@@ -118,7 +118,18 @@
 
 ## Phase 3: Advanced Features
 
-- [ ] Multi-key routing
+### Completed
+- [x] Multi-key routing (different MEKs for different prefixes)
+  - [x] New keymanager package for key routing
+  - [x] Support for ARMOR_MEK_<NAME> environment variables
+  - [x] Support for ARMOR_KEY_ROUTES prefix-to-key mapping
+  - [x] Key ID stored in x-amz-meta-armor-key-id metadata
+  - [x] Automatic key selection on encrypt/decrypt
+  - [x] Key-aware CopyObject (re-wraps with destination key)
+  - [x] Key-aware multipart uploads
+  - [x] Unit tests
+
+### Remaining
 - [ ] Multiple auth credentials with per-key ACLs
 - [ ] Pre-signed URL proxy
 - [ ] Streaming encryption for very large uploads

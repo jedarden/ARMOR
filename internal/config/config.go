@@ -7,7 +7,14 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
+
+// KeyRoute represents a prefix-to-key mapping for multi-key support.
+type KeyRoute struct {
+	Prefix  string
+	KeyName string
+}
 
 // Config holds all ARMOR configuration.
 type Config struct {
@@ -28,6 +35,10 @@ type Config struct {
 	// Encryption configuration
 	MEK       []byte
 	BlockSize int
+
+	// Multi-key configuration
+	NamedKeys map[string][]byte // Named MEKs (key name -> MEK)
+	KeyRoutes []KeyRoute        // Prefix to key name mappings
 
 	// Authentication credentials for ARMOR clients
 	AuthAccessKey string
@@ -123,6 +134,41 @@ func Load() (*Config, error) {
 	cfg.CacheMaxEntries = getEnvInt("ARMOR_CACHE_MAX_ENTRIES", 10000)
 	cfg.CacheTTL = getEnvInt("ARMOR_CACHE_TTL", 300)
 
+	// Load named keys (ARMOR_MEK_<NAME>)
+	cfg.NamedKeys = make(map[string][]byte)
+	for _, env := range os.Environ() {
+		// Look for ARMOR_MEK_<NAME> pattern
+		if strings.HasPrefix(env, "ARMOR_MEK_") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			name := strings.TrimPrefix(parts[0], "ARMOR_MEK_")
+			name = strings.ToLower(name)
+			if name == "" {
+				continue
+			}
+			// Decode hex MEK
+			mek, err := hex.DecodeString(parts[1])
+			if err != nil {
+				return nil, fmt.Errorf("ARMOR_MEK_%s must be hex-encoded: %w", name, err)
+			}
+			if len(mek) != 32 {
+				return nil, fmt.Errorf("ARMOR_MEK_%s must be 32 bytes (64 hex chars), got %d bytes", name, len(mek))
+			}
+			cfg.NamedKeys[name] = mek
+		}
+	}
+
+	// Load key routes (ARMOR_KEY_ROUTES)
+	if routesStr := os.Getenv("ARMOR_KEY_ROUTES"); routesStr != "" {
+		routes, err := parseKeyRoutes(routesStr)
+		if err != nil {
+			return nil, fmt.Errorf("ARMOR_KEY_ROUTES: %w", err)
+		}
+		cfg.KeyRoutes = routes
+	}
+
 	return cfg, nil
 }
 
@@ -148,4 +194,47 @@ func generateRandomKey(length int) string {
 		panic(fmt.Sprintf("failed to generate random key: %v", err))
 	}
 	return hex.EncodeToString(b)
+}
+
+// parseKeyRoutes parses a key routes string.
+// Format: "prefix1=key1,prefix2=key2,*=default"
+// The * prefix is a catch-all that maps to the default key.
+func parseKeyRoutes(routesStr string) ([]KeyRoute, error) {
+	if routesStr == "" {
+		return nil, nil
+	}
+
+	var routes []KeyRoute
+	parts := strings.Split(routesStr, ",")
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid route format %q (expected prefix=keyname)", part)
+		}
+
+		prefix := strings.TrimSpace(kv[0])
+		keyName := strings.TrimSpace(kv[1])
+
+		if prefix == "" || keyName == "" {
+			return nil, fmt.Errorf("invalid route %q (empty prefix or key name)", part)
+		}
+
+		// Handle wildcard - it maps to default key
+		if prefix == "*" {
+			prefix = ""
+		}
+
+		routes = append(routes, KeyRoute{
+			Prefix:  prefix,
+			KeyName: keyName,
+		})
+	}
+
+	return routes, nil
 }
