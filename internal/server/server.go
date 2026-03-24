@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
@@ -15,6 +14,8 @@ import (
 	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/logging"
+	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/provenance"
 	"github.com/jedarden/armor/internal/server/handlers"
 )
@@ -31,6 +32,11 @@ type Server struct {
 
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
+
+	// Metrics and request tracking
+	metrics       *metrics.Metrics
+	requestTracker *metrics.RequestTracker
+	logger        *logging.Logger
 }
 
 // New creates a new ARMOR server.
@@ -69,14 +75,20 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create provenance manager
 	provenanceMgr := provenance.NewManager(b2Backend, cfg.Bucket, cfg.WriterID)
 
+	// Create logger
+	logger := logging.New("armor")
+
 	return &Server{
-		config:      cfg,
-		backend:     b2Backend,
-		cache:       cache,
-		footerCache: footerCache,
-		mek:         cfg.MEK,
-		canary:      canaryMonitor,
-		provenance:  provenanceMgr,
+		config:         cfg,
+		backend:        b2Backend,
+		cache:          cache,
+		footerCache:    footerCache,
+		mek:            cfg.MEK,
+		canary:         canaryMonitor,
+		provenance:     provenanceMgr,
+		metrics:        metrics.DefaultMetrics,
+		requestTracker: metrics.DefaultRequestTracker,
+		logger:         logger,
 	}, nil
 }
 
@@ -88,14 +100,14 @@ func (s *Server) StartCanary(ctx context.Context) {
 	}
 	s.canaryStarted = true
 	s.canary.Start(ctx)
-	log.Println("Canary monitor started")
+	s.logger.Info("Canary monitor started")
 }
 
 // StopCanary stops the canary monitor.
 func (s *Server) StopCanary() {
 	if s.canary != nil && s.canaryStarted {
 		s.canary.Stop()
-		log.Println("Canary monitor stopped")
+		s.logger.Info("Canary monitor stopped")
 	}
 }
 
@@ -131,6 +143,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/key/export", s.exportKey)
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
+	mux.HandleFunc("/metrics", s.metrics.Handler())
 
 	return mux
 }
@@ -323,8 +336,17 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 // wrapHandler wraps a handler with common middleware.
 func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		// Track in-flight request
+		s.requestTracker.Start()
+		defer s.requestTracker.End()
+
 		// Log request
-		log.Printf("%s %s", r.Method, r.URL.Path)
+		s.logger.WithFields(map[string]interface{}{
+			"method": r.Method,
+			"path":   r.URL.Path,
+		}).Debug("incoming request")
 
 		// Add CORS headers for browser clients
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -341,12 +363,41 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 		if !s.isPublicPath(r.URL.Path) {
 			if !s.verifyAuth(r) {
 				s.writeError(w, "AccessDenied", "Invalid credentials", 403)
+				s.metrics.IncRequestsTotal("auth", 403)
 				return
 			}
 		}
 
-		h(w, r)
+		// Use a response writer wrapper to capture status code
+		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+		h(rw, r)
+
+		// Record metrics
+		duration := time.Since(start)
+		s.metrics.IncRequestsTotal(r.Method, rw.statusCode)
+		s.metrics.RecordRequestDuration(r.Method, duration)
+
+		// Log completed request
+		s.logger.WithFields(map[string]interface{}{
+			"method":      r.Method,
+			"path":        r.URL.Path,
+			"status":      rw.statusCode,
+			"duration_ms": duration.Milliseconds(),
+		}).Info("request completed")
 	}
+}
+
+// responseWriter wraps http.ResponseWriter to capture the status code.
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+// WriteHeader captures the status code.
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
 }
 
 // isPublicPath checks if a path is public (no auth required).
@@ -416,4 +467,14 @@ func (s *Server) GenerateDEK() ([]byte, error) {
 // GenerateIV generates a new IV (exposed for handlers).
 func (s *Server) GenerateIV() ([]byte, error) {
 	return crypto.GenerateIV()
+}
+
+// WaitForInFlightRequests waits for all in-flight requests to complete.
+func (s *Server) WaitForInFlightRequests() {
+	s.requestTracker.Wait()
+}
+
+// InFlightRequestCount returns the current number of in-flight requests.
+func (s *Server) InFlightRequestCount() int64 {
+	return s.requestTracker.Count()
 }

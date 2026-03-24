@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jedarden/armor/internal/config"
+	"github.com/jedarden/armor/internal/logging"
 	"github.com/jedarden/armor/internal/server"
 )
 
@@ -18,23 +18,27 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		logging.Fatalf("failed to load configuration: %v", err)
 	}
 
+	// Create logger with configuration
+	logger := logging.New("armor")
+	logging.SetDefault(logger)
+
 	// Log startup info
-	log.Printf("ARMOR starting...")
-	log.Printf("Listen: %s", cfg.Listen)
-	log.Printf("Admin Listen: %s", cfg.AdminListen)
-	log.Printf("Bucket: %s", cfg.Bucket)
-	log.Printf("Cloudflare Domain: %s", cfg.CFDomain)
-	log.Printf("Block Size: %d", cfg.BlockSize)
-	log.Printf("Writer ID: %s", cfg.WriterID)
-	log.Printf("Auth Access Key: %s", cfg.AuthAccessKey)
+	logger.WithFields(map[string]interface{}{
+		"listen":       cfg.Listen,
+		"admin_listen": cfg.AdminListen,
+		"bucket":       cfg.Bucket,
+		"cf_domain":    cfg.CFDomain,
+		"block_size":   cfg.BlockSize,
+		"writer_id":    cfg.WriterID,
+	}).Info("ARMOR starting")
 
 	// Create server
 	srv, err := server.New(cfg)
 	if err != nil {
-		log.Fatalf("Failed to create server: %v", err)
+		logger.Fatalf("failed to create server: %v", err)
 	}
 
 	// Create HTTP server
@@ -53,39 +57,76 @@ func main() {
 		WriteTimeout: 30 * time.Second,
 	}
 
+	// Start canary monitor
+	srv.StartCanary(context.Background())
+
 	// Start servers in goroutines
 	go func() {
-		log.Printf("S3 API listening on %s", cfg.Listen)
+		logger.Infof("S3 API listening on %s", cfg.Listen)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("S3 server error: %v", err)
+			logger.Fatalf("S3 server error: %v", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("Admin API listening on %s", cfg.AdminListen)
+		logger.Infof("Admin API listening on %s", cfg.AdminListen)
 		if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Admin server error: %v", err)
+			logger.Fatalf("Admin server error: %v", err)
 		}
 	}()
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	sig := <-quit
 
-	log.Println("Shutting down...")
+	logger.WithFields(map[string]interface{}{
+		"signal": sig.String(),
+	}).Info("shutdown signal received")
+
+	// Phase 1: Stop accepting new connections
+	logger.Info("phase 1: stopping HTTP servers")
 
 	// Graceful shutdown with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	// Shutdown HTTP servers (stops accepting new connections)
 	if err := httpServer.Shutdown(ctx); err != nil {
-		log.Printf("S3 server shutdown error: %v", err)
+		logger.WithField("error", err.Error()).Error("S3 server shutdown error")
 	}
+	logger.Info("S3 server stopped accepting connections")
 
 	if err := adminServer.Shutdown(ctx); err != nil {
-		log.Printf("Admin server shutdown error: %v", err)
+		logger.WithField("error", err.Error()).Error("Admin server shutdown error")
+	}
+	logger.Info("Admin server stopped accepting connections")
+
+	// Phase 2: Wait for in-flight requests to complete
+	inFlight := srv.InFlightRequestCount()
+	if inFlight > 0 {
+		logger.WithField("in_flight", inFlight).Info("phase 2: waiting for in-flight requests")
+
+		// Wait for in-flight requests with a timeout
+		done := make(chan struct{})
+		go func() {
+			srv.WaitForInFlightRequests()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			logger.Info("all in-flight requests completed")
+		case <-ctx.Done():
+			logger.Warn("timeout waiting for in-flight requests, proceeding with shutdown")
+		}
+	} else {
+		logger.Info("phase 2: no in-flight requests")
 	}
 
-	log.Println("Server stopped")
+	// Phase 3: Stop background tasks
+	logger.Info("phase 3: stopping background tasks")
+	srv.StopCanary()
+
+	logger.Info("ARMOR shutdown complete")
 }
