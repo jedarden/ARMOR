@@ -22,6 +22,16 @@ ARMOR is an S3-compatible proxy server that transparently encrypts and decrypts 
 
 **What makes this different from encrypting on the client:** The encryption boundary is inside the server, not on each client machine. Any S3-compatible tool works unmodified — DuckDB, pandas, rclone, AWS CLI, custom scripts — they all point at `localhost:9000` (or wherever ARMOR listens) and get transparent encryption with zero-egress downloads through Cloudflare.
 
+### Statelessness Principle
+
+ARMOR is **stateless by design.** Any ARMOR instance with the same configuration (MEK + B2 credentials + Cloudflare domain) can read, write, and manage the same data. There is no local state that is required for correctness:
+
+- **All authoritative state lives in B2.** Encryption metadata (IV, wrapped DEK, plaintext size) is stored in B2 object headers and the envelope prepended to each object. Operational metadata (key rotation progress, provenance chain) is stored as objects under a `.armor/` prefix in B2.
+- **In-memory caches are optional performance optimizations**, not state. Losing them (restart, failover) means slower first requests, not data loss or inconsistency.
+- **Multiple ARMOR instances** can run concurrently against the same bucket. Reads are safe to parallelize. Writes are safe as long as clients don't write the same key concurrently (same constraint as raw S3).
+
+This means ARMOR can be deployed as a sidecar, a standalone pod, a systemd service, or a short-lived process — and can be replaced, restarted, or scaled without migration or state transfer.
+
 ---
 
 ## Architecture
@@ -302,7 +312,7 @@ Large files require multipart upload. ARMOR encrypts each part with a continuous
 | **ListParts** | Forward to B2; adjust part sizes to plaintext sizes |
 | **ListMultipartUploads** | Forward to B2 directly |
 
-Multipart state (DEK, IV, counter offset, per-part HMACs) is held in server memory during the upload and persisted to a local state file for crash recovery.
+Multipart state (DEK, IV, counter offset, per-part HMACs) is held in server memory during the upload and persisted to B2 as an encrypted state object (`.armor/multipart/<upload-id>.state`) for crash recovery. Any ARMOR instance can resume an interrupted multipart upload by reading this state object.
 
 ### Operations Not Implemented
 
@@ -607,7 +617,7 @@ For each object in bucket:
   4. CopyObject with MetadataDirective=REPLACE, new x-amz-meta-armor-wrapped-dek
 ```
 
-This is an O(N) metadata operation — no data is re-uploaded. A 100,000-file bucket takes ~100K API calls. After May 2026, these are free. The rotation command is idempotent (safe to re-run if interrupted) — it tracks progress in a local state file.
+This is an O(N) metadata operation — no data is re-uploaded. A 100,000-file bucket takes ~100K API calls. After May 2026, these are free. The rotation command is idempotent (safe to re-run if interrupted) — it tracks progress in B2 at `.armor/rotation-state.json`, so any ARMOR instance can resume an interrupted rotation.
 
 ### Multi-Key Support (v2)
 
