@@ -1023,5 +1023,85 @@ func (b *B2Backend) PutObjectLegalHold(ctx context.Context, bucket, key string, 
 	return nil
 }
 
+// ListObjectVersions lists all versions of objects in a bucket.
+// It corrects plaintext sizes for ARMOR-encrypted objects.
+func (b *B2Backend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*ListObjectVersionsResult, error) {
+	input := &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucket),
+	}
+	if prefix != "" {
+		input.Prefix = aws.String(prefix)
+	}
+	if delimiter != "" {
+		input.Delimiter = aws.String(delimiter)
+	}
+	if keyMarker != "" {
+		input.KeyMarker = aws.String(keyMarker)
+	}
+	if versionIDMarker != "" {
+		input.VersionIdMarker = aws.String(versionIDMarker)
+	}
+	if maxKeys > 0 {
+		input.MaxKeys = aws.Int32(int32(maxKeys))
+	}
+
+	resp, err := b.s3Client.ListObjectVersions(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("ListObjectVersions failed: %w", err)
+	}
+
+	result := &ListObjectVersionsResult{
+		IsTruncated:        aws.ToBool(resp.IsTruncated),
+		NextKeyMarker:      aws.ToString(resp.NextKeyMarker),
+		NextVersionIDMarker: aws.ToString(resp.NextVersionIdMarker),
+	}
+
+	// Process versions
+	// Note: ListObjectVersions API does not return metadata or content-type.
+	// For ARMOR metadata (plaintext size), caller needs to do HeadObject with VersionId.
+	for _, version := range resp.Versions {
+		// Filter out .armor/ internal objects
+		if strings.HasPrefix(aws.ToString(version.Key), ".armor/") {
+			continue
+		}
+
+		info := ObjectVersionInfo{
+			Key:          aws.ToString(version.Key),
+			VersionID:    aws.ToString(version.VersionId),
+			Size:         aws.ToInt64(version.Size),
+			ETag:         aws.ToString(version.ETag),
+			LastModified: aws.ToTime(version.LastModified),
+			IsLatest:     aws.ToBool(version.IsLatest),
+		}
+
+		result.Versions = append(result.Versions, info)
+	}
+
+	// Process delete markers
+	for _, marker := range resp.DeleteMarkers {
+		// Filter out .armor/ internal objects
+		if strings.HasPrefix(aws.ToString(marker.Key), ".armor/") {
+			continue
+		}
+
+		info := ObjectVersionInfo{
+			Key:            aws.ToString(marker.Key),
+			VersionID:      aws.ToString(marker.VersionId),
+			LastModified:   aws.ToTime(marker.LastModified),
+			IsLatest:       aws.ToBool(marker.IsLatest),
+			IsDeleteMarker: true,
+		}
+
+		result.Versions = append(result.Versions, info)
+	}
+
+	// Process common prefixes
+	for _, prefix := range resp.CommonPrefixes {
+		result.CommonPrefixes = append(result.CommonPrefixes, aws.ToString(prefix.Prefix))
+	}
+
+	return result, nil
+}
+
 // Ensure bytes.Buffer is used when needed
 var _ = bytes.NewReader(nil)

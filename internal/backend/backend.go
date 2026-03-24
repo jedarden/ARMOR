@@ -132,6 +132,11 @@ type Backend interface {
 
 	// PutObjectLegalHold sets the legal hold status for an object.
 	PutObjectLegalHold(ctx context.Context, bucket, key string, legalHold []byte) error
+
+	// Versioning operations
+
+	// ListObjectVersions lists all versions of objects in a bucket.
+	ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*ListObjectVersionsResult, error)
 }
 
 // CompletedPart represents a completed part in a multipart upload.
@@ -172,6 +177,28 @@ type ListMultipartUploadsResult struct {
 	NextKeyMarker string
 	NextUploadIDMarker string
 	IsTruncated  bool
+}
+
+// ObjectVersionInfo contains metadata about an object version.
+// Note: ContentType, Metadata, and IsARMOREncrypted are not populated by ListObjectVersions
+// because the S3 API doesn't return them. Use HeadObject with VersionId to get these.
+type ObjectVersionInfo struct {
+	Key            string
+	VersionID      string
+	Size           int64 // Ciphertext size from API; for ARMOR objects, use HeadObject for plaintext size
+	ETag           string
+	LastModified   time.Time
+	IsLatest       bool
+	IsDeleteMarker bool
+}
+
+// ListObjectVersionsResult contains the result of a ListObjectVersions operation.
+type ListObjectVersionsResult struct {
+	Versions           []ObjectVersionInfo
+	IsTruncated        bool
+	NextKeyMarker      string
+	NextVersionIDMarker string
+	CommonPrefixes     []string
 }
 
 // ARMORMetadata extracts ARMOR-specific metadata from object headers.

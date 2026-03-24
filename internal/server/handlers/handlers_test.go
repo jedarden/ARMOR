@@ -337,6 +337,10 @@ func (m *mockBackend) PutObjectLegalHold(ctx context.Context, bucket, key string
 	return nil
 }
 
+func (m *mockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*backend.ListObjectVersionsResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 // testSetup creates common test dependencies.
 func testSetup(t *testing.T) (*config.Config, *mockBackend, *backend.MetadataCache, *backend.FooterCache, *keymanager.KeyManager) {
 	t.Helper()
@@ -2336,6 +2340,10 @@ func (m *mockBackendWithObjectLock) PutObjectLegalHold(ctx context.Context, buck
 	k := bucket + "/" + key
 	m.legalHoldConfig[k] = legalHold
 	return nil
+}
+
+func (m *mockBackendWithObjectLock) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*backend.ListObjectVersionsResult, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 // TestGetObjectLockConfiguration tests GET ?object-lock on a bucket
