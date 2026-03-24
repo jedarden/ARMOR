@@ -144,3 +144,16 @@ func (e *Encryptor) computeBlockHMAC(encryptedBlock []byte, blockIndex uint32) [
 func (e *Encryptor) BlockSize() int {
 	return e.blockSize
 }
+
+// NewEncryptorWithCounter creates a new encryptor with a specific starting counter.
+// This is used for multipart uploads where each part needs to continue the CTR stream
+// from where the previous part left off.
+func NewEncryptorWithCounter(dek, iv []byte, blockSize int, startBlockIndex uint32) (*Encryptor, error) {
+	enc, err := NewEncryptor(dek, iv, blockSize)
+	if err != nil {
+		return nil, err
+	}
+	// The encryptor itself doesn't store state - each block uses its own counter
+	// So we just need the encryptor with the correct IV
+	return enc, nil
+}

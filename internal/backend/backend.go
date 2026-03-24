@@ -73,6 +73,70 @@ type Backend interface {
 
 	// HeadBucket checks if a bucket exists.
 	HeadBucket(ctx context.Context, bucket string) error
+
+	// GetDirect retrieves an object directly from B2 (not via Cloudflare).
+	// Used for internal .armor/ objects.
+	GetDirect(ctx context.Context, bucket, key string) (io.ReadCloser, *ObjectInfo, error)
+
+	// Multipart upload operations
+
+	// CreateMultipartUpload initiates a multipart upload.
+	CreateMultipartUpload(ctx context.Context, bucket, key string, meta map[string]string) (uploadID string, err error)
+
+	// UploadPart uploads a part to a multipart upload.
+	UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int32, body io.Reader, size int64) (etag string, err error)
+
+	// CompleteMultipartUpload completes a multipart upload.
+	CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []CompletedPart) (etag string, err error)
+
+	// AbortMultipartUpload aborts a multipart upload.
+	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
+
+	// ListParts lists the parts of a multipart upload.
+	ListParts(ctx context.Context, bucket, key, uploadID string) (*ListPartsResult, error)
+
+	// ListMultipartUploads lists active multipart uploads.
+	ListMultipartUploads(ctx context.Context, bucket string) (*ListMultipartUploadsResult, error)
+}
+
+// CompletedPart represents a completed part in a multipart upload.
+type CompletedPart struct {
+	PartNumber int32
+	ETag       string
+}
+
+// PartInfo contains information about an uploaded part.
+type PartInfo struct {
+	PartNumber   int32
+	ETag         string
+	Size         int64
+	LastModified time.Time
+}
+
+// ListPartsResult contains the result of a ListParts operation.
+type ListPartsResult struct {
+	Bucket           string
+	Key              string
+	UploadID         string
+	Parts            []PartInfo
+	NextPartNumberMarker int
+	IsTruncated      bool
+}
+
+// UploadInfo contains information about an active multipart upload.
+type UploadInfo struct {
+	UploadID   string
+	Key        string
+	Initiated  time.Time
+}
+
+// ListMultipartUploadsResult contains the result of a ListMultipartUploads operation.
+type ListMultipartUploadsResult struct {
+	Bucket       string
+	Uploads      []UploadInfo
+	NextKeyMarker string
+	NextUploadIDMarker string
+	IsTruncated  bool
 }
 
 // ARMORMetadata extracts ARMOR-specific metadata from object headers.

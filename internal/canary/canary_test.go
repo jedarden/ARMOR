@@ -214,6 +214,35 @@ func (m *mockBackend) HeadBucket(ctx context.Context, bucket string) error {
 	return fmt.Errorf("bucket not found: %s", bucket)
 }
 
+func (m *mockBackend) GetDirect(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
+	return m.Get(ctx, bucket, key)
+}
+
+// Multipart upload methods (stub implementations for testing)
+func (m *mockBackend) CreateMultipartUpload(ctx context.Context, bucket, key string, meta map[string]string) (string, error) {
+	return fmt.Sprintf("upload-%d", time.Now().UnixNano()), nil
+}
+
+func (m *mockBackend) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int32, body io.Reader, size int64) (string, error) {
+	return fmt.Sprintf("etag-%d", partNumber), nil
+}
+
+func (m *mockBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []backend.CompletedPart) (string, error) {
+	return "final-etag", nil
+}
+
+func (m *mockBackend) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	return nil
+}
+
+func (m *mockBackend) ListParts(ctx context.Context, bucket, key, uploadID string) (*backend.ListPartsResult, error) {
+	return &backend.ListPartsResult{}, nil
+}
+
+func (m *mockBackend) ListMultipartUploads(ctx context.Context, bucket string) (*backend.ListMultipartUploadsResult, error) {
+	return &backend.ListMultipartUploadsResult{}, nil
+}
+
 // TestNewMonitor tests Monitor creation.
 func TestNewMonitor(t *testing.T) {
 	mek := make([]byte, 32)
