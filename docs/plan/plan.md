@@ -76,7 +76,13 @@ Client                    ARMOR                    Cloudflare              B2
   │                         │                         │                     │
 ```
 
-Downloads route **through Cloudflare** for zero-egress via the Bandwidth Alliance PNI.
+Downloads route **through Cloudflare** for zero-egress via the Bandwidth Alliance PNI. The bucket is set to `allPublic` — this is safe because every object is AES-256-CTR ciphertext, useless without the MEK. ARMOR assembles the Cloudflare download URL itself:
+
+```
+https://<cloudflare_domain>/file/<bucket>/<key>
+```
+
+No Cloudflare Worker is needed. Cloudflare is configured with a CNAME pointing to the B2 bucket hostname, with the proxy (orange cloud) enabled. Cloudflare caches responses at the edge, and the B2→Cloudflare egress over PNI is free.
 
 #### Download (GetObject — Range)
 
@@ -85,7 +91,7 @@ Client                    ARMOR                    Cloudflare              B2
   │                         │                         │                     │
   ├─ GET /bucket/key ──────▶│                         │                     │
   │   Range: bytes=X-Y      │                         │                     │
-  │                         ├─ HeadObject (CF) ──────▶│ (fetch metadata)    │
+  │                         ├─ HeadObject (B2 API) ──▶│ (fetch metadata)    │
   │                         │◀── x-amz-meta-armor-* ──┤                     │
   │                         │                         │                     │
   │                         ├─ Translate range:        │                     │
@@ -370,11 +376,11 @@ Used for: PutObject, UploadPart, CompleteMultipartUpload, DeleteObject, CopyObje
 
 **Download client** — through Cloudflare domain:
 ```
-https://armor-b2.example.com
+https://armor-b2.example.com/file/<bucket>/<key>
 ```
-Used for: GetObject (full and range). This routes through Cloudflare's edge network and PNI to B2, ensuring $0 egress. Cloudflare caches responses at the edge — repeated reads of the same encrypted blocks (common with DuckDB) are served from cache without hitting B2.
+Used for: GetObject (full and range). ARMOR assembles this URL from the configured Cloudflare domain, bucket name, and object key. The request routes through Cloudflare's edge network and PNI to the public B2 bucket, ensuring $0 egress. Cloudflare caches responses at the edge — repeated reads of the same encrypted blocks (common with DuckDB) are served from cache without hitting B2.
 
-The download client does NOT use S3 auth headers (which would bypass Cloudflare caching). Instead, the Cloudflare Worker holds a read-only B2 application key and injects auth on the B2 side. ARMOR authenticates to the Worker via a shared secret or HMAC token in a custom header.
+No authentication is needed on the download path because the bucket is public. This is safe: every stored object is AES-256-CTR ciphertext, completely opaque without the MEK. Public access to ciphertext is equivalent to accessing `/dev/urandom`. This also means Cloudflare can freely cache responses (no `Authorization` header to bypass caching).
 
 ### Authentication
 
@@ -443,10 +449,8 @@ secret_access_key = "<B2 application key>"
 # default_bucket  = "my-bucket"  # Optional: restrict to single bucket
 
 [cloudflare]
-download_domain   = "armor-b2.example.com"
-# How ARMOR authenticates to the Cloudflare Worker
-worker_auth_header = "X-Armor-Token"
-worker_auth_token  = "<shared secret>"
+download_domain   = "armor-b2.example.com"   # CNAME → <bucket>.s3.<region>.backblazeb2.com
+download_bucket   = "my-bucket"              # Bucket name for URL assembly
 
 [encryption]
 block_size = 65536              # 64 KB (must be power of 2, ≥4096)
@@ -471,6 +475,7 @@ ARMOR_B2_REGION=us-east-005
 ARMOR_B2_ACCESS_KEY_ID=...
 ARMOR_B2_SECRET_ACCESS_KEY=...
 ARMOR_CF_DOWNLOAD_DOMAIN=armor-b2.example.com
+ARMOR_CF_DOWNLOAD_BUCKET=my-bucket
 ARMOR_MEK=<hex-encoded 32-byte key>
 ```
 
@@ -479,7 +484,7 @@ ARMOR_MEK=<hex-encoded 32-byte key>
 ARMOR is designed to run as a sidecar or standalone pod:
 
 ```yaml
-# Secret with B2 creds, MEK, and Cloudflare Worker token
+# Secret with B2 creds and MEK
 apiVersion: v1
 kind: Secret
 metadata:
@@ -489,7 +494,6 @@ stringData:
   b2-access-key-id: "..."
   b2-secret-access-key: "..."
   master-encryption-key: "..."
-  cloudflare-worker-token: "..."
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -520,86 +524,62 @@ spec:
             secretKeyRef:
               name: armor-secrets
               key: master-encryption-key
-        - name: ARMOR_CF_WORKER_AUTH_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: armor-secrets
-              key: cloudflare-worker-token
+        - name: ARMOR_CF_DOWNLOAD_DOMAIN
+          value: "armor-b2.example.com"
+        - name: ARMOR_CF_DOWNLOAD_BUCKET
+          value: "my-bucket"
 ```
 
 ---
 
-## Cloudflare Worker
+## Cloudflare Setup
 
-A minimal Cloudflare Worker sits between ARMOR's download client and B2. It:
+No Cloudflare Worker is needed. The B2 bucket is set to `allPublic` and Cloudflare acts as a pure caching CDN proxy. This is safe because every stored object is AES-256-CTR ciphertext — useless without the MEK that lives on the ARMOR server.
 
-1. Validates the `X-Armor-Token` header (shared secret)
-2. Signs the request with B2 credentials (AWS SigV4 via `aws4fetch`)
-3. Forwards to the B2 S3 endpoint
-4. Strips `Authorization` from cache key so Cloudflare can cache responses
-5. Sets `Cache-Control` headers for encrypted content (long TTL — ciphertext is immutable per-version)
-6. Strips B2-specific response headers (`x-bz-*`)
-7. Passes through `Range` request/response headers unchanged
+### How It Works
 
-The Worker holds a **read-only** B2 application key scoped to a single bucket. Even if the Worker token is compromised, an attacker gets read access to ciphertext only — useless without the MEK.
+ARMOR assembles download URLs using the configured Cloudflare domain:
 
-### Worker Code (Pseudocode)
-
-```javascript
-export default {
-  async fetch(request, env) {
-    // 1. Validate ARMOR token
-    if (request.headers.get("X-Armor-Token") !== env.ARMOR_TOKEN) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-
-    // 2. Build B2 request (strip ARMOR auth, add B2 auth)
-    const b2Url = new URL(request.url);
-    b2Url.hostname = `s3.${env.B2_REGION}.backblazeb2.com`;
-
-    const b2Request = new Request(b2Url, {
-      method: request.method,
-      headers: {
-        "Range": request.headers.get("Range") || "",
-      },
-    });
-
-    // 3. Sign with B2 credentials
-    const signedRequest = await signAwsV4(b2Request, {
-      accessKeyId: env.B2_ACCESS_KEY_ID,
-      secretAccessKey: env.B2_SECRET_ACCESS_KEY,
-      region: env.B2_REGION,
-      service: "s3",
-    });
-
-    // 4. Fetch from B2 with caching
-    const response = await fetch(signedRequest, {
-      cf: {
-        cacheEverything: true,
-        cacheTtl: 86400, // 1 day (ciphertext doesn't change)
-      },
-    });
-
-    // 5. Clean up response headers
-    const cleanResponse = new Response(response.body, response);
-    cleanResponse.headers.delete("x-bz-file-name");
-    cleanResponse.headers.delete("x-bz-file-id");
-    cleanResponse.headers.delete("x-bz-content-sha1");
-    cleanResponse.headers.set("Cache-Control", "public, max-age=86400");
-
-    return cleanResponse;
-  },
-};
+```
+https://<cloudflare_domain>/file/<bucket>/<key>
 ```
 
-### Cloudflare Setup Checklist
+Cloudflare receives the request, checks its edge cache, and on a miss forwards to the B2 origin over the Bandwidth Alliance PNI (free egress). The response is cached at the edge for subsequent requests.
+
+Because the bucket is public and no `Authorization` header is sent, Cloudflare caches freely — no workarounds needed for the auth-header-bypasses-cache problem.
+
+### DNS Configuration
+
+```
+armor-b2.example.com  CNAME  f004.backblazeb2.com  (proxied / orange cloud)
+```
+
+The CNAME target is the B2 bucket's friendly hostname. To find it, upload any file to the bucket and check the download URL in the B2 web UI — the hostname portion (e.g., `f004.backblazeb2.com`) is the CNAME target.
+
+### Cloudflare Configuration
 
 - [ ] Domain on Cloudflare (e.g., `example.com`)
-- [ ] CNAME: `armor-b2.example.com` → Worker route (or use Workers custom domain)
-- [ ] SSL mode: Full (strict)
-- [ ] Disable Automatic Signed Exchanges (SXGs)
-- [ ] Worker deployed with B2 read-only credentials and ARMOR token
-- [ ] Cache rules: cache everything for the `armor-b2` subdomain
+- [ ] CNAME: `armor-b2.example.com` → B2 bucket friendly hostname (proxied)
+- [ ] SSL mode: **Full (strict)** — B2 requires HTTPS
+- [ ] **Disable Automatic Signed Exchanges (SXGs)** — incompatible with B2
+- [ ] URL Rewrite Transform Rule (if needed): prepend `/file/<bucket>/` to paths
+- [ ] Response header cleanup: strip `x-bz-file-name`, `x-bz-file-id`, `x-bz-content-sha1`, `x-bz-upload-timestamp` (optional, cosmetic)
+- [ ] Cache-Control: set `public, max-age=86400` for all responses (ciphertext is immutable per-version)
+
+### B2 Bucket Configuration
+
+- [ ] Bucket type: `allPublic`
+- [ ] Set `Cache-Control: public, max-age=86400` in bucket info (default for all files)
+- [ ] CORS rules if browser access is needed (unlikely for ARMOR's server-to-B2 path)
+
+### Why Public Is Safe
+
+| Concern | Why it's not a risk |
+|---------|-------------------|
+| Anyone can download files | They get AES-256-CTR ciphertext — indistinguishable from random bytes without the MEK |
+| File listing exposure | File names are visible, but file contents are opaque. If names are sensitive, enable filename encryption (v2 feature) |
+| No access control | The access control boundary is ARMOR, not B2. ARMOR validates client auth before proxying |
+| Cloudflare can inspect content | It's ciphertext. Cloudflare sees the same random-looking bytes as any other attacker |
 
 ---
 
@@ -698,7 +678,7 @@ Rather than implementing the full S3 XML protocol from scratch, use an existing 
 - [ ] Config file + env var support
 - [ ] `armor serve` command (starts the server)
 - [ ] `armor key generate` command
-- [ ] Cloudflare Worker (minimal: auth + sign + cache)
+- [ ] Cloudflare DNS setup (CNAME + SSL + cache rules)
 - [ ] Metadata cache (LRU, in-memory)
 - [ ] Dockerfile + CI build
 
@@ -770,10 +750,6 @@ ARMOR/
 │   │   └── cache.go             # Metadata LRU cache
 │   └── config/
 │       └── config.go            # TOML config + env var loading
-├── worker/
-│   ├── src/
-│   │   └── index.js             # Cloudflare Worker source
-│   └── wrangler.toml            # Worker deployment config
 ├── deploy/
 │   ├── Dockerfile
 │   └── kubernetes/
@@ -801,7 +777,7 @@ ARMOR/
 
 ### Integration Tests
 
-- Start ARMOR against real B2 bucket + Cloudflare Worker
+- Start ARMOR against real B2 bucket + Cloudflare CDN
 - Upload via boto3 → download via boto3 → verify content matches
 - Upload → range read → verify partial content
 - Upload Parquet → DuckDB query with `WHERE` clause → verify results + verify only partial data fetched (check ARMOR logs for range requests)
@@ -828,7 +804,7 @@ ARMOR/
 | Cloudflare CDN inspection | All cached content is ciphertext |
 | ARMOR server compromise | MEK exposed — rotate immediately; per-file DEKs limit blast radius |
 | Network sniffing (client ↔ ARMOR) | TLS on ARMOR listener, or localhost-only binding |
-| Worker token compromise | Attacker gets read access to ciphertext only — useless without MEK |
+| Public bucket enumeration | Attacker can list/download ciphertext — useless without MEK |
 | Bit-flipping attack on ciphertext | Per-block HMAC-SHA256 detects any modification |
 | Block reordering/truncation | Block index is implicit in offset; HMAC table length validates block count |
 
@@ -874,8 +850,8 @@ armor_active_multipart_uploads                  # In-progress multipart uploads
 | Integrity | HMAC-SHA256 per block | Independent verification of any block without reading the full file |
 | Key wrapping | AES-KWP (RFC 5649) | Standard, constant-time, no IV management for wrapping |
 | Block size | 64 KB | Matches Parquet page sizes; 0.05% HMAC overhead; good range-read granularity |
-| Upload path | Direct to B2 | Ingress is free; avoids Cloudflare body size limits and Worker CPU |
-| Download path | Via Cloudflare | $0 egress via Bandwidth Alliance PNI; edge caching for repeated reads |
+| Upload path | Direct to B2 | Ingress is free; avoids Cloudflare body size limits |
+| Download path | Via Cloudflare CDN | $0 egress via Bandwidth Alliance PNI; edge caching; no Worker needed (public bucket + ciphertext) |
 | Filenames | Plaintext (v1) | Enables DuckDB partition discovery; directory structure is not sensitive for this use case |
 | Metadata storage | B2 S3 headers + envelope header | Headers enable fast HeadObject; envelope enables offline reading |
 | Auth model | ARMOR-local SigV4 | B2 creds stay on server; standard S3 client compatibility |
