@@ -17,6 +17,7 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
+	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/server/handlers"
 )
 
@@ -293,7 +294,7 @@ func (m *mockBackend) ListMultipartUploads(ctx context.Context, bucket string) (
 }
 
 // testSetup creates common test dependencies.
-func testSetup(t *testing.T) (*config.Config, *mockBackend, *backend.MetadataCache, *backend.FooterCache, []byte) {
+func testSetup(t *testing.T) (*config.Config, *mockBackend, *backend.MetadataCache, *backend.FooterCache, *keymanager.KeyManager) {
 	t.Helper()
 
 	mek := make([]byte, 32)
@@ -311,12 +312,18 @@ func testSetup(t *testing.T) (*config.Config, *mockBackend, *backend.MetadataCac
 	cache := backend.NewMetadataCache(1000, 300)
 	footerCache := backend.NewFooterCache(1000, 300)
 
-	return cfg, mb, cache, footerCache, mek
+	// Create a KeyManager with the generated MEK
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+
+	return cfg, mb, cache, footerCache, km
 }
 
 func TestPutObjectGetObject(t *testing.T) {
-	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, km)
 
 	// Create plaintext content
 	plaintext := []byte("Hello, ARMOR! This is a test file with some content.")

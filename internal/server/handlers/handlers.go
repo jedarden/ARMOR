@@ -23,6 +23,7 @@ import (
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/keymanager"
 )
 
 // ProvenanceRecorder records uploads in the provenance chain.
@@ -37,18 +38,18 @@ type Handlers struct {
 	backend     backend.Backend
 	cache       *backend.MetadataCache
 	footerCache *backend.FooterCache
-	mek         []byte
+	keyManager  *keymanager.KeyManager
 	provenance  ProvenanceRecorder
 }
 
 // New creates a new Handlers instance.
-func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, footerCache *backend.FooterCache, mek []byte) *Handlers {
+func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, footerCache *backend.FooterCache, km *keymanager.KeyManager) *Handlers {
 	return &Handlers{
 		config:      cfg,
 		backend:     be,
 		cache:       cache,
 		footerCache: footerCache,
-		mek:         mek,
+		keyManager:  km,
 		provenance: nil,
 	}
 }
@@ -165,6 +166,13 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	plaintextSize := int64(len(plaintext))
 
+	// Get the appropriate MEK for this object key
+	mek, keyID, err := h.keyManager.GetMEK(key)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get encryption key: %v", err), 500)
+		return
+	}
+
 	// Generate DEK and IV
 	dek, err := crypto.GenerateDEK()
 	if err != nil {
@@ -179,7 +187,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	// Wrap DEK with MEK
-	wrappedDEK, err := crypto.WrapDEK(h.mek, dek)
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
 		return
@@ -239,6 +247,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		WrappedDEK:    wrappedDEK,
 		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
 		ETag:          etag,
+		KeyID:         keyID,
 	}).ToMetadata()
 
 	// Upload to B2
@@ -309,8 +318,15 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
+	// Get the MEK for this object using the key ID from metadata
+	mek, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get decryption key: %v", err), 500)
+		return
+	}
+
 	// Unwrap DEK
-	dek, err := crypto.UnwrapDEK(h.mek, armorMeta.WrappedDEK)
+	dek, err := crypto.UnwrapDEK(mek, armorMeta.WrappedDEK)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
 		return
@@ -883,21 +899,35 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 			return
 		}
 
-		// Unwrap DEK with current MEK
-		dek, err := crypto.UnwrapDEK(h.mek, armorMeta.WrappedDEK)
+		// Get the source MEK using the key ID from metadata
+		srcMEK, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get source decryption key: %v", err), 500)
+			return
+		}
+
+		// Unwrap DEK with source MEK
+		dek, err := crypto.UnwrapDEK(srcMEK, armorMeta.WrappedDEK)
 		if err != nil {
 			h.writeError(w, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
 			return
 		}
 
-		// Re-wrap DEK with current MEK (handles key rotation case)
-		wrappedDEK, err := crypto.WrapDEK(h.mek, dek)
+		// Get the destination MEK for the target key
+		dstMEK, dstKeyID, err := h.keyManager.GetMEK(dstKey)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get destination encryption key: %v", err), 500)
+			return
+		}
+
+		// Re-wrap DEK with destination MEK (handles key rotation and cross-prefix copy)
+		wrappedDEK, err := crypto.WrapDEK(dstMEK, dek)
 		if err != nil {
 			h.writeError(w, "InternalError", fmt.Sprintf("Failed to re-wrap DEK: %v", err), 500)
 			return
 		}
 
-		// Build new metadata with re-wrapped DEK
+		// Build new metadata with re-wrapped DEK and destination key ID
 		newMeta := (&backend.ARMORMetadata{
 			Version:       armorMeta.Version,
 			BlockSize:     armorMeta.BlockSize,
@@ -907,6 +937,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 			WrappedDEK:    wrappedDEK,
 			PlaintextSHA:  armorMeta.PlaintextSHA,
 			ETag:          armorMeta.ETag,
+			KeyID:         dstKeyID,
 		}).ToMetadata()
 
 		// Handle REPLACE directive - copy custom metadata headers from request
@@ -1288,6 +1319,13 @@ func (h *Handlers) ListBuckets(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
 
+	// Get the appropriate MEK for this object key
+	mek, keyID, err := h.keyManager.GetMEK(key)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get encryption key: %v", err), 500)
+		return
+	}
+
 	// Generate DEK and IV for this upload
 	dek, err := crypto.GenerateDEK()
 	if err != nil {
@@ -1302,7 +1340,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Wrap DEK with MEK
-	wrappedDEK, err := crypto.WrapDEK(h.mek, dek)
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
 		return
@@ -1331,6 +1369,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 		BlockSize:      h.config.BlockSize,
 		Created:        time.Now(),
 		ContentType:    contentType,
+		KeyID:          keyID,
 		EncryptedBytes: 0,
 		PartHMACs:      make(map[int]string),
 		PartSizes:      make(map[int]int64),
@@ -1412,8 +1451,15 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 
 	plaintextSize := int64(len(plaintext))
 
+	// Get the MEK for this upload using the key ID from state
+	mek, err := h.keyManager.GetMEKByID(state.KeyID)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get decryption key: %v", err), 500)
+		return
+	}
+
 	// Unwrap DEK
-	dek, err := crypto.UnwrapDEK(h.mek, state.WrappedDEK)
+	dek, err := crypto.UnwrapDEK(mek, state.WrappedDEK)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
 		return
@@ -1575,6 +1621,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		WrappedDEK:    state.WrappedDEK,
 		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
 		ETag:          etag,
+		KeyID:         state.KeyID,
 	}).ToMetadata()
 
 	// Add multipart flag to indicate HMAC table is external

@@ -14,6 +14,7 @@ import (
 	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/logging"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/provenance"
@@ -26,7 +27,7 @@ type Server struct {
 	backend     backend.Backend
 	cache       *backend.MetadataCache
 	footerCache *backend.FooterCache
-	mek         []byte
+	keyManager  *keymanager.KeyManager
 	canary      *canary.Monitor
 	provenance  *provenance.Manager
 
@@ -59,6 +60,20 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create footer cache (for Parquet footer pinning)
 	footerCache := backend.NewFooterCache(cfg.CacheMaxEntries, cfg.CacheTTL)
 
+	// Create key manager
+	// Convert config.KeyRoutes to keymanager.Route format
+	var routes []keymanager.Route
+	for _, r := range cfg.KeyRoutes {
+		routes = append(routes, keymanager.Route{
+			Prefix:  r.Prefix,
+			KeyName: r.KeyName,
+		})
+	}
+	keyMgr, err := keymanager.New(cfg.MEK, cfg.NamedKeys, routes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create key manager: %w", err)
+	}
+
 	// Create canary monitor
 	canaryMonitor := canary.NewMonitor(canary.Config{
 		Backend:    b2Backend,
@@ -83,7 +98,7 @@ func New(cfg *config.Config) (*Server, error) {
 		backend:        b2Backend,
 		cache:          cache,
 		footerCache:    footerCache,
-		mek:            cfg.MEK,
+		keyManager:     keyMgr,
 		canary:         canaryMonitor,
 		provenance:     provenanceMgr,
 		metrics:        metrics.DefaultMetrics,
@@ -120,7 +135,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/readyz", s.readyz)
 
 	// S3 operations
-	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.mek)
+	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.keyManager)
 
 	// Wire up provenance if available
 	if s.provenance != nil {
@@ -241,8 +256,9 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create key rotator
-	rotator := NewKeyRotator(s.backend, s.config.Bucket, s.mek, newMEK)
+	// Create key rotator with the default key
+	defaultKey := s.keyManager.DefaultKey()
+	rotator := NewKeyRotator(s.backend, s.config.Bucket, defaultKey.MEK, newMEK)
 
 	// Perform rotation
 	result, err := rotator.Rotate(r.Context())
@@ -258,7 +274,11 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 
 	// Update the server's MEK on success
 	if result.Status == "completed" {
-		s.mek = newMEK
+		if err := s.keyManager.UpdateDefaultKey(newMEK); err != nil {
+			s.logger.WithFields(map[string]interface{}{
+				"error": err.Error(),
+			}).Error("failed to update key manager after rotation")
+		}
 		// Clear the metadata cache since DEKs are now wrapped with new MEK
 		s.cache.Clear()
 	}
@@ -280,11 +300,12 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Export the MEK as hex-encoded string
+	// Export the default MEK as hex-encoded string
+	defaultKey := s.keyManager.DefaultKey()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"mek":   hex.EncodeToString(s.mek),
+		"mek":   hex.EncodeToString(defaultKey.MEK),
 		"format": "hex",
 		"warning": "This key provides access to all encrypted data. Store securely.",
 	})

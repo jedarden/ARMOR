@@ -24,6 +24,7 @@ type MultipartState struct {
 	BlockSize    int       `json:"block_size"`
 	Created      time.Time `json:"created"`
 	ContentType  string    `json:"content_type"`
+	KeyID        string    `json:"key_id"` // Key identifier for multi-key support
 
 	// Track cumulative encrypted bytes for CTR counter offset
 	EncryptedBytes int64 `json:"encrypted_bytes"`

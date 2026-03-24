@@ -149,6 +149,7 @@ type ARMORMetadata struct {
 	WrappedDEK    []byte
 	PlaintextSHA  string
 	ETag          string
+	KeyID         string // Key identifier for multi-key support (empty = default)
 }
 
 // ParseARMORMetadata extracts ARMOR metadata from S3 headers.
@@ -199,6 +200,9 @@ func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
 		}
 	}
 
+	// Parse key ID (for multi-key support)
+	am.KeyID = meta["x-amz-meta-armor-key-id"]
+
 	return am, true
 }
 
@@ -213,5 +217,9 @@ func (am *ARMORMetadata) ToMetadata() map[string]string {
 	meta["x-amz-meta-armor-wrapped-dek"] = base64.StdEncoding.EncodeToString(am.WrappedDEK)
 	meta["x-amz-meta-armor-plaintext-sha256"] = am.PlaintextSHA
 	meta["x-amz-meta-armor-etag"] = am.ETag
+	// Only include key-id if set (non-default key)
+	if am.KeyID != "" && am.KeyID != "default" {
+		meta["x-amz-meta-armor-key-id"] = am.KeyID
+	}
 	return meta
 }
