@@ -103,6 +103,15 @@
   - [x] Request/transfer/cache/encryption/canary metrics
   - [x] /metrics endpoint in Prometheus format
   - [x] Unit tests for logging and metrics packages
+- [x] Conditional request handling (RFC 7232)
+  - [x] If-Match header (412 Precondition Failed on mismatch)
+  - [x] If-None-Match header (304 Not Modified on match)
+  - [x] If-Modified-Since header (304 Not Modified if not modified)
+  - [x] If-Unmodified-Since header (412 Precondition Failed if modified)
+  - [x] Support for multiple ETags in If-Match/If-None-Match
+  - [x] Support for wildcard (*) in If-Match/If-None-Match
+  - [x] Applied to GetObject and HeadObject handlers
+  - [x] Unit tests for all conditional request scenarios
 
 ### Remaining
 - [ ] Integration tests against real B2 + Cloudflare
