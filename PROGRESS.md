@@ -26,6 +26,7 @@
   - [x] Full AWS SigV4 authentication (signature verification)
 - [x] Health check endpoints (`/healthz`, `/readyz`, `/armor/canary`)
 - [x] Self-healing canary integrity monitor
+  - [x] CF-Cache-Status header detection for Cloudflare cache hit tracking
 - [x] Parquet footer pinning (in-memory, keyed by ETag)
 - [x] Parallel data + HMAC range fetch (errgroup)
 - [x] Pipelined stream decryption (io.Pipe) - decrypts blocks as they stream
