@@ -159,5 +159,14 @@
   - [x] Bug fix: DecryptRange now uses relative block indices
   - [x] Unit tests for streaming encryption scenarios
 
+### Completed
+- [x] Lifecycle rule passthrough
+  - [x] GetBucketLifecycleConfiguration (GET ?lifecycle)
+  - [x] PutBucketLifecycleConfiguration (PUT ?lifecycle)
+  - [x] DeleteBucketLifecycleConfiguration (DELETE ?lifecycle)
+  - [x] Backend interface methods for lifecycle operations
+  - [x] B2 S3 implementation of lifecycle operations
+  - [x] Unit tests for lifecycle handlers
+
 ### Remaining
-- [ ] Admin API enhancements
+- [ ] Integration tests against real B2 + Cloudflare

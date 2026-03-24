@@ -86,6 +86,11 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			h.ListMultipartUploads(w, r, bucket)
 			return
 		}
+		// Handle GetBucketLifecycleConfiguration (GET ?lifecycle on bucket)
+		if r.URL.Query().Has("lifecycle") && key == "" && bucket != "" {
+			h.GetBucketLifecycleConfiguration(w, r, bucket)
+			return
+		}
 		// Handle ListParts (GET ?uploadId on object)
 		if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" && key != "" {
 			h.ListParts(w, r, bucket, key, uploadID)
@@ -105,6 +110,11 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			h.ListBuckets(w, r)
 		}
 	case http.MethodPut:
+		// Handle PutBucketLifecycleConfiguration (PUT ?lifecycle on bucket)
+		if r.URL.Query().Has("lifecycle") && key == "" && bucket != "" {
+			h.PutBucketLifecycleConfiguration(w, r, bucket)
+			return
+		}
 		if key != "" {
 			// Check for CopyObject (has x-amz-copy-source header)
 			if r.Header.Get("x-amz-copy-source") != "" {
@@ -122,6 +132,11 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			h.HeadBucket(w, r, bucket)
 		}
 	case http.MethodDelete:
+		// Handle DeleteBucketLifecycleConfiguration (DELETE ?lifecycle on bucket)
+		if r.URL.Query().Has("lifecycle") && key == "" && bucket != "" {
+			h.DeleteBucketLifecycleConfiguration(w, r, bucket)
+			return
+		}
 		// Handle AbortMultipartUpload (DELETE ?uploadId on object)
 		if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" && key != "" {
 			h.AbortMultipartUpload(w, r, bucket, key, uploadID)
@@ -2060,6 +2075,56 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
 	w.Write(output)
+}
+
+// GetBucketLifecycleConfiguration handles GET ?lifecycle on a bucket.
+// This is a passthrough operation - lifecycle configuration is not encrypted.
+func (h *Handlers) GetBucketLifecycleConfiguration(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+
+	config, err := h.backend.GetBucketLifecycleConfiguration(ctx, bucket)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get lifecycle configuration: %v", err), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
+	w.Write(config)
+}
+
+// PutBucketLifecycleConfiguration handles PUT ?lifecycle on a bucket.
+// This is a passthrough operation - lifecycle configuration is not encrypted.
+func (h *Handlers) PutBucketLifecycleConfiguration(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+
+	// Read the lifecycle configuration XML
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		return
+	}
+
+	if err := h.backend.PutBucketLifecycleConfiguration(ctx, bucket, body); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to put lifecycle configuration: %v", err), 500)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// DeleteBucketLifecycleConfiguration handles DELETE ?lifecycle on a bucket.
+// This is a passthrough operation - lifecycle configuration is not encrypted.
+func (h *Handlers) DeleteBucketLifecycleConfiguration(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+
+	if err := h.backend.DeleteBucketLifecycleConfiguration(ctx, bucket); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to delete lifecycle configuration: %v", err), 500)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // writeError writes an S3 error response.

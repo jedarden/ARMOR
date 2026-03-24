@@ -97,6 +97,17 @@ type Backend interface {
 
 	// ListMultipartUploads lists active multipart uploads.
 	ListMultipartUploads(ctx context.Context, bucket string) (*ListMultipartUploadsResult, error)
+
+	// Lifecycle configuration operations (passthrough)
+
+	// GetBucketLifecycleConfiguration gets the lifecycle configuration for a bucket.
+	GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error)
+
+	// PutBucketLifecycleConfiguration sets the lifecycle configuration for a bucket.
+	PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error
+
+	// DeleteBucketLifecycleConfiguration deletes the lifecycle configuration for a bucket.
+	DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error
 }
 
 // CompletedPart represents a completed part in a multipart upload.

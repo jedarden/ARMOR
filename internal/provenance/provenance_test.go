@@ -183,6 +183,19 @@ func (m *mockBackend) ListMultipartUploads(ctx context.Context, bucket string) (
 	return nil, nil
 }
 
+// Lifecycle configuration methods (stub implementations for testing)
+func (m *mockBackend) GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, fmt.Errorf("lifecycle configuration not found")
+}
+
+func (m *mockBackend) PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+
+func (m *mockBackend) DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error {
+	return nil
+}
+
 func TestShouldRecord(t *testing.T) {
 	m := NewManager(nil, "test-bucket", "test-writer")
 

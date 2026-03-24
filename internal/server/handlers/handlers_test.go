@@ -293,6 +293,19 @@ func (m *mockBackend) ListMultipartUploads(ctx context.Context, bucket string) (
 	return &backend.ListMultipartUploadsResult{}, nil
 }
 
+// Lifecycle configuration methods (stub implementations for testing)
+func (m *mockBackend) GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, fmt.Errorf("lifecycle configuration not found")
+}
+
+func (m *mockBackend) PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+
+func (m *mockBackend) DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error {
+	return nil
+}
+
 // testSetup creates common test dependencies.
 func testSetup(t *testing.T) (*config.Config, *mockBackend, *backend.MetadataCache, *backend.FooterCache, *keymanager.KeyManager) {
 	t.Helper()
@@ -2010,5 +2023,226 @@ func TestStreamingEncryptionThreshold(t *testing.T) {
 				t.Errorf("content mismatch for %s", tt.name)
 			}
 		})
+	}
+}
+
+// mockBackendWithLifecycle is a mock backend that supports lifecycle configuration for testing
+type mockBackendWithLifecycle struct {
+	*mockBackend
+	lifecycleConfig []byte
+}
+
+func newMockBackendWithLifecycle() *mockBackendWithLifecycle {
+	return &mockBackendWithLifecycle{
+		mockBackend: newMockBackend(),
+	}
+}
+
+func (m *mockBackendWithLifecycle) GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	if m.lifecycleConfig == nil {
+		return nil, fmt.Errorf("lifecycle configuration not found")
+	}
+	return m.lifecycleConfig, nil
+}
+
+func (m *mockBackendWithLifecycle) PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error {
+	m.lifecycleConfig = config
+	return nil
+}
+
+func (m *mockBackendWithLifecycle) DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error {
+	m.lifecycleConfig = nil
+	return nil
+}
+
+// TestGetBucketLifecycleConfiguration tests GET ?lifecycle on a bucket
+func TestGetBucketLifecycleConfiguration(t *testing.T) {
+	mek := make([]byte, 32)
+	if _, err := rand.Read(mek); err != nil {
+		t.Fatalf("failed to generate MEK: %v", err)
+	}
+
+	cfg := &config.Config{
+		BlockSize:     65536,
+		AuthAccessKey: "test-access-key",
+		AuthSecretKey: "test-secret-key",
+	}
+
+	mb := newMockBackendWithLifecycle()
+	cache := backend.NewMetadataCache(1000, 300)
+	footerCache := backend.NewFooterCache(1000, 300)
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+
+	h := handlers.New(cfg, mb, cache, footerCache, km)
+
+	// Test 1: Get lifecycle when not set - should return error
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?lifecycle", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	// Should return 500 because our mock returns an error when config doesn't exist
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500 for missing lifecycle config, got %d", w.Code)
+	}
+
+	// Test 2: Set and then get lifecycle configuration
+	lifecycleXML := `<?xml version="1.0" encoding="UTF-8"?>
+<LifecycleConfiguration>
+  <Rule>
+    <ID>test-rule</ID>
+    <Status>Enabled</Status>
+    <Filter>
+      <Prefix>logs/</Prefix>
+    </Filter>
+    <Expiration>
+      <Days>30</Days>
+    </Expiration>
+  </Rule>
+</LifecycleConfiguration>`
+
+	// PUT lifecycle configuration
+	req = httptest.NewRequest(http.MethodPut, "/test-bucket?lifecycle", strings.NewReader(lifecycleXML))
+	req.Header.Set("Content-Type", "application/xml")
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("PUT lifecycle: expected status 200, got %d", w.Code)
+	}
+
+	// GET lifecycle configuration
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket?lifecycle", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET lifecycle: expected status 200, got %d", w.Code)
+	}
+
+	if !strings.Contains(w.Body.String(), "test-rule") {
+		t.Error("GET lifecycle response should contain rule ID")
+	}
+}
+
+// TestPutBucketLifecycleConfiguration tests PUT ?lifecycle on a bucket
+func TestPutBucketLifecycleConfiguration(t *testing.T) {
+	mek := make([]byte, 32)
+	if _, err := rand.Read(mek); err != nil {
+		t.Fatalf("failed to generate MEK: %v", err)
+	}
+
+	cfg := &config.Config{
+		BlockSize:     65536,
+		AuthAccessKey: "test-access-key",
+		AuthSecretKey: "test-secret-key",
+	}
+
+	mb := newMockBackendWithLifecycle()
+	cache := backend.NewMetadataCache(1000, 300)
+	footerCache := backend.NewFooterCache(1000, 300)
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+
+	h := handlers.New(cfg, mb, cache, footerCache, km)
+
+	// Test PUT with valid lifecycle configuration
+	lifecycleXML := `<?xml version="1.0" encoding="UTF-8"?>
+<LifecycleConfiguration>
+  <Rule>
+    <ID>expire-old-logs</ID>
+    <Status>Enabled</Status>
+    <Prefix>logs/</Prefix>
+    <Expiration>
+      <Days>7</Days>
+    </Expiration>
+  </Rule>
+  <Rule>
+    <ID>abort-incomplete-uploads</ID>
+    <Status>Enabled</Status>
+    <Filter>
+      <Prefix>uploads/</Prefix>
+    </Filter>
+    <AbortIncompleteMultipartUpload>
+      <DaysAfterInitiation>1</DaysAfterInitiation>
+    </AbortIncompleteMultipartUpload>
+  </Rule>
+</LifecycleConfiguration>`
+
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket?lifecycle", strings.NewReader(lifecycleXML))
+	req.Header.Set("Content-Type", "application/xml")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("PUT lifecycle: expected status 200, got %d", w.Code)
+	}
+
+	// Verify the configuration was stored
+	if mb.lifecycleConfig == nil {
+		t.Error("lifecycle configuration should have been stored")
+	}
+}
+
+// TestDeleteBucketLifecycleConfiguration tests DELETE ?lifecycle on a bucket
+func TestDeleteBucketLifecycleConfiguration(t *testing.T) {
+	mek := make([]byte, 32)
+	if _, err := rand.Read(mek); err != nil {
+		t.Fatalf("failed to generate MEK: %v", err)
+	}
+
+	cfg := &config.Config{
+		BlockSize:     65536,
+		AuthAccessKey: "test-access-key",
+		AuthSecretKey: "test-secret-key",
+	}
+
+	mb := newMockBackendWithLifecycle()
+	cache := backend.NewMetadataCache(1000, 300)
+	footerCache := backend.NewFooterCache(1000, 300)
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+
+	h := handlers.New(cfg, mb, cache, footerCache, km)
+
+	// First set a lifecycle configuration
+	lifecycleXML := `<?xml version="1.0" encoding="UTF-8"?>
+<LifecycleConfiguration>
+  <Rule>
+    <ID>test-rule</ID>
+    <Status>Enabled</Status>
+    <Prefix>test/</Prefix>
+    <Expiration>
+      <Days>30</Days>
+    </Expiration>
+  </Rule>
+</LifecycleConfiguration>`
+
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket?lifecycle", strings.NewReader(lifecycleXML))
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT lifecycle: expected status 200, got %d", w.Code)
+	}
+
+	// Now delete it
+	req = httptest.NewRequest(http.MethodDelete, "/test-bucket?lifecycle", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("DELETE lifecycle: expected status 204, got %d", w.Code)
+	}
+
+	// Verify it was deleted
+	if mb.lifecycleConfig != nil {
+		t.Error("lifecycle configuration should have been deleted")
 	}
 }
