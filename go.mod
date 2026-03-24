@@ -1,12 +1,13 @@
 module github.com/jedarden/armor
 
-go 1.24
+go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.4
 	github.com/aws/aws-sdk-go-v2/config v1.32.12
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.12
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.2
+	github.com/kurin/blazer v0.5.3
 	golang.org/x/crypto v0.49.0
 	golang.org/x/sync v0.12.0
 )
@@ -27,5 +28,4 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.17 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.9 // indirect
 	github.com/aws/smithy-go v1.24.2 // indirect
-	github.com/kurin/blazer v0.5.3 // indirect
 )
