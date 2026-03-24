@@ -101,8 +101,9 @@ Client                    ARMOR                    Cloudflare              B2
   │                         │                         │                     │
   ├─ GET /bucket/key ──────▶│                         │                     │
   │   Range: bytes=X-Y      │                         │                     │
-  │                         ├─ HeadObject (B2 API) ──▶│ (fetch metadata)    │
-  │                         │◀── x-amz-meta-armor-* ──┤                     │
+  │                         ├─ HeadObject (direct ───▶│──(S3 API to B2)────▶│
+  │                         │   to B2, not CF)        │                     │
+  │                         │◀── x-amz-meta-armor-* ──┤◀────────────────────┤
   │                         │                         │                     │
   │                         ├─ Translate range:        │                     │
   │                         │   plaintext [X,Y]       │                     │
@@ -209,9 +210,14 @@ x-amz-meta-armor-content-type:   application/octet-stream
 x-amz-meta-armor-iv:             <base64, 16 bytes>
 x-amz-meta-armor-wrapped-dek:    <base64, ~48 bytes>
 x-amz-meta-armor-plaintext-sha256: <hex, 64 chars>
+x-amz-meta-armor-etag:           <hex MD5 of plaintext>
 ```
 
-B2 file info limit: 10 headers, total ≤7000 bytes. The above uses 7 headers at ~300 bytes total — well within limits.
+B2 file info limit: 10 headers, total ≤7000 bytes. The above uses 8 headers at ~350 bytes total — within limits with 2 slots reserved for future use (e.g., `key-id` for multi-key).
+
+### ETag Handling
+
+B2 returns an ETag based on the ciphertext. Clients expect an ETag based on content. ARMOR computes a plaintext-based ETag at upload time: the hex-encoded MD5 of the plaintext content (matching standard S3 ETag semantics). This is stored in `x-amz-meta-armor-etag`. HeadObject, GetObject, and ListObjectsV2 return this value as the `ETag` header. Conditional requests (`If-None-Match`, `If-Match`) are evaluated against this plaintext ETag. The B2 ciphertext ETag is never exposed to clients. For multipart uploads, the ETag follows S3's multipart convention: `md5-of-part-md5s-N`.
 
 The metadata headers enable `HeadObject` to return the plaintext file size and content type without fetching any object data. They also allow ARMOR to unwrap the DEK and compute range offsets before issuing the data fetch.
 
@@ -228,7 +234,7 @@ The metadata headers enable `HeadObject` to return the plaintext file size and c
 
 64 KB aligns well with Parquet page sizes (typically 8 KB–1 MB, defaulting to 1 MB in many writers but with individual pages often smaller). It keeps HMAC overhead low (0.05%) while providing granular enough range reads for DuckDB's column-chunk access patterns.
 
-Configurable per-server — not per-file — to keep the implementation simple. All files in a bucket use the same block size.
+The server's `ARMOR_BLOCK_SIZE` controls the block size for **new uploads only**. On reads, ARMOR always uses the block size from the file's envelope header (or `x-amz-meta-armor-block-size`). This means an ARMOR instance configured with 16 KB blocks can correctly read files written with 64 KB blocks — the per-file header is authoritative. Rule: **read from header, write from config.**
 
 ### Range Read Translation
 
@@ -266,7 +272,9 @@ plaintext_blocks = aes_ctr_decrypt(encrypted_blocks, dek, iv, counter_start=bloc
 result = plaintext_blocks[X % BLOCK_SIZE : (X % BLOCK_SIZE) + (Y - X + 1)]
 ```
 
-The two range reads (data blocks + HMAC entries) can be issued in parallel since they target different byte ranges of the same object. Cloudflare caches range responses, so repeated reads of the same blocks (common in DuckDB's access pattern) hit the edge cache.
+The two range reads (data blocks + HMAC entries) can be issued in parallel since they target different byte ranges of the same object.
+
+**Cloudflare caching note:** Cloudflare caches range responses when the origin returns proper `Accept-Ranges: bytes` and `Content-Range` headers (B2 does). However, free-tier caching behavior for range requests is best-effort — a range miss may trigger a full origin fetch internally. ARMOR treats Cloudflare caching as a **performance optimization, not an architectural dependency.** If CF caches, latency improves; if not, the request still succeeds via origin. The `CF-Cache-Status` response header is tracked in metrics. Enterprise CF plans with Cache Reserve offer guaranteed range caching.
 
 ---
 
@@ -291,7 +299,7 @@ These operations don't touch file data and pass through with minimal modificatio
 
 | Operation | Behavior |
 |-----------|----------|
-| **ListObjectsV2** | Forward to B2; adjust `Size` in response to report plaintext sizes |
+| **ListObjectsV2** | Forward to B2; adjust `Size` to plaintext sizes; **filter out `.armor/` prefixed keys** (internal objects are invisible to clients) |
 | **DeleteObject** | Forward to B2 directly |
 | **DeleteObjects** | Forward to B2 directly |
 | **ListBuckets** | Forward to B2 directly |
@@ -305,14 +313,16 @@ Large files require multipart upload. ARMOR encrypts each part with a continuous
 
 | Operation | Behavior |
 |-----------|----------|
-| **CreateMultipartUpload** | Generate DEK + IV; store in ARMOR's local state; forward to B2 |
+| **CreateMultipartUpload** | Generate DEK + IV; persist encrypted state to B2 at `.armor/multipart/<upload-id>.state`; forward to B2 |
 | **UploadPart** | Encrypt part with CTR counter offset based on cumulative bytes; forward to B2 |
-| **CompleteMultipartUpload** | Upload HMAC table as final operation; write `x-amz-meta-armor-*` to B2; forward completion |
-| **AbortMultipartUpload** | Clean up local state; forward to B2 |
+| **CompleteMultipartUpload** | Forward completion to B2; then upload HMAC table as sidecar object at `.armor/hmac/<key-sha256>`; write `x-amz-meta-armor-*` metadata via CopyObject with REPLACE |
+| **AbortMultipartUpload** | Delete `.armor/multipart/<upload-id>.state` from B2; forward to B2 |
 | **ListParts** | Forward to B2; adjust part sizes to plaintext sizes |
 | **ListMultipartUploads** | Forward to B2 directly |
 
-Multipart state (DEK, IV, counter offset, per-part HMACs) is held in server memory during the upload and persisted to B2 as an encrypted state object (`.armor/multipart/<upload-id>.state`) for crash recovery. Any ARMOR instance can resume an interrupted multipart upload by reading this state object.
+Multipart state (DEK, IV, counter offset, per-part HMACs) is persisted to B2 as an encrypted state object at `.armor/multipart/<upload-id>.state` on each operation. Any ARMOR instance can resume an interrupted multipart upload by reading this state object.
+
+B2's multipart assembly concatenates parts byte-for-byte — there is no opportunity to append trailing data. Therefore, multipart-uploaded objects store the HMAC table as a **sidecar object** at `.armor/hmac/<sha256-of-key>` rather than inline. The envelope header for multipart objects includes a flag (`0x01` in the reserved byte) indicating the HMAC table is external. On download, ARMOR checks this flag and fetches the sidecar for HMAC verification.
 
 ### Operations Not Implemented
 
@@ -323,7 +333,7 @@ These B2 S3 API features are out of scope for v1:
 - ACLs beyond bucket-level (B2 limitation)
 - Object Lock / retention (passthrough possible in later version)
 - Lifecycle configuration (passthrough possible in later version)
-- Versioning (passthrough possible, but each version is independently encrypted)
+- Versioning — B2 bucket versioning is **not enabled** in v1. Without versioning, CopyObject during key rotation overwrites in place and old wrapped DEKs do not persist. If versioning is enabled in a future version, key rotation must expire non-current versions after completion.
 
 ### ListObjectsV2 Size Correction
 
@@ -334,6 +344,8 @@ reported_plaintext_size = int(object.metadata["x-amz-meta-armor-plaintext-size"]
 ```
 
 If the metadata header is missing (non-ARMOR object), pass through the raw size unchanged. This allows mixed buckets (encrypted + unencrypted objects).
+
+**Mixed bucket caveat:** The B2 bucket is `allPublic`. Any object uploaded to B2 *without* ARMOR encryption is publicly accessible via the Cloudflare URL. ARMOR passes through unencrypted objects transparently (detected by absence of `x-amz-meta-armor-version`). This is useful for intentionally public files but is a foot-gun if users bypass ARMOR for uploads. All uploads intended to be private **must** go through ARMOR.
 
 ---
 
@@ -382,7 +394,7 @@ ARMOR maintains two HTTP clients to B2, using different paths:
 ```
 https://s3.<region>.backblazeb2.com
 ```
-Used for: PutObject, UploadPart, CompleteMultipartUpload, DeleteObject, CopyObject, ListObjectsV2, HeadObject (when not cached), all bucket operations.
+Used for: PutObject, UploadPart, CompleteMultipartUpload, DeleteObject, CopyObject, ListObjectsV2, HeadObject, all bucket operations. HeadObject always goes direct to B2 (zero body bytes = no egress cost; the Cloudflare `/file/` path is not the S3 API and does not return `x-amz-meta-*` headers reliably).
 
 **Download client** — through Cloudflare domain:
 ```
@@ -436,57 +448,29 @@ The unwrapped DEK is also cached (it's derived from the wrapped DEK + MEK, which
 
 ## Configuration
 
-### Config File
+ARMOR is configured exclusively via environment variables. No config files.
 
-```toml
-# /etc/armor/config.toml (or ~/.config/armor/config.toml)
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_LISTEN` | No | `0.0.0.0:9000` | S3 API listen address |
+| `ARMOR_ADMIN_LISTEN` | No | `127.0.0.1:9001` | Admin API listen address (key rotation, canary, audit). Localhost-only by default — never expose externally. |
+| `ARMOR_B2_REGION` | Yes | — | B2 region (e.g., `us-east-005`) |
+| `ARMOR_B2_ENDPOINT` | No | `https://s3.{region}.backblazeb2.com` | B2 S3 endpoint (auto-derived from region) |
+| `ARMOR_B2_ACCESS_KEY_ID` | Yes | — | B2 application key ID |
+| `ARMOR_B2_SECRET_ACCESS_KEY` | Yes | — | B2 application key |
+| `ARMOR_BUCKET` | Yes | — | B2 bucket name. Used for both uploads (direct to B2) and downloads (Cloudflare URL assembly). |
+| `ARMOR_CF_DOMAIN` | Yes | — | Cloudflare domain CNAME'd to B2 bucket (e.g., `armor-b2.example.com`) |
+| `ARMOR_MEK` | Yes | — | Master encryption key, hex-encoded 32 bytes. Generate with `openssl rand -hex 32`. |
+| `ARMOR_AUTH_ACCESS_KEY` | No | (random on startup) | S3 access key ID for client auth to ARMOR |
+| `ARMOR_AUTH_SECRET_KEY` | No | (random on startup) | S3 secret access key for client auth to ARMOR |
+| `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size for new uploads (power of 2, ≥4096). Existing files use their own block size from the envelope header. |
+| `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID. Set per cluster for multi-writer deployments. |
+| `ARMOR_CACHE_MAX_ENTRIES` | No | `10000` | Metadata cache max entries |
+| `ARMOR_CACHE_TTL` | No | `300` | Metadata cache TTL in seconds |
 
-[server]
-listen = "127.0.0.1:9000"      # Bind address. Localhost-only by default.
-# listen = "0.0.0.0:9000"      # Expose to network (use with TLS)
-tls_cert = ""                   # Path to TLS cert (optional, for HTTPS)
-tls_key  = ""                   # Path to TLS key
-
-[auth]
-access_key_id     = "armor-local-key"
-secret_access_key = "armor-local-secret"
-
-[b2]
-region            = "us-east-005"
-endpoint          = "https://s3.us-east-005.backblazeb2.com"
-access_key_id     = "<B2 application key ID>"
-secret_access_key = "<B2 application key>"
-# default_bucket  = "my-bucket"  # Optional: restrict to single bucket
-
-[cloudflare]
-download_domain   = "armor-b2.example.com"   # CNAME → <bucket>.s3.<region>.backblazeb2.com
-download_bucket   = "my-bucket"              # Bucket name for URL assembly
-
-[encryption]
-block_size = 65536              # 64 KB (must be power of 2, ≥4096)
-# MEK source: "file", "env", or "keyring"
-mek_source = "file"
-mek_path   = "/etc/armor/master.key"  # 32 bytes, hex or base64 encoded
-# mek_source = "env"
-# mek_env_var = "ARMOR_MASTER_KEY"
-
-[cache]
-metadata_max_entries = 10000
-metadata_ttl_seconds = 300
+ARMOR assembles the Cloudflare download URL as:
 ```
-
-### Environment Variable Overrides
-
-Every config field can be overridden via environment variable:
-
-```bash
-ARMOR_LISTEN=0.0.0.0:9000
-ARMOR_B2_REGION=us-east-005
-ARMOR_B2_ACCESS_KEY_ID=...
-ARMOR_B2_SECRET_ACCESS_KEY=...
-ARMOR_CF_DOWNLOAD_DOMAIN=armor-b2.example.com
-ARMOR_CF_DOWNLOAD_BUCKET=my-bucket
-ARMOR_MEK=<hex-encoded 32-byte key>
+https://${ARMOR_CF_DOMAIN}/file/${ARMOR_BUCKET}/<key>
 ```
 
 ### Deployment
@@ -534,10 +518,10 @@ spec:
             secretKeyRef:
               name: armor-secrets
               key: master-encryption-key
-        - name: ARMOR_CF_DOWNLOAD_DOMAIN
-          value: "armor-b2.example.com"
-        - name: ARMOR_CF_DOWNLOAD_BUCKET
+        - name: ARMOR_BUCKET
           value: "my-bucket"
+        - name: ARMOR_CF_DOMAIN
+          value: "armor-b2.example.com"
 ```
 
 ---
@@ -597,12 +581,22 @@ The CNAME target is the B2 bucket's friendly hostname. To find it, upload any fi
 
 ### MEK Lifecycle
 
+MEK generation is a one-time offline step before deployment:
+```bash
+openssl rand -hex 32    # → set as ARMOR_MEK env var
 ```
-armor key generate          → Generate 256-bit random MEK, write to mek_path
-armor key export            → Print MEK in base64 for backup
-armor key import <file>     → Replace MEK from backup file
-armor key rotate            → Generate new MEK, re-wrap all DEKs via CopyObject
-armor key verify            → Decrypt a test object to verify MEK is correct
+
+Key management operations are exposed as HTTP API endpoints on the admin listener (`ARMOR_ADMIN_LISTEN`, default `127.0.0.1:9001`):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/admin/key/verify` | GET | Decrypt the canary object to verify MEK is correct |
+| `/admin/key/rotate` | POST | Accept new MEK in request body, re-wrap all DEKs via CopyObject |
+| `/admin/key/export` | GET | Return current MEK (base64). Requires explicit `?confirm=yes` parameter. |
+
+In Kubernetes, operators interact via:
+```bash
+kubectl exec deploy/armor -- curl -s localhost:9001/admin/key/verify
 ```
 
 ### Key Rotation
@@ -621,19 +615,16 @@ This is an O(N) metadata operation — no data is re-uploaded. A 100,000-file bu
 
 ### Multi-Key Support (v2)
 
-For data classification (e.g., different keys for different prefixes):
+For data classification (e.g., different keys for different prefixes), additional keys use named env vars:
 
-```toml
-[encryption.keys]
-default = "/etc/armor/keys/default.key"
-sensitive = "/etc/armor/keys/sensitive.key"
-
-[encryption.key_routing]
-"data/pii/*" = "sensitive"
-"*" = "default"
+```bash
+ARMOR_MEK=<hex>                              # default key
+ARMOR_MEK_SENSITIVE=<hex>                    # key named "sensitive"
+ARMOR_MEK_ARCHIVE=<hex>                      # key named "archive"
+ARMOR_KEY_ROUTES="data/pii/*=sensitive,archive/*=archive,*=default"
 ```
 
-The key ID is stored in `x-amz-meta-armor-key-id` so ARMOR knows which MEK to use for decryption.
+The key ID is stored in `x-amz-meta-armor-key-id` so ARMOR knows which MEK to use for decryption. No file paths, no volume mounts — consistent with env-var-only configuration.
 
 ---
 
@@ -660,16 +651,11 @@ Go is the best fit for ARMOR:
 | `crypto/aes`, `crypto/cipher` | AES-256-CTR encryption/decryption |
 | `crypto/hmac`, `crypto/sha256` | Per-block HMAC-SHA256 |
 | `golang.org/x/crypto/hkdf` | HKDF key derivation (DEK → HMAC key) |
-| `golang.org/x/crypto/argon2` | MEK derivation from password |
-| `github.com/pelletier/go-toml/v2` | Config file parsing |
+| `golang.org/x/crypto/argon2` | MEK derivation from password (v2, optional) |
 
 ### S3 Protocol Handling
 
-Rather than implementing the full S3 XML protocol from scratch, use an existing S3 server framework:
-
-- **Option A: `s3gw` / custom router** — Implement S3 XML request/response parsing for the ~15 operations we need. More control, less dependency.
-- **Option B: MinIO's `cmd/gateway` pattern** — Fork MinIO's S3 handler and plug in ARMOR's backend. Heavy dependency but battle-tested S3 protocol compliance.
-- **Recommended: Option A.** The S3 XML protocol for our operation subset is well-documented and manageable. DuckDB, boto3, and AWS CLI all use straightforward request patterns. A custom router avoids the weight of MinIO and gives full control over the encryption boundary.
+ARMOR implements its own S3 XML request/response handling for the ~15 operations in scope using Go's `net/http` and `encoding/xml`. The operation set is small and well-defined. MinIO's gateway pattern was rejected — it brings massive dependency weight for features ARMOR does not need and was deprecated upstream. A custom router gives full control over the encryption boundary and keeps the binary small.
 
 ---
 
@@ -768,8 +754,10 @@ ARMOR/
 │   │   └── cache.go             # Metadata LRU cache
 │   ├── canary/
 │   │   └── canary.go            # Self-healing canary integrity monitor
+│   ├── admin/
+│   │   └── admin.go             # Admin API handlers (key rotate, audit, canary)
 │   └── config/
-│       └── config.go            # Env var configuration loading
+│       └── config.go            # Env var configuration loading (no file parsing)
 ├── deploy/
 │   └── kubernetes/
 │       ├── deployment.yaml
@@ -890,9 +878,21 @@ Client response body (streaming):
   └─────────┘ └─────────┘ └─────────┘ └─────────┘
 ```
 
-This applies to **any file type** — Parquet, binary, CSV, images, archives. The block-level pipeline is format-agnostic. For a 100 MB download, the client starts receiving plaintext after the first 64 KB arrives (~milliseconds), not after 100 MB is buffered. Implementation: `io.Pipe` with a goroutine consuming blocks from the Cloudflare `io.Reader`, verifying HMAC, decrypting, and writing to the pipe.
+This applies to **any file type** — Parquet, binary, CSV, images, archives. The block-level pipeline is format-agnostic. For a 100 MB download, the client starts receiving plaintext after the first 64 KB arrives (~milliseconds), not after 100 MB is buffered.
 
-**Impact:** Time-to-first-byte approaches raw Cloudflare latency. Full downloads complete in decrypt-throughput time, not download-then-decrypt time.
+**HMAC prefetch:** The HMAC table is at the end of the file, so it hasn't arrived when the first data blocks stream in. ARMOR issues a small range read for the HMAC table *before* starting the data stream. The table's offset and size are computable from the envelope header (`block_count × 32 bytes`). For a 1 GB file, the HMAC table is ~512 KB — negligible prefetch latency. Once the table is in memory, each data block is verified as it arrives.
+
+```
+1. Range read: HMAC table (small, fast)     ← prefetch
+2. Stream read: envelope header (64 bytes)  ← parse, consume, do NOT forward to client
+3. Stream read: block 0 → verify + decrypt → pipe to client
+4. Stream read: block 1 → verify + decrypt → pipe to client
+5. ... (stop before HMAC table offset — client gets plaintext size bytes only)
+```
+
+For full downloads, the Cloudflare response includes the entire B2 object (header + encrypted blocks + HMAC table). The streaming decryptor reads and discards the 64-byte header first (`io.ReadFull(body, headerBuf[:64])`), then processes data blocks, and stops reading at the HMAC table offset (already prefetched). For range reads, the encrypted byte offset calculation already accounts for the header (`enc_offset = HEADER_SIZE + ...`), so the header is never fetched.
+
+**Impact:** Time-to-first-byte approaches raw Cloudflare latency plus one HMAC-table round-trip. Full downloads complete in decrypt-throughput time, not download-then-decrypt time.
 
 ### 3. Parallel Data + HMAC Range Fetch
 
@@ -973,7 +973,7 @@ Each upload computes a chain hash linking it to the previous upload:
 chain_hash = SHA-256(prev_chain_hash || object_key || plaintext_sha256 || timestamp || writer_id)
 ```
 
-The chain hash and `prev_chain_hash` are stored in the object's `x-amz-meta-armor-chain-*` headers. The latest chain head is stored at `.armor/chain-head` in B2.
+Provenance entries are stored as lightweight objects under `.armor/chain/<writer_id>/<sequence>.json` in B2, each containing the object key, plaintext SHA-256, timestamp, and chain link hash. This avoids consuming per-object B2 metadata header slots (B2 has a 10-header limit; keeping provenance out of object headers leaves room for future metadata fields like `key-id` for multi-key support). The latest chain head is stored at `.armor/chain-head/<writer_id>` in B2.
 
 `armor audit` (via API endpoint `GET /armor/audit`) walks the chain and verifies every link.
 
@@ -987,15 +987,20 @@ Writer B (cluster-2):  B1 ─→ B2 ─→ ...
 Writer C (cluster-3):  C1 ─→ C2 ─→ C3 ─→ C4 ─→ ...
 ```
 
-Each ARMOR instance maintains its own chain branch, identified by a `writer_id` (configured per instance, e.g., the cluster name). Each writer stores its own chain head at `.armor/chain-head/<writer_id>`. The chain entries are:
+Each ARMOR instance maintains its own chain branch, identified by `ARMOR_WRITER_ID` (configured per instance, defaults to hostname). Each writer stores its own chain head at `.armor/chain-head/<writer_id>` and appends entries as objects at `.armor/chain/<writer_id>/<sequence>.json`:
 
-```
-x-amz-meta-armor-chain-hash:  <this entry's hash>
-x-amz-meta-armor-chain-prev:  <previous hash from THIS writer>
-x-amz-meta-armor-chain-writer: cluster-1
+```json
+{
+  "sequence": 42,
+  "object_key": "data/2026-03-24/part-0000.parquet",
+  "plaintext_sha256": "a1b2c3...",
+  "chain_hash": "d4e5f6...",
+  "prev_chain_hash": "789abc...",
+  "timestamp": "2026-03-24T14:30:00Z"
+}
 ```
 
-**Verification:** `armor audit` reads all chain heads from `.armor/chain-head/*`, walks each branch independently, and then cross-references the full set of objects in the bucket to ensure every object belongs to exactly one chain. An object that belongs to no chain was uploaded outside ARMOR or tampered with. A gap in a chain indicates deletion.
+**Verification:** `GET /admin/audit` reads all chain heads from `.armor/chain-head/*`, walks each branch independently by reading the chain entry objects, and cross-references the full set of objects in the bucket. An object that belongs to no chain was uploaded outside ARMOR or tampered with. A gap in a chain indicates deletion.
 
 **No coordination required between writers.** Each writer is fully independent. The merge is read-side only (during audit).
 
@@ -1027,7 +1032,7 @@ When the canary fails, ARMOR doesn't just alert — it attempts to diagnose and 
 | Failure Mode | Detection | Self-Healing Action |
 |---|---|---|
 | Cloudflare DNS misconfigured | Canary download returns non-B2 response | Log error with expected vs actual hostname; set `/healthz` to unhealthy |
-| Cloudflare cache serving stale data | Canary content doesn't match (old version) | Issue a cache purge for the canary URL via Cloudflare API, re-test |
+| Cloudflare cache serving stale data | Canary content doesn't match (old version) | Re-upload canary with a new unique key (`.armor/canary/<instance-id>/<timestamp>`), re-test against the new URL. No CF API credentials needed. |
 | B2 connectivity lost | Upload or download times out / 5xx | Retry with exponential backoff; set `/healthz` to unhealthy after 3 failures |
 | MEK mismatch | Decryption produces garbage (HMAC fails) | Log critical: "MEK does not match data in B2"; refuse to serve traffic |
 | HMAC verification fails | Block HMAC doesn't match | Log critical: "Data integrity violation"; refuse to serve traffic for affected bucket |
