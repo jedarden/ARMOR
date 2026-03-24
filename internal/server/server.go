@@ -3,8 +3,10 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -189,8 +191,57 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement key rotation
-	http.Error(w, "Not implemented", http.StatusNotImplemented)
+	// Read the new MEK from the request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// The new MEK should be a 32-byte hex-encoded string (64 hex chars)
+	// or raw 32 bytes
+	var newMEK []byte
+	if len(body) == 64 {
+		// Hex-encoded
+		newMEK, err = hex.DecodeString(string(body))
+		if err != nil {
+			http.Error(w, "Invalid hex-encoded MEK", http.StatusBadRequest)
+			return
+		}
+	} else if len(body) == 32 {
+		// Raw bytes
+		newMEK = body
+	} else {
+		http.Error(w, fmt.Sprintf("Invalid MEK length: expected 32 bytes or 64 hex chars, got %d", len(body)), http.StatusBadRequest)
+		return
+	}
+
+	// Create key rotator
+	rotator := NewKeyRotator(s.backend, s.config.Bucket, s.mek, newMEK)
+
+	// Perform rotation
+	result, err := rotator.Rotate(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "failed",
+			"error":   err.Error(),
+			"result":  result,
+		})
+		return
+	}
+
+	// Update the server's MEK on success
+	if result.Status == "completed" {
+		s.mek = newMEK
+		// Clear the metadata cache since DEKs are now wrapped with new MEK
+		s.cache.Clear()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(result)
 }
 
 // exportKey exports the current MEK.
@@ -205,8 +256,14 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement secure key export
-	http.Error(w, "Not implemented", http.StatusNotImplemented)
+	// Export the MEK as hex-encoded string
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"mek":   hex.EncodeToString(s.mek),
+		"format": "hex",
+		"warning": "This key provides access to all encrypted data. Store securely.",
+	})
 }
 
 // canaryHandler returns the canary status.

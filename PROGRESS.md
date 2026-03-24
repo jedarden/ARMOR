@@ -67,15 +67,22 @@
   - [x] Service (ClusterIP + headless)
   - [x] Secret template
   - [x] Kustomization
+- [x] Key rotation via API endpoint
+  - [x] POST /admin/key/rotate endpoint
+  - [x] Re-wraps all DEKs with new MEK via CopyObject
+  - [x] Progress tracking in B2 (.armor/rotation-state.json)
+  - [x] Resumable rotation (can continue interrupted rotations)
+  - [x] Skips internal .armor/ objects and non-ARMOR objects
+  - [x] GET /admin/key/export endpoint (with ?confirm=yes safety)
+  - [x] GET /admin/key/verify endpoint (via canary status)
+  - [x] Unit tests
 
 ### In Progress
-- [ ] Key rotation via API endpoint
 - [ ] Cryptographic provenance chain
 - [ ] Audit endpoint
 - [ ] Graceful shutdown + in-flight request draining
 - [ ] Structured logging (JSON)
 - [ ] Prometheus metrics
-- [ ] Kubernetes manifests
 
 ## Phase 3: Advanced Features
 
