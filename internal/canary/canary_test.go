@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -156,6 +157,61 @@ func (m *mockBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, ds
 		m.meta[dst] = newMeta
 	}
 	return nil
+}
+
+func (m *mockBackend) ListBuckets(ctx context.Context) ([]backend.BucketInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	buckets := make(map[string]time.Time)
+	for k := range m.objects {
+		parts := strings.SplitN(k, "/", 2)
+		if len(parts) > 0 && parts[0] != "" {
+			bucket := parts[0]
+			if _, exists := buckets[bucket]; !exists {
+				buckets[bucket] = time.Now()
+			}
+		}
+	}
+
+	result := make([]backend.BucketInfo, 0, len(buckets))
+	for name, created := range buckets {
+		result = append(result, backend.BucketInfo{
+			Name:         name,
+			CreationDate: created,
+		})
+	}
+	return result, nil
+}
+
+func (m *mockBackend) CreateBucket(ctx context.Context, bucket string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.objects[bucket+"/.bucket"] = nil
+	return nil
+}
+
+func (m *mockBackend) DeleteBucket(ctx context.Context, bucket string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k := range m.objects {
+		if strings.HasPrefix(k, bucket+"/") && k != bucket+"/.bucket" {
+			return fmt.Errorf("bucket not empty")
+		}
+	}
+	delete(m.objects, bucket+"/.bucket")
+	return nil
+}
+
+func (m *mockBackend) HeadBucket(ctx context.Context, bucket string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k := range m.objects {
+		if strings.HasPrefix(k, bucket+"/") {
+			return nil
+		}
+	}
+	return fmt.Errorf("bucket not found: %s", bucket)
 }
 
 // TestNewMonitor tests Monitor creation.

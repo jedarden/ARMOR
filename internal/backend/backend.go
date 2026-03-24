@@ -28,6 +28,12 @@ type ListResult struct {
 	CommonPrefixes []string
 }
 
+// BucketInfo contains metadata about a bucket.
+type BucketInfo struct {
+	Name         string
+	CreationDate time.Time
+}
+
 // Backend defines the interface for storage backends.
 // Implementations include B2 S3, mock backends for testing, etc.
 type Backend interface {
@@ -55,6 +61,18 @@ type Backend interface {
 	// Copy copies an object, optionally replacing metadata.
 	// Supports cross-bucket copy (srcBucket and dstBucket can be different).
 	Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error
+
+	// ListBuckets lists all buckets.
+	ListBuckets(ctx context.Context) ([]BucketInfo, error)
+
+	// CreateBucket creates a new bucket.
+	CreateBucket(ctx context.Context, bucket string) error
+
+	// DeleteBucket deletes an empty bucket.
+	DeleteBucket(ctx context.Context, bucket string) error
+
+	// HeadBucket checks if a bucket exists.
+	HeadBucket(ctx context.Context, bucket string) error
 }
 
 // ARMORMetadata extracts ARMOR-specific metadata from object headers.

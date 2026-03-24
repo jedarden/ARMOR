@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -193,6 +194,73 @@ func (m *mockBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, ds
 	}
 
 	return nil
+}
+
+func (m *mockBackend) ListBuckets(ctx context.Context) ([]backend.BucketInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Extract unique bucket names from stored objects
+	buckets := make(map[string]time.Time)
+	for k := range m.objects {
+		parts := strings.SplitN(k, "/", 2)
+		if len(parts) > 0 && parts[0] != "" {
+			bucket := parts[0]
+			if _, exists := buckets[bucket]; !exists {
+				buckets[bucket] = time.Now()
+			}
+		}
+	}
+
+	result := make([]backend.BucketInfo, 0, len(buckets))
+	for name, created := range buckets {
+		result = append(result, backend.BucketInfo{
+			Name:         name,
+			CreationDate: created,
+		})
+	}
+
+	return result, nil
+}
+
+func (m *mockBackend) CreateBucket(ctx context.Context, bucket string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// In a real implementation, this would create the bucket
+	// For the mock, we just track that it exists via a marker
+	m.objects[bucket+"/.bucket"] = nil
+	return nil
+}
+
+func (m *mockBackend) DeleteBucket(ctx context.Context, bucket string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check if bucket is empty (except for the marker)
+	for k := range m.objects {
+		if strings.HasPrefix(k, bucket+"/") && k != bucket+"/.bucket" {
+			return fmt.Errorf("bucket not empty")
+		}
+	}
+
+	// Remove the bucket marker
+	delete(m.objects, bucket+"/.bucket")
+	return nil
+}
+
+func (m *mockBackend) HeadBucket(ctx context.Context, bucket string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check if any objects exist in this bucket
+	for k := range m.objects {
+		if strings.HasPrefix(k, bucket+"/") {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("bucket not found: %s", bucket)
 }
 
 // testSetup creates common test dependencies.
@@ -943,3 +1011,264 @@ func TestCopyObjectWithMetadataDirective(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects tests S3 DeleteObjects (bulk delete)
+func TestDeleteObjects(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create multiple objects
+	for i := 0; i < 5; i++ {
+		content := []byte(fmt.Sprintf("Content %d", i))
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/test-bucket/bulk-delete/file%d.txt", i), bytes.NewReader(content))
+		req.Header.Set("Content-Type", "text/plain")
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+	}
+
+	// Verify objects exist
+	mb.mu.Lock()
+	initialCount := len(mb.objects)
+	mb.mu.Unlock()
+	if initialCount != 5 {
+		t.Fatalf("expected 5 objects before delete, got %d", initialCount)
+	}
+
+	// Create DeleteObjects request
+	deleteXML := `<?xml version="1.0" encoding="UTF-8"?>
+<Delete>
+  <Object>
+    <Key>bulk-delete/file0.txt</Key>
+  </Object>
+  <Object>
+    <Key>bulk-delete/file1.txt</Key>
+  </Object>
+  <Object>
+    <Key>bulk-delete/file2.txt</Key>
+  </Object>
+</Delete>`
+
+	req := httptest.NewRequest(http.MethodPost, "/test-bucket?delete=", bytes.NewReader([]byte(deleteXML)))
+	req.Header.Set("Content-Type", "application/xml")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify response is XML
+	if w.Header().Get("Content-Type") != "application/xml" {
+		t.Errorf("expected Content-Type application/xml, got %s", w.Header().Get("Content-Type"))
+	}
+
+	// Parse response
+	var result struct {
+		Deleted []struct {
+			Key string `xml:"Key"`
+		} `xml:"Deleted"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(result.Deleted) != 3 {
+		t.Errorf("expected 3 deleted objects in response, got %d", len(result.Deleted))
+	}
+
+	// Verify objects were deleted
+	mb.mu.Lock()
+	remainingCount := len(mb.objects)
+	mb.mu.Unlock()
+	if remainingCount != 2 {
+		t.Errorf("expected 2 objects remaining after delete, got %d", remainingCount)
+	}
+}
+
+// TestDeleteObjectsQuiet tests DeleteObjects with quiet mode
+func TestDeleteObjectsQuiet(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create an object
+	content := []byte("Content to delete quietly")
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/quiet-delete/file.txt", bytes.NewReader(content))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	// Delete with quiet mode
+	deleteXML := `<?xml version="1.0" encoding="UTF-8"?>
+<Delete>
+  <Quiet>true</Quiet>
+  <Object>
+    <Key>quiet-delete/file.txt</Key>
+  </Object>
+</Delete>`
+
+	req = httptest.NewRequest(http.MethodPost, "/test-bucket?delete=", bytes.NewReader([]byte(deleteXML)))
+	req.Header.Set("Content-Type", "application/xml")
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	// Parse response - should have no deleted keys in quiet mode
+	var result struct {
+		Deleted []struct {
+			Key string `xml:"Key"`
+		} `xml:"Deleted"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(result.Deleted) != 0 {
+		t.Errorf("expected 0 deleted objects in quiet mode, got %d", len(result.Deleted))
+	}
+}
+
+// TestHeadBucket tests S3 HeadBucket
+func TestHeadBucket(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create an object (which implicitly creates the bucket in our mock)
+	content := []byte("test content")
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/head-bucket-test/file.txt", bytes.NewReader(content))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	// Head bucket should succeed
+	req = httptest.NewRequest(http.MethodHead, "/test-bucket", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 for existing bucket, got %d", w.Code)
+	}
+
+	// Head non-existent bucket should fail
+	req = httptest.NewRequest(http.MethodHead, "/non-existent-bucket", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 for non-existent bucket, got %d", w.Code)
+	}
+}
+
+// TestListBuckets tests S3 ListBuckets
+func TestListBuckets(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create objects in multiple buckets
+	for bucketNum := 0; bucketNum < 3; bucketNum++ {
+		for fileNum := 0; fileNum < 2; fileNum++ {
+			content := []byte(fmt.Sprintf("Content %d-%d", bucketNum, fileNum))
+			req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/bucket-%d/file%d.txt", bucketNum, fileNum), bytes.NewReader(content))
+			req.Header.Set("Content-Type", "text/plain")
+			w := httptest.NewRecorder()
+			h.HandleRoot(w, req)
+		}
+	}
+
+	// List buckets
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Parse response
+	var result struct {
+		Buckets struct {
+			Bucket []struct {
+				Name string `xml:"Name"`
+			} `xml:"Bucket"`
+		} `xml:"Buckets"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(result.Buckets.Bucket) != 3 {
+		t.Errorf("expected 3 buckets, got %d", len(result.Buckets.Bucket))
+	}
+
+	// Verify bucket names
+	bucketNames := make(map[string]bool)
+	for _, b := range result.Buckets.Bucket {
+		bucketNames[b.Name] = true
+	}
+	for i := 0; i < 3; i++ {
+		expectedName := fmt.Sprintf("bucket-%d", i)
+		if !bucketNames[expectedName] {
+			t.Errorf("expected bucket %s in list", expectedName)
+		}
+	}
+}
+
+// TestCreateBucket tests S3 CreateBucket
+func TestCreateBucket(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create bucket
+	req := httptest.NewRequest(http.MethodPut, "/new-test-bucket", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify Location header
+	location := w.Header().Get("Location")
+	if location != "/new-test-bucket" {
+		t.Errorf("expected Location /new-test-bucket, got %s", location)
+	}
+
+	// Verify bucket exists via HEAD
+	req = httptest.NewRequest(http.MethodHead, "/new-test-bucket", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 for created bucket, got %d", w.Code)
+	}
+}
+
+// TestDeleteBucket tests S3 DeleteBucket
+func TestDeleteBucket(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create an empty bucket
+	req := httptest.NewRequest(http.MethodPut, "/bucket-to-delete", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	// Delete the bucket
+	req = httptest.NewRequest(http.MethodDelete, "/bucket-to-delete", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected status 204, got %d", w.Code)
+	}
+
+	// Verify bucket no longer exists
+	req = httptest.NewRequest(http.MethodHead, "/bucket-to-delete", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 for deleted bucket, got %d", w.Code)
+	}
+}

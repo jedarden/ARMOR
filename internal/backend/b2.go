@@ -346,6 +346,57 @@ func IsRetryableError(err error) bool {
 		strings.Contains(errStr, "connection reset")
 }
 
+// ListBuckets lists all buckets.
+func (b *B2Backend) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
+	resp, err := b.s3Client.ListBuckets(ctx, &s3.ListBucketsInput{})
+	if err != nil {
+		return nil, fmt.Errorf("ListBuckets failed: %w", err)
+	}
+
+	buckets := make([]BucketInfo, len(resp.Buckets))
+	for i, bucket := range resp.Buckets {
+		buckets[i] = BucketInfo{
+			Name:         aws.ToString(bucket.Name),
+			CreationDate: aws.ToTime(bucket.CreationDate),
+		}
+	}
+
+	return buckets, nil
+}
+
+// CreateBucket creates a new bucket.
+func (b *B2Backend) CreateBucket(ctx context.Context, bucket string) error {
+	_, err := b.s3Client.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("CreateBucket failed: %w", err)
+	}
+	return nil
+}
+
+// DeleteBucket deletes an empty bucket.
+func (b *B2Backend) DeleteBucket(ctx context.Context, bucket string) error {
+	_, err := b.s3Client.DeleteBucket(ctx, &s3.DeleteBucketInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("DeleteBucket failed: %w", err)
+	}
+	return nil
+}
+
+// HeadBucket checks if a bucket exists.
+func (b *B2Backend) HeadBucket(ctx context.Context, bucket string) error {
+	_, err := b.s3Client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("HeadBucket failed: %w", err)
+	}
+	return nil
+}
+
 // ReaderAtCloser wraps a reader with Close and ReadAt methods.
 type ReaderAtCloser struct {
 	data []byte
