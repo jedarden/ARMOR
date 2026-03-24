@@ -30,7 +30,7 @@ ARMOR is **stateless by design.** Any ARMOR instance with the same configuration
 - **In-memory caches are optional performance optimizations**, not state. Losing them (restart, failover) means slower first requests, not data loss or inconsistency.
 - **Multiple ARMOR instances** can run concurrently against the same bucket. Reads are safe to parallelize. Writes are safe as long as clients don't write the same key concurrently (same constraint as raw S3).
 
-This means ARMOR can be deployed as a sidecar, a standalone pod, a systemd service, or a short-lived process — and can be replaced, restarted, or scaled without migration or state transfer.
+This means ARMOR can be deployed as a sidecar, a standalone pod, or a Docker Compose service — and can be replaced, restarted, or scaled horizontally without migration or state transfer.
 
 ---
 
@@ -489,9 +489,9 @@ ARMOR_CF_DOWNLOAD_BUCKET=my-bucket
 ARMOR_MEK=<hex-encoded 32-byte key>
 ```
 
-### Kubernetes Deployment
+### Deployment
 
-ARMOR is designed to run as a sidecar or standalone pod:
+ARMOR is deployed exclusively as a Docker container — there is no standalone binary distribution. It runs as a Kubernetes pod (sidecar or standalone), a Docker Compose service, or a plain `docker run`:
 
 ```yaml
 # Secret with B2 creds and MEK
@@ -647,7 +647,7 @@ Go is the best fit for ARMOR:
 - **Concurrency:** Goroutines handle parallel range reads, concurrent client requests
 - **Crypto:** `crypto/aes`, `crypto/cipher` (AES-CTR), `crypto/hmac` — all stdlib, hardware-accelerated via AES-NI
 - **B2 SDK:** Official `github.com/Backblaze/blazer` + `github.com/aws/aws-sdk-go-v2` for S3
-- **Single binary:** No runtime dependencies; trivial Docker image (`FROM scratch`)
+- **Docker-native:** Compiles to a single static binary → minimal Docker image (`FROM scratch`). ARMOR is deployed exclusively as a container.
 - **Prior art:** MinIO gateway, SeaweedFS S3 proxy, Garage — all Go S3-compatible servers
 
 ### Key Dependencies
@@ -681,16 +681,20 @@ Rather than implementing the full S3 XML protocol from scratch, use an existing 
 
 - [ ] S3 protocol handler: PutObject, GetObject (full + range), HeadObject, DeleteObject, ListObjectsV2
 - [ ] AES-256-CTR encryption with per-block HMAC
-- [ ] Envelope encryption (MEK wraps DEK per file)
+- [ ] Envelope encryption (MEK wraps DEK per file) with format versioning (version byte dispatch)
 - [ ] Encrypted object format (header + data blocks + HMAC table)
 - [ ] Range read translation (plaintext offset → encrypted block offset)
-- [ ] Dual backend: direct-to-B2 uploads, Cloudflare-routed downloads
-- [ ] Config file + env var support
-- [ ] `armor serve` command (starts the server)
-- [ ] `armor key generate` command
+- [ ] Parallel data + HMAC range fetch (errgroup, two concurrent range reads)
+- [ ] Pipelined stream decryption (decrypt-as-blocks-arrive, io.Pipe)
+- [ ] Pluggable backend interface with B2 S3 implementation
+- [ ] Dual backend paths: direct-to-B2 uploads, Cloudflare-routed downloads
+- [ ] Env var configuration (no config file required)
 - [ ] Cloudflare DNS setup (CNAME + SSL + cache rules)
 - [ ] Metadata cache (LRU, in-memory)
-- [ ] Dockerfile + CI build
+- [ ] Parquet footer pinning (in-memory, keyed by ETag)
+- [ ] Self-healing canary integrity monitor
+- [ ] Health check endpoints (`/healthz`, `/readyz`, `/armor/canary`)
+- [ ] Multi-stage Dockerfile (build + scratch runtime) + CI build + GHCR publish
 
 **Validation:** Point DuckDB at ARMOR, upload a Parquet file, run `SELECT` with predicates and column selection, verify only partial data is fetched.
 
@@ -699,14 +703,16 @@ Rather than implementing the full S3 XML protocol from scratch, use an existing 
 **Goal:** Reliable for continuous use with operational tooling.
 
 - [ ] Multipart upload (CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload)
+- [ ] Multipart state stored in B2 (`.armor/multipart/<upload-id>.state`) for crash recovery
 - [ ] CopyObject (for rename and key rotation)
-- [ ] `armor key rotate` command
+- [ ] Key rotation via API endpoint (re-wraps DEKs via CopyObject, progress in `.armor/rotation-state.json`)
 - [ ] DeleteObjects (bulk delete)
 - [ ] ListBuckets, CreateBucket, DeleteBucket, HeadBucket
+- [ ] Cryptographic provenance chain (per-writer branches, `.armor/chain-head/<writer-id>`)
+- [ ] Audit endpoint (`GET /armor/audit`) — walk and verify provenance chains
 - [ ] Graceful shutdown + in-flight request draining
 - [ ] Structured logging (JSON)
-- [ ] Prometheus metrics: request count, latency, bytes transferred, cache hit rate, encryption ops
-- [ ] Health check endpoint (`/health`)
+- [ ] Prometheus metrics: request count, latency, bytes transferred, cache hit rate, encryption ops, canary status
 - [ ] Kubernetes manifests (Deployment, Service, Secret)
 - [ ] Integration tests against real B2 + Cloudflare
 
@@ -730,12 +736,13 @@ Rather than implementing the full S3 XML protocol from scratch, use an existing 
 
 ```
 ARMOR/
+├── Dockerfile                   # Multi-stage: Go build + scratch runtime
 ├── cmd/
 │   └── armor/
-│       └── main.go              # CLI entry point (serve, key generate/rotate/export)
+│       └── main.go              # Entrypoint: starts S3 server, reads env vars
 ├── internal/
 │   ├── server/
-│   │   ├── server.go            # HTTP server setup, middleware
+│   │   ├── server.go            # HTTP server setup, middleware, graceful shutdown
 │   │   ├── router.go            # S3 operation routing
 │   │   ├── auth.go              # SigV4 validation
 │   │   └── handlers/
@@ -755,13 +762,15 @@ ARMOR/
 │   │   ├── keys.go              # MEK load/generate, DEK wrap/unwrap (AES-KWP)
 │   │   └── hkdf.go              # DEK → HMAC key derivation
 │   ├── backend/
-│   │   ├── b2.go                # B2 S3 client (uploads, metadata, mutations)
+│   │   ├── backend.go           # Backend interface (pluggable storage)
+│   │   ├── b2.go                # B2 S3 backend implementation
 │   │   ├── cloudflare.go        # Cloudflare download client (range reads)
 │   │   └── cache.go             # Metadata LRU cache
+│   ├── canary/
+│   │   └── canary.go            # Self-healing canary integrity monitor
 │   └── config/
-│       └── config.go            # TOML config + env var loading
+│       └── config.go            # Env var configuration loading
 ├── deploy/
-│   ├── Dockerfile
 │   └── kubernetes/
 │       ├── deployment.yaml
 │       ├── service.yaml
@@ -851,11 +860,205 @@ armor_active_multipart_uploads                  # In-progress multipart uploads
 
 ---
 
+## Key Features
+
+### 1. Parquet Footer Pinning
+
+Parquet files are immutable once written. DuckDB's first action on every query is reading the footer (schema, row group offsets, column statistics). Without pinning, every query triggers: range read to Cloudflare → block fetch → HMAC verify → decrypt — for the same unchanging bytes.
+
+Footer pinning caches decrypted footers in memory on first access, keyed by `(bucket, key, ETag)`. Subsequent reads return from memory in microseconds. Footers are typically a few KB — caching thousands costs negligible memory. The ETag ensures cache coherence when a file is replaced.
+
+**Impact:** 50-80% reduction in DuckDB query startup latency for repeated queries against the same files.
+
+### 2. Pipelined Stream Decryption
+
+Since AES-CTR blocks are independent, ARMOR decrypts each 64 KB block the instant it arrives from Cloudflare, streaming plaintext to the client while subsequent blocks are still in flight.
+
+```
+Cloudflare response body (streaming):
+  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
+  │ Block 0 │→│ Block 1 │→│ Block 2 │→│ Block 3 │→ ...
+  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘
+       │           │           │           │
+       ▼           ▼           ▼           ▼
+    HMAC+decrypt  HMAC+decrypt HMAC+decrypt HMAC+decrypt
+       │           │           │           │
+       ▼           ▼           ▼           ▼
+Client response body (streaming):
+  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
+  │Plain  0 │→│Plain  1 │→│Plain  2 │→│Plain  3 │→ ...
+  └─────────┘ └─────────┘ └─────────┘ └─────────┘
+```
+
+This applies to **any file type** — Parquet, binary, CSV, images, archives. The block-level pipeline is format-agnostic. For a 100 MB download, the client starts receiving plaintext after the first 64 KB arrives (~milliseconds), not after 100 MB is buffered. Implementation: `io.Pipe` with a goroutine consuming blocks from the Cloudflare `io.Reader`, verifying HMAC, decrypting, and writing to the pipe.
+
+**Impact:** Time-to-first-byte approaches raw Cloudflare latency. Full downloads complete in decrypt-throughput time, not download-then-decrypt time.
+
+### 3. Parallel Data + HMAC Range Fetch
+
+Every range read requires two non-overlapping byte ranges from the same B2 object: the encrypted data blocks and the HMAC entries. These are always at different offsets (data blocks near the front, HMAC table at the end).
+
+```go
+g, ctx := errgroup.WithContext(ctx)
+
+g.Go(func() error {
+    dataBlocks, err = cf.GetRange(key, dataOffset, dataLen)
+    return err
+})
+g.Go(func() error {
+    hmacEntries, err = cf.GetRange(key, hmacOffset, hmacLen)
+    return err
+})
+
+if err := g.Wait(); err != nil {
+    return err
+}
+// Both fetches complete → verify + decrypt
+```
+
+Cuts range-read latency nearly in half for Cloudflare cache misses. For DuckDB queries issuing 20+ range reads, the savings compound.
+
+**Impact:** Highest impact-to-complexity ratio of any feature. ~15 lines of code.
+
+### 4. Pluggable Backend Abstraction
+
+ARMOR's encryption logic is completely independent of the storage backend. A clean `Backend` interface decouples the crypto layer from B2:
+
+```go
+type Backend interface {
+    Put(ctx context.Context, bucket, key string, body io.Reader, meta map[string]string) error
+    Get(ctx context.Context, bucket, key string) (io.ReadCloser, map[string]string, error)
+    GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error)
+    Head(ctx context.Context, bucket, key string) (map[string]string, error)
+    Delete(ctx context.Context, bucket, key string) error
+    List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error)
+    Copy(ctx context.Context, bucket, srcKey, dstKey string, meta map[string]string) error
+}
+```
+
+The B2 S3 client becomes the first implementation. Future backends (MinIO, R2, Wasabi, local filesystem) are additional implementations. This also enables:
+- Mock backend for unit tests (no cloud credentials needed)
+- Tiered storage (hot/cold across providers)
+- Air-gapped deployments with local-filesystem backend
+
+**Impact:** Future-proofs the project; immediate testability improvement.
+
+### 5. Encryption Format Versioning
+
+The `ARMR` magic + version byte in the envelope header is already planned, but making it a first-class architectural pattern now — with an `EnvelopeReader` interface that dispatches on version — prevents a painful retrofit later when there are terabytes of v1 objects in production.
+
+```go
+type EnvelopeReader interface {
+    ReadHeader(r io.Reader) (*EnvelopeHeader, error)
+    DecryptBlock(block []byte, blockIndex uint32, dek, iv []byte) ([]byte, error)
+    VerifyHMAC(block []byte, blockIndex uint32, hmacKey, expected []byte) error
+}
+
+var readers = map[uint8]EnvelopeReader{
+    0x01: &EnvelopeV1{},  // AES-256-CTR + HMAC-SHA256
+    // 0x02: &EnvelopeV2{},  // Future: AES-256-GCM for non-range-read files
+    // 0x03: &EnvelopeV3{},  // Future: post-quantum KEM layer
+}
+```
+
+ARMOR reads any version forever. New uploads use the latest version. A version switch + one interface — costs almost nothing now, would be extremely expensive later.
+
+**Impact:** Zero future migration pain when algorithms change.
+
+### 6. Cryptographic Provenance Chain
+
+Each upload computes a chain hash linking it to the previous upload:
+
+```
+chain_hash = SHA-256(prev_chain_hash || object_key || plaintext_sha256 || timestamp || writer_id)
+```
+
+The chain hash and `prev_chain_hash` are stored in the object's `x-amz-meta-armor-chain-*` headers. The latest chain head is stored at `.armor/chain-head` in B2.
+
+`armor audit` (via API endpoint `GET /armor/audit`) walks the chain and verifies every link.
+
+#### Multi-Writer Consistency
+
+With multiple ARMOR instances writing concurrently (e.g., multiple spot clusters), naive chain appending creates conflicts. The solution is **per-writer chains that merge**:
+
+```
+Writer A (cluster-1):  A1 ─→ A2 ─→ A3 ─→ ...
+Writer B (cluster-2):  B1 ─→ B2 ─→ ...
+Writer C (cluster-3):  C1 ─→ C2 ─→ C3 ─→ C4 ─→ ...
+```
+
+Each ARMOR instance maintains its own chain branch, identified by a `writer_id` (configured per instance, e.g., the cluster name). Each writer stores its own chain head at `.armor/chain-head/<writer_id>`. The chain entries are:
+
+```
+x-amz-meta-armor-chain-hash:  <this entry's hash>
+x-amz-meta-armor-chain-prev:  <previous hash from THIS writer>
+x-amz-meta-armor-chain-writer: cluster-1
+```
+
+**Verification:** `armor audit` reads all chain heads from `.armor/chain-head/*`, walks each branch independently, and then cross-references the full set of objects in the bucket to ensure every object belongs to exactly one chain. An object that belongs to no chain was uploaded outside ARMOR or tampered with. A gap in a chain indicates deletion.
+
+**No coordination required between writers.** Each writer is fully independent. The merge is read-side only (during audit).
+
+**Impact:** Tamper-evident audit trail for financial/trading data with zero coordination overhead between clusters.
+
+### 7. Self-Healing Canary Integrity Monitor
+
+On startup and at a configurable interval (default: every 5 minutes), ARMOR:
+
+1. Uploads a small known-content canary file to `.armor/canary/<instance-id>` in B2
+2. Downloads it through the full Cloudflare path
+3. Decrypts and verifies the plaintext matches the known content
+4. Verifies the HMAC chain
+5. Reports status on the `/healthz` endpoint
+
+```
+Canary lifecycle:
+  Upload (plaintext) → ARMOR encrypt → B2
+  Download ← ARMOR decrypt ← Cloudflare ← B2
+  Verify: plaintext matches? HMACs valid? MEK correct?
+```
+
+This single test exercises the **entire pipeline**: encryption, B2 upload, Cloudflare CDN, range reads (it reads the canary with a range request to verify that path too), HMAC verification, decryption, and MEK correctness.
+
+#### Self-Healing
+
+When the canary fails, ARMOR doesn't just alert — it attempts to diagnose and fix:
+
+| Failure Mode | Detection | Self-Healing Action |
+|---|---|---|
+| Cloudflare DNS misconfigured | Canary download returns non-B2 response | Log error with expected vs actual hostname; set `/healthz` to unhealthy |
+| Cloudflare cache serving stale data | Canary content doesn't match (old version) | Issue a cache purge for the canary URL via Cloudflare API, re-test |
+| B2 connectivity lost | Upload or download times out / 5xx | Retry with exponential backoff; set `/healthz` to unhealthy after 3 failures |
+| MEK mismatch | Decryption produces garbage (HMAC fails) | Log critical: "MEK does not match data in B2"; refuse to serve traffic |
+| HMAC verification fails | Block HMAC doesn't match | Log critical: "Data integrity violation"; refuse to serve traffic for affected bucket |
+| B2 silent corruption | Plaintext doesn't match known content despite valid HMAC | Log critical: "Canary content mismatch — possible B2 corruption or HMAC collision" |
+
+The canary endpoint is exposed at `GET /armor/canary` and returns structured JSON:
+
+```json
+{
+  "status": "healthy",
+  "last_check": "2026-03-24T14:30:00Z",
+  "upload_latency_ms": 45,
+  "download_latency_ms": 12,
+  "decrypt_verified": true,
+  "hmac_verified": true,
+  "cloudflare_cache_hit": true
+}
+```
+
+Kubernetes liveness and readiness probes point at `/healthz`, which incorporates canary status. A failing canary causes the pod to be restarted (liveness) or removed from service (readiness), forcing traffic to a healthy ARMOR instance.
+
+**Impact:** Catches pipeline problems before users hit them. Self-healing for transient issues. Hard-fail for integrity violations.
+
+---
+
 ## Decisions and Rationale
 
 | Decision | Choice | Why |
 |----------|--------|-----|
-| Language | Go | Single binary, stdlib crypto (AES-NI), excellent HTTP server, S3 ecosystem |
+| Deployment | Docker container only | Stateless; no binary distribution; consistent environment across clusters |
+| Language | Go | Stdlib crypto (AES-NI), excellent HTTP server, static binary → minimal Docker image |
 | Encryption | AES-256-CTR | Random access decryption — the single most important property for range reads |
 | Integrity | HMAC-SHA256 per block | Independent verification of any block without reading the full file |
 | Key wrapping | AES-KWP (RFC 5649) | Standard, constant-time, no IV management for wrapping |
@@ -865,3 +1068,6 @@ armor_active_multipart_uploads                  # In-progress multipart uploads
 | Filenames | Plaintext (v1) | Enables DuckDB partition discovery; directory structure is not sensitive for this use case |
 | Metadata storage | B2 S3 headers + envelope header | Headers enable fast HeadObject; envelope enables offline reading |
 | Auth model | ARMOR-local SigV4 | B2 creds stay on server; standard S3 client compatibility |
+| State | Stateless (all state in B2) | Any instance with the same config works; horizontal scaling; crash recovery |
+| Backend | Pluggable interface | Future-proofs against provider changes; enables testing without cloud credentials |
+| Provenance | Per-writer chains | Tamper-evident audit trail without coordination between concurrent writers |
