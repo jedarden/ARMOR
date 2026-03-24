@@ -202,3 +202,17 @@
 
 ### Remaining
 - (All Phase 3 features completed)
+
+---
+
+## Documentation Updates
+
+### Completed
+- [x] README.md updated to reflect actual S3 proxy implementation
+  - Removed outdated CLI interface documentation
+  - Added Docker quick start instructions
+  - Added client configuration examples (AWS CLI, boto3, DuckDB)
+  - Added full configuration reference
+  - Added multi-key and multi-credential examples
+  - Added Admin API documentation
+  - Added S3 API coverage table
