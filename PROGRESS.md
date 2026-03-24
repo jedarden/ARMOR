@@ -28,11 +28,11 @@
 - [x] Self-healing canary integrity monitor
 - [x] Parquet footer pinning (in-memory, keyed by ETag)
 - [x] Parallel data + HMAC range fetch (errgroup)
+- [x] Pipelined stream decryption (io.Pipe) - decrypts blocks as they stream
 - [x] Unit tests for crypto and canary modules (all passing)
 - [x] Multi-stage Dockerfile
 
 ### In Progress
-- [ ] Pipelined stream decryption (io.Pipe)
 - [ ] Full AWS SigV4 authentication
 - [ ] Integration tests against real B2 + Cloudflare
 
