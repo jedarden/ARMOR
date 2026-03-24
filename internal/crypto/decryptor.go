@@ -254,6 +254,21 @@ func (d *Decryptor) BlockSize() int {
 	return d.blockSize
 }
 
+// HMACKey returns the HMAC key derived from the DEK.
+func (d *Decryptor) HMACKey() []byte {
+	return d.hmacKey
+}
+
+// CipherBlock returns the underlying AES cipher block.
+func (d *Decryptor) CipherBlock() cipher.Block {
+	return d.block
+}
+
+// IV returns the initialization vector.
+func (d *Decryptor) IV() []byte {
+	return d.iv
+}
+
 func min(a, b int64) int64 {
 	if a < b {
 		return a
