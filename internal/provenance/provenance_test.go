@@ -60,15 +60,21 @@ func (m *mockBackend) GetDirect(ctx context.Context, bucket, key string) (io.Rea
 }
 
 func (m *mockBackend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
+	body, _, err := m.GetRangeWithHeaders(ctx, bucket, key, offset, length)
+	return body, err
+}
+
+func (m *mockBackend) GetRangeWithHeaders(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, map[string]string, error) {
 	data, ok := m.objects[bucket+"/"+key]
 	if !ok {
-		return nil, fmt.Errorf("not found")
+		return nil, nil, fmt.Errorf("not found")
 	}
 	end := offset + length
 	if end > int64(len(data)) {
 		end = int64(len(data))
 	}
-	return io.NopCloser(bytes.NewReader(data[offset:end])), nil
+	// Mock doesn't simulate CF caching, so return empty headers
+	return io.NopCloser(bytes.NewReader(data[offset:end])), make(map[string]string), nil
 }
 
 func (m *mockBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {

@@ -286,9 +286,9 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 	}
 	result.UploadLatencyMs = time.Since(uploadStart).Milliseconds()
 
-	// Download through Cloudflare (via GetRange which uses CF domain)
+	// Download through Cloudflare (via GetRangeWithHeaders to capture CF-Cache-Status)
 	downloadStart := time.Now()
-	body, err := m.backend.GetRange(ctx, m.bucket, key, 0, int64(len(envelope)))
+	body, headers, err := m.backend.GetRangeWithHeaders(ctx, m.bucket, key, 0, int64(len(envelope)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to download canary: %w", err)
 	}
@@ -298,6 +298,12 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to read downloaded canary: %w", err)
 	}
 	result.DownloadLatencyMs = time.Since(downloadStart).Milliseconds()
+
+	// Check Cloudflare cache status
+	// CF-Cache-Status values: HIT, MISS, EXPIRED, STALE, BYPASS, REVALIDATED, UPDATING, IGNORED
+	if cfStatus, ok := headers["CF-Cache-Status"]; ok {
+		result.CFCacheHit = (cfStatus == "HIT" || cfStatus == "STALE" || cfStatus == "REVALIDATED")
+	}
 
 	// Parse header
 	downloadedHeader, err := crypto.DecodeHeader(downloadedEnvelope)
@@ -363,7 +369,6 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 	}()
 
 	result.Status = StatusHealthy
-	result.CFCacheHit = false // TODO: detect from CF-Cache-Status header
 
 	return result, nil
 }

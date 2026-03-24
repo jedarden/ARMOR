@@ -46,6 +46,10 @@ type Backend interface {
 	// GetRange retrieves a byte range from an object.
 	GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error)
 
+	// GetRangeWithHeaders retrieves a byte range from an object along with response headers.
+	// The headers map contains relevant HTTP response headers (e.g., CF-Cache-Status).
+	GetRangeWithHeaders(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, map[string]string, error)
+
 	// Head retrieves object metadata without the body.
 	Head(ctx context.Context, bucket, key string) (*ObjectInfo, error)
 
