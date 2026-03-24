@@ -149,6 +149,15 @@
   - [x] Content-Disposition override option
   - [x] Unit tests for token generation and verification
 
+### Completed
+- [x] Streaming encryption for very large uploads
+  - [x] Automatic threshold-based switching (10MB threshold)
+  - [x] Temp file buffering for SHA-256 computation
+  - [x] io.Pipe streaming for memory-efficient encryption
+  - [x] X-Armor-Streaming header for visibility
+  - [x] Full range read support for streaming-encrypted files
+  - [x] Bug fix: DecryptRange now uses relative block indices
+  - [x] Unit tests for streaming encryption scenarios
+
 ### Remaining
-- [ ] Streaming encryption for very large uploads
 - [ ] Admin API enhancements

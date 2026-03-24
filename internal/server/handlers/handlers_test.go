@@ -1744,3 +1744,271 @@ func TestMultipleETagsInIfMatch(t *testing.T) {
 		t.Errorf("If-None-Match with multiple ETags (one matching): expected status 304, got %d", w.Code)
 	}
 }
+
+// TestStreamingEncryptionLargeFile tests streaming encryption for files > 10MB
+func TestStreamingEncryptionLargeFile(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create a file larger than the 10MB streaming threshold
+	// Using 15MB to ensure streaming is triggered
+	size := 15 * 1024 * 1024
+	plaintext := make([]byte, size)
+	for i := range plaintext {
+		plaintext[i] = byte(i % 256)
+	}
+
+	// Upload with Content-Length header to trigger streaming
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/streaming-large", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.ContentLength = int64(size)
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("PUT failed: status %d", w.Code)
+	}
+
+	// Verify streaming header is set
+	if w.Header().Get("X-Armor-Streaming") != "true" {
+		t.Error("expected X-Armor-Streaming: true header for large file")
+	}
+
+	// Verify ETag is returned
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Error("expected ETag header")
+	}
+
+	// GET the file back and verify content
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/streaming-large", nil)
+	w = httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET failed: status %d", w.Code)
+	}
+
+	if !bytes.Equal(w.Body.Bytes(), plaintext) {
+		t.Errorf("streaming content mismatch: got %d bytes, want %d bytes",
+			len(w.Body.Bytes()), len(plaintext))
+	}
+}
+
+// TestStreamingEncryptionMultiBlock tests streaming with multi-block files
+func TestStreamingEncryptionMultiBlock(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create a file that spans multiple blocks (> 64KB) but under streaming threshold
+	// This tests the buffered path
+	blockSize := cfg.BlockSize
+	plaintext := make([]byte, blockSize*2+1000)
+	for i := range plaintext {
+		plaintext[i] = byte(i % 256)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/multi-block", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("PUT failed: status %d", w.Code)
+	}
+
+	// GET and verify
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/multi-block", nil)
+	w = httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET failed: status %d", w.Code)
+	}
+
+	if !bytes.Equal(w.Body.Bytes(), plaintext) {
+		t.Error("multi-block content mismatch")
+	}
+}
+
+// TestStreamingEncryptionRangeRead tests range reads on streaming-encrypted files
+func TestStreamingEncryptionRangeRead(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create a large file (triggers streaming)
+	size := 12 * 1024 * 1024
+	plaintext := make([]byte, size)
+	for i := range plaintext {
+		plaintext[i] = byte(i % 256)
+	}
+
+	// Upload
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/streaming-range", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.ContentLength = int64(size)
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: status %d", w.Code)
+	}
+
+	// Debug: Check what was stored
+	mb.mu.Lock()
+	storedData := mb.objects["test-bucket/streaming-range"]
+	storedMeta := mb.meta["test-bucket/streaming-range"]
+	mb.mu.Unlock()
+
+	expectedEnvelopeSize := int64(64 + size + int(int(size/65536)+1)*32)
+	t.Logf("Stored data size: %d, expected envelope size: ~%d", len(storedData), expectedEnvelopeSize)
+	t.Logf("Metadata: %+v", storedMeta)
+
+	// Range read from the middle
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/streaming-range", nil)
+	req.Header.Set("Range", "bytes=1000000-2000000")
+	w = httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusPartialContent {
+		t.Errorf("expected status 206, got %d, body: %s", w.Code, w.Body.String())
+	}
+
+	expectedRange := plaintext[1000000 : 2000000+1]
+	if !bytes.Equal(w.Body.Bytes(), expectedRange) {
+		t.Errorf("range content mismatch: got %d bytes, want %d bytes",
+			len(w.Body.Bytes()), len(expectedRange))
+	}
+
+	// Verify Content-Range header
+	contentRange := w.Header().Get("Content-Range")
+	if contentRange == "" {
+		t.Error("expected Content-Range header")
+	}
+}
+
+// TestStreamingEncryptionSHA256 verifies SHA-256 integrity for streaming uploads
+func TestStreamingEncryptionSHA256(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create a known-content large file
+	size := 11 * 1024 * 1024
+	plaintext := make([]byte, size)
+	for i := range plaintext {
+		plaintext[i] = byte(i % 256)
+	}
+
+	// Upload with streaming
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/sha256-test", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.ContentLength = int64(size)
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: status %d", w.Code)
+	}
+
+	// Verify the stored metadata has the correct plaintext SHA-256
+	mb.mu.Lock()
+	meta := mb.meta["test-bucket/sha256-test"]
+	storedData := mb.objects["test-bucket/sha256-test"]
+	mb.mu.Unlock()
+
+	// Verify ARMR magic header
+	if len(storedData) < 4 || string(storedData[:4]) != "ARMR" {
+		t.Error("ARMR magic not found at start of stored data")
+	}
+
+	// Verify metadata contains SHA-256
+	sha256Meta := meta["x-amz-meta-armor-plaintext-sha256"]
+	if sha256Meta == "" {
+		t.Error("missing plaintext SHA-256 in metadata")
+	}
+
+	// GET and verify full content
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/sha256-test", nil)
+	w = httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET failed: status %d", w.Code)
+	}
+
+	if !bytes.Equal(w.Body.Bytes(), plaintext) {
+		t.Error("streaming SHA-256 content mismatch")
+	}
+}
+
+// TestStreamingEncryptionThreshold tests the boundary between buffered and streaming
+func TestStreamingEncryptionThreshold(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Test just under the 10MB threshold (should use buffered path)
+	threshold := 10 * 1024 * 1024
+
+	tests := []struct {
+		name        string
+		size        int
+		expectStream bool
+	}{
+		{"under_threshold", threshold - 1, false},
+		{"at_threshold", threshold, false}, // at threshold still uses buffered
+		{"over_threshold", threshold + 1, true},
+		{"large_over", threshold * 2, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plaintext := make([]byte, tt.size)
+			for i := range plaintext {
+				plaintext[i] = byte(i % 256)
+			}
+
+			req := httptest.NewRequest(http.MethodPut, "/test-bucket/"+tt.name, bytes.NewReader(plaintext))
+			req.Header.Set("Content-Type", "application/octet-stream")
+			req.ContentLength = int64(tt.size)
+			w := httptest.NewRecorder()
+
+			h.HandleRoot(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("PUT failed: status %d", w.Code)
+				return
+			}
+
+			streamingHeader := w.Header().Get("X-Armor-Streaming")
+			if tt.expectStream && streamingHeader != "true" {
+				t.Errorf("expected X-Armor-Streaming: true, got %s", streamingHeader)
+			}
+			if !tt.expectStream && streamingHeader == "true" {
+				t.Error("did not expect X-Armor-Streaming: true for small file")
+			}
+
+			// Verify content integrity
+			req = httptest.NewRequest(http.MethodGet, "/test-bucket/"+tt.name, nil)
+			w = httptest.NewRecorder()
+
+			h.HandleRoot(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("GET failed: status %d", w.Code)
+				return
+			}
+
+			if !bytes.Equal(w.Body.Bytes(), plaintext) {
+				t.Errorf("content mismatch for %s", tt.name)
+			}
+		})
+	}
+}

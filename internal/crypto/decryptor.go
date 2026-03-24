@@ -82,6 +82,8 @@ func (d *Decryptor) Decrypt(encrypted []byte, hmacTable []byte) ([]byte, error) 
 
 // DecryptRange decrypts a specific range of blocks after verifying HMACs.
 // plaintextStart and plaintextEnd are byte offsets in the plaintext.
+// The encrypted slice contains only the blocks needed for the range, starting from blockStart.
+// The hmacTable contains HMAC entries for blocks blockStart to blockEnd.
 func (d *Decryptor) DecryptRange(encrypted []byte, hmacTable []byte, plaintextStart, plaintextEnd int64, totalPlaintextSize int64) ([]byte, error) {
 	blockStart := int(plaintextStart / int64(d.blockSize))
 	blockEnd := int(plaintextEnd / int64(d.blockSize))
@@ -92,9 +94,14 @@ func (d *Decryptor) DecryptRange(encrypted []byte, hmacTable []byte, plaintextSt
 		blockEnd = int(maxBlocks) - 1
 	}
 
+	// Number of blocks in the encrypted slice
+	numBlocks := blockEnd - blockStart + 1
+
 	// Verify HMACs for all blocks in range
-	for i := blockStart; i <= blockEnd; i++ {
-		encStart := i * d.blockSize
+	for relIdx := 0; relIdx < numBlocks; relIdx++ {
+		absBlockIdx := blockStart + relIdx
+
+		encStart := relIdx * d.blockSize
 		encEnd := encStart + d.blockSize
 		if encEnd > len(encrypted) {
 			encEnd = len(encrypted)
@@ -102,14 +109,14 @@ func (d *Decryptor) DecryptRange(encrypted []byte, hmacTable []byte, plaintextSt
 
 		encryptedBlock := encrypted[encStart:encEnd]
 
-		hmacOffset := i * HMACSize
+		hmacOffset := relIdx * HMACSize
 		if hmacOffset+HMACSize > len(hmacTable) {
-			return nil, fmt.Errorf("HMAC table too short for block %d", i)
+			return nil, fmt.Errorf("HMAC table too short for block %d", absBlockIdx)
 		}
 		expectedHMAC := hmacTable[hmacOffset : hmacOffset+HMACSize]
 
-		if err := d.verifyBlockHMAC(encryptedBlock, uint32(i), expectedHMAC); err != nil {
-			return nil, fmt.Errorf("block %d: %w", i, err)
+		if err := d.verifyBlockHMAC(encryptedBlock, uint32(absBlockIdx), expectedHMAC); err != nil {
+			return nil, fmt.Errorf("block %d: %w", absBlockIdx, err)
 		}
 	}
 
@@ -117,8 +124,10 @@ func (d *Decryptor) DecryptRange(encrypted []byte, hmacTable []byte, plaintextSt
 	plaintext := make([]byte, plaintextEnd-plaintextStart+1)
 	outputOffset := 0
 
-	for i := blockStart; i <= blockEnd; i++ {
-		encStart := i * d.blockSize
+	for relIdx := 0; relIdx < numBlocks; relIdx++ {
+		absBlockIdx := blockStart + relIdx
+
+		encStart := relIdx * d.blockSize
 		encEnd := encStart + d.blockSize
 		if encEnd > len(encrypted) {
 			encEnd = len(encrypted)
@@ -128,12 +137,12 @@ func (d *Decryptor) DecryptRange(encrypted []byte, hmacTable []byte, plaintextSt
 
 		// Decrypt block
 		decryptedBlock := make([]byte, len(encryptedBlock))
-		ctr := d.makeCounter(uint32(i))
+		ctr := d.makeCounter(uint32(absBlockIdx))
 		stream := cipher.NewCTR(d.block, ctr)
 		stream.XORKeyStream(decryptedBlock, encryptedBlock)
 
 		// Calculate which portion of this block we need
-		blockPlaintextStart := int64(i * d.blockSize)
+		blockPlaintextStart := int64(absBlockIdx * d.blockSize)
 		blockPlaintextEnd := blockPlaintextStart + int64(len(decryptedBlock))
 
 		// Find overlap with requested range

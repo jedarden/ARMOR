@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -154,10 +155,25 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 // PutObject handles S3 PutObject with encryption.
+// For small files (<10MB), it buffers in memory.
+// For larger files, it uses streaming encryption via temp files to avoid
+// loading the entire file into memory.
 func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
 
-	// Read plaintext body
+	// Check Content-Length header
+	contentLength := r.ContentLength
+	streamingThreshold := int64(10 * 1024 * 1024) // 10MB threshold
+
+	// Use streaming for large files or unknown size
+	useStreaming := contentLength < 0 || contentLength > streamingThreshold
+
+	if useStreaming {
+		h.putObjectStreaming(ctx, w, r, bucket, key)
+		return
+	}
+
+	// Small file: buffer in memory
 	plaintext, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
@@ -267,6 +283,195 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Return ETag
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
+	w.WriteHeader(http.StatusOK)
+}
+
+// putObjectStreaming handles large file uploads with streaming encryption.
+// It uses a temp file to avoid loading the entire plaintext into memory.
+// The process is:
+// 1. Stream request body to temp file while computing SHA-256
+// 2. Create envelope header with the computed SHA-256
+// 3. Stream from temp file through encryption to B2 via io.Pipe
+// 4. Clean up temp file
+func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) {
+	// Phase 1: Stream to temp file and compute SHA-256
+	tmpFile, err := os.CreateTemp("", "armor-upload-*.tmp")
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create temp file: %v", err), 500)
+		return
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath) // Clean up on exit
+
+	// Compute SHA-256 while copying to temp file
+	plaintextHash := sha256.New()
+	teeReader := io.TeeReader(r.Body, plaintextHash)
+
+	plaintextSize, err := io.Copy(tmpFile, teeReader)
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		return
+	}
+
+	// Get the computed SHA-256
+	var plaintextSHA [32]byte
+	copy(plaintextSHA[:], plaintextHash.Sum(nil))
+
+	// Seek back to beginning of temp file for reading
+	if _, err := tmpFile.Seek(0, 0); err != nil {
+		tmpFile.Close()
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to seek temp file: %v", err), 500)
+		return
+	}
+
+	// Phase 2: Get encryption keys
+	mek, keyID, err := h.keyManager.GetMEK(key)
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get encryption key: %v", err), 500)
+		return
+	}
+
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to generate DEK: %v", err), 500)
+		return
+	}
+
+	iv, err := crypto.GenerateIV()
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to generate IV: %v", err), 500)
+		return
+	}
+
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
+		return
+	}
+
+	// Create envelope header
+	header, err := crypto.NewEnvelopeHeader(iv, plaintextSize, h.config.BlockSize, plaintextSHA)
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
+		return
+	}
+
+	headerBytes, err := header.Encode()
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to encode header: %v", err), 500)
+		return
+	}
+
+	// Create encryptor
+	encryptor, err := crypto.NewEncryptor(dek, iv, h.config.BlockSize)
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
+		return
+	}
+
+	// Calculate envelope size
+	blockCount := crypto.ComputeBlockCount(plaintextSize, h.config.BlockSize)
+	hmacTableSize := int64(blockCount) * crypto.HMACSize
+	envelopeSize := int64(len(headerBytes)) + plaintextSize + hmacTableSize
+
+	// Phase 3: Stream encrypt via io.Pipe
+	pr, pw := io.Pipe()
+
+	// Start encryption goroutine
+	encErr := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		defer close(encErr)
+
+		// Write header
+		if _, err := pw.Write(headerBytes); err != nil {
+			encErr <- fmt.Errorf("failed to write header: %w", err)
+			return
+		}
+
+		// Stream encrypt the plaintext
+		hmacTable, err := encryptor.EncryptStream(tmpFile, pw, plaintextSize)
+		if err != nil {
+			encErr <- fmt.Errorf("encryption failed: %w", err)
+			return
+		}
+
+		// Write HMAC table
+		if _, err := pw.Write(hmacTable); err != nil {
+			encErr <- fmt.Errorf("failed to write HMAC table: %w", err)
+			return
+		}
+
+		encErr <- nil
+	}()
+
+	// Build metadata
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	// Compute ETag while we have the temp file
+	// We need to read the file again for MD5, but we already have SHA-256
+	// Use SHA-256 truncated to 16 bytes as ETag for streaming (non-standard but works)
+	etag := hex.EncodeToString(plaintextSHA[:16])
+
+	meta := (&backend.ARMORMetadata{
+		Version:       1,
+		BlockSize:     h.config.BlockSize,
+		PlaintextSize: plaintextSize,
+		ContentType:   contentType,
+		IV:            iv,
+		WrappedDEK:    wrappedDEK,
+		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
+		ETag:          etag,
+		KeyID:         keyID,
+	}).ToMetadata()
+
+	// Upload to B2 using streaming reader
+	if err := h.backend.Put(ctx, bucket, key, pr, envelopeSize, meta); err != nil {
+		tmpFile.Close()
+		// Check if there was an encryption error
+		select {
+		case encErrVal := <-encErr:
+			if encErrVal != nil {
+				h.writeError(w, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
+				return
+			}
+		default:
+		}
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to upload: %v", err), 500)
+		return
+	}
+
+	// Close temp file
+	tmpFile.Close()
+
+	// Check for encryption errors
+	if encErrVal := <-encErr; encErrVal != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
+		return
+	}
+
+	// Record provenance
+	if h.provenance != nil && h.provenance.ShouldRecord(key) {
+		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
+		if err := h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put-streaming"); err != nil {
+			// Log but don't fail the upload
+		}
+	}
+
+	// Return ETag
+	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
+	w.Header().Set("X-Armor-Streaming", "true")
 	w.WriteHeader(http.StatusOK)
 }
 
