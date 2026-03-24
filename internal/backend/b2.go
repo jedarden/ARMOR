@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -564,6 +565,208 @@ func (b *B2Backend) ListMultipartUploads(ctx context.Context, bucket string) (*L
 	}
 
 	return result, nil
+}
+
+// GetBucketLifecycleConfiguration gets the lifecycle configuration for a bucket.
+func (b *B2Backend) GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	resp, err := b.s3Client.GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetBucketLifecycleConfiguration failed: %w", err)
+	}
+
+	// Build the XML response manually to ensure proper S3 format
+	var rules []string
+	for _, rule := range resp.Rules {
+		ruleXML := b.buildLifecycleRuleXML(rule)
+		rules = append(rules, ruleXML)
+	}
+
+	xmlBody := fmt.Sprintf(`<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">%s</LifecycleConfiguration>`,
+		strings.Join(rules, ""))
+	return []byte(xmlBody), nil
+}
+
+// buildLifecycleRuleXML builds XML for a single lifecycle rule.
+func (b *B2Backend) buildLifecycleRuleXML(rule types.LifecycleRule) string {
+	var parts []string
+
+	// ID
+	if rule.ID != nil {
+		parts = append(parts, fmt.Sprintf("<ID>%s</ID>", *rule.ID))
+	}
+
+	// Status
+	if rule.Status != "" {
+		parts = append(parts, fmt.Sprintf("<Status>%s</Status>", rule.Status))
+	}
+
+	// Filter
+	if rule.Filter != nil {
+		filterXML := b.buildLifecycleFilterXML(rule.Filter)
+		parts = append(parts, fmt.Sprintf("<Filter>%s</Filter>", filterXML))
+	}
+
+	// Expiration
+	if rule.Expiration != nil {
+		var expParts []string
+		if rule.Expiration.Days != nil {
+			expParts = append(expParts, fmt.Sprintf("<Days>%d</Days>", *rule.Expiration.Days))
+		}
+		if rule.Expiration.Date != nil {
+			expParts = append(expParts, fmt.Sprintf("<Date>%s</Date>", rule.Expiration.Date.Format(time.RFC3339)))
+		}
+		if len(expParts) > 0 {
+			parts = append(parts, fmt.Sprintf("<Expiration>%s</Expiration>", strings.Join(expParts, "")))
+		}
+	}
+
+	// NoncurrentVersionExpiration
+	if rule.NoncurrentVersionExpiration != nil {
+		var nveParts []string
+		if rule.NoncurrentVersionExpiration.NoncurrentDays != nil {
+			nveParts = append(nveParts, fmt.Sprintf("<NoncurrentDays>%d</NoncurrentDays>", *rule.NoncurrentVersionExpiration.NoncurrentDays))
+		}
+		if len(nveParts) > 0 {
+			parts = append(parts, fmt.Sprintf("<NoncurrentVersionExpiration>%s</NoncurrentVersionExpiration>", strings.Join(nveParts, "")))
+		}
+	}
+
+	// AbortIncompleteMultipartUpload
+	if rule.AbortIncompleteMultipartUpload != nil {
+		var aimuParts []string
+		if rule.AbortIncompleteMultipartUpload.DaysAfterInitiation != nil {
+			aimuParts = append(aimuParts, fmt.Sprintf("<DaysAfterInitiation>%d</DaysAfterInitiation>", *rule.AbortIncompleteMultipartUpload.DaysAfterInitiation))
+		}
+		if len(aimuParts) > 0 {
+			parts = append(parts, fmt.Sprintf("<AbortIncompleteMultipartUpload>%s</AbortIncompleteMultipartUpload>", strings.Join(aimuParts, "")))
+		}
+	}
+
+	return fmt.Sprintf("<Rule>%s</Rule>", strings.Join(parts, ""))
+}
+
+// buildLifecycleFilterXML builds XML for a lifecycle filter.
+func (b *B2Backend) buildLifecycleFilterXML(filter *types.LifecycleRuleFilter) string {
+	if filter == nil {
+		return ""
+	}
+
+	// Check which field is set (only one can be set at a time)
+	if filter.Prefix != nil {
+		return fmt.Sprintf("<Prefix>%s</Prefix>", *filter.Prefix)
+	}
+	if filter.Tag != nil {
+		return fmt.Sprintf("<Tag><Key>%s</Key><Value>%s</Value></Tag>", aws.ToString(filter.Tag.Key), aws.ToString(filter.Tag.Value))
+	}
+	if filter.And != nil {
+		var andParts []string
+		if filter.And.Prefix != nil {
+			andParts = append(andParts, fmt.Sprintf("<Prefix>%s</Prefix>", *filter.And.Prefix))
+		}
+		for _, tag := range filter.And.Tags {
+			andParts = append(andParts, fmt.Sprintf("<Tag><Key>%s</Key><Value>%s</Value></Tag>", aws.ToString(tag.Key), aws.ToString(tag.Value)))
+		}
+		return fmt.Sprintf("<And>%s</And>", strings.Join(andParts, ""))
+	}
+	return ""
+}
+
+// PutBucketLifecycleConfiguration sets the lifecycle configuration for a bucket.
+func (b *B2Backend) PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error {
+	// Parse the lifecycle configuration XML and convert to SDK types
+	rules, err := b.parseLifecycleConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to parse lifecycle configuration: %w", err)
+	}
+
+	_, err = b.s3Client.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+		Bucket:                 aws.String(bucket),
+		LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: rules},
+	})
+	if err != nil {
+		return fmt.Errorf("PutBucketLifecycleConfiguration failed: %w", err)
+	}
+	return nil
+}
+
+// parseLifecycleConfig parses lifecycle configuration XML into SDK types.
+func (b *B2Backend) parseLifecycleConfig(config []byte) ([]types.LifecycleRule, error) {
+	// Simple XML parsing for common lifecycle rules
+	// This handles the most common cases; full XML parsing would use encoding/xml
+	var rules []types.LifecycleRule
+
+	// Use a simple approach: parse with encoding/xml
+	type LifecycleConfiguration struct {
+		XMLName xml.Name `xml:"LifecycleConfiguration"`
+		Rules   []struct {
+			ID          string `xml:"ID"`
+			Status      string `xml:"Status"`
+			Prefix      string `xml:"Prefix"`
+			Filter      *struct {
+				Prefix string `xml:"Prefix"`
+			} `xml:"Filter"`
+			Expiration *struct {
+				Days int `xml:"Days"`
+			} `xml:"Expiration"`
+			AbortIncompleteMultipartUpload *struct {
+				DaysAfterInitiation int `xml:"DaysAfterInitiation"`
+			} `xml:"AbortIncompleteMultipartUpload"`
+		} `xml:"Rule"`
+	}
+
+	var lc LifecycleConfiguration
+	if err := xml.Unmarshal(config, &lc); err != nil {
+		return nil, err
+	}
+
+	for _, r := range lc.Rules {
+		rule := types.LifecycleRule{
+			ID:     aws.String(r.ID),
+			Status: types.ExpirationStatus(r.Status),
+		}
+
+		// Handle filter
+		if r.Filter != nil && r.Filter.Prefix != "" {
+			rule.Filter = &types.LifecycleRuleFilter{
+				Prefix: aws.String(r.Filter.Prefix),
+			}
+		} else if r.Prefix != "" {
+			rule.Filter = &types.LifecycleRuleFilter{
+				Prefix: aws.String(r.Prefix),
+			}
+		}
+
+		// Handle expiration
+		if r.Expiration != nil {
+			rule.Expiration = &types.LifecycleExpiration{
+				Days: aws.Int32(int32(r.Expiration.Days)),
+			}
+		}
+
+		// Handle abort incomplete multipart upload
+		if r.AbortIncompleteMultipartUpload != nil {
+			rule.AbortIncompleteMultipartUpload = &types.AbortIncompleteMultipartUpload{
+				DaysAfterInitiation: aws.Int32(int32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation)),
+			}
+		}
+
+		rules = append(rules, rule)
+	}
+
+	return rules, nil
+}
+
+// DeleteBucketLifecycleConfiguration deletes the lifecycle configuration for a bucket.
+func (b *B2Backend) DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error {
+	_, err := b.s3Client.DeleteBucketLifecycle(ctx, &s3.DeleteBucketLifecycleInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("DeleteBucketLifecycleConfiguration failed: %w", err)
+	}
+	return nil
 }
 
 // Ensure bytes.Buffer is used when needed

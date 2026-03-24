@@ -243,6 +243,19 @@ func (m *mockBackend) ListMultipartUploads(ctx context.Context, bucket string) (
 	return &backend.ListMultipartUploadsResult{}, nil
 }
 
+// Lifecycle configuration methods (stub implementations for testing)
+func (m *mockBackend) GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, fmt.Errorf("lifecycle configuration not found")
+}
+
+func (m *mockBackend) PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+
+func (m *mockBackend) DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error {
+	return nil
+}
+
 // TestNewMonitor tests Monitor creation.
 func TestNewMonitor(t *testing.T) {
 	mek := make([]byte, 32)

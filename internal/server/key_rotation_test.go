@@ -242,6 +242,19 @@ func (m *mockRotationBackend) ListMultipartUploads(ctx context.Context, bucket s
 	return nil, fmt.Errorf("not implemented")
 }
 
+// Lifecycle configuration methods (stub implementations for testing)
+func (m *mockRotationBackend) GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *mockRotationBackend) PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *mockRotationBackend) DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error {
+	return fmt.Errorf("not implemented")
+}
+
 // createTestARMORObject creates a mock ARMOR-encrypted object for testing.
 func createTestARMORObject(mek []byte, bucket, key string, plaintext []byte) (map[string]string, error) {
 	// Generate DEK and IV
