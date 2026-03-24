@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
@@ -18,19 +21,21 @@ import (
 
 // Handlers contains all S3 operation handlers.
 type Handlers struct {
-	config  *config.Config
-	backend backend.Backend
-	cache   *backend.MetadataCache
-	mek     []byte
+	config      *config.Config
+	backend     backend.Backend
+	cache       *backend.MetadataCache
+	footerCache *backend.FooterCache
+	mek         []byte
 }
 
 // New creates a new Handlers instance.
-func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, mek []byte) *Handlers {
+func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, footerCache *backend.FooterCache, mek []byte) *Handlers {
 	return &Handlers{
-		config:  cfg,
-		backend: be,
-		cache:   cache,
-		mek:     mek,
+		config:      cfg,
+		backend:     be,
+		cache:       cache,
+		footerCache: footerCache,
+		mek:         mek,
 	}
 }
 
@@ -342,6 +347,34 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		return
 	}
 
+	// Check if this is a Parquet footer request and we have it cached
+	// DuckDB reads footer in two steps: last 8 bytes, then footer body
+	// Footer is at the end of the file: [footer_metadata][footer_length (4B)][PAR1 (4B)]
+	if h.footerCache != nil && end >= plaintextSize-8 {
+		// This range includes the end of the file - could be a footer read
+		if footer, ok := h.footerCache.Get(bucket, key, armorMeta.ETag); ok {
+			// We have a cached footer, serve from cache
+			footerStart := plaintextSize - int64(len(footer))
+			if start >= footerStart {
+				// Request is entirely within the cached footer
+				offset := start - footerStart
+				footerEnd := offset + (end - start + 1)
+				if footerEnd <= int64(len(footer)) {
+					plaintext := footer[offset:footerEnd]
+					w.Header().Set("Content-Length", strconv.FormatInt(int64(len(plaintext)), 10))
+					w.Header().Set("Content-Type", armorMeta.ContentType)
+					w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
+					w.Header().Set("Accept-Ranges", "bytes")
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, plaintextSize))
+					w.Header().Set("X-Armor-Footer-Cache", "HIT")
+					w.WriteHeader(http.StatusPartialContent)
+					w.Write(plaintext)
+					return
+				}
+			}
+		}
+	}
+
 	// Translate range to encrypted blocks
 	translation, err := crypto.TranslateRange(start, end, plaintextSize, armorMeta.BlockSize, crypto.HeaderSize)
 	if err != nil {
@@ -349,31 +382,42 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		return
 	}
 
-	// Fetch encrypted blocks and HMAC table in parallel
-	// For now, fetch sequentially (parallel fetch is an optimization)
-	encryptedBody, err := h.backend.GetRange(ctx, bucket, key, translation.DataOffset, translation.DataLength)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to fetch encrypted blocks: %v", err), 500)
-		return
-	}
-	defer encryptedBody.Close()
+	// Fetch encrypted blocks and HMAC table in parallel using errgroup.
+	// This cuts range-read latency nearly in half for cache misses.
+	var encrypted, hmacTable []byte
 
-	encrypted, err := io.ReadAll(encryptedBody)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read encrypted blocks: %v", err), 500)
-		return
-	}
+	g, gctx := errgroup.WithContext(ctx)
 
-	hmacBody, err := h.backend.GetRange(ctx, bucket, key, translation.HMACOffset, translation.HMACLength)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to fetch HMAC table: %v", err), 500)
-		return
-	}
-	defer hmacBody.Close()
+	g.Go(func() error {
+		encryptedBody, err := h.backend.GetRange(gctx, bucket, key, translation.DataOffset, translation.DataLength)
+		if err != nil {
+			return fmt.Errorf("failed to fetch encrypted blocks: %w", err)
+		}
+		defer encryptedBody.Close()
 
-	hmacTable, err := io.ReadAll(hmacBody)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
+		encrypted, err = io.ReadAll(encryptedBody)
+		if err != nil {
+			return fmt.Errorf("failed to read encrypted blocks: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		hmacBody, err := h.backend.GetRange(gctx, bucket, key, translation.HMACOffset, translation.HMACLength)
+		if err != nil {
+			return fmt.Errorf("failed to fetch HMAC table: %w", err)
+		}
+		defer hmacBody.Close()
+
+		hmacTable, err = io.ReadAll(hmacBody)
+		if err != nil {
+			return fmt.Errorf("failed to read HMAC table: %w", err)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		h.writeError(w, "InternalError", err.Error(), 500)
 		return
 	}
 
@@ -384,6 +428,17 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		return
 	}
 
+	// Cache Parquet footer if this looks like a footer read
+	// Footer is detected by: 1) Reading near end of file, 2) Data ends with "PAR1" magic
+	if h.footerCache != nil && end >= plaintextSize-8 && len(plaintext) >= 8 {
+		if backend.IsParquetFile(plaintext[len(plaintext)-4:]) {
+			// This is a Parquet file, try to cache the full footer
+			// If we just read the last 8 bytes, cache it for footer length detection
+			// If we read more, it might be the full footer
+			h.cacheParquetFooter(ctx, bucket, key, armorMeta, plaintext, plaintextSize)
+		}
+	}
+
 	// Set response headers
 	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(plaintext)), 10))
 	w.Header().Set("Content-Type", armorMeta.ContentType)
@@ -392,6 +447,39 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, plaintextSize))
 	w.WriteHeader(http.StatusPartialContent)
 	w.Write(plaintext)
+}
+
+// cacheParquetFooter caches Parquet footer data for faster subsequent reads.
+func (h *Handlers) cacheParquetFooter(ctx context.Context, bucket, key string, armorMeta *backend.ARMORMetadata, plaintext []byte, plaintextSize int64) {
+	// If we got the last 8 bytes, we can determine footer length
+	if len(plaintext) == 8 {
+		// This is the footer length read - cache a small marker
+		// The actual footer will be cached on the next read
+		return
+	}
+
+	// Check if we have the full footer by verifying PAR1 magic at end
+	if len(plaintext) >= 8 && backend.IsParquetFile(plaintext[len(plaintext)-4:]) {
+		// We have at least part of the footer
+		// Parse footer length from the last 8 bytes if available
+		footerRange, err := backend.GetParquetFooterRange(plaintext[len(plaintext)-8:], plaintextSize)
+		if err != nil {
+			return
+		}
+
+		// Check if we have the complete footer
+		footerStart := plaintextSize - int64(footerRange.Length) - 8
+		requestStart := plaintextSize - int64(len(plaintext))
+
+		if requestStart <= footerStart {
+			// We have the complete footer, extract and cache it
+			footerOffset := footerStart - requestStart
+			if footerOffset >= 0 && int(footerOffset)+footerRange.Length+8 <= len(plaintext) {
+				footer := plaintext[footerOffset : int(footerOffset)+footerRange.Length+8]
+				h.footerCache.Set(bucket, key, armorMeta.ETag, footer)
+			}
+		}
+	}
 }
 
 // parseRangeHeader parses a Range header like "bytes=0-1023".

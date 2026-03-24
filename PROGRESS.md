@@ -24,17 +24,15 @@
   - [x] DeleteObject
   - [x] ListObjectsV2 (with size correction)
   - [x] Basic auth (access key validation)
-- [x] Unit tests for crypto module (12 tests, all passing)
+- [x] Health check endpoints (`/healthz`, `/readyz`, `/armor/canary`)
+- [x] Self-healing canary integrity monitor
+- [x] Parquet footer pinning (in-memory, keyed by ETag)
+- [x] Parallel data + HMAC range fetch (errgroup)
+- [x] Unit tests for crypto and canary modules (all passing)
 - [x] Multi-stage Dockerfile
 
 ### In Progress
-- [ ] Health check endpoints (`/healthz`, `/readyz`, `/armor/canary`)
-- [ ] Parquet footer pinning (in-memory, keyed by ETag)
-- [ ] Self-healing canary integrity monitor
-
-### Not Started
 - [ ] Pipelined stream decryption (io.Pipe)
-- [ ] Parallel data + HMAC range fetch (errgroup)
 - [ ] Full AWS SigV4 authentication
 - [ ] Integration tests against real B2 + Cloudflare
 
