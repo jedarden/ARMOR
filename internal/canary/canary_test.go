@@ -287,6 +287,10 @@ func (m *mockBackend) PutObjectLegalHold(ctx context.Context, bucket, key string
 	return nil
 }
 
+func (m *mockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*backend.ListObjectVersionsResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 // TestNewMonitor tests Monitor creation.
 func TestNewMonitor(t *testing.T) {
 	mek := make([]byte, 32)

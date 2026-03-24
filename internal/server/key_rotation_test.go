@@ -286,6 +286,10 @@ func (m *mockRotationBackend) PutObjectLegalHold(ctx context.Context, bucket, ke
 	return fmt.Errorf("not implemented")
 }
 
+func (m *mockRotationBackend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*backend.ListObjectVersionsResult, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 // createTestARMORObject creates a mock ARMOR-encrypted object for testing.
 func createTestARMORObject(mek []byte, bucket, key string, plaintext []byte) (map[string]string, error) {
 	// Generate DEK and IV

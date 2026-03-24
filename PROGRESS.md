@@ -200,8 +200,14 @@
   - [x] B2 S3 implementation of object lock operations
   - [x] Unit tests for object lock handlers (6 new tests)
 
-### Remaining
-- (All Phase 3 features completed)
+### In Progress
+- [ ] ListObjectVersions with per-version decryption
+  - [x] Backend interface method (ListObjectVersions)
+  - [x] B2 S3 implementation
+  - [x] ObjectVersionInfo and ListObjectVersionsResult types
+  - [x] Unit tests for types
+  - [ ] S3 handler for GET ?versions
+  - [ ] Per-version metadata retrieval (requires HeadObject per version)
 
 ---
 
