@@ -25,6 +25,8 @@ jobs:
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
+        env:
+          GOTOOLCHAIN: local
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -53,6 +55,8 @@ jobs:
       - name: Build binary
         run: |
           CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o armor ./cmd/armor
+        env:
+          GOTOOLCHAIN: local
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -79,7 +83,8 @@ jobs:
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
+        env:
+          GOTOOLCHAIN: local
         with:
           version: v1.64.8
           args: --timeout=5m
-          skip-pkg-cache: true
