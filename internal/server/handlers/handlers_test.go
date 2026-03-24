@@ -338,7 +338,40 @@ func (m *mockBackend) PutObjectLegalHold(ctx context.Context, bucket, key string
 }
 
 func (m *mockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*backend.ListObjectVersionsResult, error) {
-	return nil, fmt.Errorf("not implemented")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	result := &backend.ListObjectVersionsResult{
+		IsTruncated: false,
+	}
+
+	// Find objects matching the prefix
+	for k := range m.objects {
+		if !strings.HasPrefix(k, bucket+"/") {
+			continue
+		}
+		key := strings.TrimPrefix(k, bucket+"/")
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		// Create version info
+		meta := m.meta[k]
+		info := backend.ObjectVersionInfo{
+			Key:          key,
+			VersionID:    "v1",
+			Size:         int64(len(m.objects[k])),
+			ETag:         meta["x-amz-meta-armor-etag"],
+			LastModified: time.Now(),
+			IsLatest:   true,
+		}
+		result.Versions = append(result.Versions, info)
+	}
+
+	return result, nil
+}
+
+func (m *mockBackend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*backend.ObjectInfo, error) {
+	return m.Head(ctx, bucket, key)
 }
 
 // testSetup creates common test dependencies.
@@ -2700,5 +2733,57 @@ func TestPutObjectLegalHold(t *testing.T) {
 	// Verify the legal hold was updated
 	if !bytes.Contains(mb.legalHoldConfig[key], []byte("OFF")) {
 		t.Error("legal hold should have been updated to OFF")
+	}
+}
+
+// TestListObjectVersions tests the ListObjectVersions operation
+func TestListObjectVersions(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Upload a file first
+	plaintext := []byte("Version test content")
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/version-test.txt", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: status %d", w.Code)
+	}
+
+	// Now list versions
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket?versions", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("ListObjectVersions failed: status %d", w.Code)
+	}
+
+	// Verify response is XML
+	if w.Header().Get("Content-Type") != "application/xml" {
+		t.Errorf("expected Content-Type application/xml, got %s", w.Header().Get("Content-Type"))
+	}
+
+	// Parse XML response
+	body, err := io.ReadAll(w.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+
+	// The response should contain ListVersionsResult
+	if !strings.Contains(string(body), "ListVersionsResult") && !strings.Contains(string(body), "ListBucketResult") {
+		t.Errorf("response should contain ListVersionsResult, got: %s", string(body))
+	}
+
+	// The response should contain the bucket name
+	if !strings.Contains(string(body), "test-bucket") {
+		t.Errorf("response should contain bucket name, got: %s", string(body))
+	}
+
+	// The response should contain the object we uploaded
+	if !strings.Contains(string(body), "version-test.txt") {
+		t.Errorf("response should contain version-test.txt, got: %s", string(body))
 	}
 }

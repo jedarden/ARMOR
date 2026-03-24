@@ -86,6 +86,11 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			h.ListMultipartUploads(w, r, bucket)
 			return
 		}
+		// Handle ListObjectVersions (GET ?versions on bucket)
+		if r.URL.Query().Has("versions") && key == "" && bucket != "" {
+			h.ListObjectVersions(w, r, bucket)
+			return
+		}
 		// Handle GetBucketLifecycleConfiguration (GET ?lifecycle on bucket)
 		if r.URL.Query().Has("lifecycle") && key == "" && bucket != "" {
 			h.GetBucketLifecycleConfiguration(w, r, bucket)
@@ -2093,6 +2098,124 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 			StorageClass: "STANDARD",
 			Initiated:    upload.Initiated.UTC().Format(time.RFC3339),
 		})
+	}
+
+	output, err := xml.Marshal(resp)
+	if err != nil {
+		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
+	w.Write(output)
+}
+
+// ListObjectVersions handles S3 ListObjectVersions operation.
+// It lists all versions of objects in a bucket, For ARMOR-encrypted objects,
+// it retrieves per-version metadata to provide plaintext sizes.
+func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+
+	prefix := r.URL.Query().Get("prefix")
+	delimiter := r.URL.Query().Get("delimiter")
+	keyMarker := r.URL.Query().Get("key-marker")
+	versionIDMarker := r.URL.Query().Get("version-id-marker")
+	maxKeys := 1000
+	if mk := r.URL.Query().Get("max-keys"); mk != "" {
+		if v, err := strconv.Atoi(mk); err == nil && v > 0 {
+			maxKeys = v
+		}
+	}
+
+	result, err := h.backend.ListObjectVersions(ctx, bucket, prefix, delimiter, keyMarker, versionIDMarker, maxKeys)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list object versions: %v", err), 500)
+		return
+	}
+
+	// Build XML response
+	type Version struct {
+		Key          string `xml:"Key"`
+		VersionID    string `xml:"VersionId"`
+		IsLatest     bool   `xml:"IsLatest"`
+		IsDeleteMarker bool `xml:"IsDeleteMarker,omitempty"`
+		LastModified string `xml:"LastModified"`
+		ETag         string `xml:"ETag,omitempty"`
+		Size         int64  `xml:"Size,omitempty"`
+		StorageClass string `xml:"StorageClass,omitempty"`
+	}
+
+	type ListVersionsResult struct {
+		XMLName               xml.Name `xml:"ListVersionsResult"`
+		Xmlns                 string   `xml:"xmlns,attr"`
+		Name                  string   `xml:"Name"`
+		Prefix                string   `xml:"Prefix"`
+		Delimiter             string   `xml:"Delimiter,omitempty"`
+		MaxKeys               int      `xml:"MaxKeys"`
+		IsTruncated           bool     `xml:"IsTruncated"`
+		KeyMarker             string   `xml:"KeyMarker"`
+		VersionIDMarker       string   `xml:"VersionIdMarker"`
+		NextKeyMarker         string   `xml:"NextKeyMarker"`
+		NextVersionIDMarker   string   `xml:"NextVersionIdMarker"`
+		Versions              []Version `xml:"Version"`
+		CommonPrefixes       []string `xml:"CommonPrefixes>Prefix"`
+	}
+
+	resp := ListVersionsResult{
+		Xmlns:               "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:                bucket,
+		Prefix:              prefix,
+		Delimiter:           delimiter,
+		MaxKeys:             maxKeys,
+		IsTruncated:         result.IsTruncated,
+		KeyMarker:           keyMarker,
+		VersionIDMarker:     versionIDMarker,
+		NextKeyMarker:       result.NextKeyMarker,
+		NextVersionIDMarker: result.NextVersionIDMarker,
+	}
+
+	// Process versions and retrieve per-version metadata for ARMOR objects
+	for _, version := range result.Versions {
+		v := Version{
+			Key:            version.Key,
+			VersionID:      version.VersionID,
+			IsLatest:       version.IsLatest,
+			IsDeleteMarker: version.IsDeleteMarker,
+			LastModified:   version.LastModified.UTC().Format(http.TimeFormat),
+		}
+
+		if !version.IsDeleteMarker {
+		// Try to get ARMOR metadata for this specific version
+		// This requires a HeadObject call per version, get plaintext size
+		if info, err := h.backend.HeadVersion(ctx, bucket, version.Key, version.VersionID); err == nil {
+			// Check if it version is ARMOR-encrypted
+			if am, ok := backend.ParseARMORMetadata(info.Metadata); ok {
+				// Use plaintext size and ARMOR ETag
+				v.Size = am.PlaintextSize
+				v.ETag = fmt.Sprintf(`"%s"`, am.ETag)
+				v.StorageClass = "STANDARD"
+			} else {
+				// Non-ARMOR object, use raw size
+				v.Size = version.Size
+				v.ETag = fmt.Sprintf(`"%s"`, version.ETag)
+				v.StorageClass = "STANDARD"
+			}
+		} else {
+			// Fallback to raw size if we can't get version metadata
+			v.Size = version.Size
+			v.ETag = fmt.Sprintf(`"%s"`, version.ETag)
+			v.StorageClass = "STANDARD"
+		}
+	}
+
+		resp.Versions = append(resp.Versions, v)
+	}
+
+	// Process common prefixes
+	for _, cp := range result.CommonPrefixes {
+		resp.CommonPrefixes = append(resp.CommonPrefixes, cp)
 	}
 
 	output, err := xml.Marshal(resp)

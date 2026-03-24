@@ -175,6 +175,39 @@ func (b *B2Backend) Head(ctx context.Context, bucket, key string) (*ObjectInfo, 
 	return info, nil
 }
 
+// HeadVersion retrieves object metadata for a specific version.
+// Returns ARMOR metadata (plaintext size) for the specific version.
+func (b *B2Backend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*ObjectInfo, error) {
+	resp, err := b.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		VersionId: aws.String(versionID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("HeadObject failed: %w", err)
+	}
+
+	info := &ObjectInfo{
+		Key:          key,
+		Size:         aws.ToInt64(resp.ContentLength),
+		ContentType:  aws.ToString(resp.ContentType),
+		ETag:         aws.ToString(resp.ETag),
+		LastModified: aws.ToTime(resp.LastModified),
+		Metadata:     fromS3Metadata(resp.Metadata),
+	}
+
+	// Check if this is an ARMOR-encrypted object
+	if _, ok := ParseARMORMetadata(info.Metadata); ok {
+		info.IsARMOREncrypted = true
+		// Use plaintext size from metadata
+		if am, _ := ParseARMORMetadata(info.Metadata); am != nil && am.PlaintextSize > 0 {
+			info.Size = am.PlaintextSize
+		}
+	}
+
+	return info, nil
+}
+
 // Delete removes an object from B2.
 func (b *B2Backend) Delete(ctx context.Context, bucket, key string) error {
 	_, err := b.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
