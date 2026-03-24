@@ -178,7 +178,7 @@
   - [x] PutObjectLegalHold (PUT ?legal-hold on object)
   - [x] Backend interface methods for object lock operations
   - [x] B2 S3 implementation of object lock operations
-  - [x] Unit tests for object lock handlers
+  - [x] Unit tests for object lock handlers (6 new tests)
 
 ### Remaining
 - [ ] Integration tests against real B2 + Cloudflare
