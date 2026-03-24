@@ -255,6 +255,31 @@ func (m *mockRotationBackend) DeleteBucketLifecycleConfiguration(ctx context.Con
 	return fmt.Errorf("not implemented")
 }
 
+// Object Lock methods (stub implementations for testing)
+func (m *mockRotationBackend) GetObjectLockConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *mockRotationBackend) PutObjectLockConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *mockRotationBackend) GetObjectRetention(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *mockRotationBackend) PutObjectRetention(ctx context.Context, bucket, key string, retention []byte) error {
+	return fmt.Errorf("not implemented")
+}
+
+func (m *mockRotationBackend) GetObjectLegalHold(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *mockRotationBackend) PutObjectLegalHold(ctx context.Context, bucket, key string, legalHold []byte) error {
+	return fmt.Errorf("not implemented")
+}
+
 // createTestARMORObject creates a mock ARMOR-encrypted object for testing.
 func createTestARMORObject(mek []byte, bucket, key string, plaintext []byte) (map[string]string, error) {
 	// Generate DEK and IV

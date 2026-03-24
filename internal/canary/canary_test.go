@@ -256,6 +256,31 @@ func (m *mockBackend) DeleteBucketLifecycleConfiguration(ctx context.Context, bu
 	return nil
 }
 
+// Object Lock methods (stub implementations for testing)
+func (m *mockBackend) GetObjectLockConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, fmt.Errorf("object lock configuration not found")
+}
+
+func (m *mockBackend) PutObjectLockConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+
+func (m *mockBackend) GetObjectRetention(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, fmt.Errorf("retention not found")
+}
+
+func (m *mockBackend) PutObjectRetention(ctx context.Context, bucket, key string, retention []byte) error {
+	return nil
+}
+
+func (m *mockBackend) GetObjectLegalHold(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, fmt.Errorf("legal hold not found")
+}
+
+func (m *mockBackend) PutObjectLegalHold(ctx context.Context, bucket, key string, legalHold []byte) error {
+	return nil
+}
+
 // TestNewMonitor tests Monitor creation.
 func TestNewMonitor(t *testing.T) {
 	mek := make([]byte, 32)

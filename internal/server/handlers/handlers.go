@@ -91,6 +91,21 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			h.GetBucketLifecycleConfiguration(w, r, bucket)
 			return
 		}
+		// Handle GetObjectLockConfiguration (GET ?object-lock on bucket)
+		if r.URL.Query().Has("object-lock") && key == "" && bucket != "" {
+			h.GetObjectLockConfiguration(w, r, bucket)
+			return
+		}
+		// Handle GetObjectRetention (GET ?retention on object)
+		if r.URL.Query().Has("retention") && key != "" {
+			h.GetObjectRetention(w, r, bucket, key)
+			return
+		}
+		// Handle GetObjectLegalHold (GET ?legal-hold on object)
+		if r.URL.Query().Has("legal-hold") && key != "" {
+			h.GetObjectLegalHold(w, r, bucket, key)
+			return
+		}
 		// Handle ListParts (GET ?uploadId on object)
 		if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" && key != "" {
 			h.ListParts(w, r, bucket, key, uploadID)
@@ -113,6 +128,21 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		// Handle PutBucketLifecycleConfiguration (PUT ?lifecycle on bucket)
 		if r.URL.Query().Has("lifecycle") && key == "" && bucket != "" {
 			h.PutBucketLifecycleConfiguration(w, r, bucket)
+			return
+		}
+		// Handle PutObjectLockConfiguration (PUT ?object-lock on bucket)
+		if r.URL.Query().Has("object-lock") && key == "" && bucket != "" {
+			h.PutObjectLockConfiguration(w, r, bucket)
+			return
+		}
+		// Handle PutObjectRetention (PUT ?retention on object)
+		if r.URL.Query().Has("retention") && key != "" {
+			h.PutObjectRetention(w, r, bucket, key)
+			return
+		}
+		// Handle PutObjectLegalHold (PUT ?legal-hold on object)
+		if r.URL.Query().Has("legal-hold") && key != "" {
+			h.PutObjectLegalHold(w, r, bucket, key)
 			return
 		}
 		if key != "" {
@@ -2125,6 +2155,114 @@ func (h *Handlers) DeleteBucketLifecycleConfiguration(w http.ResponseWriter, r *
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetObjectLockConfiguration handles GET ?object-lock on a bucket.
+// This is a passthrough operation - object lock configuration is not encrypted.
+func (h *Handlers) GetObjectLockConfiguration(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+
+	config, err := h.backend.GetObjectLockConfiguration(ctx, bucket)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object lock configuration: %v", err), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write(config)
+}
+
+// PutObjectLockConfiguration handles PUT ?object-lock on a bucket.
+// This is a passthrough operation - object lock configuration is not encrypted.
+func (h *Handlers) PutObjectLockConfiguration(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+
+	// Read the object lock configuration XML
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		return
+	}
+
+	if err := h.backend.PutObjectLockConfiguration(ctx, bucket, body); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to put object lock configuration: %v", err), 500)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// GetObjectRetention handles GET ?retention on an object.
+// This is a passthrough operation - retention settings are not encrypted.
+func (h *Handlers) GetObjectRetention(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	ctx := r.Context()
+
+	retention, err := h.backend.GetObjectRetention(ctx, bucket, key)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object retention: %v", err), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write(retention)
+}
+
+// PutObjectRetention handles PUT ?retention on an object.
+// This is a passthrough operation - retention settings are not encrypted.
+func (h *Handlers) PutObjectRetention(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	ctx := r.Context()
+
+	// Read the retention XML
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		return
+	}
+
+	if err := h.backend.PutObjectRetention(ctx, bucket, key, body); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to put object retention: %v", err), 500)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// GetObjectLegalHold handles GET ?legal-hold on an object.
+// This is a passthrough operation - legal hold status is not encrypted.
+func (h *Handlers) GetObjectLegalHold(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	ctx := r.Context()
+
+	legalHold, err := h.backend.GetObjectLegalHold(ctx, bucket, key)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object legal hold: %v", err), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write(legalHold)
+}
+
+// PutObjectLegalHold handles PUT ?legal-hold on an object.
+// This is a passthrough operation - legal hold status is not encrypted.
+func (h *Handlers) PutObjectLegalHold(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	ctx := r.Context()
+
+	// Read the legal hold XML
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		return
+	}
+
+	if err := h.backend.PutObjectLegalHold(ctx, bucket, key, body); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to put object legal hold: %v", err), 500)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // writeError writes an S3 error response.
