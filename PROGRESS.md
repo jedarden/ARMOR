@@ -53,9 +53,17 @@
   - [x] DeleteBucket
   - [x] HeadBucket
   - [x] Unit tests
+- [x] Multipart upload support
+  - [x] CreateMultipartUpload (generates DEK+IV, stores state in B2)
+  - [x] UploadPart (encrypts with CTR counter offset, stores per-part HMACs)
+  - [x] CompleteMultipartUpload (assembles parts, stores HMAC sidecar)
+  - [x] AbortMultipartUpload (cleans up state)
+  - [x] ListParts (with plaintext sizes)
+  - [x] Multipart state persistence in B2 (.armor/multipart/<upload-id>.state)
+  - [x] HMAC sidecar for multipart objects (.armor/hmac/<key-hash>)
+  - [x] Unit tests
 
 ### In Progress
-- [ ] Multipart upload support
 - [ ] Key rotation via API endpoint
 - [ ] Cryptographic provenance chain
 - [ ] Audit endpoint
