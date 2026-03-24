@@ -1,5 +1,9 @@
 # ARMOR Implementation Plan
 
+> **Status: Implementation Complete** (as of 2026-03-24)
+>
+> All planned features from Phases 1-3 are implemented. The only remaining item is the optional web dashboard.
+
 ## Overview
 
 ARMOR is an S3-compatible proxy server that transparently encrypts and decrypts data between clients and Backblaze B2. Clients interact with ARMOR using standard S3 SDKs and tools (boto3, DuckDB `httpfs`, AWS CLI, etc.). ARMOR handles all cryptography invisibly — clients never see ciphertext.
@@ -661,59 +665,59 @@ ARMOR implements its own S3 XML request/response handling for the ~15 operations
 
 ## Implementation Phases
 
-### Phase 1: Core (MVP)
+### Phase 1: Core (MVP) ✅ COMPLETE
 
 **Goal:** DuckDB can `read_parquet('s3://bucket/path')` through ARMOR with full range-read support.
 
-- [ ] S3 protocol handler: PutObject, GetObject (full + range), HeadObject, DeleteObject, ListObjectsV2
-- [ ] AES-256-CTR encryption with per-block HMAC
-- [ ] Envelope encryption (MEK wraps DEK per file) with format versioning (version byte dispatch)
-- [ ] Encrypted object format (header + data blocks + HMAC table)
-- [ ] Range read translation (plaintext offset → encrypted block offset)
-- [ ] Parallel data + HMAC range fetch (errgroup, two concurrent range reads)
-- [ ] Pipelined stream decryption (decrypt-as-blocks-arrive, io.Pipe)
-- [ ] Pluggable backend interface with B2 S3 implementation
-- [ ] Dual backend paths: direct-to-B2 uploads, Cloudflare-routed downloads
-- [ ] Env var configuration (no config file required)
-- [ ] Cloudflare DNS setup (CNAME + SSL + cache rules)
-- [ ] Metadata cache (LRU, in-memory)
-- [ ] Parquet footer pinning (in-memory, keyed by ETag)
-- [ ] Self-healing canary integrity monitor
-- [ ] Health check endpoints (`/healthz`, `/readyz`, `/armor/canary`)
-- [ ] Multi-stage Dockerfile (build + scratch runtime) + CI build + GHCR publish
+- [x] S3 protocol handler: PutObject, GetObject (full + range), HeadObject, DeleteObject, ListObjectsV2
+- [x] AES-256-CTR encryption with per-block HMAC
+- [x] Envelope encryption (MEK wraps DEK per file) with format versioning (version byte dispatch)
+- [x] Encrypted object format (header + data blocks + HMAC table)
+- [x] Range read translation (plaintext offset → encrypted block offset)
+- [x] Parallel data + HMAC range fetch (errgroup, two concurrent range reads)
+- [x] Pipelined stream decryption (decrypt-as-blocks-arrive, io.Pipe)
+- [x] Pluggable backend interface with B2 S3 implementation
+- [x] Dual backend paths: direct-to-B2 uploads, Cloudflare-routed downloads
+- [x] Env var configuration (no config file required)
+- [ ] Cloudflare DNS setup (CNAME + SSL + cache rules) — operational/deployment task
+- [x] Metadata cache (LRU, in-memory)
+- [x] Parquet footer pinning (in-memory, keyed by ETag)
+- [x] Self-healing canary integrity monitor
+- [x] Health check endpoints (`/healthz`, `/readyz`, `/armor/canary`)
+- [x] Multi-stage Dockerfile (build + scratch runtime) + CI build + GHCR publish
 
 **Validation:** Point DuckDB at ARMOR, upload a Parquet file, run `SELECT` with predicates and column selection, verify only partial data is fetched.
 
-### Phase 2: Production Hardening
+### Phase 2: Production Hardening ✅ COMPLETE
 
 **Goal:** Reliable for continuous use with operational tooling.
 
-- [ ] Multipart upload (CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload)
-- [ ] Multipart state stored in B2 (`.armor/multipart/<upload-id>.state`) for crash recovery
-- [ ] CopyObject (for rename and key rotation)
-- [ ] Key rotation via API endpoint (re-wraps DEKs via CopyObject, progress in `.armor/rotation-state.json`)
-- [ ] DeleteObjects (bulk delete)
-- [ ] ListBuckets, CreateBucket, DeleteBucket, HeadBucket
-- [ ] Cryptographic provenance chain (per-writer branches, `.armor/chain-head/<writer-id>`)
-- [ ] Audit endpoint (`GET /armor/audit`) — walk and verify provenance chains
-- [ ] Graceful shutdown + in-flight request draining
-- [ ] Structured logging (JSON)
-- [ ] Prometheus metrics: request count, latency, bytes transferred, cache hit rate, encryption ops, canary status
-- [ ] Kubernetes manifests (Deployment, Service, Secret)
-- [ ] Integration tests against real B2 + Cloudflare
+- [x] Multipart upload (CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload)
+- [x] Multipart state stored in B2 (`.armor/multipart/<upload-id>.state`) for crash recovery
+- [x] CopyObject (for rename and key rotation)
+- [x] Key rotation via API endpoint (re-wraps DEKs via CopyObject, progress in `.armor/rotation-state.json`)
+- [x] DeleteObjects (bulk delete)
+- [x] ListBuckets, CreateBucket, DeleteBucket, HeadBucket
+- [x] Cryptographic provenance chain (per-writer branches, `.armor/chain-head/<writer-id>`)
+- [x] Audit endpoint (`GET /armor/audit`) — walk and verify provenance chains
+- [x] Graceful shutdown + in-flight request draining
+- [x] Structured logging (JSON)
+- [x] Prometheus metrics: request count, latency, bytes transferred, cache hit rate, encryption ops, canary status
+- [x] Kubernetes manifests (Deployment, Service, Secret)
+- [x] Integration tests against real B2 + Cloudflare
 
-### Phase 3: Advanced Features
+### Phase 3: Advanced Features ✅ COMPLETE
 
 **Goal:** Multi-user, multi-key, full S3 compatibility.
 
-- [ ] Multi-key routing (different MEKs for different prefixes)
-- [ ] Multiple auth credentials with per-key ACLs
-- [ ] ListObjectVersions with per-version decryption
-- [ ] Pre-signed URL proxy (ARMOR-signed URLs that trigger decrypt-on-fetch)
-- [ ] Streaming encryption for very large uploads (>5 GB)
-- [ ] Object Lock / retention passthrough
-- [ ] Lifecycle rule passthrough
-- [ ] Admin API: key management via B2 native API
+- [x] Multi-key routing (different MEKs for different prefixes)
+- [x] Multiple auth credentials with per-key ACLs
+- [x] ListObjectVersions with per-version decryption
+- [x] Pre-signed URL proxy (ARMOR-signed URLs that trigger decrypt-on-fetch)
+- [x] Streaming encryption for very large uploads (>5 GB)
+- [x] Object Lock / retention passthrough
+- [x] Lifecycle rule passthrough
+- [x] Admin API: key management via B2 native API
 - [ ] Web dashboard (optional): bucket browser, encryption status, cache stats
 
 ---
