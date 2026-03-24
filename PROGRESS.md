@@ -210,6 +210,16 @@
   - [x] Per-version metadata retrieval (HeadVersion method)
   - [x] Unit tests for handler
 
+### Completed
+- [x] Admin API: B2 application key management via native API
+  - [x] kurin/blazer dependency for B2 native API
+  - [x] b2keys package with Client wrapper
+  - [x] GET /admin/b2/keys - List B2 application keys
+  - [x] POST /admin/b2/keys - Create new B2 application key
+  - [x] DELETE /admin/b2/keys/{id} - Delete B2 application key
+  - [x] Key capabilities, prefix, and duration support
+  - [x] Unit tests for b2keys package and handlers
+
 ---
 
 ## Documentation Updates

@@ -20,6 +20,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/jedarden/armor/internal/backend"
+	"github.com/jedarden/armor/internal/b2keys"
 	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
@@ -41,6 +42,7 @@ type Server struct {
 	canary      *canary.Monitor
 	provenance  *provenance.Manager
 	presigner   *presign.Signer
+	b2keys      *b2keys.Client // B2 native API key management
 
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
@@ -107,6 +109,22 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create presign signer
 	presigner := presign.NewSigner(cfg.PresignSecret, cfg.PresignBaseURL)
 
+	// Create B2 keys client (for B2 native API key management)
+	// Uses the same B2 credentials as the S3 backend
+	var b2keysClient *b2keys.Client
+	// Extract account ID from the key ID (B2 key IDs are in format accountIdKeyId)
+	// The account ID is the first 12 characters
+	accountID := cfg.B2AccessKeyID
+	if len(accountID) > 12 {
+		accountID = accountID[:12]
+	}
+	b2keysClient, err = b2keys.NewClient(context.Background(), accountID, cfg.B2SecretAccessKey)
+	if err != nil {
+		logger.WithFields(map[string]interface{}{
+			"error": err.Error(),
+		}).Warn("Failed to create B2 keys client - key management disabled")
+	}
+
 	return &Server{
 		config:         cfg,
 		backend:        b2Backend,
@@ -116,6 +134,7 @@ func New(cfg *config.Config) (*Server, error) {
 		canary:         canaryMonitor,
 		provenance:     provenanceMgr,
 		presigner:      presigner,
+		b2keys:         b2keysClient,
 		metrics:        metrics.DefaultMetrics,
 		requestTracker: metrics.DefaultRequestTracker,
 		logger:         logger,
@@ -177,6 +196,8 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
 	mux.HandleFunc("/admin/presign", s.handlePresign)
+	mux.HandleFunc("/admin/b2/keys", s.handleB2Keys)           // GET=List, POST=Create
+	mux.HandleFunc("/admin/b2/keys/", s.handleB2KeyDelete)     // DELETE=Delete by ID
 	mux.HandleFunc("/metrics", s.metrics.Handler())
 
 	return mux
@@ -951,4 +972,124 @@ func parseRangeHeader(header string, totalSize int64) (start, end int64, err err
 	}
 
 	return start, end, nil
+}
+
+// handleB2Keys handles B2 application key management.
+// GET: List keys
+// POST: Create a new key
+func (s *Server) handleB2Keys(w http.ResponseWriter, r *http.Request) {
+	if s.b2keys == nil {
+		http.Error(w, `{"error":"B2 key management not available - check B2 credentials"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.listB2Keys(w, r)
+	case http.MethodPost:
+		s.createB2Key(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// listB2Keys lists B2 application keys.
+func (s *Server) listB2Keys(w http.ResponseWriter, r *http.Request) {
+	count := 100
+	if c := r.URL.Query().Get("count"); c != "" {
+		if parsed, err := strconv.Atoi(c); err == nil && parsed > 0 {
+			count = parsed
+		}
+	}
+	cursor := r.URL.Query().Get("cursor")
+
+	result, err := s.b2keys.ListKeys(r.Context(), count, cursor)
+	if err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"error": err.Error(),
+		}).Error("Failed to list B2 keys")
+		http.Error(w, fmt.Sprintf(`{"error":"Failed to list keys: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+// createB2Key creates a new B2 application key.
+func (s *Server) createB2Key(w http.ResponseWriter, r *http.Request) {
+	var req b2keys.CreateKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"Invalid request body: %v"}`, err), http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" {
+		http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Capabilities) == 0 {
+		http.Error(w, `{"error":"capabilities is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	key, err := s.b2keys.CreateKey(r.Context(), &req)
+	if err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"error": err.Error(),
+			"name":  req.Name,
+		}).Error("Failed to create B2 key")
+		http.Error(w, fmt.Sprintf(`{"error":"Failed to create key: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"key_id": key.ID,
+		"name":   key.Name,
+	}).Info("Created B2 application key")
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(key)
+}
+
+// handleB2KeyDelete handles DELETE /admin/b2/keys/{id}.
+func (s *Server) handleB2KeyDelete(w http.ResponseWriter, r *http.Request) {
+	if s.b2keys == nil {
+		http.Error(w, `{"error":"B2 key management not available - check B2 credentials"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract key ID from path: /admin/b2/keys/{id}
+	keyID := strings.TrimPrefix(r.URL.Path, "/admin/b2/keys/")
+	if keyID == "" || keyID == r.URL.Path {
+		http.Error(w, `{"error":"key ID is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	err := s.b2keys.DeleteKey(r.Context(), keyID)
+	if err != nil {
+		if errors.Is(err, b2keys.ErrKeyNotFound) {
+			http.Error(w, `{"error":"key not found"}`, http.StatusNotFound)
+			return
+		}
+		s.logger.WithFields(map[string]interface{}{
+			"error":  err.Error(),
+			"key_id": keyID,
+		}).Error("Failed to delete B2 key")
+		http.Error(w, fmt.Sprintf(`{"error":"Failed to delete key: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"key_id": keyID,
+	}).Info("Deleted B2 application key")
+
+	w.WriteHeader(http.StatusNoContent)
 }
