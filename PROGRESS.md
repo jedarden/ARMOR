@@ -43,12 +43,20 @@
   - [x] Cross-bucket copy support
   - [x] Metadata directive (COPY/REPLACE)
   - [x] Unit tests
+- [x] DeleteObjects (bulk delete)
+  - [x] XML parsing for delete request
+  - [x] Quiet mode support
+  - [x] Unit tests
+- [x] Bucket operations
+  - [x] ListBuckets
+  - [x] CreateBucket
+  - [x] DeleteBucket
+  - [x] HeadBucket
+  - [x] Unit tests
 
 ### In Progress
 - [ ] Multipart upload support
 - [ ] Key rotation via API endpoint
-- [ ] DeleteObjects (bulk delete)
-- [ ] Bucket operations (ListBuckets, CreateBucket, DeleteBucket, HeadBucket)
 - [ ] Cryptographic provenance chain
 - [ ] Audit endpoint
 - [ ] Graceful shutdown + in-flight request draining

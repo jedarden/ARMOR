@@ -99,12 +99,7 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		if key != "" {
 			h.DeleteObject(w, r, bucket, key)
 		} else if bucket != "" {
-			// Check for delete marker query
-			if r.URL.Query().Get("delete") != "" {
-				h.DeleteObjects(w, r, bucket)
-			} else {
-				h.DeleteBucket(w, r, bucket)
-			}
+			h.DeleteBucket(w, r, bucket)
 		}
 	case http.MethodPost:
 		// Handle multipart upload operations
@@ -118,6 +113,9 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			} else {
 				h.CompleteMultipartUpload(w, r, bucket, key, uploadID)
 			}
+		} else if r.URL.Query().Has("delete") {
+			// DeleteObjects (bulk delete) - uses POST with ?delete query param
+			h.DeleteObjects(w, r, bucket)
 		} else {
 			h.writeError(w, "InvalidRequest", "Unsupported POST operation", 400)
 		}
@@ -934,29 +932,185 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 
 // Stub implementations for other operations
 
+// HeadBucket handles S3 HeadBucket.
 func (h *Handlers) HeadBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	// TODO: Implement
+	ctx := r.Context()
+
+	if err := h.backend.HeadBucket(ctx, bucket); err != nil {
+		h.writeError(w, "NoSuchBucket", fmt.Sprintf("Bucket not found: %v", err), 404)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
+// CreateBucket handles S3 CreateBucket.
 func (h *Handlers) CreateBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	// TODO: Implement
-	h.writeError(w, "NotImplemented", "CreateBucket not implemented", 501)
+	ctx := r.Context()
+
+	if err := h.backend.CreateBucket(ctx, bucket); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create bucket: %v", err), 500)
+		return
+	}
+
+	w.Header().Set("Location", "/"+bucket)
+	w.WriteHeader(http.StatusOK)
 }
 
+// DeleteBucket handles S3 DeleteBucket.
 func (h *Handlers) DeleteBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	// TODO: Implement
-	h.writeError(w, "NotImplemented", "DeleteBucket not implemented", 501)
+	ctx := r.Context()
+
+	if err := h.backend.DeleteBucket(ctx, bucket); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to delete bucket: %v", err), 500)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
+// DeleteObjects handles S3 DeleteObjects (bulk delete).
+// The request body contains XML with a list of objects to delete.
 func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket string) {
-	// TODO: Implement
-	h.writeError(w, "NotImplemented", "DeleteObjects not implemented", 501)
+	ctx := r.Context()
+
+	// Parse the DeleteObjects request XML
+	type Object struct {
+		Key string `xml:"Key"`
+	}
+
+	type DeleteRequest struct {
+		XMLName xml.Name `xml:"Delete"`
+		Objects []Object `xml:"Object"`
+		Quiet   bool     `xml:"Quiet"`
+	}
+
+	var deleteReq DeleteRequest
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		return
+	}
+
+	if err := xml.Unmarshal(body, &deleteReq); err != nil {
+		h.writeError(w, "MalformedXML", fmt.Sprintf("Failed to parse XML: %v", err), 400)
+		return
+	}
+
+	if len(deleteReq.Objects) == 0 {
+		h.writeError(w, "MalformedXML", "No objects specified for deletion", 400)
+		return
+	}
+
+	// Extract keys
+	keys := make([]string, len(deleteReq.Objects))
+	for i, obj := range deleteReq.Objects {
+		keys[i] = obj.Key
+	}
+
+	// Perform bulk delete
+	if err := h.backend.DeleteObjects(ctx, bucket, keys); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("DeleteObjects failed: %v", err), 500)
+		return
+	}
+
+	// Invalidate cache for deleted objects
+	for _, key := range keys {
+		h.cache.Delete(bucket, key)
+		h.footerCache.Delete(bucket, key)
+	}
+
+	// Build response XML
+	type DeletedObject struct {
+		Key string `xml:"Key"`
+	}
+
+	type DeleteResult struct {
+		XMLName xml.Name        `xml:"DeleteResult"`
+		Xmlns   string          `xml:"xmlns,attr"`
+		Deleted []DeletedObject `xml:"Deleted"`
+		Error   []struct {
+			Key     string `xml:"Key"`
+			Code    string `xml:"Code"`
+			Message string `xml:"Message"`
+		} `xml:"Error"`
+	}
+
+	result := DeleteResult{
+		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+	}
+
+	// If not quiet mode, include all deleted keys
+	if !deleteReq.Quiet {
+		for _, key := range keys {
+			result.Deleted = append(result.Deleted, DeletedObject{Key: key})
+		}
+	}
+
+	output, err := xml.Marshal(result)
+	if err != nil {
+		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
+	w.Write(output)
 }
 
+// ListBuckets handles S3 ListBuckets.
 func (h *Handlers) ListBuckets(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
-	h.writeError(w, "NotImplemented", "ListBuckets not implemented", 501)
+	ctx := r.Context()
+
+	buckets, err := h.backend.ListBuckets(ctx)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list buckets: %v", err), 500)
+		return
+	}
+
+	// Build XML response
+	type Bucket struct {
+		Name         string `xml:"Name"`
+		CreationDate string `xml:"CreationDate"`
+	}
+
+	type ListAllMyBucketsResult struct {
+		XMLName xml.Name `xml:"ListAllMyBucketsResult"`
+		Xmlns   string   `xml:"xmlns,attr"`
+		Owner   struct {
+			ID          string `xml:"ID"`
+			DisplayName string `xml:"DisplayName"`
+		} `xml:"Owner"`
+		Buckets struct {
+			Bucket []Bucket `xml:"Bucket"`
+		} `xml:"Buckets"`
+	}
+
+	result := ListAllMyBucketsResult{
+		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+	}
+	result.Owner.ID = "armor"
+	result.Owner.DisplayName = "ARMOR"
+
+	for _, b := range buckets {
+		result.Buckets.Bucket = append(result.Buckets.Bucket, Bucket{
+			Name:         b.Name,
+			CreationDate: b.CreationDate.UTC().Format(time.RFC3339),
+		})
+	}
+
+	output, err := xml.Marshal(result)
+	if err != nil {
+		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
+	w.Write(output)
 }
 
 func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
