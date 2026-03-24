@@ -79,6 +79,17 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	// Route based on method and path
 	switch r.Method {
 	case http.MethodGet:
+		// Handle ListMultipartUploads (GET ?uploads on bucket, no key)
+		if r.URL.Query().Has("uploads") && key == "" && bucket != "" {
+			h.ListMultipartUploads(w, r, bucket)
+			return
+		}
+		// Handle ListParts (GET ?uploadId on object)
+		if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" && key != "" {
+			h.ListParts(w, r, bucket, key, uploadID)
+			return
+		}
+		// Regular Get operations
 		if key != "" {
 			h.GetObject(w, r, bucket, key)
 		} else if bucket != "" {
@@ -109,6 +120,11 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			h.HeadBucket(w, r, bucket)
 		}
 	case http.MethodDelete:
+		// Handle AbortMultipartUpload (DELETE ?uploadId on object)
+		if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" && key != "" {
+			h.AbortMultipartUpload(w, r, bucket, key, uploadID)
+			return
+		}
 		if key != "" {
 			h.DeleteObject(w, r, bucket, key)
 		} else if bucket != "" {
@@ -116,9 +132,8 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 	case http.MethodPost:
 		// Handle multipart upload operations
-		uploads := r.URL.Query().Get("uploads")
 		uploadID := r.URL.Query().Get("uploadId")
-		if uploads != "" {
+		if r.URL.Query().Has("uploads") {
 			h.CreateMultipartUpload(w, r, bucket, key)
 		} else if uploadID != "" {
 			if r.URL.Query().Get("partNumber") != "" {
@@ -1474,6 +1489,190 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	}
 
 	output, err := xml.Marshal(result)
+	if err != nil {
+		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
+	w.Write(output)
+}
+
+// AbortMultipartUpload handles S3 AbortMultipartUpload.
+// It deletes the multipart state and forwards the abort to B2.
+func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
+	ctx := r.Context()
+
+	// Load multipart state to verify it exists
+	manager := backend.NewMultipartStateManager(h.backend, bucket)
+	state, err := manager.LoadState(ctx, uploadID)
+	if err != nil {
+		h.writeError(w, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+		return
+	}
+
+	// Verify bucket and key match
+	if state.Bucket != bucket || state.Key != key {
+		h.writeError(w, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
+		return
+	}
+
+	// Forward abort to B2
+	if err := h.backend.AbortMultipartUpload(ctx, bucket, key, uploadID); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to abort multipart upload: %v", err), 500)
+		return
+	}
+
+	// Clean up multipart state
+	manager.DeleteState(ctx, uploadID)
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListParts handles S3 ListParts operation.
+// It forwards to B2 and adjusts part sizes to plaintext sizes.
+func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
+	ctx := r.Context()
+
+	// Load multipart state to get plaintext sizes
+	manager := backend.NewMultipartStateManager(h.backend, bucket)
+	state, err := manager.LoadState(ctx, uploadID)
+	if err != nil {
+		h.writeError(w, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+		return
+	}
+
+	// Verify bucket and key match
+	if state.Bucket != bucket || state.Key != key {
+		h.writeError(w, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
+		return
+	}
+
+	// Forward to B2
+	result, err := h.backend.ListParts(ctx, bucket, key, uploadID)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list parts: %v", err), 500)
+		return
+	}
+
+	// Build XML response with plaintext sizes
+	type Part struct {
+		PartNumber   int    `xml:"PartNumber"`
+		ETag         string `xml:"ETag"`
+		Size         int64  `xml:"Size"`
+		LastModified string `xml:"LastModified"`
+	}
+
+	type ListPartsResult struct {
+		XMLName              xml.Name `xml:"ListPartsResult"`
+		Xmlns                string   `xml:"xmlns,attr"`
+		Bucket               string   `xml:"Bucket"`
+		Key                  string   `xml:"Key"`
+		UploadID             string   `xml:"UploadId"`
+		StorageClass         string   `xml:"StorageClass"`
+		PartNumberMarker     int      `xml:"PartNumberMarker"`
+		NextPartNumberMarker int      `xml:"NextPartNumberMarker"`
+		MaxParts             int      `xml:"MaxParts"`
+		IsTruncated          bool     `xml:"IsTruncated"`
+		Parts                []Part   `xml:"Part"`
+	}
+
+	resp := ListPartsResult{
+		Xmlns:                "http://s3.amazonaws.com/doc/2006-03-01/",
+		Bucket:               bucket,
+		Key:                  key,
+		UploadID:             uploadID,
+		StorageClass:         "STANDARD",
+		PartNumberMarker:     result.NextPartNumberMarker,
+		NextPartNumberMarker: result.NextPartNumberMarker,
+		IsTruncated:          result.IsTruncated,
+	}
+
+	for _, part := range result.Parts {
+		// Use plaintext size from state if available, otherwise use reported size
+		plaintextSize := part.Size
+		if size, ok := state.PartSizes[int(part.PartNumber)]; ok {
+			plaintextSize = size
+		}
+
+		resp.Parts = append(resp.Parts, Part{
+			PartNumber:   int(part.PartNumber),
+			ETag:         part.ETag,
+			Size:         plaintextSize,
+			LastModified: part.LastModified.UTC().Format(http.TimeFormat),
+		})
+	}
+
+	output, err := xml.Marshal(resp)
+	if err != nil {
+		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
+	w.Write(output)
+}
+
+// ListMultipartUploads handles S3 ListMultipartUploads operation.
+// It forwards directly to B2 (passthrough operation).
+func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+
+	result, err := h.backend.ListMultipartUploads(ctx, bucket)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list multipart uploads: %v", err), 500)
+		return
+	}
+
+	// Build XML response
+	type Upload struct {
+		Key          string `xml:"Key"`
+		UploadID     string `xml:"UploadId"`
+		Initiator    string `xml:"Initiator>ID"`
+		Owner        string `xml:"Owner>ID"`
+		StorageClass string `xml:"StorageClass"`
+		Initiated    string `xml:"Initiated"`
+	}
+
+	type ListMultipartUploadsResult struct {
+		XMLName            xml.Name `xml:"ListMultipartUploadsResult"`
+		Xmlns              string   `xml:"xmlns,attr"`
+		Bucket             string   `xml:"Bucket"`
+		KeyMarker          string   `xml:"KeyMarker"`
+		UploadIDMarker     string   `xml:"UploadIdMarker"`
+		NextKeyMarker      string   `xml:"NextKeyMarker"`
+		NextUploadIDMarker string   `xml:"NextUploadIdMarker"`
+		MaxUploads         int      `xml:"MaxUploads"`
+		IsTruncated        bool     `xml:"IsTruncated"`
+		Uploads            []Upload `xml:"Upload"`
+	}
+
+	resp := ListMultipartUploadsResult{
+		Xmlns:              "http://s3.amazonaws.com/doc/2006-03-01/",
+		Bucket:             bucket,
+		KeyMarker:          r.URL.Query().Get("key-marker"),
+		UploadIDMarker:     r.URL.Query().Get("upload-id-marker"),
+		NextKeyMarker:      result.NextKeyMarker,
+		NextUploadIDMarker: result.NextUploadIDMarker,
+		IsTruncated:        result.IsTruncated,
+	}
+
+	for _, upload := range result.Uploads {
+		resp.Uploads = append(resp.Uploads, Upload{
+			Key:          upload.Key,
+			UploadID:     upload.UploadID,
+			Initiator:    "armor",
+			Owner:        "armor",
+			StorageClass: "STANDARD",
+			Initiated:    upload.Initiated.UTC().Format(time.RFC3339),
+		})
+	}
+
+	output, err := xml.Marshal(resp)
 	if err != nil {
 		h.writeError(w, "InternalError", "Failed to marshal response", 500)
 		return
