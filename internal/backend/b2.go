@@ -241,11 +241,11 @@ func (b *B2Backend) List(ctx context.Context, bucket, prefix, delimiter, continu
 	return result, nil
 }
 
-// Copy copies an object in B2.
-func (b *B2Backend) Copy(ctx context.Context, bucket, srcKey, dstKey string, meta map[string]string, replaceMetadata bool) error {
+// Copy copies an object in B2, supporting cross-bucket copy.
+func (b *B2Backend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
 	input := &s3.CopyObjectInput{
-		Bucket:     aws.String(bucket),
-		CopySource: aws.String(bucket + "/" + srcKey),
+		Bucket:     aws.String(dstBucket),
+		CopySource: aws.String(srcBucket + "/" + srcKey),
 		Key:        aws.String(dstKey),
 	}
 

@@ -130,12 +130,12 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 	return &backend.ListResult{Objects: objects}, nil
 }
 
-func (m *mockBackend) Copy(ctx context.Context, bucket, srcKey, dstKey string, meta map[string]string, replaceMetadata bool) error {
+func (m *mockBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	src := bucket + "/" + srcKey
-	dst := bucket + "/" + dstKey
+	src := srcBucket + "/" + srcKey
+	dst := dstBucket + "/" + dstKey
 	data, ok := m.objects[src]
 	if !ok {
 		return fmt.Errorf("source object not found: %s", srcKey)

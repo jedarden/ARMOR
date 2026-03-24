@@ -37,8 +37,15 @@
 
 ## Phase 2: Production Hardening
 
+### Completed
+- [x] CopyObject (for rename and key rotation)
+  - [x] DEK re-wrapping on copy (enables key rotation)
+  - [x] Cross-bucket copy support
+  - [x] Metadata directive (COPY/REPLACE)
+  - [x] Unit tests
+
+### In Progress
 - [ ] Multipart upload support
-- [ ] CopyObject (for rename and key rotation)
 - [ ] Key rotation via API endpoint
 - [ ] DeleteObjects (bulk delete)
 - [ ] Bucket operations (ListBuckets, CreateBucket, DeleteBucket, HeadBucket)
