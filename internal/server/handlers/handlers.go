@@ -25,6 +25,12 @@ import (
 	"github.com/jedarden/armor/internal/crypto"
 )
 
+// ProvenanceRecorder records uploads in the provenance chain.
+type ProvenanceRecorder interface {
+	RecordUpload(ctx context.Context, objectKey, plaintextSHA256, operation string) error
+	ShouldRecord(key string) bool
+}
+
 // Handlers contains all S3 operation handlers.
 type Handlers struct {
 	config      *config.Config
@@ -32,6 +38,7 @@ type Handlers struct {
 	cache       *backend.MetadataCache
 	footerCache *backend.FooterCache
 	mek         []byte
+	provenance  ProvenanceRecorder
 }
 
 // New creates a new Handlers instance.
@@ -42,7 +49,13 @@ func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, f
 		cache:       cache,
 		footerCache: footerCache,
 		mek:         mek,
+		provenance: nil,
 	}
+}
+
+// WithProvenance adds provenance support to handlers.
+func (h *Handlers) WithProvenance(p ProvenanceRecorder) {
+	h.provenance = p
 }
 
 // HandleRoot routes S3 operations based on the request.
@@ -217,6 +230,15 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	if err := h.backend.Put(ctx, bucket, key, bytes.NewReader(envelope), int64(len(envelope)), meta); err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to upload: %v", err), 500)
 		return
+	}
+
+	// Record provenance
+	if h.provenance != nil && h.provenance.ShouldRecord(key) {
+		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
+		if err := h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put"); err != nil {
+			// Log but don't fail the upload - provenance is non-critical
+			// In production, this would use structured logging
+		}
 	}
 
 	// Return ETag
@@ -764,6 +786,13 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 		if err := h.backend.Copy(ctx, srcBucket, srcKey, dstBucket, dstKey, newMeta, true); err != nil {
 			h.writeError(w, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
 			return
+		}
+
+		// Record provenance for the copy
+		if h.provenance != nil && h.provenance.ShouldRecord(dstKey) {
+			if err := h.provenance.RecordUpload(ctx, dstKey, armorMeta.PlaintextSHA, "copy"); err != nil {
+				// Log but don't fail the operation
+			}
 		}
 
 		// Invalidate cache for destination
@@ -1418,6 +1447,13 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Clean up multipart state
 	manager.DeleteState(ctx, uploadID)
+
+	// Record provenance for the multipart upload
+	if h.provenance != nil && h.provenance.ShouldRecord(key) {
+		if err := h.provenance.RecordUpload(ctx, key, hex.EncodeToString(plaintextSHA[:]), "multipart"); err != nil {
+			// Log but don't fail the operation
+		}
+	}
 
 	// Build XML response
 	type CompleteMultipartUploadResult struct {

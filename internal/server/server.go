@@ -15,6 +15,7 @@ import (
 	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/provenance"
 	"github.com/jedarden/armor/internal/server/handlers"
 )
 
@@ -26,6 +27,7 @@ type Server struct {
 	footerCache *backend.FooterCache
 	mek         []byte
 	canary      *canary.Monitor
+	provenance  *provenance.Manager
 
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
@@ -64,6 +66,9 @@ func New(cfg *config.Config) (*Server, error) {
 		RetryDelay: 10 * time.Second,
 	})
 
+	// Create provenance manager
+	provenanceMgr := provenance.NewManager(b2Backend, cfg.Bucket, cfg.WriterID)
+
 	return &Server{
 		config:      cfg,
 		backend:     b2Backend,
@@ -71,6 +76,7 @@ func New(cfg *config.Config) (*Server, error) {
 		footerCache: footerCache,
 		mek:         cfg.MEK,
 		canary:      canaryMonitor,
+		provenance:  provenanceMgr,
 	}, nil
 }
 
@@ -103,6 +109,11 @@ func (s *Server) Handler() http.Handler {
 
 	// S3 operations
 	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.mek)
+
+	// Wire up provenance if available
+	if s.provenance != nil {
+		h.WithProvenance(s.provenance)
+	}
 
 	// Bucket operations
 	mux.HandleFunc("/", s.wrapHandler(h.HandleRoot))
@@ -292,8 +303,21 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement provenance chain audit
-	http.Error(w, "Not implemented", http.StatusNotImplemented)
+	// Create auditor and perform audit
+	auditor := provenance.NewAuditor(s.backend, s.config.Bucket)
+	result, err := auditor.Audit(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(result)
 }
 
 // wrapHandler wraps a handler with common middleware.
