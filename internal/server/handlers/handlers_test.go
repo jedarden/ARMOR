@@ -583,6 +583,10 @@ func TestETagConsistency(t *testing.T) {
 }
 
 // TestHMACVerification ensures HMAC verification catches tampering
+// With streaming decryption, the HTTP status is written before all blocks are verified.
+// Tampering is detected during streaming, which will cause the body to be incomplete.
+// The httptest.ResponseRecorder doesn't capture streaming errors, so we verify
+// that the body content is incomplete or corrupted rather than checking status code.
 func TestHMACVerification(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
 	h := handlers.New(cfg, mb, cache, footerCache, mek)
@@ -604,14 +608,22 @@ func TestHMACVerification(t *testing.T) {
 	mb.mu.Unlock()
 
 	// GET should fail integrity check
+	// With streaming, the status is written before HMAC verification completes.
+	// The verification error will cause incomplete/corrupted body content.
 	req = httptest.NewRequest(http.MethodGet, "/test-bucket/verify-test", nil)
 	w = httptest.NewRecorder()
 	h.HandleRoot(w, req)
 
-	// Should get an error (500 or other)
-	if w.Code == http.StatusOK {
-		t.Error("expected error for tampered data, got success")
+	// Verify the response is not the original plaintext (tampering detected)
+	// Either the body is empty/incomplete, or it's corrupted
+	if bytes.Equal(w.Body.Bytes(), plaintext) {
+		t.Error("expected corrupted/incomplete data for tampered object, got original plaintext")
 	}
+
+	// For range requests, we still get 500 because HMAC is verified before streaming
+	// But for full downloads with streaming, we may get 200 with incomplete body
+	// This is expected behavior - streaming provides lower latency at the cost of
+	// potentially incomplete responses on integrity failure
 }
 
 // TestRangeSuffixRequest tests suffix range requests (e.g., "bytes=-100")
@@ -643,5 +655,103 @@ func TestRangeSuffixRequest(t *testing.T) {
 	expected := plaintext[len(plaintext)-100:]
 	if !bytes.Equal(w.Body.Bytes(), expected) {
 		t.Error("suffix range content mismatch")
+	}
+}
+
+// TestStreamingDecryption verifies that pipelined streaming decryption works correctly
+// for multi-block files. This exercises the io.Pipe based streaming path.
+func TestStreamingDecryption(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create a file spanning multiple blocks (64KB each)
+	// Using 3 blocks worth of data
+	blockSize := cfg.BlockSize
+	plaintext := make([]byte, blockSize*3-1000) // Not aligned to block boundary
+	for i := range plaintext {
+		plaintext[i] = byte(i % 256)
+	}
+
+	// Upload
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/streaming-test", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: status %d", w.Code)
+	}
+
+	// Download with full streaming (no Range header)
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/streaming-test", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GET failed: status %d", w.Code)
+	}
+
+	// Verify streaming header is present
+	if w.Header().Get("X-Armor-Stream") != "pipelined" {
+		t.Error("expected X-Armor-Stream: pipelined header")
+	}
+
+	// Verify content matches exactly
+	if !bytes.Equal(w.Body.Bytes(), plaintext) {
+		t.Errorf("streaming content mismatch: got %d bytes, want %d bytes",
+			len(w.Body.Bytes()), len(plaintext))
+	}
+
+	// Verify Accept-Ranges header
+	if w.Header().Get("Accept-Ranges") != "bytes" {
+		t.Error("expected Accept-Ranges: bytes header")
+	}
+}
+
+// TestStreamingDecryptionVariousSizes tests streaming with different file sizes
+func TestStreamingDecryptionVariousSizes(t *testing.T) {
+	sizes := []int{
+		100,           // Tiny
+		4096,          // One 4KB page
+		65535,         // Just under one block
+		65536,         // Exactly one block
+		65537,         // Just over one block
+		131072,        // Two blocks
+		1000000,       // ~1MB
+	}
+
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
+			cfg, mb, cache, footerCache, mek := testSetup(t)
+			h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+			plaintext := make([]byte, size)
+			for i := range plaintext {
+				plaintext[i] = byte(i % 256)
+			}
+
+			key := fmt.Sprintf("streaming-test-%d", size)
+			req := httptest.NewRequest(http.MethodPut, "/test-bucket/"+key, bytes.NewReader(plaintext))
+			req.Header.Set("Content-Type", "application/octet-stream")
+			w := httptest.NewRecorder()
+			h.HandleRoot(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("PUT failed: status %d", w.Code)
+			}
+
+			req = httptest.NewRequest(http.MethodGet, "/test-bucket/"+key, nil)
+			w = httptest.NewRecorder()
+			h.HandleRoot(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("GET failed: status %d", w.Code)
+			}
+
+			if !bytes.Equal(w.Body.Bytes(), plaintext) {
+				t.Errorf("content mismatch for size %d: got %d bytes, want %d",
+					size, len(w.Body.Bytes()), size)
+			}
+		})
 	}
 }

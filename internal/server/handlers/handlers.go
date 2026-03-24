@@ -4,6 +4,10 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -273,66 +277,156 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	// Full object download
-	// Calculate encrypted size and fetch envelope
-	encSize := crypto.FullObjectSize(plaintextSize, armorMeta.BlockSize)
+	// Full object download with pipelined stream decryption
+	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize)
+}
 
-	// Fetch entire envelope
-	body, err := h.backend.GetRange(ctx, bucket, key, 0, encSize)
+// handleFullObjectStream handles full object downloads with pipelined stream decryption.
+// This uses io.Pipe to decrypt blocks as they stream from Cloudflare, reducing
+// time-to-first-byte and memory usage compared to buffering the entire envelope.
+func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64) {
+	ctx := r.Context()
+
+	blockSize := armorMeta.BlockSize
+	blockCount := int(crypto.ComputeBlockCount(plaintextSize, blockSize))
+
+	// Calculate offsets
+	hmacTableOffset := crypto.HeaderSize + plaintextSize
+	hmacTableSize := int64(blockCount) * crypto.HMACSize
+	dataSize := plaintextSize
+
+	// 1. Prefetch HMAC table (small range read)
+	hmacBody, err := h.backend.GetRange(ctx, bucket, key, hmacTableOffset, hmacTableSize)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object: %v", err), 500)
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
 		return
 	}
-	defer body.Close()
-
-	// Read envelope
-	envelope, err := io.ReadAll(body)
+	hmacTable, err := io.ReadAll(hmacBody)
+	hmacBody.Close()
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read envelope: %v", err), 500)
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
 		return
 	}
 
-	// Parse header
-	header, err := crypto.DecodeHeader(envelope)
+	// 2. Start streaming data from Cloudflare (header + encrypted blocks, stop before HMAC)
+	streamSize := crypto.HeaderSize + dataSize
+	dataBody, err := h.backend.GetRange(ctx, bucket, key, 0, streamSize)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+		return
+	}
+	defer dataBody.Close()
+
+	// 3. Read and discard the 64-byte header
+	headerBuf := make([]byte, crypto.HeaderSize)
+	if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+		return
+	}
+
+	// Parse header to get plaintext SHA for verification
+	header, err := crypto.DecodeHeader(headerBuf)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
 		return
 	}
 
-	// Extract encrypted blocks and HMAC table
-	dataStart := crypto.HeaderSize
-	dataEnd := dataStart + int(plaintextSize)
-	hmacStart := int(header.HMACTableOffset())
-	hmacEnd := hmacStart + int(header.BlockCount())*crypto.HMACSize
-
-	if hmacEnd > len(envelope) {
-		h.writeError(w, "InternalError", "Envelope too short for HMAC table", 500)
-		return
-	}
-
-	encryptedBlocks := envelope[dataStart:dataEnd]
-	hmacTable := envelope[hmacStart:hmacEnd]
-
-	// Decrypt
-	plaintext, err := decryptor.Decrypt(encryptedBlocks, hmacTable)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to decrypt: %v", err), 500)
-		return
-	}
-
-	// Verify plaintext SHA
-	if err := header.VerifyPlaintextSHA(plaintext); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Integrity check failed: %v", err), 500)
-		return
-	}
-
-	// Set response headers
+	// 4. Set response headers before streaming
 	w.Header().Set("Content-Length", strconv.FormatInt(plaintextSize, 10))
 	w.Header().Set("Content-Type", armorMeta.ContentType)
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
 	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("X-Armor-Stream", "pipelined")
 	w.WriteHeader(http.StatusOK)
-	w.Write(plaintext)
+
+	// 5. Stream decrypt using io.Pipe
+	pr, pw := io.Pipe()
+
+	// Start decryption goroutine
+	go func() {
+		defer pw.Close()
+
+		plaintextHash := sha256.New()
+		encryptedBuf := make([]byte, blockSize)
+
+		for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
+			// Calculate actual block size (last block may be smaller)
+			remaining := plaintextSize - int64(blockIndex)*int64(blockSize)
+			actualBlockSize := int(min64(int64(blockSize), remaining))
+
+			// Read encrypted block
+			encryptedBuf = encryptedBuf[:actualBlockSize]
+			n, err := io.ReadFull(dataBody, encryptedBuf)
+			if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+				pw.CloseWithError(fmt.Errorf("read error at block %d: %w", blockIndex, err))
+				return
+			}
+			if n == 0 {
+				break
+			}
+			encryptedBuf = encryptedBuf[:n]
+
+			// Verify HMAC
+			hmacOffset := blockIndex * crypto.HMACSize
+			if hmacOffset+crypto.HMACSize > len(hmacTable) {
+				pw.CloseWithError(fmt.Errorf("HMAC table too short at block %d", blockIndex))
+				return
+			}
+			expectedHMAC := hmacTable[hmacOffset : hmacOffset+crypto.HMACSize]
+
+			mac := hmac.New(sha256.New, decryptor.HMACKey())
+			indexBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(indexBytes, uint32(blockIndex))
+			mac.Write(indexBytes)
+			mac.Write(encryptedBuf)
+			computed := mac.Sum(nil)
+
+			if !hmac.Equal(computed, expectedHMAC) {
+				pw.CloseWithError(fmt.Errorf("block %d: HMAC verification failed", blockIndex))
+				return
+			}
+
+			// Decrypt block (need to use CTR stream)
+			decrypted := make([]byte, n)
+			ctr := makeCounter(armorMeta.IV, uint32(blockIndex))
+			stream := cipher.NewCTR(decryptor.CipherBlock(), ctr)
+			stream.XORKeyStream(decrypted, encryptedBuf)
+
+			// Update plaintext hash for verification
+			plaintextHash.Write(decrypted)
+
+			// Write plaintext to pipe
+			if _, err := pw.Write(decrypted); err != nil {
+				pw.CloseWithError(fmt.Errorf("write error at block %d: %w", blockIndex, err))
+				return
+			}
+		}
+
+		// Verify plaintext SHA-256
+		computedSHA := plaintextHash.Sum(nil)
+		if !bytes.Equal(computedSHA, header.PlaintextSHA[:]) {
+			pw.CloseWithError(fmt.Errorf("plaintext SHA-256 mismatch"))
+			return
+		}
+	}()
+
+	// Stream plaintext to client
+	io.Copy(w, pr)
+}
+
+// makeCounter creates a 16-byte counter value from the IV and block index.
+func makeCounter(iv []byte, blockIndex uint32) []byte {
+	counter := make([]byte, 16)
+	copy(counter[0:12], iv[0:12])
+	binary.BigEndian.PutUint32(counter[12:16], blockIndex)
+	return counter
+}
+
+func min64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // handleRangeRequest handles range read requests.
