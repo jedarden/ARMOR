@@ -73,12 +73,17 @@ func (m *mockRotationBackend) Get(ctx context.Context, bucket, key string) (io.R
 }
 
 func (m *mockRotationBackend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
+	body, _, err := m.GetRangeWithHeaders(ctx, bucket, key, offset, length)
+	return body, err
+}
+
+func (m *mockRotationBackend) GetRangeWithHeaders(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, map[string]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	obj, ok := m.objects[bucket+"/"+key]
 	if !ok {
-		return nil, fmt.Errorf("object not found")
+		return nil, nil, fmt.Errorf("object not found")
 	}
 
 	end := offset + length
@@ -86,7 +91,8 @@ func (m *mockRotationBackend) GetRange(ctx context.Context, bucket, key string, 
 		end = int64(len(obj.data))
 	}
 
-	return io.NopCloser(bytes.NewReader(obj.data[offset:end])), nil
+	// Mock doesn't simulate CF caching, so return empty headers
+	return io.NopCloser(bytes.NewReader(obj.data[offset:end])), make(map[string]string), nil
 }
 
 func (m *mockRotationBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {

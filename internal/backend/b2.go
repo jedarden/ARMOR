@@ -102,12 +102,18 @@ func (b *B2Backend) Get(ctx context.Context, bucket, key string) (io.ReadCloser,
 
 // GetRange retrieves a byte range from an object via Cloudflare.
 func (b *B2Backend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
+	body, _, err := b.GetRangeWithHeaders(ctx, bucket, key, offset, length)
+	return body, err
+}
+
+// GetRangeWithHeaders retrieves a byte range from an object via Cloudflare along with response headers.
+func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, map[string]string, error) {
 	// Construct Cloudflare download URL
 	cfURL := fmt.Sprintf("https://%s/file/%s/%s", b.cfDomain, bucket, url.PathEscape(key))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", cfURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set Range header
@@ -115,15 +121,27 @@ func (b *B2Backend) GetRange(ctx context.Context, bucket, key string, offset, le
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Cloudflare request failed: %w", err)
+		return nil, nil, fmt.Errorf("Cloudflare request failed: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		resp.Body.Close()
-		return nil, fmt.Errorf("Cloudflare returned status %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("Cloudflare returned status %d", resp.StatusCode)
 	}
 
-	return resp.Body, nil
+	// Extract relevant headers
+	headers := make(map[string]string)
+	if cfStatus := resp.Header.Get("CF-Cache-Status"); cfStatus != "" {
+		headers["CF-Cache-Status"] = cfStatus
+	}
+	if cfRay := resp.Header.Get("CF-Ray"); cfRay != "" {
+		headers["CF-Ray"] = cfRay
+	}
+	if age := resp.Header.Get("Age"); age != "" {
+		headers["Age"] = age
+	}
+
+	return resp.Body, headers, nil
 }
 
 // Head retrieves object metadata without the body.
