@@ -117,8 +117,23 @@
   - [x] Applied to GetObject and HeadObject handlers
   - [x] Unit tests for all conditional request scenarios
 
-### Remaining
-- [ ] Integration tests against real B2 + Cloudflare
+### Completed
+- [x] Integration tests against real B2 + Cloudflare
+  - [x] Integration test framework (tests/integration/)
+  - [x] PutObject/GetObject roundtrip test
+  - [x] Range read tests
+  - [x] HeadObject plaintext size test
+  - [x] ListObjectsV2 size correction test
+  - [x] DeleteObject test
+  - [x] CopyObject test
+  - [x] Multipart upload test
+  - [x] Large file streaming test
+  - [x] Conditional request tests
+  - [x] Pre-signed URL test
+  - [x] Health endpoint tests
+  - [x] Canary endpoint test
+  - [x] Direct B2 download test (verifies encryption)
+  - [x] README with setup instructions
 
 ## Phase 3: Advanced Features
 
@@ -185,4 +200,4 @@
   - [x] Unit tests for object lock handlers (6 new tests)
 
 ### Remaining
-- [ ] Integration tests against real B2 + Cloudflare
+- (All Phase 3 features completed)
