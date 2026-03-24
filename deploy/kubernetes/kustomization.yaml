@@ -1,0 +1,25 @@
+# Kustomization for ARMOR Kubernetes deployment
+#
+# Usage:
+#   1. Copy secret.yaml.example to secret.yaml and fill in your values
+#   2. Deploy: kubectl apply -k .
+#
+# Or with a kustomize overlay:
+#   kubectl apply -k overlays/production/
+#
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- secret.yaml
+- deployment.yaml
+- service.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: armor
+  app.kubernetes.io/component: s3-proxy
+  app.kubernetes.io/part-of: armor
+
+# Namespace (uncomment to deploy to a specific namespace)
+# namespace: armor

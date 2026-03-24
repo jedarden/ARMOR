@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: armor
+  labels:
+    app: armor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: armor
+  template:
+    metadata:
+      labels:
+        app: armor
+    spec:
+      containers:
+      - name: armor
+        image: ghcr.io/jedarden/armor:latest
+        imagePullPolicy: Always
+        ports:
+        - name: s3-api
+          containerPort: 9000
+        - name: admin-api
+          containerPort: 9001
+        env:
+        # Required B2 configuration
+        - name: ARMOR_B2_REGION
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: b2-region
+        - name: ARMOR_B2_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: b2-access-key-id
+        - name: ARMOR_B2_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: b2-secret-access-key
+        # Bucket configuration
+        - name: ARMOR_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: bucket
+        # Cloudflare domain for free egress downloads
+        - name: ARMOR_CF_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: cf-domain
+        # Master encryption key
+        - name: ARMOR_MEK
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: master-encryption-key
+        # Authentication credentials for clients
+        - name: ARMOR_AUTH_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: auth-access-key
+        - name: ARMOR_AUTH_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: auth-secret-key
+        # Optional configuration with defaults
+        - name: ARMOR_LISTEN
+          value: "0.0.0.0:9000"
+        - name: ARMOR_ADMIN_LISTEN
+          value: "0.0.0.0:9001"
+        - name: ARMOR_BLOCK_SIZE
+          value: "65536"
+        - name: ARMOR_WRITER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        # Cache configuration
+        - name: ARMOR_CACHE_MAX_ENTRIES
+          value: "10000"
+        - name: ARMOR_CACHE_TTL
+          value: "300"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9000
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts: []
+      volumes: []
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
