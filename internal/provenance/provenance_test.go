@@ -231,6 +231,10 @@ func (m *mockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, de
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (m *mockBackend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*backend.ObjectInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func TestShouldRecord(t *testing.T) {
 	m := NewManager(nil, "test-bucket", "test-writer")
 

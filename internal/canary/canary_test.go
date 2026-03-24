@@ -291,6 +291,10 @@ func (m *mockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, de
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (m *mockBackend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*backend.ObjectInfo, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 // TestNewMonitor tests Monitor creation.
 func TestNewMonitor(t *testing.T) {
 	mek := make([]byte, 32)

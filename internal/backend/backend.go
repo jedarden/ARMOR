@@ -137,6 +137,9 @@ type Backend interface {
 
 	// ListObjectVersions lists all versions of objects in a bucket.
 	ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*ListObjectVersionsResult, error)
+
+	// HeadVersion retrieves object metadata for a specific version.
+	HeadVersion(ctx context.Context, bucket, key, versionID string) (*ObjectInfo, error)
 }
 
 // CompletedPart represents a completed part in a multipart upload.
