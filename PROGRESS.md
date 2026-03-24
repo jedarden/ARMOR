@@ -62,6 +62,11 @@
   - [x] Multipart state persistence in B2 (.armor/multipart/<upload-id>.state)
   - [x] HMAC sidecar for multipart objects (.armor/hmac/<key-hash>)
   - [x] Unit tests
+- [x] Kubernetes manifests
+  - [x] Deployment with health/readiness probes
+  - [x] Service (ClusterIP + headless)
+  - [x] Secret template
+  - [x] Kustomization
 
 ### In Progress
 - [ ] Key rotation via API endpoint
