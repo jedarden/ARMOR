@@ -273,6 +273,18 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	if !info.IsARMOREncrypted {
+		// Check conditional request headers for non-ARMOR objects
+		if status := checkConditionalRequest(r, info.ETag, info.LastModified); status != 0 {
+			if status == http.StatusNotModified {
+				w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
+				w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+				w.WriteHeader(status)
+			} else {
+				h.writeError(w, "PreconditionFailed", "Precondition failed", status)
+			}
+			return
+		}
+
 		// Passthrough for non-ARMOR objects
 		body, _, err := h.backend.Get(ctx, bucket, key)
 		if err != nil {
@@ -284,6 +296,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
 		w.Header().Set("Content-Type", info.ContentType)
 		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
+		w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
 		io.Copy(w, body)
 		return
@@ -311,6 +324,20 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	plaintextSize := armorMeta.PlaintextSize
+
+	// Check conditional request headers
+	if status := checkConditionalRequest(r, armorMeta.ETag, info.LastModified); status != 0 {
+		if status == http.StatusNotModified {
+			// 304 Not Modified - set headers but no body
+			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
+			w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+			w.WriteHeader(status)
+		} else {
+			// 412 Precondition Failed
+			h.writeError(w, "PreconditionFailed", "Precondition failed", status)
+		}
+		return
+	}
 
 	// Check for range request
 	rangeHeader := r.Header.Get("Range")
@@ -618,6 +645,81 @@ func (h *Handlers) cacheParquetFooter(ctx context.Context, bucket, key string, a
 	}
 }
 
+// checkConditionalRequest evaluates conditional headers and returns the appropriate
+// response status. Returns 0 if the request should proceed normally.
+// Supports: If-Match, If-None-Match, If-Modified-Since, If-Unmodified-Since
+func checkConditionalRequest(r *http.Request, etag string, lastModified time.Time) int {
+	ifMatch := r.Header.Get("If-Match")
+	ifNoneMatch := r.Header.Get("If-None-Match")
+	ifModifiedSince := r.Header.Get("If-Modified-Since")
+	ifUnmodifiedSince := r.Header.Get("If-Unmodified-Since")
+
+	// Normalize ETag (remove quotes if present for comparison)
+	normalizedETag := strings.Trim(etag, `"`)
+
+	// If-Match: Return 412 Precondition Failed if ETag doesn't match
+	if ifMatch != "" {
+		// If-Match can be "*" (match any) or a comma-separated list of ETags
+		if ifMatch == "*" {
+			// Match any existing resource - proceed
+		} else {
+			// Parse comma-separated ETags
+			etags := strings.Split(ifMatch, ",")
+			matched := false
+			for _, e := range etags {
+				// Trim space first, then quotes (order matters for " value" case)
+				e = strings.Trim(strings.TrimSpace(e), `"`)
+				if e == normalizedETag {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return http.StatusPreconditionFailed
+			}
+		}
+	}
+
+	// If-Unmodified-Since: Return 412 Precondition Failed if modified since date
+	if ifUnmodifiedSince != "" {
+		if t, err := http.ParseTime(ifUnmodifiedSince); err == nil {
+			if lastModified.After(t) {
+				return http.StatusPreconditionFailed
+			}
+		}
+	}
+
+	// If-None-Match: Return 304 Not Modified if ETag matches
+	if ifNoneMatch != "" {
+		// If-None-Match can be "*" (match any) or a comma-separated list of ETags
+		if ifNoneMatch == "*" {
+			return http.StatusNotModified
+		}
+		// Parse comma-separated ETags
+		etags := strings.Split(ifNoneMatch, ",")
+		for _, e := range etags {
+			// Trim space first, then quotes (order matters for " value" case)
+			e = strings.Trim(strings.TrimSpace(e), `"`)
+			if e == normalizedETag {
+				return http.StatusNotModified
+			}
+		}
+	}
+
+	// If-Modified-Since: Return 304 Not Modified if not modified since date
+	// Only applies if If-None-Match is not present (per RFC 7232)
+	if ifModifiedSince != "" && ifNoneMatch == "" {
+		if t, err := http.ParseTime(ifModifiedSince); err == nil {
+			// Use >= comparison per RFC 7232
+			if !lastModified.After(t) {
+				return http.StatusNotModified
+			}
+		}
+	}
+
+	return 0
+}
+
 // parseRangeHeader parses a Range header like "bytes=0-1023".
 func parseRangeHeader(header string, totalSize int64) (start, end int64, err error) {
 	if !strings.HasPrefix(header, "bytes=") {
@@ -675,19 +777,43 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
-	w.Header().Set("Content-Type", info.ContentType)
-	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
-
+	// Determine ETag and content info based on encryption status
+	var etag string
+	var contentLength int64
+	var contentType string
 	if info.IsARMOREncrypted {
 		if am, ok := backend.ParseARMORMetadata(info.Metadata); ok {
-			w.Header().Set("Content-Length", strconv.FormatInt(am.PlaintextSize, 10))
-			w.Header().Set("Content-Type", am.ContentType)
-			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, am.ETag))
+			etag = am.ETag
+			contentLength = am.PlaintextSize
+			contentType = am.ContentType
+		} else {
+			etag = info.ETag
+			contentLength = info.Size
+			contentType = info.ContentType
 		}
+	} else {
+		etag = info.ETag
+		contentLength = info.Size
+		contentType = info.ContentType
 	}
+
+	// Check conditional request headers
+	if status := checkConditionalRequest(r, etag, info.LastModified); status != 0 {
+		if status == http.StatusNotModified {
+			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
+			w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+			w.WriteHeader(status)
+		} else {
+			h.writeError(w, "PreconditionFailed", "Precondition failed", status)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
 
 	w.WriteHeader(http.StatusOK)
 }
