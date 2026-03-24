@@ -3,12 +3,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jedarden/armor/internal/backend"
+	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/server/handlers"
@@ -16,10 +19,15 @@ import (
 
 // Server represents the ARMOR server.
 type Server struct {
-	config     *config.Config
-	backend    backend.Backend
-	cache      *backend.MetadataCache
-	mek        []byte
+	config      *config.Config
+	backend     backend.Backend
+	cache       *backend.MetadataCache
+	footerCache *backend.FooterCache
+	mek         []byte
+	canary      *canary.Monitor
+
+	// canaryStarted tracks whether the canary monitor has been started
+	canaryStarted bool
 }
 
 // New creates a new ARMOR server.
@@ -39,12 +47,49 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create metadata cache
 	cache := backend.NewMetadataCache(cfg.CacheMaxEntries, cfg.CacheTTL)
 
+	// Create footer cache (for Parquet footer pinning)
+	footerCache := backend.NewFooterCache(cfg.CacheMaxEntries, cfg.CacheTTL)
+
+	// Create canary monitor
+	canaryMonitor := canary.NewMonitor(canary.Config{
+		Backend:    b2Backend,
+		Bucket:     cfg.Bucket,
+		MEK:        cfg.MEK,
+		BlockSize:  cfg.BlockSize,
+		InstanceID: cfg.WriterID,
+		Interval:   5 * time.Minute,
+		CanarySize: 1024,
+		MaxRetries: 3,
+		RetryDelay: 10 * time.Second,
+	})
+
 	return &Server{
-		config:  cfg,
-		backend: b2Backend,
-		cache:   cache,
-		mek:     cfg.MEK,
+		config:      cfg,
+		backend:     b2Backend,
+		cache:       cache,
+		footerCache: footerCache,
+		mek:         cfg.MEK,
+		canary:      canaryMonitor,
 	}, nil
+}
+
+// StartCanary starts the canary monitor.
+// It should be called after the server is created.
+func (s *Server) StartCanary(ctx context.Context) {
+	if s.canary == nil || s.canaryStarted {
+		return
+	}
+	s.canaryStarted = true
+	s.canary.Start(ctx)
+	log.Println("Canary monitor started")
+}
+
+// StopCanary stops the canary monitor.
+func (s *Server) StopCanary() {
+	if s.canary != nil && s.canaryStarted {
+		s.canary.Stop()
+		log.Println("Canary monitor stopped")
+	}
 }
 
 // Handler returns the main S3 API handler.
@@ -56,7 +101,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/readyz", s.readyz)
 
 	// S3 operations
-	h := handlers.New(s.config, s.backend, s.cache, s.mek)
+	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.mek)
 
 	// Bucket operations
 	mux.HandleFunc("/", s.wrapHandler(h.HandleRoot))
@@ -72,7 +117,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/key/verify", s.verifyKey)
 	mux.HandleFunc("/admin/key/rotate", s.rotateKey)
 	mux.HandleFunc("/admin/key/export", s.exportKey)
-	mux.HandleFunc("/armor/canary", s.canary)
+	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
 
 	return mux
@@ -80,13 +125,36 @@ func (s *Server) AdminHandler() http.Handler {
 
 // healthz returns the health status.
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
+	// Check canary status if monitor is running
+	if s.canary != nil && s.canaryStarted {
+		if !s.canary.IsHealthy() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("Unhealthy - canary check failed"))
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
 
 // readyz returns the readiness status.
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
-	// TODO: Check backend connectivity
+	// Check canary if monitor is running
+	if s.canary != nil && s.canaryStarted && !s.canary.IsHealthy() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("Not ready - canary check failed"))
+		return
+	}
+
+	// Backend connectivity check via minimal List operation
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if _, err := s.backend.List(ctx, s.config.Bucket, "", "", "", 1); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("Not ready - backend unavailable"))
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Ready"))
 }
@@ -98,9 +166,21 @@ func (s *Server) verifyKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement canary decryption to verify MEK
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"verified"}`))
+	if s.canary == nil {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"unknown","error":"canary monitor not configured"}`))
+		return
+	}
+
+	status := s.canary.GetStatus()
+	if status.DecryptVerified && status.HMACVerified {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"verified","message":"MEK is correct"}`))
+		return
+	}
+
+	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Write([]byte(`{"status":"unverified","error":"canary check failed - MEK may be incorrect"}`))
 }
 
 // rotateKey rotates the MEK.
@@ -130,16 +210,23 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Not implemented", http.StatusNotImplemented)
 }
 
-// canary returns the canary status.
-func (s *Server) canary(w http.ResponseWriter, r *http.Request) {
+// canaryHandler returns the canary status.
+func (s *Server) canaryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// TODO: Implement canary check
+	if s.canary == nil {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"unknown","error":"canary monitor not configured"}`))
+		return
+	}
+
+	status := s.canary.GetStatus()
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"healthy"}`))
+	json.NewEncoder(w).Encode(status)
 }
 
 // audit returns the audit status.

@@ -62,7 +62,8 @@ func TranslateRange(plaintextStart, plaintextEnd, totalPlaintextSize int64, bloc
 	dataLength := lastBlockDataEnd - dataOffset
 
 	// Calculate HMAC table range
-	hmacTableOffset := int64(headerSize) + int64(blockCount*blockSize)
+	// HMAC table starts right after the encrypted data, which is at headerSize + totalPlaintextSize
+	hmacTableOffset := int64(headerSize) + totalPlaintextSize
 	hmacOffset := hmacTableOffset + int64(blockStart*HMACSize)
 	hmacLength := int64((blockEnd-blockStart+1) * HMACSize)
 
@@ -89,7 +90,7 @@ func TranslateFullObject(totalPlaintextSize int64, blockSize int, headerSize int
 		BlockEnd:       blockCount - 1,
 		DataOffset:     int64(headerSize),
 		DataLength:     totalPlaintextSize,
-		HMACOffset:     int64(headerSize) + int64(blockCount*blockSize),
+		HMACOffset:     int64(headerSize) + totalPlaintextSize,
 		HMACLength:     int64(blockCount * HMACSize),
 	}
 }

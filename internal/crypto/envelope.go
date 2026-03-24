@@ -135,8 +135,9 @@ func (h *EnvelopeHeader) EncryptedSize() int64 {
 }
 
 // HMACTableOffset returns the byte offset of the HMAC table in the encrypted object.
+// Since AES-CTR preserves plaintext length, the encrypted data has the same size as plaintext.
 func (h *EnvelopeHeader) HMACTableOffset() int64 {
-	return int64(HeaderSize) + int64(h.BlockCount())*int64(h.BlockSize())
+	return int64(HeaderSize) + int64(h.PlaintextSize)
 }
 
 // PlaintextSHA256Hex returns the hex-encoded plaintext SHA-256.
