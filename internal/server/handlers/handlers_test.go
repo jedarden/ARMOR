@@ -1301,3 +1301,177 @@ func TestDeleteBucket(t *testing.T) {
 		t.Errorf("expected status 404 for deleted bucket, got %d", w.Code)
 	}
 }
+
+// TestAbortMultipartUpload tests S3 AbortMultipartUpload
+func TestAbortMultipartUpload(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create a multipart upload
+	req := httptest.NewRequest(http.MethodPost, "/test-bucket/test-abort.txt?uploads=", nil)
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("CreateMultipartUpload failed: status %d", w.Code)
+	}
+
+	// Parse upload ID from response
+	var result struct {
+		UploadID string `xml:"UploadId"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse CreateMultipartUpload response: %v", err)
+	}
+	uploadID := result.UploadID
+
+	// Abort the multipart upload
+	req = httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/test-bucket/test-abort.txt?uploadId=%s", uploadID), nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected status 204 for abort, got %d", w.Code)
+	}
+
+	// Verify state was cleaned up
+	mb.mu.Lock()
+	stateKey := fmt.Sprintf(".armor/multipart/%s.state", uploadID)
+	_, exists := mb.objects[stateKey]
+	mb.mu.Unlock()
+	if exists {
+		t.Error("multipart state should have been deleted")
+	}
+}
+
+// TestListParts tests S3 ListParts operation
+func TestListParts(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create a multipart upload
+	req := httptest.NewRequest(http.MethodPost, "/test-bucket/test-list-parts.txt?uploads=", nil)
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("CreateMultipartUpload failed: status %d", w.Code)
+	}
+
+	// Parse upload ID from response
+	var result struct {
+		UploadID string `xml:"UploadId"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse CreateMultipartUpload response: %v", err)
+	}
+	uploadID := result.UploadID
+
+	// Upload a part
+	partContent := []byte("Part 1 content")
+	req = httptest.NewRequest(http.MethodPut, fmt.Sprintf("/test-bucket/test-list-parts.txt?partNumber=1&uploadId=%s", uploadID), bytes.NewReader(partContent))
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("UploadPart failed: status %d", w.Code)
+	}
+
+	// List parts
+	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/test-bucket/test-list-parts.txt?uploadId=%s", uploadID), nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("ListParts failed: status %d", w.Code)
+	}
+
+	// Verify response is XML
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/xml" {
+		t.Errorf("expected Content-Type application/xml, got %s", contentType)
+	}
+
+	// Verify response contains ListPartsResult
+	body := w.Body.String()
+	if !strings.Contains(body, "ListPartsResult") {
+		t.Error("response should contain ListPartsResult element")
+	}
+	if !strings.Contains(body, uploadID) {
+		t.Error("response should contain upload ID")
+	}
+}
+
+// TestListMultipartUploads tests S3 ListMultipartUploads operation
+func TestListMultipartUploads(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Create multiple multipart uploads
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/test-bucket/test-list-uploads-%d.txt?uploads=", i), nil)
+		req.Header.Set("Content-Type", "text/plain")
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("CreateMultipartUpload %d failed: status %d", i, w.Code)
+		}
+	}
+
+	// List multipart uploads
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?uploads=", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("ListMultipartUploads failed: status %d", w.Code)
+	}
+
+	// Verify response is XML
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/xml" {
+		t.Errorf("expected Content-Type application/xml, got %s", contentType)
+	}
+
+	// Verify response contains ListMultipartUploadsResult
+	body := w.Body.String()
+	if !strings.Contains(body, "ListMultipartUploadsResult") {
+		t.Error("response should contain ListMultipartUploadsResult element")
+	}
+	if !strings.Contains(body, "test-bucket") {
+		t.Error("response should contain bucket name")
+	}
+}
+
+// TestAbortMultipartUploadNotFound tests aborting a non-existent upload
+func TestAbortMultipartUploadNotFound(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Try to abort a non-existent upload
+	req := httptest.NewRequest(http.MethodDelete, "/test-bucket/test.txt?uploadId=nonexistent-upload-id", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 for non-existent upload, got %d", w.Code)
+	}
+}
+
+// TestListPartsNotFound tests listing parts of a non-existent upload
+func TestListPartsNotFound(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek)
+
+	// Try to list parts of a non-existent upload
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket/test.txt?uploadId=nonexistent-upload-id", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404 for non-existent upload, got %d", w.Code)
+	}
+}
