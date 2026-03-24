@@ -31,6 +31,10 @@
 - [x] Pipelined stream decryption (io.Pipe) - decrypts blocks as they stream
 - [x] Unit tests for crypto, canary, and auth modules (all passing)
 - [x] Multi-stage Dockerfile
+- [x] CI build + GHCR publish
+  - [x] GitHub Actions CI workflow (test, build, lint)
+  - [x] GitHub Actions release workflow (tag-triggered Docker build + push to GHCR)
+  - [x] Multi-platform support (linux/amd64, linux/arm64)
 
 ## Phase 2: Production Hardening
 
