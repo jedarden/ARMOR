@@ -53,7 +53,8 @@ type Backend interface {
 	List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error)
 
 	// Copy copies an object, optionally replacing metadata.
-	Copy(ctx context.Context, bucket, srcKey, dstKey string, meta map[string]string, replaceMetadata bool) error
+	// Supports cross-bucket copy (srcBucket and dstBucket can be different).
+	Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error
 }
 
 // ARMORMetadata extracts ARMOR-specific metadata from object headers.

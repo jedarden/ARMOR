@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -78,7 +80,12 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 	case http.MethodPut:
 		if key != "" {
-			h.PutObject(w, r, bucket, key)
+			// Check for CopyObject (has x-amz-copy-source header)
+			if r.Header.Get("x-amz-copy-source") != "" {
+				h.CopyObject(w, r, bucket, key)
+			} else {
+				h.PutObject(w, r, bucket, key)
+			}
 		} else if bucket != "" {
 			h.CreateBucket(w, r, bucket)
 		}
@@ -663,6 +670,188 @@ func (h *Handlers) DeleteObject(w http.ResponseWriter, r *http.Request, bucket, 
 	h.cache.Delete(bucket, key)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// CopyObject handles S3 CopyObject with DEK re-wrapping for ARMOR-encrypted objects.
+// This supports:
+// - Renaming files (same bucket, different key)
+// - Copying files (potentially different bucket)
+// - Key rotation (re-wraps DEK with current MEK)
+func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket, dstKey string) {
+	ctx := r.Context()
+
+	// Parse copy source header
+	copySource := r.Header.Get("x-amz-copy-source")
+	if copySource == "" {
+		h.writeError(w, "InvalidRequest", "Missing x-amz-copy-source header", 400)
+		return
+	}
+
+	// Parse source bucket and key
+	// Format: /bucket/key or bucket/key
+	srcBucket, srcKey := parseCopySource(copySource)
+	if srcBucket == "" || srcKey == "" {
+		h.writeError(w, "InvalidCopySource", "Invalid copy source format", 400)
+		return
+	}
+
+	// Get source object metadata
+	srcInfo, err := h.backend.Head(ctx, srcBucket, srcKey)
+	if err != nil {
+		h.writeError(w, "NoSuchKey", fmt.Sprintf("Source object not found: %v", err), 404)
+		return
+	}
+
+	// Check metadata directive
+	metadataDirective := r.Header.Get("x-amz-metadata-directive")
+	replaceMetadata := metadataDirective == "REPLACE"
+
+	// Build response XML structure
+	type CopyObjectResult struct {
+		XMLName      xml.Name `xml:"CopyObjectResult"`
+		LastModified string   `xml:"LastModified"`
+		ETag         string   `xml:"ETag"`
+	}
+
+	// Handle ARMOR-encrypted objects
+	if srcInfo.IsARMOREncrypted {
+		// Parse ARMOR metadata
+		armorMeta, ok := backend.ParseARMORMetadata(srcInfo.Metadata)
+		if !ok {
+			h.writeError(w, "InternalError", "Failed to parse ARMOR metadata", 500)
+			return
+		}
+
+		// Unwrap DEK with current MEK
+		dek, err := crypto.UnwrapDEK(h.mek, armorMeta.WrappedDEK)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
+			return
+		}
+
+		// Re-wrap DEK with current MEK (handles key rotation case)
+		wrappedDEK, err := crypto.WrapDEK(h.mek, dek)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to re-wrap DEK: %v", err), 500)
+			return
+		}
+
+		// Build new metadata with re-wrapped DEK
+		newMeta := (&backend.ARMORMetadata{
+			Version:       armorMeta.Version,
+			BlockSize:     armorMeta.BlockSize,
+			PlaintextSize: armorMeta.PlaintextSize,
+			ContentType:   armorMeta.ContentType,
+			IV:            armorMeta.IV,
+			WrappedDEK:    wrappedDEK,
+			PlaintextSHA:  armorMeta.PlaintextSHA,
+			ETag:          armorMeta.ETag,
+		}).ToMetadata()
+
+		// Handle REPLACE directive - copy custom metadata headers from request
+		if replaceMetadata {
+			// Check for new content-type in request
+			if ct := r.Header.Get("Content-Type"); ct != "" {
+				newMeta["x-amz-meta-armor-content-type"] = ct
+			}
+			// Copy any additional custom headers from request
+			for k, v := range r.Header {
+				if strings.HasPrefix(k, "X-Amz-Meta-") && !strings.HasPrefix(k, "X-Amz-Meta-Armor-") {
+					newMeta[strings.ToLower(k)] = v[0]
+				}
+			}
+		}
+
+		// Perform server-side copy with updated metadata
+		if err := h.backend.Copy(ctx, srcBucket, srcKey, dstBucket, dstKey, newMeta, true); err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
+			return
+		}
+
+		// Invalidate cache for destination
+		h.cache.Delete(dstBucket, dstKey)
+		h.footerCache.Delete(dstBucket, dstKey)
+
+		// Return success response
+		result := CopyObjectResult{
+			LastModified: time.Now().UTC().Format(http.TimeFormat),
+			ETag:         fmt.Sprintf(`"%s"`, armorMeta.ETag),
+		}
+
+		output, err := xml.Marshal(result)
+		if err != nil {
+			h.writeError(w, "InternalError", "Failed to marshal response", 500)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
+		w.Write(output)
+		return
+	}
+
+	// Non-ARMOR object - pass through copy
+	var meta map[string]string
+	if replaceMetadata {
+		meta = make(map[string]string)
+		if ct := r.Header.Get("Content-Type"); ct != "" {
+			meta["Content-Type"] = ct
+		}
+		for k, v := range r.Header {
+			if strings.HasPrefix(k, "X-Amz-Meta-") {
+				meta[strings.ToLower(k)] = v[0]
+			}
+		}
+	}
+
+	if err := h.backend.Copy(ctx, srcBucket, srcKey, dstBucket, dstKey, meta, replaceMetadata); err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
+		return
+	}
+
+	// Get the destination object info for ETag
+	dstInfo, err := h.backend.Head(ctx, dstBucket, dstKey)
+	if err != nil {
+		h.writeError(w, "InternalError", "Failed to get destination info", 500)
+		return
+	}
+
+	// Return success response
+	result := CopyObjectResult{
+		LastModified: time.Now().UTC().Format(http.TimeFormat),
+		ETag:         fmt.Sprintf(`"%s"`, dstInfo.ETag),
+	}
+
+	output, err := xml.Marshal(result)
+	if err != nil {
+		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
+	w.Write(output)
+}
+
+// parseCopySource parses the x-amz-copy-source header value.
+// Supports formats: /bucket/key or bucket/key
+func parseCopySource(copySource string) (bucket, key string) {
+	// Remove leading slash if present
+	copySource = strings.TrimPrefix(copySource, "/")
+
+	// URL decode the key portion (keys may contain special characters)
+	if idx := strings.Index(copySource, "/"); idx != -1 {
+		bucket = copySource[:idx]
+		key = copySource[idx+1:]
+		// URL decode the key
+		if decoded, err := url.QueryUnescape(key); err == nil {
+			key = decoded
+		}
+	}
+
+	return bucket, key
 }
 
 // ListObjectsV2 handles S3 ListObjectsV2.
