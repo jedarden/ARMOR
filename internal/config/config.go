@@ -16,6 +16,19 @@ type KeyRoute struct {
 	KeyName string
 }
 
+// ACLEntry represents a single ACL rule for a credential.
+type ACLEntry struct {
+	Bucket string // Bucket name, "*" for all buckets
+	Prefix string // Key prefix, "*" or "" for any prefix
+}
+
+// Credential represents an ARMOR client credential with optional ACLs.
+type Credential struct {
+	AccessKey string
+	SecretKey string
+	ACLs      []ACLEntry // Empty means full access to configured bucket
+}
+
 // Config holds all ARMOR configuration.
 type Config struct {
 	// Server configuration
@@ -43,6 +56,9 @@ type Config struct {
 	// Authentication credentials for ARMOR clients
 	AuthAccessKey string
 	AuthSecretKey string
+
+	// Multi-credential support
+	Credentials map[string]*Credential // Access key -> Credential
 
 	// Writer ID for provenance chain
 	WriterID string
@@ -119,6 +135,19 @@ func Load() (*Config, error) {
 	cfg.AuthSecretKey = os.Getenv("ARMOR_AUTH_SECRET_KEY")
 	if cfg.AuthSecretKey == "" {
 		cfg.AuthSecretKey = generateRandomKey(32)
+	}
+
+	// Initialize credentials map with default credential
+	cfg.Credentials = make(map[string]*Credential)
+	cfg.Credentials[cfg.AuthAccessKey] = &Credential{
+		AccessKey: cfg.AuthAccessKey,
+		SecretKey: cfg.AuthSecretKey,
+		ACLs:      nil, // nil means full access to configured bucket
+	}
+
+	// Load additional named credentials (ARMOR_AUTH_<NAME>_ACCESS_KEY, _SECRET_KEY, _ACL)
+	if err := loadNamedCredentials(cfg); err != nil {
+		return nil, err
 	}
 
 	// Writer ID (default to hostname)
@@ -237,4 +266,117 @@ func parseKeyRoutes(routesStr string) ([]KeyRoute, error) {
 	}
 
 	return routes, nil
+}
+
+// loadNamedCredentials loads additional named credentials from environment variables.
+// Format: ARMOR_AUTH_<NAME>_ACCESS_KEY, ARMOR_AUTH_<NAME>_SECRET_KEY, ARMOR_AUTH_<NAME>_ACL
+// Named credentials must have a non-empty NAME that doesn't conflict with default credential names.
+func loadNamedCredentials(cfg *Config) error {
+	// Collect all credential names
+	credNames := make(map[string]bool)
+	for _, env := range os.Environ() {
+		// Look for ARMOR_AUTH_<NAME>_ACCESS_KEY pattern where NAME is not empty
+		// and not one of the default credential env vars
+		if strings.HasPrefix(env, "ARMOR_AUTH_") && strings.Contains(env, "_ACCESS_KEY=") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			// Extract name: ARMOR_AUTH_<NAME>_ACCESS_KEY -> <NAME>
+			envKey := parts[0]
+			// Skip the default credential env var
+			if envKey == "ARMOR_AUTH_ACCESS_KEY" {
+				continue
+			}
+			namePart := strings.TrimPrefix(envKey, "ARMOR_AUTH_")
+			namePart = strings.TrimSuffix(namePart, "_ACCESS_KEY")
+			if namePart == "" {
+				continue
+			}
+			credNames[namePart] = true
+		}
+	}
+
+	// Load each credential
+	for name := range credNames {
+		accessKey := os.Getenv("ARMOR_AUTH_" + name + "_ACCESS_KEY")
+		secretKey := os.Getenv("ARMOR_AUTH_" + name + "_SECRET_KEY")
+		aclStr := os.Getenv("ARMOR_AUTH_" + name + "_ACL")
+
+		if accessKey == "" || secretKey == "" {
+			return fmt.Errorf("ARMOR_AUTH_%s_ACCESS_KEY and ARMOR_AUTH_%s_SECRET_KEY are both required", name, name)
+		}
+
+		cred := &Credential{
+			AccessKey: accessKey,
+			SecretKey: secretKey,
+		}
+
+		// Parse ACL if provided
+		if aclStr != "" {
+			acls, err := parseACL(aclStr)
+			if err != nil {
+				return fmt.Errorf("ARMOR_AUTH_%s_ACL: %w", name, err)
+			}
+			cred.ACLs = acls
+		}
+
+		// Check for duplicate access key
+		if _, exists := cfg.Credentials[accessKey]; exists {
+			return fmt.Errorf("duplicate access key in ARMOR_AUTH_%s", name)
+		}
+
+		cfg.Credentials[accessKey] = cred
+	}
+
+	return nil
+}
+
+// parseACL parses an ACL string into ACL entries.
+// Format: "bucket1:prefix1,bucket2:prefix2,bucket3:*"
+// A bucket of "*" means all buckets.
+// A prefix of "*" or "" means any prefix within the bucket.
+func parseACL(aclStr string) ([]ACLEntry, error) {
+	if aclStr == "" {
+		return nil, nil
+	}
+
+	var entries []ACLEntry
+	parts := strings.Split(aclStr, ",")
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// Split bucket:prefix
+		kv := strings.SplitN(part, ":", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("invalid ACL entry %q (expected bucket:prefix)", part)
+		}
+
+		bucket := strings.TrimSpace(kv[0])
+		prefix := strings.TrimSpace(kv[1])
+
+		if bucket == "" {
+			return nil, fmt.Errorf("invalid ACL entry %q (empty bucket)", part)
+		}
+
+		// Normalize wildcard prefix
+		if prefix == "*" {
+			prefix = ""
+		}
+
+		entries = append(entries, ACLEntry{
+			Bucket: bucket,
+			Prefix: prefix,
+		})
+	}
+
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("ACL string contains no valid entries")
+	}
+
+	return entries, nil
 }

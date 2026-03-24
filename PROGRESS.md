@@ -129,8 +129,16 @@
   - [x] Key-aware multipart uploads
   - [x] Unit tests
 
+### Completed
+- [x] Multiple auth credentials with per-key ACLs
+  - [x] Credential struct with AccessKey, SecretKey, and ACLs
+  - [x] Named credentials via ARMOR_AUTH_<NAME>_ACCESS_KEY/SECRET_KEY/ACL env vars
+  - [x] ACL format: bucket:prefix (wildcard bucket "*", empty prefix for full access)
+  - [x] SigV4Auth updated to support credential lookup
+  - [x] CheckACL function for bucket/prefix validation
+  - [x] Unit tests for multi-credential auth and ACLs
+
 ### Remaining
-- [ ] Multiple auth credentials with per-key ACLs
 - [ ] Pre-signed URL proxy
 - [ ] Streaming encryption for very large uploads
 - [ ] Admin API enhancements

@@ -11,23 +11,38 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jedarden/armor/internal/config"
 )
 
 // SigV4Auth handles AWS Signature Version 4 authentication.
 type SigV4Auth struct {
-	accessKey string
-	secretKey string
-	region    string
-	service   string
+	credentials map[string]*config.Credential // access key -> credential
+	region      string
+	service     string
 }
 
-// NewSigV4Auth creates a new SigV4 authenticator.
+// NewSigV4Auth creates a new SigV4 authenticator with a single credential.
 func NewSigV4Auth(accessKey, secretKey, region string) *SigV4Auth {
 	return &SigV4Auth{
-		accessKey: accessKey,
-		secretKey: secretKey,
-		region:    region,
-		service:   "s3",
+		credentials: map[string]*config.Credential{
+			accessKey: {
+				AccessKey: accessKey,
+				SecretKey: secretKey,
+				ACLs:      nil, // nil means full access
+			},
+		},
+		region:  region,
+		service: "s3",
+	}
+}
+
+// NewSigV4AuthWithCredentials creates a SigV4 authenticator with multiple credentials.
+func NewSigV4AuthWithCredentials(credentials map[string]*config.Credential, region string) *SigV4Auth {
+	return &SigV4Auth{
+		credentials: credentials,
+		region:      region,
+		service:     "s3",
 	}
 }
 
@@ -90,36 +105,38 @@ func ParseAuthHeader(auth string) (*AuthHeader, error) {
 }
 
 // VerifyRequest verifies the SigV4 signature on an HTTP request.
-func (a *SigV4Auth) VerifyRequest(r *http.Request, body []byte) error {
+// Returns the credential if verification succeeds, or an error if it fails.
+func (a *SigV4Auth) VerifyRequest(r *http.Request, body []byte) (*config.Credential, error) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		return ErrMissingAuthHeader
+		return nil, ErrMissingAuthHeader
 	}
 
 	parsed, err := ParseAuthHeader(authHeader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Verify access key matches
-	if parsed.AccessKey != a.accessKey {
-		return ErrInvalidAccessKey
+	// Look up credential by access key
+	cred, exists := a.credentials[parsed.AccessKey]
+	if !exists {
+		return nil, ErrInvalidAccessKey
 	}
 
 	// Get the timestamp from headers
 	amzDate := r.Header.Get("X-Amz-Date")
 	if amzDate == "" {
-		return ErrMissingDateHeader
+		return nil, ErrMissingDateHeader
 	}
 
 	// Parse and verify timestamp is within 15 minutes
 	requestTime, err := time.Parse("20060102T150405Z", amzDate)
 	if err != nil {
-		return ErrInvalidDateFormat
+		return nil, ErrInvalidDateFormat
 	}
 
 	if diff := time.Since(requestTime); diff < -15*time.Minute || diff > 15*time.Minute {
-		return ErrRequestExpired
+		return nil, ErrRequestExpired
 	}
 
 	// Build canonical request
@@ -128,16 +145,16 @@ func (a *SigV4Auth) VerifyRequest(r *http.Request, body []byte) error {
 	// Build string to sign
 	stringToSign := a.buildStringToSign(amzDate, parsed.CredentialDate, canonicalRequest)
 
-	// Calculate signature
-	signingKey := a.getSigningKey(parsed.CredentialDate)
+	// Calculate signature using the credential's secret key
+	signingKey := a.getSigningKeyForCredential(cred, parsed.CredentialDate)
 	calculatedSig := hex.EncodeToString(a.hmacSHA256(signingKey, stringToSign))
 
 	// Compare signatures (constant-time comparison would be better but hex strings are not sensitive)
 	if calculatedSig != parsed.Signature {
-		return ErrSignatureMismatch
+		return nil, ErrSignatureMismatch
 	}
 
-	return nil
+	return cred, nil
 }
 
 // buildCanonicalRequest builds the canonical request string per AWS spec.
@@ -251,13 +268,40 @@ func (a *SigV4Auth) buildStringToSign(amzDate, credentialDate, canonicalRequest 
 	}, "\n")
 }
 
-// getSigningKey derives the signing key for the given date.
-func (a *SigV4Auth) getSigningKey(date string) []byte {
-	kDate := a.hmacSHA256([]byte("AWS4"+a.secretKey), date)
+// getSigningKeyForCredential derives the signing key for the given credential and date.
+func (a *SigV4Auth) getSigningKeyForCredential(cred *config.Credential, date string) []byte {
+	kDate := a.hmacSHA256([]byte("AWS4"+cred.SecretKey), date)
 	kRegion := a.hmacSHA256(kDate, a.region)
 	kService := a.hmacSHA256(kRegion, a.service)
 	kSigning := a.hmacSHA256(kService, "aws4_request")
 	return kSigning
+}
+
+// CheckACL verifies that the credential is allowed to access the given bucket and key.
+// If the credential has no ACLs (nil), it has full access.
+func CheckACL(cred *config.Credential, bucket, key string) error {
+	// No ACLs means full access
+	if len(cred.ACLs) == 0 {
+		return nil
+	}
+
+	for _, acl := range cred.ACLs {
+		// Check bucket match
+		if acl.Bucket != "*" && acl.Bucket != bucket {
+			continue
+		}
+
+		// Check prefix match
+		if acl.Prefix == "" {
+			// Empty prefix means any key in the bucket
+			return nil
+		}
+		if strings.HasPrefix(key, acl.Prefix) {
+			return nil
+		}
+	}
+
+	return ErrAccessDenied
 }
 
 // hmacSHA256 computes HMAC-SHA256.
@@ -289,6 +333,7 @@ var (
 	ErrInvalidDateFormat   = &AuthError{Code: "InvalidDateFormat", Message: "Invalid date format in X-Amz-Date header"}
 	ErrRequestExpired      = &AuthError{Code: "RequestExpired", Message: "Request has expired"}
 	ErrSignatureMismatch   = &AuthError{Code: "SignatureDoesNotMatch", Message: "The request signature we calculated does not match the signature you provided"}
+	ErrAccessDenied        = &AuthError{Code: "AccessDenied", Message: "Access Denied"}
 )
 
 // AuthError represents an authentication error.
@@ -302,41 +347,44 @@ func (e *AuthError) Error() string {
 }
 
 // VerifyQueryAuth verifies SigV4 authentication via query parameters (presigned URLs).
-func (a *SigV4Auth) VerifyQueryAuth(r *http.Request) error {
+// Returns the credential if verification succeeds.
+func (a *SigV4Auth) VerifyQueryAuth(r *http.Request) (*config.Credential, error) {
 	// Extract query parameters
 	query := r.URL.Query()
 
-	accessKey := query.Get("X-Amz-Credential")
-	if accessKey == "" {
-		return ErrMissingAuthHeader
+	accessKeyCred := query.Get("X-Amz-Credential")
+	if accessKeyCred == "" {
+		return nil, ErrMissingAuthHeader
 	}
 
 	// Parse credential
-	credParts := strings.Split(accessKey, "/")
+	credParts := strings.Split(accessKeyCred, "/")
 	if len(credParts) != 5 {
-		return ErrInvalidCredential
+		return nil, ErrInvalidCredential
 	}
 
-	if credParts[0] != a.accessKey {
-		return ErrInvalidAccessKey
+	// Look up credential by access key
+	cred, exists := a.credentials[credParts[0]]
+	if !exists {
+		return nil, ErrInvalidAccessKey
 	}
 
 	// Get signature from query
 	signature := query.Get("X-Amz-Signature")
 	if signature == "" {
-		return ErrMissingFields
+		return nil, ErrMissingFields
 	}
 
 	// Get date
 	amzDate := query.Get("X-Amz-Date")
 	if amzDate == "" {
-		return ErrMissingDateHeader
+		return nil, ErrMissingDateHeader
 	}
 
 	// Get signed headers
 	signedHeadersStr := query.Get("X-Amz-SignedHeaders")
 	if signedHeadersStr == "" {
-		return ErrMissingFields
+		return nil, ErrMissingFields
 	}
 	signedHeaders := strings.Split(signedHeadersStr, ";")
 
@@ -345,16 +393,16 @@ func (a *SigV4Auth) VerifyQueryAuth(r *http.Request) error {
 	if expires != "" {
 		expiresSec, err := strconv.Atoi(expires)
 		if err != nil {
-			return ErrRequestExpired
+			return nil, ErrRequestExpired
 		}
 
 		requestTime, err := time.Parse("20060102T150405Z", amzDate)
 		if err != nil {
-			return ErrInvalidDateFormat
+			return nil, ErrInvalidDateFormat
 		}
 
 		if time.Since(requestTime) > time.Duration(expiresSec)*time.Second {
-			return ErrRequestExpired
+			return nil, ErrRequestExpired
 		}
 	}
 
@@ -368,15 +416,15 @@ func (a *SigV4Auth) VerifyQueryAuth(r *http.Request) error {
 	credentialDate := credParts[1]
 	stringToSign := a.buildStringToSign(amzDate, credentialDate, canonicalRequest)
 
-	// Calculate signature
-	signingKey := a.getSigningKey(credentialDate)
+	// Calculate signature using the credential's secret key
+	signingKey := a.getSigningKeyForCredential(cred, credentialDate)
 	calculatedSig := hex.EncodeToString(a.hmacSHA256(signingKey, stringToSign))
 
 	if calculatedSig != signature {
-		return ErrSignatureMismatch
+		return nil, ErrSignatureMismatch
 	}
 
-	return nil
+	return cred, nil
 }
 
 // buildCanonicalQueryRequest builds canonical request for query-based auth.
