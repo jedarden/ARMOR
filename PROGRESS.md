@@ -168,5 +168,17 @@
   - [x] B2 S3 implementation of lifecycle operations
   - [x] Unit tests for lifecycle handlers
 
+### Completed
+- [x] Object Lock / retention passthrough
+  - [x] GetObjectLockConfiguration (GET ?object-lock on bucket)
+  - [x] PutObjectLockConfiguration (PUT ?object-lock on bucket)
+  - [x] GetObjectRetention (GET ?retention on object)
+  - [x] PutObjectRetention (PUT ?retention on object)
+  - [x] GetObjectLegalHold (GET ?legal-hold on object)
+  - [x] PutObjectLegalHold (PUT ?legal-hold on object)
+  - [x] Backend interface methods for object lock operations
+  - [x] B2 S3 implementation of object lock operations
+  - [x] Unit tests for object lock handlers
+
 ### Remaining
 - [ ] Integration tests against real B2 + Cloudflare

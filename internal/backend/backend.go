@@ -108,6 +108,26 @@ type Backend interface {
 
 	// DeleteBucketLifecycleConfiguration deletes the lifecycle configuration for a bucket.
 	DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error
+
+	// Object Lock operations (passthrough)
+
+	// GetObjectLockConfiguration gets the object lock configuration for a bucket.
+	GetObjectLockConfiguration(ctx context.Context, bucket string) ([]byte, error)
+
+	// PutObjectLockConfiguration sets the object lock configuration for a bucket.
+	PutObjectLockConfiguration(ctx context.Context, bucket string, config []byte) error
+
+	// GetObjectRetention gets the retention settings for an object.
+	GetObjectRetention(ctx context.Context, bucket, key string) ([]byte, error)
+
+	// PutObjectRetention sets the retention settings for an object.
+	PutObjectRetention(ctx context.Context, bucket, key string, retention []byte) error
+
+	// GetObjectLegalHold gets the legal hold status for an object.
+	GetObjectLegalHold(ctx context.Context, bucket, key string) ([]byte, error)
+
+	// PutObjectLegalHold sets the legal hold status for an object.
+	PutObjectLegalHold(ctx context.Context, bucket, key string, legalHold []byte) error
 }
 
 // CompletedPart represents a completed part in a multipart upload.

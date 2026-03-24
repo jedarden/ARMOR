@@ -769,5 +769,241 @@ func (b *B2Backend) DeleteBucketLifecycleConfiguration(ctx context.Context, buck
 	return nil
 }
 
+// GetObjectLockConfiguration gets the object lock configuration for a bucket.
+func (b *B2Backend) GetObjectLockConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	output, err := b.s3Client.GetObjectLockConfiguration(ctx, &s3.GetObjectLockConfigurationInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetObjectLockConfiguration failed: %w", err)
+	}
+
+	// Build XML response
+	if output.ObjectLockConfiguration == nil {
+		return []byte(`<?xml version="1.0" encoding="UTF-8"?><ObjectLockConfiguration/>`), nil
+	}
+
+	config := output.ObjectLockConfiguration
+	var parts []string
+
+	if config.ObjectLockEnabled == types.ObjectLockEnabledEnabled {
+		parts = append(parts, "<ObjectLockEnabled>Enabled</ObjectLockEnabled>")
+	}
+
+	if config.Rule != nil && config.Rule.DefaultRetention != nil {
+		var retentionParts []string
+		retention := config.Rule.DefaultRetention
+
+		if retention.Mode == types.ObjectLockRetentionModeGovernance {
+			retentionParts = append(retentionParts, "<Mode>GOVERNANCE</Mode>")
+		} else if retention.Mode == types.ObjectLockRetentionModeCompliance {
+			retentionParts = append(retentionParts, "<Mode>COMPLIANCE</Mode>")
+		}
+
+		if retention.Days != nil {
+			retentionParts = append(retentionParts, fmt.Sprintf("<Days>%d</Days>", *retention.Days))
+		}
+		if retention.Years != nil {
+			retentionParts = append(retentionParts, fmt.Sprintf("<Years>%d</Years>", *retention.Years))
+		}
+
+		if len(retentionParts) > 0 {
+			parts = append(parts, fmt.Sprintf("<Rule><DefaultRetention>%s</DefaultRetention></Rule>", strings.Join(retentionParts, "")))
+		}
+	}
+
+	xmlContent := strings.Join(parts, "")
+	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><ObjectLockConfiguration>%s</ObjectLockConfiguration>`, xmlContent)), nil
+}
+
+// PutObjectLockConfiguration sets the object lock configuration for a bucket.
+func (b *B2Backend) PutObjectLockConfiguration(ctx context.Context, bucket string, config []byte) error {
+	// Parse the object lock configuration XML
+	type ObjectLockConfiguration struct {
+		XMLName          xml.Name `xml:"ObjectLockConfiguration"`
+		ObjectLockEnabled string  `xml:"ObjectLockEnabled"`
+		Rule             *struct {
+			DefaultRetention *struct {
+				Mode  string `xml:"Mode"`
+				Days  *int   `xml:"Days"`
+				Years *int   `xml:"Years"`
+			} `xml:"DefaultRetention"`
+		} `xml:"Rule"`
+	}
+
+	var olc ObjectLockConfiguration
+	if err := xml.Unmarshal(config, &olc); err != nil {
+		return fmt.Errorf("failed to parse object lock configuration: %w", err)
+	}
+
+	input := &s3.PutObjectLockConfigurationInput{
+		Bucket: aws.String(bucket),
+	}
+
+	if olc.ObjectLockEnabled == "Enabled" {
+		input.ObjectLockConfiguration = &types.ObjectLockConfiguration{
+			ObjectLockEnabled: types.ObjectLockEnabledEnabled,
+		}
+
+		if olc.Rule != nil && olc.Rule.DefaultRetention != nil {
+			dr := &types.DefaultRetention{}
+			if olc.Rule.DefaultRetention.Mode == "GOVERNANCE" {
+				dr.Mode = types.ObjectLockRetentionModeGovernance
+			} else if olc.Rule.DefaultRetention.Mode == "COMPLIANCE" {
+				dr.Mode = types.ObjectLockRetentionModeCompliance
+			}
+			if olc.Rule.DefaultRetention.Days != nil {
+				dr.Days = aws.Int32(int32(*olc.Rule.DefaultRetention.Days))
+			}
+			if olc.Rule.DefaultRetention.Years != nil {
+				dr.Years = aws.Int32(int32(*olc.Rule.DefaultRetention.Years))
+			}
+			input.ObjectLockConfiguration.Rule = &types.ObjectLockRule{
+				DefaultRetention: dr,
+			}
+		}
+	}
+
+	_, err := b.s3Client.PutObjectLockConfiguration(ctx, input)
+	if err != nil {
+		return fmt.Errorf("PutObjectLockConfiguration failed: %w", err)
+	}
+	return nil
+}
+
+// GetObjectRetention gets the retention settings for an object.
+func (b *B2Backend) GetObjectRetention(ctx context.Context, bucket, key string) ([]byte, error) {
+	output, err := b.s3Client.GetObjectRetention(ctx, &s3.GetObjectRetentionInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetObjectRetention failed: %w", err)
+	}
+
+	// Build XML response
+	if output.Retention == nil {
+		return []byte(`<?xml version="1.0" encoding="UTF-8"?><Retention/>`), nil
+	}
+
+	var parts []string
+	retention := output.Retention
+
+	if retention.Mode == types.ObjectLockRetentionModeGovernance {
+		parts = append(parts, "<Mode>GOVERNANCE</Mode>")
+	} else if retention.Mode == types.ObjectLockRetentionModeCompliance {
+		parts = append(parts, "<Mode>COMPLIANCE</Mode>")
+	}
+
+	if retention.RetainUntilDate != nil {
+		parts = append(parts, fmt.Sprintf("<RetainUntilDate>%s</RetainUntilDate>", retention.RetainUntilDate.Format(time.RFC3339)))
+	}
+
+	xmlContent := strings.Join(parts, "")
+	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><Retention>%s</Retention>`, xmlContent)), nil
+}
+
+// PutObjectRetention sets the retention settings for an object.
+func (b *B2Backend) PutObjectRetention(ctx context.Context, bucket, key string, retention []byte) error {
+	// Parse the retention XML
+	type Retention struct {
+		XMLName        xml.Name `xml:"Retention"`
+		Mode           string   `xml:"Mode"`
+		RetainUntilDate string  `xml:"RetainUntilDate"`
+	}
+
+	var r Retention
+	if err := xml.Unmarshal(retention, &r); err != nil {
+		return fmt.Errorf("failed to parse retention: %w", err)
+	}
+
+	input := &s3.PutObjectRetentionInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}
+
+	if r.Mode == "GOVERNANCE" {
+		input.Retention = &types.ObjectLockRetention{
+			Mode: types.ObjectLockRetentionModeGovernance,
+		}
+	} else if r.Mode == "COMPLIANCE" {
+		input.Retention = &types.ObjectLockRetention{
+			Mode: types.ObjectLockRetentionModeCompliance,
+		}
+	}
+
+	if r.RetainUntilDate != "" {
+		t, err := time.Parse(time.RFC3339, r.RetainUntilDate)
+		if err != nil {
+			return fmt.Errorf("failed to parse RetainUntilDate: %w", err)
+		}
+		if input.Retention == nil {
+			input.Retention = &types.ObjectLockRetention{}
+		}
+		input.Retention.RetainUntilDate = aws.Time(t)
+	}
+
+	_, err := b.s3Client.PutObjectRetention(ctx, input)
+	if err != nil {
+		return fmt.Errorf("PutObjectRetention failed: %w", err)
+	}
+	return nil
+}
+
+// GetObjectLegalHold gets the legal hold status for an object.
+func (b *B2Backend) GetObjectLegalHold(ctx context.Context, bucket, key string) ([]byte, error) {
+	output, err := b.s3Client.GetObjectLegalHold(ctx, &s3.GetObjectLegalHoldInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("GetObjectLegalHold failed: %w", err)
+	}
+
+	// Build XML response
+	if output.LegalHold == nil {
+		return []byte(`<?xml version="1.0" encoding="UTF-8"?><LegalHold/>`), nil
+	}
+
+	status := "OFF"
+	if output.LegalHold.Status == types.ObjectLockLegalHoldStatusOn {
+		status = "ON"
+	}
+
+	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><LegalHold><Status>%s</Status></LegalHold>`, status)), nil
+}
+
+// PutObjectLegalHold sets the legal hold status for an object.
+func (b *B2Backend) PutObjectLegalHold(ctx context.Context, bucket, key string, legalHold []byte) error {
+	// Parse the legal hold XML
+	type LegalHold struct {
+		XMLName xml.Name `xml:"LegalHold"`
+		Status  string   `xml:"Status"`
+	}
+
+	var lh LegalHold
+	if err := xml.Unmarshal(legalHold, &lh); err != nil {
+		return fmt.Errorf("failed to parse legal hold: %w", err)
+	}
+
+	input := &s3.PutObjectLegalHoldInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		LegalHold: &types.ObjectLockLegalHold{
+			Status: types.ObjectLockLegalHoldStatusOff,
+		},
+	}
+
+	if lh.Status == "ON" {
+		input.LegalHold.Status = types.ObjectLockLegalHoldStatusOn
+	}
+
+	_, err := b.s3Client.PutObjectLegalHold(ctx, input)
+	if err != nil {
+		return fmt.Errorf("PutObjectLegalHold failed: %w", err)
+	}
+	return nil
+}
+
 // Ensure bytes.Buffer is used when needed
 var _ = bytes.NewReader(nil)
