@@ -32,9 +32,6 @@
 - [x] Unit tests for crypto, canary, and auth modules (all passing)
 - [x] Multi-stage Dockerfile
 
-### In Progress
-- [ ] Integration tests against real B2 + Cloudflare
-
 ## Phase 2: Production Hardening
 
 ### Completed
@@ -76,13 +73,6 @@
   - [x] GET /admin/key/export endpoint (with ?confirm=yes safety)
   - [x] GET /admin/key/verify endpoint (via canary status)
   - [x] Unit tests
-
-### In Progress
-- [ ] Graceful shutdown + in-flight request draining
-- [ ] Structured logging (JSON)
-- [ ] Prometheus metrics
-
-### Completed (this iteration)
 - [x] Cryptographic provenance chain
   - [x] Provenance manager for recording uploads
   - [x] Per-writer chain branches in B2
@@ -98,6 +88,23 @@
   - [x] Record provenance on PutObject
   - [x] Record provenance on CopyObject
   - [x] Record provenance on CompleteMultipartUpload
+- [x] Graceful shutdown + in-flight request draining
+  - [x] RequestTracker with sync.WaitGroup
+  - [x] Multi-phase shutdown (stop accepting → drain requests → stop background)
+  - [x] Proper canary monitor shutdown
+- [x] Structured logging (JSON)
+  - [x] New logging package with JSON output
+  - [x] Log levels (Debug, Info, Warn, Error)
+  - [x] Field chaining for structured context
+  - [x] Integration with server handlers
+- [x] Prometheus metrics
+  - [x] New metrics package with expvar
+  - [x] Request/transfer/cache/encryption/canary metrics
+  - [x] /metrics endpoint in Prometheus format
+  - [x] Unit tests for logging and metrics packages
+
+### Remaining
+- [ ] Integration tests against real B2 + Cloudflare
 
 ## Phase 3: Advanced Features
 
