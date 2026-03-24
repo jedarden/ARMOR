@@ -74,8 +74,12 @@ jobs:
           go-version: '1.24'
           cache: true
 
+      - name: Download dependencies
+        run: go mod download
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.64.8
           args: --timeout=5m
+          skip-pkg-cache: true
