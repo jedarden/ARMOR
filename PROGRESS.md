@@ -23,17 +23,16 @@
   - [x] HeadObject (metadata translation)
   - [x] DeleteObject
   - [x] ListObjectsV2 (with size correction)
-  - [x] Basic auth (access key validation)
+  - [x] Full AWS SigV4 authentication (signature verification)
 - [x] Health check endpoints (`/healthz`, `/readyz`, `/armor/canary`)
 - [x] Self-healing canary integrity monitor
 - [x] Parquet footer pinning (in-memory, keyed by ETag)
 - [x] Parallel data + HMAC range fetch (errgroup)
 - [x] Pipelined stream decryption (io.Pipe) - decrypts blocks as they stream
-- [x] Unit tests for crypto and canary modules (all passing)
+- [x] Unit tests for crypto, canary, and auth modules (all passing)
 - [x] Multi-stage Dockerfile
 
 ### In Progress
-- [ ] Full AWS SigV4 authentication
 - [ ] Integration tests against real B2 + Cloudflare
 
 ## Phase 2: Production Hardening
