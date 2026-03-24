@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -382,9 +383,17 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 
 		// Verify auth for non-public endpoints
 		if !s.isPublicPath(r.URL.Path) {
-			if !s.verifyAuth(r) {
+			cred, err := s.verifyAuthAndGetCredential(r)
+			if err != nil {
 				s.writeError(w, "AccessDenied", "Invalid credentials", 403)
 				s.metrics.IncRequestsTotal("auth", 403)
+				return
+			}
+			// Check ACL for the request
+			bucket, key := s.extractBucketAndKey(r)
+			if err := CheckACL(cred, bucket, key); err != nil {
+				s.writeError(w, "AccessDenied", "Access Denied", 403)
+				s.metrics.IncRequestsTotal("acl", 403)
 				return
 			}
 		}
@@ -426,33 +435,21 @@ func (s *Server) isPublicPath(path string) bool {
 	return path == "/healthz" || path == "/readyz"
 }
 
-// verifyAuth validates AWS SigV4 authentication.
-func (s *Server) verifyAuth(r *http.Request) bool {
+// verifyAuthAndGetCredential validates AWS SigV4 authentication and returns the credential.
+func (s *Server) verifyAuthAndGetCredential(r *http.Request) (*config.Credential, error) {
+	// Create auth with all credentials
+	auth := NewSigV4AuthWithCredentials(s.config.Credentials, s.config.B2Region)
+
 	// Check for query-based auth (presigned URLs)
 	if r.URL.Query().Get("X-Amz-Credential") != "" {
-		auth := NewSigV4Auth(s.config.AuthAccessKey, s.config.AuthSecretKey, s.config.B2Region)
-		return auth.VerifyQueryAuth(r) == nil
+		return auth.VerifyQueryAuth(r)
 	}
 
 	// Check for header-based auth
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		return false
+		return nil, ErrMissingAuthHeader
 	}
-
-	// Parse the auth header to extract access key for early rejection
-	parsed, err := ParseAuthHeader(authHeader)
-	if err != nil {
-		return false
-	}
-
-	// Quick access key check before expensive signature verification
-	if parsed.AccessKey != s.config.AuthAccessKey {
-		return false
-	}
-
-	// Full SigV4 signature verification
-	auth := NewSigV4Auth(s.config.AuthAccessKey, s.config.AuthSecretKey, s.config.B2Region)
 
 	// Read body for signature calculation (but preserve it for handlers)
 	// For GET/HEAD/DELETE, body is typically empty
@@ -465,7 +462,31 @@ func (s *Server) verifyAuth(r *http.Request) bool {
 		body = nil
 	}
 
-	return auth.VerifyRequest(r, body) == nil
+	return auth.VerifyRequest(r, body)
+}
+
+// extractBucketAndKey extracts bucket and key from the request URL.
+func (s *Server) extractBucketAndKey(r *http.Request) (bucket, key string) {
+	path := r.URL.Path
+	// Remove leading slash
+	path = strings.TrimPrefix(path, "/")
+
+	// Check for virtual-hosted-style (bucket in host)
+	// For path-style: /bucket/key
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) >= 1 {
+		bucket = parts[0]
+	}
+	if len(parts) >= 2 {
+		key = parts[1]
+	}
+
+	// Use configured bucket if empty
+	if bucket == "" {
+		bucket = s.config.Bucket
+	}
+
+	return bucket, key
 }
 
 // writeError writes an S3 error response.
