@@ -66,6 +66,10 @@ type Config struct {
 	// Cache configuration
 	CacheMaxEntries int
 	CacheTTL        int
+
+	// Pre-signed URL configuration
+	PresignSecret  []byte // Secret key for signing pre-signed URLs
+	PresignBaseURL string // Base URL for pre-signed URLs (e.g., "https://armor.example.com/share")
 }
 
 // Load reads configuration from environment variables.
@@ -162,6 +166,26 @@ func Load() (*Config, error) {
 	// Cache configuration
 	cfg.CacheMaxEntries = getEnvInt("ARMOR_CACHE_MAX_ENTRIES", 10000)
 	cfg.CacheTTL = getEnvInt("ARMOR_CACHE_TTL", 300)
+
+	// Pre-signed URL configuration
+	presignSecretHex := os.Getenv("ARMOR_PRESIGN_SECRET")
+	if presignSecretHex != "" {
+		cfg.PresignSecret, err = hex.DecodeString(presignSecretHex)
+		if err != nil {
+			return nil, fmt.Errorf("ARMOR_PRESIGN_SECRET must be hex-encoded: %w", err)
+		}
+		if len(cfg.PresignSecret) < 32 {
+			return nil, fmt.Errorf("ARMOR_PRESIGN_SECRET must be at least 32 bytes (64 hex chars)")
+		}
+	} else {
+		// Use the auth secret key as the presign secret if not specified
+		cfg.PresignSecret = []byte(cfg.AuthSecretKey)
+	}
+	cfg.PresignBaseURL = os.Getenv("ARMOR_PRESIGN_BASE_URL")
+	if cfg.PresignBaseURL == "" {
+		// Default to /share path on the main listener
+		cfg.PresignBaseURL = "/share"
+	}
 
 	// Load named keys (ARMOR_MEK_<NAME>)
 	cfg.NamedKeys = make(map[string][]byte)

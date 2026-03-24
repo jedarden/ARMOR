@@ -138,7 +138,17 @@
   - [x] CheckACL function for bucket/prefix validation
   - [x] Unit tests for multi-credential auth and ACLs
 
+### Completed
+- [x] Pre-signed URL proxy
+  - [x] New presign package for URL generation and verification
+  - [x] HMAC-SHA256 signature for token authentication
+  - [x] Configurable expiration (1 minute to 7 days)
+  - [x] POST /admin/presign endpoint to generate share URLs
+  - [x] GET /share/<token> endpoint to serve decrypted content
+  - [x] Range request support for partial content
+  - [x] Content-Disposition override option
+  - [x] Unit tests for token generation and verification
+
 ### Remaining
-- [ ] Pre-signed URL proxy
 - [ ] Streaming encryption for very large uploads
 - [ ] Admin API enhancements

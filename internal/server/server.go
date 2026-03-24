@@ -3,13 +3,21 @@ package server
 
 import (
 	"context"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/canary"
@@ -18,6 +26,7 @@ import (
 	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/logging"
 	"github.com/jedarden/armor/internal/metrics"
+	"github.com/jedarden/armor/internal/presign"
 	"github.com/jedarden/armor/internal/provenance"
 	"github.com/jedarden/armor/internal/server/handlers"
 )
@@ -31,6 +40,7 @@ type Server struct {
 	keyManager  *keymanager.KeyManager
 	canary      *canary.Monitor
 	provenance  *provenance.Manager
+	presigner   *presign.Signer
 
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
@@ -94,6 +104,9 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create logger
 	logger := logging.New("armor")
 
+	// Create presign signer
+	presigner := presign.NewSigner(cfg.PresignSecret, cfg.PresignBaseURL)
+
 	return &Server{
 		config:         cfg,
 		backend:        b2Backend,
@@ -102,6 +115,7 @@ func New(cfg *config.Config) (*Server, error) {
 		keyManager:     keyMgr,
 		canary:         canaryMonitor,
 		provenance:     provenanceMgr,
+		presigner:      presigner,
 		metrics:        metrics.DefaultMetrics,
 		requestTracker: metrics.DefaultRequestTracker,
 		logger:         logger,
@@ -135,6 +149,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/readyz", s.readyz)
 
+	// Share endpoint for pre-signed URLs (public, no auth required)
+	mux.HandleFunc("/share/", s.handleShare)
+
 	// S3 operations
 	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.keyManager)
 
@@ -159,6 +176,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/key/export", s.exportKey)
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
+	mux.HandleFunc("/admin/presign", s.handlePresign)
 	mux.HandleFunc("/metrics", s.metrics.Handler())
 
 	return mux
@@ -519,4 +537,418 @@ func (s *Server) WaitForInFlightRequests() {
 // InFlightRequestCount returns the current number of in-flight requests.
 func (s *Server) InFlightRequestCount() int64 {
 	return s.requestTracker.Count()
+}
+
+// handlePresign generates a pre-signed URL for sharing encrypted files.
+// POST /admin/presign
+// Body: {"bucket": "my-bucket", "key": "path/to/file.parquet", "expires_in": "1h", "content_disposition": "attachment; filename=\"file.parquet\""}
+func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Verify auth
+	cred, err := s.verifyAuthAndGetCredential(r)
+	if err != nil {
+		s.writeError(w, "AccessDenied", "Invalid credentials", 403)
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		Bucket             string `json:"bucket"`
+		Key                string `json:"key"`
+		ExpiresIn          string `json:"expires_in"`
+		ContentDisposition string `json:"content_disposition"`
+		Range              string `json:"range"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Use configured bucket if not specified
+	bucket := req.Bucket
+	if bucket == "" {
+		bucket = s.config.Bucket
+	}
+
+	// Validate required fields
+	if req.Key == "" {
+		http.Error(w, "key is required", http.StatusBadRequest)
+		return
+	}
+
+	// Check ACL for the request
+	if err := CheckACL(cred, bucket, req.Key); err != nil {
+		s.writeError(w, "AccessDenied", "Access Denied", 403)
+		return
+	}
+
+	// Parse expiration (default 1 hour)
+	expiration := presign.DefaultExpiration
+	if req.ExpiresIn != "" {
+		expiration, err = presign.ParseExpiration(req.ExpiresIn)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid expires_in: %v", err), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Build options
+	var opts []presign.Option
+	if req.ContentDisposition != "" {
+		opts = append(opts, presign.WithContentDisposition(req.ContentDisposition))
+	}
+	if req.Range != "" {
+		opts = append(opts, presign.WithRange(req.Range))
+	}
+
+	// Generate pre-signed URL
+	shareURL, err := s.presigner.GenerateURL(bucket, req.Key, expiration, opts...)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to generate URL: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Return response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"url":       shareURL,
+		"expires_in": presign.FormatExpiration(expiration),
+		"expires_at": time.Now().Add(expiration).UTC().Format(time.RFC3339),
+	})
+}
+
+// handleShare serves decrypted content from a pre-signed URL token.
+// GET /share/<token>
+func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract token from path
+	tokenStr := presign.ParseTokenFromPath(r.URL.Path)
+	if tokenStr == "" {
+		http.Error(w, "Missing token", http.StatusBadRequest)
+		return
+	}
+
+	// Verify token
+	token, err := s.presigner.VerifyToken(tokenStr)
+	if err != nil {
+		if errors.Is(err, presign.ErrExpiredToken) {
+			http.Error(w, "Link expired", http.StatusGone)
+			return
+		}
+		if errors.Is(err, presign.ErrInvalidSignature) {
+			http.Error(w, "Invalid link", http.StatusForbidden)
+			return
+		}
+		http.Error(w, "Invalid token", http.StatusBadRequest)
+		return
+	}
+
+	// Get object metadata
+	ctx := r.Context()
+	info, err := s.backend.Head(ctx, token.Bucket, token.Key)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Object not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Check if object is ARMOR-encrypted
+	if !info.IsARMOREncrypted {
+		// Serve non-ARMOR objects directly (passthrough)
+		body, _, err := s.backend.Get(ctx, token.Bucket, token.Key)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get object: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer body.Close()
+
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size))
+		w.Header().Set("Content-Type", info.ContentType)
+		if token.ContentDisposition != "" {
+			w.Header().Set("Content-Disposition", token.ContentDisposition)
+		}
+		w.WriteHeader(http.StatusOK)
+		io.Copy(w, body)
+		return
+	}
+
+	// Parse ARMOR metadata
+	armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
+	if !ok {
+		http.Error(w, "Failed to parse object metadata", http.StatusInternalServerError)
+		return
+	}
+
+	// Get the MEK for this object
+	mek, err := s.keyManager.GetMEKByID(armorMeta.KeyID)
+	if err != nil {
+		http.Error(w, "Failed to get decryption key", http.StatusInternalServerError)
+		return
+	}
+
+	// Unwrap DEK
+	dek, err := crypto.UnwrapDEK(mek, armorMeta.WrappedDEK)
+	if err != nil {
+		http.Error(w, "Failed to unwrap DEK", http.StatusInternalServerError)
+		return
+	}
+
+	// Create decryptor
+	decryptor, err := crypto.NewDecryptor(dek, armorMeta.IV, armorMeta.BlockSize)
+	if err != nil {
+		http.Error(w, "Failed to create decryptor", http.StatusInternalServerError)
+		return
+	}
+
+	// Set response headers
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", armorMeta.PlaintextSize))
+	w.Header().Set("Content-Type", armorMeta.ContentType)
+	w.Header().Set("Accept-Ranges", "bytes")
+	if token.ContentDisposition != "" {
+		w.Header().Set("Content-Disposition", token.ContentDisposition)
+	}
+
+	// Handle range request if specified in token or header
+	rangeHeader := token.Range
+	if rangeHeader == "" {
+		rangeHeader = r.Header.Get("Range")
+	}
+
+	if rangeHeader != "" {
+		s.handleShareRangeRequest(w, r, token, decryptor, armorMeta, rangeHeader)
+		return
+	}
+
+	// Full object download
+	s.handleShareFullObject(w, r, token, decryptor, armorMeta)
+}
+
+// handleShareFullObject handles full object downloads for share endpoint.
+func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, token *presign.Token, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata) {
+	ctx := r.Context()
+
+	blockSize := armorMeta.BlockSize
+	blockCount := int(crypto.ComputeBlockCount(armorMeta.PlaintextSize, blockSize))
+	plaintextSize := armorMeta.PlaintextSize
+
+	// Calculate offsets
+	hmacTableOffset := crypto.HeaderSize + plaintextSize
+	hmacTableSize := int64(blockCount) * crypto.HMACSize
+
+	// 1. Prefetch HMAC table
+	hmacBody, err := s.backend.GetRange(ctx, token.Bucket, token.Key, hmacTableOffset, hmacTableSize)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to fetch HMAC table: %v", err), http.StatusInternalServerError)
+		return
+	}
+	hmacTable, err := io.ReadAll(hmacBody)
+	hmacBody.Close()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read HMAC table: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// 2. Stream data from Cloudflare
+	streamSize := crypto.HeaderSize + plaintextSize
+	dataBody, err := s.backend.GetRange(ctx, token.Bucket, token.Key, 0, streamSize)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get object stream: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer dataBody.Close()
+
+	// 3. Read and discard header
+	headerBuf := make([]byte, crypto.HeaderSize)
+	if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read header: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// 4. Write status before streaming
+	w.WriteHeader(http.StatusOK)
+
+	// 5. Stream decrypt
+	encryptedBuf := make([]byte, blockSize)
+	for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
+		remaining := plaintextSize - int64(blockIndex)*int64(blockSize)
+		actualBlockSize := int(min64(int64(blockSize), remaining))
+
+		encryptedBuf = encryptedBuf[:actualBlockSize]
+		n, err := io.ReadFull(dataBody, encryptedBuf)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return
+		}
+		if n == 0 {
+			break
+		}
+		encryptedBuf = encryptedBuf[:n]
+
+		// Verify HMAC
+		hmacOffset := blockIndex * crypto.HMACSize
+		if hmacOffset+crypto.HMACSize > len(hmacTable) {
+			return
+		}
+		expectedHMAC := hmacTable[hmacOffset : hmacOffset+crypto.HMACSize]
+
+		mac := hmac.New(sha256.New, decryptor.HMACKey())
+		indexBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(indexBytes, uint32(blockIndex))
+		mac.Write(indexBytes)
+		mac.Write(encryptedBuf)
+		computed := mac.Sum(nil)
+
+		if !hmac.Equal(computed, expectedHMAC) {
+			return
+		}
+
+		// Decrypt
+		decrypted := make([]byte, n)
+		ctr := makeCounter(armorMeta.IV, uint32(blockIndex))
+		stream := cipher.NewCTR(decryptor.CipherBlock(), ctr)
+		stream.XORKeyStream(decrypted, encryptedBuf)
+
+		// Write to client
+		w.Write(decrypted)
+	}
+}
+
+// handleShareRangeRequest handles range requests for share endpoint.
+func (s *Server) handleShareRangeRequest(w http.ResponseWriter, r *http.Request, token *presign.Token, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, rangeHeader string) {
+	ctx := r.Context()
+	plaintextSize := armorMeta.PlaintextSize
+
+	// Parse range header
+	start, end, err := parseRangeHeader(rangeHeader, plaintextSize)
+	if err != nil {
+		http.Error(w, "Invalid range", http.StatusBadRequest)
+		return
+	}
+
+	// Translate range to encrypted blocks
+	translation, err := crypto.TranslateRange(start, end, plaintextSize, armorMeta.BlockSize, crypto.HeaderSize)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to translate range: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Fetch encrypted blocks and HMAC table in parallel
+	var encrypted, hmacTable []byte
+
+	g, gctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		encryptedBody, err := s.backend.GetRange(gctx, token.Bucket, token.Key, translation.DataOffset, translation.DataLength)
+		if err != nil {
+			return fmt.Errorf("failed to fetch encrypted blocks: %w", err)
+		}
+		defer encryptedBody.Close()
+
+		encrypted, err = io.ReadAll(encryptedBody)
+		if err != nil {
+			return fmt.Errorf("failed to read encrypted blocks: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		hmacBody, err := s.backend.GetRange(gctx, token.Bucket, token.Key, translation.HMACOffset, translation.HMACLength)
+		if err != nil {
+			return fmt.Errorf("failed to fetch HMAC table: %w", err)
+		}
+		defer hmacBody.Close()
+
+		hmacTable, err = io.ReadAll(hmacBody)
+		if err != nil {
+			return fmt.Errorf("failed to read HMAC table: %w", err)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Decrypt range
+	plaintext, err := decryptor.DecryptRange(encrypted, hmacTable, start, end, plaintextSize)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to decrypt range: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Set response headers
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(plaintext)))
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, plaintextSize))
+	w.WriteHeader(http.StatusPartialContent)
+	w.Write(plaintext)
+}
+
+func min64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// makeCounter creates a 16-byte counter value from the IV and block index.
+func makeCounter(iv []byte, blockIndex uint32) []byte {
+	counter := make([]byte, 16)
+	copy(counter[0:12], iv[0:12])
+	binary.BigEndian.PutUint32(counter[12:16], blockIndex)
+	return counter
+}
+
+// parseRangeHeader parses a Range header like "bytes=0-1023".
+func parseRangeHeader(header string, totalSize int64) (start, end int64, err error) {
+	if !strings.HasPrefix(header, "bytes=") {
+		return 0, 0, fmt.Errorf("invalid range format")
+	}
+
+	rangeSpec := strings.TrimPrefix(header, "bytes=")
+
+	if strings.Contains(rangeSpec, ",") {
+		return 0, 0, fmt.Errorf("multiple ranges not supported")
+	}
+
+	parts := strings.Split(rangeSpec, "-")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid range format")
+	}
+
+	if parts[0] == "" {
+		// Suffix range: -500 means last 500 bytes
+		suffix, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return 0, 0, err
+		}
+		start = totalSize - suffix
+		end = totalSize - 1
+	} else {
+		start, err = strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return 0, 0, err
+		}
+		if parts[1] == "" {
+			end = totalSize - 1
+		} else {
+			end, err = strconv.ParseInt(parts[1], 10, 64)
+			if err != nil {
+				return 0, 0, err
+			}
+		}
+	}
+
+	if start < 0 || start >= totalSize || end < start || end >= totalSize {
+		return 0, 0, fmt.Errorf("range out of bounds")
+	}
+
+	return start, end, nil
 }
