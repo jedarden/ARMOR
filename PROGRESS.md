@@ -78,11 +78,26 @@
   - [x] Unit tests
 
 ### In Progress
-- [ ] Cryptographic provenance chain
-- [ ] Audit endpoint
 - [ ] Graceful shutdown + in-flight request draining
 - [ ] Structured logging (JSON)
 - [ ] Prometheus metrics
+
+### Completed (this iteration)
+- [x] Cryptographic provenance chain
+  - [x] Provenance manager for recording uploads
+  - [x] Per-writer chain branches in B2
+  - [x] Chain hash linking (SHA-256 of prev + object metadata)
+  - [x] Skip internal .armor/ objects
+  - [x] Unit tests
+- [x] Audit endpoint
+  - [x] GET /admin/audit endpoint
+  - [x] Walks all writer chains
+  - [x] Detects untracked ARMOR-encrypted objects
+  - [x] Returns JSON audit result
+- [x] Provenance integration with handlers
+  - [x] Record provenance on PutObject
+  - [x] Record provenance on CopyObject
+  - [x] Record provenance on CompleteMultipartUpload
 
 ## Phase 3: Advanced Features
 
