@@ -261,3 +261,9 @@
   - Removed `gosimple` linter (merged into `staticcheck` in v2)
   - Moved `linters.settings` to top-level `linters-settings` section
   - Added `default: none` to explicitly control enabled linters
+- [x] Staticcheck lint fixes (20+ issues resolved)
+  - ST1005: Lowercased error strings
+  - QF1003: Converted if-chains to tagged switches
+  - SA9003: Removed empty branches
+  - QF1001: Fixed unnecessary calls to reflect.Value.Interface
+  - Disabled errcheck for intentional defer Close() patterns
