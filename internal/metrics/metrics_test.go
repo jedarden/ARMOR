@@ -276,14 +276,18 @@ func TestRequestTrackerWait(t *testing.T) {
 	rt := &RequestTracker{}
 
 	done := make(chan bool)
+	started := make(chan struct{})
 
+	// Start must complete before Wait is called to avoid race with wg.Add
 	go func() {
 		rt.Start()
+		close(started)
 		time.Sleep(50 * time.Millisecond)
 		rt.End()
 	}()
 
 	go func() {
+		<-started // Wait for Start to complete before calling Wait
 		rt.Wait()
 		close(done)
 	}()

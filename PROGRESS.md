@@ -251,3 +251,9 @@
 - [x] Go version fix: Upgraded from 1.24 to 1.25.0 (required by golang.org/x/crypto@v0.49.0)
   - Updated go.mod to Go 1.25.0
   - Updated CI workflow to use Go 1.25 with GOTOOLCHAIN=local
+- [x] CI lint job fix: Updated golangci-lint from v1.64.8 to v2.11.4
+  - v1.64.8 was built with Go 1.24, incompatible with Go 1.25
+  - v2.11.4 supports Go 1.25
+- [x] Data race fix in TestRequestTrackerWait
+  - Fixed race condition where Wait() could be called before Start() completed
+  - Added synchronization channel to ensure proper ordering
