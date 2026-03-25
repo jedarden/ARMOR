@@ -393,3 +393,8 @@ func (rt *RequestTracker) Count() int64 {
 
 // DefaultRequestTracker is the default request tracker.
 var DefaultRequestTracker = &RequestTracker{}
+
+// StartTime returns when the metrics were initialized.
+func (m *Metrics) StartTime() time.Time {
+	return m.startTime
+}

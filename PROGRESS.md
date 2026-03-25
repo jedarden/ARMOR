@@ -226,10 +226,17 @@
 
 **All three phases are complete.** The ARMOR implementation is feature-complete per the plan.
 
-**Last verified:** 2026-03-25 — CI passing, all tests green, no lint errors.
+**Last verified:** 2026-03-24 — CI passing, all tests green, no lint errors.
 
 ### Remaining Optional Items
-- [ ] Web dashboard (optional): bucket browser, encryption status, cache stats
+- [x] Web dashboard (optional): bucket browser, encryption status, cache stats
+  - GET /dashboard — HTML dashboard with bucket browser
+  - GET /dashboard/object?key=... — Object detail JSON (ARMOR metadata)
+  - GET /dashboard/metrics — JSON metrics summary
+  - Cache hit rate, bytes transferred, canary status display
+  - Breadcrumb navigation for prefix browsing
+  - ARMOR encryption badges with key ID display
+  - Unit tests for all handlers
 
 ---
 
