@@ -1,0 +1,20 @@
+# Binary
+armor
+/armor
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Marathon directory (local only)
+.marathon/
