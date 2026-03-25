@@ -511,9 +511,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// Record provenance
 	if h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		if err := h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put-streaming"); err != nil {
-			// Log but don't fail the upload
-		}
+		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put-streaming")
 	}
 
 	// Return ETag
@@ -1214,9 +1212,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 		// Record provenance for the copy
 		if h.provenance != nil && h.provenance.ShouldRecord(dstKey) {
-			if err := h.provenance.RecordUpload(ctx, dstKey, armorMeta.PlaintextSHA, "copy"); err != nil {
-				// Log but don't fail the operation
-			}
+			_ = h.provenance.RecordUpload(ctx, dstKey, armorMeta.PlaintextSHA, "copy")
 		}
 
 		// Invalidate cache for destination
@@ -1367,9 +1363,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		})
 	}
 
-	for _, cp := range result.CommonPrefixes {
-		resp.CommonPrefixes = append(resp.CommonPrefixes, cp)
-	}
+	resp.CommonPrefixes = append(resp.CommonPrefixes, result.CommonPrefixes...)
 
 	output, err := xml.Marshal(resp)
 	if err != nil {
@@ -1890,9 +1884,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Record provenance for the multipart upload
 	if h.provenance != nil && h.provenance.ShouldRecord(key) {
-		if err := h.provenance.RecordUpload(ctx, key, hex.EncodeToString(plaintextSHA[:]), "multipart"); err != nil {
-			// Log but don't fail the operation
-		}
+		_ = h.provenance.RecordUpload(ctx, key, hex.EncodeToString(plaintextSHA[:]), "multipart")
 	}
 
 	// Build XML response
@@ -2211,9 +2203,7 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 	}
 
 	// Process common prefixes
-	for _, cp := range result.CommonPrefixes {
-		resp.CommonPrefixes = append(resp.CommonPrefixes, cp)
-	}
+	resp.CommonPrefixes = append(resp.CommonPrefixes, result.CommonPrefixes...)
 
 	output, err := xml.Marshal(resp)
 	if err != nil {
