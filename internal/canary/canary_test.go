@@ -647,11 +647,8 @@ func TestResultJSON(t *testing.T) {
 	}
 
 	// Just verify it can be serialized
-	data, err := hex.DecodeString("") // placeholder - we just want the struct to be valid
+	data, _ := hex.DecodeString("") // placeholder - we just want the struct to be valid
 	_ = data
-	if err != nil {
-		// This is fine, it's just a placeholder
-	}
 
 	// Verify the struct has expected values
 	if result.Status != StatusHealthy {
