@@ -325,10 +325,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Record provenance
 	if h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
-		if err := h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put"); err != nil {
-			// Log but don't fail the upload - provenance is non-critical
-			// In production, this would use structured logging
-		}
+		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put")
 	}
 
 	// Return ETag

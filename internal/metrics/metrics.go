@@ -300,11 +300,11 @@ func (m *Metrics) PrometheusFormat() string {
 
 	// Helper to write a metric
 	writeMetric := func(name, help, metricType string, value expvar.Var) {
-		sb.WriteString(fmt.Sprintf("# HELP armor_%s %s\n", name, help))
-		sb.WriteString(fmt.Sprintf("# TYPE armor_%s %s\n", name, metricType))
+		fmt.Fprintf(&sb, "# HELP armor_%s %s\n", name, help)
+		fmt.Fprintf(&sb, "# TYPE armor_%s %s\n", name, metricType)
 		switch v := value.(type) {
 		case *expvar.Int:
-			sb.WriteString(fmt.Sprintf("armor_%s %s\n", name, v.String()))
+			fmt.Fprintf(&sb, "armor_%s %s\n", name, v.String())
 		case *expvar.String:
 			sb.WriteString(fmt.Sprintf("armor_%s %q\n", name, v.String()))
 		}
