@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +57,7 @@ func (m *mockBackend) Head(ctx context.Context, bucket, key string) (*backend.Ob
 	}
 	obj, ok := m.objects[key]
 	if !ok {
-		return nil, nil
+		return nil, errors.New("object not found")
 	}
 	return obj, nil
 }
