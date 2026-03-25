@@ -17,7 +17,6 @@ type Encryptor struct {
 	iv        []byte
 	blockSize int
 	block     cipher.Block
-	stream    cipher.Stream
 }
 
 // NewEncryptor creates a new encryptor.

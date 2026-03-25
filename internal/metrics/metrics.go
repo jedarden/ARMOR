@@ -61,7 +61,6 @@ type Metrics struct {
 
 	// Internal state
 	startTime time.Time
-	mu        sync.Mutex
 }
 
 // DefaultMetrics is the default metrics instance.
@@ -306,7 +305,7 @@ func (m *Metrics) PrometheusFormat() string {
 		case *expvar.Int:
 			fmt.Fprintf(&sb, "armor_%s %s\n", name, v.String())
 		case *expvar.String:
-			sb.WriteString(fmt.Sprintf("armor_%s %q\n", name, v.String()))
+			fmt.Fprintf(&sb, "armor_%s %q\n", name, v.String())
 		}
 	}
 
@@ -351,7 +350,7 @@ func (m *Metrics) PrometheusFormat() string {
 	uptime := time.Since(m.startTime).Seconds()
 	sb.WriteString("# HELP armor_uptime_seconds Server uptime in seconds\n")
 	sb.WriteString("# TYPE armor_uptime_seconds gauge\n")
-	sb.WriteString(fmt.Sprintf("armor_uptime_seconds %.2f\n", uptime))
+	fmt.Fprintf(&sb, "armor_uptime_seconds %.2f\n", uptime)
 
 	return sb.String()
 }
