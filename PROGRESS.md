@@ -257,3 +257,7 @@
 - [x] Data race fix in TestRequestTrackerWait
   - Fixed race condition where Wait() could be called before Start() completed
   - Added synchronization channel to ensure proper ordering
+- [x] golangci-lint v2 config format fix
+  - Removed `gosimple` linter (merged into `staticcheck` in v2)
+  - Moved `linters.settings` to top-level `linters-settings` section
+  - Added `default: none` to explicitly control enabled linters
