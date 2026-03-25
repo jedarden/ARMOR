@@ -21,6 +21,7 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/b2keys"
+	"github.com/jedarden/armor/internal/dashboard"
 	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
@@ -43,6 +44,7 @@ type Server struct {
 	provenance  *provenance.Manager
 	presigner   *presign.Signer
 	b2keys      *b2keys.Client // B2 native API key management
+	dashboard   *dashboard.Dashboard
 
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
@@ -125,6 +127,9 @@ func New(cfg *config.Config) (*Server, error) {
 		}).Warn("Failed to create B2 keys client - key management disabled")
 	}
 
+	// Create dashboard
+	dash := dashboard.New(b2Backend, cfg.Bucket, metrics.DefaultMetrics)
+
 	return &Server{
 		config:         cfg,
 		backend:        b2Backend,
@@ -135,6 +140,7 @@ func New(cfg *config.Config) (*Server, error) {
 		provenance:     provenanceMgr,
 		presigner:      presigner,
 		b2keys:         b2keysClient,
+		dashboard:      dash,
 		metrics:        metrics.DefaultMetrics,
 		requestTracker: metrics.DefaultRequestTracker,
 		logger:         logger,
@@ -199,6 +205,14 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/b2/keys", s.handleB2Keys)           // GET=List, POST=Create
 	mux.HandleFunc("/admin/b2/keys/", s.handleB2KeyDelete)     // DELETE=Delete by ID
 	mux.HandleFunc("/metrics", s.metrics.Handler())
+
+	// Dashboard routes
+	if s.dashboard != nil {
+		mux.HandleFunc("/dashboard", s.dashboard.Handler())
+		mux.HandleFunc("/dashboard/", s.dashboard.Handler()) // For prefix navigation
+		mux.HandleFunc("/dashboard/object", s.dashboard.ObjectDetailHandler())
+		mux.HandleFunc("/dashboard/metrics", s.dashboard.MetricsHandler())
+	}
 
 	return mux
 }
