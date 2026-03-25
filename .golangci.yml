@@ -12,7 +12,7 @@ linters:
     - staticcheck
     - unused
 
-linters-settings:
+settings:
   errcheck:
     check-type-assertions: true
     check-blank: true
