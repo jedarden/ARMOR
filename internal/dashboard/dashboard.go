@@ -219,7 +219,7 @@ func (d *Dashboard) ObjectDetailHandler() http.HandlerFunc {
 					"key_id":         armorMeta.KeyID,
 					"iv":             fmt.Sprintf("%x", armorMeta.IV),
 					"wrapped_dek":    fmt.Sprintf("%x", armorMeta.WrappedDEK),
-					"sha256":         armorMeta.PlaintextSHA256,
+					"sha256":         armorMeta.PlaintextSHA,
 				}
 			}
 		}
