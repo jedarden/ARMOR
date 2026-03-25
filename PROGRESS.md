@@ -226,7 +226,7 @@
 
 **All three phases are complete.** The ARMOR implementation is feature-complete per the plan.
 
-**Last verified:** 2026-03-24 — CI passing, all tests green, no lint errors.
+**Last verified:** 2026-03-25 — CI passing, all tests green, no lint errors.
 
 ### Remaining Optional Items
 - [x] Web dashboard (optional): bucket browser, encryption status, cache stats
@@ -260,6 +260,8 @@
 - [x] Dashboard build fix: Corrected PlaintextSHA field name and removed unused import
   - Changed PlaintextSHA256 to PlaintextSHA to match ARMORMetadata struct
   - Removed unused 'bytes' import from dashboard_test.go
+- [x] Dashboard test fix: Fixed nil pointer dereference in TestObjectDetailHandlerNotFound
+  - Mock Head method now returns error when object not found
 - [x] Go version fix: Upgraded from 1.24 to 1.25.0 (required by golang.org/x/crypto@v0.49.0)
   - Updated go.mod to Go 1.25.0
   - Updated CI workflow to use Go 1.25 with GOTOOLCHAIN=local
