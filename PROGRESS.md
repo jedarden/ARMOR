@@ -242,3 +242,12 @@
   - Added multi-key and multi-credential examples
   - Added Admin API documentation
   - Added S3 API coverage table
+
+---
+
+## Post-Implementation Fixes
+
+### Completed
+- [x] Go version fix: Upgraded from 1.24 to 1.25.0 (required by golang.org/x/crypto@v0.49.0)
+  - Updated go.mod to Go 1.25.0
+  - Updated CI workflow to use Go 1.25 with GOTOOLCHAIN=local
