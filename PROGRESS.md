@@ -257,6 +257,9 @@
 ## Post-Implementation Fixes
 
 ### Completed
+- [x] Dashboard build fix: Corrected PlaintextSHA field name and removed unused import
+  - Changed PlaintextSHA256 to PlaintextSHA to match ARMORMetadata struct
+  - Removed unused 'bytes' import from dashboard_test.go
 - [x] Go version fix: Upgraded from 1.24 to 1.25.0 (required by golang.org/x/crypto@v0.49.0)
   - Updated go.mod to Go 1.25.0
   - Updated CI workflow to use Go 1.25 with GOTOOLCHAIN=local
