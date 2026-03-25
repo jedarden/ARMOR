@@ -121,12 +121,12 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Cloudflare request failed: %w", err)
+		return nil, nil, fmt.Errorf("cloudflare request failed: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		resp.Body.Close()
-		return nil, nil, fmt.Errorf("Cloudflare returned status %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("cloudflare returned status %d", resp.StatusCode)
 	}
 
 	// Extract relevant headers
@@ -845,9 +845,10 @@ func (b *B2Backend) GetObjectLockConfiguration(ctx context.Context, bucket strin
 		var retentionParts []string
 		retention := config.Rule.DefaultRetention
 
-		if retention.Mode == types.ObjectLockRetentionModeGovernance {
+		switch retention.Mode {
+		case types.ObjectLockRetentionModeGovernance:
 			retentionParts = append(retentionParts, "<Mode>GOVERNANCE</Mode>")
-		} else if retention.Mode == types.ObjectLockRetentionModeCompliance {
+		case types.ObjectLockRetentionModeCompliance:
 			retentionParts = append(retentionParts, "<Mode>COMPLIANCE</Mode>")
 		}
 
@@ -898,9 +899,10 @@ func (b *B2Backend) PutObjectLockConfiguration(ctx context.Context, bucket strin
 
 		if olc.Rule != nil && olc.Rule.DefaultRetention != nil {
 			dr := &types.DefaultRetention{}
-			if olc.Rule.DefaultRetention.Mode == "GOVERNANCE" {
+			switch olc.Rule.DefaultRetention.Mode {
+			case "GOVERNANCE":
 				dr.Mode = types.ObjectLockRetentionModeGovernance
-			} else if olc.Rule.DefaultRetention.Mode == "COMPLIANCE" {
+			case "COMPLIANCE":
 				dr.Mode = types.ObjectLockRetentionModeCompliance
 			}
 			if olc.Rule.DefaultRetention.Days != nil {
@@ -940,9 +942,10 @@ func (b *B2Backend) GetObjectRetention(ctx context.Context, bucket, key string) 
 	var parts []string
 	retention := output.Retention
 
-	if retention.Mode == types.ObjectLockRetentionModeGovernance {
+	switch retention.Mode {
+	case types.ObjectLockRetentionModeGovernance:
 		parts = append(parts, "<Mode>GOVERNANCE</Mode>")
-	} else if retention.Mode == types.ObjectLockRetentionModeCompliance {
+	case types.ObjectLockRetentionModeCompliance:
 		parts = append(parts, "<Mode>COMPLIANCE</Mode>")
 	}
 
@@ -973,11 +976,12 @@ func (b *B2Backend) PutObjectRetention(ctx context.Context, bucket, key string, 
 		Key:    aws.String(key),
 	}
 
-	if r.Mode == "GOVERNANCE" {
+	switch r.Mode {
+	case "GOVERNANCE":
 		input.Retention = &types.ObjectLockRetention{
 			Mode: types.ObjectLockRetentionModeGovernance,
 		}
-	} else if r.Mode == "COMPLIANCE" {
+	case "COMPLIANCE":
 		input.Retention = &types.ObjectLockRetention{
 			Mode: types.ObjectLockRetentionModeCompliance,
 		}
