@@ -178,7 +178,13 @@ func (a *SigV4Auth) buildCanonicalRequest(r *http.Request, signedHeaders []strin
 	signedHeadersStr := strings.Join(signedHeaders, ";")
 
 	// 6. Hashed payload
-	payloadHash := sha256Sum(body)
+	// Prefer the x-amz-content-sha256 header when present — the client already
+	// computed and signed this value, so we don't need to read the body (which
+	// would consume it before the handler runs).
+	payloadHash := r.Header.Get("x-amz-content-sha256")
+	if payloadHash == "" {
+		payloadHash = sha256Sum(body)
+	}
 
 	// Combine
 	return strings.Join([]string{

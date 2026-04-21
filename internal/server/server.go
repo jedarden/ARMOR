@@ -504,18 +504,10 @@ func (s *Server) verifyAuthAndGetCredential(r *http.Request) (*config.Credential
 		return nil, ErrMissingAuthHeader
 	}
 
-	// Read body for signature calculation (but preserve it for handlers)
-	// For GET/HEAD/DELETE, body is typically empty
-	var body []byte
-	if r.Method == "PUT" || r.Method == "POST" {
-		// Note: In production, we'd need to handle body reading more carefully
-		// to avoid consuming it before handlers can read it.
-		// For now, we'll skip body-based signature verification for PUT/POST
-		// and just verify headers. This is a known limitation.
-		body = nil
-	}
-
-	return auth.VerifyRequest(r, body)
+	// Pass nil body — buildCanonicalRequest uses x-amz-content-sha256 header
+	// when present (which covers all AWS SDK/CLI requests), falling back to
+	// sha256(body) for requests without that header.
+	return auth.VerifyRequest(r, nil)
 }
 
 // extractBucketAndKey extracts bucket and key from the request URL.
