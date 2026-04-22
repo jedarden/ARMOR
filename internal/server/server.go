@@ -442,8 +442,13 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 				s.metrics.IncRequestsTotal("auth", 403)
 				return
 			}
-			// Check ACL for the request
+			// Check ACL for the request. For list operations the URL path has no
+			// key component, so fall back to the ?prefix query param so that ACL
+			// prefix restrictions are enforced correctly against the listed prefix.
 			bucket, key := s.extractBucketAndKey(r)
+			if key == "" {
+				key = r.URL.Query().Get("prefix")
+			}
 			if err := CheckACL(cred, bucket, key); err != nil {
 				s.writeError(w, "AccessDenied", "Access Denied", 403)
 				s.metrics.IncRequestsTotal("acl", 403)
