@@ -270,6 +270,71 @@ func TestReadyzConcurrentCachedHead(t *testing.T) {
 	t.Logf("HeadBucket calls: %d (limit %d)", calls, maxAllowed)
 }
 
+// TestReadyzConcurrentCanaryMode verifies that 100 concurrent GETs to /readyz
+// with a healthy canary make zero HeadBucket calls — the canary's in-memory
+// state is the sole signal.
+func TestReadyzConcurrentCanaryMode(t *testing.T) {
+	const numRequests = 100
+
+	cb := newCountingBackend()
+
+	mek := make([]byte, 32)
+	rand.Read(mek)
+	m := canary.NewMonitor(canary.Config{
+		Backend:    cb,
+		Bucket:     "test-bucket",
+		MEK:        mek,
+		BlockSize:  65536,
+		InstanceID: "test-instance",
+		CanarySize: 100,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	m.Start(ctx)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !m.IsHealthy() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for canary to become healthy")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	s := &Server{
+		config:        &config.Config{Bucket: "test-bucket"},
+		backend:       cb,
+		canary:        m,
+		canaryStarted: true,
+		logger:        logging.New("test"),
+		metrics:       metrics.DefaultMetrics,
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(numRequests)
+
+	for i := 0; i < numRequests; i++ {
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+			rec := httptest.NewRecorder()
+			s.readyz(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("expected 200, got %d", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
+
+	calls := cb.headBucketCalls.Load()
+	if calls > 1 {
+		t.Errorf("canary mode: expected ≤ 1 HeadBucket calls, got %d", calls)
+	}
+	t.Logf("Canary mode: HeadBucket calls: %d", calls)
+
+	m.Stop()
+}
+
 // TestReadyzCanaryUnhealthy verifies that when the canary reports unhealthy,
 // /readyz returns 503 without making any backend HeadBucket call.
 func TestReadyzCanaryUnhealthy(t *testing.T) {
@@ -349,7 +414,16 @@ func TestReadyzCanaryHealthy(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
+
+	start := time.Now()
 	s.readyz(rec, req)
+	elapsed := time.Since(start)
+
+	// The canary path reads an in-memory boolean — should respond in well
+	// under the handler's 5-second backend timeout.
+	if elapsed > time.Second {
+		t.Errorf("readyz took %v with healthy canary; expected < 1s", elapsed)
+	}
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
