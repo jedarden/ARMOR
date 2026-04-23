@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -49,10 +50,39 @@ type Server struct {
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
 
+	// backendHealth caches the result of the backend connectivity check
+	// used by /readyz when the canary monitor is not available.
+	backendHealth backendHealthCache
+
 	// Metrics and request tracking
 	metrics       *metrics.Metrics
 	requestTracker *metrics.RequestTracker
 	logger        *logging.Logger
+}
+
+// backendHealthCache caches a backend connectivity check result with a TTL.
+type backendHealthCache struct {
+	mu         sync.Mutex
+	lastCheck  time.Time
+	healthy    bool
+	lastError  string
+}
+
+func (c *backendHealthCache) Update(healthy bool, errStr string) {
+	c.mu.Lock()
+	c.lastCheck = time.Now()
+	c.healthy = healthy
+	c.lastError = errStr
+	c.mu.Unlock()
+}
+
+func (c *backendHealthCache) Get(ttl time.Duration) (checked bool, healthy bool, errStr string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Since(c.lastCheck) < ttl {
+		return true, c.healthy, c.lastError
+	}
+	return false, false, ""
 }
 
 // New creates a new ARMOR server.
@@ -240,23 +270,46 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 // readyz returns the readiness status.
+// When the canary monitor is running, its in-memory health state is the sole
+// signal — no backend call is made. When the canary is not configured, a
+// HeadBucket call is issued and its result is cached for ReadyzCacheTTL seconds.
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
-	// Check canary if monitor is running
-	if s.canary != nil && s.canaryStarted && !s.canary.IsHealthy() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("Not ready - canary check failed"))
+	// Fast path: canary monitor is authoritative when running.
+	if s.canary != nil && s.canaryStarted {
+		if !s.canary.IsHealthy() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("Not ready - canary check failed"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Ready"))
 		return
 	}
 
-	// Backend connectivity check via minimal List operation
+	// Fallback (no canary): cached backend connectivity check.
+	ttl := time.Duration(s.config.ReadyzCacheTTL) * time.Second
+	if checked, healthy, _ := s.backendHealth.Get(ttl); checked {
+		if healthy {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("Ready"))
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("Not ready - backend connectivity check failed (cached)"))
+		}
+		return
+	}
+
+	// Cache miss — probe the backend with HeadBucket.
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if _, err := s.backend.List(ctx, s.config.Bucket, "", "", "", 1); err != nil {
+	if err := s.backend.HeadBucket(ctx, s.config.Bucket); err != nil {
+		s.backendHealth.Update(false, err.Error())
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("Not ready - backend unavailable"))
+		w.Write([]byte("Not ready - backend unavailable: " + err.Error()))
 		return
 	}
 
+	s.backendHealth.Update(true, "")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Ready"))
 }
