@@ -173,6 +173,7 @@ ARMOR is configured via environment variables:
 | `ARMOR_AUTH_SECRET_KEY` | No | (random) | Client secret key |
 | `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size |
 | `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID |
+| `ARMOR_READYZ_CACHE_TTL` | No | `30` | Seconds to cache backend connectivity check in `/readyz` (only used when canary is disabled) |
 
 ### Multi-Key Configuration
 

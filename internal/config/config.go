@@ -70,6 +70,9 @@ type Config struct {
 	// Pre-signed URL configuration
 	PresignSecret  []byte // Secret key for signing pre-signed URLs
 	PresignBaseURL string // Base URL for pre-signed URLs (e.g., "https://armor.example.com/share")
+
+	// Readiness probe configuration
+	ReadyzCacheTTL int // Seconds to cache backend connectivity check (default 30)
 }
 
 // Load reads configuration from environment variables.
@@ -166,6 +169,9 @@ func Load() (*Config, error) {
 	// Cache configuration
 	cfg.CacheMaxEntries = getEnvInt("ARMOR_CACHE_MAX_ENTRIES", 10000)
 	cfg.CacheTTL = getEnvInt("ARMOR_CACHE_TTL", 300)
+
+	// Readiness probe configuration
+	cfg.ReadyzCacheTTL = getEnvInt("ARMOR_READYZ_CACHE_TTL", 30)
 
 	// Pre-signed URL configuration
 	presignSecretHex := os.Getenv("ARMOR_PRESIGN_SECRET")
