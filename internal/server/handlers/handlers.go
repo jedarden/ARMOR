@@ -1330,26 +1330,35 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		StorageClass string `xml:"StorageClass"`
 	}
 
+	// S3 spec: each CommonPrefixes entry is a separate wrapper element with one
+	// Prefix child. Using []string with "Outer>Inner" produces an empty
+	// <CommonPrefixes/> when the slice is nil, which the AWS SDK v1 parses as a
+	// slice with one nil element — causing nil-pointer crashes in clients like
+	// litestream. Using a dedicated struct + omitempty avoids this.
+	type CommonPrefix struct {
+		Prefix string `xml:"Prefix"`
+	}
+
 	type ListBucketResult struct {
-		XMLName               xml.Name `xml:"ListBucketResult"`
-		Xmlns                 string   `xml:"xmlns,attr"`
-		Name                  string   `xml:"Name"`
-		Prefix                string   `xml:"Prefix"`
-		Delimiter             string   `xml:"Delimiter,omitempty"`
-		MaxKeys               int      `xml:"MaxKeys"`
-		IsTruncated           bool     `xml:"IsTruncated"`
-		NextContinuationToken string   `xml:"NextContinuationToken,omitempty"`
+		XMLName               xml.Name       `xml:"ListBucketResult"`
+		Xmlns                 string         `xml:"xmlns,attr"`
+		Name                  string         `xml:"Name"`
+		Prefix                string         `xml:"Prefix"`
+		Delimiter             string         `xml:"Delimiter,omitempty"`
+		MaxKeys               int            `xml:"MaxKeys"`
+		IsTruncated           bool           `xml:"IsTruncated"`
+		NextContinuationToken string         `xml:"NextContinuationToken,omitempty"`
 		Contents              []Contents
-		CommonPrefixes        []string `xml:"CommonPrefixes>Prefix,omitempty"`
+		CommonPrefixes        []CommonPrefix `xml:"CommonPrefixes,omitempty"`
 	}
 
 	resp := ListBucketResult{
-		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:        bucket,
-		Prefix:      prefix,
-		Delimiter:   delimiter,
-		MaxKeys:     maxKeys,
-		IsTruncated: result.IsTruncated,
+		Xmlns:                 "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:                  bucket,
+		Prefix:                prefix,
+		Delimiter:             delimiter,
+		MaxKeys:               maxKeys,
+		IsTruncated:           result.IsTruncated,
 		NextContinuationToken: result.NextToken,
 	}
 
@@ -1363,7 +1372,9 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		})
 	}
 
-	resp.CommonPrefixes = append(resp.CommonPrefixes, result.CommonPrefixes...)
+	for _, p := range result.CommonPrefixes {
+		resp.CommonPrefixes = append(resp.CommonPrefixes, CommonPrefix{Prefix: p})
+	}
 
 	output, err := xml.Marshal(resp)
 	if err != nil {
