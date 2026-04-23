@@ -142,11 +142,11 @@ func (a *SigV4Auth) VerifyRequest(r *http.Request, body []byte) (*config.Credent
 	// Build canonical request
 	canonicalRequest := a.buildCanonicalRequest(r, parsed.SignedHeaders, body)
 
-	// Build string to sign
-	stringToSign := a.buildStringToSign(amzDate, parsed.CredentialDate, canonicalRequest)
+	// Build string to sign using the region the client claimed
+	stringToSign := a.buildStringToSign(amzDate, parsed.CredentialDate, parsed.Region, canonicalRequest)
 
-	// Calculate signature using the credential's secret key
-	signingKey := a.getSigningKeyForCredential(cred, parsed.CredentialDate)
+	// Calculate signature using the credential's secret key and the client's claimed region
+	signingKey := a.getSigningKeyForCredential(cred, parsed.CredentialDate, parsed.Region)
 	calculatedSig := hex.EncodeToString(a.hmacSHA256(signingKey, stringToSign))
 
 	// Compare signatures (constant-time comparison would be better but hex strings are not sensitive)
@@ -263,8 +263,8 @@ func (a *SigV4Auth) buildCanonicalHeaders(r *http.Request, signedHeaders []strin
 }
 
 // buildStringToSign builds the string to sign per AWS spec.
-func (a *SigV4Auth) buildStringToSign(amzDate, credentialDate, canonicalRequest string) string {
-	credentialScope := credentialDate + "/" + a.region + "/" + a.service + "/aws4_request"
+func (a *SigV4Auth) buildStringToSign(amzDate, credentialDate, region, canonicalRequest string) string {
+	credentialScope := credentialDate + "/" + region + "/" + a.service + "/aws4_request"
 
 	return strings.Join([]string{
 		"AWS4-HMAC-SHA256",
@@ -274,10 +274,10 @@ func (a *SigV4Auth) buildStringToSign(amzDate, credentialDate, canonicalRequest 
 	}, "\n")
 }
 
-// getSigningKeyForCredential derives the signing key for the given credential and date.
-func (a *SigV4Auth) getSigningKeyForCredential(cred *config.Credential, date string) []byte {
+// getSigningKeyForCredential derives the signing key for the given credential, date, and region.
+func (a *SigV4Auth) getSigningKeyForCredential(cred *config.Credential, date, region string) []byte {
 	kDate := a.hmacSHA256([]byte("AWS4"+cred.SecretKey), date)
-	kRegion := a.hmacSHA256(kDate, a.region)
+	kRegion := a.hmacSHA256(kDate, region)
 	kService := a.hmacSHA256(kRegion, a.service)
 	kSigning := a.hmacSHA256(kService, "aws4_request")
 	return kSigning
@@ -418,12 +418,13 @@ func (a *SigV4Auth) VerifyQueryAuth(r *http.Request) (*config.Credential, error)
 	// Build canonical request (excluding signature from query)
 	canonicalRequest := a.buildCanonicalQueryRequest(r, signedHeaders, body, query)
 
-	// Build string to sign
+	// Build string to sign using the region the client claimed
 	credentialDate := credParts[1]
-	stringToSign := a.buildStringToSign(amzDate, credentialDate, canonicalRequest)
+	clientRegion := credParts[2]
+	stringToSign := a.buildStringToSign(amzDate, credentialDate, clientRegion, canonicalRequest)
 
-	// Calculate signature using the credential's secret key
-	signingKey := a.getSigningKeyForCredential(cred, credentialDate)
+	// Calculate signature using the credential's secret key and the client's claimed region
+	signingKey := a.getSigningKeyForCredential(cred, credentialDate, clientRegion)
 	calculatedSig := hex.EncodeToString(a.hmacSHA256(signingKey, stringToSign))
 
 	if calculatedSig != signature {
