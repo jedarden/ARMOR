@@ -197,7 +197,7 @@ func TestGetSigningKey(t *testing.T) {
 		AccessKey: "AKIAIOSFODNN7EXAMPLE",
 		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 	}
-	signingKey := auth.getSigningKeyForCredential(cred, "20130524")
+	signingKey := auth.getSigningKeyForCredential(cred, "20130524", "us-east-1")
 	result := fmt.Sprintf("%x", signingKey)
 
 	if result != expectedKey {
@@ -320,10 +320,10 @@ func TestVerifyRequest_ValidSignature(t *testing.T) {
 	canonicalRequest := auth.buildCanonicalRequest(req, []string{"host", "x-amz-date"}, body)
 
 	// Build string to sign
-	stringToSign := auth.buildStringToSign(amzDate, credentialDate, canonicalRequest)
+	stringToSign := auth.buildStringToSign(amzDate, credentialDate, region, canonicalRequest)
 
 	// Calculate signature
-	signingKey := auth.getSigningKeyForCredential(cred, credentialDate)
+	signingKey := auth.getSigningKeyForCredential(cred, credentialDate, region)
 	calculatedSig := fmt.Sprintf("%x", auth.hmacSHA256(signingKey, stringToSign))
 
 	// Set the authorization header with the calculated signature
@@ -363,9 +363,10 @@ func TestVerifyRequest_WithBody(t *testing.T) {
 	stringToSign := auth.buildStringToSign(
 		req.Header.Get("X-Amz-Date"),
 		time.Now().UTC().Format("20060102"),
+		region,
 		canonicalRequest,
 	)
-	signingKey := auth.getSigningKeyForCredential(cred, time.Now().UTC().Format("20060102"))
+	signingKey := auth.getSigningKeyForCredential(cred, time.Now().UTC().Format("20060102"), region)
 	calculatedSig := fmt.Sprintf("%x", auth.hmacSHA256(signingKey, stringToSign))
 
 	// Set authorization header
@@ -433,8 +434,8 @@ func BenchmarkVerifyRequest(b *testing.B) {
 
 		// Calculate signature
 		canonicalRequest := auth.buildCanonicalRequest(req, []string{"host", "x-amz-date"}, body)
-		stringToSign := auth.buildStringToSign(now.Format("20060102T150405Z"), now.Format("20060102"), canonicalRequest)
-		signingKey := auth.getSigningKeyForCredential(cred, now.Format("20060102"))
+		stringToSign := auth.buildStringToSign(now.Format("20060102T150405Z"), now.Format("20060102"), region, canonicalRequest)
+		signingKey := auth.getSigningKeyForCredential(cred, now.Format("20060102"), region)
 		calculatedSig := fmt.Sprintf("%x", auth.hmacSHA256(signingKey, stringToSign))
 
 		authHeader := fmt.Sprintf(
@@ -506,6 +507,61 @@ func TestMultiCredentialAuth(t *testing.T) {
 			t.Errorf("expected ErrInvalidAccessKey, got %v", err)
 		}
 	})
+}
+
+// TestVerifyRequest_AnyRegionAcceptable tests that clients signing with any region
+// in their Credential scope are accepted, as long as the HMAC chain is consistent.
+// This covers R2-style clients that use region='auto' or other non-matching regions.
+func TestVerifyRequest_AnyRegionAcceptable(t *testing.T) {
+	accessKey := "AKIAIOSFODNN7EXAMPLE"
+	secretKey := "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+	serverRegion := "us-west-002"
+
+	// Server is configured with us-west-002, but clients may sign with any region.
+	clientRegions := []string{"us-west-002", "auto", "us-east-1", "eu-west-1"}
+
+	for _, clientRegion := range clientRegions {
+		t.Run("client_region_"+clientRegion, func(t *testing.T) {
+			// Verifier uses server region (only used for struct init, not enforcement)
+			auth := NewSigV4Auth(accessKey, secretKey, serverRegion)
+
+			// Sign the request with the client's chosen region
+			req := createSignedRequest(t, accessKey, secretKey, clientRegion, "GET", "/bucket/key")
+
+			cred, err := auth.VerifyRequest(req, nil)
+			if err != nil {
+				t.Errorf("expected auth to succeed with client region %q (server region %q), got: %v", clientRegion, serverRegion, err)
+			}
+			if cred.AccessKey != accessKey {
+				t.Errorf("expected access key %q, got %q", accessKey, cred.AccessKey)
+			}
+		})
+	}
+}
+
+// TestVerifyRequest_WrongSecretAnyRegion tests that wrong secrets are rejected
+// regardless of what region the client uses.
+func TestVerifyRequest_WrongSecretAnyRegion(t *testing.T) {
+	accessKey := "AKIAIOSFODNN7EXAMPLE"
+	secretKey := "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+	wrongSecret := "wrong-secret-key"
+	serverRegion := "us-west-002"
+
+	clientRegions := []string{"us-west-002", "auto", "us-east-1"}
+
+	for _, clientRegion := range clientRegions {
+		t.Run("client_region_"+clientRegion, func(t *testing.T) {
+			auth := NewSigV4Auth(accessKey, secretKey, serverRegion)
+
+			// Sign with the wrong secret
+			req := createSignedRequest(t, accessKey, wrongSecret, clientRegion, "GET", "/bucket/key")
+
+			_, err := auth.VerifyRequest(req, nil)
+			if err != ErrSignatureMismatch {
+				t.Errorf("expected ErrSignatureMismatch with wrong secret and client region %q, got: %v", clientRegion, err)
+			}
+		})
+	}
 }
 
 // TestCheckACL tests ACL checking for bucket/prefix restrictions.
@@ -661,10 +717,10 @@ func createSignedRequest(t *testing.T, accessKey, secretKey, region, method, pat
 	canonicalRequest := auth.buildCanonicalRequest(req, []string{"host", "x-amz-date"}, nil)
 
 	// Build string to sign
-	stringToSign := auth.buildStringToSign(amzDate, credentialDate, canonicalRequest)
+	stringToSign := auth.buildStringToSign(amzDate, credentialDate, region, canonicalRequest)
 
 	// Calculate signature
-	signingKey := auth.getSigningKeyForCredential(cred, credentialDate)
+	signingKey := auth.getSigningKeyForCredential(cred, credentialDate, region)
 	calculatedSig := fmt.Sprintf("%x", auth.hmacSHA256(signingKey, stringToSign))
 
 	// Set the authorization header
