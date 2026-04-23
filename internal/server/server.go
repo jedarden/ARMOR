@@ -114,17 +114,25 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create B2 keys client (for B2 native API key management)
 	// Uses the same B2 credentials as the S3 backend
 	var b2keysClient *b2keys.Client
-	// Extract account ID from the key ID (B2 key IDs are in format accountIdKeyId)
-	// The account ID is the first 12 characters
-	accountID := cfg.B2AccessKeyID
-	if len(accountID) > 12 {
-		accountID = accountID[:12]
-	}
-	b2keysClient, err = b2keys.NewClient(context.Background(), accountID, cfg.B2SecretAccessKey)
-	if err != nil {
-		logger.WithFields(map[string]interface{}{
-			"error": err.Error(),
-		}).Warn("Failed to create B2 keys client - key management disabled")
+	if cfg.Bucket != "" {
+		// Bucket-scoped configuration: application key is restricted to a single bucket
+		// and cannot call account-level B2 API endpoints (like b2_authorize_account).
+		// Key management is unavailable in this mode, which is expected and intentional.
+		logger.Info("B2 key management disabled (application key is bucket-scoped)")
+	} else {
+		// No bucket restriction: attempt to create B2 keys client for account-level operations
+		// Extract account ID from the key ID (B2 key IDs are in format accountIdKeyId)
+		// The account ID is the first 12 characters
+		accountID := cfg.B2AccessKeyID
+		if len(accountID) > 12 {
+			accountID = accountID[:12]
+		}
+		b2keysClient, err = b2keys.NewClient(context.Background(), accountID, cfg.B2SecretAccessKey)
+		if err != nil {
+			logger.WithFields(map[string]interface{}{
+				"error": err.Error(),
+			}).Warn("Failed to create B2 keys client - key management disabled")
+		}
 	}
 
 	// Create dashboard
