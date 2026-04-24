@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -330,6 +331,11 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put")
 	}
 
+	// Invalidate list cache entries covering this key's directory
+	if h.listCache != nil {
+		h.listCache.InvalidatePrefix(bucket, path.Dir(key)+"/")
+	}
+
 	// Return ETag
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
 	w.WriteHeader(http.StatusOK)
@@ -514,6 +520,11 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	if h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
 		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put-streaming")
+	}
+
+	// Invalidate list cache entries covering this key's directory
+	if h.listCache != nil {
+		h.listCache.InvalidatePrefix(bucket, path.Dir(key)+"/")
 	}
 
 	// Return ETag
@@ -1095,8 +1106,11 @@ func (h *Handlers) DeleteObject(w http.ResponseWriter, r *http.Request, bucket, 
 		return
 	}
 
-	// Invalidate cache
+	// Invalidate metadata cache and list cache
 	h.cache.Delete(bucket, key)
+	if h.listCache != nil {
+		h.listCache.InvalidatePrefix(bucket, path.Dir(key)+"/")
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1317,10 +1331,22 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		}
 	}
 
-	result, err := h.backend.List(ctx, bucket, prefix, delimiter, contToken, maxKeys)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list: %v", err), 500)
-		return
+	var result *backend.ListResult
+	if h.listCache != nil {
+		if cached, ok := h.listCache.Get(bucket, prefix, delimiter, maxKeys, contToken); ok {
+			result = cached
+		}
+	}
+	if result == nil {
+		var err error
+		result, err = h.backend.List(ctx, bucket, prefix, delimiter, contToken, maxKeys)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to list: %v", err), 500)
+			return
+		}
+		if h.listCache != nil {
+			h.listCache.Set(bucket, prefix, delimiter, maxKeys, contToken, result)
+		}
 	}
 
 	// Build XML response
