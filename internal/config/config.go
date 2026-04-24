@@ -77,6 +77,12 @@ type Config struct {
 
 	// Readiness probe configuration
 	ReadyzCacheTTL int // Seconds to cache backend connectivity check (default 30)
+
+	// Manifest index configuration (Phase 4)
+	ManifestEnabled             bool
+	ManifestPrefix              string
+	ManifestCompactionInterval  int // seconds between automatic compactions
+	ManifestCompactionThreshold int // delta entry count triggering early compaction
 }
 
 // Load reads configuration from environment variables.
@@ -180,6 +186,13 @@ func Load() (*Config, error) {
 
 	// Readiness probe configuration
 	cfg.ReadyzCacheTTL = getEnvInt("ARMOR_READYZ_CACHE_TTL", 30)
+
+	// Manifest index configuration
+	manifestEnabledStr := os.Getenv("ARMOR_MANIFEST_ENABLED")
+	cfg.ManifestEnabled = manifestEnabledStr != "false" && manifestEnabledStr != "0"
+	cfg.ManifestPrefix = getEnv("ARMOR_MANIFEST_PREFIX", ".armor/manifest")
+	cfg.ManifestCompactionInterval = getEnvInt("ARMOR_MANIFEST_COMPACTION_INTERVAL", 3600)
+	cfg.ManifestCompactionThreshold = getEnvInt("ARMOR_MANIFEST_COMPACTION_THRESHOLD", 1000)
 
 	// Pre-signed URL configuration
 	presignSecretHex := os.Getenv("ARMOR_PRESIGN_SECRET")

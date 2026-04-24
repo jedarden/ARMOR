@@ -720,6 +720,128 @@ ARMOR implements its own S3 XML request/response handling for the ~15 operations
 - [x] Admin API: key management via B2 native API
 - [ ] Web dashboard (optional): bucket browser, encryption status, cache stats
 
+### Phase 4: Manifest-Based Metadata Index
+
+**Goal:** Eliminate the majority of HeadObject B2 API calls by maintaining a per-writer in-memory index of all tracked objects, persisted to B2 as a snapshot + delta log.
+
+**Tracking bead:** `armor-r6q`
+
+#### Motivation
+
+ARMOR makes one HeadObject call to B2 per range read (to fetch the IV, wrapped DEK, and plaintext size needed for decryption). DuckDB issues 20–100+ range reads per query. Key rotation makes one HeadObject + one CopyObject per file. ListObjectVersions makes one HeadObject per listed object. These are all Class C transactions on B2 (charged per-call after May 2026).
+
+The manifest eliminates these: for any tracked object, the metadata needed for decryption is already in memory from the manifest index. HeadObject becomes a local lookup instead of a B2 round-trip.
+
+#### Design
+
+The manifest is a **performance optimization**, not authoritative state. Consistent with the statelessness principle: B2 object metadata headers remain the authoritative source. The manifest is an optional in-memory acceleration layer. Losing the manifest (restart, crash) means a cold start that reloads from B2 — no data loss, no inconsistency. Any ARMOR instance with the same config can reconstruct the manifest by reading from B2.
+
+**In-memory index:**
+
+```
+map[string]*ManifestEntry   // key: "bucket/object-key"
+
+ManifestEntry {
+    PlaintextSize   int64
+    PlaintextSHA256 string
+    IV              []byte
+    WrappedDEK      []byte
+    BlockSize       int
+    ContentType     string
+    ETag            string    // plaintext ETag
+    LastModified    time.Time
+}
+```
+
+Latest-version only — the manifest tracks the current state of each object, not historical versions. Deletes remove entries; Puts overwrite entries.
+
+**B2 storage layout (per writer, no `head` pointer file):**
+
+```
+.armor/manifest/{writer_id}/snapshot.json.gz            — full compacted index (overwritten on compaction)
+.armor/manifest/{writer_id}/delta-{seq:010d}.jsonl      — one delta file per write batch (padded for lexicographic sort)
+```
+
+Each delta file is an individual B2 object. There is no `head` pointer file — Cloudflare's aggressive caching of small objects makes a pointer file unreliable (stale reads). Delta discovery uses the B2 ListObjects response on startup; sorting by padded filename is authoritative.
+
+Delta file format (one JSON object per line):
+
+```json
+{"op":"put","key":"bucket/path/to/file","entry":{...ManifestEntry...},"ts":"2026-04-24T12:00:00Z"}
+{"op":"del","key":"bucket/path/to/file","ts":"2026-04-24T12:00:01Z"}
+```
+
+**Startup load sequence (any instance, all writers):**
+
+1. `ListObjects(.armor/manifest/)` via direct B2 (one Class C call) → discover all writer shard prefixes and delta files
+2. For each writer shard found:
+   a. Fetch `snapshot.json.gz` via **Cloudflare download path** (free egress) if present → load into memory
+   b. Fetch all `delta-*.jsonl` files with lexicographic name > last compacted sequence, via **Cloudflare download path** → replay in order
+3. Merge all writers' entries into one unified in-memory map (last-write-wins by `LastModified` timestamp for same key written by different writers)
+4. Manifest is ready — all subsequent HeadObject calls for tracked keys return from memory
+
+Every instance loads all writer shards. A fresh instance that has never written anything can still serve HeadObject for any object in the bucket by reading all peer writers' manifests on startup.
+
+**Cloudflare egress on reads:**
+
+Manifest blob fetches (snapshots and delta files) use the same Cloudflare download client as all other GetObject calls:
+
+```
+https://${ARMOR_CF_DOMAIN}/file/${ARMOR_BUCKET}/.armor/manifest/{writer_id}/snapshot.json.gz
+https://${ARMOR_CF_DOMAIN}/file/${ARMOR_BUCKET}/.armor/manifest/{writer_id}/delta-0000000001.jsonl
+```
+
+Only the ListObjects discovery call goes direct to B2 (one Class C call, done once at startup). Delta files and snapshots are cached at the Cloudflare edge after the first fetch.
+
+**Write path (async, non-blocking):**
+
+Every Put or Delete enqueues an entry to a buffered channel. A background goroutine drains the channel, groups entries into a new delta file with an incrementing in-memory sequence counter, and uploads it directly to B2 (free ingress). The primary request path is not blocked by B2 I/O.
+
+**Compaction:**
+
+Triggered when the delta file count exceeds a threshold (default 500 files) or on a timer (default 1 hour). Steps:
+1. Snapshot the current in-memory index to `snapshot.json.gz` (gzip-compressed JSON)
+2. Upload to B2 directly, overwriting the existing snapshot
+3. ListObjects for delta files with seq ≤ compaction point → DeleteObjects in batch
+4. Reset in-memory sequence counter; new writes start fresh delta numbering
+
+Compaction runs in a background goroutine. In-flight writes continue creating new delta files during compaction; these will be replayed on the next startup if they postdate the new snapshot.
+
+**Multi-writer consistency:**
+
+Each writer is fully independent — no coordination required. The merge at read time uses `LastModified` as a tiebreaker for the same key written by multiple writers, matching B2's own last-write-wins semantics. Listing of all writers is accomplished via the single discovery ListObjects call at startup.
+
+#### API call reduction
+
+| Operation | Before | After |
+|-----------|--------|-------|
+| GetObject (range read) | 1 HeadObject + 2 range fetches | 0 HeadObject + 2 range fetches |
+| HeadObject | 1 HeadObject | 0 HeadObject (manifest lookup) |
+| ListObjectVersions (N objects) | 1 List + N HeadObject | 1 List |
+| Key rotation (N files) | N HeadObject + N CopyObject | N CopyObject |
+| ListObjectsV2 size correction | 1 List (size in B2 metadata inline) | 1 List (no change — already using inline metadata) |
+
+For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadObject calls → 5 manifest loads on cold start, 0 thereafter.**
+
+#### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARMOR_MANIFEST_ENABLED` | `true` | Enable/disable manifest (disable for read-only instances or debugging) |
+| `ARMOR_MANIFEST_PREFIX` | `.armor/manifest` | B2 prefix for manifest objects |
+| `ARMOR_MANIFEST_COMPACTION_INTERVAL` | `3600` | Seconds between automatic compactions |
+| `ARMOR_MANIFEST_COMPACTION_THRESHOLD` | `1000` | Delta entry count triggering early compaction |
+
+#### Implementation tasks
+
+- [ ] `internal/manifest` package: index type, entry type, put/delete ops, JSON serialization (armor-r6q.1)
+- [ ] Startup load: snapshot + delta replay, integrated into server init (armor-r6q.2)
+- [ ] Write path: async delta append goroutine with buffered channel (armor-r6q.3)
+- [ ] Compaction: background goroutine, threshold + timer triggers (armor-r6q.4)
+- [ ] Integration: HeadObject handler checks manifest before B2; ListObjectVersions and key rotation use manifest for batch metadata (armor-r6q.5)
+- [ ] Config env vars wired into Config struct and server init (armor-r6q.6)
+- [ ] Tests: roundtrip load/persist, delta replay, compaction idempotency, HeadObject manifest hit (armor-r6q.7)
+
 ---
 
 ## Project Structure
