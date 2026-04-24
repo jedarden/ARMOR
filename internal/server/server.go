@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -778,14 +779,13 @@ func (s *Server) extractBucketAndKey(r *http.Request) (bucket, key string) {
 
 // writeError writes an S3 error response.
 func (s *Server) writeError(w http.ResponseWriter, code, message string, statusCode int) {
-	w.WriteHeader(statusCode)
 	w.Header().Set("Content-Type", "application/xml")
-	errorXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-  <Code>%s</Code>
-  <Message>%s</Message>
-</Error>`, code, message)
-	w.Write([]byte(errorXML))
+	w.WriteHeader(statusCode)
+	var codeBuf, msgBuf bytes.Buffer
+	xml.EscapeText(&codeBuf, []byte(code))
+	xml.EscapeText(&msgBuf, []byte(message))
+	fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
+		codeBuf.String(), msgBuf.String())
 }
 
 // GenerateDEK generates a new DEK (exposed for handlers).
