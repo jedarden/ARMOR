@@ -127,6 +127,8 @@ func main() {
 	// Phase 3: Stop background tasks
 	logger.Info("phase 3: stopping background tasks")
 	srv.StopCanary()
+	srv.StopManifestCompactor()
+	srv.StopManifestWriter()
 
 	logger.Info("ARMOR shutdown complete")
 }

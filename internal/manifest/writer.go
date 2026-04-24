@@ -30,6 +30,9 @@ type Writer struct {
 	stop     chan struct{}
 	done     chan struct{}
 	once     sync.Once
+	// onFlush is called after each successful B2 delta upload, e.g. to notify
+	// a Compactor that a new delta file exists. May be nil.
+	onFlush func()
 }
 
 // NewWriter creates a Writer backed by idx. bufSize controls the ops channel
@@ -61,6 +64,13 @@ func (w *Writer) Start(ctx context.Context) {
 func (w *Writer) Stop() {
 	w.once.Do(func() { close(w.stop) })
 	<-w.done
+}
+
+// SetOnFlush registers a callback that is called after each successful B2 delta
+// upload. Use this to notify a Compactor that a new delta file has been created.
+// Must be called before Start.
+func (w *Writer) SetOnFlush(fn func()) {
+	w.onFlush = fn
 }
 
 // EnqueuePut enqueues a "put" operation for async delta persistence.
@@ -145,5 +155,7 @@ func (w *Writer) flush(ops []Op) {
 	key := DeltaKey(w.prefix, w.writerID, seq)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_ = w.upload(ctx, key, data)
+	if err := w.upload(ctx, key, data); err == nil && w.onFlush != nil {
+		w.onFlush()
+	}
 }

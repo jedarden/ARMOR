@@ -2,6 +2,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -37,18 +38,20 @@ import (
 
 // Server represents the ARMOR server.
 type Server struct {
-	config      *config.Config
-	backend     backend.Backend
-	cache       *backend.MetadataCache
-	footerCache *backend.FooterCache
-	listCache   *backend.ListCache
-	keyManager  *keymanager.KeyManager
-	canary      *canary.Monitor
-	provenance  *provenance.Manager
-	presigner   *presign.Signer
-	b2keys      *b2keys.Client // B2 native API key management
-	dashboard   *dashboard.Dashboard
-	manifest    *manifest.Index // in-memory metadata index (nil when disabled)
+	config         *config.Config
+	backend        backend.Backend
+	cache          *backend.MetadataCache
+	footerCache    *backend.FooterCache
+	listCache      *backend.ListCache
+	keyManager     *keymanager.KeyManager
+	canary         *canary.Monitor
+	provenance     *provenance.Manager
+	presigner      *presign.Signer
+	b2keys         *b2keys.Client // B2 native API key management
+	dashboard      *dashboard.Dashboard
+	manifest           *manifest.Index      // in-memory metadata index (nil when disabled)
+	manifestWriter     *manifest.Writer     // async delta writer (nil when disabled)
+	manifestCompactor  *manifest.Compactor  // background compaction goroutine (nil when disabled)
 
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
@@ -226,6 +229,51 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 	}
 
+	// Create and start the manifest writer (async delta persistence to B2).
+	// Uploads go direct to B2 (free ingress); no Cloudflare path needed here.
+	var manifestWriter *manifest.Writer
+	var manifestCompactor *manifest.Compactor
+	if manifestIdx != nil {
+		uploader := func(ctx context.Context, key string, data []byte) error {
+			return b2Backend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
+		}
+		manifestWriter = manifest.NewWriter(manifestIdx, cfg.ManifestPrefix, cfg.WriterID, uploader, 0)
+
+		// Create compactor that lists and batch-deletes via the B2 backend.
+		listerForCompactor := func(ctx context.Context, prefix, token string) ([]string, string, error) {
+			result, lerr := b2Backend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
+			if lerr != nil {
+				return nil, "", lerr
+			}
+			keys := make([]string, len(result.Objects))
+			for i, obj := range result.Objects {
+				keys[i] = obj.Key
+			}
+			return keys, result.NextToken, nil
+		}
+		deleter := func(ctx context.Context, keys []string) error {
+			return b2Backend.DeleteObjects(ctx, cfg.Bucket, keys)
+		}
+		compactionInterval := time.Duration(cfg.ManifestCompactionInterval) * time.Second
+		manifestCompactor = manifest.NewCompactor(
+			manifestIdx,
+			cfg.ManifestPrefix,
+			cfg.WriterID,
+			uploader,
+			listerForCompactor,
+			deleter,
+			compactionInterval,
+			cfg.ManifestCompactionThreshold,
+		)
+
+		// Wire writer → compactor: after each delta flush, notify compactor.
+		manifestWriter.SetOnFlush(manifestCompactor.NotifyDelta)
+
+		manifestWriter.Start(context.Background())
+		manifestCompactor.Start(context.Background())
+		logger.Info("manifest writer and compactor started")
+	}
+
 	return &Server{
 		config:         cfg,
 		backend:        b2Backend,
@@ -238,11 +286,57 @@ func New(cfg *config.Config) (*Server, error) {
 		presigner:      presigner,
 		b2keys:         b2keysClient,
 		dashboard:      dash,
-		manifest:       manifestIdx,
+		manifest:          manifestIdx,
+		manifestWriter:    manifestWriter,
+		manifestCompactor: manifestCompactor,
 		metrics:        metrics.DefaultMetrics,
 		requestTracker: metrics.DefaultRequestTracker,
 		logger:         logger,
 	}, nil
+}
+
+// manifestRecorder implements handlers.ManifestRecorder. It updates the
+// in-memory index synchronously (so subsequent HeadObject calls see the new
+// state immediately) and enqueues the op for async B2 delta persistence.
+type manifestRecorder struct {
+	idx    *manifest.Index
+	writer *manifest.Writer
+}
+
+func (m *manifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, blockSize int, contentType, etag string) {
+	entry := &manifest.Entry{
+		PlaintextSize:   size,
+		PlaintextSHA256: sha256Hex,
+		IV:              iv,
+		WrappedDEK:      wrappedDEK,
+		BlockSize:       blockSize,
+		ContentType:     contentType,
+		ETag:            etag,
+		LastModified:    time.Now().UTC(),
+	}
+	m.idx.Put(bucket, key, entry)
+	m.writer.EnqueuePut(bucket, key, entry)
+}
+
+func (m *manifestRecorder) RecordDelete(bucket, key string) {
+	m.idx.Delete(bucket, key)
+	m.writer.EnqueueDelete(bucket, key)
+}
+
+// StopManifestWriter flushes any pending manifest ops and stops the async writer.
+func (s *Server) StopManifestWriter() {
+	if s.manifestWriter != nil {
+		s.manifestWriter.Stop()
+		s.logger.Info("manifest writer stopped")
+	}
+}
+
+// StopManifestCompactor stops the background compaction goroutine.
+func (s *Server) StopManifestCompactor() {
+	if s.manifestCompactor != nil {
+		s.manifestCompactor.Stop()
+		s.logger.Info("manifest compactor stopped")
+	}
 }
 
 // StartCanary starts the canary monitor.
@@ -281,6 +375,11 @@ func (s *Server) Handler() http.Handler {
 	// Wire up provenance if available
 	if s.provenance != nil {
 		h.WithProvenance(s.provenance)
+	}
+
+	// Wire up manifest recorder if enabled
+	if s.manifest != nil && s.manifestWriter != nil {
+		h.WithManifest(&manifestRecorder{idx: s.manifest, writer: s.manifestWriter})
 	}
 
 	// Bucket operations
