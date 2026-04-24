@@ -67,6 +67,10 @@ type Config struct {
 	CacheMaxEntries int
 	CacheTTL        int
 
+	// List cache configuration
+	ListCacheMaxEntries int
+	ListCacheTTL        int
+
 	// Pre-signed URL configuration
 	PresignSecret  []byte // Secret key for signing pre-signed URLs
 	PresignBaseURL string // Base URL for pre-signed URLs (e.g., "https://armor.example.com/share")
@@ -169,6 +173,10 @@ func Load() (*Config, error) {
 	// Cache configuration
 	cfg.CacheMaxEntries = getEnvInt("ARMOR_CACHE_MAX_ENTRIES", 10000)
 	cfg.CacheTTL = getEnvInt("ARMOR_CACHE_TTL", 300)
+
+	// List cache configuration
+	cfg.ListCacheMaxEntries = getEnvInt("ARMOR_LIST_CACHE_MAX_ENTRIES", 1000)
+	cfg.ListCacheTTL = getEnvInt("ARMOR_LIST_CACHE_TTL", 60)
 
 	// Readiness probe configuration
 	cfg.ReadyzCacheTTL = getEnvInt("ARMOR_READYZ_CACHE_TTL", 30)
