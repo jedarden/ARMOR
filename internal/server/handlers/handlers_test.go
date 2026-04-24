@@ -3025,3 +3025,93 @@ func TestHeadObjectManifestMissFallsBack(t *testing.T) {
 		t.Errorf("expected exactly 1 backend Head() call (manifest miss fallback), got %d", n)
 	}
 }
+
+// TestHeadObjectManifestAllHeaders verifies that HeadObject served from the
+// manifest index returns all expected response headers, including Last-Modified,
+// and makes no backend call.
+func TestHeadObjectManifestAllHeaders(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+
+	hcb := &headCountingBackend{mockBackend: mb}
+	rec := newMockManifestRecorder()
+
+	h := handlers.New(cfg, hcb, cache, footerCache, km, nil)
+	h.WithManifest(rec)
+
+	modTime := time.Date(2026, 4, 24, 10, 0, 0, 0, time.UTC)
+	rec.seed("test-bucket", "headers/object.parquet", &handlers.ManifestEntry{
+		PlaintextSize: 98765,
+		ContentType:   "application/parquet",
+		ETag:          "deadbeef01",
+		LastModified:  modTime,
+	})
+
+	req := httptest.NewRequest(http.MethodHead, "/test-bucket/headers/object.parquet", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Length"); got != "98765" {
+		t.Errorf("Content-Length: got %q, want \"98765\"", got)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/parquet" {
+		t.Errorf("Content-Type: got %q, want \"application/parquet\"", got)
+	}
+	wantETag := `"deadbeef01"`
+	if got := w.Header().Get("ETag"); got != wantETag {
+		t.Errorf("ETag: got %q, want %q", got, wantETag)
+	}
+	wantLastMod := modTime.UTC().Format(http.TimeFormat)
+	if got := w.Header().Get("Last-Modified"); got != wantLastMod {
+		t.Errorf("Last-Modified: got %q, want %q", got, wantLastMod)
+	}
+	if got := w.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Errorf("Accept-Ranges: got %q, want \"bytes\"", got)
+	}
+	if n := hcb.headCalls.Load(); n != 0 {
+		t.Errorf("expected 0 backend Head() calls (manifest cache hit), got %d", n)
+	}
+}
+
+// TestHeadObjectManifestCacheHitNotModified verifies that a HEAD request
+// with a matching If-None-Match header returns 304 Not Modified when served
+// from the manifest, without hitting the backend.
+func TestHeadObjectManifestCacheHitNotModified(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+
+	hcb := &headCountingBackend{mockBackend: mb}
+	rec := newMockManifestRecorder()
+
+	h := handlers.New(cfg, hcb, cache, footerCache, km, nil)
+	h.WithManifest(rec)
+
+	const etag = "myetag123"
+	rec.seed("test-bucket", "cond/file.parquet", &handlers.ManifestEntry{
+		PlaintextSize: 512,
+		ContentType:   "application/octet-stream",
+		ETag:          etag,
+		LastModified:  time.Now().UTC(),
+	})
+
+	// Client sends If-None-Match matching the manifest ETag.
+	req := httptest.NewRequest(http.MethodHead, "/test-bucket/cond/file.parquet", nil)
+	req.Header.Set("If-None-Match", fmt.Sprintf(`"%s"`, etag))
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d", w.Code)
+	}
+	// ETag and Last-Modified must be present in 304 response.
+	if got := w.Header().Get("ETag"); got == "" {
+		t.Error("ETag header missing from 304 response")
+	}
+	if got := w.Header().Get("Last-Modified"); got == "" {
+		t.Error("Last-Modified header missing from 304 response")
+	}
+	if n := hcb.headCalls.Load(); n != 0 {
+		t.Errorf("expected 0 backend Head() calls (304 served from manifest), got %d", n)
+	}
+}
