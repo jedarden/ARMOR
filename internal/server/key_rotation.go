@@ -14,6 +14,7 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/manifest"
 )
 
 // RotationState tracks the progress of a key rotation operation.
@@ -56,6 +57,9 @@ type KeyRotator struct {
 	bucket  string
 	oldMEK  []byte
 	newMEK  []byte
+	// idx is the manifest index used to skip HeadObject calls during rotation.
+	// May be nil when the manifest is disabled or unavailable.
+	idx *manifest.Index
 
 	// state tracks rotation progress
 	state     *RotationState
@@ -63,13 +67,15 @@ type KeyRotator struct {
 	statePath string // .armor/rotation-state.json
 }
 
-// NewKeyRotator creates a new key rotator.
-func NewKeyRotator(b backend.Backend, bucket string, oldMEK, newMEK []byte) *KeyRotator {
+// NewKeyRotator creates a new key rotator. idx may be nil if the manifest
+// index is not available; rotation falls back to per-object HeadObject calls.
+func NewKeyRotator(b backend.Backend, bucket string, oldMEK, newMEK []byte, idx *manifest.Index) *KeyRotator {
 	return &KeyRotator{
 		backend:   b,
 		bucket:    bucket,
 		oldMEK:    oldMEK,
 		newMEK:    newMEK,
+		idx:       idx,
 		statePath: ".armor/rotation-state.json",
 	}
 }
@@ -200,16 +206,35 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 
 // rotateObject re-wraps the DEK for a single object.
 func (kr *KeyRotator) rotateObject(ctx context.Context, obj backend.ObjectInfo) error {
-	// Get the object metadata
-	info, err := kr.backend.Head(ctx, kr.bucket, obj.Key)
-	if err != nil {
-		return fmt.Errorf("failed to get object metadata: %w", err)
+	var armorMeta *backend.ARMORMetadata
+
+	// Fast path: read wrapped DEK from the in-memory manifest index to avoid
+	// a B2 HeadObject API call per object.
+	if kr.idx != nil {
+		if entry, ok := kr.idx.Get(kr.bucket, obj.Key); ok {
+			armorMeta = &backend.ARMORMetadata{
+				Version:       1,
+				BlockSize:     entry.BlockSize,
+				PlaintextSize: entry.PlaintextSize,
+				ContentType:   entry.ContentType,
+				IV:            entry.IV,
+				WrappedDEK:    entry.WrappedDEK,
+				ETag:          entry.ETag,
+			}
+		}
 	}
 
-	// Extract ARMOR metadata
-	armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
-	if !ok {
-		return fmt.Errorf("object is not ARMOR-encrypted")
+	if armorMeta == nil {
+		// Manifest miss or disabled: fall back to a B2 HeadObject call.
+		info, err := kr.backend.Head(ctx, kr.bucket, obj.Key)
+		if err != nil {
+			return fmt.Errorf("failed to get object metadata: %w", err)
+		}
+		var ok bool
+		armorMeta, ok = backend.ParseARMORMetadata(info.Metadata)
+		if !ok {
+			return fmt.Errorf("object is not ARMOR-encrypted")
+		}
 	}
 
 	// Unwrap DEK with old MEK

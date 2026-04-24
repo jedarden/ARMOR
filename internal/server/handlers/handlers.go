@@ -34,6 +34,33 @@ type ProvenanceRecorder interface {
 	ShouldRecord(key string) bool
 }
 
+// ManifestEntry holds the decryption metadata for a tracked object as exposed
+// to handlers. It mirrors manifest.Entry but is defined here to avoid an
+// import cycle between the handlers and manifest packages.
+type ManifestEntry struct {
+	PlaintextSize int64
+	ContentType   string
+	ETag          string
+	LastModified  time.Time
+	IV            []byte
+	WrappedDEK    []byte
+	BlockSize     int
+}
+
+// ManifestRecorder records successful S3 write operations in the manifest
+// index for fast in-memory lookup and enqueues them for async B2 persistence
+// as delta files. Implementations must be safe for concurrent use.
+type ManifestRecorder interface {
+	// RecordPut records a successful PutObject or CompleteMultipartUpload.
+	RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, blockSize int, contentType, etag string)
+	// RecordDelete records a successful DeleteObject.
+	RecordDelete(bucket, key string)
+	// Lookup returns manifest metadata for bucket/key, or (nil, false) if not
+	// tracked. Used to serve HeadObject and ListObjectVersions from memory
+	// without a B2 round-trip.
+	Lookup(bucket, key string) (*ManifestEntry, bool)
+}
+
 // Handlers contains all S3 operation handlers.
 type Handlers struct {
 	config      *config.Config
@@ -43,6 +70,7 @@ type Handlers struct {
 	listCache   *backend.ListCache
 	keyManager  *keymanager.KeyManager
 	provenance  ProvenanceRecorder
+	manifest    ManifestRecorder
 }
 
 // New creates a new Handlers instance.
@@ -55,12 +83,20 @@ func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, f
 		listCache:   listCache,
 		keyManager:  km,
 		provenance:  nil,
+		manifest:    nil,
 	}
 }
 
 // WithProvenance adds provenance support to handlers.
 func (h *Handlers) WithProvenance(p ProvenanceRecorder) {
 	h.provenance = p
+}
+
+// WithManifest wires a ManifestRecorder into the handlers so that successful
+// PutObject and DeleteObject calls update the in-memory index and enqueue
+// delta ops for async B2 persistence.
+func (h *Handlers) WithManifest(m ManifestRecorder) {
+	h.manifest = m
 }
 
 // HandleRoot routes S3 operations based on the request.
@@ -325,6 +361,11 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
+	// Record in manifest for fast metadata lookup (async B2 persistence)
+	if h.manifest != nil {
+		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag)
+	}
+
 	// Record provenance
 	if h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
@@ -514,6 +555,11 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	if encErrVal := <-encErr; encErrVal != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
 		return
+	}
+
+	// Record in manifest for fast metadata lookup (async B2 persistence)
+	if h.manifest != nil {
+		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag)
 	}
 
 	// Record provenance
@@ -1050,6 +1096,31 @@ func parseRangeHeader(header string, totalSize int64) (start, end int64, err err
 func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
 
+	// Fast path: serve from the in-memory manifest index when available,
+	// avoiding a B2 HeadObject round-trip entirely.
+	if h.manifest != nil {
+		if entry, ok := h.manifest.Lookup(bucket, key); ok {
+			if status := checkConditionalRequest(r, entry.ETag, entry.LastModified); status != 0 {
+				if status == http.StatusNotModified {
+					w.Header().Set("ETag", fmt.Sprintf(`"%s"`, entry.ETag))
+					w.Header().Set("Last-Modified", entry.LastModified.UTC().Format(http.TimeFormat))
+					w.WriteHeader(status)
+				} else {
+					h.writeError(w, "PreconditionFailed", "Precondition failed", status)
+				}
+				return
+			}
+			w.Header().Set("Content-Length", strconv.FormatInt(entry.PlaintextSize, 10))
+			w.Header().Set("Content-Type", entry.ContentType)
+			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, entry.ETag))
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.Header().Set("Last-Modified", entry.LastModified.UTC().Format(http.TimeFormat))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	}
+
+	// Manifest miss or disabled: fall back to a B2 HeadObject call.
 	info, err := h.backend.Head(ctx, bucket, key)
 	if err != nil {
 		h.writeError(w, "NoSuchKey", "Object not found", 404)
@@ -1104,6 +1175,11 @@ func (h *Handlers) DeleteObject(w http.ResponseWriter, r *http.Request, bucket, 
 	if err := h.backend.Delete(ctx, bucket, key); err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to delete: %v", err), 500)
 		return
+	}
+
+	// Remove from manifest
+	if h.manifest != nil {
+		h.manifest.RecordDelete(bucket, key)
 	}
 
 	// Invalidate metadata cache and list cache
@@ -1499,6 +1575,13 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 	if err := h.backend.DeleteObjects(ctx, bucket, keys); err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("DeleteObjects failed: %v", err), 500)
 		return
+	}
+
+	// Remove from manifest
+	if h.manifest != nil {
+		for _, key := range keys {
+			h.manifest.RecordDelete(bucket, key)
+		}
 	}
 
 	// Invalidate cache for deleted objects
@@ -1921,6 +2004,11 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// Clean up multipart state
 	manager.DeleteState(ctx, uploadID)
 
+	// Record in manifest for fast metadata lookup (async B2 persistence)
+	if h.manifest != nil {
+		h.manifest.RecordPut(bucket, key, totalPlaintextSize, hex.EncodeToString(plaintextSHA[:]), state.IV, state.WrappedDEK, state.BlockSize, state.ContentType, etag)
+	}
+
 	// Record provenance for the multipart upload
 	if h.provenance != nil && h.provenance.ShouldRecord(key) {
 		_ = h.provenance.RecordUpload(ctx, key, hex.EncodeToString(plaintextSHA[:]), "multipart")
@@ -2215,28 +2303,38 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 		}
 
 		if !version.IsDeleteMarker {
-		// Try to get ARMOR metadata for this specific version
-		// This requires a HeadObject call per version, get plaintext size
-		if info, err := h.backend.HeadVersion(ctx, bucket, version.Key, version.VersionID); err == nil {
-			// Check if it version is ARMOR-encrypted
-			if am, ok := backend.ParseARMORMetadata(info.Metadata); ok {
-				// Use plaintext size and ARMOR ETag
-				v.Size = am.PlaintextSize
-				v.ETag = fmt.Sprintf(`"%s"`, am.ETag)
-				v.StorageClass = "STANDARD"
-			} else {
-				// Non-ARMOR object, use raw size
-				v.Size = version.Size
-				v.ETag = fmt.Sprintf(`"%s"`, version.ETag)
-				v.StorageClass = "STANDARD"
+			// For the latest version, try the manifest index first to avoid a
+			// per-version HeadObject B2 API call. The manifest tracks current
+			// state only, so this optimisation applies only to IsLatest.
+			manifestHit := false
+			if h.manifest != nil && version.IsLatest {
+				if entry, ok := h.manifest.Lookup(bucket, version.Key); ok {
+					v.Size = entry.PlaintextSize
+					v.ETag = fmt.Sprintf(`"%s"`, entry.ETag)
+					v.StorageClass = "STANDARD"
+					manifestHit = true
+				}
 			}
-		} else {
-			// Fallback to raw size if we can't get version metadata
-			v.Size = version.Size
-			v.ETag = fmt.Sprintf(`"%s"`, version.ETag)
-			v.StorageClass = "STANDARD"
+			if !manifestHit {
+				// Fall back to a per-version HeadObject call (non-latest versions
+				// or manifest miss).
+				if info, err := h.backend.HeadVersion(ctx, bucket, version.Key, version.VersionID); err == nil {
+					if am, ok := backend.ParseARMORMetadata(info.Metadata); ok {
+						v.Size = am.PlaintextSize
+						v.ETag = fmt.Sprintf(`"%s"`, am.ETag)
+						v.StorageClass = "STANDARD"
+					} else {
+						v.Size = version.Size
+						v.ETag = fmt.Sprintf(`"%s"`, version.ETag)
+						v.StorageClass = "STANDARD"
+					}
+				} else {
+					v.Size = version.Size
+					v.ETag = fmt.Sprintf(`"%s"`, version.ETag)
+					v.StorageClass = "STANDARD"
+				}
+			}
 		}
-	}
 
 		resp.Versions = append(resp.Versions, v)
 	}
