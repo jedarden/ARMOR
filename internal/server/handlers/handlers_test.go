@@ -404,7 +404,7 @@ func testSetup(t *testing.T) (*config.Config, *mockBackend, *backend.MetadataCac
 
 func TestPutObjectGetObject(t *testing.T) {
 	cfg, mb, cache, footerCache, km := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// Create plaintext content
 	plaintext := []byte("Hello, ARMOR! This is a test file with some content.")
@@ -449,7 +449,7 @@ func TestPutObjectGetObject(t *testing.T) {
 
 func TestPutObjectLargeFile(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create a file larger than one block (64KB)
 	plaintext := make([]byte, 100000)
@@ -484,7 +484,7 @@ func TestPutObjectLargeFile(t *testing.T) {
 
 func TestGetObjectRange(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create content
 	plaintext := make([]byte, 200000)
@@ -527,7 +527,7 @@ func TestGetObjectRange(t *testing.T) {
 
 func TestHeadObject(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	plaintext := []byte("Test content for HEAD")
 
@@ -560,7 +560,7 @@ func TestHeadObject(t *testing.T) {
 
 func TestDeleteObject(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	plaintext := []byte("Content to delete")
 
@@ -592,7 +592,7 @@ func TestDeleteObject(t *testing.T) {
 
 func TestListObjectsV2(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create multiple objects
 	for i := 0; i < 5; i++ {
@@ -641,7 +641,7 @@ func TestEncryptionRoundTrip(t *testing.T) {
 	// This test verifies that the encryption actually happens
 	// by checking that the stored data is different from plaintext
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	plaintext := []byte("This is sensitive data that should be encrypted")
 
@@ -667,7 +667,7 @@ func TestEncryptionRoundTrip(t *testing.T) {
 func TestMultipleFilesSameMEK(t *testing.T) {
 	// Test that multiple files encrypted with the same MEK can all be decrypted
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	files := map[string][]byte{
 		"file1.txt": []byte("Content of file 1"),
@@ -707,7 +707,7 @@ func TestMultipleFilesSameMEK(t *testing.T) {
 func TestNonARMORObjectPassthrough(t *testing.T) {
 	// Test that non-ARMOR objects (without x-amz-meta-armor-version) pass through unchanged
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Store a plain object directly in the mock backend
 	plainData := []byte("Plain unencrypted data")
@@ -733,7 +733,7 @@ func TestNonARMORObjectPassthrough(t *testing.T) {
 func TestETagConsistency(t *testing.T) {
 	// Test that ETag is consistent across uploads of same content
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	content := []byte("Same content")
 
@@ -774,7 +774,7 @@ func TestETagConsistency(t *testing.T) {
 // that the body content is incomplete or corrupted rather than checking status code.
 func TestHMACVerification(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	plaintext := []byte("Content to verify")
 
@@ -814,7 +814,7 @@ func TestHMACVerification(t *testing.T) {
 // TestRangeSuffixRequest tests suffix range requests (e.g., "bytes=-100")
 func TestRangeSuffixRequest(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	plaintext := make([]byte, 10000)
 	for i := range plaintext {
@@ -847,7 +847,7 @@ func TestRangeSuffixRequest(t *testing.T) {
 // for multi-block files. This exercises the io.Pipe based streaming path.
 func TestStreamingDecryption(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create a file spanning multiple blocks (64KB each)
 	// Using 3 blocks worth of data
@@ -908,7 +908,7 @@ func TestStreamingDecryptionVariousSizes(t *testing.T) {
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
 			cfg, mb, cache, footerCache, mek := testSetup(t)
-			h := handlers.New(cfg, mb, cache, footerCache, mek)
+			h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 			plaintext := make([]byte, size)
 			for i := range plaintext {
@@ -944,7 +944,7 @@ func TestStreamingDecryptionVariousSizes(t *testing.T) {
 // TestCopyObject tests S3 CopyObject with ARMOR encryption
 func TestCopyObject(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Upload source file
 	srcContent := []byte("Source content to copy")
@@ -989,7 +989,7 @@ func TestCopyObject(t *testing.T) {
 // TestCopyObjectRewrapsDEK tests that CopyObject re-wraps the DEK
 func TestCopyObjectRewrapsDEK(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Upload source file
 	srcContent := []byte("Content with key that should be re-wrapped")
@@ -1045,7 +1045,7 @@ func TestCopyObjectRewrapsDEK(t *testing.T) {
 // TestCopyObjectNonARMOR tests copying non-ARMOR objects
 func TestCopyObjectNonARMOR(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Store a plain (non-ARMOR) object directly in the mock backend
 	plainData := []byte("Plain unencrypted data for copy test")
@@ -1080,7 +1080,7 @@ func TestCopyObjectNonARMOR(t *testing.T) {
 // TestCopyObjectMissingSource tests error handling for missing source
 func TestCopyObjectMissingSource(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Try to copy a non-existent file
 	req := httptest.NewRequest(http.MethodPut, "/test-bucket/dest.txt", nil)
@@ -1096,7 +1096,7 @@ func TestCopyObjectMissingSource(t *testing.T) {
 // TestCopyObjectWithMetadataDirective tests COPY vs REPLACE metadata directive
 func TestCopyObjectWithMetadataDirective(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Upload source file
 	srcContent := []byte("Content for metadata directive test")
@@ -1131,7 +1131,7 @@ func TestCopyObjectWithMetadataDirective(t *testing.T) {
 // TestDeleteObjects tests S3 DeleteObjects (bulk delete)
 func TestDeleteObjects(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create multiple objects
 	for i := 0; i < 5; i++ {
@@ -1204,7 +1204,7 @@ func TestDeleteObjects(t *testing.T) {
 // TestDeleteObjectsQuiet tests DeleteObjects with quiet mode
 func TestDeleteObjectsQuiet(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create an object
 	content := []byte("Content to delete quietly")
@@ -1249,7 +1249,7 @@ func TestDeleteObjectsQuiet(t *testing.T) {
 // TestHeadBucket tests S3 HeadBucket
 func TestHeadBucket(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create an object (which implicitly creates the bucket in our mock)
 	content := []byte("test content")
@@ -1280,7 +1280,7 @@ func TestHeadBucket(t *testing.T) {
 // TestListBuckets tests S3 ListBuckets
 func TestListBuckets(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create objects in multiple buckets
 	for bucketNum := 0; bucketNum < 3; bucketNum++ {
@@ -1334,7 +1334,7 @@ func TestListBuckets(t *testing.T) {
 // TestCreateBucket tests S3 CreateBucket
 func TestCreateBucket(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create bucket
 	req := httptest.NewRequest(http.MethodPut, "/new-test-bucket", nil)
@@ -1364,7 +1364,7 @@ func TestCreateBucket(t *testing.T) {
 // TestDeleteBucket tests S3 DeleteBucket
 func TestDeleteBucket(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create an empty bucket
 	req := httptest.NewRequest(http.MethodPut, "/bucket-to-delete", nil)
@@ -1393,7 +1393,7 @@ func TestDeleteBucket(t *testing.T) {
 // TestAbortMultipartUpload tests S3 AbortMultipartUpload
 func TestAbortMultipartUpload(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create a multipart upload
 	req := httptest.NewRequest(http.MethodPost, "/test-bucket/test-abort.txt?uploads=", nil)
@@ -1436,7 +1436,7 @@ func TestAbortMultipartUpload(t *testing.T) {
 // TestListParts tests S3 ListParts operation
 func TestListParts(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create a multipart upload
 	req := httptest.NewRequest(http.MethodPost, "/test-bucket/test-list-parts.txt?uploads=", nil)
@@ -1495,7 +1495,7 @@ func TestListParts(t *testing.T) {
 // TestListMultipartUploads tests S3 ListMultipartUploads operation
 func TestListMultipartUploads(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create multiple multipart uploads
 	for i := 0; i < 3; i++ {
@@ -1537,7 +1537,7 @@ func TestListMultipartUploads(t *testing.T) {
 // TestAbortMultipartUploadNotFound tests aborting a non-existent upload
 func TestAbortMultipartUploadNotFound(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Try to abort a non-existent upload
 	req := httptest.NewRequest(http.MethodDelete, "/test-bucket/test.txt?uploadId=nonexistent-upload-id", nil)
@@ -1552,7 +1552,7 @@ func TestAbortMultipartUploadNotFound(t *testing.T) {
 // TestListPartsNotFound tests listing parts of a non-existent upload
 func TestListPartsNotFound(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Try to list parts of a non-existent upload
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket/test.txt?uploadId=nonexistent-upload-id", nil)
@@ -1567,7 +1567,7 @@ func TestListPartsNotFound(t *testing.T) {
 // TestConditionalRequests tests If-Match, If-None-Match, If-Modified-Since, If-Unmodified-Since
 func TestConditionalRequests(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create and upload an object
 	plaintext := []byte("Hello, ARMOR! This is a test file for conditional requests.")
@@ -1685,7 +1685,7 @@ func TestConditionalRequests(t *testing.T) {
 // TestHeadConditionalRequests tests conditional headers with HEAD requests
 func TestHeadConditionalRequests(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create and upload an object
 	plaintext := []byte("Hello, ARMOR! This is a test file for HEAD conditional requests.")
@@ -1734,7 +1734,7 @@ func TestHeadConditionalRequests(t *testing.T) {
 // TestConditionalRequestsWithRange tests conditional headers with range requests
 func TestConditionalRequestsWithRange(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create content larger than one block
 	plaintext := make([]byte, 200000)
@@ -1790,7 +1790,7 @@ func TestConditionalRequestsWithRange(t *testing.T) {
 // TestMultipleETagsInIfMatch tests If-Match with multiple ETags
 func TestMultipleETagsInIfMatch(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create and upload an object
 	plaintext := []byte("Test content for multiple ETags")
@@ -1829,7 +1829,7 @@ func TestMultipleETagsInIfMatch(t *testing.T) {
 // TestStreamingEncryptionLargeFile tests streaming encryption for files > 10MB
 func TestStreamingEncryptionLargeFile(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create a file larger than the 10MB streaming threshold
 	// Using 15MB to ensure streaming is triggered
@@ -1881,7 +1881,7 @@ func TestStreamingEncryptionLargeFile(t *testing.T) {
 // TestStreamingEncryptionMultiBlock tests streaming with multi-block files
 func TestStreamingEncryptionMultiBlock(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create a file that spans multiple blocks (> 64KB) but under streaming threshold
 	// This tests the buffered path
@@ -1919,7 +1919,7 @@ func TestStreamingEncryptionMultiBlock(t *testing.T) {
 // TestStreamingEncryptionRangeRead tests range reads on streaming-encrypted files
 func TestStreamingEncryptionRangeRead(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create a large file (triggers streaming)
 	size := 12 * 1024 * 1024
@@ -1977,7 +1977,7 @@ func TestStreamingEncryptionRangeRead(t *testing.T) {
 // TestStreamingEncryptionSHA256 verifies SHA-256 integrity for streaming uploads
 func TestStreamingEncryptionSHA256(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Create a known-content large file
 	size := 11 * 1024 * 1024
@@ -2033,7 +2033,7 @@ func TestStreamingEncryptionSHA256(t *testing.T) {
 // TestStreamingEncryptionThreshold tests the boundary between buffered and streaming
 func TestStreamingEncryptionThreshold(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Test just under the 10MB threshold (should use buffered path)
 	threshold := 10 * 1024 * 1024
@@ -2144,7 +2144,7 @@ func TestGetBucketLifecycleConfiguration(t *testing.T) {
 		t.Fatalf("failed to create key manager: %v", err)
 	}
 
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// Test 1: Get lifecycle when not set - should return error
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket?lifecycle", nil)
@@ -2216,7 +2216,7 @@ func TestPutBucketLifecycleConfiguration(t *testing.T) {
 		t.Fatalf("failed to create key manager: %v", err)
 	}
 
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// Test PUT with valid lifecycle configuration
 	lifecycleXML := `<?xml version="1.0" encoding="UTF-8"?>
@@ -2277,7 +2277,7 @@ func TestDeleteBucketLifecycleConfiguration(t *testing.T) {
 		t.Fatalf("failed to create key manager: %v", err)
 	}
 
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// First set a lifecycle configuration
 	lifecycleXML := `<?xml version="1.0" encoding="UTF-8"?>
@@ -2400,7 +2400,7 @@ func TestGetObjectLockConfiguration(t *testing.T) {
 		t.Fatalf("failed to create key manager: %v", err)
 	}
 
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// Test 1: Get object lock config when not set - should return error
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket?object-lock", nil)
@@ -2469,7 +2469,7 @@ func TestPutObjectLockConfiguration(t *testing.T) {
 		t.Fatalf("failed to create key manager: %v", err)
 	}
 
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// Test PUT with valid object lock configuration
 	objectLockXML := `<?xml version="1.0" encoding="UTF-8"?>
@@ -2519,7 +2519,7 @@ func TestGetObjectRetention(t *testing.T) {
 		t.Fatalf("failed to create key manager: %v", err)
 	}
 
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// Test 1: Get retention when not set - should return error
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket/test-object.txt?retention", nil)
@@ -2583,7 +2583,7 @@ func TestPutObjectRetention(t *testing.T) {
 		t.Fatalf("failed to create key manager: %v", err)
 	}
 
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// Test PUT with valid retention configuration
 	retentionXML := `<?xml version="1.0" encoding="UTF-8"?>
@@ -2629,7 +2629,7 @@ func TestGetObjectLegalHold(t *testing.T) {
 		t.Fatalf("failed to create key manager: %v", err)
 	}
 
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// Test 1: Get legal hold when not set - should return error
 	req := httptest.NewRequest(http.MethodGet, "/test-bucket/test-object.txt?legal-hold", nil)
@@ -2692,7 +2692,7 @@ func TestPutObjectLegalHold(t *testing.T) {
 		t.Fatalf("failed to create key manager: %v", err)
 	}
 
-	h := handlers.New(cfg, mb, cache, footerCache, km)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	// Test PUT with legal hold ON
 	legalHoldOnXML := `<?xml version="1.0" encoding="UTF-8"?>
@@ -2739,7 +2739,7 @@ func TestPutObjectLegalHold(t *testing.T) {
 // TestListObjectVersions tests the ListObjectVersions operation
 func TestListObjectVersions(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
-	h := handlers.New(cfg, mb, cache, footerCache, mek)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
 
 	// Upload a file first
 	plaintext := []byte("Version test content")
