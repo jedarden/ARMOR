@@ -344,6 +344,76 @@ func TestCompactor_ContextCancellationStops(t *testing.T) {
 	c.Stop() // must return without deadlock
 }
 
+// TestCompact_Idempotency verifies that running compaction twice on the same
+// index state (no new writes between passes) produces equivalent snapshots
+// and the second pass finds no delta files to delete.
+func TestCompact_Idempotency(t *testing.T) {
+	idx := New()
+	now := time.Now().UTC()
+	idx.Put("bucket", "idm-f1.parquet", &Entry{PlaintextSize: 111, ETag: "e1", LastModified: now})
+	idx.Put("bucket", "idm-f2.parquet", &Entry{PlaintextSize: 222, ETag: "e2", LastModified: now})
+	idx.SetSeq(4)
+
+	store := newCompactionStore()
+	for seq := uint64(1); seq <= 4; seq++ {
+		putDelta(store, seq)
+	}
+
+	c := NewCompactor(idx, compTestPrefix, compTestWriter,
+		store.uploader(), store.lister(), store.deleter(),
+		time.Hour, 0)
+
+	// First compaction: snapshot written, deltas 1-4 deleted.
+	if err := c.doCompact(context.Background()); err != nil {
+		t.Fatalf("first compact: %v", err)
+	}
+	snap1, ok := store.get(SnapshotKey(compTestPrefix, compTestWriter))
+	if !ok || len(snap1) == 0 {
+		t.Fatal("snapshot missing after first compaction")
+	}
+	if len(store.deletedKeys()) != 4 {
+		t.Fatalf("expected 4 deleted deltas after first compact, got %d", len(store.deletedKeys()))
+	}
+
+	// Second compaction with identical index state: snapshot overwritten,
+	// no new deltas to delete.
+	deletedBefore := len(store.deletedKeys())
+	if err := c.doCompact(context.Background()); err != nil {
+		t.Fatalf("second compact: %v", err)
+	}
+	snap2, ok := store.get(SnapshotKey(compTestPrefix, compTestWriter))
+	if !ok || len(snap2) == 0 {
+		t.Fatal("snapshot missing after second compaction")
+	}
+	if len(store.deletedKeys()) != deletedBefore {
+		t.Errorf("second compact deleted unexpected keys: before=%d after=%d",
+			deletedBefore, len(store.deletedKeys()))
+	}
+
+	// Both snapshots must decode to the same set of entries.
+	r1 := New()
+	if err := r1.UnmarshalSnapshot(snap1); err != nil {
+		t.Fatalf("unmarshal snap1: %v", err)
+	}
+	r2 := New()
+	if err := r2.UnmarshalSnapshot(snap2); err != nil {
+		t.Fatalf("unmarshal snap2: %v", err)
+	}
+	if r1.Len() != r2.Len() {
+		t.Fatalf("entry count mismatch: snap1=%d snap2=%d", r1.Len(), r2.Len())
+	}
+	for key, e1 := range r1.All() {
+		e2, ok := r2.All()[key]
+		if !ok {
+			t.Errorf("key %q present in snap1 but absent in snap2", key)
+			continue
+		}
+		if e1.ETag != e2.ETag || e1.PlaintextSize != e2.PlaintextSize {
+			t.Errorf("key %q differs between snapshots: snap1=%+v snap2=%+v", key, e1, e2)
+		}
+	}
+}
+
 // TestCompactor_DeltaCountResetAfterCompaction verifies that the internal
 // delta counter is reset so that the next threshold trigger requires a full
 // threshold count of new deltas.
