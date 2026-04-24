@@ -323,6 +323,22 @@ func (m *manifestRecorder) RecordDelete(bucket, key string) {
 	m.writer.EnqueueDelete(bucket, key)
 }
 
+func (m *manifestRecorder) Lookup(bucket, key string) (*handlers.ManifestEntry, bool) {
+	entry, ok := m.idx.Get(bucket, key)
+	if !ok {
+		return nil, false
+	}
+	return &handlers.ManifestEntry{
+		PlaintextSize: entry.PlaintextSize,
+		ContentType:   entry.ContentType,
+		ETag:          entry.ETag,
+		LastModified:  entry.LastModified,
+		IV:            entry.IV,
+		WrappedDEK:    entry.WrappedDEK,
+		BlockSize:     entry.BlockSize,
+	}, true
+}
+
 // StopManifestWriter flushes any pending manifest ops and stops the async writer.
 func (s *Server) StopManifestWriter() {
 	if s.manifestWriter != nil {
@@ -530,9 +546,10 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create key rotator with the default key
+	// Create key rotator with the default key. Pass the manifest index so
+	// rotateObject can skip per-object HeadObject calls when the entry is cached.
 	defaultKey := s.keyManager.DefaultKey()
-	rotator := NewKeyRotator(s.backend, s.config.Bucket, defaultKey.MEK, newMEK)
+	rotator := NewKeyRotator(s.backend, s.config.Bucket, defaultKey.MEK, newMEK, s.manifest)
 
 	// Perform rotation
 	result, err := rotator.Rotate(r.Context())

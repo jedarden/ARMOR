@@ -355,7 +355,7 @@ func TestKeyRotation(t *testing.T) {
 	}
 
 	// Create key rotator
-	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK)
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, nil)
 
 	// Perform rotation
 	result, err := rotator.Rotate(context.Background())
@@ -430,7 +430,7 @@ func TestKeyRotationResumption(t *testing.T) {
 	}
 
 	// Create key rotator
-	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK)
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, nil)
 
 	// Perform rotation
 	result, err := rotator.Rotate(context.Background())
@@ -476,7 +476,7 @@ func TestKeyRotationStatePersistence(t *testing.T) {
 	mock.Put(context.Background(), bucket, key, &buf, int64(len(plaintext)), meta)
 
 	// Create rotator and rotate
-	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK)
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, nil)
 	result, err := rotator.Rotate(context.Background())
 	if err != nil {
 		t.Fatalf("rotation failed: %v", err)
@@ -544,7 +544,7 @@ func TestKeyRotationSkipsNonARMORObjects(t *testing.T) {
 	mock.Put(context.Background(), bucket, plainKey, &plainBuf, int64(len(plainData)), plainMeta)
 
 	// Rotate
-	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK)
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, nil)
 	result, err := rotator.Rotate(context.Background())
 	if err != nil {
 		t.Fatalf("rotation failed: %v", err)
@@ -612,7 +612,7 @@ func TestKeyRotationSkipsInternalObjects(t *testing.T) {
 	mock.Put(context.Background(), bucket, internalKey, &internalBuf, 13, internalMeta)
 
 	// Rotate
-	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK)
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, nil)
 	result, err := rotator.Rotate(context.Background())
 	if err != nil {
 		t.Fatalf("rotation failed: %v", err)
