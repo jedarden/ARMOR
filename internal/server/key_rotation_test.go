@@ -10,10 +10,13 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/manifest"
 )
 
 // mockRotationBackend is a mock backend for testing key rotation.
@@ -292,6 +295,101 @@ func (m *mockRotationBackend) ListObjectVersions(ctx context.Context, bucket, pr
 
 func (m *mockRotationBackend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*backend.ObjectInfo, error) {
 	return nil, fmt.Errorf("not implemented")
+}
+
+// headCountingRotationBackend wraps mockRotationBackend and counts Head() calls.
+type headCountingRotationBackend struct {
+	*mockRotationBackend
+	headCalls atomic.Int64
+}
+
+func (h *headCountingRotationBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {
+	h.headCalls.Add(1)
+	return h.mockRotationBackend.Head(ctx, bucket, key)
+}
+
+// TestKeyRotationWithManifestIndex verifies that key rotation uses the in-memory
+// manifest to skip per-object HeadObject calls when entries are present.
+func TestKeyRotationWithManifestIndex(t *testing.T) {
+	oldMEK := make([]byte, 32)
+	newMEK := make([]byte, 32)
+	rand.Read(oldMEK)
+	rand.Read(newMEK)
+
+	base := newMockRotationBackend()
+	mock := &headCountingRotationBackend{mockRotationBackend: base}
+	bucket := "test-bucket"
+
+	idx := manifest.New()
+
+	// Create objects and populate the manifest index.
+	for i := 0; i < 3; i++ {
+		key := fmt.Sprintf("data/file%d.parquet", i)
+		plaintext := []byte(fmt.Sprintf("test data %d", i))
+
+		meta, err := createTestARMORObject(oldMEK, bucket, key, plaintext)
+		if err != nil {
+			t.Fatalf("failed to create test object: %v", err)
+		}
+
+		var buf bytes.Buffer
+		buf.Write(plaintext)
+		mock.Put(context.Background(), bucket, key, &buf, int64(len(plaintext)), meta)
+
+		// Parse the metadata to extract IV and wrapped DEK for the manifest.
+		am, ok := backend.ParseARMORMetadata(meta)
+		if !ok {
+			t.Fatal("failed to parse ARMOR metadata")
+		}
+		idx.Put(bucket, key, &manifest.Entry{
+			PlaintextSize: am.PlaintextSize,
+			ContentType:   am.ContentType,
+			ETag:          am.ETag,
+			IV:            am.IV,
+			WrappedDEK:    am.WrappedDEK,
+			BlockSize:     am.BlockSize,
+			LastModified:  time.Now(),
+		})
+	}
+
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, idx)
+	result, err := rotator.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("rotation failed: %v", err)
+	}
+
+	if result.Status != "completed" {
+		t.Errorf("expected status 'completed', got '%s'", result.Status)
+	}
+	if result.ProcessedObjects != 3 {
+		t.Errorf("expected 3 processed objects, got %d", result.ProcessedObjects)
+	}
+
+	// With a fully-populated manifest, no backend Head() calls should have been
+	// made during rotation — only List and Copy.
+	if n := mock.headCalls.Load(); n != 0 {
+		t.Errorf("expected 0 backend Head() calls (manifest fast-path), got %d", n)
+	}
+
+	// Verify DEKs were re-wrapped with the new MEK.
+	for i := 0; i < 3; i++ {
+		key := fmt.Sprintf("data/file%d.parquet", i)
+		info, err := mock.Head(context.Background(), bucket, key)
+		if err != nil {
+			t.Fatalf("failed to head %s: %v", key, err)
+		}
+		am, ok := backend.ParseARMORMetadata(info.Metadata)
+		if !ok {
+			t.Fatalf("object %s is not ARMOR-encrypted after rotation", key)
+		}
+		dek, err := crypto.UnwrapDEK(newMEK, am.WrappedDEK)
+		if err != nil {
+			t.Fatalf("failed to unwrap DEK with new MEK for %s: %v", key, err)
+		}
+		if len(dek) != 32 {
+			t.Errorf("invalid DEK length for %s: %d", key, len(dek))
+		}
+	}
 }
 
 // createTestARMORObject creates a mock ARMOR-encrypted object for testing.

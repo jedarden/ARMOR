@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2881,5 +2882,146 @@ func TestListObjects_DisabledCache(t *testing.T) {
 
 	if cb.listCallCount() != 2 {
 		t.Errorf("expected backend.List() called twice with disabled cache, got %d", cb.listCallCount())
+	}
+}
+
+// headCountingBackend wraps mockBackend and counts Head() calls.
+type headCountingBackend struct {
+	*mockBackend
+	headCalls atomic.Int64
+}
+
+func (h *headCountingBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {
+	h.headCalls.Add(1)
+	return h.mockBackend.Head(ctx, bucket, key)
+}
+
+// mockManifestRecorder is a simple ManifestRecorder for testing.
+type mockManifestRecorder struct {
+	mu      sync.RWMutex
+	entries map[string]*handlers.ManifestEntry
+}
+
+func newMockManifestRecorder() *mockManifestRecorder {
+	return &mockManifestRecorder{entries: make(map[string]*handlers.ManifestEntry)}
+}
+
+func (m *mockManifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, blockSize int, contentType, etag string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries[bucket+"/"+key] = &handlers.ManifestEntry{
+		PlaintextSize: size,
+		ContentType:   contentType,
+		ETag:          etag,
+		LastModified:  time.Now(),
+		IV:            iv,
+		WrappedDEK:    wrappedDEK,
+		BlockSize:     blockSize,
+	}
+}
+
+func (m *mockManifestRecorder) RecordDelete(bucket, key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.entries, bucket+"/"+key)
+}
+
+func (m *mockManifestRecorder) Lookup(bucket, key string) (*handlers.ManifestEntry, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	e, ok := m.entries[bucket+"/"+key]
+	return e, ok
+}
+
+// seed adds a manifest entry directly without going through the handler.
+func (m *mockManifestRecorder) seed(bucket, key string, entry *handlers.ManifestEntry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries[bucket+"/"+key] = entry
+}
+
+// TestHeadObjectManifestFastPath verifies that HeadObject returns metadata from
+// the in-memory manifest without issuing a B2 HeadObject call.
+func TestHeadObjectManifestFastPath(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+
+	hcb := &headCountingBackend{mockBackend: mb}
+	rec := newMockManifestRecorder()
+
+	h := handlers.New(cfg, hcb, cache, footerCache, km, nil)
+	h.WithManifest(rec)
+
+	const (
+		bucket      = "test-bucket"
+		key         = "manifest-test/file.parquet"
+		wantSize    = int64(123456)
+		wantCType   = "application/octet-stream"
+		wantETag    = "abc123"
+	)
+
+	// Pre-populate the manifest — no object exists in the backend.
+	rec.seed(bucket, key, &handlers.ManifestEntry{
+		PlaintextSize: wantSize,
+		ContentType:   wantCType,
+		ETag:          wantETag,
+		LastModified:  time.Now(),
+	})
+
+	req := httptest.NewRequest(http.MethodHead, "/"+bucket+"/"+key, nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Length"); got != fmt.Sprintf("%d", wantSize) {
+		t.Errorf("Content-Length: got %s, want %d", got, wantSize)
+	}
+	if got := w.Header().Get("Content-Type"); got != wantCType {
+		t.Errorf("Content-Type: got %s, want %s", got, wantCType)
+	}
+	if got := w.Header().Get("ETag"); got != fmt.Sprintf(`"%s"`, wantETag) {
+		t.Errorf("ETag: got %s, want %q", got, wantETag)
+	}
+	// The manifest hit must not have triggered a backend HeadObject call.
+	if n := hcb.headCalls.Load(); n != 0 {
+		t.Errorf("expected 0 backend Head() calls (manifest hit), got %d", n)
+	}
+}
+
+// TestHeadObjectManifestMissFallsBack verifies that HeadObject falls back to B2
+// when the manifest does not have an entry for the requested key.
+func TestHeadObjectManifestMissFallsBack(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+
+	hcb := &headCountingBackend{mockBackend: mb}
+	rec := newMockManifestRecorder()
+
+	h := handlers.New(cfg, hcb, cache, footerCache, km, nil)
+	h.WithManifest(rec)
+
+	// PUT an object so the backend has it.
+	plaintext := []byte("fallback test content")
+	putReq := httptest.NewRequest(http.MethodPut, "/test-bucket/fallback-key", bytes.NewReader(plaintext))
+	putReq.Header.Set("Content-Type", "text/plain")
+	putW := httptest.NewRecorder()
+	h.HandleRoot(putW, putReq)
+	if putW.Code != http.StatusOK {
+		t.Fatalf("PUT failed: %d", putW.Code)
+	}
+
+	// Clear the manifest so the HEAD triggers a B2 fallback.
+	rec.RecordDelete("test-bucket", "fallback-key")
+	hcb.headCalls.Store(0)
+
+	req := httptest.NewRequest(http.MethodHead, "/test-bucket/fallback-key", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if n := hcb.headCalls.Load(); n != 1 {
+		t.Errorf("expected exactly 1 backend Head() call (manifest miss fallback), got %d", n)
 	}
 }
