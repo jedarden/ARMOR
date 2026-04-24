@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"testing"
 )
 
@@ -165,4 +166,120 @@ func TestParseKeyRoutes(t *testing.T) {
             }
         })
     }
+}
+
+// setEnv sets multiple env vars for the duration of a test and restores them in
+// cleanup. Returns a teardown function (also registered via t.Cleanup).
+func setEnv(t *testing.T, pairs ...string) {
+	t.Helper()
+	if len(pairs)%2 != 0 {
+		t.Fatal("setEnv: pairs must be even")
+	}
+	originals := make(map[string]string, len(pairs)/2)
+	for i := 0; i < len(pairs); i += 2 {
+		k, v := pairs[i], pairs[i+1]
+		originals[k] = os.Getenv(k)
+		os.Setenv(k, v)
+	}
+	t.Cleanup(func() {
+		for k, v := range originals {
+			if v == "" {
+				os.Unsetenv(k)
+			} else {
+				os.Setenv(k, v)
+			}
+		}
+	})
+}
+
+// minimalEnv returns the set of required env var pairs needed for Load() to succeed.
+func minimalEnv() []string {
+	return []string{
+		"ARMOR_B2_REGION", "us-east-005",
+		"ARMOR_B2_ACCESS_KEY_ID", "testkey",
+		"ARMOR_B2_SECRET_ACCESS_KEY", "testsecret",
+		"ARMOR_BUCKET", "testbucket",
+		"ARMOR_CF_DOMAIN", "test.example.com",
+		"ARMOR_MEK", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+	}
+}
+
+func TestManifestConfigDefaults(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	// Unset manifest vars so defaults apply.
+	for _, k := range []string{"ARMOR_MANIFEST_ENABLED", "ARMOR_MANIFEST_PREFIX", "ARMOR_MANIFEST_COMPACTION_INTERVAL", "ARMOR_MANIFEST_COMPACTION_THRESHOLD"} {
+		os.Unsetenv(k)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if !cfg.ManifestEnabled {
+		t.Error("ManifestEnabled should default to true")
+	}
+	if cfg.ManifestPrefix != ".armor/manifest" {
+		t.Errorf("ManifestPrefix default = %q, want .armor/manifest", cfg.ManifestPrefix)
+	}
+	if cfg.ManifestCompactionInterval != 3600 {
+		t.Errorf("ManifestCompactionInterval default = %d, want 3600", cfg.ManifestCompactionInterval)
+	}
+	if cfg.ManifestCompactionThreshold != 1000 {
+		t.Errorf("ManifestCompactionThreshold default = %d, want 1000", cfg.ManifestCompactionThreshold)
+	}
+}
+
+func TestManifestEnabledFalse(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	for _, v := range []string{"false", "0"} {
+		os.Setenv("ARMOR_MANIFEST_ENABLED", v)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error with ARMOR_MANIFEST_ENABLED=%s: %v", v, err)
+		}
+		if cfg.ManifestEnabled {
+			t.Errorf("ManifestEnabled should be false when env var = %q", v)
+		}
+	}
+}
+
+func TestManifestEnabledTrue(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	for _, v := range []string{"true", "1", "yes", ""} {
+		os.Setenv("ARMOR_MANIFEST_ENABLED", v)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error with ARMOR_MANIFEST_ENABLED=%s: %v", v, err)
+		}
+		if !cfg.ManifestEnabled {
+			t.Errorf("ManifestEnabled should be true when env var = %q", v)
+		}
+	}
+}
+
+func TestManifestPrefix(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	os.Setenv("ARMOR_MANIFEST_PREFIX", ".custom/manifest/prefix")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.ManifestPrefix != ".custom/manifest/prefix" {
+		t.Errorf("ManifestPrefix = %q, want .custom/manifest/prefix", cfg.ManifestPrefix)
+	}
+}
+
+func TestManifestCompactionInterval(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	os.Setenv("ARMOR_MANIFEST_COMPACTION_INTERVAL", "7200")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.ManifestCompactionInterval != 7200 {
+		t.Errorf("ManifestCompactionInterval = %d, want 7200", cfg.ManifestCompactionInterval)
+	}
 }
