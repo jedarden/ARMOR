@@ -40,6 +40,7 @@ type Server struct {
 	backend     backend.Backend
 	cache       *backend.MetadataCache
 	footerCache *backend.FooterCache
+	listCache   *backend.ListCache
 	keyManager  *keymanager.KeyManager
 	canary      *canary.Monitor
 	provenance  *provenance.Manager
@@ -104,6 +105,12 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// Create footer cache (for Parquet footer pinning)
 	footerCache := backend.NewFooterCache(cfg.CacheMaxEntries, cfg.CacheTTL)
+
+	// Create list cache (nil when TTL is 0, meaning disabled)
+	var listCache *backend.ListCache
+	if cfg.ListCacheTTL > 0 {
+		listCache = backend.NewListCache(cfg.ListCacheMaxEntries, cfg.ListCacheTTL)
+	}
 
 	// Create key manager
 	// Convert config.KeyRoutes to keymanager.Route format
@@ -173,6 +180,7 @@ func New(cfg *config.Config) (*Server, error) {
 		backend:        b2Backend,
 		cache:          cache,
 		footerCache:    footerCache,
+		listCache:      listCache,
 		keyManager:     keyMgr,
 		canary:         canaryMonitor,
 		provenance:     provenanceMgr,
@@ -216,7 +224,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/share/", s.handleShare)
 
 	// S3 operations
-	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.keyManager)
+	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.keyManager, s.listCache)
 
 	// Wire up provenance if available
 	if s.provenance != nil {

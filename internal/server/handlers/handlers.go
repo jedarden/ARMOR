@@ -39,19 +39,21 @@ type Handlers struct {
 	backend     backend.Backend
 	cache       *backend.MetadataCache
 	footerCache *backend.FooterCache
+	listCache   *backend.ListCache
 	keyManager  *keymanager.KeyManager
 	provenance  ProvenanceRecorder
 }
 
 // New creates a new Handlers instance.
-func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, footerCache *backend.FooterCache, km *keymanager.KeyManager) *Handlers {
+func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, footerCache *backend.FooterCache, km *keymanager.KeyManager, listCache *backend.ListCache) *Handlers {
 	return &Handlers{
 		config:      cfg,
 		backend:     be,
 		cache:       cache,
 		footerCache: footerCache,
+		listCache:   listCache,
 		keyManager:  km,
-		provenance: nil,
+		provenance:  nil,
 	}
 }
 
