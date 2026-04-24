@@ -2787,3 +2787,99 @@ func TestListObjectVersions(t *testing.T) {
 		t.Errorf("response should contain version-test.txt, got: %s", string(body))
 	}
 }
+
+// countingListBackend wraps mockBackend and counts List() calls.
+type countingListBackend struct {
+	*mockBackend
+	mu        sync.Mutex
+	listCalls int
+}
+
+func (c *countingListBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	c.mu.Lock()
+	c.listCalls++
+	c.mu.Unlock()
+	return c.mockBackend.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
+func (c *countingListBackend) listCallCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.listCalls
+}
+
+func TestListObjects_CacheHit(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	cb := &countingListBackend{mockBackend: mb}
+	lc := backend.NewListCache(100, 60)
+	h := handlers.New(cfg, cb, cache, footerCache, km, lc)
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=data/", nil)
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d: %s", i, w.Code, w.Body.String())
+		}
+	}
+
+	if cb.listCallCount() != 1 {
+		t.Errorf("expected backend.List() called once within TTL, got %d", cb.listCallCount())
+	}
+}
+
+func TestListObjects_CacheInvalidatedByPut(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	cb := &countingListBackend{mockBackend: mb}
+	lc := backend.NewListCache(100, 60)
+	h := handlers.New(cfg, cb, cache, footerCache, km, lc)
+
+	// First list — populates cache
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=data/", nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list 1: expected 200, got %d", w.Code)
+	}
+
+	// PutObject under the same prefix — invalidates the cache entry
+	req = httptest.NewRequest(http.MethodPut, "/test-bucket/data/file.txt", bytes.NewReader([]byte("content")))
+	req.Header.Set("Content-Type", "text/plain")
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("put: expected 200, got %d", w.Code)
+	}
+
+	// Second list — cache entry was invalidated, backend must be called again
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=data/", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list 2: expected 200, got %d", w.Code)
+	}
+
+	if cb.listCallCount() != 2 {
+		t.Errorf("expected backend.List() called twice after PutObject invalidation, got %d", cb.listCallCount())
+	}
+}
+
+func TestListObjects_DisabledCache(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	cb := &countingListBackend{mockBackend: mb}
+	// nil listCache simulates TTL=0 disabled path
+	h := handlers.New(cfg, cb, cache, footerCache, km, nil)
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=data/", nil)
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d: %s", i, w.Code, w.Body.String())
+		}
+	}
+
+	if cb.listCallCount() != 2 {
+		t.Errorf("expected backend.List() called twice with disabled cache, got %d", cb.listCallCount())
+	}
+}

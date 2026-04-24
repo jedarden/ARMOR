@@ -57,8 +57,7 @@ func TestListCache_KeyDistinction(t *testing.T) {
 }
 
 func TestListCache_Expiry(t *testing.T) {
-	c := NewListCache(10, 0) // TTL = 0 seconds → expires immediately
-	// Set TTL to 1 nanosecond effectively by using 0s duration
+	c := NewListCache(10, 1) // 1-second TTL; override to nanosecond for a fast test
 	c.ttl = time.Nanosecond
 
 	c.Set("bucket", "", "", 1000, "", &ListResult{})
@@ -67,6 +66,18 @@ func TestListCache_Expiry(t *testing.T) {
 	_, ok := c.Get("bucket", "", "", 1000, "")
 	if ok {
 		t.Error("expected cache miss after TTL expiry")
+	}
+}
+
+func TestListCache_Disabled(t *testing.T) {
+	c := NewListCache(10, 0)
+	if c != nil {
+		t.Error("expected NewListCache with TTL=0 to return nil (disabled)")
+	}
+
+	c = NewListCache(10, -1)
+	if c != nil {
+		t.Error("expected NewListCache with negative TTL to return nil (disabled)")
 	}
 }
 
