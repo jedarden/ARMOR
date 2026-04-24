@@ -22,12 +22,13 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/b2keys"
-	"github.com/jedarden/armor/internal/dashboard"
 	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/dashboard"
 	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/logging"
+	"github.com/jedarden/armor/internal/manifest"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/presign"
 	"github.com/jedarden/armor/internal/provenance"
@@ -47,6 +48,7 @@ type Server struct {
 	presigner   *presign.Signer
 	b2keys      *b2keys.Client // B2 native API key management
 	dashboard   *dashboard.Dashboard
+	manifest    *manifest.Index // in-memory metadata index (nil when disabled)
 
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
@@ -175,6 +177,55 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create dashboard
 	dash := dashboard.New(b2Backend, cfg.Bucket, metrics.DefaultMetrics)
 
+	// Load manifest index from B2 (startup load).
+	// The manifest is a performance optimisation — errors are logged as warnings
+	// and do not prevent startup.
+	var manifestIdx *manifest.Index
+	if cfg.ManifestEnabled {
+		manifestIdx = manifest.New()
+		// ListRaw bypasses the .armor/ filter so manifest keys are discoverable.
+		lister := func(ctx context.Context, prefix, token string) ([]string, string, error) {
+			result, lerr := b2Backend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
+			if lerr != nil {
+				return nil, "", lerr
+			}
+			keys := make([]string, len(result.Objects))
+			for i, obj := range result.Objects {
+				keys[i] = obj.Key
+			}
+			return keys, result.NextToken, nil
+		}
+		// Fetch snapshot and delta blobs via Cloudflare for free egress and edge
+		// caching. Fall back to direct B2 if no Cloudflare domain is configured.
+		fetcher := func(ctx context.Context, key string) ([]byte, error) {
+			var body io.ReadCloser
+			var ferr error
+			if cfg.CFDomain != "" {
+				body, _, ferr = b2Backend.Get(ctx, cfg.Bucket, key)
+			} else {
+				body, _, ferr = b2Backend.GetDirect(ctx, cfg.Bucket, key)
+			}
+			if ferr != nil {
+				return nil, ferr
+			}
+			defer body.Close()
+			return io.ReadAll(body)
+		}
+		loadStart := time.Now()
+		if loadErr := manifest.Load(context.Background(), manifestIdx, cfg.ManifestPrefix, cfg.WriterID, lister, fetcher); loadErr != nil {
+			logger.WithFields(map[string]interface{}{
+				"error": loadErr.Error(),
+			}).Warn("manifest startup load failed — continuing with empty manifest index")
+			manifestIdx = manifest.New() // reset to empty on error
+		} else {
+			logger.WithFields(map[string]interface{}{
+				"entries":  manifestIdx.Len(),
+				"seq":      manifestIdx.Seq(),
+				"duration": time.Since(loadStart).String(),
+			}).Info("manifest index loaded")
+		}
+	}
+
 	return &Server{
 		config:         cfg,
 		backend:        b2Backend,
@@ -187,6 +238,7 @@ func New(cfg *config.Config) (*Server, error) {
 		presigner:      presigner,
 		b2keys:         b2keysClient,
 		dashboard:      dash,
+		manifest:       manifestIdx,
 		metrics:        metrics.DefaultMetrics,
 		requestTracker: metrics.DefaultRequestTracker,
 		logger:         logger,

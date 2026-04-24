@@ -380,6 +380,49 @@ func fromS3Metadata(meta map[string]string) map[string]string {
 	return result
 }
 
+// ListRaw lists objects without filtering .armor/ internal objects.
+// Used for internal operations such as manifest discovery where all keys
+// under a prefix (including .armor/ prefixed keys) must be enumerated.
+func (b *B2Backend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error) {
+	input := &s3.ListObjectsV2Input{
+		Bucket:            aws.String(bucket),
+		Prefix:            aws.String(prefix),
+		ContinuationToken: aws.String(continuationToken),
+	}
+	if delimiter != "" {
+		input.Delimiter = aws.String(delimiter)
+	}
+	if maxKeys > 0 {
+		input.MaxKeys = aws.Int32(int32(maxKeys))
+	}
+
+	resp, err := b.s3Client.ListObjectsV2(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("ListObjectsV2 failed: %w", err)
+	}
+
+	result := &ListResult{
+		IsTruncated: aws.ToBool(resp.IsTruncated),
+		NextToken:   aws.ToString(resp.NextContinuationToken),
+	}
+
+	for _, obj := range resp.Contents {
+		info := &ObjectInfo{
+			Key:          aws.ToString(obj.Key),
+			Size:         aws.ToInt64(obj.Size),
+			ETag:         aws.ToString(obj.ETag),
+			LastModified: aws.ToTime(obj.LastModified),
+		}
+		result.Objects = append(result.Objects, *info)
+	}
+
+	for _, p := range resp.CommonPrefixes {
+		result.CommonPrefixes = append(result.CommonPrefixes, aws.ToString(p.Prefix))
+	}
+
+	return result, nil
+}
+
 // S3Client returns the underlying S3 client for advanced operations.
 func (b *B2Backend) S3Client() *s3.Client {
 	return b.s3Client
