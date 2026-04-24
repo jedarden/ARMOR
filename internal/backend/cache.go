@@ -121,8 +121,11 @@ type ListCache struct {
 	ttl        time.Duration
 }
 
-// NewListCache creates a new list cache.
+// NewListCache creates a new list cache. Returns nil when ttlSeconds <= 0 (disabled).
 func NewListCache(maxEntries int, ttlSeconds int) *ListCache {
+	if ttlSeconds <= 0 {
+		return nil
+	}
 	return &ListCache{
 		entries:    make(map[string]*ListCacheEntry),
 		maxEntries: maxEntries,
