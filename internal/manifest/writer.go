@@ -33,6 +33,10 @@ type Writer struct {
 	// onFlush is called after each successful B2 delta upload, e.g. to notify
 	// a Compactor that a new delta file exists. May be nil.
 	onFlush func()
+	// lastFlush records the timestamp of the most recent successful delta upload.
+	// It is updated only when upload() succeeds. A zero time indicates no
+	// successful flush has occurred since startup.
+	lastFlush time.Time
 }
 
 // NewWriter creates a Writer backed by idx. bufSize controls the ops channel
@@ -155,7 +159,16 @@ func (w *Writer) flush(ops []Op) {
 	key := DeltaKey(w.prefix, w.writerID, seq)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := w.upload(ctx, key, data); err == nil && w.onFlush != nil {
-		w.onFlush()
+	if err := w.upload(ctx, key, data); err == nil {
+		w.lastFlush = time.Now().UTC()
+		if w.onFlush != nil {
+			w.onFlush()
+		}
 	}
+}
+
+// LastFlush returns the timestamp of the most recent successful delta upload.
+// A zero time indicates no successful flush has occurred since startup.
+func (w *Writer) LastFlush() time.Time {
+	return w.lastFlush
 }
