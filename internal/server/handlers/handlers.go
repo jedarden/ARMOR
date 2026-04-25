@@ -1313,7 +1313,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 		// Return success response
 		result := CopyObjectResult{
-			LastModified: time.Now().UTC().Format(http.TimeFormat),
+			LastModified: time.Now().UTC().Format(time.RFC3339),
 			ETag:         fmt.Sprintf(`"%s"`, armorMeta.ETag),
 		}
 
@@ -1358,7 +1358,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 	// Return success response
 	result := CopyObjectResult{
-		LastModified: time.Now().UTC().Format(http.TimeFormat),
+		LastModified: time.Now().UTC().Format(time.RFC3339),
 		ETag:         fmt.Sprintf(`"%s"`, dstInfo.ETag),
 	}
 
@@ -1469,7 +1469,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 	for _, obj := range result.Objects {
 		resp.Contents = append(resp.Contents, Contents{
 			Key:          obj.Key,
-			LastModified: obj.LastModified.UTC().Format(http.TimeFormat),
+			LastModified: obj.LastModified.UTC().Format(time.RFC3339),
 			ETag:         fmt.Sprintf(`"%s"`, obj.ETag),
 			Size:         obj.Size,
 			StorageClass: "STANDARD",
@@ -2145,7 +2145,7 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 			PartNumber:   int(part.PartNumber),
 			ETag:         part.ETag,
 			Size:         plaintextSize,
-			LastModified: part.LastModified.UTC().Format(http.TimeFormat),
+			LastModified: part.LastModified.UTC().Format(time.RFC3339),
 		})
 	}
 
@@ -2299,7 +2299,7 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 			VersionID:      version.VersionID,
 			IsLatest:       version.IsLatest,
 			IsDeleteMarker: version.IsDeleteMarker,
-			LastModified:   version.LastModified.UTC().Format(http.TimeFormat),
+			LastModified:   version.LastModified.UTC().Format(time.RFC3339),
 		}
 
 		if !version.IsDeleteMarker {
