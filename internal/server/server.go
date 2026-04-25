@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -57,39 +56,10 @@ type Server struct {
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
 
-	// backendHealth caches the result of the backend connectivity check
-	// used by /readyz when the canary monitor is not available.
-	backendHealth backendHealthCache
-
 	// Metrics and request tracking
 	metrics       *metrics.Metrics
 	requestTracker *metrics.RequestTracker
 	logger        *logging.Logger
-}
-
-// backendHealthCache caches a backend connectivity check result with a TTL.
-type backendHealthCache struct {
-	mu         sync.Mutex
-	lastCheck  time.Time
-	healthy    bool
-	lastError  string
-}
-
-func (c *backendHealthCache) Update(healthy bool, errStr string) {
-	c.mu.Lock()
-	c.lastCheck = time.Now()
-	c.healthy = healthy
-	c.lastError = errStr
-	c.mu.Unlock()
-}
-
-func (c *backendHealthCache) Get(ttl time.Duration) (checked bool, healthy bool, errStr string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Since(c.lastCheck) < ttl {
-		return true, c.healthy, c.lastError
-	}
-	return false, false, ""
 }
 
 // New creates a new ARMOR server.
@@ -432,23 +402,20 @@ func (s *Server) AdminHandler() http.Handler {
 }
 
 // healthz returns the health status.
+// This is the liveness probe — it only checks that the process is alive.
+// Backend connectivity is checked by /readyz (the readiness probe).
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
-	// Check canary status if monitor is running
-	if s.canary != nil && s.canaryStarted {
-		if !s.canary.IsHealthy() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("Unhealthy - canary check failed"))
-			return
-		}
-	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
 
 // readyz returns the readiness status.
 // When the canary monitor is running, its in-memory health state is the sole
-// signal — no backend call is made. When the canary is not configured, a
-// HeadBucket call is issued and its result is cached for ReadyzCacheTTL seconds.
+// signal — no backend call is made. When the canary is not configured, the
+// manifest writer's last successful delta flush timestamp is used as the
+// health signal. A flush within the last 60 seconds indicates the service
+// is healthy and can write to B2. If neither signal is available, the
+// service reports unhealthy.
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	// Fast path: canary monitor is authoritative when running.
 	if s.canary != nil && s.canaryStarted {
@@ -462,32 +429,29 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fallback (no canary): cached backend connectivity check.
-	ttl := time.Duration(s.config.ReadyzCacheTTL) * time.Second
-	if checked, healthy, _ := s.backendHealth.Get(ttl); checked {
-		if healthy {
+	// Fallback: manifest writer's last successful delta flush.
+	// A flush within the last 60 seconds indicates the service is healthy.
+	const flushThreshold = 60 * time.Second
+	if s.manifestWriter != nil {
+		lastFlush := s.manifestWriter.LastFlush()
+		if !lastFlush.IsZero() && time.Since(lastFlush) < flushThreshold {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("Ready"))
+			return
+		}
+		// No recent flush — report unhealthy
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if lastFlush.IsZero() {
+			w.Write([]byte("Not ready - manifest writer has never flushed"))
 		} else {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("Not ready - backend connectivity check failed (cached)"))
+			w.Write([]byte(fmt.Sprintf("Not ready - manifest writer last flush %v ago (threshold %v)", time.Since(lastFlush).Round(time.Second), flushThreshold)))
 		}
 		return
 	}
 
-	// Cache miss — probe the backend with HeadBucket.
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	if err := s.backend.HeadBucket(ctx, s.config.Bucket); err != nil {
-		s.backendHealth.Update(false, err.Error())
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("Not ready - backend unavailable: " + err.Error()))
-		return
-	}
-
-	s.backendHealth.Update(true, "")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Ready"))
+	// Neither canary nor manifest writer available — report unhealthy.
+	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Write([]byte("Not ready - no health signal available"))
 }
 
 // verifyKey verifies the MEK is correct.
