@@ -1313,7 +1313,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 		// Return success response
 		result := CopyObjectResult{
-			LastModified: time.Now().UTC().Format(time.RFC3339),
+			LastModified: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 			ETag:         fmt.Sprintf(`"%s"`, armorMeta.ETag),
 		}
 
@@ -1358,7 +1358,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 	// Return success response
 	result := CopyObjectResult{
-		LastModified: time.Now().UTC().Format(time.RFC3339),
+		LastModified: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 		ETag:         fmt.Sprintf(`"%s"`, dstInfo.ETag),
 	}
 
@@ -1469,7 +1469,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 	for _, obj := range result.Objects {
 		resp.Contents = append(resp.Contents, Contents{
 			Key:          obj.Key,
-			LastModified: obj.LastModified.UTC().Format(time.RFC3339),
+			LastModified: obj.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"),
 			ETag:         fmt.Sprintf(`"%s"`, obj.ETag),
 			Size:         obj.Size,
 			StorageClass: "STANDARD",
@@ -1666,7 +1666,7 @@ func (h *Handlers) ListBuckets(w http.ResponseWriter, r *http.Request) {
 	for _, b := range buckets {
 		result.Buckets.Bucket = append(result.Buckets.Bucket, Bucket{
 			Name:         b.Name,
-			CreationDate: b.CreationDate.UTC().Format(time.RFC3339),
+			CreationDate: b.CreationDate.UTC().Format("2006-01-02T15:04:05.000Z"),
 		})
 	}
 
@@ -2145,7 +2145,7 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 			PartNumber:   int(part.PartNumber),
 			ETag:         part.ETag,
 			Size:         plaintextSize,
-			LastModified: part.LastModified.UTC().Format(time.RFC3339),
+			LastModified: part.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"),
 		})
 	}
 
@@ -2212,7 +2212,7 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 			Initiator:    "armor",
 			Owner:        "armor",
 			StorageClass: "STANDARD",
-			Initiated:    upload.Initiated.UTC().Format(time.RFC3339),
+			Initiated:    upload.Initiated.UTC().Format("2006-01-02T15:04:05.000Z"),
 		})
 	}
 
@@ -2299,7 +2299,7 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 			VersionID:      version.VersionID,
 			IsLatest:       version.IsLatest,
 			IsDeleteMarker: version.IsDeleteMarker,
-			LastModified:   version.LastModified.UTC().Format(time.RFC3339),
+			LastModified:   version.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"),
 		}
 
 		if !version.IsDeleteMarker {
