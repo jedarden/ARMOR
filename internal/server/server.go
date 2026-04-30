@@ -56,6 +56,9 @@ type Server struct {
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
 
+	// canaryDisabled skips the canary check in /readyz when true
+	canaryDisabled bool
+
 	// Metrics and request tracking
 	metrics       *metrics.Metrics
 	requestTracker *metrics.RequestTracker
@@ -253,6 +256,7 @@ func New(cfg *config.Config) (*Server, error) {
 		listCache:      listCache,
 		keyManager:     keyMgr,
 		canary:         canaryMonitor,
+		canaryDisabled: cfg.CanaryDisabled,
 		provenance:     provenanceMgr,
 		presigner:      presigner,
 		b2keys:         b2keysClient,
@@ -328,8 +332,14 @@ func (s *Server) StopManifestCompactor() {
 
 // StartCanary starts the canary monitor.
 // It should be called after the server is created.
+// When ARMOR_CANARY_DISABLED=true, the monitor is not started and /readyz
+// always returns 200 regardless of B2 reachability.
 func (s *Server) StartCanary(ctx context.Context) {
 	if s.canary == nil || s.canaryStarted {
+		return
+	}
+	if s.canaryDisabled {
+		s.logger.Info("Canary monitor disabled (ARMOR_CANARY_DISABLED=true)")
 		return
 	}
 	s.canaryStarted = true
@@ -410,14 +420,20 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 // readyz returns the readiness status.
-// When the canary monitor is running, its in-memory health state is the sole
-// signal — no backend call is made. When the canary is not configured, the
-// manifest writer's last successful delta flush timestamp is used as the
-// health signal. A flush within the last 60 seconds indicates the service
-// is healthy and can write to B2. If neither signal is available, the
-// service reports unhealthy.
+// When the canary monitor is running and not disabled, its in-memory health
+// state is the sole signal — no backend call is made. When the canary is
+// disabled (ARMOR_CANARY_DISABLED=true), /readyz always returns 200 and the
+// liveness probe (/healthz) is the sole health guard. When the canary is not
+// configured, the manifest writer's last flush is used as the health signal.
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
-	// Fast path: canary monitor is authoritative when running.
+	// When canary is explicitly disabled, skip all backend checks.
+	if s.canaryDisabled {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Ready"))
+		return
+	}
+
+	// Canary monitor is authoritative when running.
 	if s.canary != nil && s.canaryStarted {
 		if !s.canary.IsHealthy() {
 			w.WriteHeader(http.StatusServiceUnavailable)

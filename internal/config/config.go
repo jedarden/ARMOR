@@ -45,6 +45,10 @@ type Config struct {
 	// Cloudflare download configuration
 	CFDomain string
 
+	// CanaryDisabled skips the canary check in /readyz when true.
+	// Set ARMOR_CANARY_DISABLED=true to disable the canary readiness gating.
+	CanaryDisabled bool
+
 	// Encryption configuration
 	MEK       []byte
 	BlockSize int
@@ -120,6 +124,9 @@ func Load() (*Config, error) {
 
 	// Cloudflare domain (optional — empty string enables direct S3 fallback for downloads)
 	cfg.CFDomain = os.Getenv("ARMOR_CF_DOMAIN")
+
+	// Canary disabled flag
+	cfg.CanaryDisabled = os.Getenv("ARMOR_CANARY_DISABLED") == "true"
 
 	// Master encryption key (required)
 	mekHex := os.Getenv("ARMOR_MEK")
