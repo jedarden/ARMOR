@@ -107,7 +107,22 @@ func (b *B2Backend) GetRange(ctx context.Context, bucket, key string, offset, le
 }
 
 // GetRangeWithHeaders retrieves a byte range from an object via Cloudflare along with response headers.
+// Falls back to direct S3 API when cfDomain is empty (e.g. CF CDN unavailable).
 func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, map[string]string, error) {
+	if b.cfDomain == "" {
+		// No CF domain configured — fall back to direct S3 range request.
+		rangeHeader := fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)
+		resp, err := b.s3Client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Range:  aws.String(rangeHeader),
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("direct S3 range request failed: %w", err)
+		}
+		return resp.Body, nil, nil
+	}
+
 	// Construct Cloudflare download URL
 	cfURL := fmt.Sprintf("https://%s/file/%s/%s", b.cfDomain, bucket, url.PathEscape(key))
 
