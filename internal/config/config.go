@@ -118,11 +118,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("ARMOR_BUCKET is required")
 	}
 
-	// Cloudflare domain (required)
+	// Cloudflare domain (optional — empty string enables direct S3 fallback for downloads)
 	cfg.CFDomain = os.Getenv("ARMOR_CF_DOMAIN")
-	if cfg.CFDomain == "" {
-		return nil, fmt.Errorf("ARMOR_CF_DOMAIN is required")
-	}
 
 	// Master encryption key (required)
 	mekHex := os.Getenv("ARMOR_MEK")
