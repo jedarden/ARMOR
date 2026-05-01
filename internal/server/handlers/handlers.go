@@ -115,6 +115,10 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) > 1 {
 		key = parts[1]
+		// URL decode the key (DuckDB httpfs encodes special chars like = as %3D)
+		if decoded, err := url.PathUnescape(key); err == nil {
+			key = decoded
+		}
 	}
 
 	// Route based on method and path
