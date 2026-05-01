@@ -3115,3 +3115,79 @@ func TestHeadObjectManifestCacheHitNotModified(t *testing.T) {
 		t.Errorf("expected 0 backend Head() calls (304 served from manifest), got %d", n)
 	}
 }
+
+// TestISO8601TimestampFormat verifies that ListObjectsV2 returns timestamps
+// in ISO 8601 format with milliseconds (compatible with DuckDB httpfs).
+// This test ensures the fix for https://github.com/jedarden/ARMOR/issues/8
+// where DuckDB httpfs was failing to parse timestamps in ARMOR responses.
+func TestISO8601TimestampFormat(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	// Create a test object
+	content := []byte("test content for timestamp verification")
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/ts-test/file.txt", bytes.NewReader(content))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("failed to create test object: status %d", w.Code)
+	}
+
+	// List objects to get the XML response
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=ts-test/", nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListObjectsV2 failed: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// Parse XML and verify timestamp format
+	type ListResult struct {
+		XMLName  xml.Name `xml:"ListBucketResult"`
+		Contents []struct {
+			Key          string `xml:"Key"`
+			LastModified string `xml:"LastModified"`
+		} `xml:"Contents"`
+	}
+
+	var result ListResult
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse XML: %v", err)
+	}
+
+	if len(result.Contents) == 0 {
+		t.Fatal("no objects returned")
+	}
+
+	// Verify timestamp format is ISO 8601 with milliseconds
+	for _, obj := range result.Contents {
+		if obj.LastModified == "" {
+			t.Errorf("empty LastModified for key %s", obj.Key)
+			continue
+		}
+
+		// Parse with RFC3339 (DuckDB uses ISO 8601 which is compatible)
+		parsedTime, err := time.Parse(time.RFC3339, obj.LastModified)
+		if err != nil {
+			t.Errorf("timestamp %q is not valid RFC3339/ISO 8601: %v", obj.LastModified, err)
+			continue
+		}
+
+		// Verify it has milliseconds (3 decimal places)
+		// Expected format: 2006-01-02T15:04:05.000Z (24 chars minimum)
+		if len(obj.LastModified) < 24 {
+			t.Errorf("timestamp %q appears to lack milliseconds (expected format: 2006-01-02T15:04:05.000Z)", obj.LastModified)
+		}
+
+		// Verify the format string matches what we expect
+		expectedFormat := parsedTime.UTC().Format("2006-01-02T15:04:05.000Z")
+		if obj.LastModified != expectedFormat {
+			t.Errorf("timestamp format mismatch: got %q, expected %q", obj.LastModified, expectedFormat)
+		}
+
+		t.Logf("✓ %s -> LastModified: %s (valid ISO 8601 with milliseconds, DuckDB httpfs compatible)", obj.Key, obj.LastModified)
+	}
+}
