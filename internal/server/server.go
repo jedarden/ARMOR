@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -747,6 +748,10 @@ func (s *Server) extractBucketAndKey(r *http.Request) (bucket, key string) {
 	}
 	if len(parts) >= 2 {
 		key = parts[1]
+		// URL decode the key (DuckDB httpfs encodes special chars like = as %3D)
+		if decoded, err := url.PathUnescape(key); err == nil {
+			key = decoded
+		}
 	}
 
 	// Use configured bucket if empty
