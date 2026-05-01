@@ -595,7 +595,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		if status := checkConditionalRequest(r, info.ETag, info.LastModified); status != 0 {
 			if status == http.StatusNotModified {
 				w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
-				w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+				w.Header().Set("Last-Modified", info.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"))
 				w.WriteHeader(status)
 			} else {
 				h.writeError(w, "PreconditionFailed", "Precondition failed", status)
@@ -614,7 +614,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
 		w.Header().Set("Content-Type", info.ContentType)
 		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
-		w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+		w.Header().Set("Last-Modified", info.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"))
 		w.WriteHeader(http.StatusOK)
 		io.Copy(w, body)
 		return
@@ -655,7 +655,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		if status == http.StatusNotModified {
 			// 304 Not Modified - set headers but no body
 			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
-			w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+			w.Header().Set("Last-Modified", info.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"))
 			w.WriteHeader(status)
 		} else {
 			// 412 Precondition Failed
@@ -1103,7 +1103,7 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 			if status := checkConditionalRequest(r, entry.ETag, entry.LastModified); status != 0 {
 				if status == http.StatusNotModified {
 					w.Header().Set("ETag", fmt.Sprintf(`"%s"`, entry.ETag))
-					w.Header().Set("Last-Modified", entry.LastModified.UTC().Format(http.TimeFormat))
+					w.Header().Set("Last-Modified", entry.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"))
 					w.WriteHeader(status)
 				} else {
 					h.writeError(w, "PreconditionFailed", "Precondition failed", status)
@@ -1114,7 +1114,7 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 			w.Header().Set("Content-Type", entry.ContentType)
 			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, entry.ETag))
 			w.Header().Set("Accept-Ranges", "bytes")
-			w.Header().Set("Last-Modified", entry.LastModified.UTC().Format(http.TimeFormat))
+			w.Header().Set("Last-Modified", entry.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"))
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -1151,7 +1151,7 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	if status := checkConditionalRequest(r, etag, info.LastModified); status != 0 {
 		if status == http.StatusNotModified {
 			w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
-			w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+			w.Header().Set("Last-Modified", info.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"))
 			w.WriteHeader(status)
 		} else {
 			h.writeError(w, "PreconditionFailed", "Precondition failed", status)
@@ -1163,7 +1163,7 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+	w.Header().Set("Last-Modified", info.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"))
 
 	w.WriteHeader(http.StatusOK)
 }
