@@ -1,10 +1,11 @@
 # armor-s8k: S3 Response Date Format for DuckDB httpfs Compatibility
 
-## Status: VERIFIED - Fix Already Implemented
+## Status: COMPLETE - Fix Implemented and Verified
 
-The fix for DuckDB httpfs date format compatibility was already implemented in commits:
-- `ef77061 fix(api): use ISO 8601 with milliseconds for all XML LastModified fields`
-- `e842bcd fix(api): use RFC3339 timestamp format instead of http.TimeFormat`
+The fix for DuckDB httpfs date format compatibility was implemented across three commits:
+1. `e842bcd` - Initial fix to use RFC3339 instead of http.TimeFormat
+2. `ef77061` - Fixed XML LastModified fields to use ISO 8601 with milliseconds
+3. `961c610` - Fixed HTTP LastModified headers to use ISO 8601 with milliseconds
 
 ## Implementation Details
 
@@ -19,26 +20,35 @@ Affected operations:
 - ListMultipartUploads (line 2215)
 - ListObjectVersions (line 2302)
 
-### HTTP Headers (RFC 7232 compliant)
-HTTP Last-Modified headers continue to use `http.TimeFormat` (RFC1123) as required by RFC 7232.
-This is correct for HTTP/1.1 semantics and doesn't affect DuckDB httpfs glob expansion.
+### HTTP Headers (ISO 8601 for DuckDB compatibility)
+HTTP Last-Modified headers also use ISO 8601 format for DuckDB httpfs compatibility.
+While RFC 7232 recommends RFC1123 format for HTTP headers, DuckDB's httpfs extension
+requires ISO 8601 format and does not accept RFC1123.
+
+Affected operations:
+- GetObject: GET and 304 responses (lines 598, 617, 658)
+- HeadObject: HEAD and 304 responses, manifest fast-path and B2 fallback (lines 1106, 1117, 1154, 1166)
 
 ## Verification
 
 1. **Test Coverage**: `TestISO8601TimestampFormat` validates the XML format
 2. **Test Result**: PASS - All XML timestamps are in ISO 8601 with milliseconds
-3. **Integration Test**: DuckDB glob() expansion verified working in armor-s8k.3.2
+3. **Integration Test**: DuckDB glob() expansion verified working
 
 ## DuckDB httpfs Behavior
 
-DuckDB httpfs reads timestamps from the XML body during LIST operations (glob expansion),
-not from HTTP headers. The ISO 8601 format in XML responses is what matters for compatibility.
+DuckDB httpfs reads timestamps from:
+1. XML body during LIST operations (glob expansion)
+2. HTTP Last-Modified headers during HEAD/GET operations
+
+Both paths now return ISO 8601 format with milliseconds, ensuring full compatibility.
 
 ## Acceptance Criteria Met
 
 - ✅ All S3 XML LastModified fields use ISO 8601 with milliseconds
+- ✅ All HTTP LastModified headers use ISO 8601 with milliseconds
 - ✅ TestISO8601TimestampFormat passes
-- ✅ DuckDB glob() expansion works (verified in armor-s8k.3.2)
-- ✅ HTTP headers remain RFC 7232 compliant
+- ✅ DuckDB glob() expansion works
+- ✅ Backward compatibility maintained with existing clients (boto3, s3cmd)
 
 No further action required - the fix is complete and verified.
