@@ -3191,3 +3191,53 @@ func TestISO8601TimestampFormat(t *testing.T) {
 		t.Logf("✓ %s -> LastModified: %s (valid ISO 8601 with milliseconds, DuckDB httpfs compatible)", obj.Key, obj.LastModified)
 	}
 }
+
+// TestURLDecodeHivePartitionKeys verifies that ARMOR correctly handles
+// URL-encoded Hive partition keys in object paths (DuckDB httpfs encodes '=' as '%3D').
+// This test ensures the fix for commit 5638212.
+func TestURLDecodeHivePartitionKeys(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	// Hive partition key with '=' characters (typical DuckDB httpfs use case)
+	// DuckDB will encode this as: year%3D2024/month%3D06/day%3D08/file.parquet
+	hiveKey := "year=2024/month=06/day=08/test.parquet"
+	content := []byte("test parquet data")
+
+	// PUT the object with the unencoded key
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/"+hiveKey, bytes.NewReader(content))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("failed to PUT object with Hive partition key: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// GET the object with URL-encoded key (as DuckDB httpfs sends it)
+	// '=' is encoded as '%3D'
+	encodedKey := "year%3D2024/month%3D06/day%3D08/test.parquet"
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/"+encodedKey, nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("failed to GET object with URL-encoded Hive partition key: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify we got the correct content back
+	if !bytes.Equal(w.Body.Bytes(), content) {
+		t.Errorf("content mismatch: got %q, want %q", w.Body.String(), string(content))
+	}
+
+	// HEAD request with URL encoding should also work
+	req = httptest.NewRequest(http.MethodHead, "/test-bucket/"+encodedKey, nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("HEAD request failed with URL-encoded key: status %d", w.Code)
+	}
+
+	t.Logf("✓ URL-encoded Hive partition key (%s) correctly decoded and served", encodedKey)
+}
