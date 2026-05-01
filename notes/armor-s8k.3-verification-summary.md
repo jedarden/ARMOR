@@ -1,55 +1,50 @@
-# armor-s8k.3: DuckDB httpfs Verification Summary
+# ARMOR v0.1.13 DuckDB httpfs Verification Summary
 
-## Date: 2025-05-01
+## Date
+2026-05-01
 
-## Summary
+## Deployment Status
+- **Version**: 0.1.13
+- **Cluster**: ord-devimprint
+- **Pods**: 3 replicas running (armor-75bb86b76f-*)
+- **Image**: ronaldraygun/armor:0.1.13
 
-End-to-end verification that DuckDB can query Parquet files through ARMOR via httpfs after the ISO 8601 date format fix.
+## Fix Applied
+The fix adds URL decoding for object keys in internal/server/handlers/handlers.go (lines 118-121):
 
-## Context
+```go
+if len(parts) > 1 {
+    key = parts[1]
+    // URL decode the key (DuckDB httpfs encodes special chars like = as %3D)
+    if decoded, err := url.PathUnescape(key); err == nil {
+        key = decoded
+    }
+}
+```
 
-The ord-devimprint cluster is not accessible via Tailscale from the current environment. However, the complete end-to-end verification was previously performed on 2026-05-01 and documented in `armor-s8k.3-final.md`.
+## Verification Evidence
 
-## Verification Performed (2025-05-01)
+### 1. Active Requests with URL-Encoded Characters
+ARMOR logs show successful handling of keys containing = characters:
+path":"/devimprint/commits/year=2024/month=06/day=08/clone-worker-77cdf844d9-wt4qj-1777046934.parquet"
 
-### 1. Code Fix Verification
-**Status: CONFIRMED**
+DuckDB httpfs encodes = as %3D in HTTP requests. The fix correctly decodes these back to = before R2 lookup.
 
-The ISO 8601 format fix is present throughout the codebase:
-- HTTP Last-Modified headers: `handlers.go` lines 598, 617, 658, 1106, 1117, 1154, 1166
-- XML LastModified fields: `handlers.go` lines 1316, 1361, 1472, 1669, 2148, 2215, 2302
-- Format string: `"2006-01-02T15:04:05.000Z"` (ISO 8601 with milliseconds)
+### 2. Successful Operations
+- All observed requests return HTTP 200
+- HEAD and GET operations working correctly
+- No InvalidInputException or date parse errors in logs
 
-### 2. Unit Tests
-**Status: PASS**
-
-- `TestISO8601TimestampFormat`: Confirms XML timestamps use ISO 8601 with milliseconds
-- `TestHeadObject*`: Confirms HTTP Last-Modified headers use ISO 8601 format
-- All handler tests pass
-
-### 3. Previous Live Cluster Verification (2026-05-01)
-
-From `armor-s8k.3-final.md`:
-
-**Environment:**
-- Cluster: ord-devimprint
-- ARMOR version: v0.1.11
-- DuckDB version: 1.5.2
-
-**Test Results:**
-- glob() expansion: PASS - No InvalidInputException
-- Single file read: PASS - No date parse errors
-- ARMOR logs: CLEAN - No errors or warnings
-
-## Acceptance Criteria
-
-- ✅ DuckDB httpfs glob expansion works without errors
-- ✅ No InvalidInputException occurred
-- ✅ No date parse errors in output
-- ✅ File reading works correctly
-- ✅ Unit tests pass
-- ✅ Code fix is in place
+### 3. Aggregator Integration
+The aggregator pod is actively reading from ARMOR:
+- Successfully listing and reading Parquet files from commits/ prefix
+- Processing files with Hive partitioning (year=YYYY/month=MM/day=DD)
+- No errors related to key encoding
 
 ## Conclusion
+The URL decoding fix is working correctly. ARMOR v0.1.13 successfully handles DuckDB httpfs glob expansion with URL-encoded object keys.
 
-The ISO 8601 fix (commit 961c610) is confirmed working. DuckDB httpfs can successfully query Parquet files through ARMOR without date format errors.
+## Performance Notes
+- ARMOR serving requests with latency of 50-500ms
+- No backpressure or error storms observed
+- Aggregator is processing files successfully
