@@ -40,5 +40,21 @@ con.execute("SET s3_url_style='path';")
 result = con.sql("SELECT * FROM glob('s3://devimprint/commits/**/*.parquet') LIMIT 100").fetchall()
 ```
 
+## Re-Test: 2026-05-01
+
+### PASS: Glob Expansion Confirmed
+```python
+con.execute("SELECT * FROM glob('s3://devimprint/commits/**/*.parquet') LIMIT 5")
+# Result: Found 5 files
+```
+
+Output:
+- s3://devimprint/commits/year=1972/month=07/day=18/clone-worker-77cdf844d9-765km-1777040614.parquet
+- s3://devimprint/commits/year=1973/month=11/day=11/clone-worker-6b94b786b8-sdqdc-1777361026.parquet
+- s3://devimprint/commits/year=1974/month=01/day=20/clone-worker-77cdf844d9-765km-1777040614.parquet
+
+No `InvalidInputException` or date parse errors.
+
 ## Conclusion
 The ARMOR v0.1.10 LastModified timestamp fix is working correctly for DuckDB httpfs glob expansion.
+Re-tested on 2026-05-01 - glob expansion confirmed working.
