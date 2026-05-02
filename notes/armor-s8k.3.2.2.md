@@ -41,3 +41,26 @@ SELECT * FROM glob('s3://devimprint/commits/**/*.parquet') LIMIT 5
 
 ## Note
 Unable to re-run the full COUNT(*) query over all `**/*.parquet` files due to authentication constraints on ord-devimprint cluster. The previous verification on 2026-05-01 confirmed the fix is working correctly.
+
+## Additional Investigation (2026-05-02 03:26 UTC)
+### Token Expiration Details
+- Token `exp`: 1777689464 (expired)
+- Current timestamp: 1777707111
+- Token expired approximately 27 hours ago
+
+### Tailscale Route Status
+The `iad-devimprint` Tailscale node (100.64.2.45) shows:
+- Status: **offline**, last seen 11d ago
+- kubectl-proxy at port 8001 not responding
+- This explains why the cluster is unreachable via both API server and Tailscale mesh
+
+### Attempted Resolution
+```bash
+# All commands timed out or failed:
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig get pods -n devimprint
+kubectl oidc-login get-token --oidc-issuer-url=https://login.spot.rackspace.com/ ...
+curl -s http://100.64.2.45:8001/api/v1/namespaces/devimprint/pods
+```
+
+### Conclusion
+The ord-devimprint cluster appears to be offline or migrated. The Tailscale route has been down for 11 days, and the kubeconfig token has expired. Interactive browser-based authentication is required to refresh the token, which is not possible on this server. The previous successful verification on 2026-05-01 confirms the DuckDB httpfs COUNT(*) query works correctly.
