@@ -1,66 +1,56 @@
-# DuckDB httpfs COUNT(*) Verification - ARMOR v0.1.11
-
-## Date: 2026-05-02
+# armor-s8k.3.2.2: DuckDB httpfs Verification - Access Constraints
 
 ## Task
 Exec into aggregator pod and run DuckDB httpfs COUNT(*) query over s3://devimprint/commits/**/*.parquet
 
-## Constraints Encountered (2026-05-02 Re-verification)
-1. **ord-devimprint cluster unreachable** - kubeconfig requires interactive oidc-login authentication; cluster is outside Tailscale VPN
-2. **ardenone-hub aggregator found but read-only** - Found `aggregator-68554db644-ng85f` (Running) in `devimprint` namespace, but only kubectl-proxy access available (read-only RBAC)
-3. **kubectl exec forbidden through proxy** - Error: `unable to upgrade connection: Forbidden` when attempting exec
-4. **Direct S3 access fails** - Local DuckDB query with httpfs returns `NoSuchBucket` - devimprint bucket only exists behind ARMOR proxy
-5. **No direct kubeconfig for ardenone-hub** - Only ord-devimprint, apexalgo-iad, rs-manager, and iad-ci kubeconfigs available
-6. **ord-devimprint.kubeconfig token expired** - Token expired on 2026-05-01; requires browser-based OIDC refresh (not available on server)
-7. **aggregator connects to local MinIO** - Deployment shows `S3_ENDPOINT=http://armor:9000` (cluster-internal MinIO, not AWS S3)
+## Access Constraints Encountered
 
-## Existing Verification Evidence
-The DuckDB httpfs COUNT(*) query was **already successfully verified** on 2026-05-01:
+### 1. ord-devimprint.kubeconfig (from parent bead)
+- **Location:** `~/.kube/ord-devimprint.kubeconfig`
+- **Issue:** Points to Rackspace Spot HCP endpoint (`hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`)
+- **Result:** Commands timeout (30s+), likely not accessible via Tailscale VPN
 
-```
-From: armor-s8k.3-live-verification-2026-05-01-final-live.md
+### 2. iad-devimprint (Tailscale mesh)
+- **DNS:** `iad-devimprint.tail1b1987.ts.net`
+- **IP:** `100.64.2.45`
+- **Result:** 100% packet loss, not responding to ping
+- **Tried:** `kubectl --server=http://iad-devimprint.tail1b1987.ts.net:8001` - no response
 
-**Test 3: Read individual Parquet file**
-```sql
-SELECT COUNT(*) FROM read_parquet('s3://devimprint/commits/year=2025/month=01/day=01/...')
-```
-**Result:** ✅ SUCCESS - Row count: 106
-```
+### 3. ardenone-hub aggregator (found via proxy)
+- **Proxy:** `kubectl --server=http://traefik-ardenone-hub:8001`
+- **Pod:** `aggregator-68554db644-ng85f` in `devimprint` namespace
+- **Issue:** Read-only proxy - `exec` returns "Forbidden"
+- **Missing:** No `~/.kube/ardenone-hub.kubeconfig` for read/write access
 
-Full glob expansion test passed:
-```sql
-SELECT * FROM glob('s3://devimprint/commits/**/*.parquet') LIMIT 5
-```
-**Result:** ✅ SUCCESS - Returned 5 sample files spanning 1972-1974
+### 4. rs-manager.kubeconfig
+- **Issue:** `the server has asked for the client to provide credentials`
+- **Result:** Authentication required, no valid credentials available
 
-## Acceptance Status
-- ✅ COUNT(*) returns a non-zero integer (106 rows from sample file)
-- ✅ No InvalidInputException in output
-- ✅ No date parse errors in ARMOR logs
-- ✅ ARMOR v0.1.11 deployed and healthy
+## Required Access
+To complete this task, one of the following is needed:
+1. **Tailscale-accessible kubeconfig for iad-devimprint** with exec permissions
+2. **Read/write kubeconfig for ardenone-hub** (has aggregator pod in devimprint namespace)
+3. **Working kubectl-proxy for iad-devimprint** on Tailscale mesh
+4. **Alternative access** to aggregator pod with S3 credentials
 
-## Note
-Unable to re-run the full COUNT(*) query over all `**/*.parquet` files due to authentication constraints on ord-devimprint cluster. The previous verification on 2026-05-01 confirmed the fix is working correctly.
-
-## Additional Investigation (2026-05-02 03:26 UTC)
-### Token Expiration Details
-- Token `exp`: 1777689464 (expired)
-- Current timestamp: 1777707111
-- Token expired approximately 27 hours ago
-
-### Tailscale Route Status
-The `iad-devimprint` Tailscale node (100.64.2.45) shows:
-- Status: **offline**, last seen 11d ago
-- kubectl-proxy at port 8001 not responding
-- This explains why the cluster is unreachable via both API server and Tailscale mesh
-
-### Attempted Resolution
-```bash
-# All commands timed out or failed:
-kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig get pods -n devimprint
-kubectl oidc-login get-token --oidc-issuer-url=https://login.spot.rackspace.com/ ...
-curl -s http://100.64.2.45:8001/api/v1/namespaces/devimprint/pods
+## DuckDB Query to Run (from parent bead)
+```python
+import duckdb, os
+con = duckdb.connect()
+con.execute("INSTALL httpfs; LOAD httpfs;")
+con.execute("SET s3_endpoint='armor:9000';")
+con.execute("SET s3_use_ssl=false;")
+con.execute(f"SET s3_access_key_id='{os.environ['S3_ACCESS_KEY_ID']}';")
+con.execute(f"SET s3_secret_access_key='{os.environ['S3_SECRET_ACCESS_KEY']}';")
+con.execute("SET s3_url_style='path';")
+result = con.execute("SELECT COUNT(*) FROM read_parquet('s3://devimprint/commits/**/*.parquet')").fetchone()
+print('Row count:', result[0])
 ```
 
-### Conclusion
-The ord-devimprint cluster appears to be offline or migrated. The Tailscale route has been down for 11 days, and the kubeconfig token has expired. Interactive browser-based authentication is required to refresh the token, which is not possible on this server. The previous successful verification on 2026-05-01 confirms the DuckDB httpfs COUNT(*) query works correctly.
+## Status
+**BLOCKED** - Cannot exec into aggregator pod due to access constraints.
+
+## Next Steps
+- Obtain valid kubeconfig for iad-devimprint or ardenone-hub
+- OR: Set up kubectl-proxy on iad-devimprint with exec permissions
+- OR: Run query locally with direct S3/ARMOR access
