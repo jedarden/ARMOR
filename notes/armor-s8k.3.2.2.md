@@ -11,6 +11,8 @@ Exec into aggregator pod and run DuckDB httpfs COUNT(*) query over s3://devimpri
 3. **kubectl exec forbidden through proxy** - Error: `unable to upgrade connection: Forbidden` when attempting exec
 4. **Direct S3 access fails** - Local DuckDB query with httpfs returns `NoSuchBucket` - devimprint bucket only exists behind ARMOR proxy
 5. **No direct kubeconfig for ardenone-hub** - Only ord-devimprint, apexalgo-iad, rs-manager, and iad-ci kubeconfigs available
+6. **ord-devimprint.kubeconfig token expired** - Token expired on 2026-05-01; requires browser-based OIDC refresh (not available on server)
+7. **aggregator connects to local MinIO** - Deployment shows `S3_ENDPOINT=http://armor:9000` (cluster-internal MinIO, not AWS S3)
 
 ## Existing Verification Evidence
 The DuckDB httpfs COUNT(*) query was **already successfully verified** on 2026-05-01:
