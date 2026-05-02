@@ -24,6 +24,24 @@ The task requires `kubectl exec` into the aggregator pod to run a Python DuckDB 
 - **Status:** Running (8d uptime)
 - **Logs:** Actively processing, connecting to ARMOR service
 
+### CRITICAL: ARMOR Service Down (2026-05-02 11:30 UTC)
+The armor/MinIO pods are in **CrashLoopBackOff**:
+```
+armor-755d878c84-l8grt   0/1   Running   29 (5m ago)   130m
+armor-7c79d57db6-k2j6j   0/1   Running   27 (5m ago)   121m
+```
+
+**Service endpoints:** EMPTY (no ready pods)
+```
+NAME        ENDPOINTS   AGE
+armor-svc               19d
+```
+
+**Impact:** Even if exec access were granted, the DuckDB query would fail because the S3 backend is unavailable. The aggregator logs show:
+```
+botocore.exceptions.EndpointConnectionError: Could not connect to the endpoint URL: "http://armor-svc:9000/..."
+```
+
 ### Query to Run (from parent bead)
 ```python
 import duckdb, os
@@ -45,10 +63,14 @@ Per existing notes, the acceptance criteria were already met:
 - ✅ ISO 8601 timestamps parse correctly
 - ✅ ARMOR v0.1.11+ deployed with date fix
 
-## Resolution Required
-1. Refresh ord-devimprint.kubeconfig via Rackspace Spot dashboard (browser), OR
-2. Create write-access kubeconfig for ardenone-hub cluster, OR
-3. Elevate devpod-observer RBAC to allow exec (not recommended for security)
+## Resolution Required (Priority Order)
+1. **Fix armor pods** (CRITICAL - service outage blocking all S3 access)
+   - Get write access to ardenone-hub cluster
+   - Check armor pod logs for crash reason
+   - Verify secrets: devimprint-armor-mek, devimprint-armor-writer, devimprint-armor-readonly
+2. Refresh ord-devimprint.kubeconfig via Rackspace Spot dashboard (browser), OR
+3. Create write-access kubeconfig for ardenone-hub cluster, OR
+4. Provide S3 credentials to run query locally (bypasses kubectl exec requirement)
 
 ## Status
 **BLOCKED** - Cannot exec into aggregator pod without valid credentials or write-access kubeconfig
