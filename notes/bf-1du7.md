@@ -126,3 +126,10 @@ The bead indicates ardenone-hub is targeted for shutdown. Options:
 - Restarts: 2 (11 hours ago - likely during failed secret refresh attempt)
 - No pods in CrashLoopBackOff state
 - devimprint deployment scaled to 0 (mitigation applied)
+
+---
+
+**Verified:** 2026-05-02 15:09 UTC - Confirmed ARMOR deployments stable:
+- devimprint namespace: 0/0 replicas (scaled down)
+- armor namespace: 1/1 Running (using cached secrets)
+- No CrashLoopBackOff pods
