@@ -1,9 +1,17 @@
-# armor-s8k.3.2.2 - Blocker Summary - 2026-05-02 15:30 UTC
+# armor-s8k.3.2.2 - Blocker Summary - 2026-05-02 17:12 UTC
 
 ## Task
 Exec into aggregator pod and run DuckDB httpfs COUNT(*) query over s3://devimprint/commits/**/*.parquet
 
-## Blocker: Cannot exec into aggregator pod
+## Blocker: Cannot exec into aggregator pod (UPDATED 2026-05-02 17:12 UTC)
+
+### Status Update: ARMOR Service Recovered ✅
+- **ARMOR pods:** One pod now healthy (armor-7c79d57db6-k2j6j: 1/1 Running)
+- **Service endpoints:** Active (10.42.0.70:9001,10.42.0.70:9000)
+- **OpenBao ESO token:** Issue appears resolved
+- **Aggregator pod:** Running and processing (logs show: "joined result: 76361 rows")
+
+### Remaining Blocker: No kubectl exec access
 
 ### Required Access
 The task requires `kubectl exec` into the aggregator pod to run a Python DuckDB query.
@@ -24,24 +32,10 @@ The task requires `kubectl exec` into the aggregator pod to run a Python DuckDB 
 - **Status:** Running (8d uptime)
 - **Logs:** Actively processing, connecting to ARMOR service
 
-### CRITICAL: ARMOR Service Down + OpenBao Token Expired (2026-05-02 11:30 UTC)
-
-**ARMOR pods CrashLoopBackOff:**
-```
-armor-755d878c84-l8grt   0/1   Running   29 (5m ago)   130m
-armor-7c79d57db6-k2j6j   0/1   Running   27 (5m ago)   121m
-```
-
-**Service endpoints:** EMPTY (no ready pods)
-
-**ROOT CAUSE:** OpenBao token for External Secrets Operator is **expired/revoked**:
-```
-Error: invalid vault credentials
-URL: GET http://openbao-ardenone-hub.openbao.svc.cluster.local:8200/v1/auth/token/lookup-self
-Code: 403. Errors: * permission denied
-```
-
-**Impact:** All ExternalSecret sync is broken cluster-wide. ARMOR pods can't get secrets (B2 creds, MEK, auth keys) and crash on startup.
+### PREVIOUS ISSUE: ARMOR Service Down + OpenBao Token Expired (RESOLVED ✅)
+- **Status:** RESOLVED as of 2026-05-02 17:12 UTC
+- **ARMOR pods:** armor-7c79d57db6-k2j6j is now 1/1 Running
+- **Service endpoints:** Active and serving requests
 
 ### Query to Run (from parent bead)
 ```python
@@ -64,18 +58,30 @@ Per existing notes, the acceptance criteria were already met:
 - ✅ ISO 8601 timestamps parse correctly
 - ✅ ARMOR v0.1.11+ deployed with date fix
 
-## Resolution Required (Priority Order)
-1. **CRITICAL: Fix OpenBao ESO token** (cluster-wide secret sync broken)
-   - Regenerate `openbao-eso-token` in OpenBao
-   - Update secret `external-secrets/openbao-eso-token`
-   - This will fix ALL ExternalSecret sync across the cluster
+## Resolution Required (UPDATED 2026-05-02 17:12 UTC)
+**OpenBao ESO token issue is RESOLVED.** ARMOR service is healthy.
 
-2. **Fix ARMOR pods** (depends on #1 - needs secrets to start)
-   - After ESO token fixed, ARMOR will auto-recover via ArgoCD
+Remaining options to complete the DuckDB query:
+1. **Create write-access kubeconfig for ardenone-hub cluster** (recommended)
+   - ardenone-manager has write-access kubeconfig pattern to follow
+   - This cluster has aggregator pod on ardenone-hub, not ord-devimprint
 
-3. Refresh ord-devimprint.kubeconfig via Rackspace Spot dashboard (browser), OR
-4. Create write-access kubeconfig for ardenone-hub cluster, OR
-5. Provide S3 credentials to run query locally (bypasses kubectl exec requirement)
+2. **Refresh ord-devimprint.kubeconfig via Rackspace Spot dashboard** (browser)
+   - Current OIDC token expired
+   - Note: aggregator pod may not be on ord-devimprint cluster
+
+3. **Alternative: Run query via a temporary debug pod** with write access
+   - Deploy a simple pod with kubectl exec rights to devimprint namespace
+
+4. **Provide S3 credentials to run query locally** (bypasses kubernetes entirely)
 
 ## Status
-**BLOCKED** - Cannot exec into aggregator pod without valid credentials or write-access kubeconfig
+**BLOCKED** - ARMOR service is healthy, but cannot exec into aggregator pod without write-access kubeconfig for ardenone-hub cluster.
+
+## Current State (2026-05-02 17:12 UTC)
+- ✅ ARMOR service healthy (1/2 pods Running)
+- ✅ Service endpoints active (10.42.0.70:9000,9001)
+- ✅ Aggregator pod Running and processing data
+- ❌ No write-access kubeconfig for ardenone-hub
+- ❌ ord-devimprint.kubeconfig has expired OIDC credentials
+- ❌ Read-only proxy blocks exec with "Forbidden"
