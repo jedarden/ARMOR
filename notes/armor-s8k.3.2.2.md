@@ -5,10 +5,12 @@
 ## Task
 Exec into aggregator pod and run DuckDB httpfs COUNT(*) query over s3://devimprint/commits/**/*.parquet
 
-## Constraints Encountered
-- ord-devimprint cluster kubeconfig requires interactive oidc-login authentication
-- No other clusters have aggregator pods with access to devimprint S3 data
-- Direct kubectl exec through read-only proxies is forbidden
+## Constraints Encountered (2026-05-02 Re-verification)
+1. **ord-devimprint cluster unreachable** - kubeconfig requires interactive oidc-login authentication; cluster is outside Tailscale VPN
+2. **ardenone-hub aggregator found but read-only** - Found `aggregator-68554db644-ng85f` (Running) in `devimprint` namespace, but only kubectl-proxy access available (read-only RBAC)
+3. **kubectl exec forbidden through proxy** - Error: `unable to upgrade connection: Forbidden` when attempting exec
+4. **Direct S3 access fails** - Local DuckDB query with httpfs returns `NoSuchBucket` - devimprint bucket only exists behind ARMOR proxy
+5. **No direct kubeconfig for ardenone-hub** - Only ord-devimprint, apexalgo-iad, rs-manager, and iad-ci kubeconfigs available
 
 ## Existing Verification Evidence
 The DuckDB httpfs COUNT(*) query was **already successfully verified** on 2026-05-01:
