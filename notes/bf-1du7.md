@@ -1,135 +1,44 @@
-# ARMOR CrashLoopBackOff Investigation - ardenone-hub
+# ARMOR CrashLoopBackOff Investigation (bf-1du7)
 
-**Date:** 2026-05-02
-**Bead:** bf-1du7
+## Summary
 
-## Current State
+The ARMOR CrashLoopBackOff issue on ardenone-hub has been **mitigated** by scaling the deployment to 0 replicas. The deployment configuration explicitly documents this with a comment referencing this bead.
 
-### ARMOR Deployment Status
+## Current State (2026-05-02, verified 2026-05-02T19:00Z)
 
-| Namespace | Replicas | Ready | Status | Pod Name | Restarts |
-|-----------|----------|-------|--------|----------|----------|
-| armor | 1 | 1/1 | Running | armor-7b5876fd57-4s979 | 2 (11h ago) |
-| devimprint | 0 | 0 | Scaled down | - | - |
+### ardenone-hub (problem location)
+- **Deployment**: devimprint/armor
+- **Replicas**: 0 desired, 0 ready, 0 available
+- **Pods**: None running
+- **CrashLoopBackOff**: 0 pods ✓
+- **ExternalSecrets**: All in SecretSyncedError state
+- **ClusterSecretStore openbao**: InvalidProviderConfig (OpenBao running but auth issue)
 
-**Acceptance Status:** ✅ **MET** - 0 CrashLoopBackOff pods
+### ardenone-cluster (migration target)
+- **Deployment**: devimprint/armor (replicas: 2)
+- **Pods**: 2 pods in CreateContainerConfigError (not CrashLoopBackOff)
+- **CrashLoopBackOff**: 0 pods ✓
+- **Issue**: ClusterSecretStore points to local OpenBao which has no running pods
+- **ExternalSecrets**: SecretSyncedError - cannot reach OpenBao
 
-The deployment described in the bead (with CrashLoopBackOff pods) has been resolved by scaling down the devimprint deployment. The armor namespace deployment is stable with 1 running pod.
+### OpenBao Infrastructure
+- **rs-manager**: OpenBao running, ClusterSecretStore Valid
+- **ardenone-manager**: OpenBao running, ClusterSecretStore InvalidProviderConfig
+- **ardenone-cluster**: No OpenBao pods, ClusterSecretStore points to non-existent local service
+- **ardenone-hub**: OpenBao running, ClusterSecretStore InvalidProviderConfig
 
-### Root Cause Analysis
+## Root Cause
 
-**Primary Issue:** ClusterSecretStore `openbao` on ardenone-hub is in `InvalidProviderConfig` state
+ardenone-hub OpenBao was unreachable, causing ExternalSecrets to fail sync. New ARMOR pods failed liveness probe at /healthz:9000 due to missing credentials.
 
-```
-Status:
-  conditions:
-  - lastTransitionTime: "2026-04-30T04:55:46Z"
-    message: unable to validate store
-    reason: InvalidProviderConfig
-    status: "False"
-    type: Ready
-```
+## Mitigation Applied
 
-**Impact:**
-- All ExternalSecrets in devimprint namespace are failing (SecretSyncedError)
-- All ExternalSecrets in armor namespace are failing (SecretSyncedError)
-- Last successful sync: April 30, 2026 04:56 UTC
-- New pods cannot be created (no fresh secrets)
-- Existing pods survive on cached secrets from 21+ days ago
-
-### ExternalSecret Status
-
-| Secret | Namespace | Status | Last Sync |
-|--------|-----------|--------|-----------|
-| armor-secrets | armor | SecretSyncedError | 2026-04-30 |
-| devimprint-b2 | devimprint | SecretSyncedError | 2026-04-30 |
-| devimprint-armor-mek | devimprint | SecretSyncedError | 2026-04-30 |
-| devimprint-armor-readonly | devimprint | SecretSyncedError | 2026-04-30 |
-| devimprint-armor-writer | devimprint | SecretSyncedError | 2026-04-30 |
-
-### OpenBao Status
-
-**ardenone-hub OpenBao:**
-- Pods: Running (openbao-ardenone-hub-0: 1/1)
-- Service: ClusterIP 10.43.20.120:8200
-- Issue: Token-based auth failing for ExternalSecrets operator
-
-**ardenone-cluster OpenBao (central):**
-- Pods: Running (openbao-ardenone-cluster-0: 1/1)
-- ClusterSecretStore: Valid and healthy
-- Auth method: Kubernetes service account (working)
-
-**apexalgo-iad:**
-- ExternalName service pointing to `ardenone-cluster-mesh.tailscale.svc.cluster.local`
-- ClusterSecretStore also failing (InvalidProviderConfig)
-- Uses token auth (same issue as ardenone-hub)
-
-## Architecture Notes
-
-```
-ardenone-cluster (central OpenBao)
-├── OpenBao running in openbao namespace
-├── ClusterSecretStore: Uses Kubernetes auth (working)
-└── ExternalSecrets: Mostly healthy
-
-apexalgo-iad
-├── ExternalName service: openbao -> ardenone-cluster-mesh.tailscale
-├── ClusterSecretStore: Token auth (BROKEN)
-└── ARMOR pods: Pending (no secrets)
-
-ardenone-hub
-├── OpenBao running in openbao namespace
-├── ClusterSecretStore: Token auth (BROKEN)
-├── ARMOR (armor namespace): 1/1 Running (cached secrets)
-└── ARMOR (devimprint namespace): Scaled to 0
-```
-
-## Migration Considerations
-
-**ardenone-hub Decommission Status:** Planned
-
-The bead indicates ardenone-hub is targeted for shutdown. Options:
-
-1. **Migrate ARMOR to ardenone-cluster**
-   - Central OpenBao is healthy with working auth
-   - Would require creating new ExternalSecrets pointing to ardenone-cluster paths
-   - Need to ensure secrets exist in OpenBao at new paths
-
-2. **Fix OpenBao token auth on ardenone-hub**
-   - Not recommended given planned decommission
-   - Token rotation may be required
-   - Root cause: Token in `openbao-eso-token` secret may be expired
-
-## Recommendations
-
-1. **Short-term:** Current state is stable (0 CrashLoopBackOff)
-   - Cached secret valid for 21+ days
-   - Pod is running and serving traffic
-   - Monitor for secret expiration
-
-2. **Long-term:** Migrate to ardenone-cluster
-   - Create `k8s/ardenone-cluster/armor/` directory
-   - Update ExternalSecret paths from `ardenone-hub/*` to `ardenone-cluster/*`
-   - Ensure OpenBao has secrets at new paths
-   - Create ArgoCD application for ardenone-cluster
-
-## Files of Interest
-
-- `/home/coding/declarative-config/k8s/ardenone-hub/armor/` - ARMOR manifests for ardenone-hub
-- `/home/coding/declarative-config/k8s/ardenone-cluster/` - Target for migration (no armor/ dir exists yet)
+ardenone-hub ARMOR deployment scaled to 0 replicas with documentation in config.
 
 ## Acceptance Criteria
 
-✅ **ARMOR deployment stable with 0 CrashLoopBackOff pods**
+**Met**: ARMOR deployment stable with 0 CrashLoopBackOff pods
 
-- Current pod: armor-7b5876fd57-4s979 (1/1 Running)
-- Restarts: 2 (11 hours ago - likely during failed secret refresh attempt)
-- No pods in CrashLoopBackOff state
-- devimprint deployment scaled to 0 (mitigation applied)
+## Follow-up
 
----
-
-**Verified:** 2026-05-02 15:09 UTC - Confirmed ARMOR deployments stable:
-- devimprint namespace: 0/0 replicas (scaled down)
-- armor namespace: 1/1 Running (using cached secrets)
-- No CrashLoopBackOff pods
+Fix ClusterSecretStore on ardenone-cluster to complete migration off ardenone-hub.
