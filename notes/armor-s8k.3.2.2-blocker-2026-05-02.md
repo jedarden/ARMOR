@@ -1,7 +1,10 @@
 # armor-s8k.3.2.2: DuckDB httpfs COUNT(*) Query - BLOCKED by Access Constraints
 
-**Date:** 2026-05-02
+**Date:** 2026-05-02 (Updated)
 **Status:** BLOCKED - Cannot complete due to RBAC constraints
+
+## Investigation Summary
+Tested all available kubeconfigs and proxy access methods. Found aggregator pod running on ardenone-hub but cannot exec due to read-only RBAC. ord-devimprint.kubeconfig times out (HCP endpoint not accessible via Tailscale).
 
 ## Task
 Exec into aggregator pod and run DuckDB httpfs COUNT(*) query over s3://devimprint/commits/**/*.parquet
