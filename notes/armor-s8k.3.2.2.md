@@ -1,68 +1,31 @@
-# armor-s8k.3.2.2: DuckDB httpfs Verification - Access Constraints
+# armor-s8k.3.2.2 - DuckDB httpfs Query Test
 
 ## Task
-Exec into aggregator pod and run DuckDB httpfs COUNT(*) query over s3://devimprint/commits/**/*.parquet
+Exec into aggregator pod on ord-devimprint and run DuckDB httpfs COUNT(*) query over s3://devimprint/commits/**/*.parquet
 
-## Access Constraints Encountered
+## Blocker - Expired OIDC Credentials
 
-### 1. ord-devimprint.kubeconfig (from parent bead)
-- **Location:** `~/.kube/ord-devimprint.kubeconfig`
-- **Issue:** Points to Rackspace Spot HCP endpoint (`hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`)
-- **Result:** Commands timeout (30s+), likely not accessible via Tailscale VPN
+### Issue
+The ord-devimprint cluster kubeconfig uses OIDC authentication with credentials that expired on 2026-04-27.
 
-### 2. iad-devimprint (Tailscale mesh)
-- **DNS:** `iad-devimprint.tail1b1987.ts.net`
-- **IP:** `100.64.2.45`
-- **Result:** 100% packet loss, not responding to ping
-- **Tried:** `kubectl --server=http://iad-devimprint.tail1b1987.ts.net:8001` - no response
+### Attempted Remedies
+1. Static token (ngpc-user): Also expired
+2. OIDC refresh: Requires browser-based authentication flow - not available in headless environment
+3. Alternative kubeconfigs: Same OIDC auth, also expired
 
-### 3. ardenone-hub aggregator (found via proxy)
-- **Proxy:** `kubectl --server=http://traefik-ardenone-hub:8001`
-- **Pod:** `aggregator-68554db644-ng85f` in `devimprint` namespace
-- **Issue:** Read-only proxy - `exec` returns "Forbidden"
-- **Missing:** No `~/.kube/ardenone-hub.kubeconfig` for read/write access
+### Required Command
+kubectl exec into aggregator pod on ord-devimprint with DuckDB query using ARMOR as S3 endpoint.
 
-### 4. rs-manager.kubeconfig
-- **Issue:** `the server has asked for the client to provide credentials`
-- **Result:** Authentication required, no valid credentials available
-
-## Required Access
-To complete this task, one of the following is needed:
-1. **Tailscale-accessible kubeconfig for iad-devimprint** with exec permissions
-2. **Read/write kubeconfig for ardenone-hub** (has aggregator pod in devimprint namespace)
-3. **Working kubectl-proxy for iad-devimprint** on Tailscale mesh
-4. **Alternative access** to aggregator pod with S3 credentials
-
-## DuckDB Query to Run (from parent bead)
-```python
-import duckdb, os
-con = duckdb.connect()
-con.execute("INSTALL httpfs; LOAD httpfs;")
-con.execute("SET s3_endpoint='armor:9000';")
-con.execute("SET s3_use_ssl=false;")
-con.execute(f"SET s3_access_key_id='{os.environ['S3_ACCESS_KEY_ID']}';")
-con.execute(f"SET s3_secret_access_key='{os.environ['S3_SECRET_ACCESS_KEY']}';")
-con.execute("SET s3_url_style='path';")
-result = con.execute("SELECT COUNT(*) FROM read_parquet('s3://devimprint/commits/**/*.parquet')").fetchone()
-print('Row count:', result[0])
-```
-
-### 5. ord-devimprint.kubeconfig (latest attempt)
-- **Location:** `/home/coding/.kube/ord-devimprint.kubeconfig`
-- **File:** Exists (3741 bytes, modified May 2 08:43)
-- **Issue:** Expired OIDC token - cluster unreachable
-- **Test:** `timeout 10 kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig version` - timed out
-- **Root Cause:** OIDC authentication requires browser-based re-authentication (not possible in CLI context)
-
-## Git History Context
-Recent commits document this credential issue:
-- b896f34: "document attempt - still blocked by expired credentials"
-- b22cc1c: "document current attempt - still blocked by expired credentials"
-- 8400ae5: "document credential blocker - OIDC requires browser"
-
-## Status
-**BLOCKED** - ord-devimprint cluster kubeconfig has expired OIDC credentials requiring browser-based re-authentication.
+### Acceptance Criteria
+- COUNT(*) returns a non-zero integer with no errors
+- No InvalidInputException in output
+- Timestamps are valid
 
 ## Next Steps
-- User must re-authenticate to ord-devimprint cluster via browser-based OIDC flow to refresh kubeconfig
-- OR: Use alternative cluster with valid credentials if the S3 bucket is accessible from there
+User needs to refresh OIDC credentials on a machine with browser access.
+
+## Cluster Details
+- Cluster: ord-devimprint (Rackspace Spot, ord region)
+- Auth Method: OIDC via login.spot.rackspace.com
+- Target Pod: aggregator in devimprint namespace
+- S3 Proxy: ARMOR service at armor:9000 (cluster-local)
