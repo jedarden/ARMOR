@@ -2,7 +2,9 @@
 
 ## Task: Verify ARMOR v0.1.8 is running on ord-devimprint
 
-## Status: BLOCKED - Expired Credentials
+**Date:** 2026-05-01
+
+## Status: BLOCKED - Expired Credentials - Cannot Complete Task
 
 ## Issue
 
