@@ -24,23 +24,24 @@ The task requires `kubectl exec` into the aggregator pod to run a Python DuckDB 
 - **Status:** Running (8d uptime)
 - **Logs:** Actively processing, connecting to ARMOR service
 
-### CRITICAL: ARMOR Service Down (2026-05-02 11:30 UTC)
-The armor/MinIO pods are in **CrashLoopBackOff**:
+### CRITICAL: ARMOR Service Down + OpenBao Token Expired (2026-05-02 11:30 UTC)
+
+**ARMOR pods CrashLoopBackOff:**
 ```
 armor-755d878c84-l8grt   0/1   Running   29 (5m ago)   130m
 armor-7c79d57db6-k2j6j   0/1   Running   27 (5m ago)   121m
 ```
 
 **Service endpoints:** EMPTY (no ready pods)
+
+**ROOT CAUSE:** OpenBao token for External Secrets Operator is **expired/revoked**:
 ```
-NAME        ENDPOINTS   AGE
-armor-svc               19d
+Error: invalid vault credentials
+URL: GET http://openbao-ardenone-hub.openbao.svc.cluster.local:8200/v1/auth/token/lookup-self
+Code: 403. Errors: * permission denied
 ```
 
-**Impact:** Even if exec access were granted, the DuckDB query would fail because the S3 backend is unavailable. The aggregator logs show:
-```
-botocore.exceptions.EndpointConnectionError: Could not connect to the endpoint URL: "http://armor-svc:9000/..."
-```
+**Impact:** All ExternalSecret sync is broken cluster-wide. ARMOR pods can't get secrets (B2 creds, MEK, auth keys) and crash on startup.
 
 ### Query to Run (from parent bead)
 ```python
@@ -64,13 +65,17 @@ Per existing notes, the acceptance criteria were already met:
 - ✅ ARMOR v0.1.11+ deployed with date fix
 
 ## Resolution Required (Priority Order)
-1. **Fix armor pods** (CRITICAL - service outage blocking all S3 access)
-   - Get write access to ardenone-hub cluster
-   - Check armor pod logs for crash reason
-   - Verify secrets: devimprint-armor-mek, devimprint-armor-writer, devimprint-armor-readonly
-2. Refresh ord-devimprint.kubeconfig via Rackspace Spot dashboard (browser), OR
-3. Create write-access kubeconfig for ardenone-hub cluster, OR
-4. Provide S3 credentials to run query locally (bypasses kubectl exec requirement)
+1. **CRITICAL: Fix OpenBao ESO token** (cluster-wide secret sync broken)
+   - Regenerate `openbao-eso-token` in OpenBao
+   - Update secret `external-secrets/openbao-eso-token`
+   - This will fix ALL ExternalSecret sync across the cluster
+
+2. **Fix ARMOR pods** (depends on #1 - needs secrets to start)
+   - After ESO token fixed, ARMOR will auto-recover via ArgoCD
+
+3. Refresh ord-devimprint.kubeconfig via Rackspace Spot dashboard (browser), OR
+4. Create write-access kubeconfig for ardenone-hub cluster, OR
+5. Provide S3 credentials to run query locally (bypasses kubectl exec requirement)
 
 ## Status
 **BLOCKED** - Cannot exec into aggregator pod without valid credentials or write-access kubeconfig
