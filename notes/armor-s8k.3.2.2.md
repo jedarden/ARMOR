@@ -47,10 +47,22 @@ result = con.execute("SELECT COUNT(*) FROM read_parquet('s3://devimprint/commits
 print('Row count:', result[0])
 ```
 
+### 5. ord-devimprint.kubeconfig (latest attempt)
+- **Location:** `/home/coding/.kube/ord-devimprint.kubeconfig`
+- **File:** Exists (3741 bytes, modified May 2 08:43)
+- **Issue:** Expired OIDC token - cluster unreachable
+- **Test:** `timeout 10 kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig version` - timed out
+- **Root Cause:** OIDC authentication requires browser-based re-authentication (not possible in CLI context)
+
+## Git History Context
+Recent commits document this credential issue:
+- b896f34: "document attempt - still blocked by expired credentials"
+- b22cc1c: "document current attempt - still blocked by expired credentials"
+- 8400ae5: "document credential blocker - OIDC requires browser"
+
 ## Status
-**BLOCKED** - Cannot exec into aggregator pod due to access constraints.
+**BLOCKED** - ord-devimprint cluster kubeconfig has expired OIDC credentials requiring browser-based re-authentication.
 
 ## Next Steps
-- Obtain valid kubeconfig for iad-devimprint or ardenone-hub
-- OR: Set up kubectl-proxy on iad-devimprint with exec permissions
-- OR: Run query locally with direct S3/ARMOR access
+- User must re-authenticate to ord-devimprint cluster via browser-based OIDC flow to refresh kubeconfig
+- OR: Use alternative cluster with valid credentials if the S3 bucket is accessible from there
