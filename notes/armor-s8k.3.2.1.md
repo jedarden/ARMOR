@@ -3,6 +3,7 @@
 ## Task: Verify ARMOR v0.1.8 is running on ord-devimprint
 
 **Date:** 2026-05-01
+**Last attempted:** 2026-05-01 23:55 UTC
 
 ## Status: BLOCKED - Expired Credentials - Cannot Complete Task
 
@@ -43,6 +44,14 @@ Need to refresh the ord-devimprint.kubeconfig credentials. The ord-devimprint cl
 - [ ] ARMOR pod is Running on ord-devimprint
 - [ ] ARMOR image is ronaldraygun/armor:0.1.8
 - [ ] Aggregator pod is Running
+
+## Additional Finding (2026-05-01)
+
+The declarative config at `declarative-config/k8s/ord-devimprint/devimprint/armor-deployment.yml` shows ARMOR `v0.1.13`, not `v0.1.8` as specified in this task. This suggests:
+1. The deployment may have been updated since the task was created
+2. Or this task was created based on outdated information
+
+Without cluster access, the actual running version cannot be verified.
 
 ## References
 
