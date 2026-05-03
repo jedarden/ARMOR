@@ -3,65 +3,71 @@
 ## Task
 Exec into aggregator pod and run DuckDB httpfs COUNT(*) query over s3://devimprint/commits/**/*.parquet
 
-## Status: BLOCKED - Multiple Issues
+## Status: BLOCKED - RBAC Prevents kubectl exec
 
-## Investigation Findings
+## Investigation Summary
 
-### 1. ARMOR Migration Status
-- **ardenone-hub**: ARMOR service NO LONGER EXISTS here
-- **ardenone-cluster**: ARMOR is running (2 pods, Ready: 1/1)
-- **aggregator-68554db644-ng85f**: Still pointing to `armor-svc:9000` on ardenone-hub (non-existent)
+### 1. Aggregator Location
+- **Current cluster:** ardenone-cluster (migrated from ardenone-hub)
+- **Pod:** `aggregator-86dc959987-k6x2f` in `devimprint` namespace
+- **Status:** Running (15h uptime)
 
 ### 2. Access Constraints
 
 | Method | Status | Issue |
 |--------|--------|-------|
-| ardenone-hub proxy (traefik-ardenone-hub:8001) | ❌ Read-only | RBAC blocks exec: "unable to upgrade connection: Forbidden" |
-| ardenone-cluster proxy (traefik-ardenone-cluster:8001) | ❌ Read-only | RBAC blocks exec, no aggregator pod exists here |
-| ord-devimprint.kubeconfig | ❌ Expired | OIDC token expired, requires browser re-auth |
-| rs-manager.kubeconfig | ❌ Wrong cluster | No access to ardenone-hub or ardenone-cluster |
+| ardenone-cluster proxy (traefik-ardenone-cluster:8001) | ❌ Read-only | RBAC blocks exec: "unable to upgrade connection: Forbidden" |
+| ardenone-cluster kubeconfig | ❌ N/A | No write-access kubeconfig exists for ardenone-cluster |
+| ord-devimprint.kubeconfig | ❌ Wrong cluster | Points to HCP ord-devimprint cluster (times out) |
 
-### 3. Service Discovery
+### 3. Attempted Commands
 
-**ardenone-hub:**
-```
-$ kubectl --server=http://traefik-ardenone-hub:8001 get svc -n devimprint
-No resources found
-```
-
-**ardenone-cluster:**
-```
-$ kubectl --server=http://traefik-ardenone-cluster:8001 get svc -n devimprint
-NAME    TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)             AGE
-armor   ClusterIP   10.43.160.134   <none>        9000/TCP,9001/TCP   16h
+```bash
+# Attempt 1: ardenone-cluster read-only proxy
+kubectl --server=http://traefik-ardenone-cluster:8001 exec \
+  -n devimprint aggregator-86dc959987-k6x2f -- python3 -c "..."
+# Result: error: unable to upgrade connection: Forbidden
 ```
 
-### 4. Aggregator Logs (ardenone-hub)
-```
-urllib3.exceptions.NewConnectionError: AWSHTTPConnection(host='armor-svc', port=9000):
-Failed to establish a new connection: [Errno 111] Connection refused
-```
+### 4. Verification Status (Previously Completed)
 
-The aggregator is failing to connect to the non-existent ARMOR service on ardenone-hub.
+The underlying verification objective was **already achieved** on 2026-05-01:
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| COUNT(*) returns non-zero integer | ✅ PASS | 106 rows verified |
+| No InvalidInputException | ✅ PASS | Clean execution |
+| No date parse errors | ✅ PASS | ISO 8601 format confirmed |
+
+**Reference:** `notes/armor-s8k.3-live-verification-2026-05-01-final-live.md`
+
+### 5. Production Validation
+
+The aggregator pod is actively running DuckDB queries in production:
+
+```
+2026-05-02 10:31:20,831 INFO lifetime scan: 1327 daily summary files
+2026-05-02 10:32:33,370 INFO lifetime query: 68424 users
+2026-05-02 10:32:33,890 INFO joined result: 68424 rows
+2026-05-02 10:32:36,251 INFO uploaded state/stats.parquet (2.2 MB, 68424 rows)
+```
 
 ## Root Cause
-The aggregator pod on ardenone-hub is configured to connect to `armor-svc:9000` which no longer exists after the ARMOR migration to ardenone-cluster. The aggregator needs to be updated to point to the new ARMOR location.
 
-## Resolution Required
+The `kubectl exec` command is blocked by RBAC security constraints on the read-only proxy for ardenone-cluster. No write-access kubeconfig exists for this cluster.
 
-To complete this task as specified (exec into aggregator pod on ardenone-hub):
+## Required to Complete Exact Task
 
-1. **Refresh ord-devimprint.kubeconfig** via Rackspace Spot dashboard (browser required), OR
-2. **Provide write-access kubeconfig** for ardenone-hub cluster, OR
-3. **Provide S3 credentials** to run query locally or on iad-ci cluster, OR
-4. **Update aggregator deployment** on ardenone-hub to point to ARMOR on ardenone-cluster via Tailscale
+1. **Write-access kubeconfig** for ardenone-cluster cluster, OR
+2. **Elevated RBAC** on devpod-observer ServiceAccount to allow exec, OR
+3. **Direct cluster access** bypassing the proxy
 
-## Alternative Approach
-Since the parent bead (armor-s8k.3.2) was already closed with successful verification on 2026-05-01, this task may be obsolete. The DuckDB httpfs COUNT(*) query was verified to work correctly at that time.
+## Conclusion
 
-## Verification Status (from armor-s8k.3.2.2-attempt-2026-05-02-15.md)
-- ✅ COUNT(*) returns non-zero integer (verified 2026-05-01)
-- ✅ No InvalidInputException (clean execution)
-- ✅ ARMOR v0.1.11+ deployed
-- ✅ ISO 8601 timestamps in handlers.go
-- ✅ Production evidence: 69,505+ rows processed, 0 date parse errors
+While the exact task (kubectl exec into aggregator) is blocked by infrastructure constraints, the verification objective (DuckDB httpfs COUNT(*) query working) was previously achieved with:
+- Non-zero row counts returned (106 rows)
+- No InvalidInputException or date parse errors
+- Production traffic confirming ongoing successful operation
+
+## Date
+2026-05-03
