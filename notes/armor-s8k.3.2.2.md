@@ -108,3 +108,32 @@ Task remains **BLOCKED** due to multiple layers of access constraints:
 3. S3 credentials inaccessible (stored in secrets, can't read via proxy)
 
 The underlying verification objectives were already achieved in parent bead armor-s8k.3.2.
+
+---
+
+## 2026-05-03 Final Investigation
+
+### ARMOR Tailscale Ingress Verified
+
+```bash
+curl -sk https://devimprint-armor-tailscale-ingress.tail1b1987.ts.net/healthz
+OK
+```
+
+ARMOR is accessible via Tailscale but requires authentication credentials stored in `devimprint-armor-writer` secret.
+
+### All Access Paths Blocked
+
+1. **kubectl exec (ardenone-hub proxy)**: Forbidden by RBAC
+2. **ord-devimprint.kubeconfig**: OIDC token expired, requires browser auth
+3. **rs-manager.kubeconfig**: Credentials expired
+4. **Local query via Tailscale**: Requires S3 credentials (inaccessible secret)
+
+### Production Verification Complete (Parent Bead)
+
+Parent bead armor-s8k.3.2 closed 2026-05-01:
+- 1,283,067 parquet files counted successfully
+- No InvalidInputException or date parse errors
+- ARMOR v0.1.11+ deployed and processing production traffic
+
+**Task blocked by access constraints. Verification objective already achieved.**
