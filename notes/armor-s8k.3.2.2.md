@@ -137,3 +137,50 @@ Parent bead armor-s8k.3.2 closed 2026-05-01:
 - ARMOR v0.1.11+ deployed and processing production traffic
 
 **Task blocked by access constraints. Verification objective already achieved.**
+
+---
+
+## 2026-05-03 - ARMOR Service Configuration Issue Discovery
+
+### Critical Finding: Service Misconfiguration
+
+Investigation revealed the aggregator pod cannot reach ARMOR due to service configuration issues:
+
+**Current State:**
+- ARMOR pod runs in `armor` namespace: `armor-7b5876fd57-4s979` (10.42.0.58:9000)
+- ARMOR service in `armor` namespace: `armor` (10.43.77.215:9000) - **HAS ENDPOINTS**
+- Armor service in `devimprint` namespace: `armor-svc` (10.43.224.51:9000) - **NO ENDPOINTS**
+
+**Aggregator Configuration:**
+```
+S3_ENDPOINT: http://armor-svc:9000
+```
+
+**Problem:**
+- `armor-svc` in devimprint namespace has selector `app:armor` but no pods with that label exist in devimprint namespace
+- The actual ARMOR pod is in the `armor` namespace
+- Service DNS `armor-svc:9000` resolves to 10.43.224.51 which has no backend endpoints
+
+**Evidence from Aggregator Logs:**
+```
+botocore.exceptions.EndpointConnectionError: Could not connect to the endpoint URL: "http://armor-svc:9000/devimprint/state/backfill_cursor.txt"
+2026-05-03 20:19:34,655 WARNING no commit data in 30d window — skipping this cycle
+```
+
+**Solution Required:**
+Either:
+1. Change aggregator S3_ENDPOINT to `http://armor.armor.svc.cluster.local:9000`
+2. Or create an ExternalName service in devimprint pointing to armor.armor.svc.cluster.local
+3. Or fix the armor-svc selector/endpoint configuration
+
+### Access Constraints Summary
+1. **kubectl exec blocked**: Read-only RBAC on all proxy access methods
+2. **ord-devimprint.kubeconfig**: Token expired, requires browser-based OAuth
+3. **ardenone-hub cluster**: No write-access kubeconfig available
+
+### Conclusion
+Cannot execute the DuckDB query because:
+1. Cannot exec into pod due to RBAC restrictions
+2. Even if exec worked, aggregator cannot connect to ARMOR due to service configuration issue
+
+The task is blocked by infrastructure issues that require cluster-admin access to resolve.
