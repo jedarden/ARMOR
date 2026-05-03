@@ -1,0 +1,85 @@
+---
+# One-shot Job to run DuckDB httpfs COUNT(*) query over s3://devimprint/commits/**/*.parquet
+# This validates ARMOR S3 proxy can handle DuckDB httpfs glob queries without date parse errors
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: duckdb-httpfs-test
+  namespace: devimprint
+  labels:
+    app: duckdb-test
+spec:
+  template:
+    spec:
+      imagePullSecrets:
+        - name: docker-hub-registry
+      containers:
+        - name: duckdb-test
+          image: python:3.12-slim
+          command:
+            - python3
+            - -c
+            - |
+              import duckdb, os, sys, traceback
+
+              print("=== Starting DuckDB httpfs test ===")
+
+              # Check environment variables
+              s3_key = os.environ.get('S3_ACCESS_KEY_ID', '')
+              s3_secret = os.environ.get('S3_SECRET_ACCESS_KEY', '')
+              print(f"S3_ACCESS_KEY_ID present: {bool(s3_key)}")
+              print(f"S3_SECRET_ACCESS_KEY present: {bool(s3_secret)}")
+
+              try:
+                  con = duckdb.connect()
+                  print("DuckDB connected")
+
+                  con.execute("INSTALL httpfs;")
+                  con.execute("LOAD httpfs;")
+                  print("httpfs loaded")
+
+                  con.execute("SET s3_endpoint='armor:9000';")
+                  con.execute("SET s3_use_ssl=false;")
+                  con.execute(f"SET s3_access_key_id='{s3_key}';")
+                  con.execute(f"SET s3_secret_access_key='{s3_secret}';")
+                  con.execute("SET s3_url_style='path';")
+                  print("S3 configuration set")
+
+                  print("=== DuckDB httpfs COUNT(*) Query ===")
+                  print(f"S3 Endpoint: armor:9000")
+                  print(f"Bucket: devimprint")
+                  print(f"Pattern: s3://devimprint/commits/**/*.parquet")
+
+                  result = con.execute("SELECT COUNT(*) FROM read_parquet('s3://devimprint/commits/**/*.parquet')").fetchone()
+                  print(f"Row count: {result[0]}")
+
+                  if result[0] > 0:
+                      print("SUCCESS: Non-zero count returned")
+                      sys.exit(0)
+                  else:
+                      print("ERROR: Zero count returned")
+                      sys.exit(1)
+              except Exception as e:
+                  print(f"ERROR: {type(e).__name__}: {e}")
+                  traceback.print_exc()
+                  sys.exit(1)
+          env:
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: armor-writer
+                  key: auth-access-key
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: armor-writer
+                  key: auth-secret-key
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      restartPolicy: Never
+  backoffLimit: 1
