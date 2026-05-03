@@ -1,49 +1,52 @@
-# armor-s8k.3.2.2: DuckDB httpfs COUNT(*) Query Verification - BLOCKED
+# armor-s8k.3.2.2: DuckDB httpfs COUNT(*) Query Verification - BLOCKED (2026-05-03 01:20 UTC)
 
 ## Task
 Exec into aggregator pod and run DuckDB httpfs COUNT(*) query over s3://devimprint/commits/**/*.parquet
 
-## Status: BLOCKED - Insufficient Access
+## Status: BLOCKED - No Write Access to ardenone-cluster
 
-## Findings
+## Current Findings
+
+### Aggregator Location (Updated)
+- **Primary Cluster**: ardenone-cluster (not ardenone-hub)
+- **Namespace**: devimprint
+- **Pod**: aggregator-86dc959987-k6x2f (Running, 4h46m old)
+- **Image**: ronaldraygun/devimprint-aggregator:latest
+- **Access method**: `kubectl --server=http://traefik-ardenone-cluster:8001` (read-only proxy)
+
+### Existing Job Status
+- **Name**: duckdb-httpfs-test
+- **Status**: Failed (BackoffLimitExceeded after 2 attempts, 101m ago)
+- **Problem**: Cannot retrieve logs through read-only proxy (502 Bad Gateway to node)
+- **Pods**: duckdb-httpfs-test-2v4nc, duckdb-httpfs-test-qjtsg (both Error state)
 
 ### Access Issues
-1. **ord-devimprint.kubeconfig**: OIDC authentication broken (kubectl-oidc-login plugin not working)
-2. **ardenone-hub proxy**: Read-only access - cannot exec, read secrets, or create pods
-3. **No write-access kubeconfig**: ardenone-manager.kubeconfig referenced in CLAUDE.md doesn't exist
+1. **ardenone-cluster proxy**: Read-only access - cannot exec, delete, create resources, or get pod logs
+2. **ardenone-cluster.kubeconfig**: Does not exist (not present in ~/.kube/)
+3. **rs-manager.kubeconfig**: Points to different cluster (apexalgo-rs-manager), credentials expired
+4. **ord-devimprint.kubeconfig**: Requires browser OAuth flow (not available in headless environment)
 
-### Aggregator Location
-- **Cluster**: ardenone-hub (not ord-devimprint as originally specified)
-- **Namespace**: devimprint
-- **Pod**: aggregator-5d58d6c67-7gl9m (Running)
-- **Access method**: `kubectl --server=http://traefik-ardenone-hub:8001`
+### ARMOR Service
+- **ardenone-hub**: ClusterIP service at 10.43.77.215 (ports 9000/TCP, 9001/TCP)
+- **ardenone-cluster**: armor:9000 endpoint is cluster-local only
+- **External access**: No Ingress/Route exposing ARMOR externally
 
 ### Attempted Approaches
-1. ✅ Located aggregator pod on ardenone-hub
-2. ❌ kubectl exec failed: "unable to upgrade connection: Forbidden" (read-only RBAC)
-3. ❌ kubectl debug failed: "pods is forbidden" (read-only RBAC)
-4. ❌ Secret access failed: "secrets is forbidden" (cannot get S3 credentials)
-5. ❌ Checked rs-manager, iad-ci: No devimprint namespace or aggregator pod
-
-### Root Cause
-The read-only proxy (devpod-observer ServiceAccount) on ardenone-hub intentionally blocks:
-- `exec` into pods
-- Creating resources (pods, jobs)
-- Reading secrets
-
-This prevents running the DuckDB query inside the aggregator pod.
+1. ✅ Located aggregator pod on ardenone-cluster
+2. ✅ Found existing duckdb-httpfs-test Job (failed)
+3. ❌ kubectl exec: "unable to upgrade connection: Forbidden"
+4. ❌ kubectl logs: "502 Bad Gateway" (proxy cannot access node containerd socket)
+5. ❌ kubectl delete: "is forbidden" (read-only RBAC)
+6. ❌ kubectl port-forward: "cannot create resource pods/portforward"
+7. ❌ Checked all available kubeconfigs: None have write access to ardenone-cluster
 
 ## Requirements to Complete Task
-1. **Write access to ardenone-hub cluster** OR
-2. **Fixed ord-devimprint.kubeconfig** with working OIDC auth OR
-3. **Direct kubeconfig for ardenone-hub** with cluster-admin access
+1. **Write-access kubeconfig for ardenone-cluster** OR
+2. **Alternative method to exec into aggregator-86dc959987-k6x2f** OR
+3. **Way to retrieve logs from failed duckdb-httpfs-test Job**
 
-## Alternative Approaches (if write access available)
-1. Create a Job/CronJob that runs the query and logs results
-2. Deploy a test pod with DuckDB that queries s3://devimprint/commits/**/*.parquet
-3. Use kubectl port-forward to access ARMOR service and run query locally
+## Workaround Prepared
+Created /tmp/duckdb-test-v2.yml with enhanced logging, but cannot apply without write access.
 
-## References
-- Parent bead: armor-s8k.3 (notes show ord-devimprint is deprecated)
-- ArgoCD app: devimprint-ns-ardenone-hub (OutOfSync, Degraded)
-- ARMOR pods on ardenone-hub: v0.1.11 and v0.1.13 (not v0.1.8 as expected)
+## Next Steps
+AWAITING: Write-access kubeconfig for ardenone-cluster or alternative execution method.
