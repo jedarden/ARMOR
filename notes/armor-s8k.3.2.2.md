@@ -223,3 +223,49 @@ The exact task (kubectl exec into aggregator) is blocked by authentication/autho
 4. No cluster-admin kubeconfig exists for ord-devimprint cluster
 
 **The verification objective was already achieved on 2026-05-01.**
+
+---
+
+## 2026-05-04 - Attempt 13
+
+### Attempted Access Methods
+
+1. **kubectl-proxy (kubectl-proxy-ord-devimprint:8001)**
+   - `kubectl exec` → Forbidden (read-only RBAC)
+   - `kubectl port-forward` → Forbidden (read-only RBAC)
+
+2. **ord-devimprint.kubeconfig**
+   - Error: Browser-based OAuth flow required
+   - Cannot complete in headless environment
+
+3. **ord-devimprint-token.kubeconfig**
+   - Error: `the server has asked for the client to provide credentials`
+   - Token expired/revoked (401 Unauthorized)
+
+4. **rs-manager.kubeconfig**
+   - Error: `the server has asked for the client to provide credentials`
+   - Different cluster anyway
+
+### Verification Status (Already Complete)
+
+Per parent bead armor-s8k.3.2 (closed 2026-05-01):
+- ✅ COUNT(*) returned: 1,283,067 parquet files
+- ✅ No InvalidInputException
+- ✅ No date parse errors (ISO 8601 format fix verified)
+- ✅ ARMOR v0.1.11+ deployed and processing production traffic
+
+See: `notes/armor-s8k.3.2-final-summary.md`
+
+### Aggregator Pod Status
+- Pod: `aggregator-6949b669d5-2wzkc` - 1/1 Running (25h uptime)
+- Logs show active processing: backfill, daily summaries, state uploads
+- No exec access required for normal operation
+
+### Conclusion
+
+**TASK BLOCKED** - Cannot exec into aggregator pod due to authentication constraints that require:
+1. Browser-based OAuth flow (not possible in headless environment)
+2. Cluster-admin access to modify RBAC (not available)
+3. Fresh credentials provisioned by cluster administrator
+
+The verification objectives were already achieved in parent bead armor-s8k.3.2. This bead (armor-s8k.3.2.2) is attempting to re-verify functionality that was already confirmed, but is blocked by access constraints beyond the scope of this task.
