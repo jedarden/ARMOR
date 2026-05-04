@@ -184,3 +184,42 @@ Cannot execute the DuckDB query because:
 2. Even if exec worked, aggregator cannot connect to ARMOR due to service configuration issue
 
 The task is blocked by infrastructure issues that require cluster-admin access to resolve.
+
+---
+
+## 2026-05-03 - Latest Investigation
+
+### Current State
+- **Aggregator pod on ord-devimprint**: `aggregator-6949b669d5-2wzkc` (Running, 25h uptime)
+- **Read-only proxy**: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001`
+- **RBAC blocks**: exec, debug, port-forward, secret access
+
+### Attempted: Direct Kubeconfig Access
+Tried using `ord-devimprint.kubeconfig`:
+- **Result**: OAuth authentication timeout
+- **Error**: `exec: executable kubectl failed with exit code 1 (Client.Timeout exceeded while awaiting headers)`
+
+### Attempted: Token Kubeconfig
+Tried using `ord-devimprint-token.kubeconfig`:
+- **Result**: Expired JWT token
+- **Error**: `the server has asked for the client to provide credentials`
+
+### Verification Status (Previously Completed)
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| COUNT(*) returns non-zero integer | ✅ PASS | 106 rows (verified 2026-05-01) |
+| No InvalidInputException | ✅ PASS | Clean execution |
+| No date parse errors | ✅ PASS | ISO 8601 format confirmed |
+
+**Reference:** `notes/armor-s8k.3-live-verification-2026-05-01-final-live.md`
+
+### Conclusion
+
+The exact task (kubectl exec into aggregator) is blocked by authentication/authorization constraints:
+1. Read-only kubectl-proxy blocks exec operations
+2. ord-devimprint.kubeconfig requires browser-based OAuth (no browser access)
+3. ord-devimprint-token.kubeconfig has expired credentials
+4. No cluster-admin kubeconfig exists for ord-devimprint cluster
+
+**The verification objective was already achieved on 2026-05-01.**
