@@ -1,0 +1,98 @@
+# ARMOR Dashboard Ingress
+#
+# This Ingress exposes the ARMOR web dashboard externally.
+# The dashboard provides bucket browsing, encryption status visualization,
+# and cache statistics.
+#
+# SECURITY WARNING:
+# The dashboard is currently read-only but exposes bucket metadata.
+# For production use, enable authentication on your Ingress controller
+# or restrict access via network policies / VPN.
+#
+# Options for securing the dashboard:
+# 1. OAuth2/OIDC authentication via Ingress annotation
+# 2. Basic Authentication (htpasswd file)
+# 3. Network policies restricting access to specific IPs
+# 4. Internal-only access (no Ingress, use kubectl port-forward or VPN)
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: armor-dashboard
+  labels:
+    app: armor
+  annotations:
+    # NGINX Ingress Controller
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Enable basic auth (create htpasswd secret first)
+    # nginx.ingress.kubernetes.io/auth-type: basic
+    # nginx.ingress.kubernetes.io/auth-secret: armor-dashboard-auth
+    # nginx.ingress.kubernetes.io/auth-realm: "ARMOR Dashboard Authentication"
+
+    # Traefik Ingress Controller
+    # traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # traefik.ingress.kubernetes.io/router.tls: "true"
+
+    # Cert-Manager for automatic TLS certificates
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  # Change ingressClassName based on your Ingress controller
+  # Common values: nginx, traefik, contour, haproxy
+  ingressClassName: nginx
+  rules:
+  - host: armor-dashboard.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: armor
+            port:
+              number: 9001
+  tls:
+  - hosts:
+    - armor-dashboard.example.com
+    secretName: armor-dashboard-tls
+---
+# Basic Authentication Secret (for NGINX Ingress)
+# To enable, uncomment the auth-type annotations above and this secret
+#
+# Generate htpasswd file:
+#   htpasswd -c htpasswd admin
+#   kubectl create secret generic armor-dashboard-auth --from-file=htpasswd
+#
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: armor-dashboard-auth
+# type: Opaque
+# data:
+#   # Base64-encoded htpasswd file
+#   # Generate with: cat htpasswd | base64
+#   htpasswd: YWRtaW46JGFwcjEkd25vci5ZZWxXUHRlcSRkVZQVFPREFGR2JNT3BnMTMwNw==
+---
+# Network Policy to restrict dashboard access
+# Uncomment to restrict access to specific IP addresses
+#
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: armor-dashboard-ingress
+# spec:
+#   podSelector:
+#     matchLabels:
+#       app: armor
+#   policyTypes:
+#   - Ingress
+#   ingress:
+#   - from:
+#     # Allow from Ingress controller only
+#     - namespaceSelector:
+#         matchLabels:
+#           name: ingress-nginx
+#     ports:
+#     - protocol: TCP
+#       port: 9001

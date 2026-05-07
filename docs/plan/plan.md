@@ -718,7 +718,7 @@ ARMOR implements its own S3 XML request/response handling for the ~15 operations
 - [x] Object Lock / retention passthrough
 - [x] Lifecycle rule passthrough
 - [x] Admin API: key management via B2 native API
-- [ ] Web dashboard (optional): bucket browser, encryption status, cache stats
+- [x] Web dashboard (optional): bucket browser, encryption status, cache stats
 
 ### Phase 4: Manifest-Based Metadata Index
 
