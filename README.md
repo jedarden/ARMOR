@@ -215,6 +215,7 @@ ARMOR/
 ├── cmd/armor/main.go          # Entrypoint
 ├── internal/
 │   ├── server/                # S3 server, handlers, auth
+│   ├── dashboard/             # Web dashboard UI and metrics
 │   ├── crypto/                # Encryption, decryption, envelope
 │   ├── backend/               # B2 S3 client, Cloudflare downloads
 │   ├── canary/                # Self-healing integrity monitor
@@ -227,11 +228,34 @@ ARMOR/
 ├── deploy/kubernetes/         # Kubernetes manifests
 ├── tests/integration/         # Integration tests
 └── docs/
+    ├── dashboard.md           # Web dashboard documentation
     ├── plan/                  # Implementation plan
     └── research/              # Technical research
 ```
 
 ---
+
+## 🎨 Web Dashboard
+
+ARMOR includes a web dashboard for bucket browsing, encryption status visualization, and cache statistics. The dashboard is accessible on the admin port (default `127.0.0.1:9001`):
+
+```bash
+# Local access
+open http://localhost:9001/dashboard
+
+# Kubernetes port-forward
+kubectl port-forward svc/armor 9001:9001
+open http://localhost:9001/dashboard
+```
+
+**Features:**
+- 📂 **Bucket browsing** - Navigate encrypted buckets with prefix-based navigation
+- 🔐 **Encryption status** - Visual badges showing which objects use ARMOR encryption and which keys
+- 📊 **Cache statistics** - Monitor metadata cache hit rates and effectiveness
+- 📈 **System metrics** - Real-time metrics for requests, bytes transferred, uptime, and canary status
+- 🔍 **Object details** - Detailed metadata view for individual objects
+
+For full documentation, see [docs/dashboard.md](docs/dashboard.md).
 
 ## 🔧 Admin API
 
@@ -248,6 +272,9 @@ Key management endpoints on the admin listener (default `127.0.0.1:9001`):
 | `/admin/audit` | GET | Walk provenance chains, verify integrity |
 | `/admin/presign` | POST | Generate pre-signed share URL |
 | `/armor/canary` | GET | Canary integrity status |
+| `/dashboard` | GET | Web dashboard UI |
+| `/dashboard/object` | GET | Object details (JSON) |
+| `/dashboard/metrics` | GET | Dashboard metrics (JSON) |
 
 ---
 
@@ -293,6 +320,7 @@ Key management endpoints on the admin listener (default `127.0.0.1:9001`):
 
 ## 📚 Documentation
 
+- **[Web Dashboard](docs/dashboard.md)** — Bucket browsing, encryption status, and cache statistics
 - **[Implementation Plan](docs/plan/plan.md)** — Full architecture and implementation details
 - **[Integration Tests](tests/integration/README.md)** — Testing against real B2 + Cloudflare
 - **[Research](docs/research/)** — Technical research on B2, Cloudflare, encryption, and DuckDB
