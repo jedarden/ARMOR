@@ -680,6 +680,177 @@ func TestSpecialCharacterKeys(t *testing.T) {
 	}
 }
 
+// Test authentication middleware with Basic Auth
+func TestAuthMiddlewareBasicAuth(t *testing.T) {
+	auth := NewAuthMiddleware("admin", "secret123", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+
+	// No auth header - should fail
+	if auth.Authenticate(rec, req) {
+		t.Error("Expected authentication to fail without credentials")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401, got %d", rec.Code)
+	}
+	if rec.Header().Get("WWW-Authenticate") == "" {
+		t.Error("Expected WWW-Authenticate header")
+	}
+}
+
+// Test authentication middleware with Bearer token
+func TestAuthMiddlewareBearerToken(t *testing.T) {
+	auth := NewAuthMiddleware("", "", "my-secret-token")
+
+	// Valid token
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Header.Set("Authorization", "Bearer my-secret-token")
+	rec := httptest.NewRecorder()
+
+	if !auth.Authenticate(rec, req) {
+		t.Error("Expected authentication to succeed with valid token")
+	}
+	// On success, Authenticate returns true and doesn't write to response
+	if rec.Code != 0 && rec.Code != http.StatusOK {
+		t.Errorf("Expected no error status on success, got %d", rec.Code)
+	}
+
+	// Invalid token
+	req = httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	rec = httptest.NewRecorder()
+
+	if auth.Authenticate(rec, req) {
+		t.Error("Expected authentication to fail with invalid token")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 on invalid token, got %d", rec.Code)
+	}
+}
+
+// Test authentication middleware with no auth configured
+func TestAuthMiddlewareNoAuth(t *testing.T) {
+	auth := NewAuthMiddleware("", "", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+
+	// Should allow all when no auth configured
+	if !auth.Authenticate(rec, req) {
+		t.Error("Expected authentication to succeed when no auth configured")
+	}
+}
+
+// Test authenticated dashboard handler
+func TestDashboardHandlerWithAuth(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+
+	// No auth - should fail
+	d.HandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 without auth, got %d", rec.Code)
+	}
+
+	// With Basic Auth
+	req = httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.SetBasicAuth("admin", "secret")
+	rec = httptest.NewRecorder()
+
+	d.HandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 with valid auth, got %d", rec.Code)
+	}
+}
+
+// Test bearer token authentication on dashboard handler
+func TestDashboardHandlerWithBearerToken(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123")
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+
+	// No auth - should fail
+	d.HandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 without auth, got %d", rec.Code)
+	}
+
+	// With Bearer token
+	req = httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec = httptest.NewRecorder()
+
+	d.HandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 with valid token, got %d", rec.Code)
+	}
+}
+
+// Test metrics handler with authentication
+func TestMetricsHandlerWithAuth(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "pass", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/metrics", nil)
+	rec := httptest.NewRecorder()
+
+	// No auth - should fail
+	d.MetricsHandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 without auth, got %d", rec.Code)
+	}
+
+	// With valid auth
+	req = httptest.NewRequest(http.MethodGet, "/dashboard/metrics", nil)
+	req.SetBasicAuth("admin", "pass")
+	rec = httptest.NewRecorder()
+
+	d.MetricsHandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 with valid auth, got %d", rec.Code)
+	}
+}
+
+// Test object detail handler with authentication
+func TestObjectDetailHandlerWithAuth(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["test.txt"] = &backend.ObjectInfo{
+		Key:          "test.txt",
+		Size:         100,
+		LastModified: time.Now(),
+	}
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token")
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/object?key=test.txt", nil)
+	rec := httptest.NewRecorder()
+
+	// No auth - should fail
+	d.ObjectDetailHandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 without auth, got %d", rec.Code)
+	}
+
+	// With valid token
+	req = httptest.NewRequest(http.MethodGet, "/dashboard/object?key=test.txt", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	rec = httptest.NewRecorder()
+
+	d.ObjectDetailHandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 with valid token, got %d", rec.Code)
+	}
+}
+
 // Benchmark dashboard handler
 func BenchmarkDashboardHandler(b *testing.B) {
 	mb := newMockBackend()
