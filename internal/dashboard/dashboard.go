@@ -3,9 +3,12 @@ package dashboard
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,6 +35,44 @@ func New(b backend.Backend, bucket string, m *metrics.Metrics) *Dashboard {
 	}
 	d.template = template.Must(template.New("dashboard").Parse(dashboardHTML))
 	return d
+}
+
+// KeyRotateStatusHandler returns the current key rotation status.
+// This polls the rotation state file from B2 for progress information.
+func (d *Dashboard) KeyRotateStatusHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		// Try to read the rotation state file
+		statePath := ".armor/rotation-state.json"
+		reader, _, err := d.backend.GetDirect(ctx, d.bucket, statePath)
+		if err != nil {
+			// No rotation state file means no rotation in progress
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "none",
+				"message": "No rotation in progress",
+			})
+			return
+		}
+		defer reader.Close()
+
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to read state: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Return the raw state file content
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+	}
 }
 
 // Handler returns the main dashboard handler.
@@ -256,6 +297,53 @@ func (d *Dashboard) MetricsHandler() http.HandlerFunc {
 	}
 }
 
+// KeyRotateHandler handles key rotation requests.
+// It generates a new MEK and calls the admin API to perform rotation.
+func (d *Dashboard) KeyRotateHandler(adminClient *http.Client, adminURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Generate a new MEK (32 random bytes)
+		newMEK := make([]byte, 32)
+		if _, err := rand.Read(newMEK); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to generate new MEK: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Call the admin API's rotate endpoint
+		rotateURL := adminURL
+		if rotateURL == "" {
+			rotateURL = "http://127.0.0.1:9001/admin/key/rotate"
+		}
+
+		// Send the new MEK as hex-encoded string
+		mekHex := hex.EncodeToString(newMEK)
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, rotateURL, strings.NewReader(mekHex))
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("Content-Type", "text/plain")
+
+		resp, err := adminClient.Do(req)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to call admin API: %v", err), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		// Copy response headers and body
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	}
+}
+
 // Helper functions
 
 func parseExpvarInt(s string) int64 {
@@ -308,9 +396,25 @@ const dashboardHTML = `<!DOCTYPE html>
             padding: 20px;
             margin-bottom: 20px;
             border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         header h1 { font-size: 24px; margin-bottom: 5px; }
         header .subtitle { opacity: 0.8; font-size: 14px; }
+        .rotate-btn {
+            background: #f59e0b;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .rotate-btn:hover { background: #d97706; }
+        .rotate-btn:disabled { background: #9ca3af; cursor: not-allowed; }
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -396,13 +500,83 @@ const dashboardHTML = `<!DOCTYPE html>
             color: #666;
             font-size: 12px;
         }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal.active { display: flex; }
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #1a1a2e;
+        }
+        .modal-body { margin-bottom: 20px; }
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #10b981;
+            transition: width 0.3s;
+        }
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+        }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-secondary { background: #e5e7eb; color: #374151; }
+        .btn-secondary:hover { background: #d1d5db; }
+        .status-message {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .status-success { background: #d1fae5; color: #065f46; }
+        .status-error { background: #fee2e2; color: #991b1b; }
+        .status-info { background: #dbeafe; color: #1e40af; }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>ARMOR Dashboard</h1>
-            <div class="subtitle">S3-compatible transparent encryption proxy</div>
+            <div>
+                <h1>ARMOR Dashboard</h1>
+                <div class="subtitle">S3-compatible transparent encryption proxy</div>
+            </div>
+            <button class="rotate-btn" onclick="startKeyRotation()">Rotate Key</button>
         </header>
 
         <div class="stats-grid">
@@ -485,6 +659,23 @@ const dashboardHTML = `<!DOCTYPE html>
         </footer>
     </div>
 
+    <div id="rotationModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Key Rotation</h2>
+            <div class="modal-body">
+                <div id="rotationStatus" class="status-message status-info">
+                    Initiated key rotation...
+                </div>
+                <div class="progress-bar">
+                    <div id="rotationProgressFill" class="progress-fill"></div>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeRotationModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script>
     function showDetail(key) {
         fetch('/dashboard/object?key=' + encodeURIComponent(key))
@@ -505,6 +696,99 @@ const dashboardHTML = `<!DOCTYPE html>
                 alert(msg);
             })
             .catch(err => alert('Failed to load object details: ' + err));
+    }
+
+    let rotationInterval = null;
+
+    function startKeyRotation() {
+        const modal = document.getElementById('rotationModal');
+        const statusMsg = document.getElementById('rotationStatus');
+        const progressBar = document.getElementById('rotationProgress');
+        const progressFill = document.getElementById('rotationProgressFill');
+        const rotateBtn = document.querySelector('.rotate-btn');
+
+        rotateBtn.disabled = true;
+        modal.classList.add('active');
+        statusMsg.className = 'status-message status-info';
+        statusMsg.textContent = 'Initiating key rotation...';
+        progressFill.style.width = '0%';
+
+        fetch('/dashboard/admin/key/rotate', { method: 'POST' })
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        throw new Error(text || 'Rotation request failed');
+                    });
+                }
+                // Start polling for progress
+                rotationInterval = setInterval(pollRotationStatus, 2000);
+                return null;
+            })
+            .catch(err => {
+                statusMsg.className = 'status-message status-error';
+                statusMsg.textContent = 'Error: ' + err.message;
+                rotateBtn.disabled = false;
+                if (rotationInterval) {
+                    clearInterval(rotationInterval);
+                    rotationInterval = null;
+                }
+            });
+    }
+
+    function pollRotationStatus() {
+        const statusMsg = document.getElementById('rotationStatus');
+        const progressFill = document.getElementById('rotationProgressFill');
+        const rotateBtn = document.querySelector('.rotate-btn');
+
+        fetch('/dashboard/admin/key/status')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'none' || !data.status) {
+                    // No state file yet - rotation may be initializing
+                    return;
+                }
+
+                if (data.status === 'completed') {
+                    clearInterval(rotationInterval);
+                    rotationInterval = null;
+                    statusMsg.className = 'status-message status-success';
+                    statusMsg.textContent = 'Key rotation completed successfully!';
+                    progressFill.style.width = '100%';
+                    rotateBtn.disabled = false;
+                    return;
+                }
+
+                if (data.status === 'failed') {
+                    clearInterval(rotationInterval);
+                    rotationInterval = null;
+                    statusMsg.className = 'status-message status-error';
+                    statusMsg.textContent = 'Rotation failed: ' + (data.error_message || 'Unknown error');
+                    rotateBtn.disabled = false;
+                    return;
+                }
+
+                if (data.status === 'in_progress') {
+                    const total = data.total_objects || 0;
+                    const processed = data.processed_objects || 0;
+                    const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+
+                    statusMsg.className = 'status-message status-info';
+                    statusMsg.textContent = 'Rotating keys... ' + processed + ' / ' + total + ' objects (' + percent + '%)';
+                    progressFill.style.width = percent + '%';
+                }
+            })
+            .catch(err => {
+                console.error('Failed to poll rotation status:', err);
+            });
+    }
+
+    function closeRotationModal() {
+        const modal = document.getElementById('rotationModal');
+        modal.classList.remove('active');
+        if (rotationInterval) {
+            clearInterval(rotationInterval);
+            rotationInterval = null;
+        }
     }
     </script>
 </body>
