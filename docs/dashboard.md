@@ -63,10 +63,51 @@ spec:
     secretName: armor-dashboard-tls
 ```
 
-**⚠️ Security Warning:** The dashboard is currently read-only but exposes bucket metadata. For production use:
-- Enable authentication on the Ingress (e.g., OAuth2-OIDC, Basic Auth)
-- Use network policies to restrict access
-- Consider keeping the dashboard internal-only and accessing via VPN/SSH tunnel
+## Dashboard Authentication
+
+The dashboard supports two authentication methods to protect against unauthorized access.
+
+### HTTP Basic Authentication
+
+Set username and password via environment variables:
+
+```yaml
+env:
+  - name: ARMOR_DASHBOARD_USER
+    value: "admin"
+  - name: ARMOR_DASHBOARD_PASS
+    value: "secure-password-here"
+```
+
+When accessing the dashboard, provide credentials:
+```bash
+# Using curl
+curl -u admin:secure-password-here http://localhost:9001/dashboard
+
+# Browser will prompt for username/password
+```
+
+### Bearer Token Authentication
+
+Alternatively, use a bearer token:
+
+```yaml
+env:
+  - name: ARMOR_DASHBOARD_TOKEN
+    value: "your-secure-token-here"
+```
+
+When accessing the dashboard, provide the token in the Authorization header:
+```bash
+curl -H "Authorization: Bearer your-secure-token-here" http://localhost:9001/dashboard
+```
+
+### Security Notes
+
+- If neither authentication method is configured, the dashboard is open to anyone with network access to the admin port
+- Health check endpoints (`/healthz`, `/readyz`) remain unauthenticated for Kubernetes probes
+- For production deployments, always enable authentication or use network policies to restrict access
+- Consider using a strong random password or token generated with `openssl rand -hex 32`
 
 ## Dashboard Features
 
@@ -206,11 +247,10 @@ The cache will warm up as objects are accessed. For frequently-accessed objects 
 
 Potential improvements for the dashboard:
 
-- **Authentication** - Integrate with OAuth2/OIDC or Basic Auth
 - **Historical metrics** - Graph metrics over time using Prometheus/Grafana
 - **Object search** - Full-text search across object keys
 - **Bulk operations** - Select multiple objects for deletion or re-encryption
-- **Key management UI** - Visual interface for key rotation and multi-key configuration
+- **Key management UI** - Visual interface for key rotation and multi-key configuration (key rotation trigger already implemented)
 - **Upload/download** - Direct file upload and download through the web UI
 - **Real-time updates** - WebSocket updates for live metrics and new objects
 

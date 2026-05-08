@@ -1,15 +1,15 @@
 {
-  "bead_id": "bf-520v",
+  "bead_id": "bf-19os",
   "agent": "claude-code-glm-4.7",
   "provider": "zai",
   "model": "glm-4.7",
   "exit_code": 0,
   "outcome": "success",
-  "duration_ms": 247141,
+  "duration_ms": 151686,
   "input_tokens": null,
   "output_tokens": null,
   "cost_usd": null,
-  "captured_at": "2026-05-08T13:13:36.091584266Z",
+  "captured_at": "2026-05-08T14:01:05.577569066Z",
   "trace_format": "claude_json",
   "pruned": false,
   "template_version": null

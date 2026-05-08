@@ -87,6 +87,14 @@ type Config struct {
 	ManifestPrefix              string
 	ManifestCompactionInterval  int // seconds between automatic compactions
 	ManifestCompactionThreshold int // delta entry count triggering early compaction
+
+	// Dashboard authentication configuration
+	// If DashboardUser and DashboardPass are set, HTTP Basic Auth is required
+	// If DashboardToken is set, Bearer token authentication is required
+	// If neither are set, dashboard is open (not recommended for production)
+	DashboardUser  string
+	DashboardPass  string
+	DashboardToken string
 }
 
 // Load reads configuration from environment variables.
@@ -252,6 +260,11 @@ func Load() (*Config, error) {
 		}
 		cfg.KeyRoutes = routes
 	}
+
+	// Dashboard authentication configuration
+	cfg.DashboardUser = os.Getenv("ARMOR_DASHBOARD_USER")
+	cfg.DashboardPass = os.Getenv("ARMOR_DASHBOARD_PASS")
+	cfg.DashboardToken = os.Getenv("ARMOR_DASHBOARD_TOKEN")
 
 	return cfg, nil
 }

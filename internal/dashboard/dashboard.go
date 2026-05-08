@@ -4,6 +4,7 @@ package dashboard
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -18,20 +19,95 @@ import (
 	"github.com/jedarden/armor/internal/metrics"
 )
 
+// AuthMiddleware handles authentication for dashboard routes.
+type AuthMiddleware struct {
+	user  string
+	pass  string
+	token string
+}
+
+// NewAuthMiddleware creates a new authentication middleware.
+// If both user/pass and token are empty, no authentication is performed.
+func NewAuthMiddleware(user, pass, token string) *AuthMiddleware {
+	return &AuthMiddleware{
+		user:  user,
+		pass:  pass,
+		token: token,
+	}
+}
+
+// Authenticate checks the request for valid authentication.
+// Returns true if authenticated, false otherwise.
+// When returning false, it also sets the WWW-Authenticate header.
+func (a *AuthMiddleware) Authenticate(w http.ResponseWriter, r *http.Request) bool {
+	// No auth configured - allow all
+	if a.user == "" && a.token == "" {
+		return true
+	}
+
+	// Check Bearer token first
+	if a.token != "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			token := strings.TrimPrefix(authHeader, "Bearer ")
+			if token == a.token {
+				return true
+			}
+		}
+	}
+
+	// Check HTTP Basic Auth
+	if a.user != "" && a.pass != "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Basic ") {
+			encodedCreds := strings.TrimPrefix(authHeader, "Basic ")
+			decodedCreds, err := base64.StdEncoding.DecodeString(encodedCreds)
+			if err == nil {
+				creds := strings.SplitN(string(decodedCreds), ":", 2)
+				if len(creds) == 2 && creds[0] == a.user && creds[1] == a.pass {
+					return true
+				}
+			}
+		}
+	}
+
+	// Authentication failed - set WWW-Authenticate header
+	w.Header().Set("WWW-Authenticate", `Basic realm="ARMOR Dashboard"`)
+	http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	return false
+}
+
+// Wrap wraps a handler with authentication middleware.
+func (a *AuthMiddleware) Wrap(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !a.Authenticate(w, r) {
+			return
+		}
+		h(w, r)
+	}
+}
+
 // Dashboard provides the web dashboard handlers.
 type Dashboard struct {
 	backend  backend.Backend
 	bucket   string
 	metrics  *metrics.Metrics
 	template *template.Template
+	auth     *AuthMiddleware
 }
 
 // New creates a new Dashboard.
 func New(b backend.Backend, bucket string, m *metrics.Metrics) *Dashboard {
+	return NewWithAuth(b, bucket, m, "", "", "")
+}
+
+// NewWithAuth creates a new Dashboard with authentication.
+func NewWithAuth(b backend.Backend, bucket string, m *metrics.Metrics, user, pass, token string) *Dashboard {
 	d := &Dashboard{
 		backend: b,
 		bucket:  bucket,
 		metrics: m,
+		auth:    NewAuthMiddleware(user, pass, token),
 	}
 	d.template = template.Must(template.New("dashboard").Parse(dashboardHTML))
 	return d
@@ -40,6 +116,16 @@ func New(b backend.Backend, bucket string, m *metrics.Metrics) *Dashboard {
 // KeyRotateStatusHandler returns the current key rotation status.
 // This polls the rotation state file from B2 for progress information.
 func (d *Dashboard) KeyRotateStatusHandler() http.HandlerFunc {
+	return d.keyRotateStatusHandlerImpl()
+}
+
+// KeyRotateStatusHandlerWithAuth returns the key rotation status handler with authentication.
+func (d *Dashboard) KeyRotateStatusHandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(d.keyRotateStatusHandlerImpl())
+}
+
+// keyRotateStatusHandlerImpl is the actual implementation of the key rotation status handler.
+func (d *Dashboard) keyRotateStatusHandlerImpl() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -77,6 +163,16 @@ func (d *Dashboard) KeyRotateStatusHandler() http.HandlerFunc {
 
 // Handler returns the main dashboard handler.
 func (d *Dashboard) Handler() http.HandlerFunc {
+	return d.handlerImpl()
+}
+
+// HandlerWithAuth returns the main dashboard handler with authentication.
+func (d *Dashboard) HandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(d.handlerImpl())
+}
+
+// handlerImpl is the actual implementation of the main dashboard handler.
+func (d *Dashboard) handlerImpl() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Get prefix from query
 		prefix := r.URL.Query().Get("prefix")
@@ -225,6 +321,16 @@ func (d *Dashboard) getCanaryStatus() string {
 
 // ObjectDetailHandler returns details for a specific object.
 func (d *Dashboard) ObjectDetailHandler() http.HandlerFunc {
+	return d.objectDetailHandlerImpl()
+}
+
+// ObjectDetailHandlerWithAuth returns the object detail handler with authentication.
+func (d *Dashboard) ObjectDetailHandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(d.objectDetailHandlerImpl())
+}
+
+// objectDetailHandlerImpl is the actual implementation of the object detail handler.
+func (d *Dashboard) objectDetailHandlerImpl() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := r.URL.Query().Get("key")
 		if key == "" {
@@ -243,12 +349,12 @@ func (d *Dashboard) ObjectDetailHandler() http.HandlerFunc {
 
 		// Build response
 		detail := map[string]interface{}{
-			"key":             key,
-			"size":            info.Size,
-			"content_type":    info.ContentType,
-			"etag":            info.ETag,
-			"last_modified":   info.LastModified.Format(time.RFC3339),
-			"is_armor":        info.IsARMOREncrypted,
+			"key":           key,
+			"size":          info.Size,
+			"content_type":  info.ContentType,
+			"etag":          info.ETag,
+			"last_modified": info.LastModified.Format(time.RFC3339),
+			"is_armor":      info.IsARMOREncrypted,
 		}
 
 		if info.IsARMOREncrypted {
@@ -272,6 +378,16 @@ func (d *Dashboard) ObjectDetailHandler() http.HandlerFunc {
 
 // MetricsHandler returns metrics in JSON format.
 func (d *Dashboard) MetricsHandler() http.HandlerFunc {
+	return d.metricsHandlerImpl()
+}
+
+// MetricsHandlerWithAuth returns the metrics handler with authentication.
+func (d *Dashboard) MetricsHandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(d.metricsHandlerImpl())
+}
+
+// metricsHandlerImpl is the actual implementation of the metrics handler.
+func (d *Dashboard) metricsHandlerImpl() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		m := d.metrics
 		data := map[string]interface{}{
@@ -300,6 +416,16 @@ func (d *Dashboard) MetricsHandler() http.HandlerFunc {
 // KeyRotateHandler handles key rotation requests.
 // It generates a new MEK and calls the admin API to perform rotation.
 func (d *Dashboard) KeyRotateHandler(adminClient *http.Client, adminURL string) http.HandlerFunc {
+	return d.keyRotateHandlerImpl(adminClient, adminURL)
+}
+
+// KeyRotateHandlerWithAuth handles key rotation requests with authentication.
+func (d *Dashboard) KeyRotateHandlerWithAuth(adminClient *http.Client, adminURL string) http.HandlerFunc {
+	return d.auth.Wrap(d.keyRotateHandlerImpl(adminClient, adminURL))
+}
+
+// keyRotateHandlerImpl is the actual implementation of the key rotation handler.
+func (d *Dashboard) keyRotateHandlerImpl(adminClient *http.Client, adminURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
