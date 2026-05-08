@@ -152,8 +152,9 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 	}
 
-	// Create dashboard
-	dash := dashboard.New(b2Backend, cfg.Bucket, metrics.DefaultMetrics)
+	// Create dashboard with optional authentication
+	dash := dashboard.NewWithAuth(b2Backend, cfg.Bucket, metrics.DefaultMetrics,
+		cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardToken)
 
 	// Load manifest index from B2 (startup load).
 	// The manifest is a performance optimisation — errors are logged as warnings
@@ -401,20 +402,20 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/b2/keys/", s.handleB2KeyDelete)     // DELETE=Delete by ID
 	mux.HandleFunc("/metrics", s.metrics.Handler())
 
-	// Dashboard routes
+	// Dashboard routes (authenticated via DashboardUser/Pass or DashboardToken)
 	if s.dashboard != nil {
-		mux.HandleFunc("/dashboard", s.dashboard.Handler())
-		mux.HandleFunc("/dashboard/", s.dashboard.Handler()) // For prefix navigation
-		mux.HandleFunc("/dashboard/object", s.dashboard.ObjectDetailHandler())
-		mux.HandleFunc("/dashboard/metrics", s.dashboard.MetricsHandler())
+		mux.HandleFunc("/dashboard", s.dashboard.HandlerWithAuth())
+		mux.HandleFunc("/dashboard/", s.dashboard.HandlerWithAuth()) // For prefix navigation
+		mux.HandleFunc("/dashboard/object", s.dashboard.ObjectDetailHandlerWithAuth())
+		mux.HandleFunc("/dashboard/metrics", s.dashboard.MetricsHandlerWithAuth())
 
-		// Key rotation proxy handler
+		// Key rotation proxy handler (authenticated)
 		adminClient := &http.Client{
 			Timeout: 30 * time.Minute, // Key rotation can take a long time
 		}
 		adminURL := "http://" + s.config.AdminListen + "/admin/key/rotate"
-		mux.HandleFunc("/dashboard/admin/key/rotate", s.dashboard.KeyRotateHandler(adminClient, adminURL))
-		mux.HandleFunc("/dashboard/admin/key/status", s.dashboard.KeyRotateStatusHandler())
+		mux.HandleFunc("/dashboard/admin/key/rotate", s.dashboard.KeyRotateHandlerWithAuth(adminClient, adminURL))
+		mux.HandleFunc("/dashboard/admin/key/status", s.dashboard.KeyRotateStatusHandlerWithAuth())
 	}
 
 	return mux
