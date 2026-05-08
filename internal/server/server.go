@@ -407,6 +407,14 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/", s.dashboard.Handler()) // For prefix navigation
 		mux.HandleFunc("/dashboard/object", s.dashboard.ObjectDetailHandler())
 		mux.HandleFunc("/dashboard/metrics", s.dashboard.MetricsHandler())
+
+		// Key rotation proxy handler
+		adminClient := &http.Client{
+			Timeout: 30 * time.Minute, // Key rotation can take a long time
+		}
+		adminURL := "http://" + s.config.AdminListen + "/admin/key/rotate"
+		mux.HandleFunc("/dashboard/admin/key/rotate", s.dashboard.KeyRotateHandler(adminClient, adminURL))
+		mux.HandleFunc("/dashboard/admin/key/status", s.dashboard.KeyRotateStatusHandler())
 	}
 
 	return mux
