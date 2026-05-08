@@ -471,6 +471,9 @@ ARMOR is configured exclusively via environment variables. No config files.
 | `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID. Set per cluster for multi-writer deployments. |
 | `ARMOR_CACHE_MAX_ENTRIES` | No | `10000` | Metadata cache max entries |
 | `ARMOR_CACHE_TTL` | No | `300` | Metadata cache TTL in seconds |
+| `ARMOR_DASHBOARD_USER` | No | (empty) | Dashboard HTTP Basic Auth username |
+| `ARMOR_DASHBOARD_PASS` | No | (empty) | Dashboard HTTP Basic Auth password |
+| `ARMOR_DASHBOARD_TOKEN` | No | (empty) | Dashboard Bearer token for authentication |
 
 ARMOR assembles the Cloudflare download URL as:
 ```
