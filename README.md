@@ -174,6 +174,9 @@ ARMOR is configured via environment variables:
 | `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size |
 | `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID |
 | `ARMOR_READYZ_CACHE_TTL` | No | `30` | Seconds to cache backend connectivity check in `/readyz` (only used when canary is disabled) |
+| `ARMOR_DASHBOARD_USER` | No | (empty) | Dashboard HTTP Basic Auth username |
+| `ARMOR_DASHBOARD_PASS` | No | (empty) | Dashboard HTTP Basic Auth password |
+| `ARMOR_DASHBOARD_TOKEN` | No | (empty) | Dashboard Bearer token for authentication |
 
 ### Multi-Key Configuration
 
