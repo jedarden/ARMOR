@@ -324,6 +324,7 @@ Key management endpoints on the admin listener (default `127.0.0.1:9001`):
 ## 📚 Documentation
 
 - **[Web Dashboard](docs/dashboard.md)** — Bucket browsing, encryption status, and cache statistics
+- **[Cloudflare Setup](docs/cloudflare-setup.md)** — DNS configuration for zero-egress B2 downloads
 - **[Implementation Plan](docs/plan/plan.md)** — Full architecture and implementation details
 - **[Integration Tests](tests/integration/README.md)** — Testing against real B2 + Cloudflare
 - **[Research](docs/research/)** — Technical research on B2, Cloudflare, encryption, and DuckDB

@@ -682,7 +682,7 @@ ARMOR implements its own S3 XML request/response handling for the ~15 operations
 - [x] Pluggable backend interface with B2 S3 implementation
 - [x] Dual backend paths: direct-to-B2 uploads, Cloudflare-routed downloads
 - [x] Env var configuration (no config file required)
-- [ ] Cloudflare DNS setup (CNAME + SSL + cache rules) — operational/deployment task
+- [x] Cloudflare DNS setup (CNAME + SSL + cache rules) — operational/deployment task (see [docs/cloudflare-setup.md](../cloudflare-setup.md))
 - [x] Metadata cache (LRU, in-memory)
 - [x] Parquet footer pinning (in-memory, keyed by ETag)
 - [x] Self-healing canary integrity monitor
