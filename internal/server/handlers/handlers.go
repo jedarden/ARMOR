@@ -1089,7 +1089,14 @@ func parseRangeHeader(header string, totalSize int64) (start, end int64, err err
 		}
 	}
 
-	if start < 0 || start >= totalSize || end < start || end >= totalSize {
+	// Clamp end per RFC 7233: a range ending beyond the file size is satisfiable
+	// as long as start is within bounds. DuckDB httpfs requests aligned blocks
+	// (e.g. bytes=0-131071) regardless of actual file size.
+	if end >= totalSize {
+		end = totalSize - 1
+	}
+
+	if start < 0 || start >= totalSize || end < start {
 		return 0, 0, fmt.Errorf("range out of bounds")
 	}
 
