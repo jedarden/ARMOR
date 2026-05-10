@@ -695,12 +695,16 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 		s.metrics.RecordRequestDuration(r.Method, duration)
 
 		// Log completed request
-		s.logger.WithFields(map[string]interface{}{
+		fields := map[string]interface{}{
 			"method":      r.Method,
 			"path":        r.URL.Path,
 			"status":      rw.statusCode,
 			"duration_ms": duration.Milliseconds(),
-		}).Info("request completed")
+		}
+		if rng := r.Header.Get("Range"); rng != "" {
+			fields["range"] = rng
+		}
+		s.logger.WithFields(fields).Info("request completed")
 	}
 }
 
