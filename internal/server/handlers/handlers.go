@@ -1404,6 +1404,36 @@ func parseCopySource(copySource string) (bucket, key string) {
 	return bucket, key
 }
 
+// enrichPlaintextSizes replaces encrypted on-disk sizes with plaintext sizes for
+// ARMOR-encrypted objects. B2's ListObjectsV2 response includes the encrypted
+// object size; we resolve the plaintext size using the metadata cache (if warm)
+// or a parallel HeadObject call per object (on cache miss). Each errgroup goroutine
+// writes to a distinct slice index so no mutex is needed.
+func (h *Handlers) enrichPlaintextSizes(ctx context.Context, bucket string, result *backend.ListResult) {
+	eg, egCtx := errgroup.WithContext(ctx)
+	for i := range result.Objects {
+		i := i
+		key := result.Objects[i].Key
+		if am, ok := h.cache.Get(bucket, key); ok {
+			if am != nil && am.PlaintextSize > 0 {
+				result.Objects[i].Size = am.PlaintextSize
+			}
+			continue
+		}
+		eg.Go(func() error {
+			info, err := h.backend.Head(egCtx, bucket, key)
+			if err != nil {
+				return nil // non-fatal: keep encrypted size rather than failing the listing
+			}
+			if info.Size > 0 {
+				result.Objects[i].Size = info.Size
+			}
+			return nil
+		})
+	}
+	eg.Wait() //nolint:errcheck
+}
+
 // ListObjectsV2 handles S3 ListObjectsV2.
 func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
@@ -1431,6 +1461,11 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 			h.writeError(w, "InternalError", fmt.Sprintf("Failed to list: %v", err), 500)
 			return
 		}
+		// Resolve plaintext sizes for ARMOR-encrypted objects before caching.
+		// B2 ListObjectsV2 returns encrypted (on-disk) sizes; clients like DuckDB
+		// use these sizes to compute byte-range offsets, so they must reflect the
+		// plaintext length.
+		h.enrichPlaintextSizes(ctx, bucket, result)
 		if h.listCache != nil {
 			h.listCache.Set(bucket, prefix, delimiter, maxKeys, contToken, result)
 		}
