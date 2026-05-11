@@ -16,9 +16,10 @@ import (
 
 // mockBackend implements backend.Backend for testing
 type mockBackend struct {
-	objects map[string]*backend.ObjectInfo
-	listErr error
-	headErr error
+	objects        map[string]*backend.ObjectInfo
+	commonPrefixes []string
+	listErr        error
+	headErr        error
 }
 
 func newMockBackend() *mockBackend {
@@ -83,7 +84,8 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 	}
 
 	return &backend.ListResult{
-		Objects: objects,
+		Objects:        objects,
+		CommonPrefixes: m.commonPrefixes,
 	}, nil
 }
 
@@ -912,6 +914,50 @@ func TestConcurrentRequests(t *testing.T) {
 		if !<-done {
 			t.Error("Concurrent request failed")
 		}
+	}
+}
+
+// TestCommonPrefixesDisplayed verifies that CommonPrefixes (virtual folders) appear
+// in the bucket browser output and are listed before regular objects.
+func TestCommonPrefixesDisplayed(t *testing.T) {
+	mb := newMockBackend()
+	mb.commonPrefixes = []string{"data/", "logs/"}
+	mb.objects["root.txt"] = &backend.ObjectInfo{
+		Key:          "root.txt",
+		Size:         100,
+		LastModified: time.Now(),
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Both virtual folders should appear as links
+	if !strings.Contains(body, "data/") {
+		t.Error("Expected 'data/' folder in response")
+	}
+	if !strings.Contains(body, "logs/") {
+		t.Error("Expected 'logs/' folder in response")
+	}
+	// Regular object should still appear
+	if !strings.Contains(body, "root.txt") {
+		t.Error("Expected 'root.txt' in response")
+	}
+
+	// Folders should appear before the regular object in the HTML
+	dataIdx := strings.Index(body, "data/")
+	rootIdx := strings.Index(body, "root.txt")
+	if dataIdx > rootIdx {
+		t.Error("Expected folders to appear before regular objects")
 	}
 }
 
