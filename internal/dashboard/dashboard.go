@@ -236,7 +236,16 @@ type Breadcrumb struct {
 }
 
 func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) PageData {
-	objects := make([]ObjectInfo, 0, len(result.Objects))
+	objects := make([]ObjectInfo, 0, len(result.CommonPrefixes)+len(result.Objects))
+
+	// Add common prefixes (virtual folders) first so they appear at the top.
+	for _, cp := range result.CommonPrefixes {
+		objects = append(objects, ObjectInfo{
+			Key:            cp,
+			IsFolder:       true,
+			PlaintextSizeH: "—",
+		})
+	}
 
 	for _, obj := range result.Objects {
 		info := ObjectInfo{
@@ -785,6 +794,16 @@ const dashboardHTML = `<!DOCTYPE html>
         </footer>
     </div>
 
+    <div id="objectDetailModal" class="modal">
+        <div class="modal-content" style="max-width:600px">
+            <h2 class="modal-title">Object Details</h2>
+            <div class="modal-body" id="objectDetailBody" style="font-family:monospace;font-size:13px;line-height:1.8"></div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeDetailModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="rotationModal" class="modal">
         <div class="modal-content">
             <h2 class="modal-title">Key Rotation</h2>
@@ -803,25 +822,42 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
 
     <script>
+    function row(label, value) {
+        return '<div><strong style="color:#555;display:inline-block;width:160px">' + label + '</strong>' + escHtml(String(value)) + '</div>';
+    }
+
+    function escHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function closeDetailModal() {
+        document.getElementById('objectDetailModal').classList.remove('active');
+    }
+
     function showDetail(key) {
         fetch('/dashboard/object?key=' + encodeURIComponent(key))
             .then(r => r.json())
             .then(data => {
-                let msg = 'Object: ' + data.key + '\n\n';
-                msg += 'Size: ' + data.size + ' bytes\n';
-                msg += 'Type: ' + data.content_type + '\n';
-                msg += 'ETag: ' + data.etag + '\n';
-                msg += 'Modified: ' + data.last_modified + '\n\n';
+                let html = row('Key', data.key)
+                         + row('Size', data.size + ' bytes')
+                         + row('Content-Type', data.content_type || '—')
+                         + row('ETag', data.etag || '—')
+                         + row('Last Modified', data.last_modified || '—')
+                         + row('Encrypted', data.is_armor ? 'Yes (ARMOR)' : 'No');
                 if (data.armor) {
-                    msg += 'ARMOR Encryption:\n';
-                    msg += '  Plaintext size: ' + data.armor.plaintext_size + ' bytes\n';
-                    msg += '  Block size: ' + data.armor.block_size + '\n';
-                    msg += '  Key ID: ' + data.armor.key_id + '\n';
-                    msg += '  SHA256: ' + data.armor.sha256 + '\n';
+                    html += '<hr style="margin:10px 0;border:none;border-top:1px solid #e5e7eb">'
+                          + row('Plaintext Size', data.armor.plaintext_size + ' bytes')
+                          + row('Block Size', data.armor.block_size)
+                          + row('Key ID', data.armor.key_id || 'default')
+                          + row('SHA-256', data.armor.sha256 || '—');
                 }
-                alert(msg);
+                document.getElementById('objectDetailBody').innerHTML = html;
+                document.getElementById('objectDetailModal').classList.add('active');
             })
-            .catch(err => alert('Failed to load object details: ' + err));
+            .catch(err => {
+                document.getElementById('objectDetailBody').innerHTML = '<span style="color:#991b1b">Failed to load: ' + escHtml(String(err)) + '</span>';
+                document.getElementById('objectDetailModal').classList.add('active');
+            });
     }
 
     let rotationInterval = null;
