@@ -215,18 +215,19 @@ type ObjectInfo struct {
 
 // PageData holds data for the dashboard template.
 type PageData struct {
-	Bucket       string
-	Prefix       string
-	Objects      []ObjectInfo
-	CacheHits    string
-	CacheMisses  string
-	CacheHitRate string
-	Uptime       string
-	Requests     string
-	BytesUp      string
-	BytesDown    string
-	CanaryStatus string
-	Breadcrumbs  []Breadcrumb
+	Bucket          string
+	Prefix          string
+	Objects         []ObjectInfo
+	CacheHits       string
+	CacheMisses     string
+	CacheHitRate    string
+	Uptime          string
+	Requests        string
+	BytesUp         string
+	BytesDown       string
+	CanaryStatus    string
+	CanaryCardClass string // "healthy", "unhealthy", or "" for not-yet-started
+	Breadcrumbs     []Breadcrumb
 }
 
 // Breadcrumb represents a navigation breadcrumb.
@@ -299,33 +300,42 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) Pag
 		hitRate = fmt.Sprintf("%.1f%%", rate)
 	}
 
+	canaryStatus, canaryCardClass := d.getCanaryStatus()
 	return PageData{
-		Bucket:       d.bucket,
-		Prefix:       prefix,
-		Objects:      objects,
-		CacheHits:    cacheHits,
-		CacheMisses:  cacheMisses,
-		CacheHitRate: hitRate,
-		Uptime:       formatUptime(time.Since(d.metrics.StartTime())),
-		Requests:     d.metrics.RequestsTotal.String(),
-		BytesUp:      formatBytes(parseExpvarInt(d.metrics.BytesUploaded.String())),
-		BytesDown:    formatBytes(parseExpvarInt(d.metrics.BytesDownloaded.String())),
-		CanaryStatus: d.getCanaryStatus(),
-		Breadcrumbs:  breadcrumbs,
+		Bucket:          d.bucket,
+		Prefix:          prefix,
+		Objects:         objects,
+		CacheHits:       cacheHits,
+		CacheMisses:     cacheMisses,
+		CacheHitRate:    hitRate,
+		Uptime:          formatUptime(time.Since(d.metrics.StartTime())),
+		Requests:        d.metrics.RequestsTotal.String(),
+		BytesUp:         formatBytes(parseExpvarInt(d.metrics.BytesUploaded.String())),
+		BytesDown:       formatBytes(parseExpvarInt(d.metrics.BytesDownloaded.String())),
+		CanaryStatus:    canaryStatus,
+		CanaryCardClass: canaryCardClass,
+		Breadcrumbs:     breadcrumbs,
 	}
 }
 
-func (d *Dashboard) getCanaryStatus() string {
-	lastCheck := d.metrics.CanaryLastCheckTime.String()
-	failures := d.metrics.CanaryCheckFailures.String()
+// getCanaryStatus returns (status string, CSS card class).
+// CSS class is "healthy", "unhealthy", or "" for not-yet-started.
+func (d *Dashboard) getCanaryStatus() (string, string) {
+	// Use Value() to get the raw string; String() returns JSON-quoted form.
+	lastCheck := d.metrics.CanaryLastCheckTime.Value()
+	failures := parseExpvarInt(d.metrics.CanaryCheckFailures.String())
 
-	if parseExpvarInt(failures) > 0 {
-		return fmt.Sprintf("Unhealthy (failures: %s)", failures)
+	if failures > 0 {
+		errMsg := d.metrics.CanaryLastCheckError.Value()
+		if errMsg != "" {
+			return fmt.Sprintf("Unhealthy: %s", errMsg), "unhealthy"
+		}
+		return fmt.Sprintf("Unhealthy (failures: %d)", failures), "unhealthy"
 	}
 	if lastCheck == "" {
-		return "Not started"
+		return "Not started", ""
 	}
-	return fmt.Sprintf("Healthy (last check: %s)", lastCheck)
+	return fmt.Sprintf("Healthy (last: %s)", lastCheck), "healthy"
 }
 
 // ObjectDetailHandler returns details for a specific object.
@@ -739,7 +749,7 @@ const dashboardHTML = `<!DOCTYPE html>
                 <h3>Uptime</h3>
                 <div class="value">{{.Uptime}}</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card {{.CanaryCardClass}}">
                 <h3>Canary Status</h3>
                 <div class="value">{{.CanaryStatus}}</div>
             </div>
