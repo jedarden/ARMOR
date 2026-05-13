@@ -961,6 +961,67 @@ func TestCommonPrefixesDisplayed(t *testing.T) {
 	}
 }
 
+// TestCanaryStatusNotStarted verifies "Not started" when no canary check has run.
+func TestCanaryStatusNotStarted(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	// CanaryLastCheckTime defaults to empty — simulates startup before first check
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "Not started") {
+		t.Error("Expected 'Not started' when no canary check has run")
+	}
+	// "Not started" should not apply healthy or unhealthy CSS class
+	if strings.Contains(body, "stat-card healthy") || strings.Contains(body, "stat-card unhealthy") {
+		t.Error("Expected no health CSS class before first canary check")
+	}
+}
+
+// TestCanaryStatusHealthy verifies green "healthy" class when canary passes.
+func TestCanaryStatusHealthy(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	m.SetCanaryLastCheck(time.Now())
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "stat-card healthy") {
+		t.Error("Expected 'stat-card healthy' CSS class when canary is healthy")
+	}
+	if !strings.Contains(body, "Healthy") {
+		t.Error("Expected 'Healthy' status text")
+	}
+}
+
+// TestCanaryStatusUnhealthy verifies red "unhealthy" class when canary fails.
+func TestCanaryStatusUnhealthy(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	m.IncCanaryFailures()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "stat-card unhealthy") {
+		t.Error("Expected 'stat-card unhealthy' CSS class when canary fails")
+	}
+	if !strings.Contains(body, "Unhealthy") {
+		t.Error("Expected 'Unhealthy' status text")
+	}
+}
+
 // Helper to verify response contains expected HTML elements
 func TestDashboardHTMLStructure(t *testing.T) {
 	mb := newMockBackend()
