@@ -3063,7 +3063,7 @@ func TestHeadObjectManifestAllHeaders(t *testing.T) {
 	if got := w.Header().Get("ETag"); got != wantETag {
 		t.Errorf("ETag: got %q, want %q", got, wantETag)
 	}
-	wantLastMod := modTime.UTC().Format("2006-01-02T15:04:05.000Z")
+	wantLastMod := modTime.UTC().Format(http.TimeFormat)
 	if got := w.Header().Get("Last-Modified"); got != wantLastMod {
 		t.Errorf("Last-Modified: got %q, want %q", got, wantLastMod)
 	}
