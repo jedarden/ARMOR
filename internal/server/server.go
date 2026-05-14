@@ -685,6 +685,18 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 
+		// Decode aws-chunked body when MinIO streaming signature is used.
+		// The seed signature in the Authorization header already authenticated the
+		// request; we only need to strip the chunk framing to recover the payload.
+		if r.Header.Get("X-Amz-Content-Sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+			if decoded := r.Header.Get("X-Amz-Decoded-Content-Length"); decoded != "" {
+				if n, err := strconv.ParseInt(decoded, 10, 64); err == nil {
+					r.ContentLength = n
+				}
+			}
+			r.Body = newAWSChunkedReader(r.Body)
+		}
+
 		// Use a response writer wrapper to capture status code
 		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 

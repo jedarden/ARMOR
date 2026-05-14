@@ -65,7 +65,14 @@ func ParseAuthHeader(auth string) (*AuthHeader, error) {
 	}
 
 	auth = strings.TrimPrefix(auth, "AWS4-HMAC-SHA256 ")
-	parts := strings.Split(auth, ", ")
+	// Split by "," to handle both regular (", ") and streaming (",") auth header formats.
+	rawParts := strings.Split(auth, ",")
+	parts := make([]string, 0, len(rawParts))
+	for _, p := range rawParts {
+		if t := strings.TrimSpace(p); t != "" {
+			parts = append(parts, t)
+		}
+	}
 
 	result := &AuthHeader{
 		Algorithm: "AWS4-HMAC-SHA256",
