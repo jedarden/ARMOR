@@ -676,18 +676,18 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Check for range request
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
-		h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize)
+		h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified)
 		return
 	}
 
 	// Full object download with pipelined stream decryption
-	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize)
+	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified)
 }
 
 // handleFullObjectStream handles full object downloads with pipelined stream decryption.
 // This uses io.Pipe to decrypt blocks as they stream from Cloudflare, reducing
 // time-to-first-byte and memory usage compared to buffering the entire envelope.
-func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64) {
+func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
 	ctx := r.Context()
 
 	blockSize := armorMeta.BlockSize
@@ -739,6 +739,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", armorMeta.ContentType)
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
 	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
 	w.Header().Set("X-Armor-Stream", "pipelined")
 	w.WriteHeader(http.StatusOK)
 
@@ -833,7 +834,7 @@ func min64(a, b int64) int64 {
 }
 
 // handleRangeRequest handles range read requests.
-func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64) {
+func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
 	ctx := r.Context()
 
 	// Parse range header (bytes=start-end)
@@ -941,6 +942,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	w.Header().Set("Content-Type", armorMeta.ContentType)
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
 	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
 	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, plaintextSize))
 	w.WriteHeader(http.StatusPartialContent)
 	w.Write(plaintext)
