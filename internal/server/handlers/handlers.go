@@ -163,14 +163,17 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		if key != "" {
 			h.GetObject(w, r, bucket, key)
 		} else if bucket != "" {
-			// Handle GetBucketLocation (GET ?location on bucket)
-			if r.URL.Query().Has("location") {
+			q := r.URL.Query()
+			switch {
+			case q.Has("location"):
 				h.GetBucketLocation(w, r, bucket)
-				return
+			case q.Has("versioning"):
+				h.GetBucketVersioning(w, r, bucket)
+			default:
+				// All other bucket-level GETs are list operations.
+				// HeadBucket is only for HTTP HEAD method (handled in MethodHead case).
+				h.ListObjectsV2(w, r, bucket)
 			}
-			// All bucket-level GETs are list operations (with or without list-type/prefix).
-			// HeadBucket is only for HTTP HEAD method (handled in MethodHead case).
-			h.ListObjectsV2(w, r, bucket)
 		} else {
 			h.ListBuckets(w, r)
 		}
@@ -1574,6 +1577,33 @@ func (h *Handlers) GetBucketLocation(w http.ResponseWriter, r *http.Request, buc
 	resp := locationConstraintResponse{
 		XMLNS:    "http://s3.amazonaws.com/doc/2006-03-01/",
 		Location: "",
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	if _, err := fmt.Fprint(w, xml.Header); err != nil {
+		return
+	}
+	_ = xml.NewEncoder(w).Encode(resp)
+}
+
+// GetBucketVersioning handles S3 GetBucketVersioning (GET ?versioning).
+// Returns an empty VersioningConfiguration (versioning is not enabled on ARMOR buckets).
+func (h *Handlers) GetBucketVersioning(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+
+	if err := h.backend.HeadBucket(ctx, bucket); err != nil {
+		h.writeError(w, "NoSuchBucket", fmt.Sprintf("Bucket not found: %v", err), 404)
+		return
+	}
+
+	type versioningConfigurationResponse struct {
+		XMLName xml.Name `xml:"VersioningConfiguration"`
+		XMLNS   string   `xml:"xmlns,attr"`
+	}
+
+	resp := versioningConfigurationResponse{
+		XMLNS: "http://s3.amazonaws.com/doc/2006-03-01/",
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
