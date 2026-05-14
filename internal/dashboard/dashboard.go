@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -228,6 +229,16 @@ type PageData struct {
 	CanaryStatus    string
 	CanaryCardClass string // "healthy", "unhealthy", or "" for not-yet-started
 	Breadcrumbs     []Breadcrumb
+	// Encryption statistics for the current listing
+	EncryptedCount   int
+	PlaintextCount   int
+	TotalObjectCount int     // EncryptedCount + PlaintextCount (excludes folders)
+	KeyIDs           []string
+	EncryptedPct     string  // e.g. "75.0" — used as CSS width and display value
+	// Additional metrics exposed in the stats grid
+	RangeBytesSaved string
+	KeyWrapOps      string
+	KeyUnwrapOps    string
 }
 
 // Breadcrumb represents a navigation breadcrumb.
@@ -238,6 +249,8 @@ type Breadcrumb struct {
 
 func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) PageData {
 	objects := make([]ObjectInfo, 0, len(result.CommonPrefixes)+len(result.Objects))
+	var encCount, plainCount int
+	keyIDSet := make(map[string]struct{})
 
 	// Add common prefixes (virtual folders) first so they appear at the top.
 	for _, cp := range result.CommonPrefixes {
@@ -269,9 +282,20 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) Pag
 				info.KeyID = armorMeta.KeyID
 				info.BlockSize = armorMeta.BlockSize
 			}
+			if !info.IsFolder {
+				encCount++
+				keyID := info.KeyID
+				if keyID == "" {
+					keyID = "default"
+				}
+				keyIDSet[keyID] = struct{}{}
+			}
 		} else {
 			info.PlaintextSize = obj.Size
 			info.PlaintextSizeH = formatBytes(obj.Size)
+			if !info.IsFolder {
+				plainCount++
+			}
 		}
 
 		objects = append(objects, info)
@@ -300,21 +324,42 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) Pag
 		hitRate = fmt.Sprintf("%.1f%%", rate)
 	}
 
+	// Build sorted key IDs list for the encryption coverage panel
+	keyIDs := make([]string, 0, len(keyIDSet))
+	for k := range keyIDSet {
+		keyIDs = append(keyIDs, k)
+	}
+	sort.Strings(keyIDs)
+
+	totalObjCount := encCount + plainCount
+	encPct := "0"
+	if totalObjCount > 0 {
+		encPct = fmt.Sprintf("%.1f", float64(encCount)/float64(totalObjCount)*100)
+	}
+
 	canaryStatus, canaryCardClass := d.getCanaryStatus()
 	return PageData{
-		Bucket:          d.bucket,
-		Prefix:          prefix,
-		Objects:         objects,
-		CacheHits:       cacheHits,
-		CacheMisses:     cacheMisses,
-		CacheHitRate:    hitRate,
-		Uptime:          formatUptime(time.Since(d.metrics.StartTime())),
-		Requests:        d.metrics.RequestsTotal.String(),
-		BytesUp:         formatBytes(parseExpvarInt(d.metrics.BytesUploaded.String())),
-		BytesDown:       formatBytes(parseExpvarInt(d.metrics.BytesDownloaded.String())),
-		CanaryStatus:    canaryStatus,
-		CanaryCardClass: canaryCardClass,
-		Breadcrumbs:     breadcrumbs,
+		Bucket:           d.bucket,
+		Prefix:           prefix,
+		Objects:          objects,
+		CacheHits:        cacheHits,
+		CacheMisses:      cacheMisses,
+		CacheHitRate:     hitRate,
+		Uptime:           formatUptime(time.Since(d.metrics.StartTime())),
+		Requests:         d.metrics.RequestsTotal.String(),
+		BytesUp:          formatBytes(parseExpvarInt(d.metrics.BytesUploaded.String())),
+		BytesDown:        formatBytes(parseExpvarInt(d.metrics.BytesDownloaded.String())),
+		CanaryStatus:     canaryStatus,
+		CanaryCardClass:  canaryCardClass,
+		Breadcrumbs:      breadcrumbs,
+		EncryptedCount:   encCount,
+		PlaintextCount:   plainCount,
+		TotalObjectCount: totalObjCount,
+		KeyIDs:           keyIDs,
+		EncryptedPct:     encPct,
+		RangeBytesSaved:  formatBytes(parseExpvarInt(d.metrics.RangeBytesSavedTotal.String())),
+		KeyWrapOps:       d.metrics.KeyWrapOpsTotal.String(),
+		KeyUnwrapOps:     d.metrics.KeyUnwrapOpsTotal.String(),
 	}
 }
 
@@ -409,23 +454,31 @@ func (d *Dashboard) MetricsHandlerWithAuth() http.HandlerFunc {
 func (d *Dashboard) metricsHandlerImpl() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		m := d.metrics
+		cacheHits := parseExpvarInt(m.CacheHitsTotal.String())
+		cacheMisses := parseExpvarInt(m.CacheMissesTotal.String())
+		var cacheHitRatePct float64
+		if cacheHits+cacheMisses > 0 {
+			cacheHitRatePct = float64(cacheHits) / float64(cacheHits+cacheMisses) * 100
+		}
 		data := map[string]interface{}{
-			"requests_total":         parseExpvarInt(m.RequestsTotal.String()),
-			"requests_in_flight":     parseExpvarInt(m.RequestsInFlight.String()),
-			"bytes_uploaded":         parseExpvarInt(m.BytesUploaded.String()),
-			"bytes_downloaded":       parseExpvarInt(m.BytesDownloaded.String()),
-			"bytes_fetched_from_b2":  parseExpvarInt(m.BytesFetchedFromB2.String()),
-			"range_reads_total":      parseExpvarInt(m.RangeReadsTotal.String()),
-			"range_bytes_saved":      parseExpvarInt(m.RangeBytesSavedTotal.String()),
-			"cache_hits":             parseExpvarInt(m.CacheHitsTotal.String()),
-			"cache_misses":           parseExpvarInt(m.CacheMissesTotal.String()),
-			"key_wrap_ops":           parseExpvarInt(m.KeyWrapOpsTotal.String()),
-			"key_unwrap_ops":         parseExpvarInt(m.KeyUnwrapOpsTotal.String()),
-			"canary_checks":          parseExpvarInt(m.CanaryChecksTotal.String()),
-			"canary_failures":        parseExpvarInt(m.CanaryCheckFailures.String()),
-			"active_multipart":       parseExpvarInt(m.ActiveMultipartUploads.String()),
-			"provenance_entries":     parseExpvarInt(m.ProvenanceEntriesTotal.String()),
-			"uptime_seconds":         time.Since(m.StartTime()).Seconds(),
+			"requests_total":        parseExpvarInt(m.RequestsTotal.String()),
+			"requests_in_flight":    parseExpvarInt(m.RequestsInFlight.String()),
+			"bytes_uploaded":        parseExpvarInt(m.BytesUploaded.String()),
+			"bytes_downloaded":      parseExpvarInt(m.BytesDownloaded.String()),
+			"bytes_fetched_from_b2": parseExpvarInt(m.BytesFetchedFromB2.String()),
+			"range_reads_total":     parseExpvarInt(m.RangeReadsTotal.String()),
+			"range_bytes_saved":     parseExpvarInt(m.RangeBytesSavedTotal.String()),
+			"cache_hits":            cacheHits,
+			"cache_misses":          cacheMisses,
+			"cache_hit_rate_pct":    cacheHitRatePct,
+			"key_wrap_ops":          parseExpvarInt(m.KeyWrapOpsTotal.String()),
+			"key_unwrap_ops":        parseExpvarInt(m.KeyUnwrapOpsTotal.String()),
+			"canary_checks":         parseExpvarInt(m.CanaryChecksTotal.String()),
+			"canary_failures":       parseExpvarInt(m.CanaryCheckFailures.String()),
+			"active_multipart":      parseExpvarInt(m.ActiveMultipartUploads.String()),
+			"provenance_entries":    parseExpvarInt(m.ProvenanceEntriesTotal.String()),
+			"uptime_seconds":        time.Since(m.StartTime()).Seconds(),
+			"uptime_formatted":      formatUptime(time.Since(m.StartTime())),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(data)
@@ -486,6 +539,79 @@ func (d *Dashboard) keyRotateHandlerImpl(adminClient *http.Client, adminURL stri
 		}
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
+	}
+}
+
+// EncryptionStatsResponse holds encryption statistics for a bucket listing.
+type EncryptionStatsResponse struct {
+	EncryptedCount  int            `json:"encrypted_count"`
+	PlaintextCount  int            `json:"plaintext_count"`
+	TotalCount      int            `json:"total_count"`
+	EncryptedBytes  int64          `json:"encrypted_bytes"`
+	PlaintextBytes  int64          `json:"plaintext_bytes"`
+	KeyIDs          []string       `json:"key_ids"`
+	KeyUsage        map[string]int `json:"key_usage"`
+	CoveragePercent float64        `json:"coverage_percent"`
+}
+
+// EncryptionStatsHandler returns encryption statistics for the bucket.
+func (d *Dashboard) EncryptionStatsHandler() http.HandlerFunc {
+	return d.encryptionStatsHandlerImpl()
+}
+
+// EncryptionStatsHandlerWithAuth returns the encryption stats handler with authentication.
+func (d *Dashboard) EncryptionStatsHandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(d.encryptionStatsHandlerImpl())
+}
+
+func (d *Dashboard) encryptionStatsHandlerImpl() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		prefix := r.URL.Query().Get("prefix")
+
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		// Use no delimiter to list all objects (not just top-level) for accurate stats
+		result, err := d.backend.List(ctx, d.bucket, prefix, "", "", 1000)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to list objects: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		stats := EncryptionStatsResponse{
+			KeyUsage: make(map[string]int),
+		}
+
+		for _, obj := range result.Objects {
+			if strings.HasSuffix(obj.Key, "/") {
+				continue
+			}
+			stats.TotalCount++
+			if obj.IsARMOREncrypted {
+				stats.EncryptedCount++
+				stats.EncryptedBytes += obj.Size
+				keyID := "default"
+				if armorMeta, ok := backend.ParseARMORMetadata(obj.Metadata); ok && armorMeta.KeyID != "" {
+					keyID = armorMeta.KeyID
+				}
+				stats.KeyUsage[keyID]++
+			} else {
+				stats.PlaintextCount++
+				stats.PlaintextBytes += obj.Size
+			}
+		}
+
+		for k := range stats.KeyUsage {
+			stats.KeyIDs = append(stats.KeyIDs, k)
+		}
+		sort.Strings(stats.KeyIDs)
+
+		if stats.TotalCount > 0 {
+			stats.CoveragePercent = float64(stats.EncryptedCount) / float64(stats.TotalCount) * 100
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(stats)
 	}
 }
 
@@ -712,6 +838,65 @@ const dashboardHTML = `<!DOCTYPE html>
         .status-success { background: #d1fae5; color: #065f46; }
         .status-error { background: #fee2e2; color: #991b1b; }
         .status-info { background: #dbeafe; color: #1e40af; }
+        .encryption-panel {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
+        }
+        .encryption-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .encryption-panel-title {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: #666;
+        }
+        .coverage-pct-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #10b981;
+        }
+        .coverage-bar-track {
+            width: 100%;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+        .coverage-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #059669);
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+        .coverage-legend {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+            font-size: 13px;
+        }
+        .legend-encrypted { color: #10b981; font-weight: 500; }
+        .legend-plain { color: #9ca3af; }
+        .legend-keys { color: #555; }
+        .key-tag {
+            display: inline-block;
+            background: #eff6ff;
+            color: #1d4ed8;
+            border: 1px solid #bfdbfe;
+            padding: 1px 7px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            margin-left: 4px;
+        }
     </style>
 </head>
 <body>
@@ -727,33 +912,62 @@ const dashboardHTML = `<!DOCTYPE html>
         <div class="stats-grid">
             <div class="stat-card">
                 <h3>Cache Hit Rate</h3>
-                <div class="value">{{.CacheHitRate}}</div>
+                <div class="value" id="stat-cache-rate">{{.CacheHitRate}}</div>
             </div>
             <div class="stat-card">
                 <h3>Cache Hits / Misses</h3>
-                <div class="value">{{.CacheHits}} / {{.CacheMisses}}</div>
+                <div class="value" id="stat-cache-hits">{{.CacheHits}} / {{.CacheMisses}}</div>
             </div>
             <div class="stat-card">
                 <h3>Total Requests</h3>
-                <div class="value">{{.Requests}}</div>
+                <div class="value" id="stat-requests">{{.Requests}}</div>
             </div>
             <div class="stat-card">
                 <h3>Bytes Uploaded</h3>
-                <div class="value">{{.BytesUp}}</div>
+                <div class="value" id="stat-bytes-up">{{.BytesUp}}</div>
             </div>
             <div class="stat-card">
                 <h3>Bytes Downloaded</h3>
-                <div class="value">{{.BytesDown}}</div>
+                <div class="value" id="stat-bytes-down">{{.BytesDown}}</div>
             </div>
             <div class="stat-card">
                 <h3>Uptime</h3>
-                <div class="value">{{.Uptime}}</div>
+                <div class="value" id="stat-uptime">{{.Uptime}}</div>
             </div>
-            <div class="stat-card {{.CanaryCardClass}}">
+            <div class="stat-card {{.CanaryCardClass}}" id="stat-canary-card">
                 <h3>Canary Status</h3>
-                <div class="value">{{.CanaryStatus}}</div>
+                <div class="value" id="stat-canary">{{.CanaryStatus}}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Encrypted Objects</h3>
+                <div class="value" id="stat-encrypted">{{.EncryptedCount}} / {{.TotalObjectCount}}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Range Bytes Saved</h3>
+                <div class="value" id="stat-range-saved">{{.RangeBytesSaved}}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Key Ops (W/U)</h3>
+                <div class="value" id="stat-key-ops">{{.KeyWrapOps}} / {{.KeyUnwrapOps}}</div>
             </div>
         </div>
+
+        {{if gt .TotalObjectCount 0}}
+        <div class="encryption-panel">
+            <div class="encryption-panel-header">
+                <span class="encryption-panel-title">Encryption Coverage</span>
+                <span class="coverage-pct-label">{{.EncryptedPct}}%</span>
+            </div>
+            <div class="coverage-bar-track">
+                <div class="coverage-bar-fill" style="width:{{.EncryptedPct}}%"></div>
+            </div>
+            <div class="coverage-legend">
+                <span class="legend-encrypted">{{.EncryptedCount}} encrypted</span>
+                <span class="legend-plain">{{.PlaintextCount}} plaintext</span>
+                {{if .KeyIDs}}<span class="legend-keys">Keys: {{range .KeyIDs}}<span class="key-tag">{{.}}</span>{{end}}</span>{{end}}
+            </div>
+        </div>
+        {{end}}
 
         <div class="breadcrumbs">
             {{range $i, $crumb := .Breadcrumbs}}{{if $i}}<span>›</span>{{end}}<a href="?prefix={{$crumb.Path}}">{{$crumb.Name}}</a>{{end}}
@@ -962,6 +1176,41 @@ const dashboardHTML = `<!DOCTYPE html>
             rotationInterval = null;
         }
     }
+
+    function fmtBytes(n) {
+        n = parseInt(n, 10) || 0;
+        if (n < 1024) return n + ' B';
+        if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+        if (n < 1073741824) return (n/1048576).toFixed(1) + ' MB';
+        return (n/1073741824).toFixed(1) + ' GB';
+    }
+
+    function setText(id, val) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = val;
+    }
+
+    function refreshMetrics() {
+        fetch('/dashboard/metrics')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var hits = parseInt(data.cache_hits) || 0;
+                var misses = parseInt(data.cache_misses) || 0;
+                var total = hits + misses;
+                setText('stat-cache-rate', total > 0 ? (hits/total*100).toFixed(1)+'%' : '0%');
+                setText('stat-cache-hits', hits + ' / ' + misses);
+                setText('stat-requests', data.requests_total || 0);
+                setText('stat-bytes-up', fmtBytes(data.bytes_uploaded || 0));
+                setText('stat-bytes-down', fmtBytes(data.bytes_downloaded || 0));
+                if (data.uptime_formatted) setText('stat-uptime', data.uptime_formatted);
+                setText('stat-range-saved', fmtBytes(data.range_bytes_saved || 0));
+                setText('stat-key-ops', (data.key_wrap_ops || 0) + ' / ' + (data.key_unwrap_ops || 0));
+            })
+            .catch(function(err) { console.warn('Metrics refresh failed:', err); });
+    }
+
+    // Auto-refresh metrics stats every 30 seconds without a full page reload
+    setInterval(refreshMetrics, 30000);
     </script>
 </body>
 </html>

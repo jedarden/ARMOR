@@ -2,7 +2,9 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -850,6 +852,301 @@ func TestObjectDetailHandlerWithAuth(t *testing.T) {
 	d.ObjectDetailHandlerWithAuth()(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("Expected status 200 with valid token, got %d", rec.Code)
+	}
+}
+
+// TestEncryptionStatsHandler verifies the /dashboard/encryption-stats endpoint.
+func TestEncryptionStatsHandler(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["enc1.bin"] = &backend.ObjectInfo{
+		Key:              "enc1.bin",
+		Size:             500,
+		IsARMOREncrypted: true,
+		LastModified:     time.Now(),
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "500",
+			"x-amz-meta-armor-key-id":         "keyA",
+		},
+	}
+	mb.objects["enc2.bin"] = &backend.ObjectInfo{
+		Key:              "enc2.bin",
+		Size:             300,
+		IsARMOREncrypted: true,
+		LastModified:     time.Now(),
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "300",
+			"x-amz-meta-armor-key-id":         "keyB",
+		},
+	}
+	mb.objects["plain.txt"] = &backend.ObjectInfo{
+		Key:          "plain.txt",
+		Size:         100,
+		LastModified: time.Now(),
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/encryption-stats", nil)
+	rec := httptest.NewRecorder()
+
+	d.EncryptionStatsHandler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	var stats EncryptionStatsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if stats.EncryptedCount != 2 {
+		t.Errorf("Expected 2 encrypted objects, got %d", stats.EncryptedCount)
+	}
+	if stats.PlaintextCount != 1 {
+		t.Errorf("Expected 1 plaintext object, got %d", stats.PlaintextCount)
+	}
+	if stats.TotalCount != 3 {
+		t.Errorf("Expected 3 total objects, got %d", stats.TotalCount)
+	}
+	if len(stats.KeyIDs) != 2 {
+		t.Errorf("Expected 2 key IDs, got %d: %v", len(stats.KeyIDs), stats.KeyIDs)
+	}
+	if stats.CoveragePercent < 66 || stats.CoveragePercent > 67 {
+		t.Errorf("Expected ~66.7%% coverage, got %.2f%%", stats.CoveragePercent)
+	}
+	if stats.KeyUsage["keyA"] != 1 || stats.KeyUsage["keyB"] != 1 {
+		t.Errorf("Expected keyA=1 and keyB=1, got %v", stats.KeyUsage)
+	}
+}
+
+// TestEncryptionStatsHandlerFolderExclusion verifies folders are excluded from counts.
+func TestEncryptionStatsHandlerFolderExclusion(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["folder/"] = &backend.ObjectInfo{
+		Key:          "folder/",
+		Size:         0,
+		LastModified: time.Now(),
+	}
+	mb.objects["folder/file.txt"] = &backend.ObjectInfo{
+		Key:              "folder/file.txt",
+		Size:             200,
+		IsARMOREncrypted: true,
+		LastModified:     time.Now(),
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "200",
+		},
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/encryption-stats", nil)
+	rec := httptest.NewRecorder()
+	d.EncryptionStatsHandler()(rec, req)
+
+	var stats EncryptionStatsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+	// folder/ should not be counted
+	if stats.TotalCount != 1 {
+		t.Errorf("Expected 1 non-folder object, got %d", stats.TotalCount)
+	}
+	if stats.EncryptedCount != 1 {
+		t.Errorf("Expected 1 encrypted object, got %d", stats.EncryptedCount)
+	}
+}
+
+// TestEncryptionStatsHandlerAuth verifies the authenticated wrapper works.
+func TestEncryptionStatsHandlerAuth(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123")
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/encryption-stats", nil)
+	rec := httptest.NewRecorder()
+	d.EncryptionStatsHandlerWithAuth()(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 without auth, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/dashboard/encryption-stats", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec = httptest.NewRecorder()
+	d.EncryptionStatsHandlerWithAuth()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected 200 with valid token, got %d", rec.Code)
+	}
+}
+
+// TestEncryptionCoveragePanelInDashboard verifies the coverage panel renders for mixed buckets.
+func TestEncryptionCoveragePanelInDashboard(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["encrypted.bin"] = &backend.ObjectInfo{
+		Key:              "encrypted.bin",
+		Size:             500,
+		IsARMOREncrypted: true,
+		LastModified:     time.Now(),
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "500",
+			"x-amz-meta-armor-key-id":         "mykey",
+		},
+	}
+	mb.objects["plain.txt"] = &backend.ObjectInfo{
+		Key:          "plain.txt",
+		Size:         100,
+		LastModified: time.Now(),
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "Encryption Coverage") {
+		t.Error("Expected 'Encryption Coverage' panel in response")
+	}
+	if !strings.Contains(body, "mykey") {
+		t.Error("Expected key ID 'mykey' in encryption coverage panel")
+	}
+	if !strings.Contains(body, "key-tag") {
+		t.Error("Expected key-tag CSS class for key ID display")
+	}
+	if !strings.Contains(body, "50.0%") {
+		t.Error("Expected 50.0% encryption coverage (1/2 objects)")
+	}
+}
+
+// TestEncryptionCoveragePanelHiddenWhenEmpty verifies the panel is hidden for empty buckets.
+func TestEncryptionCoveragePanelHiddenWhenEmpty(t *testing.T) {
+	mb := newMockBackend()
+	// Only common prefixes (virtual folders), no actual objects
+	mb.commonPrefixes = []string{"data/", "logs/"}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+	if strings.Contains(body, "Encryption Coverage") {
+		t.Error("Expected 'Encryption Coverage' panel to be hidden when no objects")
+	}
+}
+
+// TestFullEncryptionCoverage verifies 100% coverage display.
+func TestFullEncryptionCoverage(t *testing.T) {
+	mb := newMockBackend()
+	for i := 0; i < 3; i++ {
+		key := fmt.Sprintf("file%d.bin", i)
+		mb.objects[key] = &backend.ObjectInfo{
+			Key:              key,
+			Size:             100,
+			IsARMOREncrypted: true,
+			LastModified:     time.Now(),
+			Metadata: map[string]string{
+				"x-amz-meta-armor-version":        "1",
+				"x-amz-meta-armor-block-size":     "65536",
+				"x-amz-meta-armor-plaintext-size": "100",
+			},
+		}
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "100.0%") {
+		t.Error("Expected 100.0% encryption coverage for all-encrypted bucket")
+	}
+}
+
+// TestMetricsHandlerComputedFields verifies the new computed fields in the metrics endpoint.
+func TestMetricsHandlerComputedFields(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	m.CacheHitsTotal.Add(80)
+	m.CacheMissesTotal.Add(20)
+	m.RangeBytesSavedTotal.Add(1024 * 1024)
+	m.KeyWrapOpsTotal.Add(5)
+	m.KeyUnwrapOpsTotal.Add(10)
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/metrics", nil)
+	rec := httptest.NewRecorder()
+	d.MetricsHandler()(rec, req)
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&data); err != nil {
+		t.Fatalf("Failed to decode metrics: %v", err)
+	}
+
+	// cache_hit_rate_pct should be 80%
+	ratePct, ok := data["cache_hit_rate_pct"].(float64)
+	if !ok {
+		t.Error("Expected cache_hit_rate_pct field in metrics")
+	} else if ratePct < 79.9 || ratePct > 80.1 {
+		t.Errorf("Expected cache_hit_rate_pct ~80, got %f", ratePct)
+	}
+
+	// uptime_formatted should be present and non-empty
+	uptimeFmt, ok := data["uptime_formatted"].(string)
+	if !ok || uptimeFmt == "" {
+		t.Error("Expected non-empty uptime_formatted field in metrics")
+	}
+
+	// range_bytes_saved should be 1048576
+	rbs, ok := data["range_bytes_saved"].(float64)
+	if !ok || int64(rbs) != 1024*1024 {
+		t.Errorf("Expected range_bytes_saved=1048576, got %v", data["range_bytes_saved"])
+	}
+}
+
+// TestNewStatCardsInHTML verifies the new stat cards appear in the dashboard HTML.
+func TestNewStatCardsInHTML(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+
+	for _, expected := range []string{
+		"Encrypted Objects",
+		"Range Bytes Saved",
+		"Key Ops (W/U)",
+		"stat-cache-rate",
+		"stat-requests",
+		"stat-uptime",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("Expected %q in dashboard HTML", expected)
+		}
 	}
 }
 
