@@ -163,12 +163,14 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		if key != "" {
 			h.GetObject(w, r, bucket, key)
 		} else if bucket != "" {
-			// Check for query parameters
-			if r.URL.Query().Get("list-type") != "" || r.URL.Query().Get("prefix") != "" {
-				h.ListObjectsV2(w, r, bucket)
-			} else {
-				h.HeadBucket(w, r, bucket)
+			// Handle GetBucketLocation (GET ?location on bucket)
+			if r.URL.Query().Has("location") {
+				h.GetBucketLocation(w, r, bucket)
+				return
 			}
+			// All bucket-level GETs are list operations (with or without list-type/prefix).
+			// HeadBucket is only for HTTP HEAD method (handled in MethodHead case).
+			h.ListObjectsV2(w, r, bucket)
 		} else {
 			h.ListBuckets(w, r)
 		}
@@ -1550,6 +1552,36 @@ func (h *Handlers) HeadBucket(w http.ResponseWriter, r *http.Request, bucket str
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// GetBucketLocation handles S3 GetBucketLocation (GET ?location).
+// Returns a static LocationConstraint so MinIO/Forgejo clients can determine the region
+// without requiring region-aware routing.
+func (h *Handlers) GetBucketLocation(w http.ResponseWriter, r *http.Request, bucket string) {
+	ctx := r.Context()
+
+	if err := h.backend.HeadBucket(ctx, bucket); err != nil {
+		h.writeError(w, "NoSuchBucket", fmt.Sprintf("Bucket not found: %v", err), 404)
+		return
+	}
+
+	type locationConstraintResponse struct {
+		XMLName  xml.Name `xml:"LocationConstraint"`
+		XMLNS    string   `xml:"xmlns,attr"`
+		Location string   `xml:",chardata"`
+	}
+
+	resp := locationConstraintResponse{
+		XMLNS:    "http://s3.amazonaws.com/doc/2006-03-01/",
+		Location: "",
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	if _, err := fmt.Fprint(w, xml.Header); err != nil {
+		return
+	}
+	_ = xml.NewEncoder(w).Encode(resp)
 }
 
 // CreateBucket handles S3 CreateBucket.
