@@ -1,8 +1,8 @@
 # ARMOR Implementation Plan
 
-> **Status: Implementation Complete** (as of 2026-03-24)
+> **Status: Implementation Complete** (as of 2026-05-30)
 >
-> All planned features from Phases 1-3 are implemented. The only remaining item is the optional web dashboard.
+> All planned features from Phases 1-3 are implemented, including the web dashboard with bucket browsing, encryption status visualization, cache statistics, and key rotation UI.
 
 ## Overview
 
@@ -721,7 +721,7 @@ ARMOR implements its own S3 XML request/response handling for the ~15 operations
 - [x] Object Lock / retention passthrough
 - [x] Lifecycle rule passthrough
 - [x] Admin API: key management via B2 native API
-- [x] Web dashboard (optional): bucket browser, encryption status, cache stats
+- [x] Web dashboard (bucket browser, encryption status, cache stats) — fully implemented with authentication, key rotation UI, and encryption coverage visualization
 
 ### Phase 4: Manifest-Based Metadata Index
 
