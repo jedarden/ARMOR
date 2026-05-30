@@ -2,6 +2,13 @@
 name = "ARMOR"
 version = "0.1.0"
 edition = "2021"
+authors = ["jedarden <github@jedarden.com>"]
+description = "Actix-web Monitoring and Observation Resource"
+license = "MIT"
+repository = "https://github.com/jedarden/ARMOR"
+readme = "README.md"
+keywords = ["actix-web", "monitoring", "observability"]
+categories = ["web-programming", "development-tools"]
 
 [dependencies]
 actix-web = "4.9"
