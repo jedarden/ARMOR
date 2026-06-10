@@ -124,13 +124,10 @@ func loadWriterShard(
 	var deltaKeys []string
 
 	for _, k := range keys {
-		switch {
-		case k == snapshotKey:
+		if k == snapshotKey {
 			hasSnapshot = true
-		default:
-			if _, ok := DeltaSeqFromKey(prefix, writerID, k); ok {
-				deltaKeys = append(deltaKeys, k)
-			}
+		} else if _, ok := DeltaSeqFromKey(prefix, writerID, k); ok {
+			deltaKeys = append(deltaKeys, k)
 		}
 	}
 
