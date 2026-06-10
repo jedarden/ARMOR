@@ -33,16 +33,6 @@ func (s *compactionStore) get(key string) ([]byte, bool) {
 	return d, ok
 }
 
-func (s *compactionStore) keys() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]string, 0, len(s.objects))
-	for k := range s.objects {
-		out = append(out, k)
-	}
-	return out
-}
-
 func (s *compactionStore) lister() Lister {
 	return func(ctx context.Context, prefix, token string) ([]string, string, error) {
 		s.mu.Lock()
