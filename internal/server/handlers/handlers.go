@@ -199,6 +199,14 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if key != "" {
+			// Handle UploadPart (PUT ?partNumber&uploadId on object) — standard
+			// S3 clients PUT parts; routing this to PutObject silently stored
+			// each part as the whole object and left the B2 multipart upload
+			// empty, so CompleteMultipartUpload always failed with InvalidPart.
+			if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" && r.URL.Query().Get("partNumber") != "" {
+				h.UploadPart(w, r, bucket, key, uploadID)
+				return
+			}
 			// Check for CopyObject (has x-amz-copy-source header)
 			if r.Header.Get("x-amz-copy-source") != "" {
 				h.CopyObject(w, r, bucket, key)
