@@ -56,6 +56,11 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 	s3Client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(cfg.Endpoint)
 		o.UsePathStyle = true // B2 requires path-style URLs
+		// SDK >= s3/v1.73 sends CRC32 request checksums by default; B2 then
+		// records checksum-typed multipart parts and rejects a
+		// CompleteMultipartUpload that supplies only ETags with InvalidPart.
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
 
 	return &B2Backend{
