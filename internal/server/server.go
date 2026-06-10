@@ -471,7 +471,7 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		if lastFlush.IsZero() {
 			w.Write([]byte("Not ready - manifest writer has never flushed"))
 		} else {
-			w.Write([]byte(fmt.Sprintf("Not ready - manifest writer last flush %v ago (threshold %v)", time.Since(lastFlush).Round(time.Second), flushThreshold)))
+			fmt.Fprintf(w, "Not ready - manifest writer last flush %v ago (threshold %v)", time.Since(lastFlush).Round(time.Second), flushThreshold)
 		}
 		return
 	}
