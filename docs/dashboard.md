@@ -213,6 +213,52 @@ Returns:
 | `/dashboard?prefix=data/` | GET | Browse with prefix filter |
 | `/dashboard/object?key=path/to/file` | GET | Object details (JSON) |
 | `/dashboard/metrics` | GET | All metrics (JSON) |
+| `/dashboard/api/list?prefix=data/` | GET | List objects (JSON) |
+| `/dashboard/encryption-stats` | GET | Encryption statistics (JSON) |
+
+### JSON List Endpoint
+
+The `/dashboard/api/list` endpoint returns a JSON response with objects and common prefixes (virtual folders), enabling programmatic bucket browsing.
+
+**Request:**
+```bash
+curl http://localhost:9001/dashboard/api/list?prefix=data/
+```
+
+**Response:**
+```json
+{
+  "prefix": "data/",
+  "objects": [
+    {
+      "key": "data/file1.txt",
+      "size": 1024,
+      "last_modified": "2026-06-11T12:00:00Z",
+      "encrypted": true,
+      "key_id": "default"
+    },
+    {
+      "key": "data/file2.txt",
+      "size": 2048,
+      "last_modified": "2026-06-11T11:30:00Z",
+      "encrypted": false
+    }
+  ],
+  "common_prefixes": ["data/logs/", "data/reports/"]
+}
+```
+
+**Fields:**
+- `prefix`: The requested prefix filter
+- `objects`: Array of objects with encryption status
+  - `key`: Object key (full path)
+  - `size`: Object size in bytes (plaintext size for encrypted objects)
+  - `last_modified`: ISO 8601 timestamp
+  - `encrypted`: Boolean indicating ARMOR encryption
+  - `key_id`: The key ID used for encryption (omitted for plain objects)
+- `common_prefixes`: Array of virtual folder prefixes (delimiter-based)
+
+**Authentication:** This endpoint requires the same authentication as other dashboard routes (Basic Auth or Bearer token when configured).
 
 ## Performance Considerations
 

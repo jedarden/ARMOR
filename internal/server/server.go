@@ -409,6 +409,7 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/object", s.dashboard.ObjectDetailHandlerWithAuth())
 		mux.HandleFunc("/dashboard/metrics", s.dashboard.MetricsHandlerWithAuth())
 		mux.HandleFunc("/dashboard/encryption-stats", s.dashboard.EncryptionStatsHandlerWithAuth())
+		mux.HandleFunc("/dashboard/api/list", s.dashboard.ListAPIHandlerWithAuth())
 
 		// Key rotation proxy handler (authenticated)
 		adminClient := &http.Client{
