@@ -615,6 +615,80 @@ func (d *Dashboard) encryptionStatsHandlerImpl() http.HandlerFunc {
 	}
 }
 
+// ListObject represents an object in the JSON list response.
+type ListObject struct {
+	Key          string    `json:"key"`
+	Size         int64     `json:"size"`
+	LastModified string    `json:"last_modified"`
+	Encrypted    bool      `json:"encrypted"`
+	KeyID        string    `json:"key_id,omitempty"`
+}
+
+// ListAPIResponse holds the JSON response for the list endpoint.
+type ListAPIResponse struct {
+	Prefix         string       `json:"prefix"`
+	Objects        []ListObject `json:"objects"`
+	CommonPrefixes []string     `json:"common_prefixes"`
+}
+
+// ListAPIHandler returns the JSON list handler.
+func (d *Dashboard) ListAPIHandler() http.HandlerFunc {
+	return d.listAPIHandlerImpl()
+}
+
+// ListAPIHandlerWithAuth returns the JSON list handler with authentication.
+func (d *Dashboard) ListAPIHandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(d.listAPIHandlerImpl())
+}
+
+// listAPIHandlerImpl is the actual implementation of the JSON list handler.
+func (d *Dashboard) listAPIHandlerImpl() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		prefix := r.URL.Query().Get("prefix")
+
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		result, err := d.backend.List(ctx, d.bucket, prefix, "/", "", 1000)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to list objects: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		response := ListAPIResponse{
+			Prefix:         prefix,
+			Objects:        make([]ListObject, 0, len(result.Objects)),
+			CommonPrefixes: result.CommonPrefixes,
+		}
+
+		for _, obj := range result.Objects {
+			listObj := ListObject{
+				Key:          obj.Key,
+				Size:         obj.Size,
+				LastModified: obj.LastModified.Format(time.RFC3339),
+				Encrypted:    obj.IsARMOREncrypted,
+			}
+			if obj.IsARMOREncrypted {
+				if armorMeta, ok := backend.ParseARMORMetadata(obj.Metadata); ok {
+					listObj.KeyID = armorMeta.KeyID
+					if listObj.KeyID == "" {
+						listObj.KeyID = "default"
+					}
+				}
+			}
+			response.Objects = append(response.Objects, listObj)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
 // Helper functions
 
 func parseExpvarInt(s string) int64 {
