@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1350,5 +1351,321 @@ func TestDashboardHTMLStructure(t *testing.T) {
 		if !strings.Contains(body, elem) {
 			t.Errorf("Expected HTML to contain %q", elem)
 		}
+	}
+}
+
+// TestListAPIHandlerRoot tests the JSON list endpoint at root.
+func TestListAPIHandlerRoot(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["file1.txt"] = &backend.ObjectInfo{
+		Key:              "file1.txt",
+		Size:             100,
+		ContentType:      "text/plain",
+		LastModified:     time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC),
+		IsARMOREncrypted: true,
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "100",
+			"x-amz-meta-armor-key-id":         "default",
+		},
+	}
+	mb.objects["plain.txt"] = &backend.ObjectInfo{
+		Key:          "plain.txt",
+		Size:         200,
+		ContentType:  "text/plain",
+		LastModified: time.Date(2026, 6, 11, 11, 0, 0, 0, time.UTC),
+	}
+	mb.commonPrefixes = []string{"folder/"}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
+	rec := httptest.NewRecorder()
+
+	d.ListAPIHandler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	// Check content type is JSON
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Expected Content-Type application/json, got %q", ct)
+	}
+
+	// Parse response
+	var resp ListAPIResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode JSON: %v", err)
+	}
+
+	// Verify prefix
+	if resp.Prefix != "" {
+		t.Errorf("Expected empty prefix, got %q", resp.Prefix)
+	}
+
+	// Verify objects
+	if len(resp.Objects) != 2 {
+		t.Errorf("Expected 2 objects, got %d", len(resp.Objects))
+	}
+
+	// Check encrypted object
+	var encryptedObj *ListObject
+	for _, obj := range resp.Objects {
+		if obj.Key == "file1.txt" {
+			encryptedObj = &obj
+			break
+		}
+	}
+	if encryptedObj == nil {
+		t.Fatal("Expected to find file1.txt")
+	}
+	if !encryptedObj.Encrypted {
+		t.Error("Expected file1.txt to be encrypted")
+	}
+	if encryptedObj.KeyID != "default" {
+		t.Errorf("Expected key_id 'default', got %q", encryptedObj.KeyID)
+	}
+
+	// Check plain object
+	var plainObj *ListObject
+	for _, obj := range resp.Objects {
+		if obj.Key == "plain.txt" {
+			plainObj = &obj
+			break
+		}
+	}
+	if plainObj == nil {
+		t.Fatal("Expected to find plain.txt")
+	}
+	if plainObj.Encrypted {
+		t.Error("Expected plain.txt to not be encrypted")
+	}
+
+	// Check common prefixes
+	if len(resp.CommonPrefixes) != 1 {
+		t.Errorf("Expected 1 common prefix, got %d", len(resp.CommonPrefixes))
+	}
+	if len(resp.CommonPrefixes) > 0 && resp.CommonPrefixes[0] != "folder/" {
+		t.Errorf("Expected common prefix 'folder/', got %q", resp.CommonPrefixes[0])
+	}
+}
+
+// TestListAPIHandlerWithPrefix tests the JSON list endpoint with a prefix.
+func TestListAPIHandlerWithPrefix(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["data/file1.txt"] = &backend.ObjectInfo{
+		Key:          "data/file1.txt",
+		Size:         100,
+		LastModified: time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC),
+	}
+	mb.objects["data/file2.txt"] = &backend.ObjectInfo{
+		Key:          "data/file2.txt",
+		Size:         200,
+		LastModified: time.Date(2026, 6, 11, 11, 0, 0, 0, time.UTC),
+	}
+	mb.objects["other/file.txt"] = &backend.ObjectInfo{
+		Key:          "other/file.txt",
+		Size:         50,
+		LastModified: time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC),
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/api/list?prefix=data/", nil)
+	rec := httptest.NewRecorder()
+
+	d.ListAPIHandler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	var resp ListAPIResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode JSON: %v", err)
+	}
+
+	// Verify prefix
+	if resp.Prefix != "data/" {
+		t.Errorf("Expected prefix 'data/', got %q", resp.Prefix)
+	}
+
+	// Should only have objects under data/
+	if len(resp.Objects) != 2 {
+		t.Errorf("Expected 2 objects, got %d", len(resp.Objects))
+	}
+	for _, obj := range resp.Objects {
+		if !strings.HasPrefix(obj.Key, "data/") {
+			t.Errorf("Expected object key to start with 'data/', got %q", obj.Key)
+		}
+	}
+}
+
+// TestListAPIHandlerEncryptedVsPlain tests encrypted vs plain object handling.
+func TestListAPIHandlerEncryptedVsPlain(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["encrypted.bin"] = &backend.ObjectInfo{
+		Key:              "encrypted.bin",
+		Size:             500,
+		LastModified:     time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC),
+		IsARMOREncrypted: true,
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "500",
+			"x-amz-meta-armor-key-id":         "sensitive",
+		},
+	}
+	mb.objects["plain.txt"] = &backend.ObjectInfo{
+		Key:          "plain.txt",
+		Size:         100,
+		LastModified: time.Date(2026, 6, 11, 11, 0, 0, 0, time.UTC),
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
+	rec := httptest.NewRecorder()
+
+	d.ListAPIHandler()(rec, req)
+
+	var resp ListAPIResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode JSON: %v", err)
+	}
+
+	// Find encrypted object
+	var encObj *ListObject
+	for _, obj := range resp.Objects {
+		if obj.Key == "encrypted.bin" {
+			encObj = &obj
+			break
+		}
+	}
+	if encObj == nil {
+		t.Fatal("Expected to find encrypted.bin")
+	}
+	if !encObj.Encrypted {
+		t.Error("Expected encrypted.bin to be marked as encrypted")
+	}
+	if encObj.KeyID != "sensitive" {
+		t.Errorf("Expected key_id 'sensitive', got %q", encObj.KeyID)
+	}
+
+	// Find plain object
+	var plainObj *ListObject
+	for _, obj := range resp.Objects {
+		if obj.Key == "plain.txt" {
+			plainObj = &obj
+			break
+		}
+	}
+	if plainObj == nil {
+		t.Fatal("Expected to find plain.txt")
+	}
+	if plainObj.Encrypted {
+		t.Error("Expected plain.txt to not be marked as encrypted")
+	}
+	if plainObj.KeyID != "" {
+		t.Errorf("Expected empty key_id for plain object, got %q", plainObj.KeyID)
+	}
+}
+
+// TestListAPIHandlerWithAuth tests authentication for the list endpoint.
+func TestListAPIHandlerWithAuth(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["file.txt"] = &backend.ObjectInfo{
+		Key:          "file.txt",
+		Size:         100,
+		LastModified: time.Now(),
+	}
+
+	m := metrics.NewMetrics()
+
+	// Test with Basic Auth
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret123", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
+	rec := httptest.NewRecorder()
+
+	d.ListAPIHandlerWithAuth()(rec, req)
+
+	// Should get 401 without credentials
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 without auth, got %d", rec.Code)
+	}
+
+	// Should succeed with valid credentials
+	req = httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("admin:secret123")))
+	rec = httptest.NewRecorder()
+
+	d.ListAPIHandlerWithAuth()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 with valid auth, got %d", rec.Code)
+	}
+
+	// Test with Bearer token
+	d2 := NewWithAuth(mb, "test-bucket", m, "", "", "my-token")
+
+	req = httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
+	rec = httptest.NewRecorder()
+
+	d2.ListAPIHandlerWithAuth()(rec, req)
+
+	// Should get 401 without token
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 without token, got %d", rec.Code)
+	}
+
+	// Should succeed with valid token
+	req = httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
+	req.Header.Set("Authorization", "Bearer my-token")
+	rec = httptest.NewRecorder()
+
+	d2.ListAPIHandlerWithAuth()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 with valid token, got %d", rec.Code)
+	}
+}
+
+// TestListAPIHandlerMethodNotAllowed tests that non-GET requests are rejected.
+func TestListAPIHandlerMethodNotAllowed(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/api/list", nil)
+	rec := httptest.NewRecorder()
+
+	d.ListAPIHandler()(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status 405, got %d", rec.Code)
+	}
+}
+
+// TestListAPIHandlerListError tests error handling when backend list fails.
+func TestListAPIHandlerListError(t *testing.T) {
+	mb := newMockBackend()
+	mb.listErr = errors.New("backend error")
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
+	rec := httptest.NewRecorder()
+
+	d.ListAPIHandler()(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500, got %d", rec.Code)
 	}
 }
