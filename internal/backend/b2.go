@@ -74,6 +74,25 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 
 // Put stores an object in B2.
 func (b *B2Backend) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	// B2 rejects requests without a Content-Length header. With an unseekable
+	// body the Go transport falls back to Transfer-Encoding: chunked and drops
+	// Content-Length (AWS accepts that, B2 does not), so spool to a temp file
+	// to give the transport a seekable body with a known length.
+	if _, ok := body.(io.ReadSeeker); !ok {
+		tmp, err := os.CreateTemp("", "armor-put-*")
+		if err != nil {
+			return fmt.Errorf("PutObject spool failed: %w", err)
+		}
+		defer os.Remove(tmp.Name())
+		defer tmp.Close()
+		if _, err := io.Copy(tmp, body); err != nil {
+			return fmt.Errorf("PutObject spool failed: %w", err)
+		}
+		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("PutObject spool failed: %w", err)
+		}
+		body = tmp
+	}
 	_, err := b.s3Client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
