@@ -2,7 +2,7 @@
 
 > **Status: Implementation Complete** (as of 2026-05-30)
 >
-> All planned features from Phases 1-3 are implemented, including the web dashboard with bucket browsing, encryption status visualization, cache statistics, and key rotation UI.
+> All planned features from Phases 1-4 are implemented, including the manifest-based metadata index (Phase 4), web dashboard with bucket browsing, encryption status visualization, cache statistics, and key rotation UI.
 
 ## Overview
 
@@ -332,11 +332,9 @@ B2's multipart assembly concatenates parts byte-for-byte — there is no opportu
 
 These B2 S3 API features are out of scope for v1:
 
-- Pre-signed URLs (would expose ciphertext or require a signing proxy)
 - Object tagging (B2 doesn't support it anyway)
 - ACLs beyond bucket-level (B2 limitation)
-- Object Lock / retention (passthrough possible in later version)
-- Lifecycle configuration (passthrough possible in later version)
+- Filename encryption — filenames are stored in plaintext on B2 (v2 feature)
 - Versioning — B2 bucket versioning is **not enabled** in v1. Without versioning, CopyObject during key rotation overwrites in place and old wrapped DEKs do not persist. If versioning is enabled in a future version, key rotation must expire non-current versions after completion.
 
 ### ListObjectsV2 Size Correction
@@ -837,13 +835,13 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 
 #### Implementation tasks
 
-- [ ] `internal/manifest` package: index type, entry type, put/delete ops, JSON serialization (armor-r6q.1)
-- [ ] Startup load: snapshot + delta replay, integrated into server init (armor-r6q.2)
-- [ ] Write path: async delta append goroutine with buffered channel (armor-r6q.3)
-- [ ] Compaction: background goroutine, threshold + timer triggers (armor-r6q.4)
-- [ ] Integration: HeadObject handler checks manifest before B2; ListObjectVersions and key rotation use manifest for batch metadata (armor-r6q.5)
-- [ ] Config env vars wired into Config struct and server init (armor-r6q.6)
-- [ ] Tests: roundtrip load/persist, delta replay, compaction idempotency, HeadObject manifest hit (armor-r6q.7)
+- [x] `internal/manifest` package: index type, entry type, put/delete ops, JSON serialization (armor-r6q.1)
+- [x] Startup load: snapshot + delta replay, integrated into server init (armor-r6q.2)
+- [x] Write path: async delta append goroutine with buffered channel (armor-r6q.3)
+- [x] Compaction: background goroutine, threshold + timer triggers (armor-r6q.4)
+- [x] Integration: HeadObject handler checks manifest before B2; ListObjectVersions and key rotation use manifest for batch metadata (armor-r6q.5)
+- [x] Config env vars wired into Config struct and server init (armor-r6q.6)
+- [x] Tests: roundtrip load/persist, delta replay, compaction idempotency, HeadObject manifest hit (armor-r6q.7)
 
 ---
 
@@ -851,42 +849,57 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 
 ```
 ARMOR/
-├── Dockerfile                   # Multi-stage: Go build + scratch runtime
+├── Dockerfile                      # Multi-stage: Go build + scratch runtime
+├── VERSION                         # Version number (auto-bumped by CI)
 ├── cmd/
-│   └── armor/
-│       └── main.go              # Entrypoint: starts S3 server, reads env vars
+│   ├── armor/
+│   │   └── main.go                # ARMOR server entrypoint
+│   └── armor-decrypt/
+│       └── main.go                # Standalone decrypt tool (disaster recovery)
 ├── internal/
-│   ├── server/
-│   │   ├── server.go            # HTTP server setup, middleware, graceful shutdown
-│   │   ├── router.go            # S3 operation routing
-│   │   ├── auth.go              # SigV4 validation
-│   │   └── handlers/
-│   │       ├── get_object.go    # GetObject + range read logic
-│   │       ├── put_object.go    # PutObject encryption
-│   │       ├── head_object.go   # HeadObject metadata translation
-│   │       ├── delete_object.go
-│   │       ├── list_objects.go  # ListObjectsV2 with size correction
-│   │       ├── multipart.go     # Multipart upload operations
-│   │       ├── copy_object.go   # CopyObject + key rotation
-│   │       └── bucket.go        # Bucket operations (passthrough)
-│   ├── crypto/
-│   │   ├── envelope.go          # Envelope format: header, blocks, HMAC table
-│   │   ├── encryptor.go         # AES-CTR encrypt + HMAC per block
-│   │   ├── decryptor.go         # AES-CTR decrypt + HMAC verify per block
-│   │   ├── range.go             # Plaintext-to-encrypted range translation
-│   │   ├── keys.go              # MEK load/generate, DEK wrap/unwrap (AES-KWP)
-│   │   └── hkdf.go              # DEK → HMAC key derivation
 │   ├── backend/
-│   │   ├── backend.go           # Backend interface (pluggable storage)
-│   │   ├── b2.go                # B2 S3 backend implementation
-│   │   ├── cloudflare.go        # Cloudflare download client (range reads)
-│   │   └── cache.go             # Metadata LRU cache
+│   │   ├── backend.go             # Backend interface (pluggable storage)
+│   │   ├── b2.go                  # B2 S3 backend implementation
+│   │   ├── cache.go               # Metadata LRU cache
+│   │   ├── footer_cache.go        # Parquet footer pinning cache
+│   │   └── multipart.go           # Multipart upload state persistence
+│   ├── b2keys/
+│   │   └── b2keys.go              # B2 native key management (admin API)
 │   ├── canary/
-│   │   └── canary.go            # Self-healing canary integrity monitor
-│   ├── admin/
-│   │   └── admin.go             # Admin API handlers (key rotate, audit, canary)
-│   └── config/
-│       └── config.go            # Env var configuration loading (no file parsing)
+│   │   └── canary.go              # Self-healing canary integrity monitor
+│   ├── config/
+│   │   └── config.go              # Env var configuration loading
+│   ├── crypto/
+│   │   ├── envelope.go            # Envelope format: header, blocks, HMAC table
+│   │   ├── encryptor.go           # AES-CTR encrypt + HMAC per block
+│   │   ├── decryptor.go           # AES-CTR decrypt + HMAC verify per block
+│   │   ├── range.go               # Plaintext-to-encrypted range translation
+│   │   ├── keys.go                # MEK load/generate, DEK wrap/unwrap (AES-KWP)
+│   │   └── hkdf.go                # DEK → HMAC key derivation
+│   ├── dashboard/
+│   │   └── dashboard.go           # Web dashboard (bucket browser, metrics UI)
+│   ├── keymanager/
+│   │   └── keymanager.go          # Multi-key routing (named MEKs per prefix)
+│   ├── logging/
+│   │   └── logging.go             # Structured JSON logging
+│   ├── manifest/
+│   │   ├── manifest.go            # In-memory metadata index
+│   │   ├── loader.go              # Snapshot + delta load from B2
+│   │   ├── writer.go              # Async delta persistence to B2
+│   │   └── compaction.go          # Background compaction goroutine
+│   ├── metrics/
+│   │   └── metrics.go             # Prometheus metrics export
+│   ├── presign/
+│   │   └── presign.go             # Pre-signed URL generation
+│   ├── provenance/
+│   │   └── provenance.go          # Cryptographic audit chain
+│   └── server/
+│       ├── server.go              # HTTP server setup, middleware, graceful shutdown
+│       ├── auth.go                # SigV4 validation
+│       ├── key_rotation.go        # Key rotation orchestration
+│       ├── aws_chunked.go         # AWS chunked encoding support
+│       └── handlers/
+│           └── handlers.go       # S3 operation handlers (all in one file)
 ├── deploy/
 │   └── kubernetes/
 │       ├── deployment.yaml
@@ -894,9 +907,16 @@ ARMOR/
 │       └── secret.yaml
 ├── docs/
 │   ├── plan/
-│   │   └── plan.md              # This file
-│   └── research/
-│       └── ...                  # Research documents
+│   │   └── plan.md                # This file
+│   ├── dashboard.md               # Web dashboard documentation
+│   ├── cloudflare-setup.md        # DNS configuration for zero-egress downloads
+│   ├── disaster-recovery.md      # MEK backup/escrow, restore drills
+│   └── research/                 # Research documents
+├── scripts/
+│   └── verify-cloudflare-setup.sh # Cloudflare CDN verification script
+├── tests/
+│   ├── integration/               # Integration tests (real B2 + Cloudflare)
+│   └── aws-cli-compatibility/    # AWS CLI compatibility test suite
 ├── go.mod
 ├── go.sum
 └── README.md
