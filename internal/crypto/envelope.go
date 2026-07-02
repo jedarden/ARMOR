@@ -76,7 +76,10 @@ func (h *EnvelopeHeader) Encode() ([]byte, error) {
 	offset += 8
 
 	copy(buf[offset:], h.PlaintextSHA[:])
-	// offset += 32 would be 62, plus 2 reserved = 64
+	offset += 32
+
+	// Copy Reserved field (2 bytes)
+	copy(buf[offset:], h.Reserved[:])
 
 	return buf, nil
 }
@@ -114,6 +117,10 @@ func DecodeHeader(data []byte) (*EnvelopeHeader, error) {
 	offset += 8
 
 	copy(h.PlaintextSHA[:], data[offset:offset+32])
+	offset += 32
+
+	// Copy Reserved field (2 bytes)
+	copy(h.Reserved[:], data[offset:offset+2])
 
 	return h, nil
 }
