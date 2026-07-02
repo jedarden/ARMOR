@@ -269,6 +269,99 @@ ARMOR/
 - [Cloudflare Setup](docs/cloudflare-setup.md) — DNS configuration for zero-egress B2 downloads
 - [Integration Tests](tests/integration/README.md) — Testing against real B2 + Cloudflare
 
+## Disaster Recovery / Offline Decryption
+
+ARMOR includes a standalone CLI tool `armor-decrypt` for recovering encrypted objects without a running ARMOR server. This enables disaster recovery scenarios where you have:
+
+- The Master Encryption Key (MEK)
+- Access to B2 (or a local copy of an encrypted object)
+
+### Building the Decrypt Tool
+
+```bash
+go build -o armor-decrypt ./cmd/armor-decrypt
+```
+
+### Usage
+
+#### Decrypt from B2
+
+```bash
+# Decrypt directly from B2 (requires B2 credentials)
+armor-decrypt \
+  -mek 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  -input b2://my-bucket/path/to/file.encrypted \
+  -output recovered-file.txt
+
+# Using MEK from environment
+export ARMOR_MEK=0123456789abcdef...
+armor-decrypt -input b2://my-bucket/file -output recovered.txt
+
+# With verbose output
+armor-decrypt -mek HEX -input b2://bucket/file -v - output recovered.txt
+```
+
+#### Decrypt from Local File
+
+For local files, you need the wrapped DEK (from `x-amz-meta-armor-wrapped-dek` metadata):
+
+```bash
+armor-decrypt \
+  -mek 0123456789abcdef... \
+  -input /path/to/encrypted.bin \
+  -wrapped-dek WWF...base64... \
+  -output plaintext.bin
+```
+
+### Key Requirements
+
+- **MEK (Master Encryption Key)**: 32-byte hex string
+- **For B2**: `ARMOR_B2_REGION`, `ARMOR_B2_ENDPOINT`, `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`
+- **For local files**: Wrapped DEK (base64, from object metadata)
+
+### Multi-Key Support
+
+If your ARMOR deployment uses named keys (via `ARMOR_KEY_ROUTES`), specify the key ID:
+
+```bash
+armor-decrypt \
+  -mek <hex-for-specific-key> \
+  -input b2://bucket/file \
+  -key-id sensitive \
+  -output recovered.txt
+```
+
+The key ID comes from the `x-amz-meta-armor-key-id` metadata header.
+
+### Verification
+
+The decrypt tool automatically:
+
+- Verifies per-block HMAC-SHA256 integrity
+- Validates the plaintext SHA-256 checksum
+- Detects corrupted blocks or wrong MEK
+
+Exit codes:
+- `0`: Success
+- `1`: Decryption failed (wrong MEK, corrupted data, HMAC mismatch)
+
+### Example Workflow
+
+```bash
+# 1. List objects to find the target
+aws s3 ls --endpoint-url http://localhost:9000 s3://bucket/
+
+# 2. Get metadata to see key requirements
+aws s3api head-object --endpoint-url http://localhost:9000 \
+  --bucket bucket --key file
+
+# 3. Decrypt with the correct MEK
+armor-decrypt -mek $ARMOR_MEK -input b2://bucket/file -output recovered
+
+# 4. Verify the recovered file
+sha256sum recovered  # Should match x-amz-meta-armor-plaintext-sha256
+```
+
 ## License
 
 MIT
