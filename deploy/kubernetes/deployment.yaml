@@ -16,8 +16,7 @@ spec:
     spec:
       containers:
       - name: armor
-        image: ghcr.io/jedarden/armor:latest
-        imagePullPolicy: Always
+        image: ronaldraygun/armor:0.1.43
         ports:
         - name: s3-api
           containerPort: 9000
