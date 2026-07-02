@@ -1,70 +1,7 @@
-# bf-68dl: Test Gate Verification
+# Test Gate Verification - bf-68dl
 
-## Task
-Gate image publish on unit tests: run go vet + go test in Dockerfile build stage
-
-## Implementation Status
-**ALREADY IMPLEMENTED** in commit `4e14dec` (local) / `7a8d89d` (remote)
-
-## Verification Performed
-
-### 1. Test Gate Fails on Broken Tests ✅
-**First verification (previous):** Temporarily broke `internal/crypto/crypto_test.go` with:
-```go
-t.Fatalf("TEST BREAK: verifying docker build gate fails")
-```
-
-**Second verification (2026-07-02):** Temporarily broke `internal/b2keys/b2keys_test.go` by modifying `TestKeyNotFoundError`:
-```go
-if err.Error() != "WRONG ERROR MESSAGE" {
-    t.Errorf("Error message mismatch: got %q, want %q", err.Error(), "WRONG ERROR MESSAGE")
-}
-```
-
-Build result (both verifications):
-```
-ERROR: process "/bin/sh -c CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short" did not complete successfully: exit code: 1
-```
-
-The build correctly failed at the test gate stage, preventing image creation with failing tests.
-
-### 2. Integration Tests Are Properly Guarded ✅
-Verified integration tests have `//go:build integration` tags:
-```bash
-find tests/integration -name "*.go" | head -3 | xargs head
-# All show: //go:build integration
-```
-
-Integration tests are automatically skipped by the test gate without `-tags=integration`.
-
-### 3. Build Succeeds on Clean HEAD ✅
-After reverting the test break, build succeeded:
-```
-#16 naming to docker.io/ronaldraygun/armor:verify-fix done
-```
-
-No B2 or Cloudflare credentials are required in the build context.
-
-### 4. Build Time Impact ✅
-**First verification:** Test gate execution time: **~28 seconds**
-```
-real	0m28.663s
-```
-
-**Second verification (2026-07-02):** Test gate execution time: **~13.7 seconds** (total build: ~18 seconds)
-```
-#12 [builder 7/8] RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short
-#12 13.28 ok  	github.com/jedarden/armor/internal/server	0.130s
-#12 13.58 ok  	github.com/jedarden/armor/internal/server/handlers	0.555s
-#12 DONE 13.7s
-
-real	0m17.998s
-```
-
-Both measurements are well under the 2-minute threshold.
-
-## Dockerfile Implementation
-Lines 16-19 of Dockerfile:
+## Implementation
+The test gate was implemented in commit `7a8d89d`:
 ```dockerfile
 # Test gate: run go vet and unit tests before building
 # Integration tests (tests/integration/) require build tags and credentials,
@@ -72,11 +9,59 @@ Lines 16-19 of Dockerfile:
 RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short
 ```
 
-## Acceptance Criteria
-- ✅ docker build fails when a unit test fails
-- ✅ docker build succeeds on clean HEAD with no B2/Cloudflare credentials
-- ✅ Build time increase is acceptable (<~2 min extra)
-- ✅ Gate is documented in Dockerfile comment
+## Acceptance Criteria Verification
 
-## Conclusion
-All acceptance criteria met. The test gate was already implemented and is functioning correctly.
+### 1. Build fails when a unit test fails
+**Status:** ✅ VERIFIED
+
+**Method:** Temporarily broke `TestManifestPrefix` in `internal/config/config_test.go` by changing the expected value to `"this-will-fail"`. Ran `docker build` which failed at the test gate step with exit code 1.
+
+**Output:**
+```
+ERROR: process "/bin/sh -c CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short" did not complete successfully: exit code: 1
+```
+
+### 2. Build succeeds on clean HEAD with no credentials
+**Status:** ✅ VERIFIED
+
+**Method:** Ran `docker build -t armor-test-gate .` with no B2/Cloudflare credentials available. All unit tests passed.
+
+**Output:**
+```
+#12 [builder 7/8] RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short
+#12 10.51 ?   	github.com/jedarden/armor/cmd/armor	[no test files]
+#12 10.52 ok  	github.com/jedarden/armor/cmd/armor-decrypt	0.006s
+#12 10.52 ok  	github.com/jedarden/armor/internal/b2keys	0.005s
+#12 10.52 ok  	github.com/jedarden/armor/internal/backend	0.006s
+#12 10.77 ok  	github.com/jedarden/armor/internal/canary	0.256s
+#12 10.77 ok  	github.com/jedarden/armor/internal/config	0.003s
+#12 10.77 ok  	github.com/jedarden/armor/internal/crypto	0.165s
+#12 10.77 ok  	github.com/jedarden/armor/internal/dashboard	0.016s
+#12 10.77 ok  	github.com/jedarden/armor/internal/keymanager	0.004s
+#12 10.77 ok  	github.com/jedarden/armor/internal/logging	0.003s
+#12 10.77 ok  	github.com/jedarden/armor/internal/manifest	0.091s
+#12 10.77 ok  	github.com/jedarden/armor/internal/metrics	0.053s
+#12 10.77 ok  	github.com/jedarden/armor/internal/presign	0.006s
+#12 10.77 ok  	github.com/jedarden/armor/internal/provenance	0.004s
+#12 10.77 ok  	github.com/jedarden/armor/internal/server	0.128s
+#12 10.99 ok  	github.com/jedarden/armor/internal/server/handlers	0.476s
+#12 DONE 11.2s
+```
+
+### 3. Integration tests are properly skipped
+**Status:** ✅ VERIFIED
+
+**Method:** Checked that `tests/integration/` tests require the `integration` build tag (see `tests/integration/README.md:49`). The gate runs `go test ./... -short` without `-tags=integration`, so those tests are never compiled or run. Verified with `CGO_ENABLED=0 go test ./... -short` which returned no integration test output.
+
+### 4. Build time increase is acceptable
+**Status:** ✅ VERIFIED
+
+**Measurement:** Test gate took ~11 seconds on a cached build. Well under the 2-minute threshold.
+
+## Implementation Details
+
+- `go vet ./...` runs static analysis first
+- `go test ./... -short` runs unit tests only (integration tests require build tags)
+- CGO_ENABLED=0 ensures pure Go compilation for Linux target
+- Integration tests in `tests/integration/` are guarded by the `integration` build tag and require environment variables (`ARMOR_INTEGRATION_TEST=1`, B2 credentials, Cloudflare domain). They self-skip when not tagged properly or when credentials are missing.
+- The gate runs after `COPY . .` but before the binary build, ensuring no broken code reaches the image
