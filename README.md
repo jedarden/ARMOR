@@ -205,6 +205,20 @@ ARMOR_AUTH_WRITER_ACL="mybucket:*,otherbucket:uploads/*"
 | Lifecycle configuration | Full |
 | Object Lock / Retention / Legal Hold | Full |
 
+**Reserved Namespace: `.armor/`**
+
+The `.armor/` prefix is reserved for ARMOR internal use. Client operations targeting keys with this prefix return `403 AccessDenied`. This protects:
+
+- `.armor/chain/<writer>/*` — Tamper-evident provenance chain entries
+- `.armor/chain-head/<writer>` — Provenance chain head pointers
+- `.armor/manifest/<writer>/*` — Manifest delta files (IV + wrapped DEK entries)
+- `.armor/hmac/<sha256>` — Multipart upload HMAC sidecars
+- `.armor/rotation-state.json` — In-progress key rotation state
+- `.armor/multipart/*.state` — Crash recovery state for multipart uploads
+- `.armor/canary/*` — Health check canary objects
+
+Internal ARMOR components (provenance recorder, manifest persistence, canary, key rotation, multipart state manager) access these keys directly through the backend layer, bypassing the S3 handler guard.
+
 ## Web Dashboard
 
 A web dashboard for bucket browsing, encryption status, and metrics is available on the admin port (default `127.0.0.1:9001`):
