@@ -506,7 +506,7 @@ spec:
     spec:
       containers:
       - name: armor
-        image: ghcr.io/jedarden/armor:latest
+        image: ronaldraygun/armor:0.1.43
         ports:
         - containerPort: 9000
         env:
