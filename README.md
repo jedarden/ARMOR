@@ -281,6 +281,7 @@ ARMOR/
 
 ## Documentation
 
+- [Disaster Recovery](docs/disaster-recovery.md) — MEK backup/escrow, restore drills, rotation failure recovery
 - [Web Dashboard](docs/dashboard.md) — Bucket browsing, encryption status, cache statistics
 - [Cloudflare Setup](docs/cloudflare-setup.md) — DNS configuration for zero-egress B2 downloads
 - [Integration Tests](tests/integration/README.md) — Testing against real B2 + Cloudflare
