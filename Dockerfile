@@ -13,6 +13,11 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Test gate: run go vet and unit tests before building
+# Integration tests (tests/integration/) require build tags and credentials,
+# and are automatically skipped by this gate.
+RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short
+
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /armor ./cmd/armor
 
