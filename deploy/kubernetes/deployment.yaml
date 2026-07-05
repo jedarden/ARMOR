@@ -45,6 +45,16 @@ spec:
             secretKeyRef:
               name: armor-secrets
               key: bucket
+        # ARMOR_PREFIX for shared bucket namespace isolation (optional)
+        # When set, all keys are prefixed with this value before B2 operations
+        # Example: "kalshi-tape" becomes "kalshi-tape/" internally
+        # Leave empty to use the entire bucket without prefixing
+        - name: ARMOR_PREFIX
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: prefix
+              optional: true
         # Cloudflare domain for free egress downloads
         - name: ARMOR_CF_DOMAIN
           valueFrom:
