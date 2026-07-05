@@ -372,8 +372,9 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		KeyID:         keyID,
 	}).ToMetadata()
 
-	// Upload to B2
-	if err := h.backend.Put(ctx, bucket, key, bytes.NewReader(envelope), int64(len(envelope)), meta); err != nil {
+	// Upload to B2 with prefix applied
+	prefixedKey := h.applyPrefix(key)
+	if err := h.backend.Put(ctx, bucket, prefixedKey, bytes.NewReader(envelope), int64(len(envelope)), meta); err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to upload: %v", err), 500)
 		return
 	}
@@ -549,8 +550,9 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		KeyID:         keyID,
 	}).ToMetadata()
 
-	// Upload to B2 using streaming reader
-	if err := h.backend.Put(ctx, bucket, key, pr, envelopeSize, meta); err != nil {
+	// Upload to B2 with prefix applied using streaming reader
+	prefixedKey := h.applyPrefix(key)
+	if err := h.backend.Put(ctx, bucket, prefixedKey, pr, envelopeSize, meta); err != nil {
 		tmpFile.Close()
 		// Check if there was an encryption error
 		select {
@@ -600,8 +602,11 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
 
+	// Apply prefix for backend operations
+	prefixedKey := h.applyPrefix(key)
+
 	// Get metadata first
-	info, err := h.backend.Head(ctx, bucket, key)
+	info, err := h.backend.Head(ctx, bucket, prefixedKey)
 	if err != nil {
 		h.writeError(w, "NoSuchKey", fmt.Sprintf("Object not found: %v", err), 404)
 		return
@@ -621,7 +626,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		}
 
 		// Passthrough for non-ARMOR objects
-		body, _, err := h.backend.Get(ctx, bucket, key)
+		body, _, err := h.backend.Get(ctx, bucket, prefixedKey)
 		if err != nil {
 			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object: %v", err), 500)
 			return
@@ -698,6 +703,9 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
 	ctx := r.Context()
 
+	// Apply prefix for backend operations
+	prefixedKey := h.applyPrefix(key)
+
 	blockSize := armorMeta.BlockSize
 	blockCount := int(crypto.ComputeBlockCount(plaintextSize, blockSize))
 
@@ -707,7 +715,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 	dataSize := plaintextSize
 
 	// 1. Prefetch HMAC table (small range read)
-	hmacBody, err := h.backend.GetRange(ctx, bucket, key, hmacTableOffset, hmacTableSize)
+	hmacBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, hmacTableOffset, hmacTableSize)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
 		return
@@ -721,7 +729,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 
 	// 2. Start streaming data from Cloudflare (header + encrypted blocks, stop before HMAC)
 	streamSize := crypto.HeaderSize + dataSize
-	dataBody, err := h.backend.GetRange(ctx, bucket, key, 0, streamSize)
+	dataBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
 		return
@@ -845,6 +853,9 @@ func min64(a, b int64) int64 {
 func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
 	ctx := r.Context()
 
+	// Apply prefix for backend operations
+	prefixedKey := h.applyPrefix(key)
+
 	// Parse range header (bytes=start-end)
 	rangeHeader := r.Header.Get("Range")
 	start, end, err := parseRangeHeader(rangeHeader, plaintextSize)
@@ -895,7 +906,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	g, gctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		encryptedBody, err := h.backend.GetRange(gctx, bucket, key, translation.DataOffset, translation.DataLength)
+		encryptedBody, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.DataOffset, translation.DataLength)
 		if err != nil {
 			return fmt.Errorf("failed to fetch encrypted blocks: %w", err)
 		}
@@ -909,7 +920,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	})
 
 	g.Go(func() error {
-		hmacBody, err := h.backend.GetRange(gctx, bucket, key, translation.HMACOffset, translation.HMACLength)
+		hmacBody, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.HMACOffset, translation.HMACLength)
 		if err != nil {
 			return fmt.Errorf("failed to fetch HMAC table: %w", err)
 		}
@@ -1147,7 +1158,8 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	}
 
 	// Manifest miss or disabled: fall back to a B2 HeadObject call.
-	info, err := h.backend.Head(ctx, bucket, key)
+	prefixedKey := h.applyPrefix(key)
+	info, err := h.backend.Head(ctx, bucket, prefixedKey)
 	if err != nil {
 		h.writeError(w, "NoSuchKey", "Object not found", 404)
 		return
@@ -1198,7 +1210,8 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 func (h *Handlers) DeleteObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
 
-	if err := h.backend.Delete(ctx, bucket, key); err != nil {
+	prefixedKey := h.applyPrefix(key)
+	if err := h.backend.Delete(ctx, bucket, prefixedKey); err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to delete: %v", err), 500)
 		return
 	}
@@ -1240,8 +1253,12 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 		return
 	}
 
+	// Apply prefix for backend operations
+	srcPrefixedKey := h.applyPrefix(srcKey)
+	dstPrefixedKey := h.applyPrefix(dstKey)
+
 	// Get source object metadata
-	srcInfo, err := h.backend.Head(ctx, srcBucket, srcKey)
+	srcInfo, err := h.backend.Head(ctx, srcBucket, srcPrefixedKey)
 	if err != nil {
 		h.writeError(w, "NoSuchKey", fmt.Sprintf("Source object not found: %v", err), 404)
 		return
@@ -1370,13 +1387,13 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 		}
 	}
 
-	if err := h.backend.Copy(ctx, srcBucket, srcKey, dstBucket, dstKey, meta, replaceMetadata); err != nil {
+	if err := h.backend.Copy(ctx, srcBucket, srcPrefixedKey, dstBucket, dstPrefixedKey, meta, replaceMetadata); err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
 		return
 	}
 
 	// Get the destination object info for ETag
-	dstInfo, err := h.backend.Head(ctx, dstBucket, dstKey)
+	dstInfo, err := h.backend.Head(ctx, dstBucket, dstPrefixedKey)
 	if err != nil {
 		h.writeError(w, "InternalError", "Failed to get destination info", 500)
 		return
@@ -2628,6 +2645,39 @@ func (h *Handlers) PutObjectLegalHold(w http.ResponseWriter, r *http.Request, bu
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// applyPrefix adds the configured prefix to a key for backend operations.
+// If no prefix is configured, returns the key unchanged.
+func (h *Handlers) applyPrefix(key string) string {
+	if h.config.Prefix == "" {
+		return key
+	}
+	return h.config.Prefix + key
+}
+
+// stripPrefix removes the configured prefix from a key for client responses.
+// If no prefix is configured or the key doesn't start with the prefix, returns the key unchanged.
+func (h *Handlers) stripPrefix(key string) string {
+	if h.config.Prefix == "" {
+		return key
+	}
+	if strings.HasPrefix(key, h.config.Prefix) {
+		return strings.TrimPrefix(key, h.config.Prefix)
+	}
+	return key
+}
+
+// stripPrefixFromCommonPrefix removes the configured prefix from a common prefix string for client responses.
+// Handles the case where the common prefix is a directory path ending with /.
+func (h *Handlers) stripPrefixFromCommonPrefix(commonPrefix string) string {
+	if h.config.Prefix == "" {
+		return commonPrefix
+	}
+	if strings.HasPrefix(commonPrefix, h.config.Prefix) {
+		return strings.TrimPrefix(commonPrefix, h.config.Prefix)
+	}
+	return commonPrefix
 }
 
 // writeError writes an S3 error response.
