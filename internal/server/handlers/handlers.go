@@ -1480,15 +1480,21 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		}
 	}
 
+	// Apply the configured prefix to the prefix parameter for backend operations.
+	// When ARMOR_PREFIX is set, the backend stores all keys with the prefix prepended,
+	// but clients don't know about it. We need to prepend the prefix to the client's
+	// requested prefix so the backend finds the right objects.
+	backendPrefix := h.applyPrefix(prefix)
+
 	var result *backend.ListResult
 	if h.listCache != nil {
-		if cached, ok := h.listCache.Get(bucket, prefix, delimiter, maxKeys, contToken); ok {
+		if cached, ok := h.listCache.Get(bucket, backendPrefix, delimiter, maxKeys, contToken); ok {
 			result = cached
 		}
 	}
 	if result == nil {
 		var err error
-		result, err = h.backend.List(ctx, bucket, prefix, delimiter, contToken, maxKeys)
+		result, err = h.backend.List(ctx, bucket, backendPrefix, delimiter, contToken, maxKeys)
 		if err != nil {
 			h.writeError(w, "InternalError", fmt.Sprintf("Failed to list: %v", err), 500)
 			return
@@ -1545,8 +1551,11 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 	}
 
 	for _, obj := range result.Objects {
+		// Strip the configured prefix from object keys before returning to client.
+		// Clients don't know about the prefix, so we need to remove it from the keys.
+		strippedKey := h.stripPrefix(obj.Key)
 		resp.Contents = append(resp.Contents, Contents{
-			Key:          obj.Key,
+			Key:          strippedKey,
 			LastModified: obj.LastModified.UTC().Format("2006-01-02T15:04:05.000Z"),
 			ETag:         fmt.Sprintf(`"%s"`, obj.ETag),
 			Size:         obj.Size,
@@ -1555,7 +1564,10 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 	}
 
 	for _, p := range result.CommonPrefixes {
-		resp.CommonPrefixes = append(resp.CommonPrefixes, CommonPrefix{Prefix: p})
+		// Strip the configured prefix from common prefixes before returning to client.
+		// Common prefixes are used for directory-like listings with delimiters.
+		strippedPrefix := h.stripPrefixFromCommonPrefix(p)
+		resp.CommonPrefixes = append(resp.CommonPrefixes, CommonPrefix{Prefix: strippedPrefix})
 	}
 
 	output, err := xml.Marshal(resp)
