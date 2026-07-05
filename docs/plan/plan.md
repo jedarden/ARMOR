@@ -461,6 +461,7 @@ ARMOR is configured exclusively via environment variables. No config files.
 | `ARMOR_B2_ACCESS_KEY_ID` | Yes | — | B2 application key ID |
 | `ARMOR_B2_SECRET_ACCESS_KEY` | Yes | — | B2 application key |
 | `ARMOR_BUCKET` | Yes | — | B2 bucket name. Used for both uploads (direct to B2) and downloads (Cloudflare URL assembly). |
+| `ARMOR_PREFIX` | No | (none) | Optional key prefix applied to all S3 operations before they reach B2. Enables multiple ARMOR deployments to share a single bucket without key collisions. Normalized to a single trailing slash with no leading slash (e.g. `kalshi-tape` → `kalshi-tape/`). When unset or empty, no prefix is applied and behavior is identical to previous versions. See ADR-001. |
 | `ARMOR_CF_DOMAIN` | Yes | — | Cloudflare domain CNAME'd to B2 bucket (e.g., `armor-b2.example.com`) |
 | `ARMOR_MEK` | Yes | — | Master encryption key, hex-encoded 32 bytes. Generate with `openssl rand -hex 32`. |
 | `ARMOR_AUTH_ACCESS_KEY` | No | (random on startup) | S3 access key ID for client auth to ARMOR |
@@ -475,8 +476,9 @@ ARMOR is configured exclusively via environment variables. No config files.
 
 ARMOR assembles the Cloudflare download URL as:
 ```
-https://${ARMOR_CF_DOMAIN}/file/${ARMOR_BUCKET}/<key>
+https://${ARMOR_CF_DOMAIN}/file/${ARMOR_BUCKET}/<prefix><key>
 ```
+where `<prefix>` is empty when `ARMOR_PREFIX` is unset.
 
 ### Deployment
 
@@ -1225,3 +1227,4 @@ Kubernetes liveness and readiness probes point at `/healthz`, which incorporates
 | State | Stateless (all state in B2) | Any instance with the same config works; horizontal scaling; crash recovery |
 | Backend | Pluggable interface | Future-proofs against provider changes; enables testing without cloud credentials |
 | Provenance | Per-writer chains | Tamper-evident audit trail without coordination between concurrent writers |
+| Bucket sharing | `ARMOR_PREFIX` per deployment | Multiple ARMOR instances share one public bucket for free Cloudflare egress; prefix enforced at proxy layer, not by consumers; empty prefix = zero behavior change (see ADR-001) |
