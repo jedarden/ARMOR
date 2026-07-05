@@ -42,6 +42,12 @@ type Config struct {
 	B2SecretAccessKey string
 	Bucket            string
 
+	// Prefix for all keys (shared bucket support via ADR-001)
+	// When set, all S3 keys are prefixed with this value before B2 operations
+	// Normalized to exactly one trailing slash, no leading slash (e.g., "kalshi-tape/")
+	// Empty/unset means no prefix is applied
+	Prefix string
+
 	// Cloudflare download configuration
 	CFDomain string
 
@@ -132,6 +138,10 @@ func Load() (*Config, error) {
 
 	// Cloudflare domain (optional — empty string enables direct S3 fallback for downloads)
 	cfg.CFDomain = os.Getenv("ARMOR_CF_DOMAIN")
+
+	// Prefix for shared bucket support (ADR-001)
+	// Normalize to exactly one trailing slash, no leading slash
+	cfg.Prefix = normalizePrefix(os.Getenv("ARMOR_PREFIX"))
 
 	// Canary disabled flag
 	cfg.CanaryDisabled = os.Getenv("ARMOR_CANARY_DISABLED") == "true"
@@ -283,6 +293,36 @@ func getEnvInt(key string, defaultVal int) int {
 		}
 	}
 	return defaultVal
+}
+
+// normalizePrefix normalizes a prefix string according to ADR-001.
+// - Removes leading slashes
+// - Ensures exactly one trailing slash
+// - Empty string stays empty (no prefix)
+// Examples:
+//   "" → ""
+//   "kalshi-tape" → "kalshi-tape/"
+//   "kalshi-tape/" → "kalshi-tape/"
+//   "/kalshi-tape" → "kalshi-tape/"
+//   "/kalshi-tape/" → "kalshi-tape/"
+//   "kalshi-tape//" → "kalshi-tape/"
+func normalizePrefix(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+
+	// Remove leading slashes
+	prefix = strings.TrimLeft(prefix, "/")
+
+	// Remove all trailing slashes first
+	prefix = strings.TrimRight(prefix, "/")
+
+	// Add exactly one trailing slash if non-empty
+	if prefix != "" {
+		prefix += "/"
+	}
+
+	return prefix
 }
 
 func generateRandomKey(length int) string {

@@ -283,3 +283,120 @@ func TestManifestCompactionInterval(t *testing.T) {
 		t.Errorf("ManifestCompactionInterval = %d, want 7200", cfg.ManifestCompactionInterval)
 	}
 }
+
+func TestNormalizePrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "no trailing slash",
+			input:    "kalshi-tape",
+			expected: "kalshi-tape/",
+		},
+		{
+			name:     "with trailing slash",
+			input:    "kalshi-tape/",
+			expected: "kalshi-tape/",
+		},
+		{
+			name:     "leading slash without trailing",
+			input:    "/kalshi-tape",
+			expected: "kalshi-tape/",
+		},
+		{
+			name:     "both leading and trailing slash",
+			input:    "/kalshi-tape/",
+			expected: "kalshi-tape/",
+		},
+		{
+			name:     "multiple trailing slashes",
+			input:    "kalshi-tape//",
+			expected: "kalshi-tape/",
+		},
+		{
+			name:     "multiple leading slashes",
+			input:    "//kalshi-tape",
+			expected: "kalshi-tape/",
+		},
+		{
+			name:     "nested path without trailing slash",
+			input:    "env/prod",
+			expected: "env/prod/",
+		},
+		{
+			name:     "nested path with trailing slash",
+			input:    "env/prod/",
+			expected: "env/prod/",
+		},
+		{
+			name:     "only slashes",
+			input:    "///",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizePrefix(tt.input)
+			if result != tt.expected {
+				t.Errorf("normalizePrefix(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestArmorPrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		envValue string
+		expected string
+	}{
+		{
+			name:     "no prefix set",
+			envValue: "",
+			expected: "",
+		},
+		{
+			name:     "simple prefix",
+			envValue: "kalshi-tape",
+			expected: "kalshi-tape/",
+		},
+		{
+			name:     "prefix with trailing slash",
+			envValue: "kalshi-tape/",
+			expected: "kalshi-tape/",
+		},
+		{
+			name:     "nested path",
+			envValue: "prod/data",
+			expected: "prod/data/",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setEnv(t, minimalEnv()...)
+			if tt.envValue != "" {
+				os.Setenv("ARMOR_PREFIX", tt.envValue)
+			} else {
+				os.Unsetenv("ARMOR_PREFIX")
+			}
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+
+			if cfg.Prefix != tt.expected {
+				t.Errorf("Prefix = %q, want %q", cfg.Prefix, tt.expected)
+			}
+		})
+	}
+}
