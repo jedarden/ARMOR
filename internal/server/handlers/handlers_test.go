@@ -151,6 +151,7 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 	defer m.mu.Unlock()
 
 	var objects []backend.ObjectInfo
+	var commonPrefixes []string
 	prefixPath := bucket + "/" + prefix
 
 	for k, data := range m.objects {
@@ -158,6 +159,30 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 			continue
 		}
 		key := k[len(bucket)+1:]
+
+		// If delimiter is set, check for common prefixes
+		if delimiter != "" {
+			// Find the delimiter position after the prefix
+			searchStart := len(prefix)
+			delimiterPos := strings.Index(key[searchStart:], delimiter)
+			if delimiterPos != -1 {
+				// This is a common prefix (directory)
+				commonPrefix := key[:searchStart+delimiterPos+len(delimiter)]
+				// Avoid duplicates
+				found := false
+				for _, cp := range commonPrefixes {
+					if cp == commonPrefix {
+						found = true
+						break
+					}
+				}
+				if !found {
+					commonPrefixes = append(commonPrefixes, commonPrefix)
+				}
+				continue // Skip this key, it's represented as a common prefix
+			}
+		}
+
 		meta := m.meta[k]
 		info := backend.ObjectInfo{
 			Key:      key,
@@ -171,7 +196,7 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 		objects = append(objects, info)
 	}
 
-	return &backend.ListResult{Objects: objects}, nil
+	return &backend.ListResult{Objects: objects, CommonPrefixes: commonPrefixes}, nil
 }
 
 func (m *mockBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {

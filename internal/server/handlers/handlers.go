@@ -1340,7 +1340,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 		}
 
 		// Perform server-side copy with updated metadata
-		if err := h.backend.Copy(ctx, srcBucket, srcKey, dstBucket, dstKey, newMeta, true); err != nil {
+		if err := h.backend.Copy(ctx, srcBucket, srcPrefixedKey, dstBucket, dstPrefixedKey, newMeta, true); err != nil {
 			h.writeError(w, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
 			return
 		}
