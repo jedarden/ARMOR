@@ -1,0 +1,5 @@
+# Invalid YAML - syntax error
+name: test-config
+version: 1.0
+:invalid key
+enabled: true

@@ -1,0 +1,6 @@
+# Invalid YAML - inconsistent indentation
+server:
+  host: localhost
+    port: 8080
+  ssl:
+      enabled: true

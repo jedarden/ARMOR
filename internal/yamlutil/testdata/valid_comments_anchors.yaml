@@ -1,0 +1,30 @@
+# YAML file with comments and anchors
+# This is a comment at the top
+
+# Default values template
+defaults: &defaults
+  timeout: 30
+  retries: 3
+  backoff: 1.5
+
+# Server configuration using anchor reference
+server:
+  host: localhost
+  port: 8080
+  <<: *defaults  # Merge defaults
+  custom:
+    max_connections: 100
+
+# Another server with same defaults
+server2:
+  host: remote.example.com
+  port: 8443
+  <<: *defaults  # Merge defaults again
+  ssl: true  # This is an inline comment
+
+# List with comments
+allowed_hosts:
+  - localhost     # Local development
+  - 127.0.0.1     # Loopback
+  # - example.com  # Disabled for now
+  # - test.local
