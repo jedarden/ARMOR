@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/run/current-system/sw/bin/bash
 # Script to execute Pluck with debug logging for bead bf-135k
 set -e
 
