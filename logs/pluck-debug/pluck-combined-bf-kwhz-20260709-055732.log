@@ -1,3 +1,10 @@
+=== Combining logs ===
+Bead ID: bf-kwhz
+Timestamp: 20260709-055732
+
+=== STDOUT ===
+
+=== STDERR ===
 NEEDLE worker boot: creating tokio runtime...
 NEEDLE worker boot: tokio runtime created
 NEEDLE worker boot: initializing tracing subscriber...
