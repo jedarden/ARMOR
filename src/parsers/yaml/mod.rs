@@ -9,7 +9,7 @@ mod parser;
 
 // Re-export main types for convenience
 pub use error::{ParseError, ParseErrorKind};
-pub use types::{ParseResult, ValidationResult};
+pub use types::{ParseResult, ValidationResult, Status};
 pub use parser::Parser;
 
 /// Version of the YAML parser module
