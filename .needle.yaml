@@ -1,0 +1,18 @@
+# NEEDLE Configuration for ARMOR Workspace
+# This file configures NEEDLE strand behavior for this workspace
+
+strands:
+  # Pluck strand configuration - controls bead selection and filtering
+  pluck:
+    # Labels to exclude when selecting beads for processing
+    # Empty array means no label-based exclusions
+    # Common exclusions: deferred, human, blocked
+    exclude_labels: []
+
+    # Auto-split beads after N consecutive failures
+    # 0 = disabled (default)
+    # Positive values enable automatic bead splitting
+    split_after_failures: 0
+
+# Note: Debug logging is controlled via RUST_LOG environment variable
+# See docs/pluck-debug-configuration.md for detailed debug logging options
