@@ -10,9 +10,10 @@ import (
 
 // FileError represents a file operation error with context.
 type FileError struct {
-	Op   string // Operation that failed (e.g., "read", "exists")
-	Path string // File path that caused the error
-	Err  error  // Underlying OS error
+	Op       string // Operation that failed (e.g., "read", "exists")
+	Path     string // File path that caused the error
+	Err      error  // Underlying OS error
+	Line     int    // Line number (if applicable to the error context)
 }
 
 // Error implements the error interface.
@@ -26,6 +27,16 @@ func (fe *FileError) Error() string {
 // Unwrap returns the underlying error for error wrapping chains.
 func (fe *FileError) Unwrap() error {
 	return fe.Err
+}
+
+// YAMLErrorType implements YAMLError interface.
+func (fe *FileError) YAMLErrorType() ErrorType {
+	return ErrorTypeFile
+}
+
+// Context implements YAMLError interface.
+func (fe *FileError) Context() string {
+	return fmt.Sprintf("operation: %s, path: %s", fe.Op, fe.Path)
 }
 
 // ReadFile reads the entire contents of a file and returns the bytes.
@@ -83,49 +94,4 @@ func wrapFileError(err error) error {
 	return err
 }
 
-// IsFileNotFoundError checks if an error indicates a file was not found.
-func IsFileNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	// Check if error chain contains os.ErrNotExist
-	if errors.Is(err, os.ErrNotExist) {
-		return true
-	}
-
-	// Check if error is FileError with underlying not found
-	var fe *FileError
-	if errors.As(err, &fe) && fe != nil {
-		// Check the wrapped error in FileError
-		if os.IsNotExist(fe.Err) {
-			return true
-		}
-		// Check if the wrapped error contains os.ErrNotExist in its chain
-		if errors.Is(fe.Err, os.ErrNotExist) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// IsPermissionError checks if an error indicates a permission issue.
-func IsPermissionError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	// Check wrapped errors
-	if os.IsPermission(err) {
-		return true
-	}
-
-	// Check if error is FileError with underlying permission error
-	var fe *FileError
-	if errors.As(err, &fe) && fe != nil {
-		return os.IsPermission(fe.Err)
-	}
-
-	return false
-}
+// IsFileNotFoundError and IsPermissionError are defined in errors.go to consolidate error checking functions.
