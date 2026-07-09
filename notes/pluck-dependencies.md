@@ -254,11 +254,46 @@ cargo test --lib strand::pluck
 
 ---
 
+## Internal Module Dependencies
+
+Pluck depends on several internal NEEDLE modules:
+
+### crate::bead_store
+- **Location:** `/home/coding/NEEDLE/src/bead_store/mod.rs`
+- **Purpose:** Abstract interface to the bead backend
+- **Key Types Used:**
+  - `BeadStore` trait - async trait for bead operations
+  - `Filters` struct - filters for bead queries (assignee, exclude_labels)
+  - `RepairReport` - summary from br doctor --repair
+
+### crate::types
+- **Location:** `/home/coding/NEEDLE/src/types/mod.rs`
+- **Purpose:** Core types and enums for NEEDLE
+- **Key Types Used:**
+  - `Bead` - main work item structure
+  - `BeadId` - validated bead identifier wrapper
+  - `BeadStatus` - lifecycle status (Open, InProgress, Done)
+  - `StrandError` - error types for strand operations
+  - `StrandResult` - result types for strand evaluation
+  - `Priority` - priority level type alias (u8)
+
+### crate::strand
+- **Location:** `/home/coding/NEEDLE/src/strand/mod.rs`
+- **Purpose:** Strand waterfall interface
+- **Key Types Used:**
+  - `Strand` trait - base trait for all strands
+  - `StrandResult` enum - evaluation results (NoWork, BeadFound, Error, Split)
+
+---
+
 ## Related Files
 
 - **Cargo.toml:** `/home/coding/NEEDLE/Cargo.toml`
 - **Pluck Source:** `/home/coding/NEEDLE/src/strand/pluck.rs`
 - **CI Dockerfile:** `/home/coding/NEEDLE/ci/Dockerfile.ci`
+- **Internal Types:** `/home/coding/NEEDLE/src/types/mod.rs`
+- **Bead Store:** `/home/coding/NEEDLE/src/bead_store/mod.rs`
+- **Strand Module:** `/home/coding/NEEDLE/src/strand/mod.rs`
 
 ---
 
@@ -271,7 +306,8 @@ Based on this documentation, you can:
 3. ✅ **Configure logging** - RUST_LOG patterns documented
 4. ✅ **Run tests** - Testing dependencies identified
 5. ✅ **Enable optional features** - OpenTelemetry dependencies listed
+6. ✅ **Understand internal architecture** - Module dependencies mapped
 
 ---
 
-**Documentation Complete** - All required dependencies for Pluck have been identified and documented with minimum version requirements where applicable.
+**Documentation Complete** - All required dependencies for Pluck have been identified and documented with minimum version requirements where applicable. **Updated:** 2026-07-09 to include internal module dependencies.
