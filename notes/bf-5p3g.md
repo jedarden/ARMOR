@@ -1,45 +1,74 @@
-# Pluck Debug Flags and Logging Configuration Research
+# Pluck Debug Flags and Logging Configuration - Summary
 
-**Bead:** bf-5p3g
-**Date:** 2026-07-09
-**Status:** Complete
+**Task:** bf-5p3g  
+**Date:** 2026-07-09  
+**Status:** COMPLETE
 
-## Summary
+## Overview
 
-Verified and confirmed comprehensive Pluck debug flags and logging configuration documentation already exists in the ARMOR workspace at `notes/bf-5p3g-pluck-debug-flags.md`.
+Comprehensive documentation of Pluck debug flags and logging configuration has been completed. The findings show that Pluck (within NEEDLE) uses Rust's standard `tracing` crate for debug output, with all logging controlled via the `RUST_LOG` environment variable.
 
 ## Key Findings
 
-### Primary Debug Mechanism: RUST_LOG Environment Variable
-- **Primary control**: `RUST_LOG` environment variable
-- **Available levels**: error, warn, info, debug, trace
-- **Target paths**: `needle::strand::pluck`, `needle::strand`, `needle::bead_store`, `needle::worker`
+### Primary Debug Mechanism
+- **Environment Variable:** `RUST_LOG`
+- **Module Path:** `needle::strand::pluck`
+- **Log Levels:** `error`, `warn`, `info`, `debug`, `trace`
 
-### Filtering Decision Logging
-- **Flag**: `RUST_LOG=needle::strand::pluck=debug` enables all filtering decision logs
-- **Events logged**: Label filtering, status/assignee filtering, individual bead exclusions
-- **Structured fields**: exclude_labels, excluded_count, remaining, excluded_reasons
+### Available Debug Configurations
 
-### Usage Patterns
+| Configuration | Use Case |
+|---------------|----------|
+| `RUST_LOG=needle::strand::pluck=debug` | Standard Pluck debugging - filtering decisions, counts |
+| `RUST_LOG=needle::strand::pluck=trace` | Detailed execution trace - all variables, function calls |
+| `RUST_LOG=needle::strand=debug,needle::strand::pluck=trace` | Full strand context |
+| `RUST_LOG=needle::strand::pluck=trace,needle::worker=debug,needle::bead_store=debug` | Complete worker context |
+
+### Filtering-Related Debug Messages
+
+The following debug messages appear when Pluck debug logging is enabled:
+
+1. **Evaluation Start** - Configuration values for this cycle
+2. **Bead Store Query** - Filters being passed to bead store
+3. **Candidate Count** - Number of beads passing ready() filter
+4. **Label Filtering** - Which beads excluded by label and why
+5. **Status/Assignee Filtering** - Beads excluded due to status/assignee
+6. **Sorting Results** - How candidates are sorted
+7. **Split Decision** - Whether bead splitting is triggered
+8. **Final Result** - Outcome of the evaluation
+
+### Usage Examples
+
 ```bash
-# Pluck-only debug
-RUST_LOG=needle::strand::pluck=debug
+# Basic debug
+RUST_LOG=needle::strand::pluck=debug needle run -w /home/coding/ARMOR -c 1
 
-# Comprehensive capture (recommended)
-RUST_LOG=needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug
+# With output capture
+RUST_LOG=needle::strand::pluck=trace needle run -w /home/coding/ARMOR -c 1 2>&1 | tee pluck-debug.log
+
+# Using provided capture script
+./capture-pluck-debug.sh /home/coding/ARMOR pluck-debug.log 1
 ```
 
-## Source Verification
-- Verified against `/home/coding/NEEDLE/src/strand/pluck.rs`
-- All tracing instrumentation confirmed in source code
-- Comprehensive debug events at each filtering stage
+## Acceptance Criteria Status
 
-## Documentation Status
-✅ Complete documentation exists
-✅ All acceptance criteria met
-✅ Source code verification complete
-✅ Usage patterns documented
-✅ Filtering decision logging documented
+- ✅ **List of available debug flags/variables found** - `RUST_LOG` is the primary mechanism; no CLI-specific flags exist
+- ✅ **Documentation of which flags control filtering decision logging** - `needle::strand::pluck=debug` enables filtering decisions; `trace` provides maximum detail
+- ✅ **Clear instructions on how to enable debug output** - Multiple examples with usage patterns provided
+
+## Documentation Created
+
+- **Primary Documentation:** `docs/pluck-debug-configuration.md` (270 lines)
+- **Capture Script:** `capture-pluck-debug.sh` (verified and functional)
+- **Configuration Reference:** `.needle.yaml` with Pluck settings
+
+## Related Modules
+
+- `needle::strand` - All strand implementations
+- `needle::worker` - Worker state machine and coordination  
+- `needle::bead_store` - Bead storage and retrieval operations
+- `needle::dispatch` - Task dispatching and execution
 
 ## Conclusion
-The Pluck debug flags and logging configuration are fully documented and operational. The existing documentation at `notes/bf-5p3g-pluck-debug-flags.md` provides comprehensive coverage of all debug capabilities, usage patterns, and filtering decision logging mechanisms.
+
+No Pluck-specific CLI flags exist - all debugging is controlled via the standard Rust `RUST_LOG` environment variable. The comprehensive documentation at `docs/pluck-debug-configuration.md` provides complete guidance on enabling and interpreting Pluck debug output, particularly for filtering decisions.
