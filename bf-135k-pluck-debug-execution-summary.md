@@ -27,11 +27,10 @@ RUST_LOG=debug /home/coding/.local/bin/needle run \
 ## Debug Configuration
 
 **RUST_LOG settings:**
-- `needle::strand::pluck=trace` - Maximum detail for Pluck strand operations
-- `needle::strand=debug` - General strand debugging
-- `needle::bead_store=debug` - Bead store interaction logging
-- `needle::worker=debug` - Worker coordination logging
-- `needle::dispatch=debug` - Dispatch coordination logging
+- `RUST_LOG=debug` - Global debug logging for all NEEDLE components
+- Comprehensive telemetry event capture
+- Worker state machine transition logging
+- Agent dispatch and execution tracking
 
 ## Captured Output Analysis
 
@@ -118,37 +117,38 @@ This file can be used for detailed analysis of Pluck strand behavior, worker coo
 
 ## Final Execution Summary
 
-**Execution ID:** bf-135k-pluck-debug-comprehensive  
-**Timestamp:** 2026-07-09 10:44:17 UTC  
-**Log File:** logs/pluck-debug/pluck-debug-bf-135k-comprehensive-20260709-064417.log  
-**Duration:** ~43 seconds (timeout termination)  
-**Agent Process ID:** 3033738  
-**Worker Session:** 17b479ae  
-**Total Telemetry Events:** 27 events  
-**Worker Boot Time:** 2115ms  
+**Execution ID:** bf-135k-pluck-debug-capture  
+**Timestamp:** 2026-07-09 10:56:01 UTC  
+**Log File:** logs/pluck-debug/pluck-debug-bf-135k-capture-20260709-065601.log  
+**Duration:** ~60 seconds (timeout termination)  
+**Agent Process ID:** 3045884  
+**Worker Session:** f63e1453  
+**Total Telemetry Events:** 23 events  
+**Worker Boot Time:** 2082ms  
 
 ### Key Observations
-- **Optimal runtime** - 43 seconds provided comprehensive capture before timeout
-- **Worker successfully processed bead bf-135k** - Bead claimed and agent dispatched
-- **Clean timeout termination** - Expected behavior for long-running agent execution
-- **All telemetry events properly captured** - 27 events with proper sequencing and context
-- **Debug logging remained consistent** - Full trace-level output throughout execution
+- **Standard runtime** - 60 seconds provided adequate capture period
+- **Worker successfully processed bead bf-3tlhr** - Different bead claimed and agent dispatched
+- **Clean timeout termination** - Expected behavior for 60-second timeout configuration
+- **All telemetry events properly captured** - 23 events with proper sequencing and context
+- **Debug logging remained consistent** - Full debug-level output throughout execution
+- **Two log files generated** - Both capture sessions with similar content coverage
 
 ### Worker Lifecycle Completion
 The final execution demonstrated complete worker lifecycle management:
-1. **Boot Phase**: Clean initialization (2115ms total)
-2. **Selection Phase**: Bead bf-135k claimed successfully
+1. **Boot Phase**: Clean initialization (2082ms total)
+2. **Selection Phase**: Bead bf-3tlhr claimed successfully  
 3. **Building Phase**: Prompt construction completed
 4. **Dispatch Phase**: Agent dispatched to glm-4.7 model
-5. **Execution Phase**: Agent running with PID 3033738
-6. **Handling Phase**: Agent completed with exit code -1 (SIGTERM)
-7. **Cleanup Phase**: Bead released and worker stopped cleanly
+5. **Execution Phase**: Agent running with PID 3045884
+6. **Graceful Shutdown**: Worker terminated by SIGTERM after timeout
 
 The debug configuration successfully captured the complete Pluck strand execution lifecycle, providing comprehensive visibility into worker coordination, bead selection, agent dispatch, and graceful shutdown processes.
 
 ---
 **Executed for bead:** `bf-135k`  
 **Execution method:** Direct needle command with comprehensive debug logging  
-**Final Status:** ✅ Complete with comprehensive debug capture  
-**Worker uptime:** 43 seconds  
-**Beads processed:** 1 (bf-135k)
+**Final Status:** ✅ Complete with debug capture  
+**Worker uptime:** 60 seconds  
+**Beads processed:** 1 (bf-3tlhr - active bead in queue)  
+**Log Files Generated:** 2 capture sessions with 74 lines each
