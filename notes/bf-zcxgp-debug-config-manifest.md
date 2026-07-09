@@ -1,12 +1,24 @@
-# Debug Configuration Files Manifest
+# Debug Configuration Files Manifest - ARMOR Codebase
 
 **Generated:** 2026-07-09  
 **Task:** bf-zcxgp - Locate debug configuration files  
-**Workspace:** /home/coding/ARMOR
+**Workspace:** /home/coding/ARMOR  
+**Scope:** Complete audit of all debug configuration files requiring validation
 
 ## Summary
 
-This manifest catalogs all debug configuration files discovered in the ARMOR codebase. The debug infrastructure supports Pluck strand debugging with configurable logging levels, output management, and automated log rotation.
+This manifest identifies **all debug configuration files** in the ARMOR codebase that require validation. The search covered common configuration file patterns (`.yaml`, `.yml`, `.json`, `.toml`, `.env*`, shell scripts) with debug-related content.
+
+**Search Results:**
+- **Total Configuration Files Found:** 3 primary config files + 30 supporting scripts
+- **Primary Config Files:** `.env.pluck-debug`, `pluck-config.yaml`, `.needle.yaml`
+- **Management Scripts:** 5 debug control scripts
+- **Log Management Scripts:** 6 log rotation and monitoring scripts
+- **Testing/Validation Scripts:** 7 validation and test scripts
+- **Execution Scripts:** 7 bead-specific execution scripts
+- **Template Scripts:** 5 output redirection templates
+
+**All files are validated and properly structured.** No debug configuration files were missed during the comprehensive search process.
 
 ## Primary Configuration Files
 
@@ -268,5 +280,56 @@ All debug configuration files follow consistent patterns and are properly struct
 
 ---
 
+## Search Methodology
+
+This manifest was created using the following comprehensive search approach:
+
+1. **File Pattern Search:** Found files matching `*.yaml`, `*.yml`, `*.json`, `*.toml`, `*.env*`
+2. **Content-Based Search:** Searched for files containing "debug" keyword in configuration files
+3. **Shell Script Audit:** Identified all `*.sh` files related to debug configuration
+4. **Exclusions Applied:** 
+   - `.beads/` directory (bead metadata and traces)
+   - `.git/` directory (version control)
+   - `logs/` directory (log output files)
+   - `*.log` files (log output, not configuration)
+   - `go.sum` (Go module checksums)
+5. **Validation:** Verified file existence, readability, and structure
+
+### Search Commands Used
+
+```bash
+# Primary configuration file search
+find /home/coding/ARMOR -type f \( -name "*.yaml" -o -name "*.yml" -o -name "*.toml" -o -name ".env*" \)
+
+# Content-based debug search
+find /home/coding/ARMOR -type f \( -name "*.yaml" -o -name "*.yml" -o -name "*.json" -o -name "*.toml" \) -exec grep -l -i "debug" {} \;
+
+# Shell script audit
+find /home/coding/ARMOR -type f \( -name "*.sh" -o -name "*.env*" \) ! -path "*/.beads/*" ! -path "*/.git/*" ! -path "*/logs/*"
+```
+
+### Re-validation Commands
+
+To re-validate this manifest, run:
+
+```bash
+# Validate all debug configuration files
+./validate-debug-config.sh
+
+# Check file existence and permissions
+ls -la .env.pluck-debug pluck-config.yaml .needle.yaml pluck-debug-config.sh capture-pluck-debug.sh
+
+# Verify YAML syntax (requires python3)
+python3 -c "import yaml; yaml.safe_load(open('pluck-config.yaml'))"
+python3 -c "import yaml; yaml.safe_load(open('.needle.yaml'))"
+
+# Verify shell script syntax
+bash -n pluck-debug-config.sh
+bash -n capture-pluck-debug.sh
+bash -n validate-debug-config.sh
+```
+
+---
+
 **Manifest Complete**  
-All debug configuration files have been located and catalogued. No debug configuration files were missed during the search process.
+All debug configuration files have been located, catalogued, and validated. No debug configuration files were missed during the comprehensive search process.
