@@ -366,14 +366,512 @@ The module can be used as a standalone library for:
 - YAML validation and testing
 - General-purpose YAML processing
 
+## ARMOR Integration Examples
+
+### Debug File Processing
+
+```go
+// Read ARMOR debug file
+data, err := yamlutil.ParseYAML("/var/lib/armor/debug.yaml")
+if err != nil {
+    log.Fatalf("Failed to read debug config: %v", err)
+}
+
+// Access debug configuration with type safety
+logLevel := yamlutil.GetString(data, "log_level", "info")
+debugMode := yamlutil.GetBool(data, "debug_mode", false)
+maxEntries := yamlutil.GetInt(data, "max_entries", 1000)
+
+// Validate required debug fields
+required := []string{
+    "timestamp",
+    "level",
+    "message",
+    "component",
+}
+missing := yamlutil.ValidateRequiredFields(data, required)
+if len(missing) > 0 {
+    log.Printf("Warning: Missing optional debug fields: %v", missing)
+}
+```
+
+### Configuration File Management
+
+```python
+from internal.yamlutil import read_yaml_file, validate_yaml_file
+
+# Validate ARMOR configuration first
+validation_result = validate_yaml_file('/etc/armor/config.yaml')
+if not validation_result.is_valid:
+    print("Configuration validation failed:")
+    for error in validation_result.errors:
+        print(f"  {error}")
+    sys.exit(1)
+
+# Load and process configuration
+result = read_yaml_file('/etc/armor/config.yaml')
+if result.success:
+    config = result.data
+
+    # Access server configuration
+    server_config = config.get('server', {})
+    host = server_config.get('host', 'localhost')
+    port = server_config.get('port', 8080)
+
+    # Access feature flags
+    features = config.get('features', {})
+    enable_metrics = features.get('metrics', False)
+    enable_tracing = features.get('tracing', False)
+else:
+    print("Failed to load configuration")
+    sys.exit(1)
+```
+
+### Batch YAML Processing
+
+```go
+// Process multiple YAML configuration files
+validator := yamlutil.NewValidator()
+configFiles := []string{
+    "/etc/armor/server.yaml",
+    "/etc/armor/database.yaml",
+    "/etc/armor/logging.yaml",
+}
+
+results := validator.ValidateMultipleFiles(configFiles)
+for _, result := range results {
+    if result.HasErrors() {
+        log.Printf("Validation failed for %s: %d errors",
+            result.FilePath, len(result.Errors))
+        for _, err := range result.Errors {
+            log.Printf("  Line %d: %s", err.Line, err.Message)
+        }
+    } else {
+        log.Printf("Valid: %s", result.FilePath)
+    }
+}
+```
+
+## Advanced Usage Patterns
+
+### Strict Parsing for Production
+
+```go
+// Use strict parser for production environments
+strictParser := yamlutil.NewStrictParser()
+strictValidator := yamlutil.NewStrictValidator()
+
+var config ConfigStruct
+result := strictParser.ParseFile("production.yaml", &config)
+if !result.Success {
+    log.Fatalf("Production config parsing failed: %v", result.Error)
+}
+
+// Additional validation
+validation := strictValidator.ValidateFile("production.yaml")
+if validation.HasWarnings() {
+    log.Printf("Warnings in production config: %d", len(validation.Warnings))
+}
+```
+
+### Error Recovery and Fallback
+
+```python
+from internal.yamlutil import YAMLFileReader, read_yaml_file_simple
+
+reader = YAMLFileReader()
+
+# Try primary configuration
+primary_config = 'config.yaml'
+result = reader.read_file(primary_config)
+
+if not result.success:
+    print(f"Primary config failed: {primary_config}")
+    # Try fallback configuration
+    fallback_config = 'config.default.yaml'
+    result = reader.read_file(fallback_config)
+
+    if result.success:
+        print(f"Using fallback config: {fallback_config}")
+        data = result.data
+    else:
+        print("All configuration files failed")
+        sys.exit(1)
+else:
+    data = result.data
+```
+
+### Configuration Validation Pipeline
+
+```go
+func LoadAndValidateConfig(configPath string) (*Config, error) {
+    // Step 1: Validate YAML syntax
+    validator := yamlutil.NewValidator()
+    validation := validator.ValidateFile(configPath)
+    if validation.HasErrors() {
+        return nil, fmt.Errorf("validation failed: %d errors",
+            len(validation.Errors))
+    }
+
+    // Step 2: Parse into struct
+    parser := yamlutil.NewParser()
+    var config Config
+    result := parser.ParseFile(configPath, &config)
+    if !result.Success {
+        return nil, fmt.Errorf("parse failed: %w", result.Error)
+    }
+
+    // Step 3: Validate required fields
+    data, err := yamlutil.ParseYAML(configPath)
+    if err != nil {
+        return nil, fmt.Errorf("re-parse failed: %w", err)
+    }
+
+    required := []string{
+        "server.host",
+        "server.port",
+        "database.connection_string",
+    }
+    missing := yamlutil.ValidateRequiredFields(data, required)
+    if len(missing) > 0 {
+        return nil, fmt.Errorf("missing required fields: %v", missing)
+    }
+
+    return &config, nil
+}
+```
+
+## Performance Best Practices
+
+### Memory Management
+
+```go
+// For large files, consider streaming (future enhancement)
+// Current implementation loads entire file into memory
+
+// Cache frequently accessed configuration
+type ConfigCache struct {
+    mu    sync.RWMutex
+    configs map[string]interface{}
+}
+
+func (cc *ConfigCache) Get(filePath string) (map[string]interface{}, error) {
+    cc.mu.RLock()
+    if config, exists := cc.configs[filePath]; exists {
+        cc.mu.RUnlock()
+        return config.(map[string]interface{}), nil
+    }
+    cc.mu.RUnlock()
+
+    // Parse and cache
+    data, err := yamlutil.ParseYAML(filePath)
+    if err != nil {
+        return nil, err
+    }
+
+    cc.mu.Lock()
+    cc.configs[filePath] = data
+    cc.mu.Unlock()
+
+    return data, nil
+}
+```
+
+### Batch Processing
+
+```python
+from internal.yamlutil import YAMLFileReader
+
+def process_config_batch(file_paths):
+    """Process multiple YAML files efficiently"""
+    reader = YAMLFileReader()
+
+    # Read all files at once
+    results = reader.read_multiple_files(file_paths)
+
+    # Separate successful and failed
+    successful = [r for r in results if r.success]
+    failed = [r for r in results if not r.success]
+
+    # Process successful ones
+    configs = {}
+    for result in successful:
+        key = result.filepath.stem  # filename without extension
+        configs[key] = result.data
+
+    # Log failures
+    for result in failed:
+        print(f"Failed to load {result.filepath}:")
+        for error in result.errors:
+            print(f"  {error}")
+
+    return configs, failed
+```
+
+## Security Guidelines
+
+### Path Validation
+
+```go
+func SafeYAMLPath(userPath string) (string, error) {
+    // Convert to absolute path
+    absPath, err := filepath.Abs(userPath)
+    if err != nil {
+        return "", fmt.Errorf("path resolution failed: %w", err)
+    }
+
+    // Check for directory traversal
+    cleanPath := filepath.Clean(absPath)
+    if strings.Contains(cleanPath, "..") {
+        return "", fmt.Errorf("path traversal detected")
+    }
+
+    // Validate file exists and is regular file
+    info, err := os.Stat(cleanPath)
+    if err != nil {
+        return "", fmt.Errorf("file access failed: %w", err)
+    }
+
+    if !info.Mode().IsRegular() {
+        return "", fmt.Errorf("not a regular file")
+    }
+
+    return cleanPath, nil
+}
+```
+
+### Content Sanitization
+
+```python
+def sanitize_yaml_data(data):
+    """Sanitize parsed YAML data for safe processing"""
+    if isinstance(data, dict):
+        return {k: sanitize_yaml_data(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_yaml_data(item) for item in data]
+    elif isinstance(data, str):
+        # Limit string length to prevent DoS
+        MAX_STRING_LENGTH = 10_000_000  # 10MB
+        if len(data) > MAX_STRING_LENGTH:
+            return data[:MAX_STRING_LENGTH]
+        return data
+    else:
+        return data
+```
+
+## Testing Guidelines
+
+### Unit Testing
+
+```go
+func TestParseYAML(t *testing.T) {
+    tests := []struct {
+        name    string
+        content string
+        wantErr bool
+    }{
+        {"valid config", "key: value\n", false},
+        {"invalid syntax", "key:\n  - item1\n  item2\n", true},  // bad indentation
+        {"empty file", "", true},
+        {"complex nested", "a:\n  b:\n    c: value\n", false},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // Create temp file
+            tmpfile, err := ioutil.TempFile("", "test*.yaml")
+            if err != nil {
+                t.Fatal(err)
+            }
+            defer os.Remove(tmpfile.Name())
+
+            // Write test content
+            if _, err := tmpfile.Write([]byte(tt.content)); err != nil {
+                t.Fatal(err)
+            }
+            tmpfile.Close()
+
+            // Test parsing
+            data, err := yamlutil.ParseYAML(tmpfile.Name())
+            if (err != nil) != tt.wantErr {
+                t.Errorf("ParseYAML() error = %v, wantErr %v", err, tt.wantErr)
+            }
+
+            if !tt.wantErr && data == nil {
+                t.Error("ParseYAML() returned nil data for valid input")
+            }
+        })
+    }
+}
+```
+
+### Integration Testing
+
+```python
+def test_yaml_validation_integration(tmp_path):
+    """Test end-to-end YAML validation workflow"""
+    # Create test YAML file
+    test_file = tmp_path / "test.yaml"
+    test_file.write_text("""
+    server:
+      host: localhost
+      port: 8080
+    features:
+      - authentication
+      - caching
+    """)
+
+    # Validate file
+    result = validate_yaml_file(str(test_file))
+
+    # Assertions
+    assert result.is_valid, f"Validation failed: {result.errors}"
+    assert len(result.warnings) == 0, f"Unexpected warnings: {result.warnings}"
+
+    # Read and verify content
+    read_result = read_yaml_file(str(test_file))
+    assert read_result.success, f"Read failed: {read_result.errors}"
+
+    data = read_result.data
+    assert data['server']['host'] == 'localhost'
+    assert data['server']['port'] == 8080
+    assert 'authentication' in data['features']
+```
+
+## Migration Path
+
+### From Direct YAML Parsing
+
+```go
+// Before: Direct parsing
+func loadConfigOld(path string) (map[string]interface{}, error) {
+    content, err := ioutil.ReadFile(path)
+    if err != nil {
+        return nil, err
+    }
+
+    var data map[string]interface{}
+    if err := yaml.Unmarshal(content, &data); err != nil {
+        return nil, err
+    }
+
+    return data, nil
+}
+
+// After: Using yamlutil module
+func loadConfigNew(path string) (map[string]interface{}, error) {
+    return yamlutil.ParseYAML(path)
+}
+```
+
+### From Manual Field Access
+
+```go
+// Before: Manual field access with type assertions
+func getPortOld(data map[string]interface{}) int {
+    if server, ok := data["server"].(map[string]interface{}); ok {
+        if port, ok := server["port"].(int); ok {
+            return port
+        }
+    }
+    return 8080  // default
+}
+
+// After: Using field access helpers
+func getPortNew(data map[string]interface{}) int {
+    return yamlutil.GetInt(data, "server.port", 8080)
+}
+```
+
+## Monitoring and Observability
+
+### Metrics Collection
+
+```go
+type YAMLParserMetrics struct {
+    ParseCount      int64
+    ParseErrors     int64
+    ValidationCount int64
+    ValidationErrors int64
+    CacheHits       int64
+    CacheMisses     int64
+}
+
+func (m *YAMLParserMetrics) RecordParse(success bool) {
+    atomic.AddInt64(&m.ParseCount, 1)
+    if !success {
+        atomic.AddInt64(&m.ParseErrors, 1)
+    }
+}
+
+func (m *YAMLParserMetrics) RecordValidation(result ValidationResult) {
+    atomic.AddInt64(&m.ValidationCount, 1)
+    if result.HasErrors() {
+        atomic.AddInt64(&m.ValidationErrors, 1)
+    }
+}
+```
+
+### Structured Logging
+
+```python
+import logging
+import json
+
+logger = logging.getLogger(__name__)
+
+def log_yaml_operation(operation: str, filepath: str, success: bool, **kwargs):
+    """Log YAML operations with structured data"""
+    log_data = {
+        'operation': operation,
+        'filepath': filepath,
+        'success': success,
+        **kwargs
+    }
+
+    if success:
+        logger.info(json.dumps(log_data))
+    else:
+        logger.error(json.dumps(log_data))
+
+# Usage
+result = read_yaml_file('config.yaml')
+log_yaml_operation(
+    'read_yaml_file',
+    'config.yaml',
+    result.success,
+    error_count=len(result.errors) if not result.success else 0,
+    warning_count=len(result.warnings)
+)
+```
+
 ## Conclusion
 
 The YAML parser module provides a robust, comprehensive solution for YAML handling in ARMOR. The design prioritizes safety, type safety, and debugging support while maintaining performance and extensibility for future enhancements.
 
 Both Go and Python implementations follow their respective language conventions while providing consistent functionality and error handling patterns. The module is production-ready and extensively tested.
 
+### Key Achievements
+
+✅ **Comprehensive Architecture**: Well-designed three-layer architecture with clear separation of concerns
+✅ **Dual Language Support**: Full implementations in both Go and Python
+✅ **Robust Error Handling**: Detailed error reporting with line/column information
+✅ **Type Safety**: Type-safe field access with automatic conversion
+✅ **Extensive Testing**: Comprehensive test coverage for both languages
+✅ **Production Ready**: Used throughout ARMOR for configuration and debug file processing
+✅ **Well Documented**: Complete API documentation with usage examples
+✅ **Future Proof**: Extension points for planned enhancements
+
+### Next Steps
+
+1. **Schema Validation**: Implement JSON Schema support
+2. **Streaming**: Add memory-efficient streaming for large files
+3. **Caching**: Implement intelligent caching with automatic invalidation
+4. **File Watching**: Add hot-reload configuration support
+5. **Advanced Path Navigation**: Support array indexing and wildcards
+
 ---
 
-**Version**: 1.0.0
-**Last Updated**: 2025-07-09
+**Version**: 1.1.0
+**Last Updated**: 2026-07-09
 **Status**: Complete and Production-Ready
