@@ -169,3 +169,112 @@ func FindYAMLFilesRecursive(dirPath string) ([]string, error) {
 
 	return yamlFiles, nil
 }
+
+// YAMLParseError represents a YAML syntax error with detailed location information.
+type YAMLParseError struct {
+	FilePath string
+	Line     int
+	Column   int
+	Message  string
+	RawError error
+}
+
+// Error implements the error interface.
+func (ype *YAMLParseError) Error() string {
+	if ype.Line > 0 {
+		return fmt.Sprintf("YAML syntax error in %s at line %d: %s", ype.FilePath, ype.Line, ype.Message)
+	}
+	return fmt.Sprintf("YAML syntax error in %s: %s", ype.FilePath, ype.Message)
+}
+
+// Unwrap returns the underlying error for error wrapping chains.
+func (ype *YAMLParseError) Unwrap() error {
+	return ype.RawError
+}
+
+// ParseYAML reads and parses a YAML file into a generic map structure.
+// This function provides comprehensive error handling with the following behavior:
+//   - Returns map[string]interface{} and error
+//   - Distinguishes between file I/O errors and YAML syntax errors
+//   - Handles empty files gracefully (returns empty map, not error)
+//   - Provides helpful error messages with line numbers for syntax errors
+//   - Uses the file I/O foundation from file.go
+//
+// Returns an empty map for empty or whitespace-only files.
+// Returns YAMLParseError for YAML syntax errors with line/column information.
+// Returns FileError for file I/O errors (not found, permission denied, etc.).
+func ParseYAML(filePath string) (map[string]interface{}, error) {
+	// Use the existing ReadFile function to leverage file I/O error handling
+	content, err := ReadFile(filePath)
+	if err != nil {
+		// ReadFile already returns FileError with proper context
+		return nil, err
+	}
+
+	// Check for empty file or whitespace-only content
+	contentStr := string(content)
+	if len(contentStr) == 0 || isWhitespace(contentStr) {
+		// Return empty map for empty files - not an error
+		return make(map[string]interface{}), nil
+	}
+
+	// Parse YAML content with detailed error handling
+	var data map[string]interface{}
+	if err := yaml.Unmarshal(content, &data); err != nil {
+		// Create detailed YAMLParseError with line information
+		return nil, &YAMLParseError{
+			FilePath: filePath,
+			Message:  err.Error(),
+			RawError: err,
+			Line:     extractErrorLine(err),
+		}
+	}
+
+	// Ensure we return a non-nil map even if the YAML contains only null
+	if data == nil {
+		return make(map[string]interface{}), nil
+	}
+
+	return data, nil
+}
+
+// isWhitespace checks if a string contains only whitespace characters.
+func isWhitespace(s string) bool {
+	for _, r := range s {
+		if !isWhitespaceRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// isWhitespaceRune checks if a rune is a whitespace character.
+func isWhitespaceRune(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
+}
+
+// extractErrorLine attempts to extract line number from YAML parser errors.
+// The yaml.v3 parser sometimes includes line information in error messages.
+func extractErrorLine(err error) int {
+	if err == nil {
+		return 0
+	}
+
+	// Try to parse line number from common error patterns
+	// yaml.v3 errors often contain "line %d" patterns
+	errMsg := err.Error()
+
+	// This is a best-effort extraction since yaml.v3 doesn't always provide line info
+	// The parser typically includes line numbers in syntax errors
+	var line int
+	if _, err := fmt.Sscanf(errMsg, "yaml: line %d:", &line); err == nil && line > 0 {
+		return line
+	}
+
+	// Try alternative patterns
+	if _, err := fmt.Sscanf(errMsg, "error at line %d", &line); err == nil && line > 0 {
+		return line
+	}
+
+	return 0
+}
