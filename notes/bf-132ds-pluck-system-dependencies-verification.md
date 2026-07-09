@@ -14,6 +14,17 @@
 
 Pluck's system-level package dependencies have been verified. All required tools are present and functioning correctly with versions exceeding minimum requirements.
 
+**Verification Scope:**
+- ✅ Rust toolchain (rustc, cargo, rustfmt, clippy)
+- ✅ NEEDLE binary (0.2.11)
+- ✅ br CLI/bead-forge (0.2.0)
+- ✅ Build tools (gcc, make, pkg-config)
+- ✅ Shell environment (bash, sh)
+- ✅ SQLite (embedded in br)
+- ✅ Cross-compilation support (musl targets)
+
+**System Status:** Production ready for Pluck operation
+
 ---
 
 ## System Environment
@@ -108,9 +119,105 @@ cargo clippy --version
 
 ---
 
+## Additional System-Level Dependencies
+
+### 5. NEEDLE Binary ✅ INSTALLED
+
+| Attribute | Value |
+|-----------|-------|
+| **Status** | ✅ Installed and functional |
+| **Version** | 0.2.11 |
+| **Required** | 0.2.x |
+| **Compliance** | ✅ Latest stable version |
+| **Installation Path** | `/home/coding/.local/bin/needle` |
+| **Binary Size** | 12,307,208 bytes (12MB ELF) |
+| **Permissions** | `-rwxr-xr-x` (executable) |
+
+**Verification Command:**
+```bash
+needle --version
+# Output: needle 0.2.11
+```
+
+---
+
+### 6. br CLI (bead-forge) ✅ INSTALLED
+
+| Attribute | Value |
+|-----------|-------|
+| **Status** | ✅ Installed and functional |
+| **Version** | 0.2.0 |
+| **Required** | 0.2.0+ |
+| **Compliance** | ✅ Meets minimum requirement |
+| **Installation Path** | `/home/coding/.local/bin/bf` |
+| **Symlink** | `br` → `bf` |
+| **Binary Size** | 50,360,680 bytes (50MB ELF) |
+| **SQLite** | Embedded via rusqlite crate (0.31.0) |
+
+**Verification Command:**
+```bash
+br --version 2>&1
+# Output: bf 0.2.0 (exits with code 1 but shows version)
+```
+
+**SQLite Status:** SQLite is embedded in the br binary via the rusqlite crate. A standalone `sqlite3` CLI command is not required for Pluck operation.
+
+---
+
+### 7. Build Tools ✅ INSTALLED
+
+| Component | Version | Status | Installation |
+|-----------|---------|--------|--------------|
+| **gcc** | 13.3.0 | ✅ Available | System via NixOS |
+| **make** | 4.4.1 | ✅ Available | System via NixOS |
+| **pkg-config** | 0.29.2 | ✅ Available | System via NixOS |
+
+**Verification Commands:**
+```bash
+gcc --version       # Output: gcc (GCC) 13.3.0
+make --version      # Output: GNU Make 4.4.1
+pkg-config --version # Output: 0.29.2
+```
+
+---
+
+### 8. Shell Environment ✅ INSTALLED
+
+| Component | Version | Status | Path |
+|-----------|---------|--------|------|
+| **bash** | 5.2.37(1)-release | ✅ Available | `/run/current-system/sw/bin/bash` |
+| **sh** | - | ✅ Available | System shell |
+
+**Verification Command:**
+```bash
+bash --version
+# Output: GNU bash, version 5.2.37(1)-release (x86_64-pc-linux-gnu)
+```
+
+---
+
 ## Optional System Packages
 
-### 5. musl-tools (Static Linking) ⚠️ NOT REQUIRED
+### 9. sqlite3 (Standalone CLI) ⚠️ NOT INSTALLED (Not Required)
+
+| Attribute | Value |
+|-----------|-------|
+| **Status** | ⚠️ Not found in PATH |
+| **Required** | No - embedded in br binary |
+| **Impact** | NONE - SQLite embedded in br via rusqlite |
+| **Available in Nix store** | sqlite-3.48.0 (if needed for debugging) |
+
+**Verification:**
+```bash
+which sqlite3
+# Output: which: no sqlite3 in PATH
+```
+
+**Conclusion:** Standalone sqlite3 CLI is not required for Pluck operation since SQLite is embedded in the br binary. It is available in the Nix store if needed for debugging purposes.
+
+---
+
+### 10. musl-tools (Static Linking) ⚠️ NOT REQUIRED
 
 | Attribute | Value |
 |-----------|-------|
@@ -212,10 +319,27 @@ cargo --version    # ✅ 1.96.1
 rustfmt --version  # ✅ 1.9.0-stable
 cargo clippy --version  # ✅ 0.1.96
 
+# NEEDLE and br CLI
+needle --version   # ✅ 0.2.11
+br --version 2>&1  # ✅ 0.2.0
+
+# Build tools
+gcc --version      # ✅ 13.3.0
+make --version      # ✅ 4.4.1
+pkg-config --version  # ✅ 0.29.2
+
+# Shell environment
+bash --version      # ✅ 5.2.37(1)-release
+
 # Installation paths
 which rustc  # /home/coding/.cargo/bin/rustc
 which cargo  # /home/coding/.local/bin/cargo
 which rustfmt  # /home/coding/.cargo/bin/rustfmt
+which needle  # /home/coding/.local/bin/needle
+which br      # /home/coding/.local/bin/br
+
+# Binary details
+ls -la ~/.local/bin/needle ~/.local/bin/bf  # Check binary sizes and permissions
 
 # Component status
 rustup component list | grep -E "cargo|clippy|rustfmt"
@@ -224,6 +348,15 @@ rustup component list | grep -E "cargo|clippy|rustfmt"
 # Rustup version and toolchain info
 rustup --version  # ✅ 1.29.0
 rustup show       # ✅ stable-x86_64-unknown-linux-gnu active
+
+# Musl target support
+rustup target list | grep musl | grep installed
+# x86_64-unknown-linux-musl (installed)
+# i686-unknown-linux-musl (installed)
+
+# System musl libraries
+nix-store -q --requisites /run/current-system | grep -i musl | head -5
+# Multiple musl-based security wrappers present
 ```
 
 ---
@@ -232,9 +365,9 @@ rustup show       # ✅ stable-x86_64-unknown-linux-gnu active
 
 | Criterion | Status | Evidence |
 |-----------|--------|----------|
-| **All system packages checked** | ✅ Complete | 4 required + 1 optional package verified |
+| **All system packages checked** | ✅ Complete | 9 required + 2 optional package verified |
 | **Installed packages have versions recorded** | ✅ Complete | All versions documented above |
-| **Missing packages clearly identified** | ✅ Complete | No missing required packages; optional musl-tools documented as not required |
+| **Missing packages clearly identified** | ✅ Complete | No missing required packages; optional packages documented as not required |
 | **Installation paths documented** | ✅ Complete | All paths listed and verified |
 
 ---
@@ -243,13 +376,22 @@ rustup show       # ✅ stable-x86_64-unknown-linux-gnu active
 
 ### ✅ **SUCCESS:** All Required Dependencies Met
 
-**Required Packages (4/4):**
+**Required Runtime Packages (9/9):**
 - ✅ rustc 1.96.1 (exceeds 1.75+ requirement)
 - ✅ cargo 1.96.1 (matches rustc version)
 - ✅ rustfmt 1.9.0-stable (latest)
 - ✅ clippy 0.1.96 (latest, via cargo clippy)
+- ✅ NEEDLE 0.2.11 (latest stable)
+- ✅ br CLI (bead-forge) 0.2.0 (meets requirement)
+- ✅ gcc 13.3.0 (for building)
+- ✅ make 4.4.1 (build tool)
+- ✅ pkg-config 0.29.2 (build configuration)
+- ✅ bash 5.2.37 (shell environment)
 
-**Optional Packages (0/1):**
+**Optional Packages (0/2):**
+- ⚠️ sqlite3 CLI - Not installed but **not required**
+  - SQLite is embedded in br binary via rusqlite
+  - Available in Nix store if needed for debugging
 - ⚠️ musl-tools - Not installed but **not required**
   - System has musl support via NixOS
   - Rust toolchain includes musl targets
@@ -272,15 +414,22 @@ All required system-level dependencies for Pluck are installed, up-to-date, and 
 
 1. ✅ Pluck strand execution
 2. ✅ NEEDLE worker operation
-3. ✅ Rust development and builds
-4. ✅ Static binary compilation (via musl targets)
+3. ✅ Bead store management (via br CLI)
+4. ✅ Rust development and builds
+5. ✅ Static binary compilation (via musl targets)
 
-**Optional Enhancement:**
+**Optional Enhancements:**
 If traditional `musl-gcc` wrapper is desired for release builds, it can be installed via:
 ```nix
 environment.systemPackages = with pkgs; [ musl ];
 ```
 However, this is **not required** as the Rust toolchain already includes musl targets.
+
+If sqlite3 CLI is desired for database debugging, it can be installed via:
+```nix
+environment.systemPackages = with pkgs; [ sqlite ];
+```
+However, this is **not required** as SQLite is embedded in the br binary.
 
 ---
 
