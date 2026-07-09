@@ -1,211 +1,286 @@
 # Pluck Debug Flags and Logging Configuration
 
+**Bead:** bf-5p3g  
+**Component:** NEEDLE Pluck Strand  
+**Source:** `/home/coding/NEEDLE/src/strand/pluck.rs`  
+**Date:** 2026-07-09
+
 ## Overview
-Pluck is the primary bead selection strand in NEEDLE (Navigates Every Enqueued Deliverable, Logs Effort). It handles >90% of all bead processing by querying the bead store for unassigned, ready beads, filtering them by excluded labels, and sorting them in deterministic priority order.
 
-## Debug Logging Control
+Pluck is the primary bead selection strand in NEEDLE, handling >90% of all bead processing. It uses the Rust `tracing` crate for structured logging with multiple log levels. Debug logging is controlled via the `RUST_LOG` environment variable.
 
-### Environment Variable: `RUST_LOG`
-The primary way to enable debug logging for Pluck (and all other NEEDLE components) is through the standard Rust `RUST_LOG` environment variable.
+## Available Debug Flags
 
-#### Enable All Debug Logs
-```bash
-export RUST_LOG=debug
-needle run
+### Primary Environment Variable: `RUST_LOG`
+
+The `RUST_LOG` environment variable controls which log statements are emitted. The `tracing-subscriber` crate's `env-filter` feature parses this variable at runtime.
+
+#### Syntax
+```
+RUST_LOG=<target>=<level>,<target2>=<level2>,...
 ```
 
-#### Enable Pluck-Specific Debug Logs
+#### Available Log Levels
+- `error` - Failures that prevent operation
+- `warn` - (None currently used in Pluck)
+- `info` - Significant events (split trigger, candidate return)
+- `debug` - Detailed operation trace (filter stages, counts, decisions)
+- `trace` - Most granular details (reserved for future expansion)
+
+#### Target Paths for Pluck
+- `needle::strand::pluck` - Pluck strand specific
+- `needle::strand` - All strand modules
+- `needle::bead_store` - Bead store operations
+- `needle::worker` - Worker lifecycle
+- `needle::dispatch` - Agent dispatch
+- `needle` - All NEEDLE modules
+- (no target) - All crates globally
+
+### Common Usage Patterns
+
+#### Pluck-only Debug
 ```bash
-export RUST_LOG=needle::strand::pluck=debug
-needle run
+RUST_LOG=needle::strand::pluck=debug
 ```
 
-#### Enable Multiple Components
+#### Pluck-only Trace (Maximum Verbosity)
 ```bash
-export RUST_LOG=needle::strand::pluck=debug,needle::bead_store=debug
-needle run
+RUST_LOG=needle::strand::pluck=trace
 ```
 
-#### Enable Trace Level (Most Verbose)
+#### All NEEDLE Debug
 ```bash
-export RUST_LOG=trace
-needle run
+RUST_LOG=needle=debug
 ```
 
-## Pluck Debug Logging Points
+#### Everything Debug (Very Verbose)
+```bash
+RUST_LOG=debug
+```
 
-Based on analysis of `/home/coding/NEEDLE/src/strand/pluck.rs`, the following debug events are logged:
+#### Comprehensive Pluck Capture (Recommended)
+```bash
+RUST_LOG=needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug
+```
 
-### 1. Strand Initialization
-```rust
-tracing::debug!(
-    exclude_labels = ?self.exclude_labels,
-    split_threshold = self.split_after_failures,
-    "Pluck strand evaluation starting"
-);
+## Pluck Debug Events
+
+### 1. Evaluation Start
+```
+DEBUG Pluck strand evaluation starting
+  exclude_labels: ["deferred", "human", "blocked"]
+  split_threshold: 3
 ```
 
 ### 2. Bead Store Query
-```rust
-tracing::debug!(
-    filters = ?filters,
-    "Querying bead store for ready candidates"
-);
+```
+DEBUG Querying bead store for ready candidates
+  filters: Filters { assignee: None, exclude_labels: [...] }
 ```
 
-### 3. Candidate Count
-```rust
-tracing::debug!(
-    count = beads.len(),
-    "Bead store returned {} candidates",
-    beads.len()
-);
+### 3. Store Results
+```
+DEBUG Bead store returned {count} candidates
+  count: 42
 ```
 
 ### 4. Label Filtering
-```rust
-tracing::debug!(
-    excluded_count = before_label_filter - after_label_filter,
-    remaining = after_label_filter,
-    excluded_labels = ?self.exclude_labels,
-    "Label filtering excluded {} beads",
-    before_label_filter - after_label_filter
-);
+When beads are excluded:
+```
+DEBUG Label filtering excluded {excluded_count} beads
+  excluded_count: 5
+  remaining: 37
+  excluded_labels: ["deferred", "human", "blocked"]
 ```
 
-### 5. Individual Excluded Beads
-```rust
-tracing::debug!(
-    bead_id = %id,
-    labels = ?labels,
-    excluded_reasons = ?excluded_reasons,
-    "Excluded bead due to labels"
-);
+For each excluded bead:
+```
+DEBUG Excluded bead due to labels
+  bead_id: "bf-1234"
+  labels: ["deferred", "priority:p2"]
+  excluded_reasons: ["deferred"]
 ```
 
-### 6. Status Filtering
-```rust
-tracing::debug!(
-    filtered_count = before_status_filter - after_status_filter,
-    remaining = after_status_filter,
-    "Status/assignee filtering removed {} beads",
-    before_status_filter - after_status_filter
-);
+### 5. Status/Assignee Filtering
+```
+DEBUG Status/assignee filtering removed {filtered_count} beads
+  filtered_count: 2
+  remaining: 35
 ```
 
-### 7. Candidate Sorting
-```rust
-tracing::debug!(
-    total = candidates.len(),
-    first_bead_id = %first.id,
-    first_priority = first.priority,
-    first_created_at = %first.created_at,
-    "Sorting {} candidates by (priority ASC, created_at ASC, id ASC)",
-    candidates.len()
-);
+### 6. Sorting
+```
+DEBUG Sorting {total} candidates by (priority ASC, created_at ASC, id ASC)
+  total: 35
+  first_bead_id: "bf-0001"
+  first_priority: 1
+  first_created_at: "2026-07-09T00:00:00Z"
 ```
 
-### 8. Split Trigger Checking
-```rust
-tracing::debug!(
-    bead_id = %first_candidate.id,
-    failure_count = failure_count,
-    threshold = self.split_after_failures,
-    split_triggered = failure_count >= self.split_after_failures,
-    "Checking split trigger for first candidate"
-);
+### 7. Split Trigger Check
+```
+DEBUG Checking split trigger for first candidate
+  bead_id: "bf-0001"
+  failure_count: 0
+  threshold: 3
+  split_triggered: false
 ```
 
-### 9. Split Disabled
-```rust
-tracing::debug!("Split trigger disabled (threshold = 0)");
+When split is triggered:
+```
+INFO Split threshold reached, returning Split instruction
+  bead_id: "bf-0001"
+  failure_count: 4
+  threshold: 3
 ```
 
-### 10. No Candidates Remaining
-```rust
-tracing::debug!("No candidates remaining after filtering, returning NoWork");
+### 8. Result Return
+When candidates are found:
+```
+INFO Returning {count} candidates for processing
+  count: 35
+  candidates: ["bf-0001", "bf-0002", "bf-0003", ...]
 ```
 
-## Default Excluded Labels
-
-Pluck excludes the following labels by default (when `exclude_labels` is empty):
-- `deferred` - Beads marked for later processing
-- `human` - Beads requiring human intervention
-- `blocked` - Beads blocked by dependencies
-
-## Configuration
-
-### Pluck Configuration in `~/.config/needle/config.yaml`
-```yaml
-strands:
-  pluck:
-    exclude_labels: []           # Empty = use defaults ["deferred", "human", "blocked"]
-    split_after_failures: 3       # Auto-split after N consecutive failures (0 = disabled)
+When no candidates remain:
+```
+DEBUG No candidates remaining after filtering, returning NoWork
 ```
 
-### Custom Exclude Labels Example
-```yaml
-strands:
-  pluck:
-    exclude_labels: ["deferred", "wip", "blocked"]
-    split_after_failures: 5
+### 9. Error Cases
+```
+ERROR Bead store query failed
+  error: <error details>
 ```
 
-## Tracing Fields Captured
+## How to Enable Debug Output
 
-The Pluck strand uses structured logging with the following fields:
+### Method 1: Direct Environment Variable
+```bash
+export RUST_LOG=needle::strand::pluck=debug
+needle run -w /home/coding/ARMOR
+```
 
-- `exclude_labels`: Labels configured for exclusion
+### Method 2: Inline with Command
+```bash
+RUST_LOG=needle::strand::pluck=debug needle run -w /home/coding/ARMOR
+```
+
+### Method 3: Capture to File
+```bash
+RUST_LOG=needle::strand::pluck=debug needle run -w /home/coding/ARMOR 2>&1 | tee pluck-debug.log
+```
+
+### Method 4: Comprehensive Capture Script
+The provided `capture-pluck-debug.sh` script demonstrates a complete capture:
+```bash
+./capture-pluck-debug.sh /home/coding/ARMOR pluck-debug-output.log 1
+```
+
+This sets:
+```bash
+RUST_LOG=needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug
+```
+
+## Filtering Decision Logging
+
+### Which Events Show Filtering Decisions?
+
+All filter stages emit structured events:
+
+1. **Label filtering**: Logs count of excluded beads and reasons
+2. **Status/assignee filtering**: Logs count of removed beads
+3. **Individual exclusions**: Each excluded bead logs its ID, labels, and exclusion reasons
+
+### Key Fields for Debugging Filtering
+
+- `exclude_labels` - Labels being filtered
+- `excluded_count` - How many beads were excluded
+- `remaining` - How many beads remain after filtering
+- `excluded_reasons` - Which labels caused exclusion
+- `filters` - The filter object passed to the bead store
+
+## CLI Flags
+
+**Note:** NEEDLE does not provide CLI flags for debug logging configuration. All logging is controlled via the `RUST_LOG` environment variable.
+
+However, NEEDLE provides related logging commands:
+
+### `needle logs`
+View and query telemetry logs:
+```bash
+needle logs --follow                    # Stream events in real-time
+needle logs --filter 'event_type=bead.*'  # Filter events
+needle logs --since 1h                   # Events since 1 hour ago
+needle logs --format json               # JSON Lines output
+```
+
+### `needle config --dump`
+View resolved configuration including logging setup:
+```bash
+needle config --dump                    # Show all config
+needle config --get telemetry.file_sink.enabled  # Get specific value
+```
+
+## Tracing Instrumentation Details
+
+### Span Fields
+All Pluck events include these fields:
+- `strand`: "pluck" - identifies the strand type
+- `exclude_labels`: List of labels being filtered
 - `split_threshold`: Failure count threshold for auto-split
-- `filters`: Filters applied to bead store query
-- `count`: Number of candidates returned/processed
-- `excluded_count`: Number of beads filtered by labels
-- `remaining`: Number of candidates after filtering
-- `filtered_count`: Number filtered by status/assignee
-- `bead_id`: ID of specific bead being logged
-- `labels`: Full set of labels on a bead
-- `excluded_reasons`: Specific labels causing exclusion
-- `first_bead_id`, `first_priority`, `first_created_at`: First candidate details
-- `failure_count`: Consecutive failure count for split trigger
-- `split_triggered`: Whether split threshold was reached
 
-## Log Output
+### Event Types
+- `tracing::debug!()` - Detailed diagnostic information
+- `tracing::info!()` - Significant operational events
+- `tracing::error!()` - Failure events
 
-Logs are written to stderr and can be found in:
-- **Interactive terminal**: Direct to stderr
-- **Tmux sessions**: `~/.needle/logs/<session_name>.stderr.log`
-- **Worker logs**: `~/.needle/logs/needle-<agent>-<worker_id>.stderr.log`
+### Span Name
+All Pluck operations are tracked in the `strand.pluck` span.
 
-## Examples
+## Configuration Sources
 
-### Enable Pluck Debug Logs for a Single Worker Run
-```bash
-RUST_LOG=needle::strand::pluck=debug needle run --workspace /path/to/workspace
-```
+The tracing subscriber is initialized in `src/cli/mod.rs`:
+1. OTLP layer (if enabled in config)
+2. fmt layer for stderr output
+3. Environment variable filter (via `tracing-subscriber`'s `env-filter` feature)
 
-### Monitor Pluck Behavior in Real-Time
-```bash
-# In one terminal
-RUST_LOG=needle::strand::pluck=debug needle run
+## Acceptance Criteria Verification
 
-# In another terminal, tail the log
-tail -f ~/.needle/logs/needle-*.stderr.log | grep "strand.pluck"
-```
+✅ **List of available debug flags/variables found**
+- Primary: `RUST_LOG` environment variable
+- Levels: error, warn, info, debug, trace
+- Targets: needle::strand::pluck, needle::strand, needle, etc.
 
-### Debug Filtering Issues
-```bash
-# Enable debug logs for both Pluck and the bead store
-RUST_LOG=needle::strand::pluck=debug,needle::bead_store=debug needle run
-```
+✅ **Documentation of which flags control filtering decision logging**
+- `RUST_LOG=needle::strand::pluck=debug` enables all filtering decision logs
+- Individual bead exclusions logged at DEBUG level
+- Filter stage counts logged at DEBUG level
+- Split trigger decisions logged at DEBUG/INFO level
 
-## Summary
+✅ **Clear instructions on how to enable debug output**
+- Multiple methods documented (env var, inline, file capture, script)
+- Comprehensive capture script provided
+- Examples for all common scenarios
 
-- **Primary control**: `RUST_LOG` environment variable
-- **Pluck component path**: `needle::strand::pluck`
-- **Default debug level**: `info` (use `debug` for filtering details)
-- **Most verbose**: `trace` level
-- **Key filtering debug events**: Label exclusion, status filtering, candidate sorting
-- **Structured fields**: All relevant context (counts, labels, bead IDs) captured in log fields
-- **Log location**: `~/.needle/logs/*.stderr.log` for worker sessions
+## Related Documentation
 
-The debug logging is comprehensive for understanding Pluck's filtering decisions, making it possible to diagnose why specific beads are or aren't being selected for processing.
+- **Pluck Filter Configurations:** See `bf-1jwl.md` for complete filter documentation
+- **Pluck Debug Logging Guide:** See `bf-2hvf.md` for detailed event examples
+- **Pluck exclude_labels:** See `bf-ogec.md` for exclude_labels extraction
+- **NEEDLE Logging:** Check NEEDLE project docs for global logging configuration
+- **capture-pluck-debug.sh:** Shell script demonstrating comprehensive debug capture
+
+## Future Enhancements
+
+Possible improvements for future work:
+
+1. **CLI Flags:** Add `--log-level` flag to avoid environment variable manipulation
+2. **Filter Configuration:** Add ability to enable/disable specific log categories
+3. **Structured JSON Output:** Emit logs in JSON format for easier parsing
+4. **Per-Bead Timings:** Add timing information for each filtering stage
+5. **Filter Decision Logs:** Emit specific reason for each bead's inclusion/exclusion
+
+---
+
+**Status:** ✅ Complete - Pluck debug flags and logging configuration documented
