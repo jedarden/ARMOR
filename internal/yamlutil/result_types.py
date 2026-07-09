@@ -310,6 +310,24 @@ class Result(Generic[T]):
         """
         return cls(status=Status.ERROR, data=None, error=error_message)
 
+    def __bool__(self) -> bool:
+        """
+        Allow Result to be used in boolean contexts.
+
+        Returns True if status is SUCCESS, False if ERROR.
+
+        This enables concise conditional checks:
+            result = Result.success({"key": "value"})
+            if result:
+                data = result.data
+
+        Example:
+            result = Result.success("data")
+            if result:
+                print("Success!")
+        """
+        return self.is_success()
+
     def __str__(self) -> str:
         """
         Human-readable string representation.
@@ -325,6 +343,19 @@ class Result(Generic[T]):
             data_type = type(self.data).__name__ if self.data is not None else "None"
             return f"Result(status={self.status.value}, data={data_type})"
         return f"Result(status={self.status.value}, error={self.error})"
+
+    def __repr__(self) -> str:
+        """
+        Detailed representation for debugging.
+
+        Returns:
+            String showing all fields (useful for debugging and logs)
+
+        Example:
+            result = Result.success({"key": "value"})
+            repr(result)  # "Result(status=Status.SUCCESS, data={'key': 'value'}, error=None)"
+        """
+        return f"Result(status={self.status!r}, data={self.data!r}, error={self.error!r})"
 
 
 # ============================================================================

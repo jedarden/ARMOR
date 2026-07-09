@@ -62,6 +62,17 @@ from .parser import (
     safe_load_yaml
 )
 
+from .result_types import (
+    Status,
+    Result,
+    YAMLDataResult,
+    DictResult,
+    ListResult,
+    StrResult,
+    BoolResult,
+    IntResult,
+)
+
 __all__ = [
     # Error types
     'YAMLErrorCategory',
@@ -87,6 +98,16 @@ __all__ = [
     # Core Parser
     'YAMLCoreParser',
     'SafeLoadResult',
+
+    # Result Types
+    'Status',
+    'Result',
+    'YAMLDataResult',
+    'DictResult',
+    'ListResult',
+    'StrResult',
+    'BoolResult',
+    'IntResult',
 
     # Convenience functions
     'validate_yaml_file',
