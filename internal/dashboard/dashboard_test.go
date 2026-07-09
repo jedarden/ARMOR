@@ -86,9 +86,20 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 		}
 	}
 
+	// Filter common prefixes by prefix as well
+	var filteredPrefixes []string
+	for _, cp := range m.commonPrefixes {
+		if prefix == "" || strings.HasPrefix(cp, prefix) {
+			// Don't include the prefix itself in the results
+			if cp != prefix {
+				filteredPrefixes = append(filteredPrefixes, cp)
+			}
+		}
+	}
+
 	return &backend.ListResult{
 		Objects:        objects,
-		CommonPrefixes: m.commonPrefixes,
+		CommonPrefixes: filteredPrefixes,
 	}, nil
 }
 
@@ -113,7 +124,8 @@ func (m *mockBackend) HeadBucket(ctx context.Context, bucket string) error {
 }
 
 func (m *mockBackend) GetDirect(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
-	return nil, nil, nil
+	// Simulate "file not found" for rotation state file
+	return nil, nil, errors.New("object not found")
 }
 
 func (m *mockBackend) CreateMultipartUpload(ctx context.Context, bucket, key string, meta map[string]string) (string, error) {
@@ -1293,11 +1305,12 @@ func TestCommonPrefixesDisplayed(t *testing.T) {
 	}
 
 	// Verify folder links use ?prefix= format for navigation
-	if !strings.Contains(body, `href="?prefix=data/"`) {
-		t.Error("Expected folder link with href=\"?prefix=data/\" for navigation")
+	// Note: Go templates URL-escape the slash, so we check for %2f
+	if !strings.Contains(body, `href="?prefix=data%2f`) {
+		t.Error("Expected folder link with href=\"?prefix=data/\" for navigation (URL-encoded as %2f)")
 	}
-	if !strings.Contains(body, `href="?prefix=logs/"`) {
-		t.Error("Expected folder link with href=\"?prefix=logs/\" for navigation")
+	if !strings.Contains(body, `href="?prefix=logs%2f`) {
+		t.Error("Expected folder link with href=\"?prefix=logs/\" for navigation (URL-encoded as %2f)")
 	}
 }
 
@@ -1321,8 +1334,9 @@ func TestCommonPrefixLinksNavigateByPrefix(t *testing.T) {
 	d.Handler()(rec, req)
 
 	body := rec.Body.String()
-	if !strings.Contains(body, `href="?prefix=folder1/"`) {
-		t.Error("Expected folder1/ link with ?prefix= for navigation")
+	// Note: Go templates URL-escape the slash, so we check for %2f
+	if !strings.Contains(body, `href="?prefix=folder1%2f`) {
+		t.Error("Expected folder1/ link with ?prefix= for navigation (URL-encoded as %2f)")
 	}
 
 	// Second, verify navigating to folder1/ shows its contents
@@ -1376,14 +1390,15 @@ func TestBreadcrumbLinksNavigateBack(t *testing.T) {
 
 	// Verify breadcrumb links exist with proper ?prefix= format
 	// Should have: test-bucket (?prefix=), data (?prefix=data/), 2024 (?prefix=data/2024/), january (?prefix=data/2024/january/)
-	if !strings.Contains(body, `href="?prefix=data/"`) {
-		t.Error("Expected breadcrumb link with href=\"?prefix=data/\" to navigate back to data/")
+	// Note: Go templates URL-escape slashes, so we check for %2f
+	if !strings.Contains(body, `href="?prefix=data%2f"`) {
+		t.Error("Expected breadcrumb link with href=\"?prefix=data/\" to navigate back to data/ (URL-encoded as %2f)")
 	}
-	if !strings.Contains(body, `href="?prefix=data/2024/"`) {
-		t.Error("Expected breadcrumb link with href=\"?prefix=data/2024/\" to navigate back to 2024/")
+	if !strings.Contains(body, `href="?prefix=data%2f2024%2f"`) {
+		t.Error("Expected breadcrumb link with href=\"?prefix=data/2024/\" to navigate back to 2024/ (URL-encoded as %2f)")
 	}
-	if !strings.Contains(body, `href="?prefix=data/2024/january/"`) {
-		t.Error("Expected breadcrumb link with href=\"?prefix=data/2024/january/\" for current folder")
+	if !strings.Contains(body, `href="?prefix=data%2f2024%2fjanuary%2f"`) {
+		t.Error("Expected breadcrumb link with href=\"?prefix=data/2024/january/\" for current folder (URL-encoded as %2f)")
 	}
 
 	// Verify clicking "data" breadcrumb navigates back correctly
@@ -1809,5 +1824,192 @@ func TestListAPIHandlerListError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("Expected status 500, got %d", rec.Code)
+	}
+}
+
+// TestKeyRotateStatusHandlerNoRotation verifies status returns "none" when no rotation state file exists.
+func TestKeyRotateStatusHandlerNoRotation(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/admin/key/status", nil)
+	rec := httptest.NewRecorder()
+
+	d.KeyRotateStatusHandler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode JSON: %v", err)
+	}
+
+	if resp["status"] != "none" {
+		t.Errorf("Expected status 'none', got %v", resp["status"])
+	}
+	if resp["message"] != "No rotation in progress" {
+		t.Errorf("Expected message 'No rotation in progress', got %v", resp["message"])
+	}
+}
+
+// TestKeyRotateStatusHandlerWithAuth verifies authentication on the status endpoint.
+func TestKeyRotateStatusHandlerWithAuth(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123")
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/admin/key/status", nil)
+	rec := httptest.NewRecorder()
+
+	// Should fail without auth
+	d.KeyRotateStatusHandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 without auth, got %d", rec.Code)
+	}
+
+	// Should succeed with valid token
+	req = httptest.NewRequest(http.MethodGet, "/dashboard/admin/key/status", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec = httptest.NewRecorder()
+
+	d.KeyRotateStatusHandlerWithAuth()(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 with valid token, got %d", rec.Code)
+	}
+}
+
+// TestKeyRotateStatusHandlerMethodNotAllowed verifies non-GET requests are rejected.
+func TestKeyRotateStatusHandlerMethodNotAllowed(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/status", nil)
+	rec := httptest.NewRecorder()
+
+	d.KeyRotateStatusHandler()(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status 405, got %d", rec.Code)
+	}
+}
+
+// TestKeyRotateHandlerSuccess verifies successful key rotation initiation.
+func TestKeyRotateHandlerSuccess(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	// Mock admin API server
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		// Return success response
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(`{"status":"accepted"}`))
+	}))
+	defer adminServer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
+	rec := httptest.NewRecorder()
+
+	d.KeyRotateHandler(adminServer.Client(), adminServer.URL)(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("Expected status 202, got %d", rec.Code)
+	}
+}
+
+// TestKeyRotateHandlerWithAuth verifies authentication on the rotate endpoint.
+func TestKeyRotateHandlerWithAuth(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "")
+
+	// Mock admin API server
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer adminServer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
+	rec := httptest.NewRecorder()
+
+	// Should fail without auth
+	d.KeyRotateHandlerWithAuth(adminServer.Client(), adminServer.URL)(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 without auth, got %d", rec.Code)
+	}
+
+	// Should succeed with valid auth
+	req = httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
+	req.SetBasicAuth("admin", "secret")
+	rec = httptest.NewRecorder()
+
+	d.KeyRotateHandlerWithAuth(adminServer.Client(), adminServer.URL)(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("Expected status 202 with valid auth, got %d", rec.Code)
+	}
+}
+
+// TestKeyRotateHandlerMethodNotAllowed verifies non-POST requests are rejected.
+func TestKeyRotateHandlerMethodNotAllowed(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/admin/key/rotate", nil)
+	rec := httptest.NewRecorder()
+
+	d.KeyRotateHandler(nil, "")(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status 405, got %d", rec.Code)
+	}
+}
+
+// TestKeyRotateHandlerAdminAPIFailure verifies error handling when admin API fails.
+func TestKeyRotateHandlerAdminAPIFailure(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	// Mock admin API that returns an error response
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("admin API error"))
+	}))
+	defer adminServer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
+	rec := httptest.NewRecorder()
+
+	d.KeyRotateHandler(adminServer.Client(), adminServer.URL)(rec, req)
+
+	// The handler copies the admin API's response status code
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500, got %d", rec.Code)
+	}
+}
+
+// TestKeyRotateHandlerDefaultURL verifies default admin URL is used when none provided.
+func TestKeyRotateHandlerDefaultURL(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	// Don't provide a URL - should use default
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
+	rec := httptest.NewRecorder()
+
+	d.KeyRotateHandler(http.DefaultClient, "")(rec, req)
+
+	// Will fail to connect to localhost:9001, but confirms the default URL is used
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("Expected status 502 (connection refused), got %d", rec.Code)
 	}
 }
