@@ -1,55 +1,72 @@
 # Package Manager Detection Report
 
-## System Information
-- **OS:** NixOS 25.05 (Warbler)
-- **Kernel:** Linux 6.12.63
-- **Architecture:** linux/amd64
+## System Type
+**NixOS 25.05 (Warbler)** - Declarative Linux distribution using the Nix package manager
 
-## Primary Package Manager
+## Available Package Managers
 
-### Nix (2.28.5)
-NixOS uses the Nix package manager as its primary package management system. All Nix tools are available:
+### System Package Manager: Nix
+- **nix**: v2.28.5
+- **Location**: `/run/current-system/sw/bin/nix`
+- **Related tools present**:
+  - nix-env
+  - nix-shell
+  - nix-store
+  - nix-channel
+  - nix-build
 
-| Command | Path |
-|---------|------|
-| nix | `/run/current-system/sw/bin/nix` |
-| nix-env | `/run/current-system/sw/bin/nix-env` |
-| nix-store | `/run/current-system/sw/bin/nix-store` |
-| nix-channel | `/run/current-system/sw/bin/nix-channel` |
-| nix-build | `/run/current-system/sw/bin/nix-build` |
-| nix-shell | `/run/current-system/sw/bin/nix-shell` |
-| nix-collect-garbage | `/run/current-system/sw/bin/nix-collect-garbage` |
-| nixos-rebuild | `/run/current-system/sw/bin/nixos-rebuild` |
+NixOS uses Nix as its native package manager. Unlike traditional distributions (Debian/Ubuntu with apt, RHEL/CentOS with yum/dnf, Arch with pacman), NixOS manages all packages through the Nix expression language and declarative configuration.
 
-## Language Package Managers
+### Language-Specific Package Managers
 
-| Language | Package Manager | Version |
-|----------|-----------------|---------|
-| Rust | cargo | 1.96.1 |
-| Node.js | npm | 10.9.2 |
-| Go | go modules | 1.25.0 |
+| Tool | Version | Location | Purpose |
+|------|---------|----------|---------|
+| **cargo** | 1.96.1 | `~/.local/bin/cargo` | Rust package manager and build tool |
+| **npm** | 10.9.2 | `~/.nix-profile/bin/npm` | Node.js package manager |
+| **go** | 1.25.0 | `~/.nix-profile/bin/go` | Go toolchain (includes module support) |
 
-## Traditional Package Managers: Not Available
+### Container Package Managers
 
-The following traditional package managers are **NOT** available on this NixOS system:
-- `apt` / `apt-get` (Debian/Ubuntu)
-- `yum` (RHEL/CentOS 6-)
-- `dnf` (RHEL/CentOS 8+, Fedora)
-- `pacman` (Arch Linux)
-- `zypper` (openSUSE)
-- `apk` (Alpine Linux)
-- `opkg` (OpenWrt)
-- `emerge` (Gentoo)
+| Tool | Version | Purpose |
+|------|---------|---------|
+| **docker** | 27.5.1 | Container image management |
+| **podman** | 5.4.1 | Daemonless container engine (Docker-compatible) |
 
-## Universal Package Systems: Not Available
+### Traditional Package Managers: NOT PRESENT
 
-The following universal package systems are **NOT** available:
-- Flatpak
-- Snap
-- Homebrew (brew)
+The following traditional Linux package managers are **not available** on this NixOS system:
+- apt/apt-get (Debian/Ubuntu)
+- yum/dnf (RHEL/CentOS/Fedora)
+- pacman (Arch Linux)
+- zypper (openSUSE)
+- apk (Alpine Linux)
+- brew (macOS/Linux)
+- snap (Canonical)
+- flatpak (universal Linux)
 
-## Notes
+This is expected behavior for NixOS, which uses Nix exclusively for system package management.
 
-NixOS is a purely functional Linux distribution that uses Nix as its package manager. Unlike traditional distributions, NixOS does not use conventional package managers like apt or yum. Instead, it uses declarative configuration through Nix expressions and the Nix package manager.
+### Build Tools Present
 
-Language-specific package managers (cargo, npm, go) are available and work as expected within the Nix ecosystem.
+| Tool | Version | Purpose |
+|------|---------|---------|
+| **git** | 2.50.1 | Version control |
+| **curl** | 8.14.1 | HTTP client |
+| **wget** | 1.25.0 | HTTP/FTP client |
+| **make** | 4.4.1 | Build automation |
+
+### Language Package Managers: NOT PRESENT
+
+The following language package managers are **not available**:
+- pip/pip3 (Python)
+- yarn (Node.js alternative)
+- composer (PHP)
+- gem (Ruby)
+- luarocks (Lua)
+
+## Summary
+
+This is a **NixOS 25.05 system** with Nix (v2.28.5) as the primary package manager. Development tools for Rust (cargo), Node.js (npm), and Go are available. Both Docker and Podman are installed for container management. Traditional package managers (apt, yum, pacman, etc.) are not present, which is the expected and correct configuration for NixOS.
+
+## Date
+2026-07-09
