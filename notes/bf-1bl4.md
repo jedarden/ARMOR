@@ -1,7 +1,8 @@
 # Debug Configuration Verification - bf-1bl4
 
-**Date:** 2026-07-09  
+**Date:** 2026-07-09
 **Task:** Verify debug configuration files exist and are valid for Pluck execution
+**Status:** ✅ COMPLETE
 
 ## Summary
 
@@ -23,24 +24,30 @@ All debug configuration files have been verified and confirmed to be present, re
    - Auto-split settings present (currently disabled: 0)
    - Valid YAML structure
 
-3. **`/home/coding/ARMOR/.beads/config.yaml`** - Beads project configuration
+3. **`/home/coding/ARMOR/.env.pluck-debug`** - Environment variable configuration
+   - Contains RUST_LOG export statements for multiple debug levels
+   - Active configuration: Comprehensive mode (Pluck TRACE + supporting modules)
+   - Properly formatted and documented
+
+4. **`/home/coding/ARMOR/.beads/config.yaml`** - Beads project configuration
    - Basic project settings present
    - Issue prefix: `armor`
    - Valid YAML structure
 
-### ✓ Supporting Scripts and Configuration
+### ✓ Supporting Scripts
 
-4. **`/home/coding/ARMOR/logs/pluck-debug/log-rotation-config.sh`** - Log rotation management
-   - Executable bash script
-   - Configured for automatic log rotation (10MB threshold)
-   - Contains cleanup policies (7-day retention, 50 file limit)
-   - Properly structured and documented
+5. **`/home/coding/ARMOR/pluck-debug-config.sh`** - Debug configuration manager
+   - Executable bash script (755 permissions)
+   - 6 debug preset levels available
+   - RUST_LOG environment configuration
+   - Automatic log capture and analysis
+   - Help system and usage examples
 
-5. **`/home/coding/ARMOR/capture-pluck-debug.sh`** - Debug capture utility
-   - Executable bash script
-   - Configured for comprehensive RUST_LOG capture
-   - Proper workspace and output file handling
-   - Valid bash syntax
+6. **`/home/coding/ARMOR/capture-pluck-debug.sh`** - Debug capture utility
+   - Executable bash script (755 permissions)
+   - Comprehensive debug capture preset
+   - Multi-module logging configuration
+   - Timestamped output file generation
 
 ### ✓ Directory Structure
 
@@ -49,25 +56,25 @@ All debug configuration files have been verified and confirmed to be present, re
 
 ## Configuration Keys Verified
 
-### Debug Section
+### Debug Section (pluck-config.yaml)
 - ✓ `level: debug` - Proper logging level set
 - ✓ `log_filtering_decisions: true` - Filtering decision logging enabled
 - ✓ `log_bead_store_queries: true` - Bead store query logging enabled
 - ✓ `log_split_evaluation: true` - Split threshold evaluation logging enabled
 
-### Modules Section
+### Modules Section (pluck-config.yaml)
 - ✓ `strand: true` - Strand-level debug logging enabled
 - ✓ `worker: true` - Worker coordination debug logging enabled
 - ✓ `bead_store: true` - Bead store access debug logging enabled
 - ✓ `dispatch: true` - Dispatch coordination debug logging enabled
 - ✓ `claim: false` - Claim process debug logging disabled
 
-### Filtering Section
+### Filtering Section (pluck-config.yaml)
 - ✓ `exclude_labels: []` - No label-based exclusions configured
 - ✓ `split_after_failures: 0` - Auto-split disabled
 - ✓ `sort_order: priority` - Priority-based candidate selection
 
-### Output Section
+### Output Section (pluck-config.yaml)
 - ✓ `file: "logs/pluck-debug.log"` - Log file location specified
 - ✓ `timestamps: true` - Timestamp logging enabled
 - ✓ `source_location: true` - Source location logging enabled
@@ -75,24 +82,110 @@ All debug configuration files have been verified and confirmed to be present, re
 - ✓ `max_size_mb: 100` - Log rotation at 100MB
 - ✓ `max_backups: 5` - Maximum 5 rotated log files retained
 
-## Syntax Validation
+### NEEDLE Strand Configuration (.needle.yaml)
+- ✓ `strands.pluck.exclude_labels: []` - No label exclusions
+- ✓ `strands.pluck.split_after_failures: 0` - Auto-split disabled
 
-All YAML files passed basic syntax validation:
+## Available Debug Presets
+
+### Level 1: Minimal
+```bash
+RUST_LOG=needle::strand::pluck=info
+```
+High-level strand operations only
+
+### Level 2: Standard (Recommended)
+```bash
+RUST_LOG=needle::strand::pluck=debug
+```
+Filtering decisions and statistics
+
+### Level 3: Detailed
+```bash
+RUST_LOG=needle::strand::pluck=trace
+```
+Complete execution details
+
+### Level 4: Comprehensive (Active)
+```bash
+RUST_LOG=needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug
+```
+Pluck TRACE + supporting modules
+
+### Level 5: Full
+```bash
+RUST_LOG=needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug,needle::claim=debug
+```
+All NEEDLE modules
+
+### Level 6: Maximum
+```bash
+RUST_LOG=trace
+```
+Everything at TRACE level (very verbose)
+
+## Syntax Validation Results
+
+### YAML Files
 - ✓ No tab characters found (proper space indentation)
 - ✓ All required sections present with proper structure
 - ✓ All configuration keys present and properly formatted
-- ✓ No syntax errors detected in bash scripts
+- ✓ No syntax errors detected
 
-## Historical Validation
+### Shell Scripts
+- ✓ Valid bash syntax
+- ✓ Executable permissions set (755)
+- ✓ RUST_LOG configurations properly formatted
+- ✓ Needle command invocation syntax correct
 
-Previous syntax validation log (`/home/coding/ARMOR/logs/pluck-syntax-validation.log`) confirms:
-- ✓ Needle command availability verified (needle 0.2.11)
-- ✓ Command structure validation passed
-- ✓ RUST_LOG module path validation passed
-- ✓ Combined command validation passed
+### File Permissions
+- Configuration files: 644 (readable)
+- Shell scripts: 755 (executable)
+- All files owned by correct user
+
+## Integration Points
+
+### NEEDLE Integration
+- Configuration files integrate with NEEDLE's strand system
+- Pluck strand configured with proper filtering parameters
+- Debug logging aligns with NEEDLE's RUST_LOG system
+
+### Workspace Integration
+- All configuration files located in workspace root
+- Shell scripts configured for ARMOR workspace path
+- Log output directed to workspace logs directory
+
+### Beads Integration
+- Configuration respects beads project settings
+- Compatible with beads database operations
+- Supports beads claim and dispatch workflows
+
+## Acceptance Criteria Status
+
+✅ **All debug configuration files located**
+- Main configuration files found and verified
+- Shell scripts located and validated
+- Environment files present
+- Directory structure established
+
+✅ **Files contain valid syntax**
+- YAML files: Valid syntax, no errors
+- Shell scripts: Executable and valid
+- Environment files: Properly formatted
+
+✅ **Required configuration keys confirmed present**
+- All required keys in pluck-config.yaml
+- All required keys in .needle.yaml
+- Environment variables properly configured
+- Shell scripts contain necessary parameters
 
 ## Conclusion
 
-**Status:** ✅ COMPLETE
+The debug configuration for Pluck execution is **complete and operational**. All files are present, valid, and properly configured. The system is ready for immediate use with multiple debug preset levels available.
 
-All debug configuration files for Pluck execution have been verified and confirmed valid. The workspace is properly configured for comprehensive Pluck debugging with all required files present, readable, and syntactically correct.
+## Recommendations
+
+1. **Default Configuration:** Use comprehensive mode for most debugging scenarios
+2. **Production Use:** Standard mode provides good balance of detail vs. verbosity
+3. **Deep Troubleshooting:** Maximum mode should only be used when necessary
+4. **Log Management:** Monitor log file size due to potential volume at higher debug levels
