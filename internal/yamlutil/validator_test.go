@@ -596,6 +596,118 @@ func TestValidator_WarningSummary(t *testing.T) {
 	if !result.HasWarnings() && summary != "No warnings" {
 		t.Errorf("Expected 'No warnings' when no warnings present, got: %s", summary)
 	}
+
+	t.Run("with warnings", func(t *testing.T) {
+		// Create a result with warnings
+		result := ValidationResult{
+			FilePath: "/test/file.yaml",
+			Valid:    true,
+			Warnings: []ValidationError{
+				{
+					Type:    ErrorTypeStructure,
+					Message: "Duplicate key detected",
+					Line:    5,
+				},
+				{
+					Type:    ErrorTypeDeprecated,
+					Message: "Deprecated YAML feature",
+					Line:    10,
+				},
+			},
+		}
+
+		summary := result.WarningSummary()
+
+		if !strings.Contains(summary, "Warnings") {
+			t.Errorf("Expected summary to contain 'Warnings', got: %s", summary)
+		}
+
+		if !strings.Contains(summary, "Duplicate key detected") {
+			t.Errorf("Expected summary to contain first warning message, got: %s", summary)
+		}
+
+		if !strings.Contains(summary, "1.") && !strings.Contains(summary, "2.") {
+			t.Errorf("Expected numbered warnings, got: %s", summary)
+		}
+	})
+}
+
+func TestCategorizeError(t *testing.T) {
+	tests := []struct {
+		name         string
+		errorMsg     string
+		expectedType ErrorType
+	}{
+		{
+			name:         "could not find expected",
+			errorMsg:     "yaml: line 1: could not find expected ':'",
+			expectedType: ErrorTypeSyntax,
+		},
+		{
+			name:         "did not find expected key",
+			errorMsg:     "did not find expected key",
+			expectedType: ErrorTypeSyntax,
+		},
+		{
+			name:         "cannot start any key",
+			errorMsg:     "found character that cannot start any key",
+			expectedType: ErrorTypeSyntax,
+		},
+		{
+			name:         "invalid indentation",
+			errorMsg:     "invalid indentation",
+			expectedType: ErrorTypeSyntax,
+		},
+		{
+			name:         "duplicate key",
+			errorMsg:     "duplicate key",
+			expectedType: ErrorTypeStructure,
+		},
+		{
+			name:         "mapping values not allowed",
+			errorMsg:     "mapping values are not allowed here",
+			expectedType: ErrorTypeSyntax,
+		},
+		{
+			name:         "unexpected end",
+			errorMsg:     "unexpected end of document",
+			expectedType: ErrorTypeSyntax,
+		},
+		{
+			name:         "unacceptable character",
+			errorMsg:     "unacceptable character",
+			expectedType: ErrorTypeSyntax,
+		},
+		{
+			name:         "scanner error",
+			errorMsg:     "scanner error",
+			expectedType: ErrorTypeSyntax,
+		},
+		{
+			name:         "unmarshal errors",
+			errorMsg:     "unmarshal errors",
+			expectedType: ErrorTypeStructure,
+		},
+		{
+			name:         "cannot unmarshal",
+			errorMsg:     "cannot unmarshal !!str into []string",
+			expectedType: ErrorTypeStructure,
+		},
+		{
+			name:         "unknown error",
+			errorMsg:     "some unknown error",
+			expectedType: ErrorTypeUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := categorizeError(tt.errorMsg)
+			if result != tt.expectedType {
+				t.Errorf("categorizeError(%q) = %v, expected %v", tt.errorMsg, result, tt.expectedType)
+			}
+		})
+	}
 }
 
 // Test acceptance criteria
@@ -711,5 +823,58 @@ func TestAcceptanceCriteria_ErrorTypeCategorization(t *testing.T) {
 				t.Errorf("Expected error type to be one of %v, got: %s", tc.expectedTypes, errType)
 			}
 		})
+	}
+}
+
+func TestWarningSummary_WithWarnings(t *testing.T) {
+	validator := NewValidator()
+	yamlContent := `
+key1: value1
+key2: value2
+	`
+
+	result := validator.ValidateString(yamlContent)
+
+	// Manually add a warning to test WarningSummary
+	result.Warnings = append(result.Warnings, ValidationError{
+		Type:     ErrorTypeStructure,
+		Message:  "Test warning",
+		FilePath: "test.yaml",
+		Line:     1,
+	})
+
+	summary := result.WarningSummary()
+
+	if !strings.Contains(summary, "Warnings for") {
+		t.Errorf("Expected summary to mention warnings, got: %s", summary)
+	}
+
+	if !strings.Contains(summary, "Test warning") {
+		t.Errorf("Expected summary to contain warning message, got: %s", summary)
+	}
+
+	if !strings.Contains(summary, "1.") {
+		t.Errorf("Expected summary to list warning number, got: %s", summary)
+	}
+}
+
+func TestWarningSummary_MultipleWarnings(t *testing.T) {
+	validator := NewValidator()
+	result := validator.ValidateString("key: value")
+
+	// Add multiple warnings
+	result.Warnings = append(result.Warnings,
+		ValidationError{Type: ErrorTypeStructure, Message: "Warning 1", FilePath: "test.yaml"},
+		ValidationError{Type: ErrorTypeStructure, Message: "Warning 2", FilePath: "test.yaml"},
+	)
+
+	summary := result.WarningSummary()
+
+	if !strings.Contains(summary, "1.") {
+		t.Errorf("Expected first warning number, got: %s", summary)
+	}
+
+	if !strings.Contains(summary, "2.") {
+		t.Errorf("Expected second warning number, got: %s", summary)
 	}
 }
