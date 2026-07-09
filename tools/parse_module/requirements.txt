@@ -1,0 +1,8 @@
+# Requirements for YAML Parser Utility Module
+# Install with: pip install -r requirements.txt
+
+# YAML parsing library
+pyyaml>=6.0
+
+# Testing framework
+pytest>=7.0.0

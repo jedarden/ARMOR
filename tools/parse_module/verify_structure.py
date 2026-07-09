@@ -30,11 +30,18 @@ def test_imports():
         return False
 
     try:
+        # Try importing via the package (if installed)
         from parse_module import YAMLParser, ParseResult, ParseStatus
         print("✓ parse_module package: All expected symbols exported")
-    except ImportError as e:
-        print(f"✗ Failed to import from parse_module package: {e}")
-        return False
+    except ImportError:
+        # Expected if not installed as package - try direct import
+        try:
+            from yaml_parser import YAMLParser
+            from result import ParseResult, ParseStatus
+            print("✓ Module imports: All expected symbols available (direct import)")
+        except ImportError as e:
+            print(f"✗ Failed to import required symbols: {e}")
+            return False
 
     return True
 

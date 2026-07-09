@@ -53,19 +53,19 @@ class YAMLParser:
             ParseResult with status, data, and error fields
         """
         if not self.yaml:
-            return ParseResult.error('PyYAML not available')
+            return ParseResult.make_error('PyYAML not available')
 
         if not yaml_content or not yaml_content.strip():
-            return ParseResult.error('Empty YAML content')
+            return ParseResult.make_error('Empty YAML content')
 
         try:
             data = self.yaml.safe_load(yaml_content)
             return ParseResult.success(data)
         except self.yaml.YAMLError as e:
             error_msg = self._format_yaml_error(str(e))
-            return ParseResult.error(error_msg)
+            return ParseResult.make_error(error_msg)
         except Exception as e:
-            return ParseResult.error(f'Unexpected error: {str(e)}')
+            return ParseResult.make_error(f'Unexpected error: {str(e)}')
 
     def parse_file(self, filepath: str) -> ParseResult:
         """
@@ -81,11 +81,11 @@ class YAMLParser:
 
         # Check if file exists
         if not path.exists():
-            return ParseResult.error(f'File not found: {filepath}')
+            return ParseResult.make_error(f'File not found: {filepath}')
 
         # Check if it's a file (not directory)
         if not path.is_file():
-            return ParseResult.error(f'Path is not a file: {filepath}')
+            return ParseResult.make_error(f'Path is not a file: {filepath}')
 
         try:
             with open(path, 'r', encoding='utf-8') as f:
@@ -94,13 +94,13 @@ class YAMLParser:
             return self.parse_string(content)
 
         except FileNotFoundError:
-            return ParseResult.error(f'File not found: {filepath}')
+            return ParseResult.make_error(f'File not found: {filepath}')
         except PermissionError:
-            return ParseResult.error(f'Permission denied: {filepath}')
+            return ParseResult.make_error(f'Permission denied: {filepath}')
         except UnicodeDecodeError as e:
-            return ParseResult.error(f'Encoding error reading file: {str(e)}')
+            return ParseResult.make_error(f'Encoding error reading file: {str(e)}')
         except Exception as e:
-            return ParseResult.error(f'Error reading file: {str(e)}')
+            return ParseResult.make_error(f'Error reading file: {str(e)}')
 
     def _format_yaml_error(self, error_message: str) -> str:
         """
