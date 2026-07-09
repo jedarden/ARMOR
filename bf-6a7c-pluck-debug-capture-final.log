@@ -16,58 +16,58 @@ NEEDLE telemetry: writer thread ready signal received
 NEEDLE telemetry: start_and_wait complete
 NEEDLE worker boot: writer thread started
 NEEDLE worker boot: starting init step 'bead_store_discover'...
-2026-07-09T05:33:25.573146Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=1
-NEEDLE telemetry writer thread: first event written: init.step.started
-2026-07-09T05:33:25.573169Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=2
+2026-07-09T05:43:44.656024Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=1
+2026-07-09T05:43:44.656044Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=2
 NEEDLE worker boot: init step 'bead_store_discover' completed in 0ms
+NEEDLE telemetry writer thread: first event written: init.step.started
 NEEDLE worker boot: starting init step 'worker_construction'...
-2026-07-09T05:33:25.623279Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=3
-2026-07-09T05:33:25.623336Z  WARN needle::learning: failed to parse learning entry: Invalid learning entry: too few lines, skipping
-2026-07-09T05:33:25.625492Z DEBUG needle::sanitize: skipping invalid allowlist regex rule="global-allowlist" error=regex parse error:
+2026-07-09T05:43:44.706138Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=3
+2026-07-09T05:43:44.706201Z  WARN needle::learning: failed to parse learning entry: Invalid learning entry: too few lines, skipping
+2026-07-09T05:43:44.708360Z DEBUG needle::sanitize: skipping invalid allowlist regex rule="global-allowlist" error=regex parse error:
     ^\$(?:\d+|{\d+})$
               ^
 error: repetition operator missing expression pattern=^\$(?:\d+|{\d+})$
-2026-07-09T05:33:25.625545Z DEBUG needle::sanitize: skipping invalid allowlist regex rule="global-allowlist" error=regex parse error:
+2026-07-09T05:43:44.708409Z DEBUG needle::sanitize: skipping invalid allowlist regex rule="global-allowlist" error=regex parse error:
     ^\${(?:[A-Z_]+|[a-z_]+)}$
         ^
 error: repetition quantifier expects a valid decimal pattern=^\${(?:[A-Z_]+|[a-z_]+)}$
-2026-07-09T05:33:25.993611Z DEBUG needle::sanitize: skipping invalid allowlist regex rule_id=curl-auth-user error=regex parse error:
+2026-07-09T05:43:45.076597Z DEBUG needle::sanitize: skipping invalid allowlist regex rule_id=curl-auth-user error=regex parse error:
     ['"]?\$?{{[^}]+}}['"]?:['"]?\$?{{[^}]+}}['"]?
              ^
 error: repetition quantifier expects a valid decimal pattern=['"]?\$?{{[^}]+}}['"]?:['"]?\$?{{[^}]+}}['"]?
-2026-07-09T05:33:26.312564Z DEBUG needle::sanitize: gitleaks rule regex compile error rule_id=generic-api-key error=Compiled regex exceeds size limit of 10485760 bytes. pattern=(?i)[\w.-]{0,50}?(?:access|auth|(?-i:[Aa]pi|API)|credential|creds|key|passw(?:or)?d|secret|token)(?:[ \t\w.-]{0,20})[\s'"]{0,3}(?:=|>|:{1,3}=|\|\||:|=>|\?=|,)[\x60'"\s=]{0,5}([\w.=-]{10,150}|[a-z0-9][a-z0-9+/]{11,}={0,3})(?:[\x60'"\s;]|\\[nr]|$)
-2026-07-09T05:33:26.312575Z DEBUG needle::sanitize: skipping gitleaks rule: regex failed to compile rule_id=generic-api-key
-2026-07-09T05:33:26.869302Z DEBUG needle::sanitize: skipping gitleaks rule: regex failed to compile rule_id=pkcs12-file
-2026-07-09T05:33:27.029952Z DEBUG needle::sanitize: gitleaks rule regex compile error rule_id=pypi-upload-token error=Compiled regex exceeds size limit of 10485760 bytes. pattern=pypi-AgEIcHlwaS5vcmc[\w-]{50,1000}
-2026-07-09T05:33:27.029963Z DEBUG needle::sanitize: skipping gitleaks rule: regex failed to compile rule_id=pypi-upload-token
-2026-07-09T05:33:27.391779Z DEBUG needle::sanitize: gitleaks rule regex compile error rule_id=vault-batch-token error=Compiled regex exceeds size limit of 10485760 bytes. pattern=\b(hvb\.[\w-]{138,300})(?:[\x60'"\s;]|\\[nr]|$)
-2026-07-09T05:33:27.391791Z DEBUG needle::sanitize: skipping gitleaks rule: regex failed to compile rule_id=vault-batch-token
-2026-07-09T05:33:27.473447Z  INFO needle::dispatch: trace sanitizer initialized rule_count=218 custom_count=0
-2026-07-09T05:33:27.473519Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=4
-NEEDLE worker boot: init step 'worker_construction' completed in 1850ms
-NEEDLE worker boot: all init steps completed in 1960ms, starting worker loop...
-2026-07-09T05:33:27.523621Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=5
-2026-07-09T05:33:27.523628Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=6
-2026-07-09T05:33:27.523629Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=7
-2026-07-09T05:33:27.523771Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=8
-2026-07-09T05:33:27.523778Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=9
-2026-07-09T05:33:27.523780Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=10
-2026-07-09T05:33:27.523795Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=11
-2026-07-09T05:33:27.523878Z  INFO needle::health: heartbeat emitter started worker=alpha interval_secs=30 path=/home/coding/.needle/state/heartbeats/claude-code-glm-4.7-alpha.json
-2026-07-09T05:33:27.523884Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=12
-2026-07-09T05:33:27.523888Z DEBUG needle::telemetry: telemetry event event_type=worker.started seq=13
-2026-07-09T05:33:27.523889Z DEBUG needle::worker: state transition from=BOOTING to=SELECTING
-2026-07-09T05:33:27.523905Z  INFO needle::worker: worker booted worker=alpha strands=["pluck", "mend", "explore", "weave", "unravel", "pulse", "reflect", "splice", "knot"]
-2026-07-09T05:33:27.523943Z DEBUG needle::worker: installed synchronous signal handler signal=15
-2026-07-09T05:33:27.523946Z DEBUG needle::worker: installed synchronous signal handler signal=2
-2026-07-09T05:33:27.523947Z DEBUG needle::worker: installed synchronous signal handler signal=1
-2026-07-09T05:33:27.523962Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=038d8ad7 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}: needle::telemetry: telemetry event event_type=bead.claim.attempted seq=15
-2026-07-09T05:33:27.534351Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=038d8ad7 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}: needle::telemetry: telemetry event event_type=bead.claim.succeeded seq=16
-2026-07-09T05:33:27.534359Z  INFO worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=038d8ad7 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}: needle::worker: atomically claimed bead via claim_auto bead_id=bf-6a7c
-2026-07-09T05:33:27.534361Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=038d8ad7 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}: needle::worker: state transition from=SELECTING to=BUILDING
-2026-07-09T05:33:27.535485Z DEBUG needle::telemetry: telemetry event event_type=build.heartbeat seq=18
-2026-07-09T05:33:27.538124Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=038d8ad7 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:bead.prompt_build{needle.bead.id=bf-6a7c}: needle::worker: state transition from=BUILDING to=DISPATCHING
-2026-07-09T05:33:27.538162Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=038d8ad7 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:agent.dispatch{gen_ai.system=zai gen_ai.request.model=glm-4.7}: needle::telemetry: telemetry event event_type=rate_limit.allowed seq=20
-2026-07-09T05:33:27.538228Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=038d8ad7 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:agent.dispatch{gen_ai.system=zai gen_ai.request.model=glm-4.7}: needle::worker: state transition from=DISPATCHING to=EXECUTING
-2026-07-09T05:33:27.539050Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=038d8ad7 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:agent.execution{needle.bead.id=bf-6a7c}:agent.dispatch{needle.bead.id=bf-6a7c gen_ai.system=zai gen_ai.operation.name="chat" gen_ai.request.id=bf-6a7c}: needle::telemetry: telemetry event event_type=agent.dispatched seq=22
-2026-07-09T05:33:27.549836Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=038d8ad7 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:agent.execution{needle.bead.id=bf-6a7c}:agent.dispatch{needle.bead.id=bf-6a7c gen_ai.system=zai gen_ai.operation.name="chat" gen_ai.request.id=bf-6a7c}:agent.execution{needle.bead.id=bf-6a7c needle.agent.pid=2861115}: needle::telemetry: telemetry event event_type=transform.skipped seq=23
+2026-07-09T05:43:45.396777Z DEBUG needle::sanitize: gitleaks rule regex compile error rule_id=generic-api-key error=Compiled regex exceeds size limit of 10485760 bytes. pattern=(?i)[\w.-]{0,50}?(?:access|auth|(?-i:[Aa]pi|API)|credential|creds|key|passw(?:or)?d|secret|token)(?:[ \t\w.-]{0,20})[\s'"]{0,3}(?:=|>|:{1,3}=|\|\||:|=>|\?=|,)[\x60'"\s=]{0,5}([\w.=-]{10,150}|[a-z0-9][a-z0-9+/]{11,}={0,3})(?:[\x60'"\s;]|\\[nr]|$)
+2026-07-09T05:43:45.396788Z DEBUG needle::sanitize: skipping gitleaks rule: regex failed to compile rule_id=generic-api-key
+2026-07-09T05:43:45.966979Z DEBUG needle::sanitize: skipping gitleaks rule: regex failed to compile rule_id=pkcs12-file
+2026-07-09T05:43:46.129207Z DEBUG needle::sanitize: gitleaks rule regex compile error rule_id=pypi-upload-token error=Compiled regex exceeds size limit of 10485760 bytes. pattern=pypi-AgEIcHlwaS5vcmc[\w-]{50,1000}
+2026-07-09T05:43:46.129217Z DEBUG needle::sanitize: skipping gitleaks rule: regex failed to compile rule_id=pypi-upload-token
+2026-07-09T05:43:46.513438Z DEBUG needle::sanitize: gitleaks rule regex compile error rule_id=vault-batch-token error=Compiled regex exceeds size limit of 10485760 bytes. pattern=\b(hvb\.[\w-]{138,300})(?:[\x60'"\s;]|\\[nr]|$)
+2026-07-09T05:43:46.513449Z DEBUG needle::sanitize: skipping gitleaks rule: regex failed to compile rule_id=vault-batch-token
+2026-07-09T05:43:46.601951Z  INFO needle::dispatch: trace sanitizer initialized rule_count=218 custom_count=0
+2026-07-09T05:43:46.602010Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=4
+NEEDLE worker boot: init step 'worker_construction' completed in 1895ms
+NEEDLE worker boot: all init steps completed in 2006ms, starting worker loop...
+2026-07-09T05:43:46.652143Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=5
+2026-07-09T05:43:46.652152Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=6
+2026-07-09T05:43:46.652154Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=7
+2026-07-09T05:43:46.652281Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=8
+2026-07-09T05:43:46.652285Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=9
+2026-07-09T05:43:46.652286Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=10
+2026-07-09T05:43:46.652303Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=11
+2026-07-09T05:43:46.652361Z  INFO needle::health: heartbeat emitter started worker=alpha interval_secs=30 path=/home/coding/.needle/state/heartbeats/claude-code-glm-4.7-alpha.json
+2026-07-09T05:43:46.652365Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=12
+2026-07-09T05:43:46.652370Z DEBUG needle::telemetry: telemetry event event_type=worker.started seq=13
+2026-07-09T05:43:46.652372Z DEBUG needle::worker: state transition from=BOOTING to=SELECTING
+2026-07-09T05:43:46.652388Z  INFO needle::worker: worker booted worker=alpha strands=["pluck", "mend", "explore", "weave", "unravel", "pulse", "reflect", "splice", "knot"]
+2026-07-09T05:43:46.652424Z DEBUG needle::worker: installed synchronous signal handler signal=15
+2026-07-09T05:43:46.652426Z DEBUG needle::worker: installed synchronous signal handler signal=2
+2026-07-09T05:43:46.652427Z DEBUG needle::worker: installed synchronous signal handler signal=1
+2026-07-09T05:43:46.652438Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=b8426347 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}: needle::telemetry: telemetry event event_type=bead.claim.attempted seq=15
+2026-07-09T05:43:46.662618Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=b8426347 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}: needle::telemetry: telemetry event event_type=bead.claim.succeeded seq=16
+2026-07-09T05:43:46.662624Z  INFO worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=b8426347 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}: needle::worker: atomically claimed bead via claim_auto bead_id=bf-6a7c
+2026-07-09T05:43:46.662626Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=b8426347 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}: needle::worker: state transition from=SELECTING to=BUILDING
+2026-07-09T05:43:46.663770Z DEBUG needle::telemetry: telemetry event event_type=build.heartbeat seq=18
+2026-07-09T05:43:46.666442Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=b8426347 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:bead.prompt_build{needle.bead.id=bf-6a7c}: needle::worker: state transition from=BUILDING to=DISPATCHING
+2026-07-09T05:43:46.666482Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=b8426347 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:agent.dispatch{gen_ai.system=zai gen_ai.request.model=glm-4.7}: needle::telemetry: telemetry event event_type=rate_limit.allowed seq=20
+2026-07-09T05:43:46.666550Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=b8426347 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:agent.dispatch{gen_ai.system=zai gen_ai.request.model=glm-4.7}: needle::worker: state transition from=DISPATCHING to=EXECUTING
+2026-07-09T05:43:46.667371Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=b8426347 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:agent.execution{needle.bead.id=bf-6a7c}:agent.dispatch{needle.bead.id=bf-6a7c gen_ai.system=zai gen_ai.operation.name="chat" gen_ai.request.id=bf-6a7c}: needle::telemetry: telemetry event event_type=agent.dispatched seq=22
+2026-07-09T05:43:46.679622Z DEBUG worker.session{needle.worker_id=claude-code-glm-4.7-alpha needle.session_id=b8426347 needle.agent=claude-code-glm-4.7 needle.model=claude-code-glm-4.7 needle.workspace=/home/coding/ARMOR}:agent.execution{needle.bead.id=bf-6a7c}:agent.dispatch{needle.bead.id=bf-6a7c gen_ai.system=zai gen_ai.operation.name="chat" gen_ai.request.id=bf-6a7c}:agent.execution{needle.bead.id=bf-6a7c needle.agent.pid=2867802}: needle::telemetry: telemetry event event_type=transform.skipped seq=23
