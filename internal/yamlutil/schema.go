@@ -208,11 +208,10 @@ func (sv *SchemaValidator) validateFields(
 	for fieldName, value := range data {
 		fieldDef, exists := fields[fieldName]
 		if !exists {
-			if sv.config.Strict {
+			if sv.config.StrictMode {
 				result.Warnings = append(result.Warnings, SchemaValidationError{
 					FieldPath:      sv.joinPath(pathPrefix, fieldName),
 					Message:        "Unknown field in strict mode",
-					ConstraintType: "unknown_field",
 				})
 			}
 			continue
@@ -314,7 +313,6 @@ func (sv *SchemaValidator) validateConstraints(
 			result.Valid = false
 			result.ConstraintViolations = append(result.ConstraintViolations, ConstraintViolation{
 				FieldPath:       fieldPath,
-				ConstraintType:  "min",
 				Message:         fmt.Sprintf("Value violates minimum constraint: %d", *fieldDef.Min),
 				ActualValue:     value,
 				ConstraintValue: *fieldDef.Min,
@@ -328,7 +326,6 @@ func (sv *SchemaValidator) validateConstraints(
 			result.Valid = false
 			result.ConstraintViolations = append(result.ConstraintViolations, ConstraintViolation{
 				FieldPath:       fieldPath,
-				ConstraintType:  "max",
 				Message:         fmt.Sprintf("Value violates maximum constraint: %d", *fieldDef.Max),
 				ActualValue:     value,
 				ConstraintValue: *fieldDef.Max,
@@ -344,7 +341,6 @@ func (sv *SchemaValidator) validateConstraints(
 				result.Valid = false
 				result.ConstraintViolations = append(result.ConstraintViolations, ConstraintViolation{
 					FieldPath:       fieldPath,
-					ConstraintType:  "pattern",
 					Message:         fmt.Sprintf("Value does not match pattern: %s", fieldDef.Pattern),
 					ActualValue:     value,
 					ConstraintValue: fieldDef.Pattern,
@@ -359,7 +355,6 @@ func (sv *SchemaValidator) validateConstraints(
 			result.Valid = false
 			result.ConstraintViolations = append(result.ConstraintViolations, ConstraintViolation{
 				FieldPath:       fieldPath,
-				ConstraintType:  "allowed_values",
 				Message:         fmt.Sprintf("Value not in allowed list: %v", fieldDef.AllowedValues),
 				ActualValue:     value,
 				ConstraintValue: fieldDef.AllowedValues,
@@ -775,4 +770,14 @@ const (
 	SeverityError
 	// SeverityFatal indicates a fatal violation that prevents processing
 	SeverityFatal
+)
+
+// Status represents the success or error state of a parse operation.
+type Status string
+
+const (
+	// StatusSuccess indicates a successful parse operation
+	StatusSuccess Status = "success"
+	// StatusError indicates a failed parse operation
+	StatusError Status = "error"
 )
