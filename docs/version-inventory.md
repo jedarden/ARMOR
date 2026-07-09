@@ -1,8 +1,9 @@
 # ARMOR Version Inventory
 
 **Last Updated:** 2026-07-09  
-**ARMOR Version:** 0.1.341  
-**Document Purpose:** Comprehensive version inventory for reproducibility and dependency management
+**ARMOR Version:** 0.1.375  
+**Document Purpose:** Comprehensive version inventory for reproducibility and dependency management  
+**Bead:** bf-2kzox (Version inventory compilation)
 
 ## Overview
 
@@ -13,6 +14,14 @@ This document provides a consolidated version inventory for the ARMOR project, i
 - Development tools
 - System requirements
 - Minimum version constraints
+
+### Bead Lineage
+
+This version inventory was compiled through the collaborative efforts of three child beads:
+- **bf-39ucf**: Identified and listed installed Pluck dependencies
+- **bf-2p935**: Documented Pluck minimum version requirements
+- **bf-4qcfn**: Captured development tool versions
+- **bf-2kzox**: Parent bead that consolidated all outputs into this comprehensive document
 
 ---
 
@@ -411,6 +420,7 @@ golangci-lint version
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
+| 2026-07-09 | 1.1 | Updated to version 0.1.375, added bead lineage (bf-2kzox) | ARMOR team |
 | 2026-07-09 | 1.0 | Initial version inventory | ARMOR team |
 
 ---
