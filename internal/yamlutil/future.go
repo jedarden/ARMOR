@@ -10,6 +10,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Streaming YAML Parser (Future Enhancement)
@@ -491,8 +493,3 @@ func (sv *SchemaValidator) ValidateAgainstSchema(data map[string]interface{}, sc
 	// Future implementation will perform actual schema validation
 	return result, nil
 }
-
-// Import yaml package for stub implementations
-import (
-	"gopkg.in/yaml.v3"
-)
