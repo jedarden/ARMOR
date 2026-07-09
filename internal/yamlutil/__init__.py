@@ -56,6 +56,12 @@ from .reader import (
     read_yaml_file_simple
 )
 
+from .parser import (
+    YAMLCoreParser,
+    SafeLoadResult,
+    safe_load_yaml
+)
+
 __all__ = [
     # Error types
     'YAMLErrorCategory',
@@ -78,11 +84,16 @@ __all__ = [
     'YAMLFileReader',
     'YAMLReadResult',
 
+    # Core Parser
+    'YAMLCoreParser',
+    'SafeLoadResult',
+
     # Convenience functions
     'validate_yaml_file',
     'validate_yaml_string',
     'read_yaml_file',
     'read_yaml_file_simple',
+    'safe_load_yaml',
 ]
 
 __version__ = '1.0.1'
