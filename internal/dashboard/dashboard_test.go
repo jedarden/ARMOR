@@ -1374,9 +1374,6 @@ func TestBreadcrumbLinksNavigateBack(t *testing.T) {
 
 	body := rec.Body.String()
 
-	// Debug: print the breadcrumbs section
-	t.Logf("Body contains breadcrumbs section: %s", extractHTMLSection(body, `<div class="breadcrumbs">`, `</div>`))
-
 	// Verify breadcrumb links exist with proper ?prefix= format
 	// Should have: test-bucket (?prefix=), data (?prefix=data/), 2024 (?prefix=data/2024/), january (?prefix=data/2024/january/)
 	if !strings.Contains(body, `href="?prefix=data/"`) {
