@@ -1,0 +1,25 @@
+# Valid YAML file with nested structures
+server:
+  host: localhost
+  port: 8080
+  ssl:
+    enabled: true
+    certificate: /path/to/cert.pem
+    key: /path/to/key.pem
+
+database:
+  primary:
+    host: db1.example.com
+    port: 5432
+    name: production
+  replica:
+    host: db2.example.com
+    port: 5432
+    name: production_replica
+
+logging:
+  level: debug
+  format: json
+  output:
+    - stdout
+    - /var/log/app.log
