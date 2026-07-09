@@ -1,0 +1,4 @@
+# Invalid YAML - missing colon separator
+name test-config
+version 1.0
+enabled true

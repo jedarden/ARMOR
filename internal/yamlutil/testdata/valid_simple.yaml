@@ -1,0 +1,6 @@
+# Simple valid YAML file with basic key-value pairs
+name: test-config
+version: 1.0
+enabled: true
+count: 42
+description: A simple test configuration file

@@ -1,0 +1,25 @@
+# Valid YAML file with lists and complex structures
+items:
+  - id: 1
+    name: First Item
+    tags:
+      - important
+      - priority
+  - id: 2
+    name: Second Item
+    tags:
+      - normal
+  - id: 3
+    name: Third Item
+    tags: []
+
+users:
+  - username: alice
+    email: alice@example.com
+    roles:
+      - admin
+      - user
+  - username: bob
+    email: bob@example.com
+    roles:
+      - user

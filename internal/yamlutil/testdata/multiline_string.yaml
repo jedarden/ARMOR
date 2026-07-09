@@ -1,0 +1,20 @@
+# Valid YAML with multiline strings
+description: |
+  This is a multiline string
+  that preserves formatting
+  and newlines.
+
+ folded_string: >
+  This is a folded string
+  that will be joined into
+  a single line.
+
+ literal_block: |
+  Line 1
+  Line 2
+    Indented line
+
+nested:
+  key: |
+    Multiline in nested structure
+    Second line
