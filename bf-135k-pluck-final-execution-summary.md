@@ -16,12 +16,23 @@ timeout 180s needle run -w /home/coding/ARMOR -c 1 2>&1 | tee "logs/pluck-debug/
 
 ## Log Output
 
-**Primary Log File:** `logs/pluck-debug/pluck-debug-bf-135k-capture-20260709-063859.log`
+**Primary Log File:** `logs/pluck-debug/pluck-debug-bf-135k-capture-20260709-064833.log` (final execution)
 
 ### Execution Statistics
-- **Log File Size:** ~9.1 KB
+- **Log File Size:** 9109 bytes
 - **Line Count:** 73 lines
-- **Execution Duration:** Meaningful execution with full worker lifecycle
+- **Execution Duration:** 60 seconds with expected timeout
+- **Pluck references:** 1 confirmed
+- **Strand references:** 1 confirmed
+
+### Multiple Execution Runs
+The following debug log files were created during testing:
+- `pluck-debug-bf-135k-capture-20260709-064725.log` (9100 bytes)
+- `pluck-debug-bf-135k-capture-20260709-064733.log` (9100 bytes)
+- `pluck-debug-bf-135k-capture-20260709-064749.log` (9100 bytes)
+- `pluck-debug-bf-135k-capture-20260709-064812.log` (9109 bytes)
+- `pluck-debug-bf-135k-capture-20260709-064822.log` (9109 bytes)
+- `pluck-debug-bf-135k-capture-20260709-064833.log` (9109 bytes) ← FINAL
 
 ### Key Debug Output Captured
 
