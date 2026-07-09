@@ -15,27 +15,27 @@ debug:
   # Enable bead store query logging
   # When true, logs all bead store interactions
   # Default: false
-  log_bead_store_queries: false
+  log_bead_store_queries: true
 
   # Enable split threshold evaluation logging
   # When true, logs split decision logic
   # Default: false
-  log_split_evaluation: false
+  log_split_evaluation: true
 
 # Complementary debug modules
 # These modules provide additional context when pluck debug is enabled
 modules:
   # Enable strand-level debug logging
-  strand: false
+  strand: true
 
   # Enable worker coordination debug logging
-  worker: false
+  worker: true
 
   # Enable bead store access debug logging
-  bead_store: false
+  bead_store: true
 
   # Enable dispatch coordination debug logging
-  dispatch: false
+  dispatch: true
 
   # Enable claim process debug logging
   claim: false
