@@ -79,6 +79,6 @@ The execution was terminated by the 180-second timeout, which is expected behavi
 
 ## Related Artifacts
 
-- **Primary Log:** `logs/pluck-debug/pluck-debug-bf-4zvc-capture-20260709-023117.log`
+- **Primary Log:** `logs/pluck-debug/pluck-debug-bf-4zvc-capture-20260709-023133.log`
 - **Execution Script:** `execute-pluck-capture.sh`
 - **Environment Config:** `.env.pluck-debug`
