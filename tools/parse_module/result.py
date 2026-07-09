@@ -95,7 +95,7 @@ class ParseResult:
         return cls(status=ParseStatus.SUCCESS, data=data, error=None)
 
     @classmethod
-    def error(cls, error_message: str) -> 'ParseResult':
+    def make_error(cls, error_message: str) -> 'ParseResult':
         """
         Create an error parse result.
 
