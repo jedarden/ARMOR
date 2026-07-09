@@ -1,0 +1,31 @@
+=== Pluck Command Syntax Validation ===
+Timestamp: Thu Jul  9 04:33:49 AM EDT 2026
+
+Test 1: Needle Command Availability
+  ✓ Needle found: needle 0.2.11
+Test 2: Command Structure Validation
+  ✓ 'needle run' command structure valid
+  ✓ '-w/--workspace' flag recognized
+  ✓ '-c/--count' flag recognized
+Test 3: RUST_LOG Module Path Validation
+  ✓ minimal: RUST_LOG accepted (needle::strand::pluck=info)
+  ✓ standard: RUST_LOG accepted (needle::strand::pluck=debug)
+  ✓ detailed: RUST_LOG accepted (needle::strand::pluck=trace)
+  ✓ maximum: RUST_LOG accepted (trace)
+  ✓ comprehensive: RUST_LOG accepted (needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug)
+  ✓ full: RUST_LOG accepted (needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug,needle::claim=debug)
+Test 4: Combined Command Validation
+  Testing command: timeout 1s needle run -w /home/coding/ARMOR -c 1
+  With RUST_LOG: needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug
+  ✓ Combined command syntax valid
+Test 5: Workspace Validation
+  ✓ Workspace directory exists: /home/coding/ARMOR
+  ✓ Beads database directory found
+Test 6: Pluck Execution Script Validation
+  ✓ execute-pluck-bf-4q1w.sh exists and is executable
+  ✓ capture-pluck-debug.sh exists and is executable
+  ✓ pluck-debug-config.sh exists and is executable
+=== Validation Summary ===
+✓ Pluck command syntax is VALID
+✓ All RUST_LOG debug configurations are ACCEPTED
+✓ Workspace and script paths are VALID
