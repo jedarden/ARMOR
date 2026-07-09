@@ -62,7 +62,7 @@ output:
   # Log file location (relative to workspace root)
   # Empty string means stdout only
   # Default: empty string
-  file: ""
+  file: "logs/pluck-debug.log"
 
   # Include timestamp in log output
   # Default: true
@@ -75,3 +75,13 @@ output:
   # Colorize console output (when file is empty)
   # Default: true
   colorize: true
+
+  # Maximum log file size before rotation (in MB)
+  # 0 = no rotation
+  # Default: 0
+  max_size_mb: 100
+
+  # Maximum number of rotated log files to keep
+  # 0 = keep all rotated files
+  # Default: 5
+  max_backups: 5
