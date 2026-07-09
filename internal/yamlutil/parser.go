@@ -9,23 +9,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ParseResult represents the result of parsing a YAML file.
-type ParseResult struct {
-	FilePath string       // Path to the parsed file
-	Data     interface{}  // Parsed YAML data (usually map[string]interface{} or []interface{})
-	Success  bool         // Whether parsing succeeded
-	Error    error        // Error if parsing failed
-}
+// ParseResult is defined in result_types.go to consolidate all result types.
 
 // Parser provides YAML parsing functionality with error handling.
 type Parser struct {
-	strict bool // Whether to use strict parsing (reject unknown fields)
+	strict bool          // Whether to use strict parsing (reject unknown fields)
+	config *ParserConfig // Parser configuration
 }
 
 // NewParser creates a new YAML parser with default settings.
 func NewParser() *Parser {
 	return &Parser{
 		strict: false,
+		config: DefaultParserConfig(),
 	}
 }
 
@@ -35,6 +31,7 @@ func NewParser() *Parser {
 func NewStrictParser() *Parser {
 	return &Parser{
 		strict: true,
+		config: StrictParserConfig(),
 	}
 }
 
@@ -102,6 +99,14 @@ func (p *Parser) MustParseFile(filePath string, data interface{}) {
 	if !result.Success {
 		panic(fmt.Sprintf("failed to parse YAML file %s: %v", filePath, result.Error))
 	}
+}
+
+// Config returns the configuration for this parser.
+func (p *Parser) Config() *ParserConfig {
+	if p.config == nil {
+		p.config = DefaultParserConfig()
+	}
+	return p.config
 }
 
 // ParseString parses YAML content from a string into the provided data structure.
