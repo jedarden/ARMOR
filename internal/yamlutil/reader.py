@@ -14,7 +14,12 @@ from .error_types import (
     YAMLErrorCategory,
     YAMLErrorSeverity,
     YAMLErrorDetail,
-    YAMLValidationResult
+    YAMLValidationResult,
+    YAMLParserError,
+    YAMLFileNotFoundError,
+    YAMLSyntaxError,
+    YAMLStructureError,
+    YAMLEmptyFileError
 )
 
 
@@ -58,6 +63,80 @@ class YAMLReadResult:
             error_msg = "; ".join([e.message for e in self.errors])
             raise RuntimeError(f"Cannot get data from failed YAML read: {error_msg}")
         return self.data
+
+    def to_exception(self) -> Optional[YAMLParserError]:
+        """
+        Convert errors to appropriate exception.
+
+        Returns:
+            YAMLParserError subclass if errors exist, None otherwise
+
+        Example:
+            result = read_yaml_file('config.yaml')
+            if not result.success:
+                raise result.to_exception()
+        """
+        if self.success or not self.errors:
+            return None
+
+        # Get the first error to determine exception type
+        error = self.errors[0]
+
+        # Map error categories to exception types
+        if error.category == YAMLErrorCategory.DOCUMENT:
+            # Document-level errors including empty files
+            if "empty" in error.message.lower():
+                return YAMLEmptyFileError(error.message, filepath=self.filepath)
+
+        if error.category == YAMLErrorCategory.UNKNOWN:
+            # File system related errors
+            if "not found" in error.message.lower() or "does not exist" in error.message.lower():
+                return YAMLFileNotFoundError(error.message, filepath=self.filepath)
+            if "not readable" in error.message.lower() or "permission" in error.message.lower():
+                return YAMLFileNotFoundError(error.message, filepath=self.filepath)
+
+        # Syntax and structure errors
+        if error.category == YAMLErrorCategory.SYNTAX:
+            return YAMLSyntaxError(
+                error.message,
+                filepath=self.filepath,
+                line=error.line,
+                column=error.column,
+                context=error.context,
+                suggestion=error.suggestion
+            )
+
+        if error.category == YAMLErrorCategory.STRUCTURE:
+            return YAMLStructureError(
+                error.message,
+                filepath=self.filepath,
+                line=error.line,
+                column=error.column
+            )
+
+        # Default to base parser error
+        return YAMLParserError(
+            error.message,
+            filepath=self.filepath,
+            line=error.line,
+            column=error.column
+        )
+
+    def raise_if_error(self) -> None:
+        """
+        Raise an exception if the read failed.
+
+        Raises:
+            YAMLParserError: If the read operation failed
+
+        Example:
+            result = read_yaml_file('config.yaml')
+            result.raise_if_error()  # Raises exception if failed
+            data = result.data  # Safe to use
+        """
+        exc = self.to_exception()
+        if exc:
+            raise exc
 
 
 class YAMLFileReader:
