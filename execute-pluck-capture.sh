@@ -2,7 +2,7 @@
 # Script to execute Pluck with debug logging and capture complete output
 set -e
 
-OUTPUT_FILE="pluck-debug-bf-6a7c-capture-$(date +%Y%m%d-%H%M%S).log"
+OUTPUT_FILE="logs/pluck-debug/pluck-debug-bf-4zvc-capture-$(date +%Y%m%d-%H%M%S).log"
 
 echo "=== Pluck Debug Execution Capture ==="
 echo "Output file: $OUTPUT_FILE"
