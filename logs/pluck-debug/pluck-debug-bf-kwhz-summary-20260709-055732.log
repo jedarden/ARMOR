@@ -7,3 +7,27 @@ Workspace: /home/coding/ARMOR
 RUST_LOG: needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug
 Timeout: 180 seconds
 
+=== Execution Summary ===
+Bead ID: bf-kwhz
+Timestamp: 20260709-055732
+Log directory: /home/coding/ARMOR/logs/pluck-debug
+
+📊 File Statistics:
+  Stdout: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-kwhz-stdout-20260709-055732.log
+    Size: 0 bytes
+    Lines: 0
+  Stderr: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-kwhz-stderr-20260709-055732.log
+    Size: 11948 bytes
+    Lines: 85
+  Combined: /home/coding/ARMOR/logs/pluck-debug/pluck-combined-bf-kwhz-20260709-055732.log
+    Size: 12047 bytes
+    Lines: 92
+
+🚨 Error Analysis:
+  Errors: 9
+  Warnings: 1
+
+🔄 Progress Indicators Found:
+  No stdout output available
+
+=== Execution Complete ===
