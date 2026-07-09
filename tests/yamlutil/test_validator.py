@@ -15,6 +15,7 @@ from internal.yamlutil import (
     validate_yaml_string,
     YAMLErrorCategory,
     YAMLErrorSeverity,
+    YAMLErrorDetail,
     YAMLValidationResult
 )
 
@@ -82,7 +83,8 @@ nested:
         assert tab_error is not None
         assert tab_error.category == YAMLErrorCategory.INDENTATION
         assert tab_error.line is not None
-        assert 'suggestion' in tab_error.suggestion.lower()
+        assert len(tab_error.suggestion) > 0  # Check that suggestion exists and has content
+        assert any(term in tab_error.suggestion.lower() for term in ['space', 'replace', 'tab'])
 
     def test_unclosed_quote_detection(self):
         """Test detection of unclosed quotes."""
