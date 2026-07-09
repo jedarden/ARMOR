@@ -1291,6 +1291,117 @@ func TestCommonPrefixesDisplayed(t *testing.T) {
 	if dataIdx > rootIdx {
 		t.Error("Expected folders to appear before regular objects")
 	}
+
+	// Verify folder links use ?prefix= format for navigation
+	if !strings.Contains(body, `href="?prefix=data/"`) {
+		t.Error("Expected folder link with href=\"?prefix=data/\" for navigation")
+	}
+	if !strings.Contains(body, `href="?prefix=logs/"`) {
+		t.Error("Expected folder link with href=\"?prefix=logs/\" for navigation")
+	}
+}
+
+// TestCommonPrefixLinksNavigateByPrefix verifies that clicking folder links
+// navigates to that folder using ?prefix= query parameter.
+func TestCommonPrefixLinksNavigateByPrefix(t *testing.T) {
+	mb := newMockBackend()
+	mb.commonPrefixes = []string{"folder1/", "folder2/"}
+	mb.objects["folder1/file.txt"] = &backend.ObjectInfo{
+		Key:          "folder1/file.txt",
+		Size:         100,
+		LastModified: time.Now(),
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	// First, verify folder links appear at root
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="?prefix=folder1/"`) {
+		t.Error("Expected folder1/ link with ?prefix= for navigation")
+	}
+
+	// Second, verify navigating to folder1/ shows its contents
+	req = httptest.NewRequest(http.MethodGet, "/dashboard?prefix=folder1/", nil)
+	rec = httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 when navigating to folder1/, got %d", rec.Code)
+	}
+
+	body = rec.Body.String()
+	// Should show the file inside folder1
+	if !strings.Contains(body, "folder1/file.txt") {
+		t.Error("Expected folder1/file.txt to appear when viewing folder1/")
+	}
+	// Should not show folder2 contents when viewing folder1
+	if strings.Contains(body, "folder2/") {
+		t.Error("Expected folder2/ to be filtered out when viewing folder1/")
+	}
+}
+
+// TestBreadcrumbLinksNavigateBack verifies that breadcrumb links
+// navigate back up the directory hierarchy correctly.
+func TestBreadcrumbLinksNavigateBack(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["data/2024/january/report.txt"] = &backend.ObjectInfo{
+		Key:          "data/2024/january/report.txt",
+		Size:         100,
+		LastModified: time.Now(),
+	}
+	mb.objects["data/2024/february/other.txt"] = &backend.ObjectInfo{
+		Key:          "data/2024/february/other.txt",
+		Size:         200,
+		LastModified: time.Now(),
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	// Navigate to deep folder
+	req := httptest.NewRequest(http.MethodGet, "/dashboard?prefix=data/2024/january/", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Debug: print the breadcrumbs section
+	t.Logf("Body contains breadcrumbs section: %s", extractHTMLSection(body, `<div class="breadcrumbs">`, `</div>`))
+
+	// Verify breadcrumb links exist with proper ?prefix= format
+	// Should have: test-bucket (?prefix=), data (?prefix=data/), 2024 (?prefix=data/2024/), january (?prefix=data/2024/january/)
+	if !strings.Contains(body, `href="?prefix=data/"`) {
+		t.Error("Expected breadcrumb link with href=\"?prefix=data/\" to navigate back to data/")
+	}
+	if !strings.Contains(body, `href="?prefix=data/2024/"`) {
+		t.Error("Expected breadcrumb link with href=\"?prefix=data/2024/\" to navigate back to 2024/")
+	}
+	if !strings.Contains(body, `href="?prefix=data/2024/january/"`) {
+		t.Error("Expected breadcrumb link with href=\"?prefix=data/2024/january/\" for current folder")
+	}
+
+	// Verify clicking "data" breadcrumb navigates back correctly
+	req = httptest.NewRequest(http.MethodGet, "/dashboard?prefix=data/", nil)
+	rec = httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body = rec.Body.String()
+	// Should show both january and february folders at data/ level
+	if !strings.Contains(body, "data/2024/january/report.txt") {
+		t.Error("Expected january report to be visible at data/ level")
+	}
+	if !strings.Contains(body, "data/2024/february/other.txt") {
+		t.Error("Expected february file to be visible at data/ level")
+	}
 }
 
 // TestCanaryStatusNotStarted verifies "Not started" when no canary check has run.
