@@ -1,4 +1,4 @@
-# Invalid YAML - missing colon separator
-name test-config
-version 1.0
-enabled true
+# Invalid YAML - empty key (truly invalid syntax)
+: value
+name: test-config
+enabled: true
