@@ -4,12 +4,12 @@ description: |
   that preserves formatting
   and newlines.
 
- folded_string: >
+folded_string: >
   This is a folded string
   that will be joined into
   a single line.
 
- literal_block: |
+literal_block: |
   Line 1
   Line 2
     Indented line
