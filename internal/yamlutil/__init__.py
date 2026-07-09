@@ -34,7 +34,13 @@ from .error_types import (
     YAMLErrorCategory,
     YAMLErrorSeverity,
     YAMLErrorDetail,
-    YAMLValidationResult
+    YAMLValidationResult,
+    YAMLParserError,
+    YAMLFileNotFoundError,
+    YAMLSyntaxError,
+    YAMLStructureError,
+    YAMLValidationError,
+    YAMLEmptyFileError
 )
 
 from .validator import (
@@ -56,6 +62,14 @@ __all__ = [
     'YAMLErrorSeverity',
     'YAMLErrorDetail',
     'YAMLValidationResult',
+
+    # Custom exceptions
+    'YAMLParserError',
+    'YAMLFileNotFoundError',
+    'YAMLSyntaxError',
+    'YAMLStructureError',
+    'YAMLValidationError',
+    'YAMLEmptyFileError',
 
     # Validator
     'YAMLSyntaxValidator',
