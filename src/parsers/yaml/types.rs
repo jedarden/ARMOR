@@ -49,7 +49,77 @@ impl fmt::Display for Status {
     }
 }
 
-use std::fmt;
+/// Result of a YAML operation with status, data, and error fields
+///
+/// This is a simple dataclass-style result type that holds:
+/// - `status`: A Status enum indicating SUCCESS or ERROR
+/// - `data`: Optional generic data payload
+/// - `error`: Optional error message string
+#[derive(Debug, Clone)]
+pub struct OperationResult<T> {
+    /// The operation status (SUCCESS or ERROR)
+    pub status: Status,
+    /// The parsed content data, if successful
+    pub data: Option<T>,
+    /// The error message, if the operation failed
+    pub error: Option<String>,
+}
+
+impl<T> OperationResult<T> {
+    /// Create a new OperationResult with all three fields
+    ///
+    /// # Arguments
+    /// * `status` - The Status enum value (SUCCESS or ERROR)
+    /// * `data` - Optional data payload
+    /// * `error` - Optional error message
+    pub fn new(status: Status, data: Option<T>, error: Option<String>) -> Self {
+        Self { status, data, error }
+    }
+
+    /// Create a successful OperationResult with data
+    ///
+    /// # Arguments
+    /// * `data` - The successful result data
+    pub fn success(data: T) -> Self {
+        Self {
+            status: Status::SUCCESS,
+            data: Some(data),
+            error: None,
+        }
+    }
+
+    /// Create a failed OperationResult with an error message
+    ///
+    /// # Arguments
+    /// * `message` - The error message describing the failure
+    pub fn error(message: String) -> Self {
+        Self {
+            status: Status::ERROR,
+            data: None,
+            error: Some(message),
+        }
+    }
+
+    /// Check if the operation was successful
+    pub fn is_success(&self) -> bool {
+        self.status.is_success()
+    }
+
+    /// Check if the operation failed
+    pub fn is_error(&self) -> bool {
+        self.status.is_error()
+    }
+
+    /// Get a reference to the data, if successful
+    pub fn get_data(&self) -> Option<&T> {
+        self.data.as_ref()
+    }
+
+    /// Get the error message as a string slice, if failed
+    pub fn get_error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
 
 /// Result of a YAML parsing operation
 #[derive(Debug, Clone)]
