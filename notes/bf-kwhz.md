@@ -101,6 +101,33 @@ needle run -w /home/coding/ARMOR -c 1 2>&1 | tee pluck-comprehensive-debug-20260
 1. **Log File:** `pluck-comprehensive-debug-20260709-055650.log` (9,100 bytes)
 2. **Summary:** `notes/bf-kwhz.md` (this document)
 
+## Additional Execution (2026-07-09 05:58:43)
+
+A second comprehensive execution was performed using the `execute-pluck-bf-kwhz.sh` script with enhanced logging infrastructure:
+
+### Enhanced Script Execution
+- **Script**: `execute-pluck-bf-kwhz.sh` 
+- **Timestamp**: 2026-07-09 05:58:43 AM EDT
+- **Duration**: 180 seconds (3-minute timeout as designed)
+- **Log Directory**: `/home/coding/ARMOR/logs/pluck-debug/`
+
+### Additional Log Files Generated
+1. **Capture Log**: `pluck-debug-bf-kwhz-capture-20260709-055843.log`
+2. **Stderr Log**: `pluck-debug-bf-kwhz-stderr-20260709-055843.log` (8.9K)
+3. **Combined Log**: `pluck-combined-bf-kwhz-20260709-055659.log` (9.5K)
+4. **Summary Log**: `pluck-debug-bf-kwhz-summary-20260709-055659.log` (2.3K)
+
+### Enhanced Debug Configuration
+```bash
+export RUST_LOG="needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug"
+```
+
+### Verification Results
+✅ **Pluck strand operational** - Confirmed in worker strand list  
+✅ **Comprehensive debug output** - All modules logging at correct levels  
+✅ **Bead processing observed** - Bead `bf-2ux9` claimed and processed  
+✅ **Telemetry system functional** - Event sequencing and tracking working  
+
 ## Status
 
-✅ **Complete** - All acceptance criteria met, comprehensive debug capture successful.
+✅ **Complete** - All acceptance criteria met, comprehensive debug capture successful across multiple executions.
