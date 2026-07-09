@@ -1,218 +1,124 @@
 # Pluck Debug Configuration Verification Report
+**Bead:** bf-3d99  
+**Date:** 2026-07-09  
+**Status:** ✅ COMPLETE
 
-**Bead ID:** bf-3d99  
-**Verification Date:** 2026-07-09  
-**Workspace:** /home/coding/ARMOR  
-**Status:** ✅ **READY FOR DEBUG EXECUTION**
-
----
-
-## Executive Summary
-
-All Pluck debug configuration components have been verified and are ready for comprehensive debug execution. The configuration is properly structured, environment variables are set, logging infrastructure is in place, and previous successful debug runs confirm the setup works correctly.
-
----
-
-## Configuration Checklist
-
-### ✅ 1. Debug Configuration Files (VALIDATED)
-
-**Primary Configuration:** `/home/coding/ARMOR/pluck-config.yaml`
-- **Status:** Present and valid
-- **Structure:** 88 lines, 4 main sections
-- **Sections:**
-  - `debug` - Core debug settings
-  - `modules` - Module-specific logging
-  - `filtering` - Bead filtering configuration
-  - `output` - Log file management
-
-**Key Settings:**
-```yaml
-debug:
-  level: debug                    # Debug logging enabled
-  log_filtering_decisions: true   # Detailed filter logging
-  log_bead_store_queries: true    # Bead store interaction logging
-  log_split_evaluation: true       # Split decision logic
-
-modules:
-  strand: true                    # Strand-level debug
-  worker: true                    # Worker coordination debug
-  bead_store: true               # Bead store access debug
-  dispatch: true                  # Dispatch coordination debug
-```
-
----
-
-### ✅ 2. Environment Variables (CONFIGURED)
-
-**Current Environment:**
-```bash
-RUST_LOG=needle::strand::pluck=trace
-```
-
-**Available Debug Presets** (via `pluck-debug-config.sh`):
-- `minimal` - INFO level: High-level operations
-- `standard` - DEBUG level: Filtering decisions and statistics
-- `detailed` - TRACE level: Complete execution details
-- `comprehensive` - TRACE + supporting modules
-- `full` - All NEEDLE modules at DEBUG/TRACE level
-- `maximum` - Everything at TRACE level (very verbose)
-
----
-
-### ✅ 3. Debug Infrastructure (OPERATIONAL)
-
-**Log Directory:** `/home/coding/ARMOR/logs/pluck-debug/`
-- **Permissions:** Writable (verified)
-- **Structure:** Organized by bead ID and timestamp
-- **Rotation:** 100MB max file size, 5 backups retained
-
-**Previous Debug Runs:**
-- `bf-135k` - 21 log files captured successfully
-- `bf-4zvc` - 11 log files captured successfully
-- **Sample log format:** Timestamped, structured output with module/event classification
-
-**Log Output Configuration:**
-```yaml
-output:
-  file: "logs/pluck-debug/pluck-debug.log"
-  timestamps: true
-  source_location: true
-  colorize: true
-  max_size_mb: 100
-  max_backups: 5
-```
-
----
-
-### ✅ 4. Debug Scripts (AVAILABLE)
-
-**1. `pluck-debug-config.sh`** - Configuration Manager
-- Comprehensive preset system for different debug levels
-- Automatic analysis and summary generation
-- Flexible workspace and output configuration
-
-**2. `capture-pluck-debug.sh`** - Standard Capture
-- Simplified capture with comprehensive logging
-- Fixed configuration for consistent output
-- Basic analysis commands provided
-
-**3. `execute-pluck-capture.sh`** - Execution with Capture
-- Timeout-protected execution (180s)
-- Real-time capture with analysis
-- Designed for long-running operations
-
----
-
-### ✅ 5. Filtering Configuration (OPTIMIZED)
-
-**Current Filtering Settings:**
-```yaml
-filtering:
-  exclude_labels: []              # No label exclusions
-  split_after_failures: 0         # Auto-split disabled
-  sort_order: priority            # Priority-based selection
-```
-
-**No exclusions** means all beads will be considered during Pluck operations, providing maximum visibility into the decision process.
-
----
-
-## Readiness Assessment
-
-### Configuration Status: ✅ COMPLETE
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Config file syntax | ✅ Valid | 88 lines, proper YAML structure |
-| Debug level | ✅ Set | DEBUG with TRACE for pluck module |
-| Module coverage | ✅ Complete | All relevant modules enabled |
-| Environment variables | ✅ Configured | RUST_LOG properly set |
-| Log directory | ✅ Writable | Permissions verified |
-| Log rotation | ✅ Enabled | 100MB max, 5 backups |
-| Debug scripts | ✅ Available | 3 scripts for different use cases |
-| Previous runs | ✅ Successful | bf-135k, bf-4zvc completed |
-
----
-
-## Usage Examples
-
-### Standard Debug Execution
-```bash
-# Use comprehensive preset (recommended for debugging)
-./pluck-debug-config.sh /home/coding/ARMOR output.log comprehensive 1
-
-# Or use the standard capture script
-./capture-pluck-debug.sh /home/coding/ARMOR output.log 1
-```
-
-### Quick Debug Check
-```bash
-# Set environment and run
-export RUST_LOG="needle::strand::pluck=trace"
-needle run -w /home/coding/ARMOR -c 1
-```
-
-### Analyze Debug Output
-```bash
-# Search for specific patterns
-grep -i 'pluck' logs/pluck-debug/pluck-debug-bf-135k-*.log
-grep -i 'filter' logs/pluck-debug/pluck-debug-bf-135k-*.log
-grep -i 'exclude' logs/pluck-debug/pluck-debug-bf-135k-*.log
-grep -i 'candidate' logs/pluck-debug/pluck-debug-bf-135k-*.log
-```
-
----
-
-## Recommendations
-
-1. **For new debug sessions:** Use `comprehensive` preset via `pluck-debug-config.sh`
-2. **For troubleshooting:** Use `maximum` preset with filtered analysis
-3. **For routine verification:** Current `standard` configuration is sufficient
-4. **Log management:** Monitor disk space with extensive debug runs
-5. **Configuration updates:** Modify `pluck-config.yaml` for persistent changes
-
----
+## Overview
+Systematic verification of Pluck debug configuration readiness for ARMOR workspace.
 
 ## Verification Results
 
-**Overall Status:** ✅ **ALL CHECKS PASSED**
+### 1. Debug Configuration Files ✅
+**Status:** All configuration files present and valid
 
-The Pluck debug configuration is fully operational and ready for comprehensive debugging. All required components are in place, properly configured, and have been validated through previous successful debug executions.
+- **`.env.pluck-debug`** (947 bytes)
+  - Contains comprehensive RUST_LOG configuration
+  - Provides multiple debug level presets (minimal to maximum)
+  - Active setting: `needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug`
 
-**No action required** - the system is ready for immediate use.
+- **`pluck-config.yaml`** (2,198 bytes)  
+  - YAML configuration for Pluck debug behavior
+  - Configures debug modules: strand, worker, bead_store, dispatch, claim
+  - Output settings: file logging to `logs/pluck-debug.log`
+  - Filtering configuration: no label exclusions, priority-based sorting
+  - Log rotation: 100MB max size, 5 backups
 
----
+- **`pluck-debug-config.sh`** (3,753 bytes, executable)
+  - Bash script for managing debug configurations
+  - Syntax validated successfully  
+  - Provides 6 debug presets: minimal, standard, detailed, comprehensive, full, maximum
+  - Includes usage documentation and analysis commands
 
-## Appendix: Configuration Validation
+### 2. Debug Flags ✅
+**Status:** All required debug flags confirmed
 
-### YAML Structure Validation
-- Top-level sections: `debug`, `modules`, `filtering`, `output`
-- Proper indentation hierarchy
-- Valid key-value pairs
-- Comment blocks preserved
+Available debug presets:
+- `minimal`: `needle::strand::pluck=info`
+- `standard`: `needle::strand::pluck=debug` 
+- `detailed`: `needle::strand::pluck=trace`
+- `comprehensive`: `needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug`
+- `full`: All NEEDLE modules at DEBUG/TRACE
+- `maximum`: `trace` (everything)
 
-### Environment Verification
+Current active configuration uses the **comprehensive** preset with full module coverage.
+
+### 3. Environment Variables ✅
+**Status:** Environment configuration loadable and validated
+
+Successfully tested environment loading:
 ```bash
-# Current environment
-RUST_LOG=needle::strand::pluck=trace
-
-# Additional debug env vars (optional)
-# RUST_BACKTRACE=1         # Enable backtraces
-# RUST_LOG_FORMAT=pretty   # Pretty-printed logs
+source .env.pluck-debug
 ```
 
-### Log Path Verification
-```bash
-# Directory permissions
-drwxr-xr-x 2 coding users 4096 /home/coding/ARMOR/logs/pluck-debug/
+Active RUST environment variables:
+- `RUST_LOG=needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug`
+- `RUST_TEST_THREADS=2`
+- `RUSTFLAGS=-C codegen-units=1`
 
-# Write test confirmed
-touch /home/coding/ARMOR/logs/pluck-debug/test-write.tmp ✅
+### 4. Logging Output Paths ✅
+**Status:** Output directory verified writable
+
+- **Directory:** `/home/coding/ARMOR/logs/pluck-debug/`
+- **Permissions:** Drwxr-xr-x (readable, writable, executable)
+- **Write test:** Successful - test file creation and deletion confirmed
+- **Configuration:** Log file path set to `logs/pluck-debug.log` in YAML config
+
+## Configuration Checklist
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| Configuration files exist | ✅ | 3 files present |
+| File validity | ✅ | Bash syntax valid, YAML structure correct |
+| Debug flags available | ✅ | 6 presets configured |
+| Environment variables | ✅ | Successfully loadable |
+| RUST_LOG configuration | ✅ | Comprehensive setting active |
+| Output directory | ✅ | Exists and writable |
+| Log rotation config | ✅ | 100MB max, 5 backups |
+| Binary availability | ✅ | needle binary found at `/home/coding/.local/bin/needle` |
+
+## Usage Examples
+
+### Basic Debug Execution
+```bash
+# Load environment and run
+source /home/coding/ARMOR/.env.pluck-debug
+needle run -w /home/coding/ARMOR -c 1
 ```
 
----
+### Using Configuration Script
+```bash
+# Standard debug level
+./pluck-debug-config.sh /home/coding/ARMOR output.log standard 1
 
-**Verification completed:** 2026-07-09  
-**Next action:** Ready for debug execution  
-**Close bead:** `br close bf-3d99`
+# Detailed trace level  
+./pluck-debug-config.sh /home/coding/ARMOR output.log detailed 1
+
+# Comprehensive debug with full context
+./pluck-debug-config.sh /home/coding/ARMOR output.log comprehensive 1
+```
+
+### Custom Debug Level
+```bash
+# Set custom RUST_LOG
+export RUST_LOG=needle::strand::pluck=trace,needle::strand=debug
+needle run -w /home/coding/ARMOR -c 1
+```
+
+## Debug Output Analysis
+The configuration supports comprehensive debug output including:
+- Strand filtering decisions and candidate evaluations
+- Bead store query logging  
+- Split threshold evaluation logic
+- Worker coordination trace
+- Dispatch coordination debug
+
+All output will be written to `logs/pluck-debug.log` with timestamps and source location information.
+
+## Conclusion
+**Pluck debug configuration is fully ready for execution.** All verification criteria have been met:
+- ✅ Debug configuration files verified present and valid
+- ✅ All required debug flags confirmed
+- ✅ Output directory verified writable
+- ✅ Configuration checklist complete
+
+The ARMOR workspace is ready for comprehensive Pluck debugging with multiple configuration levels available for different debugging needs.
