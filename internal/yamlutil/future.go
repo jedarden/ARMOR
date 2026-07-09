@@ -79,10 +79,10 @@ func (sp *StreamParser) ParseStreamToMap(reader io.Reader) (map[string]interface
 // This implementation provides basic caching functionality with
 // thread-safe operations and size limits.
 type MemoryCache struct {
-	mu     sync.RWMutex
-	cache  map[string]*cacheEntry
- maxSize int
-	ttl    time.Duration
+	mu      sync.RWMutex
+	cache   map[string]*cacheEntry
+	maxSize int
+	ttl     time.Duration
 }
 
 type cacheEntry struct {
@@ -93,9 +93,9 @@ type cacheEntry struct {
 // NewMemoryCache creates a new in-memory YAML cache.
 func NewMemoryCache(maxSize int, ttl time.Duration) *MemoryCache {
 	return &MemoryCache{
-		cache:  make(map[string]*cacheEntry),
+		cache:   make(map[string]*cacheEntry),
 		maxSize: maxSize,
-		ttl:    ttl,
+		ttl:     ttl,
 	}
 }
 

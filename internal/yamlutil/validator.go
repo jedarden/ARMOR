@@ -102,7 +102,10 @@ type Validator struct {
 	strict bool // Whether to use strict validation
 }
 
-// NewValidator creates a new YAML validator with default settings.
+// NewValidator creates a new YAML validator with default (non-strict) settings.
+//
+// Returns a Validator that checks YAML syntax and structure with lenient validation
+// suitable for development environments. Use NewStrictValidator for production use.
 func NewValidator() *Validator {
 	return &Validator{
 		strict: false,
@@ -110,6 +113,9 @@ func NewValidator() *Validator {
 }
 
 // NewStrictValidator creates a new YAML validator with strict mode enabled.
+//
+// Returns a Validator that enforces strict YAML validation rules for production
+// environments where errors should not be tolerated and maximum validation coverage is required.
 func NewStrictValidator() *Validator {
 	return &Validator{
 		strict: true,
@@ -296,11 +302,11 @@ func (v *Validator) checkNode(node *yaml.Node, content string, warnings *[]Valid
 					key := keyNode.Value
 					if keys[key] {
 						warn := ValidationError{
-							Type:     ErrorTypeStructure,
-							Message:  fmt.Sprintf("Duplicate key detected: %q", key),
-							Line:     keyNode.Line,
-							Column:   keyNode.Column,
-							Context:  fmt.Sprintf("Key %q appears multiple times in mapping", key),
+							Type:    ErrorTypeStructure,
+							Message: fmt.Sprintf("Duplicate key detected: %q", key),
+							Line:    keyNode.Line,
+							Column:  keyNode.Column,
+							Context: fmt.Sprintf("Key %q appears multiple times in mapping", key),
 						}
 						*warnings = append(*warnings, warn)
 					}
