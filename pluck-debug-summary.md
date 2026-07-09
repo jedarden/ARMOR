@@ -198,7 +198,9 @@ The configuration is ready for immediate use:
 3. `/home/coding/ARMOR/pluck-debug-summary.md` - This summary
 
 ### Existing Files (Verified)
-1. `/home/coding/ARMOR/pluck-debug-config.sh` - Configuration script (already existed, verified working)
+1. `/home/coding/ARMOR/.env.pluck-debug` - Environment configuration (already existed, verified working)
+2. `/home/coding/ARMOR/capture-pluck-debug.sh` - Capture script (already existed, verified working)
+3. `/home/coding/ARMOR/.needle.yaml` - NEEDLE configuration with debug reference (updated)
 
 ## Conclusion
 
