@@ -18,3 +18,4 @@ coverage.txt
 
 # Marathon directory (local only)
 .marathon/
+/target
