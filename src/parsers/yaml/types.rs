@@ -3,6 +3,7 @@
 //! This module defines the result types used by the YAML parser.
 
 use crate::parsers::yaml::error::{ParseError, Result};
+use std::fmt;
 
 /// Status enum representing success/error states for Result types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
