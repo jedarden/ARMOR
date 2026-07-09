@@ -1,0 +1,36 @@
+=== Execution Summary ===
+Bead ID: bf-2ux9
+Timestamp: 20260709-055824
+Log directory: /home/coding/ARMOR/logs/pluck-debug
+
+📊 File Statistics:
+  Stdout: logs/pluck-debug/pluck-debug-bf-2ux9-capture-20260709-055824.log
+    Size: 0 bytes
+    Lines: 0
+  Stderr: logs/pluck-debug/pluck-debug-bf-2ux9-stderr-20260709-055824.log
+    Size: 9100 bytes
+    Lines: 73
+  Combined: logs/pluck-debug/pluck-combined-bf-2ux9-20260709-055824.log
+    Size: 9225 bytes
+    Lines: 80
+
+🚨 Error Analysis:
+  Errors: 9
+  Warnings: 1
+
+🔄 Progress Indicators Found:
+  Pluck mentions: 1
+  Filter mentions: 0
+0
+  Candidate mentions: 0
+0
+  Strand mentions: 1
+  Bead mentions: 8
+
+✅ Execution Status:
+  Exit Code: 144 (timeout expected for long-running agent execution)
+  Duration: ~180 seconds (timed)
+  State: NEEDLE worker successfully booted and initialized
+  Log Directory: /home/coding/ARMOR/logs/pluck-debug
+
+=== Execution Complete ===
