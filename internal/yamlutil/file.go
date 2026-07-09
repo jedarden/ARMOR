@@ -2,6 +2,7 @@
 package yamlutil
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,10 +56,10 @@ func ReadFile(filePath string) ([]byte, error) {
 }
 
 // FileExists checks if a file exists at the given path.
-// Returns false if the file does not exist or if there's a permission error.
-// Returns true only if the file exists and is accessible.
+// Returns false if the file does not exist, if there's a permission error, or if it's a directory.
+// Returns true only if the file exists, is accessible, and is not a directory.
 func FileExists(filePath string) bool {
-	_, err := os.Stat(filePath)
+	info, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false
@@ -67,7 +68,8 @@ func FileExists(filePath string) bool {
 		// as the file is not accessible for reading
 		return false
 	}
-	return true
+	// Return false if it's a directory
+	return !info.IsDir()
 }
 
 // wrapFileError wraps OS-level file errors with descriptive context.
@@ -97,7 +99,7 @@ func IsFileNotFoundError(err error) bool {
 
 	// Check if error is FileError with underlying not found
 	var fe *FileError
-	if fe != nil {
+	if errors.As(err, &fe) && fe != nil {
 		return os.IsNotExist(fe.Err)
 	}
 
@@ -117,7 +119,7 @@ func IsPermissionError(err error) bool {
 
 	// Check if error is FileError with underlying permission error
 	var fe *FileError
-	if fe != nil {
+	if errors.As(err, &fe) && fe != nil {
 		return os.IsPermission(fe.Err)
 	}
 

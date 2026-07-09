@@ -2,6 +2,7 @@
 package yamlutil
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -370,6 +371,40 @@ func TestMustParseFile(t *testing.T) {
 	parser.MustParseFile("/nonexistent/file.yaml", &config)
 }
 
+func TestNewStrictParser(t *testing.T) {
+	parser := NewStrictParser()
+
+	if parser == nil {
+		t.Error("expected non-nil parser")
+	}
+
+	if !parser.strict {
+		t.Error("expected strict mode to be enabled")
+	}
+
+	tmpDir := t.TempDir()
+	type TestConfig struct {
+		Name string `yaml:"name"`
+	}
+
+	testYAML := `name: test`
+	testFile := filepath.Join(tmpDir, "test.yaml")
+	if err := os.WriteFile(testFile, []byte(testYAML), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	var config TestConfig
+	result := parser.ParseFile(testFile, &config)
+
+	if !result.Success {
+		t.Errorf("expected successful parse with strict parser, got error: %v", result.Error)
+	}
+
+	if config.Name != "test" {
+		t.Errorf("expected name='test', got '%s'", config.Name)
+	}
+}
+
 func TestParseYAML(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -582,6 +617,30 @@ func TestYAMLParseError(t *testing.T) {
 			t.Errorf("expected 'YAML syntax error' in message, got: %s", errMsg)
 		}
 	})
+
+	t.Run("unwrap returns underlying error", func(t *testing.T) {
+		underlyingErr := fmt.Errorf("underlying error")
+		err := &YAMLParseError{
+			FilePath: "/test/file.yaml",
+			Message:  "syntax error",
+			RawError: underlyingErr,
+		}
+
+		if err.Unwrap() != underlyingErr {
+			t.Error("expected Unwrap to return underlying error")
+		}
+	})
+
+	t.Run("unwrap with nil underlying error", func(t *testing.T) {
+		err := &YAMLParseError{
+			FilePath: "/test/file.yaml",
+			Message:  "syntax error",
+		}
+
+		if err.Unwrap() != nil {
+			t.Error("expected Unwrap to return nil when RawError is nil")
+		}
+	})
 }
 
 // Helper function for string contains check
@@ -596,4 +655,40 @@ func containsInMiddle(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestStrictParserBehavior(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	type TestConfig struct {
+		Name  string `yaml:"name"`
+		Value int    `yaml:"value"`
+	}
+
+	// Create a valid YAML file
+	testYAML := `
+name: test-config
+value: 42
+	`
+	testFile := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(testFile, []byte(testYAML), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Test strict parser
+	strictParser := NewStrictParser()
+	var config TestConfig
+	result := strictParser.ParseFile(testFile, &config)
+
+	if !result.Success {
+		t.Fatalf("expected successful parse with strict parser, got error: %v", result.Error)
+	}
+
+	if config.Name != "test-config" {
+		t.Errorf("expected name='test-config', got '%s'", config.Name)
+	}
+
+	if config.Value != 42 {
+		t.Errorf("expected value=42, got %d", config.Value)
+	}
 }

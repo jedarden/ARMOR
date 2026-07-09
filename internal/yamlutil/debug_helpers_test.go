@@ -501,9 +501,14 @@ func TestGetRequiredString(t *testing.T) {
 
 func TestGetRequiredInt(t *testing.T) {
 	data := map[string]interface{}{
-		"int":     42,
-		"float":   3.14,
-		"string":  "hello",
+		"int":         42,
+		"float":       3.14,
+		"float_int":   10.0,
+		"int64":       int64(100),
+		"int32":       int32(200),
+		"float32_int": float32(300),
+		"float32":     float32(3.14),
+		"string":      "hello",
 	}
 
 	t.Run("existing int", func(t *testing.T) {
@@ -516,19 +521,68 @@ func TestGetRequiredInt(t *testing.T) {
 		}
 	})
 
-	t.Run("missing field", func(t *testing.T) {
-		_, err := GetRequiredInt(data, "missing")
-		if err == nil {
-			t.Error("expected error for missing field")
+	t.Run("int64 conversion", func(t *testing.T) {
+		result, err := GetRequiredInt(data, "int64")
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+		if result != 100 {
+			t.Errorf("expected 100, got: %d", result)
 		}
 	})
 
-	t.Run("float that is not integer", func(t *testing.T) {
+	t.Run("int32 conversion", func(t *testing.T) {
+		result, err := GetRequiredInt(data, "int32")
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+		if result != 200 {
+			t.Errorf("expected 200, got: %d", result)
+		}
+	})
+
+	t.Run("float64 that represents integer", func(t *testing.T) {
+		result, err := GetRequiredInt(data, "float_int")
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+		if result != 10 {
+			t.Errorf("expected 10, got: %d", result)
+		}
+	})
+
+	t.Run("float32 that represents integer", func(t *testing.T) {
+		result, err := GetRequiredInt(data, "float32_int")
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+		if result != 300 {
+			t.Errorf("expected 300, got: %d", result)
+		}
+	})
+
+	t.Run("float64 that is not integer", func(t *testing.T) {
 		_, err := GetRequiredInt(data, "float")
 		if err == nil {
 			t.Error("expected error for non-integer float")
 		} else if _, ok := err.(*TypeMismatchError); !ok {
 			t.Errorf("expected TypeMismatchError, got: %T", err)
+		}
+	})
+
+	t.Run("float32 that is not integer", func(t *testing.T) {
+		_, err := GetRequiredInt(data, "float32")
+		if err == nil {
+			t.Error("expected error for non-integer float32")
+		} else if _, ok := err.(*TypeMismatchError); !ok {
+			t.Errorf("expected TypeMismatchError, got: %T", err)
+		}
+	})
+
+	t.Run("missing field", func(t *testing.T) {
+		_, err := GetRequiredInt(data, "missing")
+		if err == nil {
+			t.Error("expected error for missing field")
 		}
 	})
 
@@ -863,4 +917,150 @@ func TestEdgeCases(t *testing.T) {
 			t.Errorf("expected default for empty map, got: %q", result)
 		}
 	})
+}
+
+func TestGetRequiredInt_EdgeCases(t *testing.T) {
+	data := map[string]interface{}{
+		"int32_value":    int32(100),
+		"int64_value":    int64(200),
+		"float32_whole":  float32(300.0),
+		"float32_frac":   float32(300.5),
+		"string_int":     "123",
+		"string_float":   "123.45",
+		"string_invalid": "abc",
+		"bool_value":     true,
+		"array_value":    []int{1, 2, 3},
+	}
+
+	t.Run("int32 value", func(t *testing.T) {
+		result, err := GetRequiredInt(data, "int32_value")
+		if err != nil {
+			t.Errorf("expected no error for int32, got: %v", err)
+		}
+		if result != 100 {
+			t.Errorf("expected 100, got %d", result)
+		}
+	})
+
+	t.Run("int64 value", func(t *testing.T) {
+		result, err := GetRequiredInt(data, "int64_value")
+		if err != nil {
+			t.Errorf("expected no error for int64, got: %v", err)
+		}
+		if result != 200 {
+			t.Errorf("expected 200, got %d", result)
+		}
+	})
+
+	t.Run("float32 whole number", func(t *testing.T) {
+		result, err := GetRequiredInt(data, "float32_whole")
+		if err != nil {
+			t.Errorf("expected no error for whole float32, got: %v", err)
+		}
+		if result != 300 {
+			t.Errorf("expected 300, got %d", result)
+		}
+	})
+
+	t.Run("float32 with fraction", func(t *testing.T) {
+		_, err := GetRequiredInt(data, "float32_frac")
+		if err == nil {
+			t.Error("expected error for float32 with fraction")
+		}
+		if _, ok := err.(*TypeMismatchError); !ok {
+			t.Errorf("expected TypeMismatchError, got: %T", err)
+		}
+	})
+
+	t.Run("string that parses as int", func(t *testing.T) {
+		result, err := GetRequiredInt(data, "string_int")
+		if err != nil {
+			t.Errorf("expected no error for string int, got: %v", err)
+		}
+		if result != 123 {
+			t.Errorf("expected 123, got %d", result)
+		}
+	})
+
+	t.Run("string that parses as float", func(t *testing.T) {
+		_, err := GetRequiredInt(data, "string_float")
+		if err == nil {
+			t.Error("expected error for string float")
+		}
+	})
+
+	t.Run("invalid string", func(t *testing.T) {
+		_, err := GetRequiredInt(data, "string_invalid")
+		if err == nil {
+			t.Error("expected error for invalid string")
+		}
+	})
+
+	t.Run("boolean value", func(t *testing.T) {
+		_, err := GetRequiredInt(data, "bool_value")
+		if err == nil {
+			t.Error("expected error for boolean value")
+		}
+		if _, ok := err.(*TypeMismatchError); !ok {
+			t.Errorf("expected TypeMismatchError, got: %T", err)
+		}
+	})
+
+	t.Run("array value", func(t *testing.T) {
+		_, err := GetRequiredInt(data, "array_value")
+		if err == nil {
+			t.Error("expected error for array value")
+		}
+		if _, ok := err.(*TypeMismatchError); !ok {
+			t.Errorf("expected TypeMismatchError, got: %T", err)
+		}
+	})
+
+	t.Run("negative int", func(t *testing.T) {
+		data2 := map[string]interface{}{
+			"neg_int": -42,
+		}
+		result, err := GetRequiredInt(data2, "neg_int")
+		if err != nil {
+			t.Errorf("expected no error for negative int, got: %v", err)
+		}
+		if result != -42 {
+			t.Errorf("expected -42, got %d", result)
+		}
+	})
+}
+
+func TestIsInt(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    interface{}
+		expected bool
+	}{
+		{"int", int(42), true},
+		{"int64", int64(42), true},
+		{"int32", int32(42), true},
+		{"int16", int16(42), true},
+		{"int8", int8(42), true},
+		{"uint", uint(42), true},
+		{"uint64", uint64(42), true},
+		{"uint32", uint32(42), true},
+		{"float64 whole", float64(42.0), true},
+		{"float64 fraction", float64(42.5), false},
+		{"float32 whole", float32(42.0), true},
+		{"float32 fraction", float32(42.5), false},
+		{"string", "42", false},
+		{"bool", true, false},
+		{"nil", nil, false},
+		{"array", []int{1, 2, 3}, false},
+		{"map", map[string]int{"a": 1}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isInt(tt.value)
+			if result != tt.expected {
+				t.Errorf("isInt(%v) = %v, expected %v", tt.value, result, tt.expected)
+			}
+		})
+	}
 }
