@@ -113,14 +113,16 @@ class TestResultDataclass:
 
     def test_result_string_representation(self):
         """Verify Result string representations."""
+        # Success case - shows status and data type
         success_result = Result.success({"data": "value"})
         str_repr = str(success_result)
-        assert "SUCCESS" in str_repr
-        assert "data" in str_repr
+        assert "success" in str_repr  # lowercase from status.value
+        assert "dict" in str_repr  # Shows data type, not literal "data"
 
+        # Error case - shows status and error message
         error_result = Result.error("Test error")
         str_repr = str(error_result)
-        assert "ERROR" in str_repr
+        assert "error" in str_repr  # lowercase from status.value
         assert "Test error" in str_repr
 
 

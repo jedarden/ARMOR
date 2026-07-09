@@ -195,7 +195,7 @@ class Result(Generic[T]):
         exception when attempting to access data from a failed result.
 
         Returns:
-            The data value
+            The data value (may be None if success was called with None)
 
         Raises:
             RuntimeError: If status is ERROR
@@ -213,6 +213,28 @@ class Result(Generic[T]):
                 f"Cannot get data from failed result: {self.error}"
             )
         return self.data  # type: ignore
+
+    def get_data_or(self, default: T) -> T:
+        """
+        Get the data, returning a default value if the operation failed.
+
+        This is a convenience method that avoids exception handling
+        when you have a sensible default value.
+
+        Args:
+            default: Value to return if status is ERROR
+
+        Returns:
+            The data value on success, or default on error
+
+        Example:
+            result = Result.error("Failed")
+            data = result.get_data_or({})
+            # data is now {}
+        """
+        if self.is_success():
+            return self.data  # type: ignore
+        return default
 
     def get_error(self) -> Optional[str]:
         """
@@ -339,10 +361,11 @@ class Result(Generic[T]):
             result = Result.success({"key": "value"})
             print(result)  # "Result(status=SUCCESS, data=dict)"
         """
+        status_name = self.status.name  # Get uppercase name (SUCCESS/ERROR)
         if self.is_success():
             data_type = type(self.data).__name__ if self.data is not None else "None"
-            return f"Result(status={self.status.value}, data={data_type})"
-        return f"Result(status={self.status.value}, error={self.error})"
+            return f"Result(status={status_name}, data={data_type})"
+        return f"Result(status={status_name}, error={self.error})"
 
     def __repr__(self) -> str:
         """
