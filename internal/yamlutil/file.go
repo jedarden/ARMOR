@@ -89,18 +89,22 @@ func IsFileNotFoundError(err error) bool {
 		return false
 	}
 
-	// Check wrapped errors
-	if os.IsNotExist(err) {
+	// Check if error chain contains os.ErrNotExist
+	if errors.Is(err, os.ErrNotExist) {
 		return true
-	}
-	if os.IsPermission(err) {
-		return false
 	}
 
 	// Check if error is FileError with underlying not found
 	var fe *FileError
 	if errors.As(err, &fe) && fe != nil {
-		return os.IsNotExist(fe.Err)
+		// Check the wrapped error in FileError
+		if os.IsNotExist(fe.Err) {
+			return true
+		}
+		// Check if the wrapped error contains os.ErrNotExist in its chain
+		if errors.Is(fe.Err, os.ErrNotExist) {
+			return true
+		}
 	}
 
 	return false

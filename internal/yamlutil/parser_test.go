@@ -669,7 +669,7 @@ func TestStrictParserBehavior(t *testing.T) {
 	testYAML := `
 name: test-config
 value: 42
-	`
+`
 	testFile := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(testFile, []byte(testYAML), 0644); err != nil {
 		t.Fatalf("failed to create test file: %v", err)
