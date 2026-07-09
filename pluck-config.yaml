@@ -1,0 +1,77 @@
+# Pluck Debug Configuration for ARMOR Workspace
+# This file controls Pluck strand debug logging and filtering behavior
+
+debug:
+  # Debug logging level
+  # Options: info, debug, trace, off
+  # Default: info
+  level: info
+
+  # Enable detailed filtering decision logging
+  # When true, logs all filter operations and candidate evaluations
+  # Default: false
+  log_filtering_decisions: false
+
+  # Enable bead store query logging
+  # When true, logs all bead store interactions
+  # Default: false
+  log_bead_store_queries: false
+
+  # Enable split threshold evaluation logging
+  # When true, logs split decision logic
+  # Default: false
+  log_split_evaluation: false
+
+# Complementary debug modules
+# These modules provide additional context when pluck debug is enabled
+modules:
+  # Enable strand-level debug logging
+  strand: false
+
+  # Enable worker coordination debug logging
+  worker: false
+
+  # Enable bead store access debug logging
+  bead_store: false
+
+  # Enable dispatch coordination debug logging
+  dispatch: false
+
+  # Enable claim process debug logging
+  claim: false
+
+# Filtering configuration
+filtering:
+  # Labels to exclude when selecting beads
+  # Empty array means no label-based exclusions
+  # Common exclusions: deferred, human, blocked
+  exclude_labels: []
+
+  # Auto-split beads after N consecutive failures
+  # 0 = disabled (default)
+  # Positive values enable automatic bead splitting
+  split_after_failures: 0
+
+  # Priority order for candidate selection
+  # Options: created, updated, priority, random
+  # Default: priority
+  sort_order: priority
+
+# Log output configuration
+output:
+  # Log file location (relative to workspace root)
+  # Empty string means stdout only
+  # Default: empty string
+  file: ""
+
+  # Include timestamp in log output
+  # Default: true
+  timestamps: true
+
+  # Include module/function in log output
+  # Default: true
+  source_location: true
+
+  # Colorize console output (when file is empty)
+  # Default: true
+  colorize: true
