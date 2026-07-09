@@ -1,0 +1,5 @@
+error: unrecognized subcommand 'pluck'
+
+Usage: needle <COMMAND>
+
+For more information, try '--help'.
