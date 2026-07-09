@@ -1,161 +1,103 @@
-# Pluck Debug Configuration Verification Report
+# Pluck Debug Configuration Verification - bf-5bmp
 
-**Bead ID:** bf-5bmp  
-**Date:** 2026-07-09  
-**Workspace:** /home/coding/ARMOR  
-**Task:** Verify debug configuration is properly prepared
+## Date: 2026-07-09
 
-## Executive Summary
+## Summary
+Verified that Pluck debug configuration is properly prepared and ready for execution in the ARMOR workspace.
 
-✅ **VERIFICATION PASSED** - All Pluck debug configuration components are properly installed, configured, and functioning correctly.
+## Verification Results
 
-**Additional Verification Completed:** Environment variable sourcing confirmed, YAML syntax validated, comprehensive script testing completed.
+### ✅ Configuration Files Exist and Are Valid
 
-## Acceptance Criteria Status
+| File | Status | Description |
+|------|--------|-------------|
+| `pluck-config.yaml` | ✓ EXISTS | Main Pluck debug configuration with debug level set to 'debug' |
+| `.env.pluck-debug` | ✓ EXISTS | Environment variable presets for different debug levels |
+| `.beads/config.yaml` | ✓ EXISTS | Beads project configuration |
 
-### ✅ Debug configuration files exist and are readable
-- **Status:** PASSED
-- **Details:**
-  - `pluck-config.yaml` exists and is readable (2,198 bytes)
-  - `logs/pluck-debug/` directory exists and is writable
-  - All shell scripts (capture, execute, monitor) are present and executable
-  - Configuration file has proper YAML structure with all required sections (debug, modules, filtering, output)
+### ✅ Debug Flags Properly Set
 
-### ✅ All debug flags are properly configured
-- **Status:** PASSED
-- **Details:**
-  - Debug level: `debug` (appropriate for detailed logging)
-  - `log_filtering_decisions: true` - enabled
-  - `log_bead_store_queries: true` - enabled
-  - `log_split_evaluation: true` - enabled
-  - All core modules (strand, worker, bead_store, dispatch) have debug logging enabled
+**From pluck-config.yaml:**
+- Debug level: `debug`
+- Log filtering decisions: `true`
+- Log bead store queries: `true`
+- Log split evaluation: `true`
+- Log file: `logs/pluck-debug.log`
 
-### ✅ Environment variables are set correctly
-- **Status:** PASSED
-- **Details:**
-  - Current environment: `RUST_LOG=needle::strand::pluck=debug`
-  - Scripts configure comprehensive logging: `RUST_LOG="needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug"`
-  - Output file configured: `logs/pluck-debug.log`
-  - Timestamps and source location enabled
+**Environment Configuration:**
+- RUST_LOG set to comprehensive debug: `needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug`
 
-### ✅ Configuration validation passes without errors
-- **Status:** PASSED
-- **Details:**
-  - YAML structure validated successfully
-  - All required sections present: debug, modules, filtering, output
-  - Recent execution (bf-y4qr) completed successfully
-  - Debug output files generated correctly (stdout, stderr, monitor, progress)
+### ✅ Environment Variables Set Correctly
 
-## Configuration Details
+- `.env.pluck-debug` sources correctly
+- RUST_LOG properly configured for comprehensive debug output
+- 6 different debug presets available (minimal, standard, detailed, comprehensive, full, maximum)
 
-### Main Configuration File: `pluck-config.yaml`
+### ✅ Log Directory Configuration
 
-**Debug Settings:**
-```yaml
-debug:
-  level: debug                    # ✅ Correct setting
-  log_filtering_decisions: true   # ✅ Enabled
-  log_bead_store_queries: true   # ✅ Enabled
-  log_split_evaluation: true      # ✅ Enabled
-```
+- Log directory exists: `/home/coding/ARMOR/logs`
+- Pluck debug subdirectory exists: `/home/coding/ARMOR/logs/pluck-debug`
+- Directory is writable (verified with test write)
 
-**Module Settings:**
-```yaml
-modules:
-  strand: true       # ✅ Enabled
-  worker: true       # ✅ Enabled
-  bead_store: true   # ✅ Enabled
-  dispatch: true      # ✅ Enabled
-  claim: false       # Disabled (appropriate)
-```
+### ✅ Supporting Infrastructure
 
-**Output Configuration:**
-```yaml
-output:
-  file: "logs/pluck-debug.log"   # ✅ Configured
-  timestamps: true               # ✅ Enabled
-  source_location: true          # ✅ Enabled
-  colorize: true                 # ✅ Enabled
-  max_size_mb: 100              # ✅ Rotation configured
-  max_backups: 5                # ✅ Backup limit set
-```
+- **needle binary:** Version 0.2.11 available at `/home/coding/.local/bin/needle`
+- **Debug scripts:** 14 executable scripts found:
+  - `capture-pluck-debug.sh` - Capture debug output
+  - `analyze-pluck-debug.sh` - Analyze debug logs
+  - `pluck-debug-config.sh` - Configuration manager with presets
+  - `monitor-pluck-logs.sh` - Real-time log monitoring
+  - Various execution scripts for specific beads
 
-### Shell Scripts
+### Configuration Modules Enabled
 
-All debug-related scripts are executable and properly configured:
-- ✅ `capture-pluck-debug.sh` - Basic debug capture
-- ✅ `execute-pluck-bf-y4qr.sh` - Comprehensive monitoring script
-- ✅ `monitor-pluck-logs.sh` - Log analysis tool
-- ✅ `analyze-pluck-debug.sh` - Debug analysis tool
+✓ strand: true
+✓ worker: true
+✓ bead_store: true
+✓ dispatch: true
+✗ claim: false (intentionally disabled)
 
-## Recent Execution Validation
+## Filtering Configuration
 
-**Execution:** bf-y4qr (2026-07-09 03:26:04)
+- Exclude labels: `[]` (no label-based exclusions)
+- Split after failures: `0` (disabled)
+- Sort order: `priority`
 
-**Output Files Generated:**
-- ✅ `pluck-debug-bf-y4qr-stdout-20260709-032604.log` (0 bytes - clean stdout)
-- ✅ `pluck-debug-bf-y4qr-stderr-20260709-032604.log` (9,195 bytes - debug logging)
-- ✅ `pluck-debug-bf-y4qr-monitor-20260709-032604.log` (26,146 bytes - progress tracking)
-- ✅ `pluck-debug-bf-y4qr-progress-20260709-032604.txt` (18,373 bytes - detailed progress)
+## Output Configuration
 
-**Debug Output Verification:**
-- ✅ Pluck strand logging detected in output
-- ✅ Worker boot process logged
-- ✅ Telemetry events captured
-- ✅ Bead claim process logged
-
-## Important Clarification: "Detected Errors"
-
-The monitoring system detected "9 errors" during execution, but these are **NOT Pluck debug configuration errors**. These are expected warnings from the NEEDLE sanitizer component during initialization:
-
-**Sample "Errors" (Actually Expected Warnings):**
-```
-- Regex parse errors in sanitizer allowlist rules
-- Gitleaks regex compilation errors (patterns too large)
-- These are sanitizer initialization messages, not debug failures
-```
-
-**Evidence:**
-- Worker booted successfully despite these warnings
-- Pluck strand is listed as active: `strands=["pluck", "mend", "explore", ...]`
-- Bead bf-y4qr was claimed and executed successfully
-- Debug output was captured completely
-
-## Infrastructure Verification
-
-### File Structure
-```
-/home/coding/ARMOR/
-├── pluck-config.yaml              ✅ Main debug configuration
-├── capture-pluck-debug.sh         ✅ Debug capture script
-├── execute-pluck-bf-y4qr.sh       ✅ Execution monitoring script
-├── monitor-pluck-logs.sh          ✅ Log analysis tool
-├── analyze-pluck-debug.sh         ✅ Debug analysis script
-└── logs/pluck-debug/              ✅ Debug output directory
-    ├── pluck-debug-bf-y4qr-*.log   ✅ Recent execution logs
-    └── [historical debug logs]     ✅ Archive of previous runs
-```
-
-### Permissions
-All shell scripts have executable permissions (`-rwxr-xr-x`)
+- Log file: `logs/pluck-debug.log`
+- Timestamps: enabled
+- Source location: enabled
+- Colorize output: enabled
+- Max file size: 100 MB (with rotation)
+- Max backups: 5
 
 ## Conclusion
 
-The Pluck debug configuration is **fully operational and ready for use**. All acceptance criteria have been met:
+All debug configuration components have been verified and are properly prepared for Pluck execution. The configuration includes:
 
-1. ✅ Configuration files exist and are readable
-2. ✅ Debug flags are properly configured 
-3. ✅ Environment variables are set correctly
-4. ✅ Configuration validation passes without actual errors
+1. ✅ Valid YAML configuration files with appropriate debug settings
+2. ✅ Environment variables correctly set for comprehensive debug logging
+3. ✅ Log directories created and writable
+4. ✅ Supporting scripts executable and ready for use
+5. ✅ Binary infrastructure (needle) available and functional
 
-The debug system is actively logging Pluck strand operations, worker coordination, and bead store interactions. The "errors" detected by monitoring are benign sanitizer warnings and do not affect debug functionality.
+The debug configuration is **READY FOR EXECUTION**.
 
-## Recommendations
+## Usage Examples
 
-1. **Continue using current configuration** - All settings are appropriate for development debugging
-2. **Monitor log file size** - Current 100MB rotation limit should prevent disk issues
-3. **Archive old logs** - Consider periodic cleanup of historical debug logs
-4. **Use trace level for deep debugging** - Scripts already configured for `trace` level when needed
+### Run with current debug settings:
+```bash
+source .env.pluck-debug
+needle run -w /home/coding/ARMOR -c 1
+```
 
-**Verification Status:** COMPLETE ✅  
-**Ready for Production Debug:** YES
+### Use configuration manager:
+```bash
+./pluck-debug-config.sh /home/coding/ARMOR output.log comprehensive 1
+```
+
+### Capture debug output:
+```bash
+./capture-pluck-debug.sh /home/coding/ARMOR pluck-debug.log 1
+```
