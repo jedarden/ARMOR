@@ -1,102 +1,81 @@
-# Pluck Debug Command Structure Research - Task Summary
+# Bead bf-1r7s: Pluck Debug Command Documentation
 
-**Bead:** bf-1r7s
-**Date:** 2026-07-09
+**Date:** 2026-07-09  
 **Status:** ✅ Complete
 
-## Task Completed
+## Summary
 
-Researched and documented the complete Pluck debug command structure with all required debug flags and verified against source code.
+Researched and documented the complete Pluck debug command structure for NEEDLE 0.2.11, including all RUST_LOG configurations, tracing instrumentation points, and practical execution examples.
 
-## Research Performed
+## Work Completed
 
-1. **Examined existing documentation** in ARMOR workspace:
-   - `pluck-debug-quickstart.md` - Quick start guide
-   - `pluck-debug-capture-final.md` - Comprehensive capture analysis
-   - `.needle.yaml` - Workspace configuration
-   - `pluck-debug-config.sh` - Configuration script
-   - Various execution scripts for specific beads
+### 1. Source Code Analysis
+- Analyzed `/home/coding/NEEDLE/src/strand/pluck.rs` (917 lines)
+- Extracted all `tracing::debug!()`, `tracing::info!()`, and `tracing::error!()` calls
+- Documented `tracing::instrument` span fields
 
-2. **Verified NEEDLE command structure:**
-   - Ran `needle run --help` to confirm all options
-   - Ran `needle --help` to understand overall command structure
-   - Verified workspace, agent, count, identifier, timeout, and other options
+### 2. Documentation Created
+Created comprehensive reference: `/home/coding/ARMOR/docs/pluck-debug-command-reference.md`
 
-3. **Analyzed Pluck source code** at `/home/coding/NEEDLE/src/strand/pluck.rs`:
-   - Confirmed all tracing instrumentation points
-   - Verified logging targets and levels
-   - Documented 11 key debug output points
-   - Verified deterministic sorting algorithm
-   - Confirmed default exclude labels behavior
+Includes:
+- Complete command structure with all debug flags
+- 6 preset RUST_LOG configurations (minimal through maximum)
+- All NEEDLE module targets and log levels
+- Complete tracing event sequence (10+ event types)
+- Practical execution examples with scripts
+- Log analysis commands
+- Troubleshooting guide
+- Performance impact analysis
 
-4. **Documented complete command structure:**
-   - Base command pattern: `needle run -w <workspace> -c <count>`
-   - Debug logging via `RUST_LOG` environment variable
-   - Six debug levels from minimal to maximum
-   - Configuration options in `.needle.yaml`
-   - Complete execution examples with timeout and output capture
+### 3. Key Findings
 
-## Documentation Created
+#### Recommended Debug Command (Standard)
+```bash
+RUST_LOG=needle::strand::pluck=debug \
+NEEDLE run -w /home/coding/ARMOR -c 1 2>&1 | tee pluck-debug-$(date +%Y%m%d-%H%M%S).log
+```
 
-### Updated File: `docs/pluck-command-structure.md`
+#### Comprehensive Debug Command
+```bash
+RUST_LOG=needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug \
+RUST_BACKTRACE=1 \
+NEEDLE run -w /home/coding/ARMOR -c 1 2>&1 | tee pluck-comprehensive-$(date +%Y%m%d-%H%M%S).log
+```
 
-Enhanced existing document with:
-- Complete overview of Pluck strand in NEEDLE architecture
-- All command options with descriptions and defaults
-- Environment variables for logging and telemetry
-- Six debug level presets (minimal through maximum)
-- Workspace configuration options
-- Expected debug output examples for all scenarios
-- Source code verification with line numbers
-- Related documentation references
+#### RUST_LOG Module Targets
+- `needle::strand::pluck` - Primary Pluck strand
+- `needle::strand` - All strand modules  
+- `needle::bead_store` - Bead storage operations
+- `needle::worker` - Worker lifecycle
+- `needle::dispatch` - Task dispatch
+- `needle::claim` - Bead claiming
 
-### Key Sections Added
-
-1. **Pluck Overview** - What Pluck does and its position in NEEDLE strand sequence
-2. **Complete Command Options** - Full table of `needle run` options
-3. **Environment Variables** - RUST_LOG and telemetry configuration
-4. **Workspace Configuration** - `.needle.yaml` settings with defaults
-5. **Expected Debug Output** - Real examples from source code
-6. **Source Code Verification** - Instrumentation points with line numbers
-7. **Related Documentation** - Links to supporting files
-
-## Verification
-
-✅ Command syntax validated against `needle run --help`
-✅ Debug flags verified against source code at `/home/coding/NEEDLE/src/strand/pluck.rs`
-✅ Configuration script tested and functional
-✅ All examples use correct syntax and options
-✅ Output format verified against actual debug logs
-
-## Acceptance Criteria Met
-
-- ✅ Complete Pluck command with debug flags documented
-- ✅ Command syntax verified against Pluck documentation and source code
-- ✅ Command ready for execution with examples
-
-## Files Modified
-
-1. `docs/pluck-command-structure.md` - Enhanced with comprehensive command structure reference
+### 4. Verification
+- Command syntax verified against NEEDLE 0.2.11 source code
+- Cross-referenced with existing ARMOR workspace documentation
+- All debug levels validated (error, warn, info, debug, trace)
+- Confirmed integration with .needle.yaml configuration
 
 ## Deliverables
 
-The documentation now provides:
-- Complete command structure for all debug levels
-- Six tested debug presets from minimal to maximum
-- Configuration options and workspace setup
-- Expected output examples for all scenarios
-- Source code verification with line references
-- Complete examples ready for execution
+✅ Complete command reference document  
+✅ 6 preset RUST_LOG configurations documented  
+✅ 10+ tracing event types documented  
+✅ Practical execution examples with scripts  
+✅ Log analysis commands  
+✅ Troubleshooting guide  
+✅ Performance impact analysis  
 
-## Next Steps
+## Integration
 
-The documented command structure can now be used for:
-- Debugging Pluck strand behavior
-- Understanding bead filtering decisions
-- Troubleshooting candidate selection issues
-- Analyzing split trigger behavior
-- Monitoring bead processing workflows
+Document integrates with existing ARMOR workspace:
+- References `.needle.yaml` configuration
+- Compatible with existing `pluck-debug-config.sh` script
+- Aligns with existing documentation in workspace
 
----
+## Acceptance Criteria Met
 
-**Task completed successfully with comprehensive documentation verified against source code.**
+✅ Complete Pluck command with debug flags documented  
+✅ Command syntax verified against Pluck source code  
+✅ Command ready for execution  
+✅ Comprehensive reference created for future use
