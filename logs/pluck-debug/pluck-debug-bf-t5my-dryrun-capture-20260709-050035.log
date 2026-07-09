@@ -1,0 +1,14 @@
+test
+Launch worker(s) to process beads
+
+Usage: needle run [OPTIONS]
+
+Options:
+  -w, --workspace <WORKSPACE>    Workspace to process beads from
+  -a, --agent <AGENT>            Agent adapter to use
+  -c, --count <COUNT>            Number of workers to launch [default: 1]
+  -i, --identifier <IDENTIFIER>  Worker identifier (overrides NATO naming)
+  -t, --timeout <TIMEOUT>        Agent execution timeout in seconds
+      --resume                   Resume an existing worker session (used by hot-reload)
+      --hot-reload <HOT_RELOAD>  Enable or disable hot-reload for this worker [possible values: true, false]
+  -h, --help                     Print help
