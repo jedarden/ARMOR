@@ -4,6 +4,52 @@
 
 use crate::parsers::yaml::error::{ParseError, Result};
 
+/// Status enum representing success/error states for Result types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// Operation completed successfully
+    SUCCESS,
+    /// Operation encountered an error
+    ERROR,
+}
+
+impl Status {
+    /// Check if status is SUCCESS
+    pub fn is_success(self) -> bool {
+        matches!(self, Status::SUCCESS)
+    }
+
+    /// Check if status is ERROR
+    pub fn is_error(self) -> bool {
+        matches!(self, Status::ERROR)
+    }
+
+    /// Convert from boolean (true = SUCCESS, false = ERROR)
+    pub fn from_bool(success: bool) -> Self {
+        if success {
+            Status::SUCCESS
+        } else {
+            Status::ERROR
+        }
+    }
+
+    /// Convert to boolean
+    pub fn as_bool(self) -> bool {
+        self.is_success()
+    }
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Status::SUCCESS => write!(f, "SUCCESS"),
+            Status::ERROR => write!(f, "ERROR"),
+        }
+    }
+}
+
+use std::fmt;
+
 /// Result of a YAML parsing operation
 #[derive(Debug, Clone)]
 pub struct ParseResult<T> {
