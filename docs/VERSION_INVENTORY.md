@@ -15,7 +15,7 @@ This document provides a comprehensive inventory of all versions and dependencie
 
 | Component | Version | Description |
 |-----------|---------|-------------|
-| **ARMOR** | 0.1.346 | Automatic Recovery and Monitoring Operations Resilience |
+| **ARMOR** | 0.1.376 | Automatic Recovery and Monitoring Operations Resilience |
 | **Go Module** | github.com/jedarden/armor | Go module path |
 | **Go Version Required** | 1.25.0 | Minimum Go version |
 
@@ -365,7 +365,7 @@ echo "Pluck dependencies: 38"
 |-------|-------|
 | **Created** | 2026-07-09 |
 | **Original Bead ID** | bf-358zg |
-| **Updated By** | bf-fq15h |
+| **Updated By** | bf-fq15h, bf-2kzox |
 | **Last Updated** | 2026-07-09 |
 | **Next Review** | When dependencies are updated |
 
@@ -386,7 +386,7 @@ echo "Pluck dependencies: 38"
 **ARMOR Version Inventory Status:** ✅ Complete  
 
 The ARMOR workspace maintains a comprehensive version inventory covering:
-- **ARMOR Project:** Version 0.1.342, Go 1.25.0
+- **ARMOR Project:** Version 0.1.376, Go 1.25.0
 - **Development Tools:** All current and compliant
 - **Go Dependencies:** 22 total (7 direct, 15 indirect)
 - **Pluck/NEEDLE:** 38 Rust dependencies

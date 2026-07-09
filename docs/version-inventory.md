@@ -1,7 +1,7 @@
 # ARMOR Version Inventory
 
 **Last Updated:** 2026-07-09  
-**ARMOR Version:** 0.1.375  
+**ARMOR Version:** 0.1.376  
 **Document Purpose:** Comprehensive version inventory for reproducibility and dependency management  
 **Bead:** bf-2kzox (Version inventory compilation)
 
@@ -427,6 +427,7 @@ golangci-lint version
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
+| 2026-07-09 | 1.2 | Updated to version 0.1.376, current version sync | ARMOR team |
 | 2026-07-09 | 1.1 | Updated to version 0.1.375, added bead lineage (bf-2kzox) | ARMOR team |
 | 2026-07-09 | 1.0 | Initial version inventory | ARMOR team |
 
