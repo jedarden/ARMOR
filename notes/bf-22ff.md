@@ -136,6 +136,128 @@ MAX_AGE_DAYS=14 bash logs/pluck-debug/log-rotation-config.sh  # Keep 14 days
 MAX_LOG_FILES=100 bash logs/pluck-debug/log-rotation-config.sh  # Keep 100 files
 ```
 
+## Detailed Output Redirection Methods
+
+### Method 1: Separate stdout/stderr Capture
+```bash
+# Capture to separate files
+needle run -w /home/coding/ARMOR -c 1 \
+  > logs/pluck-debug/pluck-stdout-{bead}-{ts}.log \
+  2> logs/pluck-debug/pluck-stderr-{bead}-{ts}.log
+```
+
+### Method 2: Combined Output
+```bash
+# Capture both streams to single file
+needle run -w /home/coding/ARMOR -c 1 \
+  > logs/pluck-debug/pluck-combined-{bead}-{ts}.log 2>&1
+```
+
+### Method 3: Using tee for Real-time Monitoring
+```bash
+# Display to console while logging
+needle run -w /home/coding/ARMOR -c 1 2>&1 | \
+  tee logs/pluck-debug/pluck-combined-{bead}-{ts}.log
+```
+
+### Method 4: Background Execution with Logging
+```bash
+# Run in background with nohup for long-running processes
+nohup needle run -w /home/coding/ARMOR -c 1 \
+  > logs/pluck-debug/pluck-combined-{bead}-{ts}.log 2>&1 &
+```
+
+## Sample Log Output
+
+### Pluck Execution Log Content
+```
+NEEDLE worker boot: creating tokio runtime...
+NEEDLE worker boot: tokio runtime created
+NEEDLE worker boot: initializing tracing subscriber...
+2026-07-09T08:49:10.159332Z DEBUG needle::telemetry: telemetry event event_type=init.step.started seq=1
+NEEDLE telemetry writer thread: first event written: init.step.started
+2026-07-09T08:49:10.159361Z DEBUG needle::telemetry: telemetry event event_type=init.step.completed seq=2
+```
+
+### Configuration Summary Example
+```
+=== Pluck Output Redirection Summary ===
+Generated: Thu Jul  9 04:47:03 AM EDT 2026
+Bead ID: bf-22ff
+Timestamp: 20260709-044703
+
+=== Configuration ===
+Log Directory: /home/coding/ARMOR/logs/pluck-debug
+RUST_LOG Preset: standard
+RUST_LOG Value: needle::strand::pluck=debug
+
+=== File Status ===
+pluck-stdout-manual-20260709-044703.log: 95 bytes, 3 lines
+pluck-stderr-manual-20260709-044703.log: 80 bytes, 2 lines
+```
+
+## Best Practices
+
+### 1. Always Use Bead-Specific Log Files
+```bash
+# Good - specific and traceable
+BEAD_ID="bf-22ff"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+LOG_FILE="logs/pluck-debug/pluck-${BEAD_ID}-${TIMESTAMP}.log"
+```
+
+### 2. Set Appropriate RUST_LOG Levels
+```bash
+# For debugging: Use detailed/comprehensive
+export RUST_LOG="needle::strand::pluck=trace,needle::strand=debug"
+
+# For production: Use standard  
+export RUST_LOG="needle::strand::pluck=debug"
+
+# For minimal output: Use minimal
+export RUST_LOG="needle::strand::pluck=info"
+```
+
+### 3. Monitor Log File Sizes
+```bash
+# Check log directory size
+du -sh /home/coding/ARMOR/logs/pluck-debug
+
+# Find large log files
+find /home/coding/ARMOR/logs/pluck-debug -name "*.log" -size +10M
+```
+
+### 4. Regular Log Maintenance
+```bash
+# Run log rotation weekly
+crontab entry: 0 0 * * 0 bash /home/coding/ARMOR/logs/pluck-debug/log-rotation-config.sh
+
+# Or run manually after heavy usage
+bash /home/coding/ARMOR/logs/pluck-debug/log-rotation-config.sh
+```
+
+## Troubleshooting
+
+### Issue: Log files not being created
+**Solution:** Check directory permissions and disk space
+```bash
+ls -ld /home/coding/ARMOR/logs/pluck-debug
+df -h /home/coding/ARMOR
+```
+
+### Issue: Logs are empty
+**Solution:** Verify RUST_LOG level and command syntax
+```bash
+export RUST_LOG="needle::strand::pluck=debug"
+needle run -w /home/coding/ARMOR -c 1 2>&1 | tee test.log
+```
+
+### Issue: Disk space filling up
+**Solution:** Run log rotation and reduce retention
+```bash
+MAX_AGE_DAYS=3 MAX_LOG_FILES=20 bash logs/pluck-debug/log-rotation-config.sh
+```
+
 ## Conclusion
 
 The log file output redirection configuration is complete and fully operational. All acceptance criteria have been met, and the system provides comprehensive logging capabilities with automatic maintenance for long-running Pluck processes.
