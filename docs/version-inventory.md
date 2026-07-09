@@ -149,23 +149,30 @@ This version inventory was compiled through the collaborative efforts of three c
 | **Docker** | 27.5.1 | Containerization | System installation |
 | **Docker Base Image** | golang:1.25-alpine | Build environment | `Dockerfile` line 2 |
 | **CGO** | Disabled (0) | Static linking | `Dockerfile` lines 19, 22 |
+| **Git** | 2.50.1 | Version control | System installation |
 
 ### Linting Tools
 
 | Tool | Version | Purpose | Status |
 |------|---------|---------|--------|
-| **golangci-lint** | "2" (config format) | Linting | ⚠️ Configured but not installed |
-| **govet** | Built-in | Static analysis | ✅ Available |
-| **ineffassign** | Built-in | Ineffable assignment | ✅ Available |
-| **staticcheck** | External | Advanced static analysis | ⚠️ Via golangci-lint |
-| **unused** | Built-in | Unused code | ✅ Available |
+| **golangci-lint** | 2 (latest) | Linting aggregator | ✅ Configured (`.golangci.yml`) |
+| **govet** | Built-in (via golangci-lint) | Static analysis | ✅ Available |
+| **ineffassign** | Built-in (via golangci-lint) | Ineffective assignment detection | ✅ Available |
+| **staticcheck** | External (via golangci-lint) | Advanced static analysis | ✅ Available |
+| **unused** | Built-in (via golangci-lint) | Unused code detection | ✅ Available |
 
 ### Python Tools
 
 | Tool | Version | Purpose | Status |
 |------|---------|---------|--------|
-| **Python 3** | 3.12.12 | Configuration parsing | ✅ Available |
-| **PyYAML** | Not specified | YAML parsing | ⚠️ Not pinned |
+| **Python 3** | 3.12.12 | Configuration parsing and utilities | ✅ Available |
+| **pytest** | >= 7.0.0 | Python testing framework | ✅ Available |
+| **PyYAML** | >= 6.0 | YAML parsing | ✅ Available |
+
+**Python Testing:**
+- pytest used for YAML validation utilities in `tests/yamlutil/`
+- Integration tests for inventory readers
+- Test files in `tests/test_inventory_reader.py`
 
 ---
 
