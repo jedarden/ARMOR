@@ -96,8 +96,30 @@ timeout 180s needle run -w /home/coding/ARMOR -c 1 2>&1 | tee "$OUTPUT_FILE"
 - `pluck-debug-bf-135k-capture-20260709-023439.log` (9.1KB)
 - `pluck-debug-bf-4zvc-capture-20260709-023224.log` (9.2KB)
 
+## Bead bf-5qxu Specific Verification
+
+**Target Log File:** `logs/pluck-debug/pluck-debug-bf-135k-capture-20260709-023439.log`
+
+**Bead bf-5qxu execution captured:**
+- Line 66: `atomically claimed bead via claim_auto bead_id=bf-5qxu`
+- Session ID: `772424da`
+- Agent PID: `2895670`
+- State transitions: SELECTING → BUILDING → DISPATCHING → EXECUTING
+- Timestamp: 2026-07-09T06:34:41.470593Z
+
+**Specific bf-5qxu execution events:**
+1. Bead claim attempted (seq=15)
+2. Bead claim succeeded (seq=16)
+3. State transition BUILDING → DISPATCHING
+4. Rate limit allowed (seq=20)
+5. State transition DISPATCHING → EXECUTING
+6. Agent dispatched (seq=22)
+7. Transform skipped (seq=23)
+
 ## Conclusion
 
 The Pluck debug output capture mechanism is **fully functional** and producing valid debug logs. All acceptance criteria have been met. The logs contain comprehensive debug information including worker initialization, strand booting (including pluck), telemetry events, and agent execution traces.
+
+**Specific for bead bf-5qxu:** The execution was successfully captured in `logs/pluck-debug/pluck-debug-bf-135k-capture-20260709-023439.log` with complete debug output from worker boot through agent dispatch.
 
 **Recommendation:** Continue using existing capture scripts for future Pluck debugging sessions.
