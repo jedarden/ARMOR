@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Package yamlutil provides stub implementations for future enhancements.
 //
 // This file contains placeholder implementations for advanced features
@@ -26,6 +28,10 @@ type StreamParser struct {
 }
 
 // NewStreamParser creates a new streaming YAML parser.
+// Returns a StreamParser configured with default buffer (4096 bytes) and chunk (1024 bytes) sizes.
+//
+// Note: Current implementation loads entire content into memory.
+// Future versions will implement true streaming for memory efficiency on large files.
 func NewStreamParser() *StreamParser {
 	return &StreamParser{
 		bufferSize: 4096,
