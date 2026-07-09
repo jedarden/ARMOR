@@ -7,27 +7,7 @@ import (
 	"strings"
 )
 
-// FieldNotFoundError is returned when a requested field is not present in the YAML data.
-type FieldNotFoundError struct {
-	FieldPath string // Dot-separated path to the missing field
-}
-
-// Error implements the error interface.
-func (e *FieldNotFoundError) Error() string {
-	return fmt.Sprintf("field not found: %s", e.FieldPath)
-}
-
-// TypeMismatchError is returned when a field exists but is not of the expected type.
-type TypeMismatchError struct {
-	FieldPath   string // Dot-separated path to the field
-	ExpectedType string // Expected type description
-	ActualType   string // Actual type description
-}
-
-// Error implements the error interface.
-func (e *TypeMismatchError) Error() string {
-	return fmt.Sprintf("type mismatch for field %s: expected %s, got %s", e.FieldPath, e.ExpectedType, e.ActualType)
-}
+// FieldNotFoundError and TypeMismatchError are defined in errors.go to consolidate error types.
 
 // GetField retrieves a field value from nested YAML data using a dot-separated path.
 // Returns the value if found, or the provided defaultValue if the field is missing.
@@ -287,18 +267,13 @@ func ValidateRequiredFields(data map[string]interface{}, requiredFields []string
 	return missing
 }
 
-// FieldRequirement represents a required field with its expected type.
-type FieldRequirement struct {
-	Path         string // Dot-separated path to the field
-	ExpectedType string // Expected type: "string", "int", "bool", or "any"
-	Optional     bool   // If true, field is optional but must match type if present
-}
+// FieldRequirement is defined in config.go to consolidate configuration types.
 
 // ValidateFieldRequirements validates field requirements with type checking.
 // Returns a list of validation errors. Empty list means all requirements passed.
 //
 // For each requirement:
-// - If Optional is false and field is missing → FieldNotFoundError
+// - If Required is true and field is missing → FieldNotFoundError
 // - If field exists but type doesn't match → TypeMismatchError
 func ValidateFieldRequirements(data map[string]interface{}, requirements []FieldRequirement) []error {
 	var errors []error
@@ -308,25 +283,25 @@ func ValidateFieldRequirements(data map[string]interface{}, requirements []Field
 
 		// Check if field is missing
 		if !exists || value == nil {
-			if !req.Optional {
+			if req.Required {
 				errors = append(errors, &FieldNotFoundError{FieldPath: req.Path})
 			}
 			continue
 		}
 
-		// Skip type check if "any" type is specified
-		if req.ExpectedType == "any" {
+		// Skip type check if "any" type is specified or no type specified
+		if req.Type == "" || req.Type == "any" {
 			continue
 		}
 
 		// Type validation
 		typeMatch := false
-		switch req.ExpectedType {
+		switch req.Type {
 		case "string":
 			typeMatch = isString(value)
-		case "int":
+		case "int", "integer":
 			typeMatch = isInt(value)
-		case "bool":
+		case "bool", "boolean":
 			typeMatch = isBool(value)
 		default:
 			// Unknown type specification - skip validation
@@ -335,9 +310,9 @@ func ValidateFieldRequirements(data map[string]interface{}, requirements []Field
 
 		if !typeMatch {
 			errors = append(errors, &TypeMismatchError{
-				FieldPath:   req.Path,
-				ExpectedType: req.ExpectedType,
-				ActualType:   fmt.Sprintf("%T", value),
+				FieldPath:     req.Path,
+				ExpectedType:  req.Type,
+				ActualType:    fmt.Sprintf("%T", value),
 			})
 		}
 	}

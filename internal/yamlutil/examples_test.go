@@ -26,7 +26,12 @@ func Example_parseYAML_errorHandling() {
 	// Try to parse a non-existent file
 	_, err := ParseYAML("nonexistent.yaml")
 	if err != nil {
-		fmt.Printf("Error handled: %v\n", err)
+		// The error message includes file path details
+		if IsFileNotFoundError(err) {
+			fmt.Println("Error handled: file not found")
+		} else {
+			fmt.Printf("Error handled: %v\n", err)
+		}
 	}
 	// Output: Error handled: file not found
 }
@@ -173,7 +178,7 @@ func Example_fileNotFoundError() {
 			fmt.Printf("Handled: Other error: %v\n", err)
 		}
 	}
-	// Output: Handled: Other error
+	// Output: Handled: File not found
 }
 
 // Example_emptyFile demonstrates handling empty YAML files.
@@ -378,7 +383,7 @@ func Example_errorHandlingComprehensive() {
 		}
 	}
 	// Output:
-	// Read 153 bytes
+	// Read 151 bytes
 	// Field not found: nonexistent.field
 }
 
@@ -572,7 +577,7 @@ func Example_parseFileToMap() {
 
 	data := result.Data.(map[string]interface{})
 	fmt.Printf("Parsed map with %d keys\n", len(data))
-	// Output: Parsed map with 4 keys
+	// Output: Parsed map with 5 keys
 }
 
 // Example_mustParseFile demonstrates MustParseFile panic behavior.

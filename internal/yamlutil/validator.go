@@ -9,19 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ErrorType represents the category of validation error.
-type ErrorType string
-
-const (
-	ErrorTypeSyntax     ErrorType = "syntax"     // YAML syntax errors (indentation, colons, etc.)
-	ErrorTypeStructure  ErrorType = "structure"  // Structural errors (duplicate keys, invalid nesting)
-	ErrorTypeIO         ErrorType = "io"         // I/O errors (file not found, permissions)
-	ErrorTypeEmpty      ErrorType = "empty"      // Empty file or content
-	ErrorTypeDeprecated ErrorType = "deprecated" // Deprecated YAML features
-	ErrorTypeUnknown    ErrorType = "unknown"    // Uncategorized errors
-)
-
-// ValidationError represents a detailed YAML validation error.
+// ErrorType is defined in errors.go to consolidate all error types.
+// ValidationError is defined in errors.go to consolidate all error types.
 type ValidationError struct {
 	Type     ErrorType // Category of error
 	Line     int       // Line number where error occurred (1-indexed)
@@ -53,8 +42,10 @@ func (ve ValidationError) String() string {
 	return sb.String()
 }
 
-// ValidationResult represents the result of validating a YAML file.
-type ValidationResult struct {
+// ValidationResult is defined in result_types.go to consolidate all result types.
+
+// LocalValidationResult provides a validator-specific result type for backward compatibility.
+type LocalValidationResult struct {
 	FilePath string            // Path to the validated file
 	Valid    bool              // Whether validation passed
 	Errors   []ValidationError // List of validation errors
@@ -62,40 +53,16 @@ type ValidationResult struct {
 }
 
 // HasErrors returns true if there are any validation errors.
-func (vr ValidationResult) HasErrors() bool {
+func (vr LocalValidationResult) HasErrors() bool {
 	return len(vr.Errors) > 0
 }
 
 // HasWarnings returns true if there are any validation warnings.
-func (vr ValidationResult) HasWarnings() bool {
+func (vr LocalValidationResult) HasWarnings() bool {
 	return len(vr.Warnings) > 0
 }
 
-// ErrorSummary returns a formatted summary of all errors.
-func (vr ValidationResult) ErrorSummary() string {
-	if !vr.HasErrors() {
-		return "No errors"
-	}
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Validation failed for %s:\n", vr.FilePath))
-	for i, err := range vr.Errors {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, err.String()))
-	}
-	return sb.String()
-}
-
-// WarningSummary returns a formatted summary of all warnings.
-func (vr ValidationResult) WarningSummary() string {
-	if !vr.HasWarnings() {
-		return "No warnings"
-	}
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Warnings for %s:\n", vr.FilePath))
-	for i, warn := range vr.Warnings {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, warn.String()))
-	}
-	return sb.String()
-}
+// ErrorSummary and WarningSummary methods for ValidationResult are defined in result_types.go
 
 // Validator provides YAML validation functionality with detailed error reporting.
 type Validator struct {
