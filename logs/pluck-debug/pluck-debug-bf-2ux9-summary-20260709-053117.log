@@ -1,0 +1,24 @@
+=== Execution Summary ===
+Bead ID: bf-2ux9
+Timestamp: 20260709-053117
+Log directory: /home/coding/ARMOR/logs/pluck-debug
+
+📊 File Statistics:
+  Stdout: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-2ux9-capture-20260709-053117.log
+    Size: 0 bytes
+    Lines: 0
+  Stderr: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-2ux9-stderr-20260709-053117.log
+    Size: 11465 bytes
+    Lines: 83
+  Combined: /home/coding/ARMOR/logs/pluck-debug/pluck-combined-bf-2ux9-20260709-053117.log
+    Size: 11564 bytes
+    Lines: 90
+
+🚨 Error Analysis:
+  Errors: 9
+  Warnings: 1
+
+🔄 Progress Indicators Found:
+  No stdout output available
+
+=== Execution Complete ===
