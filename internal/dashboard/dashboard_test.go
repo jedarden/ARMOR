@@ -1034,6 +1034,40 @@ func TestEncryptionCoveragePanelInDashboard(t *testing.T) {
 	}
 }
 
+// TestEmptyBucket verifies the dashboard renders sanely for a completely empty bucket.
+func TestEmptyBucket(t *testing.T) {
+	mb := newMockBackend()
+	// No objects, no common prefixes - completely empty bucket
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for empty bucket, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Should render basic dashboard structure
+	if !strings.Contains(body, "ARMOR Dashboard") {
+		t.Error("Expected dashboard title in empty bucket response")
+	}
+
+	// Should not show encryption coverage panel when no objects
+	if strings.Contains(body, "Encryption Coverage") {
+		t.Error("Expected 'Encryption Coverage' panel to be hidden for empty bucket")
+	}
+
+	// Should show empty objects table
+	if !strings.Contains(body, "<table>") {
+		t.Error("Expected objects table in empty bucket response")
+	}
+}
+
 // TestEncryptionCoveragePanelHiddenWhenEmpty verifies the panel is hidden for empty buckets.
 func TestEncryptionCoveragePanelHiddenWhenEmpty(t *testing.T) {
 	mb := newMockBackend()
