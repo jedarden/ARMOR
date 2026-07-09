@@ -36,15 +36,30 @@ class TestResultHelpersExtended:
         data = result.get_data()
         assert data is None  # Should return None, not raise
 
-    def test_get_data_raises_on_error(self):
-        """Verify get_data raises RuntimeError on error."""
+    def test_get_data_on_success_with_data(self):
+        """Verify get_data returns data on success."""
+        result = Result.success({"key": "value"})
+        data = result.get_data()
+        assert data == {"key": "value"}
+
+    def test_get_data_on_error_returns_none(self):
+        """Verify get_data returns None on error when no default provided."""
         result = Result.error("Test error")
-        try:
-            result.get_data()
-            assert False, "Should have raised RuntimeError"
-        except RuntimeError as e:
-            assert "Cannot get data from failed result" in str(e)
-            assert "Test error" in str(e)
+        data = result.get_data()
+        assert data is None
+
+    def test_get_data_on_error_with_default(self):
+        """Verify get_data returns default value on error."""
+        result = Result.error("Test error")
+        data = result.get_data({})
+        assert data == {}
+        assert isinstance(data, dict)
+
+    def test_get_data_on_error_with_custom_default(self):
+        """Verify get_data returns custom default value on error."""
+        result = Result.error("Test error")
+        data = result.get_data({"default": "value"})
+        assert data == {"default": "value"}
 
     def test_get_error_on_success(self):
         """Verify get_error returns None on success."""
@@ -97,7 +112,10 @@ if __name__ == "__main__":
         ("get_data_or on error returns default", test.test_get_data_or_on_error),
         ("get_data_or with None default", test.test_get_data_or_with_none_default),
         ("get_data handles None data on success", test.test_get_data_on_success_with_none_data),
-        ("get_data raises RuntimeError on error", test.test_get_data_raises_on_error),
+        ("get_data returns data on success", test.test_get_data_on_success_with_data),
+        ("get_data returns None on error without default", test.test_get_data_on_error_returns_none),
+        ("get_data returns default on error with default", test.test_get_data_on_error_with_default),
+        ("get_data returns custom default on error", test.test_get_data_on_error_with_custom_default),
         ("get_error returns None on success", test.test_get_error_on_success),
         ("get_error returns message on error", test.test_get_error_on_error),
         ("__bool__ returns True on success", test.test_bool_on_success),
@@ -126,5 +144,11 @@ if __name__ == "__main__":
         print("\n✅ All acceptance criteria met for bead bf-50670:")
         print("  ✓ is_success() method exists and works correctly")
         print("  ✓ get_error() method returns error message on ERROR status, None otherwise")
-        print("  ✓ get_data() method returns data on SUCCESS, raises error on ERROR")
-        print("  ✓ Methods handle edge cases (data=None on success)")
+        print("  ✓ get_data() method returns data on SUCCESS, or default value on ERROR")
+        print("  ✓ Methods handle edge cases (data=None on success, defaults on error)")
+        print("\n✅ All acceptance criteria met for bead bf-l3evl:")
+        print("  ✓ is_success() returns True for SUCCESS status")
+        print("  ✓ is_error() returns True for ERROR status")
+        print("  ✓ get_error() returns error message or None")
+        print("  ✓ get_data() returns data or default value (with optional default)")
+        print("  ✓ All methods handle edge cases properly")

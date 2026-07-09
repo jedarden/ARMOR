@@ -187,32 +187,31 @@ class Result(Generic[T]):
         """
         return self.status.is_error()
 
-    def get_data(self) -> T:
+    def get_data(self, default: Optional[T] = None) -> Optional[T]:
         """
-        Get the data, raising an error if the operation failed.
+        Get the data, returning a default value if the operation failed.
 
-        This method provides explicit error handling by raising an
-        exception when attempting to access data from a failed result.
+        This method provides convenient data access without exception handling
+        when you have a sensible default value. If no default is provided and
+        the operation failed, it returns None.
+
+        Args:
+            default: Optional value to return if status is ERROR (defaults to None)
 
         Returns:
-            The data value (may be None if success was called with None)
-
-        Raises:
-            RuntimeError: If status is ERROR
+            The data value on success, or default on error
 
         Example:
             result = Result.success({"key": "value"})
-            try:
-                data = result.get_data()
-                print(f"Got data: {data}")
-            except RuntimeError as e:
-                print(f"Cannot get data: {e}")
+            data = result.get_data()  # {"key": "value"}
+
+            result = Result.error("Failed")
+            data = result.get_data({})  # {}
+            data = result.get_data()  # None
         """
-        if not self.is_success():
-            raise RuntimeError(
-                f"Cannot get data from failed result: {self.error}"
-            )
-        return self.data  # type: ignore
+        if self.is_success():
+            return self.data  # type: ignore
+        return default
 
     def get_data_or(self, default: T) -> T:
         """
