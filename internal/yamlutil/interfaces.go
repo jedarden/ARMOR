@@ -242,7 +242,7 @@ type YAMLWatcher interface {
 
 // FileChangeEvent represents a change to a monitored file.
 type FileChangeEvent struct {
-	FilePath string
+	FilePath  string
 	EventType FileEventType
 }
 
@@ -280,6 +280,9 @@ type DefaultProcessor struct {
 }
 
 // NewDefaultProcessor creates a new default YAML processor with standard components.
+//
+// Returns a YAMLProcessor that combines standard parsing, validation, field access,
+// file reading, and file discovery capabilities with default (non-strict) settings.
 func NewDefaultProcessor() *DefaultProcessor {
 	return &DefaultProcessor{
 		parser:    NewParser(),
@@ -291,6 +294,10 @@ func NewDefaultProcessor() *DefaultProcessor {
 }
 
 // NewStrictProcessor creates a new YAML processor with strict validation enabled.
+//
+// Returns a YAMLProcessor that combines standard parsing, validation, field access,
+// file reading, and file discovery capabilities with strict mode enabled for
+// production environments where validation should reject unknown fields and enforce constraints.
 func NewStrictProcessor() *DefaultProcessor {
 	return &DefaultProcessor{
 		parser:    NewStrictParser(),
@@ -303,104 +310,91 @@ func NewStrictProcessor() *DefaultProcessor {
 
 // Default implementations of interfaces
 
+// defaultFileReader implements FileReader using package-level functions.
 type defaultFileReader struct{}
+
+// defaultFieldAccessor implements FieldAccessor using package-level functions.
 type defaultFieldAccessor struct{}
+
+// defaultFileDiscovery implements FileDiscovery using package-level functions.
 type defaultFileDiscovery struct{}
 
+// Read implements FileReader.Read by delegating to the ReadFile function.
 func (d *defaultFileReader) Read(path string) ([]byte, error) {
 	return ReadFile(path)
 }
 
+// Exists implements FileReader.Exists by delegating to the FileExists function.
 func (d *defaultFileReader) Exists(path string) bool {
 	return FileExists(path)
 }
 
+// GetField implements FieldAccessor.GetField by delegating to the GetField function.
 func (d *defaultFieldAccessor) GetField(data map[string]interface{}, path string, defaultValue interface{}) interface{} {
 	return GetField(data, path, defaultValue)
 }
 
+// GetString implements FieldAccessor.GetString by delegating to the GetString function.
 func (d *defaultFieldAccessor) GetString(data map[string]interface{}, path string, defaultValue string) string {
 	return GetString(data, path, defaultValue)
 }
 
+// GetInt implements FieldAccessor.GetInt by delegating to the GetInt function.
 func (d *defaultFieldAccessor) GetInt(data map[string]interface{}, path string, defaultValue int) int {
 	return GetInt(data, path, defaultValue)
 }
 
+// GetBool implements FieldAccessor.GetBool by delegating to the GetBool function.
 func (d *defaultFieldAccessor) GetBool(data map[string]interface{}, path string, defaultValue bool) bool {
 	return GetBool(data, path, defaultValue)
 }
 
+// HasField implements FieldAccessor.HasField by delegating to the HasField function.
 func (d *defaultFieldAccessor) HasField(data map[string]interface{}, path string) bool {
 	return HasField(data, path)
 }
 
+// GetRequiredField implements FieldAccessor.GetRequiredField by delegating to the GetRequiredField function.
 func (d *defaultFieldAccessor) GetRequiredField(data map[string]interface{}, path string) (interface{}, error) {
 	return GetRequiredField(data, path)
 }
 
+// GetRequiredString implements FieldAccessor.GetRequiredString by delegating to the GetRequiredString function.
 func (d *defaultFieldAccessor) GetRequiredString(data map[string]interface{}, path string) (string, error) {
 	return GetRequiredString(data, path)
 }
 
+// GetRequiredInt implements FieldAccessor.GetRequiredInt by delegating to the GetRequiredInt function.
 func (d *defaultFieldAccessor) GetRequiredInt(data map[string]interface{}, path string) (int, error) {
 	return GetRequiredInt(data, path)
 }
 
+// GetRequiredBool implements FieldAccessor.GetRequiredBool by delegating to the GetRequiredBool function.
 func (d *defaultFieldAccessor) GetRequiredBool(data map[string]interface{}, path string) (bool, error) {
 	return GetRequiredBool(data, path)
 }
 
+// ValidateRequiredFields implements FieldAccessor.ValidateRequiredFields by delegating to the ValidateRequiredFields function.
 func (d *defaultFieldAccessor) ValidateRequiredFields(data map[string]interface{}, requiredFields []string) []string {
 	return ValidateRequiredFields(data, requiredFields)
 }
 
+// ValidateFieldRequirements implements FieldAccessor.ValidateFieldRequirements by delegating to the ValidateFieldRequirements function.
 func (d *defaultFieldAccessor) ValidateFieldRequirements(data map[string]interface{}, requirements []FieldRequirement) []error {
 	return ValidateFieldRequirements(data, requirements)
 }
 
+// FindYAMLFiles implements FileDiscovery.FindYAMLFiles by delegating to the FindYAMLFiles function.
 func (d *defaultFileDiscovery) FindYAMLFiles(dirPath string) ([]string, error) {
 	return FindYAMLFiles(dirPath)
 }
 
+// FindYAMLFilesRecursive implements FileDiscovery.FindYAMLFilesRecursive by delegating to the FindYAMLFilesRecursive function.
 func (d *defaultFileDiscovery) FindYAMLFilesRecursive(dirPath string) ([]string, error) {
 	return FindYAMLFilesRecursive(dirPath)
 }
 
+// IsYAMLFile implements FileDiscovery.IsYAMLFile by delegating to the IsYAMLFile function.
 func (d *defaultFileDiscovery) IsYAMLFile(filePath string) bool {
 	return IsYAMLFile(filePath)
-}
-
-// Interface implementations for existing types
-
-func (p *Parser) ParseFile(filePath string, data interface{}) ParseResult {
-	return p.ParseFile(filePath, data)
-}
-
-func (p *Parser) ParseFileToMap(filePath string) ParseResult {
-	return p.ParseFileToMap(filePath)
-}
-
-func (p *Parser) ParseString(yamlContent string, data interface{}) error {
-	return p.ParseString(yamlContent, data)
-}
-
-func (p *Parser) MustParseFile(filePath string, data interface{}) {
-	p.MustParseFile(filePath, data)
-}
-
-func (v *Validator) ValidateFile(filePath string) ValidationResult {
-	return v.ValidateFile(filePath)
-}
-
-func (v *Validator) ValidateString(yamlContent string) ValidationResult {
-	return v.ValidateString(yamlContent)
-}
-
-func (v *Validator) ValidateStringWithPath(yamlContent, filePath string) ValidationResult {
-	return v.ValidateStringWithPath(yamlContent, filePath)
-}
-
-func (v *Validator) ValidateMultipleFiles(filePaths []string) []ValidationResult {
-	return v.ValidateMultipleFiles(filePaths)
 }
