@@ -1,7 +1,7 @@
 # ARMOR Version Inventory
 
 **Generated:** 2026-07-09  
-**Bead ID:** bf-358zg  
+**Bead ID:** bf-fq15h (updated from bf-358zg)  
 **Project:** github.com/jedarden/armor  
 **Environment:** /home/coding/ARMOR  
 
@@ -15,7 +15,7 @@ This document provides a comprehensive inventory of all versions and dependencie
 
 | Component | Version | Description |
 |-----------|---------|-------------|
-| **ARMOR** | 0.1.342 | Automatic Recovery and Monitoring Operations Resilience |
+| **ARMOR** | 0.1.346 | Automatic Recovery and Monitoring Operations Resilience |
 | **Go Module** | github.com/jedarden/armor | Go module path |
 | **Go Version Required** | 1.25.0 | Minimum Go version |
 
@@ -364,7 +364,8 @@ echo "Pluck dependencies: 38"
 | Field | Value |
 |-------|-------|
 | **Created** | 2026-07-09 |
-| **Bead ID** | bf-358zg |
+| **Original Bead ID** | bf-358zg |
+| **Updated By** | bf-fq15h |
 | **Last Updated** | 2026-07-09 |
 | **Next Review** | When dependencies are updated |
 
