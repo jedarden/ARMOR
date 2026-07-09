@@ -196,6 +196,35 @@ func (m *mockBackend) HeadVersion(ctx context.Context, bucket, key, versionID st
 	return nil, nil
 }
 
+// TestRootPageRendering verifies that the root page renders successfully.
+// This is a basic rendering test that doesn't require complex navigation setup.
+func TestRootPageRendering(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for root page, got %d", rec.Code)
+	}
+
+	// Verify basic HTML structure is rendered
+	body := rec.Body.String()
+	if !strings.Contains(body, "ARMOR Dashboard") {
+		t.Error("Expected 'ARMOR Dashboard' title in response")
+	}
+	if !strings.Contains(body, "<!DOCTYPE html>") {
+		t.Error("Expected valid HTML DOCTYPE in response")
+	}
+	if !strings.Contains(body, "</html>") {
+		t.Error("Expected HTML closing tag in response")
+	}
+}
+
 func TestDashboardHandler(t *testing.T) {
 	mb := newMockBackend()
 	mb.objects["test/file1.txt"] = &backend.ObjectInfo{
@@ -594,6 +623,72 @@ func TestObjectDetailContentType(t *testing.T) {
 	contentType := rec.Header().Get("Content-Type")
 	if contentType != "application/json" {
 		t.Errorf("Expected Content-Type application/json, got %s", contentType)
+	}
+}
+
+// TestRootPageRendering verifies the dashboard renders correctly at root (no prefix).
+func TestRootPageRendering(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Verify basic page structure renders at root
+	requiredElements := []string{
+		"<!DOCTYPE html>",
+		"<title>ARMOR Dashboard</title>",
+		"<table>",
+		"</html>",
+	}
+
+	for _, elem := range requiredElements {
+		if !strings.Contains(body, elem) {
+			t.Errorf("Expected HTML to contain %q at root", elem)
+		}
+	}
+}
+
+// TestEmptyBucketRendering verifies the dashboard renders sanely for an empty bucket.
+func TestEmptyBucketRendering(t *testing.T) {
+	mb := newMockBackend()
+	// No objects added - completely empty bucket
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for empty bucket, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Should render basic dashboard structure
+	if !strings.Contains(body, "ARMOR Dashboard") {
+		t.Error("Expected dashboard title in empty bucket response")
+	}
+
+	// Should show objects table even when empty
+	if !strings.Contains(body, "<table>") {
+		t.Error("Expected objects table in empty bucket response")
+	}
+
+	// Should not show encryption coverage panel when no objects
+	if strings.Contains(body, "Encryption Coverage") {
+		t.Error("Expected 'Encryption Coverage' panel to be hidden for empty bucket")
 	}
 }
 
