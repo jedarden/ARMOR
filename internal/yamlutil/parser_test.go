@@ -369,3 +369,231 @@ func TestMustParseFile(t *testing.T) {
 
 	parser.MustParseFile("/nonexistent/file.yaml", &config)
 }
+
+func TestParseYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	t.Run("valid YAML file", func(t *testing.T) {
+		testYAML := `
+key1: value1
+key2: value2
+nested:
+  item1: nested1
+  item2: nested2
+`
+		testFile := filepath.Join(tmpDir, "test.yaml")
+		if err := os.WriteFile(testFile, []byte(testYAML), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+
+		data, err := ParseYAML(testFile)
+		if err != nil {
+			t.Fatalf("expected successful parse, got error: %v", err)
+		}
+
+		if data["key1"] != "value1" {
+			t.Errorf("expected key1='value1', got '%v'", data["key1"])
+		}
+
+		nested, ok := data["nested"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected nested to be map[string]interface{}, got %T", data["nested"])
+		}
+
+		if nested["item1"] != "nested1" {
+			t.Errorf("expected nested.item1='nested1', got '%v'", nested["item1"])
+		}
+	})
+
+	t.Run("empty file returns empty map", func(t *testing.T) {
+		testFile := filepath.Join(tmpDir, "empty.yaml")
+		if err := os.WriteFile(testFile, []byte(""), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+
+		data, err := ParseYAML(testFile)
+		if err != nil {
+			t.Fatalf("expected empty file to return no error, got: %v", err)
+		}
+
+		if data == nil {
+			t.Error("expected non-nil empty map")
+		}
+
+		if len(data) != 0 {
+			t.Errorf("expected empty map, got %d items", len(data))
+		}
+	})
+
+	t.Run("whitespace-only file returns empty map", func(t *testing.T) {
+		testFile := filepath.Join(tmpDir, "whitespace.yaml")
+		if err := os.WriteFile(testFile, []byte("   \n\t  \n  "), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+
+		data, err := ParseYAML(testFile)
+		if err != nil {
+			t.Fatalf("expected whitespace file to return no error, got: %v", err)
+		}
+
+		if data == nil {
+			t.Error("expected non-nil empty map")
+		}
+
+		if len(data) != 0 {
+			t.Errorf("expected empty map, got %d items", len(data))
+		}
+	})
+
+	t.Run("file not found returns FileError", func(t *testing.T) {
+		_, err := ParseYAML("/nonexistent/file.yaml")
+		if err == nil {
+			t.Error("expected error for missing file, got nil")
+		}
+
+		// Check if it's a FileError by checking the error message
+		errMsg := err.Error()
+		if !containsString(errMsg, "read file") && !containsString(errMsg, "not found") {
+			t.Errorf("expected file read error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid YAML syntax returns YAMLParseError", func(t *testing.T) {
+		invalidYAML := `key1: value1
+key2: [unclosed bracket
+key3: value3
+`
+		invalidFile := filepath.Join(tmpDir, "invalid.yaml")
+		if err := os.WriteFile(invalidFile, []byte(invalidYAML), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+
+		_, err := ParseYAML(invalidFile)
+		if err == nil {
+			t.Error("expected error for invalid YAML, got nil")
+		}
+
+		// Check if it's a YAMLParseError by checking the error message
+		errMsg := err.Error()
+		if !containsString(errMsg, "YAML syntax error") {
+			t.Errorf("expected YAML syntax error message, got: %v", err)
+		}
+	})
+
+	t.Run("invalid YAML structure returns YAMLParseError", func(t *testing.T) {
+		// YAML with duplicated keys (which is invalid)
+		invalidYAML := `key1: value1
+key1: value2
+`
+		invalidFile := filepath.Join(tmpDir, "duplicate.yaml")
+		if err := os.WriteFile(invalidFile, []byte(invalidYAML), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+
+		_, err := ParseYAML(invalidFile)
+		if err == nil {
+			t.Error("expected error for duplicate keys, got nil")
+		}
+
+		// Should be a syntax error
+		errMsg := err.Error()
+		if !containsString(errMsg, "YAML syntax error") && !containsString(errMsg, "duplicate") {
+			t.Errorf("expected duplicate key error, got: %v", err)
+		}
+	})
+
+	t.Run("YAML with lists and complex structures", func(t *testing.T) {
+		complexYAML := `
+items:
+  - name: item1
+    value: 10
+  - name: item2
+    value: 20
+metadata:
+  author: test
+  version: 1.0
+`
+		testFile := filepath.Join(tmpDir, "complex.yaml")
+		if err := os.WriteFile(testFile, []byte(complexYAML), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+
+		data, err := ParseYAML(testFile)
+		if err != nil {
+			t.Fatalf("expected successful parse, got error: %v", err)
+		}
+
+		items, ok := data["items"].([]interface{})
+		if !ok {
+			t.Fatalf("expected items to be []interface{}, got %T", data["items"])
+		}
+
+		if len(items) != 2 {
+			t.Errorf("expected 2 items, got %d", len(items))
+		}
+
+		// Check metadata
+		metadata, ok := data["metadata"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected metadata to be map[string]interface{}, got %T", data["metadata"])
+		}
+
+		if metadata["author"] != "test" {
+			t.Errorf("expected author='test', got '%v'", metadata["author"])
+		}
+	})
+}
+
+func TestYAMLParseError(t *testing.T) {
+	t.Run("error message includes file path", func(t *testing.T) {
+		err := &YAMLParseError{
+			FilePath: "/test/file.yaml",
+			Message:  "syntax error",
+			Line:     5,
+		}
+
+		errMsg := err.Error()
+		if !containsString(errMsg, "/test/file.yaml") {
+			t.Errorf("expected error message to contain file path, got: %s", errMsg)
+		}
+	})
+
+	t.Run("error message includes line number", func(t *testing.T) {
+		err := &YAMLParseError{
+			FilePath: "/test/file.yaml",
+			Message:  "syntax error",
+			Line:     5,
+		}
+
+		errMsg := err.Error()
+		if !containsString(errMsg, "line 5") {
+			t.Errorf("expected error message to contain line number, got: %s", errMsg)
+		}
+	})
+
+	t.Run("error message without line number", func(t *testing.T) {
+		err := &YAMLParseError{
+			FilePath: "/test/file.yaml",
+			Message:  "syntax error",
+		}
+
+		errMsg := err.Error()
+		if !containsString(errMsg, "YAML syntax error") {
+			t.Errorf("expected 'YAML syntax error' in message, got: %s", errMsg)
+		}
+	})
+}
+
+// Helper function for string contains check
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || containsInMiddle(s, substr)))
+}
+
+func containsInMiddle(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
