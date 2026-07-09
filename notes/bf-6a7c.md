@@ -15,13 +15,14 @@ Successfully executed Pluck with comprehensive debug logging and captured comple
 
 ### Command Executed
 ```bash
-bash capture-pluck-debug.sh /home/coding/ARMOR bf-6a7c-pluck-debug-capture-final.log 1
+bash capture-pluck-debug.sh /home/coding/ARMOR bf-6a7c-pluck-execution-final-20260709-013551.log 1
 ```
 
 ### Output Files Generated
-1. **Primary Capture**: `bf-6a7c-pluck-debug-capture-final.log` (9.1 KB)
-2. **Additional Logs**: Multiple timestamped capture runs for verification
+1. **Latest Capture**: `bf-6a7c-pluck-execution-final-20260709-013551.log` (9.1 KB, 73 lines)
+2. **Previous Captures**: Multiple timestamped capture runs for verification
 3. **Configuration**: `pluck-config.yaml` with debug settings
+4. **Environment**: `.env.pluck-debug` with comprehensive RUST_LOG settings
 
 ## Log Contents
 
