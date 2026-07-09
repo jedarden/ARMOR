@@ -1,17 +1,27 @@
-# Pluck Debug Configuration Files Location Summary
+# Debug Configuration Files Location Summary - bf-4g8se
 
 **Bead:** bf-4g8se  
 **Date:** 2026-07-09  
 **Workspace:** /home/coding/ARMOR  
-**Task:** Locate debug configuration files for Pluck execution
+**Task:** Locate all debug configuration files in expected locations for Pluck execution
 
 ## Overview
 
-This document summarizes the location and existence of all debug configuration files for Pluck execution in the ARMOR workspace. All expected files have been verified and exist.
+Comprehensive audit of all expected debug configuration file locations for Pluck strand execution within the NEEDLE system. All expected locations are populated with appropriate configuration files. No missing files detected.
 
-## Primary Configuration Files
+## Expected Debug Configuration Locations
 
-### 1. Main Pluck Configuration
+### 1. Primary Workspace Configuration Files ✅
+
+**Location:** `/home/coding/ARMOR/`
+
+| File | Status | Purpose |
+|------|--------|---------|
+| `.needle.yaml` | ✅ EXISTS | Main NEEDLE configuration with Pluck strand settings (exclude_labels, split_after_failures) |
+| `pluck-config.yaml` | ✅ EXISTS | Dedicated Pluck debug configuration (debug levels, filtering, output settings) |
+| `.env.pluck-debug` | ✅ EXISTS | Environment variable configuration for RUST_LOG settings |
+
+#### 1.1 Main Pluck Configuration (`pluck-config.yaml`)
 - **Location:** `/home/coding/ARMOR/pluck-config.yaml`
 - **Status:** ✅ EXISTS
 - **Purpose:** Controls Pluck strand debug logging levels, filtering decisions, bead store queries, and output configuration
@@ -22,7 +32,7 @@ This document summarizes the location and existence of all debug configuration f
   - Split threshold evaluation logging
   - Log file output configuration
 
-### 2. NEEDLE Configuration
+#### 1.2 NEEDLE Configuration (`.needle.yaml`)
 - **Location:** `/home/coding/ARMOR/.needle.yaml`
 - **Status:** ✅ EXISTS
 - **Purpose:** Configures NEEDLE strand behavior, including Pluck filtering settings
@@ -30,7 +40,7 @@ This document summarizes the location and existence of all debug configuration f
   - `strands.pluck.exclude_labels` - Labels to exclude when selecting beads
   - `strands.pluck.split_after_failures` - Auto-split beads after N consecutive failures
 
-### 3. Environment Configuration
+#### 1.3 Environment Configuration (`.env.pluck-debug`)
 - **Location:** `/home/coding/ARMOR/.env.pluck-debug`
 - **Status:** ✅ EXISTS
 - **Purpose:** RUST_LOG environment variable presets for different debug levels
@@ -38,6 +48,15 @@ This document summarizes the location and existence of all debug configuration f
   ```bash
   export RUST_LOG=needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug
   ```
+
+### 2. User-Level Configuration ✅
+
+**Location:** `/home/coding/.config/needle/`
+
+| File | Status | Purpose |
+|------|--------|---------|
+| `config.yaml` | ✅ EXISTS | User-level NEEDLE configuration |
+| `adapters/` | ✅ EXISTS | Agent adapter configurations (9 adapter files) |
 
 ## Documentation Files
 
