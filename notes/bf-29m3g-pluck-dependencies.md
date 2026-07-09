@@ -1,214 +1,144 @@
 # Pluck Dependencies Documentation
 
+**Bead:** bf-29m3g  
+**Component:** Pluck Strand (part of NEEDLE)  
+**Last Updated:** 2026-07-09
+
 ## Overview
 
-**Pluck** is a strand (command/module) within the NEEDLE project that handles primary bead selection from the assigned workspace. It processes over 90% of all bead operations by querying the bead store for unassigned, ready beads, filtering by excluded labels, and sorting them in deterministic priority order.
+Pluck is a strand component within the NEEDLE project. Pluck handles >90% of all bead processing by querying the bead store for unassigned, ready beads, filtering by excluded labels, and sorting them in deterministic priority order.
 
-**Project:** NEEDLE (Navigates Every Enqueued Deliverable, Logs Effort)  
-**Pluck Module:** `/home/coding/NEEDLE/src/strand/pluck.rs`  
-**Language:** Rust  
-**Current Version:** 0.2.11
+**Source Location:** `/home/coding/NEEDLE/src/strand/pluck.rs`  
+**Project Repository:** https://github.com/jedarden/NEEDLE  
+**Documentation Path:** `docs/bf-29m3g-pluck-dependencies.md`
 
 ---
 
-## Required Dependencies
+## Core System Requirements
 
-### 1. Rust Toolchain
+### Rust Toolchain
+- **Minimum Version:** Rust 1.75+ (specified in Cargo.toml)
+- **Edition:** Rust 2021
+- **Stable Channel:** Recommended (uses stable toolchain)
+- **Components Required:**
+  - `rustfmt` - Code formatting
+  - `clippy` - Linting
+  - `cargo` - Build tool
 
-**Minimum Rust Version:** 1.75 (specified in `rust-version` field)
-
-**Required Components:**
-- `rustc` (Rust compiler)
-- `cargo` (Rust package manager)
-- `rustfmt` (code formatter - optional but recommended)
-- `clippy` (linter - optional but recommended)
-
-**Installation:**
-```bash
-# Using rustup (recommended)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Or on Linux with apt
-sudo apt install rustc cargo
-
-# Verify installation
-rustc --version
-cargo --version
+**Toolchain Configuration:** `/home/coding/NEEDLE/rust-toolchain.toml`
+```toml
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
 ```
 
-**Toolchain Configuration:**
-- **Channel:** Stable
-- **Targets:** 
-  - `x86_64-unknown-linux-gnu` (Linux AMD64)
-  - `aarch64-apple-darwin` (macOS ARM64)
+### Supported Target Platforms
+- **Linux x86_64:** `x86_64-unknown-linux-gnu` (primary)
+- **Linux x86_64 static:** `x86_64-unknown-linux-musl` (for release builds)
+- **macOS ARM64:** `aarch64-apple-darwin`
 
 ---
 
-### 2. Core Cargo Dependencies
+## Rust Dependencies (from Cargo.toml)
 
-Pluck relies on these Rust libraries defined in `/home/coding/NEEDLE/Cargo.toml`:
+### Core Runtime Dependencies
 
-#### Async Runtime
-- **tokio** (version 1, features: "full") - Async runtime
-- **async-trait** (version 0.1) - Async trait support
-- **futures** (version 0.3) - Futures utilities
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| `tokio` | 1.x | Async runtime (full features) | ✅ Yes |
+| `serde` | 1.x | Serialization (with derive) | ✅ Yes |
+| `serde_json` | 1.x | JSON serialization | ✅ Yes |
+| `serde_yaml` | 0.9.x | YAML serialization | ✅ Yes |
+| `async-trait` | 0.1.x | Async trait support | ✅ Yes |
+| `tracing` | 0.1.x | Logging/telemetry framework | ✅ Yes |
+| `tracing-subscriber` | 0.3.x | Log subscriber (env-filter, json) | ✅ Yes |
 
-#### Serialization & Data Handling
-- **serde** (version 1, features: "derive") - Serialization framework
-- **serde_json** (version 1) - JSON serialization
-- **serde_yaml** (version 0.9) - YAML serialization
-- **toml** (version 0.8) - TOML parsing
+### CLI Dependencies
 
-#### CLI & User Interface
-- **clap** (version 4, features: "derive") - Command-line argument parsing
-- **atty** (version 0.2) - Terminal detection for ANSI color support
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| `clap` | 4.x | CLI argument parsing (derive) | ✅ Yes |
 
-#### Error Handling
-- **anyhow** (version 1) - Error handling
-- **thiserror** (version 1) - Error derive macros
+### Error Handling
 
-#### Logging & Telemetry
-- **tracing** (version 0.1) - Structured logging
-- **tracing-subscriber** (version 0.3, features: "env-filter", "json") - Log formatting
-- **chrono** (version 0.4, features: "serde") - Time handling
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| `anyhow` | 1.x | Generic error handling | ✅ Yes |
+| `thiserror` | 1.x | Error derive macros | ✅ Yes |
 
-#### OpenTelemetry (Optional Feature)
-- **opentelemetry** (version 0.31, optional)
-- **opentelemetry_sdk** (version 0.31, features: "rt-tokio", optional)
-- **opentelemetry-otlp** (version 0.31, features: "grpc-tonic", "http-proto", optional)
-- **opentelemetry-semantic-conventions** (version 0.31, optional)
-- **tonic** (version 0.14, optional)
-- **tracing-opentelemetry** (version 0.32, optional)
+### Data Processing & Utilities
 
-#### File System & Process Management
-- **which** (version 4) - Process/executable detection
-- **fs2** (version 0.4) - Cross-platform file locking (flock)
-- **libc** (version 0.2) - Unix process handling (PID liveness check)
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| `chrono` | 0.4.x | Time handling (serde features) | ✅ Yes |
+| `regex` | 1.x | Regular expressions | ✅ Yes |
+| `glob` | 0.3.x | Pattern matching | ✅ Yes |
+| `aho-corasick` | 1.x | Multi-pattern string search | ✅ Yes |
+| `sha2` | 0.10.x | Hashing (content fingerprinting) | ✅ Yes |
+| `hex` | 0.4.x | Hex encoding | ✅ Yes |
 
-#### Cryptography & Hashing
-- **sha2** (version 0.10) - SHA-256 hashing for prompt content
-- **hex** (version 0.4) - Hex encoding
+### System Integration
 
-#### Pattern Matching & Text Processing
-- **regex** (version 1) - Regular expressions (agent token extraction)
-- **aho-corasick** (version 1) - Multi-pattern string search
-- **glob** (version 0.3) - Glob pattern matching
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| `fs2` | 0.4.x | Cross-platform file locking (flock) | ✅ Yes |
+| `which` | 4.x | Process management | ✅ Yes |
+| `libc` | 0.2.x | Unix process handling (PID checks) | ✅ Yes |
+| `atty` | 0.2.x | Terminal detection (ANSI colors) | ✅ Yes |
+| `toml` | 0.8.x | TOML parsing | ✅ Yes |
+| `cfg-if` | 1.x | Conditional compilation | ✅ Yes |
+| `rand` | 0.8.x | Random jitter (backoff desync) | ✅ Yes |
+| `futures` | 0.3.x | Async utilities | ✅ Yes |
+| `gethostname` | 0.4.x | Hostname retrieval | ✅ Yes |
 
-#### Networking
-- **ureq** (version 2) - HTTP client (self-update functionality)
+### Network & HTTP
 
-#### Randomization & Utilities
-- **rand** (version 0.8) - Random jitter (backoff desynchronization)
-- **cfg-if** (version 1) - Conditional compilation
-- **gethostname** (version 0.4) - Hostname detection
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| `ureq` | 2.x | HTTP client (self-update) | ✅ Yes |
 
----
+### Optional Dependencies (Feature-Gated)
 
-### 3. Development Dependencies
+#### OpenTelemetry/OTLP Feature
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| `opentelemetry` | 0.31.x | OTel SDK | ⚠️ Optional |
+| `opentelemetry_sdk` | 0.31.x | OTel SDK (rt-tokio) | ⚠️ Optional |
+| `opentelemetry-otlp` | 0.31.x | OTLP exporter (grpc-tonic, http-proto) | ⚠️ Optional |
+| `opentelemetry-semantic-conventions` | 0.31.x | Semantic conventions | ⚠️ Optional |
+| `tonic` | 0.14.x | gRPC for OTLP | ⚠️ Optional |
+| `tracing-opentelemetry` | 0.32.x | Tracing bridge | ⚠️ Optional |
 
-Required for testing and development:
-- **tokio-test** (version 0.4) - Tokio testing utilities
-- **tempfile** (version 3) - Temporary file handling
-- **proptest** (version 1) - Property-based testing
-- **filetime** (version 0.2) - File time manipulation
-- **criterion** (version 0.5) - Benchmarking framework
+#### Integration Test Feature
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| `testcontainers` | 0.23.x | Containerized integration tests | ⚠️ Optional |
 
----
+### Development Dependencies (Build-time Only)
 
-### 4. Optional System Dependencies
-
-#### For Installation Script (`install.sh`)
-The installer optionally uses these system tools (but can work without them):
-
-- **curl** or **wget** - Downloading releases
-- **sha256sum** or **shasum** - Checksum verification
-- **gpg** - GPG signature verification (optional)
-
-#### For Build Process
-- **git** - Version control (for building from git repository)
-- **make** - Build automation (if using makefiles)
-
----
-
-## Minimum Version Requirements
-
-| Component | Minimum Version | Recommended Version |
-|-----------|----------------|-------------------|
-| Rust | 1.75 | Latest stable |
-| Cargo | Bundled with Rust 1.75 | Latest stable |
-| tokio | 1.x | Latest 1.x |
-| serde | 1.x | Latest 1.x |
-| clap | 4.x | Latest 4.x |
-| chrono | 0.4.x | Latest 0.4.x |
+| Dependency | Version | Purpose | Required |
+|------------|---------|---------|----------|
+| `tokio-test` | 0.4.x | Async testing utilities | 🔧 Dev only |
+| `tempfile` | 3.x | Temporary file testing | 🔧 Dev only |
+| `proptest` | 1.x | Property-based testing | 🔧 Dev only |
+| `filetime` | 0.2.x | File time testing | 🔧 Dev only |
+| `criterion` | 0.5.x | Benchmarking | 🔧 Dev only |
 
 ---
 
-## Build Requirements
+## System-Level Dependencies
 
-### Memory & Disk Space
-- **RAM:** 2GB minimum (4GB+ recommended for full builds)
-- **Disk Space:** ~500MB for dependencies, ~2GB for release build with LTO
+### Build Dependencies
 
-### Build Commands
-```bash
-# Debug build
-cargo build
+| Tool | Version | Purpose | Required |
+|------|---------|---------|----------|
+| `cargo` | Latest | Rust build tool | ✅ Yes |
+| `rustc` | 1.75+ | Rust compiler | ✅ Yes |
+| `musl-tools` | Any | Static linking for Linux (release builds only) | ⚠️ Release only |
 
-# Release build (optimized)
-cargo build --release
-
-# Run tests
-cargo test
-
-# Run linter
-cargo clippy --all-targets -- -D warnings
-
-# Format code
-cargo fmt
-```
-
-### Cross-Compilation Targets
-- **Linux AMD64:** `x86_64-unknown-linux-gnu` (native)
-- **macOS ARM64:** `aarch64-apple-darwin` (cross-compile)
-
----
-
-## Runtime Requirements
-
-### Bead Store Backend
-Pluck requires a bead store backend (one of):
-- **SQLite** (via `br` CLI) - `.beads/beads.db` database
-- **br CLI** - Bead store management tool
-
-### Configuration Files
-- **`.needle.yaml`** - Needle configuration (optional, has defaults)
-- **`.beads/issues.jsonl`** - Bead checkpoint file
-
-### Environment Variables (Optional)
-- `RUST_LOG` - Control logging verbosity (e.g., `RUST_LOG=needle::strand::pluck=trace`)
-- `NEEDLE_INSTALL_PATH` - Custom installation path for installer
-
----
-
-## Feature Flags
-
-Pluck supports these Cargo features:
-
-- **default** - Includes `otlp` feature
-- **otlp** - Enable OpenTelemetry/OTLP telemetry
-- **integration** - Integration testing with testcontainers
-
-### Building with Features
-```bash
-# Build without OTLP
-cargo build --no-default-features
-
-# Build with integration tests
-cargo build --features integration
-
-# Build with all features
-cargo build --all-features
-```
+### Runtime Dependencies (No external system deps required)
+Pluck/NEEDLE is **statically linked** for release builds and has **no runtime system dependencies**.
 
 ---
 
@@ -229,88 +159,107 @@ cargo install --git https://github.com/jedarden/NEEDLE
 git clone https://github.com/jedarden/NEEDLE.git
 cd NEEDLE
 cargo build --release
-install -m 755 target/release/needle ~/.local/bin/needle
+```
+
+---
+
+## Configuration Requirements
+
+### Environment Variables (Optional)
+- `RUST_LOG` - For debug logging (e.g., `RUST_LOG=needle::strand::pluck=debug`)
+- `CARGO_TERM_COLOR` - Terminal color control
+- `RUST_BACKTRACE` - Enable backtraces for debugging
+
+### Build Features
+- **Default:** `otlp` (OpenTelemetry enabled)
+- **Minimal:** `--no-default-features` (OpenTelemetry disabled)
+- **Integration:** `--features integration` (includes testcontainers)
+
+---
+
+## Minimum Version Requirements Summary
+
+| Component | Minimum Version | Notes |
+|-----------|-----------------|-------|
+| **Rust** | 1.75 | Specified in Cargo.toml |
+| **Cargo** | Works with 1.75+ | Comes with Rust |
+| **tokio** | 1.x | Async runtime |
+| **serde** | 1.x | Serialization |
+| **chrono** | 0.4.x | Time handling |
+| **tracing** | 0.1.x | Logging |
+
+---
+
+## Dependency Tree (Key Relationships)
+
+```
+Pluck (src/strand/pluck.rs)
+├── needle::bead_store (BeadStore trait)
+├── needle::types (Bead, StrandError, StrandResult)
+└── External Dependencies
+    ├── async-trait (for BeadStore async trait)
+    ├── tracing (for debug logging)
+    ├── chrono (for bead created_at timestamps)
+    └── anyhow/thiserror (for error handling)
 ```
 
 ---
 
 ## Verification Checklist
 
-Before running Pluck in production, verify:
-
-- [ ] Rust 1.75+ is installed (`rustc --version`)
-- [ ] Cargo is working (`cargo --version`)
-- [ ] All dependencies build successfully (`cargo build`)
-- [ ] Tests pass (`cargo test`)
-- [ ] Linter passes (`cargo clippy`)
-- [ ] Code is formatted (`cargo fmt --check`)
-- [ ] Binary executes (`needle --version`)
-- [ ] Bead store is accessible (`br list`)
-
----
-
-## Troubleshooting
-
-### Build Issues
-
-**Problem:** "error: linker `aarch64-linux-gnu-gcc` not found"
-```bash
-# Install cross-compilation toolchain
-sudo apt install gcc-aarch64-linux-gnu
-```
-
-**Problem:** Out of memory during build
-```bash
-# Limit parallel jobs
-export CARGO_BUILD_JOBS=2
-cargo build
-```
-
-### Runtime Issues
-
-**Problem:** "Bead store connection failed"
-- Verify `.beads/beads.db` exists
-- Check file permissions
-- Ensure `br` CLI is installed
-
-**Problem:** High memory usage
-- Pluck is memory-efficient (<100MB typical)
-- If excessive, check for leaks in dependencies
-
----
-
-## Security Considerations
-
-- All dependencies are from reputable crates.io sources
-- No network access required for core Pluck functionality
-- Optional `ureq` dependency for self-update (can be disabled)
-- File locking (`fs2`) prevents concurrent access issues
-- SHA-256 hashing (`sha2`) for content integrity
+- [x] Identify Pluck's source code and build configuration
+- [x] Extract dependency requirements from Cargo.toml
+- [x] Document required system libraries and development tools
+- [x] Note minimum version requirements (Rust 1.75+)
+- [x] Create comprehensive dependency documentation
+- [x] Document supported target platforms
+- [x] Document optional (feature-gated) dependencies
+- [x] Document installation methods
 
 ---
 
 ## Next Steps
 
-After verifying dependencies:
+1. **Install Rust toolchain** (if not already installed):
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
 
-1. **Install br CLI** for bead store management
-2. **Configure `.needle.yaml`** for your workspace
-3. **Initialize bead store** with `br init`
-4. **Run Pluck** with `needle run --agent <agent> --identity <identity>`
+2. **Clone NEEDLE repository** (if building from source):
+   ```bash
+   git clone https://github.com/jedarden/NEEDLE.git
+   cd NEEDLE
+   ```
+
+3. **Build Pluck/NEEDLE**:
+   ```bash
+   cargo build --release
+   ```
+
+4. **Verify installation**:
+   ```bash
+   needle --version
+   ```
 
 ---
 
-## Additional Resources
+## References
 
 - **NEEDLE Repository:** https://github.com/jedarden/NEEDLE
-- **Documentation:** `/home/coding/NEEDLE/docs/`
-- **Examples:** `/home/coding/NEEDLE/docs/examples/`
 - **Pluck Source:** `/home/coding/NEEDLE/src/strand/pluck.rs`
 - **Cargo.toml:** `/home/coding/NEEDLE/Cargo.toml`
+- **Toolchain Config:** `/home/coding/NEEDLE/rust-toolchain.toml`
+- **CI Configuration:** `/home/coding/NEEDLE/.github/workflows/ci.yml`
+- **Release Configuration:** `/home/coding/NEEDLE/.github/workflows/release.yml`
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-07-09  
-**Bead ID:** bf-29m3g  
-**Status:** Complete
+**Status:** ✅ **Documentation Complete**
+
+All required dependencies for Pluck strand have been documented, including:
+- Rust toolchain requirements (1.75+)
+- All Cargo dependencies with versions
+- System-level build dependencies
+- Optional feature-gated dependencies
+- Installation methods and verification
+- Target platforms supported
