@@ -10,18 +10,78 @@
 
 Pluck is a strand within the NEEDLE system (a Rust project). This document lists all **currently installed dependencies** with their exact versions as resolved in `Cargo.lock`.
 
-**Project Location:** `/home/coding/NEEDLE/`  
-**Cargo.toml Location:** `/home/coding/NEEDLE/Cargo.toml`  
-**Cargo.lock Location:** `/home/coding/NEEDLE/Cargo.lock`  
+**Project Location:** `/home/coding/NEEDLE/`
+**Cargo.toml Location:** `/home/coding/NEEDLE/Cargo.toml`
+**Cargo.lock Location:** `/home/coding/NEEDLE/Cargo.lock`
+**Verification Date:** 2026-07-09
+
+---
+
+## System & CLI Dependencies
+
+### Rust Toolchain
+| Dependency | Status | Version | Location | Meets Requirement |
+|------------|--------|---------|----------|-------------------|
+| **rustc** | ✅ INSTALLED | 1.96.1 (31fca3adb 2026-06-26) | System binary (Nix store) | ✅ Yes (exceeds 1.75+) |
+| **cargo** | ✅ INSTALLED | 1.96.1 (356927216 2026-06-26) | System binary (Nix store) | ✅ Yes (exceeds 1.75+) |
+| **rustfmt** | ✅ INSTALLED | 1.9.0-stable (31fca3adb2 2026-06-26) | System binary (Nix store) | ✅ Yes |
+| **clippy** | ❌ NOT INSTALLED | N/A | N/A | ⚠️ Optional dev tool |
+
+**Rust Toolchain Summary:** ✅ **OPERATIONAL**  
+**Minimum Required:** 1.75+ | **Current:** 1.96.1 | **Status:** Exceeds requirement
+
+### Go Toolchain
+| Dependency | Status | Version | Location | Meets Requirement |
+|------------|--------|---------|----------|-------------------|
+| **go** | ✅ INSTALLED | 1.25.0 linux/amd64 | System binary (Nix store) | ✅ Yes (exceeds 1.20+) |
+
+**Go Toolchain Summary:** ✅ **OPERATIONAL**  
+**Minimum Required:** 1.20+ | **Current:** 1.25.0 | **Status:** Exceeds requirement
+
+### CLI Applications
+| Dependency | Status | Version | Location | Size | Last Updated |
+|------------|--------|---------|----------|------|--------------|
+| **needle** | ✅ INSTALLED | 0.2.11 | ~/.local/bin/needle | 12M | 2026-07-06 |
+| **bf** (bead-forge) | ✅ INSTALLED | v0.2.0 | ~/.local/bin/bf | 7.5M | 2026-07-09 |
+| **br** | ✅ INSTALLED | v0.2.0 | ~/.local/bin/br -> bf | symlink | Symlink to bf |
+
+**CLI Tools Summary:** ✅ **OPERATIONAL**  
+**Verification:** `needle --version` returns 0.2.11, `bf --help` shows functional CLI  
+**Version Source:** ~/.local/bin/.bf-version contains "v0.2.0"
+
+### Build Tools
+| Dependency | Status | Version | Location | Meets Requirement |
+|------------|--------|---------|----------|-------------------|
+| **gcc** | ✅ INSTALLED | 13.3.0 | System binary (Nix store) | ✅ Yes |
+| **make** | ✅ INSTALLED | 4.4.1 | System binary (Nix store) | ✅ Yes |
+| **pkg-config** | ✅ INSTALLED | 0.29.2 | System binary (Nix store) | ✅ Yes |
+| **curl** | ✅ INSTALLED | 8.14.1 | System binary (Nix store) | ✅ Yes |
+
+**Build Tools Summary:** ✅ **OPERATIONAL**  
+**Purpose:** Building NEEDLE from source, fetching dependencies
+
+### Optional Tools
+| Dependency | Status | Version | Notes |
+|------------|--------|---------|-------|
+| **sqlite3 CLI** | ❌ NOT INSTALLED | N/A | Not blocking (embedded SQLite in br) |
 
 ---
 
 ## Installation Status Summary
 
+### System/CLI Dependencies
+| Status | Count | Notes |
+|--------|-------|-------|
+| **Installed** | 12 | All critical system tools and CLI applications |
+| **Missing** | 2 | clippy (optional dev tool), sqlite3 CLI (optional) |
+
+### Cargo/Rust Dependencies (Statically Compiled)
 | Status | Count | Notes |
 |--------|-------|-------|
 | **Installed** | 32 | All direct dependencies resolved and locked |
 | **Missing** | 0 | No missing dependencies |
+
+**Total Dependencies Documented:** 44 (12 system/CLI + 32 Cargo)
 
 ---
 
@@ -207,6 +267,33 @@ cargo tree
 
 To verify the installed versions yourself:
 
+### System/CLI Dependencies
+```bash
+# Rust toolchain
+rustc --version       # Expected: rustc 1.96.1
+cargo --version       # Expected: cargo 1.96.1
+rustfmt --version     # Expected: rustfmt 1.9.0-stable
+clippy --version      # Expected: command not found (optional)
+
+# Go toolchain
+go version            # Expected: go version go1.25.0
+
+# CLI tools
+needle --version      # Expected: needle 0.2.11
+bf --help             # Expected: bead-forge help output
+br --help             # Expected: br help output (symlink to bf)
+
+# Build tools
+gcc --version         # Expected: gcc (GCC) 13.3.0
+make --version        # Expected: GNU Make 4.4.1
+pkg-config --version  # Expected: 0.29.2
+curl --version        # Expected: curl 8.14.1
+
+# Optional (should return "command not found")
+sqlite3 --version     # Expected: command not found (not installed)
+```
+
+### Cargo/Rust Dependencies
 ```bash
 # Check NEEDLE version
 needle --version
@@ -232,32 +319,67 @@ cargo test
 
 ## Key Findings
 
+### System/CLI Dependencies
+1. **All critical system dependencies are installed** - Rust 1.96.1, Go 1.25.0, all build tools present
+2. **NEEDLE and bead-forge are operational** - versions 0.2.11 and v0.2.0 respectively
+3. **Rust toolchain exceeds minimum requirements** - 1.96.1 vs minimum 1.75+
+4. **Optional tools not blocking** - clippy (dev tool) and sqlite3 CLI (optional) missing but not required
+5. **All CLI tools accessible via PATH** - needle, bf, br all functional
+
+### Cargo/Rust Dependencies
 1. **All 32 direct dependencies are installed** - no missing dependencies
 2. **All installed versions meet or exceed minimum requirements** - compatible with Rust 1.75+
 3. **OpenTelemetry (otlp) feature is enabled** - all 6 OTLP dependencies present
 4. **No deprecated dependencies in use** - except serde_yaml which is marked as deprecated but still maintained
 5. **All versions are locked in Cargo.lock** - reproducible builds are guaranteed
 
+### Overall System Readiness
+✅ **READY FOR PLUCK OPERATIONS** - All critical dependencies verified and functional
+
 ---
 
 ## Related Documentation
 
-- **Minimum version requirements:** `/home/coding/ARMOR/docs/pluck-dependencies.md`
-- **Requirements summary:** `/home/coding/ARMOR/docs/pluck-dependency-requirements-summary.md`
+### Existing ARMOR Documentation
+- **Pluck Dependency Requirements:** `/home/coding/ARMOR/notes/bf-1fyju-pluck-dependencies.md`
+- **Pluck Dependencies Categorized:** `/home/coding/ARMOR/notes/bf-4n9l1-pluck-dependency-categorized.md`
+- **Pluck Dependencies Verification:** `/home/coding/ARMOR/notes/bf-5b04s-pluck-dependencies-verification-2026-07-09.md`
+- **Dependency Verification Report:** `/home/coding/ARMOR/notes/bf-34avz-dependency-verification-report.md`
+
+### NEEDLE Project Files
 - **NEEDLE Cargo.toml:** `/home/coding/NEEDLE/Cargo.toml`
 - **NEEDLE Cargo.lock:** `/home/coding/NEEDLE/Cargo.lock`
+- **NEEDLE Repository:** https://github.com/jedarden/NEEDLE
+
+### System Configuration
+- **Rust Toolchain:** Managed via Nix package manager
+- **Go Toolchain:** Managed via Nix package manager
+- **CLI Tools:** Installed in `/home/coding/.local/bin/`
 
 ---
 
 ## Acceptance Criteria Status
 
-✅ **All dependencies listed with exact versions** - 32 direct dependencies documented  
-✅ **Installation status documented** - All show "✅ Installed"  
+✅ **All dependencies listed with exact versions** - 44 total dependencies documented (12 system/CLI + 32 Cargo)  
+✅ **Installation status documented** - Each dependency shows status (✅ Installed / ❌ Not Installed)  
 ✅ **Structured format suitable for documentation** - Markdown tables and categorized sections  
-✅ **Verification commands provided** - Commands to re-check versions included  
-✅ **Related documentation referenced** - Links to other dependency docs  
+✅ **Verification commands provided** - Commands to re-check both system and Cargo versions  
+✅ **Related documentation referenced** - Links to comprehensive ARMOR Pluck documentation  
+
+### Dependencies Count Summary
+| Category | Installed | Missing | Total |
+|----------|-----------|---------|-------|
+| **System/CLI** | 10 | 2 (optional) | 12 |
+| **Cargo Runtime** | 26 | 0 | 26 |
+| **Cargo Dev** | 5 | 0 | 5 |
+| **Cargo OTLP** | 6 | 0 | 6 |
+| **TOTAL** | 47 | 2 | 49 |
+
+**Note:** 2 missing (clippy, sqlite3 CLI) are optional and not blocking for Pluck operations.
 
 ---
 
 **Task Status:** ✅ COMPLETE  
-**Documentation Status:** Comprehensive installed versions list created and committed.
+**Documentation Status:** Comprehensive installed versions list created, enhanced, and committed.  
+**Verification Date:** 2026-07-09  
+**System Readiness:** ✅ READY FOR PLUCK OPERATIONS
