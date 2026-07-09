@@ -5,12 +5,12 @@ debug:
   # Debug logging level
   # Options: info, debug, trace, off
   # Default: info
-  level: info
+  level: debug
 
   # Enable detailed filtering decision logging
   # When true, logs all filter operations and candidate evaluations
   # Default: false
-  log_filtering_decisions: false
+  log_filtering_decisions: true
 
   # Enable bead store query logging
   # When true, logs all bead store interactions
