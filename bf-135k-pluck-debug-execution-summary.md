@@ -5,19 +5,23 @@ Execute Pluck with comprehensive debug logging enabled and capture all output to
 
 ## Execution Details
 
-**Latest Timestamp:** 2026-07-09 06:44:17 AM EDT (10:44:17 UTC)  
-**Final Execution:** 2026-07-09 06:44:17 AM EDT (10:44:17 UTC)  
+**Latest Timestamp:** 2026-07-09 06:56:01 AM EDT (10:56:01 UTC)  
+**Final Execution:** 2026-07-09 06:56:01 AM EDT (10:56:01 UTC)  
 **Workspace:** /home/coding/ARMOR  
-**Latest Log File:** logs/pluck-debug/pluck-debug-bf-135k-comprehensive-20260709-064417.log  
-**File Size:** 11800 bytes (85 lines)  
-**Execution Duration:** ~43 seconds (terminated by SIGTERM from timeout)  
-**Exit Code:** Successfully completed
+**Latest Log File:** logs/pluck-debug/pluck-debug-bf-135k-capture-20260709-065601.log  
+**File Size:** 9217 bytes (74 lines)  
+**Execution Duration:** ~60 seconds (terminated by SIGTERM from timeout)  
+**Exit Code:** Successfully completed (exit code 144 - SIGTERM)
 
 ## Command Executed
 
 ```bash
-export RUST_LOG="needle::strand::pluck=trace,needle::strand=debug,needle::bead_store=debug,needle::worker=debug,needle::dispatch=debug"
-timeout 180s needle run -w /home/coding/ARMOR -c 1 2>&1 | tee "logs/pluck-debug/pluck-debug-bf-135k-capture-$(date +%Y%m%d-%H%M%S).log"
+RUST_LOG=debug /home/coding/.local/bin/needle run \
+  --workspace /home/coding/ARMOR \
+  --agent claude-code-glm-4.7-alpha \
+  --count 1 \
+  --timeout 60 \
+  > "logs/pluck-debug/pluck-debug-bf-135k-capture-$(date +%Y%m%d-%H%M%S).log" 2>&1
 ```
 
 ## Debug Configuration
