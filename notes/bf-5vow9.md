@@ -1,53 +1,75 @@
-# Bead bf-5vow9: Verify armor-writer secret exists
+# Bead bf-5vow9: Verify armor-writer secret exists in devimprint namespace
 
-**Date:** 2026-07-11
-**Cluster:** ord-devimprint
-**Namespace:** devimprint
+## Task Verification
 
-## Verification Summary
+**Objective:** Confirm that the armor-writer secret exists in the devimprint namespace and contains the expected keys.
 
-✓ **PASSED** - The `armor-writer` secret exists and is properly synced
+## Findings
 
-## Evidence
+### 1. ExternalSecret Configuration Verified
 
-### ExternalSecret Status
-```bash
+The ExternalSecret `armor-writer` exists in the `devimprint` namespace and is defined in:
+`~/declarative-config/k8s/ord-devimprint/devimprint/devimprint-externalsecrets.yml`
+
+**Spec:**
+- Secret keys created: `auth-access-key`, `auth-secret-key`
+- OpenBao path: `rs-manager/ord-devimprint/armor-writer`
+- Properties: `auth-access-key`, `auth-secret-key`
+
+### 2. ExternalSecret Status
+
+```
 kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get externalsecret armor-writer -n devimprint
 ```
 
-**Result:**
-- Name: `armor-writer`
-- Status: `SecretSynced`
-- Ready: `True`
-- Last Sync: `2026-07-11T16:21:24Z` (31 minutes ago)
-- Store: `ClusterSecretStore/openbao`
-- Remote Key: `rs-manager/ord-devimprint/armor-writer`
+**Status:**
+- Condition: `Ready` = `True`
+- Reason: `SecretSynced`
+- Message: `secret synced`
+- Last synced: `2026-07-11T16:21:24Z`
 
-### Secret Keys (from ExternalSecret spec)
-The ExternalSecret defines these secret keys in the target Kubernetes Secret:
-1. `auth-access-key` - from OpenBao property `auth-access-key`
-2. `auth-secret-key` - from OpenBao property `auth-secret-key`
+The ExternalSecret successfully synced the secret from OpenBao.
 
-### Environment Variable Mapping (from job manifests)
-The deployment manifests map these secret keys to environment variables:
-- Secret key `auth-access-key` → `LITESTREAM_ACCESS_KEY_ID` env var
-- Secret key `auth-secret-key` → `LITESTREAM_SECRET_ACCESS_KEY` env var
+### 3. Secret Keys Clarification
 
-## Acceptance Criteria Clarification
+The acceptance criteria mentions:
+- `LITESTREAM_ACCESS_KEY_ID`
+- `LITESTREAM_SECRET_ACCESS_KEY`
 
-**Original acceptance criteria requested:**
-- Secret contains `LITESTREAM_ACCESS_KEY_ID` key
-- Secret contains `LITESTREAM_SECRET_ACCESS_KEY` key
+These are **environment variable names** used in deployments (e.g., queue-api), not the actual secret data keys.
 
-**Actual reality:**
-The acceptance criteria conflates *environment variable names* with *secret key names*. The actual secret keys are `auth-access-key` and `auth-secret-key`, which are then mapped to the environment variables `LITESTREAM_ACCESS_KEY_ID` and `LITESTREAM_SECRET_ACCESS_KEY` in pod specs.
+The actual secret keys are:
+- `auth-access-key` (mapped to env var `LITESTREAM_ACCESS_KEY_ID`)
+- `auth-secret-key` (mapped to env var `LITESTREAM_SECRET_ACCESS_KEY`)
 
-## Access Limitation
+### 4. Deployment Reference
 
-**Note:** Direct verification of secret contents (`kubectl get secret armor-writer -o json`) is not possible via the read-only kubectl-proxy at `http://kubectl-proxy-ord-devimprint:8001`. The proxy's ServiceAccount (`devpod-observer`) explicitly denies access to secrets for security reasons.
+In `queue-api-deployment.yml`:
+```yaml
+env:
+- name: LITESTREAM_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: armor-writer
+      key: auth-access-key
+- name: LITESTREAM_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: armor-writer
+      key: auth-secret-key
+```
 
-**Verification method:** Relied on ExternalSecret status which shows successful sync and the secret keys defined in the ExternalSecret spec.
+## Verification Result
 
-## Conclusion
+✓ ExternalSecret `armor-writer` exists in devimprint namespace
+✓ ExternalSecret status is `Ready` with `SecretSynced` reason
+✓ Secret contains the expected keys: `auth-access-key` and `auth-secret-key`
+✓ These keys are correctly referenced by the LITESTREAM_* environment variables
 
-The `armor-writer` secret exists in the `devimprint` namespace and is actively synced from OpenBao with the correct keys (`auth-access-key` and `auth-secret-key`) for litestream S3 write access.
+**Note:** Direct secret access is blocked by the read-only RBAC on the devimprint proxy. Verification was done through ExternalSecret status, which confirms successful secret creation and syncing from OpenBao.
+
+## Acceptance Criteria
+
+- [x] Secret 'armor-writer' exists in devimprint namespace
+- [x] Secret contains `auth-access-key` key (env var: `LITESTREAM_ACCESS_KEY_ID`)
+- [x] Secret contains `auth-secret-key` key (env var: `LITESTREAM_SECRET_ACCESS_KEY`)
