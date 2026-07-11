@@ -2,6 +2,153 @@
 //!
 //! This module defines the error types used throughout the YAML parser.
 //!
+//! # Error Handling Philosophy
+//!
+//! The `ParseError` type follows a structured approach to error handling that emphasizes:
+//!
+//! 1. **Clear categorization** - Each error falls into a distinct category (syntax, I/O, validation, etc.)
+//! 2. **Rich context** - Errors carry location information, context messages, and code snippets
+//! 3. **Composability** - Errors propagate cleanly through the call stack using Rust's `?` operator
+//! 4. **User-friendly output** - Multiple formatting options for different use cases (logging, UI, debugging)
+//!
+//! ## When to Use Each Variant
+//!
+//! ### `ParseErrorKind::Io` vs Other Variants
+//!
+//! Use [`ParseErrorKind::Io`] for **file system and I/O operation failures**:
+//! - File not found (`std::io::ErrorKind::NotFound`)
+//! - Permission denied (`std::io::ErrorKind::PermissionDenied`)
+//! - Read/write failures (`std::io::ErrorKind::Other`)
+//! - Network I/O errors (if applicable)
+//!
+//! **Do not use** `Io` for:
+//! - YAML syntax errors → use [`ParseErrorKind::Syntax`]
+//! - Type mismatches → use [`ParseErrorKind::TypeMismatch`]
+//! - Constraint violations → use [`ParseErrorKind::Validation`]
+//!
+//! ```ignore
+//! // ✅ Correct: Use Io for file system errors
+//! let content = std::fs::read_to_string(path)?;  // io::Error → Io
+//!
+//! // ❌ Incorrect: Don't use Io for parsing errors
+//! // let error = ParseError::io("invalid YAML structure");  // Wrong! Use Syntax instead
+//! ```
+//!
+//! ### `ParseErrorKind::InvalidUtf8` vs Other Variants
+//!
+//! Use [`ParseErrorKind::InvalidUtf8`] specifically for **encoding errors**:
+//! - Invalid UTF-8 byte sequences in input
+//! - Failed UTF-8 validation when converting bytes to strings
+//!
+//! **Do not use** `InvalidUtf8` for:
+//! - I/O errors during file reading → use [`ParseErrorKind::Io`]
+//! - General parsing failures → use [`ParseErrorKind::Syntax`]
+//!
+//! ```ignore
+//! // ✅ Correct: Use InvalidUtf8 for encoding errors
+//! let string = String::from_utf8(bytes)?;  // FromUtf8Error → InvalidUtf8
+//!
+//! // ❌ Incorrect: Don't use InvalidUtf8 for file reading errors
+//! // let error = ParseError::new(ParseErrorKind::InvalidUtf8);  // Wrong! Use Io instead
+//! ```
+//!
+//! ### `ParseErrorKind::UnexpectedEof` vs `ParseErrorKind::Syntax`
+//!
+//! Use [`ParseErrorKind::UnexpectedEof`] when **input ends prematurely**:
+//! - Incomplete YAML documents (missing closing brackets, braces, quotes)
+//! - Truncated files or streams
+//! - Multi-document YAML streams that end mid-document
+//!
+//! Use [`ParseErrorKind::Syntax`] for **general YAML syntax violations**:
+//! - Invalid indentation
+//! - Invalid escape sequences
+//! - Malformed scalars or mappings
+//! - Any YAML grammar violation that's not specifically EOF-related
+//!
+//! ```ignore
+//! // ✅ Correct: Use UnexpectedEof for incomplete input
+//! if input.ends_with("key: ") {
+//!     return Err(ParseError::new(ParseErrorKind::UnexpectedEof));
+//! }
+//!
+//! // ✅ Correct: Use Syntax for general YAML errors
+//! if !is_valid_indentation(line) {
+//!     return Err(ParseError::syntax("invalid indentation"));
+//! }
+//! ```
+//!
+//! ### `ParseErrorKind::TypeMismatch` vs `ParseErrorKind::Validation`
+//!
+//! Use [`ParseErrorKind::TypeMismatch`] when **a value has the wrong Rust/YAML type**:
+//! - Expecting an integer but finding a string
+//! - Expecting a sequence but finding a scalar
+//! - Expecting a boolean but finding a number
+//!
+//! Use [`ParseErrorKind::Validation`] for **semantic constraint violations**:
+//! - Value out of allowed range (e.g., port number > 65535)
+//! - String doesn't match required pattern (e.g., invalid email format)
+//! - Array length constraints violated
+//! - Business logic or schema validation failures
+//!
+//! The key distinction: `TypeMismatch` is about **type**, `Validation` is about **value**.
+//!
+//! ```ignore
+//! // ✅ Correct: Use TypeMismatch for type errors
+//! let port = value["port"].as_i64()
+//!     .ok_or_else(|| ParseError::type_mismatch("port", "integer", "string"))?;
+//!
+//! // ✅ Correct: Use Validation for value constraints
+//! if port < 1 || port > 65535 {
+//!     return Err(ParseError::validation("port must be between 1 and 65535"));
+//! }
+//! ```
+//!
+//! ### `ParseErrorKind::DuplicateKey` vs `ParseErrorKind::Validation`
+//!
+//! Use [`ParseErrorKind::DuplicateKey`] specifically for **duplicate key errors**:
+//! - YAML mappings with repeated keys (YAML 1.2 spec violation)
+//! - Configuration files with conflicting entries
+//!
+//! Use [`ParseErrorKind::Validation`] for **general validation failures** including:
+//! - Missing required fields (not duplicated, but absent)
+//! - Inter-field constraint violations (e.g., "start_time > end_time")
+//! - Schema validation failures beyond type/duplicate checking
+//!
+//! ```ignore
+//! // ✅ Correct: Use DuplicateKey for duplicate keys
+//! if keys.contains(&key) {
+//!     return Err(ParseError::new(ParseErrorKind::DuplicateKey(key)));
+//! }
+//!
+//! // ✅ Correct: Use Validation for missing required fields
+//! if value["name"].is_null() {
+//!     return Err(ParseError::validation("missing required field: 'name'"));
+//! }
+//! ```
+//!
+//! ### `ParseErrorKind::Other` (Catch-all) vs Specific Variants
+//!
+//! Use [`ParseErrorKind::Other`] **only as a last resort** for errors that don't fit other categories:
+//! - Unclassifiable serde_yaml errors
+//! - Errors from external libraries that don't map cleanly
+//! - Temporary error cases during refactoring
+//!
+//! **Prefer specific variants** whenever possible:
+//! - Unknown anchors → [`ParseErrorKind::UnknownAnchor`]
+//! - Syntax errors → [`ParseErrorKind::Syntax`]
+//! - I/O errors → [`ParseErrorKind::Io`]
+//! - Type errors → [`ParseErrorKind::TypeMismatch`]
+//!
+//! If you find yourself using `Other` frequently, consider adding a new specific variant.
+//!
+//! ```ignore
+//! // ✅ Prefer specific variants
+//! return Err(ParseError::syntax("invalid YAML"));
+//!
+//! // ⚠️ Use Other only as a catch-all
+//! return Err(ParseError::new(ParseErrorKind::Other("unclassified error".to_string())));
+//! ```
+//!
 //! # Error Propagation Strategy
 //!
 //! The `ParseError` type is designed to work seamlessly with Rust's error propagation
@@ -37,10 +184,10 @@
 //! ## Converting from Other Error Types
 //!
 //! `ParseError` implements `From` for:
-//! - `std::io::Error` → `ParseErrorKind::Io`
-//! - `serde_yaml::Error` → Appropriate `ParseErrorKind` based on error classification
-//! - `std::str::Utf8Error` → `ParseErrorKind::InvalidUtf8`
-//! - `std::string::FromUtf8Error` → `ParseErrorKind::InvalidUtf8`
+//! - `std::io::Error` → [`ParseErrorKind::Io`]
+//! - `serde_yaml::Error` → Appropriate [`ParseErrorKind`] based on error classification
+//! - `std::str::Utf8Error` → [`ParseErrorKind::InvalidUtf8`]
+//! - `std::string::FromUtf8Error` → [`ParseErrorKind::InvalidUtf8`]
 //!
 //! ## Custom Error Creation
 //!
