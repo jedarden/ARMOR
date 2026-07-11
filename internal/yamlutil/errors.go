@@ -453,6 +453,112 @@ func IsValidationError(err error) bool {
 	return err != nil && (errors.As(err, &ve) || isYAMLErrorOfType(err, ErrorTypeValidation))
 }
 
+// NewFileError creates a new FileError with proper initialization.
+func NewFileError(path string, operation string, message string, errorCode ErrorCode) *FileError {
+	return &FileError{
+		Path:       path,
+		Operation:  operation,
+		Message:    message,
+		ErrorCode:  errorCode,
+	}
+}
+
+// NewSchemaValidationError creates a new SchemaValidationError with proper initialization.
+func NewSchemaValidationError(filePath string, schemaPath string, fieldPath string, message string, expected string, found string, line int, errorCode ErrorCode) *SchemaValidationError {
+	return &SchemaValidationError{
+		FilePath:   filePath,
+		SchemaPath: schemaPath,
+		FieldPath:  fieldPath,
+		Message:    message,
+		Expected:   expected,
+		Found:      found,
+		Line:       line,
+		ErrorCode:  errorCode,
+	}
+}
+
+// NewTypeMismatchError creates a new TypeMismatchError with proper initialization.
+func NewTypeMismatchError(filePath string, fieldPath string, expectedType string, actualType string, value string, line int, errorCode ErrorCode) *TypeMismatchError {
+	return &TypeMismatchError{
+		FilePath:     filePath,
+		FieldPath:    fieldPath,
+		ExpectedType: expectedType,
+		ActualType:   actualType,
+		Value:        value,
+		Line:         line,
+		ErrorCode:    errorCode,
+	}
+}
+
+// NewFieldNotFoundError creates a new FieldNotFoundError with proper initialization.
+func NewFieldNotFoundError(filePath string, fieldPath string, line int, errorCode ErrorCode) *FieldNotFoundError {
+	return &FieldNotFoundError{
+		FilePath:  filePath,
+		FieldPath: fieldPath,
+		Line:      line,
+		ErrorCode: errorCode,
+	}
+}
+
+// NewConstraintError creates a new ConstraintError with proper initialization.
+func NewConstraintError(filePath string, fieldPath string, constraintType string, constraint string, value string, line int, errorCode ErrorCode) *ConstraintError {
+	return &ConstraintError{
+		FilePath:       filePath,
+		FieldPath:      fieldPath,
+		ConstraintType: constraintType,
+		Constraint:     constraint,
+		Value:          value,
+		Line:           line,
+		ErrorCode:      errorCode,
+	}
+}
+
+// NewSyntaxError creates a new SyntaxError with proper initialization.
+func NewSyntaxError(filePath string, message string, line int, column int, expected string, found string, errorCode ErrorCode) *SyntaxError {
+	return &SyntaxError{
+		FilePath:  filePath,
+		Message:   message,
+		Line:      line,
+		Column:    column,
+		Expected:  expected,
+		Found:     found,
+		ErrorCode: errorCode,
+	}
+}
+
+// NewStructureError creates a new StructureError with proper initialization.
+func NewStructureError(filePath string, message string, line int, duplicateKey string, location string, errorCode ErrorCode) *StructureError {
+	return &StructureError{
+		FilePath:     filePath,
+		Message:      message,
+		Line:         line,
+		DuplicateKey: duplicateKey,
+		Location:     location,
+		ErrorCode:    errorCode,
+	}
+}
+
+// NewDuplicateKeyError creates a new DuplicateKeyError with proper initialization.
+func NewDuplicateKeyError(filePath string, key string, location string, line1 int, line2 int, errorCode ErrorCode) *DuplicateKeyError {
+	return &DuplicateKeyError{
+		FilePath:  filePath,
+		Key:       key,
+		Location:  location,
+		Line1:     line1,
+		Line2:     line2,
+		ErrorCode: errorCode,
+	}
+}
+
+// NewSchemaLoadError creates a new SchemaLoadError with proper initialization.
+func NewSchemaLoadError(filePath string, message string, errorCode ErrorCode) *SchemaLoadError {
+	return &SchemaLoadError{
+		FilePath:  filePath,
+		Message:   message,
+		ErrorCode: errorCode,
+	}
+}
+
 // containsRequiredFieldKeywords checks if the message suggests a required field error.
 func containsRequiredFieldKeywords(msg string) bool {
 	keywords := []string{"required", "missing", "not found", "must be provided"}
