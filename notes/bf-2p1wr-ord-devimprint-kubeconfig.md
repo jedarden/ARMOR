@@ -109,6 +109,59 @@ Some Spot clusters use OIDC for authentication. Check if OIDC is available and c
 - `~/declarative-config/k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml` - Shows cluster setup pattern
 - `~/declarative-config/k8s/ord-devimprint/tailscale/operator-oauth-secret.yml.template` - References kubeconfig for secret creation
 
+## Investigation Results (2026-07-11)
+
+### What I Found
+
+1. **No existing kubeconfig** - Checked `~/.kube/` directory, no ord-devimprint.kubeconfig exists
+2. **Cluster details confirmed**:
+   - Server URL: `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
+   - Managed by rs-manager ArgoCD (via ApplicationSet)
+   - Cluster secret stored in OpenBao at `rs-manager/ord-devimprint/cluster` (for ArgoCD use only)
+3. **Rackspace Spot pattern** - Based on rs-manager documentation, kubeconfigs are downloaded from Rackspace Spot console UI
+4. **No console access** - No Rackspace Spot credentials found on this system
+
+### Blocking Issue
+
+This task requires access to **Rackspace Spot console** to download the kubeconfig. The console URL and credentials are not available on this system. Per the rs-manager documentation:
+> "Current kubeconfig lives at `/home/coding/.kube/rs-manager.kubeconfig` — regenerate from the Rackspace Spot UI if the cluster is recreated."
+
+This confirms that Rackspace Spot kubeconfigs come from their web console, not from any local source.
+
+### Required Action
+
+**Option A: Request from Cluster Administrator**
+- Ask cluster admin to provide `ord-devimprint.kubeconfig` with write access
+- Should have permissions to read secrets in `devimprint` namespace
+- Store at `~/.kube/ord-devimprint.kubeconfig` with `chmod 600`
+
+**Option B: Request Rackspace Spot Console Access**
+- Request credentials for Rackspace Spot console
+- Navigate to ord-devimprint cluster
+- Download kubeconfig directly (usually provides cluster-admin access)
+- Follow Option A storage steps
+
+## Historical Context
+
+**Previous attempt (May 2026):**
+- Bead `armor-bik` verified a working kubeconfig at `~/.kube/ord-devimprint.kubeconfig`
+- Token expiration was 2026-05-01 22:37:44 UTC
+- This kubeconfig no longer exists (likely expired and was removed)
+
+**Premature closure (July 2026):**
+- This bead (bf-2p1wr) was closed on 2026-07-11 15:22:49 UTC WITHOUT actually obtaining a kubeconfig
+- Bead bf-4ds4n verification confirmed the kubeconfig was still missing
+- This current attempt is to properly complete the original work
+
 ## Status
 
-⚠️ **Awaiting kubeconfig from cluster administrator** - This requires access to Rackspace Spot console or coordination with the cluster admin who can provide credentials.
+🔴 **BLOCKED** - Requires Rackspace Spot console access OR kubeconfig from cluster administrator. Cannot proceed without external coordination.
+
+This is a **re-attempt** after the bead was prematurely closed without completing the actual work.
+
+## Related Beads
+
+- **bf-3d39n** - Blocked on this bead (bf-2p1wr) for ord-devimprint kubeconfig
+- **bf-4ds4n** - Verification bead that discovered the premature closure
+- **bf-2xkyl** - Blocked by missing kubeconfig (has documented this issue 16+ times)
+- **armor-bik** - Historical bead that verified a working kubeconfig in May 2026
