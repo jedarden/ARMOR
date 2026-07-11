@@ -1,38 +1,52 @@
-# Bead bf-5vow9: Verification Blocked - Prerequisite Incomplete
+# Bead bf-5vow9: Verify armor-writer secret - BLOCKER
 
 ## Task
-Verify armor-writer secret exists in devimprint namespace
+Verify that the armor-writer secret exists in the devimprint namespace and contains the expected keys.
 
 ## Status
-**BLOCKED** - Cannot complete verification
+**BLOCKER - Prerequisite incomplete**
 
 ## Findings
 
-### Attempted Verification
-Used kubectl-proxy connection documented in CLAUDE.md:
+### kubeconfig access NOT available
+- No kubeconfig file exists for ord-devimprint cluster
+- Checked `~/.kube/` - only `iad-acb.kubeconfig` and `iad-ci.kubeconfig` present
+
+### Read-only proxy cannot access secrets
+Attempted via kubectl-proxy (the documented access method for ord-devimprint):
 ```bash
 kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
 ```
 
-**Result:** Forbidden - User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+Result:
+```
+Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
+```
 
-### Root Cause
-1. The ord-devimprint proxy runs with `devpod-observer` serviceaccount (read-only RBAC)
-2. This serviceaccount explicitly denies secret access
-3. No direct kubeconfig exists at `~/.kube/` for ord-devimprint cluster
+The `devpod-observer` serviceaccount has read-only RBAC which explicitly denies secret access.
 
-### Prerequisite Status
-Bead bf-4ds4n (kubeconfig setup for ord-devimprint) is still incomplete based on git history:
-- Recent commits document "kubeconfig missing, prerequisite incomplete"
-- The kubeconfig is required to access secrets directly
+### Prerequisite chain broken
+1. **Bead bf-4ds4n** (previous child bead): Verify ord-devimprint kubeconfig - **INCOMPLETE**
+   - Was supposed to establish working kubeconfig access
+   - Never completed successfully
+   - Multiple commits show "kubeconfig missing, prerequisite incomplete"
 
-## Resolution Path
-Before this verification can complete:
-1. Complete bead bf-4ds4n to establish working kubeconfig for ord-devimprint
-2. Retry verification using direct kubeconfig access
-3. Document secret existence and key structure
+2. **Bead bf-5vow9** (this bead): Cannot verify secret without kubeconfig - **BLOCKED**
 
-## Acceptance Criteria Status
-- [ ] Secret 'armor-writer' exists in devimprint namespace - BLOCKED (no secret access)
-- [ ] Secret contains LITESTREAM_ACCESS_KEY_ID key - BLOCKED
-- [ ] Secret contains LITESTREAM_SECRET_ACCESS_KEY key - BLOCKED
+## Resolution needed
+This task requires either:
+- A kubeconfig with secret read access to ord-devimprint cluster, OR
+- An alternative verification method (e.g., cluster admin access via another cluster, or documentation from infrastructure setup)
+
+The ord-devimprint cluster documentation shows only read-only proxy access is available - no read-write kubeconfig is documented. This may be an infrastructure gap that needs to be addressed separately.
+
+## Attempted commands
+```bash
+# Check for kubeconfig
+ls -la ~/.kube/ | grep -i "devimprint\|ord"
+# (no results)
+
+# Attempt proxy access (forbidden)
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
+# Error: Forbidden - cannot get secrets
+```
