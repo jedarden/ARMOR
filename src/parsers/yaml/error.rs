@@ -5,7 +5,7 @@
 use std::fmt;
 
 /// Main error type for YAML parsing operations
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ParseError {
     /// The kind of error that occurred
     pub kind: ParseErrorKind,
