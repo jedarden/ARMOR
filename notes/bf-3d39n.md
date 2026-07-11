@@ -22,6 +22,11 @@
 - Checked `~/.kube/*.kubeconfig` - no ord-devimprint kubeconfig found
 - The write-access kubeconfig that bf-2p1wr is supposed to obtain doesn't exist yet
 
+❌ **Individual secret read access forbidden (proxy):**
+- Command: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint`
+- Error: `User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"`
+- Reason: kubectl-proxy serviceaccount has read-only RBAC without secret data access
+
 ## Acceptance Criteria Status
 
 | Criterion | Status | Notes |
