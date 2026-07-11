@@ -863,6 +863,25 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 
 ---
 
+### Phase 6: Backup Restore Verification & Validation
+
+**Goal:** Prove that backups stored through ARMOR are actually restorable, continuously. Phase 5 detects write-path corruption at upload time; this phase closes the other half of the 2026-06 incident: a backup existed, passed object-level checks, and was still unrecoverable when needed. "Verified" means a real restore through the read path with application-level assertions — not object presence, not ContentLength, not canary health.
+
+**Scope:** every ARMOR deployment and bucket — `armor-apexalgo` (live ACB content), `ord-devimprint`, and the three deployments never audited after the multipart bug (`iad-ci`, `iad-kalshi`, `rs-manager`).
+
+#### Implementation tasks
+
+- [ ] **Restore-verification harness**: a long-running verifier (Deployment with an internal scheduling loop, per the no-CronJobs convention) that, per bucket, restores (a) the most recent backup object set and (b) a random sample of historical objects, through two independent paths: the ARMOR read path, and `armor-decrypt` directly against raw B2 ciphertext with the escrowed MEK. Verify plaintext SHA-256 against manifest/provenance records on both paths.
+- [ ] **Application-level validity assertions** per artifact class, not just checksums: SQLite artifacts get `PRAGMA integrity_check` plus a row-count/recency probe; tar/gzip archives get full listing + sampled extraction; Parquet gets footer parse + DuckDB row-count query through the range-read path (this also regression-tests range translation on real backup data).
+- [ ] **Multipart-era corruption audit** of the four unaudited/at-risk buckets: enumerate objects >5 MiB written while an affected ARMOR version was deployed (join object timestamps against the Phase 5 version-drift inventory), verify each, and produce a corruption inventory with a re-upload/rebaseline plan for anything unrecoverable.
+- [ ] **Restorability metrics and alerting**: per-bucket Prometheus gauges (`armor_last_verified_restore_timestamp`, `armor_verified_object_ratio`, `armor_restore_verification_failures_total`) on the existing `/metrics` endpoint; Grafana panel + PrometheusRule alert (restore-age exceeds threshold, or any failure) added via declarative-config.
+- [ ] **Failure escalation**: every verification failure files a bead (`br create`) carrying object key, bucket, deployment, writer version from provenance, and both-path evidence — never a silent retry. Staleness (no verified restore within the window) escalates the same way.
+- [ ] **Scheduled DR drill**: automate the `armor-decrypt`-only drill from `docs/disaster-recovery.md` (MEK from escrow → raw B2 fetch → decrypt → checksum → application assertion) so the "ARMOR server is gone" recovery path is itself continuously proven.
+
+**Boundary:** ARMOR proves restorability of what ARMOR stores. Estate-wide restore verification of non-ARMOR streams (CNPG/barman WAL, Litestream SQLite, restic backup-home, Velero) belongs to LAZARUS, the standalone restore-proof engine — keep metric naming and bead conventions compatible so LAZARUS can subsume these results into one estate-wide restorability view.
+
+---
+
 ## Project Structure
 
 ```
