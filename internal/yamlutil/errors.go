@@ -518,10 +518,23 @@ func (fe *FileError) Error() string {
 	if op == "" && fe.Op != "" {
 		op = fe.Op
 	}
+
+	var sb strings.Builder
 	if op != "" {
-		return fmt.Sprintf("file error during %s on %s: %s", op, fe.Path, fe.Message)
+		sb.WriteString(fmt.Sprintf("file error during %s on %s", op, fe.Path))
+	} else {
+		sb.WriteString(fmt.Sprintf("file error in %s", fe.Path))
 	}
-	return fmt.Sprintf("file error in %s: %s", fe.Path, fe.Message)
+
+	if fe.Message != "" {
+		sb.WriteString(fmt.Sprintf(": %s", fe.Message))
+	}
+
+	if fe.Err != nil {
+		sb.WriteString(fmt.Sprintf(": %s", fe.Err.Error()))
+	}
+
+	return sb.String()
 }
 
 // Unwrap returns the underlying error for error wrapping chains.
