@@ -1,103 +1,74 @@
-# Task: Retrieve S3 credentials from armor-writer secret
-# Bead: bf-2xkyl
-# Date: 2026-07-11
+# bf-2xkyl Blocker Verification #16 - 2026-07-11
 
-## BLOCKER: Cannot Complete Task - Missing Prerequisite
+## Task: Retrieve S3 credentials from armor-writer secret
 
-### Prerequisite Status: FAILED
+### Status: BLOCKED - Cannot complete
 
-Bead **bf-2p1wr** (Obtain ord-devimprint kubeconfig with write access) was marked as `closed` but is actually **INCOMPLETE**.
+## Verification Summary
 
-**Evidence:**
-1. No kubeconfig file exists at `~/.kube/ord-devimprint.kubeconfig`
-2. Notes from bf-2p1wr confirm the bead was closed without meeting acceptance criteria
-3. The notes explicitly state: "INCOMPLETE - Requires External Coordination"
+16th verification on 2026-07-11 - **Blocker persists unchanged**
 
-### Why This Task Cannot Be Completed
+### 1. Required Kubeconfig Missing
+- Expected: `~/.kube/ord-devimprint.kubeconfig` (from prerequisite bead bf-2p1wr)
+- Actual: File does not exist
+- Impact: No write access to ord-devimprint cluster
 
-To retrieve the `armor-writer` secret from ord-devimprint, I need one of:
-
-1. **Direct kubeconfig with secret read access** to ord-devimprint ← DOES NOT EXIST
-2. **Access to OpenBao on rs-manager** where the source credentials are stored ← NOT AVAILABLE
-
-**Current access situation:**
-- `kubectl-proxy-ord-devimprint:8001` - Read-only proxy, explicitly denies secret access
-- `~/.kube/iad-ci.kubeconfig` - Only has access to iad-ci cluster
-- `~/.kube/iad-acb.kubeconfig` - Only has access to iad-acb cluster
-- No kubeconfig for ord-devimprint or rs-manager
-
-### What Was Attempted
-
+Verified:
 ```bash
-# Attempt 1: Read-only proxy (fails - no secret access)
-$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
-    get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+ls -la /home/coding/.kube/ord-devimprint.kubeconfig
+# Output: ls: cannot access '/home/coding/.kube/ord-devimprint.kubeconfig': No such file or directory
+```
+
+### 2. Read-Only Proxy Limitations
+- Proxy: `http://kubectl-proxy-ord-devimprint:8001`
+- Can list secrets: YES
+- Can read secret data: NO - Forbidden by RBAC
+- Error: `User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"`
+
+Verified again:
+```bash
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
+  get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+
 Error from server (Forbidden): secrets "armor-writer" is forbidden:
-User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-
-# Attempt 2: rs-manager kubeconfig (file doesn't exist)
-$ kubectl --kubeconfig=/home/coding/.kube/rs-manager.kubeconfig ...
-error: stat /home/coding/.kube/rs-manager.kubeconfig: no such file or directory
-
-# Attempt 3: Check for OpenBao access
-$ kubectl --kubeconfig=/home/coding/.kube/iad-ci.kubeconfig \
-    get pods -n openbao -l app=openbao
-No resources found in openbao namespace
+User "system:serviceaccount:devpod-observer:devpod-observer" 
+cannot get resource "secrets" in API group "" in the namespace "devimprint"
 ```
 
-### Secret Key Mapping (from code analysis)
+### 3. Prerequisite Bead Status
+- Bead bf-2p1wr: Marked "closed" but never completed
+- Acceptance criteria NOT met:
+  - ❌ Kubeconfig file NOT obtained
+  - ❌ Cannot run: `kubectl get secrets -n devimprint`
+- Closed incorrectly despite being incomplete
 
-Based on `notes/litestream-force-fresh-snapshot-job.yaml`:
-- Environment variable `LITESTREAM_ACCESS_KEY_ID` → secret key `auth-access-key`
-- Environment variable `LITESTREAM_SECRET_ACCESS_KEY` → secret key `auth-secret-key`
+## Acceptance Criteria Status
 
-The ExternalSecret config (`~/declarative-config/k8s/ord-devimprint/devimprint/devimprint-externalsecrets.yml`) confirms:
-```yaml
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: armor-writer
-  namespace: devimprint
-spec:
-  data:
-    - secretKey: auth-access-key
-      remoteRef:
-        key: rs-manager/ord-devimprint/armor-writer
-        property: auth-access-key
-    - secretKey: auth-secret-key
-      remoteRef:
-        key: rs-manager/ord-devimprint/armor-writer
-        property: auth-secret-key
-```
+| Criterion | Status |
+|-----------|--------|
+| Retrieved LITESTREAM_ACCESS_KEY_ID | ❌ Cannot access secret |
+| Retrieved LITESTREAM_SECRET_ACCESS_KEY | ❌ Cannot access secret |
+| Credentials stored securely | ❌ No credentials retrieved |
 
-The source is OpenBao path `rs-manager/ord-devimprint/armor-writer`.
+## Required Resolution
 
-### What Is Needed
+Before this task can be completed, the ord-devimprint kubeconfig must be obtained:
 
-To complete either bead (bf-2p1wr OR bf-2xkyl), one of the following must be provided:
+1. Re-open bead bf-2p1wr (closed incomplete)
+2. Log into Rackspace Spot console (https://spot.rackspace.com)
+3. Navigate to ord-devimprint cluster (server: `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`)
+4. Download admin kubeconfig
+5. Save to: `~/.kube/ord-devimprint.kubeconfig`
 
-1. **A kubeconfig file for ord-devimprint** with secret read permissions, stored at:
-   `/home/coding/.kube/ord-devimprint.kubeconfig`
+## Action Taken
 
-2. **Direct access to the credential values** (can be provided via secure channel, not in chat)
+Per bead instructions: "If you cannot complete the task OR cannot produce a commit: Do NOT close the bead."
 
-3. **Rackspace Spot portal access** to download the admin kubeconfig and create a ServiceAccount with limited permissions
+**Bead bf-2xkyl remains OPEN and BLOCKED** pending kubeconfig access.
 
-4. **OpenBao access** on rs-manager to retrieve `rs-manager/ord-devimprint/armor-writer` secret
+---
 
-### Recommendation
-
-The bead dependency chain is broken. The correct order should be:
-
-1. **Complete bf-2p1wr first** - Obtain ord-devimprint kubeconfig with write access
-2. **Then complete bf-2xkyl** - Use that kubeconfig to retrieve the credentials
-
-Bead bf-2p1wr should be **re-opened** and completed properly before bf-2xkyl can proceed.
-
-### Acceptance Criteria Status
-
-- [ ] Successfully retrieved LITESTREAM_ACCESS_KEY_ID value (base64-decoded) - **BLOCKED**
-- [ ] Successfully retrieved LITESTREAM_SECRET_ACCESS_KEY value (base64-decoded) - **BLOCKED**
-- [ ] Credentials are stored temporarily in a secure location (not in git history) - **BLOCKED**
-
-**All criteria blocked by missing kubeconfig from prerequisite bead.**
+**Timestamp**: 2026-07-11 (16th verification)
+**Bead ID**: bf-2xkyl
+**Status**: BLOCKED (not closed)
+**Verification Count**: 16
