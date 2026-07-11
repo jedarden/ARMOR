@@ -179,14 +179,15 @@ func TestFileDiscoveryInterface(t *testing.T) {
 	}
 
 	t.Run("FindYAMLFiles", func(t *testing.T) {
-		// Test with the current directory (should have some .go files)
-		files, err := discovery.FindYAMLFiles("/home/coding/ARMOR/internal/yamlutil")
+		// Test with the testdata directory (should have YAML test files)
+		testdataDir := "/home/coding/ARMOR/internal/yamlutil/testdata"
+		files, err := discovery.FindYAMLFiles(testdataDir)
 		if err != nil {
 			t.Errorf("FindYAMLFiles() error: %v", err)
 		}
-		// We know this directory has YAML-related files
+		// We know this directory has YAML test files
 		if len(files) == 0 {
-			t.Error("FindYAMLFiles() returned no files for yamlutil directory")
+			t.Error("FindYAMLFiles() returned no files for testdata directory")
 		}
 
 		// Test with non-existent directory

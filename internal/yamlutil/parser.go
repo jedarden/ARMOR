@@ -187,6 +187,9 @@ type YAMLParseError struct {
 // Error implements the error interface.
 func (ype *YAMLParseError) Error() string {
 	if ype.Line > 0 {
+		if ype.Column > 0 {
+			return fmt.Sprintf("YAML syntax error in %s at line %d, column %d: %s", ype.FilePath, ype.Line, ype.Column, ype.Message)
+		}
 		return fmt.Sprintf("YAML syntax error in %s at line %d: %s", ype.FilePath, ype.Line, ype.Message)
 	}
 	return fmt.Sprintf("YAML syntax error in %s: %s", ype.FilePath, ype.Message)
