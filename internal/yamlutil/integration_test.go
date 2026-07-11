@@ -549,6 +549,148 @@ func TestParseFile_MultilineString(t *testing.T) {
 	}
 }
 
+// TestParseFile_ValidComplexYAML tests parsing YAML with comments, anchors, aliases, and multiline strings
+// This test verifies comprehensive data extraction including:
+// - Comments are properly ignored during parsing
+// - Anchors (&) and aliases (*) are correctly resolved
+// - Merge operator (<<) properly includes anchor fields
+// - Field overrides work correctly (timeout override in api service)
+// - Folded scalars (>) are processed as single-line strings
+// - Literal block scalars (|) preserve newlines and formatting
+func TestParseFile_ValidComplexYAML(t *testing.T) {
+	parser := NewParser()
+	testFile := "testdata/valid_complex.yaml"
+
+	var data map[string]interface{}
+	result := parser.ParseFile(testFile, &data)
+
+	if !result.Success {
+		t.Fatalf("expected successful parse, got error: %v", result.Error)
+	}
+
+	// Verify defaults anchor definition exists
+	defaults, ok := data["defaults"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected defaults to be a map")
+	}
+
+	if defaults["timeout"] != int64(30) && defaults["timeout"] != int(30) {
+		t.Errorf("expected defaults.timeout=30, got %v", defaults["timeout"])
+	}
+
+	if defaults["retries"] != int64(3) && defaults["retries"] != int(3) {
+		t.Errorf("expected defaults.retries=3, got %v", defaults["retries"])
+	}
+
+	if defaults["backoff"] != "exponential" {
+		t.Errorf("expected defaults.backoff='exponential', got %v", defaults["backoff"])
+	}
+
+	// Verify services structure with anchor merges
+	services, ok := data["services"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected services to be a map")
+	}
+
+	// Check web service - should have merged defaults + its own fields
+	web, ok := services["web"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected services.web to be a map")
+	}
+
+	if web["port"] != int64(8080) && web["port"] != int(8080) {
+		t.Errorf("expected services.web.port=8080, got %v", web["port"])
+	}
+
+	if web["host"] != "example.com" {
+		t.Errorf("expected services.web.host='example.com', got %v", web["host"])
+	}
+
+	if web["health_check"] != "/health" {
+		t.Errorf("expected services.web.health_check='/health', got %v", web["health_check"])
+	}
+
+	// Verify anchor merge brought in timeout from defaults
+	webTimeout, ok := web["timeout"]
+	if !ok {
+		t.Error("expected services.web.timeout to be present from anchor merge")
+	} else if webTimeout != int64(30) && webTimeout != int(30) {
+		t.Errorf("expected services.web.timeout=30 from defaults, got %v", webTimeout)
+	}
+
+	// Verify retries was also merged in
+	webRetries, ok := web["retries"]
+	if !ok {
+		t.Error("expected services.web.retries to be present from anchor merge")
+	} else if webRetries != int64(3) && webRetries != int(3) {
+		t.Errorf("expected services.web.retries=3 from defaults, got %v", webRetries)
+	}
+
+	// Check API service - should have merged defaults with timeout override
+	api, ok := services["api"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected services.api to be a map")
+	}
+
+	if api["port"] != int64(8081) && api["port"] != int(8081) {
+		t.Errorf("expected services.api.port=8081, got %v", api["port"])
+	}
+
+	if api["host"] != "api.example.com" {
+		t.Errorf("expected services.api.host='api.example.com', got %v", api["host"])
+	}
+
+	// Verify timeout override (60 instead of default 30)
+	apiTimeout, ok := api["timeout"]
+	if !ok {
+		t.Error("expected services.api.timeout to be present")
+	} else if apiTimeout != int64(60) && apiTimeout != int(60) {
+		t.Errorf("expected services.api.timeout=60 (override), got %v", apiTimeout)
+	}
+
+	// Verify backoff was still merged in from defaults
+	apiBackoff, ok := api["backoff"]
+	if !ok {
+		t.Error("expected services.api.backoff to be present from anchor merge")
+	} else if apiBackoff != "exponential" {
+		t.Errorf("expected services.api.backoff='exponential', got %v", apiBackoff)
+	}
+
+	// Verify multiline strings - folded scalar (>)
+	description, ok := data["description"].(string)
+	if !ok {
+		t.Fatal("expected description to be a string")
+	}
+
+	if description == "" {
+		t.Error("expected description to be non-empty")
+	}
+
+	// Folded scalar should become a single line (newlines become spaces)
+	if !strings.Contains(description, "but becomes a single line") {
+		t.Errorf("expected description to contain 'but becomes a single line', got: %s", description)
+	}
+
+	// Verify multiline strings - literal block scalar (|)
+	notes, ok := data["notes"].(string)
+	if !ok {
+		t.Fatal("expected notes to be a string")
+	}
+
+	if notes == "" {
+		t.Error("expected notes to be non-empty")
+	}
+
+	// Literal block scalar should preserve newlines
+	if !strings.Contains(notes, "\n") {
+		t.Error("literal block scalar should preserve newlines")
+	}
+
+	if !strings.Contains(notes, "formatting exactly as written") {
+		t.Errorf("expected notes to contain 'formatting exactly as written', got: %s", notes)
+	}
+}
+
 // TestParseFileToMap_ValidYAML tests parsing to generic map
 func TestParseFileToMap_ValidYAML(t *testing.T) {
 	parser := NewParser()
