@@ -35,3 +35,25 @@ This bead should be retried after:
 base64 -d /tmp/litestream_key_id.b64 > /tmp/litestream_key_id.txt
 # Result: base64: invalid input
 ```
+
+## Additional Investigation (2026-07-11)
+Verified that `/tmp/litestream_key_id.b64` exists (723 bytes) and contains the full RBAC error message rather than base64 data. The file contents confirm:
+
+```
+RBAC BLOCKER: Cannot retrieve secret value
+
+Error from server (Forbidden): secrets "armor-writer" is forbidden:
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+in API group "" in the namespace "devimprint"
+
+The kubectl-proxy for ord-devimprint runs with read-only RBAC that explicitly blocks
+secret access, even for get operations.
+```
+
+## Conclusion
+This bead **cannot be completed** because:
+1. The prerequisite condition was not met (base64 value was not retrieved)
+2. There is no valid base64 data to decode
+3. The RBAC blocker must be resolved before retry
+
+Per instructions: "If you cannot complete the task OR cannot produce a commit: Do NOT close the bead. The bead will be automatically released for retry."
