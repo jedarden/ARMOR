@@ -2,6 +2,8 @@
 
 ## Status: PREREQUISITE NOT MET
 
+**Attempt 2 (2026-07-11):** Confirmed the same issue - the prerequisite child bead did not actually succeed.
+
 This bead cannot be completed because the prerequisite child bead (retrieve base64 value) did not actually succeed.
 
 ## Root Cause
@@ -37,4 +39,8 @@ This bead must be re-attempted after resolving the secret access issue:
 
 ## Conclusion
 
-This is a dependency chain blocker - the prerequisite bead appeared to complete (it wrote to the file), but the actual secret retrieval failed due to RBAC restrictions. The bead should be released for retry after resolving the secret access issue.
+This is a dependency chain blocker - the prerequisite bead appeared to complete (it wrote to the file), but the actual secret retrieval failed due to RBAC restrictions.
+
+**Confirmed on second attempt:** The base64 file still contains only the RBAC error message, not the actual secret value.
+
+The bead should be released for retry after resolving the secret access issue. The root blocker must be addressed first before this decoding/validation task can proceed.
