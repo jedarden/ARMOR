@@ -677,31 +677,19 @@ func TestFieldNotFoundErrorFormatting(t *testing.T) {
 	}{
 		{
 			name: "field not found with line number",
-			err: &FieldNotFoundError{
-				FilePath:  "config.yaml",
-				FieldPath: "database.host",
-				Line:      8,
-			},
+			err: NewFieldNotFoundError("config.yaml", "database.host", 8, ""),
 			wantMessage: "required field missing in config.yaml at line 8: database.host",
 			wantContext: "required field not found: database.host",
 		},
 		{
 			name: "field not found without line number",
-			err: &FieldNotFoundError{
-				FilePath:  "data.yaml",
-				FieldPath: "api.endpoint",
-				Line:      0,
-			},
+			err: NewFieldNotFoundError("data.yaml", "api.endpoint", 0, ""),
 			wantMessage: "required field missing in data.yaml: api.endpoint",
 			wantContext: "required field not found: api.endpoint",
 		},
 		{
 			name: "field not found with nested field path",
-			err: &FieldNotFoundError{
-				FilePath:  "app.yaml",
-				FieldPath: "servers.api.responses[0].body",
-				Line:      35,
-			},
+			err: NewFieldNotFoundError("app.yaml", "servers.api.responses[0].body", 35, ""),
 			wantMessage: "required field missing in app.yaml at line 35: servers.api.responses[0].body",
 			wantContext: "required field not found: servers.api.responses[0].body",
 		},
