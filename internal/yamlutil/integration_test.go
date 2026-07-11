@@ -260,6 +260,11 @@ func TestParseFile_ValidListYAML(t *testing.T) {
 }
 
 // TestParseFile_ValidCommentsAnchors tests parsing YAML with comments and anchors
+// This test verifies comprehensive data extraction including:
+// - Comments are properly ignored
+// - Anchors are correctly merged with << operator
+// - Multiple anchor references work correctly
+// - Lists with comments are processed correctly
 func TestParseFile_ValidCommentsAnchors(t *testing.T) {
 	parser := NewParser()
 	testFile := "testdata/valid_comments_anchors.yaml"
@@ -277,13 +282,102 @@ func TestParseFile_ValidCommentsAnchors(t *testing.T) {
 		t.Fatal("expected server to be a map")
 	}
 
+	// Verify basic server configuration
 	if server["host"] != "localhost" {
 		t.Errorf("expected server.host 'localhost', got %v", server["host"])
 	}
 
-	// After anchor resolution, timeout should be present
-	if _, ok := server["timeout"]; !ok {
-		t.Error("expected server.timeout to be present from anchor merge")
+	// Verify anchor merge brought in all default fields
+	expectedDefaults := map[string]interface{}{
+		"timeout": int64(30),
+		"retries": int64(3),
+		"backoff": 1.5,
+	}
+
+	for key, expectedValue := range expectedDefaults {
+		actualValue, exists := server[key]
+		if !exists {
+			t.Errorf("expected server.%s to be present from anchor merge", key)
+		} else {
+			// Handle type comparison
+			switch expected := expectedValue.(type) {
+			case int64:
+				if actual, ok := actualValue.(int); ok {
+					if int64(actual) != expected {
+						t.Errorf("expected server.%s=%d, got %d", key, expected, actual)
+					}
+				} else if actual, ok := actualValue.(int64); ok {
+					if actual != expected {
+						t.Errorf("expected server.%s=%d, got %d", key, expected, actual)
+					}
+				} else {
+					t.Errorf("expected server.%s to be int64, got %T", key, actualValue)
+				}
+			case float64:
+				if actual, ok := actualValue.(float64); ok {
+					if actual != expected {
+						t.Errorf("expected server.%s=%f, got %f", key, expected, actual)
+					}
+				} else {
+					t.Errorf("expected server.%s to be float64, got %T", key, actualValue)
+				}
+			}
+		}
+	}
+
+	// Verify server.custom nested structure
+	custom, ok := server["custom"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected server.custom to be a map")
+	}
+	if custom["max_connections"] != int64(100) && custom["max_connections"] != int(100) {
+		t.Errorf("expected server.custom.max_connections=100, got %v", custom["max_connections"])
+	}
+
+	// Verify second server also has anchor merge
+	server2, ok := data["server2"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected server2 to be a map")
+	}
+	if server2["host"] != "remote.example.com" {
+		t.Errorf("expected server2.host 'remote.example.com', got %v", server2["host"])
+	}
+	if server2["ssl"] != true {
+		t.Errorf("expected server2.ssl=true, got %v", server2["ssl"])
+	}
+	// Verify anchor merge fields are present in server2
+	if _, ok := server2["timeout"]; !ok {
+		t.Error("expected server2.timeout to be present from anchor merge")
+	}
+	if _, ok := server2["retries"]; !ok {
+		t.Error("expected server2.retries to be present from anchor merge")
+	}
+
+	// Verify allowed_hosts list processing (comments should be ignored)
+	allowedHosts, ok := data["allowed_hosts"].([]interface{})
+	if !ok {
+		t.Fatal("expected allowed_hosts to be a list")
+	}
+	// Should have 2 items (localhost and 127.0.0.1), not 4 (comments should be excluded)
+	if len(allowedHosts) != 2 {
+		t.Errorf("expected 2 allowed_hosts (comments excluded), got %d", len(allowedHosts))
+	}
+	// Verify first host
+	if firstHost, ok := allowedHosts[0].(string); !ok || firstHost != "localhost" {
+		t.Errorf("expected first allowed_host 'localhost', got %v", allowedHosts[0])
+	}
+	// Verify second host
+	if secondHost, ok := allowedHosts[1].(string); !ok || secondHost != "127.0.0.1" {
+		t.Errorf("expected second allowed_host '127.0.0.1', got %v", allowedHosts[1])
+	}
+
+	// Verify defaults anchor definition is also in the data
+	defaults, ok := data["defaults"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected defaults to be a map")
+	}
+	if defaults["timeout"] != int64(30) && defaults["timeout"] != int(30) {
+		t.Errorf("expected defaults.timeout=30, got %v", defaults["timeout"])
 	}
 }
 
