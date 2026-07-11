@@ -592,10 +592,11 @@ func NewFieldNotFoundError(filePath string, fieldPath string, line int, errorCod
 }
 
 // NewConstraintError creates a new ConstraintError with proper initialization.
-func NewConstraintError(filePath string, fieldPath string, constraintType string, constraint string, value string, line int, errorCode ErrorCode) *ConstraintError {
+func NewConstraintError(filePath string, fieldPath string, constraintType string, constraint string, message string, value string, line int, errorCode ErrorCode) *ConstraintError {
 	return &ConstraintError{
 		FilePath:       filePath,
 		FieldPath:      fieldPath,
+		Message:        message,
 		ConstraintType: constraintType,
 		Constraint:     constraint,
 		Value:          value,
@@ -971,6 +972,7 @@ func (fnfe *FieldNotFoundError) Error() string {
 type ConstraintError struct {
 	FilePath       string    // Path to the file with constraint error
 	FieldPath      string    // Dot-notation path to the field
+	Message        string    // Human-readable error message
 	ConstraintType string    // Type of constraint (range, length, pattern, etc.)
 	Constraint     string    // Description of the constraint
 	Value          string    // Actual value that violated the constraint
@@ -999,12 +1001,28 @@ func (ce *ConstraintError) Context() string {
 
 // Error implements the error interface.
 func (ce *ConstraintError) Error() string {
+	var sb strings.Builder
+
+	// Build base error with location
 	if ce.Line > 0 {
-		return fmt.Sprintf("constraint violation in %s at line %d, field %s: %s",
-			ce.FilePath, ce.Line, ce.FieldPath, ce.Constraint)
+		sb.WriteString(fmt.Sprintf("constraint violation in %s at line %d", ce.FilePath, ce.Line))
+	} else {
+		sb.WriteString(fmt.Sprintf("constraint violation in %s", ce.FilePath))
 	}
-	return fmt.Sprintf("constraint violation in %s, field %s: %s",
-		ce.FilePath, ce.FieldPath, ce.Constraint)
+
+	// Add field path if available
+	if ce.FieldPath != "" {
+		sb.WriteString(fmt.Sprintf(", field %s", ce.FieldPath))
+	}
+
+	// Add message if available, otherwise use constraint
+	msg := ce.Message
+	if msg == "" {
+		msg = ce.Constraint
+	}
+	sb.WriteString(fmt.Sprintf(": %s", msg))
+
+	return sb.String()
 }
 
 // DuplicateKeyError represents an error when duplicate keys are found in YAML.
