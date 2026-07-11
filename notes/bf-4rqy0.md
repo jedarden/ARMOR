@@ -64,5 +64,65 @@ To complete this validation, one of the following would be needed:
 - Git commit 89eecb6f: "docs(bf-4rqy0): document RBAC blocker preventing base64 validation of LITESTREAM_ACCESS_KEY_ID"
 - Git commit 8c9de496: "docs(bf-2y15n): document infrastructure blocker - ord-devimprint proxy denies secret access"
 
+## Additional Finding: Property Name Mismatch (2026-07-12 00:13 UTC)
+
+### Configuration Issue Discovered
+
+Beyond the RBAC blocker, there's a **configuration mismatch** in the ExternalSecret:
+
+**ExternalSecret armor-writer syncs:**
+- `auth-access-key` (from OpenBao) → `auth-access-key` (in Kubernetes secret)
+- `auth-secret-key` (from OpenBao) → `auth-secret-key` (in Kubernetes secret)
+
+**Beads are attempting to retrieve:**
+- `LITESTREAM_ACCESS_KEY_ID`
+- `LITESTREAM_SECRET_ACCESS_KEY`
+
+**The property names do not match!** The beads are looking for keys that don't exist in the ExternalSecret configuration.
+
+### Verification
+
+```bash
+# Checked ExternalSecret properties
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
+  get externalsecret armor-writer -n devimprint \
+  -o jsonpath='{.spec.data[*].secretKey}'
+# Output: auth-access-key auth-secret-key
+
+# Searched for litestream properties - none found
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
+  get externalsecrets -n devimprint -o json | grep -i litestream
+# No output
+```
+
+### ExternalSecret Health
+
+Despite the configuration issue, the ExternalSecret reports:
+- Status: `SecretSynced`
+- Ready: `True`
+- Last sync: ~37 minutes ago
+
+The secret is syncing successfully, but it's not pulling the Litestream credentials.
+
+### Root Cause Analysis
+
+This appears to be one of:
+1. **Wrong ExternalSecret** - The beads reference the wrong secret
+2. **Missing properties** - The ExternalSecret spec needs to be updated to include Litestream keys
+3. **OpenBao path mismatch** - Litestream credentials might be stored under a different OpenBao key path
+4. **Secret naming confusion** - The credentials might be in a different secret entirely
+
+### Combined Blockers
+
+This task is blocked by **two independent issues**:
+1. **RBAC** - Cannot directly access secrets to verify contents
+2. **Configuration** - The ExternalSecret doesn't reference the correct properties
+
+### Resolution Required
+
+To unblock this task, both issues need resolution:
+1. **Fix configuration**: Update ExternalSecret to include LITESTREAM_* properties, or determine correct secret/keys
+2. **Fix RBAC**: Obtain kubeconfig with secret access, or modify RBAC to allow proxy SA to read secrets
+
 ## Timestamp
-2026-07-11 23:57 UTC
+2026-07-12 00:13 UTC
