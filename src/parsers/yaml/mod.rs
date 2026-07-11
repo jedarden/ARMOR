@@ -14,8 +14,7 @@
 //! ## Quick Start
 //!
 //! ```no_run
-//! use armor::parsers::yaml::parse_yaml;
-//! use armor::parsers::yaml::types::ParseResult;
+//! use armor::parsers::yaml::{parse_yaml, ParseResult};
 //!
 //! fn main() {
 //!     let yaml = r#"

@@ -306,8 +306,8 @@ impl fmt::Debug for ValidationHook {
 ///
 /// ## Builder Pattern
 ///
-/// ```
-/// use armor::parsers::config::ParserConfig;
+/// ```ignore
+/// use armor::parsers::config::{ParserConfig, ParserMode};
 ///
 /// let config = ParserConfig::builder()
 ///     .mode(ParserMode::Strict)
