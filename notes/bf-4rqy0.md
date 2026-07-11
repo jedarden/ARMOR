@@ -47,6 +47,7 @@ To complete this validation, one of the following would be needed:
 3. Alternative validation method that doesn't require direct secret access
 
 ### Re-verification History
+- **2026-07-11 23:59 UTC**: RBAC blocker confirmed - kubectl-proxy returns Forbidden error for secret access. No kubeconfig available.
 - **2026-07-11 23:57 UTC**: RBAC blocker confirmed - kubectl-proxy returns Forbidden error for secret access. No kubeconfig available.
 - **2026-07-11 19:56 UTC**: RBAC blocker persists - no admin kubeconfig available (commit 9879d3d9)
 
