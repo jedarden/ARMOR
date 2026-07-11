@@ -609,7 +609,7 @@ func TestValidator_WarningSummary(t *testing.T) {
 					Line:    5,
 				},
 				{
-					Type:    ErrorTypeDeprecated,
+					Type:    ErrorTypeValidation,
 					Message: "Deprecated YAML feature",
 					Line:    10,
 				},
