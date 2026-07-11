@@ -560,6 +560,34 @@ pub struct ValidationError {
     pub line: Option<usize>,
 }
 
+impl ValidationError {
+    /// Create a new validation error
+    pub fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            message: message.into(),
+            line: None,
+        }
+    }
+
+    /// Set the line number for this error
+    pub fn with_line(mut self, line: usize) -> Self {
+        self.line = Some(line);
+        self
+    }
+}
+
+impl fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.line {
+            Some(line) => write!(f, "{}: validation error at '{}': {}", line, self.path, self.message),
+            None => write!(f, "validation error at '{}': {}", self.path, self.message),
+        }
+    }
+}
+
+impl std::error::Error for ValidationError {}
+
 /// A validation warning
 #[derive(Debug, Clone)]
 pub struct ValidationWarning {
@@ -569,6 +597,32 @@ pub struct ValidationWarning {
     pub message: String,
     /// Line number where the warning occurred (1-indexed)
     pub line: Option<usize>,
+}
+
+impl ValidationWarning {
+    /// Create a new validation warning
+    pub fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            message: message.into(),
+            line: None,
+        }
+    }
+
+    /// Set the line number for this warning
+    pub fn with_line(mut self, line: usize) -> Self {
+        self.line = Some(line);
+        self
+    }
+}
+
+impl fmt::Display for ValidationWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.line {
+            Some(line) => write!(f, "{}: warning at '{}': {}", line, self.path, self.message),
+            None => write!(f, "warning at '{}': {}", self.path, self.message),
+        }
+    }
 }
 
 /// A non-fatal warning that occurred during parsing
@@ -616,7 +670,7 @@ impl ParseWarning {
     /// # Examples
     ///
     /// ```
-    /// use armor::parsers::yaml::ParseWarning;
+    /// use armor::parsers::yaml::{ParseWarning, ParseWarningKind};
     ///
     /// let warning = ParseWarning::deprecated_field("old_api", "new_api");
     /// assert!(matches!(warning.kind, ParseWarningKind::DeprecatedField { .. }));
@@ -636,7 +690,7 @@ impl ParseWarning {
     /// # Examples
     ///
     /// ```
-    /// use armor::parsers::yaml::ParseWarning;
+    /// use armor::parsers::yaml::{ParseWarning, ParseWarningKind};
     ///
     /// let warning = ParseWarning::unknown_key("unknown_setting");
     /// assert!(matches!(warning.kind, ParseWarningKind::UnknownKey(_)));
