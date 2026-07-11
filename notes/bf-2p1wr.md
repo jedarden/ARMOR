@@ -115,3 +115,14 @@ No automated workaround exists without:
 
 This bead blocks:
 - `bf-3d39n`: Verify ord-devimprint ExternalSecret armor-writer sync
+
+---
+## Re-verification - 2026-07-11 18:20 UTC
+
+Confirmed all previous findings still apply:
+- `~/.kube/ord-devimprint.kubeconfig` still does not exist
+- Only kubeconfigs present: `iad-acb.kubeconfig`, `iad-ci.kubeconfig`
+- Read-only proxy lists 10 secrets but forbids secret content access
+- No alternative paths discovered since last investigation
+
+**Status**: BLOCKER REMAINS - Requires Rackspace Spot console access
