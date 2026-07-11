@@ -1,0 +1,7 @@
+# Simple key-value pairs for testing
+string: hello world
+number: 42
+float: 3.14
+boolean: true
+empty_string: ""
+null_value: null
