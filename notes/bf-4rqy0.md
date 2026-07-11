@@ -9,7 +9,9 @@ Bead bf-2y15n (Retrieve base64-encoded value from secret) was closed with an inf
 - No kubeconfig exists at `/home/coding/.kube/ord-devimprint.kubeconfig`
 - The secret value `LITESTREAM_ACCESS_KEY_ID` was never retrieved
 
-## Verification Attempt
+## Verification Attempts
+
+### Initial Attempt
 Attempted to retrieve the value directly:
 ```bash
 kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
@@ -18,6 +20,34 @@ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
 ```
 
 **Result:** Forbidden - User `system:serviceaccount:devpod-observer:devpod-observer` cannot get resource `secrets`
+
+### Re-verification (2026-07-11 19:50 UTC)
+Re-verified the infrastructure blocker persists:
+
+**RBAC Check:**
+```bash
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 auth can-i get secrets -n devimprint
+no
+```
+
+**Secret List (works - list permission exists):**
+```bash
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
+NAME                    TYPE      DATA   AGE
+admin-oauth             Opaque    3      62d
+armor-credentials       Opaque    7      80d
+armor-readonly          Opaque    2      80d
+armor-writer            Opaque    2      80d
+...
+```
+
+**Secret Get (fails - get permission denied):**
+```bash
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
+Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
+```
+
+**Conclusion:** The `devpod-observer` ServiceAccount has `list` permissions on secrets but lacks `get` permissions to read secret data. This is the RBAC blocker.
 
 ## Infrastructure Blocker
 Per the documented cluster access patterns, ord-devimprint only provides:
