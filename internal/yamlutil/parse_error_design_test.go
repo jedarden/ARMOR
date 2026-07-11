@@ -138,12 +138,12 @@ func TestNewTypeMismatchParseError(t *testing.T) {
 		t.Errorf("expected error message to contain 'field: server.port', got: %s", errMsg)
 	}
 
-	if !strings.Contains(errMsg, "expected: int") {
-		t.Errorf("expected error message to contain 'expected: int', got: %s", errMsg)
+	if !strings.Contains(errMsg, "expected int") {
+		t.Errorf("expected error message to contain 'expected int', got: %s", errMsg)
 	}
 
-	if !strings.Contains(errMsg, "got: string") {
-		t.Errorf("expected error message to contain 'got: string', got: %s", errMsg)
+	if !strings.Contains(errMsg, "got string") {
+		t.Errorf("expected error message to contain 'got string', got: %s", errMsg)
 	}
 }
 
