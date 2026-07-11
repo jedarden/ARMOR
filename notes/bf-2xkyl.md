@@ -1,68 +1,71 @@
-# Bead bf-2xkyl - Retrieve S3 credentials from armor-writer secret
+# Bead bf-2xkyl: Blocker - Missing ord-devimprint Kubeconfig
 
-## Status: BLOCKED
+## Task
+Retrieve S3 credentials from armor-writer secret in devimprint namespace
 
-### Blocker Details
+## Blocker Identified
+Cannot complete task - prerequisite kubeconfig with write access to ord-devimprint cluster does not exist.
 
-**Prerequisite Not Met**: Child bead bf-2p1wr is marked as complete, but the required kubeconfig file with write access to ord-devimprint cluster does not exist.
+## Current State
 
-### Investigation Results
+### Available Access
+- **ord-devimprint cluster**: Only accessible via read-only proxy
+  - Proxy endpoint: `kubectl-proxy-ord-devimprint:8001`
+  - Access level: **READ-ONLY** (cannot access secrets)
+  - Verified error: `Forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"`
 
-1. **No kubeconfig file exists**: No file matching `*devimprint*` found in `~/.kube/`
-2. **Read-only proxy cannot access secrets**: Attempted via `kubectl-proxy-ord-devimprint:8001` and received:
-   ```
-   Error from server (Forbidden): User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
-   ```
-
-### Required Resolution
-
-Before this bead can proceed, either:
-1. The kubeconfig file for ord-devimprint with secret access must be obtained (revisit bf-2p1wr)
-2. An alternative method for accessing the armor-writer secret must be provided
-
-### Attempted Commands
-
-```bash
-# Tried read-only proxy (failed as expected)
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
-# Error: Forbidden - cannot get resource "secrets"
-
-# Checked for kubeconfig files
-find ~/.kube -name "*devimprint*" -type f
-# No results found
+### Existing Kubeconfigs
 ```
+~/.kube/iad-acb.kubeconfig     → iad-acb cluster
+~/.kube/iad-ci.kubeconfig      → iad-ci cluster
+```
+None of these provide access to ord-devimprint.
 
-### Next Steps
+### Parent Bead Status
+- **bf-2p1wr** (Obtain ord-devimprint kubeconfig with write access): Marked as `closed`
+- **Problem**: No kubeconfig file was actually created or obtained
+- Expected location: `~/.kube/ord-devimprint.kubeconfig` (does not exist)
 
-- Reopen or revisit bead bf-2p1wr to obtain actual kubeconfig with write access
-- OR obtain the kubeconfig through cluster administrator coordination
-- OR provide alternative access method to the armor-writer secret
-
----
-
-## Latest Verification (2026-07-11 16:28 UTC)
-
-### Confirmed Access Capabilities
-The read-only proxy can list secret names but cannot read secret data:
+## Verification Commands Executed
 
 ```bash
-# This works - listing secrets
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
-# Shows: armor-writer among other secrets
+# Attempted to access secret via read-only proxy
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
+  get secret armor-writer -n devimprint \
+  -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
 
-# This fails - reading secret data
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+# Result: Exit code 1
 # Error: Forbidden - cannot get resource "secrets"
 ```
 
-### Available Clusters Checked
-- **iad-ci**: Has `devimprint-migration` namespace but no `armor-writer` secret
-- **ardenone-manager**: No kubeconfig exists at expected location
-- **ord-devimprint**: Only read-only proxy access available
+## Required Resolution
 
-### Conclusion
-This bead cannot be completed without:
-1. A kubeconfig with secret-read access to ord-devimprint cluster stored at `~/.kube/ord-devimprint.kubeconfig`, OR
-2. The LITESTREAM_ACCESS_KEY_ID and LITESTREAM_SECRET_ACCESS_KEY values provided through an alternative secure channel
+To complete bead bf-2xkyl, the following steps are needed:
 
-**Do not close this bead** until one of these conditions is met.
+1. **Obtain write-access kubeconfig** for ord-devimprint cluster
+   - Via Rackspace Spot console (cloudspace-admin OIDC token)
+   - Or via cluster administrator
+   - Target: ServiceAccount with secret read permissions in devimprint namespace
+
+2. **Store kubeconfig securely**
+   - Location: `~/.kube/ord-devimprint.kubeconfig`
+   - Permissions: `chmod 600`
+
+3. **Verify access**
+   ```bash
+   kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig \
+     get secrets -n devimprint
+   ```
+
+4. **Update bead status**
+   - Re-open bf-2p1wr OR update its notes to reflect incomplete status
+   - Once kubeconfig is available, complete bf-2xkyl
+
+## Next Steps
+- Awaiting kubeconfig acquisition (requires cluster admin access or Spot console)
+- Task created to track blocker resolution: Task #1
+- Bead bf-2xkyl remains in_progress with blocker documented in notes field
+
+## References
+- CLAUDE.md: ord-devimprint cluster configuration (read-only only)
+- Bead bf-2p1wr: Prerequisite bead (incorrectly marked closed)
