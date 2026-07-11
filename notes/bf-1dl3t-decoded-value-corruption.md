@@ -1,61 +1,46 @@
-# Bead bf-1dl3t: Decoded Value Corruption - FAILED
+# bf-1dl3t: Decoded Value Corruption - Binary Data Detected
 
 ## Date
 2026-07-11
 
-## Task
-Verify decoded value is human-readable and not corrupted
-
-## Result: FAILED ❌
-
-The decoded AWS access key ID at `/tmp/litestream_key_id.txt` is **corrupted** and contains binary data.
+## Finding
+The decoded value in `/tmp/litestream_key_id.txt` is **corrupted binary data**, not human-readable text.
 
 ## Evidence
 
-### 1. Garbled Terminal Output
+### Hex dump (first 48 bytes)
 ```
-Decoded AWS Access Key ID: ߗk4ikfu8zmwo:Gz[u[o
-Length: 46 characters
-```
-
-### 2. Hex Dump Shows Non-ASCII Bytes
-```
-00000000: f797 1bdf 97f6 6baf 3469 e7f9 6b96 faf7  ......k.4i..k...
-00000010: 66df 75ef 38f5 fd7a 6da6 b6eb b7da d377  f.u.8..zm......w
-00000020: 9d6f bd3a df47 7ad7                      .o.:.Gz.
+000000 f7 97 1b df 97 f6 6b af 34 69 e7 f9 6b 96 fa f7  >......k.4i..k...<
+000010 66 df 75 ef 38 f5 fd 7a 6d a6 b6 eb b7 da d3 77  >f.u.8..zm......w<
+000020 9d 6f bd 3a df 47 7a d7 9f 75 e9 df 5b 6f cd dd  >.o.:.Gz..u..[o..<
 ```
 
-Bytes like `0xF7`, `0x97`, `0xDF`, `0x97`, `0xF6` are **NOT valid printable ASCII** (valid range: 0x20-0x7E).
+### File characteristics
+- **Length:** 46 characters (but includes non-printable bytes)
+- **Control characters:** None detected (but bytes are outside ASCII printable range)
+- **Null bytes:** None detected
+- **File type:** Binary data (not text/ASCII)
 
-### 3. Wrong Length
-- Actual: 46 characters
-- Expected: 20 characters (standard AWS access key ID length)
-
-### 4. Invalid Format
-- Valid AWS access key ID format: `AKIA[0-9A-Z]{16}` (20 alphanumeric characters, starts with "AKIA")
-- This value: 46 bytes of binary/garbled data
+### Expected vs Actual
+| Aspect | Expected | Actual |
+|--------|----------|--------|
+| Format | 20-character alphanumeric (e.g., `AKIAIOSFODNN7EXAMPLE`) | 46 bytes of binary garbage |
+| Character set | Printable ASCII (0-9, A-Z) | High-byte values (0xF7, 0x97, 0xDF, etc.) |
+| Readability | Human-readable | Unreadable binary corruption |
 
 ## Root Cause Analysis
 
-The corruption may be caused by:
-1. **Incorrect base64 decoding**: The original secret might not be base64-encoded
-2. **Wrong encoding**: The source secret may be in a different encoding (UTF-16, etc.)
-3. **Corruption during decode process**: The base64 decode command may have been applied incorrectly
-4. **Source secret corrupted**: The secret stored in OpenBao/Kubernetes may already be corrupted
+The corruption likely occurred during one of these stages:
+1. **Base64 decoding** - Input may have been doubly-encoded or improperly encoded
+2. **OpenBao secret storage** - Secret may have been corrupted at rest
+3. **Transit decoding** - Character set or encoding mismatch during retrieval
 
 ## Next Steps
 
-Since this bead failed validation, the next step would be to:
-1. Investigate the original secret source (OpenBao/Kubernetes Secret)
-2. Verify the encoding of the original secret
-3. Re-decode with the correct method if needed
-4. If the source is corrupted, restore from backup
+The parent bead needs to revisit the extraction process:
+- Verify the OpenBao secret is stored correctly
+- Check if double-encoding occurred (Base64-of-Base64)
+- Re-extract with explicit encoding handling
 
-## Acceptance Criteria Status
-
-- ❌ Value contains only printable ASCII characters
-- ❌ No control characters, null bytes, or binary data
-- ❌ Value is not garbled or corrupted
-- ❌ Hex dump shows clean ASCII
-
-**Bead cannot be closed - validation failed.**
+## Status
+**FAILED** - Value contains binary corruption, not valid AWS Access Key ID.
