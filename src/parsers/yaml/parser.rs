@@ -4,7 +4,6 @@
 //! parsing YAML content from various sources.
 
 use crate::parsers::yaml::{
-    error::{ParseError, Result},
     types::{ParseResult, ValidationResult},
     ParserConfig,
 };
