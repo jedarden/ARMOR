@@ -204,6 +204,20 @@ func GetRequiredInt(data map[string]interface{}, path string) (int, error) {
 		return int(v), nil
 	case int32:
 		return int(v), nil
+	case int16:
+		return int(v), nil
+	case int8:
+		return int(v), nil
+	case uint:
+		return int(v), nil
+	case uint64:
+		return int(v), nil
+	case uint32:
+		return int(v), nil
+	case uint16:
+		return int(v), nil
+	case uint8:
+		return int(v), nil
 	case float64:
 		if v == float64(int(v)) {
 			return int(v), nil
@@ -221,6 +235,16 @@ func GetRequiredInt(data map[string]interface{}, path string) (int, error) {
 			FieldPath:   path,
 			ExpectedType: "integer",
 			ActualType:   "float",
+		}
+	case string:
+		// Try to parse string as integer
+		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return int(i), nil
+		}
+		return 0, &TypeMismatchError{
+			FieldPath:   path,
+			ExpectedType: "integer",
+			ActualType:   "string",
 		}
 	default:
 		return 0, &TypeMismatchError{
@@ -370,7 +394,9 @@ func isString(value interface{}) bool {
 // isInt checks if a value is an integer or float64 representing an integer.
 func isInt(value interface{}) bool {
 	switch v := value.(type) {
-	case int, int64, int32:
+	case int, int64, int32, int16, int8:
+		return true
+	case uint, uint64, uint32, uint16, uint8:
 		return true
 	case float64:
 		return v == float64(int(v))
