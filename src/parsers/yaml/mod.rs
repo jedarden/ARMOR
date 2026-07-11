@@ -8,7 +8,7 @@ mod types;
 mod parser;
 
 // Re-export main types for convenience
-pub use error::{ParseError, ParseErrorKind};
+pub use error::{ParseError, ParseErrorKind, Result};
 pub use types::{OperationResult, ParseResult, ValidationResult, Status};
 pub use parser::Parser;
 
