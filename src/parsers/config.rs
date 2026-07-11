@@ -325,6 +325,8 @@ pub struct ParserConfig {
     pub preserve_comments: bool,
     /// Preserve quote information in parsed strings
     pub preserve_quotes: bool,
+    /// Preserve order of mapping keys (use index-based map instead of hash map)
+    pub preserve_order: bool,
     /// Maximum nesting depth (0 = unlimited)
     pub max_depth: usize,
     /// Enforce strict type checking (no implicit coercion)
@@ -346,6 +348,7 @@ impl Default for ParserConfig {
             allow_duplicates: true,
             preserve_comments: false,
             preserve_quotes: false,
+            preserve_order: false,
             max_depth: 0,
             strict_types: false,
             type_constructors: HashMap::new(),
@@ -520,6 +523,35 @@ impl ParserConfig {
             .iter()
             .filter(move |hook| hook.applies_to(field))
     }
+
+    /// Validate configuration for mutually exclusive or inconsistent options
+    ///
+    /// This method checks if any mutually exclusive options are set together
+    /// or if the configuration has inconsistent settings. Returns an error if
+    /// validation fails.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Configuration is valid
+    /// * `Err(String)` - Configuration has conflicting or inconsistent options
+    pub fn validate(&self) -> Result<(), String> {
+        // Check for mutually exclusive or inconsistent options
+        if self.warnings_as_errors && !self.emit_warnings {
+            return Err("warnings_as_errors requires emit_warnings to be true".to_string());
+        }
+
+        // Strict mode should not allow duplicates
+        if self.mode.is_strict() && self.allow_duplicates {
+            return Err("Strict mode with allow_duplicates=true is inconsistent".to_string());
+        }
+
+        // Strict types should align with strict mode
+        if self.strict_types && self.mode.is_lenient() {
+            return Err("strict_types=true with lenient mode is inconsistent".to_string());
+        }
+
+        Ok(())
+    }
 }
 
 /// Builder for constructing ParserConfig instances
@@ -576,6 +608,12 @@ impl ParserConfigBuilder {
         self
     }
 
+    /// Set whether to preserve mapping key order
+    pub fn preserve_order(mut self, preserve: bool) -> Self {
+        self.config.preserve_order = preserve;
+        self
+    }
+
     /// Set maximum nesting depth
     pub fn max_depth(mut self, depth: usize) -> Self {
         self.config.max_depth = depth;
@@ -613,9 +651,402 @@ impl ParserConfigBuilder {
     }
 
     /// Build the final ParserConfig
-    pub fn build(self) -> ParserConfig {
+    ///
+    /// This method validates the configuration before returning it.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(ParserConfig)` - Valid configuration
+    /// * `Err(String)` - Configuration validation failed
+    pub fn build(self) -> Result<ParserConfig, String> {
+        self.config.validate()?;
+        Ok(self.config)
+    }
+
+    /// Build without validation (internal use only)
+    #[doc(hidden)]
+    pub fn build_unchecked(self) -> ParserConfig {
         self.config
     }
+}
+
+/// Validation mode for field checking
+///
+/// Defines the strictness level for validation operations. Each mode has
+/// specific behaviors for field presence and type checking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationMode {
+    /// Strict mode - enforce all validation rules
+    ///
+    /// In strict mode:
+    /// - All required fields must be present
+    /// - Unknown fields cause validation to fail
+    /// - Type mismatches are errors
+    Strict,
+
+    /// Permissive mode - allow some flexibility
+    ///
+    /// In permissive mode:
+    /// - Required fields use defaults if missing
+    /// - Unknown fields are ignored with warnings
+    /// - Type mismatches are coerced when possible
+    Permissive,
+}
+
+impl ValidationMode {
+    /// Check if this mode is strict
+    pub fn is_strict(&self) -> bool {
+        matches!(self, Self::Strict)
+    }
+
+    /// Check if this mode is permissive
+    pub fn is_permissive(&self) -> bool {
+        matches!(self, Self::Permissive)
+    }
+}
+
+impl fmt::Display for ValidationMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Strict => write!(f, "strict"),
+            Self::Permissive => write!(f, "permissive"),
+        }
+    }
+}
+
+impl Default for ValidationMode {
+    fn default() -> Self {
+        Self::Permissive
+    }
+}
+
+/// Comprehensive validator configuration
+///
+/// This structure consolidates all configuration options for validation behavior.
+/// It provides fine-grained control over field checking, type validation, and
+/// constraint enforcement.
+///
+/// # Default Configuration
+///
+/// The default configuration is:
+///
+/// ```ignore
+/// ValidatorConfig {
+///     mode: Permissive,
+///     require_all_fields: false,
+///     disallow_unknown_fields: false,
+///     type_checking: true,
+///     .. }
+/// ```
+///
+/// # Examples
+///
+/// ## Using Defaults
+///
+/// ```
+/// use armor::parsers::config::ValidatorConfig;
+///
+/// let config = ValidatorConfig::default();
+/// ```
+///
+/// ## Strict Mode
+///
+/// ```
+/// use armor::parsers::config::ValidatorConfig;
+///
+/// let config = ValidatorConfig::strict();
+/// ```
+///
+/// ## Builder Pattern
+///
+/// ```ignore
+/// use armor::parsers::config::{ValidatorConfig, ValidationMode};
+///
+/// let config = ValidatorConfig::builder()
+///     .mode(ValidationMode::Strict)
+///     .require_all_fields(true)
+///     .disallow_unknown_fields(true)
+///     .build();
+/// ```
+#[derive(Debug, Clone)]
+pub struct ValidatorConfig {
+    /// Validation mode (strict vs permissive)
+    pub mode: ValidationMode,
+    /// Require all fields to be present (no missing fields)
+    pub require_all_fields: bool,
+    /// Disallow unknown fields (fail on unexpected fields)
+    pub disallow_unknown_fields: bool,
+    /// Enable type checking (validate field types match schema)
+    pub type_checking: bool,
+    /// Perform deep validation on nested structures
+    pub deep_validation: bool,
+    /// Emit warnings for non-critical issues
+    pub emit_warnings: bool,
+    /// Treat warnings as errors (fail on warnings)
+    pub warnings_as_errors: bool,
+}
+
+impl Default for ValidatorConfig {
+    fn default() -> Self {
+        Self {
+            mode: ValidationMode::default(),
+            require_all_fields: false,
+            disallow_unknown_fields: false,
+            type_checking: true,
+            deep_validation: true,
+            emit_warnings: true,
+            warnings_as_errors: false,
+        }
+    }
+}
+
+impl ValidatorConfig {
+    /// Create a builder for constructing ValidatorConfig
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::config::{ValidatorConfig, ValidationMode};
+    ///
+    /// let config = ValidatorConfig::builder()
+    ///     .mode(ValidationMode::Strict)
+    ///     .build();
+    /// ```
+    pub fn builder() -> ValidatorConfigBuilder {
+        ValidatorConfigBuilder::new()
+    }
+
+    /// Create a strict-mode configuration
+    ///
+    /// This is a convenience method that creates a configuration optimized
+    /// for strict validation. Equivalent to:
+    ///
+    /// ```ignore
+    /// ValidatorConfig::builder()
+    ///     .mode(ValidationMode::Strict)
+    ///     .require_all_fields(true)
+    ///     .disallow_unknown_fields(true)
+    ///     .type_checking(true)
+    ///     .build()
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::config::ValidatorConfig;
+    ///
+    /// let config = ValidatorConfig::strict();
+    /// assert!(config.mode.is_strict());
+    /// assert!(config.require_all_fields);
+    /// assert!(config.disallow_unknown_fields);
+    /// assert!(config.type_checking);
+    /// ```
+    pub fn strict() -> Self {
+        Self {
+            mode: ValidationMode::Strict,
+            require_all_fields: true,
+            disallow_unknown_fields: true,
+            type_checking: true,
+            ..Default::default()
+        }
+    }
+
+    /// Create a permissive-mode configuration
+    ///
+    /// This is a convenience method that creates a configuration optimized
+    /// for flexible validation. Equivalent to:
+    ///
+    /// ```ignore
+    /// ValidatorConfig::builder()
+    ///     .mode(ValidationMode::Permissive)
+    ///     .require_all_fields(false)
+    ///     .disallow_unknown_fields(false)
+    ///     .type_checking(true)
+    ///     .build()
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::config::ValidatorConfig;
+    ///
+    /// let config = ValidatorConfig::permissive();
+    /// assert!(config.mode.is_permissive());
+    /// assert!(!config.require_all_fields);
+    /// assert!(!config.disallow_unknown_fields);
+    /// assert!(config.type_checking);
+    /// ```
+    pub fn permissive() -> Self {
+        Self {
+            mode: ValidationMode::Permissive,
+            require_all_fields: false,
+            disallow_unknown_fields: false,
+            type_checking: true,
+            ..Default::default()
+        }
+    }
+
+    /// Check if strict mode is enabled
+    pub fn is_strict(&self) -> bool {
+        self.mode.is_strict()
+    }
+
+    /// Check if permissive mode is enabled
+    pub fn is_permissive(&self) -> bool {
+        self.mode.is_permissive()
+    }
+
+    /// Validate configuration for mutually exclusive options
+    ///
+    /// This method checks if any mutually exclusive options are set together.
+    /// Returns an error if validation fails.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Configuration is valid
+    /// * `Err(String)` - Configuration has conflicting options
+    pub fn validate(&self) -> Result<(), String> {
+        // Check for mutually exclusive options
+        if self.mode.is_strict() && !self.require_all_fields {
+            return Err("Strict mode requires require_all_fields to be true".to_string());
+        }
+
+        if self.mode.is_strict() && !self.disallow_unknown_fields {
+            return Err("Strict mode requires disallow_unknown_fields to be true".to_string());
+        }
+
+        if self.warnings_as_errors && !self.emit_warnings {
+            return Err("warnings_as_errors requires emit_warnings to be true".to_string());
+        }
+
+        Ok(())
+    }
+}
+
+/// Builder for constructing ValidatorConfig instances
+///
+/// Provides a fluent interface for creating validator configurations.
+/// Use [`ValidatorConfig::builder()`] to create an instance.
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::config::{ValidatorConfig, ValidationMode};
+///
+/// let config = ValidatorConfig::builder()
+///     .mode(ValidationMode::Strict)
+///     .require_all_fields(true)
+///     .disallow_unknown_fields(true)
+///     .type_checking(true)
+///     .build();
+/// ```
+#[derive(Debug, Clone)]
+pub struct ValidatorConfigBuilder {
+    config: ValidatorConfig,
+}
+
+impl ValidatorConfigBuilder {
+    /// Create a new builder with default configuration
+    fn new() -> Self {
+        Self {
+            config: ValidatorConfig::default(),
+        }
+    }
+
+    /// Set the validation mode
+    pub fn mode(mut self, mode: ValidationMode) -> Self {
+        self.config.mode = mode;
+        self
+    }
+
+    /// Set whether to require all fields
+    pub fn require_all_fields(mut self, require: bool) -> Self {
+        self.config.require_all_fields = require;
+        self
+    }
+
+    /// Set whether to disallow unknown fields
+    pub fn disallow_unknown_fields(mut self, disallow: bool) -> Self {
+        self.config.disallow_unknown_fields = disallow;
+        self
+    }
+
+    /// Set type checking
+    pub fn type_checking(mut self, enabled: bool) -> Self {
+        self.config.type_checking = enabled;
+        self
+    }
+
+    /// Set deep validation on nested structures
+    pub fn deep_validation(mut self, enabled: bool) -> Self {
+        self.config.deep_validation = enabled;
+        self
+    }
+
+    /// Set whether to emit warnings
+    pub fn emit_warnings(mut self, emit: bool) -> Self {
+        self.config.emit_warnings = emit;
+        self
+    }
+
+    /// Set whether to treat warnings as errors
+    pub fn warnings_as_errors(mut self, treat_as_errors: bool) -> Self {
+        self.config.warnings_as_errors = treat_as_errors;
+        self
+    }
+
+    /// Build the final ValidatorConfig
+    ///
+    /// This method validates the configuration before returning it.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(ValidatorConfig)` - Valid configuration
+    /// * `Err(String)` - Configuration validation failed
+    pub fn build(self) -> Result<ValidatorConfig, String> {
+        self.config.validate()?;
+        Ok(self.config)
+    }
+
+    /// Build without validation (internal use only)
+    #[doc(hidden)]
+    pub fn build_unchecked(self) -> ValidatorConfig {
+        self.config
+    }
+}
+
+/// Create default parser configuration
+///
+/// This is a convenience function that creates a `ParserConfig` with default values.
+/// Equivalent to `ParserConfig::default()`.
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::config::default_parser_config;
+///
+/// let config = default_parser_config();
+/// assert!(config.is_lenient());
+/// ```
+pub fn default_parser_config() -> ParserConfig {
+    ParserConfig::default()
+}
+
+/// Create default validator configuration
+///
+/// This is a convenience function that creates a `ValidatorConfig` with default values.
+/// Equivalent to `ValidatorConfig::default()`.
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::config::default_validator_config;
+///
+/// let config = default_validator_config();
+/// assert!(config.is_permissive());
+/// ```
+pub fn default_validator_config() -> ValidatorConfig {
+    ValidatorConfig::default()
 }
 
 #[cfg(test)]
@@ -678,6 +1109,7 @@ mod tests {
         assert!(config.allow_duplicates);
         assert!(!config.preserve_comments);
         assert!(!config.preserve_quotes);
+        assert!(!config.preserve_order);
         assert_eq!(config.max_depth, 0);
         assert!(!config.strict_types);
     }
@@ -731,13 +1163,16 @@ mod tests {
             .allow_duplicates(false)
             .max_depth(10)
             .preserve_comments(true)
+            .preserve_order(true)
             .strict_types(true)
-            .build();
+            .build()
+            .unwrap();
 
         assert!(config.is_strict());
         assert!(!config.allow_duplicates);
         assert_eq!(config.max_depth, 10);
         assert!(config.preserve_comments);
+        assert!(config.preserve_order);
         assert!(config.strict_types);
     }
 
@@ -754,9 +1189,174 @@ mod tests {
         let config = ParserConfig::builder()
             .with_constructor("timeout", TypeConstructor::new("Duration", constructor))
             .with_validation(ValidationHook::new("port", validation))
-            .build();
+            .build()
+            .unwrap();
 
         assert!(config.get_constructor("timeout").is_some());
         assert_eq!(config.get_validations("port").count(), 1);
+    }
+
+    #[test]
+    fn test_parser_config_validate() {
+        let config = ParserConfig::default();
+        assert!(config.validate().is_ok());
+
+        let strict_config = ParserConfig::strict();
+        assert!(strict_config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_parser_config_validate_errors() {
+        // warnings_as_errors without emit_warnings should fail
+        let config = ParserConfig {
+            emit_warnings: false,
+            warnings_as_errors: true,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        // Strict mode with allow_duplicates should fail
+        let config2 = ParserConfig {
+            mode: ParserMode::Strict,
+            allow_duplicates: true,
+            ..Default::default()
+        };
+        assert!(config2.validate().is_err());
+
+        // strict_types with lenient mode should fail
+        let config3 = ParserConfig {
+            mode: ParserMode::Lenient,
+            strict_types: true,
+            ..Default::default()
+        };
+        assert!(config3.validate().is_err());
+    }
+
+    #[test]
+    fn test_parser_config_builder_validation_error() {
+        let result = ParserConfig::builder()
+            .mode(ParserMode::Strict)
+            .allow_duplicates(true)  // Invalid for strict mode
+            .build();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validation_mode_display() {
+        assert_eq!(ValidationMode::Strict.to_string(), "strict");
+        assert_eq!(ValidationMode::Permissive.to_string(), "permissive");
+    }
+
+    #[test]
+    fn test_validation_mode_checks() {
+        assert!(ValidationMode::Strict.is_strict());
+        assert!(!ValidationMode::Strict.is_permissive());
+        assert!(ValidationMode::Permissive.is_permissive());
+        assert!(!ValidationMode::Permissive.is_strict());
+    }
+
+    #[test]
+    fn test_validation_mode_default() {
+        assert_eq!(ValidationMode::default(), ValidationMode::Permissive);
+    }
+
+    #[test]
+    fn test_validator_config_default() {
+        let config = ValidatorConfig::default();
+        assert!(config.is_permissive());
+        assert!(!config.require_all_fields);
+        assert!(!config.disallow_unknown_fields);
+        assert!(config.type_checking);
+        assert!(config.deep_validation);
+        assert!(config.emit_warnings);
+        assert!(!config.warnings_as_errors);
+    }
+
+    #[test]
+    fn test_validator_config_strict() {
+        let config = ValidatorConfig::strict();
+        assert!(config.is_strict());
+        assert!(config.require_all_fields);
+        assert!(config.disallow_unknown_fields);
+        assert!(config.type_checking);
+    }
+
+    #[test]
+    fn test_validator_config_permissive() {
+        let config = ValidatorConfig::permissive();
+        assert!(config.is_permissive());
+        assert!(!config.require_all_fields);
+        assert!(!config.disallow_unknown_fields);
+        assert!(config.type_checking);
+    }
+
+    #[test]
+    fn test_validator_config_validate() {
+        let config = ValidatorConfig::default();
+        assert!(config.validate().is_ok());
+
+        let strict_config = ValidatorConfig::strict();
+        assert!(strict_config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validator_config_validate_errors() {
+        // Strict mode without require_all_fields should fail
+        let config = ValidatorConfig {
+            mode: ValidationMode::Strict,
+            require_all_fields: false,
+            disallow_unknown_fields: true,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        // warnings_as_errors without emit_warnings should fail
+        let config2 = ValidatorConfig {
+            emit_warnings: false,
+            warnings_as_errors: true,
+            ..Default::default()
+        };
+        assert!(config2.validate().is_err());
+    }
+
+    #[test]
+    fn test_validator_config_builder() {
+        let config = ValidatorConfig::builder()
+            .mode(ValidationMode::Strict)
+            .require_all_fields(true)
+            .disallow_unknown_fields(true)
+            .type_checking(true)
+            .build()
+            .unwrap();
+
+        assert!(config.is_strict());
+        assert!(config.require_all_fields);
+        assert!(config.disallow_unknown_fields);
+        assert!(config.type_checking);
+    }
+
+    #[test]
+    fn test_validator_config_builder_validation_error() {
+        let result = ValidatorConfig::builder()
+            .mode(ValidationMode::Strict)
+            .require_all_fields(false)  // Invalid for strict mode
+            .build();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_default_parser_config() {
+        let config = default_parser_config();
+        assert!(config.is_lenient());
+        assert!(config.allow_duplicates);
+    }
+
+    #[test]
+    fn test_default_validator_config() {
+        let config = default_validator_config();
+        assert!(config.is_permissive());
+        assert!(config.type_checking);
     }
 }
