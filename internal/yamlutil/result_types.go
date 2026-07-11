@@ -473,6 +473,12 @@ func (vr ValidationResult) HasErrors() bool {
 	return len(vr.Errors) > 0
 }
 
+// IsValid returns whether validation passed without errors.
+// This provides accessor method semantics for the Valid field.
+func (vr ValidationResult) IsValid() bool {
+	return vr.Valid
+}
+
 // HasWarnings returns true if there are any validation warnings.
 func (vr ValidationResult) HasWarnings() bool {
 	return len(vr.Warnings) > 0
