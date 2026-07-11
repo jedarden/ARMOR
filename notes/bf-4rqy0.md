@@ -46,15 +46,22 @@ To complete this validation, one of the following would be needed:
 2. RBAC modification to grant devpod-observer SA secret read access in devimprint namespace
 3. Alternative validation method that doesn't require direct secret access
 
+### Re-verification History
+- **2026-07-11 23:57 UTC**: RBAC blocker confirmed - kubectl-proxy returns Forbidden error for secret access. No kubeconfig available.
+- **2026-07-11 19:56 UTC**: RBAC blocker persists - no admin kubeconfig available (commit 9879d3d9)
+
 ### Status
 - **Prerequisites**: All child beads (bf-4743d, bf-2pn4n, bf-2y15n) are closed
 - **Blocker**: RBAC denies secret access
 - **Validation**: Cannot proceed without secret access
+- **Bead Status**: OPEN - awaiting infrastructure changes
 
 ### Related Documentation
-- Git commit 301bfcc1: "docs(bf-4rqy0): re-verify infrastructure blocker persists - RBAC denies secret access"
-- Git commit 78b9efe8: "docs(bf-4rqy0): document infrastructure blocker - cannot access secret for validation"
+- Git commit 9879d3d9: "docs(bf-4rqy0): re-verify RBAC blocker persists - no admin kubeconfig available"
+- Git commit 03fb00e5: "docs(bf-4rqy0): document current state - RBAC blocker prevents validation completion"
+- Git commit 3c50a542: "docs(bf-4rqy0): re-verify RBAC blocker persists - no kubeconfig available, validation impossible"
+- Git commit 89eecb6f: "docs(bf-4rqy0): document RBAC blocker preventing base64 validation of LITESTREAM_ACCESS_KEY_ID"
 - Git commit 8c9de496: "docs(bf-2y15n): document infrastructure blocker - ord-devimprint proxy denies secret access"
 
 ## Timestamp
-2026-07-11
+2026-07-11 23:57 UTC
