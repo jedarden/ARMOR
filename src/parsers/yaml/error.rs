@@ -201,6 +201,175 @@
 //!     Ok(port as u16)
 //! }
 //! ```
+//!
+//! # Examples
+//!
+//! ## Basic Error Creation
+//!
+//! Creating errors using convenience constructors:
+//!
+//! ```
+//! use armor::parsers::yaml::ParseError;
+//!
+//! // Create a syntax error
+//! let syntax_err = ParseError::syntax("invalid YAML indentation");
+//! assert!(syntax_err.is_syntax());
+//!
+//! // Create a validation error
+//! let validation_err = ParseError::validation("port must be between 1 and 65535");
+//! assert!(validation_err.is_validation());
+//!
+//! // Create a type mismatch error
+//! let type_err = ParseError::type_mismatch("port", "integer", "string");
+//! assert!(type_err.is_type_mismatch());
+//! assert_eq!(type_err.summary(), "<unknown>: type mismatch at 'port': expected integer, got string");
+//! ```
+//!
+//! ## Error Propagation with `?`
+//!
+//! Using the `?` operator to automatically convert errors:
+//!
+//! ```
+//! use armor::parsers::yaml::{ParseError, Result};
+//! use std::fs;
+//!
+//! fn read_config(path: &str) -> Result<String> {
+//!     // io::Error is automatically converted to ParseError via From impl
+//!     let content = fs::read_to_string(path)?;
+//!     Ok(content)
+//! }
+//!
+//! // This function demonstrates automatic error conversion
+//! fn parse_config_size(path: &str) -> Result<usize> {
+//!     let content = read_config(path)?;  // ParseError propagates via ?
+//!     Ok(content.len())
+//! }
+//!
+//! // Example: successful read
+//! assert!(parse_config_size("/dev/null").is_ok());
+//! ```
+//!
+//! ## Custom Error Handling with Builder Pattern
+//!
+//! Using builder methods to add context and location information:
+//!
+//! ```
+//! use armor::parsers::yaml::ParseError;
+//!
+//! fn validate_service_config(yaml_content: &str) -> Result<(), ParseError> {
+//!     // Simulating an error during validation
+//!     if yaml_content.contains("port: abc") {
+//!         let error = ParseError::type_mismatch("service.port", "integer", "string")
+//!             .with_path("config/services.yaml")
+//!             .with_line(5)
+//!             .with_column(10)
+//!             .with_context("while validating service configuration")
+//!             .with_snippet("services:\n  - name: web\n    port: abc");
+//!
+//!         return Err(error);
+//!     }
+//!     Ok(())
+//! }
+//!
+//! // Create an error to verify the builder pattern
+//! let error = ParseError::validation("invalid port")
+//!     .with_path("config.yaml")
+//!     .with_line(10)
+//!     .with_column(5)
+//!     .with_context("while parsing configuration");
+//!
+//! assert_eq!(error.path, Some("config.yaml".to_string()));
+//! assert_eq!(error.line, Some(10));
+//! assert_eq!(error.column, Some(5));
+//! assert_eq!(error.context, "while parsing configuration");
+//! ```
+//!
+//! ## Error Display and Formatting
+//!
+//! Different ways to format and display errors:
+//!
+//! ```
+//! use armor::parsers::yaml::ParseError;
+//!
+//! // Create an error with full context
+//! let error = ParseError::syntax("unexpected colon")
+//!     .with_path("config/database.yaml")
+//!     .with_line(15)
+//!     .with_column(8)
+//!     .with_context("while parsing database configuration")
+//!     .with_snippet("database:\n  host: localhost\n  port: 5432:\n    invalid");
+//!
+//! // Get a single-line summary (good for logging)
+//! let summary = error.summary();
+//! assert!(summary.contains("config/database.yaml:15"));
+//! assert!(summary.contains("syntax error"));
+//! assert!(summary.contains("while parsing database configuration"));
+//!
+//! // Get a detailed multi-line report (good for user display)
+//! let detailed = error.detailed_report();
+//! assert!(detailed.contains("error:"));
+//! assert!(detailed.contains("snippet:"));
+//!
+//! // Get a structured representation (good for debugging)
+//! let structured = error.format_structured();
+//! assert!(structured.contains("ParseError"));
+//! assert!(structured.contains("config/database.yaml:15:8"));
+//! assert!(structured.contains("line: Some(15)"));
+//!
+//! // Display implementation provides user-friendly output
+//! let display_string = format!("{}", error);
+//! assert!(display_string.contains("config/database.yaml"));
+//! assert!(display_string.contains("syntax error"));
+//! ```
+//!
+//! ## Error Conversion from Standard Types
+//!
+//! Automatic conversion from standard library errors:
+//!
+//! ```
+//! use armor::parsers::yaml::ParseError;
+//! use std::io;
+//!
+//! // io::Error converts to ParseError::Io
+//! let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+//! let parse_err: ParseError = io_err.into();
+//! assert!(parse_err.is_io());
+//! assert!(parse_err.summary().contains("I/O error"));
+//! assert!(parse_err.summary().contains("file not found"));
+//!
+//! // String::from_utf8 Error converts to ParseError::InvalidUtf8
+//! let invalid_bytes = b"\xff\xfe\xfd";
+//! let utf8_err = String::from_utf8(invalid_bytes.to_vec()).unwrap_err();
+//! let parse_err: ParseError = utf8_err.into();
+//! assert!(matches!(parse_err.kind, armor::parsers::yaml::ParseErrorKind::InvalidUtf8));
+//! ```
+//!
+//! ## Working with Error Types
+//!
+//! Checking error types and handling specific cases:
+//!
+//! ```
+//! use armor::parsers::yaml::ParseError;
+//!
+//! let errors = vec![
+//!     ParseError::syntax("invalid token"),
+//!     ParseError::io("file not found"),
+//!     ParseError::validation("port out of range"),
+//!     ParseError::type_mismatch("field", "string", "integer"),
+//! ];
+//!
+//! // Check specific error types
+//! assert!(errors[0].is_syntax());
+//! assert!(errors[1].is_io());
+//! assert!(errors[2].is_validation());
+//! assert!(errors[3].is_type_mismatch());
+//!
+//! // Filter errors by type
+//! let syntax_errors: Vec<_> = errors.iter()
+//!     .filter(|e| e.is_syntax())
+//!     .collect();
+//! assert_eq!(syntax_errors.len(), 1);
+//! ```
 
 use std::fmt;
 
