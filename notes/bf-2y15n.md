@@ -65,5 +65,18 @@ This blocker has been documented in previous commits:
 - `d82d1463` - docs(bf-2y15n): document blocking issue - ord-devimprint has no kubeconfig with secret access
 - `fdc9b957` - docs(bf-2y15n): document blocking issue - missing ord-devimprint.kubeconfig
 
+## Current Attempt (2026-07-11)
+
+Attempted the specified command again:
+```bash
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+```
+
+Result: `error: stat /home/coding/.kube/ord-devimprint.kubeconfig: no such file or directory`
+
+Confirmed the blocker persists - the kubeconfig file still does not exist, and the read-only proxy denies secrets access as documented in previous attempts.
+
 ## Status
-**BLOCKED** - Cannot complete until infrastructure access is resolved.
+**BLOCKED** - Cannot complete until infrastructure access is resolved. Task requires either:
+- Direct kubeconfig for ord-devimprint with secret access
+- RBAC modification to grant devpod-observer ServiceAccount secrets read access
