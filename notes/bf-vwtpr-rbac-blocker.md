@@ -19,12 +19,17 @@ in namespace "devimprint"
 ## Evidence
 ```bash
 $ cat /tmp/litestream_key_id.b64
-RBAC BLOCKER: Cannot retrieve secret value
-
 Error from server (Forbidden): secrets "armor-writer" is forbidden:
 User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-in the namespace "devimprint"
+in the namespace "armor"
 ```
+
+**Actual Error Details (2026-07-11):**
+- **Cluster:** ardenone-cluster (not ord-devimprint)
+- **Namespace:** armor
+- **ServiceAccount:** devpod-observer
+- **Blocked Resource:** secrets
+- **Attempted Command:** `kubectl --server=http://traefik-ardenone-cluster:8001 get secret/armor-writer -n armor`
 
 ## Attempted Workarounds
 1. ❌ Direct decode via `base64 -d` - Failed: "invalid input" (file contains error text, not base64)
