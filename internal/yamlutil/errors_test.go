@@ -781,3 +781,113 @@ func TestFieldNotFoundErrorFormatting(t *testing.T) {
 		})
 	}
 }
+
+// TestValidationErrorWithTypeInformation verifies that ValidationError includes type information
+func TestValidationErrorWithTypeInformation(t *testing.T) {
+	tests := []struct {
+		name         string
+		expectedType string
+		actualType   string
+		message      string
+		fieldPath    string
+	}{
+		{
+			name:         "with both expected and actual types",
+			expectedType: "integer",
+			actualType:   "string",
+			message:      "invalid type",
+			fieldPath:    "server.port",
+		},
+		{
+			name:         "with only expected type",
+			expectedType: "boolean",
+			actualType:   "",
+			message:      "type check failed",
+			fieldPath:    "feature.enabled",
+		},
+		{
+			name:         "with only actual type",
+			expectedType: "",
+			actualType:   "array",
+			message:      "wrong type found",
+			fieldPath:    "config.items",
+		},
+		{
+			name:         "with constraint and types",
+			expectedType: "string",
+			actualType:   "integer",
+			message:      "value validation failed",
+			fieldPath:    "database.host",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := NewValidationError(
+				"config.yaml",
+				tt.message,
+				tt.fieldPath,
+				"must be valid",
+				ErrCodeInvalidValue,
+				10,
+				5,
+				ErrorTypeValidation,
+				"",
+			)
+			// Set type information directly
+			err.ExpectedType = tt.expectedType
+			err.ActualType = tt.actualType
+
+			errorMsg := err.Error()
+
+			// Verify expected type is included if set
+			if tt.expectedType != "" && !contains(errorMsg, tt.expectedType) {
+				t.Errorf("Error should include expected type %q, got: %s", tt.expectedType, errorMsg)
+			}
+
+			// Verify actual type is included if set
+			if tt.actualType != "" && !contains(errorMsg, tt.actualType) {
+				t.Errorf("Error should include actual type %q, got: %s", tt.actualType, errorMsg)
+			}
+
+			// Verify the format includes "expected" and "got" when both types are present
+			if tt.expectedType != "" && tt.actualType != "" {
+				expectedFormat := fmt.Sprintf("expected %s, got %s", tt.expectedType, tt.actualType)
+				if !contains(errorMsg, expectedFormat) {
+					t.Errorf("Error should include format %q, got: %s", expectedFormat, errorMsg)
+				}
+			}
+
+			t.Logf("✓ Error message: %s", errorMsg)
+		})
+	}
+}
+
+// TestValidationErrorStringWithTypeInformation verifies String() method includes type information
+func TestValidationErrorStringWithTypeInformation(t *testing.T) {
+	err := NewValidationError(
+		"config.yaml",
+		"type validation failed",
+		"server.port",
+		"must be integer",
+		ErrCodeInvalidValue,
+		10,
+		5,
+		ErrorTypeValidation,
+		"",
+	)
+	err.ExpectedType = "integer"
+	err.ActualType = "string"
+
+	stringOutput := err.String()
+
+	// Verify String() output includes type information
+	if !contains(stringOutput, "Expected Type: integer") {
+		t.Error("String() should include expected type")
+	}
+	if !contains(stringOutput, "Actual Type: string") {
+		t.Error("String() should include actual type")
+	}
+
+	t.Logf("String() output:\n%s", stringOutput)
+}

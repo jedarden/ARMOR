@@ -464,6 +464,21 @@ func (ve *ValidationError) Error() string {
 		sb.WriteString(fmt.Sprintf(" (constraint: %s)", ve.Constraint))
 	}
 
+	// Add type mismatch information if available
+	if ve.ExpectedType != "" || ve.ActualType != "" {
+		sb.WriteString(" (")
+		if ve.ExpectedType != "" {
+			sb.WriteString(fmt.Sprintf("expected %s", ve.ExpectedType))
+		}
+		if ve.ExpectedType != "" && ve.ActualType != "" {
+			sb.WriteString(", ")
+		}
+		if ve.ActualType != "" {
+			sb.WriteString(fmt.Sprintf("got %s", ve.ActualType))
+		}
+		sb.WriteString(")")
+	}
+
 	return sb.String()
 }
 
@@ -489,6 +504,12 @@ func (ve *ValidationError) String() string {
 	}
 	if ve.Constraint != "" {
 		sb.WriteString(fmt.Sprintf("  Constraint: %s\n", ve.Constraint))
+	}
+	if ve.ExpectedType != "" {
+		sb.WriteString(fmt.Sprintf("  Expected Type: %s\n", ve.ExpectedType))
+	}
+	if ve.ActualType != "" {
+		sb.WriteString(fmt.Sprintf("  Actual Type: %s\n", ve.ActualType))
 	}
 	if ve.ContextStr != "" {
 		sb.WriteString(fmt.Sprintf("  Context: %s\n", ve.ContextStr))
