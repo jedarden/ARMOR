@@ -67,12 +67,12 @@ key2: value2
 		t.Error("Expected error message to be set")
 	}
 
-	if err.Context == "" {
+	if err.Context() == "" {
 		t.Error("Expected error context to be set")
 	}
 
 	// Verify context contains line content
-	if !strings.Contains(err.Context, "Line content") {
+	if !strings.Contains(err.Context(), "Line content") {
 		t.Error("Expected context to contain line content")
 	}
 }
@@ -534,12 +534,12 @@ key4: value4`
 	}
 
 	// Verify the error context contains the problematic line
-	if result.Errors[0].Context == "" {
+	if result.Errors[0].Context() == "" {
 		t.Error("Expected error context to be set")
 	}
 
 	// Context should mention the problematic content
-	if !strings.Contains(result.Errors[0].Context, "Line content") {
+	if !strings.Contains(result.Errors[0].Context(), "Line content") {
 		t.Error("Expected context to contain line content")
 	}
 }
