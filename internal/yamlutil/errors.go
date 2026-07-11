@@ -108,6 +108,8 @@ type ParseError struct {
 	Err        error       // Underlying error for error wrapping
 	ErrorType  ErrorType   // Specific type of parse error
 	ErrorCode  ErrorCode   // Error code for programmatic handling
+	Expected   string      // What was expected (optional, for syntax/type errors)
+	Actual     string      // What was actually found (optional, for syntax/type errors)
 }
 
 // Code implements YAMLError interface.
@@ -130,10 +132,37 @@ func (pe *ParseError) Context() string {
 
 // Error implements the error interface.
 func (pe *ParseError) Error() string {
+	var sb strings.Builder
+
+	// Build base error with location
 	if pe.Line > 0 {
-		return fmt.Sprintf("parse error in %s at line %d: %s", pe.FilePath, pe.Line, pe.Message)
+		sb.WriteString(fmt.Sprintf("parse error in %s at line %d", pe.FilePath, pe.Line))
+		if pe.Column > 0 {
+			sb.WriteString(fmt.Sprintf(", column %d", pe.Column))
+		}
+	} else {
+		sb.WriteString(fmt.Sprintf("parse error in %s", pe.FilePath))
 	}
-	return fmt.Sprintf("parse error in %s: %s", pe.FilePath, pe.Message)
+
+	// Add message
+	sb.WriteString(fmt.Sprintf(": %s", pe.Message))
+
+	// Add expected vs actual if available
+	if pe.Expected != "" || pe.Actual != "" {
+		sb.WriteString(" (")
+		if pe.Expected != "" {
+			sb.WriteString(fmt.Sprintf("expected: %s", pe.Expected))
+		}
+		if pe.Expected != "" && pe.Actual != "" {
+			sb.WriteString(", ")
+		}
+		if pe.Actual != "" {
+			sb.WriteString(fmt.Sprintf("actual: %s", pe.Actual))
+		}
+		sb.WriteString(")")
+	}
+
+	return sb.String()
 }
 
 // Unwrap returns the underlying error for error wrapping chains.
@@ -144,7 +173,7 @@ func (pe *ParseError) Unwrap() error {
 // NewParseError creates a new ParseError with the given parameters.
 //
 // This constructor function provides a convenient way to create properly initialized
-// ParseError instances with message, line, column, and error code.
+// ParseError instances with message, line, column, error code, and optional expected/actual values.
 //
 // Parameters:
 //   - filePath: Path to the file being parsed
@@ -152,13 +181,15 @@ func (pe *ParseError) Unwrap() error {
 //   - line: Line number where error occurred (1-indexed, use 0 if unknown)
 //   - column: Column number where error occurred (1-indexed, use 0 if unknown)
 //   - code: Error code for programmatic handling (use empty string for default)
+//   - expected: What was expected (optional, use empty string if not applicable)
+//   - actual: What was actually found (optional, use empty string if not applicable)
 //
 // Returns a properly initialized ParseError that implements the YAMLError interface.
 //
 // Example usage:
 //
-//	err := NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax)
-func NewParseError(filePath string, message string, line int, column int, code ErrorCode) *ParseError {
+//	err := NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "identifier", "123")
+func NewParseError(filePath string, message string, line int, column int, code ErrorCode, expected string, actual string) *ParseError {
 	// Use provided code or default to generic parse error
 	errorCode := code
 	if errorCode == "" {
@@ -172,13 +203,15 @@ func NewParseError(filePath string, message string, line int, column int, code E
 		Column:    column,
 		ErrorCode: errorCode,
 		ErrorType: ErrorTypeParse,
+		Expected:  expected,
+		Actual:    actual,
 	}
 }
 
 // IsParseError checks if an error is a ParseError.
 func IsParseError(err error) bool {
 	var pe *ParseError
-	return err != nil && (pe != nil || isYAMLErrorOfType(err, ErrorTypeParse))
+	return err != nil && (errors.As(err, &pe) || isYAMLErrorOfType(err, ErrorTypeParse))
 }
 
 // ValidationError represents errors that occur during YAML validation.
@@ -230,28 +263,32 @@ func (ve *ValidationError) Context() string {
 
 // Error implements the error interface.
 func (ve *ValidationError) Error() string {
+	var sb strings.Builder
+
+	// Build base error with location
 	if ve.Line > 0 {
-		if ve.FieldPath != "" {
-			if ve.Constraint != "" {
-				return fmt.Sprintf("validation error in %s at line %d, field %s: %s (constraint: %s)", ve.FilePath, ve.Line, ve.FieldPath, ve.Message, ve.Constraint)
-			}
-			return fmt.Sprintf("validation error in %s at line %d, field %s: %s", ve.FilePath, ve.Line, ve.FieldPath, ve.Message)
+		sb.WriteString(fmt.Sprintf("validation error in %s at line %d", ve.FilePath, ve.Line))
+		if ve.Column > 0 {
+			sb.WriteString(fmt.Sprintf(", column %d", ve.Column))
 		}
-		if ve.Constraint != "" {
-			return fmt.Sprintf("validation error in %s at line %d: %s (constraint: %s)", ve.FilePath, ve.Line, ve.Message, ve.Constraint)
-		}
-		return fmt.Sprintf("validation error in %s at line %d: %s", ve.FilePath, ve.Line, ve.Message)
+	} else {
+		sb.WriteString(fmt.Sprintf("validation error in %s", ve.FilePath))
 	}
+
+	// Add field path if available
 	if ve.FieldPath != "" {
-		if ve.Constraint != "" {
-			return fmt.Sprintf("validation error in %s at field %s: %s (constraint: %s)", ve.FilePath, ve.FieldPath, ve.Message, ve.Constraint)
-		}
-		return fmt.Sprintf("validation error in %s at field %s: %s", ve.FilePath, ve.FieldPath, ve.Message)
+		sb.WriteString(fmt.Sprintf(" at field %s", ve.FieldPath))
 	}
+
+	// Add message
+	sb.WriteString(fmt.Sprintf(": %s", ve.Message))
+
+	// Add constraint if available
 	if ve.Constraint != "" {
-		return fmt.Sprintf("validation error in %s: %s (constraint: %s)", ve.FilePath, ve.Message, ve.Constraint)
+		sb.WriteString(fmt.Sprintf(" (constraint: %s)", ve.Constraint))
 	}
-	return fmt.Sprintf("validation error in %s: %s", ve.FilePath, ve.Message)
+
+	return sb.String()
 }
 
 // Unwrap returns the underlying error for error wrapping chains.
