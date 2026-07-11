@@ -1,10 +1,10 @@
 """
-Comprehensive unit tests for Result structure (bf-3prra).
+Comprehensive unit tests for Result structure (bf-4yq1k).
 
 This module provides complete coverage of all Result functionality including:
 - Result creation with SUCCESS and ERROR statuses
 - All helper methods (is_success, get_error, get_data, get_data_or)
-- Advanced methods (map, and_then)
+- Advanced methods (map, and_then, unwrap)
 - Status enum methods (from_bool, as_bool)
 - Edge cases and complex scenarios
 """
@@ -874,7 +874,7 @@ def run_all_tests():
     total_failed = 0
 
     print("=" * 70)
-    print("COMPREHENSIVE RESULT UNIT TESTS (bf-3prra)")
+    print("COMPREHENSIVE RESULT UNIT TESTS (bf-4yq1k)")
     print("=" * 70)
 
     for class_name, test_class in test_classes:
