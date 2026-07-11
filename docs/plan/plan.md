@@ -878,7 +878,7 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 - [ ] **Failure escalation**: every verification failure files a bead (`br create`) carrying object key, bucket, deployment, writer version from provenance, and both-path evidence — never a silent retry. Staleness (no verified restore within the window) escalates the same way.
 - [ ] **Scheduled DR drill**: automate the `armor-decrypt`-only drill from `docs/disaster-recovery.md` (MEK from escrow → raw B2 fetch → decrypt → checksum → application assertion) so the "ARMOR server is gone" recovery path is itself continuously proven.
 
-**Boundary:** ARMOR proves restorability of what ARMOR stores. Estate-wide restore verification of non-ARMOR streams (CNPG/barman WAL, Litestream SQLite, restic backup-home, Velero) belongs to LAZARUS, the standalone restore-proof engine — keep metric naming and bead conventions compatible so LAZARUS can subsume these results into one estate-wide restorability view.
+**Boundary:** ARMOR proves restorability of what ARMOR stores. Estate-wide restore verification of non-ARMOR streams (CNPG/barman WAL, Litestream SQLite, restic backup-home, Velero) belongs to DRILL (Disaster Recovery Integrity & Liveness Loop), the standalone restore-proof engine — keep metric naming and bead conventions compatible so DRILL can subsume these results into one estate-wide restorability view.
 
 ---
 
