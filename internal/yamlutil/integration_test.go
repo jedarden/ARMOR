@@ -786,6 +786,83 @@ func TestLoadInvalidYAMLIndentation(t *testing.T) {
 	}
 }
 
+// TestLoadEmptyFile tests loading an empty YAML file
+func TestLoadEmptyFile(t *testing.T) {
+	testFile := "testdata/empty.yaml"
+
+	// Load test data using helper
+	content, err := loadTestData(testFile)
+	if err != nil {
+		t.Fatalf("loadTestData(%s) failed: %v", testFile, err)
+	}
+
+	// Verify content is empty
+	if len(content) != 0 {
+		t.Errorf("expected empty content from empty.yaml, got %d bytes", len(content))
+	}
+
+	// Parse the loaded YAML content - should succeed with empty result
+	parser := NewParser()
+	var data map[string]interface{}
+	if err := parser.ParseString(string(content), &data); err != nil {
+		t.Fatalf("ParseString failed for empty file: %v", err)
+	}
+
+	// Verify result is empty
+	if len(data) != 0 {
+		t.Errorf("expected empty map, got %d keys", len(data))
+	}
+}
+
+// TestLoadWhitespaceOnly tests loading a file with only whitespace
+func TestLoadWhitespaceOnly(t *testing.T) {
+	testFile := "testdata/whitespace_only.yaml"
+
+	// Load test data using helper
+	content, err := loadTestData(testFile)
+	if err != nil {
+		t.Fatalf("loadTestData(%s) failed: %v", testFile, err)
+	}
+
+	// Verify content is not nil (has whitespace)
+	if content == nil {
+		t.Error("expected non-nil content from whitespace_only.yaml")
+	}
+
+	// Parse the loaded YAML content - should succeed with empty result
+	parser := NewParser()
+	var data map[string]interface{}
+	if err := parser.ParseString(string(content), &data); err != nil {
+		t.Fatalf("ParseString failed for whitespace-only file: %v", err)
+	}
+
+	// Verify result is empty
+	if len(data) != 0 {
+		t.Errorf("expected empty map, got %d keys", len(data))
+	}
+}
+
+// TestLoadMissingFile tests handling of a missing file
+func TestLoadMissingFile(t *testing.T) {
+	testFile := "testdata/nonexistent.yaml"
+
+	// Load test data using helper - should fail
+	content, err := loadTestData(testFile)
+	if err == nil {
+		t.Error("expected loadTestData to fail for missing file, got nil error")
+	}
+
+	if content != nil {
+		t.Error("expected nil content for missing file")
+	}
+
+	// Verify it's a file not found error
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "not found") && !strings.Contains(errMsg, "no such file") && !strings.Contains(errMsg, "cannot find") {
+		t.Errorf("expected 'not found' error, got: %s", errMsg)
+	}
+}
+
 // TestParseFile_RelativePath tests parsing with relative paths
 func TestParseFile_RelativePath(t *testing.T) {
 	// Change to testdata directory
