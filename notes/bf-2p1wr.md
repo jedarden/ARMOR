@@ -1,170 +1,97 @@
-# Task: Obtain ord-devimprint kubeconfig with write access
+# Bead bf-2p1wr: ord-devimprint Kubeconfig Investigation
 
-## Current Situation
+## Current State
 
-The ord-devimprint cluster is currently accessible only via a read-only kubectl proxy:
+### Existing Access
+- **Read-only proxy**: `kubectl-proxy-ord-devimprint:8001` via Tailscale
+- **Proxy RBAC**: ServiceAccount `devpod-observer:devpod-observer`
+- **Limitations**: Explicitly denies access to secrets and cluster-level resources
 
-- **Proxy endpoint**: `kubectl-proxy-ord-devimprint:8001`
-- **Access level**: Read-only (via devpod-observer service account)
-- **Secrets access**: DENIED (`kubectl auth can-i get secrets -n devimprint` returns `no`)
+### Cluster Details
+- **Platform**: Rackspace Spot (us-east-iad-1)
+- **Cluster ID**: `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
+- **Management**: ArgoCD on rs-manager
+- **ArgoCD ApplicationSet**: `manifest-appset-ord-devimprint` in `rs-manager/argocd`
 
-## What's Needed
+### Pattern from Other Clusters
+Other Rackspace Spot clusters have direct kubeconfigs:
+- `~/.kube/rs-manager.kubeconfig` (cluster-admin)
+- `~/.kube/iad-ci.kubeconfig` (cluster-admin)
+- `~/.kube/iad-acb.kubeconfig` (proxy only, small file)
 
-To retrieve the `armor-writer` secret, we need a kubeconfig file with:
-- Permissions to read secrets in the `devimprint` namespace
-- Stored securely at `~/.kube/ord-devimprint.kubeconfig`
+**ord-devimprint does not have a direct kubeconfig.**
 
-## Existing Kubeconfig Pattern
+## ArgoCD Credential Setup
 
-Other clusters have direct kubeconfigs:
-- `~/.kube/iad-ci.kubeconfig` - Full cluster-admin access
-- `~/.kube/iad-acb.kubeconfig` - Another cluster config
+The file `k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml` contains the one-time setup instructions for ArgoCD cluster credentials, which requires a kubeconfig with cluster-admin access.
 
-## Cluster Information
+This is circular - the setup requires a kubeconfig, but no kubeconfig exists.
 
-From ExternalSecret configuration (`~/declarative-config/k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml`):
-- **Cluster Server**: `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
-- **Type**: Rackspace Spot cluster
-- **Management Cluster**: rs-manager
+## Required Action
 
-## Acquisition Process
+**Rackspace Spot Console Access Required**
 
-### Method 1: Rackspace Spot Portal (Recommended)
+To obtain a kubeconfig with write access to ord-devimprint:
 
-1. **Access Rackspace Spot Portal**:
+1. **Log in to Rackspace Spot console** (us-east-iad-1 region)
+2. **Navigate to the cluster**: `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330`
+3. **Download kubeconfig** with cluster-admin or appropriate namespace-level permissions
+4. **Store securely**: `~/.kube/ord-devimprint.kubeconfig`
+5. **Test access**:
    ```bash
-   # Navigate to: https://spot.rackspace.com
-   # Authenticate with Rackspace Spot credentials
+   kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint
    ```
 
-2. **Download Admin Kubeconfig**:
-   - Find cluster: `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330` or "ord-devimprint"
-   - Download kubeconfig to `/tmp/ord-devimprint-admin.kubeconfig`
+## Alternative Approaches
 
-3. **Create ServiceAccount with Write Access**:
-   ```bash
-   KC=/tmp/ord-devimprint.kubeconfig
+If full cluster-admin is not available:
+- **Namespace-specific admin**: Create a RoleBinding with `admin` role in `devimprint` namespace only
+- **ServiceAccount token**: Create a ServiceAccount with limited secret read permissions in `devimprint` namespace
 
-   # Create serviceaccount
-   kubectl --kubeconfig=$KC create serviceaccount argocd-manager -n kube-system
+## Blocker Summary
 
-   # Grant cluster-admin permissions
-   kubectl --kubeconfig=$KC create clusterrolebinding argocd-manager \
-     --clusterrole=cluster-admin --serviceaccount=kube-system:argocd-manager
+This task is blocked on:
+- **User action**: Access to Rackspace Spot console to download kubeconfig
+- **Or coordination**: Cluster administrator providing the kubeconfig
 
-   # Generate long-lived token (1 year)
-   TOKEN=$(kubectl --kubeconfig=$KC create token argocd-manager \
-     -n kube-system --duration=8760h)
+Once kubeconfig is obtained, the ArgoCD credential setup can proceed if not already done.
+# Investigation Results - 2026-07-11
 
-   echo "Token: $TOKEN"
-   ```
+## Investigation Summary
 
-4. **Create Kubeconfig File**:
-   ```bash
-   # Extract CA data from admin kubeconfig
-   CA_DATA=$(kubectl --kubeconfig=$KC config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+Attempted to find alternative paths to obtain ord-devimprint kubeconfig access.
 
-   # Create final kubeconfig
-   cat > ~/.kube/ord-devimprint.kubeconfig << EOF
-   apiVersion: v1
-   kind: Config
-   clusters:
-     - cluster:
-         certificate-authority-data: $CA_DATA
-         server: https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com
-       name: ord-devimprint
-   contexts:
-     - context:
-         cluster: ord-devimprint
-         user: argocd-manager
-       name: ord-devimprint
-   current-context: ord-devimprint
-   preferences: {}
-   users:
-     - name: argocd-manager
-       user:
-         token: $TOKEN
-   EOF
+### Findings
 
-   # Secure permissions
-   chmod 600 ~/.kube/ord-devimprint.kubeconfig
-   ```
+1. **Read-only proxy confirmed**: `kubectl-proxy-ord-devimprint:8001` can list secret names but cannot read secret content (Forbidden error on `get secret armor-writer`)
 
-### Method 2: OpenBao Integration (Optional)
+2. **ArgoCD cluster secret exists**: Found `cluster-ord-devimprint` secret in `argocd` namespace on rs-manager cluster, but cannot read it due to RBAC restrictions on the devpod-observer ServiceAccount
 
-For GitOps integration, store credentials in OpenBao:
+3. **Missing kubeconfigs**: Expected kubeconfigs from CLAUDE.md do not exist:
+   - `~/.kube/rs-manager.kubeconfig` - NOT FOUND
+   - `~/.kube/ardenone-manager.kubeconfig` - NOT FOUND
+   - Only found: `iad-acb.kubeconfig`, `iad-ci.kubeconfig`
 
-```bash
-bao kv put secret/rs-manager/ord-devimprint/cluster \
-  server="https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com" \
-  token="$TOKEN"
-```
+4. **ExternalSecret setup**: The file `declarative-config/k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml` contains setup instructions that require a fresh kubeconfig - circular dependency
 
-This enables the ExternalSecret to sync automatically to rs-manager.
+### Conclusion
 
-## Next Steps
+**BLOCKER CONFIRMED**: This task requires human intervention to obtain kubeconfig from Rackspace Spot console.
 
-**This requires Rackspace Spot portal access or coordination with the cluster administrator.**
+No automated workaround exists without:
+- Direct access to Rackspace Spot console (us-east-iad-1 region, cluster: `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330`)
+- Or coordination with cluster administrator to provide the kubeconfig
 
-## Verification Steps (once kubeconfig is obtained)
+### Next Steps (Requires Human Action)
 
-```bash
-# Test basic connectivity
-kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get nodes
+1. Log into Rackspace Spot console (us-east-iad-1 region)
+2. Navigate to cluster `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330`  
+3. Download kubeconfig with appropriate permissions
+4. Store at `~/.kube/ord-devimprint.kubeconfig`
+5. Verify: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint`
+6. Close bead bf-2p1wr and proceed to dependent tasks
 
-# Test secret access (acceptance criteria)
-kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint
+## Related Beads
 
-# Test the specific secret we need
-kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint
-```
-
-## Cluster Notes
-
-From CLAUDE.md:
-- ord-devimprint uses Tailscale operator (not Traefik like other clusters)
-- Proxy hostname: `kubectl-proxy-ord-devimprint`
-- No existing write-access kubeconfig on file
-
-## Current Verification (2026-07-11)
-
-```bash
-# Can list secrets but cannot read contents
-$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
-NAME                    TYPE                             DATA   AGE
-admin-oauth             Opaque                           3      62d
-armor-credentials       Opaque                           7      79d
-armor-readonly          Opaque                           2      79d
-armor-writer            Opaque                           2      79d  # ← Target secret
-devimprint-b2-workers   Opaque                           5      65d
-...
-
-# Cannot GET secret contents (Forbidden)
-$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
-Error from server (Forbidden): secrets "armor-writer" is forbidden:
-User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-```
-
-**Confirmed**: The devpod-observer ServiceAccount has `verbs: ["list"]` for secrets but NOT `get`.
-
-## Status
-
-**INCOMPLETE - Requires External Coordination**
-
-Acceptance criteria NOT met:
-- [ ] Kubeconfig file exists at `~/.kube/ord-devimprint.kubeconfig` (FILE DOES NOT EXIST)
-- [ ] Can run: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint` (CANNOT TEST - NO KUBECONFIG)
-- [ ] Can run: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint` (CANNOT TEST - NO KUBECONFIG)
-
-This task requires:
-1. **Rackspace Spot portal access** with admin permissions on the ord-devimprint cluster
-2. **Or coordination with the cluster administrator** who can provide the kubeconfig
-
-The documentation above provides the exact steps needed once access is available.
-
-## Next Steps for Completion
-
-1. Obtain Rackspace Spot portal access OR coordinate with cluster administrator
-2. Follow Method 1 above to create and store the kubeconfig
-3. Run verification steps
-4. Complete this bead
+This bead blocks:
+- `bf-3d39n`: Verify ord-devimprint ExternalSecret armor-writer sync
