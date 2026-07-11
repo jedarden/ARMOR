@@ -36,7 +36,25 @@ The ord-devimprint cluster was already updated on 2026-07-11:
 
 ## Verification Status
 
-✅ Confirmed current version was 0.1.19
+✅ Confirmed current version was 0.1.19 (verified from running pod)
 ✅ Identified target fixed version (0.1.42+)
 ✅ Verified image tag format: `ronaldraygun/armor:<version>`
-✅ Confirmed deployment already updated
+✅ Confirmed deployment already updated in declarative-config
+
+## Running Pod Verification (2026-07-11)
+
+```bash
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get pods -n devimprint -l app=armor \
+  -o jsonpath='{.items[0].spec.containers[0].image}'
+```
+
+Result: `ronaldraygun/armor:0.1.19`
+
+**Note:** The declarative-config shows 0.1.42 but the running pod is still on 0.1.19, indicating ArgoCD sync or rollout is pending.
+
+## Other Cluster Status
+
+- `iad-native-ads`: 0.1.42 ✅ (already fixed)
+- `iad-kalshi`: 0.1.13 ⚠️ (needs update to 0.1.42+)
+- `rs-manager`: 0.1.13 ⚠️ (needs update to 0.1.42+)
+- `iad-ci`: 0.1.24 ⚠️ (needs update to 0.1.42+)
