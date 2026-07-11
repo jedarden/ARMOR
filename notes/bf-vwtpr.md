@@ -108,3 +108,55 @@ base64: invalid input
 **Result:** Cannot proceed - the base64 file contains an RBAC error message, not valid base64 data.
 
 **Status:** PREREQUISITE NOT MET - bead cannot be completed.
+
+---
+
+## Attempt 18+ (2026-07-11 14:42 UTC)
+
+### Current Status: DATA CORRUPTION CONFIRMED
+
+The previous error message has been replaced, but now the data is corrupted.
+
+### File Contents
+```bash
+$ cat /tmp/litestream_key_id.b64
+95cb35f2a680aef5a5b692bfde849f16baa267fa03edb70630d615916d9bb83d
+```
+
+This is a **hexadecimal SHA256 hash** (64 hex characters), NOT a base64-encoded AWS access key.
+
+### Decoding Attempt
+```bash
+$ base64 -d /tmp/litestream_key_id.b64 > /tmp/litestream_key_id.txt
+$ cat /tmp/litestream_key_id.txt
+��ߗ�k�4i��k���f�u�8��zm�������w�o�:�Gzןu��[o��
+```
+
+The output is **garbled binary data**, not human-readable text.
+
+### Validation Results
+
+| Criteria | Expected | Actual | Status |
+|----------|----------|--------|--------|
+| Decode base64 successfully | Plain text | Binary garbage | ❌ |
+| Non-empty decoded value | Yes | Yes | ✅ (but corrupted) |
+| Valid AWS format (AKIA...) | AKIA + 16 chars | Hex hash | ❌ |
+| Human-readable | Yes | No | ❌ |
+
+### Root Cause Analysis
+
+The value `95cb35f2a680aef5a5b692bfde849f16baa267fa03edb70630d615916d9bb83d` is:
+- A **SHA256 hex digest** (64 characters, valid hex format)
+- **NOT** base64-encoded data
+- **NOT** an AWS access key ID
+
+This suggests either:
+1. The previous bead retrieved the wrong secret/field
+2. The secret value in the cluster is incorrectly set
+3. Data corruption during transmission/storage
+
+### Conclusion
+
+**VALIDATION FAILED** - The secret does not contain a base64-encoded AWS access key. It contains a hex hash that decodes to binary garbage.
+
+This bead cannot be completed because the input data is invalid. The parent bead should investigate why the secret contains a hash instead of the expected base64-encoded AWS access key.
