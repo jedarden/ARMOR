@@ -1,43 +1,65 @@
 # Bead bf-2xkyl: Retrieve S3 credentials from armor-writer secret
 
-## Blocker Status
+## Status: BLOCKED - Missing kubeconfig access
 
-**BLOCKED**: Cannot retrieve S3 credentials from ord-devimprint cluster due to missing kubeconfig access.
+## Investigation Summary
 
-## What was attempted
+### Current Access State
+- **Read-only proxy**: `kubectl-proxy-ord-devimprint:8001` can LIST secrets but cannot READ secret contents (RBAC forbidden)
+- **Kubeconfig files available**:
+  - `~/.kube/iad-ci.kubeconfig` (Rackspace Spot cluster)
+  - `~/.kube/iad-acb.kubeconfig` (unknown cluster)
+  - **No ord-devimprint kubeconfig exists**
 
-1. **Read-only proxy access (kubectl-proxy-ord-devimprint:8001)**:
-   - Used the observer service account proxy
-   - Result: Forbidden - observer SA cannot read secrets
-   - Error: `secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"`
+### Prerequisites Not Met
+Child bead `bf-2p1wr` (Obtain ord-devimprint kubeconfig with write access) is marked as **closed**, but:
+- No kubeconfig file exists at `~/.kube/ord-devimprint.kubeconfig` or any other expected location
+- Cannot access secret contents via the read-only proxy
+- No alternative access path identified
 
-2. **Direct kubeconfig check**:
-   - Searched for ord-devimprint kubeconfig in `~/.kube/`
-   - Result: No kubeconfig found for ord-devimprint cluster
-
-## Required access
-
-According to the bead prerequisites:
-- **Prerequisite bead**: bf-2p1wr (not yet completed)
-- **Required**: Kubeconfig with write access to ord-devimprint cluster
-- **Needed permissions**: Ability to read secrets in `devimprint` namespace
-
-## Current ord-devimprint access (per CLAUDE.md)
-
-- Read-only proxy via `kubectl-proxy-ord-devimprint:8001`
-- Observer service account with restricted RBAC (no secret access)
-- No direct kubeconfig with elevated permissions
-
-## Next steps to unblock
-
-1. Complete prerequisite bead bf-2p1wr to set up kubeconfig with write access
-2. Or coordinate with cluster administrator to obtain appropriate credentials
-3. Once access is available, use commands:
+### Attempts Made
+1. **Direct proxy access** - RBAC forbidden:
    ```bash
-   kubectl --kubeconfig=<path-to-kubeconfig> get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}' | base64 -d
-   kubectl --kubeconfig=<path-to-kubeconfig> get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_SECRET_ACCESS_KEY}' | base64 -d
+   kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
+   # Error: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
    ```
 
-## Timestamp
+2. **Check for kubeconfig** - File not found:
+   ```bash
+   ls ~/.kube/ord-devimprint*  # No results
+   ```
 
-2026-07-11
+3. **Check ArgoCD cluster registry** - ord-devimprint not registered:
+   ```bash
+   kubectl --server=http://traefik-ardenone-manager:8001 get clusters -n argocd
+   # No devimprint cluster found
+   ```
+
+### Blocker Details
+The task cannot proceed because:
+- Secret read access requires elevated permissions beyond the read-only proxy SA
+- No kubeconfig with secret read/write access exists
+- Prerequisite bead bf-2p1wr was closed without actually obtaining the required kubeconfig
+
+## Required Actions
+1. **Reopen bead bf-2p1wr** - The prerequisite bead needs to be actually completed
+2. **Obtain kubeconfig** - Get a kubeconfig with secret read access to ord-devimprint cluster
+3. **Verify access** - Confirm kubectl can read secret contents before marking complete
+4. **Return to bf-2xkyl** - Once kubeconfig is available, complete credential retrieval
+
+## Commands to Run When Unblocked
+Once kubeconfig is obtained at `~/.kube/ord-devimprint.kubeconfig`:
+```bash
+# Retrieve ACCESS_KEY_ID
+kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint \
+  -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}' | base64 -d
+
+# Retrieve SECRET_ACCESS_KEY
+kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint \
+  -o jsonpath='{.data.LITESTREAM_SECRET_ACCESS_KEY}' | base64 -d
+```
+
+## Notes
+- Credentials must be stored temporarily (not committed to git)
+- Consider using mktemp or a secure temp location for credential storage
+- Coordinates: 2026-07-11 investigation session
