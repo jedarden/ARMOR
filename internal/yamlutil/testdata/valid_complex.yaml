@@ -1,0 +1,34 @@
+# Complex YAML with comments, anchors, and aliases
+# This tests advanced YAML features
+
+defaults: &defaults
+  timeout: 30
+  retries: 3
+  backoff: exponential
+
+services:
+  # Web service configuration
+  web:
+    <<: *defaults
+    port: 8080
+    host: example.com
+    health_check: /health
+
+  # API service configuration
+  api:
+    <<: *defaults
+    port: 8081
+    host: api.example.com
+    # Override timeout for API
+    timeout: 60
+
+# Multi-line strings
+description: >
+  This is a folded scalar
+  that spans multiple lines
+  but becomes a single line.
+
+notes: |
+  This is a literal block scalar
+  that preserves newlines and
+  formatting exactly as written.
