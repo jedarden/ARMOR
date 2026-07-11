@@ -667,9 +667,9 @@ func Example_commentsInYAML() {
 	}
 
 	// Comments are not included in the parsed data
-	name := GetString(data, "application.name", "")
-	fmt.Printf("Application: %s\n", name)
-	// Output: Application: myapp
+	host := GetString(data, "server.host", "")
+	fmt.Printf("Server: %s\n", host)
+	// Output: Server: localhost
 }
 
 // Example_listAccess demonstrates accessing and working with list fields.
@@ -693,7 +693,7 @@ func Example_listAccess() {
 		}
 	}
 	// Output:
-	// Item 0: first
-	// Item 1: second
-	// Item 2: third
+	// Item 0: First Item
+	// Item 1: Second Item
+	// Item 2: Third Item
 }
