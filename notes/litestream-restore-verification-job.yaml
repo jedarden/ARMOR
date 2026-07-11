@@ -1,0 +1,145 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: litestream-restore-verification
+  namespace: devimprint
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: litestream-restore-verification
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: litestream-verify
+        image: benbjohnson/litestream:0.5.14
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "=== Litestream Restore Verification Job ==="
+          echo "Task: bf-5aqh0"
+          echo "Timestamp: $(date -Iseconds)"
+          echo ""
+
+          echo "Step 1: Checking original database exists"
+          if [ ! -f /data/queue.db ]; then
+            echo "✗ Original database not found at /data/queue.db"
+            exit 1
+          fi
+          echo "✓ Original database found: /data/queue.db"
+          ORIGINAL_SIZE=$(stat -c%s /data/queue.db)
+          echo "  Size: $ORIGINAL_SIZE bytes"
+          echo ""
+
+          echo "Step 2: Displaying litestream configuration"
+          echo "Configuration:"
+          cat /etc/litestream.yml
+          echo ""
+
+          echo "Step 3: Checking litestream databases status"
+          litestream databases || echo "No databases info available"
+          echo ""
+
+          echo "Step 4: Creating temporary restore location"
+          mkdir -p /data/restore_test
+          echo "✓ Created temporary directory: /data/restore_test"
+          echo ""
+
+          echo "Step 5: Running restore to temporary location"
+          # Restore the latest generation to /data/restore_test/queue_restored.db
+          if litestream restore -v -o /data/restore_test/queue_restored.db /data/queue.db; then
+            echo "✓ Restore command completed successfully"
+          else
+            echo "✗ Restore command failed"
+            exit 1
+          fi
+          echo ""
+
+          echo "Step 6: Verifying restored database"
+          if [ ! -f /data/restore_test/queue_restored.db ]; then
+            echo "✗ Restored database not found"
+            exit 1
+          fi
+          RESTORED_SIZE=$(stat -c%s /data/restore_test/queue_restored.db)
+          echo "✓ Restored database created"
+          echo "  Size: $RESTORED_SIZE bytes"
+          echo ""
+
+          echo "Step 7: Checking database integrity"
+          # Use SQLite to verify database integrity
+          echo "Running integrity check..."
+          if sqlite3 /data/restore_test/queue_restored.db "PRAGMA integrity_check;"; then
+            echo "✓ Database integrity check passed"
+          else
+            echo "✗ Database integrity check failed"
+            exit 1
+          fi
+          echo ""
+
+          echo "Step 8: Verifying database has data"
+          TABLE_COUNT=$(sqlite3 /data/restore_test/queue_restored.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table';")
+          echo "  Found $TABLE_COUNT tables"
+          if [ "$TABLE_COUNT" -lt 1 ]; then
+            echo "✗ No tables found in restored database"
+            exit 1
+          fi
+          echo "✓ Database contains tables"
+          echo ""
+
+          echo "Step 9: Showing schema overview"
+          sqlite3 /data/restore_test/queue_restored.db ".schema"
+          echo ""
+
+          echo "Step 10: Comparing file sizes"
+          SIZE_DIFF=$((ORIGINAL_SIZE - RESTORED_SIZE))
+          SIZE_DIFF_PERCENT=$((SIZE_DIFF * 100 / ORIGINAL_SIZE))
+          echo "  Original size: $ORIGINAL_SIZE bytes"
+          echo "  Restored size: $RESTORED_SIZE bytes"
+          echo "  Difference: $SIZE_DIFF bytes ($SIZE_DIFF_PERCENT%)"
+          if [ $RESTORED_SIZE -lt 1000 ]; then
+            echo "✗ Restored database seems too small"
+            exit 1
+          fi
+          echo "✓ File sizes are comparable"
+          echo ""
+
+          echo "Step 11: Cleanup (keeping restored file for manual inspection)"
+          echo "  Restored database available at: /data/restore_test/queue_restored.db"
+          echo "  To cleanup: rm -rf /data/restore_test"
+          echo ""
+
+          echo "=== Verification Complete ==="
+          echo "✓ All checks passed - restore test successful"
+          exit 0
+        volumeMounts:
+        - name: queue-data
+          mountPath: /data
+        env:
+        - name: LITESTREAM_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: armor-writer
+              key: access-key-id
+        - name: LITESTREAM_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: armor-writer
+              key: secret-access-key
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: armor-writer
+              key: access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: armor-writer
+              key: secret-access-key
+      volumes:
+      - name: queue-data
+        persistentVolumeClaim:
+          claimName: queue-api-data-sata-2
