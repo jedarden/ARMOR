@@ -14,6 +14,9 @@ import (
 //
 // ParseResult provides a uniform return type for parsing operations that includes
 // success status, parsed data, and detailed error information.
+//
+// Deprecated: Use SuccessParseResult[T] for new code. This non-generic version is maintained
+// for backward compatibility.
 type ParseResult struct {
 	// FilePath is the path to the parsed file
 	FilePath string
@@ -32,6 +35,288 @@ type ParseResult struct {
 
 	// Metrics contains additional parsing metrics (optional)
 	Metrics *ParseMetrics
+}
+
+// SuccessParseResult represents a successful YAML parsing outcome.
+//
+// SuccessParseResult[T] is a generic type that holds the result of successfully parsing
+// a YAML document. The type parameter T represents the type of the parsed data.
+//
+// This type is only used for successful parses - failed parses return error types.
+// This design eliminates the need for Success/Error fields and provides type-safe
+// access to the parsed data.
+//
+// Type parameter T is the type of the parsed data. Common choices include:
+//   - map[string]interface{} for dynamic YAML structures
+//   - []interface{} for YAML arrays
+//   - A specific struct type for typed YAML parsing
+//   - interface{} for fully generic content
+//
+// Example usage:
+//   // Parse into a map
+//   result := SuccessParseResult[map[string]interface{}]{...}
+//   value := result.Data["key"]
+//
+//   // Parse into a struct
+//   type Config struct { Name string Port int }
+//   result := SuccessParseResult[Config]{...}
+//   fmt.Println(result.Data.Name)
+type SuccessParseResult[T any] struct {
+	// Raw is the original YAML content as bytes.
+	// Preserved for debugging, re-serialization, and validation purposes.
+	// May be nil if the parser chose not to retain the original content.
+	Raw []byte
+
+	// Data is the successfully parsed YAML content.
+	// The type T is typically a struct type or map[string]interface{}.
+	Data T
+
+	// Source describes where the YAML content originated from.
+	Source ParseSource
+
+	// Metadata contains information about the parsed YAML document structure.
+	Metadata ParseMetadata
+
+	// Timing contains performance metrics for the parse operation.
+	Timing ParseTiming
+}
+
+// ParseSource describes the origin of parsed YAML content.
+//
+// ParseSource provides information about where the YAML content came from,
+// supporting files, strings, readers, and other sources.
+type ParseSource struct {
+	// Type indicates the kind of source (file, string, reader, etc.)
+	Type SourceType
+
+	// Path is the file path when Type is SourceFile, empty otherwise.
+	Path string
+
+	// Description is a human-readable description of the source.
+	// For files, this is the filepath; for strings, it might be "string" or "<stdin>".
+	Description string
+
+	// Size is the size of the source content in bytes, if known.
+	// Zero indicates unknown size (e.g., from a reader).
+	Size int64
+}
+
+// SourceType represents the type of YAML source.
+type SourceType string
+
+const (
+	// SourceFile indicates YAML content from a file.
+	SourceFile SourceType = "file"
+
+	// SourceString indicates YAML content from a string.
+	SourceString SourceType = "string"
+
+	// SourceReader indicates YAML content from an io.Reader.
+	SourceReader SourceType = "reader"
+
+	// SourceBytes indicates YAML content from a byte slice.
+	SourceBytes SourceType = "bytes"
+
+	// SourceUnknown indicates an unknown or unspecified source type.
+	SourceUnknown SourceType = "unknown"
+)
+
+// ParseMetadata contains structural information about parsed YAML content.
+//
+// ParseMetadata provides statistics and structural details about the YAML
+// document that was parsed, useful for validation, debugging, and analytics.
+type ParseMetadata struct {
+	// LineCount is the total number of lines in the YAML source.
+	LineCount int
+
+	// DocumentCount is the number of YAML documents in the source.
+	// Multi-document YAML files use "---" separators.
+	DocumentCount int
+
+	// MaxNestingDepth is the maximum depth of nested structures found.
+	// A scalar at root level has depth 0; a field in a nested map has depth 1, etc.
+	MaxNestingDepth int
+
+	// FieldCount is the total number of mapping fields across all documents.
+	FieldCount int
+
+	// HasDocumentStart indicates whether the YAML begins with "---" marker.
+	HasDocumentStart bool
+
+	// HasDocumentEnd indicates whether the YAML ends with "..." marker.
+	HasDocumentEnd bool
+
+	// Encoding is the detected character encoding of the source.
+	// Typically "utf-8" for modern YAML files.
+	Encoding string
+
+	// ContainsAnchors indicates whether the YAML contains YAML anchors/aliases (&/*/[]).
+	ContainsAnchors bool
+
+	// ContainsTags indicates whether the YAML contains explicit type tags (e.g., !!str).
+	ContainsTags bool
+}
+
+// ParseTiming contains performance metrics for parsing operations.
+//
+// ParseTiming provides detailed timing information for parsing operations,
+// useful for performance analysis and optimization.
+type ParseTiming struct {
+	// Duration is the total time taken to parse the YAML content.
+	Duration time.Duration
+
+	// ReadDuration is the time spent reading the source content.
+	// For files, this includes I/O time; for strings/bytes, this is typically zero.
+	ReadDuration time.Duration
+
+	// ParseDuration is the time spent actually parsing the YAML syntax.
+	// This excludes read time and validation time.
+	ParseDuration time.Duration
+
+	// ValidationDuration is the time spent validating the parsed structure.
+	// Zero if validation was not performed.
+	ValidationDuration time.Duration
+
+	// Timestamp is when the parse operation completed.
+	Timestamp time.Time
+}
+
+// ============================================================================
+// Methods on SuccessParseResult[T]
+// ============================================================================
+
+// FilePath returns the source file path when the source is a file.
+// Returns empty string for non-file sources.
+func (spr SuccessParseResult[T]) FilePath() string {
+	if spr.Source.Type == SourceFile {
+		return spr.Source.Path
+	}
+	return ""
+}
+
+// IsFile returns true if the parsed content originated from a file.
+func (spr SuccessParseResult[T]) IsFile() bool {
+	return spr.Source.Type == SourceFile
+}
+
+// IsMultiDocument returns true if the YAML contains multiple documents.
+func (spr SuccessParseResult[T]) IsMultiDocument() bool {
+	return spr.Metadata.DocumentCount > 1
+}
+
+// Size returns the size of the source content in bytes.
+// Returns 0 if size is unknown.
+func (spr SuccessParseResult[T]) Size() int64 {
+	return spr.Source.Size
+}
+
+// LineCount returns the number of lines in the YAML source.
+func (spr SuccessParseResult[T]) LineCount() int {
+	return spr.Metadata.LineCount
+}
+
+// String returns a human-readable summary of the parse result.
+func (spr SuccessParseResult[T]) String() string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("SuccessParseResult[%T]{", spr.Data))
+	sb.WriteString(fmt.Sprintf("Source: %s", spr.Source.Description))
+	if spr.Source.Path != "" {
+		sb.WriteString(fmt.Sprintf(" (path: %s)", spr.Source.Path))
+	}
+	sb.WriteString(fmt.Sprintf(", Documents: %d", spr.Metadata.DocumentCount))
+	sb.WriteString(fmt.Sprintf(", Lines: %d", spr.Metadata.LineCount))
+	sb.WriteString(fmt.Sprintf(", Duration: %v", spr.Timing.Duration))
+	sb.WriteString("}")
+	return sb.String()
+}
+
+// ToLegacy converts the generic SuccessParseResult[T] to the legacy ParseResult format.
+// This is provided for backward compatibility with code using the old ParseResult.
+func (spr SuccessParseResult[T]) ToLegacy() ParseResult {
+	return ParseResult{
+		FilePath:      spr.FilePath(),
+		Data:          spr.Data,
+		Success:       true,
+		Error:         nil,
+		ParseDuration: spr.Timing.Duration,
+		Metrics: &ParseMetrics{
+			ByteCount:       int(spr.Source.Size),
+			LineCount:       spr.Metadata.LineCount,
+			MaxNestingDepth: spr.Metadata.MaxNestingDepth,
+			KeyCount:        spr.Metadata.FieldCount,
+		},
+	}
+}
+
+// GetRawBytes returns the raw YAML content as bytes.
+// Returns nil if Raw is not set.
+func (spr SuccessParseResult[T]) GetRawBytes() []byte {
+	return spr.Raw
+}
+
+// GetRawString returns the raw YAML content as a string.
+// Returns empty string if Raw is nil.
+func (spr SuccessParseResult[T]) GetRawString() string {
+	if spr.Raw == nil {
+		return ""
+	}
+	return string(spr.Raw)
+}
+
+// HasRaw returns true if raw YAML content is available.
+func (spr SuccessParseResult[T]) HasRaw() bool {
+	return spr.Raw != nil
+}
+
+// RawSize returns the size of the raw YAML content in bytes.
+// Returns 0 if Raw is nil.
+func (spr SuccessParseResult[T]) RawSize() int64 {
+	if spr.Raw == nil {
+		return 0
+	}
+	return int64(len(spr.Raw))
+}
+
+// ============================================================================
+// Methods on ParseSource
+// ============================================================================
+
+// String returns a string representation of the source.
+func (ps ParseSource) String() string {
+	if ps.Path != "" {
+		return ps.Path
+	}
+	return ps.Description
+}
+
+// IsFile returns true if the source is a file.
+func (ps ParseSource) IsFile() bool {
+	return ps.Type == SourceFile
+}
+
+// ============================================================================
+// Methods on ParseMetadata
+// ============================================================================
+
+// String returns a string representation of the metadata.
+func (pm ParseMetadata) String() string {
+	return fmt.Sprintf("Metadata{Lines: %d, Docs: %d, Depth: %d, Fields: %d}",
+		pm.LineCount, pm.DocumentCount, pm.MaxNestingDepth, pm.FieldCount)
+}
+
+// ============================================================================
+// Methods on ParseTiming
+// ============================================================================
+
+// String returns a string representation of the timing metrics.
+func (pt ParseTiming) String() string {
+	return fmt.Sprintf("Timing{Total: %v, Read: %v, Parse: %v, Validate: %v}",
+		pt.Duration, pt.ReadDuration, pt.ParseDuration, pt.ValidationDuration)
+}
+
+// IsZero returns true if the timing metrics are unset/zero.
+func (pt ParseTiming) IsZero() bool {
+	return pt.Duration == 0 && pt.ReadDuration == 0 && pt.ParseDuration == 0
 }
 
 // ParseMetrics contains detailed metrics about parsing operations.

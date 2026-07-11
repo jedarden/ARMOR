@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // YAMLError is the base interface for all YAML processing errors.
@@ -29,6 +30,9 @@ import (
 // YAML file I/O, parsing, validation, and schema operations.
 type YAMLError interface {
 	error
+
+	// Code returns the error code for programmatic error handling.
+	Code() ErrorCode
 
 	// YAMLErrorType returns the category of error for type switching.
 	YAMLErrorType() ErrorType
@@ -58,6 +62,39 @@ const (
 	ErrorTypeIO             ErrorType = "io"             // I/O error
 )
 
+// ErrorCode represents specific error codes for programmatic error handling.
+//
+// ErrorCodes provide machine-readable identifiers for errors, enabling
+// programmatic error handling and internationalization of error messages.
+type ErrorCode string
+
+const (
+	// File error codes
+	ErrCodeFileNotFound      ErrorCode = "FILE_NOT_FOUND"      // File does not exist
+	ErrCodeFileAccessDenied ErrorCode = "FILE_ACCESS_DENIED" // Permission denied
+	ErrCodeFileIOError       ErrorCode = "FILE_IO_ERROR"      // Generic I/O error
+	ErrCodeFileEmpty         ErrorCode = "FILE_EMPTY"         // File is empty
+
+	// Parse error codes
+	ErrCodeInvalidSyntax   ErrorCode = "INVALID_SYNTAX"    // YAML syntax error
+	ErrCodeTypeMismatch    ErrorCode = "TYPE_MISMATCH"    // Type conversion error
+	ErrCodeInvalidStructure ErrorCode = "INVALID_STRUCTURE" // YAML structure error
+	ErrCodeDuplicateKey    ErrorCode = "DUPLICATE_KEY"    // Duplicate mapping key
+	ErrCodeParseError       ErrorCode = "PARSE_ERROR"      // Generic parse error
+
+	// Validation error codes
+	ErrCodeValidationFailed   ErrorCode = "VALIDATION_FAILED"    // Validation failed
+	ErrCodeRequiredField      ErrorCode = "REQUIRED_FIELD"       // Missing required field
+	ErrCodeConstraintViolation ErrorCode = "CONSTRAINT_VIOLATION" // Constraint violated
+	ErrCodeInvalidValue       ErrorCode = "INVALID_VALUE"        // Invalid value
+
+	// Schema error codes
+	ErrCodeSchemaLoadFailed   ErrorCode = "SCHEMA_LOAD_FAILED"    // Schema loading failed
+	ErrCodeSchemaValidation   ErrorCode = "SCHEMA_VALIDATION"    // Schema validation failed
+	ErrCodeSchemaNotFound     ErrorCode = "SCHEMA_NOT_FOUND"      // Schema not found
+	ErrCodeSchemaInvalid      ErrorCode = "SCHEMA_INVALID"         // Invalid schema definition
+)
+
 // ParseError represents errors that occur during YAML parsing.
 //
 // ParseError wraps underlying parsing errors and provides detailed
@@ -70,6 +107,15 @@ type ParseError struct {
 	ContextStr string      // Additional context about the parsing state
 	Err        error       // Underlying error for error wrapping
 	ErrorType  ErrorType   // Specific type of parse error
+	ErrorCode  ErrorCode   // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (pe *ParseError) Code() ErrorCode {
+	if pe.ErrorCode != "" {
+		return pe.ErrorCode
+	}
+	return ErrCodeParseError
 }
 
 // YAMLErrorType implements YAMLError interface.
@@ -101,18 +147,201 @@ func IsParseError(err error) bool {
 	return err != nil && (pe != nil || isYAMLErrorOfType(err, ErrorTypeParse))
 }
 
+// ValidationError represents errors that occur during YAML validation.
+//
+// ValidationError wraps validation failures and provides detailed
+// information about what failed validation. This is the base error type
+// used throughout the yamlutil package for validation errors.
+type ValidationError struct {
+	FilePath   string    // Path to the file being validated
+	FieldPath  string    // Dot-notation path to the invalid field (optional)
+	Message    string    // Human-readable error message
+	Line       int       // Line number where error occurred (1-indexed)
+	Column     int       // Column number where error occurred (1-indexed, optional)
+	ContextStr string    // Additional context about the validation state (optional)
+	Err        error     // Underlying error for error wrapping (optional)
+	ErrorCode  ErrorCode // Error code for programmatic handling (optional)
+	Type       ErrorType // Category of error for type switching
+}
+
+// Code implements YAMLError interface.
+func (ve *ValidationError) Code() ErrorCode {
+	if ve.ErrorCode != "" {
+		return ve.ErrorCode
+	}
+	return ErrCodeValidationFailed
+}
+
+// YAMLErrorType implements YAMLError interface.
+func (ve *ValidationError) YAMLErrorType() ErrorType {
+	// If Type is explicitly set, use it
+	if ve.Type != "" {
+		return ve.Type
+	}
+	// Try to determine error type from error code or message
+	if ve.ErrorCode == ErrCodeRequiredField || (ve.FieldPath != "" && containsRequiredFieldKeywords(ve.Message)) {
+		return ErrorTypeFieldNotFound
+	}
+	if ve.ErrorCode == ErrCodeConstraintViolation || containsConstraintKeywords(ve.Message) {
+		return ErrorTypeConstraint
+	}
+	return ErrorTypeValidation
+}
+
+// Context implements YAMLError interface.
+func (ve *ValidationError) Context() string {
+	return ve.ContextStr
+}
+
+// Error implements the error interface.
+func (ve *ValidationError) Error() string {
+	if ve.Line > 0 {
+		if ve.FieldPath != "" {
+			return fmt.Sprintf("validation error in %s at line %d, field %s: %s", ve.FilePath, ve.Line, ve.FieldPath, ve.Message)
+		}
+		return fmt.Sprintf("validation error in %s at line %d: %s", ve.FilePath, ve.Line, ve.Message)
+	}
+	if ve.FieldPath != "" {
+		return fmt.Sprintf("validation error in %s at field %s: %s", ve.FilePath, ve.FieldPath, ve.Message)
+	}
+	return fmt.Sprintf("validation error in %s: %s", ve.FilePath, ve.Message)
+}
+
+// Unwrap returns the underlying error for error wrapping chains.
+func (ve *ValidationError) Unwrap() error {
+	return ve.Err
+}
+
+// String returns a formatted error message with context.
+func (ve *ValidationError) String() string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("  Error: %s\n", ve.Message))
+	sb.WriteString(fmt.Sprintf("  Type: %s\n", ve.YAMLErrorType()))
+	if ve.Line > 0 {
+		sb.WriteString(fmt.Sprintf("  Location: Line %d", ve.Line))
+		if ve.Column > 0 {
+			sb.WriteString(fmt.Sprintf(", Column %d", ve.Column))
+		}
+		sb.WriteString("\n")
+	}
+	if ve.FieldPath != "" {
+		sb.WriteString(fmt.Sprintf("  Field: %s\n", ve.FieldPath))
+	}
+	if ve.ContextStr != "" {
+		sb.WriteString(fmt.Sprintf("  Context: %s\n", ve.ContextStr))
+	}
+	return sb.String()
+}
+
+// IsValidationError checks if an error is a ValidationError.
+func IsValidationError(err error) bool {
+	var ve *ValidationError
+	return err != nil && (ve != nil || isYAMLErrorOfType(err, ErrorTypeValidation))
+}
+
+// containsRequiredFieldKeywords checks if the message suggests a required field error.
+func containsRequiredFieldKeywords(msg string) bool {
+	keywords := []string{"required", "missing", "not found", "must be provided"}
+	lower := strings.ToLower(msg)
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsConstraintKeywords checks if the message suggests a constraint violation.
+func containsConstraintKeywords(msg string) bool {
+	keywords := []string{"constraint", "range", "length", "pattern", "invalid value"}
+	lower := strings.ToLower(msg)
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// FileError represents errors that occur during file I/O operations.
+//
+// FileError wraps file I/O errors and provides detailed
+// information about the file operation that failed.
+type FileError struct {
+	Op        string    // Operation that failed (read, write, etc.) - "Op" for backward compatibility
+	Path      string    // Path to the file
+	Operation string    // Operation that failed (read, write, etc.) - "Operation" for clarity
+	Message   string    // Human-readable error message
+	Err       error     // Underlying error for error wrapping
+	ErrorCode ErrorCode // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (fe *FileError) Code() ErrorCode {
+	if fe.ErrorCode != "" {
+		return fe.ErrorCode
+	}
+	return ErrCodeFileIOError
+}
+
+// YAMLErrorType implements YAMLError interface.
+func (fe *FileError) YAMLErrorType() ErrorType {
+	return ErrorTypeFile
+}
+
+// Context implements YAMLError interface.
+func (fe *FileError) Context() string {
+	op := fe.Operation
+	if op == "" && fe.Op != "" {
+		op = fe.Op
+	}
+	return fmt.Sprintf("operation: %s, path: %s", op, fe.Path)
+}
+
+// Error implements the error interface.
+func (fe *FileError) Error() string {
+	op := fe.Operation
+	if op == "" && fe.Op != "" {
+		op = fe.Op
+	}
+	if op != "" {
+		return fmt.Sprintf("file error during %s on %s: %s", op, fe.Path, fe.Message)
+	}
+	return fmt.Sprintf("file error in %s: %s", fe.Path, fe.Message)
+}
+
+// Unwrap returns the underlying error for error wrapping chains.
+func (fe *FileError) Unwrap() error {
+	return fe.Err
+}
+
+// IsFileError checks if an error is a FileError.
+func IsFileError(err error) bool {
+	var fe *FileError
+	return err != nil && (fe != nil || isYAMLErrorOfType(err, ErrorTypeFile))
+}
+
 // SyntaxError represents YAML syntax errors during parsing.
 //
 // SyntaxError includes indentation errors, malformed YAML, and other
 // syntax-related issues that prevent the YAML from being parsed.
 type SyntaxError struct {
-	FilePath string // Path to the file with syntax error
-	Line     int    // Line number where syntax error occurred
-	Column   int    // Column number where syntax error occurred
-	Message  string // Description of the syntax error
-	Expected string // What was expected (if known)
-	Found    string // What was actually found (if known)
-	Err      error  // Underlying yaml parser error
+	FilePath  string    // Path to the file with syntax error
+	Line      int       // Line number where syntax error occurred
+	Column    int       // Column number where syntax error occurred
+	Message   string    // Description of the syntax error
+	Expected  string    // What was expected (if known)
+	Found     string    // What was actually found (if known)
+	Err       error     // Underlying yaml parser error
+	ErrorCode ErrorCode // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (se *SyntaxError) Code() ErrorCode {
+	if se.ErrorCode != "" {
+		return se.ErrorCode
+	}
+	return ErrCodeInvalidSyntax
 }
 
 // YAMLErrorType implements YAMLError interface.
@@ -147,12 +376,24 @@ func (se *SyntaxError) Unwrap() error {
 // StructureError includes issues like duplicate keys, invalid nesting,
 // and other structural problems that syntax-checking alone won't catch.
 type StructureError struct {
-	FilePath    string            // Path to the file with structure error
-	Line        int               // Line number where structure error occurred
-	Message     string            // Description of the structure error
-	DuplicateKey string           // Name of duplicate key (if applicable)
-	Location    string            // Nested path to the error location
-	Err         error             // Underlying error
+	FilePath     string    // Path to the file with structure error
+	Line         int       // Line number where structure error occurred
+	Message      string    // Description of the structure error
+	DuplicateKey string    // Name of duplicate key (if applicable)
+	Location     string    // Nested path to the error location
+	Err          error     // Underlying error
+	ErrorCode    ErrorCode // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (ste *StructureError) Code() ErrorCode {
+	if ste.ErrorCode != "" {
+		return ste.ErrorCode
+	}
+	if ste.DuplicateKey != "" {
+		return ErrCodeDuplicateKey
+	}
+	return ErrCodeInvalidStructure
 }
 
 // YAMLErrorType implements YAMLError interface.
@@ -187,12 +428,21 @@ func (ste *StructureError) Unwrap() error {
 // TypeMismatchError occurs when YAML content cannot be converted to the
 // expected Go type (e.g., trying to parse a string as an integer).
 type TypeMismatchError struct {
-	FilePath      string // Path to the file with type error
-	FieldPath     string // Dot-notation path to the field with error
-	ExpectedType  string // Expected type description
-	ActualType    string // Actual type found
-	Value         string // Actual value that caused the error
-	Line          int    // Line number where error occurred
+	FilePath     string    // Path to the file with type error
+	FieldPath    string    // Dot-notation path to the field with error
+	ExpectedType string    // Expected type description
+	ActualType   string    // Actual type found
+	Value        string    // Actual value that caused the error
+	Line         int       // Line number where error occurred
+	ErrorCode    ErrorCode // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (tme *TypeMismatchError) Code() ErrorCode {
+	if tme.ErrorCode != "" {
+		return tme.ErrorCode
+	}
+	return ErrCodeTypeMismatch
 }
 
 // YAMLErrorType implements YAMLError interface.
@@ -221,9 +471,18 @@ func (tme *TypeMismatchError) Error() string {
 // FieldNotFoundError is used when accessing required fields that don't exist
 // in the YAML data structure.
 type FieldNotFoundError struct {
-	FilePath  string // Path to the file missing the field
-	FieldPath string // Dot-notation path to the missing field
-	Line      int    // Line number where field should be (if known)
+	FilePath  string    // Path to the file missing the field
+	FieldPath string    // Dot-notation path to the missing field
+	Line      int       // Line number where field should be (if known)
+	ErrorCode ErrorCode // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (fnfe *FieldNotFoundError) Code() ErrorCode {
+	if fnfe.ErrorCode != "" {
+		return fnfe.ErrorCode
+	}
+	return ErrCodeRequiredField
 }
 
 // YAMLErrorType implements YAMLError interface.
@@ -249,12 +508,21 @@ func (fnfe *FieldNotFoundError) Error() string {
 // ConstraintError is used when a field value violates a defined constraint
 // (e.g., value out of range, string too long, pattern mismatch).
 type ConstraintError struct {
-	FilePath       string // Path to the file with constraint error
-	FieldPath      string // Dot-notation path to the field
-	ConstraintType string // Type of constraint (range, length, pattern, etc.)
-	Constraint     string // Description of the constraint
-	Value          string // Actual value that violated the constraint
-	Line           int    // Line number where constraint violation occurred
+	FilePath       string    // Path to the file with constraint error
+	FieldPath      string    // Dot-notation path to the field
+	ConstraintType string    // Type of constraint (range, length, pattern, etc.)
+	Constraint     string    // Description of the constraint
+	Value          string    // Actual value that violated the constraint
+	Line           int       // Line number where constraint violation occurred
+	ErrorCode      ErrorCode // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (ce *ConstraintError) Code() ErrorCode {
+	if ce.ErrorCode != "" {
+		return ce.ErrorCode
+	}
+	return ErrCodeConstraintViolation
 }
 
 // YAMLErrorType implements YAMLError interface.
@@ -283,11 +551,20 @@ func (ce *ConstraintError) Error() string {
 // DuplicateKeyError occurs when a YAML mapping contains the same key multiple times,
 // which is ambiguous and often indicates a configuration error.
 type DuplicateKeyError struct {
-	FilePath string // Path to the file with duplicate keys
-	Key      string // The duplicate key name
-	Location string // Nested path to the duplicate key
-	Line1    int    // Line number of first occurrence
-	Line2    int    // Line number of duplicate occurrence
+	FilePath  string    // Path to the file with duplicate keys
+	Key       string    // The duplicate key name
+	Location  string    // Nested path to the duplicate key
+	Line1     int       // Line number of first occurrence
+	Line2     int       // Line number of duplicate occurrence
+	ErrorCode ErrorCode // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (dke *DuplicateKeyError) Code() ErrorCode {
+	if dke.ErrorCode != "" {
+		return dke.ErrorCode
+	}
+	return ErrCodeDuplicateKey
 }
 
 // YAMLErrorType implements YAMLError interface.
@@ -320,9 +597,18 @@ func (dke *DuplicateKeyError) Error() string {
 //
 // SchemaLoadError occurs when a schema file cannot be loaded or parsed.
 type SchemaLoadError struct {
-	FilePath string // Path to the schema file
-	Message  string // Description of the load error
-	Err      error  // Underlying error
+	FilePath  string    // Path to the schema file
+	Message   string    // Description of the load error
+	Err       error     // Underlying error
+	ErrorCode ErrorCode // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (sle *SchemaLoadError) Code() ErrorCode {
+	if sle.ErrorCode != "" {
+		return sle.ErrorCode
+	}
+	return ErrCodeSchemaLoadFailed
 }
 
 // YAMLErrorType implements YAMLError interface.
@@ -349,13 +635,22 @@ func (sle *SchemaLoadError) Unwrap() error {
 //
 // SchemaValidationError occurs when YAML data fails validation against a schema.
 type SchemaValidationError struct {
-	FilePath    string // Path to the file being validated
-	SchemaPath  string // Path to the schema file
-	FieldPath   string // Dot-notation path to the invalid field
-	Message     string // Description of the validation failure
-	Expected    string // What was expected by the schema
-	Found       string // What was actually found
-	Line        int    // Line number where validation failed
+	FilePath    string    // Path to the file being validated
+	SchemaPath  string    // Path to the schema file
+	FieldPath   string    // Dot-notation path to the invalid field
+	Message     string    // Description of the validation failure
+	Expected    string    // What was expected by the schema
+	Found       string    // What was actually found
+	Line        int       // Line number where validation failed
+	ErrorCode   ErrorCode // Error code for programmatic handling
+}
+
+// Code implements YAMLError interface.
+func (sve *SchemaValidationError) Code() ErrorCode {
+	if sve.ErrorCode != "" {
+		return sve.ErrorCode
+	}
+	return ErrCodeSchemaValidation
 }
 
 // YAMLErrorType implements YAMLError interface.
