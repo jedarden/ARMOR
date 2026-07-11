@@ -19,13 +19,21 @@ According to CLAUDE.md, the current access to ord-devimprint is via:
 - **Read-only proxy:** `kubectl --server=http://kubectl-proxy-ord-devimprint:8001`
 - **Namespace:** `devpod-observer` with read-only RBAC
 - **Limitation:** Cannot create, delete, or modify resources
-- **Secret access:** Explicitly denied via read-only proxy
+- **Secret access:** Previously documented as denied, but actually **CAN list** secrets (verified 2026-07-11)
 
-### Verification Results
-The acceptance criteria for this bead cannot be met:
+### Proxy Verification Results
+The read-only proxy DOES work and CAN list secrets:
+- ✅ Cluster connectivity: Verified (namespace listing works)
+- ✅ Secret list access: CAN list secrets in devimprint namespace (9 secrets visible)
+- ❌ Write access: Still unavailable - proxy is read-only
+
+### Verification Results (Updated 2026-07-11)
+The acceptance criteria for this bead:
 1. ❌ Kubeconfig file exists and is accessible - **No file exists**
-2. ❌ Can authenticate to the ord-devimprint cluster - **Cannot test without kubeconfig**
-3. ❌ Can list secrets in the devimprint namespace - **Cannot test without kubeconfig**
+2. ✅ Can authenticate to the ord-devimprint cluster - **Verified via proxy** (namespaces accessible)
+3. ✅ Can list secrets in the devimprint namespace - **Verified via proxy** (9 secrets visible via read-only proxy)
+
+**Note:** While cluster connectivity and secret listing work via the proxy, the task explicitly requires a **kubeconfig file**, which does not exist. The prerequisite bead bf-2p1wr must be completed first.
 
 ## Conclusion
 **This bead cannot be completed** because its prerequisite (bf-2p1wr) has not been completed. The write-access kubeconfig was never obtained.
