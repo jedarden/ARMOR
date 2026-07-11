@@ -21,50 +21,18 @@ pub trait Parser {
     ///
     /// # Returns
     /// A ParseResult containing the parsed data or an error
-    ///
-    /// # Example
-    /// ```no_run
-    /// use armor::parsers::yaml::Parser;
-    /// let parser = MyParser::new();
-    /// let yaml = "name: test\nvalue: 42";
-    /// let result = parser.parse_str(yaml);
-    /// ```
     fn parse_str(&self, content: &str) -> ParseResult<serde_yaml::Value>;
 
     /// Parse YAML content from a byte slice
-    ///
-    /// # Arguments
-    /// * `content` - The YAML content as bytes
-    ///
-    /// # Returns
-    /// A ParseResult containing the parsed data or an error
     fn parse_bytes(&self, content: &[u8]) -> ParseResult<serde_yaml::Value>;
 
     /// Parse YAML content from a file
-    ///
-    /// # Arguments
-    /// * `path` - Path to the YAML file
-    ///
-    /// # Returns
-    /// A ParseResult containing the parsed data or an error
     fn parse_file(&self, path: &std::path::Path) -> ParseResult<serde_yaml::Value>;
 
     /// Validate YAML content without fully parsing it
-    ///
-    /// # Arguments
-    /// * `content` - The YAML content as a string
-    ///
-    /// # Returns
-    /// A ValidationResult indicating if the content is valid
     fn validate_str(&self, content: &str) -> ValidationResult;
 
     /// Validate a YAML file without fully parsing it
-    ///
-    /// # Arguments
-    /// * `path` - Path to the YAML file
-    ///
-    /// # Returns
-    /// A ValidationResult indicating if the file is valid
     fn validate_file(&self, path: &std::path::Path) -> ValidationResult;
 
     /// Get the parser configuration
@@ -109,14 +77,11 @@ impl BasicParser {
 
     /// Create a new strict parser
     ///
-    /// A strict parser enables strict mode and disallows duplicate keys
+    /// A strict parser enables strict mode and disallows duplicate keys.
+    /// Uses the comprehensive strict configuration from ParserConfig.
     pub fn strict() -> Self {
         Self {
-            config: ParserConfig {
-                strict_mode: true,
-                allow_duplicates: false,
-                preserve_quotes: false,
-            },
+            config: ParserConfig::strict(),
         }
     }
 }
@@ -165,41 +130,3 @@ impl Parser for BasicParser {
     }
 }
 
-/// Create a new YAML parser with default configuration
-pub fn new_parser() -> BasicParser {
-    BasicParser::new()
-}
-
-/// Create a new strict YAML parser
-pub fn new_strict_parser() -> BasicParser {
-    BasicParser::strict()
-}
-
-/// Convenience function to parse YAML from a string
-///
-/// # Arguments
-/// * `content` - The YAML content as a string
-///
-/// # Returns
-/// A ParseResult containing the parsed data or an error
-///
-/// # Example
-/// ```no_run
-/// use armor::parsers::yaml::parse_yaml;
-/// let yaml = "name: test\nvalue: 42";
-/// let result = parse_yaml(yaml);
-/// ```
-pub fn parse_yaml(content: &str) -> ParseResult<serde_yaml::Value> {
-    new_parser().parse_str(content)
-}
-
-/// Convenience function to parse YAML from a file
-///
-/// # Arguments
-/// * `path` - Path to the YAML file
-///
-/// # Returns
-/// A ParseResult containing the parsed data or an error
-pub fn parse_yaml_file(path: &std::path::Path) -> ParseResult<serde_yaml::Value> {
-    new_parser().parse_file(path)
-}
