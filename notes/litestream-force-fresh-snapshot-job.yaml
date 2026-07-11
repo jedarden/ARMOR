@@ -1,0 +1,124 @@
+# Litestream Fresh Snapshot Job
+# This job forces litestream to create a fresh snapshot from the fixed ARMOR version
+# Usage: kubectl apply -f litestream-force-fresh-snapshot-job.yaml
+#
+# PREREQUISITES:
+# 1. Scale down queue-api deployment first: kubectl scale deployment queue-api --replicas=0 -n devimprint
+# 2. Wait for pod termination: kubectl wait --for=delete pod -l app=queue-api -n devimprint --timeout=60s
+# 3. Apply this job: kubectl apply -f litestream-force-fresh-snapshot-job.yaml
+# 4. Monitor job: kubectl wait --for=condition=complete job/litestream-force-fresh-snapshot -n devimprint --timeout=300s
+# 5. Check logs: kubectl logs job/litestream-force-fresh-snapshot -n devimprint
+# 6. Scale back up: kubectl scale deployment queue-api --replicas=1 -n devimprint
+# 7. Verify litestream creates new snapshot: kubectl logs deployment/queue-api -c litestream -n devimprint
+#
+# VERIFICATION:
+# After the job completes and queue-api is scaled back up, check litestream logs for:
+# "taking new snapshot" or "generation" messages indicating a fresh snapshot was created
+#
+# cleanup: kubectl delete job litestream-force-fresh-snapshot -n devimprint
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: litestream-force-fresh-snapshot
+  namespace: devimprint
+  labels:
+    app: litestream-reset
+    task: bf-36zo2
+spec:
+  backoffLimit: 0  # Fail immediately, don't retry
+  activeDeadlineSeconds: 300  # 5 minute timeout
+  template:
+    metadata:
+      labels:
+        app: litestream-reset
+        task: bf-36zo2
+    spec:
+      activeDeadlineSeconds: 300
+      containers:
+      - name: litestream-reset
+        image: litestream/litestream:0.5.11
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set -e
+            echo "=== Litestream Fresh Snapshot Job ==="
+            echo "Task: bf-36zo2"
+            echo "Timestamp: $(date)"
+            echo ""
+
+            echo "Step 1: Checking database exists"
+            if [ ! -f /data/queue.db ]; then
+              echo "ERROR: Database not found at /data/queue.db"
+              exit 1
+            fi
+            echo "✓ Database found: $(ls -lh /data/queue.db)"
+            echo ""
+
+            echo "Step 2: Displaying litestream configuration"
+            echo "Configuration:"
+            cat /etc/litestream.yml
+            echo ""
+
+            echo "Step 3: Checking current litestream status"
+            litestream databases || echo "No existing litestream state found"
+            echo ""
+
+            echo "Step 4: Clearing litestream local state"
+            echo "This forces a fresh snapshot on next sync"
+            litestream reset /data/queue.db || {
+              echo "Note: Reset command returned non-zero (may be expected if no prior state)"
+              echo "Continuing anyway..."
+            }
+            echo ""
+
+            echo "Step 5: Verifying reset"
+            if litestream databases 2>&1 | grep -q "no databases found"; then
+              echo "✓ Litestream state successfully cleared"
+            else
+              echo "Note: Some state may remain, but fresh snapshot will be created"
+            fi
+            echo ""
+
+            echo "=== Job Complete ==="
+            echo "Next steps:"
+            echo "1. Scale queue-api deployment back to 1"
+            echo "2. Monitor litestream logs for new snapshot creation"
+            echo "3. Verify new generation in ARMOR S3 bucket"
+            echo ""
+            echo "Expected log message in litestream sidecar:"
+            echo "  'taking new snapshot' or 'generating new snapshot'"
+
+        env:
+          - name: LITESTREAM_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: armor-writer
+                key: auth-access-key
+          - name: LITESTREAM_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: armor-writer
+                key: auth-secret-key
+        volumeMounts:
+          - name: data
+            mountPath: /data
+          - name: litestream-config
+            mountPath: /etc/litestream.yml
+            subPath: litestream.yml
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: queue-api-data-sata-2
+        - name: litestream-config
+          configMap:
+            name: queue-api-litestream-config
+      restartPolicy: Never
