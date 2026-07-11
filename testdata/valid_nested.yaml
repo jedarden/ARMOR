@@ -1,0 +1,25 @@
+# Nested structures and lists
+database:
+  host: localhost
+  port: 5432
+  credentials:
+    username: admin
+    password: secret
+
+servers:
+  - name: web1
+    ip: 10.0.0.1
+    roles:
+      - web
+      - cache
+  - name: db1
+    ip: 10.0.0.2
+    roles:
+      - database
+      - backup
+
+metadata:
+  created: 2024-01-15T10:30:00Z
+  tags:
+    environment: production
+    tier: frontend

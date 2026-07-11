@@ -1590,6 +1590,126 @@ func TestListPartsNotFound(t *testing.T) {
 	}
 }
 
+// TestEmptyBucketRendering tests that listing an empty bucket returns valid XML
+// with no objects and doesn't cause any errors.
+func TestEmptyBucketRendering(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
+
+	// Verify the backend starts empty
+	mb.mu.Lock()
+	initialObjectCount := len(mb.objects)
+	mb.mu.Unlock()
+
+	if initialObjectCount != 0 {
+		t.Errorf("expected empty backend, got %d objects", initialObjectCount)
+	}
+
+	// List objects in the empty bucket
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2", nil)
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	// Should return 200 OK even for empty bucket
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 for empty bucket, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify Content-Type is XML
+	if w.Header().Get("Content-Type") != "application/xml" {
+		t.Errorf("expected Content-Type application/xml, got %s", w.Header().Get("Content-Type"))
+	}
+
+	// Parse XML response
+	var result struct {
+		XMLName       xml.Name `xml:"ListBucketResult"`
+		Name          string   `xml:"Name"`
+		Prefix        string   `xml:"Prefix"`
+		MaxKeys       int      `xml:"MaxKeys"`
+		IsTruncated   bool     `xml:"IsTruncated"`
+		Contents      []struct {
+			Key  string `xml:"Key"`
+			Size int64  `xml:"Size"`
+		} `xml:"Contents"`
+		CommonPrefixes []struct {
+			Prefix string `xml:"Prefix"`
+		} `xml:"CommonPrefixes"`
+	}
+
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse XML response: %v\nResponse body: %s", err, w.Body.String())
+	}
+
+	// Verify basic response fields
+	if result.Name != "test-bucket" {
+		t.Errorf("expected bucket name 'test-bucket', got '%s'", result.Name)
+	}
+
+	if result.MaxKeys != 1000 {
+		t.Errorf("expected MaxKeys 1000, got %d", result.MaxKeys)
+	}
+
+	if result.IsTruncated {
+		t.Error("expected IsTruncated to be false for empty bucket")
+	}
+
+	// Empty bucket should have no objects
+	if len(result.Contents) != 0 {
+		t.Errorf("expected 0 objects in empty bucket, got %d", len(result.Contents))
+	}
+
+	// Empty bucket should have no common prefixes
+	if len(result.CommonPrefixes) != 0 {
+		t.Errorf("expected 0 common prefixes in empty bucket, got %d", len(result.CommonPrefixes))
+	}
+
+	// Verify response is well-formed XML
+	if !strings.HasPrefix(w.Body.String(), `<?xml version="1.0" encoding="UTF-8"?>`) {
+		t.Error("expected XML declaration in response")
+	}
+
+	// Test with prefix filter on empty bucket
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&prefix=data/", nil)
+	w = httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 for empty bucket with prefix, got %d", w.Code)
+	}
+
+	// Parse and verify empty response with prefix
+	var prefixResult struct {
+		Prefix   string `xml:"Prefix"`
+		Contents []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+	}
+
+	if err := xml.Unmarshal(w.Body.Bytes(), &prefixResult); err != nil {
+		t.Fatalf("failed to parse XML with prefix: %v", err)
+	}
+
+	if prefixResult.Prefix != "data/" {
+		t.Errorf("expected prefix 'data/', got '%s'", prefixResult.Prefix)
+	}
+
+	if len(prefixResult.Contents) != 0 {
+		t.Errorf("expected 0 objects with prefix filter on empty bucket, got %d", len(prefixResult.Contents))
+	}
+
+	// Test with delimiter on empty bucket
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket?list-type=2&delimiter=/", nil)
+	w = httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 for empty bucket with delimiter, got %d", w.Code)
+	}
+}
+
 // TestConditionalRequests tests If-Match, If-None-Match, If-Modified-Since, If-Unmodified-Since
 func TestConditionalRequests(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)

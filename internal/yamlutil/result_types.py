@@ -235,6 +235,30 @@ class Result(Generic[T]):
             return self.data  # type: ignore
         return default
 
+    def unwrap(self) -> T:
+        """
+        Get the data, raising an exception if the operation failed.
+
+        This method is for cases where you expect success and want
+        explicit error handling via exceptions when expectations aren't met.
+
+        Returns:
+            The data value on success
+
+        Raises:
+            ValueError: If status is ERROR, with the error message
+
+        Example:
+            result = Result.success({"key": "value"})
+            data = result.unwrap()  # {"key": "value"}
+
+            result = Result.error("Parse error")
+            data = result.unwrap()  # Raises ValueError("Parse error")
+        """
+        if self.is_success():
+            return self.data  # type: ignore
+        raise ValueError(self.error or "Operation failed")
+
     def get_error(self) -> Optional[str]:
         """
         Get the error message if present.
