@@ -597,3 +597,103 @@ func Example_mustParseFile() {
 	parser.MustParseFile("nonexistent.yaml", &data)
 	// Output: Panicked as expected for missing file
 }
+
+// Example_anchorsAndAliases demonstrates working with YAML anchors and aliases.
+func Example_anchorsAndAliases() {
+	// Parse YAML with anchors and aliases
+	data, err := ParseYAML("testdata/valid_anchors.yaml")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Access values that use anchor defaults
+	timeout := GetInt(data, "server.timeout", 30)
+	retries := GetInt(data, "server.retries", 3)
+	fmt.Printf("Server config: timeout=%d, retries=%d\n", timeout, retries)
+
+	// Access another server with same defaults
+	host2 := GetString(data, "server2.host", "")
+	ssl2 := GetBool(data, "server2.ssl", false)
+	fmt.Printf("Server2: %s (SSL: %v)\n", host2, ssl2)
+
+	// Database also shares the same defaults
+	dbPort := GetInt(data, "database.port", 0)
+	poolSize := GetInt(data, "database.pool_size", 0)
+	fmt.Printf("Database: port=%d, pool_size=%d\n", dbPort, poolSize)
+	// Output:
+	// Server config: timeout=30, retries=3
+	// Server2: remote.example.com (SSL: true)
+	// Database: port=5432, pool_size=10
+}
+
+// Example_multilineStrings demonstrates working with multiline YAML strings.
+func Example_multilineStrings() {
+	// Parse YAML with multiline strings
+	data, err := ParseYAML("testdata/valid_multiline.yaml")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Access literal block scalar (preserves formatting)
+	description := GetString(data, "description", "")
+	fmt.Printf("Description (literal): %q\n", description)
+
+	// Access folded block scalar (newlines become spaces)
+	folded := GetString(data, "folded_string", "")
+	fmt.Printf("Folded: %q\n", folded)
+
+	// Access nested multiline string
+	nestedKey := GetString(data, "nested.key", "")
+	fmt.Printf("Nested key: %q\n", nestedKey)
+
+	// Multiline script
+	script := GetString(data, "config.script", "")
+	if len(script) > 0 {
+		fmt.Println("Script found with", len(script), "characters")
+	}
+	// Output:
+	// Description (literal): "This is a multiline string\nthat preserves formatting\nand newlines.\nIndentation is preserved.\n"
+	// Folded: "This is a folded string that will be joined into a single line with spaces.\n"
+	// Nested key: "Multiline in nested structure\nSecond line\nThird line\n"
+	// Script found with 32 characters
+}
+
+// Example_commentsInYAML demonstrates handling YAML files with comments.
+func Example_commentsInYAML() {
+	// Parse YAML with comments (comments are ignored during parsing)
+	data, err := ParseYAML("testdata/valid_comments_anchors.yaml")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Comments are not included in the parsed data
+	name := GetString(data, "application.name", "")
+	fmt.Printf("Application: %s\n", name)
+	// Output: Application: myapp
+}
+
+// Example_listAccess demonstrates accessing and working with list fields.
+func Example_listAccess() {
+	data, err := ParseYAML("testdata/valid_list.yaml")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Access items list
+	items, ok := data["items"].([]interface{})
+	if !ok {
+		log.Fatal("items is not a list")
+	}
+
+	// Iterate through list items
+	for i, item := range items {
+		if itemMap, ok := item.(map[string]interface{}); ok {
+			name := GetString(itemMap, "name", "")
+			fmt.Printf("Item %d: %s\n", i, name)
+		}
+	}
+	// Output:
+	// Item 0: first
+	// Item 1: second
+	// Item 2: third
+}
