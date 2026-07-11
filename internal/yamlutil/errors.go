@@ -551,6 +551,13 @@ func NewValidationError(filePath string, message string, fieldPath string, const
 		eType = ErrorTypeValidation
 	}
 
+	// Handle nil/empty path: use fieldPath as fallback if path is empty
+	// This ensures the Path field is populated when available
+	validPath := path
+	if validPath == "" && fieldPath != "" {
+		validPath = fieldPath
+	}
+
 	return &ValidationError{
 		FilePath:   filePath,
 		Message:    message,
@@ -560,7 +567,7 @@ func NewValidationError(filePath string, message string, fieldPath string, const
 		Line:       line,
 		Column:     column,
 		Type:       eType,
-		Path:       path,
+		Path:       validPath,
 	}
 }
 
