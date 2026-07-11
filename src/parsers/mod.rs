@@ -3,7 +3,9 @@
 //! This module defines generic parsing interfaces and implementations
 //! for different data formats.
 
+pub mod config;
 pub mod yaml;
 
 mod traits;
+pub use config::{ParserConfig, ParserMode, ParserConfigBuilder, TypeConstructor, ValidationHook};
 pub use traits::{Parser, ParseOptions, ParseMetadata, StreamingParser, IncrementalParser};
