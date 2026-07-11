@@ -1,47 +1,154 @@
-# Task bf-37mxj: Obtain S3 credentials from ord-devimprint cluster
+# bf-37mxj: S3 Credentials from ord-devimprint Cluster
 
-## Status: BLOCKED - Cannot complete without required access
+**Task:** Obtain S3 credentials from ord-devimprint cluster  
+**Date:** 2026-07-11  
+**Status:** BLOCKED - Insufficient Access Permissions
 
-## What I Found
+## Objective
 
-### Target Secret
-- **Name:** `armor-writer` 
-- **Namespace:** `devimprint`
-- **Keys:** `auth-access-key` and `auth-secret-key`
-- **Synced from:** OpenBao path `rs-manager/ord-devimprint/armor-writer`
-- **ExternalSecret:** Defined in `/home/coding/declarative-config/k8s/ord-devimprint/devimprint/devimprint-externalsecrets.yml`
+Retrieve `LITESTREAM_ACCESS_KEY_ID` and `LITESTREAM_SECRET_ACCESS_KEY` from the `armor-writer` secret in the `devimprint` namespace on the ord-devimprint cluster.
 
-### Access Blockers
-1. **Read-only proxy:** The kubectl proxy at `http://kubectl-proxy-ord-devimprint:8001` uses serviceaccount `devpod-observer:devpod-observer` with read-only RBAC that explicitly denies secret access
-2. **No kubeconfig:** No kubeconfig file exists for ord-devimprint cluster with write access
-   - Checked: `/home/coding/.kube/*.kubeconfig` - only `iad-acb.kubeconfig` and `iad-ci.kubeconfig` exist
-   - Ord-devimprint cluster access is only available via read-only proxy
+## Analysis
 
-### What Was Attempted
-1. ✅ Verified secret exists: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint` → Forbidden (expected)
-2. ✅ Found ExternalSecret configuration showing the secret syncs from OpenBao
-3. ✅ Located OpenBao service on rs-manager cluster (`openbao-rs-manager:8200`)
-4. ❌ Cannot access OpenBao directly (no kubeconfig with secret access to rs-manager)
-5. ❌ No local cache of credentials in `.env` files or documentation
+### Target Secret Location
 
-## What Is Needed
+The secret is an ExternalSecret that pulls from OpenBao:
 
-To complete this task, one of the following is required:
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: armor-writer
+  namespace: devimprint
+spec:
+  data:
+    - secretKey: auth-access-key
+      remoteRef:
+        key: rs-manager/ord-devimprint/armor-writer
+        property: auth-access-key
+    - secretKey: auth-secret-key
+      remoteRef:
+        key: rs-manager/ord-devimprint/armor-writer
+        property: auth-secret-key
+```
 
-1. **Ord-devimprint kubeconfig with write access** - A kubeconfig file that allows secret access in the devimprint namespace
-2. **Alternative access path** - Direct OpenBao access with permissions to read `rs-manager/ord-devimprint/armor-writer`
-3. **Cached credentials** - If credentials were previously retrieved and cached locally
+The secret contains:
+- `auth-access-key` → `LITESTREAM_ACCESS_KEY_ID`
+- `auth-secret-key` → `LITESTREAM_SECRET_ACCESS_KEY`
 
-## Correct Environment Variable Names
+### Access Constraints
 
-Based on the ExternalSecret configuration:
-- Secret key: `auth-access-key` → should map to `LITESTREAM_ACCESS_KEY_ID`
-- Secret key: `auth-secret-key` → should map to `LITESTREAM_SECRET_ACCESS_KEY`
+#### ord-devimprint Cluster
+- **Available Access:** Read-only kubectl proxy at `http://kubectl-proxy-ord-devimprint:8001`
+- **Limitation:** Explicitly denies secrets access
+- **No Kubeconfig:** No direct kubeconfig available for ord-devimprint
 
-The job manifest in `/home/coding/ARMOR/notes/litestream-force-fresh-snapshot-job.yaml` shows the correct mapping.
+#### rs-manager Cluster (OpenBao host)
+- **Expected Location:** `/home/coding/.kube/rs-manager.kubeconfig`
+- **Status:** File does not exist
+- **Impact:** Cannot access OpenBao directly to retrieve credentials
+
+### Blocked Attempts
+
+1. **Read-only kubectl proxy:**
+   ```bash
+   kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
+     get secret armor-writer -n devimprint
+   ```
+   Result: `Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"`
+
+2. **Direct kubeconfig access:**
+   - No ord-devimprint kubeconfig available
+   - No rs-manager kubeconfig available
+
+3. **Alternative access methods:**
+   - No cached credentials in restore environment
+   - No OpenBao direct access available
+
+## Required Access
+
+To complete this task, one of the following is needed:
+
+### Option 1: ord-devimprint Kubeconfig
+A kubeconfig with secret access to ord-devimprint cluster:
+```bash
+kubectl get secret armor-writer -n devimprint -o jsonpath='{.data.auth-access-key}' | base64 -d
+kubectl get secret armor-writer -n devimprint -o jsonpath='{.data.auth-secret-key}' | base64 -d
+```
+
+### Option 2: rs-manager Kubeconfig
+Access to rs-manager cluster to query OpenBao directly:
+```bash
+# OpenBao API access (requires cluster connectivity)
+vault kv get -field=auth-access-key rs-manager/ord-devimprint/armor-writer
+vault kv get -field=auth-secret-key rs-manager/ord-devimprint/armor-writer
+```
+
+### Option 3: Manual Credential Provisioning
+Cluster administrator provides credentials directly.
+
+## Acceptance Criteria Status
+
+| Criteria | Status |
+|----------|--------|
+| LITESTREAM_ACCESS_KEY_ID environment variable set | ❌ BLOCKED |
+| LITESTREAM_SECRET_ACCESS_KEY environment variable set | ❌ BLOCKED |
+| Credentials validated (S3 authentication) | ❌ BLOCKED |
+
+## Related Context
+
+This task is related to database restore verification (bf-69ix4), which requires the same credentials. The restore verification infrastructure is complete but blocked on credential access.
+
+## Resolution Path
+
+To unblock this task:
+
+1. **Obtain ord-devimprint kubeconfig** with secret access permissions
+2. **Obtain rs-manager kubeconfig** to access OpenBao directly
+3. **Request credentials** from cluster administrator
+4. **Create cached credentials** in test environment after initial retrieval
+
+## Technical Details
+
+### Secret Structure
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: armor-writer
+  namespace: devimprint
+type: Opaque
+data:
+  auth-access-key: <base64-encoded>
+  auth-secret-key: <base64-encoded>
+```
+
+### Environment Variable Mapping
+```bash
+export LITESTREAM_ACCESS_KEY_ID="<auth-access-key value>"
+export LITESTREAM_SECRET_ACCESS_KEY="<auth-secret-key value>"
+```
+
+### Usage Context
+These credentials are used by:
+- Litestream backup/restore operations
+- ARMOR S3 authentication
+- queue-api database backup verification
+- DevImprint production database restore testing
+
+## Conclusion
+
+**Task Status:** INCOMPLETE - Access Blocker
+
+The credentials cannot be retrieved with current access permissions. The task requires cluster administrator intervention to provide either:
+1. A kubeconfig with appropriate permissions
+2. The credentials directly
+3. Access to the rs-manager cluster (OpenBao host)
+
+All infrastructure and retrieval commands are ready for immediate execution once access is granted.
 
 ## References
 
 - ExternalSecret config: `/home/coding/declarative-config/k8s/ord-devimprint/devimprint/devimprint-externalsecrets.yml`
-- Cluster secret setup: `/home/coding/declarative-config/k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml`
-- Usage example: `/home/coding/ARMOR/notes/litestream-force-fresh-snapshot-job.yaml`
+- Related verification task: `/home/coding/ARMOR/notes/bf-69ix4.md`
+- Cluster documentation: `/home/coding/CLAUDE.md`
