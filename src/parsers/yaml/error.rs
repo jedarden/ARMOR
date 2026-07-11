@@ -1,11 +1,64 @@
 //! Error types for YAML parsing
 //!
 //! This module defines the error types used throughout the YAML parser.
+//!
+//! # Error Propagation Strategy
+//!
+//! The `ParseError` type is designed to work seamlessly with Rust's error propagation
+//! mechanisms. It implements `From` for common error types, enabling the use of the `?`
+//! operator for automatic error conversion.
+//!
+//! ## Basic Propagation with `?`
+//!
+//! ```ignore
+//! use armor::parsers::yaml::{ParseError, Result};
+//!
+//! fn parse_config(path: &Path) -> Result<Config> {
+//!     let content = std::fs::read_to_string(path)?;  // io::Error → ParseError
+//!     parse_yaml(&content)
+//! }
+//! ```
+//!
+//! ## Adding Context with `.context()`
+//!
+//! Use the builder-style `.context()` method to add contextual information:
+//!
+//! ```ignore
+//! fn parse_database_config(value: &serde_yaml::Value) -> Result<DatabaseConfig> {
+//!     let port = value["port"]
+//!         .as_i64()
+//!         .ok_or_else(|| ParseError::type_mismatch("port", "integer", "null"))
+//!         .context("while parsing database configuration")?;
+//!
+//!     Ok(DatabaseConfig { port })
+//! }
+//! ```
+//!
+//! ## Converting from Other Error Types
+//!
+//! `ParseError` implements `From` for:
+//! - `std::io::Error` → `ParseErrorKind::Io`
+//! - `serde_yaml::Error` → Appropriate `ParseErrorKind` based on error classification
+//! - `std::str::Utf8Error` → `ParseErrorKind::InvalidUtf8`
+//! - `std::string::FromUtf8Error` → `ParseErrorKind::InvalidUtf8`
+//!
+//! ## Custom Error Creation
+//!
+//! For domain-specific errors, create them directly:
+//!
+//! ```ignore
+//! fn validate_port(port: i64) -> Result<u16> {
+//!     if port < 1 || port > 65535 {
+//!         return Err(ParseError::validation("port must be between 1 and 65535"));
+//!     }
+//!     Ok(port as u16)
+//! }
+//! ```
 
 use std::fmt;
 
 /// Main error type for YAML parsing operations
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct ParseError {
     /// The kind of error that occurred
     pub kind: ParseErrorKind,
@@ -23,6 +76,26 @@ pub struct ParseError {
 
 impl ParseError {
     /// Create a new ParseError with the given kind
+    ///
+    /// This is the base constructor for creating a ParseError. All fields except
+    /// `kind` are set to their default values (None or empty). Use the builder methods
+    /// to add additional context and location information.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::{ParseError, ParseErrorKind};
+    ///
+    /// let error = ParseError::new(ParseErrorKind::UnexpectedEof);
+    /// assert!(matches!(error.kind, ParseErrorKind::UnexpectedEof));
+    /// assert_eq!(error.line, None);
+    /// ```
+    ///
+    /// For common error types, prefer using the convenience constructors:
+    /// - [`ParseError::syntax()`] for syntax errors
+    /// - [`ParseError::io()`] for I/O errors
+    /// - [`ParseError::validation()`] for validation errors
+    /// - [`ParseError::type_mismatch()`] for type mismatch errors
     pub fn new(kind: ParseErrorKind) -> Self {
         Self {
             kind,
@@ -35,36 +108,119 @@ impl ParseError {
     }
 
     /// Set the line number for this error
+    ///
+    /// Line numbers are 1-indexed, matching typical text editor conventions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// let error = ParseError::syntax("invalid token")
+    ///     .with_line(42);
+    /// assert_eq!(error.line, Some(42));
+    /// ```
     pub fn with_line(mut self, line: usize) -> Self {
         self.line = Some(line);
         self
     }
 
     /// Set the column number for this error
+    ///
+    /// Column numbers are 1-indexed, indicating the character position within the line.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// let error = ParseError::syntax("invalid token")
+    ///     .with_column(15);
+    /// assert_eq!(error.column, Some(15));
+    /// ```
     pub fn with_column(mut self, column: usize) -> Self {
         self.column = Some(column);
         self
     }
 
     /// Set the file/source path for this error
+    ///
+    /// The path can be absolute or relative. It's displayed in error messages to help
+    /// users locate the source of the error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// let error = ParseError::syntax("invalid YAML")
+    ///     .with_path("config/services.yaml");
+    /// assert_eq!(error.path, Some("config/services.yaml".to_string()));
+    /// ```
     pub fn with_path(mut self, path: impl Into<String>) -> Self {
         self.path = Some(path.into());
         self
     }
 
     /// Set the code snippet for this error
+    ///
+    /// The snippet should contain the relevant lines of source code where the error occurred.
+    /// This is displayed in detailed error reports to help users understand the context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// let error = ParseError::syntax("invalid port value")
+    ///     .with_line(5)
+    ///     .with_snippet("service:\n  name: web\n  port: abc");
+    ///
+    /// let report = error.detailed_report();
+    /// assert!(report.contains("service:"));
+    /// assert!(report.contains("port: abc"));
+    /// ```
     pub fn with_snippet(mut self, snippet: impl Into<String>) -> Self {
         self.snippet = Some(snippet.into());
         self
     }
 
     /// Set the context message for this error
+    ///
+    /// Context provides additional information about what operation was being performed
+    /// when the error occurred. This helps users understand the broader scenario.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// let error = ParseError::validation("port out of range")
+    ///     .with_context("while parsing database configuration");
+    ///
+    /// let summary = error.summary();
+    /// assert!(summary.contains("while parsing database configuration"));
+    /// ```
     pub fn with_context(mut self, context: impl Into<String>) -> Self {
         self.context = context.into();
         self
     }
 
     /// Set both line and column for this error
+    ///
+    /// Convenience method for setting location with a single call.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// let error = ParseError::syntax("invalid token")
+    ///     .with_location(10, 25);
+    /// assert_eq!(error.line, Some(10));
+    /// assert_eq!(error.column, Some(25));
+    /// assert_eq!(error.location_string(), "10:25");
+    /// ```
     pub fn with_location(mut self, line: usize, column: usize) -> Self {
         self.line = Some(line);
         self.column = Some(column);
@@ -72,6 +228,35 @@ impl ParseError {
     }
 
     /// Get a formatted location string (e.g., "file.yaml:10:5" or "<unknown>:10")
+    ///
+    /// This method generates a human-readable location string based on the available
+    /// location information (path, line, column). The format adapts based on which fields are set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// // Full location with path, line, and column
+    /// let error = ParseError::syntax("test")
+    ///     .with_path("config.yaml")
+    ///     .with_location(10, 5);
+    /// assert_eq!(error.location_string(), "config.yaml:10:5");
+    ///
+    /// // Line and column only
+    /// let error = ParseError::syntax("test")
+    ///     .with_location(42, 15);
+    /// assert_eq!(error.location_string(), "42:15");
+    ///
+    /// // Path only
+    /// let error = ParseError::syntax("test")
+    ///     .with_path("config.yaml");
+    /// assert_eq!(error.location_string(), "config.yaml");
+    ///
+    /// // Unknown location
+    /// let error = ParseError::syntax("test");
+    /// assert_eq!(error.location_string(), "<unknown>");
+    /// ```
     pub fn location_string(&self) -> String {
         match (&self.path, self.line, self.column) {
             (Some(path), Some(line), Some(col)) => format!("{}:{}:{}", path, line, col),
@@ -86,6 +271,30 @@ impl ParseError {
     }
 
     /// Get a brief summary of the error (single line, suitable for logging)
+    ///
+    /// The summary includes location, error kind, and context (if set). This is ideal
+    /// for logging purposes where a compact, single-line error message is desired.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// // Summary with context
+    /// let error = ParseError::syntax("invalid token")
+    ///     .with_path("config.yaml")
+    ///     .with_line(10)
+    ///     .with_context("while parsing services");
+    /// assert_eq!(error.summary(),
+    ///     "config.yaml:10: syntax error: invalid token - while parsing services");
+    ///
+    /// // Summary without context
+    /// let error = ParseError::syntax("invalid token")
+    ///     .with_path("config.yaml")
+    ///     .with_line(10);
+    /// assert_eq!(error.summary(),
+    ///     "config.yaml:10: syntax error: invalid token");
+    /// ```
     pub fn summary(&self) -> String {
         let location = self.location_string();
         if !self.context.is_empty() {
@@ -96,6 +305,30 @@ impl ParseError {
     }
 
     /// Get a detailed multi-line error report with snippet and visual indicator
+    ///
+    /// This method generates a comprehensive error report suitable for displaying
+    /// to users. It includes the error summary, context (if set), and a code snippet
+    /// with a visual indicator (^) pointing to the error location.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// let error = ParseError::syntax("invalid port value")
+    ///     .with_path("config.yaml")
+    ///     .with_line(5)
+    ///     .with_column(10)
+    ///     .with_context("while parsing service configuration")
+    ///     .with_snippet("service:\n  port: abc");
+    ///
+    /// let report = error.detailed_report();
+    /// assert!(report.contains("error:"));
+    /// assert!(report.contains("config.yaml:5:10"));
+    /// assert!(report.contains("syntax error: invalid port value"));
+    /// assert!(report.contains("while parsing service configuration"));
+    /// assert!(report.contains("snippet:"));
+    /// ```
     pub fn detailed_report(&self) -> String {
         let mut report = String::new();
 
@@ -126,6 +359,26 @@ impl ParseError {
     }
 
     /// Format this error as a structured log entry (JSON-like but readable)
+    ///
+    /// This method produces a structured representation of the error suitable for
+    /// programmatic analysis or structured logging systems.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseError;
+    ///
+    /// let error = ParseError::type_mismatch("port", "integer", "string")
+    ///     .with_path("config.yaml")
+    ///     .with_line(8)
+    ///     .with_column(10);
+    ///
+    /// let formatted = error.format_structured();
+    /// assert!(formatted.contains("ParseError"));
+    /// assert!(formatted.contains("config.yaml:8:10"));
+    /// assert!(formatted.contains("line: Some(8)"));
+    /// assert!(formatted.contains("column: Some(10)"));
+    /// ```
     pub fn format_structured(&self) -> String {
         format!(
             "ParseError {{ kind: {:?}, location: {}, line: {:?}, column: {:?} }}",
@@ -212,6 +465,17 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+impl PartialEq for ParseError {
+    fn eq(&self, other: &Self) -> bool {
+        // Only compare core error identification fields
+        // Context and snippet are NOT included in equality
+        self.kind == other.kind
+            && self.line == other.line
+            && self.column == other.column
+            && self.path == other.path
+    }
+}
 
 impl fmt::Debug for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -312,3 +576,45 @@ impl fmt::Display for ParseErrorKind {
 
 /// Result type alias for parse operations
 pub type Result<T> = std::result::Result<T, ParseError>;
+
+// ============================================================================
+// From implementations for error propagation
+// ============================================================================
+
+impl From<std::io::Error> for ParseError {
+    fn from(err: std::io::Error) -> Self {
+        ParseError::new(ParseErrorKind::Io(err.to_string()))
+    }
+}
+
+impl From<serde_yaml::Error> for ParseError {
+    fn from(err: serde_yaml::Error) -> Self {
+        // Classify serde_yaml errors into appropriate ParseError kinds
+        // based on the error message content
+        let err_msg = err.to_string().to_lowercase();
+
+        let kind = if err_msg.contains("syntax") || err_msg.contains("unexpected") || err_msg.contains("expected") {
+            ParseErrorKind::Syntax(err.to_string())
+        } else if err_msg.contains("duplicate") {
+            ParseErrorKind::DuplicateKey(err.to_string())
+        } else if err_msg.contains("io") || err_msg.contains("failed to read") {
+            ParseErrorKind::Io(err.to_string())
+        } else {
+            ParseErrorKind::Other(err.to_string())
+        };
+
+        ParseError::new(kind)
+    }
+}
+
+impl From<std::str::Utf8Error> for ParseError {
+    fn from(err: std::str::Utf8Error) -> Self {
+        ParseError::new(ParseErrorKind::InvalidUtf8).with_context(err.to_string())
+    }
+}
+
+impl From<std::string::FromUtf8Error> for ParseError {
+    fn from(err: std::string::FromUtf8Error) -> Self {
+        ParseError::new(ParseErrorKind::InvalidUtf8).with_context(err.to_string())
+    }
+}
