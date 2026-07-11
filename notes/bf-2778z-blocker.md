@@ -30,7 +30,7 @@ The dependency bead bf-5vow9 was marked as "completed" despite its notes clearly
 BLOCKED - Cannot proceed without prerequisite completion
 
 ## Verification Attempts
-### 2026-07-11
+### 2026-07-11 12:59 EDT (First attempt)
 Attempted command:
 ```bash
 kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}' | base64 -d
@@ -47,6 +47,10 @@ Confirmed that:
 3. Only available kubeconfigs are `iad-acb.kubeconfig` and `iad-ci.kubeconfig`
 
 Verification comment added to bead (comment #38).
+
+### 2026-07-11 13:00 EDT (Re-verification)
+Re-verified that the blocker persists - same error, no kubeconfig available.
+Prerequisite bead bf-2p1wr remains OPEN.
 
 ## Resolution Path
 Cannot proceed until bead bf-2p1wr is completed with a valid kubeconfig that has secret read permissions.
