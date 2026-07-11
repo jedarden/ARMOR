@@ -39,11 +39,11 @@ func ExampleEnhancedParseError_syntax() {
 
 	// Output:
 	// syntax error in config.yaml at line 5, column 10: expected mapping key, found scalar (expected: mapping key, found: scalar value)
-	//
 	// syntax error in config.yaml at line 5, column 17: expected mapping key, found scalar (expected: mapping key, found: scalar value)
 	//
 	//       credentials: admin
 	//                   ^--- here
+	//
 	// This is a syntax error
 }
 
@@ -91,7 +91,7 @@ func ExampleEnhancedParseError_typeMismatch() {
 	fmt.Println("Value:", err.Detail.Value)
 
 	// Output:
-	// type mismatch error in config.yaml at line 8, field server.port: expected integer, got: string (field: server.port, expected: integer, got: string)
+	// type mismatch error in config.yaml at line 8, field server.port: expected integer, got string (field: server.port, expected: integer, got string)
 	// Expected: integer
 	// Actual: string
 	// Value: "8080"
@@ -311,7 +311,7 @@ func ExampleEnhancedParseError_transformFromYAML() {
 	// Output:
 	// syntax error in data.yaml at line 7, column 12: invalid token (expected: valid YAML token, found: invalid character)
 	//
-	//   host: localhost:port:invalid
+	//     host: localhost:port:invalid
 	//              ^--- here
 	//
 	//   database:
