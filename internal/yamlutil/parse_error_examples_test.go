@@ -40,10 +40,10 @@ func ExampleEnhancedParseError_syntax() {
 	// Output:
 	// syntax error in config.yaml at line 5, column 10: expected mapping key, found scalar (expected: mapping key, found: scalar value)
 	//
-	//   syntax error in config.yaml at line 5, column 10: expected mapping key, found scalar (expected: mapping key, found: scalar value)
+	// syntax error in config.yaml at line 5, column 17: expected mapping key, found scalar (expected: mapping key, found: scalar value)
 	//
-	//       credentials: admin
-	//                    ^--- here
+	//     credentials: admin
+	//                 ^--- here
 	// This is a syntax error
 }
 
@@ -311,6 +311,9 @@ func ExampleEnhancedParseError_transformFromYAML() {
 	// Output:
 	// syntax error in data.yaml at line 7, column 12: invalid token (expected: valid YAML token, found: invalid character)
 	//
+	//   host: localhost:port:invalid
+	//             ^--- here
+	//
 	//   database:
 	//     host: localhost
 	//     port: 5432
@@ -347,12 +350,12 @@ func ExampleEnhancedParseError_richContext() {
 	// Error with rich context:
 	// syntax error in app.yaml at line 8, column 5: incorrect indentation (expected: consistent indentation, found: inconsistent indentation)
 	//
-	//     port: 5432
-	//     ^--- here
+	//       port: 5432
+	//       ^--- here
 	//
 	//   database:
 	//     host: localhost
-	// >   port: 5432
+	// >     port: 5432
 	//     name: mydb
 }
 
