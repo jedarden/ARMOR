@@ -1,50 +1,78 @@
-# bf-2xkyl: S3 Credentials Retrieval - Blocked
+# Blocker: bf-2xkyl - Prerequisite kubeconfig still missing
 
-## Date: 2026-07-11
+## Current Situation
 
-## Blocker Summary
+Attempted to complete bf-2xkyl (Retrieve S3 credentials from armor-writer secret) but cannot proceed due to missing prerequisite.
 
-Cannot retrieve S3 credentials from the `armor-writer` secret in the `devimprint` namespace due to missing prerequisite kubeconfig.
+## Prerequisite Issue
 
-## Current State
+**Bead**: bf-2p1wr (Obtain ord-devimprint kubeconfig with write access)
+**Status**: Closed (incorrectly - actual work incomplete)
+**Required File**: `~/.kube/ord-devimprint.kubeconfig`
+**Actual State**: FILE DOES NOT EXIST
 
-### Available Access Methods
-1. **Read-only proxy** (kubectl-proxy-ord-devimprint:8001)
-   - Explicitly denies access to secrets
-   - Confirmed via error: `User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"`
+## Verification
 
-2. **Kubeconfigs with write access**
-   - Only available: `iad-acb.kubeconfig`, `iad-ci.kubeconfig`
-   - Missing: `rs-manager.kubeconfig`, `ord-devimprint.kubeconfig`
+```bash
+$ ls -la /home/coding/.kube/ord-devimprint.kubeconfig
+ls: cannot access '/home/coding/.kube/ord-devimprint.kubeconfig': No such file or directory
 
-### Prerequisite Status
-- **Child bead bf-2p1wr**: Marked as `closed` but kubeconfig not found
-- **Expected file**: `~/.kube/ord-devimprint.kubeconfig` (or similar)
-- **Actual state**: No kubeconfig file exists for ord-devimprint with write access
+$ find /home/coding/.kube -name "*.kubeconfig"
+/home/coding/.kube/iad-acb.kubeconfig
+/home/coding/.kube/iad-ci.kubeconfig
+```
 
-### Infrastructure Context
-- ord-devimprint cluster uses OpenBao (on rs-manager) for external secrets
-- ExternalSecrets operator uses Kubernetes auth via ServiceAccount
-- No static OpenBao tokens available for direct access
-- No OpenBao client configuration found
+Only two kubeconfigs exist, neither for ord-devimprint.
 
-## Attempts Made
-1. Checked for read-only proxy access - DENIED (expected)
-2. Searched for existing kubeconfig files - NOT FOUND
-3. Checked for OpenBao tokens/env vars - NOT FOUND
-4. Checked for Spot CLI - NOT INSTALLED
-5. Checked for cached credentials - NOT FOUND
+## Current Access
 
-## Required to Complete Task
-A kubeconfig file with write access to the ord-devimprint cluster, specifically:
-- Can read secrets in the `devimprint` namespace
-- Can execute: `kubectl get secret armor-writer -n devimprint`
+**Read-only proxy**: `kubectl-proxy-ord-devimprint:8001`
+- Can list secrets: YES
+- Can read secret contents: NO (Forbidden by RBAC)
+
+```bash
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
+NAME                    TYPE             DATA   AGE
+armor-writer            Opaque           2      79d
+
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
+Error from server (Forbidden): secrets "armor-writer" is forbidden:
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+```
+
+## Required Action
+
+The ord-devimprint kubeconfig must be obtained via:
+
+1. **Rackspace Spot Portal** (recommended):
+   - Login to https://spot.rackspace.com
+   - Download admin kubeconfig for ord-devimprint cluster
+   - Create serviceaccount with secret-read permissions
+   - Store at `~/.kube/ord-devimprint.kubeconfig`
+
+2. **Or coordinate with cluster administrator** who has Rackspace Spot access
+
+## Pattern from Other Clusters
+
+The iad-ci cluster has a working kubeconfig at `~/.kube/iad-ci.kubeconfig` with cluster-admin access. A similar setup is needed for ord-devimprint.
+
+## ExternalSecret Reference
+
+The cluster credentials are stored in OpenBao at `secret/rs-manager/ord-devimprint/cluster` for ArgoCD, but this does not provide direct kubectl access.
+
+## Acceptance Criteria NOT Met
+
+- [ ] Kubeconfig exists at `~/.kube/ord-devimprint.kubeconfig`
+- [ ] Can read secrets in devimprint namespace
+- [ ] Can retrieve armor-writer secret contents
 
 ## Next Steps
-Option A: Request manual credential handoff from administrator
-Option B: Obtain ord-devimprint kubeconfig from Rackspace Spot console
-Option C: Set up Spot CLI and configure access
-Option D: Request OpenBao access to retrieve credentials directly
 
-## Status
-**BLOCKED** - Cannot proceed without kubeconfig with write access
+1. **DO NOT CLOSE bf-2xkyl** - prerequisite not met
+2. **Coordinate with user** to obtain ord-devimprint kubeconfig
+3. **Re-open bf-2p1wr** or create new bead for kubeconfig acquisition
+4. **Re-attempt bf-2xkyl** once kubeconfig is available
+
+## Date
+
+2026-07-11
