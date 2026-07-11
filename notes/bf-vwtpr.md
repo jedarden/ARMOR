@@ -50,6 +50,13 @@ The kubectl-proxy for ord-devimprint runs with read-only RBAC that explicitly bl
 secret access, even for get operations.
 ```
 
+## 2026-07-11 Attempt: Decode Validation
+
+**Attempted:** `base64 -d /tmp/litestream_key_id.b64 > /tmp/litestream_key_id.txt`
+**Result:** Exit code 1 (invalid input)
+
+Verified that the file `/tmp/litestream_key_id.b64` (723 bytes) contains only the RBAC error message from the previous failed retrieval attempt. No base64 data is present to decode.
+
 ## Conclusion
 This bead **cannot be completed** because:
 1. The prerequisite condition was not met (base64 value was not retrieved)
