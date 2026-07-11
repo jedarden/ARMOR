@@ -71,7 +71,7 @@ func TestAcceptanceCriteria_ContextualErrorFormatting(t *testing.T) {
 			{"ParseError", NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "identifier", "123")},
 			{"ValidationError", NewValidationError("deployment.yaml", "invalid value", "spec.replicas", "must be positive", ErrCodeInvalidValue, 15, 12, "")},
 			{"TypeMismatchError", NewTypeMismatchError("config.yaml", "server.port", "int", "string", "\"8080\"", 20, ErrCodeTypeMismatch)},
-			{"ConstraintError", NewConstraintError("manifest.yaml", "spec.replicas", "range", "must be >= 0", "-1", 25, ErrCodeConstraintViolation)},
+			{"ConstraintError", NewConstraintError("manifest.yaml", "spec.replicas", "range", "must be >= 0", "value violates minimum constraint", "-1", 25, ErrCodeConstraintViolation)},
 		}
 
 		fmt.Println("✓ AC4: All error messages follow consistent formatting:")
