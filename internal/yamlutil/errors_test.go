@@ -454,7 +454,7 @@ func TestNewValidationError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError(tt.filePath, tt.message, tt.fieldPath, tt.constraint, tt.code, tt.line, tt.column, tt.wantErrorType)
+			err := NewValidationError(tt.filePath, tt.message, tt.fieldPath, tt.constraint, tt.code, tt.line, tt.column, tt.wantErrorType, "")
 
 			// Verify fields are set correctly
 			if err.FilePath != tt.filePath {
@@ -509,7 +509,7 @@ func TestValidationErrorString(t *testing.T) {
 	}{
 		{
 			name: "validation error with constraint",
-			err: NewValidationError("config.yaml", "invalid port", "server.port", "must be 1-65535", ErrCodeInvalidValue, 0, 0, ""),
+			err: NewValidationError("config.yaml", "invalid port", "server.port", "must be 1-65535", ErrCodeInvalidValue, 0, 0, "", ""),
 			wantFields: []string{
 				"Error: invalid port",
 				"Type: validation",
@@ -519,7 +519,7 @@ func TestValidationErrorString(t *testing.T) {
 		},
 		{
 			name: "validation error without constraint",
-			err: NewValidationError("test.yaml", "validation failed", "", "", ErrCodeValidationFailed, 0, 0, ""),
+			err: NewValidationError("test.yaml", "validation failed", "", "", ErrCodeValidationFailed, 0, 0, "", ""),
 			wantFields: []string{
 				"Error: validation failed",
 				"Type: validation",
@@ -527,7 +527,7 @@ func TestValidationErrorString(t *testing.T) {
 		},
 		{
 			name: "validation error with line and column",
-			err: NewValidationError("data.yaml", "syntax error", "", "must be string", ErrCodeInvalidValue, 10, 5, ErrorTypeValidation),
+			err: NewValidationError("data.yaml", "syntax error", "", "must be string", ErrCodeInvalidValue, 10, 5, ErrorTypeValidation, ""),
 			wantFields: []string{
 				"Error: syntax error",
 				"Type: validation",
@@ -536,7 +536,7 @@ func TestValidationErrorString(t *testing.T) {
 		},
 		{
 			name: "validation error with line, field path, and constraint",
-			err: NewValidationError("app.yaml", "value out of range", "database.connectionTimeout", "must be between 1-300", ErrCodeConstraintViolation, 25, 15, ErrorTypeConstraint),
+			err: NewValidationError("app.yaml", "value out of range", "database.connectionTimeout", "must be between 1-300", ErrCodeConstraintViolation, 25, 15, ErrorTypeConstraint, ""),
 			wantFields: []string{
 				"Error: value out of range",
 				"Type: constraint",
