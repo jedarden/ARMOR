@@ -88,3 +88,4 @@ This suggests ord-devimprint may only be accessible via the read-only proxy, mak
 2026-07-11 ~21:30 UTC (retry #13 - same RBAC blocker, prerequisite still not met, no progress)
 2026-07-11 ~22:00 UTC (retry #14 - same RBAC blocker persists, file /tmp/litestream_key_id.b64 still contains error text not base64 data, no progress)
 2026-07-11 ~23:30 UTC (retry #15 - same RBAC blocker, base64 -d fails with "invalid input" because file contains error text not base64 data, prerequisite still not met, no progress)
+2026-07-12 ~00:15 UTC (retry #16 - same RBAC blocker persists, prerequisite still not met, no progress - file still contains RBAC error message not base64 data)
