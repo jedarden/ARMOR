@@ -510,13 +510,14 @@ func (ve *ValidationError) String() string {
 //   - line: Line number where error occurred (1-indexed, use 0 if unknown)
 //   - column: Column number where error occurred (1-indexed, use 0 if unknown)
 //   - errorType: Category of error (use empty string for default ErrorTypeValidation)
+//   - path: Dot-notation field path (optional, for backward compatibility defaults to empty string)
 //
 // Returns a properly initialized ValidationError that implements the YAMLError interface.
 //
 // Example usage:
 //
-//	err := NewValidationError("config.yaml", "invalid port number", "server.port", "must be between 1-65535", ErrCodeInvalidValue, 10, 5, "")
-func NewValidationError(filePath string, message string, fieldPath string, constraint string, code ErrorCode, line int, column int, errorType ErrorType) *ValidationError {
+//	err := NewValidationError("config.yaml", "invalid port number", "server.port", "must be between 1-65535", ErrCodeInvalidValue, 10, 5, "", "spec.replicas")
+func NewValidationError(filePath string, message string, fieldPath string, constraint string, code ErrorCode, line int, column int, errorType ErrorType, path string) *ValidationError {
 	// Use provided code or default to generic validation error
 	errorCode := code
 	if errorCode == "" {
@@ -538,6 +539,7 @@ func NewValidationError(filePath string, message string, fieldPath string, const
 		Line:       line,
 		Column:     column,
 		Type:       eType,
+		Path:       path,
 	}
 }
 
