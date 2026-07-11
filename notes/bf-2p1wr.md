@@ -119,9 +119,20 @@ Confirmed the following:
 1. ❌ Kubeconfig file does not exist: `~/.kube/ord-devimprint.kubeconfig`
 2. ❌ Read-only proxy cannot access secrets:
    ```
-   Error from server (Forbidden): secrets "armor-writer" is forbidden: 
+   Error from server (Forbidden): secrets "armor-writer" is forbidden:
    User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
    ```
+
+## Re-verification (2026-07-11 ~18:50 UTC)
+
+Re-verified all aspects:
+1. ❌ Kubeconfig file still missing: `~/.kube/ord-devimprint.kubeconfig`
+2. ❌ Read-only proxy permissions confirmed - list works, get fails:
+   - `kubectl get secrets -n devimprint` → Lists secret names (metadata only)
+   - `kubectl get secret armor-writer -n devimprint -o json` → Forbidden (cannot read secret data)
+3. ✅ No alternate access paths found:
+   - Available kubeconfigs: `iad-ci.kubeconfig`, `iad-acb.kubeconfig` (different clusters)
+   - No cluster-admin access to ord-devimprint via other clusters
 
 ## Action Required
 This task requires human intervention:
