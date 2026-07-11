@@ -1,10 +1,8 @@
 # Bead bf-vwtpr: Decode and validate LITESTREAM_ACCESS_KEY_ID - FAILED
 
-## Status: PREREQUISITE NOT MET
+## Status: PREREQUISITE NOT MET - ATTEMPT 11 (2026-07-11)
 
-**Attempt 2 (2026-07-11):** Confirmed the same issue - the prerequisite child bead did not actually succeed.
-
-This bead cannot be completed because the prerequisite child bead (retrieve base64 value) did not actually succeed.
+**This bead cannot be completed because the prerequisite child bead (retrieve base64 value) did not actually succeed.**
 
 ## Root Cause
 
@@ -17,30 +15,76 @@ User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource
 in API group "" in the namespace "devimprint"
 ```
 
-## Issue
+## Verification
 
-The kubectl-proxy for `ord-devimprint` runs with read-only RBAC that **explicitly blocks secret access**, even for get operations. The ServiceAccount `devpod-observer` in the `devpod-observer` namespace does not have permissions to read secrets in `devimprint`.
-
-## Command Attempted (from previous bead)
-
+Attempted to decode the base64 file:
 ```bash
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
-  get secret armor-writer -n devimprint \
-  -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+base64 -d /tmp/litestream_key_id.b64 > /tmp/litestream_key_id.txt
 ```
+Result: **Exit code 1** - The file contains plain text error messages, not valid base64 data.
+
+## Investigation Results
+
+Checked the `ord-devimprint` cluster status:
+- ✅ ExternalSecret `armor-writer` exists and shows `SecretSynced` status
+- ✅ Secret is properly synced from OpenBao (path: `rs-manager/ord-devimprint/armor-writer`)
+- ❌ kubectl-proxy has RBAC that **explicitly blocks secret access**
+- ❌ No direct kubeconfig available for `ord-devimprint`
+- ❌ Cannot access secret through any available proxy or kubeconfig methods
+
+Checked running pods:
+- Found multiple `armor` pods running in devimprint namespace
+- Cannot read environment variables or exec into pods due to RBAC restrictions
+- Secret is mounted and working for pods, but inaccessible via kubectl-proxy
+
+## Technical Details
+
+**ExternalSecret Configuration:**
+```yaml
+kind: ExternalSecret
+metadata:
+  name: armor-writer
+  namespace: devimprint
+spec:
+  data:
+  - remoteRef:
+      key: rs-manager/ord-devimprint/armor-writer
+      property: auth-access-key
+    secretKey: auth-access-key
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+    message: secret synced
+```
+
+**RBAC Restriction:**
+The `devpod-observer` service account in `ord-devimprint` has **explicit deny** on secret access, even for get operations. This is stricter than other clusters' observer accounts.
+
+## Acceptance Criteria Status
+
+All validation criteria **FAILED**:
+- ❌ Cannot decode base64 value (file contains plain text error, not base64)
+- ❌ Cannot verify decoded value is non-empty
+- ❌ Cannot validate AWS access key format (AKIA...)
+- ❌ Cannot confirm human-readable value
 
 ## Resolution Path
 
 This bead must be re-attempted after resolving the secret access issue:
 
-1. **Option A:** Use direct kubeconfig access to ord-devimprint with appropriate secret read permissions
-2. **Option B:** Access the secret through a different cluster that has proper permissions
-3. **Option C:** Use a different method to retrieve the Litestream credentials
+**Option A:** Obtain direct kubeconfig for `ord-devimprint` with secret read permissions
+**Option B:** Access the secret through a different cluster/method that has proper permissions
+**Option C:** Access the secret directly from OpenBao using appropriate credentials
+**Option D:** Skip this validation and use alternative method to verify Litestream configuration
 
 ## Conclusion
 
-This is a dependency chain blocker - the prerequisite bead appeared to complete (it wrote to the file), but the actual secret retrieval failed due to RBAC restrictions.
+This is a **dependency chain blocker** - the prerequisite bead appeared to complete (it wrote to the file), but the actual secret retrieval failed due to RBAC restrictions.
 
-**Confirmed on second attempt:** The base64 file still contains only the RBAC error message, not the actual secret value.
+The bead has been attempted 11 times with the same result. The root blocker must be addressed first before this decoding/validation task can proceed.
 
-The bead should be released for retry after resolving the secret access issue. The root blocker must be addressed first before this decoding/validation task can proceed.
+**Status:** Prerequisite NOT met - bead will be released for retry after secret access is resolved.
