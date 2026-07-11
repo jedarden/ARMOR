@@ -1,73 +1,58 @@
-# Bead bf-4ds4n: Verify ord-devimprint write-access kubeconfig exists
+# ord-devimprint Kubeconfig Verification - FAILED
 
 ## Task
-Verify that we have a working kubeconfig with write access to the ord-devimprint cluster.
+Verify ord-devimprint write-access kubeconfig exists and is functional.
 
-## Investigation Results
-**Verification Date**: 2026-07-11 (re-verified - blocker persists)
+## Verification Results
 
-### Expected Location
-- `~/.kube/ord-devimprint.kubeconfig` (per prerequisite bead bf-2p1wr)
+### Kubeconfig Existence
+- **Expected location**: `~/.kube/ord-devimprint.kubeconfig`
+- **Status**: ❌ **DOES NOT EXIST**
 
-### Actual State
-- **File does NOT exist** - verified with `ls -la /home/coding/.kube/ord-devimprint*`
-- Only kubeconfigs present: `iad-acb.kubeconfig` and `iad-ci.kubeconfig`
-
-### Read-Only Proxy Capabilities
-The read-only proxy at `kubectl-proxy-ord-devimprint:8001`:
-- **CAN read pods**: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get pods -n devimprint` ✓
-- **CAN list secrets**: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint` ✓
-- **CANNOT read secret data**: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint` → "Forbidden: User \"system:serviceaccount:devpod-observer:devpod-observer\" cannot get resource \"secrets\"" ✗
-- **CANNOT create**: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 auth can-i create pods -n devimprint` → "no" ✗
-- **CANNOT delete**: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 auth can-i delete pods -n devimprint` → "no" ✗
-
-### Prerequisite Bead Status
-- **bf-2p1wr**: "Obtain ord-devimprint kubeconfig with write access"
-- Status: **closed** (via CLI on 2026-07-11 15:22:49 UTC)
-- **Evidence**: The kubeconfig file was never actually created
-- **Conclusion**: Bead was closed prematurely without completing the work
-
-### Acceptance Criteria Status
-- [ ] Kubeconfig file exists at a known location - **FAILED**
-- [ ] Can successfully authenticate to ord-devimprint cluster - **CANNOT TEST** (no kubeconfig)
-- [ ] Has write access to the devimprint namespace (not read-only) - **CANNOT TEST** (no kubeconfig)
-
-## Verification Commands Attempted
+### Connectivity Test
 ```bash
-# Check for kubeconfig file
-ls -la ~/.kube/ord-devimprint*
-# Result: No such file or directory
+kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get pods -n devimprint
+```
+- **Status**: ❌ **Cannot test - file missing**
 
-# Test proxy secret listing
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
-# Result: SUCCESS (can list secrets)
+## Root Cause Analysis
 
-# Test proxy secret data read
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
-# Result: Forbidden - User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+The prerequisite bead **bf-2p1wr** ("Obtain ord-devimprint kubeconfig with write access") was marked as **closed**, but the actual kubeconfig was never created.
 
-# Test proxy write permissions
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 auth can-i create pods -n devimprint
-# Result: no (permission denied)
+From `notes/bf-2p1wr-ord-devimprint-kubeconfig.md`:
+> ⚠️ **Awaiting kubeconfig from cluster administrator**
 
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 auth can-i delete pods -n devimprint
-# Result: no (permission denied)
+The bead appears to have been closed without completing the work.
+
+## Current Access to ord-devimprint
+
+Per CLAUDE.md, the only current access is:
+```bash
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get pods -n <namespace>
 ```
 
-## Conclusion
-**BLOCKED**: The write-access kubeconfig does not exist. The prerequisite bead bf-2p1wr was closed without actually creating the kubeconfig file.
+This is a **read-only proxy** with limitations:
+- ServiceAccount: `devpod-observer`
+- Cannot read secret contents
+- Cannot create, delete, or modify resources
 
-The read-only proxy is insufficient for operations requiring secret data access. While the proxy can **list** secrets (including `armor-writer`, `armor-credentials`, etc.), it **cannot read the actual secret values** due to RBAC restrictions (Forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets").
+## Required Access
 
-To complete this task, a kubeconfig with secret read access must be obtained from the Rackspace Spot dashboard for the ord-devimprint cluster and stored at `~/.kube/ord-devimprint.kubeconfig`.
-
-## Related Beads
-- **bf-2p1wr**: Prerequisite - "Obtain ord-devimprint kubeconfig with write access" (closed prematurely)
-- **bf-2xkyl**: "Retrieve S3 credentials from armor-writer secret" - may be blocked by this
-- **armor-bik**: Previously refreshed an expired token for this kubeconfig (file no longer exists)
+To complete dependent tasks (e.g., retrieving `armor-writer` secret), we need:
+- A kubeconfig with write/read access to secrets in `devimprint` namespace
+- Location: `~/.kube/ord-devimprint.kubeconfig`
 
 ## Next Steps Required
-1. Re-open and complete bead bf-2p1wr to actually create the kubeconfig
-2. Obtain cloudspace-admin OIDC token from Rackspace Spot UI for ord-devimprint cluster
-3. Create kubeconfig at `~/.kube/ord-devimprint.kubeconfig`
-4. Re-verify with this bead's acceptance criteria
+
+1. **Obtain kubeconfig** via Rackspace Spot console for ord-devimprint cluster
+2. **Save to**: `~/.kube/ord-devimprint.kubeconfig`
+3. **Set permissions**: `chmod 600 ~/.kube/ord-devimprint.kubeconfig`
+4. **Re-run verification**: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get pods -n devimprint`
+
+## Dependency Issue
+
+This verification bead (bf-4ds4n) is **blocked** on the incomplete prerequisite bead (bf-2p1wr). The prerequisite should be reopened and completed properly before this verification can succeed.
+
+## Status
+
+❌ **FAILED** - Prerequisite kubeconfig does not exist
