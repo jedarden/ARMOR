@@ -1,7 +1,7 @@
 # Bead bf-3d39n: Verify ord-devimprint kubeconfig access
 
 ## Date
-2026-07-11
+2026-07-11 (re-verified 2026-07-11 18:02 UTC)
 
 ## Findings
 
@@ -63,6 +63,21 @@ To complete this bead:
 1. Complete bead bf-2p1wr to obtain the kubeconfig
 2. Store it at `~/.kube/ord-devimprint.kubeconfig`
 3. Re-run this verification bead
+
+## Re-verification (2026-07-11 18:02 UTC)
+
+Re-verified the ord-devimprint access - **status unchanged**:
+
+- ✅ Proxy connectivity: Working (can list 14 namespaces)
+- ✅ Secret list: Working (10 secrets visible in devimprint namespace)
+- ❌ Secret read access: Still blocked (Forbidden error)
+- ❌ Kubeconfig file: Still missing
+- ❌ Prerequisite bead bf-2p1wr: Still open
+
+**Secrets now visible:** 10 secrets (updated from 9 in previous check)
+- Added: `queue-api-auth` (2 keys) - new since first verification
+
+All findings remain consistent - the task cannot proceed without completion of bead bf-2p1wr.
 
 ## Related Beads
 - **bf-2p1wr** (prerequisite): Obtain ord-devimprint kubeconfig with write access - **OPEN**
