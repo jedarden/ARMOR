@@ -52,5 +52,12 @@ Verification comment added to bead (comment #38).
 Re-verified that the blocker persists - same error, no kubeconfig available.
 Prerequisite bead bf-2p1wr remains OPEN.
 
+### 2026-07-11 ~17:20 UTC (Re-verification)
+Re-verified blocker status:
+- Read-only proxy access: Forbidden by RBAC (devpod-observer SA cannot read secrets)
+- No ord-devimprint kubeconfig exists in ~/.kube/
+- Only kubeconfigs available: iad-acb.kubeconfig, iad-ci.kubeconfig
+- Prerequisite bead bf-2p1wr remains OPEN
+
 ## Resolution Path
 Cannot proceed until bead bf-2p1wr is completed with a valid kubeconfig that has secret read permissions.
