@@ -126,6 +126,9 @@ impl fmt::Display for ParseError {
             (Some(path), None, None) => {
                 write!(f, "{}: {}", path, self.kind)
             }
+            (Some(path), None, Some(col)) => {
+                write!(f, "{}::{}: {}", path, col, self.kind)
+            }
             (None, Some(line), Some(col)) => {
                 write!(f, "{}:{}: {}", line, col, self.kind)
             }
