@@ -685,9 +685,9 @@ func TestValidateFieldRequirements(t *testing.T) {
 
 	t.Run("all requirements met", func(t *testing.T) {
 		requirements := []FieldRequirement{
-			{Path: "name", ExpectedType: "string", Optional: false},
-			{Path: "count", ExpectedType: "int", Optional: false},
-			{Path: "flag", ExpectedType: "bool", Optional: false},
+			{Path: "name", Type: "string", Required: true},
+			{Path: "count", Type: "int", Required: true},
+			{Path: "flag", Type: "bool", Required: true},
 		}
 		errors := ValidateFieldRequirements(data, requirements)
 		if len(errors) != 0 {
@@ -697,7 +697,7 @@ func TestValidateFieldRequirements(t *testing.T) {
 
 	t.Run("missing required field", func(t *testing.T) {
 		requirements := []FieldRequirement{
-			{Path: "missing", ExpectedType: "string", Optional: false},
+			{Path: "missing", Type: "string", Required: true},
 		}
 		errors := ValidateFieldRequirements(data, requirements)
 		if len(errors) != 1 {
@@ -709,7 +709,7 @@ func TestValidateFieldRequirements(t *testing.T) {
 
 	t.Run("type mismatch", func(t *testing.T) {
 		requirements := []FieldRequirement{
-			{Path: "wrong_type", ExpectedType: "string", Optional: false},
+			{Path: "wrong_type", Type: "string", Required: true},
 		}
 		errors := ValidateFieldRequirements(data, requirements)
 		if len(errors) != 1 {
@@ -721,7 +721,7 @@ func TestValidateFieldRequirements(t *testing.T) {
 
 	t.Run("optional field missing", func(t *testing.T) {
 		requirements := []FieldRequirement{
-			{Path: "optional_missing", ExpectedType: "string", Optional: true},
+			{Path: "optional_missing", Type: "string", Required: false},
 		}
 		errors := ValidateFieldRequirements(data, requirements)
 		if len(errors) != 0 {
@@ -731,7 +731,7 @@ func TestValidateFieldRequirements(t *testing.T) {
 
 	t.Run("optional field present with wrong type", func(t *testing.T) {
 		requirements := []FieldRequirement{
-			{Path: "wrong_type", ExpectedType: "string", Optional: true},
+			{Path: "wrong_type", Type: "string", Required: false},
 		}
 		errors := ValidateFieldRequirements(data, requirements)
 		if len(errors) != 1 {
@@ -741,7 +741,7 @@ func TestValidateFieldRequirements(t *testing.T) {
 
 	t.Run("nested field validation", func(t *testing.T) {
 		requirements := []FieldRequirement{
-			{Path: "nested.value", ExpectedType: "string", Optional: false},
+			{Path: "nested.value", Type: "string", Required: true},
 		}
 		errors := ValidateFieldRequirements(data, requirements)
 		if len(errors) != 0 {
@@ -751,9 +751,9 @@ func TestValidateFieldRequirements(t *testing.T) {
 
 	t.Run("any type accepts any value", func(t *testing.T) {
 		requirements := []FieldRequirement{
-			{Path: "name", ExpectedType: "any", Optional: false},
-			{Path: "count", ExpectedType: "any", Optional: false},
-			{Path: "flag", ExpectedType: "any", Optional: false},
+			{Path: "name", Type: "any", Required: true},
+			{Path: "count", Type: "any", Required: true},
+			{Path: "flag", Type: "any", Required: true},
 		}
 		errors := ValidateFieldRequirements(data, requirements)
 		if len(errors) != 0 {
@@ -843,7 +843,7 @@ func TestFieldNotFoundError(t *testing.T) {
 
 func TestTypeMismatchError(t *testing.T) {
 	err := &TypeMismatchError{
-		FieldPath:   "server.port",
+		FieldPath:    "server.port",
 		ExpectedType: "int",
 		ActualType:   "string",
 	}
