@@ -80,3 +80,14 @@ The task requirements conflict with the cluster's security architecture.
 - Requires elevated secret access that doesn't exist
 - ord-devimprint uses credential-free kubectl-proxy with read-only RBAC
 - No kubeconfig file or alternative access path available
+
+## Verification (2026-07-11 15:30 UTC)
+Re-verified the blockers:
+1. Kubeconfig still missing: `/home/coding/.kube/ord-devimprint.kubeconfig` does not exist
+2. Proxy still blocks secrets: `Error from server (Forbidden): secrets "armor-writer" is forbidden`
+3. No alternative kubeconfigs found: Only `iad-acb.kubeconfig` and `iad-ci.kubeconfig` available
+
+**Prerequisite discrepancy:** Beads bf-4743d and bf-2pn4n are marked closed, but their stated objectives (verify kubeconfig exists, test kubectl access) cannot be complete given the verified blockers. This suggests either:
+- The prerequisites were closed without proper verification
+- A regression has occurred since they were completed
+- The verification scope was incomplete (e.g., only checked proxy connectivity, not secret access)
