@@ -73,7 +73,7 @@ func TestGetYAMLErrorType(t *testing.T) {
 		},
 		{
 			name:     "ParseError returns ErrorTypeParse",
-			err:      &ParseError{FilePath: "test.yaml"},
+			err:      &ParseError{FilePath: "test.yaml", ErrorType: ErrorTypeParse},
 			expected: ErrorTypeParse,
 		},
 		{
@@ -87,13 +87,13 @@ func TestGetYAMLErrorType(t *testing.T) {
 			expected: ErrorTypeFile,
 		},
 		{
-			name:     "SchemaValidationError returns ErrorTypeSchema",
+			name:     "SchemaValidationError returns ErrorTypeSchemaValidate",
 			err:      &SchemaValidationError{FilePath: "test.yaml"},
-			expected: ErrorTypeSchema,
+			expected: ErrorTypeSchemaValidate,
 		},
 		{
 			name:     "wrapped ParseError returns ErrorTypeParse",
-			err:      fmt.Errorf("wrapped: %w", &ParseError{FilePath: "test.yaml"}),
+			err:      fmt.Errorf("wrapped: %w", &ParseError{FilePath: "test.yaml", ErrorType: ErrorTypeParse}),
 			expected: ErrorTypeParse,
 		},
 	}
