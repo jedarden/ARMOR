@@ -42,7 +42,11 @@ pub use types::{
 pub use parser::Parser as YamlParser;
 
 // Re-export comprehensive configuration from config module
-pub use crate::parsers::config::{ParserConfig, ParserMode, ParserConfigBuilder, TypeConstructor, ValidationHook};
+pub use crate::parsers::config::{
+    ParserConfig, ParserMode, ParserConfigBuilder, TypeConstructor, ValidationHook,
+    ValidatorConfig, ValidationMode, ValidatorConfigBuilder,
+    default_parser_config, default_validator_config,
+};
 
 /// Version of the YAML parser module
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
