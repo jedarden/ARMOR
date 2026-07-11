@@ -129,10 +129,10 @@ func (e *EnhancedParseError) Error() string {
 	case ParseErrorKindTypeMismatch:
 		// For type mismatch, if we have field info, format it specially
 		if e.Detail.FieldPath != "" {
-			sb.WriteString(fmt.Sprintf(", field %s: expected %s, got: %s",
+			sb.WriteString(fmt.Sprintf(", field %s: expected %s, got %s",
 				e.Detail.FieldPath, e.Detail.ExpectedType, e.Detail.ActualType))
-			// Add parenthetical with full details (note: uses "got:" for consistency)
-			sb.WriteString(fmt.Sprintf(" (field: %s, expected: %s, got: %s)",
+			// Add parenthetical with full details
+			sb.WriteString(fmt.Sprintf(" (field: %s, expected: %s, got %s)",
 				e.Detail.FieldPath, e.Detail.ExpectedType, e.Detail.ActualType))
 		} else if e.Message != "" {
 			sb.WriteString(fmt.Sprintf(": %s", e.Message))

@@ -353,6 +353,8 @@ func TestNewValidationError(t *testing.T) {
 		fieldPath    string
 		constraint   string
 		code         ErrorCode
+		line         int
+		column       int
 		wantMessage  string
 		wantCode     ErrorCode
 		wantErrorType ErrorType
@@ -364,6 +366,8 @@ func TestNewValidationError(t *testing.T) {
 			fieldPath:    "server.port",
 			constraint:   "must be between 1-65535",
 			code:         ErrCodeInvalidValue,
+			line:         0,
+			column:       0,
 			wantMessage:  "validation error in config.yaml at field server.port: invalid value (constraint: must be between 1-65535)",
 			wantCode:     ErrCodeInvalidValue,
 			wantErrorType: ErrorTypeValidation,
@@ -375,6 +379,8 @@ func TestNewValidationError(t *testing.T) {
 			fieldPath:    "database.name",
 			constraint:   "required",
 			code:         "",
+			line:         0,
+			column:       0,
 			wantMessage:  "validation error in test.yaml at field database.name: required field missing (constraint: required)",
 			wantCode:     ErrCodeValidationFailed,
 			wantErrorType: ErrorTypeValidation,
@@ -386,6 +392,8 @@ func TestNewValidationError(t *testing.T) {
 			fieldPath:    "",
 			constraint:   "",
 			code:         ErrCodeValidationFailed,
+			line:         0,
+			column:       0,
 			wantMessage:  "validation error in unknown.yaml: validation failed",
 			wantCode:     ErrCodeValidationFailed,
 			wantErrorType: ErrorTypeValidation,
@@ -397,15 +405,56 @@ func TestNewValidationError(t *testing.T) {
 			fieldPath:    "api.timeout",
 			constraint:   "must be positive integer",
 			code:         ErrCodeConstraintViolation,
+			line:         0,
+			column:       0,
 			wantMessage:  "validation error in data.yaml at field api.timeout: constraint violation (constraint: must be positive integer)",
 			wantCode:     ErrCodeConstraintViolation,
+			wantErrorType: ErrorTypeValidation,
+		},
+		{
+			name:         "validation error with line and column",
+			filePath:     "app.yaml",
+			message:      "port out of range",
+			fieldPath:    "server.port",
+			constraint:   "must be between 1-65535",
+			code:         ErrCodeInvalidValue,
+			line:         15,
+			column:       12,
+			wantMessage:  "validation error in app.yaml at line 15, column 12 at field server.port: port out of range (constraint: must be between 1-65535)",
+			wantCode:     ErrCodeInvalidValue,
+			wantErrorType: ErrorTypeValidation,
+		},
+		{
+			name:         "validation error with line only",
+			filePath:     "manifest.yaml",
+			message:      "replicas must be positive",
+			fieldPath:    "spec.replicas",
+			constraint:   "must be >= 0",
+			code:         ErrCodeConstraintViolation,
+			line:         8,
+			column:       0,
+			wantMessage:  "validation error in manifest.yaml at line 8 at field spec.replicas: replicas must be positive (constraint: must be >= 0)",
+			wantCode:     ErrCodeConstraintViolation,
+			wantErrorType: ErrorTypeValidation,
+		},
+		{
+			name:         "validation error with nested field path and line",
+			filePath:     "deployment.yaml",
+			message:      "invalid image tag",
+			fieldPath:    "spec.template.spec.containers[0].image",
+			constraint:   "must match registry/*:tag pattern",
+			code:         ErrCodeInvalidValue,
+			line:         22,
+			column:       18,
+			wantMessage:  "validation error in deployment.yaml at line 22, column 18 at field spec.template.spec.containers[0].image: invalid image tag (constraint: must match registry/*:tag pattern)",
+			wantCode:     ErrCodeInvalidValue,
 			wantErrorType: ErrorTypeValidation,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError(tt.filePath, tt.message, tt.fieldPath, tt.constraint, tt.code, 0, 0, tt.wantErrorType)
+			err := NewValidationError(tt.filePath, tt.message, tt.fieldPath, tt.constraint, tt.code, tt.line, tt.column, tt.wantErrorType)
 
 			// Verify fields are set correctly
 			if err.FilePath != tt.filePath {
@@ -419,6 +468,12 @@ func TestNewValidationError(t *testing.T) {
 			}
 			if err.Constraint != tt.constraint {
 				t.Errorf("Constraint = %q, want %q", err.Constraint, tt.constraint)
+			}
+			if err.Line != tt.line {
+				t.Errorf("Line = %d, want %d", err.Line, tt.line)
+			}
+			if err.Column != tt.column {
+				t.Errorf("Column = %d, want %d", err.Column, tt.column)
 			}
 			if err.Code() != tt.wantCode {
 				t.Errorf("Code() = %q, want %q", err.Code(), tt.wantCode)
