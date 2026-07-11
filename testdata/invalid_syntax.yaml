@@ -1,0 +1,10 @@
+# Invalid YAML syntax for error testing
+# Missing colons and wrong indentation
+
+key value
+  indented_wrongly: value
+another_key
+    - list item without parent
+unclosed_map: {
+ dangling_comma: value,
+    extra_indent: x
