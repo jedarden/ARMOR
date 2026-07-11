@@ -1,0 +1,1538 @@
+=== RUN   TestPerformanceParserConfig
+=== RUN   TestPerformanceParserConfig/StrictMode_should_be_false
+=== RUN   TestPerformanceParserConfig/VerboseErrors_should_be_false
+=== RUN   TestPerformanceParserConfig/IncludeLineInfo_should_be_false
+=== RUN   TestPerformanceParserConfig/ErrorContextLines_should_be_0
+=== RUN   TestPerformanceParserConfig/EnableCaching_should_be_true
+=== RUN   TestPerformanceParserConfig/CacheTTL_should_be_30_minutes
+=== RUN   TestPerformanceParserConfig/MaxCacheSize_should_be_1000
+=== RUN   TestPerformanceParserConfig/EnableStreaming_should_be_true
+=== RUN   TestPerformanceParserConfig/StreamBufferSize_should_be_16384
+=== RUN   TestPerformanceParserConfig/MaxFileSize_should_be_100MB
+=== RUN   TestPerformanceParserConfig/ValidateAfterParse_should_be_false
+=== RUN   TestPerformanceParserConfig/ExplicitTypeTags_should_be_false
+=== RUN   TestPerformanceParserConfig/CoerceTypes_should_be_true
+=== RUN   TestPerformanceParserConfig/DefaultZeroValues_should_be_true
+=== RUN   TestPerformanceParserConfig/MultiDocument_should_be_true
+=== RUN   TestPerformanceParserConfig/DocumentSeparator_should_be_---
+=== RUN   TestPerformanceParserConfig/CustomResolvers_should_be_nil
+=== RUN   TestPerformanceParserConfig/PostProcessors_should_be_nil
+--- PASS: TestPerformanceParserConfig (0.00s)
+    --- PASS: TestPerformanceParserConfig/StrictMode_should_be_false (0.00s)
+    --- PASS: TestPerformanceParserConfig/VerboseErrors_should_be_false (0.00s)
+    --- PASS: TestPerformanceParserConfig/IncludeLineInfo_should_be_false (0.00s)
+    --- PASS: TestPerformanceParserConfig/ErrorContextLines_should_be_0 (0.00s)
+    --- PASS: TestPerformanceParserConfig/EnableCaching_should_be_true (0.00s)
+    --- PASS: TestPerformanceParserConfig/CacheTTL_should_be_30_minutes (0.00s)
+    --- PASS: TestPerformanceParserConfig/MaxCacheSize_should_be_1000 (0.00s)
+    --- PASS: TestPerformanceParserConfig/EnableStreaming_should_be_true (0.00s)
+    --- PASS: TestPerformanceParserConfig/StreamBufferSize_should_be_16384 (0.00s)
+    --- PASS: TestPerformanceParserConfig/MaxFileSize_should_be_100MB (0.00s)
+    --- PASS: TestPerformanceParserConfig/ValidateAfterParse_should_be_false (0.00s)
+    --- PASS: TestPerformanceParserConfig/ExplicitTypeTags_should_be_false (0.00s)
+    --- PASS: TestPerformanceParserConfig/CoerceTypes_should_be_true (0.00s)
+    --- PASS: TestPerformanceParserConfig/DefaultZeroValues_should_be_true (0.00s)
+    --- PASS: TestPerformanceParserConfig/MultiDocument_should_be_true (0.00s)
+    --- PASS: TestPerformanceParserConfig/DocumentSeparator_should_be_--- (0.00s)
+    --- PASS: TestPerformanceParserConfig/CustomResolvers_should_be_nil (0.00s)
+    --- PASS: TestPerformanceParserConfig/PostProcessors_should_be_nil (0.00s)
+=== RUN   TestDefaultValidatorConfig
+=== RUN   TestDefaultValidatorConfig/StrictMode_should_be_false
+=== RUN   TestDefaultValidatorConfig/RequireAllFields_should_be_false
+=== RUN   TestDefaultValidatorConfig/RejectUnknownKeys_should_be_false
+=== RUN   TestDefaultValidatorConfig/VerboseErrors_should_be_true
+=== RUN   TestDefaultValidatorConfig/MaxErrors_should_be_50
+=== RUN   TestDefaultValidatorConfig/StopAtFirstError_should_be_false
+=== RUN   TestDefaultValidatorConfig/WarningThreshold_should_be_10
+=== RUN   TestDefaultValidatorConfig/EnableSchemaValidation_should_be_false
+=== RUN   TestDefaultValidatorConfig/SchemaPaths_should_be_nil
+=== RUN   TestDefaultValidatorConfig/SchemaValidationMode_should_be_Lenient
+=== RUN   TestDefaultValidatorConfig/EnableConstraints_should_be_true
+=== RUN   TestDefaultValidatorConfig/ConstraintMode_should_be_Warn
+=== RUN   TestDefaultValidatorConfig/CheckDuplicateKeys_should_be_true
+=== RUN   TestDefaultValidatorConfig/CheckCircularRefs_should_be_false
+=== RUN   TestDefaultValidatorConfig/CheckDeprecatedSyntax_should_be_false
+=== RUN   TestDefaultValidatorConfig/ValidateTypes_should_be_true
+=== RUN   TestDefaultValidatorConfig/ValidateRanges_should_be_false
+=== RUN   TestDefaultValidatorConfig/ValidatePatterns_should_be_false
+=== RUN   TestDefaultValidatorConfig/ValidateLengths_should_be_false
+=== RUN   TestDefaultValidatorConfig/CustomValidators_should_be_nil
+=== RUN   TestDefaultValidatorConfig/SchemaValidators_should_be_nil
+=== RUN   TestDefaultValidatorConfig/EnableValidationCache_should_be_false
+=== RUN   TestDefaultValidatorConfig/CacheInvalidFiles_should_be_false
+--- PASS: TestDefaultValidatorConfig (0.00s)
+    --- PASS: TestDefaultValidatorConfig/StrictMode_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/RequireAllFields_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/RejectUnknownKeys_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/VerboseErrors_should_be_true (0.00s)
+    --- PASS: TestDefaultValidatorConfig/MaxErrors_should_be_50 (0.00s)
+    --- PASS: TestDefaultValidatorConfig/StopAtFirstError_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/WarningThreshold_should_be_10 (0.00s)
+    --- PASS: TestDefaultValidatorConfig/EnableSchemaValidation_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/SchemaPaths_should_be_nil (0.00s)
+    --- PASS: TestDefaultValidatorConfig/SchemaValidationMode_should_be_Lenient (0.00s)
+    --- PASS: TestDefaultValidatorConfig/EnableConstraints_should_be_true (0.00s)
+    --- PASS: TestDefaultValidatorConfig/ConstraintMode_should_be_Warn (0.00s)
+    --- PASS: TestDefaultValidatorConfig/CheckDuplicateKeys_should_be_true (0.00s)
+    --- PASS: TestDefaultValidatorConfig/CheckCircularRefs_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/CheckDeprecatedSyntax_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/ValidateTypes_should_be_true (0.00s)
+    --- PASS: TestDefaultValidatorConfig/ValidateRanges_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/ValidatePatterns_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/ValidateLengths_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/CustomValidators_should_be_nil (0.00s)
+    --- PASS: TestDefaultValidatorConfig/SchemaValidators_should_be_nil (0.00s)
+    --- PASS: TestDefaultValidatorConfig/EnableValidationCache_should_be_false (0.00s)
+    --- PASS: TestDefaultValidatorConfig/CacheInvalidFiles_should_be_false (0.00s)
+=== RUN   TestStrictValidatorConfig
+=== RUN   TestStrictValidatorConfig/StrictMode_should_be_true
+=== RUN   TestStrictValidatorConfig/RequireAllFields_should_be_true
+=== RUN   TestStrictValidatorConfig/RejectUnknownKeys_should_be_true
+=== RUN   TestStrictValidatorConfig/VerboseErrors_should_be_true
+=== RUN   TestStrictValidatorConfig/MaxErrors_should_be_100
+=== RUN   TestStrictValidatorConfig/StopAtFirstError_should_be_false
+=== RUN   TestStrictValidatorConfig/WarningThreshold_should_be_0
+=== RUN   TestStrictValidatorConfig/EnableSchemaValidation_should_be_true
+=== RUN   TestStrictValidatorConfig/SchemaValidationMode_should_be_Strict
+=== RUN   TestStrictValidatorConfig/ConstraintMode_should_be_Error
+=== RUN   TestStrictValidatorConfig/CheckCircularRefs_should_be_true
+=== RUN   TestStrictValidatorConfig/CheckDeprecatedSyntax_should_be_true
+=== RUN   TestStrictValidatorConfig/ValidateRanges_should_be_true
+=== RUN   TestStrictValidatorConfig/ValidatePatterns_should_be_true
+=== RUN   TestStrictValidatorConfig/ValidateLengths_should_be_true
+=== RUN   TestStrictValidatorConfig/EnableValidationCache_should_be_true
+--- PASS: TestStrictValidatorConfig (0.00s)
+    --- PASS: TestStrictValidatorConfig/StrictMode_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/RequireAllFields_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/RejectUnknownKeys_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/VerboseErrors_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/MaxErrors_should_be_100 (0.00s)
+    --- PASS: TestStrictValidatorConfig/StopAtFirstError_should_be_false (0.00s)
+    --- PASS: TestStrictValidatorConfig/WarningThreshold_should_be_0 (0.00s)
+    --- PASS: TestStrictValidatorConfig/EnableSchemaValidation_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/SchemaValidationMode_should_be_Strict (0.00s)
+    --- PASS: TestStrictValidatorConfig/ConstraintMode_should_be_Error (0.00s)
+    --- PASS: TestStrictValidatorConfig/CheckCircularRefs_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/CheckDeprecatedSyntax_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/ValidateRanges_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/ValidatePatterns_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/ValidateLengths_should_be_true (0.00s)
+    --- PASS: TestStrictValidatorConfig/EnableValidationCache_should_be_true (0.00s)
+=== RUN   TestLenientValidatorConfig
+=== RUN   TestLenientValidatorConfig/StrictMode_should_be_false
+=== RUN   TestLenientValidatorConfig/RequireAllFields_should_be_false
+=== RUN   TestLenientValidatorConfig/RejectUnknownKeys_should_be_false
+=== RUN   TestLenientValidatorConfig/VerboseErrors_should_be_true
+=== RUN   TestLenientValidatorConfig/MaxErrors_should_be_25
+=== RUN   TestLenientValidatorConfig/StopAtFirstError_should_be_false
+=== RUN   TestLenientValidatorConfig/WarningThreshold_should_be_20
+=== RUN   TestLenientValidatorConfig/EnableSchemaValidation_should_be_false
+=== RUN   TestLenientValidatorConfig/SchemaValidationMode_should_be_Lenient
+=== RUN   TestLenientValidatorConfig/ConstraintMode_should_be_Warn
+=== RUN   TestLenientValidatorConfig/CheckDuplicateKeys_should_be_true
+=== RUN   TestLenientValidatorConfig/CheckCircularRefs_should_be_false
+=== RUN   TestLenientValidatorConfig/ValidateTypes_should_be_false
+=== RUN   TestLenientValidatorConfig/ValidateRanges_should_be_false
+=== RUN   TestLenientValidatorConfig/ValidatePatterns_should_be_false
+=== RUN   TestLenientValidatorConfig/ValidateLengths_should_be_false
+--- PASS: TestLenientValidatorConfig (0.00s)
+    --- PASS: TestLenientValidatorConfig/StrictMode_should_be_false (0.00s)
+    --- PASS: TestLenientValidatorConfig/RequireAllFields_should_be_false (0.00s)
+    --- PASS: TestLenientValidatorConfig/RejectUnknownKeys_should_be_false (0.00s)
+    --- PASS: TestLenientValidatorConfig/VerboseErrors_should_be_true (0.00s)
+    --- PASS: TestLenientValidatorConfig/MaxErrors_should_be_25 (0.00s)
+    --- PASS: TestLenientValidatorConfig/StopAtFirstError_should_be_false (0.00s)
+    --- PASS: TestLenientValidatorConfig/WarningThreshold_should_be_20 (0.00s)
+    --- PASS: TestLenientValidatorConfig/EnableSchemaValidation_should_be_false (0.00s)
+    --- PASS: TestLenientValidatorConfig/SchemaValidationMode_should_be_Lenient (0.00s)
+    --- PASS: TestLenientValidatorConfig/ConstraintMode_should_be_Warn (0.00s)
+    --- PASS: TestLenientValidatorConfig/CheckDuplicateKeys_should_be_true (0.00s)
+    --- PASS: TestLenientValidatorConfig/CheckCircularRefs_should_be_false (0.00s)
+    --- PASS: TestLenientValidatorConfig/ValidateTypes_should_be_false (0.00s)
+    --- PASS: TestLenientValidatorConfig/ValidateRanges_should_be_false (0.00s)
+    --- PASS: TestLenientValidatorConfig/ValidatePatterns_should_be_false (0.00s)
+    --- PASS: TestLenientValidatorConfig/ValidateLengths_should_be_false (0.00s)
+=== RUN   TestDefaultSchemaConfig
+=== RUN   TestDefaultSchemaConfig/SchemaPaths_should_be_nil
+=== RUN   TestDefaultSchemaConfig/SchemaURIs_should_be_nil
+=== RUN   TestDefaultSchemaConfig/SchemaStrings_should_be_nil
+=== RUN   TestDefaultSchemaConfig/EnableReloading_should_be_false
+=== RUN   TestDefaultSchemaConfig/ReloadInterval_should_be_60s
+=== RUN   TestDefaultSchemaConfig/CacheSchemas_should_be_true
+=== RUN   TestDefaultSchemaConfig/ValidationMode_should_be_Lenient
+=== RUN   TestDefaultSchemaConfig/RequireAllFields_should_be_false
+=== RUN   TestDefaultSchemaConfig/RejectUnknownKeys_should_be_false
+=== RUN   TestDefaultSchemaConfig/EnableTypeCheck_should_be_true
+=== RUN   TestDefaultSchemaConfig/StrictTypes_should_be_false
+=== RUN   TestDefaultSchemaConfig/CustomTypes_should_be_nil
+=== RUN   TestDefaultSchemaConfig/CustomConstraints_should_be_nil
+--- PASS: TestDefaultSchemaConfig (0.00s)
+    --- PASS: TestDefaultSchemaConfig/SchemaPaths_should_be_nil (0.00s)
+    --- PASS: TestDefaultSchemaConfig/SchemaURIs_should_be_nil (0.00s)
+    --- PASS: TestDefaultSchemaConfig/SchemaStrings_should_be_nil (0.00s)
+    --- PASS: TestDefaultSchemaConfig/EnableReloading_should_be_false (0.00s)
+    --- PASS: TestDefaultSchemaConfig/ReloadInterval_should_be_60s (0.00s)
+    --- PASS: TestDefaultSchemaConfig/CacheSchemas_should_be_true (0.00s)
+    --- PASS: TestDefaultSchemaConfig/ValidationMode_should_be_Lenient (0.00s)
+    --- PASS: TestDefaultSchemaConfig/RequireAllFields_should_be_false (0.00s)
+    --- PASS: TestDefaultSchemaConfig/RejectUnknownKeys_should_be_false (0.00s)
+    --- PASS: TestDefaultSchemaConfig/EnableTypeCheck_should_be_true (0.00s)
+    --- PASS: TestDefaultSchemaConfig/StrictTypes_should_be_false (0.00s)
+    --- PASS: TestDefaultSchemaConfig/CustomTypes_should_be_nil (0.00s)
+    --- PASS: TestDefaultSchemaConfig/CustomConstraints_should_be_nil (0.00s)
+=== RUN   TestSchemaModeConstants
+=== RUN   TestSchemaModeConstants/SchemaModeDisabled
+=== RUN   TestSchemaModeConstants/SchemaModeLenient
+=== RUN   TestSchemaModeConstants/SchemaModeStrict
+=== RUN   TestSchemaModeConstants/SchemaModeRequired
+--- PASS: TestSchemaModeConstants (0.00s)
+    --- PASS: TestSchemaModeConstants/SchemaModeDisabled (0.00s)
+    --- PASS: TestSchemaModeConstants/SchemaModeLenient (0.00s)
+    --- PASS: TestSchemaModeConstants/SchemaModeStrict (0.00s)
+    --- PASS: TestSchemaModeConstants/SchemaModeRequired (0.00s)
+=== RUN   TestConstraintModeConstants
+=== RUN   TestConstraintModeConstants/ConstraintModeDisabled
+=== RUN   TestConstraintModeConstants/ConstraintModeWarn
+=== RUN   TestConstraintModeConstants/ConstraintModeError
+=== RUN   TestConstraintModeConstants/ConstraintModeFatal
+--- PASS: TestConstraintModeConstants (0.00s)
+    --- PASS: TestConstraintModeConstants/ConstraintModeDisabled (0.00s)
+    --- PASS: TestConstraintModeConstants/ConstraintModeWarn (0.00s)
+    --- PASS: TestConstraintModeConstants/ConstraintModeError (0.00s)
+    --- PASS: TestConstraintModeConstants/ConstraintModeFatal (0.00s)
+=== RUN   TestGetField
+=== RUN   TestGetField/simple_string_field
+=== RUN   TestGetField/simple_number_field
+=== RUN   TestGetField/nested_field
+=== RUN   TestGetField/missing_field_returns_default
+=== RUN   TestGetField/missing_nested_field_returns_default
+=== RUN   TestGetField/nil_value_returns_default
+=== RUN   TestGetField/empty_path_returns_default
+--- PASS: TestGetField (0.00s)
+    --- PASS: TestGetField/simple_string_field (0.00s)
+    --- PASS: TestGetField/simple_number_field (0.00s)
+    --- PASS: TestGetField/nested_field (0.00s)
+    --- PASS: TestGetField/missing_field_returns_default (0.00s)
+    --- PASS: TestGetField/missing_nested_field_returns_default (0.00s)
+    --- PASS: TestGetField/nil_value_returns_default (0.00s)
+    --- PASS: TestGetField/empty_path_returns_default (0.00s)
+=== RUN   TestGetString
+=== RUN   TestGetString/existing_string
+=== RUN   TestGetString/number_converted_to_string
+=== RUN   TestGetString/float_converted_to_string
+=== RUN   TestGetString/boolean_converted_to_string
+=== RUN   TestGetString/nested_string
+=== RUN   TestGetString/missing_field_returns_default
+--- PASS: TestGetString (0.00s)
+    --- PASS: TestGetString/existing_string (0.00s)
+    --- PASS: TestGetString/number_converted_to_string (0.00s)
+    --- PASS: TestGetString/float_converted_to_string (0.00s)
+    --- PASS: TestGetString/boolean_converted_to_string (0.00s)
+    --- PASS: TestGetString/nested_string (0.00s)
+    --- PASS: TestGetString/missing_field_returns_default (0.00s)
+=== RUN   TestGetInt
+=== RUN   TestGetInt/existing_int
+=== RUN   TestGetInt/int64_converted_to_int
+=== RUN   TestGetInt/int32_converted_to_int
+=== RUN   TestGetInt/float_representing_int
+=== RUN   TestGetInt/float_not_representing_int_returns_default
+=== RUN   TestGetInt/string_integer_parsed
+=== RUN   TestGetInt/invalid_string_returns_default
+=== RUN   TestGetInt/nested_int
+=== RUN   TestGetInt/zero_value
+=== RUN   TestGetInt/negative_value
+=== RUN   TestGetInt/missing_field_returns_default
+--- PASS: TestGetInt (0.00s)
+    --- PASS: TestGetInt/existing_int (0.00s)
+    --- PASS: TestGetInt/int64_converted_to_int (0.00s)
+    --- PASS: TestGetInt/int32_converted_to_int (0.00s)
+    --- PASS: TestGetInt/float_representing_int (0.00s)
+    --- PASS: TestGetInt/float_not_representing_int_returns_default (0.00s)
+    --- PASS: TestGetInt/string_integer_parsed (0.00s)
+    --- PASS: TestGetInt/invalid_string_returns_default (0.00s)
+    --- PASS: TestGetInt/nested_int (0.00s)
+    --- PASS: TestGetInt/zero_value (0.00s)
+    --- PASS: TestGetInt/negative_value (0.00s)
+    --- PASS: TestGetInt/missing_field_returns_default (0.00s)
+=== RUN   TestGetBool
+=== RUN   TestGetBool/boolean_true
+=== RUN   TestGetBool/boolean_false
+=== RUN   TestGetBool/string_'true'
+=== RUN   TestGetBool/string_'false'
+=== RUN   TestGetBool/string_'yes'
+=== RUN   TestGetBool/string_'no'
+=== RUN   TestGetBool/string_'1'
+=== RUN   TestGetBool/string_'0'
+=== RUN   TestGetBool/string_'on'
+=== RUN   TestGetBool/string_'off'
+=== RUN   TestGetBool/non-zero_int
+=== RUN   TestGetBool/zero_int
+=== RUN   TestGetBool/non-zero_float
+=== RUN   TestGetBool/nested_boolean
+=== RUN   TestGetBool/invalid_string_returns_default
+=== RUN   TestGetBool/missing_field_returns_default
+--- PASS: TestGetBool (0.00s)
+    --- PASS: TestGetBool/boolean_true (0.00s)
+    --- PASS: TestGetBool/boolean_false (0.00s)
+    --- PASS: TestGetBool/string_'true' (0.00s)
+    --- PASS: TestGetBool/string_'false' (0.00s)
+    --- PASS: TestGetBool/string_'yes' (0.00s)
+    --- PASS: TestGetBool/string_'no' (0.00s)
+    --- PASS: TestGetBool/string_'1' (0.00s)
+    --- PASS: TestGetBool/string_'0' (0.00s)
+    --- PASS: TestGetBool/string_'on' (0.00s)
+    --- PASS: TestGetBool/string_'off' (0.00s)
+    --- PASS: TestGetBool/non-zero_int (0.00s)
+    --- PASS: TestGetBool/zero_int (0.00s)
+    --- PASS: TestGetBool/non-zero_float (0.00s)
+    --- PASS: TestGetBool/nested_boolean (0.00s)
+    --- PASS: TestGetBool/invalid_string_returns_default (0.00s)
+    --- PASS: TestGetBool/missing_field_returns_default (0.00s)
+=== RUN   TestHasField
+=== RUN   TestHasField/existing_field
+=== RUN   TestHasField/nil_field_returns_false
+=== RUN   TestHasField/nested_existing_field
+=== RUN   TestHasField/nested_missing_field
+=== RUN   TestHasField/empty_nested_map_returns_false_for_missing_key
+=== RUN   TestHasField/missing_top-level_field
+=== RUN   TestHasField/empty_path
+--- PASS: TestHasField (0.00s)
+    --- PASS: TestHasField/existing_field (0.00s)
+    --- PASS: TestHasField/nil_field_returns_false (0.00s)
+    --- PASS: TestHasField/nested_existing_field (0.00s)
+    --- PASS: TestHasField/nested_missing_field (0.00s)
+    --- PASS: TestHasField/empty_nested_map_returns_false_for_missing_key (0.00s)
+    --- PASS: TestHasField/missing_top-level_field (0.00s)
+    --- PASS: TestHasField/empty_path (0.00s)
+=== RUN   TestGetRequiredField
+=== RUN   TestGetRequiredField/existing_field
+=== RUN   TestGetRequiredField/missing_field
+=== RUN   TestGetRequiredField/nil_field
+--- PASS: TestGetRequiredField (0.00s)
+    --- PASS: TestGetRequiredField/existing_field (0.00s)
+    --- PASS: TestGetRequiredField/missing_field (0.00s)
+    --- PASS: TestGetRequiredField/nil_field (0.00s)
+=== RUN   TestGetRequiredString
+=== RUN   TestGetRequiredString/existing_string
+=== RUN   TestGetRequiredString/missing_field
+=== RUN   TestGetRequiredString/type_mismatch
+--- PASS: TestGetRequiredString (0.00s)
+    --- PASS: TestGetRequiredString/existing_string (0.00s)
+    --- PASS: TestGetRequiredString/missing_field (0.00s)
+    --- PASS: TestGetRequiredString/type_mismatch (0.00s)
+=== RUN   TestGetRequiredInt
+=== RUN   TestGetRequiredInt/existing_int
+=== RUN   TestGetRequiredInt/int64_conversion
+=== RUN   TestGetRequiredInt/int32_conversion
+=== RUN   TestGetRequiredInt/float64_that_represents_integer
+=== RUN   TestGetRequiredInt/float32_that_represents_integer
+=== RUN   TestGetRequiredInt/float64_that_is_not_integer
+=== RUN   TestGetRequiredInt/float32_that_is_not_integer
+=== RUN   TestGetRequiredInt/missing_field
+=== RUN   TestGetRequiredInt/type_mismatch
+--- PASS: TestGetRequiredInt (0.00s)
+    --- PASS: TestGetRequiredInt/existing_int (0.00s)
+    --- PASS: TestGetRequiredInt/int64_conversion (0.00s)
+    --- PASS: TestGetRequiredInt/int32_conversion (0.00s)
+    --- PASS: TestGetRequiredInt/float64_that_represents_integer (0.00s)
+    --- PASS: TestGetRequiredInt/float32_that_represents_integer (0.00s)
+    --- PASS: TestGetRequiredInt/float64_that_is_not_integer (0.00s)
+    --- PASS: TestGetRequiredInt/float32_that_is_not_integer (0.00s)
+    --- PASS: TestGetRequiredInt/missing_field (0.00s)
+    --- PASS: TestGetRequiredInt/type_mismatch (0.00s)
+=== RUN   TestGetRequiredBool
+=== RUN   TestGetRequiredBool/existing_bool
+=== RUN   TestGetRequiredBool/missing_field
+=== RUN   TestGetRequiredBool/type_mismatch
+--- PASS: TestGetRequiredBool (0.00s)
+    --- PASS: TestGetRequiredBool/existing_bool (0.00s)
+    --- PASS: TestGetRequiredBool/missing_field (0.00s)
+    --- PASS: TestGetRequiredBool/type_mismatch (0.00s)
+=== RUN   TestValidateRequiredFields
+=== RUN   TestValidateRequiredFields/all_required_fields_present
+=== RUN   TestValidateRequiredFields/some_required_fields_missing
+=== RUN   TestValidateRequiredFields/nil_field_is_considered_missing
+=== RUN   TestValidateRequiredFields/empty_required_list
+--- PASS: TestValidateRequiredFields (0.00s)
+    --- PASS: TestValidateRequiredFields/all_required_fields_present (0.00s)
+    --- PASS: TestValidateRequiredFields/some_required_fields_missing (0.00s)
+    --- PASS: TestValidateRequiredFields/nil_field_is_considered_missing (0.00s)
+    --- PASS: TestValidateRequiredFields/empty_required_list (0.00s)
+=== RUN   TestValidateFieldRequirements
+=== RUN   TestValidateFieldRequirements/all_requirements_met
+=== RUN   TestValidateFieldRequirements/missing_required_field
+=== RUN   TestValidateFieldRequirements/type_mismatch
+=== RUN   TestValidateFieldRequirements/optional_field_missing
+=== RUN   TestValidateFieldRequirements/optional_field_present_with_wrong_type
+=== RUN   TestValidateFieldRequirements/nested_field_validation
+=== RUN   TestValidateFieldRequirements/any_type_accepts_any_value
+--- PASS: TestValidateFieldRequirements (0.00s)
+    --- PASS: TestValidateFieldRequirements/all_requirements_met (0.00s)
+    --- PASS: TestValidateFieldRequirements/missing_required_field (0.00s)
+    --- PASS: TestValidateFieldRequirements/type_mismatch (0.00s)
+    --- PASS: TestValidateFieldRequirements/optional_field_missing (0.00s)
+    --- PASS: TestValidateFieldRequirements/optional_field_present_with_wrong_type (0.00s)
+    --- PASS: TestValidateFieldRequirements/nested_field_validation (0.00s)
+    --- PASS: TestValidateFieldRequirements/any_type_accepts_any_value (0.00s)
+=== RUN   TestGetFieldWithType
+=== RUN   TestGetFieldWithType/existing_field
+=== RUN   TestGetFieldWithType/nested_field
+=== RUN   TestGetFieldWithType/missing_field
+=== RUN   TestGetFieldWithType/nil_field
+=== RUN   TestGetFieldWithType/complex_nested_structure
+--- PASS: TestGetFieldWithType (0.00s)
+    --- PASS: TestGetFieldWithType/existing_field (0.00s)
+    --- PASS: TestGetFieldWithType/nested_field (0.00s)
+    --- PASS: TestGetFieldWithType/missing_field (0.00s)
+    --- PASS: TestGetFieldWithType/nil_field (0.00s)
+    --- PASS: TestGetFieldWithType/complex_nested_structure (0.00s)
+=== RUN   TestFieldNotFoundError
+--- PASS: TestFieldNotFoundError (0.00s)
+=== RUN   TestTypeMismatchError
+--- PASS: TestTypeMismatchError (0.00s)
+=== RUN   TestDeepNesting
+=== RUN   TestDeepNesting/deep_nested_get_string
+=== RUN   TestDeepNesting/deep_nested_has_field
+=== RUN   TestDeepNesting/deep_missing_intermediate
+--- PASS: TestDeepNesting (0.00s)
+    --- PASS: TestDeepNesting/deep_nested_get_string (0.00s)
+    --- PASS: TestDeepNesting/deep_nested_has_field (0.00s)
+    --- PASS: TestDeepNesting/deep_missing_intermediate (0.00s)
+=== RUN   TestEdgeCases
+=== RUN   TestEdgeCases/nil_data_map
+=== RUN   TestEdgeCases/path_with_dots_in_key_names_should_work_if_properly_escaped
+=== RUN   TestEdgeCases/empty_map_data
+--- PASS: TestEdgeCases (0.00s)
+    --- PASS: TestEdgeCases/nil_data_map (0.00s)
+    --- PASS: TestEdgeCases/path_with_dots_in_key_names_should_work_if_properly_escaped (0.00s)
+    --- PASS: TestEdgeCases/empty_map_data (0.00s)
+=== RUN   TestGetRequiredInt_EdgeCases
+=== RUN   TestGetRequiredInt_EdgeCases/int32_value
+=== RUN   TestGetRequiredInt_EdgeCases/int64_value
+=== RUN   TestGetRequiredInt_EdgeCases/float32_whole_number
+=== RUN   TestGetRequiredInt_EdgeCases/float32_with_fraction
+=== RUN   TestGetRequiredInt_EdgeCases/string_that_parses_as_int
+=== RUN   TestGetRequiredInt_EdgeCases/string_that_parses_as_float
+=== RUN   TestGetRequiredInt_EdgeCases/invalid_string
+=== RUN   TestGetRequiredInt_EdgeCases/boolean_value
+=== RUN   TestGetRequiredInt_EdgeCases/array_value
+=== RUN   TestGetRequiredInt_EdgeCases/negative_int
+--- PASS: TestGetRequiredInt_EdgeCases (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/int32_value (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/int64_value (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/float32_whole_number (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/float32_with_fraction (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/string_that_parses_as_int (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/string_that_parses_as_float (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/invalid_string (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/boolean_value (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/array_value (0.00s)
+    --- PASS: TestGetRequiredInt_EdgeCases/negative_int (0.00s)
+=== RUN   TestIsInt
+=== RUN   TestIsInt/int
+=== RUN   TestIsInt/int64
+=== RUN   TestIsInt/int32
+=== RUN   TestIsInt/int16
+=== RUN   TestIsInt/int8
+=== RUN   TestIsInt/uint
+=== RUN   TestIsInt/uint64
+=== RUN   TestIsInt/uint32
+=== RUN   TestIsInt/float64_whole
+=== RUN   TestIsInt/float64_fraction
+=== RUN   TestIsInt/float32_whole
+=== RUN   TestIsInt/float32_fraction
+=== RUN   TestIsInt/string
+=== RUN   TestIsInt/bool
+=== RUN   TestIsInt/nil
+=== RUN   TestIsInt/array
+=== RUN   TestIsInt/map
+--- PASS: TestIsInt (0.00s)
+    --- PASS: TestIsInt/int (0.00s)
+    --- PASS: TestIsInt/int64 (0.00s)
+    --- PASS: TestIsInt/int32 (0.00s)
+    --- PASS: TestIsInt/int16 (0.00s)
+    --- PASS: TestIsInt/int8 (0.00s)
+    --- PASS: TestIsInt/uint (0.00s)
+    --- PASS: TestIsInt/uint64 (0.00s)
+    --- PASS: TestIsInt/uint32 (0.00s)
+    --- PASS: TestIsInt/float64_whole (0.00s)
+    --- PASS: TestIsInt/float64_fraction (0.00s)
+    --- PASS: TestIsInt/float32_whole (0.00s)
+    --- PASS: TestIsInt/float32_fraction (0.00s)
+    --- PASS: TestIsInt/string (0.00s)
+    --- PASS: TestIsInt/bool (0.00s)
+    --- PASS: TestIsInt/nil (0.00s)
+    --- PASS: TestIsInt/array (0.00s)
+    --- PASS: TestIsInt/map (0.00s)
+=== RUN   TestParseErrorVariantString
+=== RUN   TestParseErrorVariantString/syntax_variant
+=== RUN   TestParseErrorVariantString/type_mismatch_variant
+=== RUN   TestParseErrorVariantString/validation_variant
+=== RUN   TestParseErrorVariantString/IO_variant
+=== RUN   TestParseErrorVariantString/structure_variant
+=== RUN   TestParseErrorVariantString/custom_variant
+--- PASS: TestParseErrorVariantString (0.00s)
+    --- PASS: TestParseErrorVariantString/syntax_variant (0.00s)
+    --- PASS: TestParseErrorVariantString/type_mismatch_variant (0.00s)
+    --- PASS: TestParseErrorVariantString/validation_variant (0.00s)
+    --- PASS: TestParseErrorVariantString/IO_variant (0.00s)
+    --- PASS: TestParseErrorVariantString/structure_variant (0.00s)
+    --- PASS: TestParseErrorVariantString/custom_variant (0.00s)
+=== RUN   TestParseErrorVariantDescription
+=== RUN   TestParseErrorVariantDescription/syntax_variant_description
+=== RUN   TestParseErrorVariantDescription/type_mismatch_variant_description
+=== RUN   TestParseErrorVariantDescription/validation_variant_description
+=== RUN   TestParseErrorVariantDescription/IO_variant_description
+=== RUN   TestParseErrorVariantDescription/structure_variant_description
+=== RUN   TestParseErrorVariantDescription/custom_variant_description
+--- PASS: TestParseErrorVariantDescription (0.00s)
+    --- PASS: TestParseErrorVariantDescription/syntax_variant_description (0.00s)
+    --- PASS: TestParseErrorVariantDescription/type_mismatch_variant_description (0.00s)
+    --- PASS: TestParseErrorVariantDescription/validation_variant_description (0.00s)
+    --- PASS: TestParseErrorVariantDescription/IO_variant_description (0.00s)
+    --- PASS: TestParseErrorVariantDescription/structure_variant_description (0.00s)
+    --- PASS: TestParseErrorVariantDescription/custom_variant_description (0.00s)
+=== RUN   TestParseErrorVariantCount
+    errors_parsevariant_test.go:98: ParseErrorVariant has 6 distinct variants (minimum 5 required):
+    errors_parsevariant_test.go:100:   1. syntax - YAML syntax error - invalid YAML structure or formatting
+    errors_parsevariant_test.go:100:   2. type_mismatch - Type mismatch error - cannot convert YAML to expected type
+    errors_parsevariant_test.go:100:   3. validation - Validation error - constraint violation or invalid value
+    errors_parsevariant_test.go:100:   4. io - I/O error - file operation failed
+    errors_parsevariant_test.go:100:   5. structure - Structure error - invalid YAML document structure
+    errors_parsevariant_test.go:100:   6. custom - Custom error - application-specific parsing error
+--- PASS: TestParseErrorVariantCount (0.00s)
+=== RUN   TestParseErrorVariantAllDistinct
+--- PASS: TestParseErrorVariantAllDistinct (0.00s)
+=== RUN   TestIsYAMLError
+=== RUN   TestIsYAMLError/nil_error_returns_false
+=== RUN   TestIsYAMLError/standard_error_returns_false
+=== RUN   TestIsYAMLError/ParseError_returns_true
+=== RUN   TestIsYAMLError/ValidationError_returns_true
+=== RUN   TestIsYAMLError/FileError_returns_true
+=== RUN   TestIsYAMLError/SchemaValidationError_returns_true
+--- PASS: TestIsYAMLError (0.00s)
+    --- PASS: TestIsYAMLError/nil_error_returns_false (0.00s)
+    --- PASS: TestIsYAMLError/standard_error_returns_false (0.00s)
+    --- PASS: TestIsYAMLError/ParseError_returns_true (0.00s)
+    --- PASS: TestIsYAMLError/ValidationError_returns_true (0.00s)
+    --- PASS: TestIsYAMLError/FileError_returns_true (0.00s)
+    --- PASS: TestIsYAMLError/SchemaValidationError_returns_true (0.00s)
+=== RUN   TestGetYAMLErrorType
+=== RUN   TestGetYAMLErrorType/nil_error_returns_empty_string
+=== RUN   TestGetYAMLErrorType/standard_error_returns_empty_string
+=== RUN   TestGetYAMLErrorType/ParseError_returns_ErrorTypeParse
+    errors_test.go:105: GetYAMLErrorType() = , expected parse
+=== RUN   TestGetYAMLErrorType/ValidationError_returns_ErrorTypeValidation
+=== RUN   TestGetYAMLErrorType/FileError_returns_ErrorTypeFile
+=== RUN   TestGetYAMLErrorType/SchemaValidationError_returns_ErrorTypeSchema
+    errors_test.go:105: GetYAMLErrorType() = schema_validate, expected schema
+=== RUN   TestGetYAMLErrorType/wrapped_ParseError_returns_ErrorTypeParse
+    errors_test.go:105: GetYAMLErrorType() = , expected parse
+--- FAIL: TestGetYAMLErrorType (0.00s)
+    --- PASS: TestGetYAMLErrorType/nil_error_returns_empty_string (0.00s)
+    --- PASS: TestGetYAMLErrorType/standard_error_returns_empty_string (0.00s)
+    --- FAIL: TestGetYAMLErrorType/ParseError_returns_ErrorTypeParse (0.00s)
+    --- PASS: TestGetYAMLErrorType/ValidationError_returns_ErrorTypeValidation (0.00s)
+    --- PASS: TestGetYAMLErrorType/FileError_returns_ErrorTypeFile (0.00s)
+    --- FAIL: TestGetYAMLErrorType/SchemaValidationError_returns_ErrorTypeSchema (0.00s)
+    --- FAIL: TestGetYAMLErrorType/wrapped_ParseError_returns_ErrorTypeParse (0.00s)
+=== RUN   TestWrapError
+--- PASS: TestWrapError (0.00s)
+=== RUN   TestIsParseError
+=== RUN   TestIsParseError/nil_error_returns_false
+=== RUN   TestIsParseError/standard_error_returns_false
+=== RUN   TestIsParseError/ParseError_returns_true
+=== RUN   TestIsParseError/wrapped_ParseError_returns_true
+=== RUN   TestIsParseError/ValidationError_returns_false
+--- PASS: TestIsParseError (0.00s)
+    --- PASS: TestIsParseError/nil_error_returns_false (0.00s)
+    --- PASS: TestIsParseError/standard_error_returns_false (0.00s)
+    --- PASS: TestIsParseError/ParseError_returns_true (0.00s)
+    --- PASS: TestIsParseError/wrapped_ParseError_returns_true (0.00s)
+    --- PASS: TestIsParseError/ValidationError_returns_false (0.00s)
+=== RUN   TestNewParseError
+=== RUN   TestNewParseError/basic_parse_error
+=== RUN   TestNewParseError/parse_error_with_default_code
+=== RUN   TestNewParseError/parse_error_without_line_number
+=== RUN   TestNewParseError/parse_error_with_line_and_column
+=== RUN   TestNewParseError/parse_error_with_expected_and_actual
+=== RUN   TestNewParseError/parse_error_with_only_expected
+=== RUN   TestNewParseError/parse_error_with_only_actual
+--- PASS: TestNewParseError (0.00s)
+    --- PASS: TestNewParseError/basic_parse_error (0.00s)
+    --- PASS: TestNewParseError/parse_error_with_default_code (0.00s)
+    --- PASS: TestNewParseError/parse_error_without_line_number (0.00s)
+    --- PASS: TestNewParseError/parse_error_with_line_and_column (0.00s)
+    --- PASS: TestNewParseError/parse_error_with_expected_and_actual (0.00s)
+    --- PASS: TestNewParseError/parse_error_with_only_expected (0.00s)
+    --- PASS: TestNewParseError/parse_error_with_only_actual (0.00s)
+=== RUN   TestNewValidationError
+=== RUN   TestNewValidationError/basic_validation_error
+=== RUN   TestNewValidationError/validation_error_with_default_code
+=== RUN   TestNewValidationError/validation_error_without_field_path
+=== RUN   TestNewValidationError/validation_error_with_all_fields
+--- PASS: TestNewValidationError (0.00s)
+    --- PASS: TestNewValidationError/basic_validation_error (0.00s)
+    --- PASS: TestNewValidationError/validation_error_with_default_code (0.00s)
+    --- PASS: TestNewValidationError/validation_error_without_field_path (0.00s)
+    --- PASS: TestNewValidationError/validation_error_with_all_fields (0.00s)
+=== RUN   TestValidationErrorString
+=== RUN   TestValidationErrorString/validation_error_with_constraint
+=== RUN   TestValidationErrorString/validation_error_without_constraint
+=== RUN   TestValidationErrorString/validation_error_with_line_and_column
+=== RUN   TestValidationErrorString/validation_error_with_line,_field_path,_and_constraint
+--- PASS: TestValidationErrorString (0.00s)
+    --- PASS: TestValidationErrorString/validation_error_with_constraint (0.00s)
+    --- PASS: TestValidationErrorString/validation_error_without_constraint (0.00s)
+    --- PASS: TestValidationErrorString/validation_error_with_line_and_column (0.00s)
+    --- PASS: TestValidationErrorString/validation_error_with_line,_field_path,_and_constraint (0.00s)
+=== RUN   TestTypeMismatchErrorFormatting
+=== RUN   TestTypeMismatchErrorFormatting/type_mismatch_with_line_and_field_path
+=== RUN   TestTypeMismatchErrorFormatting/type_mismatch_without_line_number
+=== RUN   TestTypeMismatchErrorFormatting/type_mismatch_with_nested_field_path
+--- PASS: TestTypeMismatchErrorFormatting (0.00s)
+    --- PASS: TestTypeMismatchErrorFormatting/type_mismatch_with_line_and_field_path (0.00s)
+    --- PASS: TestTypeMismatchErrorFormatting/type_mismatch_without_line_number (0.00s)
+    --- PASS: TestTypeMismatchErrorFormatting/type_mismatch_with_nested_field_path (0.00s)
+=== RUN   TestConstraintErrorFieldPathFormatting
+=== RUN   TestConstraintErrorFieldPathFormatting/constraint_error_with_line_and_field_path
+=== RUN   TestConstraintErrorFieldPathFormatting/constraint_error_without_line_number
+=== RUN   TestConstraintErrorFieldPathFormatting/constraint_error_with_nested_field_path
+--- PASS: TestConstraintErrorFieldPathFormatting (0.00s)
+    --- PASS: TestConstraintErrorFieldPathFormatting/constraint_error_with_line_and_field_path (0.00s)
+    --- PASS: TestConstraintErrorFieldPathFormatting/constraint_error_without_line_number (0.00s)
+    --- PASS: TestConstraintErrorFieldPathFormatting/constraint_error_with_nested_field_path (0.00s)
+=== RUN   TestFieldNotFoundErrorFormatting
+=== RUN   TestFieldNotFoundErrorFormatting/field_not_found_with_line_number
+=== RUN   TestFieldNotFoundErrorFormatting/field_not_found_without_line_number
+=== RUN   TestFieldNotFoundErrorFormatting/field_not_found_with_nested_field_path
+--- PASS: TestFieldNotFoundErrorFormatting (0.00s)
+    --- PASS: TestFieldNotFoundErrorFormatting/field_not_found_with_line_number (0.00s)
+    --- PASS: TestFieldNotFoundErrorFormatting/field_not_found_without_line_number (0.00s)
+    --- PASS: TestFieldNotFoundErrorFormatting/field_not_found_with_nested_field_path (0.00s)
+=== RUN   TestReadFile
+=== RUN   TestReadFile/successful_file_read
+=== RUN   TestReadFile/file_not_found
+=== RUN   TestReadFile/directory_instead_of_file
+=== RUN   TestReadFile/relative_path_resolution
+=== RUN   TestReadFile/empty_file
+=== RUN   TestReadFile/large_file
+--- PASS: TestReadFile (0.00s)
+    --- PASS: TestReadFile/successful_file_read (0.00s)
+    --- PASS: TestReadFile/file_not_found (0.00s)
+    --- PASS: TestReadFile/directory_instead_of_file (0.00s)
+    --- PASS: TestReadFile/relative_path_resolution (0.00s)
+    --- PASS: TestReadFile/empty_file (0.00s)
+    --- PASS: TestReadFile/large_file (0.00s)
+=== RUN   TestFileExists
+=== RUN   TestFileExists/existing_file
+=== RUN   TestFileExists/non-existent_file
+=== RUN   TestFileExists/relative_path_to_existing_file
+--- PASS: TestFileExists (0.00s)
+    --- PASS: TestFileExists/existing_file (0.00s)
+    --- PASS: TestFileExists/non-existent_file (0.00s)
+    --- PASS: TestFileExists/relative_path_to_existing_file (0.00s)
+=== RUN   TestFileError
+=== RUN   TestFileError/error_message_format
+=== RUN   TestFileError/error_message_without_underlying_error
+=== RUN   TestFileError/unwrap_returns_underlying_error
+=== RUN   TestFileError/unwrap_with_nil_underlying_error
+--- PASS: TestFileError (0.00s)
+    --- PASS: TestFileError/error_message_format (0.00s)
+    --- PASS: TestFileError/error_message_without_underlying_error (0.00s)
+    --- PASS: TestFileError/unwrap_returns_underlying_error (0.00s)
+    --- PASS: TestFileError/unwrap_with_nil_underlying_error (0.00s)
+=== RUN   TestIsFileNotFoundError
+=== RUN   TestIsFileNotFoundError/nil_error
+=== RUN   TestIsFileNotFoundError/os.ErrNotExist
+=== RUN   TestIsFileNotFoundError/FileError_with_not_found_underlying
+=== RUN   TestIsFileNotFoundError/FileError_with_permission_error
+=== RUN   TestIsFileNotFoundError/other_error
+--- PASS: TestIsFileNotFoundError (0.00s)
+    --- PASS: TestIsFileNotFoundError/nil_error (0.00s)
+    --- PASS: TestIsFileNotFoundError/os.ErrNotExist (0.00s)
+    --- PASS: TestIsFileNotFoundError/FileError_with_not_found_underlying (0.00s)
+    --- PASS: TestIsFileNotFoundError/FileError_with_permission_error (0.00s)
+    --- PASS: TestIsFileNotFoundError/other_error (0.00s)
+=== RUN   TestIsPermissionError
+=== RUN   TestIsPermissionError/nil_error
+=== RUN   TestIsPermissionError/os.ErrPermission
+=== RUN   TestIsPermissionError/FileError_with_permission_underlying
+=== RUN   TestIsPermissionError/FileError_with_not_found_error
+=== RUN   TestIsPermissionError/other_error
+--- PASS: TestIsPermissionError (0.00s)
+    --- PASS: TestIsPermissionError/nil_error (0.00s)
+    --- PASS: TestIsPermissionError/os.ErrPermission (0.00s)
+    --- PASS: TestIsPermissionError/FileError_with_permission_underlying (0.00s)
+    --- PASS: TestIsPermissionError/FileError_with_not_found_error (0.00s)
+    --- PASS: TestIsPermissionError/other_error (0.00s)
+=== RUN   TestLoadValidYAML
+--- PASS: TestLoadValidYAML (0.00s)
+=== RUN   TestLoadNestedYAML
+--- PASS: TestLoadNestedYAML (0.00s)
+=== RUN   TestParseFile_ValidSimpleYAML
+--- PASS: TestParseFile_ValidSimpleYAML (0.00s)
+=== RUN   TestParseFile_ValidNestedYAML
+--- PASS: TestParseFile_ValidNestedYAML (0.00s)
+=== RUN   TestParseFile_ValidListYAML
+--- PASS: TestParseFile_ValidListYAML (0.00s)
+=== RUN   TestParseFile_ValidCommentsAnchors
+--- PASS: TestParseFile_ValidCommentsAnchors (0.00s)
+=== RUN   TestParseFile_InvalidMissingColon
+--- PASS: TestParseFile_InvalidMissingColon (0.00s)
+=== RUN   TestParseFile_InvalidIndentation
+--- PASS: TestParseFile_InvalidIndentation (0.00s)
+=== RUN   TestParseFile_InvalidUnmatchedBracket
+--- PASS: TestParseFile_InvalidUnmatchedBracket (0.00s)
+=== RUN   TestParseFile_InvalidSyntaxError
+--- PASS: TestParseFile_InvalidSyntaxError (0.00s)
+=== RUN   TestParseFile_EmptyFile
+--- PASS: TestParseFile_EmptyFile (0.00s)
+=== RUN   TestParseFile_WhitespaceOnly
+--- PASS: TestParseFile_WhitespaceOnly (0.00s)
+=== RUN   TestParseFile_MissingFile
+--- PASS: TestParseFile_MissingFile (0.00s)
+=== RUN   TestParseFile_MultilineString
+--- PASS: TestParseFile_MultilineString (0.00s)
+=== RUN   TestParseFile_ValidComplexYAML
+--- PASS: TestParseFile_ValidComplexYAML (0.00s)
+=== RUN   TestParseFileToMap_ValidYAML
+--- PASS: TestParseFileToMap_ValidYAML (0.00s)
+=== RUN   TestParseFileToMap_InvalidYAML
+--- PASS: TestParseFileToMap_InvalidYAML (0.00s)
+=== RUN   TestParseFileToMap_MissingFile
+--- PASS: TestParseFileToMap_MissingFile (0.00s)
+=== RUN   TestReadFile_ValidYAML
+--- PASS: TestReadFile_ValidYAML (0.00s)
+=== RUN   TestReadFile_MissingFile
+--- PASS: TestReadFile_MissingFile (0.00s)
+=== RUN   TestFileExists_WithTestData
+--- PASS: TestFileExists_WithTestData (0.00s)
+=== RUN   TestParseFile_AllInvalidFiles
+=== RUN   TestParseFile_AllInvalidFiles/invalid_missing_colon.yaml
+=== RUN   TestParseFile_AllInvalidFiles/invalid_indentation.yaml
+=== RUN   TestParseFile_AllInvalidFiles/invalid_unmatched_bracket.yaml
+=== RUN   TestParseFile_AllInvalidFiles/invalid_syntax_error.yaml
+--- PASS: TestParseFile_AllInvalidFiles (0.00s)
+    --- PASS: TestParseFile_AllInvalidFiles/invalid_missing_colon.yaml (0.00s)
+    --- PASS: TestParseFile_AllInvalidFiles/invalid_indentation.yaml (0.00s)
+    --- PASS: TestParseFile_AllInvalidFiles/invalid_unmatched_bracket.yaml (0.00s)
+    --- PASS: TestParseFile_AllInvalidFiles/invalid_syntax_error.yaml (0.00s)
+=== RUN   TestParseFile_AllValidFiles
+=== RUN   TestParseFile_AllValidFiles/valid_simple.yaml
+=== RUN   TestParseFile_AllValidFiles/valid_nested.yaml
+=== RUN   TestParseFile_AllValidFiles/valid_list.yaml
+=== RUN   TestParseFile_AllValidFiles/valid_comments_anchors.yaml
+=== RUN   TestParseFile_AllValidFiles/multiline_string.yaml
+=== RUN   TestParseFile_AllValidFiles/empty.yaml
+=== RUN   TestParseFile_AllValidFiles/whitespace_only.yaml
+--- PASS: TestParseFile_AllValidFiles (0.00s)
+    --- PASS: TestParseFile_AllValidFiles/valid_simple.yaml (0.00s)
+    --- PASS: TestParseFile_AllValidFiles/valid_nested.yaml (0.00s)
+    --- PASS: TestParseFile_AllValidFiles/valid_list.yaml (0.00s)
+    --- PASS: TestParseFile_AllValidFiles/valid_comments_anchors.yaml (0.00s)
+    --- PASS: TestParseFile_AllValidFiles/multiline_string.yaml (0.00s)
+    --- PASS: TestParseFile_AllValidFiles/empty.yaml (0.00s)
+    --- PASS: TestParseFile_AllValidFiles/whitespace_only.yaml (0.00s)
+=== RUN   TestLoadInvalidYAMLMissingColon
+--- PASS: TestLoadInvalidYAMLMissingColon (0.00s)
+=== RUN   TestLoadInvalidYAMLIndentation
+--- PASS: TestLoadInvalidYAMLIndentation (0.00s)
+=== RUN   TestLoadEmptyFile
+--- PASS: TestLoadEmptyFile (0.00s)
+=== RUN   TestLoadWhitespaceOnly
+--- PASS: TestLoadWhitespaceOnly (0.00s)
+=== RUN   TestLoadMissingFile
+--- PASS: TestLoadMissingFile (0.00s)
+=== RUN   TestParseFile_RelativePath
+--- PASS: TestParseFile_RelativePath (0.00s)
+=== RUN   TestParseFile_AbsolutePath
+--- PASS: TestParseFile_AbsolutePath (0.00s)
+=== RUN   TestValidator_ValidSimpleYAML
+--- PASS: TestValidator_ValidSimpleYAML (0.00s)
+=== RUN   TestValidator_ValidNestedYAML
+--- PASS: TestValidator_ValidNestedYAML (0.00s)
+=== RUN   TestValidator_ValidListYAML
+--- PASS: TestValidator_ValidListYAML (0.00s)
+=== RUN   TestValidator_ValidCommentsAnchors
+--- PASS: TestValidator_ValidCommentsAnchors (0.00s)
+=== RUN   TestValidator_InvalidIndentation
+--- PASS: TestValidator_InvalidIndentation (0.00s)
+=== RUN   TestValidator_InvalidMissingColon
+--- PASS: TestValidator_InvalidMissingColon (0.00s)
+=== RUN   TestValidator_InvalidSyntaxError
+--- PASS: TestValidator_InvalidSyntaxError (0.00s)
+=== RUN   TestValidator_InvalidUnmatchedBracket
+--- PASS: TestValidator_InvalidUnmatchedBracket (0.00s)
+=== RUN   TestValidator_EmptyFile
+--- PASS: TestValidator_EmptyFile (0.00s)
+=== RUN   TestValidator_WhitespaceOnlyFile
+--- PASS: TestValidator_WhitespaceOnlyFile (0.00s)
+=== RUN   TestValidator_MissingFile
+--- PASS: TestValidator_MissingFile (0.00s)
+=== RUN   TestValidator_MultilineString
+--- PASS: TestValidator_MultilineString (0.00s)
+=== RUN   TestIntegration_ReadParseValidate
+--- PASS: TestIntegration_ReadParseValidate (0.00s)
+=== RUN   TestIntegration_ErrorPropagation
+--- PASS: TestIntegration_ErrorPropagation (0.00s)
+=== RUN   TestIntegration_ValidateMultipleFiles
+--- PASS: TestIntegration_ValidateMultipleFiles (0.00s)
+=== RUN   TestIntegration_AllSampleFilesAccessible
+=== RUN   TestIntegration_AllSampleFilesAccessible/valid_simple.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/valid_nested.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/valid_list.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/valid_comments_anchors.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/multiline_string.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/invalid_indentation.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/invalid_missing_colon.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/invalid_syntax_error.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/invalid_unmatched_bracket.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/empty.yaml
+=== RUN   TestIntegration_AllSampleFilesAccessible/whitespace_only.yaml
+--- PASS: TestIntegration_AllSampleFilesAccessible (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/valid_simple.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/valid_nested.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/valid_list.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/valid_comments_anchors.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/multiline_string.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/invalid_indentation.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/invalid_missing_colon.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/invalid_syntax_error.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/invalid_unmatched_bracket.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/empty.yaml (0.00s)
+    --- PASS: TestIntegration_AllSampleFilesAccessible/whitespace_only.yaml (0.00s)
+=== RUN   TestIntegration_FileReadAndValidateString
+--- PASS: TestIntegration_FileReadAndValidateString (0.00s)
+=== RUN   TestRootValidSimpleYAML
+--- PASS: TestRootValidSimpleYAML (0.00s)
+=== RUN   TestRootValidNestedYAML
+--- PASS: TestRootValidNestedYAML (0.00s)
+=== RUN   TestRootValidComplexYAML
+--- PASS: TestRootValidComplexYAML (0.00s)
+=== RUN   TestValidSimpleYAMLComprehensive
+--- PASS: TestValidSimpleYAMLComprehensive (0.00s)
+=== RUN   TestValidSimpleYAMLWithParseString
+--- PASS: TestValidSimpleYAMLWithParseString (0.00s)
+=== RUN   TestValidSimpleYAMLWithParseFileToMap
+--- PASS: TestValidSimpleYAMLWithParseFileToMap (0.00s)
+=== RUN   TestValidSimpleYAMLTypeChecking
+=== RUN   TestValidSimpleYAMLTypeChecking/string_type
+=== RUN   TestValidSimpleYAMLTypeChecking/number_type
+=== RUN   TestValidSimpleYAMLTypeChecking/float_type
+=== RUN   TestValidSimpleYAMLTypeChecking/boolean_type
+=== RUN   TestValidSimpleYAMLTypeChecking/empty_string_type
+=== RUN   TestValidSimpleYAMLTypeChecking/null_value_type
+--- PASS: TestValidSimpleYAMLTypeChecking (0.00s)
+    --- PASS: TestValidSimpleYAMLTypeChecking/string_type (0.00s)
+    --- PASS: TestValidSimpleYAMLTypeChecking/number_type (0.00s)
+    --- PASS: TestValidSimpleYAMLTypeChecking/float_type (0.00s)
+    --- PASS: TestValidSimpleYAMLTypeChecking/boolean_type (0.00s)
+    --- PASS: TestValidSimpleYAMLTypeChecking/empty_string_type (0.00s)
+    --- PASS: TestValidSimpleYAMLTypeChecking/null_value_type (0.00s)
+=== RUN   TestFieldAccessorInterface
+=== RUN   TestFieldAccessorInterface/GetString
+=== RUN   TestFieldAccessorInterface/GetInt
+=== RUN   TestFieldAccessorInterface/GetBool
+=== RUN   TestFieldAccessorInterface/HasField
+=== RUN   TestFieldAccessorInterface/GetRequiredField
+=== RUN   TestFieldAccessorInterface/GetRequiredString
+=== RUN   TestFieldAccessorInterface/GetRequiredInt
+=== RUN   TestFieldAccessorInterface/GetRequiredBool
+=== RUN   TestFieldAccessorInterface/ValidateRequiredFields
+=== RUN   TestFieldAccessorInterface/ValidateFieldRequirements
+--- PASS: TestFieldAccessorInterface (0.00s)
+    --- PASS: TestFieldAccessorInterface/GetString (0.00s)
+    --- PASS: TestFieldAccessorInterface/GetInt (0.00s)
+    --- PASS: TestFieldAccessorInterface/GetBool (0.00s)
+    --- PASS: TestFieldAccessorInterface/HasField (0.00s)
+    --- PASS: TestFieldAccessorInterface/GetRequiredField (0.00s)
+    --- PASS: TestFieldAccessorInterface/GetRequiredString (0.00s)
+    --- PASS: TestFieldAccessorInterface/GetRequiredInt (0.00s)
+    --- PASS: TestFieldAccessorInterface/GetRequiredBool (0.00s)
+    --- PASS: TestFieldAccessorInterface/ValidateRequiredFields (0.00s)
+    --- PASS: TestFieldAccessorInterface/ValidateFieldRequirements (0.00s)
+=== RUN   TestFileDiscoveryInterface
+=== RUN   TestFileDiscoveryInterface/FindYAMLFiles
+    interfaces_test.go:189: FindYAMLFiles() returned no files for yamlutil directory
+=== RUN   TestFileDiscoveryInterface/FindYAMLFilesRecursive
+--- FAIL: TestFileDiscoveryInterface (0.00s)
+    --- FAIL: TestFileDiscoveryInterface/FindYAMLFiles (0.00s)
+    --- PASS: TestFileDiscoveryInterface/FindYAMLFilesRecursive (0.00s)
+=== RUN   TestParserFactoryInterface
+=== RUN   TestParserFactoryInterface/CreateDefaultParser
+=== RUN   TestParserFactoryInterface/CreateStrictParser
+=== RUN   TestParserFactoryInterface/CreateParser
+--- PASS: TestParserFactoryInterface (0.00s)
+    --- PASS: TestParserFactoryInterface/CreateDefaultParser (0.00s)
+    --- PASS: TestParserFactoryInterface/CreateStrictParser (0.00s)
+    --- PASS: TestParserFactoryInterface/CreateParser (0.00s)
+=== RUN   TestValidatorFactoryInterface
+=== RUN   TestValidatorFactoryInterface/NewDefaultValidator
+=== RUN   TestValidatorFactoryInterface/NewStrictValidator
+--- PASS: TestValidatorFactoryInterface (0.00s)
+    --- PASS: TestValidatorFactoryInterface/NewDefaultValidator (0.00s)
+    --- PASS: TestValidatorFactoryInterface/NewStrictValidator (0.00s)
+=== RUN   TestNewSyntaxParseError
+--- PASS: TestNewSyntaxParseError (0.00s)
+=== RUN   TestNewStructureParseError
+--- PASS: TestNewStructureParseError (0.00s)
+=== RUN   TestNewTypeMismatchParseError
+--- PASS: TestNewTypeMismatchParseError (0.00s)
+=== RUN   TestNewIOParseError
+--- PASS: TestNewIOParseError (0.00s)
+=== RUN   TestNewValidationParseError
+--- PASS: TestNewValidationParseError (0.00s)
+=== RUN   TestNewSchemaParseError
+--- PASS: TestNewSchemaParseError (0.00s)
+=== RUN   TestNewEmptyParseError
+--- PASS: TestNewEmptyParseError (0.00s)
+=== RUN   TestEnhancedParseErrorYAMLErrorInterface
+=== RUN   TestEnhancedParseErrorYAMLErrorInterface/syntax_error
+=== RUN   TestEnhancedParseErrorYAMLErrorInterface/structure_error_with_duplicate_key
+=== RUN   TestEnhancedParseErrorYAMLErrorInterface/structure_error_without_duplicate_key
+=== RUN   TestEnhancedParseErrorYAMLErrorInterface/type_mismatch_error
+=== RUN   TestEnhancedParseErrorYAMLErrorInterface/IO_error
+=== RUN   TestEnhancedParseErrorYAMLErrorInterface/validation_error
+=== RUN   TestEnhancedParseErrorYAMLErrorInterface/schema_error
+=== RUN   TestEnhancedParseErrorYAMLErrorInterface/empty_error
+--- PASS: TestEnhancedParseErrorYAMLErrorInterface (0.00s)
+    --- PASS: TestEnhancedParseErrorYAMLErrorInterface/syntax_error (0.00s)
+    --- PASS: TestEnhancedParseErrorYAMLErrorInterface/structure_error_with_duplicate_key (0.00s)
+    --- PASS: TestEnhancedParseErrorYAMLErrorInterface/structure_error_without_duplicate_key (0.00s)
+    --- PASS: TestEnhancedParseErrorYAMLErrorInterface/type_mismatch_error (0.00s)
+    --- PASS: TestEnhancedParseErrorYAMLErrorInterface/IO_error (0.00s)
+    --- PASS: TestEnhancedParseErrorYAMLErrorInterface/validation_error (0.00s)
+    --- PASS: TestEnhancedParseErrorYAMLErrorInterface/schema_error (0.00s)
+    --- PASS: TestEnhancedParseErrorYAMLErrorInterface/empty_error (0.00s)
+=== RUN   TestEnhancedParseErrorKindCheckers
+=== RUN   TestEnhancedParseErrorKindCheckers/syntax_error_is_syntax
+=== RUN   TestEnhancedParseErrorKindCheckers/syntax_error_is_not_structure
+=== RUN   TestEnhancedParseErrorKindCheckers/structure_error_is_structure
+=== RUN   TestEnhancedParseErrorKindCheckers/structure_error_is_not_syntax
+=== RUN   TestEnhancedParseErrorKindCheckers/type_mismatch_is_type_mismatch
+=== RUN   TestEnhancedParseErrorKindCheckers/IO_error_is_IO
+=== RUN   TestEnhancedParseErrorKindCheckers/validation_error_is_validation
+=== RUN   TestEnhancedParseErrorKindCheckers/schema_error_is_schema
+=== RUN   TestEnhancedParseErrorKindCheckers/empty_error_is_empty
+--- PASS: TestEnhancedParseErrorKindCheckers (0.00s)
+    --- PASS: TestEnhancedParseErrorKindCheckers/syntax_error_is_syntax (0.00s)
+    --- PASS: TestEnhancedParseErrorKindCheckers/syntax_error_is_not_structure (0.00s)
+    --- PASS: TestEnhancedParseErrorKindCheckers/structure_error_is_structure (0.00s)
+    --- PASS: TestEnhancedParseErrorKindCheckers/structure_error_is_not_syntax (0.00s)
+    --- PASS: TestEnhancedParseErrorKindCheckers/type_mismatch_is_type_mismatch (0.00s)
+    --- PASS: TestEnhancedParseErrorKindCheckers/IO_error_is_IO (0.00s)
+    --- PASS: TestEnhancedParseErrorKindCheckers/validation_error_is_validation (0.00s)
+    --- PASS: TestEnhancedParseErrorKindCheckers/schema_error_is_schema (0.00s)
+    --- PASS: TestEnhancedParseErrorKindCheckers/empty_error_is_empty (0.00s)
+=== RUN   TestEnhancedParseErrorToLegacyConversions
+=== RUN   TestEnhancedParseErrorToLegacyConversions/to_syntax_error
+=== RUN   TestEnhancedParseErrorToLegacyConversions/non-syntax_error_to_syntax_error_returns_nil
+=== RUN   TestEnhancedParseErrorToLegacyConversions/to_structure_error
+=== RUN   TestEnhancedParseErrorToLegacyConversions/to_type_mismatch_error
+=== RUN   TestEnhancedParseErrorToLegacyConversions/to_parse_error
+--- PASS: TestEnhancedParseErrorToLegacyConversions (0.00s)
+    --- PASS: TestEnhancedParseErrorToLegacyConversions/to_syntax_error (0.00s)
+    --- PASS: TestEnhancedParseErrorToLegacyConversions/non-syntax_error_to_syntax_error_returns_nil (0.00s)
+    --- PASS: TestEnhancedParseErrorToLegacyConversions/to_structure_error (0.00s)
+    --- PASS: TestEnhancedParseErrorToLegacyConversions/to_type_mismatch_error (0.00s)
+    --- PASS: TestEnhancedParseErrorToLegacyConversions/to_parse_error (0.00s)
+=== RUN   TestEnhancedParseErrorString
+=== RUN   TestEnhancedParseErrorString/error_with_snippet
+=== RUN   TestEnhancedParseErrorString/error_with_surrounding_lines
+=== RUN   TestEnhancedParseErrorString/error_without_extra_context
+--- PASS: TestEnhancedParseErrorString (0.00s)
+    --- PASS: TestEnhancedParseErrorString/error_with_snippet (0.00s)
+    --- PASS: TestEnhancedParseErrorString/error_with_surrounding_lines (0.00s)
+    --- PASS: TestEnhancedParseErrorString/error_without_extra_context (0.00s)
+=== RUN   TestOkParseResult
+--- PASS: TestOkParseResult (0.00s)
+=== RUN   TestErrResult
+--- PASS: TestErrResult (0.00s)
+=== RUN   TestUnwrap
+=== RUN   TestUnwrap/unwrap_ok_result
+=== RUN   TestUnwrap/unwrap_error_result_panics
+--- PASS: TestUnwrap (0.00s)
+    --- PASS: TestUnwrap/unwrap_ok_result (0.00s)
+    --- PASS: TestUnwrap/unwrap_error_result_panics (0.00s)
+=== RUN   TestUnwrapOr
+=== RUN   TestUnwrapOr/unwrap_or_ok_result
+=== RUN   TestUnwrapOr/unwrap_or_error_result
+=== RUN   TestUnwrapOr/unwrap_or_with_zero_value
+--- PASS: TestUnwrapOr (0.00s)
+    --- PASS: TestUnwrapOr/unwrap_or_ok_result (0.00s)
+    --- PASS: TestUnwrapOr/unwrap_or_error_result (0.00s)
+    --- PASS: TestUnwrapOr/unwrap_or_with_zero_value (0.00s)
+=== RUN   TestUnwrapOrElse
+=== RUN   TestUnwrapOrElse/unwrap_or_else_ok_result
+=== RUN   TestUnwrapOrElse/unwrap_or_else_error_result
+=== RUN   TestUnwrapOrElse/unwrap_or_else_can_access_error
+--- PASS: TestUnwrapOrElse (0.00s)
+    --- PASS: TestUnwrapOrElse/unwrap_or_else_ok_result (0.00s)
+    --- PASS: TestUnwrapOrElse/unwrap_or_else_error_result (0.00s)
+    --- PASS: TestUnwrapOrElse/unwrap_or_else_can_access_error (0.00s)
+=== RUN   TestMap
+=== RUN   TestMap/map_ok_result
+=== RUN   TestMap/map_error_result_returns_error_unchanged
+=== RUN   TestMap/map_can_change_type
+--- PASS: TestMap (0.00s)
+    --- PASS: TestMap/map_ok_result (0.00s)
+    --- PASS: TestMap/map_error_result_returns_error_unchanged (0.00s)
+    --- PASS: TestMap/map_can_change_type (0.00s)
+=== RUN   TestMapErr
+=== RUN   TestMapErr/map_err_ok_result_returns_unchanged
+=== RUN   TestMapErr/map_err_error_result_transforms_error
+--- PASS: TestMapErr (0.00s)
+    --- PASS: TestMapErr/map_err_ok_result_returns_unchanged (0.00s)
+    --- PASS: TestMapErr/map_err_error_result_transforms_error (0.00s)
+=== RUN   TestAndThen
+=== RUN   TestAndThen/and_then_with_ok_results
+=== RUN   TestAndThen/and_then_with_error_result
+=== RUN   TestAndThen/and_then_with_error_in_function
+=== RUN   TestAndThen/and_then_chains_multiple_operations
+--- PASS: TestAndThen (0.00s)
+    --- PASS: TestAndThen/and_then_with_ok_results (0.00s)
+    --- PASS: TestAndThen/and_then_with_error_result (0.00s)
+    --- PASS: TestAndThen/and_then_with_error_in_function (0.00s)
+    --- PASS: TestAndThen/and_then_chains_multiple_operations (0.00s)
+=== RUN   TestOrElse
+=== RUN   TestOrElse/or_else_with_ok_result
+=== RUN   TestOrElse/or_else_with_error_result
+=== RUN   TestOrElse/or_else_with_error_alternative
+--- PASS: TestOrElse (0.00s)
+    --- PASS: TestOrElse/or_else_with_ok_result (0.00s)
+    --- PASS: TestOrElse/or_else_with_error_result (0.00s)
+    --- PASS: TestOrElse/or_else_with_error_alternative (0.00s)
+=== RUN   TestOrElseTry
+=== RUN   TestOrElseTry/or_else_try_with_ok_result
+=== RUN   TestOrElseTry/or_else_try_with_error_result
+=== RUN   TestOrElseTry/or_else_try_can_compute_lazily
+--- PASS: TestOrElseTry (0.00s)
+    --- PASS: TestOrElseTry/or_else_try_with_ok_result (0.00s)
+    --- PASS: TestOrElseTry/or_else_try_with_error_result (0.00s)
+    --- PASS: TestOrElseTry/or_else_try_can_compute_lazily (0.00s)
+=== RUN   TestErrorKindCheckers
+=== RUN   TestErrorKindCheckers/ok_result_is_not_syntax_error
+=== RUN   TestErrorKindCheckers/syntax_error_detected
+=== RUN   TestErrorKindCheckers/structure_error_detected
+=== RUN   TestErrorKindCheckers/type_mismatch_error_detected
+=== RUN   TestErrorKindCheckers/IO_error_detected
+=== RUN   TestErrorKindCheckers/validation_error_detected
+=== RUN   TestErrorKindCheckers/schema_error_detected
+=== RUN   TestErrorKindCheckers/empty_error_detected
+--- PASS: TestErrorKindCheckers (0.00s)
+    --- PASS: TestErrorKindCheckers/ok_result_is_not_syntax_error (0.00s)
+    --- PASS: TestErrorKindCheckers/syntax_error_detected (0.00s)
+    --- PASS: TestErrorKindCheckers/structure_error_detected (0.00s)
+    --- PASS: TestErrorKindCheckers/type_mismatch_error_detected (0.00s)
+    --- PASS: TestErrorKindCheckers/IO_error_detected (0.00s)
+    --- PASS: TestErrorKindCheckers/validation_error_detected (0.00s)
+    --- PASS: TestErrorKindCheckers/schema_error_detected (0.00s)
+    --- PASS: TestErrorKindCheckers/empty_error_detected (0.00s)
+=== RUN   TestErrorAccessors
+--- PASS: TestErrorAccessors (0.00s)
+=== RUN   TestErrorAccessorsOnOkResult
+--- PASS: TestErrorAccessorsOnOkResult (0.00s)
+=== RUN   TestDetailedString
+=== RUN   TestDetailedString/ok_result_detailed_string
+=== RUN   TestDetailedString/error_result_detailed_string
+--- PASS: TestDetailedString (0.00s)
+    --- PASS: TestDetailedString/ok_result_detailed_string (0.00s)
+    --- PASS: TestDetailedString/error_result_detailed_string (0.00s)
+=== RUN   TestResultErrorSummary
+=== RUN   TestResultErrorSummary/ok_result_error_summary
+=== RUN   TestResultErrorSummary/error_result_error_summary
+--- PASS: TestResultErrorSummary (0.00s)
+    --- PASS: TestResultErrorSummary/ok_result_error_summary (0.00s)
+    --- PASS: TestResultErrorSummary/error_result_error_summary (0.00s)
+=== RUN   TestCollectParseResults
+--- PASS: TestCollectParseResults (0.00s)
+=== RUN   TestFilterErrors
+--- PASS: TestFilterErrors (0.00s)
+=== RUN   TestFilterSuccesses
+--- PASS: TestFilterSuccesses (0.00s)
+=== RUN   TestParseResultsErrorSummary
+--- PASS: TestParseResultsErrorSummary (0.00s)
+=== RUN   TestMapResultTypeAlias
+--- PASS: TestMapResultTypeAlias (0.00s)
+=== RUN   TestConfigResultTypeAlias
+--- PASS: TestConfigResultTypeAlias (0.00s)
+=== RUN   TestParseFile
+--- PASS: TestParseFile (0.00s)
+=== RUN   TestParseFileMissing
+--- PASS: TestParseFileMissing (0.00s)
+=== RUN   TestParseFileInvalid
+--- PASS: TestParseFileInvalid (0.00s)
+=== RUN   TestParseFileToStruct
+--- PASS: TestParseFileToStruct (0.00s)
+=== RUN   TestParseString
+--- PASS: TestParseString (0.00s)
+=== RUN   TestParseStringInvalid
+--- PASS: TestParseStringInvalid (0.00s)
+=== RUN   TestExists
+--- PASS: TestExists (0.00s)
+=== RUN   TestIsYAMLFile
+=== RUN   TestIsYAMLFile/yaml_extension
+=== RUN   TestIsYAMLFile/yml_extension
+=== RUN   TestIsYAMLFile/json_extension
+=== RUN   TestIsYAMLFile/no_extension
+=== RUN   TestIsYAMLFile/yaml_in_path
+--- PASS: TestIsYAMLFile (0.00s)
+    --- PASS: TestIsYAMLFile/yaml_extension (0.00s)
+    --- PASS: TestIsYAMLFile/yml_extension (0.00s)
+    --- PASS: TestIsYAMLFile/json_extension (0.00s)
+    --- PASS: TestIsYAMLFile/no_extension (0.00s)
+    --- PASS: TestIsYAMLFile/yaml_in_path (0.00s)
+=== RUN   TestFindYAMLFiles
+--- PASS: TestFindYAMLFiles (0.00s)
+=== RUN   TestFindYAMLFilesRecursive
+--- PASS: TestFindYAMLFilesRecursive (0.00s)
+=== RUN   TestParseResultFields
+--- PASS: TestParseResultFields (0.00s)
+=== RUN   TestMustParseFile
+--- PASS: TestMustParseFile (0.00s)
+=== RUN   TestNewStrictParser
+--- PASS: TestNewStrictParser (0.00s)
+=== RUN   TestParseYAML
+=== RUN   TestParseYAML/valid_YAML_file
+=== RUN   TestParseYAML/empty_file_returns_empty_map
+=== RUN   TestParseYAML/whitespace-only_file_returns_empty_map
+=== RUN   TestParseYAML/file_not_found_returns_FileError
+=== RUN   TestParseYAML/invalid_YAML_syntax_returns_YAMLParseError
+=== RUN   TestParseYAML/invalid_YAML_structure_returns_YAMLParseError
+=== RUN   TestParseYAML/YAML_with_lists_and_complex_structures
+--- PASS: TestParseYAML (0.00s)
+    --- PASS: TestParseYAML/valid_YAML_file (0.00s)
+    --- PASS: TestParseYAML/empty_file_returns_empty_map (0.00s)
+    --- PASS: TestParseYAML/whitespace-only_file_returns_empty_map (0.00s)
+    --- PASS: TestParseYAML/file_not_found_returns_FileError (0.00s)
+    --- PASS: TestParseYAML/invalid_YAML_syntax_returns_YAMLParseError (0.00s)
+    --- PASS: TestParseYAML/invalid_YAML_structure_returns_YAMLParseError (0.00s)
+    --- PASS: TestParseYAML/YAML_with_lists_and_complex_structures (0.00s)
+=== RUN   TestYAMLParseError
+=== RUN   TestYAMLParseError/error_message_includes_file_path
+=== RUN   TestYAMLParseError/error_message_includes_line_number
+=== RUN   TestYAMLParseError/error_message_without_line_number
+=== RUN   TestYAMLParseError/unwrap_returns_underlying_error
+=== RUN   TestYAMLParseError/unwrap_with_nil_underlying_error
+--- PASS: TestYAMLParseError (0.00s)
+    --- PASS: TestYAMLParseError/error_message_includes_file_path (0.00s)
+    --- PASS: TestYAMLParseError/error_message_includes_line_number (0.00s)
+    --- PASS: TestYAMLParseError/error_message_without_line_number (0.00s)
+    --- PASS: TestYAMLParseError/unwrap_returns_underlying_error (0.00s)
+    --- PASS: TestYAMLParseError/unwrap_with_nil_underlying_error (0.00s)
+=== RUN   TestStrictParserBehavior
+--- PASS: TestStrictParserBehavior (0.00s)
+=== RUN   TestResult_Ok
+--- PASS: TestResult_Ok (0.00s)
+=== RUN   TestResult_Err
+--- PASS: TestResult_Err (0.00s)
+=== RUN   TestResult_Unwrap_panics_on_Err
+--- PASS: TestResult_Unwrap_panics_on_Err (0.00s)
+=== RUN   TestResult_UnwrapErr_panics_on_Ok
+--- PASS: TestResult_UnwrapErr_panics_on_Ok (0.00s)
+=== RUN   TestResult_UnwrapOrDefault
+--- PASS: TestResult_UnwrapOrDefault (0.00s)
+=== RUN   TestResult_UnwrapOr
+--- PASS: TestResult_UnwrapOr (0.00s)
+=== RUN   TestResult_UnwrapOrElse
+--- PASS: TestResult_UnwrapOrElse (0.00s)
+=== RUN   TestResult_Map
+--- PASS: TestResult_Map (0.00s)
+=== RUN   TestResult_MapErr
+--- PASS: TestResult_MapErr (0.00s)
+=== RUN   TestResult_AndThen
+--- PASS: TestResult_AndThen (0.00s)
+=== RUN   TestResult_OrElse
+--- PASS: TestResult_OrElse (0.00s)
+=== RUN   TestResult_Match
+--- PASS: TestResult_Match (0.00s)
+=== RUN   TestResult_String
+--- PASS: TestResult_String (0.00s)
+=== RUN   TestCollectResults
+--- PASS: TestCollectResults (0.00s)
+=== RUN   TestPartitionResults
+--- PASS: TestPartitionResults (0.00s)
+=== RUN   TestOption_Some
+--- PASS: TestOption_Some (0.00s)
+=== RUN   TestOption_None
+--- PASS: TestOption_None (0.00s)
+=== RUN   TestOption_UnwrapOr
+--- PASS: TestOption_UnwrapOr (0.00s)
+=== RUN   TestResult_ToOption
+--- PASS: TestResult_ToOption (0.00s)
+=== RUN   TestAsParseError
+--- PASS: TestAsParseError (0.00s)
+=== RUN   TestFromError
+--- PASS: TestFromError (0.00s)
+=== RUN   TestWithLineNumber
+--- PASS: TestWithLineNumber (0.00s)
+=== RUN   TestWithContext
+--- PASS: TestWithContext (0.00s)
+=== RUN   TestResult_Error
+--- PASS: TestResult_Error (0.00s)
+=== RUN   TestSuccessParseResult_RawField
+--- PASS: TestSuccessParseResult_RawField (0.00s)
+=== RUN   TestSuccessParseResult_NoRaw
+--- PASS: TestSuccessParseResult_NoRaw (0.00s)
+=== RUN   TestSuccessParseResult_ExistingMethods
+--- PASS: TestSuccessParseResult_ExistingMethods (0.00s)
+=== RUN   TestSuccessParseResult_ToLegacy
+--- PASS: TestSuccessParseResult_ToLegacy (0.00s)
+=== RUN   TestSuccessParseResult_GenericTypes
+--- PASS: TestSuccessParseResult_GenericTypes (0.00s)
+=== RUN   TestSuccessParseResult_String
+--- PASS: TestSuccessParseResult_String (0.00s)
+=== RUN   TestStatusValues
+=== RUN   TestStatusValues/StatusSuccess_value
+=== RUN   TestStatusValues/StatusError_value
+--- PASS: TestStatusValues (0.00s)
+    --- PASS: TestStatusValues/StatusSuccess_value (0.00s)
+    --- PASS: TestStatusValues/StatusError_value (0.00s)
+=== RUN   TestStatusEquality
+--- PASS: TestStatusEquality (0.00s)
+=== RUN   TestStatusInFunction
+--- PASS: TestStatusInFunction (0.00s)
+=== RUN   TestStatusInStruct
+--- PASS: TestStatusInStruct (0.00s)
+=== RUN   TestStatusStringConversion
+=== RUN   TestStatusStringConversion/StatusSuccess_string
+=== RUN   TestStatusStringConversion/StatusError_string
+--- PASS: TestStatusStringConversion (0.00s)
+    --- PASS: TestStatusStringConversion/StatusSuccess_string (0.00s)
+    --- PASS: TestStatusStringConversion/StatusError_string (0.00s)
+=== RUN   TestStatusType
+--- PASS: TestStatusType (0.00s)
+=== RUN   TestValidComplexYAML_Integration
+--- PASS: TestValidComplexYAML_Integration (0.00s)
+=== RUN   TestValidComplexYAML_ParseFile
+--- PASS: TestValidComplexYAML_ParseFile (0.00s)
+=== RUN   TestValidComplexYAML_ParseFileToMap
+--- PASS: TestValidComplexYAML_ParseFileToMap (0.00s)
+=== RUN   TestValidNestedYAML_Integration
+--- PASS: TestValidNestedYAML_Integration (0.00s)
+=== RUN   TestValidNestedYAML_ParseFile
+--- PASS: TestValidNestedYAML_ParseFile (0.00s)
+=== RUN   TestValidNestedYAML_ParseFileToMap
+--- PASS: TestValidNestedYAML_ParseFileToMap (0.00s)
+=== RUN   TestValidSimpleYAML_Integration
+--- PASS: TestValidSimpleYAML_Integration (0.00s)
+=== RUN   TestValidSimpleYAML_ParseFile
+--- PASS: TestValidSimpleYAML_ParseFile (0.00s)
+=== RUN   TestValidSimpleYAML_ParseFileToMap
+--- PASS: TestValidSimpleYAML_ParseFileToMap (0.00s)
+=== RUN   TestValidator_ValidYAML
+--- PASS: TestValidator_ValidYAML (0.00s)
+=== RUN   TestValidator_InvalidYAML_SyntaxError
+--- PASS: TestValidator_InvalidYAML_SyntaxError (0.00s)
+=== RUN   TestValidator_InvalidYAML_BadIndentation
+--- PASS: TestValidator_InvalidYAML_BadIndentation (0.00s)
+=== RUN   TestValidator_InvalidYAML_ColonError
+--- PASS: TestValidator_InvalidYAML_ColonError (0.00s)
+=== RUN   TestValidator_InvalidYAML_UnexpectedCharacter
+--- PASS: TestValidator_InvalidYAML_UnexpectedCharacter (0.00s)
+=== RUN   TestValidator_EmptyContent
+--- PASS: TestValidator_EmptyContent (0.00s)
+=== RUN   TestValidator_WhitespaceOnly
+--- PASS: TestValidator_WhitespaceOnly (0.00s)
+=== RUN   TestValidator_ValidFile
+--- PASS: TestValidator_ValidFile (0.00s)
+=== RUN   TestValidator_InvalidFile_SyntaxError
+--- PASS: TestValidator_InvalidFile_SyntaxError (0.00s)
+=== RUN   TestValidator_NonexistentFile
+--- PASS: TestValidator_NonexistentFile (0.00s)
+=== RUN   TestValidator_ErrorFormatting
+    validator_test.go:281: Expected Error() to contain type, got: validation error in <string> at line 3: yaml: line 3: mapping values are not allowed in this context
+    validator_test.go:284: Expected Error() to contain line number, got: validation error in <string> at line 3: yaml: line 3: mapping values are not allowed in this context
+--- FAIL: TestValidator_ErrorFormatting (0.00s)
+=== RUN   TestValidator_ErrorSummary
+--- PASS: TestValidator_ErrorSummary (0.00s)
+=== RUN   TestValidator_ErrorSummary_NoErrors
+--- PASS: TestValidator_ErrorSummary_NoErrors (0.00s)
+=== RUN   TestValidator_HasErrors
+--- PASS: TestValidator_HasErrors (0.00s)
+=== RUN   TestValidator_HasWarnings
+--- PASS: TestValidator_HasWarnings (0.00s)
+=== RUN   TestValidator_MultiDocument
+--- PASS: TestValidator_MultiDocument (0.00s)
+=== RUN   TestValidator_ComplexStructure
+--- PASS: TestValidator_ComplexStructure (0.00s)
+=== RUN   TestValidator_ValidateStringWithPath
+--- PASS: TestValidator_ValidateStringWithPath (0.00s)
+=== RUN   TestValidator_MultipleFiles
+--- PASS: TestValidator_MultipleFiles (0.00s)
+=== RUN   TestValidator_ErrorTypes
+=== RUN   TestValidator_ErrorTypes/empty_content
+=== RUN   TestValidator_ErrorTypes/indentation_error
+--- PASS: TestValidator_ErrorTypes (0.00s)
+    --- PASS: TestValidator_ErrorTypes/empty_content (0.00s)
+    --- PASS: TestValidator_ErrorTypes/indentation_error (0.00s)
+=== RUN   TestValidator_LineAndColumnReporting
+--- PASS: TestValidator_LineAndColumnReporting (0.00s)
+=== RUN   TestValidator_NewStrictValidator
+--- PASS: TestValidator_NewStrictValidator (0.00s)
+=== RUN   TestValidator_HumanReadableMessages
+--- PASS: TestValidator_HumanReadableMessages (0.00s)
+=== RUN   TestValidator_WarningSummary
+=== RUN   TestValidator_WarningSummary/with_warnings
+--- PASS: TestValidator_WarningSummary (0.00s)
+    --- PASS: TestValidator_WarningSummary/with_warnings (0.00s)
+=== RUN   TestCategorizeError
+=== RUN   TestCategorizeError/could_not_find_expected
+=== RUN   TestCategorizeError/did_not_find_expected_key
+=== RUN   TestCategorizeError/cannot_start_any_key
+=== RUN   TestCategorizeError/invalid_indentation
+=== RUN   TestCategorizeError/duplicate_key
+=== RUN   TestCategorizeError/mapping_values_not_allowed
+=== RUN   TestCategorizeError/unexpected_end
+=== RUN   TestCategorizeError/unacceptable_character
+=== RUN   TestCategorizeError/scanner_error
+=== RUN   TestCategorizeError/unmarshal_errors
+=== RUN   TestCategorizeError/cannot_unmarshal
+=== RUN   TestCategorizeError/unknown_error
+--- PASS: TestCategorizeError (0.00s)
+    --- PASS: TestCategorizeError/could_not_find_expected (0.00s)
+    --- PASS: TestCategorizeError/did_not_find_expected_key (0.00s)
+    --- PASS: TestCategorizeError/cannot_start_any_key (0.00s)
+    --- PASS: TestCategorizeError/invalid_indentation (0.00s)
+    --- PASS: TestCategorizeError/duplicate_key (0.00s)
+    --- PASS: TestCategorizeError/mapping_values_not_allowed (0.00s)
+    --- PASS: TestCategorizeError/unexpected_end (0.00s)
+    --- PASS: TestCategorizeError/unacceptable_character (0.00s)
+    --- PASS: TestCategorizeError/scanner_error (0.00s)
+    --- PASS: TestCategorizeError/unmarshal_errors (0.00s)
+    --- PASS: TestCategorizeError/cannot_unmarshal (0.00s)
+    --- PASS: TestCategorizeError/unknown_error (0.00s)
+=== RUN   TestAcceptanceCriteria_SyntaxValidationFunctional
+--- PASS: TestAcceptanceCriteria_SyntaxValidationFunctional (0.00s)
+=== RUN   TestAcceptanceCriteria_LineColumnContext
+--- PASS: TestAcceptanceCriteria_LineColumnContext (0.00s)
+=== RUN   TestAcceptanceCriteria_HumanReadableMessages
+--- PASS: TestAcceptanceCriteria_HumanReadableMessages (0.00s)
+=== RUN   TestAcceptanceCriteria_ErrorTypeCategorization
+=== RUN   TestAcceptanceCriteria_ErrorTypeCategorization/empty_file
+=== RUN   TestAcceptanceCriteria_ErrorTypeCategorization/syntax_error
+--- PASS: TestAcceptanceCriteria_ErrorTypeCategorization (0.00s)
+    --- PASS: TestAcceptanceCriteria_ErrorTypeCategorization/empty_file (0.00s)
+    --- PASS: TestAcceptanceCriteria_ErrorTypeCategorization/syntax_error (0.00s)
+=== RUN   TestWarningSummary_WithWarnings
+--- PASS: TestWarningSummary_WithWarnings (0.00s)
+=== RUN   TestWarningSummary_MultipleWarnings
+--- PASS: TestWarningSummary_MultipleWarnings (0.00s)
+=== RUN   Example_parseYAML
+--- PASS: Example_parseYAML (0.00s)
+=== RUN   Example_parseYAML_errorHandling
+--- PASS: Example_parseYAML_errorHandling (0.00s)
+=== RUN   Example_parseYAML_invalidSyntax
+--- PASS: Example_parseYAML_invalidSyntax (0.00s)
+=== RUN   Example_fileHelpers
+--- PASS: Example_fileHelpers (0.00s)
+=== RUN   Example_fieldAccess
+--- PASS: Example_fieldAccess (0.00s)
+=== RUN   Example_fieldAccess_withDefaults
+--- PASS: Example_fieldAccess_withDefaults (0.00s)
+=== RUN   Example_requiredFields
+--- PASS: Example_requiredFields (0.00s)
+=== RUN   Example_parser
+--- PASS: Example_parser (0.00s)
+=== RUN   Example_armorDebugProcessing
+--- PASS: Example_armorDebugProcessing (0.00s)
+=== RUN   Example_findYAMLFiles
+--- FAIL: Example_findYAMLFiles (0.00s)
+got:
+Found 14 YAML files
+want:
+Found 13 YAML files
+=== RUN   Example_fileNotFoundError
+--- PASS: Example_fileNotFoundError (0.00s)
+=== RUN   Example_emptyFile
+--- PASS: Example_emptyFile (0.00s)
+=== RUN   Example_fieldNotFoundError
+--- PASS: Example_fieldNotFoundError (0.00s)
+=== RUN   Example_typeMismatch
+--- PASS: Example_typeMismatch (0.00s)
+=== RUN   Example_completeWorkflow
+--- PASS: Example_completeWorkflow (0.00s)
+=== RUN   Example_parseString
+--- PASS: Example_parseString (0.00s)
+=== RUN   Example_hasField
+--- PASS: Example_hasField (0.00s)
+=== RUN   Example_listField
+--- PASS: Example_listField (0.00s)
+=== RUN   Example_validateRequiredFields
+--- PASS: Example_validateRequiredFields (0.00s)
+=== RUN   Example_strictParsing
+--- PASS: Example_strictParsing (0.00s)
+=== RUN   Example_errorHandlingComprehensive
+--- PASS: Example_errorHandlingComprehensive (0.00s)
+=== RUN   Example_armorDebugSession
+--- PASS: Example_armorDebugSession (0.00s)
+=== RUN   Example_workingWithLists
+--- PASS: Example_workingWithLists (0.00s)
+=== RUN   Example_multiLevelNesting
+--- PASS: Example_multiLevelNesting (0.00s)
+=== RUN   Example_booleanFieldHandling
+--- PASS: Example_booleanFieldHandling (0.00s)
+=== RUN   Example_integerConversion
+--- PASS: Example_integerConversion (0.00s)
+=== RUN   Example_stringConversion
+--- PASS: Example_stringConversion (0.00s)
+=== RUN   Example_fileDiscoveryPatterns
+--- FAIL: Example_fileDiscoveryPatterns (0.00s)
+got:
+config.yaml exists
+Found 14 YAML files in testdata
+Is YAML file: true
+want:
+config.yaml exists
+Found 13 YAML files in testdata
+Is YAML file: true
+=== RUN   Example_safeFileProcessing
+--- PASS: Example_safeFileProcessing (0.00s)
+=== RUN   Example_readFileErrorHandling
+--- PASS: Example_readFileErrorHandling (0.00s)
+=== RUN   Example_parseFileToMap
+--- PASS: Example_parseFileToMap (0.00s)
+=== RUN   Example_mustParseFile
+--- PASS: Example_mustParseFile (0.00s)
+=== RUN   Example_anchorsAndAliases
+--- PASS: Example_anchorsAndAliases (0.00s)
+=== RUN   Example_multilineStrings
+--- PASS: Example_multilineStrings (0.00s)
+=== RUN   Example_commentsInYAML
+--- PASS: Example_commentsInYAML (0.00s)
+=== RUN   Example_listAccess
+--- PASS: Example_listAccess (0.00s)
+=== RUN   ExampleEnhancedParseError_syntax
+--- FAIL: ExampleEnhancedParseError_syntax (0.00s)
+got:
+syntax error in config.yaml at line 5, column 10: expected mapping key, found scalar (expected: mapping key, found: scalar value)
+syntax error in config.yaml at line 5, column 17: expected mapping key, found scalar (expected: mapping key, found: scalar value)
+
+      credentials: admin
+                  ^--- here
+
+This is a syntax error
+want:
+syntax error in config.yaml at line 5, column 10: expected mapping key, found scalar (expected: mapping key, found: scalar value)
+syntax error in config.yaml at line 5, column 17: expected mapping key, found scalar (expected: mapping key, found: scalar value)
+
+      credentials: admin
+                 ^--- here
+This is a syntax error
+=== RUN   ExampleEnhancedParseError_duplicateKey
+--- PASS: ExampleEnhancedParseError_duplicateKey (0.00s)
+=== RUN   ExampleEnhancedParseError_typeMismatch
+--- FAIL: ExampleEnhancedParseError_typeMismatch (0.00s)
+got:
+type_mismatch error in config.yaml at line 8: field 'port' must be an integer (field: server.port, expected: integer, got: string
+Expected: integer
+Actual: string
+Value: "8080"
+want:
+type_mismatch error in config.yaml at line 8: field 'port' must be an integer (field: server.port, expected: integer, got: string)
+Expected: integer
+Actual: string
+Value: "8080"
+=== RUN   ExampleEnhancedParseError_ioError
+--- PASS: ExampleEnhancedParseError_ioError (0.00s)
+=== RUN   ExampleEnhancedParseError_validation
+--- PASS: ExampleEnhancedParseError_validation (0.00s)
+=== RUN   ExampleEnhancedParseError_emptyFile
+--- PASS: ExampleEnhancedParseError_emptyFile (0.00s)
+=== RUN   ExampleResult_parseSuccess
+--- PASS: ExampleResult_parseSuccess (0.00s)
+=== RUN   ExampleResult_parseError
+--- PASS: ExampleResult_parseError (0.00s)
+=== RUN   ExampleResult_functionReturningResult
+--- PASS: ExampleResult_functionReturningResult (0.00s)
+=== RUN   ExampleEnhancedParseError_transformFromYAML
+--- FAIL: ExampleEnhancedParseError_transformFromYAML (0.00s)
+got:
+syntax error in data.yaml at line 7, column 12: invalid token (expected: valid YAML token, found: invalid character)
+
+    host: localhost:port:invalid
+             ^--- here
+
+  database:
+    host: localhost
+    port: 5432
+>   host: localhost:port:invalid
+want:
+syntax error in data.yaml at line 7, column 12: invalid token (expected: valid YAML token, found: invalid character)
+
+  database:
+    host: localhost
+    port: 5432
+>   host: localhost:port:invalid
+=== RUN   ExampleEnhancedParseError_richContext
+--- FAIL: ExampleEnhancedParseError_richContext (0.00s)
+got:
+Error with rich context:
+syntax error in app.yaml at line 8, column 5: incorrect indentation (expected: consistent indentation, found: inconsistent indentation)
+
+      port: 5432
+      ^--- here
+
+  database:
+    host: localhost
+>     port: 5432
+    name: mydb
+want:
+Error with rich context:
+syntax error in app.yaml at line 8, column 5: incorrect indentation (expected: consistent indentation, found: inconsistent indentation)
+
+    port: 5432
+    ^--- here
+
+  database:
+    host: localhost
+>   port: 5432
+    name: mydb
+=== RUN   ExampleEnhancedParseError_schema
+--- PASS: ExampleEnhancedParseError_schema (0.00s)
+=== RUN   ExampleEnhancedParseError_errorCode
+--- PASS: ExampleEnhancedParseError_errorCode (0.00s)
+=== RUN   ExampleEnhancedParseError_toLegacy
+--- PASS: ExampleEnhancedParseError_toLegacy (0.00s)
+=== RUN   ExampleResult_comprehensiveErrorHandling
+--- FAIL: ExampleResult_comprehensiveErrorHandling (0.00s)
+got:
+=== Testing config.yaml ===
+✓ Success: Config loaded with 1 keys
+
+=== Testing missing_field.yaml ===
+✗ Error: validation error in missing_field.yaml at line 5: required field missing (field: database.host, constraint: field is required)
+  → Ensure all required fields are present and constraints are met
+
+=== Testing invalid_syntax.yaml ===
+✗ Error: syntax error in invalid_syntax.yaml at line 10, column 5: invalid YAML syntax (expected: valid YAML, found: invalid)
+  → Check YAML syntax and indentation
+
+=== Testing type_error.yaml ===
+✗ Error: type_mismatch error in type_error.yaml at line 8: type mismatch (field: server.port, expected: integer, got: string
+  → Verify field types match expected types
+want:
+=== Testing config.yaml ===
+✓ Success: Config loaded with 1 keys
+
+=== Testing missing_field.yaml ===
+✗ Error: validation error in missing_field.yaml at line 5: required field missing (field: database.host, constraint: field is required)
+  → Ensure all required fields are present and constraints are met
+
+=== Testing invalid_syntax.yaml ===
+✗ Error: syntax error in invalid_syntax.yaml at line 10, column 5: invalid YAML syntax (expected: valid YAML, found: invalid)
+  → Check YAML syntax and indentation
+
+=== Testing type_error.yaml ===
+✗ Error: type_mismatch error in type_error.yaml at line 8: type mismatch (field: server.port, expected: integer, got: string)
+  → Verify field types match expected types
+=== RUN   ExampleResult
+--- PASS: ExampleResult (0.00s)
+=== RUN   ExampleResult_AndThen
+--- PASS: ExampleResult_AndThen (0.00s)
+=== RUN   ExampleResult_OrElse
+--- PASS: ExampleResult_OrElse (0.00s)
+FAIL
+FAIL	github.com/jedarden/armor/internal/yamlutil	0.014s
+FAIL
