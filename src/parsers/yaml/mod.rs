@@ -37,7 +37,7 @@ mod parser;
 pub use error::{ParseError, ParseErrorKind, Result};
 pub use types::{
     OperationResult, ParseMetadata, ParseResult, ParseWarning, ParseWarningKind,
-    ValidationResult, Status,
+    ValidationResult, ValidationError, ValidationWarning, Status,
 };
 pub use parser::Parser as YamlParser;
 
