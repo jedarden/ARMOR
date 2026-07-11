@@ -16,6 +16,36 @@ use crate::parsers::yaml::ParseError as YamlParseError;
 /// 3. **Extensible** - Supports streaming and incremental parsing
 /// 4. **Error-aware** - Uses structured error types for consistent error handling
 ///
+/// # Relationship to ParseResult and ParseError
+///
+/// The generic `Parser<Input, Output>` trait uses Rust's standard `Result<Output, ParseError>`
+/// for its core parsing method. However, for YAML-specific parsing, the [`ParseResult<T>`](crate::parsers::yaml::ParseResult)
+/// type provides a richer result structure that includes:
+///
+/// - **Metadata**: Lines processed, bytes processed, timing information
+/// - **Warnings**: Non-fatal issues that don't prevent parsing (e.g., deprecated fields)
+/// - **Detailed error context**: Location information, code snippets, suggestions
+///
+/// ## When to Use Result vs ParseResult
+///
+/// - **Use `Result<T, ParseError>`** (this trait): For generic parsers, simple parsing operations,
+///   and when you want standard Rust error handling patterns
+/// - **Use `ParseResult<T>`** (YAML-specific): For YAML parsing when you need rich metadata,
+///   warning collection, and detailed error reporting
+///
+/// ## Converting Between Result and ParseResult
+///
+/// [`ParseResult<T>`](crate::parsers::yaml::ParseResult) implements `From<Result<T>>` for seamless
+/// integration:
+///
+/// ```ignore
+/// use armor::parsers::yaml::ParseResult;
+///
+/// // Convert Result<T, ParseError> to ParseResult<T>
+/// let result: Result<MyType, ParseError> = parse_value();
+/// let parse_result: ParseResult<MyType> = ParseResult::from(result);
+/// ```
+///
 /// # Type Parameters
 ///
 /// * `Input` - The input source type (e.g., `&str`, `&[u8]`, `&Path`)
@@ -30,6 +60,70 @@ use crate::parsers::yaml::ParseError as YamlParseError;
 /// - `Input = &Path` for file-based parsing (delegates to string parsing)
 ///
 /// The `Output` type is the target representation after parsing.
+///
+/// # Parsing Strategies
+///
+/// This trait supports multiple parsing strategies that can be configured through
+/// [`ParseOptions`] or implementation-specific behavior:
+///
+/// ## Strict Parsing
+///
+/// Strict parsing follows format specifications precisely and rejects any deviations:
+///
+/// ```ignore
+/// use armor::parsers::{Parser, ParseOptions};
+///
+/// let parser = StrictParser::new();
+/// let options = ParseOptions::strict();
+/// let result = parser.parse_with_options(source, options)?;
+///
+/// // In strict mode:
+/// // - Unknown fields cause errors
+/// // - Type mismatches are rejected
+/// // - Duplicate keys are not allowed
+/// // - Format specifications are enforced strictly
+/// ```
+///
+/// ## Lenient Parsing
+///
+/// Lenient parsing is more forgiving and attempts to recover from errors:
+///
+/// ```ignore
+/// use armor::parsers::{Parser, ParseOptions};
+///
+/// let parser = LenientParser::new();
+/// let options = ParseOptions::lenient();
+/// let result = parser.parse_with_options(source, options)?;
+///
+/// // In lenient mode:
+/// // - Unknown fields are ignored
+/// // - Type coercion is attempted
+/// // - Duplicate keys use last value
+/// // - Minor format issues are tolerated
+/// ```
+///
+/// ## Custom Parsing
+///
+/// Custom parsers implement domain-specific parsing logic:
+///
+/// ```ignore
+/// use armor::parsers::Parser;
+///
+/// struct CustomConfigParser {
+///     allow_extended_syntax: bool,
+///     resolve_variables: bool,
+/// }
+///
+/// impl Parser<&str, CustomConfig> for CustomConfigParser {
+///     fn parse(&self, source: &str) -> Result<CustomConfig, ParseError> {
+///         // Custom parsing logic here
+///         // - Variable substitution
+///         // - Extended syntax support
+///         // - Domain-specific validation
+///         Ok(CustomConfig { /* ... */ })
+///     }
+/// }
+/// ```
 ///
 /// # Core Method
 ///
