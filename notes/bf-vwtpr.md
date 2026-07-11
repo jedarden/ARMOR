@@ -81,3 +81,4 @@ This suggests ord-devimprint may only be accessible via the read-only proxy, mak
 ## Timestamp
 2026-07-11 13:21 UTC (initial attempt)
 2026-07-11 ~14:00 UTC (updated with comprehensive analysis)
+2026-07-11 ~14:15 UTC (retry attempt - same RBAC blocker confirmed, no changes to situation)
