@@ -606,6 +606,20 @@ func TestYAMLParseError(t *testing.T) {
 		}
 	})
 
+	t.Run("error message includes line and column", func(t *testing.T) {
+		err := &YAMLParseError{
+			FilePath: "/test/file.yaml",
+			Message:  "syntax error",
+			Line:     5,
+			Column:   12,
+		}
+
+		errMsg := err.Error()
+		if !containsString(errMsg, "line 5, column 12") {
+			t.Errorf("expected error message to contain line and column, got: %s", errMsg)
+		}
+	})
+
 	t.Run("error message without line number", func(t *testing.T) {
 		err := &YAMLParseError{
 			FilePath: "/test/file.yaml",

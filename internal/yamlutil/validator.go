@@ -23,6 +23,9 @@ type LocalValidationError struct {
 // Error implements the error interface.
 func (ve LocalValidationError) Error() string {
 	if ve.Line > 0 {
+		if ve.Column > 0 {
+			return fmt.Sprintf("%s: Line %d, Column %d: %s: %s", ve.FilePath, ve.Line, ve.Column, ve.Type, ve.Message)
+		}
 		return fmt.Sprintf("%s: Line %d: %s: %s", ve.FilePath, ve.Line, ve.Type, ve.Message)
 	}
 	return fmt.Sprintf("%s: %s: %s", ve.FilePath, ve.Type, ve.Message)

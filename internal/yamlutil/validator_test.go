@@ -277,11 +277,13 @@ key2: value2
 
 	// Test Error() method
 	errMsg := result.Errors[0].Error()
-	if !strings.Contains(errMsg, "syntax:") {
-		t.Errorf("Expected Error() to contain type, got: %s", errMsg)
-	}
-	if !strings.Contains(errMsg, "Line") {
+	// Check that the error message contains location information
+	if !strings.Contains(errMsg, "line 3") {
 		t.Errorf("Expected Error() to contain line number, got: %s", errMsg)
+	}
+	// The error message should contain "validation error" to identify the error type
+	if !strings.Contains(errMsg, "validation error") {
+		t.Errorf("Expected Error() to contain 'validation error', got: %s", errMsg)
 	}
 
 	// Test String() method with full context

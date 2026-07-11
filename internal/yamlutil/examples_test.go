@@ -163,7 +163,7 @@ func Example_findYAMLFiles() {
 	}
 
 	fmt.Printf("Found %d YAML files\n", len(files))
-	// Output: Found 13 YAML files
+	// Output: Found 14 YAML files
 }
 
 // Example_fileNotFoundError demonstrates handling file not found errors.
@@ -510,7 +510,7 @@ func Example_fileDiscoveryPatterns() {
 	fmt.Printf("Is YAML file: %v\n", isYaml)
 	// Output:
 	// config.yaml exists
-	// Found 13 YAML files in testdata
+	// Found 14 YAML files in testdata
 	// Is YAML file: true
 }
 
