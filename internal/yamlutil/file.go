@@ -7,36 +7,7 @@ import (
 	"path/filepath"
 )
 
-// FileError represents a file operation error with context.
-type FileError struct {
-	Op       string // Operation that failed (e.g., "read", "exists")
-	Path     string // File path that caused the error
-	Err      error  // Underlying OS error
-	Line     int    // Line number (if applicable to the error context)
-}
-
-// Error implements the error interface.
-func (fe *FileError) Error() string {
-	if fe.Err != nil {
-		return fmt.Sprintf("%s file %s: %v", fe.Op, fe.Path, fe.Err)
-	}
-	return fmt.Sprintf("%s file %s", fe.Op, fe.Path)
-}
-
-// Unwrap returns the underlying error for error wrapping chains.
-func (fe *FileError) Unwrap() error {
-	return fe.Err
-}
-
-// YAMLErrorType implements YAMLError interface.
-func (fe *FileError) YAMLErrorType() ErrorType {
-	return ErrorTypeFile
-}
-
-// Context implements YAMLError interface.
-func (fe *FileError) Context() string {
-	return fmt.Sprintf("operation: %s, path: %s", fe.Op, fe.Path)
-}
+// FileError is defined in errors.go to consolidate all error types in one location.
 
 // ReadFile reads the entire contents of a file and returns the bytes.
 // It wraps OS-level errors with context about the operation and file path.
@@ -46,9 +17,9 @@ func ReadFile(filePath string) ([]byte, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return nil, &FileError{
-			Op:   "resolve",
-			Path: filePath,
-			Err:  fmt.Errorf("failed to resolve absolute path: %w", err),
+			Operation: "resolve",
+			Path:      filePath,
+			Err:       fmt.Errorf("failed to resolve absolute path: %w", err),
 		}
 	}
 
@@ -56,9 +27,9 @@ func ReadFile(filePath string) ([]byte, error) {
 	content, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, &FileError{
-			Op:   "read",
-			Path: absPath,
-			Err:  wrapFileError(err),
+			Operation: "read",
+			Path:      absPath,
+			Err:       wrapFileError(err),
 		}
 	}
 

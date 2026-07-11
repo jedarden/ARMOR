@@ -1187,7 +1187,7 @@ func TestIntegration_ErrorPropagation(t *testing.T) {
 	}
 
 	// Error should have context
-	if err.Context == "" {
+	if err.Context() == "" {
 		t.Error("Expected context in error")
 	}
 
