@@ -126,19 +126,45 @@ From CLAUDE.md:
 - Proxy hostname: `kubectl-proxy-ord-devimprint`
 - No existing write-access kubeconfig on file
 
+## Current Verification (2026-07-11)
+
+```bash
+# Can list secrets but cannot read contents
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
+NAME                    TYPE                             DATA   AGE
+admin-oauth             Opaque                           3      62d
+armor-credentials       Opaque                           7      79d
+armor-readonly          Opaque                           2      79d
+armor-writer            Opaque                           2      79d  # ← Target secret
+devimprint-b2-workers   Opaque                           5      65d
+...
+
+# Cannot GET secret contents (Forbidden)
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
+Error from server (Forbidden): secrets "armor-writer" is forbidden:
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+```
+
+**Confirmed**: The devpod-observer ServiceAccount has `verbs: ["list"]` for secrets but NOT `get`.
+
 ## Status
 
-**DOCUMENTATION COMPLETE** - Detailed acquisition process documented above.
+**INCOMPLETE - Requires External Coordination**
+
+Acceptance criteria NOT met:
+- [ ] Kubeconfig file exists at `~/.kube/ord-devimprint.kubeconfig` (FILE DOES NOT EXIST)
+- [ ] Can run: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint` (CANNOT TEST - NO KUBECONFIG)
+- [ ] Can run: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint` (CANNOT TEST - NO KUBECONFIG)
 
 This task requires:
 1. **Rackspace Spot portal access** with admin permissions on the ord-devimprint cluster
 2. **Or coordination with the cluster administrator** who can provide the kubeconfig
 
-The documentation above provides the exact steps needed to:
-- Access the Rackspace Spot portal and download the admin kubeconfig
-- Create a ServiceAccount with cluster-admin permissions
-- Generate a long-lived token (1 year validity)
-- Store the kubeconfig securely at `~/.kube/ord-devimprint.kubeconfig`
-- Optionally integrate with OpenBao for GitOps automation
+The documentation above provides the exact steps needed once access is available.
 
-Once the kubeconfig is obtained, run the verification steps below to confirm access.
+## Next Steps for Completion
+
+1. Obtain Rackspace Spot portal access OR coordinate with cluster administrator
+2. Follow Method 1 above to create and store the kubeconfig
+3. Run verification steps
+4. Complete this bead
