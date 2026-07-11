@@ -1,47 +1,46 @@
 # AWS Access Key Format Validation - FAILED
 
-**Bead:** bf-1y0g6  
-**Date:** 2026-07-11  
-**Status:** FAILED ❌
+## Task
+Validate decoded value from `/tmp/litestream_key_id.txt` matches AWS access key format.
 
-## Validation Summary
+## Results
+**STATUS: FAILED** - The decoded value is corrupted binary data, not a valid AWS access key.
 
-The decoded value from `/tmp/litestream_key_id.txt` was validated against AWS access key format requirements.
+## Validation Details
 
-## Test Results
+### File Content
+The decoded file contains binary/gibberish characters instead of readable text.
 
-| Requirement | Expected | Actual | Status |
-|-------------|----------|--------|--------|
-| Prefix | AKIA | Binary/corrupted data | ❌ FAILED |
-| Length | 20 characters | 46 characters | ❌ FAILED |
-| Character set | Alphanumeric (A-Z, 0-9) | Binary/non-printable | ❌ FAILED |
-| File type | Text | Binary data | ❌ FAILED |
-
-## Evidence
-
-**Decoded value contains binary/non-printable characters:**
-- Octal dump shows escape sequences and non-ASCII values
-- Length is 46 characters instead of expected 20
-- No visible "AKIA" prefix
-
-**Octal dump confirmation:**
+### Hex Analysis
 ```
-0000000 367 227 033 337 227 366   k 257   4   i 347 371   k 226 372 367
-0000020   f 337   u 357   8 365 375   z   m 246 266 353 267 332 323   w
-0000040 235   o 275   : 337   G   z 327 237   u 351 337   [   o 315 335
-0000060
+000000 f7 97 1b df 97 f6 6b af 34 69 e7 f9 6b 96 fa f7  >......k.4i..k...<
+000010 66 df 75 ef 38 f5 fd 7a 6d a6 b6 eb b7 da d3 77  >f.u.8..zm......w<
+000020 9d 6f bd 3a df 47 7a d7 9f 75 e9 df 5b 6f cd dd  >.o.:.Gz..u..[o..<
 ```
+
+### Validation Failures
+1. **Format**: Value does NOT start with "AKIA" (standard AWS access key prefix)
+2. **Length**: Value is 46 bytes (expected 20 characters for AWS access key)
+3. **Character set**: Contains binary/non-ASCII bytes instead of alphanumeric characters
+4. **Data type**: Binary data detected, not plain text
+
+## Expected Format
+- **Pattern**: `AKIA[0-9A-Z]{16}` (AKIA + 16 alphanumeric characters)
+- **Length**: Exactly 20 characters
+- **Character set**: Uppercase A-Z and digits 0-9 only
 
 ## Conclusion
+The decoded value in `/tmp/litestream_key_id.txt` is **NOT** a valid AWS access key. The file contains corrupted binary data instead of the expected plaintext access key format.
 
-The decoded value is **not** a valid AWS access key. The data appears to be corrupted binary content, suggesting:
-
-1. The original secret value may have been corrupted in OpenBao
-2. The base64 decoding process (bead bf-3c5vm) may have failed silently
-3. The secret may never have been an AWS access key
+This indicates either:
+1. The original secret was not an AWS access key
+2. The base64 encoding/decoding process corrupted the data
+3. The wrong secret was selected from OpenBao
+4. The secret data was not properly stored in OpenBao
 
 ## Next Steps
-
-This bead failed because the acceptance criteria (valid AWS access key format) were not met. The validation task itself completed successfully and correctly identified that the value is invalid.
-
-**Cannot close bead** - acceptance criteria not met (the value is not a valid AWS access key).
+The parent bead (bf-520v or related) needs to:
+1. Verify the correct secret was selected from OpenBao
+2. Confirm the secret type and format expectations
+3. Re-decode the base64 value with proper error handling
+4. Consider whether this is the correct secret for the intended use case
