@@ -1,99 +1,63 @@
-# Obtaining ord-devimprint Kubeconfig with Write Access
+# ord-devimprint Kubeconfig Requirements
 
-## Current Situation
+## Current Status
 
-The `ord-devimprint` cluster currently has a read-only kubectl proxy at `kubectl-proxy-ord-devimprint:8001`. This proxy uses a ServiceAccount (`devpod-observer`) with RBAC that explicitly denies secret access:
+### Read-Only Access (Working)
+- **Endpoint:** `kubectl-proxy-ord-devimprint:8001`
+- **Access Level:** Read-only via ServiceAccount `devpod-observer`
+- **Capabilities:**
+  - Can list resources including secrets
+  - Cannot read secret contents (Forbidden)
+  - Cannot create/modify/delete resources
 
-```yaml
-# From declarative-config/k8s/ord-devimprint/devpod-observer/rbac.yml
-- apiGroups: [""]
-  resources:
-    - secrets
-  verbs: ["list"]  # Only list, NOT get/watch - cannot read secret values
+### Verification
+```bash
+# List secrets (works)
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
+
+# Read secret content (forbidden)
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
+# Error: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
 ```
 
-This is why `kubectl get secret armor-writer -n devimprint` returns:
-```
-Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-```
+## Write Access Requirements
 
-## What's Needed
+### Cluster Details
+- **Name:** ord-devimprint
+- **Provider:** Rackspace Spot
+- **Region:** ord (Chicago)
+- **Managed by:** rs-manager ArgoCD
 
-A kubeconfig file with sufficient permissions to read secrets in the `devimprint` namespace. Based on the pattern for other Rackspace Spot clusters (like `iad-options`), this requires:
+### ArgoCD Registration
+The cluster is registered in rs-manager ArgoCD as secret `cluster-ord-devimprint` in the `argocd` namespace, but this secret contains only connection credentials and is not directly usable as a kubeconfig.
 
-1. Access to the **Rackspace Spot console** (web UI)
-2. Generating a kubeconfig/OIDC token for the `ord-devimprint` cluster
-3. Saving it to `~/.kube/ord-devimprint.kubeconfig`
+### How to Obtain Kubeconfig
 
-## Why This Requires Manual Intervention
+#### Option 1: Rackspace Spot Console (Recommended)
+1. Log in to Rackspace Spot console at https://argocd-rs-manager.tail1b1987.ts.net:8080
+2. Navigate to the ord-devimprint cluster
+3. Download or generate the kubeconfig with appropriate permissions
+4. Store securely at `~/.kube/ord-devimprint.kubeconfig`
 
-Rackspace Spot clusters use OIDC authentication with short-lived tokens (expires every ~3 days for `iad-options`). The kubeconfig must be generated through the Spot console's interface - there is no API or programmatic way to obtain it without existing credentials.
+#### Option 2: ServiceAccount Token
+Create a ServiceAccount with cluster-admin or limited namespace access in the devimprint namespace, then generate a kubeconfig from its token.
 
-This is a **persistent blocker** that has been re-verified multiple times:
-- 2026-07-11: Re-verified - read-only proxy still blocks secret access, requires Rackspace Spot console
-- 2026-06-10: Re-verified - requires Rackspace Spot console access (commit `330b6d2a`)
-- Earlier: Multiple re-verification attempts (commits `44053922`, `0fb2d44d`)
-
-## Steps to Complete (Requires Human Action)
-
-1. **Log into Rackspace Spot console**
-   - Navigate to the ord-devimprint cluster (ORD region)
-   - This requires account access with permissions for this cluster
-
-2. **Generate kubeconfig**
-   - Use the Spot UI to download or generate a kubeconfig
-   - This typically creates an OIDC-based auth token
-   - Ensure it has permissions to read secrets in the `devimprint` namespace
-
-3. **Save the kubeconfig**
-   ```bash
-   # Save to standard location
-   cp ~/Downloads/kubeconfig-ord-devimprint ~/.kube/ord-devimprint.kubeconfig
-   
-   # Set proper permissions
-   chmod 600 ~/.kube/ord-devimprint.kubeconfig
-   ```
-
-4. **Verify access**
-   ```bash
-   # Test secret access
-   kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint
-   
-   # Specifically verify armor-writer is accessible
-   kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o jsonpath='{.data}'
-   ```
+## Required Permissions
+The kubeconfig must have at minimum:
+- **Namespace:** devimprint
+- **Resource:** secrets
+- **Verb:** get
 
 ## Acceptance Criteria
+- [ ] Kubeconfig file obtained and stored at `~/.kube/ord-devimprint.kubeconfig`
+- [ ] Can successfully read secrets: `kubectl get secret armor-writer -n devimprint`
+- [ ] Verify before proceeding to next child bead
 
-- [ ] Kubeconfig file exists at `~/.kube/ord-devimprint.kubeconfig`
-- [ ] Kubeconfig has permissions to read secrets in the `devimprint` namespace
-- [ ] Successfully run: `kubectl get secrets -n devimprint` with the kubeconfig
-- [ ] Can read the `armor-writer` secret specifically
+## Notes
+- This is a **blocker** for retrieving the armor-writer secret
+- The cluster administrator (user with Rackspace Spot console access) needs to perform this step
+- Similar to how `iad-options.kubeconfig` is obtained (cloudspace-admin OIDC token from Spot UI)
 
-## Reference Pattern
-
-For comparison, the `iad-options` cluster uses a similar pattern:
-- **Read-only proxy**: `kubectl --server=http://traefik-iad-options:8001` (denies secret access)
-- **Read/write kubeconfig**: `kubectl --kubeconfig=/home/coding/.kube/iad-options.kubeconfig`
-- **Token expiry**: ~3 days (requires regeneration from Spot UI)
-
-## After Completion
-
-Once the kubeconfig is obtained and verified, this bead can be closed and dependent work can proceed to retrieve the `armor-writer` secret.
-
-## Investigation Log
-
-| Date | Action | Finding |
-|------|--------|---------|
-| 2026-07-11 | Re-verified access (5th attempt) | 5th overall verification. Confirmed read-only proxy still blocks secret access. Checked for any existing kubeconfig files - none found for ord-devimprint. Pattern consistent with other Rackspace Spot clusters (iad-options, iad-ci). Confirmed this requires manual intervention through Rackspace Spot console. No programmatic workaround available. Bead remains blocked pending human action. |
-| 2026-07-11 | Re-verified access (4th attempt) | Confirmed no kubeconfig exists at ~/.kube/ord-devimprint.kubeconfig. Checked all existing kubeconfigs in ~/.kube/ - only iad-acb.kubeconfig and iad-ci.kubeconfig present. Persistent blocker remains - requires human with Rackspace Spot console access to download kubeconfig. No programmatic workaround available. |
-| 2026-07-11 | Re-verified access (3rd attempt) | Verified read-only proxy (kubectl-proxy-ord-devimprint:8001) still blocks secret access with Forbidden error. Confirmed no kubeconfig exists at ~/.kube/ord-devimprint.kubeconfig. Persistent blocker remains - requires Rackspace Spot console access. |
-| 2026-07-11 | Re-verified access (2nd attempt) | Read-only proxy (kubectl-proxy-ord-devimprint:8001) still explicitly denies secret access. RBAC confirms secrets only have `list` verb, not `get`. No programmatic path to obtain write-access kubeconfig. |
-| 2026-07-11 | Re-verified access (1st attempt) | Initial investigation documented persistent blocker requiring Rackspace Spot console access |
-| 2026-06-10 | Previous verification | Documented persistent blocker requiring Rackspace Spot console access |
-
-| 2026-07-11 | Re-verified access (7th attempt) | 7th overall verification. Confirmed read-only proxy can LIST secrets but cannot GET secret data (RBAC: `list` verb allowed, `get` verb forbidden). Verified no kubeconfig exists at ~/.kube/ord-devimprint.kubeconfig. Confirmed rs-manager cluster cannot see ord-devimprint (separate cloudspaces). Pattern consistent with iad-options cluster (OIDC auth, ~3 day token expiry, requires Spot console). No programmatic workaround available. Bead remains blocked pending human action. |
-
-Last verified: 2026-07-11 (7th re-verification)
-Bead: bf-2p1wr
-Status: BLOCKED - Requires human access to Rackspace Spot console
+## References
+- CLAUDE.md documents ord-devimprint as having only read-only proxy access
+- Other Rackspace clusters (iad-ci, iad-options, iad-kalshi) have write-capable kubeconfigs
