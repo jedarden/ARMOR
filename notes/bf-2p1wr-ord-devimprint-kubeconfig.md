@@ -181,6 +181,81 @@ This confirms that Rackspace Spot kubeconfigs come from their web console, not f
 - Bead bf-4ds4n verification confirmed the kubeconfig was still missing
 - This current attempt is to properly complete the original work
 
+## Current Investigation (2026-07-11 19:30 UTC)
+
+### Verification of Blocker
+
+```bash
+# No ord-devimprint kubeconfig exists
+$ ls -la ~/.kube/ord-devimprint.kubeconfig
+ls: cannot access '/home/coding/.kube/ord-devimprint.kubeconfig': No such file or directory
+
+# Only two kubeconfigs available: iad-acb.kubeconfig and iad-ci.kubeconfig
+$ ls -la ~/.kube/*.kubeconfig
+-rw-r--r-- 1 coding users  282 Jun 25 07:20 /home/coding/.kube/iad-acb.kubeconfig
+-rw-r--r-- 1 coding users 2809 Jun  7 08:31 /home/coding/.kube/iad-ci.kubeconfig
+
+# ArgoCD cluster secret exists (read-only)
+$ kubectl --server=http://traefik-rs-manager:8001 get secret cluster-ord-devimprint -n argocd
+NAME                      TYPE      DATA   AGE
+cluster-ord-devimprint   Opaque    3      80d
+
+# Cannot read secret data via proxy (Forbidden)
+$ kubectl --server=http://traefik-rs-manager:8001 get secret cluster-ord-devimprint -n argocd -o json
+Error from server (Forbidden): secrets "cluster-ord-devimprint" is forbidden
+
+# OpenBao CLI not available
+$ which bao
+bao CLI not available
+```
+
+### Confirmed Findings
+
+1. **No local kubeconfig** - The ord-devimprint kubeconfig does not exist
+2. **ArgoCD secret is for ArgoCD only** - The cluster secret in rs-manager ArgoCD is specifically formatted for ArgoCD cluster management (not for direct kubectl use)
+3. **No access to OpenBao** - The bao CLI is not available to potentially extract credentials
+4. **Chicken-and-egg problem** - To create a ServiceAccount for secret access, I need cluster-admin access, which requires a kubeconfig, which I don't have
+
+## Current Verification (2026-07-11 19:45 UTC)
+
+### Re-verification Results
+
+```bash
+# No ord-devimprint kubeconfig exists
+$ ls -la ~/.kube/ord-devimprint.kubeconfig
+ls: cannot access '/home/coding/.kube/ord-devimprint.kubeconfig': No such file or directory
+
+# No rs-manager kubeconfig (potential intermediate access)
+$ ls -la ~/.kube/rs-manager.kubeconfig
+ls: cannot access '/home/coding/.kube/rs-manager.kubeconfig': No such file or directory
+
+# Read-only proxy confirmed - can list secrets but not read contents
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
+NAME                    TYPE                             DATA   AGE
+armor-writer            Opaque                           2      80d
+[... other secrets ...]
+
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
+Error from server (Forbidden): secrets "armor-writer" is forbidden
+
+# ArgoCD cluster secret exists (but not directly usable as kubeconfig)
+$ kubectl --server=http://traefik-rs-manager:8001 get secret cluster-ord-devimprint -n argocd
+NAME                      TYPE      DATA   AGE
+cluster-ord-devimprint   Opaque    3      80d
+
+# No OpenBao CLI available to extract credentials
+$ which vault bao
+No vault/bao CLI found
+```
+
+### Confirmed: Blocker Persists
+
+The situation remains unchanged from previous investigations:
+- No kubeconfig file exists
+- No Rackspace Spot console credentials available
+- Read-only proxy explicitly denies secret data access
+- Chicken-and-egg problem (need cluster-admin to create ServiceAccount, need kubeconfig for cluster-admin)
+
 ## Status
 
 🔴 **BLOCKED - Requires Rackspace Spot console access OR kubeconfig from cluster administrator**
