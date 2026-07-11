@@ -241,12 +241,12 @@ If cluster-admin access is acceptable (over-provisioned but functional):
 - ❌ Find existing kubeconfig files → None exist on disk
 - ❌ Access OpenBao directly → No bao CLI, no credentials
 
-## Persistent Blocker Confirmed (17th Verification - 2026-07-11)
+## Persistent Blocker Confirmed (18th Verification - 2026-07-11)
 
 This task **requires Rackspace Spot console access** to download the admin kubeconfig. This is a documented recurring blocker across multiple beads and verification attempts.
 
 ### Verification History
-- This is the **17th documented verification attempt** (16 previous attempts noted in git history)
+- This is the **18th documented verification attempt** (17 previous attempts noted in git history)
 - All previous attempts concluded the same: Requires Rackspace Spot console access
 - No automated workarounds are viable
 - ExternalSecret has been failing for multiple weeks
@@ -287,6 +287,26 @@ Cannot access (no CLI, no creds, read-only proxy blocks secrets)
 2. Download ord-devimprint admin kubeconfig
 3. Save to ~/.kube/ord-devimprint.kubeconfig (chmod 600)
 4. Verify: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o json`
+
+### 18th Verification - 2026-07-11 (Continued Investigation)
+
+**Re-verification performed:**
+- Confirmed read-only proxy still denies secret access
+- Tested: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint`
+- Result: "Forbidden" - ServiceAccount lacks `get` permissions on secrets
+- Confirmed no kubeconfig file exists at `~/.kube/ord-devimprint.kubeconfig`
+- Verified no alternative access methods available
+
+**Consistent Findings:**
+- All previous verification conclusions remain valid
+- No programmatic workaround available
+- ExternalSecret still failing
+- Requires Rackspace Spot console access
+
+**Action Taken:**
+- Documentation updated with 18th verification
+- Findings committed to git for future reference
+- Bead released for retry when Rackspace Spot console access becomes available
 
 ### 17th Verification - 2026-07-11 (Final Attempt)
 
