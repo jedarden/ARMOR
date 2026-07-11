@@ -121,6 +121,34 @@ Some Spot clusters use OIDC for authentication. Check if OIDC is available and c
 3. **Rackspace Spot pattern** - Based on rs-manager documentation, kubeconfigs are downloaded from Rackspace Spot console UI
 4. **No console access** - No Rackspace Spot credentials found on this system
 
+### Re-investigation (2026-07-11 18:23 UTC)
+
+Confirmed the blocker persists:
+
+```bash
+# No kubeconfig exists
+$ ls -la ~/.kube/ord-devimprint.kubeconfig
+ls: cannot access '/home/coding/.kube/ord-devimprint.kubeconfig': No such file or directory
+
+# No rs-manager kubeconfig to use as alternative
+$ ls -la ~/.kube/rs-manager.kubeconfig
+ls: cannot access '/home/coding/.kube/rs-manager.kubeconfig': No such file or directory
+
+# Read-only proxy cannot read secret data
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
+Error from server (Forbidden): secrets "armor-writer" is forbidden:
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get
+resource "secrets" in API group "" in the namespace "devimprint"
+```
+
+ArgoCD read-only API returned no output, unable to verify cluster status via that path.
+
+### Alternative Approaches Considered
+
+1. **Use rs-manager as intermediate** - No rs-manager kubeconfig available
+2. **Access via ArgoCD API** - Read-only API not responding with cluster data
+3. **Create ServiceAccount** - Requires cluster admin access (chicken-and-egg problem)
+
 ### Blocking Issue
 
 This task requires access to **Rackspace Spot console** to download the kubeconfig. The console URL and credentials are not available on this system. Per the rs-manager documentation:
@@ -155,9 +183,29 @@ This confirms that Rackspace Spot kubeconfigs come from their web console, not f
 
 ## Status
 
-🔴 **BLOCKED** - Requires Rackspace Spot console access OR kubeconfig from cluster administrator. Cannot proceed without external coordination.
+🔴 **BLOCKED - Requires Rackspace Spot console access OR kubeconfig from cluster administrator**
 
-This is a **re-attempt** after the bead was prematurely closed without completing the actual work.
+### What's Needed
+
+1. **Option A: Rackspace Spot Console Access**
+   - Login to Rackspace Spot web console (cloudspace-admin credentials)
+   - Navigate to ord-devimprint cluster
+   - Download kubeconfig (typically provides cluster-admin access)
+   - Save to `~/.kube/ord-devimprint.kubeconfig` with `chmod 600`
+
+2. **Option B: Kubeconfig from Cluster Administrator**
+   - Request kubeconfig from cluster administrator
+   - Should have permissions to read secrets in `devimprint` namespace
+   - Store securely at `~/.kube/ord-devimprint.kubeconfig` with `chmod 600`
+
+### Why This Is Blocked
+
+- No Rackspace Spot console credentials found on this system
+- No existing kubeconfig for ord-devimprint or rs-manager
+- Read-only proxy explicitly denies secret access
+- Cannot create ServiceAccount without cluster-admin access (chicken-and-egg)
+
+This is a **re-attempt** after the bead was prematurely closed on 2026-07-11 15:22:49 UTC without actually obtaining a kubeconfig.
 
 ## Related Beads
 
