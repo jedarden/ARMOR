@@ -9,6 +9,164 @@ import (
 	"testing"
 )
 
+// ============================================================================
+// Test Helper Functions
+// ============================================================================
+
+// loadTestData reads and returns the content of a testdata file.
+// It is a helper function for integration tests that need to load YAML files.
+func loadTestData(path string) ([]byte, error) {
+	// Prepend "testdata/" if not already present
+	if !strings.HasPrefix(path, "testdata/") {
+		path = filepath.Join("testdata", path)
+	}
+
+	// Read the file
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return content, nil
+}
+
+// ============================================================================
+// Load Integration Tests
+// ============================================================================
+
+// TestLoadValidYAML tests loading valid_simple.yaml and validates expected values.
+func TestLoadValidYAML(t *testing.T) {
+	testFile := "valid_simple.yaml"
+
+	// Load test data using helper
+	content, err := loadTestData(testFile)
+	if err != nil {
+		t.Fatalf("loadTestData(%s) failed: %v", testFile, err)
+	}
+
+	// Verify content is not empty
+	if len(content) == 0 {
+		t.Error("expected non-empty content from valid_simple.yaml")
+	}
+
+	// Parse the loaded YAML content
+	parser := NewParser()
+	var data map[string]interface{}
+	if err := parser.ParseString(string(content), &data); err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	// Verify expected values from loaded YAML
+	assertions := []struct {
+		key      string
+		expected interface{}
+	}{
+		{"name", "test-config"},
+		{"version", int64(1)},
+		{"enabled", true},
+		{"count", int64(42)},
+	}
+
+	for _, assertion := range assertions {
+		actual := data[assertion.key]
+		if actual != assertion.expected {
+			// Handle int vs int64 comparison
+			if expectedInt, ok := assertion.expected.(int64); ok {
+				if actualInt, ok := actual.(int); ok && int64(actualInt) == expectedInt {
+					continue
+				}
+			}
+			t.Errorf("expected %s=%v, got %v", assertion.key, assertion.expected, actual)
+		}
+	}
+
+	// Verify description field
+	if description, ok := data["description"].(string); !ok || description == "" {
+		t.Error("expected non-empty description string")
+	}
+}
+
+// TestLoadNestedYAML tests loading valid_nested.yaml and validates nested structures.
+func TestLoadNestedYAML(t *testing.T) {
+	testFile := "valid_nested.yaml"
+
+	// Load test data using helper
+	content, err := loadTestData(testFile)
+	if err != nil {
+		t.Fatalf("loadTestData(%s) failed: %v", testFile, err)
+	}
+
+	// Verify content is not empty
+	if len(content) == 0 {
+		t.Error("expected non-empty content from valid_nested.yaml")
+	}
+
+	// Parse the loaded YAML content
+	parser := NewParser()
+	var data map[string]interface{}
+	if err := parser.ParseString(string(content), &data); err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	// Verify top-level sections exist
+	requiredSections := []string{"server", "database", "logging"}
+	for _, section := range requiredSections {
+		if _, exists := data[section]; !exists {
+			t.Errorf("expected section '%s' to exist in loaded YAML", section)
+		}
+	}
+
+	// Verify server.host
+	server, ok := data["server"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected server to be a map")
+	}
+	if server["host"] != "localhost" {
+		t.Errorf("expected server.host='localhost', got %v", server["host"])
+	}
+	if server["port"] != int64(8080) && server["port"] != int(8080) {
+		t.Errorf("expected server.port=8080, got %v", server["port"])
+	}
+
+	// Verify server.ssl.enabled nested structure
+	ssl, ok := server["ssl"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected server.ssl to be a map")
+	}
+	if ssl["enabled"] != true {
+		t.Errorf("expected server.ssl.enabled=true, got %v", ssl["enabled"])
+	}
+
+	// Verify database.primary.host
+	database, ok := data["database"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected database to be a map")
+	}
+	primary, ok := database["primary"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected database.primary to be a map")
+	}
+	if primary["host"] != "db1.example.com" {
+		t.Errorf("expected database.primary.host='db1.example.com', got %v", primary["host"])
+	}
+	if primary["port"] != int64(5432) && primary["port"] != int(5432) {
+		t.Errorf("expected database.primary.port=5432, got %v", primary["port"])
+	}
+
+	// Verify logging.output is a list
+	logging, ok := data["logging"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected logging to be a map")
+	}
+	output, ok := logging["output"].([]interface{})
+	if !ok {
+		t.Fatal("expected logging.output to be a list")
+	}
+	if len(output) != 2 {
+		t.Errorf("expected logging.output to have 2 items, got %d", len(output))
+	}
+}
+
 // TestParseFile_ValidSimpleYAML tests parsing a simple valid YAML file
 func TestParseFile_ValidSimpleYAML(t *testing.T) {
 	parser := NewParser()
