@@ -1,0 +1,770 @@
+// Package yamlutil tests for Result<T, ParseError> pattern.
+package yamlutil
+
+import (
+	"strings"
+	"testing"
+)
+
+// ============================================================================
+// Ok and Err Construction Tests
+// ============================================================================
+
+func TestOkParseResult(t *testing.T) {
+	result := OkParse(42)
+
+	if !result.IsOk() {
+		t.Error("expected Ok result to be ok")
+	}
+
+	if result.IsError() {
+		t.Error("expected Ok result to not be an error")
+	}
+
+	if result.Unwrap() != 42 {
+		t.Errorf("expected Unwrap()=42, got %d", result.Unwrap())
+	}
+
+	if result.Error() != nil {
+		t.Error("expected Error() to return nil for Ok result")
+	}
+
+	if result.ErrorMsg() != "" {
+		t.Errorf("expected ErrorMsg()='', got '%s'", result.ErrorMsg())
+	}
+
+	str := result.String()
+	if !strings.Contains(str, "Ok") {
+		t.Errorf("expected String() to contain 'Ok', got: %s", str)
+	}
+}
+
+func TestErrResult(t *testing.T) {
+	err := NewSyntaxParseError("test.yaml", "bad syntax", 1, 1, ":", "}")
+	result := ErrParse[int](err)
+
+	if !result.IsError() {
+		t.Error("expected Err result to be an error")
+	}
+
+	if result.IsOk() {
+		t.Error("expected Err result to not be ok")
+	}
+
+	if result.Error() == nil {
+		t.Error("expected Error() to return non-nil for Err result")
+	}
+
+	if result.Error() != err {
+		t.Error("expected Error() to return the same error")
+	}
+
+	str := result.String()
+	if !strings.Contains(str, "Err") {
+		t.Errorf("expected String() to contain 'Err', got: %s", str)
+	}
+}
+
+// ============================================================================
+// Unwrap Tests
+// ============================================================================
+
+func TestUnwrap(t *testing.T) {
+	t.Run("unwrap ok result", func(t *testing.T) {
+		result := OkParse(100)
+		if result.Unwrap() != 100 {
+			t.Errorf("expected 100, got %d", result.Unwrap())
+		}
+	})
+
+	t.Run("unwrap error result panics", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic when calling Unwrap on error result")
+			}
+		}()
+
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+		result.Unwrap()
+	})
+}
+
+func TestUnwrapOr(t *testing.T) {
+	t.Run("unwrap or ok result", func(t *testing.T) {
+		result := OkParse(200)
+		got := result.UnwrapOr(0)
+		if got != 200 {
+			t.Errorf("expected 200, got %d", got)
+		}
+	})
+
+	t.Run("unwrap or error result", func(t *testing.T) {
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+		got := result.UnwrapOr(999)
+		if got != 999 {
+			t.Errorf("expected default 999, got %d", got)
+		}
+	})
+
+	t.Run("unwrap or with zero value", func(t *testing.T) {
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+		got := result.UnwrapOr(0)
+		if got != 0 {
+			t.Errorf("expected 0, got %d", got)
+		}
+	})
+}
+
+func TestUnwrapOrElse(t *testing.T) {
+	t.Run("unwrap or else ok result", func(t *testing.T) {
+		result := OkParse(300)
+		got := result.UnwrapOrElse(func(e *EnhancedParseError) int {
+			return 999
+		})
+		if got != 300 {
+			t.Errorf("expected 300, got %d", got)
+		}
+	})
+
+	t.Run("unwrap or else error result", func(t *testing.T) {
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+		got := result.UnwrapOrElse(func(e *EnhancedParseError) int {
+			return 42
+		})
+		if got != 42 {
+			t.Errorf("expected 42, got %d", got)
+		}
+	})
+
+	t.Run("unwrap or else can access error", func(t *testing.T) {
+		err := NewSyntaxParseError("test.yaml", "bad", 1, 1, "", "")
+		result := ErrParse[int](err)
+		got := result.UnwrapOrElse(func(e *EnhancedParseError) int {
+			if e.FilePath != "test.yaml" {
+				t.Errorf("expected to access error details")
+			}
+			return -1
+		})
+		if got != -1 {
+			t.Errorf("expected -1, got %d", got)
+		}
+	})
+}
+
+// ============================================================================
+// Map Tests
+// ============================================================================
+
+func TestMap(t *testing.T) {
+	t.Run("map ok result", func(t *testing.T) {
+		result := OkParse(10)
+		mapped := result.Map(func(x int) int {
+			return x * 2
+		})
+
+		if mapped.IsError() {
+			t.Error("expected mapped result to be ok")
+		}
+
+		if mapped.Unwrap() != 20 {
+			t.Errorf("expected 20, got %d", mapped.Unwrap())
+		}
+	})
+
+	t.Run("map error result returns error unchanged", func(t *testing.T) {
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+		mapped := result.Map(func(x int) int {
+			return x * 2
+		})
+
+		if !mapped.IsError() {
+			t.Error("expected mapped result to be error")
+		}
+
+		if mapped.Error() != err {
+			t.Error("expected same error to be returned")
+		}
+	})
+
+	t.Run("map can change type", func(t *testing.T) {
+		result := OkParse(100)
+		mapped := result.Map(func(x int) int {
+			return x + 1
+		})
+
+		if mapped.Unwrap() != 101 {
+			t.Errorf("expected 101, got %d", mapped.Unwrap())
+		}
+	})
+}
+
+func TestMapErr(t *testing.T) {
+	t.Run("map err ok result returns unchanged", func(t *testing.T) {
+		result := OkParse(50)
+		mapped := result.MapErr(func(e *EnhancedParseError) *EnhancedParseError {
+			return NewSyntaxParseError("other.yaml", "transformed", 1, 1, "", "")
+		})
+
+		if !mapped.IsOk() {
+			t.Error("expected mapped result to be ok")
+		}
+
+		if mapped.Unwrap() != 50 {
+			t.Errorf("expected 50, got %d", mapped.Unwrap())
+		}
+	})
+
+	t.Run("map err error result transforms error", func(t *testing.T) {
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+		mapped := result.MapErr(func(e *EnhancedParseError) *EnhancedParseError {
+			return NewSyntaxParseError("transformed.yaml", "transformed error", 5, 5, "", "")
+		})
+
+		if !mapped.IsError() {
+			t.Error("expected mapped result to be error")
+		}
+
+		mappedErr := mapped.Error()
+		if mappedErr.FilePath != "transformed.yaml" {
+			t.Errorf("expected transformed error, got FilePath=%s", mappedErr.FilePath)
+		}
+	})
+}
+
+// ============================================================================
+// AndThen Tests
+// ============================================================================
+
+func TestAndThen(t *testing.T) {
+	t.Run("and then with ok results", func(t *testing.T) {
+		result := OkParse(10)
+		chained := result.AndThen(func(x int) ParseResultWithError[int] {
+			return OkParse(x * 3)
+		})
+
+		if chained.IsError() {
+			t.Error("expected chained result to be ok")
+		}
+
+		if chained.Unwrap() != 30 {
+			t.Errorf("expected 30, got %d", chained.Unwrap())
+		}
+	})
+
+	t.Run("and then with error result", func(t *testing.T) {
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+		called := false
+
+		chained := result.AndThen(func(x int) ParseResultWithError[int] {
+			called = true
+			return OkParse(x * 3)
+		})
+
+		if called {
+			t.Error("expected function not to be called on error result")
+		}
+
+		if !chained.IsError() {
+			t.Error("expected chained result to be error")
+		}
+
+		if chained.Error() != err {
+			t.Error("expected same error to be returned")
+		}
+	})
+
+	t.Run("and then with error in function", func(t *testing.T) {
+		result := OkParse(10)
+		chained := result.AndThen(func(x int) ParseResultWithError[int] {
+			return ErrParse[int](NewEmptyParseError("error.yaml"))
+		})
+
+		if !chained.IsError() {
+			t.Error("expected chained result to be error")
+		}
+
+		if chained.Error().FilePath != "error.yaml" {
+			t.Errorf("expected error from function, got FilePath=%s", chained.Error().FilePath)
+		}
+	})
+
+	t.Run("and then chains multiple operations", func(t *testing.T) {
+		result := OkParse(2)
+		chained := result.AndThen(func(x int) ParseResultWithError[int] {
+			return OkParse(x + 3)
+		}).AndThen(func(x int) ParseResultWithError[int] {
+			return OkParse(x * 4)
+		}).AndThen(func(x int) ParseResultWithError[int] {
+			return OkParse(x - 1)
+		})
+
+		if chained.IsError() {
+			t.Error("expected chained result to be ok")
+		}
+
+		// (2 + 3) * 4 - 1 = 19
+		if chained.Unwrap() != 19 {
+			t.Errorf("expected 19, got %d", chained.Unwrap())
+		}
+	})
+}
+
+// ============================================================================
+// OrElse Tests
+// ============================================================================
+
+func TestOrElse(t *testing.T) {
+	t.Run("or else with ok result", func(t *testing.T) {
+		result := OkParse(100)
+		alternative := OkParse(200)
+		got := result.OrElse(alternative)
+
+		if !got.IsOk() {
+			t.Error("expected result to be ok")
+		}
+
+		if got.Unwrap() != 100 {
+			t.Errorf("expected 100, got %d", got.Unwrap())
+		}
+	})
+
+	t.Run("or else with error result", func(t *testing.T) {
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+		alternative := OkParse(200)
+		got := result.OrElse(alternative)
+
+		if !got.IsOk() {
+			t.Error("expected alternative to be returned")
+		}
+
+		if got.Unwrap() != 200 {
+			t.Errorf("expected 200, got %d", got.Unwrap())
+		}
+	})
+
+	t.Run("or else with error alternative", func(t *testing.T) {
+		err1 := NewEmptyParseError("test1.yaml")
+		err2 := NewEmptyParseError("test2.yaml")
+		result := ErrParse[int](err1)
+		alternative := ErrParse[int](err2)
+		got := result.OrElse(alternative)
+
+		if !got.IsError() {
+			t.Error("expected error result")
+		}
+
+		if got.Error() != err2 {
+			t.Error("expected alternative error to be returned")
+		}
+	})
+}
+
+func TestOrElseTry(t *testing.T) {
+	t.Run("or else try with ok result", func(t *testing.T) {
+		result := OkParse(100)
+		called := false
+
+		got := result.OrElseTry(func() ParseResultWithError[int] {
+			called = true
+			return OkParse(200)
+		})
+
+		if called {
+			t.Error("expected function not to be called on ok result")
+		}
+
+		if !got.IsOk() {
+			t.Error("expected result to be ok")
+		}
+
+		if got.Unwrap() != 100 {
+			t.Errorf("expected 100, got %d", got.Unwrap())
+		}
+	})
+
+	t.Run("or else try with error result", func(t *testing.T) {
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+
+		got := result.OrElseTry(func() ParseResultWithError[int] {
+			return OkParse(300)
+		})
+
+		if !got.IsOk() {
+			t.Error("expected alternative to be returned")
+		}
+
+		if got.Unwrap() != 300 {
+			t.Errorf("expected 300, got %d", got.Unwrap())
+		}
+	})
+
+	t.Run("or else try can compute lazily", func(t *testing.T) {
+		err := NewEmptyParseError("test.yaml")
+		result := ErrParse[int](err)
+		callCount := 0
+
+		got := result.OrElseTry(func() ParseResultWithError[int] {
+			callCount++
+			return OkParse(callCount)
+		})
+
+		if callCount != 1 {
+			t.Errorf("expected function to be called once, called %d times", callCount)
+		}
+
+		if got.Unwrap() != 1 {
+			t.Errorf("expected 1, got %d", got.Unwrap())
+		}
+	})
+}
+
+// ============================================================================
+// Error Kind Checking Tests
+// ============================================================================
+
+func TestErrorKindCheckers(t *testing.T) {
+	tests := []struct {
+		name       string
+		result     ParseResultWithError[int]
+		checkFunc  func(ParseResultWithError[int]) bool
+		want       bool
+	}{
+		{
+			name:      "ok result is not syntax error",
+			result:    Ok(1),
+			checkFunc: IsSyntaxError[int],
+			want:      false,
+		},
+		{
+			name: "syntax error detected",
+			result: Err[int](NewSyntaxParseError("test.yaml", "err", 1, 1, "", "")),
+			checkFunc: IsSyntaxError[int],
+			want:      true,
+		},
+		{
+			name: "structure error detected",
+			result: Err[int](NewStructureParseError("test.yaml", "err", 1, "", "")),
+			checkFunc: IsStructureError[int],
+			want:      true,
+		},
+		{
+			name: "type mismatch error detected",
+			result: Err[int](NewTypeMismatchParseError("test.yaml", "err", 1, "", "", "", "")),
+			checkFunc: IsTypeMismatchError[int],
+			want:      true,
+		},
+		{
+			name: "IO error detected",
+			result: Err[int](NewIOParseError("test.yaml", "err", 0, nil)),
+			checkFunc: IsIOError[int],
+			want:      true,
+		},
+		{
+			name: "validation error detected",
+			result: Err[int](NewValidationParseError("test.yaml", "err", 1, "", "", "")),
+			checkFunc: IsValidationError[int],
+			want:      true,
+		},
+		{
+			name: "schema error detected",
+			result: Err[int](NewSchemaParseError("test.yaml", "err", 1, "", "")),
+			checkFunc: IsSchemaError[int],
+			want:      true,
+		},
+		{
+			name: "empty error detected",
+			result: Err[int](NewEmptyParseError("test.yaml")),
+			checkFunc: IsEmptyError[int],
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.checkFunc(tt.result); got != tt.want {
+				t.Errorf("check function returned %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Result Error Accessor Tests
+// ============================================================================
+
+func TestErrorAccessors(t *testing.T) {
+	err := NewSyntaxParseError("test.yaml", "bad syntax", 5, 10, ":", "}")
+	result := Err[int](err)
+
+	if result.ErrorKind() != ParseErrorKindSyntax {
+		t.Errorf("expected ErrorKind=%s, got %s", ParseErrorKindSyntax, result.ErrorKind())
+	}
+
+	if result.ErrorFilePath() != "test.yaml" {
+		t.Errorf("expected ErrorFilePath='test.yaml', got '%s'", result.ErrorFilePath())
+	}
+
+	if result.ErrorLine() != 5 {
+		t.Errorf("expected ErrorLine=5, got %d", result.ErrorLine())
+	}
+
+	if result.ErrorColumn() != 10 {
+		t.Errorf("expected ErrorColumn=10, got %d", result.ErrorColumn())
+	}
+}
+
+func TestErrorAccessorsOnOkResult(t *testing.T) {
+	result := Ok[int](42)
+
+	if result.ErrorKind() != "" {
+		t.Errorf("expected empty ErrorKind on ok result, got '%s'", result.ErrorKind())
+	}
+
+	if result.ErrorFilePath() != "" {
+		t.Errorf("expected empty ErrorFilePath on ok result, got '%s'", result.ErrorFilePath())
+	}
+
+	if result.ErrorLine() != 0 {
+		t.Errorf("expected ErrorLine=0 on ok result, got %d", result.ErrorLine())
+	}
+
+	if result.ErrorColumn() != 0 {
+		t.Errorf("expected ErrorColumn=0 on ok result, got %d", result.ErrorColumn())
+	}
+}
+
+// ============================================================================
+// Display and Formatting Tests
+// ============================================================================
+
+func TestDetailedString(t *testing.T) {
+	t.Run("ok result detailed string", func(t *testing.T) {
+		result := Ok(123)
+		str := result.DetailedString()
+
+		if !strings.Contains(str, "Ok") {
+			t.Errorf("expected 'Ok' in detailed string, got: %s", str)
+		}
+
+		if !strings.Contains(str, "123") {
+			t.Errorf("expected value in detailed string, got: %s", str)
+		}
+	})
+
+	t.Run("error result detailed string", func(t *testing.T) {
+		err := NewSyntaxParseError("test.yaml", "bad syntax", 5, 10, ":", "}")
+		err.Context.Snippet = "  port: 8080"
+		err.Context.Column = 9
+
+		result := Err[int](err)
+		str := result.DetailedString()
+
+		if !strings.Contains(str, "syntax error") {
+			t.Errorf("expected 'syntax error' in detailed string, got: %s", str)
+		}
+
+		if !strings.Contains(str, "test.yaml") {
+			t.Errorf("expected file path in detailed string, got: %s", str)
+		}
+
+		if !strings.Contains(str, "  port: 8080") {
+			t.Errorf("expected snippet in detailed string, got: %s", str)
+		}
+
+		if !strings.Contains(str, "^--- here") {
+			t.Errorf("expected column indicator in detailed string, got: %s", str)
+		}
+	})
+}
+
+func TestResultErrorSummary(t *testing.T) {
+	t.Run("ok result error summary", func(t *testing.T) {
+		result := OkParse(456)
+		summary := result.ErrorSummary()
+
+		if summary != "No error" {
+			t.Errorf("expected 'No error', got: '%s'", summary)
+		}
+	})
+
+	t.Run("error result error summary", func(t *testing.T) {
+		err := NewSyntaxParseError("test.yaml", "bad syntax", 5, 10, ":", "}")
+		result := ErrParse[int](err)
+		summary := result.ErrorSummary()
+
+		if !strings.Contains(summary, "syntax error") {
+			t.Errorf("expected 'syntax error' in summary, got: %s", summary)
+		}
+
+		// ErrorSummary should be single-line
+		if strings.Contains(summary, "\n") {
+			t.Errorf("expected single-line summary, got: %s", summary)
+		}
+	})
+}
+
+// ============================================================================
+// Batch Operations Tests
+// ============================================================================
+
+func TestCollectParseResults(t *testing.T) {
+	results := []ParseResultWithError[int]{
+		OkParse(1),
+		ErrParse[int](NewEmptyParseError("test1.yaml")),
+		OkParse(2),
+		ErrParse[int](NewEmptyParseError("test2.yaml")),
+		OkParse(3),
+	}
+
+	collected := CollectParseResults(results)
+
+	if collected.SuccessCount != 3 {
+		t.Errorf("expected SuccessCount=3, got %d", collected.SuccessCount)
+	}
+
+	if collected.ErrorCount != 2 {
+		t.Errorf("expected ErrorCount=2, got %d", collected.ErrorCount)
+	}
+
+	if len(collected.Results) != 5 {
+		t.Errorf("expected 5 results, got %d", len(collected.Results))
+	}
+
+	str := collected.String()
+	if !strings.Contains(str, "Total: 5") {
+		t.Errorf("expected 'Total: 5' in string, got: %s", str)
+	}
+
+	if !strings.Contains(str, "Success: 3") {
+		t.Errorf("expected 'Success: 3' in string, got: %s", str)
+	}
+
+	if !strings.Contains(str, "Errors: 2") {
+		t.Errorf("expected 'Errors: 2' in string, got: %s", str)
+	}
+}
+
+func TestFilterErrors(t *testing.T) {
+	results := []ParseResultWithError[int]{
+		OkParse(1),
+		ErrParse[int](NewEmptyParseError("test1.yaml")),
+		OkParse(2),
+		ErrParse[int](NewEmptyParseError("test2.yaml")),
+		OkParse(3),
+	}
+
+	collected := CollectParseResults(results)
+	errors := collected.FilterErrors()
+
+	if len(errors) != 2 {
+		t.Errorf("expected 2 errors, got %d", len(errors))
+	}
+
+	for _, err := range errors {
+		if !err.IsError() {
+			t.Error("expected all filtered results to be errors")
+		}
+	}
+}
+
+func TestFilterSuccesses(t *testing.T) {
+	results := []ParseResultWithError[int]{
+		OkParse(1),
+		ErrParse[int](NewEmptyParseError("test1.yaml")),
+		OkParse(2),
+		ErrParse[int](NewEmptyParseError("test2.yaml")),
+		OkParse(3),
+	}
+
+	collected := CollectParseResults(results)
+	successes := collected.FilterSuccesses()
+
+	if len(successes) != 3 {
+		t.Errorf("expected 3 successes, got %d", len(successes))
+	}
+
+	for _, succ := range successes {
+		if !succ.IsOk() {
+			t.Error("expected all filtered results to be successes")
+		}
+	}
+}
+
+func TestParseResultsErrorSummary(t *testing.T) {
+	results := []ParseResultWithError[int]{
+		OkParse(1),
+		ErrParse[int](NewSyntaxParseError("test1.yaml", "err1", 1, 1, "", "")),
+		OkParse(2),
+		ErrParse[int](NewSyntaxParseError("test2.yaml", "err2", 2, 1, "", "")),
+		OkParse(3),
+	}
+
+	collected := CollectParseResults(results)
+	summary := collected.ErrorSummary()
+
+	if !strings.Contains(summary, "Parse errors (2)") {
+		t.Errorf("expected error count in summary, got: %s", summary)
+	}
+
+	if !strings.Contains(summary, "err1") {
+		t.Errorf("expected first error message in summary, got: %s", summary)
+	}
+
+	if !strings.Contains(summary, "err2") {
+		t.Errorf("expected second error message in summary, got: %s", summary)
+	}
+}
+
+// ============================================================================
+// Type Alias Tests
+// ============================================================================
+
+func TestMapResultTypeAlias(t *testing.T) {
+	// Test that MapResult works as expected
+	var result MapResult = OkParse(map[string]interface{}{
+		"key": "value",
+	})
+
+	if result.IsError() {
+		t.Error("expected ok result")
+	}
+
+	data := result.Unwrap()
+	if data["key"] != "value" {
+		t.Errorf("expected key='value', got %v", data["key"])
+	}
+}
+
+func TestConfigResultTypeAlias(t *testing.T) {
+	type Config struct {
+		Name string
+		Port int
+	}
+
+	var result ConfigResult[Config] = Ok(Config{
+		Name: "test",
+		Port: 8080,
+	})
+
+	if result.IsError() {
+		t.Error("expected ok result")
+	}
+
+	config := result.Unwrap()
+	if config.Name != "test" {
+		t.Errorf("expected Name='test', got '%s'", config.Name)
+	}
+
+	if config.Port != 8080 {
+		t.Errorf("expected Port=8080, got %d", config.Port)
+	}
+}

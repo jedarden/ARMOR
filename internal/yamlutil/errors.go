@@ -192,6 +192,7 @@ type ValidationError struct {
 	Message    string    // Human-readable error message
 	Line       int       // Line number where error occurred (1-indexed)
 	Column     int       // Column number where error occurred (1-indexed, optional)
+	Constraint string    // Constraint that was violated (optional)
 	ContextStr string    // Additional context about the validation state (optional)
 	Err        error     // Underlying error for error wrapping (optional)
 	ErrorCode  ErrorCode // Error code for programmatic handling (optional)
@@ -231,12 +232,24 @@ func (ve *ValidationError) Context() string {
 func (ve *ValidationError) Error() string {
 	if ve.Line > 0 {
 		if ve.FieldPath != "" {
+			if ve.Constraint != "" {
+				return fmt.Sprintf("validation error in %s at line %d, field %s: %s (constraint: %s)", ve.FilePath, ve.Line, ve.FieldPath, ve.Message, ve.Constraint)
+			}
 			return fmt.Sprintf("validation error in %s at line %d, field %s: %s", ve.FilePath, ve.Line, ve.FieldPath, ve.Message)
+		}
+		if ve.Constraint != "" {
+			return fmt.Sprintf("validation error in %s at line %d: %s (constraint: %s)", ve.FilePath, ve.Line, ve.Message, ve.Constraint)
 		}
 		return fmt.Sprintf("validation error in %s at line %d: %s", ve.FilePath, ve.Line, ve.Message)
 	}
 	if ve.FieldPath != "" {
+		if ve.Constraint != "" {
+			return fmt.Sprintf("validation error in %s at field %s: %s (constraint: %s)", ve.FilePath, ve.FieldPath, ve.Message, ve.Constraint)
+		}
 		return fmt.Sprintf("validation error in %s at field %s: %s", ve.FilePath, ve.FieldPath, ve.Message)
+	}
+	if ve.Constraint != "" {
+		return fmt.Sprintf("validation error in %s: %s (constraint: %s)", ve.FilePath, ve.Message, ve.Constraint)
 	}
 	return fmt.Sprintf("validation error in %s: %s", ve.FilePath, ve.Message)
 }
@@ -261,10 +274,47 @@ func (ve *ValidationError) String() string {
 	if ve.FieldPath != "" {
 		sb.WriteString(fmt.Sprintf("  Field: %s\n", ve.FieldPath))
 	}
+	if ve.Constraint != "" {
+		sb.WriteString(fmt.Sprintf("  Constraint: %s\n", ve.Constraint))
+	}
 	if ve.ContextStr != "" {
 		sb.WriteString(fmt.Sprintf("  Context: %s\n", ve.ContextStr))
 	}
 	return sb.String()
+}
+
+// NewValidationError creates a new ValidationError with the given parameters.
+//
+// This constructor function provides a convenient way to create properly initialized
+// ValidationError instances with message, path, constraint, and error code.
+//
+// Parameters:
+//   - filePath: Path to the file being validated
+//   - message: Human-readable error message
+//   - fieldPath: Dot-notation path to the invalid field (optional)
+//   - constraint: Constraint that was violated (optional)
+//   - code: Error code for programmatic handling (use empty string for default)
+//
+// Returns a properly initialized ValidationError that implements the YAMLError interface.
+//
+// Example usage:
+//
+//	err := NewValidationError("config.yaml", "invalid port number", "server.port", "must be between 1-65535", ErrCodeInvalidValue)
+func NewValidationError(filePath string, message string, fieldPath string, constraint string, code ErrorCode) *ValidationError {
+	// Use provided code or default to generic validation error
+	errorCode := code
+	if errorCode == "" {
+		errorCode = ErrCodeValidationFailed
+	}
+
+	return &ValidationError{
+		FilePath:   filePath,
+		Message:    message,
+		FieldPath:  fieldPath,
+		Constraint: constraint,
+		ErrorCode:  errorCode,
+		Type:       ErrorTypeValidation,
+	}
 }
 
 // IsValidationError checks if an error is a ValidationError.
