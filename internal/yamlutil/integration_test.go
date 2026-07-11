@@ -1153,3 +1153,302 @@ func TestIntegration_FileReadAndValidateString(t *testing.T) {
 		t.Errorf("Expected FilePath=%s, got: %s", testFile, result.FilePath)
 	}
 }
+
+// ============================================================================
+// Root-Level Testdata Integration Tests
+// These tests use YAML files from the repository root /testdata/ directory
+// (different from internal/yamlutil/testdata/)
+// ============================================================================
+
+// TestRootValidSimpleYAML tests parsing simple key-value pairs from root testdata
+func TestRootValidSimpleYAML(t *testing.T) {
+	testFile := "../../testdata/valid_simple.yaml"
+
+	content, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%s) failed: %v", testFile, err)
+	}
+
+	if len(content) == 0 {
+		t.Error("expected non-empty content from valid_simple.yaml")
+	}
+
+	parser := NewParser()
+	var data map[string]interface{}
+	if err := parser.ParseString(string(content), &data); err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	// Verify all expected keys and values from root testdata/valid_simple.yaml
+	assertions := []struct {
+		key      string
+		expected interface{}
+	}{
+		{"string", "hello world"},
+		{"number", int64(42)},
+		{"float", 3.14},
+		{"boolean", true},
+		{"empty_string", ""},
+		{"null_value", interface{}(nil)},
+	}
+
+	for _, assertion := range assertions {
+		actual := data[assertion.key]
+		if assertion.expected == nil {
+			if actual != nil {
+				t.Errorf("expected %s to be null, got %v", assertion.key, actual)
+			}
+		} else {
+			// Handle int vs int64 comparison
+			if expectedInt, ok := assertion.expected.(int64); ok {
+				if actualInt, ok := actual.(int); ok && int64(actualInt) == expectedInt {
+					continue
+				}
+			}
+			if actual != assertion.expected {
+				t.Errorf("expected %s=%v, got %v", assertion.key, assertion.expected, actual)
+			}
+		}
+	}
+}
+
+// TestRootValidNestedYAML tests parsing nested structures and lists from root testdata
+func TestRootValidNestedYAML(t *testing.T) {
+	testFile := "../../testdata/valid_nested.yaml"
+
+	content, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%s) failed: %v", testFile, err)
+	}
+
+	if len(content) == 0 {
+		t.Error("expected non-empty content from valid_nested.yaml")
+	}
+
+	parser := NewParser()
+	var data map[string]interface{}
+	if err := parser.ParseString(string(content), &data); err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	// Verify database nested structure
+	database, ok := data["database"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected database to be a map")
+	}
+
+	if database["host"] != "localhost" {
+		t.Errorf("expected database.host='localhost', got %v", database["host"])
+	}
+
+	if database["port"] != int64(5432) && database["port"] != int(5432) {
+		t.Errorf("expected database.port=5432, got %v", database["port"])
+	}
+
+	credentials, ok := database["credentials"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected database.credentials to be a map")
+	}
+
+	if credentials["username"] != "admin" {
+		t.Errorf("expected database.credentials.username='admin', got %v", credentials["username"])
+	}
+
+	if credentials["password"] != "secret" {
+		t.Errorf("expected database.credentials.password='secret', got %v", credentials["password"])
+	}
+
+	// Verify servers list structure
+	servers, ok := data["servers"].([]interface{})
+	if !ok {
+		t.Fatal("expected servers to be a list")
+	}
+
+	if len(servers) != 2 {
+		t.Errorf("expected 2 servers, got %d", len(servers))
+	}
+
+	// Check first server
+	web1, ok := servers[0].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected first server to be a map")
+	}
+
+	if web1["name"] != "web1" {
+		t.Errorf("expected first server name 'web1', got %v", web1["name"])
+	}
+
+	if web1["ip"] != "10.0.0.1" {
+		t.Errorf("expected first server ip '10.0.0.1', got %v", web1["ip"])
+	}
+
+	// Verify roles list
+	roles, ok := web1["roles"].([]interface{})
+	if !ok {
+		t.Fatal("expected server roles to be a list")
+	}
+
+	if len(roles) != 2 {
+		t.Errorf("expected 2 roles, got %d", len(roles))
+	}
+
+	// Check second server
+	db1, ok := servers[1].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected second server to be a map")
+	}
+
+	if db1["name"] != "db1" {
+		t.Errorf("expected second server name 'db1', got %v", db1["name"])
+	}
+
+	// Verify metadata structure
+	metadata, ok := data["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected metadata to be a map")
+	}
+
+	// Timestamp may be parsed as time.Time or string
+	if createdStr, ok := metadata["created"].(string); ok {
+		if createdStr != "2024-01-15T10:30:00Z" {
+			t.Errorf("expected metadata.created='2024-01-15T10:30:00Z', got %v", createdStr)
+		}
+	} else if metadata["created"] == nil {
+		t.Errorf("expected metadata.created to be present, got nil")
+	}
+	// If it's time.Time, that's also acceptable
+
+	tags, ok := metadata["tags"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected metadata.tags to be a map")
+	}
+
+	if tags["environment"] != "production" {
+		t.Errorf("expected tags.environment='production', got %v", tags["environment"])
+	}
+
+	if tags["tier"] != "frontend" {
+		t.Errorf("expected tags.tier='frontend', got %v", tags["tier"])
+	}
+}
+
+// TestRootValidComplexYAML tests parsing YAML with comments, anchors, and multiline strings from root testdata
+func TestRootValidComplexYAML(t *testing.T) {
+	testFile := "../../testdata/valid_complex.yaml"
+
+	content, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%s) failed: %v", testFile, err)
+	}
+
+	if len(content) == 0 {
+		t.Error("expected non-empty content from valid_complex.yaml")
+	}
+
+	parser := NewParser()
+	var data map[string]interface{}
+	if err := parser.ParseString(string(content), &data); err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	// Verify defaults anchor definition
+	defaults, ok := data["defaults"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected defaults to be a map")
+	}
+
+	if defaults["timeout"] != int64(30) && defaults["timeout"] != int(30) {
+		t.Errorf("expected defaults.timeout=30, got %v", defaults["timeout"])
+	}
+
+	if defaults["retries"] != int64(3) && defaults["retries"] != int(3) {
+		t.Errorf("expected defaults.retries=3, got %v", defaults["retries"])
+	}
+
+	if defaults["backoff"] != "exponential" {
+		t.Errorf("expected defaults.backoff='exponential', got %v", defaults["backoff"])
+	}
+
+	// Verify services structure with anchor merges
+	services, ok := data["services"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected services to be a map")
+	}
+
+	// Check web service
+	web, ok := services["web"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected services.web to be a map")
+	}
+
+	if web["port"] != int64(8080) && web["port"] != int(8080) {
+		t.Errorf("expected services.web.port=8080, got %v", web["port"])
+	}
+
+	if web["host"] != "example.com" {
+		t.Errorf("expected services.web.host='example.com', got %v", web["host"])
+	}
+
+	if web["health_check"] != "/health" {
+		t.Errorf("expected services.web.health_check='/health', got %v", web["health_check"])
+	}
+
+	// Verify anchor merge brought in timeout
+	webTimeout, ok := web["timeout"]
+	if !ok {
+		t.Error("expected services.web.timeout to be present from anchor merge")
+	} else if webTimeout != int64(30) && webTimeout != int(30) {
+		t.Errorf("expected services.web.timeout=30, got %v", webTimeout)
+	}
+
+	// Check API service with timeout override
+	api, ok := services["api"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected services.api to be a map")
+	}
+
+	if api["port"] != int64(8081) && api["port"] != int(8081) {
+		t.Errorf("expected services.api.port=8081, got %v", api["port"])
+	}
+
+	if api["host"] != "api.example.com" {
+		t.Errorf("expected services.api.host='api.example.com', got %v", api["host"])
+	}
+
+	// Verify timeout override (60 instead of default 30)
+	apiTimeout, ok := api["timeout"]
+	if !ok {
+		t.Error("expected services.api.timeout to be present")
+	} else if apiTimeout != int64(60) && apiTimeout != int(60) {
+		t.Errorf("expected services.api.timeout=60 (override), got %v", apiTimeout)
+	}
+
+	// Verify multiline strings
+	description, ok := data["description"].(string)
+	if !ok {
+		t.Fatal("expected description to be a string")
+	}
+
+	if description == "" {
+		t.Error("expected description to be non-empty")
+	}
+
+	// Folded scalar should not contain literal newlines
+	if strings.Contains(description, "\n\n") {
+		t.Error("folded scalar should not contain multiple consecutive newlines")
+	}
+
+	notes, ok := data["notes"].(string)
+	if !ok {
+		t.Fatal("expected notes to be a string")
+	}
+
+	if notes == "" {
+		t.Error("expected notes to be non-empty")
+	}
+
+	// Literal block scalar should preserve newlines
+	if !strings.Contains(notes, "\n") {
+		t.Error("literal block scalar should preserve newlines")
+	}
+}
