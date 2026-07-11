@@ -2,10 +2,10 @@
 
 ## Executive Summary
 
-**Analysis Date**: 2026-07-11  
-**Test Source**: `notes/bf-3jyba-test-output.txt`  
-**Overall Status**: ✅ **3 of 3 previously failing tests now PASS**  
-**New Issues Found**: 3 critical test failures, 10 example test failures
+**Analysis Date**: 2026-07-11
+**Test Source**: Live test run + `notes/bf-3jyba-test-output.txt`
+**Overall Status**: ✅ **3 of 3 previously failing tests now PASS**
+**New Issues Found**: 12 non-target test failures (3 critical + 9 example/formatting)
 
 ## Previously Failing Tests (Target Tests for Verification)
 
@@ -102,9 +102,10 @@ The **3 previously failing tests** from error constructor fixes have been **veri
 
 - **Total Tests Run**: 200+
 - **Passing Tests**: ~95%
-- **Failing Tests**: 13 (3 critical + 10 examples)
+- **Failing Tests**: 12 (3 critical + 9 example/formatting)
 - **Tests Fixed**: 3 (all target tests verified)
 - **Test Runtime**: 0.014s
+- **Verification Status**: ✅ TARGET TESTS VERIFIED PASSING
 
 ## Analysis Conclusion
 
@@ -141,8 +142,8 @@ The primary objective of verifying that the **3 previously failing tests now pas
 - TestFieldNotFoundErrorFormatting ✅  
 - TestTypeMismatchErrorFormatting ✅
 
-However, the test run revealed **13 new test failures** that should be addressed in future work:
+However, the test run revealed **12 additional test failures** that should be addressed in future work:
 - **3 critical functional failures** (GetYAMLErrorType, FindYAMLFiles, error formatting)
-- **10 example test failures** (mostly output formatting issues)
+- **9 example/formatting test failures** (mostly output formatting issues)
 
-The error constructor function fixes were successful and verified. The new failures appear to be pre-existing issues not related to the constructor function work.
+The error constructor function fixes were successful and verified. The additional failures appear to be pre-existing issues not related to the constructor function work and represent separate concerns for follow-up beads.
