@@ -62,6 +62,21 @@ func (r ParseResultWithError[T]) IsOk() bool {
 	return r.success
 }
 
+// IsSuccess returns true if this result represents success.
+// This is an alias for IsOk() for better semantic clarity.
+func (r ParseResultWithError[T]) IsSuccess() bool {
+	return r.success
+}
+
+// Value returns the successful result data.
+// Panics if the result is an error - always check IsSuccess() first.
+func (r ParseResultWithError[T]) Value() T {
+	if r.IsError() {
+		panic(fmt.Sprintf("called Value on error result: %v", r.err))
+	}
+	return r.data
+}
+
 // Unwrap returns the successful data.
 // Panics if the result is an error - always check IsOk() first.
 func (r ParseResultWithError[T]) Unwrap() T {

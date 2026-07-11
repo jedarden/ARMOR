@@ -310,3 +310,247 @@ func TestSuccessParseResult_String(t *testing.T) {
 		}
 	}
 }
+
+// TestParseResultWithError_Value tests the Value() method
+func TestParseResultWithError_Value(t *testing.T) {
+	// Test successful result
+	successResult := OkParse(map[string]interface{}{
+		"key": "value",
+		"name": "test",
+	})
+
+	value := successResult.Value()
+	if value == nil {
+		t.Error("Value() returned nil for successful result")
+	} else if value["key"] != "value" {
+		t.Errorf("Value()[\"key\"] = %v, want %v", value["key"], "value")
+	}
+
+	// Test error result - should panic
+	errorResult := ErrParse[map[string]interface{}](NewSyntaxParseError(
+		"test.yaml",
+		"syntax error",
+		5,
+		10,
+		"identifier",
+		"123",
+	))
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("Expected panic when calling Value() on error result, but did not panic")
+		}
+	}()
+
+	errorResult.Value()
+}
+
+// TestParseResultWithValue_IsSuccess tests the IsSuccess() method (alias for IsOk())
+func TestParseResultWithValue_IsSuccess(t *testing.T) {
+	// Test successful result
+	successResult := OkParse(42)
+
+	if !successResult.IsSuccess() {
+		t.Error("IsSuccess() returned false for successful result")
+	}
+
+	// Verify IsSuccess() is equivalent to IsOk()
+	if successResult.IsSuccess() != successResult.IsOk() {
+		t.Error("IsSuccess() should return same value as IsOk()")
+	}
+
+	// Test error result
+	errorResult := ErrParse[int](NewSyntaxParseError(
+		"test.yaml",
+		"syntax error",
+		5,
+		10,
+		"identifier",
+		"123",
+	))
+
+	if errorResult.IsSuccess() {
+		t.Error("IsSuccess() returned true for error result")
+	}
+
+	// Verify IsSuccess() is equivalent to IsOk()
+	if errorResult.IsSuccess() != errorResult.IsOk() {
+		t.Error("IsSuccess() should return same value as IsOk()")
+	}
+}
+
+// TestParseResultWithValue_UnwrapValue tests that Unwrap() and Value() return the same data
+func TestParseResultWithValue_UnwrapValue(t *testing.T) {
+	testData := map[string]interface{}{
+		"key1": "value1",
+		"key2": 42,
+	}
+
+	result := OkParse(testData)
+
+	unwrapValue := result.Unwrap()
+	valueMethodValue := result.Value()
+
+	if unwrapValue["key1"] != valueMethodValue["key1"] {
+		t.Errorf("Unwrap()[\"key1\"] = %v, Value()[\"key1\"] = %v, should be same",
+			unwrapValue["key1"], valueMethodValue["key1"])
+	}
+
+	if unwrapValue["key2"] != valueMethodValue["key2"] {
+		t.Errorf("Unwrap()[\"key2\"] = %v, Value()[\"key2\"] = %v, should be same",
+			unwrapValue["key2"], valueMethodValue["key2"])
+	}
+}
+
+// TestValidationResult_IsValid tests the IsValid() method
+func TestValidationResult_IsValid(t *testing.T) {
+	// Test valid result
+	validResult := ValidationResult{
+		FilePath: "test.yaml",
+		Valid:     true,
+		Errors:    []ValidationError{},
+		Warnings: []ValidationError{},
+	}
+
+	if !validResult.IsValid() {
+		t.Error("IsValid() returned false for valid result")
+	}
+
+	// Test invalid result
+	invalidResult := ValidationResult{
+		FilePath: "test.yaml",
+		Valid:    false,
+		Errors: []ValidationError{
+			*NewValidationError("test.yaml", "required field missing", "server.name", "", ErrCodeRequiredField, 5, 0, ""),
+		},
+		Warnings: []ValidationError{},
+	}
+
+	if invalidResult.IsValid() {
+		t.Error("IsValid() returned true for invalid result")
+	}
+
+	// Verify IsValid() returns the Valid field value
+	testResult := ValidationResult{
+		FilePath: "test.yaml",
+		Valid:     true,
+		Errors:    []ValidationError{},
+	}
+
+	if testResult.IsValid() != testResult.Valid {
+		t.Error("IsValid() should return the same value as Valid field")
+	}
+}
+
+// TestValidationResult_IsValid_Consistency tests consistency between IsValid() and HasErrors()
+func TestValidationResult_IsValid_Consistency(t *testing.T) {
+	// When Valid is true, HasErrors should be false
+	validNoErrors := ValidationResult{
+		FilePath: "test.yaml",
+		Valid:    true,
+		Errors:   []ValidationError{},
+	}
+
+	if validNoErrors.IsValid() && validNoErrors.HasErrors() {
+		t.Error("Expected IsValid()=true and HasErrors()=false to be consistent")
+	}
+
+	// When Valid is false, HasErrors should typically be true
+	invalidWithErrors := ValidationResult{
+		FilePath: "test.yaml",
+		Valid:    false,
+		Errors: []ValidationError{
+			*NewValidationError("test.yaml", "validation error", "", "", ErrCodeValidationFailed, 0, 0, ""),
+		},
+	}
+
+	if !invalidWithErrors.IsValid() && !invalidWithErrors.HasErrors() {
+		t.Log("Note: IsValid()=false but HasErrors()=false - this can happen in edge cases")
+	}
+}
+
+// TestNewResultMethods_Comprehensive tests all new methods together
+func TestNewResultMethods_Comprehensive(t *testing.T) {
+	t.Run("ParseResultWithError methods", func(t *testing.T) {
+		// Create a successful parse result
+		successResult := OkParse(map[string]interface{}{
+			"server": map[string]interface{}{
+				"host": "localhost",
+				"port": 8080,
+			},
+		})
+
+		// Test IsSuccess()
+		if !successResult.IsSuccess() {
+			t.Error("Expected IsSuccess() to return true")
+		}
+
+		// Test Value()
+		data := successResult.Value()
+		if data == nil {
+			t.Error("Expected Value() to return non-nil data")
+		}
+
+		// Test that Value() and Unwrap() return the same data
+		unwrapData := successResult.Unwrap()
+		serverData := data["server"]
+		serverUnwrapData := unwrapData["server"]
+
+		if serverData == nil || serverUnwrapData == nil {
+			t.Error("Expected server data to be non-nil")
+		} else {
+			// Type assert to map for comparison
+			serverMap, ok1 := serverData.(map[string]interface{})
+			unwrapServerMap, ok2 := serverUnwrapData.(map[string]interface{})
+			if !ok1 || !ok2 {
+				t.Error("Expected server data to be map[string]interface{}")
+			} else if serverMap["host"] != unwrapServerMap["host"] || serverMap["port"] != unwrapServerMap["port"] {
+				t.Error("Value() and Unwrap() should return the same data")
+			}
+		}
+
+		// Create an error result
+		errorResult := ErrParse[map[string]interface{}](
+			NewTypeMismatchParseError("config.yaml", "type mismatch", 10, "server.port", "int", "string", "8080"),
+		)
+
+		// Test IsSuccess() on error
+		if errorResult.IsSuccess() {
+			t.Error("Expected IsSuccess() to return false for error result")
+		}
+
+		// Test that Value() panics on error
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("Expected Value() to panic on error result")
+			}
+		}()
+		errorResult.Value()
+	})
+
+	t.Run("ValidationResult methods", func(t *testing.T) {
+		// Create a valid result
+		validResult := ValidationResult{
+			FilePath: "config.yaml",
+			Valid:    true,
+			Errors:   []ValidationError{},
+		}
+
+		if !validResult.IsValid() {
+			t.Error("Expected IsValid() to return true")
+		}
+
+		// Create an invalid result
+		invalidResult := ValidationResult{
+			FilePath: "config.yaml",
+			Valid:    false,
+			Errors: []ValidationError{
+				*NewValidationError("config.yaml", "port out of range", "server.port", "1-65535", ErrCodeInvalidValue, 15, 0, ""),
+			},
+		}
+
+		if invalidResult.IsValid() {
+			t.Error("Expected IsValid() to return false for invalid result")
+		}
+	})
+}
