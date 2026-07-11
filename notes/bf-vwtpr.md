@@ -1,16 +1,30 @@
 # Bead bf-vwtpr: Decode and validate LITESTREAM_ACCESS_KEY_ID
 
-## Status: BLOCKED - Prerequisite Not Met
+## Issue Found
 
-## Finding
+The prerequisite for this bead (base64 value retrieval) was not successfully completed. The file `/tmp/litestream_key_id.b64` contains an RBAC error message instead of actual base64-encoded data.
 
-This child bead could not complete because the prerequisite condition was not satisfied. The previous child bead did NOT successfully retrieve the base64 value.
+## Root Cause
 
-### Evidence
-
-The file `/tmp/litestream_key_id.b64` contains an RBAC error message instead of a base64-encoded AWS access key:
+The previous attempt to retrieve the LITESTREAM_ACCESS_KEY_ID used the read-only kubectl-proxy for `ord-devimprint`:
 
 ```
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+```
+
+This proxy runs with the `devpod-observer` ServiceAccount which has **read-only RBAC that explicitly blocks secret access**.
+
+## Cluster Access Constraints
+
+According to the environment documentation:
+- `ord-devimprint` cluster only has read-only proxy access
+- No read-write kubeconfig is available for this cluster
+- The observer SA explicitly denies access to secrets (stricter than other clusters)
+
+## Evidence
+
+```bash
+$ cat /tmp/litestream_key_id.b64
 RBAC BLOCKER: Cannot retrieve secret value
 
 Error from server (Forbidden): secrets "armor-writer" is forbidden:
@@ -18,28 +32,11 @@ User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource
 in API group "" in the namespace "devimprint"
 ```
 
-### Root Cause
+## Resolution Required
 
-The kubectl-proxy for `ord-devimprint` runs with read-only RBAC that explicitly blocks secret access, even for get operations. The ServiceAccount `devpod-observer` in the `devpod-observer` namespace does not have permissions to read secrets in `devimprint`.
+This task cannot be completed because:
+1. The base64 file contains an error message, not valid data
+2. There is no available kubeconfig with secret access for ord-devimprint
+3. The prerequisite (successful base64 value retrieval) was not met
 
-### Command That Failed
-
-```bash
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
-```
-
-### Why This Cannot Proceed
-
-Per the acceptance criteria, this bead requires:
-- Successfully decoded the base64 value to plain text
-- Decoded value is not empty  
-- Value appears valid (starts with AKIA... or similar AWS access key pattern)
-
-Since there is no base64 value to decode—only an error message—none of these criteria can be met.
-
-### Resolution Path
-
-This bead must be retried after one of:
-1. Using a different cluster with proper secret access permissions
-2. Using direct kubeconfig with cluster-admin access instead of read-only proxy
-3. The ExternalSecret is manually refreshed and the value is retrieved through an alternate method
+The parent bead (bf-2778z) and this child bead (bf-vwtpr) are blocked by RBAC constraints.
