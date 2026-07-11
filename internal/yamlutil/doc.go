@@ -112,6 +112,31 @@
 //	    log.Fatalf("Missing required fields: %v", missing)
 //	}
 //
+// # Advanced YAML Features
+//
+// Working with YAML anchors, aliases, and multiline strings:
+//
+//	// Parse YAML with anchors and aliases
+//	data, err := yamlutil.ParseYAML("config-with-anchors.yaml")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Access values that use anchor defaults
+//	timeout := yamlutil.GetInt(data, "server.timeout", 30)
+//	retries := yamlutil.GetInt(data, "server.retries", 3)
+//
+//	// Parse YAML with multiline strings
+//	data, err := yamlutil.ParseYAML("config-with-multiline.yaml")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Access multiline string fields
+//	description := yamlutil.GetString(data, "description", "")
+//	script := yamlutil.GetString(data, "config.script", "")
+//	// Multiline strings preserve formatting and newlines
+//
 // # Validation
 //
 // Validate YAML syntax and structure with detailed error reporting:
