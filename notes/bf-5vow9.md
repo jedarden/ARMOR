@@ -4,7 +4,12 @@
 Verify that the armor-writer secret exists in the devimprint namespace and contains the expected keys.
 
 ## Status
-**BLOCKER - Prerequisite incomplete**
+**BLOCKER - Broken dependency chain**
+
+- Previous bead bf-4ds4n marked as CLOSED despite its prerequisite (bf-2p1wr) being OPEN
+- No kubeconfig exists for ord-devimprint cluster
+- Read-only proxy explicitly denies secret access
+- Task cannot proceed until kubeconfig is obtained via bf-2p1wr
 
 ## Findings
 
@@ -33,12 +38,32 @@ The `devpod-observer` serviceaccount has read-only RBAC which explicitly denies 
 
 2. **Bead bf-5vow9** (this bead): Cannot verify secret without kubeconfig - **BLOCKED**
 
-## Resolution needed
-This task requires either:
-- A kubeconfig with secret read access to ord-devimprint cluster, OR
-- An alternative verification method (e.g., cluster admin access via another cluster, or documentation from infrastructure setup)
+## Resolution needed - BROKEN DEPENDENCY CHAIN
 
-The ord-devimprint cluster documentation shows only read-only proxy access is available - no read-write kubeconfig is documented. This may be an infrastructure gap that needs to be addressed separately.
+The prerequisite bead chain is fundamentally broken:
+
+1. **bf-2p1wr**: "Obtain ord-devimprint kubeconfig with write access"
+   - Status: **OPEN** (never completed)
+   - This bead was supposed to create the kubeconfig
+
+2. **bf-4ds4n**: "Verify ord-devimprint write-access kubeconfig exists"
+   - Status: **CLOSED** (incorrectly closed despite open prerequisite)
+   - Should have verified the kubeconfig from bf-2p1wr
+   - Marked as complete even though bf-2p1wr is still open
+
+3. **bf-5vow9** (current): "Verify armor-writer secret exists"
+   - Status: **BLOCKED** - cannot proceed without kubeconfig
+
+### Action required
+- **bf-2p1wr must be completed first** to obtain a kubeconfig with secret read access
+- The bead dependency system should prevent closure of bf-4ds4n while bf-2p1wr is open (bug in dependency tracking)
+- Once bf-2p1wr completes, bf-4ds4n should be re-verified, then bf-5vow9 can proceed
+
+### Alternative approach
+If ord-devimprint truly has no admin kubeconfig (by design), this verification may need to be:
+- Performed by a cluster administrator directly
+- Verified through documentation of the ExternalSecret creation process
+- Confirmed via alternative cluster access method
 
 ## Attempted commands
 ```bash
