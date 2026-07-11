@@ -1,74 +1,36 @@
-# Bead bf-2y15n: Retrieve base64-encoded value from secret
+# Task bf-2y15n - Cannot Complete: RBAC Blocker
 
-## Task Blocked - RBAC Restriction
+## Task
+Retrieve base64-encoded LITESTREAM_ACCESS_KEY_ID from armor-writer secret in ord-devimprint cluster
 
-Attempted to retrieve the LITESTREAM_ACCESS_KEY_ID field from the armor-writer secret in the ord-devimprint cluster.
+## Attempted Commands
 
-### Command Attempted
+1. Using kubeconfig (doesn't exist):
+```bash
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+# Error: stat /home/coding/.kube/ord-devimprint.kubeconfig: no such file or directory
+```
 
+2. Using kubectl-proxy (correct method for ord-devimprint):
 ```bash
 kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+# Error from server (Forbidden): secrets "armor-writer" is forbidden: 
+# User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" 
+# in API group "" in the namespace "devimprint"
 ```
 
-### Error Encountered
+## Blocker
+The ord-devimprint kubectl-proxy runs with read-only RBAC that **explicitly denies access to secrets**. The proxy's ServiceAccount (`devpod-observer:devpod-observer`) does not have secret access permissions.
 
-```
-Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
-```
+## Resolution Required
+This task requires either:
+1. A read-write kubeconfig for ord-devimprint (if one exists)
+2. RBAC changes to grant the devpod-observer ServiceAccount secret access
+3. An alternative method to retrieve the secret value
 
-### Root Cause
+## Status
+**BLOCKED** - Cannot complete task without secret access permissions.
 
-The ord-devimprint cluster is accessed via a read-only kubectl-proxy (running in the `devpod-observer` namespace with a restricted ServiceAccount). This proxy explicitly denies access to secrets, which is consistent with the cluster's security model.
-
-### Available Access Options
-
-Per CLAUDE.md documentation for ord-devimprint:
-- Access is **read-only** via proxy
-- Cannot create, delete, or modify resources
-- The observer ServiceAccount has no secret access
-
-### Resolution Required
-
-To complete this bead, one of the following would be needed:
-1. A direct kubeconfig with elevated privileges (similar to iad-options or iad-ci clusters)
-2. An alternative method to retrieve the secret value
-3. Secret access granted to the observer ServiceAccount (unlikely given security posture)
-
-### Status
-
-**BLOCKED** - Cannot complete task with current access level. Bead should remain open for retry with appropriate credentials.
-
----
-
-## Current Attempt (2026-07-11)
-
-### Verification of Blocker
-
-Attempted both access methods:
-
-1. **Direct kubeconfig (specified in task)**
-   ```bash
-   kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
-   ```
-   Result: `error: stat /home/coding/.kube/ord-devimprint.kubeconfig: no such file or directory`
-
-2. **Read-only proxy (fallback)**
-   ```bash
-   kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
-   ```
-   Result: `Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"`
-
-### Prerequisite Status
-
-The prerequisite beads (bf-4743d, bf-2pn4n) are marked as closed, but they encountered the same infrastructure limitations:
-- bf-4743d: Verified kubeconfig doesn't exist (expected - ord-devimprint uses proxy)
-- bf-2pn4n: Would have confirmed proxy denies secrets access
-
-### Conclusion
-
-The infrastructure blocker persists. This bead **cannot be closed** until one of the following is resolved:
-1. A direct kubeconfig for ord-devimprint with secret access is created
-2. RBAC is modified to grant devpod-observer ServiceAccount secrets read access
-3. An alternative method to retrieve the secret value is provided
-
-Per task instructions: "If you cannot complete the task OR cannot produce a commit - Do NOT close the bead"
+## Related Documentation
+- Recent commits document this RBAC blocker: "docs(bf-2y15n): document RBAC blocker - no secret access on ord-devimprint"
+- CLAUDE.md notes that ord-devimprint proxy "Access is **read-only** — cannot create, delete, or modify resources" but doesn't explicitly mention secret denial
