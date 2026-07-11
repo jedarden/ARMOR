@@ -2,7 +2,6 @@
 package yamlutil
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
