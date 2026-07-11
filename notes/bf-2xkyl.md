@@ -6,7 +6,7 @@ Retrieve S3 credentials from armor-writer secret in ord-devimprint cluster
 ## BLOCKER - Cannot Proceed
 **Prerequisite bead bf-2p1wr was marked closed but work was not completed.**
 
-## Current State (2026-07-11)
+## Current State (2026-07-11 - Re-verified)
 - **Prerequisite bead:** bf-2p1wr (status: closed)
 - **Required kubeconfig:** `~/.kube/ord-devimprint.kubeconfig` (DOES NOT EXIST)
 - **Read-only proxy:** `kubectl-proxy-ord-devimprint:8001` (blocks secret access)
@@ -15,11 +15,17 @@ Retrieve S3 credentials from armor-writer secret in ord-devimprint cluster
 1. Checked for ord-devimprint kubeconfig files - **NOT FOUND**
 2. Tried read-only proxy - **BLOCKED BY RBAC**:
    ```
-   Error from server (Forbidden): secrets "armor-writer" is forbidden: 
-   User "system:serviceaccount:devpod-observer:devpod-observer" 
+   Error from server (Forbidden): secrets "armor-writer" is forbidden:
+   User "system:serviceaccount:devpod-observer:devpod-observer"
    cannot get resource "secrets" in API group "" in the namespace "devimprint"
    ```
 3. Checked kubectl contexts - **no ord-devimprint context found**
+
+## Latest Verification (2026-07-11)
+- Confirmed `~/.kube/ord-devimprint.kubeconfig` does NOT exist
+- Confirmed read-only proxy at `kubectl-proxy-ord-devimprint:8001` blocks secret access
+- RBAC explicitly denies: User `system:serviceaccount:devpod-observer:devpod-observer` cannot get secrets in `devimprint` namespace
+- **Task cannot proceed without kubeconfig with secret-read permissions**
 
 ## What Is Needed
 A kubeconfig file for ord-devimprint with secret-read permissions in the devimprint namespace. Following the pattern of other Rackspace Spot clusters:
