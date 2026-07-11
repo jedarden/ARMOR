@@ -76,6 +76,7 @@ impl ParseError {
         match (&self.path, self.line, self.column) {
             (Some(path), Some(line), Some(col)) => format!("{}:{}:{}", path, line, col),
             (Some(path), Some(line), None) => format!("{}:{}", path, line),
+            (Some(path), None, Some(col)) => format!("{}::{}", path, col),
             (Some(path), None, None) => path.clone(),
             (None, Some(line), Some(col)) => format!("{}:{}", line, col),
             (None, Some(line), None) => format!("{}", line),
