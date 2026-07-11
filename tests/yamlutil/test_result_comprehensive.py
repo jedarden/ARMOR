@@ -679,6 +679,79 @@ class TestGenericTypes:
         assert isinstance(result.data, int)
 
 
+class TestUnwrapMethod:
+    """Test unwrap() method behavior."""
+
+    def test_unwrap_on_success(self):
+        """Verify unwrap() returns data on success."""
+        result = Result.success({"key": "value"})
+        data = result.unwrap()
+        assert data == {"key": "value"}
+
+    def test_unwrap_on_success_with_none(self):
+        """Verify unwrap() returns None when data is None."""
+        result = Result.success(None)
+        data = result.unwrap()
+        assert data is None
+
+    def test_unwrap_on_success_with_false(self):
+        """Verify unwrap() returns False value."""
+        result = Result.success(False)
+        data = result.unwrap()
+        assert data is False
+
+    def test_unwrap_on_success_with_zero(self):
+        """Verify unwrap() returns zero value."""
+        result = Result.success(0)
+        data = result.unwrap()
+        assert data == 0
+
+    def test_unwrap_on_error_raises(self):
+        """Verify unwrap() raises ValueError on error."""
+        result = Result.error("Test error")
+        try:
+            result.unwrap()
+            assert False, "Expected ValueError to be raised"
+        except ValueError as e:
+            assert "Test error" in str(e)
+
+    def test_unwrap_on_error_with_none_message(self):
+        """Verify unwrap() raises with default message on error with None."""
+        result = Result.error(None)
+        try:
+            result.unwrap()
+            assert False, "Expected ValueError to be raised"
+        except ValueError as e:
+            assert "Operation failed" in str(e)
+
+    def test_unwrap_on_error_with_empty_message(self):
+        """Verify unwrap() raises with empty message."""
+        result = Result.error("")
+        try:
+            result.unwrap()
+            assert False, "Expected ValueError to be raised"
+        except ValueError as e:
+            assert "" in str(e)
+
+    def test_unwrap_on_error_with_long_message(self):
+        """Verify unwrap() raises with long error message."""
+        long_msg = "This is a very long error message: " + "A" * 100
+        result = Result.error(long_msg)
+        try:
+            result.unwrap()
+            assert False, "Expected ValueError to be raised"
+        except ValueError as e:
+            assert long_msg in str(e)
+
+    def test_unwrap_on_success_with_complex_data(self):
+        """Verify unwrap() returns complex nested data."""
+        data = {"nested": {"key": [1, 2, 3]}}
+        result = Result.success(data)
+        unwrapped = result.unwrap()
+        assert unwrapped == data
+        assert unwrapped["nested"]["key"] == [1, 2, 3]
+
+
 class TestEdgeCases:
     """Test edge cases and complex scenarios."""
 
@@ -788,6 +861,7 @@ def run_all_tests():
         ("get_error() Method", TestGetErrorMethod),
         ("get_data() Method", TestGetDataMethod),
         ("get_data_or() Method", TestGetDataOrMethod),
+        ("unwrap() Method", TestUnwrapMethod),
         ("map() Method", TestMapMethod),
         ("and_then() Method", TestAndThenMethod),
         ("Boolean Conversion", TestBooleanConversion),
@@ -842,7 +916,7 @@ def run_all_tests():
         print("\n✅ ALL ACCEPTANCE CRITERIA MET:")
         print("  ✓ Unit test file exists and is runnable")
         print("  ✓ All Result creation scenarios are tested")
-        print("  ✓ All helper methods (is_success, get_error, get_data, get_data_or) tested")
+        print("  ✓ All helper methods (is_success, get_error, get_data, get_data_or, unwrap) tested")
         print("  ✓ Advanced methods (map, and_then) tested")
         print("  ✓ Status enum methods (from_bool, as_bool) tested")
         print("  ✓ Edge cases covered (None data, empty error messages, etc.)")
