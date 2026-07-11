@@ -19,13 +19,25 @@
    ```
 
 2. **No alternative kubeconfig paths found**
-   - Searched `~/.kube/` directory: No matching files
+   - Searched `~/.kube/` directory: Only `iad-acb.kubeconfig` and `iad-ci.kubeconfig` exist
    - Searched home directory for `*devimprint*`: Only documentation files found
 
 3. **Prerequisite bead status inconsistency**
    - Bead `bf-2p1wr` is marked as **closed** (2026-07-11 15:22:49 UTC via CLI)
    - However, the bead's own notes state: ⚠️ **Awaiting kubeconfig from cluster administrator**
    - The bead was closed without completing the actual work
+
+4. **Current access level (read-only proxy)**
+   - ✅ **Can list pods**: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get pods -n devimprint`
+   - ✅ **Can list secrets**: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint`
+   - ❌ **Cannot read secret data**: Forbidden error when attempting to access secret contents
+   ```bash
+   $ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data}'
+   Error from server (Forbidden): secrets "armor-writer" is forbidden: 
+   User "system:serviceaccount:devpod-observer:devpod-observer" cannot get 
+   resource "secrets" in API group "" in the namespace "devimprint"
+   ```
+   - **ServiceAccount**: `system:serviceaccount:devpod-observer:devpod-observer`
 
 ### Historical Context
 
