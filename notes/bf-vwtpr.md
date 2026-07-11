@@ -1,42 +1,46 @@
 # Bead bf-vwtpr: Decode and validate LITESTREAM_ACCESS_KEY_ID
 
-## Status: FAILED - Prerequisite not met
+## Status: FAILED - Prerequisite Not Met
 
 ## Issue
-The previous bead did not successfully retrieve the base64-encoded value. Instead, the file `/tmp/litestream_key_id.b64` contains an error message:
+
+The prerequisite child bead (retrieve base64 value) did not successfully retrieve the secret. Instead, it encountered an RBAC blocker.
+
+## Root Cause
+
+The kubectl-proxy for `ord-devimprint` runs with read-only RBAC that **explicitly blocks secret access**:
+
+```
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+in API group "" in the namespace "devimprint"
+```
+
+## Evidence
+
+The file `/tmp/litestream_key_id.b64` contains an error message instead of base64 data:
 
 ```
 RBAC BLOCKER: Cannot retrieve secret value
-
-Error from server (Forbidden): secrets "armor-writer" is forbidden:
-User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-in the namespace "devimprint"
+Error from server (Forbidden): secrets "armor-writer" is forbidden
 ```
 
-## Root Cause
-The kubectl-proxy for `ord-devimprint` runs with read-only RBAC that explicitly blocks secret access. The ServiceAccount `devpod-observer` in the `devpod-observer` namespace does not have permissions to read secrets in `devimprint`.
+## Next Steps
 
-## Command Attempted by Previous Bead
-```bash
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
-```
+To complete this bead, one of the following is needed:
 
-## Result
-Access forbidden - RBAC blocker on secret access.
+1. **Use a kubeconfig with secret access** - The direct kubeconfig for ord-devimprint (if it exists and has higher privileges)
+2. **Access the secret from a different cluster** - If the same secret exists on a cluster with read/write access
+3. **Use OpenBao directly** - Retrieve the value from OpenBao rather than from Kubernetes secrets
+4. **Have a human provide the value** - Manually provide the base64-encoded value
 
-## Validation Attempted
-```bash
-base64 -d /tmp/litestream_key_id.b64
-# Exit code 1: base64: invalid input
-```
+## Why the bead failed
 
-The decode failed because the file contains an error message, not valid base64 data.
+The acceptance criteria state:
+- Prerequisites: Previous child bead complete (base64 value retrieved)
 
-## Recommendation
-This bead cannot be completed through the read-only kubectl-proxy. Alternative approaches:
-1. Use direct kubeconfig with appropriate permissions (if available)
-2. Access the secret through a different cluster with appropriate permissions
-3. Have an operator with proper access retrieve the value manually
+This prerequisite was NOT met. The file exists but contains an error, not the secret value. Therefore, the base64 decode command fails with "invalid input".
 
-## Date
-2026-07-11
+## Files examined
+
+- `/tmp/litestream_key_id.b64` - Contains RBAC error, not base64 data
+- `/tmp/litestream_key_id.txt` - Could not be created due to decode failure
