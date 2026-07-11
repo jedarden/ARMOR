@@ -20,14 +20,91 @@ Other clusters have direct kubeconfigs:
 - `~/.kube/iad-ci.kubeconfig` - Full cluster-admin access
 - `~/.kube/iad-acb.kubeconfig` - Another cluster config
 
+## Cluster Information
+
+From ExternalSecret configuration (`~/declarative-config/k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml`):
+- **Cluster Server**: `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
+- **Type**: Rackspace Spot cluster
+- **Management Cluster**: rs-manager
+
+## Acquisition Process
+
+### Method 1: Rackspace Spot Portal (Recommended)
+
+1. **Access Rackspace Spot Portal**:
+   ```bash
+   # Navigate to: https://spot.rackspace.com
+   # Authenticate with Rackspace Spot credentials
+   ```
+
+2. **Download Admin Kubeconfig**:
+   - Find cluster: `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330` or "ord-devimprint"
+   - Download kubeconfig to `/tmp/ord-devimprint-admin.kubeconfig`
+
+3. **Create ServiceAccount with Write Access**:
+   ```bash
+   KC=/tmp/ord-devimprint.kubeconfig
+
+   # Create serviceaccount
+   kubectl --kubeconfig=$KC create serviceaccount argocd-manager -n kube-system
+
+   # Grant cluster-admin permissions
+   kubectl --kubeconfig=$KC create clusterrolebinding argocd-manager \
+     --clusterrole=cluster-admin --serviceaccount=kube-system:argocd-manager
+
+   # Generate long-lived token (1 year)
+   TOKEN=$(kubectl --kubeconfig=$KC create token argocd-manager \
+     -n kube-system --duration=8760h)
+
+   echo "Token: $TOKEN"
+   ```
+
+4. **Create Kubeconfig File**:
+   ```bash
+   # Extract CA data from admin kubeconfig
+   CA_DATA=$(kubectl --kubeconfig=$KC config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+
+   # Create final kubeconfig
+   cat > ~/.kube/ord-devimprint.kubeconfig << EOF
+   apiVersion: v1
+   kind: Config
+   clusters:
+     - cluster:
+         certificate-authority-data: $CA_DATA
+         server: https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com
+       name: ord-devimprint
+   contexts:
+     - context:
+         cluster: ord-devimprint
+         user: argocd-manager
+       name: ord-devimprint
+   current-context: ord-devimprint
+   preferences: {}
+   users:
+     - name: argocd-manager
+       user:
+         token: $TOKEN
+   EOF
+
+   # Secure permissions
+   chmod 600 ~/.kube/ord-devimprint.kubeconfig
+   ```
+
+### Method 2: OpenBao Integration (Optional)
+
+For GitOps integration, store credentials in OpenBao:
+
+```bash
+bao kv put secret/rs-manager/ord-devimprint/cluster \
+  server="https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com" \
+  token="$TOKEN"
+```
+
+This enables the ExternalSecret to sync automatically to rs-manager.
+
 ## Next Steps
 
-**This requires coordination with the cluster administrator.**
-
-The kubeconfig must be created by whoever administers the ord-devimprint cluster, as I cannot:
-1. Create credentials with elevated permissions
-2. Modify RBAC on the cluster (no write access)
-3. Generate new tokens or certificates
+**This requires Rackspace Spot portal access or coordination with the cluster administrator.**
 
 ## Verification Steps (once kubeconfig is obtained)
 
@@ -51,9 +128,17 @@ From CLAUDE.md:
 
 ## Status
 
-**BLOCKED** - Waiting for cluster administrator to provide kubeconfig with write access.
+**DOCUMENTATION COMPLETE** - Detailed acquisition process documented above.
 
-This task cannot be completed without external coordination. The cluster administrator needs to:
-1. Create a ServiceAccount with appropriate RBAC to read secrets in the `devimprint` namespace
-2. Generate a kubeconfig or token for that ServiceAccount
-3. Provide it securely for storage at `~/.kube/ord-devimprint.kubeconfig`
+This task requires:
+1. **Rackspace Spot portal access** with admin permissions on the ord-devimprint cluster
+2. **Or coordination with the cluster administrator** who can provide the kubeconfig
+
+The documentation above provides the exact steps needed to:
+- Access the Rackspace Spot portal and download the admin kubeconfig
+- Create a ServiceAccount with cluster-admin permissions
+- Generate a long-lived token (1 year validity)
+- Store the kubeconfig securely at `~/.kube/ord-devimprint.kubeconfig`
+- Optionally integrate with OpenBao for GitOps automation
+
+Once the kubeconfig is obtained, run the verification steps below to confirm access.
