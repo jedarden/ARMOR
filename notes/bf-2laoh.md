@@ -59,6 +59,7 @@ ParserConfig {
 ## Files Modified
 - **src/parsers/config.rs** (new) - Main configuration implementation
 - **src/parsers/mod.rs** (modified) - Re-export configuration types
+- **docs/parser-config.md** (new) - Comprehensive user documentation
 
 ## Testing
 All 12 configuration tests pass:
