@@ -122,6 +122,87 @@ impl<T> OperationResult<T> {
 }
 
 /// Result of a YAML parsing operation
+///
+/// `ParseResult<T>` represents the outcome of a YAML parsing operation, encapsulating
+/// either a successful parse with its associated data and metadata, or a failure with
+/// detailed error information.
+///
+/// # Type Parameter
+///
+/// - `T` - The type of the parsed value. This is typically the target type that the YAML
+///   content is being parsed into (e.g., a configuration struct, `serde_yaml::Value`,
+///   or any deserializable type).
+///
+/// # Fields
+///
+/// ## Core Fields
+///
+/// - `value: Option<T>` - The successfully parsed value. Present when parsing succeeds.
+/// - `error: Option<ParseError>` - Detailed error information. Present when parsing fails.
+/// - `metadata: ParseMetadata` - Metadata about the parsing operation (lines processed,
+///   bytes processed, processing time, source path). Always present.
+/// - `warnings: Vec<ParseWarning>` - Collection of non-fatal warnings that occurred during
+///   parsing. Parsing can succeed with warnings present.
+///
+/// # Design Philosophy
+///
+/// `ParseResult<T>` follows a structured approach to representing parsing outcomes:
+///
+/// 1. **Explicit success/failure states** - Success requires both `value` present and
+///    `error` absent. Failure requires `error` present and `value` absent.
+/// 2. **Rich context** - Both success and failure carry metadata about the operation.
+/// 3. **Warnings without failure** - Warnings are non-fatal; parsing can succeed with
+///    warnings present (e.g., deprecated field usage, unknown keys in lenient mode).
+/// 4. **Composable operations** - Supports `map()` for transforming success values,
+///    and `From<Result<T>>` for interoperability with standard `Result` types.
+///
+/// # Examples
+///
+/// ## Successful Parse
+///
+/// ```ignore
+/// use armor::parsers::yaml::{ParseResult, ParseMetadata};
+///
+/// let result = ParseResult::success(42);
+/// assert!(result.is_success());
+/// assert_eq!(result.value(), Some(&42));
+/// assert!(result.warnings().is_empty());
+/// ```
+///
+/// ## Failed Parse
+///
+/// ```ignore
+/// use armor::parsers::yaml::{ParseResult, ParseError};
+///
+/// let error = ParseError::syntax("invalid YAML");
+/// let result = ParseResult::<i32>::failure(error);
+/// assert!(result.is_failure());
+/// assert!(result.error().is_some());
+/// ```
+///
+/// ## Parse with Warnings
+///
+/// ```ignore
+/// use armor::parsers::yaml::{ParseResult, ParseWarning};
+///
+/// let mut result = ParseResult::success(42);
+/// result.add_warning(ParseWarning::deprecated_field("old_field", "new_field"));
+///
+/// assert!(result.is_success());
+/// assert!(!result.warnings().is_empty());
+/// assert_eq!(result.warnings().len(), 1);
+/// ```
+///
+/// ## Mapping Over Success
+///
+/// ```ignore
+/// use armor::parsers::yaml::ParseResult;
+///
+/// let result: ParseResult<i32> = ParseResult::success(10);
+/// let mapped = result.map(|x| x * 2);
+///
+/// assert_eq!(mapped.value(), Some(&20));
+/// ```
 #[derive(Debug, Clone)]
 pub struct ParseResult<T> {
     /// The parsed value, if successful
@@ -130,24 +211,61 @@ pub struct ParseResult<T> {
     error: Option<ParseError>,
     /// Additional metadata about the parse operation
     metadata: ParseMetadata,
+    /// Non-fatal warnings that occurred during parsing
+    warnings: Vec<ParseWarning>,
 }
 
 impl<T> ParseResult<T> {
     /// Create a successful parse result
+    ///
+    /// # Arguments
+    /// * `value` - The successfully parsed value
+    ///
+    /// # Returns
+    /// A `ParseResult` with the value set, no error, empty warnings, and default metadata
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseResult;
+    ///
+    /// let result = ParseResult::success(42);
+    /// assert!(result.is_success());
+    /// assert_eq!(result.value(), Some(&42));
+    /// ```
     pub fn success(value: T) -> Self {
         Self {
             value: Some(value),
             error: None,
             metadata: ParseMetadata::default(),
+            warnings: Vec::new(),
         }
     }
 
     /// Create a failed parse result
+    ///
+    /// # Arguments
+    /// * `error` - The error that caused parsing to fail
+    ///
+    /// # Returns
+    /// A `ParseResult` with the error set, no value, empty warnings, and default metadata
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::{ParseResult, ParseError};
+    ///
+    /// let error = ParseError::syntax("invalid YAML");
+    /// let result = ParseResult::<i32>::failure(error);
+    /// assert!(result.is_failure());
+    /// assert!(result.error().is_some());
+    /// ```
     pub fn failure(error: ParseError) -> Self {
         Self {
             value: None,
             error: Some(error),
             metadata: ParseMetadata::default(),
+            warnings: Vec::new(),
         }
     }
 
@@ -174,13 +292,92 @@ impl<T> ParseResult<T> {
     }
 
     /// Get the metadata for this parse result
+    ///
+    /// # Returns
+    /// A reference to the `ParseMetadata` containing information about lines processed,
+    /// bytes processed, processing time, and source path
     pub fn metadata(&self) -> &ParseMetadata {
         &self.metadata
     }
 
+    /// Get the warnings for this parse result
+    ///
+    /// # Returns
+    /// A slice of `ParseWarning` items representing non-fatal issues that occurred during parsing
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::{ParseResult, ParseWarning};
+    ///
+    /// let mut result = ParseResult::success(42);
+    /// result.add_warning(ParseWarning::deprecated_field("old", "new"));
+    ///
+    /// assert_eq!(result.warnings().len(), 1);
+    /// ```
+    pub fn warnings(&self) -> &[ParseWarning] {
+        &self.warnings
+    }
+
+    /// Check if this parse result has any warnings
+    ///
+    /// # Returns
+    /// `true` if there are warnings present, `false` otherwise
+    pub fn has_warnings(&self) -> bool {
+        !self.warnings.is_empty()
+    }
+
+    /// Add a warning to this parse result
+    ///
+    /// # Arguments
+    /// * `warning` - The warning to add
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::{ParseResult, ParseWarning};
+    ///
+    /// let mut result = ParseResult::success(42);
+    /// result.add_warning(ParseWarning::unknown_key("deprecated_field"));
+    /// assert!(result.has_warnings());
+    /// ```
+    pub fn add_warning(&mut self, warning: ParseWarning) {
+        self.warnings.push(warning);
+    }
+
+    /// Add warnings to this parse result
+    ///
+    /// # Arguments
+    /// * `warnings` - An iterator of warnings to add
+    pub fn add_warnings<I>(&mut self, warnings: I)
+    where
+        I: IntoIterator<Item = ParseWarning>,
+    {
+        self.warnings.extend(warnings);
+    }
+
+    /// Set the metadata for this parse result
+    ///
+    /// # Arguments
+    /// * `metadata` - The metadata to set
+    pub fn with_metadata(mut self, metadata: ParseMetadata) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
     /// Unwrap the value, consuming the result
     ///
-    /// Panics if the parse failed
+    /// # Panics
+    /// Panics if the parse failed (i.e., if `error` is present)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseResult;
+    ///
+    /// let result = ParseResult::success(42);
+    /// assert_eq!(result.unwrap(), 42);
+    /// ```
     pub fn unwrap(self) -> T {
         self.value.expect(
             "called unwrap() on a failed ParseResult"
@@ -188,11 +385,50 @@ impl<T> ParseResult<T> {
     }
 
     /// Unwrap the value or return a default
+    ///
+    /// # Arguments
+    /// * `default` - The default value to return if parsing failed
+    ///
+    /// # Returns
+    /// The parsed value if successful, or the provided default
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::{ParseResult, ParseError};
+    ///
+    /// let success: ParseResult<i32> = ParseResult::success(42);
+    /// assert_eq!(success.unwrap_or(0), 42);
+    ///
+    /// let failure = ParseResult::<i32>::failure(ParseError::syntax("error"));
+    /// assert_eq!(failure.unwrap_or(0), 0);
+    /// ```
     pub fn unwrap_or(self, default: T) -> T {
         self.value.unwrap_or(default)
     }
 
     /// Map the success value to a new type
+    ///
+    /// # Type Parameters
+    /// * `U` - The target type after mapping
+    /// * `F` - Function type that transforms `T` into `U`
+    ///
+    /// # Arguments
+    /// * `f` - A function that transforms the success value
+    ///
+    /// # Returns
+    /// A new `ParseResult<U>` with the transformed value, preserving error, metadata, and warnings
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseResult;
+    ///
+    /// let result: ParseResult<i32> = ParseResult::success(10);
+    /// let doubled = result.map(|x| x * 2);
+    ///
+    /// assert_eq!(doubled.value(), Some(&20));
+    /// ```
     pub fn map<U, F>(self, f: F) -> ParseResult<U>
     where
         F: FnOnce(T) -> U,
@@ -202,11 +438,13 @@ impl<T> ParseResult<T> {
                 value: Some(f(v)),
                 error: None,
                 metadata: self.metadata,
+                warnings: self.warnings,
             },
             None => ParseResult {
                 value: None,
                 error: self.error,
                 metadata: self.metadata,
+                warnings: self.warnings,
             },
         }
     }
@@ -331,4 +569,131 @@ pub struct ValidationWarning {
     pub message: String,
     /// Line number where the warning occurred (1-indexed)
     pub line: Option<usize>,
+}
+
+/// A non-fatal warning that occurred during parsing
+///
+/// `ParseWarning` represents issues that don't prevent parsing from completing
+/// but may indicate deprecated usage, potential problems, or other concerns.
+///
+/// # Warning Types
+///
+/// - `DeprecatedField` - A field that has been deprecated and should be migrated
+/// - `UnknownKey` - An unknown key encountered (only in lenient mode)
+/// - `DuplicateKey` - A duplicate key that was handled (lenient mode)
+#[derive(Debug, Clone)]
+pub struct ParseWarning {
+    /// The kind of warning
+    pub kind: ParseWarningKind,
+    /// Line number where the warning occurred (1-indexed)
+    pub line: Option<usize>,
+}
+
+impl ParseWarning {
+    /// Create a new parse warning
+    ///
+    /// # Arguments
+    /// * `kind` - The type of warning
+    pub fn new(kind: ParseWarningKind) -> Self {
+        Self { kind, line: None }
+    }
+
+    /// Set the line number for this warning
+    ///
+    /// # Arguments
+    /// * `line` - The line number (1-indexed)
+    pub fn with_line(mut self, line: usize) -> Self {
+        self.line = Some(line);
+        self
+    }
+
+    /// Create a deprecated field warning
+    ///
+    /// # Arguments
+    /// * `old_field` - The deprecated field name
+    /// * `new_field` - The recommended replacement field
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseWarning;
+    ///
+    /// let warning = ParseWarning::deprecated_field("old_api", "new_api");
+    /// assert!(matches!(warning.kind, ParseWarningKind::DeprecatedField { .. }));
+    /// ```
+    pub fn deprecated_field(old_field: impl Into<String>, new_field: impl Into<String>) -> Self {
+        Self::new(ParseWarningKind::DeprecatedField {
+            old_field: old_field.into(),
+            new_field: new_field.into(),
+        })
+    }
+
+    /// Create an unknown key warning
+    ///
+    /// # Arguments
+    /// * `key` - The unknown key name
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::ParseWarning;
+    ///
+    /// let warning = ParseWarning::unknown_key("unknown_setting");
+    /// assert!(matches!(warning.kind, ParseWarningKind::UnknownKey(_)));
+    /// ```
+    pub fn unknown_key(key: impl Into<String>) -> Self {
+        Self::new(ParseWarningKind::UnknownKey(key.into()))
+    }
+}
+
+impl std::fmt::Display for ParseWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let location = self.line.map_or_else(|| "<unknown>".to_string(), |l| l.to_string());
+        write!(f, "{}: {}", location, self.kind)
+    }
+}
+
+/// The kind of parse warning
+#[derive(Debug, Clone)]
+pub enum ParseWarningKind {
+    /// A deprecated field was used
+    ///
+    /// Indicates that a field has been deprecated and should be replaced
+    DeprecatedField {
+        /// The deprecated field name
+        old_field: String,
+        /// The recommended replacement field
+        new_field: String,
+    },
+
+    /// An unknown key was encountered (in lenient mode)
+    ///
+    /// Indicates a key that was not recognized but was not rejected
+    /// due to lenient parsing mode
+    UnknownKey(String),
+
+    /// A duplicate key was encountered (in lenient mode)
+    ///
+    /// Indicates a duplicate key that was handled by taking one of the values
+    DuplicateKey(String),
+}
+
+impl std::fmt::Display for ParseWarningKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DeprecatedField { old_field, new_field } => {
+                write!(
+                    f,
+                    "warning: field '{}' is deprecated, use '{}' instead",
+                    old_field, new_field
+                )
+            }
+            Self::UnknownKey(key) => {
+                write!(f, "warning: unknown key '{}'", key)
+            }
+            Self::DuplicateKey(key) => {
+                write!(f, "warning: duplicate key '{}'", key)
+            }
+        }
+    }
 }

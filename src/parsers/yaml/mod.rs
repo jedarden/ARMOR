@@ -35,7 +35,10 @@ mod parser;
 
 // Re-export main types for convenience
 pub use error::{ParseError, ParseErrorKind, Result};
-pub use types::{OperationResult, ParseResult, ValidationResult, Status};
+pub use types::{
+    OperationResult, ParseMetadata, ParseResult, ParseWarning, ParseWarningKind,
+    ValidationResult, Status,
+};
 pub use parser::Parser as YamlParser;
 
 // Re-export comprehensive configuration from config module
