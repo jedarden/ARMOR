@@ -288,6 +288,20 @@ Cannot access (no CLI, no creds, read-only proxy blocks secrets)
 3. Save to ~/.kube/ord-devimprint.kubeconfig (chmod 600)
 4. Verify: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o json`
 
+### 16th Verification - 2026-07-11 (Current Attempt)
+
+**Re-verification performed:**
+- Confirmed read-only proxy still denies secret access
+- Tested: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint`
+- Result: "Forbidden" - ServiceAccount lacks `get` permissions on secrets
+- Confirmed no kubeconfig file exists at `~/.kube/ord-devimprint.kubeconfig`
+
+**Consistent Findings:**
+- All previous verification conclusions remain valid
+- No programmatic workaround available
+- ExternalSecret still failing (15+ days)
+- Requires Rackspace Spot console access
+
 ### Conclusion
 
 **TASK CANNOT BE COMPLETED PROGRAMMATICALLY**
