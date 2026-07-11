@@ -1,0 +1,30 @@
+# YAML file demonstrating anchors and aliases
+# Anchors define reusable nodes, aliases reference them
+
+# Default values template
+defaults: &defaults
+  timeout: 30
+  retries: 3
+  backoff: 1.5
+
+# Server configuration using anchor reference
+server:
+  host: localhost
+  port: 8080
+  <<: *defaults  # Merge defaults
+  custom:
+    max_connections: 100
+
+# Another server with same defaults
+server2:
+  host: remote.example.com
+  port: 8443
+  <<: *defaults  # Merge defaults again
+  ssl: true
+
+# Database config sharing the same defaults
+database:
+  host: db.example.com
+  port: 5432
+  <<: *defaults
+  pool_size: 10

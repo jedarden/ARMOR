@@ -1,0 +1,38 @@
+# Valid YAML with multiline strings
+# Demonstrates literal (|) and folded (>) styles
+
+# Literal block scalar - preserves newlines and formatting
+description: |
+  This is a multiline string
+  that preserves formatting
+  and newlines.
+  Indentation is preserved.
+
+# Folded block scalar - newlines become spaces
+folded_string: >
+  This is a folded string
+  that will be joined into
+  a single line with spaces.
+
+# More multiline examples
+address: |
+  John Doe
+  123 Main Street
+  Anytown, US 12345
+
+summary: >
+  This is a long description
+  that spans multiple lines
+  but becomes one line.
+
+nested:
+  key: |
+    Multiline in nested structure
+    Second line
+    Third line
+
+config:
+  script: |
+    #!/bin/bash
+    echo "Hello"
+    exit 0
