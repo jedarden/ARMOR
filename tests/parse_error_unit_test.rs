@@ -441,3 +441,167 @@ fn test_error_kind_partial_equality_type_mismatch() {
     assert_eq!(kind1, kind2);
     assert_ne!(kind1, kind3);
 }
+
+// ===========================================================================
+// Display/Error Message Formatting Tests
+// ===========================================================================
+
+#[test]
+fn test_display_formatting_syntax() {
+    let error = ParseError::syntax("invalid YAML syntax");
+    let display = format!("{}", error.kind);
+    assert_eq!(display, "syntax error: invalid YAML syntax");
+}
+
+#[test]
+fn test_display_formatting_io() {
+    let error = ParseError::io("file not found");
+    let display = format!("{}", error.kind);
+    assert_eq!(display, "I/O error: file not found");
+}
+
+#[test]
+fn test_display_formatting_validation() {
+    let error = ParseError::validation("value out of range");
+    let display = format!("{}", error.kind);
+    assert_eq!(display, "validation error: value out of range");
+}
+
+#[test]
+fn test_display_formatting_type_mismatch() {
+    let error = ParseError::type_mismatch("port", "integer", "string");
+    let display = format!("{}", error.kind);
+    assert_eq!(display, "type mismatch at 'port': expected integer, got string");
+}
+
+#[test]
+fn test_display_formatting_unexpected_eof() {
+    let error = ParseError::new(ParseErrorKind::UnexpectedEof);
+    let display = format!("{}", error.kind);
+    assert_eq!(display, "unexpected end of input");
+}
+
+#[test]
+fn test_display_formatting_invalid_utf8() {
+    let error = ParseError::new(ParseErrorKind::InvalidUtf8);
+    let display = format!("{}", error.kind);
+    assert_eq!(display, "invalid UTF-8 encoding");
+}
+
+#[test]
+fn test_display_formatting_unknown_anchor() {
+    let error = ParseError::new(ParseErrorKind::UnknownAnchor("ref".to_string()));
+    let display = format!("{}", error.kind);
+    assert_eq!(display, "unknown anchor: ref");
+}
+
+#[test]
+fn test_display_formatting_duplicate_key() {
+    let error = ParseError::new(ParseErrorKind::DuplicateKey("name".to_string()));
+    let display = format!("{}", error.kind);
+    assert_eq!(display, "duplicate key: name");
+}
+
+#[test]
+fn test_display_formatting_other() {
+    let error = ParseError::new(ParseErrorKind::Other("custom error message".to_string()));
+    let display = format!("{}", error.kind);
+    assert_eq!(display, "error: custom error message");
+}
+
+// ===========================================================================
+// Constructor Message Verification Tests
+// ===========================================================================
+
+#[test]
+fn test_syntax_constructor_message_preserved() {
+    let msg = "unexpected token while parsing";
+    let error = ParseError::syntax(msg);
+    if let ParseErrorKind::Syntax(actual_msg) = error.kind {
+        assert_eq!(actual_msg, msg);
+    } else {
+        panic!("Expected Syntax variant");
+    }
+}
+
+#[test]
+fn test_io_constructor_message_preserved() {
+    let msg = "failed to read file";
+    let error = ParseError::io(msg);
+    if let ParseErrorKind::Io(actual_msg) = error.kind {
+        assert_eq!(actual_msg, msg);
+    } else {
+        panic!("Expected Io variant");
+    }
+}
+
+#[test]
+fn test_validation_constructor_message_preserved() {
+    let msg = "port must be between 1 and 65535";
+    let error = ParseError::validation(msg);
+    if let ParseErrorKind::Validation(actual_msg) = error.kind {
+        assert_eq!(actual_msg, msg);
+    } else {
+        panic!("Expected Validation variant");
+    }
+}
+
+#[test]
+fn test_type_mismatch_constructor_all_fields_preserved() {
+    let field = "database.port";
+    let expected = "integer";
+    let actual = "null";
+    let error = ParseError::type_mismatch(field, expected, actual);
+    if let ParseErrorKind::TypeMismatch { field: f, expected: e, actual: a } = error.kind {
+        assert_eq!(f, field);
+        assert_eq!(e, expected);
+        assert_eq!(a, actual);
+    } else {
+        panic!("Expected TypeMismatch variant");
+    }
+}
+
+#[test]
+fn test_unexpected_eof_no_message() {
+    let error = ParseError::new(ParseErrorKind::UnexpectedEof);
+    assert!(matches!(error.kind, ParseErrorKind::UnexpectedEof));
+}
+
+#[test]
+fn test_invalid_utf8_no_message() {
+    let error = ParseError::new(ParseErrorKind::InvalidUtf8);
+    assert!(matches!(error.kind, ParseErrorKind::InvalidUtf8));
+}
+
+#[test]
+fn test_unknown_anchor_message_preserved() {
+    let anchor_name = "unknown_ref";
+    let error = ParseError::new(ParseErrorKind::UnknownAnchor(anchor_name.to_string()));
+    if let ParseErrorKind::UnknownAnchor(name) = error.kind {
+        assert_eq!(name, anchor_name);
+    } else {
+        panic!("Expected UnknownAnchor variant");
+    }
+}
+
+#[test]
+fn test_duplicate_key_message_preserved() {
+    let key = "service_name";
+    let error = ParseError::new(ParseErrorKind::DuplicateKey(key.to_string()));
+    if let ParseErrorKind::DuplicateKey(k) = error.kind {
+        assert_eq!(k, key);
+    } else {
+        panic!("Expected DuplicateKey variant");
+    }
+}
+
+#[test]
+fn test_other_custom_error_message_preserved() {
+    let custom_msg = "this is a custom error";
+    let error = ParseError::new(ParseErrorKind::Other(custom_msg.to_string()));
+    if let ParseErrorKind::Other(msg) = error.kind {
+        assert_eq!(msg, custom_msg);
+    } else {
+        panic!("Expected Other variant");
+    }
+}
