@@ -847,6 +847,22 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 
 ---
 
+### Phase 5: Integrity Detection Hardening
+
+**Goal:** Close the detection gaps that let the 2026-06 multipart-upload corruption bug run undetected for ~40 days on `ord-devimprint` despite a continuously-passing canary. See [ADR-002](../adr/002-multipart-corruption-detection-gaps.md) for full incident context and rationale — this phase does not change the encryption/HMAC/provenance design, only what gets exercised and checked.
+
+**Tracking bead:** `armor-integrity-detection` (see `docs/adr/002-multipart-corruption-detection-gaps.md`)
+
+#### Implementation tasks
+
+- [ ] Extend `internal/canary` with a second, longer-interval multipart canary check (real `CreateMultipartUpload`/`UploadPart`×N/`CompleteMultipartUpload` above the multipart size threshold), reusing existing HMAC/plaintext-SHA verification; surface a distinct `multipart_healthy` status in `/armor/canary` and Prometheus metrics
+- [ ] Strengthen `TestMultipartUpload` (and add sibling cases: non-multiple-of-part-size final part, single-part multipart) to verify actual downloaded byte content against what was uploaded per-part, not just `ContentLength`; confirm this gates the image-build pipeline
+- [ ] Add a version-drift check across known ARMOR deployments (read deployed image tags from declarative-config across clusters, compare against latest GitHub release, flag correctness-labeled releases distinctly from routine bumps)
+- [ ] Document the fix-propagation checklist (any correctness/data-integrity fix must enumerate every known deployment and confirm each is patched or explicitly tracked before considered resolved) — add to `docs/disaster-recovery.md` or a new `docs/release-process.md`
+- [ ] Immediate remediation (tracked here since it's what triggered this phase, not a new feature): bump `ord-devimprint`'s deployed ARMOR to a fixed version, then force a fresh backup baseline and verify it actually restores end-to-end
+
+---
+
 ## Project Structure
 
 ```
