@@ -162,30 +162,110 @@ func (v ParseErrorVariant) Description() string {
 type ErrorCode string
 
 const (
-	// File error codes
-	ErrCodeFileNotFound      ErrorCode = "FILE_NOT_FOUND"      // File does not exist
-	ErrCodeFileAccessDenied ErrorCode = "FILE_ACCESS_DENIED" // Permission denied
-	ErrCodeFileIOError       ErrorCode = "FILE_IO_ERROR"      // Generic I/O error
-	ErrCodeFileEmpty         ErrorCode = "FILE_EMPTY"         // File is empty
+	// ============================================================================
+	// File Error Codes
+	// ============================================================================
 
-	// Parse error codes
-	ErrCodeInvalidSyntax   ErrorCode = "INVALID_SYNTAX"    // YAML syntax error
-	ErrCodeTypeMismatch    ErrorCode = "TYPE_MISMATCH"    // Type conversion error
-	ErrCodeInvalidStructure ErrorCode = "INVALID_STRUCTURE" // YAML structure error
-	ErrCodeDuplicateKey    ErrorCode = "DUPLICATE_KEY"    // Duplicate mapping key
-	ErrCodeParseError       ErrorCode = "PARSE_ERROR"      // Generic parse error
+	// ErrCodeFileNotFound indicates that a file does not exist at the specified path.
+	// This error is returned when file operations fail because the target file cannot
+	// be found in the filesystem.
+	ErrCodeFileNotFound ErrorCode = "FILE_NOT_FOUND"
 
-	// Validation error codes
-	ErrCodeValidationFailed   ErrorCode = "VALIDATION_FAILED"    // Validation failed
-	ErrCodeRequiredField      ErrorCode = "REQUIRED_FIELD"       // Missing required field
-	ErrCodeConstraintViolation ErrorCode = "CONSTRAINT_VIOLATION" // Constraint violated
-	ErrCodeInvalidValue       ErrorCode = "INVALID_VALUE"        // Invalid value
+	// ErrCodeFileAccessDenied indicates insufficient permissions to access a file.
+	// This error occurs when the application lacks the necessary read or write
+	// permissions for the specified file path.
+	ErrCodeFileAccessDenied ErrorCode = "FILE_ACCESS_DENIED"
 
-	// Schema error codes
-	ErrCodeSchemaLoadFailed   ErrorCode = "SCHEMA_LOAD_FAILED"    // Schema loading failed
-	ErrCodeSchemaValidation   ErrorCode = "SCHEMA_VALIDATION"    // Schema validation failed
-	ErrCodeSchemaNotFound     ErrorCode = "SCHEMA_NOT_FOUND"      // Schema not found
-	ErrCodeSchemaInvalid      ErrorCode = "SCHEMA_INVALID"         // Invalid schema definition
+	// ErrCodeFileIOError indicates a generic file I/O error that doesn't fit
+	// other specific file error categories. This includes disk errors, filesystem
+	// issues, or other low-level I/O failures.
+	ErrCodeFileIOError ErrorCode = "FILE_IO_ERROR"
+
+	// ErrCodeFileEmpty indicates that a file exists but contains no data or
+	// only whitespace. This error is used when parsing an empty file would result
+	// in undefined behavior or missing required configuration.
+	ErrCodeFileEmpty ErrorCode = "FILE_EMPTY"
+
+	// ============================================================================
+	// Parse Error Codes
+	// ============================================================================
+
+	// ErrCodeInvalidSyntax indicates a YAML syntax error during parsing.
+	// This includes invalid indentation, malformed YAML structure, invalid escape
+	// sequences, improper quoting, or any fundamental YAML syntax violation that
+	// prevents the document from being parsed.
+	ErrCodeInvalidSyntax ErrorCode = "INVALID_SYNTAX"
+
+	// ErrCodeTypeMismatch indicates a type conversion error during parsing.
+	// This occurs when YAML content cannot be converted to the expected Go type,
+	// such as attempting to parse a string as an integer, unmarshaling a scalar into
+	// a struct, or incompatible array/slice types.
+	ErrCodeTypeMismatch ErrorCode = "TYPE_MISMATCH"
+
+	// ErrCodeInvalidStructure indicates a YAML structure error that passes
+	// syntax checking but represents invalid document structure. This includes
+	// invalid nesting, inconsistent document structure, or other structural issues
+	// that prevent proper interpretation of the YAML data.
+	ErrCodeInvalidStructure ErrorCode = "INVALID_STRUCTURE"
+
+	// ErrCodeDuplicateKey indicates that a YAML mapping contains the same key
+	// multiple times. This is ambiguous and often indicates a configuration error,
+	// as YAML mappings should have unique keys.
+	ErrCodeDuplicateKey ErrorCode = "DUPLICATE_KEY"
+
+	// ErrCodeParseError indicates a generic parsing error that doesn't fit into
+	// more specific parse error categories. Use this as a fallback when the exact
+	// nature of the parse error cannot be determined.
+	ErrCodeParseError ErrorCode = "PARSE_ERROR"
+
+	// ============================================================================
+	// Validation Error Codes
+	// ============================================================================
+
+	// ErrCodeValidationFailed indicates a general validation failure.
+	// This is used when validation cannot pass but doesn't fit into more specific
+	// validation error categories.
+	ErrCodeValidationFailed ErrorCode = "VALIDATION_FAILED"
+
+	// ErrCodeRequiredField indicates that a required field is missing from the
+	// YAML data. This error is used when accessing required fields that don't exist
+	// in the YAML structure, preventing proper configuration or processing.
+	ErrCodeRequiredField ErrorCode = "REQUIRED_FIELD"
+
+	// ErrCodeConstraintViolation indicates that a field value violates a defined
+	// constraint. This includes values out of allowed ranges, string length violations,
+	// pattern matching failures, or any constraint validation rule defined in the
+	// schema or validation logic.
+	ErrCodeConstraintViolation ErrorCode = "CONSTRAINT_VIOLATION"
+
+	// ErrCodeInvalidValue indicates that a field contains an invalid value that
+	// doesn't meet validation criteria. This is used when a value is syntactically
+	// correct but semantically invalid for the intended use.
+	ErrCodeInvalidValue ErrorCode = "INVALID_VALUE"
+
+	// ============================================================================
+	// Schema Error Codes
+	// ============================================================================
+
+	// ErrCodeSchemaLoadFailed indicates an error occurred while loading a schema
+	// definition. This includes file I/O errors reading the schema file, JSON/YAML
+	// parsing errors in the schema definition itself, or invalid schema syntax.
+	ErrCodeSchemaLoadFailed ErrorCode = "SCHEMA_LOAD_FAILED"
+
+	// ErrCodeSchemaValidation indicates that YAML data failed validation against
+	// a schema. This error is returned when the YAML structure or content doesn't
+	// conform to the rules defined in the validation schema.
+	ErrCodeSchemaValidation ErrorCode = "SCHEMA_VALIDATION"
+
+	// ErrCodeSchemaNotFound indicates that a required schema file cannot be found.
+	// This error occurs when the schema reference points to a non-existent file or
+	// the schema cannot be located in the configured schema paths.
+	ErrCodeSchemaNotFound ErrorCode = "SCHEMA_NOT_FOUND"
+
+	// ErrCodeSchemaInvalid indicates that the schema definition itself is invalid.
+	// This includes schemas with invalid structure, unsupported features, or schemas
+	// that cannot be properly parsed or interpreted by the validation system.
+	ErrCodeSchemaInvalid ErrorCode = "SCHEMA_INVALID"
 )
 
 // ParseError represents errors that occur during YAML parsing.
