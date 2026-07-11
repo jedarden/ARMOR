@@ -62,6 +62,99 @@ const (
 	ErrorTypeIO             ErrorType = "io"             // I/O error
 )
 
+// ParseErrorVariant represents the specific variant/category of a parse error.
+//
+// ParseErrorVariant provides a structured way to categorize different types of
+// parse errors, enabling precise error handling and user-friendly error messages.
+// Each variant represents a distinct category of parsing failure.
+type ParseErrorVariant string
+
+const (
+	// ParseErrorVariantSyntax represents YAML syntax errors.
+	//
+	// This variant covers fundamental YAML syntax issues including:
+	// - Invalid indentation
+	// - Malformed YAML structure
+	// - Invalid escape sequences
+	// - Improper quoting
+	// - Invalid YAML tokens
+	ParseErrorVariantSyntax ParseErrorVariant = "syntax"
+
+	// ParseErrorVariantTypeMismatch represents type conversion errors.
+	//
+	// This variant covers errors when YAML content cannot be converted to the
+	// expected Go type, including:
+	// - Attempting to parse a string as an integer
+	// - Trying to unmarshal a scalar into a struct
+	// - Incompatible array/slice types
+	// - Invalid boolean representations
+	ParseErrorVariantTypeMismatch ParseErrorVariant = "type_mismatch"
+
+	// ParseErrorVariantValidation represents constraint validation errors.
+	//
+	// This variant covers errors when YAML data violates defined constraints,
+	// including:
+	// - Value out of allowed range
+	// - String length violations
+	// - Pattern matching failures
+	// - Required field violations
+	ParseErrorVariantValidation ParseErrorVariant = "validation"
+
+	// ParseErrorVariantIO represents I/O operation errors.
+	//
+	// This variant covers errors related to file operations during parsing,
+	// including:
+	// - File not found
+	// - Permission denied
+	// - Read/write failures
+	// - File system errors
+	ParseErrorVariantIO ParseErrorVariant = "io"
+
+	// ParseErrorVariantStructure represents YAML structure errors.
+	//
+	// This variant covers structural issues that syntax checking alone won't catch,
+	// including:
+	// - Duplicate mapping keys
+	// - Invalid nesting
+	// - Circular references
+	// - Inconsistent document structure
+	ParseErrorVariantStructure ParseErrorVariant = "structure"
+
+	// ParseErrorVariantCustom represents custom/extensible error categories.
+	//
+	// This variant is reserved for application-specific parsing errors that don't
+	// fit into the standard categories. It enables extensibility for domain-specific
+	// validation rules and custom parsing logic.
+	// Applications can use this variant with custom error codes and messages
+	// to represent specialized error conditions.
+	ParseErrorVariantCustom ParseErrorVariant = "custom"
+)
+
+// String returns the string representation of the ParseErrorVariant.
+func (v ParseErrorVariant) String() string {
+	return string(v)
+}
+
+// Description returns a human-readable description of the ParseErrorVariant.
+func (v ParseErrorVariant) Description() string {
+	switch v {
+	case ParseErrorVariantSyntax:
+		return "YAML syntax error - invalid YAML structure or formatting"
+	case ParseErrorVariantTypeMismatch:
+		return "Type mismatch error - cannot convert YAML to expected type"
+	case ParseErrorVariantValidation:
+		return "Validation error - constraint violation or invalid value"
+	case ParseErrorVariantIO:
+		return "I/O error - file operation failed"
+	case ParseErrorVariantStructure:
+		return "Structure error - invalid YAML document structure"
+	case ParseErrorVariantCustom:
+		return "Custom error - application-specific parsing error"
+	default:
+		return "Unknown parse error variant"
+	}
+}
+
 // ErrorCode represents specific error codes for programmatic error handling.
 //
 // ErrorCodes provide machine-readable identifiers for errors, enabling
@@ -357,7 +450,7 @@ func NewValidationError(filePath string, message string, fieldPath string, const
 // IsValidationError checks if an error is a ValidationError.
 func IsValidationError(err error) bool {
 	var ve *ValidationError
-	return err != nil && (ve != nil || isYAMLErrorOfType(err, ErrorTypeValidation))
+	return err != nil && (errors.As(err, &ve) || isYAMLErrorOfType(err, ErrorTypeValidation))
 }
 
 // containsRequiredFieldKeywords checks if the message suggests a required field error.
@@ -439,7 +532,7 @@ func (fe *FileError) Unwrap() error {
 // IsFileError checks if an error is a FileError.
 func IsFileError(err error) bool {
 	var fe *FileError
-	return err != nil && (fe != nil || isYAMLErrorOfType(err, ErrorTypeFile))
+	return err != nil && (errors.As(err, &fe) || isYAMLErrorOfType(err, ErrorTypeFile))
 }
 
 // SyntaxError represents YAML syntax errors during parsing.
