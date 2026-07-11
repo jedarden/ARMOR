@@ -241,7 +241,7 @@ If cluster-admin access is acceptable (over-provisioned but functional):
 - ❌ Find existing kubeconfig files → None exist on disk
 - ❌ Access OpenBao directly → No bao CLI, no credentials
 
-## Persistent Blocker Confirmed (18th Verification - 2026-07-11)
+## Persistent Blocker Confirmed (19th Verification - 2026-07-11)
 
 This task **requires Rackspace Spot console access** to download the admin kubeconfig. This is a documented recurring blocker across multiple beads and verification attempts.
 
@@ -325,6 +325,32 @@ Cannot access (no CLI, no creds, read-only proxy blocks secrets)
 
 **Action Taken:**
 - Documentation updated with complete investigation history
+- Findings committed to git for future reference
+- Bead released for retry when Rackspace Spot console access becomes available
+
+### 19th Verification - 2026-07-11
+
+**Re-verification performed:**
+- Confirmed read-only proxy still denies secret access (19th consecutive test)
+- Tested: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint`
+- Result: "Forbidden" - ServiceAccount `system:serviceaccount:devpod-observer:devpod-observer` lacks `get` permissions on secrets
+- Re-confirmed no kubeconfig file exists at `~/.kube/ord-devimprint.kubeconfig`
+- Verified no alternative access methods available
+
+**Consistent Findings Across All 19 Verifications:**
+- All previous verification conclusions remain valid
+- No programmatic workaround available
+- ExternalSecret `cluster-ord-devimprint` still failing (Status: SecretSyncedError, 14+ days)
+- Requires Rackspace Spot console access
+
+**Access Chain Confirmed (19th verification):**
+```
+Rackspace Spot Console → Admin Kubeconfig → ServiceAccount Token → OpenBao → ExternalSecret → ArgoCD
+                         ↑ MISSING BLOCKER ↑
+```
+
+**Action Taken:**
+- Documentation updated with 19th verification
 - Findings committed to git for future reference
 - Bead released for retry when Rackspace Spot console access becomes available
 
