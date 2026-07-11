@@ -45,5 +45,38 @@ To complete this bead, one of the following is needed:
 2. Update the task to use an alternative method for accessing the secret (e.g., ExternalSecret caching, or access through a cluster with credentials like ardenone-manager)
 3. Revoke the prerequisite beads' completion status if they did not actually verify the kubeconfig exists
 
+## Additional Investigation (2026-07-11)
+
+### Checked alternative access paths
+1. **ardenone-manager**: Has read-only proxy access, but no access to ord-devimprint resources
+2. **rs-manager**: Has read-only proxy access, but devimprint namespace doesn't exist there
+3. **iad-ci**: Has direct kubeconfig, but only for iad-ci cluster, no devimprint namespace
+4. **ArgoCD API**: Checked for ord-devimprint cluster registration, API returned error
+
+### ExternalSecret configuration
+The `armor-writer` secret is synced from OpenBao:
+```bash
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get externalsecrets -n devimprint
+NAME           STORETYPE            STORE     REFRESH INTERVAL   STATUS         READY
+armor-writer   ClusterSecretStore   openbao   1h                 SecretSynced   True
+```
+
+However, I do not have direct OpenBao access to retrieve the secret value.
+
+### Architectural constraint
+The ord-devimprint cluster is designed with credential-free kubectl-proxy access over Tailscale. This is an intentional security pattern - no long-lived kubeconfig with elevated permissions exists. The read-only proxy is the only documented access method.
+
+## Conclusion
+This task cannot be completed as specified because it assumes a kubeconfig with secret access exists, but:
+- No such kubeconfig exists (confirmed by prerequisite bead bf-4743d)
+- The documented access method (kubectl-proxy) is intentionally read-only
+- No management cluster has admin access to ord-devimprint
+- OpenBao access is not available from this context
+
+The task requirements conflict with the cluster's security architecture.
+
 ## Status
-**BLOCKED** — Cannot proceed without valid secret access.
+**BLOCKED - Task requirements conflict with cluster security architecture**
+- Requires elevated secret access that doesn't exist
+- ord-devimprint uses credential-free kubectl-proxy with read-only RBAC
+- No kubeconfig file or alternative access path available
