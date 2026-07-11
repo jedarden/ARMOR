@@ -17,15 +17,19 @@ Acquire a kubeconfig file with write access to the ord-devimprint cluster.
 
 2. **Direct Kubeconfig (Previously Existed)**
    - Expected location: `~/.kube/ord-devimprint.kubeconfig`
-   - Current status: ❌ File does not exist
-   - Previous auth method: OIDC (kubectl-oidc-login plugin)
-   - Last known working: 2026-05-01 (per armor-bik.md)
+   - Current status: ❌ File does not exist (verified 2026-07-11)
+   - Previous auth method: Unknown (possibly OIDC or ServiceAccount token)
+   - Last known working: 2026-05-01 (per armor-bik.md investigation)
+   - **Note:** The kubeconfig existed in early May 2026 but has been deleted or lost since then
 
 ### Cluster Information
 
-- **Provider:** OpenStack (providerID: `openstack:///62a06c73-3882-4765-ad54-35437e1143da`)
+- **Provider:** Rackspace Spot (ORD region)
+- **Cluster API:** `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
+- **Node naming:** `prod-instance-*` (Rackspace Spot pattern)
 - **Ingress:** Tailscale operator (hostname: `kubectl-proxy-ord-devimprint`)
 - **Namespaces of interest:** `devimprint`
+- **Management:** ArgoCD from rs-manager cluster
 
 ### Verification Tests
 
@@ -70,14 +74,197 @@ If the cluster uses OIDC authentication (as suggested by previous notes), the cl
 2. Configure kubectl-oidc-login plugin
 3. Ensure kubeconfig references the correct OIDC issuer and client ID
 
-## Next Steps
+## Documented Setup Process
 
-1. **Contact cluster administrator** to request write-access kubeconfig
-2. **Specify required permissions:**
-   - Read secrets in `devimprint` namespace
-   - Read/write pods in `devimprint` namespace (for debugging)
-3. **Store kubeconfig** at `~/.kube/ord-devimprint.kubeconfig` when received
-4. **Verify access** by reading the `armor-writer` secret
+Found in `/home/coding/declarative-config/k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml`:
+
+### Step 1: Obtain Initial Kubeconfig (BLOCKER)
+**Requires Rackspace Spot console access.**
+- Log into Rackspace Spot dashboard
+- Navigate to ord-devimprint cluster  
+- Download kubeconfig file
+- Save to `~/.kube/ord-devimprint.kubeconfig`
+
+### Step 2: Create Long-Lived ServiceAccount
+Once kubeconfig is obtained:
+
+```bash
+KC=~/.kube/ord-devimprint.kubeconfig
+
+kubectl --kubeconfig=$KC create serviceaccount argocd-manager -n kube-system
+kubectl --kubeconfig=$KC create clusterrolebinding argocd-manager \
+  --clusterrole=cluster-admin --serviceaccount=kube-system:argocd-manager
+TOKEN=$(kubectl --kubeconfig=$KC create token argocd-manager \
+  -n kube-system --duration=8760h)
+
+bao kv put secret/rs-manager/ord-devimprint/cluster \
+  server="https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com" \
+  token="$TOKEN"
+```
+
+### Step 3: Verify Access
+```bash
+kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint
+kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o json
+```
+
+## Latest Investigation (2026-07-11)
+
+### ExternalSecret Status Update
+
+**CRITICAL FINDING**: ArgoCD ExternalSecret `cluster-ord-devimprint` is **BROKEN**
+
+```yaml
+Name: cluster-ord-devimprint
+Namespace: argocd
+Status: SecretSyncedError (False)
+Last Sync: 2026-06-27T22:59:33Z (14 days ago)
+Error: "could not get secret data from provider"
+```
+
+**Root Cause**: The OpenBao secret `rs-manager/ord-devimprint/cluster` cannot be accessed by ExternalSecret Operator. This means:
+- Either the secret was never created in OpenBao
+- Or the secret was deleted/rotated and ESO lost access
+- Or OpenBao authentication for ESO is broken
+
+**Impact**: Even if we could access OpenBao, there's likely no valid credential to extract.
+
+### New Findings
+
+1. **ArgoCD Integration Status**
+   - Cluster secret `cluster-ord-devimprint` exists in ArgoCD (rs-manager)
+   - Should be stored in OpenBao at path: `secret/rs-manager/ord-devimprint/cluster`
+   - Should contain ServiceAccount token for `argocd-manager` with cluster-admin permissions
+   - **BUT**: ExternalSecret sync has been failing for 14+ days
+
+2. **Secret Access Pattern Confirmed**
+   - Target secret `armor-writer` confirmed to exist in `devimprint` namespace
+   - Listable via read-only proxy (shows NAME, TYPE, DATA, AGE)
+   - But contents are Forbidden (RBAC denies `get` on secrets)
+
+3. **No Viable Credentials Available**
+   - OpenBao path exists but ESO cannot access it
+   - No direct kubeconfig file exists on disk
+   - No alternative authentication methods documented
+
+### Updated Resolution Options
+
+#### Option A: Extract Existing ArgoCD Token (if OpenBao accessible)
+The OpenBao secret `secret/rs-manager/ord-devimprint/cluster` contains:
+- Server address: `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
+- Bearer token for `argocd-manager` ServiceAccount (cluster-admin)
+
+If OpenBao access is available:
+1. Retrieve secret from OpenBao: `bao kv get secret/rs-manager/ord-devimprint/cluster`
+2. Construct kubeconfig using extracted server and token
+3. Test secret access
+
+#### Option B: Create New ServiceAccount (requires Rackspace Spot kubeconfig)
+Once admin kubeconfig obtained from Rackspace Spot console:
+
+```bash
+# Create ServiceAccount with secret-reader permissions
+kubectl --kubeconfig=/tmp/ord-devimprint.kubeconfig create serviceaccount armor-secret-reader -n devimprint
+
+# Create role for secret access
+kubectl --kubeconfig=/tmp/ord-devimprint.kubeconfig create role armor-secret-reader \
+  --namespace=devimprint \
+  --verb=get,list,watch \
+  --resource=secrets
+
+# Bind role to ServiceAccount
+kubectl --kubeconfig=/tmp/ord-devimprint.kubeconfig create rolebinding armor-secret-reader \
+  --namespace=devimprint \
+  --role=armor-secret-reader \
+  --serviceaccount=devimprint:armor-secret-reader
+
+# Generate long-lived token (1 year)
+TOKEN=$(kubectl --kubeconfig=/tmp/ord-devimprint.kubeconfig create token armor-secret-reader \
+  -n devimprint --duration=8760h)
+
+# Create kubeconfig
+cat > ~/.kube/ord-devimprint.kubeconfig <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+  - cluster:
+      server: https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com
+      insecure-skip-tls-verify: true
+    name: ord-devimprint
+contexts:
+  - context:
+      cluster: ord-devimprint
+      namespace: devimprint
+      user: armor-secret-reader
+    name: ord-devimprint
+current-context: ord-devimprint
+users:
+  - name: armor-secret-reader
+    user:
+      token: $TOKEN
+EOF
+
+chmod 600 ~/.kube/ord-devimprint.kubeconfig
+```
+
+#### Option C: Use ArgoCD Token (if cluster-admin acceptable)
+If cluster-admin access is acceptable (over-provisioned but functional):
+1. Access OpenBao on rs-manager
+2. Extract existing ArgoCD token from `secret/rs-manager/ord-devimprint/cluster`
+3. Create kubeconfig with cluster-admin permissions
+
+## Next Steps (Updated 2026-07-11)
+
+### Resolution Path (Requires Human Action)
+
+1. **PRIMARY PATH**: Access Rackspace Spot Console → Download kubeconfig
+   - Log into Rackspace Spot dashboard
+   - Navigate to ord-devimprint cluster
+   - Download admin kubeconfig
+   - Save to `~/.kube/ord-devimprint.kubeconfig`
+
+2. **SECONDARY PATH**: Populate OpenBao Secret
+   - Use admin kubeconfig to create argocd-manager ServiceAccount
+   - Generate long-lived token (8760h = 1 year)
+   - Store in OpenBao at: `secret/rs-manager/ord-devimprint/cluster`
+   - ExternalSecret will auto-sync within 24h
+
+3. **VERIFICATION**: Test secret access
+   ```bash
+   kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o json
+   ```
+
+### Automated Workarounds (All Failed)
+
+- ❌ Extract ArgoCD token from OpenBao → ESO cannot access the secret
+- ❌ Use read-only proxy → Explicitly denies secret access
+- ❌ Find existing kubeconfig files → None exist on disk
+- ❌ Access OpenBao directly → No bao CLI, no credentials
+
+## Persistent Blocker Confirmed (15th Verification)
+
+This task **requires Rackspace Spot console access** to download the admin kubeconfig. This is a documented recurring blocker across multiple beads and verification attempts.
+
+### Verification History
+- This is the **15th documented verification attempt** (14 previous attempts noted in git history)
+- All previous attempts concluded the same: Requires Rackspace Spot console access
+- No automated workarounds are viable
+- ExternalSecret has been failing for 14+ days (since 2026-06-27)
+
+### Conclusion
+
+**TASK CANNOT BE COMPLETED PROGRAMMATICALLY**
+
+This bead requires human intervention:
+1. Access Rackspace Spot console with appropriate permissions
+2. Download admin kubeconfig for ord-devimprint cluster
+3. Either use directly or populate OpenBao for ArgoCD sync
+
+**DO NOT CLOSE THIS BEAD** - Release for retry when Rackspace Spot console access becomes available.
+
+## Related Files
+- ArgoCD ExternalSecret: `/home/coding/declarative-config/k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml`
+- kubectl-proxy deployment: `/home/coding/declarative-config/k8s/ord-devimprint/devpod-observer/kubectl-proxy.yml`
 
 ## Dependencies
 
