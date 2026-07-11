@@ -21,6 +21,7 @@ func TestValidationErrorDemo(t *testing.T) {
 		0,
 		0,
 		"",
+		"",
 	)
 	fmt.Println("Test 1 - Basic field path and constraint:")
 	fmt.Println(err1.Error())
@@ -36,6 +37,7 @@ func TestValidationErrorDemo(t *testing.T) {
 		22,
 		18,
 		"",
+		"",
 	)
 	fmt.Println("Test 2 - Nested field path with line/column:")
 	fmt.Println(err2.Error())
@@ -50,6 +52,7 @@ func TestValidationErrorDemo(t *testing.T) {
 		ErrCodeConstraintViolation,
 		8,
 		0,
+		"",
 		"",
 	)
 	fmt.Println("Test 3 - spec.replicas field path:")

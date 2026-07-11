@@ -421,7 +421,7 @@ func TestValidationResult_IsValid(t *testing.T) {
 		FilePath: "test.yaml",
 		Valid:    false,
 		Errors: []ValidationError{
-			*NewValidationError("test.yaml", "required field missing", "server.name", "", ErrCodeRequiredField, 5, 0, ""),
+			*NewValidationError("test.yaml", "required field missing", "server.name", "", ErrCodeRequiredField, 5, 0, "", ""),
 		},
 		Warnings: []ValidationError{},
 	}
@@ -460,7 +460,7 @@ func TestValidationResult_IsValid_Consistency(t *testing.T) {
 		FilePath: "test.yaml",
 		Valid:    false,
 		Errors: []ValidationError{
-			*NewValidationError("test.yaml", "validation error", "", "", ErrCodeValidationFailed, 0, 0, ""),
+			*NewValidationError("test.yaml", "validation error", "", "", ErrCodeValidationFailed, 0, 0, "", ""),
 		},
 	}
 
@@ -545,7 +545,7 @@ func TestNewResultMethods_Comprehensive(t *testing.T) {
 			FilePath: "config.yaml",
 			Valid:    false,
 			Errors: []ValidationError{
-				*NewValidationError("config.yaml", "port out of range", "server.port", "1-65535", ErrCodeInvalidValue, 15, 0, ""),
+				*NewValidationError("config.yaml", "port out of range", "server.port", "1-65535", ErrCodeInvalidValue, 15, 0, "", ""),
 			},
 		}
 
