@@ -37,3 +37,32 @@ find ~/.kube -name "*devimprint*" -type f
 - Reopen or revisit bead bf-2p1wr to obtain actual kubeconfig with write access
 - OR obtain the kubeconfig through cluster administrator coordination
 - OR provide alternative access method to the armor-writer secret
+
+---
+
+## Latest Verification (2026-07-11 16:28 UTC)
+
+### Confirmed Access Capabilities
+The read-only proxy can list secret names but cannot read secret data:
+
+```bash
+# This works - listing secrets
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
+# Shows: armor-writer among other secrets
+
+# This fails - reading secret data
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+# Error: Forbidden - cannot get resource "secrets"
+```
+
+### Available Clusters Checked
+- **iad-ci**: Has `devimprint-migration` namespace but no `armor-writer` secret
+- **ardenone-manager**: No kubeconfig exists at expected location
+- **ord-devimprint**: Only read-only proxy access available
+
+### Conclusion
+This bead cannot be completed without:
+1. A kubeconfig with secret-read access to ord-devimprint cluster stored at `~/.kube/ord-devimprint.kubeconfig`, OR
+2. The LITESTREAM_ACCESS_KEY_ID and LITESTREAM_SECRET_ACCESS_KEY values provided through an alternative secure channel
+
+**Do not close this bead** until one of these conditions is met.
