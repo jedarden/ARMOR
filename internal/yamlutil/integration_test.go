@@ -1599,3 +1599,282 @@ func TestRootValidComplexYAML(t *testing.T) {
 		t.Error("literal block scalar should preserve newlines")
 	}
 }
+
+// ============================================================================
+// Integration Test for valid_simple.yaml
+// This test comprehensively verifies parsing and data extraction for valid_simple.yaml
+// ============================================================================
+
+// TestValidSimpleYAMLComprehensive is a comprehensive integration test that:
+// 1. Parses valid_simple.yaml successfully
+// 2. Verifies all simple key-value pairs are correctly extracted
+// 3. Tests different data types (string, int, float, boolean, empty string, null)
+func TestValidSimpleYAMLComprehensive(t *testing.T) {
+	testFile := "../../testdata/valid_simple.yaml"
+
+	// Step 1: Verify file exists and is readable
+	if !FileExists(testFile) {
+		t.Fatalf("test file %s does not exist", testFile)
+	}
+
+	// Step 2: Read file content
+	content, err := ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("failed to read file: %v", err)
+	}
+
+	if len(content) == 0 {
+		t.Fatal("expected non-empty content from valid_simple.yaml")
+	}
+
+	// Step 3: Parse the file using parser
+	parser := NewParser()
+	var data map[string]interface{}
+	result := parser.ParseFile(testFile, &data)
+
+	if !result.Success {
+		t.Fatalf("expected successful parse, got error: %v", result.Error)
+	}
+
+	// Step 4: Verify all expected keys are present
+	expectedKeys := []string{"string", "number", "float", "boolean", "empty_string", "null_value"}
+	for _, key := range expectedKeys {
+		if _, exists := data[key]; !exists {
+			t.Errorf("expected key '%s' to be present in parsed data", key)
+		}
+	}
+
+	// Step 5: Verify each key-value pair is correctly extracted
+
+	// Verify string value
+	if str, ok := data["string"].(string); !ok {
+		t.Error("expected 'string' to be a string type")
+	} else if str != "hello world" {
+		t.Errorf("expected string='hello world', got '%s'", str)
+	}
+
+	// Verify number value (YAML parses integers as int64)
+	num, ok := data["number"].(int64)
+	if !ok {
+		// Try int type as well
+		if numInt, ok := data["number"].(int); ok {
+			num = int64(numInt)
+		} else {
+			t.Fatal("expected 'number' to be an integer type")
+		}
+	}
+	if num != 42 {
+		t.Errorf("expected number=42, got %d", num)
+	}
+
+	// Verify float value
+	flt, ok := data["float"].(float64)
+	if !ok {
+		t.Fatal("expected 'float' to be a float64 type")
+	}
+	// Use approximate comparison for floating point
+	if flt < 3.139 || flt > 3.141 {
+		t.Errorf("expected float≈3.14, got %f", flt)
+	}
+
+	// Verify boolean value
+	boolVal, ok := data["boolean"].(bool)
+	if !ok {
+		t.Fatal("expected 'boolean' to be a bool type")
+	}
+	if !boolVal {
+		t.Error("expected boolean=true, got false")
+	}
+
+	// Verify empty string
+	emptyStr, ok := data["empty_string"].(string)
+	if !ok {
+		t.Fatal("expected 'empty_string' to be a string type")
+	}
+	if emptyStr != "" {
+		t.Errorf("expected empty_string='', got '%s'", emptyStr)
+	}
+
+	// Verify null value
+	nullVal := data["null_value"]
+	if nullVal != nil {
+		t.Errorf("expected null_value=nil, got %v", nullVal)
+	}
+
+	// Step 6: Verify no unexpected keys are present
+	keyCount := len(data)
+	if keyCount != len(expectedKeys) {
+		t.Logf("warning: expected %d keys, got %d (extra keys may be present)", len(expectedKeys), keyCount)
+		for key := range data {
+			found := false
+			for _, expectedKey := range expectedKeys {
+				if key == expectedKey {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Logf("unexpected key found: %s = %v", key, data[key])
+			}
+		}
+	}
+}
+
+// TestValidSimpleYAMLWithParseString tests parsing valid_simple.yaml using ParseString method
+func TestValidSimpleYAMLWithParseString(t *testing.T) {
+	testFile := "../../testdata/valid_simple.yaml"
+
+	// Read file content
+	content, err := ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("failed to read file: %v", err)
+	}
+
+	// Parse using ParseString
+	parser := NewParser()
+	var data map[string]interface{}
+	if err := parser.ParseString(string(content), &data); err != nil {
+		t.Fatalf("ParseString failed: %v", err)
+	}
+
+	// Verify key values
+	assertions := map[string]interface{}{
+		"string":       "hello world",
+		"number":       int64(42),
+		"float":        3.14,
+		"boolean":      true,
+		"empty_string": "",
+		"null_value":  nil,
+	}
+
+	for key, expected := range assertions {
+		actual := data[key]
+		if expected == nil {
+			if actual != nil {
+				t.Errorf("expected %s to be null, got %v", key, actual)
+			}
+		} else {
+			// Handle int vs int64 comparison
+			if expectedInt, ok := expected.(int64); ok {
+				if actualInt, ok := actual.(int); ok && int64(actualInt) == expectedInt {
+					continue
+				}
+			}
+			if actual != expected {
+				t.Errorf("expected %s=%v, got %v", key, expected, actual)
+			}
+		}
+	}
+}
+
+// TestValidSimpleYAMLWithParseFileToMap tests parsing valid_simple.yaml using ParseFileToMap
+func TestValidSimpleYAMLWithParseFileToMap(t *testing.T) {
+	testFile := "../../testdata/valid_simple.yaml"
+
+	parser := NewParser()
+	result := parser.ParseFileToMap(testFile)
+
+	if !result.Success {
+		t.Fatalf("expected successful parse, got error: %v", result.Error)
+	}
+
+	data, ok := result.Data.(map[string]interface{})
+	if !ok {
+		t.Fatal("expected result.Data to be map[string]interface{}")
+	}
+
+	// Verify the data was parsed correctly
+	if data["string"] != "hello world" {
+		t.Errorf("expected string='hello world', got %v", data["string"])
+	}
+
+	// Verify number (handle int/int64)
+	switch num := data["number"].(type) {
+	case int:
+		if num != 42 {
+			t.Errorf("expected number=42, got %d", num)
+		}
+	case int64:
+		if num != 42 {
+			t.Errorf("expected number=42, got %d", num)
+		}
+	default:
+		t.Errorf("expected number to be int or int64, got %T", data["number"])
+	}
+
+	// Verify float
+	if flt, ok := data["float"].(float64); !ok {
+		t.Error("expected float to be float64")
+	} else if flt < 3.139 || flt > 3.141 {
+		t.Errorf("expected float≈3.14, got %f", flt)
+	}
+
+	// Verify boolean
+	if data["boolean"] != true {
+		t.Errorf("expected boolean=true, got %v", data["boolean"])
+	}
+
+	// Verify empty string
+	if data["empty_string"] != "" {
+		t.Errorf("expected empty_string='', got %v", data["empty_string"])
+	}
+
+	// Verify null value
+	if data["null_value"] != nil {
+		t.Errorf("expected null_value=nil, got %v", data["null_value"])
+	}
+}
+
+// TestValidSimpleYAMLTypeChecking tests that each value has the correct Go type
+func TestValidSimpleYAMLTypeChecking(t *testing.T) {
+	testFile := "../../testdata/valid_simple.yaml"
+
+	parser := NewParser()
+	var data map[string]interface{}
+	result := parser.ParseFile(testFile, &data)
+
+	if !result.Success {
+		t.Fatalf("expected successful parse, got error: %v", result.Error)
+	}
+
+	// Verify type of each value
+	typeTests := []struct {
+		key           string
+		expectedType  string
+		typeCheck     func(interface{}) bool
+	}{
+		{"string", "string", func(v interface{}) bool {
+			_, ok := v.(string)
+			return ok
+		}},
+		{"number", "int64 or int", func(v interface{}) bool {
+			_, ok1 := v.(int64)
+			_, ok2 := v.(int)
+			return ok1 || ok2
+		}},
+		{"float", "float64", func(v interface{}) bool {
+			_, ok := v.(float64)
+			return ok
+		}},
+		{"boolean", "bool", func(v interface{}) bool {
+			_, ok := v.(bool)
+			return ok
+		}},
+		{"empty_string", "string", func(v interface{}) bool {
+			_, ok := v.(string)
+			return ok
+		}},
+		{"null_value", "nil", func(v interface{}) bool {
+			return v == nil
+		}},
+	}
+
+	for _, tt := range typeTests {
+		t.Run(tt.key+"_type", func(t *testing.T) {
+			val := data[tt.key]
+			if !tt.typeCheck(val) {
+				t.Errorf("expected %s to be %s, got %T", tt.key, tt.expectedType, val)
+			}
+		})
+	}
+}
