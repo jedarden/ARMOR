@@ -416,7 +416,7 @@ func (ve *ValidationError) String() string {
 // NewValidationError creates a new ValidationError with the given parameters.
 //
 // This constructor function provides a convenient way to create properly initialized
-// ValidationError instances with message, path, constraint, and error code.
+// ValidationError instances with message, path, constraint, error code, and location.
 //
 // Parameters:
 //   - filePath: Path to the file being validated
@@ -424,17 +424,26 @@ func (ve *ValidationError) String() string {
 //   - fieldPath: Dot-notation path to the invalid field (optional)
 //   - constraint: Constraint that was violated (optional)
 //   - code: Error code for programmatic handling (use empty string for default)
+//   - line: Line number where error occurred (1-indexed, use 0 if unknown)
+//   - column: Column number where error occurred (1-indexed, use 0 if unknown)
+//   - errorType: Category of error (use empty string for default ErrorTypeValidation)
 //
 // Returns a properly initialized ValidationError that implements the YAMLError interface.
 //
 // Example usage:
 //
-//	err := NewValidationError("config.yaml", "invalid port number", "server.port", "must be between 1-65535", ErrCodeInvalidValue)
-func NewValidationError(filePath string, message string, fieldPath string, constraint string, code ErrorCode) *ValidationError {
+//	err := NewValidationError("config.yaml", "invalid port number", "server.port", "must be between 1-65535", ErrCodeInvalidValue, 10, 5, "")
+func NewValidationError(filePath string, message string, fieldPath string, constraint string, code ErrorCode, line int, column int, errorType ErrorType) *ValidationError {
 	// Use provided code or default to generic validation error
 	errorCode := code
 	if errorCode == "" {
 		errorCode = ErrCodeValidationFailed
+	}
+
+	// Use provided error type or default to validation error
+	eType := errorType
+	if eType == "" {
+		eType = ErrorTypeValidation
 	}
 
 	return &ValidationError{
@@ -443,7 +452,9 @@ func NewValidationError(filePath string, message string, fieldPath string, const
 		FieldPath:  fieldPath,
 		Constraint: constraint,
 		ErrorCode:  errorCode,
-		Type:       ErrorTypeValidation,
+		Line:       line,
+		Column:     column,
+		Type:       eType,
 	}
 }
 
@@ -539,7 +550,26 @@ func NewStructureError(filePath string, message string, line int, duplicateKey s
 }
 
 // NewDuplicateKeyError creates a new DuplicateKeyError with proper initialization.
-func NewDuplicateKeyError(filePath string, key string, location string, line1 int, line2 int, errorCode ErrorCode) *DuplicateKeyError {
+//
+// This constructor function provides a convenient way to create properly initialized
+// DuplicateKeyError instances with the given parameters.
+//
+// Parameters:
+//   - filePath: Path to the file with duplicate keys
+//   - key: The duplicate key name
+//   - location: Nested path to the duplicate key (optional, use empty string if not applicable)
+//   - line1: Line number of first occurrence (use 0 if unknown)
+//   - line2: Line number of duplicate occurrence (use 0 if unknown)
+//   - code: Error code for programmatic handling (use empty string for default)
+//
+// Returns a properly initialized DuplicateKeyError that implements the YAMLError interface.
+func NewDuplicateKeyError(filePath string, key string, location string, line1 int, line2 int, code ErrorCode) *DuplicateKeyError {
+	// Use provided code or default to duplicate key error
+	errorCode := code
+	if errorCode == "" {
+		errorCode = ErrCodeDuplicateKey
+	}
+
 	return &DuplicateKeyError{
 		FilePath:  filePath,
 		Key:       key,
@@ -551,10 +581,28 @@ func NewDuplicateKeyError(filePath string, key string, location string, line1 in
 }
 
 // NewSchemaLoadError creates a new SchemaLoadError with proper initialization.
-func NewSchemaLoadError(filePath string, message string, errorCode ErrorCode) *SchemaLoadError {
+//
+// This constructor function provides a convenient way to create properly initialized
+// SchemaLoadError instances with the given parameters.
+//
+// Parameters:
+//   - filePath: Path to the schema file
+//   - message: Description of the load error
+//   - err: Underlying error (optional, use nil if not applicable)
+//   - code: Error code for programmatic handling (use empty string for default)
+//
+// Returns a properly initialized SchemaLoadError that implements the YAMLError interface.
+func NewSchemaLoadError(filePath string, message string, err error, code ErrorCode) *SchemaLoadError {
+	// Use provided code or default to schema load failed error
+	errorCode := code
+	if errorCode == "" {
+		errorCode = ErrCodeSchemaLoadFailed
+	}
+
 	return &SchemaLoadError{
 		FilePath:  filePath,
 		Message:   message,
+		Err:       err,
 		ErrorCode: errorCode,
 	}
 }
