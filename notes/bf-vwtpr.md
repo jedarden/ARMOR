@@ -1,6 +1,11 @@
 # Bead bf-vwtpr: Decode and validate LITESTREAM_ACCESS_KEY_ID - FAILED
 
-## Status: Cannot complete - Prerequisite not met
+## Attempt Summary: 2026-07-11 (Latest)
+
+**Status:** BLOCKED - Prerequisite not met
+
+## Issue
+The file `/tmp/litestream_key_id.b64` does not contain a base64-encoded AWS access key. Instead, it contains an RBAC error message:
 
 ## Issue
 The file `/tmp/litestream_key_id.b64` does not contain a base64-encoded AWS access key. Instead, it contains an RBAC error message:
