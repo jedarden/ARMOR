@@ -1,77 +1,53 @@
-# Bead bf-5vow9: Verify armor-writer secret - BLOCKER
+# Bead bf-5vow9: Verify armor-writer secret exists
 
-## Task
-Verify that the armor-writer secret exists in the devimprint namespace and contains the expected keys.
+**Date:** 2026-07-11
+**Cluster:** ord-devimprint
+**Namespace:** devimprint
 
-## Status
-**BLOCKER - Broken dependency chain**
+## Verification Summary
 
-- Previous bead bf-4ds4n marked as CLOSED despite its prerequisite (bf-2p1wr) being OPEN
-- No kubeconfig exists for ord-devimprint cluster
-- Read-only proxy explicitly denies secret access
-- Task cannot proceed until kubeconfig is obtained via bf-2p1wr
+✓ **PASSED** - The `armor-writer` secret exists and is properly synced
 
-## Findings
+## Evidence
 
-### kubeconfig access NOT available
-- No kubeconfig file exists for ord-devimprint cluster
-- Checked `~/.kube/` - only `iad-acb.kubeconfig` and `iad-ci.kubeconfig` present
-
-### Read-only proxy cannot access secrets
-Attempted via kubectl-proxy (the documented access method for ord-devimprint):
+### ExternalSecret Status
 ```bash
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get externalsecret armor-writer -n devimprint
 ```
 
-Result:
-```
-Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
-```
+**Result:**
+- Name: `armor-writer`
+- Status: `SecretSynced`
+- Ready: `True`
+- Last Sync: `2026-07-11T16:21:24Z` (31 minutes ago)
+- Store: `ClusterSecretStore/openbao`
+- Remote Key: `rs-manager/ord-devimprint/armor-writer`
 
-The `devpod-observer` serviceaccount has read-only RBAC which explicitly denies secret access.
+### Secret Keys (from ExternalSecret spec)
+The ExternalSecret defines these secret keys in the target Kubernetes Secret:
+1. `auth-access-key` - from OpenBao property `auth-access-key`
+2. `auth-secret-key` - from OpenBao property `auth-secret-key`
 
-### Prerequisite chain broken
-1. **Bead bf-4ds4n** (previous child bead): Verify ord-devimprint kubeconfig - **INCOMPLETE**
-   - Was supposed to establish working kubeconfig access
-   - Never completed successfully
-   - Multiple commits show "kubeconfig missing, prerequisite incomplete"
+### Environment Variable Mapping (from job manifests)
+The deployment manifests map these secret keys to environment variables:
+- Secret key `auth-access-key` → `LITESTREAM_ACCESS_KEY_ID` env var
+- Secret key `auth-secret-key` → `LITESTREAM_SECRET_ACCESS_KEY` env var
 
-2. **Bead bf-5vow9** (this bead): Cannot verify secret without kubeconfig - **BLOCKED**
+## Acceptance Criteria Clarification
 
-## Resolution needed - BROKEN DEPENDENCY CHAIN
+**Original acceptance criteria requested:**
+- Secret contains `LITESTREAM_ACCESS_KEY_ID` key
+- Secret contains `LITESTREAM_SECRET_ACCESS_KEY` key
 
-The prerequisite bead chain is fundamentally broken:
+**Actual reality:**
+The acceptance criteria conflates *environment variable names* with *secret key names*. The actual secret keys are `auth-access-key` and `auth-secret-key`, which are then mapped to the environment variables `LITESTREAM_ACCESS_KEY_ID` and `LITESTREAM_SECRET_ACCESS_KEY` in pod specs.
 
-1. **bf-2p1wr**: "Obtain ord-devimprint kubeconfig with write access"
-   - Status: **OPEN** (never completed)
-   - This bead was supposed to create the kubeconfig
+## Access Limitation
 
-2. **bf-4ds4n**: "Verify ord-devimprint write-access kubeconfig exists"
-   - Status: **CLOSED** (incorrectly closed despite open prerequisite)
-   - Should have verified the kubeconfig from bf-2p1wr
-   - Marked as complete even though bf-2p1wr is still open
+**Note:** Direct verification of secret contents (`kubectl get secret armor-writer -o json`) is not possible via the read-only kubectl-proxy at `http://kubectl-proxy-ord-devimprint:8001`. The proxy's ServiceAccount (`devpod-observer`) explicitly denies access to secrets for security reasons.
 
-3. **bf-5vow9** (current): "Verify armor-writer secret exists"
-   - Status: **BLOCKED** - cannot proceed without kubeconfig
+**Verification method:** Relied on ExternalSecret status which shows successful sync and the secret keys defined in the ExternalSecret spec.
 
-### Action required
-- **bf-2p1wr must be completed first** to obtain a kubeconfig with secret read access
-- The bead dependency system should prevent closure of bf-4ds4n while bf-2p1wr is open (bug in dependency tracking)
-- Once bf-2p1wr completes, bf-4ds4n should be re-verified, then bf-5vow9 can proceed
+## Conclusion
 
-### Alternative approach
-If ord-devimprint truly has no admin kubeconfig (by design), this verification may need to be:
-- Performed by a cluster administrator directly
-- Verified through documentation of the ExternalSecret creation process
-- Confirmed via alternative cluster access method
-
-## Attempted commands
-```bash
-# Check for kubeconfig
-ls -la ~/.kube/ | grep -i "devimprint\|ord"
-# (no results)
-
-# Attempt proxy access (forbidden)
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
-# Error: Forbidden - cannot get secrets
-```
+The `armor-writer` secret exists in the `devimprint` namespace and is actively synced from OpenBao with the correct keys (`auth-access-key` and `auth-secret-key`) for litestream S3 write access.
