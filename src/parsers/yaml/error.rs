@@ -13,6 +13,10 @@ pub struct ParseError {
     pub line: Option<usize>,
     /// The column number where the error occurred (1-indexed)
     pub column: Option<usize>,
+    /// The file or source path where the error occurred
+    pub path: Option<String>,
+    /// A code snippet showing the problematic segment
+    pub snippet: Option<String>,
     /// Additional context about the error
     pub context: String,
 }
@@ -24,6 +28,8 @@ impl ParseError {
             kind,
             line: None,
             column: None,
+            path: None,
+            snippet: None,
             context: String::new(),
         }
     }
@@ -37,6 +43,18 @@ impl ParseError {
     /// Set the column number for this error
     pub fn with_column(mut self, column: usize) -> Self {
         self.column = Some(column);
+        self
+    }
+
+    /// Set the file/source path for this error
+    pub fn with_path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    /// Set the code snippet for this error
+    pub fn with_snippet(mut self, snippet: impl Into<String>) -> Self {
+        self.snippet = Some(snippet.into());
         self
     }
 
@@ -61,6 +79,20 @@ impl ParseError {
         Self::new(ParseErrorKind::Validation(msg.into()))
     }
 
+    /// Create a type mismatch error
+    ///
+    /// # Arguments
+    /// * `field` - The field path where the error occurred
+    /// * `expected` - The expected type description
+    /// * `actual` - The actual type that was received
+    pub fn type_mismatch(field: impl Into<String>, expected: impl Into<String>, actual: impl Into<String>) -> Self {
+        Self::new(ParseErrorKind::TypeMismatch {
+            field: field.into(),
+            expected: expected.into(),
+            actual: actual.into(),
+        })
+    }
+
     /// Check if this is a syntax error
     pub fn is_syntax(&self) -> bool {
         matches!(self.kind, ParseErrorKind::Syntax(_))
@@ -75,47 +107,117 @@ impl ParseError {
     pub fn is_validation(&self) -> bool {
         matches!(self.kind, ParseErrorKind::Validation(_))
     }
+
+    /// Check if this is a type mismatch error
+    pub fn is_type_mismatch(&self) -> bool {
+        matches!(self.kind, ParseErrorKind::TypeMismatch { .. })
+    }
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.line, &self.column) {
-            (Some(line), Some(col)) => {
-                write!(f, "{}:{}:{}: {}", self.kind, line, col, self.context)
+        match (&self.path, &self.line, &self.column) {
+            (Some(path), Some(line), Some(col)) => {
+                write!(f, "{}:{}:{}: {}", path, line, col, self.kind)
             }
-            (Some(line), None) => {
-                write!(f, "{}:{}: {}", self.kind, line, self.context)
+            (Some(path), Some(line), None) => {
+                write!(f, "{}:{}: {}", path, line, self.kind)
             }
-            (None, None) => {
+            (Some(path), None, None) => {
+                write!(f, "{}: {}", path, self.kind)
+            }
+            (None, Some(line), Some(col)) => {
+                write!(f, "{}:{}: {}", line, col, self.kind)
+            }
+            (None, Some(line), None) => {
+                write!(f, "{}: {}", line, self.kind)
+            }
+            (None, None, Some(_)) => {
                 write!(f, "{}: {}", self.kind, self.context)
             }
-            (None, Some(_)) => {
+            (None, None, None) => {
                 write!(f, "{}: {}", self.kind, self.context)
             }
+        }?;
+
+        // Add context if present
+        if !self.context.is_empty() {
+            write!(f, ": {}", self.context)?;
         }
+
+        // Add snippet if present
+        if let Some(snippet) = &self.snippet {
+            write!(f, "\n\nSnippet:\n{}", snippet)?;
+        }
+
+        Ok(())
     }
 }
 
 impl std::error::Error for ParseError {}
 
 /// The kind of parse error that occurred
+///
+/// This enum represents the core categories of errors that can occur during
+/// YAML parsing operations. Each variant represents a distinct class of error.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParseErrorKind {
     /// Syntax error in the YAML source
+    ///
+    /// This variant covers errors related to invalid YAML structure, malformed
+    /// syntax, or violations of the YAML grammar rules.
     Syntax(String),
+
     /// I/O error (file not found, permission denied, etc.)
+    ///
+    /// This variant covers errors related to file system operations such as
+    /// reading, writing, or accessing files.
     Io(String),
-    /// Validation error (schema violation, type mismatch, etc.)
+
+    /// Validation error (constraint violations)
+    ///
+    /// This variant covers errors related to constraint violations such as
+    /// required field violations, range violations, or other schema validation failures.
     Validation(String),
+
+    /// Type mismatch error (unexpected type for a field)
+    ///
+    /// This variant covers errors where a value has an unexpected type, such as
+    /// expecting a string but receiving a number, or expecting a sequence but receiving a scalar.
+    TypeMismatch {
+        /// The field path where the error occurred
+        field: String,
+        /// The expected type
+        expected: String,
+        /// The actual type that was received
+        actual: String,
+    },
+
     /// Unexpected end of input
+    ///
+    /// This variant covers errors where the YAML source ends prematurely
+    /// and cannot be fully parsed.
     UnexpectedEof,
+
     /// Invalid UTF-8 encoding
+    ///
+    /// This variant covers errors where the input contains invalid UTF-8 sequences.
     InvalidUtf8,
+
     /// Unknown anchor or alias
+    ///
+    /// This variant covers errors where an anchor or alias reference cannot be resolved.
     UnknownAnchor(String),
+
     /// Duplicate key in mapping
+    ///
+    /// This variant covers errors where duplicate keys are found in a YAML mapping.
     DuplicateKey(String),
+
     /// Other error
+    ///
+    /// This variant provides a catch-all for errors that don't fit into any of the
+    /// other specific categories, allowing for extensibility.
     Other(String),
 }
 
@@ -125,6 +227,9 @@ impl fmt::Display for ParseErrorKind {
             Self::Syntax(msg) => write!(f, "syntax error: {}", msg),
             Self::Io(msg) => write!(f, "I/O error: {}", msg),
             Self::Validation(msg) => write!(f, "validation error: {}", msg),
+            Self::TypeMismatch { field, expected, actual } => {
+                write!(f, "type mismatch at '{}': expected {}, got {}", field, expected, actual)
+            }
             Self::UnexpectedEof => write!(f, "unexpected end of input"),
             Self::InvalidUtf8 => write!(f, "invalid UTF-8 encoding"),
             Self::UnknownAnchor(name) => write!(f, "unknown anchor: {}", name),
