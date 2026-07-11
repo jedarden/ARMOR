@@ -716,6 +716,76 @@ func TestParseFile_AllValidFiles(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// Invalid YAML Error Case Tests (requested test names)
+// ============================================================================
+
+// TestLoadInvalidYAMLMissingColon tests loading invalid YAML with missing colon
+func TestLoadInvalidYAMLMissingColon(t *testing.T) {
+	testFile := "testdata/invalid_missing_colon.yaml"
+
+	// Load test data using helper
+	content, err := loadTestData(testFile)
+	if err != nil {
+		t.Fatalf("loadTestData(%s) failed: %v", testFile, err)
+	}
+
+	// Verify content is not empty
+	if len(content) == 0 {
+		t.Error("expected non-empty content from invalid_missing_colon.yaml")
+	}
+
+	// Parse the loaded YAML content - should fail
+	parser := NewParser()
+	var data map[string]interface{}
+	parseErr := parser.ParseString(string(content), &data)
+	if parseErr == nil {
+		t.Fatalf("expected ParseString to return error for invalid YAML with missing colon, got nil")
+	}
+
+	// Verify error message contains expected keywords
+	errMsg := parseErr.Error()
+	if !strings.Contains(strings.ToLower(errMsg), "yaml") &&
+	   !strings.Contains(strings.ToLower(errMsg), "parse") &&
+	   !strings.Contains(strings.ToLower(errMsg), "colon") &&
+	   !strings.Contains(strings.ToLower(errMsg), "syntax") {
+		t.Errorf("expected error to mention YAML/parse/colon/syntax, got: %s", errMsg)
+	}
+}
+
+// TestLoadInvalidYAMLIndentation tests loading invalid YAML with bad indentation
+func TestLoadInvalidYAMLIndentation(t *testing.T) {
+	testFile := "testdata/invalid_indentation.yaml"
+
+	// Load test data using helper
+	content, err := loadTestData(testFile)
+	if err != nil {
+		t.Fatalf("loadTestData(%s) failed: %v", testFile, err)
+	}
+
+	// Verify content is not empty
+	if len(content) == 0 {
+		t.Error("expected non-empty content from invalid_indentation.yaml")
+	}
+
+	// Parse the loaded YAML content - should fail
+	parser := NewParser()
+	var data map[string]interface{}
+	parseErr := parser.ParseString(string(content), &data)
+	if parseErr == nil {
+		t.Fatalf("expected ParseString to return error for invalid YAML with bad indentation, got nil")
+	}
+
+	// Verify error message contains expected keywords
+	errMsg := parseErr.Error()
+	if !strings.Contains(strings.ToLower(errMsg), "yaml") &&
+	   !strings.Contains(strings.ToLower(errMsg), "parse") &&
+	   !strings.Contains(strings.ToLower(errMsg), "indentation") &&
+	   !strings.Contains(strings.ToLower(errMsg), "syntax") {
+		t.Errorf("expected error to mention YAML/parse/indentation/syntax, got: %s", errMsg)
+	}
+}
+
 // TestParseFile_RelativePath tests parsing with relative paths
 func TestParseFile_RelativePath(t *testing.T) {
 	// Change to testdata directory
