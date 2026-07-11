@@ -25,7 +25,27 @@ According to CLAUDE.md, the current access to ord-devimprint is via:
 The read-only proxy DOES work and CAN list secrets:
 - ✅ Cluster connectivity: Verified (namespace listing works)
 - ✅ Secret list access: CAN list secrets in devimprint namespace (9 secrets visible)
+- ❌ Secret content access: CANNOT read individual secrets (Forbidden)
 - ❌ Write access: Still unavailable - proxy is read-only
+
+**Secret Content Access Test (2026-07-11):**
+```bash
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o yaml
+# Error from server (Forbidden): secrets "armor-writer" is forbidden:
+# User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+```
+
+**Secrets Visible in devimprint namespace:**
+- admin-oauth (3 keys)
+- armor-credentials (7 keys)
+- armor-readonly (2 keys)
+- armor-writer (2 keys)
+- devimprint-b2-workers (5 keys)
+- devimprint-cloudflare (8 keys)
+- docker-hub-registry (1 key)
+- github-oauth (2 keys)
+- github-pat (1 key)
+- queue-api-auth (2 keys)
 
 ### Verification Results (Updated 2026-07-11)
 The acceptance criteria for this bead:
