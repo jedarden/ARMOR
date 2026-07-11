@@ -393,16 +393,19 @@ func IsParseError(err error) bool {
 // information about what failed validation. This is the base error type
 // used throughout the yamlutil package for validation errors.
 type ValidationError struct {
-	FilePath   string    // Path to the file being validated
-	FieldPath  string    // Dot-notation path to the invalid field (optional)
-	Message    string    // Human-readable error message
-	Line       int       // Line number where error occurred (1-indexed)
-	Column     int       // Column number where error occurred (1-indexed, optional)
-	Constraint string    // Constraint that was violated (optional)
-	ContextStr string    // Additional context about the validation state (optional)
-	Err        error     // Underlying error for error wrapping (optional)
-	ErrorCode  ErrorCode // Error code for programmatic handling (optional)
-	Type       ErrorType // Category of error for type switching
+	FilePath     string    // Path to the file being validated
+	FieldPath    string    // Dot-notation path to the invalid field (optional)
+	Path         string    // Dot-notation field path (e.g., "spec.replicas")
+	Message      string    // Human-readable error message
+	Line         int       // Line number where error occurred (1-indexed)
+	Column       int       // Column number where error occurred (1-indexed, optional)
+	Constraint   string    // Constraint that was violated (optional)
+	ContextStr   string    // Additional context about the validation state (optional)
+	Err          error     // Underlying error for error wrapping (optional)
+	ErrorCode    ErrorCode // Error code for programmatic handling (optional)
+	Type         ErrorType // Category of error for type switching
+	ExpectedType string    // Expected type for type mismatch errors (optional)
+	ActualType   string    // Actual type found for type mismatch errors (optional)
 }
 
 // Code implements YAMLError interface.
