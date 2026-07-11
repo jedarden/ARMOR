@@ -59,5 +59,14 @@ Re-verified blocker status:
 - Only kubeconfigs available: iad-acb.kubeconfig, iad-ci.kubeconfig
 - Prerequisite bead bf-2p1wr remains OPEN
 
+### 2026-07-11 ~17:42 UTC (Re-verification)
+Re-verified blocker status (final attempt):
+- Read-only proxy access: Still Forbidden by RBAC
+  - Command: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint`
+  - Error: `User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"`
+- No ord-devimprint kubeconfig exists (checked ~/.kube/ord-devimprint.kubeconfig)
+- Prerequisite bead bf-2p1wr confirmed OPEN via `br show bf-2p1wr`
+- Task cannot be completed without bf-2p1wr completion
+
 ## Resolution Path
 Cannot proceed until bead bf-2p1wr is completed with a valid kubeconfig that has secret read permissions.
