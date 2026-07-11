@@ -175,6 +175,107 @@ func TestIsParseError(t *testing.T) {
 	}
 }
 
+func TestNewParseError(t *testing.T) {
+	tests := []struct {
+		name         string
+		filePath     string
+		message      string
+		line         int
+		column       int
+		code         ErrorCode
+		wantMessage  string
+		wantCode     ErrorCode
+		wantErrorType ErrorType
+	}{
+		{
+			name:         "basic parse error",
+			filePath:     "config.yaml",
+			message:      "invalid syntax",
+			line:         10,
+			column:       5,
+			code:         ErrCodeInvalidSyntax,
+			wantMessage:  "parse error in config.yaml at line 10: invalid syntax",
+			wantCode:     ErrCodeInvalidSyntax,
+			wantErrorType: ErrorTypeParse,
+		},
+		{
+			name:         "parse error with default code",
+			filePath:     "test.yaml",
+			message:      "unexpected token",
+			line:         3,
+			column:       0,
+			code:         "",
+			wantMessage:  "parse error in test.yaml at line 3: unexpected token",
+			wantCode:     ErrCodeParseError,
+			wantErrorType: ErrorTypeParse,
+		},
+		{
+			name:         "parse error without line number",
+			filePath:     "unknown.yaml",
+			message:      "file is corrupted",
+			line:         0,
+			column:       0,
+			code:         ErrCodeParseError,
+			wantMessage:  "parse error in unknown.yaml: file is corrupted",
+			wantCode:     ErrCodeParseError,
+			wantErrorType: ErrorTypeParse,
+		},
+		{
+			name:         "parse error with line and column",
+			filePath:     "data.yaml",
+			message:      "unexpected end of file",
+			line:         15,
+			column:       8,
+			code:         ErrCodeInvalidStructure,
+			wantMessage:  "parse error in data.yaml at line 15: unexpected end of file",
+			wantCode:     ErrCodeInvalidStructure,
+			wantErrorType: ErrorTypeParse,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := NewParseError(tt.filePath, tt.message, tt.line, tt.column, tt.code)
+
+			// Verify fields are set correctly
+			if err.FilePath != tt.filePath {
+				t.Errorf("FilePath = %q, want %q", err.FilePath, tt.filePath)
+			}
+			if err.Message != tt.message {
+				t.Errorf("Message = %q, want %q", err.Message, tt.message)
+			}
+			if err.Line != tt.line {
+				t.Errorf("Line = %d, want %d", err.Line, tt.line)
+			}
+			if err.Column != tt.column {
+				t.Errorf("Column = %d, want %d", err.Column, tt.column)
+			}
+			if err.Code() != tt.wantCode {
+				t.Errorf("Code() = %q, want %q", err.Code(), tt.wantCode)
+			}
+			if err.YAMLErrorType() != tt.wantErrorType {
+				t.Errorf("YAMLErrorType() = %q, want %q", err.YAMLErrorType(), tt.wantErrorType)
+			}
+
+			// Verify Error() method returns formatted message with position
+			errorMsg := err.Error()
+			if errorMsg != tt.wantMessage {
+				t.Errorf("Error() = %q, want %q", errorMsg, tt.wantMessage)
+			}
+
+			// Verify it's recognized as a YAMLError
+			if !IsYAMLError(err) {
+				t.Error("NewParseError() should implement YAMLError interface")
+			}
+
+			// Verify it's recognized as a ParseError
+			if !IsParseError(err) {
+				t.Error("NewParseError() should be recognized as ParseError")
+			}
+		})
+	}
+}
+
 // Helper function to check if a string contains a substring
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsHelper(s, substr))

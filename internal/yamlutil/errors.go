@@ -141,6 +141,40 @@ func (pe *ParseError) Unwrap() error {
 	return pe.Err
 }
 
+// NewParseError creates a new ParseError with the given parameters.
+//
+// This constructor function provides a convenient way to create properly initialized
+// ParseError instances with message, line, column, and error code.
+//
+// Parameters:
+//   - filePath: Path to the file being parsed
+//   - message: Human-readable error message
+//   - line: Line number where error occurred (1-indexed, use 0 if unknown)
+//   - column: Column number where error occurred (1-indexed, use 0 if unknown)
+//   - code: Error code for programmatic handling (use empty string for default)
+//
+// Returns a properly initialized ParseError that implements the YAMLError interface.
+//
+// Example usage:
+//
+//	err := NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax)
+func NewParseError(filePath string, message string, line int, column int, code ErrorCode) *ParseError {
+	// Use provided code or default to generic parse error
+	errorCode := code
+	if errorCode == "" {
+		errorCode = ErrCodeParseError
+	}
+
+	return &ParseError{
+		FilePath:  filePath,
+		Message:   message,
+		Line:      line,
+		Column:    column,
+		ErrorCode: errorCode,
+		ErrorType: ErrorTypeParse,
+	}
+}
+
 // IsParseError checks if an error is a ParseError.
 func IsParseError(err error) bool {
 	var pe *ParseError
