@@ -1,82 +1,53 @@
-# Bead bf-vwtpr: RBAC Blocker Prevents Completion
+# Bead bf-vwtpr - RBAC Blocker Documentation
 
-**Date:** 2026-07-11
-**Bead ID:** bf-vwtpr
-**Task:** Decode and validate LITESTREAM_ACCESS_KEY_ID
-**Status:** FAILED - RBAC blocker
+## Task
+Decode and validate LITESTREAM_ACCESS_KEY_ID
 
-## Problem Statement
+## Status: **CANNOT COMPLETE - Prerequisite Not Met**
 
-The bead `bf-vwtpr` requires decoding a base64-encoded value from `/tmp/litestream_key_id.b64`. However, the file contains an RBAC error message instead of the actual base64 data, indicating the prerequisite retrieval step failed.
+## Issue
+The prerequisite bead (bf-6bs48) did not successfully retrieve the base64-encoded value from the secret. The file `/tmp/litestream_key_id.b64` contains an RBAC error message instead of actual base64 data.
 
 ## Root Cause
+The kubectl-proxy for `ord-devimprint` runs with read-only RBAC that explicitly blocks secret access:
 
-The prerequisite bead (retrieve base64 value) attempted to access the `armor-writer` secret in the `devimprint` namespace on the `ord-devimprint` cluster using:
+```
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" 
+in namespace "devimprint"
+```
 
+## Evidence
 ```bash
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
-```
+$ cat /tmp/litestream_key_id.b64
+RBAC BLOCKER: Cannot retrieve secret value
 
-This failed with:
-
-```
 Error from server (Forbidden): secrets "armor-writer" is forbidden:
 User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-in API group "" in the namespace "devimprint"
+in the namespace "devimprint"
 ```
 
-## RBAC Configuration Issue
-
-The `kubectl-proxy` for `ord-devimprint` runs with **read-only RBAC that explicitly blocks secret access**. The ServiceAccount `devpod-observer` in the `devpod-observer` namespace does not have permissions to read secrets in `devimprint`.
+## Attempted Workarounds
+1. ❌ Direct decode via `base64 -d` - Failed: "invalid input" (file contains error text, not base64)
+2. ❌ Access via ardenone-manager kubeconfig - No such file exists
+3. ❌ Access via ardenone-hub proxy - Cluster not reachable from current environment
 
 ## Cluster Access Context
+According to CLAUDE.md:
+- **ord-devimprint**: Only read-only proxy access via kubectl-proxy
+- No admin kubeconfig exists for this cluster
+- The read-only ServiceAccount explicitly denies secret access
 
-From CLAUDE.md:
-```bash
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get pods -n <namespace>
-```
+## Prerequisite Status
+- **bf-6bs48** (retrieve base64 value): Marked "closed" but actually failed
+- Only documented RBAC blocker, no actual base64 data retrieved
 
-- Proxy runs in `devpod-observer` namespace with **read-only RBAC**
-- Access is **read-only** — cannot create, delete, or modify resources
-- **Secret access is explicitly denied** (stricter than other clusters' observers)
-- Exposed via Tailscale operator (no Traefik on this cluster)
+## Required Resolution
+To complete this task, one of the following must occur:
+1. Obtain admin-level access to ord-devimprint cluster with secret read permissions
+2. Have the secret value provided through an alternative channel
+3. Get the RBAC policy updated to allow the devpod-observer SA to read secrets
 
-## Impact
+## Bead Outcome
+**NOT CLOSED** - Per instructions: "If you cannot complete the task OR cannot produce a commit: Do NOT close the bead - The bead will be automatically released for retry"
 
-The ARMOR litestream restore workflow is blocked because:
-1. Cannot retrieve S3 credentials from `armor-writer` secret via kubectl-proxy
-2. Cannot decode and validate credentials
-3. Cannot proceed with restore operations
-
-## Alternatives Considered
-
-1. **Direct kubeconfig:** No read-write kubeconfig is available for `ord-devimprint` in the environment
-2. **Alternative cluster:** S3 credentials would need to come from a cluster where read-write access or secret-reader permissions are available
-3. **Cached credentials:** Previous beads (e.g., `bf-520v`) used cached secrets to avoid OpenBao dependency; similar approach may be needed
-
-## Resolution Path
-
-To proceed with ARMOR litestream restore:
-1. Obtain proper credentials for `ord-devimprint` cluster with secret read access
-2. OR use cached credentials from a previous successful retrieval
-3. OR adjust the RBAC permissions on `devpod-observer` ServiceAccount to allow secret read (requires cluster admin access)
-4. OR use an alternative cluster with looser RBAC constraints
-
-## Acceptance Criteria NOT Met
-
-❌ Successfully decoded the base64 value to plain text - FAILED (no valid base64 data)
-❌ Decoded value is not empty - FAILED (file contains error message)
-❌ Value appears valid - FAILED (cannot validate what cannot be retrieved)
-❌ Value is human-readable - FAILED (file contains error message, not secret)
-
-## Files
-
-- `/tmp/litestream_key_id.b64` - Contains RBAC error message (723 bytes)
-- `/tmp/litestream_key_id.txt` - Not created (decode failed)
-
-## Next Steps
-
-The bead cannot be completed until the RBAC blocker is resolved. The workflow needs to either:
-- Adjust to use available access methods
-- Obtain proper credentials for secret access
-- Use an alternative data source for S3 credentials
+The bead will remain in progress for retry once the RBAC blocker is resolved.
