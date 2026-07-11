@@ -85,11 +85,12 @@ Once the kubeconfig is obtained and verified, this bead can be closed and depend
 
 | Date | Action | Finding |
 |------|--------|---------|
+| 2026-07-11 | Re-verified access (4th attempt) | Confirmed no kubeconfig exists at ~/.kube/ord-devimprint.kubeconfig. Checked all existing kubeconfigs in ~/.kube/ - only iad-acb.kubeconfig and iad-ci.kubeconfig present. Persistent blocker remains - requires human with Rackspace Spot console access to download kubeconfig. No programmatic workaround available. |
 | 2026-07-11 | Re-verified access (3rd attempt) | Verified read-only proxy (kubectl-proxy-ord-devimprint:8001) still blocks secret access with Forbidden error. Confirmed no kubeconfig exists at ~/.kube/ord-devimprint.kubeconfig. Persistent blocker remains - requires Rackspace Spot console access. |
 | 2026-07-11 | Re-verified access (2nd attempt) | Read-only proxy (kubectl-proxy-ord-devimprint:8001) still explicitly denies secret access. RBAC confirms secrets only have `list` verb, not `get`. No programmatic path to obtain write-access kubeconfig. |
 | 2026-07-11 | Re-verified access (1st attempt) | Initial investigation documented persistent blocker requiring Rackspace Spot console access |
 | 2026-06-10 | Previous verification | Documented persistent blocker requiring Rackspace Spot console access |
 
-Last verified: 2026-07-11
+Last verified: 2026-07-11 (4th re-verification)
 Bead: bf-2p1wr
 Status: BLOCKED - Requires human access to Rackspace Spot console
