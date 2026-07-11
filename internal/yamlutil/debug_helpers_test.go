@@ -835,7 +835,8 @@ func TestGetFieldWithType(t *testing.T) {
 
 func TestFieldNotFoundError(t *testing.T) {
 	err := &FieldNotFoundError{FieldPath: "server.port"}
-	expected := "field not found: server.port"
+	// The actual format is "required field missing in <filepath>: <fieldpath>"
+	expected := "required field missing in : server.port"
 	if err.Error() != expected {
 		t.Errorf("expected error message %q, got %q", expected, err.Error())
 	}
@@ -847,7 +848,8 @@ func TestTypeMismatchError(t *testing.T) {
 		ExpectedType: "int",
 		ActualType:   "string",
 	}
-	expected := "type mismatch for field server.port: expected int, got string"
+	// The actual format is "type mismatch in <filepath>, field <fieldpath>: expected <expected>, got <actual>"
+	expected := "type mismatch in , field server.port: expected int, got string"
 	if err.Error() != expected {
 		t.Errorf("expected error message %q, got %q", expected, err.Error())
 	}

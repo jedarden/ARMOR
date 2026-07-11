@@ -9,19 +9,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ErrorType is defined in errors.go to consolidate all error types.
-// ValidationError is defined in errors.go to consolidate all error types.
-type ValidationError struct {
-	Type     ErrorType // Category of error
+// LocalValidationError provides additional fields for validator-specific error details.
+// This is used internally by the validator and can be converted to the standard ValidationError.
+type LocalValidationError struct {
+	FilePath string    // Path to the file being validated
 	Line     int       // Line number where error occurred (1-indexed)
 	Column   int       // Column number where error occurred (1-indexed)
 	Message  string    // Human-readable error message
 	Context  string    // Contextual information about the error
-	FilePath string    // Path to the file being validated
+	Type     ErrorType // Category of error
 }
 
 // Error implements the error interface.
-func (ve ValidationError) Error() string {
+func (ve LocalValidationError) Error() string {
 	if ve.Line > 0 {
 		return fmt.Sprintf("%s: Line %d: %s: %s", ve.FilePath, ve.Line, ve.Type, ve.Message)
 	}
@@ -29,7 +29,7 @@ func (ve ValidationError) Error() string {
 }
 
 // String returns a formatted error message with context.
-func (ve ValidationError) String() string {
+func (ve LocalValidationError) String() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("  Error: %s\n", ve.Message))
 	sb.WriteString(fmt.Sprintf("  Type: %s\n", ve.Type))
@@ -42,14 +42,26 @@ func (ve ValidationError) String() string {
 	return sb.String()
 }
 
+// ToValidationError converts LocalValidationError to the standard ValidationError.
+func (ve LocalValidationError) ToValidationError() ValidationError {
+	return ValidationError{
+		FilePath:   ve.FilePath,
+		Message:    ve.Message,
+		ContextStr: ve.Context,
+		Line:       ve.Line,
+		Column:     ve.Column,
+		Type:       ve.Type,
+	}
+}
+
 // ValidationResult is defined in result_types.go to consolidate all result types.
 
 // LocalValidationResult provides a validator-specific result type for backward compatibility.
 type LocalValidationResult struct {
-	FilePath string            // Path to the validated file
-	Valid    bool              // Whether validation passed
-	Errors   []ValidationError // List of validation errors
-	Warnings []ValidationError // List of validation warnings
+	FilePath string                  // Path to the validated file
+	Valid    bool                    // Whether validation passed
+	Errors   []LocalValidationError  // List of validation errors
+	Warnings []LocalValidationError  // List of validation warnings
 }
 
 // HasErrors returns true if there are any validation errors.
@@ -106,11 +118,12 @@ func (v *Validator) ValidateStringWithPath(yamlContent, filePath string) Validat
 	// Check for empty content
 	if strings.TrimSpace(yamlContent) == "" {
 		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Type:     ErrorTypeEmpty,
-			Message:  "YAML content is empty",
+		ve := LocalValidationError{
 			FilePath: filePath,
-		})
+			Message:  "YAML content is empty",
+			Type:     ErrorTypeEmpty,
+		}
+		result.Errors = append(result.Errors, ve.ToValidationError())
 		return result
 	}
 
@@ -120,7 +133,7 @@ func (v *Validator) ValidateStringWithPath(yamlContent, filePath string) Validat
 	if err != nil {
 		result.Valid = false
 		ve := v.parseYAMLError(err, filePath, yamlContent)
-		result.Errors = append(result.Errors, ve)
+		result.Errors = append(result.Errors, ve.ToValidationError())
 		return result
 	}
 
@@ -144,11 +157,12 @@ func (v *Validator) ValidateFile(filePath string) ValidationResult {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Type:     ErrorTypeIO,
-			Message:  fmt.Sprintf("Failed to read file: %v", err),
+		ve := LocalValidationError{
 			FilePath: filePath,
-		})
+			Message:  fmt.Sprintf("Failed to read file: %v", err),
+			Type:     ErrorTypeIO,
+		}
+		result.Errors = append(result.Errors, ve.ToValidationError())
 		return result
 	}
 
@@ -156,12 +170,12 @@ func (v *Validator) ValidateFile(filePath string) ValidationResult {
 	return v.ValidateStringWithPath(string(content), filePath)
 }
 
-// parseYAMLError converts a yaml.v3 error into a ValidationError with line/column info.
-func (v *Validator) parseYAMLError(err error, filePath, content string) ValidationError {
-	ve := ValidationError{
-		Type:     ErrorTypeSyntax,
-		Message:  err.Error(),
+// parseYAMLError converts a yaml.v3 error into a LocalValidationError with line/column info.
+func (v *Validator) parseYAMLError(err error, filePath, content string) LocalValidationError {
+	ve := LocalValidationError{
 		FilePath: filePath,
+		Message:  err.Error(),
+		Type:     ErrorTypeSyntax,
 	}
 
 	// Parse line and column from error message if available
@@ -268,14 +282,15 @@ func (v *Validator) checkNode(node *yaml.Node, content string, warnings *[]Valid
 				if keyNode.Kind == yaml.ScalarNode && keyNode.Value != "" {
 					key := keyNode.Value
 					if keys[key] {
-						warn := ValidationError{
-							Type:    ErrorTypeStructure,
-							Message: fmt.Sprintf("Duplicate key detected: %q", key),
-							Line:    keyNode.Line,
-							Column:  keyNode.Column,
-							Context: fmt.Sprintf("Key %q appears multiple times in mapping", key),
+						warn := LocalValidationError{
+							FilePath: "", // Will be set by caller if needed
+							Message:  fmt.Sprintf("Duplicate key detected: %q", key),
+							Line:     keyNode.Line,
+							Type:     ErrorTypeStructure,
+							Column:   keyNode.Column,
+							Context:  fmt.Sprintf("Key %q appears multiple times in mapping", key),
 						}
-						*warnings = append(*warnings, warn)
+						*warnings = append(*warnings, warn.ToValidationError())
 					}
 					keys[key] = true
 				}

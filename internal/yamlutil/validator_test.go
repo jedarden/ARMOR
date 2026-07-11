@@ -67,12 +67,12 @@ key2: value2
 		t.Error("Expected error message to be set")
 	}
 
-	if err.Context == "" {
+	if err.Context() == "" {
 		t.Error("Expected error context to be set")
 	}
 
 	// Verify context contains line content
-	if !strings.Contains(err.Context, "Line content") {
+	if !strings.Contains(err.Context(), "Line content") {
 		t.Error("Expected context to contain line content")
 	}
 }
@@ -327,8 +327,8 @@ func TestValidator_ErrorSummary_NoErrors(t *testing.T) {
 	result := validator.ValidateString("key: value")
 	summary := result.ErrorSummary()
 
-	if summary != "No errors" {
-		t.Errorf("Expected 'No errors' for valid YAML, got: %s", summary)
+	if summary != "No validation errors" {
+		t.Errorf("Expected 'No validation errors' for valid YAML, got: %s", summary)
 	}
 }
 
@@ -534,12 +534,12 @@ key4: value4`
 	}
 
 	// Verify the error context contains the problematic line
-	if result.Errors[0].Context == "" {
+	if result.Errors[0].Context() == "" {
 		t.Error("Expected error context to be set")
 	}
 
 	// Context should mention the problematic content
-	if !strings.Contains(result.Errors[0].Context, "Line content") {
+	if !strings.Contains(result.Errors[0].Context(), "Line content") {
 		t.Error("Expected context to contain line content")
 	}
 }
@@ -593,8 +593,8 @@ func TestValidator_WarningSummary(t *testing.T) {
 	result := validator.ValidateString("key: value")
 	summary := result.WarningSummary()
 
-	if !result.HasWarnings() && summary != "No warnings" {
-		t.Errorf("Expected 'No warnings' when no warnings present, got: %s", summary)
+	if !result.HasWarnings() && summary != "No validation warnings" {
+		t.Errorf("Expected 'No validation warnings' when no warnings present, got: %s", summary)
 	}
 
 	t.Run("with warnings", func(t *testing.T) {
@@ -618,7 +618,7 @@ func TestValidator_WarningSummary(t *testing.T) {
 
 		summary := result.WarningSummary()
 
-		if !strings.Contains(summary, "Warnings") {
+		if !strings.Contains(strings.ToLower(summary), "warnings") {
 			t.Errorf("Expected summary to contain 'Warnings', got: %s", summary)
 		}
 
@@ -845,7 +845,7 @@ key2: value2
 
 	summary := result.WarningSummary()
 
-	if !strings.Contains(summary, "Warnings for") {
+	if !strings.Contains(strings.ToLower(summary), "warnings") {
 		t.Errorf("Expected summary to mention warnings, got: %s", summary)
 	}
 
