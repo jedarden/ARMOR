@@ -42,5 +42,32 @@ This RBAC limitation is consistent with previous observations documented in work
 - Read-only proxy access explicitly denies secret access
 - ExternalSecrets sync issues remain unresolved but may not block operations
 
+## Decode Attempt - 2026-07-11 13:56 UTC
+
+### Commands Run
+```bash
+# Attempted to decode the base64 file
+$ base64 -d /tmp/litestream_key_id.b64 > /tmp/litestream_key_id.txt
+base64: invalid input
+
+# Checked file content
+$ cat /tmp/litestream_key_id.b64 | head -c 200
+RBAC BLOCKER: Cannot retrieve secret value
+
+Error from server (Forbidden): secrets "armor-writer" is forbidden:
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secret
+```
+
+### Validation Result
+**FAILED** - The file `/tmp/litestream_key_id.b64` does not contain valid base64 data. It contains an RBAC error message from the previous child bead's failed retrieval attempt.
+
+### Conclusion
+The prerequisite (base64-encoded secret value) was never successfully retrieved due to RBAC permissions. Therefore:
+- ✗ Cannot decode (invalid input)
+- ✗ Cannot validate AWS key format
+- ✗ Cannot verify human-readability
+
+The task remains **BLOCKED** by the same RBAC issue that prevented secret retrieval.
+
 ## Date
 2026-07-11
