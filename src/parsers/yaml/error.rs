@@ -64,6 +64,77 @@ impl ParseError {
         self
     }
 
+    /// Set both line and column for this error
+    pub fn with_location(mut self, line: usize, column: usize) -> Self {
+        self.line = Some(line);
+        self.column = Some(column);
+        self
+    }
+
+    /// Get a formatted location string (e.g., "file.yaml:10:5" or "<unknown>:10")
+    pub fn location_string(&self) -> String {
+        match (&self.path, self.line, self.column) {
+            (Some(path), Some(line), Some(col)) => format!("{}:{}:{}", path, line, col),
+            (Some(path), Some(line), None) => format!("{}:{}", path, line),
+            (Some(path), None, None) => path.clone(),
+            (None, Some(line), Some(col)) => format!("{}:{}", line, col),
+            (None, Some(line), None) => format!("{}", line),
+            (None, None, Some(col)) => format!("col {}", col),
+            (None, None, None) => "<unknown>".to_string(),
+        }
+    }
+
+    /// Get a brief summary of the error (single line, suitable for logging)
+    pub fn summary(&self) -> String {
+        let location = self.location_string();
+        if !self.context.is_empty() {
+            format!("{}: {} - {}", location, self.kind, self.context)
+        } else {
+            format!("{}: {}", location, self.kind)
+        }
+    }
+
+    /// Get a detailed multi-line error report with snippet and visual indicator
+    pub fn detailed_report(&self) -> String {
+        let mut report = String::new();
+
+        // Header line with location and error kind
+        report.push_str(&format!("error: {}\n", self.summary()));
+
+        // Add context section if present
+        if !self.context.is_empty() {
+            report.push_str(&format!("  context: {}\n", self.context));
+        }
+
+        // Add snippet with visual indicator
+        if let Some(snippet) = &self.snippet {
+            report.push_str("\n  snippet:\n");
+            for line in snippet.lines() {
+                report.push_str(&format!("    {}\n", line));
+            }
+
+            // Add visual indicator for column position
+            if let Some(col) = self.column {
+                if col > 0 {
+                    report.push_str(&format!("    {}^\n", " ".repeat(col.saturating_sub(1))));
+                }
+            }
+        }
+
+        report
+    }
+
+    /// Format this error as a structured log entry (JSON-like but readable)
+    pub fn format_structured(&self) -> String {
+        format!(
+            "ParseError {{ kind: {:?}, location: {}, line: {:?}, column: {:?} }}",
+            self.kind,
+            self.location_string(),
+            self.line,
+            self.column
+        )
+    }
+
     /// Create a syntax error
     pub fn syntax(msg: impl Into<String>) -> Self {
         Self::new(ParseErrorKind::Syntax(msg.into()))
@@ -116,41 +187,23 @@ impl ParseError {
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.path, &self.line, &self.column) {
-            (Some(path), Some(line), Some(col)) => {
-                write!(f, "{}:{}:{}: {}", path, line, col, self.kind)
-            }
-            (Some(path), Some(line), None) => {
-                write!(f, "{}:{}: {}", path, line, self.kind)
-            }
-            (Some(path), None, None) => {
-                write!(f, "{}: {}", path, self.kind)
-            }
-            (Some(path), None, Some(col)) => {
-                write!(f, "{}::{}: {}", path, col, self.kind)
-            }
-            (None, Some(line), Some(col)) => {
-                write!(f, "{}:{}: {}", line, col, self.kind)
-            }
-            (None, Some(line), None) => {
-                write!(f, "{}: {}", line, self.kind)
-            }
-            (None, None, Some(_)) => {
-                write!(f, "{}: {}", self.kind, self.context)
-            }
-            (None, None, None) => {
-                write!(f, "{}: {}", self.kind, self.context)
-            }
-        }?;
+        // Use the summary method for concise display
+        write!(f, "{}", self.summary())?;
 
-        // Add context if present
-        if !self.context.is_empty() {
-            write!(f, ": {}", self.context)?;
-        }
-
-        // Add snippet if present
+        // Add detailed section with snippet if available
         if let Some(snippet) = &self.snippet {
-            write!(f, "\n\nSnippet:\n{}", snippet)?;
+            write!(f, "\n\n  snippet:")?;
+            for line in snippet.lines() {
+                write!(f, "\n    {}", line)?;
+            }
+
+            // Add visual indicator for column position
+            if let Some(col) = self.column {
+                if col > 0 {
+                    write!(f, "\n    {}", " ".repeat(col.saturating_sub(1)))?;
+                    write!(f, "^")?;
+                }
+            }
         }
 
         Ok(())
@@ -158,6 +211,20 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+impl fmt::Debug for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ParseError")
+            .field("kind", &self.kind)
+            .field("location", &self.location_string())
+            .field("line", &self.line)
+            .field("column", &self.column)
+            .field("path", &self.path)
+            .field("context", &self.context)
+            .field("has_snippet", &self.snippet.is_some())
+            .finish()
+    }
+}
 
 /// The kind of parse error that occurred
 ///
