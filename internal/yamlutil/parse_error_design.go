@@ -21,7 +21,7 @@ const (
 	ParseErrorKindStructure ParseErrorKind = "structure"
 
 	// ParseErrorKindTypeMismatch indicates type conversion errors (string to int, etc.)
-	ParseErrorKindTypeMismatch ParseErrorKind = "type_mismatch"
+	ParseErrorKindTypeMismatch ParseErrorKind = "type mismatch"
 
 	// ParseErrorKindIO indicates file I/O errors (not found, permission denied, etc.)
 	ParseErrorKindIO ParseErrorKind = "io"
@@ -124,16 +124,30 @@ func (e *EnhancedParseError) Error() string {
 		sb.WriteString(fmt.Sprintf("%s error in %s", e.Kind, e.FilePath))
 	}
 
-	// Add message
-	sb.WriteString(fmt.Sprintf(": %s", e.Message))
-
 	// Add kind-specific details
 	switch e.Kind {
+	case ParseErrorKindTypeMismatch:
+		// For type mismatch, if we have field info, format it specially
+		if e.Detail.FieldPath != "" {
+			sb.WriteString(fmt.Sprintf(", field %s: expected %s, got: %s",
+				e.Detail.FieldPath, e.Detail.ExpectedType, e.Detail.ActualType))
+			// Add parenthetical with full details (note: uses "got:" for consistency)
+			sb.WriteString(fmt.Sprintf(" (field: %s, expected: %s, got: %s)",
+				e.Detail.FieldPath, e.Detail.ExpectedType, e.Detail.ActualType))
+		} else if e.Message != "" {
+			sb.WriteString(fmt.Sprintf(": %s", e.Message))
+		}
 	case ParseErrorKindSyntax:
+		if e.Message != "" {
+			sb.WriteString(fmt.Sprintf(": %s", e.Message))
+		}
 		if e.Detail.Expected != "" || e.Detail.Found != "" {
 			sb.WriteString(fmt.Sprintf(" (expected: %s, found: %s)", e.Detail.Expected, e.Detail.Found))
 		}
 	case ParseErrorKindStructure:
+		if e.Message != "" {
+			sb.WriteString(fmt.Sprintf(": %s", e.Message))
+		}
 		if e.Detail.DuplicateKey != "" {
 			sb.WriteString(fmt.Sprintf(" (duplicate key: %s", e.Detail.DuplicateKey))
 			if e.Detail.Location != "" {
@@ -141,15 +155,18 @@ func (e *EnhancedParseError) Error() string {
 			}
 			sb.WriteString(")")
 		}
-	case ParseErrorKindTypeMismatch:
-		if e.Detail.FieldPath != "" {
-			sb.WriteString(fmt.Sprintf(" (field: %s, expected: %s, got: %s",
-				e.Detail.FieldPath, e.Detail.ExpectedType, e.Detail.ActualType))
-		}
 	case ParseErrorKindValidation:
+		if e.Message != "" {
+			sb.WriteString(fmt.Sprintf(": %s", e.Message))
+		}
 		if e.Detail.FieldPath != "" && e.Detail.Constraint != "" {
 			sb.WriteString(fmt.Sprintf(" (field: %s, constraint: %s)",
 				e.Detail.FieldPath, e.Detail.Constraint))
+		}
+	default:
+		// For other error types, just add the message
+		if e.Message != "" {
+			sb.WriteString(fmt.Sprintf(": %s", e.Message))
 		}
 	}
 
@@ -244,16 +261,16 @@ func (e *EnhancedParseError) String() string {
 	sb.WriteString(e.Error())
 	sb.WriteString("\n")
 
-	// Add snippet if available
+	// Show snippet with caret pointer if we have it
 	if e.LocationInfo.Snippet != "" {
 		sb.WriteString("\n")
-		sb.WriteString("  ")
+		sb.WriteString("  ")  // Add 2-space prefix for consistency
 		sb.WriteString(e.LocationInfo.Snippet)
 		sb.WriteString("\n")
 
 		// Add column indicator if available
 		if e.LocationInfo.Column > 0 && e.LocationInfo.Column <= len(e.LocationInfo.Snippet) {
-			sb.WriteString("  ")
+			sb.WriteString("  ")  // Add 2-space prefix for consistency
 			for i := 0; i < e.LocationInfo.Column-1; i++ {
 				sb.WriteString(" ")
 			}
@@ -263,7 +280,10 @@ func (e *EnhancedParseError) String() string {
 
 	// Add surrounding context if available
 	if len(e.LocationInfo.SurroundingLines) > 0 {
-		sb.WriteString("\n")
+		// Add blank line separator if we showed the snippet
+		if e.LocationInfo.Snippet != "" {
+			sb.WriteString("\n")
+		}
 		for i, line := range e.LocationInfo.SurroundingLines {
 			if i == e.LocationInfo.SnippetLineIndex {
 				sb.WriteString("> ")
