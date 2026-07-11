@@ -99,11 +99,29 @@ Based on CLAUDE.md and previous beads, Rackspace Spot clusters use these pattern
 ## Current Blocker
 The ord-devimprint kubeconfig file no longer exists at `~/.kube/ord-devimprint.kubeconfig`. Based on previous experience with bead `armor-bik`, this needs to be refreshed via the Rackspace Spot dashboard.
 
+### Verification (2026-07-11)
+- ❌ Kubeconfig file does not exist: `~/.kube/ord-devimprint.kubeconfig`
+- ❌ Read-only proxy cannot access secrets:
+  ```
+  Error from server (Forbidden): secrets "armor-writer" is forbidden: 
+  User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+  ```
+
 ## Next Steps
 1. **Immediate**: Access Rackspace Spot dashboard and download new kubeconfig for ord-devimprint
 2. **Store**: Save as `~/.kube/ord-devimprint.kubeconfig`
 3. **Verify**: Test access to secrets in devimprint namespace
 4. **Document**: Note token expiry timeline for future refresh
+
+## Action Required
+This task requires human intervention:
+- Log into Rackspace Spot dashboard (https://spot.rackspace.com)
+- Navigate to ORD region clusters
+- Find cluster `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330` (ord-devimprint)
+- Download kubeconfig with appropriate permissions
+- Save to `~/.kube/ord-devimprint.kubeconfig`
+
+As an AI assistant, I cannot access external dashboards or authenticate with third-party services. The user must perform this action manually.
 
 ## References
 - CLAUDE.md: Kubernetes Access section for ord-devimprint
