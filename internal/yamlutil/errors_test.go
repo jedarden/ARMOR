@@ -183,6 +183,8 @@ func TestNewParseError(t *testing.T) {
 		line         int
 		column       int
 		code         ErrorCode
+		expected     string
+		actual       string
 		wantMessage  string
 		wantCode     ErrorCode
 		wantErrorType ErrorType
@@ -194,7 +196,9 @@ func TestNewParseError(t *testing.T) {
 			line:         10,
 			column:       5,
 			code:         ErrCodeInvalidSyntax,
-			wantMessage:  "parse error in config.yaml at line 10: invalid syntax",
+			expected:     "",
+			actual:       "",
+			wantMessage:  "parse error in config.yaml at line 10, column 5: invalid syntax",
 			wantCode:     ErrCodeInvalidSyntax,
 			wantErrorType: ErrorTypeParse,
 		},
@@ -205,6 +209,8 @@ func TestNewParseError(t *testing.T) {
 			line:         3,
 			column:       0,
 			code:         "",
+			expected:     "",
+			actual:       "",
 			wantMessage:  "parse error in test.yaml at line 3: unexpected token",
 			wantCode:     ErrCodeParseError,
 			wantErrorType: ErrorTypeParse,
@@ -216,6 +222,8 @@ func TestNewParseError(t *testing.T) {
 			line:         0,
 			column:       0,
 			code:         ErrCodeParseError,
+			expected:     "",
+			actual:       "",
 			wantMessage:  "parse error in unknown.yaml: file is corrupted",
 			wantCode:     ErrCodeParseError,
 			wantErrorType: ErrorTypeParse,
@@ -227,15 +235,56 @@ func TestNewParseError(t *testing.T) {
 			line:         15,
 			column:       8,
 			code:         ErrCodeInvalidStructure,
-			wantMessage:  "parse error in data.yaml at line 15: unexpected end of file",
+			expected:     "",
+			actual:       "",
+			wantMessage:  "parse error in data.yaml at line 15, column 8: unexpected end of file",
 			wantCode:     ErrCodeInvalidStructure,
+			wantErrorType: ErrorTypeParse,
+		},
+		{
+			name:         "parse error with expected and actual",
+			filePath:     "schema.yaml",
+			message:      "type mismatch",
+			line:         7,
+			column:       12,
+			code:         ErrCodeTypeMismatch,
+			expected:     "string",
+			actual:       "integer",
+			wantMessage:  "parse error in schema.yaml at line 7, column 12: type mismatch (expected: string, actual: integer)",
+			wantCode:     ErrCodeTypeMismatch,
+			wantErrorType: ErrorTypeParse,
+		},
+		{
+			name:         "parse error with only expected",
+			filePath:     "config.yaml",
+			message:      "missing required field",
+			line:         5,
+			column:       0,
+			code:         ErrCodeRequiredField,
+			expected:     "identifier",
+			actual:       "",
+			wantMessage:  "parse error in config.yaml at line 5: missing required field (expected: identifier)",
+			wantCode:     ErrCodeRequiredField,
+			wantErrorType: ErrorTypeParse,
+		},
+		{
+			name:         "parse error with only actual",
+			filePath:     "data.yaml",
+			message:      "unexpected value",
+			line:         20,
+			column:       3,
+			code:         ErrCodeInvalidValue,
+			expected:     "",
+			actual:       "null",
+			wantMessage:  "parse error in data.yaml at line 20, column 3: unexpected value (actual: null)",
+			wantCode:     ErrCodeInvalidValue,
 			wantErrorType: ErrorTypeParse,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewParseError(tt.filePath, tt.message, tt.line, tt.column, tt.code)
+			err := NewParseError(tt.filePath, tt.message, tt.line, tt.column, tt.code, tt.expected, tt.actual)
 
 			// Verify fields are set correctly
 			if err.FilePath != tt.filePath {
@@ -249,6 +298,12 @@ func TestNewParseError(t *testing.T) {
 			}
 			if err.Column != tt.column {
 				t.Errorf("Column = %d, want %d", err.Column, tt.column)
+			}
+			if err.Expected != tt.expected {
+				t.Errorf("Expected = %q, want %q", err.Expected, tt.expected)
+			}
+			if err.Actual != tt.actual {
+				t.Errorf("Actual = %q, want %q", err.Actual, tt.actual)
 			}
 			if err.Code() != tt.wantCode {
 				t.Errorf("Code() = %q, want %q", err.Code(), tt.wantCode)
@@ -432,6 +487,26 @@ func TestValidationErrorString(t *testing.T) {
 				"Location: Line 10, Column 5",
 			},
 		},
+		{
+			name: "validation error with line, field path, and constraint",
+			err: &ValidationError{
+				FilePath:   "app.yaml",
+				Message:    "value out of range",
+				Line:       25,
+				Column:     15,
+				FieldPath:  "database.connectionTimeout",
+				Constraint: "must be between 1-300",
+				ErrorCode:  ErrCodeConstraintViolation,
+				Type:       ErrorTypeConstraint,
+			},
+			wantFields: []string{
+				"Error: value out of range",
+				"Type: constraint",
+				"Location: Line 25, Column 15",
+				"Field: database.connectionTimeout",
+				"Constraint: must be between 1-300",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -446,3 +521,237 @@ func TestValidationErrorString(t *testing.T) {
 	}
 }
 
+
+// TestTypeMismatchErrorFormatting verifies type mismatch errors include expected and actual types
+func TestTypeMismatchErrorFormatting(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         *TypeMismatchError
+		wantMessage string
+		wantContext string
+	}{
+		{
+			name: "type mismatch with line and field path",
+			err: &TypeMismatchError{
+				FilePath:     "config.yaml",
+				FieldPath:    "server.port",
+				ExpectedType: "integer",
+				ActualType:   "string",
+				Value:        "abc",
+				Line:         15,
+			},
+			wantMessage: "type mismatch in config.yaml at line 15, field server.port: expected integer, got string",
+			wantContext: "field: server.port, expected type: integer, actual type: string, value: abc",
+		},
+		{
+			name: "type mismatch without line number",
+			err: &TypeMismatchError{
+				FilePath:     "data.yaml",
+				FieldPath:    "database.timeout",
+				ExpectedType: "integer",
+				ActualType:   "boolean",
+				Value:        "true",
+				Line:         0,
+			},
+			wantMessage: "type mismatch in data.yaml, field database.timeout: expected integer, got boolean",
+			wantContext: "field: database.timeout, expected type: integer, actual type: boolean, value: true",
+		},
+		{
+			name: "type mismatch with nested field path",
+			err: &TypeMismatchError{
+				FilePath:     "app.yaml",
+				FieldPath:    "servers.api.responses[0].statusCode",
+				ExpectedType: "integer",
+				ActualType:   "string",
+				Value:        "\"200\"",
+				Line:         42,
+			},
+			wantMessage: "type mismatch in app.yaml at line 42, field servers.api.responses[0].statusCode: expected integer, got string",
+			wantContext: "field: servers.api.responses[0].statusCode, expected type: integer, actual type: string, value: \"200\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify Error() message
+			errorMsg := tt.err.Error()
+			if errorMsg != tt.wantMessage {
+				t.Errorf("Error() = %q, want %q", errorMsg, tt.wantMessage)
+			}
+
+			// Verify Context() message
+			ctxMsg := tt.err.Context()
+			if ctxMsg != tt.wantContext {
+				t.Errorf("Context() = %q, want %q", ctxMsg, tt.wantContext)
+			}
+
+			// Verify it's recognized as a YAMLError
+			if !IsYAMLError(tt.err) {
+				t.Error("TypeMismatchError should implement YAMLError interface")
+			}
+
+			// Verify error type
+			if tt.err.YAMLErrorType() != ErrorTypeTypeMismatch {
+				t.Errorf("YAMLErrorType() = %q, want %q", tt.err.YAMLErrorType(), ErrorTypeTypeMismatch)
+			}
+
+			// Verify error code
+			if tt.err.Code() != ErrCodeTypeMismatch {
+				t.Errorf("Code() = %q, want %q", tt.err.Code(), ErrCodeTypeMismatch)
+			}
+		})
+	}
+}
+
+// TestConstraintErrorFieldPathFormatting verifies constraint errors include field path
+func TestConstraintErrorFieldPathFormatting(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         *ConstraintError
+		wantMessage string
+		wantContext string
+	}{
+		{
+			name: "constraint error with line and field path",
+			err: &ConstraintError{
+				FilePath:       "config.yaml",
+				FieldPath:      "server.port",
+				ConstraintType: "range",
+				Constraint:     "must be between 1-65535",
+				Value:          "70000",
+				Line:           12,
+			},
+			wantMessage: "constraint violation in config.yaml at line 12, field server.port: must be between 1-65535",
+			wantContext: "field: server.port, constraint: must be between 1-65535, value: 70000",
+		},
+		{
+			name: "constraint error without line number",
+			err: &ConstraintError{
+				FilePath:       "data.yaml",
+				FieldPath:      "api.version",
+				ConstraintType: "pattern",
+				Constraint:     "must match ^v\\d+\\.\\d+$",
+				Value:          "v1",
+				Line:           0,
+			},
+			wantMessage: "constraint violation in data.yaml, field api.version: must match ^v\\d+\\.\\d+$",
+			wantContext: "field: api.version, constraint: must match ^v\\d+\\.\\d+$, value: v1",
+		},
+		{
+			name: "constraint error with nested field path",
+			err: &ConstraintError{
+				FilePath:       "app.yaml",
+				FieldPath:      "database.connectionPool.maxConnections",
+				ConstraintType: "range",
+				Constraint:     "must be between 1-100",
+				Value:          "150",
+				Line:           28,
+			},
+			wantMessage: "constraint violation in app.yaml at line 28, field database.connectionPool.maxConnections: must be between 1-100",
+			wantContext: "field: database.connectionPool.maxConnections, constraint: must be between 1-100, value: 150",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify Error() message
+			errorMsg := tt.err.Error()
+			if errorMsg != tt.wantMessage {
+				t.Errorf("Error() = %q, want %q", errorMsg, tt.wantMessage)
+			}
+
+			// Verify Context() message
+			ctxMsg := tt.err.Context()
+			if ctxMsg != tt.wantContext {
+				t.Errorf("Context() = %q, want %q", ctxMsg, tt.wantContext)
+			}
+
+			// Verify it's recognized as a YAMLError
+			if !IsYAMLError(tt.err) {
+				t.Error("ConstraintError should implement YAMLError interface")
+			}
+
+			// Verify error type
+			if tt.err.YAMLErrorType() != ErrorTypeConstraint {
+				t.Errorf("YAMLErrorType() = %q, want %q", tt.err.YAMLErrorType(), ErrorTypeConstraint)
+			}
+
+			// Verify error code
+			if tt.err.Code() != ErrCodeConstraintViolation {
+				t.Errorf("Code() = %q, want %q", tt.err.Code(), ErrCodeConstraintViolation)
+			}
+		})
+	}
+}
+
+// TestFieldNotFoundErrorFormatting verifies field not found errors include field path
+func TestFieldNotFoundErrorFormatting(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         *FieldNotFoundError
+		wantMessage string
+		wantContext string
+	}{
+		{
+			name: "field not found with line number",
+			err: &FieldNotFoundError{
+				FilePath:  "config.yaml",
+				FieldPath: "database.host",
+				Line:      8,
+			},
+			wantMessage: "required field missing in config.yaml at line 8: database.host",
+			wantContext: "required field not found: database.host",
+		},
+		{
+			name: "field not found without line number",
+			err: &FieldNotFoundError{
+				FilePath:  "data.yaml",
+				FieldPath: "api.endpoint",
+				Line:      0,
+			},
+			wantMessage: "required field missing in data.yaml: api.endpoint",
+			wantContext: "required field not found: api.endpoint",
+		},
+		{
+			name: "field not found with nested field path",
+			err: &FieldNotFoundError{
+				FilePath:  "app.yaml",
+				FieldPath: "servers.api.responses[0].body",
+				Line:      35,
+			},
+			wantMessage: "required field missing in app.yaml at line 35: servers.api.responses[0].body",
+			wantContext: "required field not found: servers.api.responses[0].body",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify Error() message
+			errorMsg := tt.err.Error()
+			if errorMsg != tt.wantMessage {
+				t.Errorf("Error() = %q, want %q", errorMsg, tt.wantMessage)
+			}
+
+			// Verify Context() message
+			ctxMsg := tt.err.Context()
+			if ctxMsg != tt.wantContext {
+				t.Errorf("Context() = %q, want %q", ctxMsg, tt.wantContext)
+			}
+
+			// Verify it's recognized as a YAMLError
+			if !IsYAMLError(tt.err) {
+				t.Error("FieldNotFoundError should implement YAMLError interface")
+			}
+
+			// Verify error type
+			if tt.err.YAMLErrorType() != ErrorTypeFieldNotFound {
+				t.Errorf("YAMLErrorType() = %q, want %q", tt.err.YAMLErrorType(), ErrorTypeFieldNotFound)
+			}
+
+			// Verify error code
+			if tt.err.Code() != ErrCodeRequiredField {
+				t.Errorf("Code() = %q, want %q", tt.err.Code(), ErrCodeRequiredField)
+			}
+		})
+	}
+}
