@@ -66,7 +66,7 @@ pub use syntax_validator::SyntaxValidator;
 pub use syntax_detector::{SyntaxDetector, DelimiterErrorType, IndentationErrorType};
 pub use line_parser::{
     LineType, YamlLine, LineContent, LineParseResult,
-    MappingKeyInfo, detect_mapping_key,
+    MappingKeyInfo, detect_mapping_key, is_comment_line, strip_inline_comment,
 };
 
 // Re-export comprehensive configuration from config module
