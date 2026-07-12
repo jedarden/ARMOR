@@ -763,6 +763,86 @@ key4: value4`,
 	}
 }
 
+// TestBasicIndentationLevelCommentDetection tests comment detection at basic indentation levels.
+// This test covers the acceptance criteria requirement for testing comments at indentation levels 0, 2, 4, 6.
+func TestBasicIndentationLevelCommentDetection(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected bool
+	}{
+		{
+			name:     "zero spaces - comment at start",
+			line:     "# comment",
+			expected: true,
+		},
+		{
+			name:     "zero spaces - comment with text",
+			line:     "# This is a comment",
+			expected: true,
+		},
+		{
+			name:     "two spaces - comment",
+			line:     "  # comment",
+			expected: true,
+		},
+		{
+			name:     "two spaces - comment with text",
+			line:     "  # This is a comment",
+			expected: true,
+		},
+		{
+			name:     "four spaces - comment",
+			line:     "    # comment",
+			expected: true,
+		},
+		{
+			name:     "four spaces - comment with text",
+			line:     "    # This is a comment",
+			expected: true,
+		},
+		{
+			name:     "six spaces - comment",
+			line:     "      # comment",
+			expected: true,
+		},
+		{
+			name:     "six spaces - comment with text",
+			line:     "      # This is a comment",
+			expected: true,
+		},
+		{
+			name:     "zero spaces - not comment",
+			line:     "key: value",
+			expected: false,
+		},
+		{
+			name:     "two spaces - not comment",
+			line:     "  key: value",
+			expected: false,
+		},
+		{
+			name:     "four spaces - not comment",
+			line:     "    key: value",
+			expected: false,
+		},
+		{
+			name:     "six spaces - not comment",
+			line:     "      key: value",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsCommentLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("IsCommentLine(%q) = %v, want %v", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestDeepIndentationLevels tests comments at deeper indentation levels (6, 8, 10, 12 spaces).
 // This test covers the acceptance criteria requirement for testing comments at indentation levels 6, 8, 10, 12.
 func TestDeepIndentationLevels(t *testing.T) {
