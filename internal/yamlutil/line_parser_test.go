@@ -1324,6 +1324,46 @@ monitoring:
 	}
 }
 
+// TestCalculateIndentationTabAndMixedScenarios tests tab-based and mixed tab/space indentation scenarios.
+// This test covers the acceptance criteria requirement for testing tabs and mixed whitespace.
+func TestCalculateIndentationTabAndMixedScenarios(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected int
+	}{
+		{
+			name:     "single tab indentation",
+			line:     "\tcontent",
+			expected: 8, // 1 tab expanded to 8 spaces
+		},
+		{
+			name:     "multiple tabs",
+			line:     "\t\t\tcontent",
+			expected: 24, // 3 tabs * 8 = 24 spaces
+		},
+		{
+			name:     "mixed tabs then spaces",
+			line:     "\t  content",
+			expected: 10, // 1 tab (8) + 2 spaces = 10
+		},
+		{
+			name:     "tabs after spaces",
+			line:     "  \tcontent",
+			expected: 8, // 2 spaces + 1 tab (rounded to next 8-space boundary) = 8
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calculateIndentation(tt.line)
+			if result != tt.expected {
+				t.Errorf("calculateIndentation(%q) = %d, want %d", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestCalculateIndentationVeryLong tests very long indentation edge cases.
 // This test covers the acceptance criteria requirement for testing very long indentation.
 func TestCalculateIndentationVeryLong(t *testing.T) {
