@@ -15,11 +15,48 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Schema represents a YAML schema definition for validation.
+// Schema defines the interface for validating values against a schema.
 //
-// Schema defines the expected structure of YAML documents, including field
+// Schema provides a generic validation interface that can be implemented by
+// different schema types (JSON Schema, YAML Schema, custom validation schemas, etc.)
+// to validate arbitrary values against defined rules and constraints.
+//
+// The Validate method accepts any value type and returns an error if validation
+// fails. Implementations may return schema-specific error types that provide
+// detailed validation failure information.
+//
+// Example usage:
+//
+//	type MySchema struct { ... }
+//	func (s *MySchema) Validate(value interface{}) error { ... }
+//
+//	schema := NewMySchema()
+//	err := schema.Validate(data)
+//	if err != nil {
+//	    return fmt.Errorf("validation failed: %w", err)
+//	}
+type Schema interface {
+	// Validate validates the given value against the schema rules.
+	//
+	// The value parameter can be of any type:
+	//   - Primitive types (string, int, float64, bool, etc.)
+	//   - Struct types for typed validation
+	//   - map[string]interface{} for dynamic YAML/JSON data
+	//   - []interface{} for array validation
+	//   - Any other custom type
+	//
+	// Returns nil if the value conforms to the schema rules.
+	// Returns an error if the value violates any schema constraints.
+	// The error type may provide additional details about the validation failure.
+	Validate(value interface{}) error
+}
+
+// SchemaDefinition represents a YAML schema definition for validation.
+//
+// SchemaDefinition defines the expected structure of YAML documents, including field
 // definitions, type constraints, required fields, and validation rules.
-type Schema struct {
+// This implements the Schema interface.
+type SchemaDefinition struct {
 	// Type specifies the schema format type.
 	Type SchemaType
 
@@ -83,7 +120,7 @@ type FieldDefinition struct {
 
 // SchemaValidator provides schema-based validation for YAML documents.
 type SchemaValidator struct {
-	schema  *Schema
+	schema  Schema
 	config  *ValidatorConfig
 	compiled bool
 }
@@ -92,7 +129,7 @@ type SchemaValidator struct {
 //
 // The validator uses default configuration unless configured otherwise.
 // The schema is compiled on first validation for performance.
-func NewSchemaValidator(schema *Schema) *SchemaValidator {
+func NewSchemaValidator(schema Schema) *SchemaValidator {
 	return &SchemaValidator{
 		schema: schema,
 		config: DefaultValidatorConfig(),
@@ -102,7 +139,7 @@ func NewSchemaValidator(schema *Schema) *SchemaValidator {
 // NewSchemaValidatorWithConfig creates a new schema validator with custom configuration.
 //
 // The configuration controls validation strictness and behavior.
-func NewSchemaValidatorWithConfig(schema *Schema, config *ValidatorConfig) *SchemaValidator {
+func NewSchemaValidatorWithConfig(schema Schema, config *ValidatorConfig) *SchemaValidator {
 	return &SchemaValidator{
 		schema: schema,
 		config: config,
@@ -117,7 +154,7 @@ func NewSchemaValidatorWithConfig(schema *Schema, config *ValidatorConfig) *Sche
 // - Field type correctness
 // - Constraint satisfaction (min, max, pattern, allowed values)
 // - Nested structure validation
-func (sv *SchemaValidator) Validate(data map[string]interface{}) SchemaValidationResult {
+func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult {
 	result := SchemaValidationResult{
 		Valid:                true,
 		Errors:               []SchemaValidationError{},
@@ -129,7 +166,7 @@ func (sv *SchemaValidator) Validate(data map[string]interface{}) SchemaValidatio
 
 	// Compile schema if not already compiled
 	if !sv.compiled {
-		if err := sv.schema.Validate(); err != nil {
+		if err := sv.compileSchema(); err != nil {
 			result.Valid = false
 			result.Errors = append(result.Errors, SchemaValidationError{
 				Message: fmt.Sprintf("Invalid schema: %v", err),
@@ -139,8 +176,28 @@ func (sv *SchemaValidator) Validate(data map[string]interface{}) SchemaValidatio
 		sv.compiled = true
 	}
 
-	// Validate root fields
-	sv.validateFields(data, sv.schema.RootFields, "", &result)
+	// Validate data against schema
+	if err := sv.schema.Validate(data); err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, SchemaValidationError{
+			Message: fmt.Sprintf("Validation failed: %v", err),
+		})
+		return result
+	}
+
+	// For SchemaDefinition, do detailed field validation
+	if schemaDef, ok := sv.schema.(*SchemaDefinition); ok {
+		// Convert data to map if needed
+		dataMap, ok := data.(map[string]interface{})
+		if !ok {
+			result.Valid = false
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message: fmt.Sprintf("Expected map[string]interface{}, got %T", data),
+			})
+			return result
+		}
+		sv.validateFields(dataMap, schemaDef.RootFields, "", &result)
+	}
 
 	// Set overall valid flag
 	result.Valid = !result.HasErrors()
@@ -184,6 +241,14 @@ func (sv *SchemaValidator) ValidateFile(filePath string) SchemaValidationResult 
 
 	// Validate against schema
 	return sv.Validate(data)
+}
+
+// compileSchema compiles and validates the schema definition.
+func (sv *SchemaValidator) compileSchema() error {
+	if schemaDef, ok := sv.schema.(*SchemaDefinition); ok {
+		return schemaDef.Compile()
+	}
+	return nil
 }
 
 // validateFields validates data fields against their definitions.
@@ -512,8 +577,8 @@ func (sv *SchemaValidator) joinPath(prefix, component string) string {
 
 // LoadSchema loads a schema definition from a file.
 //
-// Supports JSON and YAML schema files. Returns a compiled Schema object.
-func LoadSchema(schemaPath string) (*Schema, error) {
+// Supports JSON and YAML schema files. Returns a compiled SchemaDefinition object.
+func LoadSchema(schemaPath string) (*SchemaDefinition, error) {
 	// Read file content
 	content, err := os.ReadFile(schemaPath)
 	if err != nil {
@@ -550,7 +615,7 @@ func LoadSchema(schemaPath string) (*Schema, error) {
 	}
 
 	// Build schema from parsed data
-	schema, err := buildSchemaFromData(data)
+	schemaDef, err := buildSchemaFromData(data)
 	if err != nil {
 		return nil, &SchemaError{
 			Message:  fmt.Sprintf("Failed to build schema: %v", err),
@@ -558,15 +623,23 @@ func LoadSchema(schemaPath string) (*Schema, error) {
 		}
 	}
 
-	return schema, nil
+	// Compile the schema
+	if err := schemaDef.Compile(); err != nil {
+		return nil, &SchemaError{
+			Message:  fmt.Sprintf("Failed to compile schema: %v", err),
+			FilePath: schemaPath,
+		}
+	}
+
+	return schemaDef, nil
 }
 
-// buildSchemaFromData constructs a Schema from parsed data.
-func buildSchemaFromData(data map[string]interface{}) (*Schema, error) {
-	schema := &Schema{
+// buildSchemaFromData constructs a SchemaDefinition from parsed data.
+func buildSchemaFromData(data map[string]interface{}) (*SchemaDefinition, error) {
+	schema := &SchemaDefinition{
 		Type:          SchemaTypeJSON,
 		RootFields:    make(map[string]*FieldDefinition),
-		NestedSchemas: make(map[string]*Schema),
+		NestedSchemas: make(map[string]*SchemaDefinition),
 		definitions:   make(map[string]*FieldDefinition),
 	}
 
@@ -655,16 +728,16 @@ func buildFieldDefinition(data map[string]interface{}) (*FieldDefinition, error)
 	return fieldDef, nil
 }
 
-// Validate checks if the schema definition itself is valid.
-func (s *Schema) Validate() error {
+// Compile checks if the schema definition itself is valid and compiles it for use.
+func (s *SchemaDefinition) Compile() error {
 	if s == nil {
-		return fmt.Errorf("schema is nil")
+		return NewSchemaLoadError("", "schema is nil", nil, ErrCodeSchemaInvalid)
 	}
 
 	// Validate root fields
 	for fieldName, fieldDef := range s.RootFields {
 		if fieldDef == nil {
-			return fmt.Errorf("field %s has nil definition", fieldName)
+			return NewValidationError("", fmt.Sprintf("field %s has nil definition", fieldName), fieldName, "", ErrCodeSchemaInvalid, 0, 0, ErrorTypeSchemaValidate, "")
 		}
 		if err := s.validateFieldDefinition(fieldDef, fieldName); err != nil {
 			return err
@@ -674,8 +747,253 @@ func (s *Schema) Validate() error {
 	return nil
 }
 
+// Validate validates data against the schema definition.
+//
+// This method satisfies the Schema interface. It validates the given value
+// against the schema rules and returns an error if validation fails.
+//
+// The value parameter can be of any type but should typically be
+// map[string]interface{} for YAML/JSON data validation.
+func (s *SchemaDefinition) Validate(value interface{}) error {
+	if value == nil {
+		return fmt.Errorf("value cannot be nil")
+	}
+
+	// Convert to map if needed
+	data, ok := value.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("expected map[string]interface{}, got %T", value)
+	}
+
+	// Validate root fields
+	for fieldName, fieldDef := range s.RootFields {
+		if fieldDef.Required {
+			if _, exists := data[fieldName]; !exists {
+				return fmt.Errorf("missing required field: %s", fieldName)
+			}
+		}
+
+		// Validate existing field
+		if fieldValue, exists := data[fieldName]; exists {
+			if err := s.validateField(fieldValue, fieldDef, fieldName); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateField validates a single field value against its definition.
+func (s *SchemaDefinition) validateField(value interface{}, fieldDef *FieldDefinition, fieldPath string) error {
+	// Type validation
+	if !s.validateType(value, fieldDef.Type) {
+		return fmt.Errorf("type mismatch at %s: expected %s, got %T", fieldPath, fieldDef.Type, value)
+	}
+
+	// Constraint validation
+	if err := s.validateConstraints(value, fieldDef, fieldPath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateType checks if a value matches the expected type.
+func (s *SchemaDefinition) validateType(value interface{}, expectedType string) bool {
+	if expectedType == "" || expectedType == "any" {
+		return true
+	}
+
+	switch expectedType {
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "int", "integer":
+		switch value.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			return true
+		default:
+			return false
+		}
+	case "float", "number":
+		switch value.(type) {
+		case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			return true
+		default:
+			return false
+		}
+	case "bool", "boolean":
+		_, ok := value.(bool)
+		return ok
+	case "array", "list":
+		_, ok := value.([]interface{})
+		return ok
+	case "object", "map":
+		_, ok := value.(map[string]interface{})
+		return ok
+	default:
+		return true // Unknown type, accept
+	}
+}
+
+// validateConstraints checks if a value satisfies its constraints.
+func (s *SchemaDefinition) validateConstraints(value interface{}, fieldDef *FieldDefinition, fieldPath string) error {
+	// Min constraint
+	if fieldDef.Min != nil {
+		if !s.checkMinConstraint(value, *fieldDef.Min) {
+			return fmt.Errorf("value violates minimum constraint %d at %s", *fieldDef.Min, fieldPath)
+		}
+	}
+
+	// Max constraint
+	if fieldDef.Max != nil {
+		if !s.checkMaxConstraint(value, *fieldDef.Max) {
+			return fmt.Errorf("value violates maximum constraint %d at %s", *fieldDef.Max, fieldPath)
+		}
+	}
+
+	// Pattern constraint
+	if fieldDef.Pattern != "" {
+		if strVal, ok := value.(string); ok {
+			matched, err := regexp.MatchString(fieldDef.Pattern, strVal)
+			if err != nil || !matched {
+				return fmt.Errorf("value does not match pattern '%s' at %s", fieldDef.Pattern, fieldPath)
+			}
+		}
+	}
+
+	// Allowed values constraint
+	if len(fieldDef.AllowedValues) > 0 {
+		if !s.isAllowedValue(value, fieldDef.AllowedValues) {
+			return fmt.Errorf("value %v not in allowed list %v at %s", value, fieldDef.AllowedValues, fieldPath)
+		}
+	}
+
+	return nil
+}
+
+// checkMinConstraint checks if a value satisfies the minimum constraint.
+func (s *SchemaDefinition) checkMinConstraint(value interface{}, min int) bool {
+	switch v := value.(type) {
+	case int:
+		return v >= min
+	case int8:
+		return int(v) >= min
+	case int16:
+		return int(v) >= min
+	case int32:
+		return int(v) >= min
+	case int64:
+		return int(v) >= min
+	case uint:
+		return int(v) >= min
+	case uint8:
+		return int(v) >= min
+	case uint16:
+		return int(v) >= min
+	case uint32:
+		return int(v) >= min
+	case uint64:
+		return int(v) >= min
+	case float32:
+		return float64(v) >= float64(min)
+	case float64:
+		return v >= float64(min)
+	case string:
+		return len(v) >= min
+	case []interface{}:
+		return len(v) >= min
+	case map[string]interface{}:
+		return len(v) >= min
+	default:
+		return true
+	}
+}
+
+// checkMaxConstraint checks if a value satisfies the maximum constraint.
+func (s *SchemaDefinition) checkMaxConstraint(value interface{}, max int) bool {
+	switch v := value.(type) {
+	case int:
+		return v <= max
+	case int8:
+		return int(v) <= max
+	case int16:
+		return int(v) <= max
+	case int32:
+		return int(v) <= max
+	case int64:
+		return int(v) <= max
+	case uint:
+		return int(v) <= max
+	case uint8:
+		return int(v) <= max
+	case uint16:
+		return int(v) <= max
+	case uint32:
+		return int(v) <= max
+	case uint64:
+		return int(v) <= max
+	case float32:
+		return float64(v) <= float64(max)
+	case float64:
+		return v <= float64(max)
+	case string:
+		return len(v) <= max
+	case []interface{}:
+		return len(v) <= max
+	case map[string]interface{}:
+		return len(v) <= max
+	default:
+		return true
+	}
+}
+
+// isAllowedValue checks if a value is in the allowed values list.
+func (s *SchemaDefinition) isAllowedValue(value interface{}, allowed []interface{}) bool {
+	for _, allowedVal := range allowed {
+		if s.valuesEqual(value, allowedVal) {
+			return true
+		}
+	}
+	return false
+}
+
+// valuesEqual compares two values for equality.
+func (s *SchemaDefinition) valuesEqual(a, b interface{}) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	// Type-specific comparison
+	switch va := a.(type) {
+	case string:
+		if vb, ok := b.(string); ok {
+			return va == vb
+		}
+	case int:
+		if vb, ok := b.(int); ok {
+			return va == vb
+		}
+	case float64:
+		if vb, ok := b.(float64); ok {
+			return va == vb
+		}
+	case bool:
+		if vb, ok := b.(bool); ok {
+			return va == vb
+		}
+	}
+
+	// Fallback to interface equality
+	return a == b
+}
+
 // validateFieldDefinition validates a single field definition.
-func (s *Schema) validateFieldDefinition(fieldDef *FieldDefinition, fieldName string) error {
+func (s *SchemaDefinition) validateFieldDefinition(fieldDef *FieldDefinition, fieldName string) error {
 	// Check type is valid
 	if fieldDef.Type != "" {
 		validTypes := map[string]bool{
