@@ -1,34 +1,27 @@
-# Bead bf-1h60y: Decode SECRET_ACCESS_KEY from base64
+# Bead bf-1h60y - Cannot Complete: Prerequisite Failure
 
-## Status: FAILED - Prerequisite Failure
+## Task
+Decode base64-encoded SECRET_ACCESS_KEY from LITESTREAM_SECRET_ACCESS_KEY
 
-## Issue
-
-The prerequisite bead bf-3llc7 was supposed to retrieve the base64-encoded `LITESTREAM_SECRET_ACCESS_KEY`, but it created an **empty file**:
-
-```
--rw-r--r-- 1 coding users 0 Jul 12 10:35 /tmp/litestream_secret_key_encoded.b64
-```
-
-## Verification
-
-1. Encoded file exists: ✓ `/tmp/litestream_secret_key_encoded.b64` exists
-2. Encoded file is non-empty: ✗ **File is 0 bytes**
-3. Decoding result: ✗ **Decoded file is also 0 bytes** (empty input produces empty output)
+## Blocker
+Prerequisite bead bf-3llc7 failed to retrieve the encoded key. The encoded file `/tmp/litestream_secret_key_encoded.b64` is empty.
 
 ## Root Cause
+The ord-devimprint cluster is only accessible via read-only kubectl-proxy (http://kubectl-proxy-ord-devimprint:8001), which uses the devpod-observer ServiceAccount. This SA explicitly denies access to secrets:
 
-The prerequisite bead bf-3llc7 did not successfully retrieve the secret. Possible causes:
-- ExternalSecret not synced/available
-- Infrastructure access blocked secret retrieval
-- OpenBao/kubectl access failure
+```
+Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
+```
 
-## Acceptance Criteria Status
+## Available Access Methods
+- **Read-only proxy:** `kubectl --server=http://kubectl-proxy-ord-devimprint:8001` - Cannot access secrets
+- **Read-write kubeconfig:** Does not exist for ord-devimprint (only iad-ci and iad-acb have kubeconfigs)
 
-- ❌ Successfully decoded the base64-encoded SECRET_ACCESS_KEY to plain text
-- ❌ Decoded value is saved to a temporary file
-- ❌ File exists and contains non-empty decoded text
+## Required Resolution
+To complete this task, one of the following is needed:
+1. A read-write kubeconfig for ord-devimprint cluster
+2. Elevated permissions for devpod-observer SA to access secrets in devimprint namespace
+3. An alternative method to retrieve the secret value
 
-## Next Steps
-
-This bead cannot complete until bf-3llc7 is fixed to retrieve an actual non-empty encoded secret.
+## Status
+Bead bf-1h60y cannot be closed due to unresolved prerequisite failure.
