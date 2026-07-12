@@ -825,29 +825,17 @@ func TestYAMLParseError_ErrorMethod(t *testing.T) {
 	}{
 		{
 			name: "error with line and column",
-			err: &YAMLParseError{
-				FilePath: "test.yaml",
-				Line:     5,
-				Column:   10,
-				Message:  "unexpected token",
-			},
+			err: NewYAMLParseError("test.yaml", "unexpected token", 5, 10, nil),
 			wantMsg: "line 5, column 10",
 		},
 		{
 			name: "error with line only",
-			err: &YAMLParseError{
-				FilePath: "test.yaml",
-				Line:     3,
-				Message:  "invalid structure",
-			},
+			err: NewYAMLParseError("test.yaml", "invalid structure", 3, 0, nil),
 			wantMsg: "line 3",
 		},
 		{
 			name: "error without location",
-			err: &YAMLParseError{
-				FilePath: "test.yaml",
-				Message:  "general error",
-			},
+			err: NewYAMLParseError("test.yaml", "general error", 0, 0, nil),
 			wantMsg: "YAML syntax error",
 		},
 	}
@@ -866,11 +854,7 @@ func TestYAMLParseError_ErrorMethod(t *testing.T) {
 func TestYAMLParseError_Unwrap(t *testing.T) {
 	underlyingErr := errors.New("underlying yaml error")
 
-	parseErr := &YAMLParseError{
-		FilePath: "test.yaml",
-		Message:  "parse error",
-		RawError: underlyingErr,
-	}
+	parseErr := NewYAMLParseError("test.yaml", "parse error", 0, 0, underlyingErr)
 
 	unwrapped := parseErr.Unwrap()
 	if unwrapped != underlyingErr {
@@ -878,11 +862,7 @@ func TestYAMLParseError_Unwrap(t *testing.T) {
 	}
 
 	// Test nil RawError
-	parseErrNil := &YAMLParseError{
-		FilePath: "test.yaml",
-		Message:  "parse error",
-		RawError: nil,
-	}
+	parseErrNil := NewYAMLParseError("test.yaml", "parse error", 0, 0, nil)
 
 	unwrappedNil := parseErrNil.Unwrap()
 	if unwrappedNil != nil {
