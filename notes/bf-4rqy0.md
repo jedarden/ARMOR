@@ -156,5 +156,59 @@ Before this bead can be completed:
 2. Obtain kubeconfig with secret access OR modify ExternalSecret to include correct properties
 3. Re-validate the bead task specification matches the actual infrastructure
 
+## Re-verification (2026-07-12 00:18 UTC)
+
+### ExternalSecret Specification Analysis
+
+Re-examined the `armor-writer` ExternalSecret specification in detail:
+
+```yaml
+spec:
+  data:
+  - remoteRef:
+      key: rs-manager/ord-devimprint/armor-writer
+      property: auth-access-key
+    secretKey: auth-access-key
+  - remoteRef:
+      key: rs-manager/ord-devimprint/armor-writer
+      property: auth-secret-key
+    secretKey: auth-secret-key
+```
+
+**Critical Finding**: The ExternalSecret specification does NOT include any reference to `LITESTREAM_ACCESS_KEY_ID` or similar Litestream-related properties. Only two keys are being synced from OpenBao:
+1. `auth-access-key` (OpenBao property) → `auth-access-key` (Kubernetes secret key)
+2. `auth-secret-key` (OpenBao property) → `auth-secret-key` (Kubernetes secret key)
+
+### Implications
+
+The bead task specifies retrieving `LITESTREAM_ACCESS_KEY_ID` from the `armor-writer` secret, but this key:
+1. Does not exist in the ExternalSecret specification
+2. Cannot be synced from OpenBao (no remoteRef for it)
+3. Will not exist in the resulting Kubernetes secret
+
+### Conclusion
+
+This is a **specification mismatch** between the bead task requirements and the actual ExternalSecret configuration. Before the validation can proceed, one of the following must occur:
+
+1. **Update the ExternalSecret** in `declarative-config` to include the Litestream properties:
+   ```yaml
+   - remoteRef:
+       key: rs-manager/ord-devimprint/armor-writer
+       property: litestream-access-key-id  # or actual OpenBao property name
+     secretKey: LITESTREAM_ACCESS_KEY_ID
+   ```
+
+2. **Update the bead task** to reference the correct property names that match the ExternalSecret spec
+
+3. **Determine the correct secret** - Litestream credentials might be stored in a different ExternalSecret/secret entirely
+
+### ExternalSecret Status (Confirmed)
+- Name: `armor-writer`
+- Namespace: `devimprint`
+- Status: Ready (True)
+- Reason: SecretSynced
+- Last refresh: 2026-07-11T23:21:25Z
+- Synced properties: `auth-access-key`, `auth-secret-key` only
+
 ## Timestamp
-2026-07-11 (re-verification)
+2026-07-12 00:18 UTC - Configuration mismatch confirmed; ExternalSecret does not include LITESTREAM_ACCESS_KEY_ID property
