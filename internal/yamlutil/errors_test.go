@@ -40,7 +40,7 @@ func TestIsYAMLError(t *testing.T) {
 		},
 		{
 			name:     "SchemaValidationError returns true",
-			err:      &SchemaValidationError{FilePath: "test.yaml"},
+			err:      NewSchemaValidationError("test.yaml", "", "", "", "", "", 0, ""),
 			expected: true,
 		},
 	}
@@ -88,7 +88,7 @@ func TestGetYAMLErrorType(t *testing.T) {
 		},
 		{
 			name:     "SchemaValidationError returns ErrorTypeSchemaValidate",
-			err:      &SchemaValidationError{FilePath: "test.yaml"},
+			err:      NewSchemaValidationError("test.yaml", "", "", "", "", "", 0, ""),
 			expected: ErrorTypeSchemaValidate,
 		},
 		{
