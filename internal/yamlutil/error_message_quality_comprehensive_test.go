@@ -374,7 +374,7 @@ func TestAllErrorCategoriesHaveQualityMessages(t *testing.T) {
 			{
 				name: "file not found",
 				createErr: func() error {
-					return NewFileError("missing.yaml", "read", "no such file or directory", ErrCodeFileIOError)
+					return NewFileError("missing.yaml", "read", "no such file or directory", os.ErrNotExist)
 				},
 				checks: []string{"file", "missing.yaml"},
 			},
