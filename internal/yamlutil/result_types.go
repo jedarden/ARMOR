@@ -665,6 +665,40 @@ func (svr SchemaValidationResult) ErrorSummary() string {
 	return sb.String()
 }
 
+// ErrorCount returns the total number of validation errors.
+func (svr SchemaValidationResult) ErrorCount() int {
+	count := len(svr.Errors)
+	count += len(svr.MissingRequiredFields)
+	count += len(svr.TypeMismatches)
+	count += len(svr.ConstraintViolations)
+	return count
+}
+
+// String returns a formatted string representation of the validation result.
+func (svr SchemaValidationResult) String() string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("SchemaValidationResult{File: %s, Valid: %v", svr.FilePath, svr.Valid))
+
+	if svr.HasErrors() {
+		sb.WriteString(fmt.Sprintf(", Errors: %d", svr.ErrorCount()))
+	}
+
+	if svr.HasWarnings() {
+		sb.WriteString(fmt.Sprintf(", Warnings: %d", len(svr.Warnings)))
+	}
+
+	if svr.SchemaInfo != nil {
+		sb.WriteString(fmt.Sprintf(", Schema: %s", svr.SchemaInfo.SchemaName))
+		if svr.SchemaInfo.SchemaVersion != "" {
+			sb.WriteString(fmt.Sprintf(" v%s", svr.SchemaInfo.SchemaVersion))
+		}
+	}
+
+	sb.WriteString("}")
+	return sb.String()
+}
+
 // ProcessingResult represents the result of a complete YAML processing pipeline.
 //
 // ProcessingResult combines results from parsing, validation, and processing
