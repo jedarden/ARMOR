@@ -1,0 +1,40 @@
+=== Comprehensive Execution Summary ===
+Bead ID: bf-3jus
+Timestamp: 20260712-132102
+Log directory: /home/coding/ARMOR/logs/pluck-debug
+
+📊 File Statistics:
+  Stdout: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-3jus-stdout-20260712-132102.log
+    Size: 0 bytes
+    Lines: 0
+  Stderr: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-3jus-stderr-20260712-132102.log
+    Size: 12099 bytes
+    Lines: 86
+  Monitor: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-3jus-monitor-20260712-132102.log
+    Checks: 480
+
+🚨 Error Analysis:
+  Errors: 9
+  Warnings: 1
+  Fatal: 0
+0
+  Panic: 0
+0
+
+  Sample errors:
+    - 2026-07-12T17:21:02.968914Z DEBUG needle::sanitize: skipping invalid allowlist regex rule="global-allowlist" error=regex parse error:
+    - error: repetition operator missing expression pattern=^\$(?:\d+|{\d+})$
+    - 2026-07-12T17:21:02.968974Z DEBUG needle::sanitize: skipping invalid allowlist regex rule="global-allowlist" error=regex parse error:
+    - error: repetition quantifier expects a valid decimal pattern=^\${(?:[A-Z_]+|[a-z_]+)}$
+    - 2026-07-12T17:21:03.355337Z DEBUG needle::sanitize: skipping invalid allowlist regex rule_id=curl-auth-user error=regex parse error:
+
+🔄 Progress Indicators Found:
+  No stdout output available
+
+📈 Critical Status:
+
+=== Monitoring Complete ===
+
+📋 Summary Report Generated: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-3jus-summary-20260712-132102.log
+📋 Progress Tracking: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-3jus-progress-20260712-132102.txt
+📋 Monitor Log: /home/coding/ARMOR/logs/pluck-debug/pluck-debug-bf-3jus-monitor-20260712-132102.log
