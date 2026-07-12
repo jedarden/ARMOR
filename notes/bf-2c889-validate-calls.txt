@@ -1,0 +1,11 @@
+./src/parsers/config.rs:662:        self.config.validate()?;
+./src/parsers/config.rs:1007:        self.config.validate()?;
+./src/parsers/config.rs:1202:        assert!(config.validate().is_ok());
+./src/parsers/config.rs:1205:        assert!(strict_config.validate().is_ok());
+./src/parsers/config.rs:1216:        assert!(config.validate().is_err());
+./src/parsers/config.rs:1224:        assert!(config2.validate().is_err());
+./src/parsers/config.rs:1232:        assert!(config3.validate().is_err());
+./src/parsers/config.rs:1297:        assert!(config.validate().is_ok());
+./src/parsers/config.rs:1300:        assert!(strict_config.validate().is_ok());
+./src/parsers/config.rs:1312:        assert!(config.validate().is_err());
+./src/parsers/config.rs:1320:        assert!(config2.validate().is_err());
