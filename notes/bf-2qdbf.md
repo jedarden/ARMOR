@@ -5,6 +5,8 @@ Update Validate() callers in internal/yamlutil/schema.go to handle YAMLError ret
 
 ## Verification Result
 
+**Status**: ✅ COMPLETE (Verified 2026-07-12)
+
 All Validate() and Compile() callers in schema.go **already properly handle YAMLError**. The implementation was completed across three prior beads on 2026-07-12.
 
 ### Call Sites Verified
@@ -103,3 +105,21 @@ Test output confirms proper error code extraction:
 ## Conclusion
 
 The task was already completed. The Validate() callers in schema.go properly handle YAMLError return type according to the acceptance criteria.
+
+---
+
+## Re-verification (2026-07-12)
+
+Current code inspection confirms all three call sites maintain proper YAMLError handling:
+
+1. **SchemaValidator.Validate()** (line 208): Type assertion with ErrorCode extraction
+2. **compileSchema()** (line 287): Error wrapping with fmt.Errorf
+3. **LoadSchema()** (line 675): SchemaError wrapping with FilePath context
+
+All patterns follow the updated Validate() implementation with proper:
+- `if err != nil` nil checks
+- Type assertion `if yamlErr, ok := err.(YAMLError); ok`
+- Context preservation with meaningful error messages
+- Compilation verified with no errors
+
+**Bead Status**: Previously closed and verified complete.
