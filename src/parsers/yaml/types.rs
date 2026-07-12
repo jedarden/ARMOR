@@ -558,6 +558,8 @@ pub struct ValidationError {
     pub message: String,
     /// Line number where the error occurred (1-indexed)
     pub line: Option<usize>,
+    /// Indentation error type (if this is an indentation error)
+    pub indentation_error_type: Option<crate::parsers::yaml::syntax_detector::IndentationErrorType>,
 }
 
 impl ValidationError {
@@ -567,12 +569,19 @@ impl ValidationError {
             path: path.into(),
             message: message.into(),
             line: None,
+            indentation_error_type: None,
         }
     }
 
     /// Set the line number for this error
     pub fn with_line(mut self, line: usize) -> Self {
         self.line = Some(line);
+        self
+    }
+
+    /// Set the indentation error type for this error
+    pub fn with_indentation_error_type(mut self, error_type: crate::parsers::yaml::syntax_detector::IndentationErrorType) -> Self {
+        self.indentation_error_type = Some(error_type);
         self
     }
 }
