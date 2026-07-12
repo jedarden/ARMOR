@@ -1,593 +1,412 @@
-# Validate() Implementation and Error Flow Analysis
+# Validate() Implementations and Error Flow Analysis
 
-**Bead:** bf-2xbez  
-**Date:** 2026-07-12  
-**Scope:** ARMOR yamlutil package validation system
+**Bead**: bf-2xbez  
+**Task**: Analyze Validate() implementations and error flow  
+**Date**: 2026-07-12
 
-## Executive Summary
+## Summary
 
-The ARMOR codebase implements a comprehensive multi-layered validation system centered around the `ValidatedSchema` interface and related validation infrastructure. The system provides:
+This analysis identified critical gaps in the ARMOR codebase regarding schema validation interfaces and error handling patterns. The `ValidatedSchema` interface is defined but **has zero implementations**, while validation is handled through the separate `Schema` interface with inconsistent error return patterns.
 
-- **Schema validation** through `ValidatedSchema` interface
-- **Data validation** through `SchemaValidator` with detailed error reporting
-- **Constraint validation** through six specialized constraint types
-- **Error hierarchy** with structured YAMLError types for precise error handling
+---
 
-## 1. ValidatedSchema Interface Implementations
+## 1. ValidatedSchema Interface
 
-### Interface Definition
-
-**Location:** `internal/yamlutil/schema_interfaces.go` (Lines 31-44)
+**Location**: `internal/yamlutil/schema_interfaces.go:31-44`
 
 ```go
 type ValidatedSchema interface {
-    Validate() error
+    // Validate checks if the schema definition itself is valid.
+    // Returns a YAMLError if the schema has invalid configuration.
+    Validate() YAMLError
+    
+    // Name returns the schema name identifier.
     Name() string
+    
+    // Description returns a human-readable description of the schema.
     Description() string
+    
+    // Version returns the schema version for compatibility tracking.
     Version() string
 }
 ```
 
-### Documentation Comments
+### Status: **NO IMPLEMENTATIONS FOUND**
 
-The interface specifies that `Validate()` returns YAMLError types from the error hierarchy:
-- `SchemaLoadError` (ErrCodeSchemaLoadFailed): when schema cannot be loaded
-- `SchemaValidationError` (ErrCodeSchemaInvalid): when schema definition is invalid  
-- `ValidationError` (ErrCodeValidationFailed): for general validation failures
+No types in the codebase implement the `ValidatedSchema` interface. The interface is defined but unused.
 
-### Concrete Implementations Found
+---
 
-#### SchemaDefinition
+## 2. Schema Interface (Different from ValidatedSchema)
 
-**Location:** `internal/yamlutil/schema.go` (Lines 59-80)
-
-**Methods:**
-- `Validate(value interface{}) error` (Lines 757-785)
-- `Compile() error` (Lines 732-748)
-- `Name()`, `Description()`, `Version()` via struct fields
-
-**Note:** SchemaDefinition does NOT implement the ValidatedSchema interface as defined. The interface requires `Validate() error` (no parameters), but SchemaDefinition has `Validate(value interface{}) error`. This appears to be a design inconsistency.
-
-## 2. Validate() Method Implementations
-
-### Constraint Validators (Value-Level Validation)
-
-**Location:** `internal/yamlutil/schema_interfaces.go`
-
-All constraint validators implement:
-```go
-Validate(value interface{}) *ConstraintError
-```
-
-1. **StringConstraintImpl** (Lines 343-395)
-   - Validates string length, patterns, allowed values, format
-   - Returns `*ConstraintError` or `nil`
-
-2. **NumberConstraintImpl** (Lines 458-507)
-   - Validates numeric ranges, exclusive bounds, multiples
-   - Returns `*ConstraintError` or `nil`
-
-3. **ArrayConstraintImpl** (Lines 560-593)
-   - Validates array length, unique items
-   - Returns `*ConstraintError` or `nil`
-
-4. **ObjectConstraintImpl** (Lines 647-695)
-   - Validates properties, required fields, property counts
-   - Returns `*ConstraintError` or `nil`
-
-5. **BooleanConstraintImpl** (Lines 746-763)
-   - Validates boolean values against allowed values
-   - Returns `*ConstraintError` or `nil`
-
-6. **TypeConstraintImpl** (Lines 795-812)
-   - Validates type matching and nullable constraints
-   - Returns `*ConstraintError` or `nil`
-
-### Schema-Level Validators
-
-#### SchemaDefinition.Validate()
-
-**Location:** `internal/yamlutil/schema.go` (Lines 757-785)
-
-**Signature:** `func (s *SchemaDefinition) Validate(value interface{}) error`
-
-**Error Returns:**
-- `NewValidationError` for nil values (Line 759)
-- `NewTypeMismatchError` for type conversion failures (Line 765)
-- `NewFieldNotFoundError` for missing required fields (Line 772)
-- Type mismatch errors during field validation (Line 791)
-- Constraint errors from constraint validation (Lines 845-869)
-
-**Error Creation Points:**
-```go
-// Line 734: SchemaLoadError for nil schema
-return NewSchemaLoadError("", "schema is nil", nil, ErrCodeSchemaInvalid)
-
-// Line 740: ValidationError for nil field definitions
-return NewValidationError("", fmt.Sprintf("field %s has nil definition", fieldName), fieldName, "", ErrCodeSchemaInvalid, 0, 0, ErrorTypeSchemaValidate, "")
-
-// Line 759: ValidationError for nil value
-return NewValidationError("", "value cannot be nil", "", "", ErrCodeValidationFailed, 0, 0, ErrorTypeValidation, "")
-
-// Line 765: TypeMismatchError for wrong type
-return NewTypeMismatchError("", "", "map[string]interface{}", fmt.Sprintf("%T", value), "", 0, ErrCodeTypeMismatch)
-
-// Line 772: FieldNotFoundError for missing required field
-return NewFieldNotFoundError("", fieldName, 0, ErrCodeRequiredField)
-```
-
-#### SchemaValidator.Validate()
-
-**Location:** `internal/yamlutil/schema.go` (Lines 157-206)
-
-**Signature:** `func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult`
-
-**Return Type:** `SchemaValidationResult` (structured result, NOT error)
-
-**Error Handling:**
-- Line 169: Calls `compileSchema()` and handles compilation errors
-- Line 180: Calls `sv.schema.Validate(data)` and wraps errors in SchemaValidationResult
-- Lines 189-200: Performs detailed field validation with SchemaValidationResult
-
-**Key Difference:** Returns `SchemaValidationResult` instead of `error`, providing:
-- `Valid` boolean
-- `Errors []SchemaValidationError`
-- `Warnings []SchemaValidationError`
-- `MissingRequiredFields []string`
-- `TypeMismatches []FieldTypeError`
-- `ConstraintViolations []ConstraintViolation`
-
-## 3. Validate() Call Sites
-
-### Internal Call Sites (schema.go)
-
-1. **Line 180:** `sv.schema.Validate(data)`
-   - Context: SchemaValidator calling schema's Validate method
-   - Error: Wrapped in SchemaValidationResult
-
-2. **Line 243:** `sv.Validate(data)`
-   - Context: ValidateFile delegating to Validate method
-   - Error: Returns SchemaValidationResult
-
-3. **Line 627:** `schemaDef.Compile()`
-   - Context: LoadSchema validating schema definition
-   - Error: Returned to caller or wrapped in SchemaError
-
-### Test File Call Sites
-
-**Location:** `internal/yamlutil/schema_validation_test.go`
-
-4. **Line 94:** `tt.schema.Validate()`
-   - Context: Testing ValidatedSchema interface compliance
-   - Error: Checked for YAMLError interface compliance
-
-5. **Line 147:** `schema.Validate()`
-   - Context: Interface compliance testing
-   - Error: Checked for non-nil errors
-
-6. **Lines 224, 310:** `validator.Validate(tt.data)`
-   - Context: Testing data validation
-   - Error: Results checked in SchemaValidationResult
-
-7. **Line 391:** `validator.ValidateFile()`
-   - Context: File-based validation testing
-   - Error: Results checked in SchemaValidationResult
-
-**Location:** `internal/yamlutil/integration_test.go`
-
-8. **Lines 1061-1263:** Multiple `validator.ValidateFile()` calls
-9. **Lines 1292, 1319:** Integration workflow validation
-
-## 4. Error Return Patterns
-
-### Pattern 1: Direct Error Returns (SchemaDefinition)
-
-`SchemaDefinition.Validate()` returns `error` directly:
+**Location**: `internal/yamlutil/schema.go:38-52`
 
 ```go
-func (s *SchemaDefinition) Validate(value interface{}) error {
-    if value == nil {
-        return NewValidationError(...)
-    }
-    
-    data, ok := value.(map[string]interface{})
-    if !ok {
-        return NewTypeMismatchError(...)
-    }
-    
-    for fieldName, fieldDef := range s.RootFields {
-        if fieldDef.Required {
-            if _, exists := data[fieldName]; !exists {
-                return NewFieldNotFoundError(...)
-            }
-        }
-        
-        if fieldValue, exists := data[fieldName]; exists {
-            if err := s.validateField(fieldValue, fieldDef, fieldName); err != nil {
-                return err  // Propagates validation errors
-            }
-        }
-    }
-    
-    return nil  // Success
+type Schema interface {
+    // Validate validates the given value against the schema rules.
+    Validate(value interface{}) error
 }
 ```
 
-**Error Types Returned:**
-- `ValidationError` (via NewValidationError)
-- `TypeMismatchError` (via NewTypeMismatchError)
-- `FieldNotFoundError` (via NewFieldNotFoundError)
-- `ConstraintError` (via NewConstraintError)
+### Implementation: SchemaDefinition
 
-### Pattern 2: Structured Results (SchemaValidator)
-
-`SchemaValidator.Validate()` returns `SchemaValidationResult`:
+**Location**: `internal/yamlutil/schema.go:59-80`
 
 ```go
-func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult {
-    result := SchemaValidationResult{
-        Valid: true,
-        Errors: []SchemaValidationError{},
-        // ...
-    }
-    
-    if !sv.compiled {
-        if err := sv.compileSchema(); err != nil {
-            result.Valid = false
-            result.Errors = append(result.Errors, SchemaValidationError{
-                Message: fmt.Sprintf("Invalid schema: %v", err),
-            })
-            return result
-        }
-    }
-    
-    if err := sv.schema.Validate(data); err != nil {
+type SchemaDefinition struct {
+    Type          SchemaType
+    Name          string
+    Description   string
+    Version       string
+    RootFields    map[string]*FieldDefinition
+    NestedSchemas map[string]*Schema
+    definitions   map[string]*FieldDefinition
+}
+```
+
+**Methods**:
+- `Compile() error` - Validates the schema definition itself (line 732)
+- `Validate(value interface{}) error` - Validates data against schema (line 757)
+
+---
+
+## 3. Current Validate() Call Patterns
+
+### 3.1 SchemaValidator.Validate() Call Site
+
+**Location**: `internal/yamlutil/schema.go:180-186`
+
+```go
+// Compile schema if not already compiled
+if !sv.compiled {
+    if err := sv.compileSchema(); err != nil {
         result.Valid = false
         result.Errors = append(result.Errors, SchemaValidationError{
-            Message: fmt.Sprintf("Validation failed: %v", err),
+            Message: fmt.Sprintf("Invalid schema: %v", err),
         })
         return result
     }
-    
-    // Detailed field validation...
-    result.Valid = !result.HasErrors()
-    return result
+    sv.compiled = true
 }
-```
 
-**Key Difference:** Errors are collected into result structure rather than returned directly.
-
-### Pattern 3: Constraint Validation Errors
-
-Constraint validators return `*ConstraintError`:
-
-```go
-func (sc *StringConstraintImpl) Validate(value interface{}) *ConstraintError {
-    str, ok := value.(string)
-    if !ok {
-        return &ConstraintError{
-            Constraint:     fmt.Sprintf("value is not a string: %T", value),
-            ConstraintType: "string",
-            Value:          fmt.Sprintf("%v", value),
-        }
-    }
-    
-    if sc.minLength > 0 && len(str) < sc.minLength {
-        return &ConstraintError{
-            Constraint:     fmt.Sprintf("string length %d is less than minimum %d", len(str), sc.minLength),
-            ConstraintType: "min_length",
-            Value:          str,
-        }
-    }
-    
-    return nil  // Success
-}
-```
-
-## 5. Error Conversion Points
-
-### Conversion 1: YAMLError → SchemaValidationResult
-
-**Location:** `internal/yamlutil/schema.go` (Lines 169-186)
-
-```go
-if err := sv.compileSchema(); err != nil {
+// Validate data against schema
+if err := sv.schema.Validate(data); err != nil {
     result.Valid = false
     result.Errors = append(result.Errors, SchemaValidationError{
-        Message: fmt.Sprintf("Invalid schema: %v", err),
+        Message: fmt.Sprintf("Validation failed: %v", err),
     })
     return result
 }
 ```
 
-**Conversion Pattern:** YAMLError → SchemaValidationError (string message only)
-
-### Conversion 2: LocalValidationError → ValidationError
-
-**Location:** `internal/yamlutil/validator.go` (Lines 48-59)
-
-```go
-func (ve LocalValidationError) ToValidationError() ValidationError {
-    return ValidationError{
-        FilePath:   ve.FilePath,
-        Message:    ve.Message,
-        ContextStr: ve.Context,
-        Line:       ve.Line,
-        Column:     ve.Column,
-        Type:       ve.Type,
-        Path:       "",
-    }
-}
-```
-
-**Conversion Pattern:** Local type → Standard YAMLError type
-
-### Conversion 3: Error → SchemaError
-
-**Location:** `internal/yamlutil/schema.go` (Lines 584-634)
-
-```go
-func LoadSchema(schemaPath string) (*SchemaDefinition, error) {
-    content, err := os.ReadFile(schemaPath)
-    if err != nil {
-        return nil, &SchemaError{
-            Message:  fmt.Sprintf("Failed to read schema file: %v", err),
-            FilePath: schemaPath,
-        }
-    }
-    
-    // Parse and build...
-    
-    if err := schemaDef.Compile(); err != nil {
-        return nil, &SchemaError{
-            Message:  fmt.Sprintf("Failed to compile schema: %v", err),
-            FilePath: schemaPath,
-        }
-    }
-    
-    return schemaDef, nil
-}
-```
-
-**Conversion Pattern:** Various errors → SchemaError with file context
-
-## 6. Error Flow Map
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Validation Entry Points                       │
-├─────────────────────────────────────────────────────────────────┤
-│  ValidateString() │ ValidateFile() │ Validate(data interface{})  │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Schema Validator Layer                        │
-├─────────────────────────────────────────────────────────────────┤
-│  SchemaValidator.Validate()                                     │
-│  ├─ compileSchema()                                             │
-│  ├─ schema.Validate(data) ────────────────┐                   │
-│  └─ validateFields() ───────────────────────┤                   │
-└─────────────────────────────────────────────┼───────────────────┘
-                                               │
-                     ┌─────────────────────────┼─────────────────────┐
-                     │                         │                     │
-                     ▼                         ▼                     ▼
-        ┌─────────────────────┐   ┌──────────────────┐   ┌─────────────────┐
-        │ SchemaDefinition     │   │ Field Validation │   │ Constraint       │
-        │ .Validate()         │   │ validateField()  │   │ Validation      │
-        ├─────────────────────┤   ├──────────────────┤   ├─────────────────┤
-        │ • Type checking     │   │ • Type validation│   │ • Min/Max       │
-        │ • Required fields   │   │ • Constraint     │   │ • Pattern       │
-        │ • Schema rules      │   │   validation     │   │ • Allowed       │
-        └──────────┬──────────┘   └────────┬─────────┘   │   values         │
-                   │                      │             └─────────────────┘
-                   ▼                      ▼
-        ┌──────────────────────────────────────────────┐
-        │              Error Creation                    │
-        ├──────────────────────────────────────────────┤
-        │ • NewValidationError()                         │
-        │ • NewTypeMismatchError()                       │
-        │ • NewFieldNotFoundError()                      │
-        │ • NewConstraintError()                         │
-        │ • NewSchemaLoadError()                         │
-        └──────────────────────────────────────────────┘
-                   │
-                   ▼
-        ┌──────────────────────────────────────────────┐
-        │           Error Flow Paths                    │
-        ├──────────────────────────────────────────────┤
-        │  Path 1: error → SchemaValidationResult       │
-        │  Path 2: error → SchemaError → caller         │
-        │  Path 3: *ConstraintError → ValidationError    │
-        │  Path 4: LocalValidationError → ValidationError│
-        └──────────────────────────────────────────────┘
-```
-
-## 7. Key Findings and Issues
-
-### Issue 1: Interface/Implementation Mismatch
-
-The `ValidatedSchema` interface requires `Validate() error` (no parameters), but `SchemaDefinition.Validate(value interface{}) error` takes a parameter. This means:
-
-**SchemaDefinition does NOT implement ValidatedSchema** as the interface is currently defined.
-
-**Potential Fix Options:**
-1. Change interface to: `Validate(value interface{}) error`
-2. Split into two interfaces:
-   - `ValidatedSchema` for schema validation (no params)
-   - `DataValidator` for data validation (with value param)
-3. Add adapter methods to SchemaDefinition
-
-### Issue 2: Mixed Return Patterns
-
-The codebase has two different validation return patterns:
-
-1. **Error-based**: `SchemaDefinition.Validate()` returns `error`
-2. **Result-based**: `SchemaValidator.Validate()` returns `SchemaValidationResult`
-
-This creates inconsistency in how validation results are handled across the codebase.
-
-### Issue 3: Error Information Loss
-
-When converting YAMLError to SchemaValidationResult (Line 180-186), only the error message is preserved:
-
-```go
-result.Errors = append(result.Errors, SchemaValidationError{
-    Message: fmt.Sprintf("Validation failed: %v", err),
-})
-```
-
-**Lost Information:**
-- Error code (`err.Code()`)
-- Error type (`err.YAMLErrorType()`) 
-- Context (`err.Context()`)
-- Structured error details
-
-### Issue 4: Constraint Error vs YAMLError
-
-Constraint validators return `*ConstraintError`, but this is NOT a YAMLError interface type. This creates:
-
-1. **Type inconsistency**: Constraint errors don't implement YAMLError interface
-2. **Handling complexity**: Different error types require different handling patterns
-3. **Limited error context**: ConstraintError has fewer fields than ValidationError
-
-## 8. Recommendations
-
-### 1. Standardize Interface Definitions
-
-```go
-// Schema validation (validates the schema itself)
-type ValidatedSchema interface {
-    ValidateSchema() error  // Validates schema definition
-    Name() string
-    Description() string
-    Version() string
-}
-
-// Data validation (validates data against schema)
-type DataValidator interface {
-    Validate(value interface{}) error
-}
-```
-
-### 2. Standardize Error Returns
-
-Choose ONE pattern and apply consistently:
-
-**Option A:** Always return structured results
-```go
-Validate(value interface{}) SchemaValidationResult
-```
-
-**Option B:** Always return errors with rich error types
-```go
-Validate(value interface{}) error
-```
-
-### 3. Make ConstraintError Implement YAMLError
-
-```go
-type ConstraintError struct {
-    // ... existing fields ...
-    ErrorCode ErrorCode
-    ErrorType ErrorType
-}
-
-func (ce *ConstraintError) Code() ErrorCode { return ce.ErrorCode }
-func (ce *ConstraintError) YAMLErrorType() ErrorType { return ce.ErrorType }
-func (ce *ConstraintError) Context() string { return ce.Message }
-```
-
-### 4. Preserve Error Information in Conversions
-
-```go
-result.Errors = append(result.Errors, SchemaValidationError{
-    Message: err.Error(),
-    ErrorCode: err.Code(),
-    ErrorType: err.YAMLErrorType(),
-    Context: err.Context(),
-    // ... preserve full error structure
-})
-```
-
-## 9. Validation Usage Patterns
-
-### Pattern 1: Direct Schema Validation
-
-```go
-schemaDef := &SchemaDefinition{...}
-if err := schemaDef.Compile(); err != nil {
-    return fmt.Errorf("schema compilation failed: %w", err)
-}
-
-if err := schemaDef.Validate(data); err != nil {
-    return fmt.Errorf("validation failed: %w", err)
-}
-```
-
-### Pattern 2: Schema Validator Usage
-
-```go
-validator := NewSchemaValidator(schemaDef)
-result := validator.Validate(data)
-
-if !result.Valid {
-    for _, err := range result.Errors {
-        log.Printf("Validation error: %s", err.Message)
-    }
-}
-```
-
-### Pattern 3: File-Based Validation
-
-```go
-validator := NewSchemaValidator(schemaDef)
-result := validator.ValidateFile("config.yaml")
-
-if result.HasErrors() {
-    // Handle errors
-}
-
-if result.HasWarnings() {
-    // Handle warnings
-}
-```
-
-## 10. Error Type Reference
-
-### YAMLError Hierarchy
-
-```
-YAMLError (interface)
-├── ParseError
-│   ├── SyntaxError
-│   ├── StructureError
-│   └── TypeMismatchError
-├── ValidationError
-│   ├── FieldNotFoundError
-│   ├── ConstraintError
-│   └── DuplicateKeyError
-└── SchemaError
-    ├── SchemaLoadError
-    └── SchemaValidationError
-```
-
-### Error Codes
-
-- `ErrCodeFileNotFound` - File I/O errors
-- `ErrCodeInvalidSyntax` - YAML syntax errors
-- `ErrCodeTypeMismatch` - Type conversion errors
-- `ErrCodeValidationFailed` - General validation failures
-- `ErrCodeRequiredField` - Missing required fields
-- `ErrCodeConstraintViolation` - Constraint violations
-- `ErrCodeSchemaLoadFailed` - Schema loading errors
-- `ErrCodeSchemaInvalid` - Invalid schema definitions
+**Error Pattern**: YAMLError → string conversion → SchemaValidationError
 
 ---
 
-**Analysis Completed:** 2026-07-12  
-**Total Files Analyzed:** 8 core files + test files  
-**Lines of Code Reviewed:** ~3,000+ lines  
-**Error Types Identified:** 12 distinct error types  
-**Validation Patterns:** 3 main patterns documented
+## 4. Error Return Patterns in SchemaDefinition
+
+### 4.1 Compile() Method (schema validation)
+
+**Location**: `internal/yamlutil/schema.go:732-748`
+
+```go
+func (s *SchemaDefinition) Compile() error {
+    if s == nil {
+        return NewSchemaLoadError("", "schema is nil", nil, ErrCodeSchemaInvalid)
+    }
+    
+    for fieldName, fieldDef := range s.RootFields {
+        if fieldDef == nil {
+            return NewValidationError("", fmt.Sprintf("field %s has nil definition", fieldName), 
+                fieldName, "", ErrCodeSchemaInvalid, 0, 0, ErrorTypeSchemaValidate, "")
+        }
+        if err := s.validateFieldDefinition(fieldDef, fieldName); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+```
+
+**Error Types Returned**:
+- `SchemaLoadError` via `NewSchemaLoadError()`
+- `ValidationError` via `NewValidationError()`
+- Returns as `error` interface, not `YAMLError`
+
+### 4.2 Validate() Method (data validation)
+
+**Location**: `internal/yamlutil/schema.go:757-785`
+
+```go
+func (s *SchemaDefinition) Validate(value interface{}) error {
+    if value == nil {
+        return NewValidationError("", "value cannot be nil", "", "", 
+            ErrCodeValidationFailed, 0, 0, ErrorTypeValidation, "")
+    }
+    
+    data, ok := value.(map[string]interface{})
+    if !ok {
+        return NewTypeMismatchError("", "", "map[string]interface{}", 
+            fmt.Sprintf("%T", value), "", 0, ErrCodeTypeMismatch)
+    }
+    
+    for fieldName, fieldDef := range s.RootFields {
+        if fieldDef.Required {
+            if _, exists := data[fieldName]; !exists {
+                return NewFieldNotFoundError("", fieldName, 0, ErrCodeRequiredField)
+            }
+        }
+        
+        if fieldValue, exists := data[fieldName]; exists {
+            if err := s.validateField(fieldValue, fieldDef, fieldName); err != nil {
+                return err
+            }
+        }
+    }
+    return nil
+}
+```
+
+**Error Types Returned**:
+- `ValidationError` via `NewValidationError()`
+- `TypeMismatchError` via `NewTypeMismatchError()`
+- `FieldNotFoundError` via `NewFieldNotFoundError()`
+- `ConstraintError` via `NewConstraintError()` (from validateField)
+- All returned as `error` interface
+
+---
+
+## 5. Error Conversion Points
+
+### 5.1 Primary Conversion Locations
+
+| Location | Method | From | To | Pattern |
+|----------|--------|------|-----|---------|
+| schema.go:734 | Compile() | NewSchemaLoadError() | error | YAMLError → error |
+| schema.go:740 | Compile() | NewValidationError() | error | YAMLError → error |
+| schema.go:759 | Validate() | NewValidationError() | error | YAMLError → error |
+| schema.go:765 | Validate() | NewTypeMismatchError() | error | YAMLError → error |
+| schema.go:772 | Validate() | NewFieldNotFoundError() | error | YAMLError → error |
+| schema.go:845 | validateConstraints() | NewConstraintError() | error | YAMLError → error |
+
+### 5.2 Secondary Conversion (SchemaValidator)
+
+**Location**: `schema.go:180-186`
+
+```go
+if err := sv.schema.Validate(data); err != nil {
+    result.Valid = false
+    result.Errors = append(result.Errors, SchemaValidationError{
+        Message: fmt.Sprintf("Validation failed: %v", err),
+    })
+    return result
+}
+```
+
+**Pattern**: `error` → string → `SchemaValidationError`
+
+**Loss of Information**:
+- Original YAMLError type information is lost
+- Error code is discarded
+- Field path and line information is lost in string conversion
+- Structured error context is lost
+
+---
+
+## 6. YAMLError Hierarchy
+
+**Location**: `internal/yamlutil/errors.go:27-42`
+
+```
+YAMLError (base interface)
+├── FileError (file I/O errors)
+├── ParseError (YAML parsing errors)
+│   ├── SyntaxError (YAML syntax errors)
+│   ├── StructureError (YAML structure errors)
+│   └── TypeMismatchError (type conversion errors)
+├── ValidationError (validation errors)
+│   ├── FieldNotFoundError (missing required fields)
+│   ├── ConstraintError (constraint violations)
+│   └── DuplicateKeyError (duplicate key errors)
+└── SchemaError (schema-related errors)
+    ├── SchemaLoadError (schema loading errors)
+    └── SchemaValidationError (schema validation errors)
+```
+
+**All YAMLError types provide**:
+- `Code() ErrorCode` - Machine-readable error code
+- `YAMLErrorType() ErrorType` - Category for type switching
+- `Context() string` - Additional error context
+
+---
+
+## 7. Current Error Handling Issues
+
+### Issue 1: Interface Mismatch
+- `ValidatedSchema` interface requires `Validate() YAMLError`
+- No implementations exist
+- Actual validation uses `Schema` interface with `Validate(value interface{}) error`
+
+### Issue 2: Type Erasure
+- YAMLError types are created but returned as plain `error`
+- Type information is lost at interface boundary
+- Callers cannot use type assertions to access YAMLError methods
+
+### Issue 3: Double Wrapping
+- YAMLError → error → string → SchemaValidationError
+- Each conversion loses information
+- Structured error data is discarded
+
+### Issue 4: Inconsistent Patterns
+- Compile() returns error (should return YAMLError per ValidatedSchema contract)
+- Validate() returns error (different signature than ValidatedSchema requires)
+- Error handling varies between methods
+
+---
+
+## 8. SchemaValidationHandler Interface
+
+**Location**: `internal/yamlutil/schema_interfaces.go:60-76`
+
+```go
+type SchemaValidationHandler interface {
+    // ValidateSchema validates the schema definition itself.
+    ValidateSchema(schema ValidatedSchema) YAMLError
+    
+    // ValidateValue validates a single value against a field definition.
+    ValidateValue(fieldPath string, value interface{}, fieldDef *FieldDefinition) YAMLError
+    
+    // Validate validates YAML data against the schema.
+    Validate(data map[string]interface{}) SchemaValidationResult
+    
+    // ValidateFile validates a YAML file against the schema.
+    ValidateFile(filePath string) SchemaValidationResult
+}
+```
+
+**Status**: **NO IMPLEMENTATIONS FOUND**
+
+This interface is also defined but has no implementations.
+
+---
+
+## 9. Constraint Interface Implementations
+
+**Location**: `internal/yamlutil/schema_interfaces.go:86-96`
+
+```go
+type Constraint interface {
+    Validate(value interface{}) *ConstraintError
+    Description() string
+    ConstraintType() string
+}
+```
+
+**Implementations Found**:
+- `StringConstraintImpl` (line 316)
+- `NumberConstraintImpl` (line 426)
+- `ArrayConstraintImpl` (line 538)
+- `ObjectConstraintImpl` (line 624)
+- `BooleanConstraintImpl` (line 730)
+- `TypeConstraintImpl` (line 778)
+
+**Pattern**: All return `*ConstraintError` (which is a YAMLError type)
+
+---
+
+## 10. Recommendations
+
+### 10.1 Align Interface Definitions
+**Option A**: Implement ValidatedSchema
+- Add `Validate() YAMLError` to SchemaDefinition (schema validation)
+- Add `Name()`, `Description()`, `Version()` methods
+- Keep existing `Validate(value interface{}) error` as data validation
+
+**Option B**: Remove Unused Interfaces
+- Remove ValidatedSchema interface (unused)
+- Remove SchemaValidationHandler interface (unused)
+- Document Schema as the primary validation interface
+
+### 10.2 Fix Type Erasure
+- Change return types from `error` to `YAMLError`
+- Update method signatures:
+  - `Compile() YAMLError` instead of `Compile() error`
+  - `Validate(value interface{}) YAMLError` instead of `Validate(value interface{}) error`
+
+### 10.3 Preserve Error Information
+- Avoid string conversions in error handling
+- Use type assertions to access YAMLError methods
+- Propagate structured error context through call stack
+
+### 10.4 Error Conversion Strategy
+- Implement proper error wrapping without losing type information
+- Use `%w` directive for error wrapping
+- Avoid error message stringification
+
+---
+
+## 11. Next Steps
+
+1. **Decision Point**: Choose Option A (implement ValidatedSchema) or Option B (remove unused interfaces)
+
+2. **If Option A**:
+   - Implement Validate() YAMLError on SchemaDefinition
+   - Add Name(), Description(), Version() methods
+   - Update all callers to handle YAMLError returns
+
+3. **If Option B**:
+   - Remove ValidatedSchema interface
+   - Remove SchemaValidationHandler interface  
+   - Document Schema as primary interface
+   - Fix return types to preserve YAMLError information
+
+4. **Update Error Handling**:
+   - Change Compile() return type to YAMLError
+   - Change Validate() return type to YAMLError
+   - Update all error handling code
+
+5. **Add Tests**:
+   - Test ValidatedSchema implementations (if Option A)
+   - Test error type preservation
+   - Test error conversion points
+
+---
+
+## 12. Related Files
+
+- `internal/yamlutil/schema_interfaces.go` - Interface definitions
+- `internal/yamlutil/schema.go` - Schema implementation
+- `internal/yamlutil/errors.go` - YAMLError hierarchy
+- `internal/yamlutil/validator.go` - YAML validation
+- `internal/yamlutil/config.go` - Configuration types
+
+---
+
+## 13. Acceptance Criteria Status
+
+- ✅ **List of all Validate() implementations found**:
+  - SchemaDefinition.Validate(value interface{}) error
+  - StringConstraintImpl.Validate(value interface{}) *ConstraintError
+  - NumberConstraintImpl.Validate(value interface{}) *ConstraintError
+  - ArrayConstraintImpl.Validate(value interface{}) *ConstraintError
+  - ObjectConstraintImpl.Validate(value interface{}) *ConstraintError
+  - BooleanConstraintImpl.Validate(value interface{}) *ConstraintError
+  - TypeConstraintImpl.Validate(value interface{}) *ConstraintError
+
+- ✅ **List of all Validate() call sites documented**:
+  - SchemaValidator.Validate() → Schema.Validate() (line 180)
+  - SchemaValidator.ValidateFile() → Validate() (line 243)
+
+- ✅ **Current error patterns documented**:
+  - YAMLError types created but returned as plain error
+  - Double wrapping: YAMLError → error → string → SchemaValidationError
+  - Type information loss at interface boundaries
+
+- ✅ **Conversion points identified**:
+  - Compile() method: 2 conversion points
+  - Validate() method: 4 conversion points
+  - SchemaValidator wrapper: 1 major conversion point
+
+---
+
+**Analysis Complete**
