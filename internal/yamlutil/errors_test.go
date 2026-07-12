@@ -35,7 +35,7 @@ func TestIsYAMLError(t *testing.T) {
 		},
 		{
 			name:     "FileError returns true",
-			err:      &FileError{Path: "test.yaml"},
+			err:      NewFileError("test.yaml", "", "", nil),
 			expected: true,
 		},
 		{
@@ -83,7 +83,7 @@ func TestGetYAMLErrorType(t *testing.T) {
 		},
 		{
 			name:     "FileError returns ErrorTypeFile",
-			err:      &FileError{Path: "test.yaml"},
+			err:      NewFileError("test.yaml", "", "", nil),
 			expected: ErrorTypeFile,
 		},
 		{
