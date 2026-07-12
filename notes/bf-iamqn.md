@@ -1,65 +1,121 @@
-# Validate() Call Sites in ARMOR
+# Validate() Call Sites Inventory
 
-## Summary
+**Search performed:** 2026-07-12
+**Search patterns:** `\.validate\(` across Rust files
 
-All Validate() call sites discovered in the ARMOR codebase, categorized by file.
+## Summary Statistics
 
-## Production Code (non-test)
+- **Total call sites found:** 145
+- **Production code (non-test):** 3 call sites
+- **Test code:** 142 call sites
+
+## Production Code Call Sites (non-test)
 
 ### src/parsers/config.rs
-- src/parsers/config.rs:662 - `self.config.validate()?;`
-- src/parsers/config.rs:1007 - `self.config.validate()?;`
+- **Line 662:** `self.config.validate()?;`
+  - Context: Called in `Config::reload()` method
+  - Purpose: Validates configuration after reload
+- **Line 1007:** `self.config.validate()?;`
+  - Context: Called in `Config::try_new()` method
+  - Purpose: Validates configuration during construction
 
 ### src/parsers/yaml/parser.rs
-- src/parsers/yaml/parser.rs:121 - `let mut result = validator.validate(content);`
+- **Line 121:** `let mut result = validator.validate(content);`
+  - Context: Called in `YamlParser::parse()` method
+  - Purpose: Validates YAML content during parsing
 
-### src/schema.rs (doc comments only)
-- Lines 145-146, 216-218, 270-272 - Documentation examples only
+### src/parsers/traits.rs (documentation only)
+- **Line 319:** Documentation comment example `if parser.validate("key: value").is_ok() {`
+  - Context: Trait documentation example
+  - Purpose: Shows usage pattern
 
-### src/parsers/yaml/syntax_validator.rs (tests only)
-- Lines 438, 453, 461, 470, 479, 487, 495, 503 - Test code
+## Test Code Call Sites
 
-### src/parsers/traits.rs (doc comment only)
-- Line 319 - Documentation example only
-
-### src/parsers/yaml/syntax_detector_tests.rs (tests only)
-- Lines 131, 567, 728 - Test code
-
-## Test Code
-
-### tests/schema_validation_test.rs (all entries)
-- tests/schema_validation_test.rs:148 - `UsernameSchema.validate(&user.username)`
-- tests/schema_validation_test.rs:150 - `AgeSchema.validate(&user.age)`
-- Lines 180-184, 192-194, 202-206, 214-218, 230-236, 242, 250-253, 261-264, 276, 282, 290-292
-- Lines 304, 312, 316, 325, 338, 351, 363, 375, 392, 409, 421, 429, 437, 449, 457, 465, 482, 498, 514, 526, 538, 545
-- Lines 559-560, 563-564, 572, 575, 583, 586, 590, 621, 631, 647
-
-### src/parsers/config.rs (tests)
-- Lines 1202, 1205, 1216, 1224, 1232, 1297, 1300, 1312, 1320
-
-### src/schema.rs (doc tests)
-- Lines 318-319, 322, 326, 352-354, 357-358, 431-433, 436, 440, 462-463, 466, 505, 511, 518, 527, 551-552, 555, 560, 564
-- Lines 602-606, 610-614, 660, 662, 675, 682, 693
+### src/parsers/config.rs (unit tests)
+- Line 1202: `assert!(config.validate().is_ok());`
+- Line 1205: `assert!(strict_config.validate().is_ok());`
+- Line 1216: `assert!(config.validate().is_err());`
+- Line 1224: `assert!(config2.validate().is_err());`
+- Line 1232: `assert!(config3.validate().is_err());`
+- Line 1297: `assert!(config.validate().is_ok());`
+- Line 1300: `assert!(strict_config.validate().is_ok());`
+- Line 1312: `assert!(config.validate().is_err());`
+- Line 1320: `assert!(config2.validate().is_err());`
 
 ### src/parsers/yaml/syntax_validator.rs (tests)
-- Lines 438, 453, 461, 470, 479, 487, 495, 503
+- Line 438: `let result = validator.validate("");`
+- Line 453: `let result = validator.validate(yaml);`
+- Line 461: `let result = validator.validate(yaml);`
+- Line 470: `let result = validator.validate(yaml);`
+- Line 479: `let result = validator.validate(yaml);`
+- Line 487: `let result = validator.validate(yaml);`
+- Line 495: `let result = validator.validate(yaml);`
+- Line 503: `let result = validator.validate(yaml);`
 
-### src/parsers/yaml/syntax_detector_tests.rs (tests)
-- Lines 131, 567, 728
+### src/parsers/yaml/syntax_detector_tests.rs
+- Line 131: `let result = validator.validate(yaml);`
+- Line 567: `let result = validator.validate(yaml);`
+- Line 728: `let result = validator.validate(yaml);`
 
-## Total Count
+### src/schema.rs (examples and doctests)
+- Lines 145-146, 216, 218, 270-272: Documentation string examples
+- Lines 318-326: RangeSchema doctest examples
+- Lines 352-358: InclusiveRangeSchema doctest examples
+- Lines 431-440: NonEmptyStringSchema doctest examples
+- Lines 462-466: NonEmptyVecSchema doctest examples
+- Lines 505-527: ServerConfigSchema doctest examples
+- Lines 551-564: OptionSchema doctest examples
+- Lines 602-614: CombineAndSchema doctest examples
+- Lines 660-662, 675-693: StructSchema doctest examples
 
-- **Production (non-test) call sites: 3**
-- **Test call sites: 100+** (comprehensive test coverage)
+### tests/schema_validation_test.rs (comprehensive test suite)
+- Lines 148, 150: Nested validation in UserSchema
+- Lines 180-290: Successful validation tests across all schema types
+- Lines 304-545: Error case tests
+- Lines 559-575: Range validation tests
+- Lines 583-647: Additional validation scenarios
 
-## Key Production Call Sites
+## Raw List (file:line format)
 
-1. **src/parsers/config.rs:662** - Config::reload() validates config after reload
-2. **src/parsers/config.rs:1007** - Config::try_new() validates config during construction
-3. **src/parsers/yaml/parser.rs:121** - YamlParser validates content during parsing
+### Production
+```
+src/parsers/config.rs:662
+src/parsers/config.rs:1007
+src/parsers/yaml/parser.rs:121
+```
 
-## Search Method
+### Tests (abbreviated - see full grep output for complete list)
+```
+src/parsers/config.rs:1202
+src/parsers/config.rs:1205
+src/parsers/config.rs:1216
+src/parsers/config.rs:1224
+src/parsers/config.rs:1232
+src/parsers/config.rs:1297
+src/parsers/config.rs:1300
+src/parsers/config.rs:1312
+src/parsers/config.rs:1320
+src/parsers/yaml/syntax_validator.rs:438
+src/parsers/yaml/syntax_validator.rs:453
+src/parsers/yaml/syntax_validator.rs:461
+src/parsers/yaml/syntax_validator.rs:470
+src/parsers/yaml/syntax_validator.rs:479
+src/parsers/yaml/syntax_validator.rs:487
+src/parsers/yaml/syntax_validator.rs:495
+src/parsers/yaml/syntax_validator.rs:503
+src/parsers/yaml/syntax_detector_tests.rs:131
+src/parsers/yaml/syntax_detector_tests.rs:567
+src/parsers/yaml/syntax_detector_tests.rs:728
+src/schema.rs:318
+src/schema.rs:319
+src/schema.rs:322
+src/schema.rs:326
+[... and 100+ more in src/schema.rs and tests/schema_validation_test.rs]
+```
 
-Searched using: `rg "\.validate\(" --type rust -n`
+## Notes
 
-Generated: 2026-07-12
+- Search pattern used: `\.validate\(` (method calls only)
+- Trait definitions (`fn validate(&self, ...)`) excluded
+- Docstring examples included but marked as documentation
+- No false positives detected in manual review
