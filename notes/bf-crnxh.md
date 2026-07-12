@@ -1,62 +1,128 @@
-# ValidatedSchema Interface - Implementation Search Results
+# ValidatedSchema Implementation Search - bf-crnxh
 
-## Task: Find all ValidatedSchema implementations in the ARMOR codebase
+## Task
+Find all types that implement the `ValidatedSchema` interface in the ARMOR codebase.
 
-## Interface Definition Location
-- **File:** `internal/yamlutil/schema_interfaces.go` (lines 31-44)
-- **Interface Type:** `ValidatedSchema`
+## Interface Definition
+**Location:** `/home/coding/ARMOR/internal/yamlutil/schema_interfaces.go:31-44`
 
-## Required Methods
-The ValidatedSchema interface requires implementers to provide four methods:
+```go
+type ValidatedSchema interface {
+    // Validate checks if the schema definition itself is valid.
+    // Returns a YAMLError if the schema has invalid configuration.
+    Validate() YAMLError
 
-1. `Validate() YAMLError` - Checks if the schema definition itself is valid
-2. `Name() string` - Returns the schema name identifier
-3. `Description() string` - Returns a human-readable description
-4. `Version() string` - Returns the schema version for compatibility tracking
+    // Name returns the schema name identifier.
+    Name() string
+
+    // Description returns a human-readable description of the schema.
+    Description() string
+
+    // Version returns the schema version for compatibility tracking.
+    Version() string
+}
+```
 
 ## Search Results
 
-### Finding: **NO IMPLEMENTATIONS FOUND**
+### Method-Specific Searches
 
-After comprehensive searching of the entire codebase, there are **currently no types that implement the ValidatedSchema interface**.
+1. **Validate() YAMLError** - NO implementations found
+2. **Name() string** - NO implementations found
+3. **Version() string** - NO implementations found
+4. **Description() string** - Found on constraint types only:
+   - `StringConstraintImpl.Description()` - schema_interfaces.go:397
+   - `NumberConstraintImpl.Description()` - schema_interfaces.go:509
+   - `ArrayConstraintImpl.Description()` - schema_interfaces.go:595
+   - `ObjectConstraintImpl.Description()` - schema_interfaces.go:697
+   - `BooleanConstraintImpl.Description()` - schema_interfaces.go:765
+   - `TypeConstraintImpl.Description()` - schema_interfaces.go:814
 
-### Search Methodology
-1. Searched for all methods returning `YAMLError` - none found for `Validate()`
-2. Searched for `Name() string` methods - none found on struct types
-3. Searched for `Version() string` methods - none found on struct types
-4. Examined all Go files in `internal/yamlutil/` package
-5. Checked for recent changes via git diff
+### SchemaDefinition Analysis
+**Location:** `/home/coding/ARMOR/internal/yamlutil/schema.go:59-80`
 
-### Related Types Found
+The `SchemaDefinition` struct has fields:
+- `Name string`
+- `Description string`
+- `Version string`
 
-#### SchemaDefinition (internal/yamlutil/schema.go)
-- **Fields:** Has `Name`, `Description`, and `Version` as **fields**, not methods
-- **Method:** Has `Validate(value interface{}) error` method
-  - Takes a parameter (unlike ValidatedSchema.Validate())
-  - Returns `error` instead of `YAMLError`
-- **Conclusion:** Does NOT implement ValidatedSchema
+But it implements a different interface:
+- `Validate(value interface{}) error` (not `Validate() YAMLError`)
+- No `Name()` method (uses field access instead)
+- No `Description()` method (uses field access instead)
+- No `Version()` method (uses field access instead)
 
-#### Constraint Implementations (internal/yamlutil/schema_interfaces.go)
-- `StringConstraintImpl` - Has `Description() string` but no `Name()`, `Version()`, or parameter-less `Validate()`
-- `NumberConstraintImpl` - Same limitation
-- `ArrayConstraintImpl` - Same limitation
-- `ObjectConstraintImpl` - Same limitation
-- `BooleanConstraintImpl` - Same limitation
-- `TypeConstraintImpl` - Same limitation
-- **Conclusion:** These implement the `Constraint` interface, not `ValidatedSchema`
+## Related Interfaces Found
+
+### Schema Interface (schema.go:38-52)
+```go
+type Schema interface {
+    Validate(value interface{}) error
+}
+```
+**Implemented by:** `SchemaDefinition`
+
+### Constraint Interface (schema_interfaces.go:86-96)
+```go
+type Constraint interface {
+    Validate(value interface{}) *ConstraintError
+    Description() string
+    ConstraintType() string
+}
+```
+**Implemented by:**
+- `StringConstraintImpl`
+- `NumberConstraintImpl`
+- `ArrayConstraintImpl`
+- `ObjectConstraintImpl`
+- `BooleanConstraintImpl`
+- `TypeConstraintImpl`
+
+### SchemaValidationHandler Interface (schema_interfaces.go:60-76)
+```go
+type SchemaValidationHandler interface {
+    ValidateSchema(schema ValidatedSchema) YAMLError
+    ValidateValue(fieldPath string, value interface{}, fieldDef *FieldDefinition) YAMLError
+    Validate(data map[string]interface{}) SchemaValidationResult
+    ValidateFile(filePath string) SchemaValidationResult
+}
+```
+
+### ComposableSchema Interface (schema_interfaces.go:253-279)
+```go
+type ComposableSchema interface {
+    ValidatedSchema  // embeds ValidatedSchema
+    AllOf() []ValidatedSchema
+    AnyOf() []ValidatedSchema
+    OneOf() []ValidatedSchema
+    Not() ValidatedSchema
+    AddAllOf(schemas ...ValidatedSchema) error
+    AddAnyOf(schemas ...ValidatedSchema) error
+    AddOneOf(schemas ...ValidatedSchema) error
+    SetNot(schema ValidatedSchema) error
+}
+```
 
 ## Conclusion
 
-The `ValidatedSchema` interface is defined in the codebase but **has no implementations**. This appears to be forward-looking interface design for future schema validation functionality, or an interface that needs implementations to be added.
+**No ValidatedSchema implementations exist in the ARMOR codebase.**
 
-## Recommendations
+The interface is fully defined but no types implement it. The closest related type is `SchemaDefinition`, which:
+- Has the required data fields (Name, Description, Version)
+- Implements a different interface (`Schema` with `Validate(value interface{}) error`)
+- Does NOT implement the `ValidatedSchema` interface methods
 
-To implement ValidatedSchema, a type would need:
-1. A parameter-less `Validate() YAMLError` method (self-validation)
-2. A `Name() string` method
-3. A `Description() string` method  
-4. A `Version() string` method
+## File Locations Summary
 
-The existing `SchemaDefinition` type could be adapted to implement this interface by:
-1. Adding getter methods for Name, Description, and Version
-2. Adding a separate `Validate() YAMLError` method for self-validation (distinct from the current `Validate(value interface{}) error` which validates data against the schema)
+| Interface/Type | File Location | Line |
+|----------------|---------------|------|
+| `ValidatedSchema` | `internal/yamlutil/schema_interfaces.go` | 31-44 |
+| `SchemaDefinition` | `internal/yamlutil/schema.go` | 59-80 |
+| `Schema` | `internal/yamlutil/schema.go` | 38-52 |
+| `Constraint` | `internal/yamlutil/schema_interfaces.go` | 86-96 |
+| `StringConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 316 |
+| `NumberConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 426 |
+| `ArrayConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 538 |
+| `ObjectConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 624 |
+| `BooleanConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 730 |
+| `TypeConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 778 |
