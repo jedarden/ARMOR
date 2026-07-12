@@ -1,43 +1,56 @@
-# bf-5xfnl: Retrieve base64-encoded LITESTREAM_ACCESS_KEY_ID
+# Task bf-5xfnl: Retrieve base64-encoded LITESTREAM_ACCESS_KEY_ID from secret
 
-## Attempt
-Attempted to retrieve LITESTREAM_ACCESS_KEY_ID from armor-writer secret in devimprint namespace.
+## Status: BLOCKED - Missing read/write kubeconfig
 
-## Command Run
+## What was attempted
+
+1. Checked for iad-options read/write kubeconfig at `/home/coding/.kube/iad-options.kubeconfig` - does not exist
+2. Checked for iad-options observer kubeconfig at `/home/coding/.kube/iad-options-observer.kubeconfig` - does not exist
+3. Attempted proxy access via `http://traefik-iad-options:8001` - blocked by RBAC (observer SA explicitly denies secret access)
+4. Attempted proxy access via `http://kubectl-proxy-ord-devimprint:8001` - blocked by RBAC (observer SA denies secret access)
+5. Checked iad-ci cluster for devimprint namespace - namespace does not exist in that cluster
+6. Checked for any recently created kubeconfigs - none found
+
+## Root cause
+
+The read/write kubeconfig for iad-options cluster is missing. According to project documentation:
+
+> Read/write (cloudspace-admin OIDC token, expires every ~3 days — regenerate from Spot UI)
+
+The credential needs to be regenerated from the Spot UI and saved to `/home/coding/.kube/iad-options.kubeconfig`.
+
+## Prerequisite status
+
+- Child bead bf-58r06: BLOCKED (same issue - missing kubeconfig, could not retrieve value)
+- Child bead bf-2c1jp: BLOCKED (same issue - read/write kubeconfig required for secret access)
+- Namespace devimprint: Cannot verify without secret read access
+- Secret armor-writer: Cannot verify without secret read access
+
+## Git evidence
+
+Recent commits confirm the blocker persists:
+- `97e3cc7d docs(bf-48qtv): document blocked state - prerequisite bf-58r06 did not retrieve value`
+- `5238ba3f docs(bf-58r06): re-verify blocked state - kubeconfig still missing`
+- `8e26e14b docs(bf-58r06): task blocked - missing iad-options read/write kubeconfig`
+
+## Command to run once kubeconfig is available
+
 ```bash
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+kubectl --kubeconfig=/home/coding/.kube/iad-options.kubeconfig get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
 ```
 
-## Result
-**Exit code 1 - Forbidden**
+## Next steps
 
-```
-Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
-```
+User needs to:
+1. Regenerate the cloudspace-admin OIDC token from Spot UI for iad-options cluster
+2. Save it to `/home/coding/.kube/iad-options.kubeconfig`
+3. Re-run this task
 
-## Blocker
-RBAC restriction on the ord-devimprint kubectl-proxy:
-- The read-only proxy runs as `system:serviceaccount:devpod-observer:devpod-observer`
-- This service account **explicitly denies access to secrets** (similar to iad-options cluster's stricter observer)
-- Only pod/logs inspection is available through the proxy
+## Acceptance criteria (not met)
 
-## Infrastructure Status
-This is a **persistent infrastructure blocker** that has been verified across multiple commits:
-- 4186964e - re-verify infrastructure blocker - RBAC still denies secret access
-- 1e69b07a - document persistent infrastructure blocker - RBAC prevents secret access
+- ❌ Successfully retrieved the base64-encoded value
+- ❌ Value is not empty
+- ❌ Value appears to be valid base64
 
-## Alternative Approaches Not Available
-- No read/write kubeconfig exists for ord-devimprint cluster
-- No cluster-admin access like ardenone-manager/iad-ci
-- Proxy is the only documented access method
-
-## Resolution Required
-To complete this task, one of the following infrastructure changes is needed:
-1. Add a read/write kubeconfig for ord-devimprint (similar to iad-ci)
-2. Modify the devpod-observer RBAC to allow secret get/list in devimprint namespace
-3. Provide the secret value through an alternative channel (e.g., manual copy, ExternalSecret sync)
-
-## Next Steps
-The bead cannot be completed without infrastructure access. Awaiting:
-- Infrastructure resolution (RBAC update or kubeconfig provision)
-- Or alternative task approach that doesn't require direct secret access
+Date: 2026-07-11
+Bead ID: bf-5xfnl
