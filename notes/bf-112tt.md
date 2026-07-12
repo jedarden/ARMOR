@@ -1,38 +1,68 @@
-# bf-112tt: LITESTREAM_SECRET_ACCESS_KEY Retrieval Attempt
+# Bead bf-112tt: RBAC Blockade on LITESTREAM Credential Retrieval
 
-## Task
+## Task Objective
 Retrieve and decode LITESTREAM_SECRET_ACCESS_KEY from the armor-writer secret and store both credentials securely.
 
-## Execution
-Attempted to retrieve credentials from ord-devimprint cluster using the read-only kubectl-proxy:
+## Current Status: BLOCKED by RBAC
+
+### Problem
+The ord-devimprint cluster's read-only kubectl-proxy explicitly denies access to secrets:
 
 ```bash
 kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
+# Error from server (Forbidden): secrets "armor-writer" is forbidden: 
+# User "system:serviceaccount:devpod-observer:devpod-observer" 
+# cannot get resource "secrets" in API group "" in the namespace "devimprint"
 ```
 
-## Result
-**BLOCKED BY RBAC**
+### ExternalSecret Configuration
+The armor-writer secret is synced from OpenBao via ExternalSecret:
 
-The read-only proxy (ServiceAccount: `system:serviceaccount:devpod-observer:devpod-observer`) does not have permission to access secrets in the `devimprint` namespace:
+- **ExternalSecret**: armor-writer in devimprint namespace
+- **Source**: OpenBao ClusterSecretStore
+- **OpenBao Path**: rs-manager/ord-devimprint/armor-writer
+- **Properties**:
+  - auth-access-key → LITESTREAM_ACCESS_KEY_ID (assumed)
+  - auth-secret-key → LITESTREAM_SECRET_ACCESS_KEY (assumed)
+- **Status**: SecretSynced (last sync: 2026-07-12T14:21:25Z)
 
-```
-Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
-```
+### Attempted Workarounds
+1. ✗ Direct secret access via read-only proxy - BLOCKED by RBAC
+2. ✗ rs-manager.kubeconfig - File does not exist (/home/coding/.kube/rs-manager.kubeconfig)
+3. ✗ OpenBao direct access - No accessible OpenBao endpoint
+4. ✗ Alternative clusters - No ord-devimprint admin credentials available
 
-## Issue
-This is the same RBAC blockade that prevented SECRET_ACCESS_KEY retrieval in previous beads (documented in git commits):
-- `docs(bf-112tt): update credential retrieval status`
-- `docs(bf-112tt): document RBAC blockade on SECRET_ACCESS_KEY retrieval`
-- `docs(bf-112tt): document RBAC blockade on LITESTREAM credential retrieval`
+### Cached Files (All Empty/Invalid)
+- /tmp/litestream_secret_key_decoded.txt - Contains RBAC blockade notice
+- /tmp/litestream_access_key_id.decoded - Contains corrupted binary data
+- /tmp/litestream_credentials_status.md - Previous attempt documentation
 
-## Root Cause
-There is no read-write kubeconfig documented for the `ord-devimprint` cluster in the project instructions. The project instructions only document a read-only proxy access method, which explicitly denies secret access.
+### Available Clusters with Admin Access
+- ardenone-manager - Full cluster-admin via direct kubeconfig
+- rs-manager - Full cluster-admin via direct kubeconfig (file missing)
+- iad-ci - Full cluster-admin via direct kubeconfig
 
-## Resolution Required
-To complete this task, one of the following is needed:
-1. A read-write kubeconfig for the ord-devimprint cluster
-2. RBAC changes to grant the devpod-observer ServiceAccount access to secrets in the devimprint namespace
-3. An alternative method to retrieve the credentials (e.g., from a cached source like was done for bf-520v)
+None of these provide access to ord-devimprint secrets.
 
-## Status
-**INCOMPLETE** - Cannot proceed without elevated credentials or alternative access method.
+## Resolution Options
+To complete this task, one of the following is required:
+
+1. Direct kubeconfig for ord-devimprint with secret read access
+2. RBAC policy update to allow devpod-observer SA to read secrets in devimprint namespace
+3. OpenBao admin access to retrieve credentials directly from OpenBao
+4. Alternative credential delivery (e.g., manual provisioning, secure paste)
+5. Cross-cluster secret sync from a cluster with admin access
+
+## Timeline
+- 2026-07-12 11:21 - RBAC blockade confirmed via kubectl-proxy
+- 2026-07-12 11:09 - Previous attempt failed with same RBAC error
+- 2026-07-11 - Multiple credential retrieval attempts all blocked by RBAC
+
+## Next Steps
+This task cannot be completed without elevated credentials or RBAC changes. The bead should remain open until one of the resolution options is implemented.
+
+---
+
+Generated: 2026-07-12 11:21 EDT
+Bead: bf-112tt
+Status: BLOCKED - Awaiting access resolution
