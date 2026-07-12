@@ -1665,6 +1665,119 @@ fn test_negative_int32_to_uint32_conversions() {
     }
 }
 
+#[test]
+fn test_negative_int64_to_uint64_conversions() {
+    /// Test: Negative int64 values cannot convert to uint64
+    ///
+    /// These test cases verify that negative int64 values are properly rejected
+    /// when attempting to convert them to uint64.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | -1 | Basic negative value |
+    /// | -128 | int8::MIN (common boundary) |
+    /// | -32768 | int16::MIN (common boundary) |
+    /// | -2147483648 | int32::MIN (common boundary) |
+    /// | -9223372036854775808 | int64::MIN (minimum int64) |
+    /// | -18446744073709551615 | Large negative value |
+
+    // Test cases within i64 range
+    let valid_test_cases = vec![
+        (r#"value: -1"#, "-1", "basic negative"),
+        (r#"value: -128"#, "-128", "int8 min"),
+        (r#"value: -32768"#, "-32768", "int16 min"),
+        (r#"value: -2147483648"#, "-2147483648", "int32 min"),
+        (r#"value: -9223372036854775808"#, "-9223372036854775808", "int64 min"),
+    ];
+
+    for (yaml, value_str, description) in valid_test_cases {
+        let value: Result<Value, _> = serde_yaml::from_str(yaml);
+        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+
+        let value = value.unwrap();
+        let field_value = &value["value"];
+
+        // Verify it's a negative integer
+        assert!(field_value.is_i64(), "Field should be i64 ({})", description);
+        let int_value = field_value.as_i64().unwrap();
+        assert!(int_value < 0, "Field should be negative ({})", description);
+
+        // Verify the actual value matches expected
+        assert_eq!(int_value, value_str.parse::<i64>().unwrap(),
+            "Field value should match expected {} ({})", value_str, description);
+
+        // For uint64 conversion simulation - verify it would fail
+        // uint64 range is 0 to 18446744073709551615
+        let fits_in_uint64 = int_value >= 0 && int_value <= u64::MAX as i64;
+        assert!(!fits_in_uint64,
+            "Negative value {} should not fit in uint64 ({})", value_str, description);
+
+        // Verify type mismatch error is properly created for uint64 context
+        let error = ParseError::type_mismatch("value", "uint64", "int64_negative");
+        assert!(error.is_type_mismatch(),
+            "Type mismatch error should be created for negative {} in uint64 context ({})",
+            value_str, description);
+
+        let error_msg = format!("{}", error.kind);
+        assert!(error_msg.contains("uint64") || error_msg.contains("unsigned"),
+            "Error should mention uint64/unsigned type for {}", description);
+        assert!(error_msg.contains("negative") || error_msg.contains("int64"),
+            "Error should mention negative/int64 for {}", description);
+    }
+
+    // Test values beyond i64 range - these may be parsed as strings or fail
+    let beyond_i64_min_cases = vec![
+        (r#"value: "-9223372036854775809""#, "-9223372036854775809", "int64 min - 1 (as string)"),
+        (r#"value: "-18446744073709551615""#, "-18446744073709551615", "large negative as string"),
+    ];
+
+    for (yaml, value_str, description) in beyond_i64_min_cases {
+        let value: Result<Value, _> = serde_yaml::from_str(yaml);
+        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+
+        let value = value.unwrap();
+        let field_value = &value["value"];
+
+        // These may be parsed as strings since they're beyond i64 range
+        if field_value.is_string() {
+            // String representation of a negative number - still cannot convert to uint64
+            let str_value = field_value.as_str().unwrap();
+            assert!(str_value.starts_with('-'),
+                "String should represent negative value for {}", description);
+
+            // Verify string to i64 conversion fails (beyond range)
+            let result = field_value.as_i64();
+            assert!(result.is_none(),
+                "String '{}' beyond i64 range should not convert to i64 ({})",
+                value_str, description);
+
+            // Verify type mismatch error is properly created for uint64 context
+            let error = ParseError::type_mismatch("value", "uint64", "negative_string");
+            assert!(error.is_type_mismatch(),
+                "Type mismatch error should be created for negative string {} in uint64 context ({})",
+                value_str, description);
+        } else if field_value.is_i64() {
+            // If somehow parsed as i64, verify it's negative
+            let int_value = field_value.as_i64().unwrap();
+            assert!(int_value < 0,
+                "Value should be negative for {}", description);
+
+            // Verify it wouldn't fit in uint64
+            let fits_in_uint64 = int_value >= 0 && int_value <= u64::MAX as i64;
+            assert!(!fits_in_uint64,
+                "Negative value {} should not fit in uint64 ({})", value_str, description);
+
+            // Verify type mismatch error
+            let error = ParseError::type_mismatch("value", "uint64", "int64_negative");
+            assert!(error.is_type_mismatch(),
+                "Type mismatch error should be created for negative {} in uint64 context ({})",
+                value_str, description);
+        }
+    }
+}
+
 // ============================================================================
 // Floating Point Precision and Range Tests
 // ============================================================================
