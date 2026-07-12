@@ -1023,8 +1023,8 @@ database:
         username: admin  # DB username
         # Password
         password: secret  # DB password (change in production)
-            # Comment at level 12
-            fallback: true  # Use fallback connection
+      # Fallback connection
+      fallback: true  # Use fallback connection
 """
         result = self.parser.safe_load(yaml_content)
         assert result.is_success()
@@ -1034,6 +1034,226 @@ database:
         assert result.data['database']['connection']['primary']['credentials']['username'] == 'admin'
         assert result.data['database']['connection']['primary']['credentials']['password'] == 'secret'
         assert result.data['database']['connection']['primary']['fallback'] is True
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+
+class TestNestedStructureCommentDetection:
+    """Test YAML comment detection in nested structures - bf-48lyo."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = YAMLCoreParser()
+
+    def test_comment_in_nested_map(self):
+        """Test that comments in nested map structures are properly filtered."""
+        yaml_content = """# Top-level comment
+outer_map:
+  # Comment for inner map 1
+  inner_map_1:
+    # Comment for key in inner map 1
+    key1: value1  # Inline comment for value1
+    key2: value2
+  # Comment for inner map 2
+  inner_map_2:
+    # Comment for key in inner map 2
+    key3: value3
+    key4: value4  # Inline comment for value4
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify nested map structure is parsed correctly
+        assert result.data['outer_map']['inner_map_1']['key1'] == 'value1'
+        assert result.data['outer_map']['inner_map_1']['key2'] == 'value2'
+        assert result.data['outer_map']['inner_map_2']['key3'] == 'value3'
+        assert result.data['outer_map']['inner_map_2']['key4'] == 'value4'
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_in_nested_list(self):
+        """Test that comments in nested list structures are properly filtered."""
+        yaml_content = """# Top-level comment
+outer_list:
+  # Comment for inner list 1
+  - - item1_1  # Inline comment for item1_1
+    - item1_2
+    - item1_3
+  # Comment for inner list 2
+  - - item2_1
+    - item2_2
+    - item2_3  # Inline comment for item2_3
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify nested list structure is parsed correctly
+        assert result.data['outer_list'][0] == ['item1_1', 'item1_2', 'item1_3']
+        assert result.data['outer_list'][1] == ['item2_1', 'item2_2', 'item2_3']
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_in_map_within_list_structure(self):
+        """Test that comments in map-within-list structures are properly filtered."""
+        yaml_content = """# Configuration list
+configs:
+  # First config
+  - name: config1  # Config 1 name
+    enabled: true  # Config 1 enabled
+    # Nested settings for config 1
+    settings:
+      timeout: 30  # Timeout value
+      retry: 3  # Retry count
+  # Second config
+  - name: config2
+    enabled: false
+    # Nested settings for config 2
+    settings:
+      timeout: 60
+      retry: 5  # Retry count for config 2
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify map-within-list structure is parsed correctly
+        assert result.data['configs'][0]['name'] == 'config1'
+        assert result.data['configs'][0]['enabled'] is True
+        assert result.data['configs'][0]['settings']['timeout'] == 30
+        assert result.data['configs'][0]['settings']['retry'] == 3
+        assert result.data['configs'][1]['name'] == 'config2'
+        assert result.data['configs'][1]['enabled'] is False
+        assert result.data['configs'][1]['settings']['timeout'] == 60
+        assert result.data['configs'][1]['settings']['retry'] == 5
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_in_list_within_map_structure(self):
+        """Test that comments in list-within-map structures are properly filtered."""
+        yaml_content = """# Service configuration
+service:
+  # Service name
+  name: my-service  # Service name value
+  # Service ports
+  ports:
+    # HTTP port
+    - 80  # HTTP port number
+    # HTTPS port
+    - 443  # HTTPS port number
+    # Admin port
+    - 8080  # Admin port number
+  # Service endpoints
+  endpoints:
+    # Health check endpoint
+    - /health  # Health check path
+    # Metrics endpoint
+    - /metrics  # Metrics path
+    # API endpoint
+    - /api  # API path
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify list-within-map structure is parsed correctly
+        assert result.data['service']['name'] == 'my-service'
+        assert result.data['service']['ports'] == [80, 443, 8080]
+        assert result.data['service']['endpoints'] == ['/health', '/metrics', '/api']
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_deeply_nested_map_with_comments(self):
+        """Test comments in deeply nested map structures (3+ levels)."""
+        yaml_content = """# Level 0 comment
+database:
+  # Level 1 comment
+  connection:
+    # Level 2 comment
+    primary:
+      # Level 3 comment
+      credentials:
+        # Level 4 comment
+        username: admin  # Username
+        password: secret  # Password
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify deeply nested structure is parsed correctly
+        assert result.data['database']['connection']['primary']['credentials']['username'] == 'admin'
+        assert result.data['database']['connection']['primary']['credentials']['password'] == 'secret'
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_deeply_nested_list_with_comments(self):
+        """Test comments in deeply nested list structures (3+ levels)."""
+        yaml_content = """# Level 0 comment
+matrix:
+  # Level 1 comment
+  - # Level 2 comment
+    - # Level 3 comment
+      - deep_item_1  # Deep item 1
+      - deep_item_2  # Deep item 2
+      - deep_item_3
+      # Level 3 comment for second group
+      - deep_item_4
+      - deep_item_5
+  # Level 1 comment for second row
+  - - another_row_item
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify deeply nested list structure is parsed correctly
+        # Actual structure: 3-level nested list
+        assert result.data['matrix'][0][0] == ['deep_item_1', 'deep_item_2', 'deep_item_3', 'deep_item_4', 'deep_item_5']
+        assert result.data['matrix'][1] == ['another_row_item']
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_complex_nested_structure_with_mixed_comments(self):
+        """Test realistic complex nested structure with various comment patterns."""
+        yaml_content = """# Application configuration
+app:
+  # App metadata
+  name: MyApp  # Application name
+  version: 1.0  # Version number
+
+  # Cluster configuration (list within map)
+  clusters:
+    # Primary cluster
+    - name: primary  # Primary cluster name
+      region: us-east-1  # Region
+      # Nodes configuration (map within list within map)
+      nodes:
+        master:
+          count: 3  # Master node count
+          size: large  # Master node size
+        worker:
+          count: 10  # Worker node count
+          size: medium  # Worker node size
+    # Secondary cluster
+    - name: secondary
+      region: us-west-2
+      nodes:
+        master:
+          count: 2
+          size: large
+        worker:
+          count: 5  # Worker count for secondary
+          size: small
+
+  # Feature flags (list within map)
+  features:
+    # Feature list items
+    - feature_a  # Feature A
+    - feature_b  # Feature B
+    - feature_c
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify complex nested structure is parsed correctly
+        assert result.data['app']['name'] == 'MyApp'
+        assert result.data['app']['version'] == 1.0
+        assert result.data['app']['clusters'][0]['name'] == 'primary'
+        assert result.data['app']['clusters'][0]['region'] == 'us-east-1'
+        assert result.data['app']['clusters'][0]['nodes']['master']['count'] == 3
+        assert result.data['app']['clusters'][0]['nodes']['worker']['size'] == 'medium'
+        assert result.data['app']['clusters'][1]['name'] == 'secondary'
+        assert result.data['app']['clusters'][1]['nodes']['worker']['count'] == 5
+        assert result.data['app']['features'] == ['feature_a', 'feature_b', 'feature_c']
         # Comments should be filtered out
         assert 'comment' not in str(result.data).lower()
 
