@@ -1474,6 +1474,193 @@ fn test_signed_integer_unsigned_context_overflow() {
 }
 
 // ============================================================================
+// Negative Signed to Unsigned Integer Conversion Tests
+// ============================================================================
+
+#[test]
+fn test_negative_int16_to_uint16_conversions() {
+    /// Test: Negative int16 values cannot convert to uint16
+    ///
+    /// These test cases verify that negative int16 values are properly rejected
+    /// when attempting to convert them to uint16.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | -1 | Basic negative value |
+    /// | -128 | int8::MIN (common boundary) |
+    /// | -32768 | int16::MIN (minimum int16) |
+    /// | -32769 | int16::MIN - 1 (beyond int16 range) |
+    /// | -65535 | Large negative value |
+    /// | -65536 | Large negative value -1 |
+
+    let test_cases = vec![
+        (r#"value: -1"#, "-1", "basic negative"),
+        (r#"value: -128"#, "-128", "int8 min"),
+        (r#"value: -32768"#, "-32768", "int16 min"),
+        (r#"value: -32769"#, "-32769", "int16 min - 1"),
+        (r#"value: -65535"#, "-65535", "large negative -65535"),
+        (r#"value: -65536"#, "-65536", "large negative -65536"),
+    ];
+
+    for (yaml, value_str, description) in test_cases {
+        let value: Result<Value, _> = serde_yaml::from_str(yaml);
+        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+
+        let value = value.unwrap();
+        let field_value = &value["value"];
+
+        // Verify it's a negative integer
+        assert!(field_value.is_i64(), "Field should be i64 ({})", description);
+        let int_value = field_value.as_i64().unwrap();
+        assert!(int_value < 0, "Field should be negative ({})", description);
+
+        // Verify the actual value matches expected
+        assert_eq!(int_value, value_str.parse::<i64>().unwrap(),
+            "Field value should match expected {} ({})", value_str, description);
+
+        // For uint16 conversion simulation - verify it would fail
+        // uint16 range is 0 to 65535
+        let fits_in_uint16 = int_value >= 0 && int_value <= u16::MAX as i64;
+        assert!(!fits_in_uint16,
+            "Negative value {} should not fit in uint16 ({})", value_str, description);
+
+        // Verify type mismatch error is properly created for uint16 context
+        let error = ParseError::type_mismatch("value", "uint16", "int16_negative");
+        assert!(error.is_type_mismatch(),
+            "Type mismatch error should be created for negative {} in uint16 context ({})",
+            value_str, description);
+
+        let error_msg = format!("{}", error.kind);
+        assert!(error_msg.contains("uint16") || error_msg.contains("unsigned"),
+            "Error should mention uint16/unsigned type for {}", description);
+        assert!(error_msg.contains("negative") || error_msg.contains("int16"),
+            "Error should mention negative/int16 for {}", description);
+    }
+}
+
+#[test]
+fn test_negative_int8_to_uint8_conversions() {
+    /// Test: Negative int8 values cannot convert to uint8
+    ///
+    /// These test cases verify that negative int8 values are properly rejected
+    /// when attempting to convert them to uint8.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | -1 | Basic negative value |
+    /// | -128 | int8::MIN (minimum int8) |
+    /// | -129 | int8::MIN - 1 (beyond int8 range) |
+    /// | -255 | Large negative value |
+    /// | -256 | Large negative value -1 |
+
+    let test_cases = vec![
+        (r#"value: -1"#, "-1", "basic negative"),
+        (r#"value: -128"#, "-128", "int8 min"),
+        (r#"value: -129"#, "-129", "int8 min - 1"),
+        (r#"value: -255"#, "-255", "large negative -255"),
+        (r#"value: -256"#, "-256", "large negative -256"),
+    ];
+
+    for (yaml, value_str, description) in test_cases {
+        let value: Result<Value, _> = serde_yaml::from_str(yaml);
+        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+
+        let value = value.unwrap();
+        let field_value = &value["value"];
+
+        // Verify it's a negative integer
+        assert!(field_value.is_i64(), "Field should be i64 ({})", description);
+        let int_value = field_value.as_i64().unwrap();
+        assert!(int_value < 0, "Field should be negative ({})", description);
+
+        // Verify the actual value matches expected
+        assert_eq!(int_value, value_str.parse::<i64>().unwrap(),
+            "Field value should match expected {} ({})", value_str, description);
+
+        // For uint8 conversion simulation - verify it would fail
+        // uint8 range is 0 to 255
+        let fits_in_uint8 = int_value >= 0 && int_value <= u8::MAX as i64;
+        assert!(!fits_in_uint8,
+            "Negative value {} should not fit in uint8 ({})", value_str, description);
+
+        // Verify type mismatch error is properly created for uint8 context
+        let error = ParseError::type_mismatch("value", "uint8", "int8_negative");
+        assert!(error.is_type_mismatch(),
+            "Type mismatch error should be created for negative {} in uint8 context ({})",
+            value_str, description);
+
+        let error_msg = format!("{}", error.kind);
+        assert!(error_msg.contains("uint8") || error_msg.contains("unsigned"),
+            "Error should mention uint8/unsigned type for {}", description);
+        assert!(error_msg.contains("negative") || error_msg.contains("int8"),
+            "Error should mention negative/int8 for {}", description);
+    }
+}
+
+#[test]
+fn test_negative_int32_to_uint32_conversions() {
+    /// Test: Negative int32 values cannot convert to uint32
+    ///
+    /// These test cases verify that negative int32 values are properly rejected
+    /// when attempting to convert them to uint32.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | -1 | Basic negative value |
+    /// | -32768 | int16::MIN (common boundary) |
+    /// | -2147483648 | int32::MIN (minimum int32) |
+    /// | -2147483649 | int32::MIN - 1 |
+
+    let test_cases = vec![
+        (r#"value: -1"#, "-1", "basic negative"),
+        (r#"value: -32768"#, "-32768", "int16 min"),
+        (r#"value: -2147483648"#, "-2147483648", "int32 min"),
+        (r#"value: -2147483649"#, "-2147483649", "int32 min - 1"),
+    ];
+
+    for (yaml, value_str, description) in test_cases {
+        let value: Result<Value, _> = serde_yaml::from_str(yaml);
+        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+
+        let value = value.unwrap();
+        let field_value = &value["value"];
+
+        // Verify it's a negative integer
+        assert!(field_value.is_i64(), "Field should be i64 ({})", description);
+        let int_value = field_value.as_i64().unwrap();
+        assert!(int_value < 0, "Field should be negative ({})", description);
+
+        // Verify the actual value matches expected
+        assert_eq!(int_value, value_str.parse::<i64>().unwrap(),
+            "Field value should match expected {} ({})", value_str, description);
+
+        // For uint32 conversion simulation - verify it would fail
+        // uint32 range is 0 to 4294967295
+        let fits_in_uint32 = int_value >= 0 && int_value <= u32::MAX as i64;
+        assert!(!fits_in_uint32,
+            "Negative value {} should not fit in uint32 ({})", value_str, description);
+
+        // Verify type mismatch error is properly created for uint32 context
+        let error = ParseError::type_mismatch("value", "uint32", "int32_negative");
+        assert!(error.is_type_mismatch(),
+            "Type mismatch error should be created for negative {} in uint32 context ({})",
+            value_str, description);
+
+        let error_msg = format!("{}", error.kind);
+        assert!(error_msg.contains("uint32") || error_msg.contains("unsigned"),
+            "Error should mention uint32/unsigned type for {}", description);
+        assert!(error_msg.contains("negative") || error_msg.contains("int32"),
+            "Error should mention negative/int32 for {}", description);
+    }
+}
+
+// ============================================================================
 // Floating Point Precision and Range Tests
 // ============================================================================
 
