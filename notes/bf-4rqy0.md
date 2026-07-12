@@ -124,5 +124,37 @@ To unblock this task, both issues need resolution:
 1. **Fix configuration**: Update ExternalSecret to include LITESTREAM_* properties, or determine correct secret/keys
 2. **Fix RBAC**: Obtain kubeconfig with secret access, or modify RBAC to allow proxy SA to read secrets
 
+## Re-verification (2026-07-11)
+
+### Current State Verification
+
+Re-verified both blockers persist:
+
+1. **RBAC Blocker Confirmed**:
+   - Cannot access secret: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint`
+   - Error: `User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"`
+   - No kubeconfig file exists: `/home/coding/.kube/ord-devimprint.kubeconfig` (not found)
+
+2. **Configuration Mismatch Confirmed**:
+   - ExternalSecret properties: `auth-access-key`, `auth-secret-key`
+   - Beads attempting to retrieve: `LITESTREAM_ACCESS_KEY_ID`, `LITESTREAM_SECRET_ACCESS_KEY`
+   - Property names do not match
+   - No litestream properties found in ExternalSecret configuration
+
+### Validation Cannot Proceed
+
+Without access to:
+1. The secret itself (RBAC blocked)
+2. The correct property names (configuration mismatch)
+
+The base64 validation task cannot be completed as specified. The task requires retrieving `LITESTREAM_ACCESS_KEY_ID` but that property does not exist in the ExternalSecret.
+
+### Recommendation
+
+Before this bead can be completed:
+1. Determine correct secret/property names for Litestream credentials
+2. Obtain kubeconfig with secret access OR modify ExternalSecret to include correct properties
+3. Re-validate the bead task specification matches the actual infrastructure
+
 ## Timestamp
-2026-07-12 00:13 UTC
+2026-07-11 (re-verification)
