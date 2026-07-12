@@ -472,8 +472,8 @@ func TestErrorQualityAcceptanceCriteria(t *testing.T) {
 		testErrors := []error{
 			NewParseError("config.yaml", "test", 1, 1, "", "", ""),
 			NewValidationError("app.yaml", "test", "field", "constraint", "", 0, 0, "", "field"),
-			&TypeMismatchError{FilePath: "values.yaml"},
-			&ConstraintError{FilePath: "service.yaml"},
+			NewTypeMismatchError("values.yaml", "", "", "", "", 0, ""),
+			NewConstraintError("service.yaml", "", "", "", "", "", 0, ""),
 			NewFieldNotFoundError("deploy.yaml", "field", 1, ""),
 		}
 
@@ -512,8 +512,8 @@ func TestErrorQualityAcceptanceCriteria(t *testing.T) {
 		}{
 			{NewParseError("f.yaml", "m", 1, 1, "", "", ""), ErrorTypeParse},
 			{NewValidationError("f.yaml", "m", "f", "c", "", 0, 0, "", "f"), ErrorTypeValidation},
-			{&TypeMismatchError{FilePath: "f.yaml"}, ErrorTypeTypeMismatch},
-			{&ConstraintError{FilePath: "f.yaml"}, ErrorTypeConstraint},
+			{NewTypeMismatchError("f.yaml", "", "", "", "", 0, ""), ErrorTypeTypeMismatch},
+			{NewConstraintError("f.yaml", "", "", "", "", "", 0, ""), ErrorTypeConstraint},
 			{NewFieldNotFoundError("f.yaml", "f", 1, ""), ErrorTypeFieldNotFound},
 		}
 
