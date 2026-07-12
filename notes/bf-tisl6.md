@@ -56,25 +56,61 @@ Created `internal/yamlutil/signed_integer_underflow_test.go` with comprehensive 
 
 ## Test Location
 Tests are implemented in:
-- File: `internal/yamlutil/integer_overflow_test.go`
-- Function: `TestIntegerUnderflowScenarios`
-- Lines: 184-333
+- File: `internal/yamlutil/signed_integer_underflow_test.go`
+- Functions:
+  - `TestSignedIntegerUnderflowScenarios` (lines 11-298)
+  - `TestSignedIntegerUnderflowErrorMessages` (lines 300-378)
+  - `TestSignedIntegerUnderflowInNestedStructs` (lines 380-491)
+  - `TestSignedIntegerUnderflowWithDifferentFormats` (lines 493-570)
 
-## Test Results Summary
+## Verification on 2026-07-12
+Re-verified all signed integer underflow tests pass successfully:
+
+```bash
+$ go test -v ./internal/yamlutil -run "TestSignedIntegerUnderflow"
+=== RUN   TestSignedIntegerUnderflowScenarios
+--- PASS: TestSignedIntegerUnderflowScenarios (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int8_underflow_-_one_below_minimum (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int8_underflow_-_far_below_minimum (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int8_underflow_-_very_large_negative (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int8_boundary_-_minimum_valid_value (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int16_underflow_-_one_below_minimum (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int16_underflow_-_far_below_minimum (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int16_underflow_-_int32_minimum (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int16_boundary_-_minimum_valid_value (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int32_underflow_-_one_below_minimum (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int32_underflow_-_far_below_minimum (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int32_underflow_-_very_large_negative (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int32_boundary_-_minimum_valid_value (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int64_underflow_-_one_below_minimum_wraps (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int64_underflow_-_far_below_minimum_wraps (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int64_boundary_-_minimum_valid_value (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int64_near_underflow_-_large_negative_but_valid (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int8_underflow_with_zero_prefix (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int16_underflow_with_positive_sign_for_negative (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int32_underflow_via_scientific_notation (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int64_with_extremely_large_negative_string (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int8_verify_underflow_not_overflow (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int16_verify_underflow_not_overflow (0.00s)
+    --- PASS: TestSignedIntegerUnderflowScenarios/int32_verify_underflow_not_overflow (0.00s)
+=== RUN   TestSignedIntegerUnderflowErrorMessages
+--- PASS: TestSignedIntegerUnderflowErrorMessages (0.00s)
+=== RUN   TestSignedIntegerUnderflowInNestedStructs
+--- PASS: TestSignedIntegerUnderflowInNestedStructs (0.00s)
+=== RUN   TestSignedIntegerUnderflowWithDifferentFormats
+--- PASS: TestSignedIntegerUnderflowWithDifferentFormats (0.00s)
+PASS
 ```
-TestIntegerUnderflowScenarios: PASS
-  int8_underflow_-_value_-129_(min_-_1): PASS
-  int8_underflow_-_value_-999: PASS
-  int8_underflow_-_extreme_negative_value: PASS
-  int16_underflow_-_value_-32769_(min_-_1): PASS
-  int16_underflow_-_value_-65536: PASS
-  int16_underflow_-_value_-100000: PASS
-  int32_underflow_-_value_-2147483649_(min_-_1): PASS
-  int32_underflow_-_extreme_negative_value: PASS
-  int64_underflow_-_value_-9223372036854775809_(min_-_1): PASS
-```
+
+All tests confirm:
+- int8 underflow detection (values < -128)
+- int16 underflow detection (values < -32768)
+- int32 underflow detection (values < -2147483648)
+- int64 underflow handling (parser wraps extreme values)
+- Error messages indicate "cannot unmarshal" with invalid values
 
 ## Notes
-- Tests were originally added in commit `aaa89ab2` 
+- Tests were originally added in commit `aaa89ab2`
 - Bead `bf-e65cw` previously verified these tests
-- All acceptance criteria for bead `bf-tisl6` are satisfied
+- Re-verified on 2026-07-12 - all acceptance criteria for bead `bf-tisl6` are satisfied
+- All 23 test scenarios pass successfully
