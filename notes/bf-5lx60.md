@@ -59,11 +59,26 @@ Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system
 
 This confirms the RBAC blocker is a permanent limitation for ord-devimprint cluster access via the kubectl-proxy.
 
+## Re-attempt #2 (2026-07-11 ~20:16)
+
+Third verification attempt - same command, same result:
+```bash
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
+  get secret armor-writer -n devimprint \
+  -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+```
+
+**Result:** Identical RBAC error - no change in access permissions.
+
+Exit code: 1
+Error: `secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"`
+
 ## Recommendation
 Document this as a known RBAC blocker for ord-devimprint cluster operations. Future beads requiring secret access on this cluster should account for this limitation.
 
 ---
 *Initial Date: 2026-07-11*
-*Re-attempt: 2026-07-11 ~20:13*
+*Re-attempt #1: 2026-07-11 ~20:13*
+*Re-attempt #2: 2026-07-11 ~20:16*
 *Cluster: ord-devimprint*
 *Proxy: kubectl-proxy-ord-devimprint:8001 (read-only, no secret access)*
