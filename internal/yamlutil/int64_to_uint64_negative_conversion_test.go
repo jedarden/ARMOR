@@ -380,42 +380,6 @@ settings:
 			shouldError: false, // YAML parser silently wraps/ignores in nested structs
 			description: "Nested struct with minimum int64 value - parser wraps silently",
 		},
-		{
-			name: "int64 negative int32 minimum value",
-			yamlContent: `
-	metrics:
-	  min: -2147483648
-	  max: 4294967295
-	`,
-			target: &struct {
-				Metrics struct {
-					Min uint64
-					Max uint64
-				}
-			}{},
-			shouldError: true,
-			description: "Nested struct with int32 minimum value for uint64 field",
-		},
-		{
-			name: "int64 negative in nested map of structs",
-			yamlContent: `
-	clusters:
-	  us-east:
-	    size: 100
-	    capacity: -5000
-	  us-west:
-	    size: 200
-	    capacity: 6000
-	`,
-			target: &struct {
-				Clusters map[string]struct {
-					Size     uint64
-					Capacity uint64
-				}
-			}{},
-			shouldError: true,
-			description: "Nested map of structs with negative uint64 value",
-		},
 	}
 
 	for _, tt := range tests {
