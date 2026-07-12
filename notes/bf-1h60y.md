@@ -29,3 +29,4 @@ $ cat /tmp/litestream_secret_key_encoded.b64
 - 2026-07-12 ~10:36: Prerequisite bf-3llc7 shows as "closed" but verification failed
 - 2026-07-12 10:37: Re-verification - encoded file persists at 0 bytes
 - 2026-07-12 14:36: Final verification - task still blocked on empty prerequisite file
+- 2026-07-12 14:37: Current attempt - confirmed encoded file is 0 bytes; cannot decode empty file
