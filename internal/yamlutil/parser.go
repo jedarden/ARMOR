@@ -200,6 +200,33 @@ func (ype *YAMLParseError) Unwrap() error {
 	return ype.RawError
 }
 
+// NewYAMLParseError creates a new YAMLParseError with the given parameters.
+//
+// This constructor function provides a convenient way to create properly initialized
+// YAMLParseError instances with file path, message, line, column, and optional raw error.
+//
+// Parameters:
+//   - filePath: Path to the file being parsed
+//   - message: Human-readable error message
+//   - line: Line number where error occurred (1-indexed, use 0 if unknown)
+//   - column: Column number where error occurred (1-indexed, use 0 if unknown)
+//   - rawError: Underlying error from the YAML parser (optional, can be nil)
+//
+// Returns a properly initialized YAMLParseError that implements the error interface.
+//
+// Example usage:
+//
+//	err := NewYAMLParseError("config.yaml", "unexpected token", 10, 5, nil)
+func NewYAMLParseError(filePath string, message string, line int, column int, rawError error) *YAMLParseError {
+	return &YAMLParseError{
+		FilePath: filePath,
+		Message:  message,
+		Line:     line,
+		Column:   column,
+		RawError: rawError,
+	}
+}
+
 // ParseYAML reads and parses a YAML file into a generic map structure.
 // This function provides comprehensive error handling with the following behavior:
 //   - Returns map[string]interface{} and error
