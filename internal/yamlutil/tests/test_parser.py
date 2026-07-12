@@ -636,6 +636,197 @@ app:
         assert result.data['app']['debug'] is False
         assert result.data['app']['features'] == ['feature1', 'feature2', 'feature3']
 
+    # ============================================================================
+    # Full-line comment detection tests - bf-58w56
+    # ============================================================================
+
+    def test_full_line_comment_with_hash_only(self):
+        """Test that a line with only # is detected as a comment."""
+        yaml_content = """#
+key: value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value'}
+
+    def test_full_line_comment_with_hash_and_text(self):
+        """Test that a line starting with # followed by text is a comment."""
+        yaml_content = """# This is a comment
+key: value
+# Another comment
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value'}
+
+    def test_full_line_comment_without_space_after_hash(self):
+        """Test that a line starting with #text (no space) is still a comment."""
+        yaml_content = """#This is a comment without space
+key: value
+#Another comment without space
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value'}
+
+    def test_full_line_comment_with_leading_whitespace_and_hash(self):
+        """Test that a line with whitespace followed by # is a comment."""
+        yaml_content = """  # Comment with leading spaces
+key: value
+  # Comment with leading spaces (2 spaces)
+another: value2
+    # Comment with 4 leading spaces
+third: value3
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value', 'another': 'value2', 'third': 'value3'}
+
+    def test_full_line_comment_single_space_after_hash(self):
+        """Test that # followed by single space and text is a comment."""
+        yaml_content = """# Single space after hash
+key: value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value'}
+
+    def test_full_line_comment_multiple_spaces_after_hash(self):
+        """Test that # followed by multiple spaces and text is a comment."""
+        yaml_content = """#    Multiple spaces after hash
+key: value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value'}
+
+    def test_full_line_comment_with_special_characters(self):
+        """Test that lines starting with # with special characters are comments."""
+        yaml_content = """# Comment with @#$%^&*() special chars
+key: value
+# Comment with 123 numbers and symbols!@#
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value'}
+
+    def test_full_line_comment_various_indentation_levels(self):
+        """Test full-line comments at various indentation levels."""
+        yaml_content = """# Top-level comment
+parent:
+  # Indented comment level 1
+  child1: value1
+    # Indented comment level 2 (misaligned but still comment)
+  child2: value2
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data['parent']['child1'] == 'value1'
+        assert result.data['parent']['child2'] == 'value2'
+
+    def test_empty_line_not_detected_as_comment(self):
+        """Test that empty lines are NOT detected as comments (they're preserved as structure)."""
+        yaml_content = """key1: value1
+
+key2: value2
+
+
+key3: value3
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Empty lines don't create empty values in the parsed data
+        assert result.data == {'key1': 'value1', 'key2': 'value2', 'key3': 'value3'}
+
+    def test_whitespace_only_line_not_detected_as_comment(self):
+        """Test that lines with only whitespace are NOT treated as comments."""
+        yaml_content = """key1: value1
+
+
+key2: value2
+
+
+key3: value3
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Whitespace-only lines don't create entries in the parsed data
+        assert result.data == {'key1': 'value1', 'key2': 'value2', 'key3': 'value3'}
+
+    def test_mixed_full_line_and_inline_comments(self):
+        """Test that full-line and inline comments are both handled correctly."""
+        yaml_content = """# Full-line comment 1
+key1: value1  # Inline comment 1
+# Full-line comment 2
+key2: value2  # Inline comment 2
+# Full-line comment 3
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key1': 'value1', 'key2': 'value2'}
+
+    def test_full_line_comment_in_multiline_string_context(self):
+        """Test that # inside multiline strings is NOT treated as comment."""
+        yaml_content = """description: |
+  This is a multiline string
+  # This line is part of the string, not a comment
+  Another line
+key: value
+# This IS a comment
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # The # inside the multiline string is preserved
+        assert 'This line is part of the string' in result.data['description']
+        assert result.data == {
+            'description': 'This is a multiline string\n# This line is part of the string, not a comment\nAnother line\n',
+            'key': 'value'
+        }
+
+    def test_full_line_comment_preserved_in_folded_style(self):
+        """Test that # in folded-style scalars is preserved."""
+        yaml_content = """description: >
+  This is a folded string
+  # This line is part of the folded string
+  Another line
+# This IS a comment outside the string
+key: value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # The folded style preserves content but converts newlines to spaces
+        assert 'folded string' in result.data['description']
+        assert result.data == {
+            'description': 'This is a folded string # This line is part of the folded string Another line\n',
+            'key': 'value'
+        }
+
+    def test_consecutive_full_line_comments(self):
+        """Test multiple consecutive full-line comments with different patterns."""
+        yaml_content = """#Comment without space
+# Comment with space
+  # Comment with leading space
+#Third comment
+# Fourth comment
+key: value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value'}
+
+    def test_full_line_comment_at_document_boundaries(self):
+        """Test full-line comments at start and end of document."""
+        yaml_content = """# Header comment
+# Another header
+key: value
+another: item
+# Footer comment
+# End of file
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value', 'another': 'item'}
+
 
 if __name__ == '__main__':
     # Run tests with pytest
