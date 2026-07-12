@@ -36,7 +36,7 @@ func TestValidationErrorPathFormatting_SimplePaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", "")
+			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", tt.fieldPath)
 			errorMsg := err.Error()
 
 			if !contains(errorMsg, tt.wantInMsg) {
@@ -87,7 +87,7 @@ func TestValidationErrorPathFormatting_NestedPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", "")
+			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", tt.fieldPath)
 			errorMsg := err.Error()
 
 			if !contains(errorMsg, tt.wantInMsg) {
@@ -138,7 +138,7 @@ func TestValidationErrorPathFormatting_ArrayIndexedPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", "")
+			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", tt.fieldPath)
 			errorMsg := err.Error()
 
 			if !contains(errorMsg, tt.wantInMsg) {
@@ -179,7 +179,7 @@ func TestValidationErrorPathFormatting_DeepNestedPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", "")
+			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", tt.fieldPath)
 			errorMsg := err.Error()
 
 			if !contains(errorMsg, tt.wantInMsg) {
@@ -213,7 +213,7 @@ func TestValidationErrorPathFormatting_EmptyAndMissingPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", "")
+			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", 0, 0, "", tt.fieldPath)
 			errorMsg := err.Error()
 
 			// Verify that "at field" prefix is not present when path is empty
