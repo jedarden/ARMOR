@@ -1102,6 +1102,106 @@ func TestClassifyLineCommentLines(t *testing.T) {
 	}
 }
 
+// TestClassifyLineCommentOnlyLines verifies comment-only lines (edge cases).
+// This test covers the acceptance criteria requirement for testing lines with only comment markers.
+func TestClassifyLineCommentOnlyLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected SimpleLineCategory
+	}{
+		{
+			name:     "hash only no text",
+			line:     "#",
+			expected: CategoryComment,
+		},
+		{
+			name:     "hash with trailing spaces",
+			line:     "#  ",
+			expected: CategoryComment,
+		},
+		{
+			name:     "hash with trailing tabs",
+			line:     "#\t\t",
+			expected: CategoryComment,
+		},
+		{
+			name:     "hash with trailing mixed whitespace",
+			line:     "# \t \t ",
+			expected: CategoryComment,
+		},
+		{
+			name:     "whitespace and hash no trailing",
+			line:     "   #",
+			expected: CategoryComment,
+		},
+		{
+			name:     "tabs and hash no trailing",
+			line:     "\t\t\t#",
+			expected: CategoryComment,
+		},
+		{
+			name:     "mixed whitespace and hash no trailing",
+			line:     "  \t  #",
+			expected: CategoryComment,
+		},
+		{
+			name:     "spaces hash spaces both sides",
+			line:     "   #   ",
+			expected: CategoryComment,
+		},
+		{
+			name:     "tabs hash tabs both sides",
+			line:     "\t#\t",
+			expected: CategoryComment,
+		},
+		{
+			name:     "many leading spaces hash no trailing",
+			line:     "          #",
+			expected: CategoryComment,
+		},
+		{
+			name:     "many leading tabs hash no trailing",
+			line:     "\t\t\t\t\t#",
+			expected: CategoryComment,
+		},
+		{
+			name:     "extreme leading spaces hash",
+			line:     strings.Repeat(" ", 50) + "#",
+			expected: CategoryComment,
+		},
+		{
+			name:     "extreme leading tabs hash",
+			line:     strings.Repeat("\t", 10) + "#",
+			expected: CategoryComment,
+		},
+		{
+			name:     "hash with extreme trailing spaces",
+			line:     "#" + strings.Repeat(" ", 50),
+			expected: CategoryComment,
+		},
+		{
+			name:     "hash with extreme trailing tabs",
+			line:     "#" + strings.Repeat("\t", 10),
+			expected: CategoryComment,
+		},
+		{
+			name:     "mixed extreme whitespace around hash",
+			line:     strings.Repeat(" ", 20) + "#" + strings.Repeat("\t", 5),
+			expected: CategoryComment,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := classifyLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("classifyLine(%q) = %v, want %v", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestClassifyLineContentLines verifies content line classification.
 func TestClassifyLineContentLines(t *testing.T) {
 	tests := []struct {
