@@ -1,56 +1,64 @@
-# Validate() YAMLError Handling Verification - bf-2xyvz
+# Bead bf-2xyvz: Validate() YAMLError Handling Verification
 
 ## Summary
-Verified that all direct Validate() callers in the ARMOR codebase properly handle YAMLError return type.
+All direct `Validate()` callers already have proper YAMLError handling implemented.
 
-## Analysis Results
+## Verification Results
 
 ### Direct Validate() Callers Found
-As documented in `/internal/yamlutil/schema.go` (lines 7-23), there are two primary call sites:
 
-1. **Line 190**: `sv.schema.Validate(data)` inside `SchemaValidator.Validate()` method
-   - Status: ✅ **Already handles YAMLError properly**
-   - Error handling: Lines 211-223 include type assertion to YAMLError with structured error codes
-   - Pattern: `if yamlErr, ok := err.(YAMLError); ok { result.Errors = append(result.Errors, SchemaValidationError{ Message: fmt.Sprintf("Data validation failed: %v", yamlErr), ErrorCode: yamlErr.Code(), }) }`
+1. **SchemaValidator.Validate()** (line 208 in `internal/yamlutil/schema.go`)
+   - ✅ Proper YAMLError type checking with `yamlErr, ok := err.(YAMLError)`
+   - ✅ Error code extraction with `yamlErr.Code()`
+   - ✅ Context preservation with `fmt.Sprintf("Data validation failed: %v", yamlErr)`
+   - ✅ Fallback for generic errors
 
-2. **Line 281**: `sv.Validate(data)` inside `SchemaValidator.ValidateFile()` method  
-   - Status: ✅ **Inherits proper YAMLError handling** 
-   - Delegates to `SchemaValidator.Validate()` which has structured error handling
+2. **SchemaValidator.ValidateFile()** (line 281 in `internal/yamlutil/schema.go`)
+   - ✅ Delegates to `SchemaValidator.Validate()` which handles YAMLError
+   - ✅ Inherits proper error handling from delegate
 
-### YAMLError Implementation
-The `SchemaDefinition.Validate()` method (line 813) already returns proper YAMLError types:
-- `NewValidationError()` - for general validation errors
-- `NewTypeMismatchError()` - for type mismatches  
-- `NewFieldNotFoundError()` - for missing required fields
-- `NewConstraintError()` - for constraint violations
+### Code Pattern
 
-### Code Compilation
-```bash
-$ go build ./...
-# No errors - compiles successfully
+The implemented pattern follows the same structure as `compileSchema()`:
+
+```go
+if err := sv.schema.Validate(data); err != nil {
+    result.Valid = false
+    
+    // Handle YAMLError with structured information
+    if yamlErr, ok := err.(YAMLError); ok {
+        result.Errors = append(result.Errors, SchemaValidationError{
+            Message:   fmt.Sprintf("Data validation failed: %v", yamlErr),
+            ErrorCode: yamlErr.Code(),
+        })
+    } else {
+        // Handle generic errors
+        result.Errors = append(result.Errors, SchemaValidationError{
+            Message: fmt.Sprintf("Data validation failed: %v", err),
+        })
+    }
+    return result
+}
 ```
 
-### Test Results  
-```bash
-$ go test -v ./internal/yamlutil -run "TestValidateYAMLErrorHandling|TestValidatePatternConsistency"
-✓ TestValidateYAMLErrorHandling - PASS
-  - valid_data_passes_validation
-  - missing_required_field_returns_YAMLError_with_proper_error_code (Code: REQUIRED_FIELD)
-  - type_mismatch_returns_YAMLError_with_proper_error_code (Code: TYPE_MISMATCH)
-  - constraint_violation_returns_YAMLError_with_proper_error_code (Code: CONSTRAINT_VIOLATION)
-✓ TestValidatePatternConsistency - PASS
-  - Properly handles YAMLError with code: REQUIRED_FIELD
-```
+### Test Results
 
-### Pattern Verification
-All callers follow the correct pattern from the updated Validate() implementation:
-- ✅ Check for nil return
-- ✅ Add proper error wrapping with `fmt.Errorf` where applicable
-- ✅ Preserve error context in wrap messages
-- ✅ Handle the new YAMLError type signature with type assertions
+All YAMLError handling tests pass:
+- ✅ `TestValidateYAMLErrorHandling` - All subtests pass
+- ✅ `TestValidatePatternConsistency` - Passes
+- ✅ Build compiles without errors
 
-## External Call Sites
-No external Validate() calls found outside the `internal/yamlutil` package.
+Test output shows proper YAMLError handling:
+- Missing required field: Returns `REQUIRED_FIELD` error code
+- Type mismatch: Returns `TYPE_MISMATCH` error code  
+- Constraint violation: Returns `CONSTRAINT_VIOLATION` error code
 
 ## Conclusion
-**No code changes required**. All direct Validate() callers already properly handle YAMLError return type. The code compiles successfully and all YAMLError-specific tests pass.
+
+No changes were required. The YAMLError handling was already properly implemented in a previous bead (bf-4en42) and all acceptance criteria are met:
+
+- ✅ All direct Validate() callers updated (already done)
+- ✅ Error checks added (if err != nil)
+- ✅ Error wrapping preserves context
+- ✅ Code compiles without errors
+- ✅ Follows the pattern from updated Validate() implementation
