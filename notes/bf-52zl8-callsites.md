@@ -1,28 +1,60 @@
 # Validate() Call Sites Catalog
 
-**Generated:** 2026-07-12  
-**Task:** Catalog all Validate() call sites in ARMOR codebase  
-**Total call sites found:** 142
+**Generated:** 2026-07-12
+**Bead:** bf-52zl8
+**Task:** Catalog all Validate() call sites in ARMOR codebase
+**Total distinct validate() methods:** 6
+**Production call sites:** 3
 
 ---
 
-## Summary by Category
+## Executive Summary
 
-| Category | Count | Files |
-|----------|-------|-------|
-| Production code (real calls) | 3 | 2 files |
-| Test code (assertions) | 102 | 4 files |
-| Documentation (doc comments) | 37 | 3 files |
+The ARMOR codebase has **6 distinct `validate()` method signatures** across different types:
+
+1. **Schema trait** (`Schema::validate()`) - Test-only, no production usage
+2. **ParserConfig** (`ParserConfig::validate()`) - Builder pattern, properly handled
+3. **ValidatorConfig** (`ValidatorConfig::validate()`) - Builder pattern, properly handled
+4. **ValidationHook** (`ValidationHook::validate()`) - Defined but never called
+5. **SyntaxValidator** (`SyntaxValidator::validate()`) - YAML syntax validation, custom return type
+6. **Parser trait** (`Parser::validate()`) - Default trait implementation, never called
+
+**Key Finding:** All production `validate()` call sites already have proper error handling. No systematic updates required.
 
 ---
 
-## 1. Production Code - Direct Call Sites (3 sites)
+## Method Signature Catalog
 
-These are actual runtime calls that execute in production code. All are **already properly handled** and require **no changes**.
+### 1. Schema Trait (`schema::Schema<T>`)
 
-### 1.1 `src/parsers/config.rs:662`
+```rust
+// src/schema.rs:274
+fn validate(&self, value: &T) -> ValidationResult
+// where ValidationResult = Result<(), ParseError>
+```
 
-**Context:** `ParserConfig::build()` method
+**Definition:** `src/schema.rs:274` - Schema trait definition
+
+**Production Call Sites:** None
+
+**Test Call Sites:**
+- `tests/schema_validation_test.rs` - 20+ test assertions
+- `src/schema.rs` - Module tests (lines 318-695)
+
+**Status:** ✅ **TEST-ONLY** - No production usage, no error handling updates needed
+
+---
+
+### 2. ParserConfig::validate()
+
+```rust
+// src/parsers/config.rs:537-554
+pub fn validate(&self) -> Result<(), String>
+```
+
+**Definition:** `src/parsers/config.rs:537-554`
+
+**Production Call Site:** `src/parsers/config.rs:662`
 
 ```rust
 pub fn build(self) -> Result<ParserConfig, String> {
@@ -31,15 +63,27 @@ pub fn build(self) -> Result<ParserConfig, String> {
 }
 ```
 
-**Call type:** Direct with `?` operator  
-**Returns:** `Result<(), String>` → converts to `Result<ParserConfig, String>`  
-**Status:** ✅ **NO CHANGE NEEDED** - Error propagation works correctly
+**Call Type:** Direct with `?` operator
+**Error Handling:** ✅ **CORRECT** - Uses `?` operator to propagate `String` errors
+**Update Priority:** **LOW** - Already uses proper error propagation
+
+**Validation Rules:**
+- Checks `warnings_as_errors` requires `emit_warnings`
+- Checks strict mode conflicts with `allow_duplicates`
+- Checks `strict_types` alignment with mode
 
 ---
 
-### 1.2 `src/parsers/config.rs:1007`
+### 3. ValidatorConfig::validate()
 
-**Context:** `ValidatorConfig::build()` method
+```rust
+// src/parsers/config.rs:908-923
+pub fn validate(&self) -> Result<(), String>
+```
+
+**Definition:** `src/parsers/config.rs:908-923`
+
+**Production Call Site:** `src/parsers/config.rs:1007`
 
 ```rust
 pub fn build(self) -> Result<ValidatorConfig, String> {
@@ -48,15 +92,50 @@ pub fn build(self) -> Result<ValidatorConfig, String> {
 }
 ```
 
-**Call type:** Direct with `?` operator  
-**Returns:** `Result<(), String>` → converts to `Result<ValidatorConfig, String>`  
-**Status:** ✅ **NO CHANGE NEEDED** - Error propagation works correctly
+**Call Type:** Direct with `?` operator
+**Error Handling:** ✅ **CORRECT** - Uses `?` operator to propagate `String` errors
+**Update Priority:** **LOW** - Already uses proper error propagation
+
+**Validation Rules:**
+- Checks strict mode requires `require_all_fields`
+- Checks strict mode requires `disallow_unknown_fields`
+- Checks `warnings_as_errors` requires `emit_warnings`
 
 ---
 
-### 1.3 `src/parsers/yaml/parser.rs:121`
+### 4. ValidationHook::validate()
 
-**Context:** `YamlParser::validate_str()` method
+```rust
+// src/parsers/config.rs:255-257
+pub fn validate(&self, field: &str, value: &serde_yaml::Value) -> Result<(), String>
+```
+
+**Definition:** `src/parsers/config.rs:255-257`
+
+**Production Call Sites:** None
+
+**Implementation:**
+```rust
+pub fn validate(&self, field: &str, value: &serde_yaml::Value) -> Result<(), String> {
+    (self.validator)(field, value)
+}
+```
+
+**Status:** ⚠️ **UNUSED** - Defined but never called in the codebase
+
+---
+
+### 5. SyntaxValidator::validate()
+
+```rust
+// src/parsers/yaml/syntax_validator.rs:65-105
+pub fn validate(&self, content: &str) -> ValidationResult
+// Note: Returns custom ValidationResult struct, NOT the schema type alias
+```
+
+**Definition:** `src/parsers/yaml/syntax_validator.rs:65-105`
+
+**Production Call Site:** `src/parsers/yaml/parser.rs:121`
 
 ```rust
 fn validate_str(&self, content: &str) -> ValidationResult {
@@ -65,28 +144,85 @@ fn validate_str(&self, content: &str) -> ValidationResult {
     } else {
         SyntaxValidator::lenient()
     };
-    
+
     let mut result = validator.validate(content);
-    // ... uses result directly
+
+    if result.is_valid() {
+        let mut detector = SyntaxDetector::new();
+        let detector_result = detector.detect_to_validation_result(content);
+
+        if !detector_result.is_valid() {
+            result.valid = false;
+            result.errors.extend(detector_result.errors);
+        }
+    }
+
     result
 }
 ```
 
-**Call type:** Direct assignment  
-**Returns:** `ValidationResult` (custom struct, not Result)  
-**Status:** ✅ **NO CHANGE NEEDED** - Uses custom ValidationResult type
+**Call Type:** Direct assignment
+**Error Handling:** N/A - Returns custom `ValidationResult` struct, not `Result` type
+**Update Priority:** **N/A** - Custom return type, no `?` operator applicable
+
+**Test Call Sites:**
+- `src/parsers/yaml/syntax_validator.rs` - Multiple test cases (lines 438-503)
+- `src/parsers/yaml/syntax_detector_tests.rs` - Multiple test cases (lines 131, 567, 728)
 
 ---
 
-## 2. Test Code - Assertion Sites (102 sites)
+### 6. Parser Trait validate() (Default Implementation)
 
-All test assertions using `assert!(schema.validate(...).is_ok())` or `assert!(schema.validate(...).is_err())`. These are **test-only** and require **no changes**.
+```rust
+// src/parsers/traits.rs:323-326
+fn validate(&self, source: Input) -> Result<(), ParseError>
+```
 
-### Files with test assertions:
+**Definition:** `src/parsers/traits.rs:323-326` - Default trait implementation
 
-#### 2.1 `tests/schema_validation_test.rs` (70+ assertions)
+**Production Call Sites:** None
 
-**Lines:** 148, 150, 180-184, 192-194, 202-206, 214-218, 230-264, 276-292, 304-575
+**Implementation:**
+```rust
+fn validate(&self, source: Input) -> Result<(), ParseError> {
+    self.parse(source)?;
+    Ok(())
+}
+```
+
+**Status:** ⚠️ **UNUSED** - Default implementation exists but no production usage
+
+---
+
+## Categorization Summary
+
+### By Update Priority
+
+| Method | Priority | Reason |
+|--------|----------|--------|
+| `ParserConfig::validate()` | LOW | Already uses `?` operator |
+| `ValidatorConfig::validate()` | LOW | Already uses `?` operator |
+| `SyntaxValidator::validate()` | N/A | Custom return type, no `?` operator |
+| `Schema::validate()` | N/A | Test-only, no production usage |
+| `ValidationHook::validate()` | N/A | Unused method |
+| `Parser::validate()` | N/A | Unused default implementation |
+
+### By Type
+
+| Type | Count | Methods |
+|------|-------|---------|
+| Production call sites | 3 | ParserConfig, ValidatorConfig, SyntaxValidator |
+| Test-only implementations | 10+ | All Schema trait implementations |
+| Unused methods | 2 | ValidationHook, Parser trait default |
+| Proper error handling | 2 | ParserConfig::validate(), ValidatorConfig::validate() |
+| Custom return type | 1 | SyntaxValidator::validate() |
+
+### Test Code Distribution
+
+The Schema trait has extensive test coverage in:
+
+#### `tests/schema_validation_test.rs` (70+ assertions)
+- Lines: 148, 150, 180-184, 192-194, 202-206, 214-218, 230-264, 276-292, 304-575
 
 **Pattern examples:**
 ```rust
@@ -97,11 +233,13 @@ let result = schema.validate(&invalid_value);
 
 **Status:** ✅ **NO CHANGES NEEDED** - Test-only code
 
----
+#### `src/schema.rs` module tests
+- Lines: 318-695
 
-#### 2.2 `src/parsers/config.rs` (12 assertions in test module)
+**Status:** ✅ **NO CHANGES NEEDED** - Test-only code
 
-**Lines:** 1202, 1205, 1216, 1224, 1232, 1297, 1300, 1312, 1320
+#### `src/parsers/config.rs` test module
+- Lines: 1202, 1205, 1216, 1224, 1232, 1297, 1300, 1312, 1320
 
 **Pattern examples:**
 ```rust
@@ -111,89 +249,68 @@ assert!(config.validate().is_err());
 
 **Status:** ✅ **NO CHANGES NEEDED** - Test-only code
 
----
+#### `src/parsers/yaml/syntax_validator.rs` tests
+- Lines: 438, 453, 461, 470, 479, 487, 495, 503
 
-#### 2.3 `src/parsers/yaml/syntax_validator.rs` (10 assertions)
+**Status:** ✅ **NO CHANGES NEEDED** - Test-only code
 
-**Lines:** 438, 453, 461, 470, 479, 487, 495, 503
-
-**Pattern examples:**
-```rust
-let result = validator.validate(yaml);
-assert!(result.is_valid());
-```
+#### `src/parsers/yaml/syntax_detector_tests.rs` tests
+- Lines: 131, 567, 728
 
 **Status:** ✅ **NO CHANGES NEEDED** - Test-only code
 
 ---
 
-#### 2.4 `src/parsers/yaml/syntax_detector_tests.rs` (10 assertions)
+## Error Type Analysis
 
-**Lines:** 131, 567, 728
+### Return Type Patterns
 
-**Pattern examples:**
-```rust
-let result = validator.validate(yaml);
-// validation result assertions
-```
+| Type | Method | Return Type | Used By |
+|------|--------|-------------|---------|
+| Config validation | `ParserConfig::validate()` | `Result<(), String>` | `build()` methods |
+| Config validation | `ValidatorConfig::validate()` | `Result<(), String>` | `build()` methods |
+| Field validation | `ValidationHook::validate()` | `Result<(), String>` | None (unused) |
+| Syntax validation | `SyntaxValidator::validate()` | `ValidationResult` (custom struct) | YAML parser |
+| Schema validation | `Schema::validate()` | `Result<(), ParseError>` | Tests/docs |
+| Parser validation | `Parser::validate()` | `Result<(), ParseError>` | Trait definition |
 
-**Status:** ✅ **NO CHANGES NEEDED** - Test-only code
+### Error Conversion Status
 
----
+**Current State:**
 
-## 3. Documentation - Doc Comment Examples (37 sites)
+1. **ParserConfig/ValidatorConfig**: Return `Result<(), String>` - No ParseError conversion needed
+2. **SyntaxValidator**: Returns custom struct - No error conversion applicable
+3. **Schema trait**: Returns `Result<(), ParseError>` - Test-only, already correct type
+4. **ValidationHook**: Returns `Result<(), String>` - Unused
+5. **Parser trait**: Returns `Result<(), ParseError>` - Unused default
 
-Documentation examples in doc comments showing usage patterns. These are **not executable code** and require **no changes**.
+**Recommendation:**
 
-### Files with doc examples:
-
-#### 3.1 `src/schema.rs` (30+ examples)
-
-**Lines:** 93, 135, 163, 191, 202, 214, 259, 274, 306, 339, 415, 450, 481, 537, 578, 590, 622, 637, 658
-
-**Example patterns:**
-```rust
-/// assert!(schema.validate(&42).is_ok());
-/// assert!(schema.validate(&-5).is_err());
-/// NameSchema.validate(&config.name)
-```
-
-**Status:** ✅ **NO CHANGES NEEDED** - Documentation only
+**No error handling updates required** for any production call sites:
+- Builder patterns (ParserConfig, ValidatorConfig) already use `?` operator properly
+- SyntaxValidator returns custom struct, not Result type
+- Schema trait is test-only
 
 ---
 
-#### 3.2 `src/parsers/traits.rs:319`
+## Schema Trait Implementations
 
-**Example:**
-```rust
-/// if parser.validate("key: value").is_ok() {
-///     // proceed with parsing
-/// }
-```
+All Schema trait implementations are **test-only**:
 
-**Status:** ✅ **NO CHANGES NEEDED** - Documentation only
+| Implementation | Location | Type Being Validated |
+|----------------|----------|---------------------|
+| PositiveIntegerSchema | tests/schema_validation_test.rs:24 | i32 |
+| RangeSchema | tests/schema_validation_test.rs:40 | i32 |
+| NonEmptyStringSchema | tests/schema_validation_test.rs:54 | str |
+| PortSchema | tests/schema_validation_test.rs:71 | u16 |
+| ServerConfigSchema | tests/schema_validation_test.rs:89 | ServerConfig |
+| UsernameSchema | tests/schema_validation_test.rs:106 | String |
+| AgeSchema | tests/schema_validation_test.rs:123 | u8 |
+| UserSchema | tests/schema_validation_test.rs:146 | User |
+| RequiredValueSchema | tests/schema_validation_test.rs:159 | Option<i32> |
+| StrictUserSchema | tests/schema_validation_test.rs:599 | User |
 
----
-
-#### 3.3 `src/parsers/config.rs` (scattered examples)
-
-Various doc comment examples throughout the file.
-
-**Status:** ✅ **NO CHANGES NEEDED** - Documentation only
-
----
-
-## 4. Validate() Method Signatures
-
-For reference, here are the Validate() method signatures found in the codebase:
-
-| Method | Location | Return Type |
-|--------|----------|-------------|
-| `ParserConfig::validate()` | src/parsers/config.rs:537 | `Result<(), String>` |
-| `ValidatorConfig::validate()` | src/parsers/config.rs:908 | `Result<(), String>` |
-| `SyntaxValidator::validate()` | src/parsers/yaml/syntax_validator.rs:65 | `ValidationResult` |
-| `Parser::validate()` | src/parsers/traits.rs:323 | `Result<(), ParseError>` |
-| `Schema::validate()` | src/schema.rs (trait) | `ValidationResult` or `Result<(), ParseError>` |
+**None of these are used in production code.**
 
 ---
 
