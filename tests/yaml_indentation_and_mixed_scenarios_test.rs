@@ -985,3 +985,410 @@ fn test_all_indentation_levels_with_inline_comments() {
                    "Should be mapping key: {}", line);
     }
 }
+
+// ============================================================================
+// Multi-line Scalar Context Tests - Literal Style (|)
+// ============================================================================
+
+#[test]
+fn test_literal_scalar_content_with_hash_prefix() {
+    // In a literal scalar (|), lines starting with # are CONTENT, not comments
+    // This is a key difference from general YAML parsing
+    let yaml = vec![
+        "description: |",
+        "  # This is a heading in the content",
+        "  Regular content line",
+        "  # Another heading",
+        "  Final content",
+    ];
+
+    // The header line with | is a mapping key
+    assert_eq!(classify_line_type(yaml[0]), LineType::MappingKey);
+    assert!(!is_comment_line(yaml[0]));
+
+    // Content lines (including those starting with #) are treated as:
+    // - Lines starting with #: classified as Comment by line-based parser
+    // - Regular content lines: not structural (not valid mapping keys)
+    for (i, line) in yaml.iter().enumerate().skip(1) {
+        if line.trim().starts_with("#") {
+            // Line-based parser sees this as a comment
+            assert_eq!(classify_line_type(line), LineType::Comment,
+                       "Line {} should be classified as comment by line-based parser: {}", i + 1, line);
+            assert!(is_comment_line(line),
+                    "Line {} should be identified as comment line: {}", i + 1, line);
+        } else {
+            // Regular content lines are not structural
+            assert!(!classify_line_type(line).is_structural(),
+                    "Line {} should not be structural: {}", i + 1, line);
+            assert!(!is_comment_line(line),
+                    "Line {} should not be comment line: {}", i + 1, line);
+        }
+    }
+}
+
+#[test]
+fn test_literal_scalar_various_indentation_levels() {
+    // Test literal scalars at different indentation levels
+    let test_cases = vec![
+        // Level 0 (no indentation)
+        vec![
+            "text: |",
+            "  Content at level 0",
+            "  # Comment-like content",
+        ],
+        // Level 2 (2 spaces)
+        vec![
+            "  section:",
+            "    text: |",
+            "      Content at level 2",
+            "      # Comment-like at level 2",
+        ],
+        // Level 4 (4 spaces)
+        vec![
+            "    nested:",
+            "      deep:",
+            "        text: |",
+            "          Content at level 4",
+            "          # Comment-like at level 4",
+        ],
+        // Level 6 (6 spaces)
+        vec![
+            "      deeply:",
+            "        nested:",
+            "          text: |",
+            "            Content at level 6",
+            "            # Comment-like at level 6",
+        ],
+    ];
+
+    for yaml in test_cases {
+        // Find the | line (scalar header)
+        let header_idx = yaml.iter().position(|l| l.contains("|")).unwrap();
+        let header_line = yaml[header_idx];
+
+        // Header is always a mapping key
+        assert_eq!(classify_line_type(header_line), LineType::MappingKey);
+
+        // Content lines after | should be handled appropriately
+        for (i, line) in yaml.iter().enumerate().skip(header_idx + 1) {
+            let indent = calculate_indentation(line);
+
+            // Lines that look like comments are classified as such by line-based parser
+            if line.trim().starts_with("#") {
+                assert_eq!(classify_line_type(line), LineType::Comment,
+                           "Content line should be comment: {}", line);
+                assert_eq!(strip_inline_comment(line), " ".repeat(indent).as_str(),
+                           "Should strip to just indentation: {}", line);
+            } else if !line.trim().is_empty() {
+                // Regular content is not structural
+                assert!(!classify_line_type(line).is_structural(),
+                        "Regular content should not be structural: {}", line);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_literal_scalar_empty_lines_and_whitespace() {
+    // Test empty lines and whitespace in literal scalars
+    let yaml = vec![
+        "text: |",
+        "  First line",
+        "",
+        "  Third line (after empty)",
+        "    ",  // Line with only spaces
+        "  Fifth line",
+    ];
+
+    assert_eq!(classify_line_type(yaml[0]), LineType::MappingKey);
+
+    // Empty lines and whitespace-only lines have specific behavior
+    // Empty lines ARE structural (they're Blank type)
+    // Whitespace-only lines are also Blank
+    assert!(!classify_line_type(yaml[1]).is_structural()); // "  First line" - content
+    assert_eq!(classify_line_type(yaml[2]), LineType::Blank); // "" (empty line) is structural/Blank
+    assert!(!classify_line_type(yaml[3]).is_structural()); // "  Third line" - content
+    assert_eq!(classify_line_type(yaml[4]), LineType::Blank); // "    " (spaces only) is Blank
+    assert!(!classify_line_type(yaml[5]).is_structural()); // "  Fifth line" - content
+}
+
+#[test]
+fn test_literal_scalar_with_special_patterns() {
+    // Test literal scalars with special patterns that might look like YAML syntax
+    let yaml = vec![
+        "config: |",
+        "  # KEY: value - looks like mapping but is content",
+        "  - item - looks like list item but is content",
+        "  key: value - looks like mapping but is content",
+        "  Regular text without special chars",
+    ];
+
+    assert_eq!(classify_line_type(yaml[0]), LineType::MappingKey);
+
+    // All content lines are treated as content, not YAML syntax
+    // by the line-based parser's structural classification
+    for (i, line) in yaml.iter().enumerate().skip(1) {
+        if line.trim().starts_with("#") {
+            // Lines starting with # are classified as comments
+            assert_eq!(classify_line_type(line), LineType::Comment);
+        } else if line.contains(":") {
+            // Lines with colons might be classified as mapping keys
+            // even though they're actually content in the scalar
+            let line_type = classify_line_type(line);
+            // The parser sees "  key: value" as a potential mapping key
+            assert!(matches!(line_type, LineType::MappingKey | LineType::Unknown),
+                    "Content with colon should be mapping key or unknown: {} (got {:?})", line, line_type);
+        } else {
+            // Other content lines
+            assert!(!classify_line_type(line).is_structural());
+        }
+    }
+}
+
+// ============================================================================
+// Multi-line Scalar Context Tests - Folded Style (>)
+// ============================================================================
+
+#[test]
+fn test_folded_scalar_content_with_hash_prefix() {
+    // In a folded scalar (>), lines starting with # are CONTENT, not comments
+    // Behavior is similar to literal scalars
+    let yaml = vec![
+        "text: >",
+        "  # This is a heading in the content",
+        "  Regular content line",
+        "  # Another heading",
+        "  Final content",
+    ];
+
+    assert_eq!(classify_line_type(yaml[0]), LineType::MappingKey);
+
+    // Content lines behavior matches literal scalars
+    for (i, line) in yaml.iter().enumerate().skip(1) {
+        if line.trim().starts_with("#") {
+            assert_eq!(classify_line_type(line), LineType::Comment,
+                       "Line {} should be comment: {}", i + 1, line);
+        } else {
+            assert!(!classify_line_type(line).is_structural(),
+                    "Line {} should not be structural: {}", i + 1, line);
+        }
+    }
+}
+
+#[test]
+fn test_folded_scalar_various_indentation_levels() {
+    // Test folded scalars at different indentation levels
+    let test_cases = vec![
+        // Level 0
+        vec![
+            "description: >",
+            "  Content at level 0",
+            "  # Comment-like content",
+        ],
+        // Level 4
+        vec![
+            "    nested:",
+            "      description: >",
+            "        Content at level 4",
+            "        # Comment-like at level 4",
+        ],
+        // Level 8
+        vec![
+            "        deeply:",
+            "          nested:",
+            "            description: >",
+            "              Content at level 8",
+            "              # Comment-like at level 8",
+        ],
+    ];
+
+    for yaml in test_cases {
+        let header_idx = yaml.iter().position(|l| l.contains(">")).unwrap();
+        let header_line = yaml[header_idx];
+
+        assert_eq!(classify_line_type(header_line), LineType::MappingKey);
+
+        for (i, line) in yaml.iter().enumerate().skip(header_idx + 1) {
+            if line.trim().starts_with("#") {
+                assert_eq!(classify_line_type(line), LineType::Comment);
+            } else if !line.trim().is_empty() {
+                assert!(!classify_line_type(line).is_structural());
+            }
+        }
+    }
+}
+
+#[test]
+fn test_folded_scalar_newline_handling() {
+    // Folded scalars treat newlines differently than literal scalars
+    // (newlines are converted to spaces in folded scalars)
+    // But for line-based classification, behavior is similar
+    let yaml = vec![
+        "text: >",
+        "  Line 1",
+        "  Line 2 (folded with Line 1)",
+        "",
+        "  Line 4 (after empty line - new paragraph)",
+    ];
+
+    assert_eq!(classify_line_type(yaml[0]), LineType::MappingKey);
+    assert_eq!(classify_line_type(yaml[0]), LineType::MappingKey);
+
+    // Content lines are not structural
+    for (i, line) in yaml.iter().enumerate().skip(1) {
+        if !line.trim().is_empty() {
+            assert!(!classify_line_type(line).is_structural(),
+                    "Content line {} should not be structural: {}", i + 1, line);
+        }
+    }
+}
+
+// ============================================================================
+// Multi-line Scalar Edge Cases
+// ============================================================================
+
+#[test]
+fn test_multiline_scalar_with_inline_comment_on_header() {
+    // Test inline comment on the multi-line scalar header line
+    let test_cases = vec![
+        ("text: | # Literal scalar", "text: | "),
+        ("description: > # Folded scalar", "description: > "),
+        ("  content: | # Indented literal", "  content: | "),
+        ("    data: > # Deep folded", "    data: > "),
+    ];
+
+    for (line, expected_stripped) in test_cases {
+        assert_eq!(classify_line_type(line), LineType::MappingKey);
+        assert!(!is_comment_line(line));
+
+        let stripped = strip_inline_comment(line);
+        assert_eq!(stripped, expected_stripped);
+        assert!(stripped.contains('|') || stripped.contains('>'));
+    }
+}
+
+#[test]
+fn test_multiline_scalar_chomping_indicators() {
+    // Test chomping indicators (-, +, -|, +>, etc.)
+    let test_cases = vec![
+        "text: |-",    // Strip final newline
+        "text: |+",    // Keep final newlines
+        "description: >-",  // Strip for folded
+        "description: >+",  // Keep for folded
+        "  content: |-",     // With indentation
+        "    data: >+",      // Deep with chomping
+    ];
+
+    for line in test_cases {
+        // Lines with chomping indicators are still mapping keys
+        assert_eq!(classify_line_type(line), LineType::MappingKey,
+                   "Chomping indicator line should be mapping key: {}", line);
+        assert!(!is_comment_line(line),
+                "Should not be comment line: {}", line);
+    }
+}
+
+#[test]
+fn test_multiline_scalar_with_indentation_indicator() {
+    // Test indentation indicators (e.g., |2, >4)
+    let test_cases = vec![
+        "text: |2",   // 2-space indentation
+        "description: >4",  // 4-space indentation
+        "content: |8",      // 8-space indentation
+        "  data: >2",       // Indented with 2-space indicator
+    ];
+
+    for line in test_cases {
+        assert_eq!(classify_line_type(line), LineType::MappingKey);
+        assert!(!is_comment_line(line));
+    }
+}
+
+#[test]
+fn test_multiline_scalar_mixed_with_other_yaml_structures() {
+    // Test multi-line scalars mixed with other YAML structures
+    let yaml = vec![
+        "config:",
+        "  # This is a comment",
+        "  description: |",
+        "    Multi-line",
+        "    description",
+        "    # with hash",
+        "  settings:",
+        "    timeout: 30",
+        "  another: >",
+        "    Folded",
+        "    scalar",
+    ];
+
+    let expected_types = vec![
+        LineType::MappingKey,      // config:
+        LineType::Comment,         // # This is a comment
+        LineType::MappingKey,      // description: |
+        // Content lines for | scalar
+        // These are not structural or are comments if starting with #
+        LineType::Unknown,         // "    Multi-line" - not a valid mapping key at this indent
+        LineType::Unknown,         // "    description"
+        LineType::Comment,         // "    # with hash"
+        LineType::MappingKey,      // settings:
+        LineType::MappingKey,      // timeout: 30
+        LineType::MappingKey,      // another: >
+        LineType::Unknown,         // "    Folded"
+        LineType::Unknown,         // "    scalar"
+    ];
+
+    for (i, line) in yaml.iter().enumerate() {
+        let expected = expected_types[i];
+        let actual = classify_line_type(line);
+        assert_eq!(actual, expected,
+                   "Line {}: expected {:?}, got {:?} for: {}", i + 1, expected, actual, line);
+    }
+}
+
+#[test]
+fn test_comment_detection_in_multiline_nested_structures() {
+    // Test comment detection in complex nested structures with multi-line scalars
+    let yaml = r#"# Root comment
+root:
+  # Nested comment
+  section1:
+    # Deep comment before scalar
+    description: |
+      Multi-line content
+      # Looks like comment but is content
+      More content
+    # Comment after scalar
+    section2:
+      # Another deep comment
+      text: >
+        Folded content
+        # Hash in folded
+        End of folded
+      # Final comment
+"#;
+
+    let lines: Vec<&str> = yaml.lines().filter(|l| !l.trim().is_empty()).collect();
+
+    // Count comments vs non-comments
+    let mut comment_count = 0;
+    let mut content_count = 0;
+
+    for line in &lines {
+        if classify_line_type(line) == LineType::Comment {
+            comment_count += 1;
+        } else {
+            content_count += 1;
+        }
+    }
+
+    // Should detect both comments and content
+    assert!(comment_count > 0, "Should detect comment lines");
+    assert!(content_count > 0, "Should detect content lines");
+
+    // Verify specific lines
+    let hash_content_line = "      # Looks like comment but is content";
+    if lines.iter().any(|l| *l == hash_content_line) {
+        // This line IS classified as a comment by the line-based parser
+        assert!(is_comment_line(hash_content_line));
+    }
+}
