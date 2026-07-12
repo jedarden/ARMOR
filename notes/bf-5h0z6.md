@@ -36,7 +36,7 @@ The existing catalog correctly documents all **5 production code call sites**:
    - Priority: 🟠 P2 (MEDIUM)
    - Status: ✅ Structured error handling
 
-5. **Site 5:** `internal/yodingutil/schema.go:253` - ReadAndValidate()
+5. **Site 5:** `internal/yamlutil/schema.go:253` - ReadAndValidate()
    - Code: `return sv.Validate(data)`
    - Priority: 🟢 P3 (LOW)
    - Status: ✅ Chains to Site 4
@@ -44,11 +44,13 @@ The existing catalog correctly documents all **5 production code call sites**:
 ## Verification Method
 
 ```bash
-# Rust production code search
-rg "\.validate\(\)" --type rust -n /home/coding/ARMOR/src | grep -v "test" | grep -v "//"
+# Rust validate() search (production + test)
+rg "\.validate\(" --type rust -n | grep -v "//"
+# Found: 134 total call sites (3 production, 131 test)
 
-# Go production code search  
-rg "\.Validate\(" --type go -n /home/coding/ARMOR | grep -v "_test.go" | grep -v "//" | grep -v "interface" | grep -v "func.*Validate"
+# Go Validate() search (production + test)
+rg "Validate\(" --type go -n | grep -v "//"
+# Found: 29 total references (2 production calls, 4 test calls, rest interfaces/implementations)
 ```
 
 ## Key Findings
