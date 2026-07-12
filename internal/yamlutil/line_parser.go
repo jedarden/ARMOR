@@ -10,6 +10,65 @@ import (
 	"unicode"
 )
 
+// SimpleLineCategory represents a simple 3-category classification of YAML lines.
+//
+// SimpleLineCategory categorizes lines into three types for basic classification:
+// - Blank: Empty lines or lines containing only whitespace
+// - Comment: Lines starting with # (after stripping leading whitespace)
+// - Content: All other lines that contain YAML content
+type SimpleLineCategory int
+
+const (
+	// CategoryBlank represents empty or whitespace-only lines
+	CategoryBlank SimpleLineCategory = iota
+	// CategoryComment represents lines starting with # after stripping leading whitespace
+	CategoryComment
+	// CategoryContent represents all other lines with YAML content
+	CategoryContent
+)
+
+// String returns the string representation of SimpleLineCategory.
+func (slc SimpleLineCategory) String() string {
+	switch slc {
+	case CategoryBlank:
+		return "Blank"
+	case CategoryComment:
+		return "Comment"
+	case CategoryContent:
+		return "Content"
+	default:
+		return "Unknown"
+	}
+}
+
+// classifyLine classifies a YAML line into a SimpleLineCategory.
+//
+// classifyLine categorizes lines based on their content following this order:
+// 1. Blank lines: empty strings or strings containing only whitespace
+// 2. Comment lines: lines starting with # after stripping leading whitespace
+// 3. Content lines: all other lines
+//
+// Parameters:
+//   - line: The line content to classify
+//
+// Returns the SimpleLineCategory category (CategoryBlank, CategoryComment, or CategoryContent).
+func classifyLine(line string) SimpleLineCategory {
+	// Check for blank lines first (empty or whitespace-only)
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return CategoryBlank
+	}
+
+	// Check for comment (starts with # after stripping leading whitespace)
+	stripped := strings.TrimLeft(line, " \t")
+	if strings.HasPrefix(stripped, "#") {
+		return CategoryComment
+	}
+
+	// Otherwise classify as Content
+	return CategoryContent
+}
+
 // ParsedLine represents a single line of YAML with parsed metadata.
 //
 // ParsedLine captures the essential information about each YAML line needed
