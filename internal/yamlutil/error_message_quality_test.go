@@ -479,13 +479,7 @@ func TestErrorTypeInMessages(t *testing.T) {
 		{
 			name: "TypeMismatchError mentions type mismatch",
 			createError: func() error {
-				return &TypeMismatchError{
-					FilePath:     "values.yaml",
-					FieldPath:    "server.port",
-					ExpectedType: "integer",
-					ActualType:   "string",
-					Line:         10,
-				}
+				return NewTypeMismatchError("values.yaml", "server.port", "integer", "string", "", 10, "")
 			},
 			expectedInMessage: []string{"type mismatch"},
 		},
@@ -541,14 +535,7 @@ func TestErrorMessagesProvideContext(t *testing.T) {
 		{
 			name: "TypeMismatchError provides type information",
 			createError: func() error {
-				return &TypeMismatchError{
-					FilePath:     "config.yaml",
-					FieldPath:    "server.port",
-					ExpectedType: "integer",
-					ActualType:   "string",
-					Value:        "8080",
-					Line:         10,
-				}
+				return NewTypeMismatchError("config.yaml", "server.port", "integer", "string", "8080", 10, "")
 			},
 			expectedContext: []string{"expected", "integer", "got", "string"},
 			description:     "Type mismatch should show expected and actual types",
@@ -624,14 +611,7 @@ func TestErrorMessagesAreActionable(t *testing.T) {
 		{
 			name: "Type mismatch suggests fix",
 			createError: func() error {
-				return &TypeMismatchError{
-					FilePath:     "config.yaml",
-					FieldPath:    "server.port",
-					ExpectedType: "integer",
-					ActualType:   "string",
-					Value:        "8080",
-					Line:         10,
-				}
+				return NewTypeMismatchError("config.yaml", "server.port", "integer", "string", "8080", 10, "")
 			},
 			actionable:    true,
 			expectedHints: []string{"expected", "integer", "got", "string"},
@@ -848,14 +828,7 @@ func TestErrorMessagesAcrossAllCategories(t *testing.T) {
 			category: "type mismatch errors",
 			testErrors: []func() error{
 				func() error {
-					return &TypeMismatchError{
-						FilePath:     "values.yaml",
-						FieldPath:    "server.port",
-						ExpectedType: "integer",
-						ActualType:   "string",
-						Value:        "8080",
-						Line:         10,
-					}
+					return NewTypeMismatchError("values.yaml", "server.port", "integer", "string", "8080", 10, "")
 				},
 			},
 			qualityChecks: func(err error) []string {
@@ -921,13 +894,7 @@ func TestErrorFormatConsistencyAcrossErrors(t *testing.T) {
 		},
 		{
 			name: "TypeMismatchError format",
-			err: &TypeMismatchError{
-				FilePath:     "values.yaml",
-				FieldPath:    "server.port",
-				ExpectedType: "integer",
-				ActualType:   "string",
-				Line:         10,
-			},
+			err: NewTypeMismatchError("values.yaml", "server.port", "integer", "string", "", 10, ""),
 			check: func(msg string) bool {
 				return strings.Contains(msg, "type mismatch in") &&
 					strings.Contains(msg, "expected") &&
@@ -969,7 +936,7 @@ func TestErrorMessagesNonEmpty(t *testing.T) {
 	testErrors := []func() error{
 		func() error { return NewParseError("f.yaml", "m", 1, 1, "", "", "") },
 		func() error { return NewValidationError("f.yaml", "m", "f", "c", "", 0, 0, "", "f") },
-		func() error { return &TypeMismatchError{FilePath: "f.yaml"} },
+		func() error { return NewTypeMismatchError("f.yaml", "", "", "", "", 0, "") },
 		func() error { return &ConstraintError{FilePath: "f.yaml"} },
 		func() error { return NewFieldNotFoundError("f.yaml", "f", 1, "") },
 		func() error { return &SyntaxError{FilePath: "f.yaml", Message: "m"} },
