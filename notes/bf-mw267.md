@@ -1,48 +1,49 @@
-# Task bf-mw267: Update FileError tests to use NewFileError
+# FileError Test Construction Verification (bf-mw267)
 
 ## Summary
 
-Verified that all FileError test constructions in `internal/yamlutil` test files are **already using** the `NewFileError()` constructor. No changes were needed.
+Verified that all FileError test constructions in `internal/yamlutil` test files are already using the `NewFileError()` constructor. No direct struct initializations found.
 
-## Investigation Results
+## Verification Results
 
-### Comprehensive Search Performed
+### Direct Struct Constructions
+- **Count**: 0
+- **Searched pattern**: `FileError{...}` and `&FileError{...}`
+- **Result**: No direct struct initializations found
 
-1. **Searched all test files** in `internal/yamlutil` for direct FileError struct constructions
-2. **Found 155 total references** to FileError in test files
-3. **Found 33 calls to NewFileError()** - all FileError creations use the constructor
-4. **Zero direct struct initializations** found (no `&FileError{...}` or `FileError{...}` patterns)
+### Constructor Usage
+- **Count**: 33
+- **Pattern**: `NewFileError(path, operation, message, err)`
+- **Result**: All FileError instances use the constructor
 
-### Files Verified
+### Test Files Verified
 
-All test files in `internal/yamlutil` were checked, including:
-- `errors_test.go`
-- `error_message_quality_test.go`
-- `error_cases_test.go`
-- `file_test.go`
-- `integration_test.go`
-- `missing_file_scenarios_test.go`
-- `parser_test.go`
-- And 40+ other test files
+#### Files Using NewFileError()
+1. `error_message_quality_comprehensive_test.go` - 1 usage
+2. `error_message_quality_test.go` - 3 usages
+3. `errors_test.go` - 2 usages
+4. `file_test.go` - 14 usages
+5. `missing_file_scenarios_test.go` - 13 usages
 
-### Test Execution
+#### Files with Type Checks Only
+These files check error types using `IsFileError()` or type assertions, but don't construct FileError:
+- `error_cases_test.go` - Uses `IsFileError()` for type checking
+- `integration_test.go` - Uses type assertion `err.(*FileError)`
+- `parser_test.go` - Uses type assertion for verification
 
-All FileError-related tests pass successfully:
-- `TestFileError`
-- `TestFileErrorMessageContent`
-- `TestFileError_ErrorMessages`
-- `TestFileError_InterfaceChecks`
-- `TestIsFileNotFoundError`
-- `TestIsPermissionError`
-- `TestReadFile_MissingFileError`
-- And more
+## Test Execution
+
+All FileError-related tests pass:
+```
+go test -v ./internal/yamlutil/... -run "FileError"
+PASS
+ok      github.com/jedarden/armor/internal/yamlutil    0.002s
+```
 
 ## Conclusion
 
-The task requirements are already met:
-- ✅ All FileError struct constructions use NewFileError() calls
-- ✅ Test logic remains identical
-- ✅ No new functionality was needed
-- ✅ Tests remain readable and maintainable
+**Task already complete.** All FileError test constructions in `internal/yamlutil` test files already use the `NewFileError()` constructor. No changes needed to test files.
 
-This work was likely completed as part of the dependency task "Update ParseError tests to use NewParseError" (bf-1gc35), which updated error constructor patterns across the codebase.
+## Related Work
+
+This verification follows the same pattern as bead bf-1gc35 (ParseError constructor verification), which confirmed that ParseError tests were also already using the `NewParseError()` constructor.
