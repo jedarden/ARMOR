@@ -211,13 +211,13 @@ func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult {
 		// Handle YAMLError with structured information
 		if yamlErr, ok := err.(YAMLError); ok {
 			result.Errors = append(result.Errors, SchemaValidationError{
-				Message:   yamlErr.Error(),
+				Message:   fmt.Sprintf("Data validation failed: %v", yamlErr),
 				ErrorCode: yamlErr.Code(),
 			})
 		} else {
 			// Handle generic errors
 			result.Errors = append(result.Errors, SchemaValidationError{
-				Message: fmt.Sprintf("Validation failed: %v", err),
+				Message: fmt.Sprintf("Data validation failed: %v", err),
 			})
 		}
 		return result
