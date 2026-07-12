@@ -148,6 +148,21 @@ func (lp *LineParser) Parse(content string) LineParserResult {
 	return result
 }
 
+// calculateIndentation calculates the indentation level of a YAML line.
+//
+// This function counts leading spaces and tabs to determine indentation depth.
+// Tabs are counted as single characters, not expanded to spaces.
+//
+// Parameters:
+//   - line: The line content to analyze
+//
+// Returns the number of leading whitespace characters (spaces + tabs).
+// Returns 0 for lines with no leading whitespace.
+func calculateIndentation(line string) int {
+	trimmed := strings.TrimLeft(line, " \t")
+	return len(line) - len(trimmed)
+}
+
 // parseLine parses a single line of YAML.
 //
 // Parameters:
@@ -163,7 +178,7 @@ func (lp *LineParser) parseLine(lineNum int, originalLine string) ParsedLine {
 		LineNumber:      lineNum,
 		OriginalContent: line,
 		TrimmedContent:  strings.TrimSpace(trimmed),
-		Indentation:     len(line) - len(trimmed),
+		Indentation:     calculateIndentation(line),
 	}
 
 	// Detect indentation type
