@@ -1977,3 +1977,587 @@ func TestErrorWrappingAndUnwrapping(t *testing.T) {
 		})
 	}
 }
+
+// TestInvalidStringToNonStringConversions tests invalid string conversions beyond basic types
+func TestInvalidStringToNonStringConversions(t *testing.T) {
+	tests := []struct {
+		name         string
+		yamlContent  string
+		target       interface{}
+		shouldError  bool
+		description  string
+		expectedType string
+		actualType   string
+	}{
+		{
+			name: "string to struct conversion",
+			yamlContent: `
+config: "not_a_struct"
+`,
+			target: &struct {
+				Config struct {
+					Port int
+					Host string
+				}
+			}{},
+			shouldError:  true,
+			description:  "String cannot be converted to struct",
+			expectedType: "struct",
+			actualType:   "string",
+		},
+		{
+			name: "string to array conversion",
+			yamlContent: `
+items: "not_an_array"
+`,
+			target:      &struct{ Items []int }{},
+			shouldError: true,
+			description: "String cannot be converted to array",
+			expectedType: "array",
+			actualType:   "string",
+		},
+		{
+			name: "string to map conversion",
+			yamlContent: `
+config: "not_a_map"
+`,
+			target:      &struct{ Config map[string]string }{},
+			shouldError: true,
+			description: "String cannot be converted to map",
+			expectedType: "map",
+			actualType:  "string",
+		},
+		{
+			name: "string to slice of structs conversion",
+			yamlContent: `
+servers: "not_a_slice"
+`,
+			target: &struct {
+				Servers []struct {
+					Port int
+					Host string
+				}
+			}{},
+			shouldError:  true,
+			description:  "String cannot be converted to slice of structs",
+			expectedType: "slice",
+			actualType:   "string",
+		},
+		{
+			name: "empty string to int conversion",
+			yamlContent: `
+value: ""
+`,
+			target:      &struct{ Value int }{},
+			shouldError: true,
+			description: "Empty string cannot be converted to int",
+			expectedType: "int",
+			actualType:   "string",
+		},
+		{
+			name: "whitespace string to int conversion",
+			yamlContent: `
+value: "   "
+`,
+			target:      &struct{ Value int }{},
+			shouldError: true,
+			description: "Whitespace string cannot be converted to int",
+			expectedType: "int",
+			actualType:   "string",
+		},
+		{
+			name: "special chars string to int conversion",
+			yamlContent: `
+value: "!@#$%"
+`,
+			target:      &struct{ Value int }{},
+			shouldError: true,
+			description: "Special character string cannot be converted to int",
+			expectedType: "int",
+			actualType:   "string",
+		},
+		{
+			name: "string with whitespace to float conversion",
+			yamlContent: `
+rate: " 3.14 "
+`,
+			target:      &struct{ Rate float64 }{},
+			shouldError: true,
+			description: "String with surrounding whitespace cannot be converted to float",
+			expectedType: "float64",
+			actualType:   "string",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser()
+
+			err := parser.ParseString(tt.yamlContent, tt.target)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
+				} else {
+					t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
+					// Verify error is returned (not panic)
+					if err != nil {
+						t.Logf("✓ Error returned (not panic) for %s", tt.name)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Test '%s' should succeed but errored: %v", tt.name, err)
+				} else {
+					t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
+				}
+			}
+		})
+	}
+}
+
+// TestStructToScalarConversionFailures tests struct/mapping to scalar conversion failures
+func TestStructToScalarConversionFailures(t *testing.T) {
+	tests := []struct {
+		name         string
+		yamlContent  string
+		target       interface{}
+		shouldError  bool
+		description  string
+		expectedType string
+		actualType   string
+	}{
+		{
+			name: "struct to int conversion",
+			yamlContent: `
+value:
+  field1: data1
+  field2: data2
+`,
+			target:      &struct{ Value int }{},
+			shouldError: true,
+			description: "Struct/mapping cannot be converted to int",
+			expectedType: "int",
+			actualType:   "mapping",
+		},
+		{
+			name: "struct to float conversion",
+			yamlContent: `
+rate:
+  value: 123
+`,
+			target:      &struct{ Rate float64 }{},
+			shouldError: true,
+			description: "Struct/mapping cannot be converted to float",
+			expectedType: "float64",
+			actualType:   "mapping",
+		},
+		{
+			name: "struct to bool conversion",
+			yamlContent: `
+enabled:
+  flag: true
+`,
+			target:      &struct{ Enabled bool }{},
+			shouldError: true,
+			description: "Struct/mapping cannot be converted to bool",
+			expectedType: "bool",
+			actualType:   "mapping",
+		},
+		{
+			name: "nested struct to string conversion",
+			yamlContent: `
+name:
+  first: John
+  last: Doe
+`,
+			target:      &struct{ Name string }{},
+			shouldError: true,
+			description: "Nested struct cannot be converted to string",
+			expectedType: "string",
+			actualType:   "mapping",
+		},
+		{
+			name: "struct with multiple fields to scalar",
+			yamlContent: `
+value:
+  a: 1
+  b: 2
+  c: 3
+`,
+			target:      &struct{ Value int }{},
+			shouldError: true,
+			description: "Multi-field struct cannot be converted to scalar int",
+			expectedType: "int",
+			actualType:   "mapping",
+		},
+		{
+			name: "empty struct to scalar",
+			yamlContent: `
+value: {}
+`,
+			target:      &struct{ Value int }{},
+			shouldError: true,
+			description: "Empty struct/mapping cannot be converted to int",
+			expectedType: "int",
+			actualType:   "mapping",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser()
+
+			err := parser.ParseString(tt.yamlContent, tt.target)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
+				} else {
+					t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
+					// Verify error is returned (not panic)
+					if err != nil {
+						t.Logf("✓ Error returned (not panic) for %s", tt.name)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Test '%s' should succeed but errored: %v", tt.name, err)
+				} else {
+					t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
+				}
+			}
+		})
+	}
+}
+
+// TestInvalidMapArrayConversions tests invalid map/array to scalar conversions
+func TestInvalidMapArrayConversions(t *testing.T) {
+	tests := []struct {
+		name         string
+		yamlContent  string
+		target       interface{}
+		shouldError  bool
+		description  string
+		expectedType string
+		actualType   string
+	}{
+		{
+			name: "map to int conversion",
+			yamlContent: `
+value:
+  key1: val1
+  key2: val2
+`,
+			target:      &struct{ Value int }{},
+			shouldError: true,
+			description: "Map cannot be converted to int",
+			expectedType: "int",
+			actualType:   "map",
+		},
+		{
+			name: "map to float conversion",
+			yamlContent: `
+rate:
+  a: 1.5
+  b: 2.5
+`,
+			target:      &struct{ Rate float64 }{},
+			shouldError: true,
+			description: "Map cannot be converted to float",
+			expectedType: "float64",
+			actualType:   "map",
+		},
+		{
+			name: "map to bool conversion",
+			yamlContent: `
+flag:
+  enabled: true
+`,
+			target:      &struct{ Flag bool }{},
+			shouldError: true,
+			description: "Map cannot be converted to bool",
+			expectedType: "bool",
+			actualType:   "map",
+		},
+		{
+			name: "array to int conversion",
+			yamlContent: `
+value:
+  - 1
+  - 2
+  - 3
+`,
+			target:      &struct{ Value int }{},
+			shouldError: true,
+			description: "Array cannot be converted to int",
+			expectedType: "int",
+			actualType:   "array",
+		},
+		{
+			name: "array to float conversion",
+			yamlContent: `
+rate:
+  - 1.5
+  - 2.5
+`,
+			target:      &struct{ Rate float64 }{},
+			shouldError: true,
+			description: "Array cannot be converted to float",
+			expectedType: "float64",
+			actualType:   "array",
+		},
+		{
+			name: "array to bool conversion",
+			yamlContent: `
+enabled:
+  - true
+  - false
+`,
+			target:      &struct{ Enabled bool }{},
+			shouldError: true,
+			description: "Array cannot be converted to bool",
+			expectedType: "bool",
+			actualType:   "array",
+		},
+		{
+			name: "empty array to int conversion",
+			yamlContent: `
+value: []
+`,
+			target:      &struct{ Value int }{},
+			shouldError: true,
+			description: "Empty array cannot be converted to int",
+			expectedType: "int",
+			actualType:   "array",
+		},
+		{
+			name: "empty map to float conversion",
+			yamlContent: `
+rate: {}
+`,
+			target:      &struct{ Rate float64 }{},
+			shouldError: true,
+			description: "Empty map cannot be converted to float",
+			expectedType: "float64",
+			actualType:   "map",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser()
+
+			err := parser.ParseString(tt.yamlContent, tt.target)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
+				} else {
+					t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
+					// Verify error is returned (not panic)
+					if err != nil {
+						t.Logf("✓ Error returned (not panic) for %s", tt.name)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Test '%s' should succeed but errored: %v", tt.name, err)
+				} else {
+					t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
+				}
+			}
+		})
+	}
+}
+
+// TestMapToArrayConversion tests invalid map to array conversions
+func TestMapToArrayConversion(t *testing.T) {
+	tests := []struct {
+		name         string
+		yamlContent  string
+		target       interface{}
+		shouldError  bool
+		description  string
+		expectedType string
+		actualType   string
+	}{
+		{
+			name: "map to array of strings conversion",
+			yamlContent: `
+items:
+  a: item1
+  b: item2
+`,
+			target:      &struct{ Items []string }{},
+			shouldError: true,
+			description: "Map cannot be converted to array of strings",
+			expectedType: "array",
+			actualType:   "map",
+		},
+		{
+			name: "map to array of ints conversion",
+			yamlContent: `
+numbers:
+  one: 1
+  two: 2
+`,
+			target:      &struct{ Numbers []int }{},
+			shouldError: true,
+			description: "Map cannot be converted to array of ints",
+			expectedType: "array",
+			actualType:   "map",
+		},
+		{
+			name: "map to array of structs conversion",
+			yamlContent: `
+servers:
+  web:
+    port: 8080
+  api:
+    port: 9090
+`,
+			target: &struct {
+				Servers []struct {
+					Port int
+				}
+			}{},
+			shouldError:  true,
+			description:  "Map cannot be converted to array of structs",
+			expectedType: "array",
+			actualType:   "map",
+		},
+		{
+			name: "empty map to array conversion",
+			yamlContent: `
+items: {}
+`,
+			target:      &struct{ Items []string }{},
+			shouldError: true,
+			description: "Empty map cannot be converted to array",
+			expectedType: "array",
+			actualType:   "map",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser()
+
+			err := parser.ParseString(tt.yamlContent, tt.target)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
+				} else {
+					t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
+					// Verify error is returned (not panic)
+					if err != nil {
+						t.Logf("✓ Error returned (not panic) for %s", tt.name)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Test '%s' should succeed but errored: %v", tt.name, err)
+				} else {
+					t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
+				}
+			}
+		})
+	}
+}
+
+// TestArrayToMapConversion tests invalid array to map conversions
+func TestArrayToMapConversion(t *testing.T) {
+	tests := []struct {
+		name         string
+		yamlContent  string
+		target       interface{}
+		shouldError  bool
+		description  string
+		expectedType string
+		actualType   string
+	}{
+		{
+			name: "array to map of strings conversion",
+			yamlContent: `
+config:
+  - key1
+  - key2
+`,
+			target:      &struct{ Config map[string]string }{},
+			shouldError: true,
+			description: "Array cannot be converted to map of strings",
+			expectedType: "map",
+			actualType:   "array",
+		},
+		{
+			name: "array to map of ints conversion",
+			yamlContent: `
+values:
+  - 100
+  - 200
+`,
+			target:      &struct{ Values map[string]int }{},
+			shouldError: true,
+			description: "Array cannot be converted to map of ints",
+			expectedType: "map",
+			actualType:   "array",
+		},
+		{
+			name: "array of objects to map conversion",
+			yamlContent: `
+servers:
+  - {name: web, port: 8080}
+  - {name: api, port: 9090}
+`,
+			target: &struct {
+				Servers map[string]struct {
+					Name string
+					Port int
+				}
+			}{},
+			shouldError:  true,
+			description:  "Array of objects cannot be converted to map",
+			expectedType: "map",
+			actualType:   "array",
+		},
+		{
+			name: "empty array to map conversion",
+			yamlContent: `
+config: []
+`,
+			target:      &struct{ Config map[string]string }{},
+			shouldError: true,
+			description: "Empty array cannot be converted to map",
+			expectedType: "map",
+			actualType:   "array",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser()
+
+			err := parser.ParseString(tt.yamlContent, tt.target)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
+				} else {
+					t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
+					// Verify error is returned (not panic)
+					if err != nil {
+						t.Logf("✓ Error returned (not panic) for %s", tt.name)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Test '%s' should succeed but errored: %v", tt.name, err)
+				} else {
+					t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
+				}
+			}
+		})
+	}
+}
