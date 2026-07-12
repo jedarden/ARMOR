@@ -820,6 +820,126 @@ impl fmt::Display for MappingKeyInfo {
     }
 }
 
+/// Check if a line is a YAML comment line
+///
+/// This function determines if a line is a full-line comment (starts with #)
+/// or contains inline content. It handles leading whitespace properly.
+///
+/// # Arguments
+///
+/// * `line` - The line to check
+///
+/// # Returns
+///
+/// `true` if the line is a comment line, `false` otherwise
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::line_parser::is_comment_line;
+///
+/// assert!(is_comment_line("# This is a comment"));
+/// assert!(is_comment_line("  # indented comment"));
+/// assert!(!is_comment_line("key: value # not a comment line"));
+/// assert!(!is_comment_line("key: value"));
+/// ```
+pub fn is_comment_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with('#')
+}
+
+/// Strip inline comment from a YAML line
+///
+/// This function removes inline comments from a YAML line while preserving:
+/// - Hash characters (#) in URLs (http://example.com#anchor)
+/// - Hash characters in quoted strings
+/// - Hash characters in values
+///
+/// The function intelligently handles quoted strings and only removes comments
+/// that are outside of quotes AND preceded by whitespace (per YAML spec).
+///
+/// # Arguments
+///
+/// * `line` - The line to process
+///
+/// # Returns
+///
+/// The line with inline comments removed, or the original line if no comments found
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::line_parser::strip_inline_comment;
+///
+/// // Basic inline comment
+/// assert_eq!(strip_inline_comment("key: value # comment"), "key: value ");
+///
+/// // Comment without leading space
+/// assert_eq!(strip_inline_comment("key: value#comment"), "key: value");
+///
+/// // Hash in URL should be preserved
+/// assert_eq!(strip_inline_comment("url: http://example.com#anchor"), "url: http://example.com#anchor");
+///
+/// // Hash in quoted string should be preserved
+/// assert_eq!(strip_inline_comment("key: \"value with # hash\" # comment"), "key: \"value with # hash\" ");
+/// ```
+pub fn strip_inline_comment(line: &str) -> String {
+    let mut result = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escaped = false;
+    let mut prev_char: Option<char> = None;
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            // After escape character, preserve everything
+            result.push(ch);
+            prev_char = Some(ch);
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                result.push(ch);
+                prev_char = Some(ch);
+                escaped = true;
+            }
+            '\'' if !in_double_quote => {
+                in_single_quote = !in_single_quote;
+                result.push(ch);
+                prev_char = Some(ch);
+            }
+            '"' if !in_single_quote => {
+                in_double_quote = !in_double_quote;
+                result.push(ch);
+                prev_char = Some(ch);
+            }
+            '#' if !in_single_quote && !in_double_quote => {
+                // Check if this # is preceded by whitespace (YAML comment rule)
+                // A # only starts a comment if it's preceded by whitespace or at line start
+                let is_comment = prev_char.map_or(true, |c| c.is_whitespace());
+
+                if is_comment {
+                    // Found comment start - stop processing
+                    break;
+                } else {
+                    // # is part of the value (like in URL), preserve it
+                    result.push(ch);
+                    prev_char = Some(ch);
+                }
+            }
+            _ => {
+                result.push(ch);
+                prev_char = Some(ch);
+            }
+        }
+    }
+
+    result
+}
+
 /// Detect if a line is a YAML mapping key and extract key information
 ///
 /// This function analyzes a YAML line to determine if it contains a mapping key,
@@ -868,7 +988,9 @@ impl fmt::Display for MappingKeyInfo {
 /// assert!(info.unwrap().is_parent_key);
 /// ```
 pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKeyInfo> {
-    let trimmed = line.trim();
+    // Strip inline comments before processing
+    let line_without_comments = strip_inline_comment(line);
+    let trimmed = line_without_comments.trim();
 
     // Skip empty lines
     if trimmed.is_empty() {
@@ -1867,5 +1989,231 @@ mod tests {
         // But if we call it with parent_indent=0 (root level), it should be detected
         let info = detect_mapping_key("  back_up: value", 0);
         assert!(info.is_some(), "Should detect key at appropriate indentation level");
+    }
+
+    // Comment filtering tests
+
+    #[test]
+    fn test_is_comment_line_full_comment() {
+        // Full comment line
+        assert!(is_comment_line("# This is a comment"));
+        assert!(is_comment_line("#"));
+        assert!(is_comment_line("#TODO: fix this"));
+    }
+
+    #[test]
+    fn test_is_comment_line_indented_comment() {
+        // Indented comment lines
+        assert!(is_comment_line("  # indented comment"));
+        assert!(is_comment_line("    # deeply indented comment"));
+        assert!(is_comment_line("\t# tab-indented comment"));
+        assert!(is_comment_line("  \t  # mixed whitespace comment"));
+    }
+
+    #[test]
+    fn test_is_comment_line_inline_comment_not_full_line() {
+        // Lines with inline comments are NOT full-line comments
+        assert!(!is_comment_line("key: value # comment"));
+        assert!(!is_comment_line("key: value#comment"));
+        assert!(!is_comment_line("  key: value # with inline comment"));
+    }
+
+    #[test]
+    fn test_is_comment_line_regular_lines() {
+        // Regular lines are not comments
+        assert!(!is_comment_line("key: value"));
+        assert!(!is_comment_line("  key: value"));
+        assert!(!is_comment_line("- item"));
+        assert!(!is_comment_line("---"));
+        assert!(!is_comment_line(""));
+        assert!(!is_comment_line("   "));
+    }
+
+    #[test]
+    fn test_strip_inline_comment_basic() {
+        // Basic inline comment (hash preceded by whitespace)
+        assert_eq!(strip_inline_comment("key: value # comment"), "key: value ");
+        assert_eq!(strip_inline_comment("key: value # comment with more text"), "key: value ");
+        // Hash without preceding whitespace is part of value, not comment
+        assert_eq!(strip_inline_comment("key: value#comment"), "key: value#comment");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_no_comment() {
+        // No comment to strip
+        assert_eq!(strip_inline_comment("key: value"), "key: value");
+        assert_eq!(strip_inline_comment("  key: value  "), "  key: value  ");
+        assert_eq!(strip_inline_comment("just text"), "just text");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_hash_in_url() {
+        // Hash in URL should be preserved
+        assert_eq!(strip_inline_comment("url: http://example.com#anchor"), "url: http://example.com#anchor");
+        assert_eq!(strip_inline_comment("url: https://example.com/path#section"), "url: https://example.com/path#section");
+        assert_eq!(strip_inline_comment("link: ftp://files.example.com#dir"), "link: ftp://files.example.com#dir");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_hash_in_quoted_string() {
+        // Hash in quoted string should be preserved
+        assert_eq!(strip_inline_comment("key: \"value with # hash\""), "key: \"value with # hash\"");
+        assert_eq!(strip_inline_comment("key: 'value with # hash'"), "key: 'value with # hash'");
+        assert_eq!(strip_inline_comment("key: \"value #1\" # comment"), "key: \"value #1\" ");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_double_quoted_with_comment() {
+        // Double quoted string followed by comment
+        assert_eq!(strip_inline_comment("key: \"value\" # comment"), "key: \"value\" ");
+        assert_eq!(strip_inline_comment("key: \"# not a comment\" # this is a comment"), "key: \"# not a comment\" ");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_single_quoted_with_comment() {
+        // Single quoted string followed by comment
+        assert_eq!(strip_inline_comment("key: 'value' # comment"), "key: 'value' ");
+        assert_eq!(strip_inline_comment("key: '# not a comment' # this is a comment"), "key: '# not a comment' ");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_mixed_quotes() {
+        // Mixed quote handling
+        assert_eq!(strip_inline_comment("key: \"double 'inner' # hash\" # comment"), "key: \"double 'inner' # hash\" ");
+        assert_eq!(strip_inline_comment("key: 'single \"inner\" # hash' # comment"), "key: 'single \"inner\" # hash' ");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_escaped_quotes() {
+        // Escaped quotes should be handled
+        assert_eq!(strip_inline_comment("key: \"value with \\\" escaped quote\" # comment"), "key: \"value with \\\" escaped quote\" ");
+        assert_eq!(strip_inline_comment("key: 'value with \\' escaped quote' # comment"), "key: 'value with \\' escaped quote' ");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_multiple_hashes() {
+        // Multiple hash characters without preceding whitespace are part of value
+        assert_eq!(strip_inline_comment("key: value#hash#in#value"), "key: value#hash#in#value");
+        // Hash preceded by whitespace starts comment, strips everything after
+        assert_eq!(strip_inline_comment("key: value # comment # with # multiple # hashes"), "key: value ");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_edge_cases() {
+        // Edge cases
+        // Full comment line - hash at start with no preceding content
+        assert_eq!(strip_inline_comment("#"), "");
+        assert_eq!(strip_inline_comment("# comment"), "");
+        // Empty line
+        assert_eq!(strip_inline_comment(""), "");
+        // Whitespace only
+        assert_eq!(strip_inline_comment("   "), "   ");
+        // Hash at start after whitespace (still a comment)
+        assert_eq!(strip_inline_comment("  # comment"), "  ");
+    }
+
+    #[test]
+    fn test_strip_inline_comment_preserves_leading_whitespace() {
+        // Leading whitespace should be preserved
+        assert_eq!(strip_inline_comment("  key: value # comment"), "  key: value ");
+        assert_eq!(strip_inline_comment("\tkey: value # comment"), "\tkey: value ");
+        assert_eq!(strip_inline_comment("    key: value # comment"), "    key: value ");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_with_inline_comment() {
+        // Key detection should work with inline comments
+        let info = detect_mapping_key("key: value # this is a comment", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "key");
+        assert_eq!(info.value, Some("value".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_with_inline_comment_no_space() {
+        // Hash without preceding whitespace is part of value, not a comment
+        let info = detect_mapping_key("key: value#comment", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "key");
+        // value#comment is the actual value since # wasn't preceded by whitespace
+        assert_eq!(info.value, Some("value#comment".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_with_url_and_comment() {
+        // URL with hash and inline comment
+        let info = detect_mapping_key("url: http://example.com#anchor # this is a comment", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "url");
+        // Value should preserve the URL hash
+        assert_eq!(info.value, Some("http://example.com#anchor".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_with_quoted_value_and_comment() {
+        // Quoted value with hash characters and inline comment
+        let info = detect_mapping_key("key: \"value #1\" # this is a comment", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "key");
+        // Value should preserve the quoted hash
+        assert_eq!(info.value, Some("\"value #1\"".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_nested_with_comment() {
+        // Nested key with inline comment
+        let info = detect_mapping_key("  nested: value # comment", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "nested");
+        assert_eq!(info.value, Some("value".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_full_comment_line_rejected() {
+        // Full comment line should still be rejected
+        let info = detect_mapping_key("# This: is a comment", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_indented_full_comment_rejected() {
+        // Indented full comment line should be rejected
+        let info = detect_mapping_key("  # TODO: fix this later", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_multiple_inline_comments() {
+        // Line with inline comment - only first # preceded by whitespace starts comment
+        let info = detect_mapping_key("key: value # not # comments", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "key");
+        // Should strip everything after first # (which is preceded by whitespace)
+        assert_eq!(info.value, Some("value".to_string()));
+    }
+
+    #[test]
+    fn test_strip_inline_comment_complex_yaml_line() {
+        // Complex real-world YAML line
+        let line = "  database: \"postgresql://localhost:5432/db#schema\" # production database";
+        let stripped = strip_inline_comment(line);
+        assert_eq!(stripped, "  database: \"postgresql://localhost:5432/db#schema\" ");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_complex_real_world_line() {
+        // Complex real-world YAML line with URL and comment
+        let info = detect_mapping_key("api: \"https://api.example.com/v1#endpoint\" # production API", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "api");
+        // Value should preserve the URL hash in quoted string
+        assert_eq!(info.value, Some("\"https://api.example.com/v1#endpoint\"".to_string()));
     }
 }
