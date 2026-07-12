@@ -1,43 +1,27 @@
-# BF-5DCTC: Validation Failed - No Value to Validate
+# Bead bf-5dctc: Validation Failure
 
-## Task
-Validate extracted value is valid base64 and non-empty.
+## Issue
+No extracted value was available to validate.
 
-## Prerequisite Status
-❌ **FAILED** - The prerequisite stated "Previous child bead complete (value extracted successfully)" was NOT met.
+## Root Cause
+The parent bead `bf-5lx60` (extract LITESTREAM_ACCESS_KEY_ID from secret) failed due to an RBAC blocker on the ord-devimprint cluster:
 
-## Root Cause Analysis
-The parent bead `bf-5lx60` failed to extract the base64-encoded `LITESTREAM_ACCESS_KEY_ID` from the `armor-writer` secret due to RBAC restrictions on the ord-devimprint cluster.
+```
+secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in the "devimprint" namespace
+```
 
-From `notes/bf-5lx60.md`:
-- The `devpod-observer` ServiceAccount cannot read secrets in the `devimprint` namespace
-- Multiple re-attempts confirmed the RBAC blocker is persistent
-- Error: "secrets \"armor-writer\" is forbidden: User \"system:serviceaccount:devpod-observer:devpod-observer\" cannot get resource \"secrets\" in API group \"\" in the namespace \"devimprint\""
+The kubectl-proxy accessed via `http://kubectl-proxy-ord-devimprint:8001` runs with the `devpod-observer` ServiceAccount, which has explicit read-only RBAC that denies secret access. This is a permanent limitation for ord-devimprint cluster access through the available kubectl-proxy.
 
-## Validation Status
-Since no value was extracted, there is nothing to validate:
+## Validation Result
+**FAILED** - No value to validate.
 
-- ❌ Value is not empty (no value exists)
-- ❌ Value contains only valid base64 characters (no value exists)
-- ❌ Value is properly padded with = (no value exists)
+The acceptance criteria for this bead cannot be met:
+- ❌ Value is not empty (N/A - no value exists)
+- ❌ Value contains only valid base64 characters (N/A - no value exists)
+- ❌ Value is properly padded with = if needed (N/A - no value exists)
 
-## Conclusion
-This bead cannot complete its validation task because the extraction prerequisite failed. The RBAC blocker on ord-devimprint cluster prevents reading the secret value.
+## Resolution
+This validation task cannot be completed due to the permanent RBAC limitation on ord-devimprint cluster secret access. The parent bead was closed despite the extraction failure, leaving this bead with no value to validate.
 
-## Final Validation Status
-**VALIDATION CANNOT PROCEED** - There is no extracted value to validate against the acceptance criteria:
-- ❌ No value exists to check length > 0
-- ❌ No value exists to check base64 character set
-- ❌ No value exists to check padding
-
-## Recommended Resolution
-Future work involving secret access on ord-devimprint cluster must account for this documented RBAC limitation. Options include:
-1. Obtain direct kubeconfig with appropriate permissions
-2. Request RBAC modifications to the devpod-observer ServiceAccount
-3. Use alternative clusters/methods for secret access
-
----
-*Date: 2026-07-11*
-*Cluster: ord-devimprint*
-*Dependency: bf-5lx60 (closed, but extraction failed)*
-*Bead-Id: bf-5dctc*
+## Date
+2026-07-12
