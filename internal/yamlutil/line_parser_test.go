@@ -2,6 +2,7 @@
 package yamlutil
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -902,5 +903,345 @@ monitoring:
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		parser.Parse(strings.TrimSpace(yamlContent))
+	}
+}
+
+// TestClassifyLineBlankLines verifies blank line classification.
+func TestClassifyLineBlankLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected SimpleLineCategory
+	}{
+		{
+			name:     "empty string",
+			line:     "",
+			expected: CategoryBlank,
+		},
+		{
+			name:     "single space",
+			line:     " ",
+			expected: CategoryBlank,
+		},
+		{
+			name:     "multiple spaces",
+			line:     "    ",
+			expected: CategoryBlank,
+		},
+		{
+			name:     "single tab",
+			line:     "\t",
+			expected: CategoryBlank,
+		},
+		{
+			name:     "multiple tabs",
+			line:     "\t\t\t",
+			expected: CategoryBlank,
+		},
+		{
+			name:     "mixed spaces and tabs",
+			line:     "  \t  \t",
+			expected: CategoryBlank,
+		},
+		{
+			name:     "newlines only",
+			line:     "\n",
+			expected: CategoryBlank,
+		},
+		{
+			name:     "carriage return",
+			line:     "\r",
+			expected: CategoryBlank,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := classifyLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("classifyLine(%q) = %v, want %v", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestClassifyLineCommentLines verifies comment line classification.
+func TestClassifyLineCommentLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected SimpleLineCategory
+	}{
+		{
+			name:     "simple comment",
+			line:     "# This is a comment",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with leading spaces",
+			line:     "  # CategoryComment with spaces",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with leading tabs",
+			line:     "\t# CategoryComment with tabs",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with mixed indent",
+			line:     " \t # Mixed indent comment",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with text after hash",
+			line:     "#key: value", // This is a comment, not a key
+			expected: CategoryComment,
+		},
+		{
+			name:     "inline comment at start",
+			line:     "# This is comment text with : colon",
+			expected: CategoryComment,
+		},
+		{
+			name:     "hash only",
+			line:     "#",
+			expected: CategoryComment,
+		},
+		{
+			name:     "hash with spaces only",
+			line:     "   #   ",
+			expected: CategoryComment,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := classifyLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("classifyLine(%q) = %v, want %v", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestClassifyLineContentLines verifies content line classification.
+func TestClassifyLineContentLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected SimpleLineCategory
+	}{
+		{
+			name:     "simple key-value",
+			line:     "key: value",
+			expected: CategoryContent,
+		},
+		{
+			name:     "key with indent",
+			line:     "  key: value",
+			expected: CategoryContent,
+		},
+		{
+			name:     "sequence item",
+			line:     "- item",
+			expected: CategoryContent,
+		},
+		{
+			name:     "nested mapping",
+			line:     "parent:",
+			expected: CategoryContent,
+		},
+		{
+			name:     "document start",
+			line:     "---",
+			expected: CategoryContent,
+		},
+		{
+			name:     "document end",
+			line:     "...",
+			expected: CategoryContent,
+		},
+		{
+			name:     "flow style mapping",
+			line:     "{key: value}",
+			expected: CategoryContent,
+		},
+		{
+			name:     "flow style sequence",
+			line:     "[item1, item2]",
+			expected: CategoryContent,
+		},
+		{
+			name:     "scalar value",
+			line:     "just a string",
+			expected: CategoryContent,
+		},
+		{
+			name:     "quoted string",
+			line:     "'quoted string'",
+			expected: CategoryContent,
+		},
+		{
+			name:     "numeric value",
+			line:     "123",
+			expected: CategoryContent,
+		},
+		{
+			name:     "boolean value",
+			line:     "true",
+			expected: CategoryContent,
+		},
+		{
+			name:     "colon not at start",
+			line:     "value:with:colons",
+			expected: CategoryContent,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := classifyLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("classifyLine(%q) = %v, want %v", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestClassifyLineEdgeCases verifies edge case handling.
+func TestClassifyLineEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected SimpleLineCategory
+	}{
+		{
+			name:     "hash in middle of content",
+			line:     "key#notcomment: value",
+			expected: CategoryContent,
+		},
+		{
+			name:     "hash after colon",
+			line:     "key: value#notcomment",
+			expected: CategoryContent,
+		},
+		{
+			name:     "hash in quoted string",
+			line:     `"key#with#hash": value`,
+			expected: CategoryContent,
+		},
+		{
+			name:     "whitespace then content",
+			line:     "    key: value",
+			expected: CategoryContent,
+		},
+		{
+			name:     "tab then content",
+			line:     "\tkey: value",
+			expected: CategoryContent,
+		},
+		{
+			name:     "zero-width space",
+			line:   "​",
+			expected: CategoryBlank, // Zero-width space is whitespace
+		},
+		{
+			name:     "unicode whitespace",
+			line:     " ", // Non-breaking space
+			expected: CategoryBlank, // Considered whitespace by strings.TrimSpace
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := classifyLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("classifyLine(%q) = %v, want %v", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestLineTypeEnumValues verifies SimpleLineCategory enum constant values.
+func TestLineTypeEnumValues(t *testing.T) {
+	// Verify that CategoryBlank, CategoryComment, and CategoryContent have distinct values
+	types := []SimpleLineCategory{CategoryBlank, CategoryComment, CategoryContent}
+	seen := make(map[SimpleLineCategory]bool)
+
+	for i, lt := range types {
+		if seen[lt] {
+			t.Errorf("SimpleLineCategory %d has duplicate value", i)
+		}
+		seen[lt] = true
+
+		// Verify expected values (iota starts at 0)
+		expected := SimpleLineCategory(i)
+		if lt != expected {
+			t.Errorf("SimpleLineCategory %d = %v, want %v", i, lt, expected)
+		}
+	}
+
+	// Verify we have exactly 3 distinct types
+	if len(seen) != 3 {
+		t.Errorf("Expected 3 distinct SimpleLineCategory values, got %d", len(seen))
+	}
+}
+
+// TestClassifyLineYAMLScenarios tests classifyLine with realistic YAML.
+func TestClassifyLineYAMLScenarios(t *testing.T) {
+	yamlContent := `# Service configuration
+service:
+  name: my-service
+  port: 8080
+
+  # Database settings
+  database:
+    host: localhost
+
+database:
+  # This is a comment
+  pool:
+    max_connections: 10
+
+# Another section
+monitoring:
+  enabled: true
+
+`
+
+	lines := strings.Split(yamlContent, "\n")
+	expectedTypes := []SimpleLineCategory{
+		CategoryComment, // # Service configuration
+		CategoryContent, // service:
+		CategoryContent, //   name: my-service
+		CategoryContent, //   port: 8080
+		CategoryBlank,   // (empty line)
+		CategoryComment, //   # Database settings
+		CategoryContent, //   database:
+		CategoryContent, //     host: localhost
+		CategoryBlank,   // (empty line)
+		CategoryContent, // database:
+		CategoryComment, //   # This is a comment
+		CategoryContent, //   pool:
+		CategoryContent, //     max_connections: 10
+		CategoryBlank,   // (empty line)
+		CategoryComment, // # Another section
+		CategoryContent, // monitoring:
+		CategoryContent, //   enabled: true
+		CategoryBlank,   // (empty line)
+		CategoryBlank,   // (empty line at end)
+	}
+
+	for i, line := range lines {
+		if i >= len(expectedTypes) {
+			break
+		}
+		t.Run(fmt.Sprintf("line_%d", i), func(t *testing.T) {
+			result := classifyLine(line)
+			if result != expectedTypes[i] {
+				t.Errorf("Line %d (%q): classifyLine = %v, want %v",
+					i, line, result, expectedTypes[i])
+			}
+		})
 	}
 }
