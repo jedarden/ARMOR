@@ -2,9 +2,19 @@
 
 Generated: 2026-07-12
 Bead: bf-5wm9t
+Updated: 2026-07-12
 
 ## Summary
-Total Validate() occurrences found: 60+ (including definitions, implementations, and call sites)
+Total Validate() occurrences found: **150+** (including definitions, implementations, call sites, and documentation)
+
+## Search Method
+- `rg -n "\.Validate\(" -C 2` - Method call patterns
+- `rg -n "\bValidate\(" -C 2` - Direct function calls
+- `rg -n "Validate," -C 2` - Type assertions/declarations
+- `rg -n "\bValidate\b" -C 1` - All Validate occurrences
+
+## Raw Output
+Complete raw findings with context saved to: `/tmp/validate_callsites_raw.txt`
 
 ---
 
@@ -126,6 +136,34 @@ Total Validate() occurrences found: 60+ (including definitions, implementations,
 
 ---
 
+## 6. Additional Validation Categories Found
+
+### YAML Validation (70+ call sites)
+- `validator.ValidateString()` - 40+ occurrences
+- `validator.ValidateFile()` - 20+ occurrences
+- `validator.ValidateMultipleFiles()` - 5+ occurrences
+- `validator.ValidateStringWithPath()` - 5+ occurrences
+
+### Field Validation (15+ call sites)
+- `ValidateRequiredFields()` - 10+ occurrences
+- `ValidateFieldRequirements()` - 5+ occurrences
+
+### Key Indentation Validation (15+ call sites)
+- `ValidateMappingKeyIndent()` - 10+ occurrences
+- `ValidateKeyIndentationSequence()` - 2+ occurrences
+- `ValidateMappingKeyIndentLine()` - 2+ occurrences
+
+### Syntax Validation (5+ call sites)
+- `ValidateSyntax()` - 3+ occurrences
+- `ValidateSyntaxInFile()` - 2+ occurrences
+
+### Config/Field References (15+ occurrences)
+- `ValidateTypes`, `ValidateRanges`, `ValidatePatterns`, `ValidateLengths` config fields
+- `ValidateOnly` field in validation context
+- `ValidateAfterParse` parser config field
+
+---
+
 ## 5. Comments/Documentation (6)
 
 ### Error handling documentation
@@ -146,12 +184,13 @@ Total Validate() occurrences found: 60+ (including definitions, implementations,
 
 | Category | Count |
 |----------|-------|
-| Interface Definitions | 5 |
-| Method Implementations | 8 |
-| Production Call Sites | 2 |
-| Test Call Sites | 12 |
-| Documentation/Comments | 6 |
-| **Total** | **33+** |
+| Interface Definitions | 20+ |
+| Method Implementations | 20+ |
+| Production Call Sites | 5+ |
+| Test Call Sites | 70+ |
+| Documentation/Comments | 20+ |
+| Config Fields/Assertions | 15+ |
+| **Total** | **150+** |
 
 ---
 
@@ -160,16 +199,41 @@ Total Validate() occurrences found: 60+ (including definitions, implementations,
 1. **All Validate() calls are internal to yamlutil package** - No cross-package dependencies found
 2. **Primary validation pattern**: SchemaValidator → SchemaDefinition.Validate()
 3. **Constraint validation**: 6 constraint types with individual Validate() implementations
-4. **Test coverage**: Comprehensive test coverage with 12+ call sites in test code
+4. **Test coverage**: Comprehensive test coverage with 70+ call sites in test code
 5. **No external API calls**: All Validate() calls are within the yamlutil subsystem
+6. **Multiple validation types**: YAML syntax validation, schema validation, field validation, key indentation validation
+7. **Heavily tested**: Test code accounts for ~70% of all Validate() call sites
 
 ---
 
 ## Files Containing Validate()
 
+**Core Implementation:**
 1. `internal/yamlutil/schema_interfaces.go` - Interface definitions and constraint implementations
 2. `internal/yamlutil/schema.go` - Core SchemaValidator and SchemaDefinition implementations
-3. `internal/yamlutil/schema_validation_test.go` - Unit tests
-4. `internal/yamlutil/parse_error_examples_test.go` - Integration tests
-5. `internal/yamlutil/integration_test.go` - Integration workflow tests
+3. `internal/yamlutil/validator.go` - YAML validation methods
+4. `internal/yamlutil/syntax_validator.go` - Syntax validation
+5. `internal/yamlutil/key_detection.go` - Key indentation validation
+6. `internal/yamlutil/debug_helpers.go` - Field validation helpers
+7. `internal/yamlutil/interfaces.go` - Field accessor interfaces
+8. `internal/yamlutil/future.go` - Future/schema validation stubs
+9. `internal/yamlutil/config.go` - Configuration structs
+
+**Test Files:**
+10. `internal/yamlutil/schema_validation_test.go` - Schema validation tests
+11. `internal/yamlutil/validator_test.go` - Validator tests
+12. `internal/yamlutil/key_indentation_validation_test.go` - Key indentation tests
+13. `internal/yamlutil/debug_helpers_test.go` - Helper validation tests
+14. `internal/yamlutil/interfaces_test.go` - Interface tests
+15. `internal/yamlutil/integration_test.go` - Integration tests
+16. `internal/yamlutil/empty_file_scenarios_test.go` - Empty file tests
+17. `internal/yamlutil/invalid_yaml_fixed_test.go` - Invalid YAML tests
+18. `internal/yamlutil/syntax_validator_test.go` - Syntax validator tests
+19. `internal/yamlutil/config_test.go` - Config tests
+20. `internal/yamlutil/examples_test.go` - Example tests
+21. `internal/yamlutil/errors_test.go` - Error type tests
+22. `internal/yamlutil/parse_error_examples_test.go` - Parse error examples
+
+**Documentation:**
+23. `internal/yamlutil/doc.go` - Usage examples in comments
 
