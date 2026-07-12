@@ -1,42 +1,47 @@
-# Bead bf-3x6ov: Test Assertions Verified
+# Task bf-3x6ov: Verify Test Assertions for Plain Scalar Parser Behavior
 
 ## Task
 Review and fix test assertions to match the actual parser behavior for plain multi-line scalars.
 
 ## Findings
-All 21 tests in `yaml_plain_multiline_scalar_comment_test.rs` pass successfully.
 
-### Verified Behavior
+### Test Status
+✅ All 21 tests in `yaml_plain_multiline_scalar_comment_test.rs` are passing
 
-1. **Lines starting with # ARE comments in plain scalar context**
-   - Unlike block scalars (literal `|` or folded `>`), plain scalars treat `#` as a comment start
-   - Test: `test_hash_in_plain_scalar_starts_comment` ✓
+### Parser Behavior Verified
+
+The tests correctly verify the following YAML spec-compliant behavior for plain scalars:
+
+1. **Lines starting with `#` ARE comments in plain scalar context**
+   - Unlike literal/folded block scalars (where `#` is content)
+   - Tests: `test_hash_in_plain_scalar_starts_comment`, `test_multiline_plain_scalar_with_comment_lines`
 
 2. **Inline comment stripping works correctly**
-   - `#` preceded by whitespace triggers comment stripping
+   - `#` preceded by whitespace starts a comment (YAML spec rule)
    - `#` NOT preceded by space is preserved (e.g., URLs with anchors)
-   - Test: `test_hash_symbol_in_plain_scalar_value` ✓
-   - Test: `test_multiple_hashes_in_plain_scalar` ✓
+   - Tests: `test_hash_symbol_in_plain_scalar_value`, `test_strip_inline_comment_*`
 
-3. **Plain scalar classification is correct**
-   - Mapping keys are properly classified
-   - Continuation lines are not classified as comments
-   - Tests: `test_plain_scalar_single_line_classification`, `test_plain_scalar_multiline_continuation` ✓
+3. **Hash preservation in content**
+   - URLs: `http://example.com#anchor` preserves `#anchor`
+   - Values: `value#hash` preserved when no space before `#`
+   - Quoted strings: `#` inside quotes is always preserved
+   - Tests: `test_multiple_hashes_in_plain_scalar`, `test_plain_scalar_with_mixed_content`
 
-4. **Multi-line plain scalars work correctly**
-   - Comment lines interspersed in plain scalars are detected
-   - Hash symbols in content are handled correctly
-   - Tests: `test_multiline_plain_scalar_with_comment_lines`, `test_multiline_plain_scalar_with_hash_in_content` ✓
+### Implementation Details
+From `src/parsers/yaml/line_parser.rs`:
 
-5. **Plain vs block scalar differences are documented**
-   - Tests document the key difference: plain scalars never treat `#` as content, while block scalars preserve `#` when in block context
-   - Tests: `test_plain_vs_literal_block_classification`, `test_plain_vs_folded_block_classification` ✓
+- `is_comment_line()` (lines 846-849): Returns `true` if trimmed line starts with `#`
+- `strip_inline_comment()` (lines 1025-1080): 
+  - Tracks quote state to preserve `#` inside strings
+  - Checks previous character for whitespace to determine if `#` starts comment
+  - Stops processing at first `#` preceded by whitespace
 
-## Conclusion
-No changes needed. The test assertions correctly verify the actual parser behavior according to YAML spec.
+### Conclusion
+✅ Test assertions are correct and match actual parser behavior
+✅ All acceptance criteria met:
+- All test assertions match actual parser behavior
+- Tests correctly verify `#` starts comments in plain scalars (unlike block scalars)
+- Inline comment stripping works correctly
 
-## Test Output
-```
-running 21 tests
-test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured
-```
+## Recommendation
+The bead can be closed as the work is complete - the tests are already correctly asserting the expected parser behavior.
