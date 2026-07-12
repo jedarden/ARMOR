@@ -7,6 +7,8 @@ This document catalogs all `Validate()` call site locations found in the ARMOR R
 - **bf-2c889**: Initial search for Validate() call sites (focused on `src/parsers/config.rs`)
 - **bf-52zl8**: Comprehensive Validate() catalog (entire codebase, all validate() methods)
 - **bf-cdc05**: Documentation task to structure and present the findings
+- **bf-4y58v**: Analyze Validate() callers for error handling patterns
+- **bf-3bqt8**: Categorize Validate() callers by type (direct, wrapped, deferred)
 
 ## Overview
 This document catalogs all locations in the ARMOR codebase where `validate()` methods are called. The codebase has two distinct `validate()` method families:
@@ -24,10 +26,11 @@ pub fn build(self) -> Result<ParserConfig, String> {
     Ok(self.config)
 }
 ```
-**Type:** Direct call with proper error handling
+**Call Type:** Direct call
 **Return Type:** `Result<(), String>`
 **Error Handling:** ✅ Uses `?` operator to propagate errors
 **Priority:** LOW - Already has correct error handling
+**Categorization:** Direct call - validate() is invoked immediately in the build() method flow
 
 ---
 
@@ -39,10 +42,11 @@ pub fn build(self) -> Result<ValidatorConfig, String> {
     Ok(self.config)
 }
 ```
-**Type:** Direct call with proper error handling
+**Call Type:** Direct call
 **Return Type:** `Result<(), String>`
 **Error Handling:** ✅ Uses `?` operator to propagate errors
 **Priority:** LOW - Already has correct error handling
+**Categorization:** Direct call - validate() is invoked immediately in the build() method flow
 
 ---
 
@@ -73,10 +77,17 @@ fn validate_str(&self, content: &str) -> ValidationResult {
     result
 }
 ```
-**Type:** Direct call with manual result inspection
+**Call Type:** Wrapped call
+**Category:** Wrapped call
 **Return Type:** `ValidationResult` (struct)
 **Error Handling:** ⚠️ Does NOT use `?` - stores result and manually checks `is_valid()`
 **Priority:** LOW - Intentionally uses result struct directly (not a `Result` type)
+**Categorization:** Wrapped call - validate() is wrapped within validate_str() method that combines basic validation with enhanced syntax detection and result merging
+**Wrapper functionality:**
+- Encapsulates validator selection (strict vs lenient)
+- Combines basic validation with enhanced syntax detection
+- Merges errors from both validation sources
+- Provides unified ValidationResult interface
 
 ---
 
@@ -87,39 +98,114 @@ All other `validate()` calls are in test code and use assertion patterns:
 ### Config Tests (`src/parsers/config.rs`)
 - Lines 1202, 1205, 1216, 1224, 1232, 1297, 1300, 1312, 1320
 - Pattern: `assert!(config.validate().is_ok())` or `assert!(config.validate().is_err())`
+- **Call Type:** Direct call - validate() is called directly within assertion expressions
 
 ### Schema Tests (`src/schema.rs`)
 - Lines 145, 146, 216, 218, 270-272, 318-326, 352-358, 431-440, 462-466, 505, 511, 518, 527, 551-552, 555, 560, 564, 602-614, 660, 662, 675, 682, 693
 - Pattern: `assert!(schema.validate(&value).is_ok())` or `is_err()` assertions
+- **Call Type:** Direct call - validate() is called directly within assertion expressions
 
 ### YAML Validator Tests (`src/parsers/yaml/syntax_validator.rs`)
 - Lines 438, 453, 461, 470, 479, 487, 495, 503
 - Pattern: `let result = validator.validate(yaml)`
+- **Call Type:** Direct call - validate() is called directly and result stored for later inspection
 
 ### Syntax Detector Tests (`src/parsers/yaml/syntax_detector_tests.rs`)
 - Lines 131, 567, 728
 - Pattern: `let result = validator.validate(yaml)`
+- **Call Type:** Direct call - validate() is called directly and result stored for later inspection
 
 ### Schema Validation Tests (`tests/schema_validation_test.rs`)
 - Lines 148, 150, 180-264, 276, 282, 290-292, 304-575, 583, 586, 590, 621, 631, 647
 - Pattern: `assert!(schema.validate(&value).is_ok())` or `let result = schema.validate(&value)`
+- **Call Type:** Direct call - validate() is called directly within assertions or stored for inspection
 
 ---
 
-## Summary by Category
+## Summary by Call Type
 
-### Direct Calls with Proper Error Handling (Production)
-1. `ParserConfigBuilder::build()` - Line 662 ✅
-2. `ValidatorConfigBuilder::build()` - Line 1007 ✅
+### Production Code Call Sites (3 total)
 
-### Direct Calls with Manual Result Inspection (Production)
-1. `YamlParser::validate_str()` - Line 121 ⚠️ (uses struct, not Result)
+#### Direct Calls (3)
+All production validate() calls are **direct calls** - the method is invoked immediately in the execution flow:
 
-### Test Calls (Assertion Pattern)
-- ~80+ calls across test files using `assert!(...is_ok())` or `assert!(...is_err())`
+1. **ParserConfigBuilder::build()** - Line 662
+   - Call Type: Direct call
+   - Pattern: `self.config.validate()?`
+   - Error Handling: ✅ Proper with `?` operator
 
-### Test Calls (Variable Assignment)
-- ~20 calls across test files storing result for later inspection
+2. **ValidatorConfigBuilder::build()** - Line 1007
+   - Call Type: Direct call
+   - Pattern: `self.config.validate()?`
+   - Error Handling: ✅ Proper with `?` operator
+
+3. **YamlParser::validate_str()** - Line 121
+   - Call Type: Direct call
+   - Pattern: `validator.validate(content)` then manual inspection
+   - Error Handling: ⚠️ Manual (intentionally uses ValidationResult struct)
+
+#### Wrapped Calls (0)
+No wrapped calls found - no validate() calls are wrapped in helper functions or abstraction layers.
+
+#### Deferred Calls (0)
+No deferred calls found - no validate() calls are deferred via closures, futures, or lazy evaluation.
+
+### Test Code Call Sites (100+ total)
+
+All test validate() calls are **direct calls**:
+
+#### Config Tests (10 calls)
+- Lines 1202, 1205, 1216, 1224, 1232, 1297, 1300, 1312, 1320
+- Call Type: Direct call within assertion expressions
+- Pattern: `assert!(config.validate().is_ok())` or `assert!(config.validate().is_err())`
+
+#### Schema Tests (~45 calls)
+- Lines 145, 146, 216, 218, 270-272, 318-326, 352-358, 431-440, 462-466, 505, 511, 518, 527, 551-552, 555, 560, 564, 602-614, 660, 662, 675, 682, 693
+- Call Type: Direct call within assertion expressions
+- Pattern: `assert!(schema.validate(&value).is_ok())` or `is_err()` assertions
+
+#### YAML Validator Tests (8 calls)
+- Lines 438, 453, 461, 470, 479, 487, 495, 503
+- Call Type: Direct call with variable assignment
+- Pattern: `let result = validator.validate(yaml)`
+
+#### Syntax Detector Tests (3 calls)
+- Lines 131, 567, 728
+- Call Type: Direct call with variable assignment
+- Pattern: `let result = validator.validate(yaml)`
+
+#### Schema Validation Tests (~40 calls)
+- Lines 148, 150, 180-264, 276, 282, 290-292, 304-575, 583, 586, 590, 621, 631, 647
+- Call Type: Direct call within assertions or with variable assignment
+- Pattern: `assert!(schema.validate(&value).is_ok())` or `let result = schema.validate(&value)`
+
+---
+
+## Summary Statistics by Call Type
+
+### Production Code
+- **Direct Calls:** 3 (100%)
+- **Wrapped Calls:** 0 (0%)
+- **Deferred Calls:** 0 (0%)
+- **Total:** 3 call sites
+
+### Test Code
+- **Direct Calls:** 100+ (100%)
+- **Wrapped Calls:** 0 (0%)
+- **Deferred Calls:** 0 (0%)
+- **Total:** 100+ call sites
+
+### Overall Codebase
+- **Direct Calls:** 103+ (100%)
+- **Wrapped Calls:** 0 (0%)
+- **Deferred Calls:** 0 (0%)
+- **Total:** 103+ call sites
+
+### Key Findings
+1. **No wrapped calls** - All validate() calls are direct; no abstraction layers or helper functions wrap the validation
+2. **No deferred calls** - No lazy evaluation, closures, or async deferral of validation
+3. **Consistent pattern** - All production calls follow direct invocation patterns appropriate to their context
+4. **Test coverage** - Extensive test coverage with 100+ direct calls in test code
 
 ---
 
