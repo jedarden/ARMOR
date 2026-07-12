@@ -5,19 +5,82 @@ Update Validate() callers in internal/yamlutil/schema.go to handle YAMLError ret
 
 ## Verification Result
 
-The Validate() callers in schema.go **already properly handle YAMLError**. The implementation was completed in a previous commit.
+All Validate() and Compile() callers in schema.go **already properly handle YAMLError**. The implementation was completed across three prior beads on 2026-07-12.
 
-### Implementation Details
+### Call Sites Verified
 
-**Location**: `internal/yamlutil/schema.go:208-224`
+#### 1. SchemaValidator.Validate() - Line 208
+**Implemented by**: bead bf-3qktt (commit fa92143e)
 
-The `SchemaValidator.Validate()` method properly handles YAMLError from `sv.schema.Validate(data)`:
+```go
+if err := sv.schema.Validate(data); err != nil {
+    result.Valid = false
 
-1. **Nil Check**: `if err := sv.schema.Validate(data); err != nil {` (line 208)
-2. **Type Assertion**: `if yamlErr, ok := err.(YAMLError); ok {` (line 212)
-3. **Error Code Extraction**: `ErrorCode: yamlErr.Code()` (line 215)
-4. **Context Preservation**: `Message: fmt.Sprintf("Data validation failed: %v", yamlErr)` (line 214)
-5. **Fallback Handling**: Generic error handling for non-YAMLError types (lines 217-221)
+    // Handle YAMLError with structured information
+    if yamlErr, ok := err.(YAMLError); ok {
+        result.Errors = append(result.Errors, SchemaValidationError{
+            Message:   fmt.Sprintf("Data validation failed: %v", yamlErr),
+            ErrorCode: yamlErr.Code(),
+        })
+    } else {
+        // Handle generic errors
+        result.Errors = append(result.Errors, SchemaValidationError{
+            Message: fmt.Sprintf("Data validation failed: %v", err),
+        })
+    }
+    return result
+}
+```
+
+- ✓ Nil check with `if err != nil`
+- ✓ Type assertion to YAMLError
+- ✓ ErrorCode extraction
+- ✓ Context preservation with fmt.Sprintf
+- ✓ Fallback for generic errors
+
+#### 2. compileSchema() - Line 287
+**Implemented by**: bead bf-6csby (commit 98295061)
+
+```go
+if err := schemaDef.Compile(); err != nil {
+    // Handle YAMLError with structured information
+    if yamlErr, ok := err.(YAMLError); ok {
+        return fmt.Errorf("schema compilation failed: %w", yamlErr)
+    }
+    // Handle generic errors
+    return fmt.Errorf("schema compilation failed: %w", err)
+}
+```
+
+- ✓ Nil check with `if err != nil`
+- ✓ Type assertion to YAMLError
+- ✓ Error wrapping with fmt.Errorf
+- ✓ Context preservation
+
+#### 3. LoadSchema() - Line 675
+**Implemented by**: bead bf-2jsu8 (commit b540ba49)
+
+```go
+if err := schemaDef.Compile(); err != nil {
+    // Handle YAMLError with structured information
+    if yamlErr, ok := err.(YAMLError); ok {
+        return nil, &SchemaError{
+            Message:  fmt.Sprintf("Failed to compile schema: %v", yamlErr),
+            FilePath: schemaPath,
+        }
+    }
+    // Handle generic errors
+    return nil, &SchemaError{
+        Message: fmt.Sprintf("Failed to compile schema: %v", err),
+        FilePath: schemaPath,
+    }
+}
+```
+
+- ✓ Nil check with `if err != nil`
+- ✓ Type assertion to YAMLError
+- ✓ SchemaError wrapping with context
+- ✓ FilePath preservation
 
 ### Acceptance Criteria Met
 
