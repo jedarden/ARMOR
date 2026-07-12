@@ -421,7 +421,7 @@ func TestValidationResult_IsValid(t *testing.T) {
 		FilePath: "test.yaml",
 		Valid:    false,
 		Errors: []ValidationError{
-			*NewValidationError("test.yaml", "required field missing", "server.name", "", ErrCodeRequiredField, 5, 0, "", ""),
+			*NewValidationError("test.yaml", "required field missing", "server.name", "", ErrCodeRequiredField, 5, 0, "", "server.name"),
 		},
 		Warnings: []ValidationError{},
 	}
