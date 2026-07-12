@@ -44,7 +44,6 @@ fn test_string_to_invalid_integer_conversions() {
     /// | "" | Empty string |
     /// | "inf" | Infinity string |
     /// | "-inf" | Negative infinity |
-
     let test_cases = vec![
         ("abc", "pure alphabetic"),
         ("12.34", "float-formatted"),
@@ -64,17 +63,26 @@ fn test_string_to_invalid_integer_conversions() {
         let value: Result<Value, _> = serde_yaml::from_str(&yaml);
 
         // Verify parsing succeeds (YAML accepts these as strings)
-        assert!(value.is_ok(), "YAML parsing should succeed for {} input", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {} input",
+            description
+        );
 
         let value = value.unwrap();
         let port_value = &value["port"];
 
         // Verify it's actually a string
-        assert!(port_value.is_string(), "Value should be string for {}", description);
+        assert!(
+            port_value.is_string(),
+            "Value should be string for {}",
+            description
+        );
 
         // Verify conversion to integer fails
         let result = port_value.as_i64();
-        assert!(result.is_none(),
+        assert!(
+            result.is_none(),
             "String '{}' should not convert to integer ({})",
             if input.is_empty() { "<empty>" } else { input },
             description
@@ -82,16 +90,28 @@ fn test_string_to_invalid_integer_conversions() {
 
         // Verify we can create a type_mismatch error for this case
         let error = ParseError::type_mismatch("port", "integer", "string");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be recognized for {}", description);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be recognized for {}",
+            description
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("port"),
-            "Error message should include field name for {}", description);
-        assert!(error_msg.contains("integer"),
-            "Error message should include expected type for {}", description);
-        assert!(error_msg.contains("string"),
-            "Error message should include actual type for {}", description);
+        assert!(
+            error_msg.contains("port"),
+            "Error message should include field name for {}",
+            description
+        );
+        assert!(
+            error_msg.contains("integer"),
+            "Error message should include expected type for {}",
+            description
+        );
+        assert!(
+            error_msg.contains("string"),
+            "Error message should include actual type for {}",
+            description
+        );
     }
 }
 
@@ -114,7 +134,6 @@ fn test_string_to_invalid_boolean_conversions() {
     /// | "off" | Off state |
     /// | "TRUE" | Uppercase (may vary by parser) |
     /// | "tRuE" | Mixed case |
-
     let test_cases = vec![
         ("yes", "affirmative"),
         ("no", "negative"),
@@ -132,19 +151,30 @@ fn test_string_to_invalid_boolean_conversions() {
         let yaml = format!("enabled: \"{}\"", input);
         let value: Result<Value, _> = serde_yaml::from_str(&yaml);
 
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         let enabled_value = &value["enabled"];
 
-        assert!(enabled_value.is_string(), "Value should be string for {}", description);
+        assert!(
+            enabled_value.is_string(),
+            "Value should be string for {}",
+            description
+        );
 
         // Verify conversion to boolean fails (for non-standard boolean strings)
         let _result = enabled_value.as_bool();
         // Note: Some YAML parsers may convert certain strings, so we check the error handling
         let error = ParseError::type_mismatch("enabled", "boolean", "string");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for {} string", description);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for {} string",
+            description
+        );
     }
 }
 
@@ -161,7 +191,6 @@ fn test_string_to_invalid_float_conversions() {
     /// | "abc" | Alphabetic |
     /// | "true" | Boolean string |
     /// | "null" | Null string |
-
     let test_cases = vec![
         ("abc", "alphabetic"),
         ("true", "boolean string"),
@@ -176,16 +205,25 @@ fn test_string_to_invalid_float_conversions() {
         let yaml = format!("rate: \"{}\"", input);
         let value: Result<Value, _> = serde_yaml::from_str(&yaml);
 
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         let rate_value = &value["rate"];
 
-        assert!(rate_value.is_string(), "Value should be string for {}", description);
+        assert!(
+            rate_value.is_string(),
+            "Value should be string for {}",
+            description
+        );
 
         // Verify conversion to float fails
         let result = rate_value.as_f64();
-        assert!(result.is_none(),
+        assert!(
+            result.is_none(),
             "String '{}' should not convert to float ({})",
             if input.is_empty() { "<empty>" } else { input },
             description
@@ -193,8 +231,11 @@ fn test_string_to_invalid_float_conversions() {
 
         // Verify type mismatch error handling
         let error = ParseError::type_mismatch("rate", "float", "string");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for {}", description);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for {}",
+            description
+        );
     }
 }
 
@@ -218,7 +259,6 @@ fn test_mapping_to_scalar_conversions() {
     /// | float | Mapping cannot become float |
     /// | string | Mapping cannot become string (directly) |
     /// | null | Mapping cannot become null |
-
     let test_cases = vec![
         ("integer", "i64", "number"),
         ("boolean", "bool", "true/false"),
@@ -250,17 +290,26 @@ config:
             _ => panic!("Unexpected type: {}", expected_type),
         };
 
-        assert!(!result,
-            "Mapping should not convert to {} ({})", expected_type, description);
+        assert!(
+            !result,
+            "Mapping should not convert to {} ({})",
+            expected_type, description
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch("config", expected_type, "mapping");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for mapping to {} conversion", expected_type);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for mapping to {} conversion",
+            expected_type
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("mapping") || error_msg.contains("object"),
-            "Error should mention actual type is mapping/object for {}", description);
+        assert!(
+            error_msg.contains("mapping") || error_msg.contains("object"),
+            "Error should mention actual type is mapping/object for {}",
+            description
+        );
     }
 }
 
@@ -280,7 +329,6 @@ fn test_sequence_to_scalar_conversions() {
     /// | float | Array cannot become float |
     /// | string | Array cannot become string (directly) |
     /// | number | Array cannot become number |
-
     let test_cases = vec![
         ("integer", "i64"),
         ("boolean", "bool"),
@@ -313,17 +361,22 @@ servers:
             _ => panic!("Unexpected type: {}", expected_type),
         };
 
-        assert!(!result,
-            "Sequence should not convert to {}", expected_type);
+        assert!(!result, "Sequence should not convert to {}", expected_type);
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch("servers", expected_type, "sequence");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for sequence to {} conversion", expected_type);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for sequence to {} conversion",
+            expected_type
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("sequence") || error_msg.contains("array"),
-            "Error should mention actual type is sequence/array for {}", expected_type);
+        assert!(
+            error_msg.contains("sequence") || error_msg.contains("array"),
+            "Error should mention actual type is sequence/array for {}",
+            expected_type
+        );
     }
 }
 
@@ -343,11 +396,14 @@ fn test_array_to_scalar_invalid_conversions() {
     /// - Single-element array to scalar (still invalid - must explicitly access)
     /// - Multi-element array to scalar
     /// - Nested array to scalar
-
     let test_cases = vec![
         (r#"items: []"#, "empty array", "integer"),
         (r#"count: [42]"#, "single-element array", "integer"),
-        (r#"ports: [8000, 8001, 8002]"#, "multi-element array", "integer"),
+        (
+            r#"ports: [8000, 8001, 8002]"#,
+            "multi-element array",
+            "integer",
+        ),
         (r#"matrix: [[1, 2], [3, 4]]"#, "nested array", "integer"),
         (r#"flags: [true, false]"#, "boolean array", "boolean"),
         (r#"rates: [1.5, 2.5, 3.5]"#, "float array", "float"),
@@ -355,14 +411,29 @@ fn test_array_to_scalar_invalid_conversions() {
 
     for (yaml, description, expected_type) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         // Get the first key-value pair
-        let key = value.as_mapping().unwrap().keys().next().unwrap().as_str().unwrap();
+        let key = value
+            .as_mapping()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .as_str()
+            .unwrap();
         let array_value = &value[key];
 
-        assert!(array_value.is_sequence(), "Value should be array for {}", description);
+        assert!(
+            array_value.is_sequence(),
+            "Value should be array for {}",
+            description
+        );
 
         // Verify conversion fails
         let result = match expected_type {
@@ -372,13 +443,20 @@ fn test_array_to_scalar_invalid_conversions() {
             _ => panic!("Unexpected expected type: {}", expected_type),
         };
 
-        assert!(!result,
-            "Array should not convert to {} for {}", expected_type, description);
+        assert!(
+            !result,
+            "Array should not convert to {} for {}",
+            expected_type, description
+        );
 
         // Verify error handling
         let error = ParseError::type_mismatch(key, expected_type, "array");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for array to {} ({})", expected_type, description);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for array to {} ({})",
+            expected_type,
+            description
+        );
     }
 }
 
@@ -394,24 +472,46 @@ fn test_map_to_scalar_invalid_conversions() {
     /// - Single-key map to scalar
     /// - Multi-key map to scalar
     /// - Nested map to scalar
-
     let test_cases = vec![
         (r#"config: {}"#, "empty map", "integer"),
         (r#"port: {number: 8080}"#, "single-key map", "integer"),
-        (r#"server: {host: localhost, port: 8080}"#, "multi-key map", "string"),
-        (r#"database: {host: localhost, port: 5432, name: test}"#, "multi-field map", "boolean"),
+        (
+            r#"server: {host: localhost, port: 8080}"#,
+            "multi-key map",
+            "string",
+        ),
+        (
+            r#"database: {host: localhost, port: 5432, name: test}"#,
+            "multi-field map",
+            "boolean",
+        ),
         (r#"nested: {outer: {inner: 42}}"#, "nested map", "integer"),
     ];
 
     for (yaml, description, expected_type) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
-        let key = value.as_mapping().unwrap().keys().next().unwrap().as_str().unwrap();
+        let key = value
+            .as_mapping()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .as_str()
+            .unwrap();
         let map_value = &value[key];
 
-        assert!(map_value.is_mapping(), "Value should be map for {}", description);
+        assert!(
+            map_value.is_mapping(),
+            "Value should be map for {}",
+            description
+        );
 
         // Verify conversion fails
         let result = match expected_type {
@@ -421,13 +521,20 @@ fn test_map_to_scalar_invalid_conversions() {
             _ => panic!("Unexpected expected type: {}", expected_type),
         };
 
-        assert!(!result,
-            "Map should not convert to {} for {}", expected_type, description);
+        assert!(
+            !result,
+            "Map should not convert to {} for {}",
+            expected_type, description
+        );
 
         // Verify error handling
         let error = ParseError::type_mismatch(key, expected_type, "map");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for map to {} ({})", expected_type, description);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for map to {} ({})",
+            expected_type,
+            description
+        );
     }
 }
 
@@ -436,7 +543,6 @@ fn test_array_to_map_invalid_conversion() {
     /// Test: Array to map conversion should fail
     ///
     /// Arrays cannot be treated as maps/objects - this is a structural mismatch.
-
     let yaml_array = r#"
 servers:
   - name: server1
@@ -451,17 +557,23 @@ servers:
     assert!(servers_value.is_sequence(), "Servers should be an array");
 
     // Verify array cannot be treated as mapping
-    assert!(servers_value.as_mapping().is_none(),
-        "Array should not convert to mapping");
+    assert!(
+        servers_value.as_mapping().is_none(),
+        "Array should not convert to mapping"
+    );
 
     // Verify error handling
     let error = ParseError::type_mismatch("servers", "map", "array");
-    assert!(error.is_type_mismatch(),
-        "Type mismatch error should be created for array to map conversion");
+    assert!(
+        error.is_type_mismatch(),
+        "Type mismatch error should be created for array to map conversion"
+    );
 
     let error_msg = format!("{}", error.kind);
-    assert!(error_msg.contains("array"),
-        "Error should mention actual type is array");
+    assert!(
+        error_msg.contains("array"),
+        "Error should mention actual type is array"
+    );
 }
 
 #[test]
@@ -469,7 +581,6 @@ fn test_map_to_array_invalid_conversion() {
     /// Test: Map to array conversion should fail
     ///
     /// Maps/objects cannot be treated as arrays - this is a structural mismatch.
-
     let yaml_map = r#"
 server:
   name: web
@@ -483,17 +594,23 @@ server:
     assert!(server_value.is_mapping(), "Server should be a map");
 
     // Verify map cannot be treated as sequence
-    assert!(server_value.as_sequence().is_none(),
-        "Map should not convert to sequence");
+    assert!(
+        server_value.as_sequence().is_none(),
+        "Map should not convert to sequence"
+    );
 
     // Verify error handling
     let error = ParseError::type_mismatch("server", "array", "map");
-    assert!(error.is_type_mismatch(),
-        "Type mismatch error should be created for map to array conversion");
+    assert!(
+        error.is_type_mismatch(),
+        "Type mismatch error should be created for map to array conversion"
+    );
 
     let error_msg = format!("{}", error.kind);
-    assert!(error_msg.contains("map") || error_msg.contains("object"),
-        "Error should mention actual type is map/object");
+    assert!(
+        error_msg.contains("map") || error_msg.contains("object"),
+        "Error should mention actual type is map/object"
+    );
 }
 
 // ============================================================================
@@ -514,7 +631,6 @@ fn test_null_to_typed_scalar_conversions() {
     /// | boolean | Null is not a boolean |
     /// | float | Null is not a float |
     /// | string | Null is not a string |
-
     let yaml = r#"
 port: ~
 enabled: null
@@ -545,13 +661,19 @@ name: null
             _ => panic!("Unexpected type: {}", expected_type),
         };
 
-        assert!(!result,
-            "Null should not convert to {} for field {}", expected_type, field);
+        assert!(
+            !result,
+            "Null should not convert to {} for field {}",
+            expected_type, field
+        );
 
         // Verify error handling
         let error = ParseError::type_mismatch(field, expected_type, "null");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for null to {} conversion", expected_type);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for null to {} conversion",
+            expected_type
+        );
     }
 }
 
@@ -572,7 +694,6 @@ fn test_nested_field_type_mismatch() {
     /// | database.port | integer | string | Port is string, not integer |
     /// | server.enabled | boolean | integer | Enabled is number, not boolean |
     /// | config.rate | float | boolean | Rate is boolean, not float |
-
     let yaml = r#"
 database:
   host: localhost
@@ -612,8 +733,11 @@ config:
             _ => false,
         };
 
-        assert!(is_actual_type,
-            "Field {} should be {} type", field_path, actual);
+        assert!(
+            is_actual_type,
+            "Field {} should be {} type",
+            field_path, actual
+        );
 
         // Verify conversion to expected type fails
         let conversion_succeeds = match expected {
@@ -624,17 +748,26 @@ config:
             _ => panic!("Unexpected expected type: {}", expected),
         };
 
-        assert!(!conversion_succeeds,
-            "Field {} ({}) should not convert to {}", field_path, actual, expected);
+        assert!(
+            !conversion_succeeds,
+            "Field {} ({}) should not convert to {}",
+            field_path, actual, expected
+        );
 
         // Verify error handling with proper field path
         let error = ParseError::type_mismatch(field_path, expected, actual);
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for {} field path", field_path);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for {} field path",
+            field_path
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains(field_path),
-            "Error should include field path '{}'", field_path);
+        assert!(
+            error_msg.contains(field_path),
+            "Error should include field path '{}'",
+            field_path
+        );
     }
 }
 
@@ -647,15 +780,34 @@ fn test_type_mismatch_error_formatting() {
     /// Test: Type mismatch error formatting consistency
     ///
     /// Verify that all type mismatch errors produce consistent, well-formatted messages.
-
     let test_cases = vec![
         ("field1", "integer", "string", "Integer field got string"),
-        ("timeout", "integer", "boolean", "Timeout is boolean, not integer"),
-        ("enabled", "boolean", "integer", "Enabled is integer, not boolean"),
+        (
+            "timeout",
+            "integer",
+            "boolean",
+            "Timeout is boolean, not integer",
+        ),
+        (
+            "enabled",
+            "boolean",
+            "integer",
+            "Enabled is integer, not boolean",
+        ),
         ("rate", "float", "string", "Rate is string, not float"),
-        ("hosts", "array", "string", "Hosts should be array, got string"),
+        (
+            "hosts",
+            "array",
+            "string",
+            "Hosts should be array, got string",
+        ),
         ("config", "object", "null", "Config is null, not object"),
-        ("database.port", "integer", "string", "Nested integer field got string"),
+        (
+            "database.port",
+            "integer",
+            "string",
+            "Nested integer field got string",
+        ),
     ];
 
     for (field, expected, actual, description) in test_cases {
@@ -663,24 +815,42 @@ fn test_type_mismatch_error_formatting() {
         let error_msg = format!("{}", error.kind);
 
         // Verify error message contains all components
-        assert!(error_msg.contains(field),
-            "Error should contain field name for: {}", description);
+        assert!(
+            error_msg.contains(field),
+            "Error should contain field name for: {}",
+            description
+        );
 
-        assert!(error_msg.contains(expected),
-            "Error should contain expected type for: {}", description);
+        assert!(
+            error_msg.contains(expected),
+            "Error should contain expected type for: {}",
+            description
+        );
 
-        assert!(error_msg.contains(actual),
-            "Error should contain actual type for: {}", description);
+        assert!(
+            error_msg.contains(actual),
+            "Error should contain actual type for: {}",
+            description
+        );
 
         // Verify error is correctly categorized
-        assert!(error.is_type_mismatch(),
-            "Error should be type mismatch category for: {}", description);
+        assert!(
+            error.is_type_mismatch(),
+            "Error should be type mismatch category for: {}",
+            description
+        );
 
         // Verify error is not other categories
-        assert!(!error.is_syntax(),
-            "Type mismatch should not be syntax error for: {}", description);
-        assert!(!error.is_validation(),
-            "Type mismatch should not be validation error for: {}", description);
+        assert!(
+            !error.is_syntax(),
+            "Type mismatch should not be syntax error for: {}",
+            description
+        );
+        assert!(
+            !error.is_validation(),
+            "Type mismatch should not be validation error for: {}",
+            description
+        );
     }
 }
 
@@ -690,7 +860,6 @@ fn test_type_mismatch_no_panic_on_invalid_conversion() {
     ///
     /// This is a critical safety test - no invalid type conversion should ever panic.
     /// All conversions must return None or Result::Err.
-
     let yaml = r#"
 string_field: "not a number"
 bool_field: "not a boolean"
@@ -705,11 +874,36 @@ null_field: null
     // Note: Some conversions succeed in serde_yaml (e.g., bool->str, int->str, float->str)
     // so we only test the truly invalid conversions
     let test_cases = vec![
-        (&value["string_field"], "string_field", "string", vec!["as_i64", "as_bool", "as_f64"]),
-        (&value["bool_field"], "bool_field", "boolean", vec!["as_i64", "as_f64"]),
-        (&value["array_field"], "array_field", "array", vec!["as_i64", "as_bool", "as_str", "as_f64", "as_mapping"]),
-        (&value["map_field"], "map_field", "map", vec!["as_i64", "as_bool", "as_str", "as_f64", "as_sequence"]),
-        (&value["null_field"], "null_field", "null", vec!["as_i64", "as_bool", "as_f64"]),
+        (
+            &value["string_field"],
+            "string_field",
+            "string",
+            vec!["as_i64", "as_bool", "as_f64"],
+        ),
+        (
+            &value["bool_field"],
+            "bool_field",
+            "boolean",
+            vec!["as_i64", "as_f64"],
+        ),
+        (
+            &value["array_field"],
+            "array_field",
+            "array",
+            vec!["as_i64", "as_bool", "as_str", "as_f64", "as_mapping"],
+        ),
+        (
+            &value["map_field"],
+            "map_field",
+            "map",
+            vec!["as_i64", "as_bool", "as_str", "as_f64", "as_sequence"],
+        ),
+        (
+            &value["null_field"],
+            "null_field",
+            "null",
+            vec!["as_i64", "as_bool", "as_f64"],
+        ),
     ];
 
     for (value_ref, field_name, actual_type, methods) in test_cases {
@@ -726,9 +920,11 @@ null_field: null
             };
 
             // Verify conversion failed safely
-            assert!(!conversion_result,
+            assert!(
+                !conversion_result,
                 "Conversion {} for {} ({}) should fail, got success",
-                method, field_name, actual_type);
+                method, field_name, actual_type
+            );
 
             // Verify we can create an error for this case
             let expected_type: &str = match method {
@@ -742,9 +938,13 @@ null_field: null
             };
 
             let error = ParseError::type_mismatch(field_name, expected_type, actual_type);
-            assert!(error.is_type_mismatch(),
+            assert!(
+                error.is_type_mismatch(),
                 "Type mismatch error should be created for {} -> {} conversion ({})",
-                actual_type, expected_type, method);
+                actual_type,
+                expected_type,
+                method
+            );
         }
     }
 }
@@ -769,7 +969,6 @@ fn test_expected_integer_got_boolean() {
     /// | count | true | Boolean true as count |
     /// | timeout | false | Boolean false as timeout |
     /// | size | true | Boolean true as size |
-
     let test_cases = vec![
         (r#"port: true"#, "port", "true"),
         (r#"port: false"#, "port", "false"),
@@ -781,31 +980,52 @@ fn test_expected_integer_got_boolean() {
 
     for (yaml, field_name, boolean_value) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for boolean {}", boolean_value);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for boolean {}",
+            boolean_value
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
 
         // Verify it's actually a boolean
-        assert!(field_value.is_bool(), "Field {} should be boolean ({})", field_name, boolean_value);
+        assert!(
+            field_value.is_bool(),
+            "Field {} should be boolean ({})",
+            field_name,
+            boolean_value
+        );
 
         // Verify conversion to integer fails
         let result = field_value.as_i64();
-        assert!(result.is_none(),
+        assert!(
+            result.is_none(),
             "Boolean {} should not convert to integer for field {}",
-            boolean_value, field_name);
+            boolean_value,
+            field_name
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch(field_name, "integer", "boolean");
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for boolean {} in integer field {}",
-            boolean_value, field_name);
+            boolean_value,
+            field_name
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("integer"),
-            "Error should mention expected integer type for {}", field_name);
-        assert!(error_msg.contains("boolean") || error_msg.contains("bool"),
-            "Error should mention actual boolean type for {}", field_name);
+        assert!(
+            error_msg.contains("integer"),
+            "Error should mention expected integer type for {}",
+            field_name
+        );
+        assert!(
+            error_msg.contains("boolean") || error_msg.contains("bool"),
+            "Error should mention actual boolean type for {}",
+            field_name
+        );
     }
 }
 
@@ -829,7 +1049,6 @@ fn test_expected_string_got_number() {
     /// | label | 3.14 | Float where string needed |
     /// | description | 42 | Integer as description |
     /// | path | 999 | Integer where path string needed |
-
     let test_cases = vec![
         (r#"name: 123"#, "name", "123", "integer"),
         (r#"hostname: 8080"#, "hostname", "8080", "integer"),
@@ -843,14 +1062,22 @@ fn test_expected_string_got_number() {
 
     for (yaml, field_name, numeric_value, value_type) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for numeric {}", numeric_value);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for numeric {}",
+            numeric_value
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
 
         // Verify it's actually a number (not a string)
-        assert!(!field_value.is_string(),
-            "Field {} should not be string (got numeric {})", field_name, numeric_value);
+        assert!(
+            !field_value.is_string(),
+            "Field {} should not be string (got numeric {})",
+            field_name,
+            numeric_value
+        );
 
         // Verify it's a number
         let is_number = if value_type == "integer" {
@@ -858,25 +1085,37 @@ fn test_expected_string_got_number() {
         } else {
             field_value.as_f64().is_some()
         };
-        assert!(is_number,
+        assert!(
+            is_number,
             "Field {} should be {} type (value: {})",
-            field_name, value_type, numeric_value);
+            field_name, value_type, numeric_value
+        );
 
         // Verify conversion to string fails
         let result = field_value.as_str();
-        assert!(result.is_none(),
+        assert!(
+            result.is_none(),
             "Numeric {} should not convert to string for field {}",
-            numeric_value, field_name);
+            numeric_value,
+            field_name
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch(field_name, "string", value_type);
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for {} {} in string field {}",
-            value_type, numeric_value, field_name);
+            value_type,
+            numeric_value,
+            field_name
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("string"),
-            "Error should mention expected string type for {}", field_name);
+        assert!(
+            error_msg.contains("string"),
+            "Error should mention expected string type for {}",
+            field_name
+        );
     }
 }
 
@@ -900,7 +1139,6 @@ fn test_expected_array_got_scalar() {
     /// | array | true | Boolean where array needed |
     /// | array | 3.14 | Float where array needed |
     /// | array | null | Null where array needed |
-
     let test_cases = vec![
         (r#"servers: 42"#, "servers", "integer", "42"),
         (r#"hosts: "single""#, "hosts", "string", "single"),
@@ -914,15 +1152,24 @@ fn test_expected_array_got_scalar() {
 
     for (yaml, field_name, actual_type, actual_value) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {} {}", actual_type, actual_value);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {} {}",
+            actual_type,
+            actual_value
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
 
         // Verify it's not a sequence/array
-        assert!(!field_value.is_sequence(),
+        assert!(
+            !field_value.is_sequence(),
             "Field {} should not be sequence (got {} {})",
-            field_name, actual_type, actual_value);
+            field_name,
+            actual_type,
+            actual_value
+        );
 
         // Verify it matches the expected actual type
         let matches_actual_type = match actual_type {
@@ -933,25 +1180,38 @@ fn test_expected_array_got_scalar() {
             "null" => field_value.is_null(),
             _ => panic!("Unexpected actual type: {}", actual_type),
         };
-        assert!(matches_actual_type,
+        assert!(
+            matches_actual_type,
             "Field {} should be {} type (value: {})",
-            field_name, actual_type, actual_value);
+            field_name, actual_type, actual_value
+        );
 
         // Verify conversion to sequence fails
         let result = field_value.as_sequence();
-        assert!(result.is_none(),
+        assert!(
+            result.is_none(),
             "{} {} should not convert to sequence for field {}",
-            actual_type, actual_value, field_name);
+            actual_type,
+            actual_value,
+            field_name
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch(field_name, "array", actual_type);
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for {} {} in array field {}",
-            actual_type, actual_value, field_name);
+            actual_type,
+            actual_value,
+            field_name
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("array") || error_msg.contains("sequence"),
-            "Error should mention expected array/sequence type for {}", field_name);
+        assert!(
+            error_msg.contains("array") || error_msg.contains("sequence"),
+            "Error should mention expected array/sequence type for {}",
+            field_name
+        );
     }
 }
 
@@ -974,7 +1234,6 @@ fn test_expected_map_got_scalar() {
     /// | map | "config" | String where map needed |
     /// | map | true | Boolean where map needed |
     /// | map | null | Null where map needed |
-
     let test_cases = vec![
         (r#"config: 42"#, "config", "integer"),
         (r#"settings: "simple""#, "settings", "string"),
@@ -985,29 +1244,47 @@ fn test_expected_map_got_scalar() {
 
     for (yaml, field_name, actual_type) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {} in map field", actual_type);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {} in map field",
+            actual_type
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
 
         // Verify it's not a mapping
-        assert!(!field_value.is_mapping(),
-            "Field {} should not be mapping (got {})", field_name, actual_type);
+        assert!(
+            !field_value.is_mapping(),
+            "Field {} should not be mapping (got {})",
+            field_name,
+            actual_type
+        );
 
         // Verify conversion to mapping fails
         let result = field_value.as_mapping();
-        assert!(result.is_none(),
-            "{} should not convert to mapping for field {}", actual_type, field_name);
+        assert!(
+            result.is_none(),
+            "{} should not convert to mapping for field {}",
+            actual_type,
+            field_name
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch(field_name, "map", actual_type);
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for {} in map field {}",
-            actual_type, field_name);
+            actual_type,
+            field_name
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("map") || error_msg.contains("object"),
-            "Error should mention expected map/object type for {}", field_name);
+        assert!(
+            error_msg.contains("map") || error_msg.contains("object"),
+            "Error should mention expected map/object type for {}",
+            field_name
+        );
     }
 }
 
@@ -1030,7 +1307,6 @@ fn test_integer_float_cross_conversion() {
     /// | float | integer | 42 | Integer where float needed |
     /// | integer | float | 1.0 | Whole number as float |
     /// | float | integer | 0 | Zero as integer |
-
     let test_cases = vec![
         (r#"port: 3.14"#, "port", "integer", "float"),
         (r#"rate: 42"#, "rate", "float", "integer"),
@@ -1042,7 +1318,12 @@ fn test_integer_float_cross_conversion() {
 
     for (yaml, field_name, expected_type, actual_type) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {} to {}", actual_type, expected_type);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {} to {}",
+            actual_type,
+            expected_type
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
@@ -1053,8 +1334,11 @@ fn test_integer_float_cross_conversion() {
         } else {
             field_value.as_f64().is_some()
         };
-        assert!(is_actual_type,
-            "Field {} should be {} type", field_name, actual_type);
+        assert!(
+            is_actual_type,
+            "Field {} should be {} type",
+            field_name, actual_type
+        );
 
         // Verify conversion to expected type fails
         let conversion_succeeds = if expected_type == "integer" {
@@ -1067,15 +1351,21 @@ fn test_integer_float_cross_conversion() {
         // For integer->float conversion, we expect success in serde_yaml
         // but should fail if strict type checking is required
         if actual_type == "float" && expected_type == "integer" {
-            assert!(!conversion_succeeds || field_value.as_f64().unwrap().fract() != 0.0,
-                "Float with fractional part should not convert to integer for {}", field_name);
+            assert!(
+                !conversion_succeeds || field_value.as_f64().unwrap().fract() != 0.0,
+                "Float with fractional part should not convert to integer for {}",
+                field_name
+            );
         }
 
         // Verify type mismatch error can be created
         let error = ParseError::type_mismatch(field_name, expected_type, actual_type);
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for {} to {} conversion",
-            actual_type, expected_type);
+            actual_type,
+            expected_type
+        );
     }
 }
 
@@ -1094,7 +1384,6 @@ fn test_truthy_values_as_booleans() {
     /// | 0 | Zero (falsy in some languages) |
     /// | -1 | Negative one (truthy) |
     /// | 2 | Non-zero integer |
-
     let test_cases = vec![
         (r#"enabled: 1"#, "enabled", "1"),
         (r#"active: 0"#, "active", "0"),
@@ -1105,26 +1394,46 @@ fn test_truthy_values_as_booleans() {
 
     for (yaml, field_name, numeric_value) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for numeric {}", numeric_value);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for numeric {}",
+            numeric_value
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
 
         // Verify it's an integer, not a boolean
-        assert!(field_value.is_i64(), "Field {} should be integer ({})", field_name, numeric_value);
-        assert!(!field_value.is_bool(), "Field {} should not be boolean ({})", field_name, numeric_value);
+        assert!(
+            field_value.is_i64(),
+            "Field {} should be integer ({})",
+            field_name,
+            numeric_value
+        );
+        assert!(
+            !field_value.is_bool(),
+            "Field {} should not be boolean ({})",
+            field_name,
+            numeric_value
+        );
 
         // Verify conversion to boolean fails (or would need explicit conversion)
         let result = field_value.as_bool();
-        assert!(result.is_none(),
+        assert!(
+            result.is_none(),
             "Integer {} should not auto-convert to boolean for field {}",
-            numeric_value, field_name);
+            numeric_value,
+            field_name
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch(field_name, "boolean", "integer");
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for integer {} in boolean field {}",
-            numeric_value, field_name);
+            numeric_value,
+            field_name
+        );
     }
 }
 
@@ -1141,7 +1450,6 @@ fn test_boolean_as_integer_truthy_values() {
     /// |-------|-------------|
     /// | true | Boolean true (not 1) |
     /// | false | Boolean false (not 0) |
-
     let test_cases = vec![
         (r#"count: true"#, "count", "true"),
         (r#"size: false"#, "size", "false"),
@@ -1151,26 +1459,46 @@ fn test_boolean_as_integer_truthy_values() {
 
     for (yaml, field_name, boolean_value) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for boolean {}", boolean_value);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for boolean {}",
+            boolean_value
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
 
         // Verify it's a boolean, not an integer
-        assert!(field_value.is_bool(), "Field {} should be boolean ({})", field_name, boolean_value);
-        assert!(!field_value.is_i64(), "Field {} should not be integer ({})", field_name, boolean_value);
+        assert!(
+            field_value.is_bool(),
+            "Field {} should be boolean ({})",
+            field_name,
+            boolean_value
+        );
+        assert!(
+            !field_value.is_i64(),
+            "Field {} should not be integer ({})",
+            field_name,
+            boolean_value
+        );
 
         // Verify conversion to integer fails
         let result = field_value.as_i64();
-        assert!(result.is_none(),
+        assert!(
+            result.is_none(),
             "Boolean {} should not auto-convert to integer for field {}",
-            boolean_value, field_name);
+            boolean_value,
+            field_name
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch(field_name, "integer", "boolean");
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for boolean {} in integer field {}",
-            boolean_value, field_name);
+            boolean_value,
+            field_name
+        );
     }
 }
 
@@ -1189,7 +1517,6 @@ fn test_numeric_string_conversion_mismatch() {
     /// | "3.14" | float | String with float content |
     /// | "0" | integer | String with zero |
     /// | "1000" | integer | String with large integer |
-
     let test_cases = vec![
         (r#"port: "123""#, "port", "integer", "123"),
         (r#"rate: "3.14""#, "rate", "float", "3.14"),
@@ -1201,13 +1528,22 @@ fn test_numeric_string_conversion_mismatch() {
 
     for (yaml, field_name, expected_type, string_value) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for string '{}'", string_value);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for string '{}'",
+            string_value
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
 
         // Verify it's a string, not a number
-        assert!(field_value.is_string(), "Field {} should be string ('{}')", field_name, string_value);
+        assert!(
+            field_value.is_string(),
+            "Field {} should be string ('{}')",
+            field_name,
+            string_value
+        );
 
         // Verify conversion to expected numeric type fails
         let conversion_succeeds = if expected_type == "integer" {
@@ -1216,21 +1552,34 @@ fn test_numeric_string_conversion_mismatch() {
             field_value.as_f64().is_some()
         };
 
-        assert!(!conversion_succeeds,
+        assert!(
+            !conversion_succeeds,
             "String '{}' should not auto-convert to {} for field {}",
-            string_value, expected_type, field_name);
+            string_value, expected_type, field_name
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch(field_name, expected_type, "string");
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for string '{}' in {} field {}",
-            string_value, expected_type, field_name);
+            string_value,
+            expected_type,
+            field_name
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains(expected_type),
-            "Error should mention expected {} type for {}", expected_type, field_name);
-        assert!(error_msg.contains("string"),
-            "Error should mention actual string type for {}", field_name);
+        assert!(
+            error_msg.contains(expected_type),
+            "Error should mention expected {} type for {}",
+            expected_type,
+            field_name
+        );
+        assert!(
+            error_msg.contains("string"),
+            "Error should mention actual string type for {}",
+            field_name
+        );
     }
 }
 
@@ -1248,7 +1597,6 @@ fn test_incompatible_scalar_to_scalar_conversions() {
     /// | boolean | string | String to boolean |
     /// | float | boolean | Boolean to float |
     /// | string | boolean | Boolean to string |
-
     let test_cases = vec![
         (r#"port: true"#, "port", "integer", "boolean"),
         (r#"enabled: "yes""#, "enabled", "boolean", "string"),
@@ -1262,8 +1610,12 @@ fn test_incompatible_scalar_to_scalar_conversions() {
 
     for (yaml, field_name, expected_type, actual_type) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(),
-            "YAML parsing should succeed for {} -> {}", actual_type, expected_type);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {} -> {}",
+            actual_type,
+            expected_type
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
@@ -1276,8 +1628,11 @@ fn test_incompatible_scalar_to_scalar_conversions() {
             "float" => field_value.as_f64().is_some(),
             _ => panic!("Unexpected actual type: {}", actual_type),
         };
-        assert!(is_actual_type,
-            "Field {} should be {} type", field_name, actual_type);
+        assert!(
+            is_actual_type,
+            "Field {} should be {} type",
+            field_name, actual_type
+        );
 
         // Verify conversion to expected type fails
         let conversion_succeeds = match expected_type {
@@ -1288,15 +1643,21 @@ fn test_incompatible_scalar_to_scalar_conversions() {
             _ => panic!("Unexpected expected type: {}", expected_type),
         };
 
-        assert!(!conversion_succeeds,
+        assert!(
+            !conversion_succeeds,
             "{} should not convert to {} for field {}",
-            actual_type, expected_type, field_name);
+            actual_type, expected_type, field_name
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch(field_name, expected_type, actual_type);
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for {} -> {} in field {}",
-            actual_type, expected_type, field_name);
+            actual_type,
+            expected_type,
+            field_name
+        );
     }
 }
 
@@ -1320,7 +1681,6 @@ fn test_integer_overflow_values() {
     /// | 18446744073709551615 | u64::MAX (overflow for i64) |
     /// | 100000000000000000000 | Extremely large value |
     /// | 92233720368547758070 | 10x i64::MAX |
-
     let test_cases = vec![
         ("9223372036854775808", "i64_MAX + 1"),
         ("9999999999999999999", "arbitrary large number"),
@@ -1341,31 +1701,46 @@ fn test_integer_overflow_values() {
             if port_value.is_i64() {
                 let int_value = port_value.as_i64().unwrap();
                 // If YAML clamped to max, that's acceptable behavior
-                assert!(int_value <= i64::MAX,
-                    "Integer should be at most i64::MAX for {}", description);
+                assert!(
+                    int_value <= i64::MAX,
+                    "Integer should be at most i64::MAX for {}",
+                    description
+                );
             } else if port_value.is_string() {
                 // String representation - cannot convert to integer
                 let result = port_value.as_i64();
-                assert!(result.is_none(),
+                assert!(
+                    result.is_none(),
                     "Overflow string '{}' should not convert to integer ({})",
-                    input, description);
+                    input,
+                    description
+                );
 
                 // Verify type mismatch error handling
                 let error = ParseError::type_mismatch("port", "integer", "overflow");
-                assert!(error.is_type_mismatch(),
-                    "Type mismatch error should be created for overflow case {}", description);
+                assert!(
+                    error.is_type_mismatch(),
+                    "Type mismatch error should be created for overflow case {}",
+                    description
+                );
             } else if port_value.is_u64() {
                 // Some YAML parsers use u64 for large values
                 let u64_value = port_value.as_u64().unwrap();
-                assert!(u64_value > i64::MAX as u64,
-                    "u64 value should exceed i64::MAX for {}", description);
+                assert!(
+                    u64_value > i64::MAX as u64,
+                    "u64 value should exceed i64::MAX for {}",
+                    description
+                );
             }
         }
 
         // Verify error handling for overflow scenario
         let error = ParseError::type_mismatch("port", "integer", "overflow");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for overflow {}", description);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for overflow {}",
+            description
+        );
     }
 }
 
@@ -1384,7 +1759,6 @@ fn test_integer_underflow_values() {
     /// | -9999999999999999999 | Arbitrary very negative number |
     /// | -92233720368547758080 | 10x i64::MIN |
     /// | -18446744073709551615 | Extremely negative |
-
     let test_cases = vec![
         ("-9223372036854775809", "i64_MIN - 1"),
         ("-9999999999999999999", "arbitrary very negative number"),
@@ -1403,26 +1777,38 @@ fn test_integer_underflow_values() {
             if port_value.is_string() {
                 // String representation - cannot convert to integer
                 let result = port_value.as_i64();
-                assert!(result.is_none(),
+                assert!(
+                    result.is_none(),
                     "Underflow string '{}' should not convert to integer ({})",
-                    input, description);
+                    input,
+                    description
+                );
 
                 // Verify type mismatch error handling
                 let error = ParseError::type_mismatch("port", "integer", "underflow");
-                assert!(error.is_type_mismatch(),
-                    "Type mismatch error should be created for underflow case {}", description);
+                assert!(
+                    error.is_type_mismatch(),
+                    "Type mismatch error should be created for underflow case {}",
+                    description
+                );
             } else if port_value.is_i64() {
                 let int_value = port_value.as_i64().unwrap();
                 // If YAML clamped to min, that's acceptable behavior
-                assert!(int_value >= i64::MIN,
-                    "Integer should be at least i64::MIN for {}", description);
+                assert!(
+                    int_value >= i64::MIN,
+                    "Integer should be at least i64::MIN for {}",
+                    description
+                );
             }
         }
 
         // Verify error handling for underflow scenario
         let error = ParseError::type_mismatch("port", "integer", "underflow");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for underflow {}", description);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for underflow {}",
+            description
+        );
     }
 }
 
@@ -1441,35 +1827,61 @@ fn test_signed_integer_unsigned_context_overflow() {
     /// | -100 | unsigned | Larger negative value |
     /// | -2147483648 | unsigned | i32::MIN in unsigned context |
     /// | -9223372036854775808 | unsigned | i64::MIN in unsigned context |
-
     let test_cases = vec![
         (r#"port: -1"#, "port", "-1", "unsigned"),
         (r#"count: -100"#, "count", "-100", "unsigned"),
         (r#"size: -2147483648"#, "size", "-2147483648", "unsigned"),
-        (r#"timeout: -9223372036854775808"#, "timeout", "-9223372036854775808", "unsigned"),
+        (
+            r#"timeout: -9223372036854775808"#,
+            "timeout",
+            "-9223372036854775808",
+            "unsigned",
+        ),
     ];
 
     for (yaml, field_name, value_str, context) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {} in {}", value_str, context);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {} in {}",
+            value_str,
+            context
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
 
         // Verify it's a negative integer
-        assert!(field_value.is_i64(), "Field {} should be i64 ({})", field_name, value_str);
+        assert!(
+            field_value.is_i64(),
+            "Field {} should be i64 ({})",
+            field_name,
+            value_str
+        );
         let int_value = field_value.as_i64().unwrap();
-        assert!(int_value < 0, "Field {} should be negative ({})", field_name, value_str);
+        assert!(
+            int_value < 0,
+            "Field {} should be negative ({})",
+            field_name,
+            value_str
+        );
 
         // Verify type mismatch error is properly created
         let error = ParseError::type_mismatch(field_name, "unsigned", "signed_negative");
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for {} {} in {} context",
-            value_str, field_name, context);
+            value_str,
+            field_name,
+            context
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("unsigned") || error_msg.contains("negative"),
-            "Error should mention unsigned context or negative value for {}", field_name);
+        assert!(
+            error_msg.contains("unsigned") || error_msg.contains("negative"),
+            "Error should mention unsigned context or negative value for {}",
+            field_name
+        );
     }
 }
 
@@ -1494,7 +1906,6 @@ fn test_negative_int16_to_uint16_conversions() {
     /// | -32769 | int16::MIN - 1 (beyond int16 range) |
     /// | -65535 | Large negative value |
     /// | -65536 | Large negative value -1 |
-
     let test_cases = vec![
         (r#"value: -1"#, "-1", "basic negative"),
         (r#"value: -128"#, "-128", "int8 min"),
@@ -1506,37 +1917,62 @@ fn test_negative_int16_to_uint16_conversions() {
 
     for (yaml, value_str, description) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         let field_value = &value["value"];
 
         // Verify it's a negative integer
-        assert!(field_value.is_i64(), "Field should be i64 ({})", description);
+        assert!(
+            field_value.is_i64(),
+            "Field should be i64 ({})",
+            description
+        );
         let int_value = field_value.as_i64().unwrap();
         assert!(int_value < 0, "Field should be negative ({})", description);
 
         // Verify the actual value matches expected
-        assert_eq!(int_value, value_str.parse::<i64>().unwrap(),
-            "Field value should match expected {} ({})", value_str, description);
+        assert_eq!(
+            int_value,
+            value_str.parse::<i64>().unwrap(),
+            "Field value should match expected {} ({})",
+            value_str,
+            description
+        );
 
         // For uint16 conversion simulation - verify it would fail
         // uint16 range is 0 to 65535
         let fits_in_uint16 = int_value >= 0 && int_value <= u16::MAX as i64;
-        assert!(!fits_in_uint16,
-            "Negative value {} should not fit in uint16 ({})", value_str, description);
+        assert!(
+            !fits_in_uint16,
+            "Negative value {} should not fit in uint16 ({})",
+            value_str, description
+        );
 
         // Verify type mismatch error is properly created for uint16 context
         let error = ParseError::type_mismatch("value", "uint16", "int16_negative");
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for negative {} in uint16 context ({})",
-            value_str, description);
+            value_str,
+            description
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("uint16") || error_msg.contains("unsigned"),
-            "Error should mention uint16/unsigned type for {}", description);
-        assert!(error_msg.contains("negative") || error_msg.contains("int16"),
-            "Error should mention negative/int16 for {}", description);
+        assert!(
+            error_msg.contains("uint16") || error_msg.contains("unsigned"),
+            "Error should mention uint16/unsigned type for {}",
+            description
+        );
+        assert!(
+            error_msg.contains("negative") || error_msg.contains("int16"),
+            "Error should mention negative/int16 for {}",
+            description
+        );
     }
 }
 
@@ -1556,7 +1992,6 @@ fn test_negative_int8_to_uint8_conversions() {
     /// | -129 | int8::MIN - 1 (beyond int8 range) |
     /// | -255 | Large negative value |
     /// | -256 | Large negative value -1 |
-
     let test_cases = vec![
         (r#"value: -1"#, "-1", "basic negative"),
         (r#"value: -128"#, "-128", "int8 min"),
@@ -1567,37 +2002,62 @@ fn test_negative_int8_to_uint8_conversions() {
 
     for (yaml, value_str, description) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         let field_value = &value["value"];
 
         // Verify it's a negative integer
-        assert!(field_value.is_i64(), "Field should be i64 ({})", description);
+        assert!(
+            field_value.is_i64(),
+            "Field should be i64 ({})",
+            description
+        );
         let int_value = field_value.as_i64().unwrap();
         assert!(int_value < 0, "Field should be negative ({})", description);
 
         // Verify the actual value matches expected
-        assert_eq!(int_value, value_str.parse::<i64>().unwrap(),
-            "Field value should match expected {} ({})", value_str, description);
+        assert_eq!(
+            int_value,
+            value_str.parse::<i64>().unwrap(),
+            "Field value should match expected {} ({})",
+            value_str,
+            description
+        );
 
         // For uint8 conversion simulation - verify it would fail
         // uint8 range is 0 to 255
         let fits_in_uint8 = int_value >= 0 && int_value <= u8::MAX as i64;
-        assert!(!fits_in_uint8,
-            "Negative value {} should not fit in uint8 ({})", value_str, description);
+        assert!(
+            !fits_in_uint8,
+            "Negative value {} should not fit in uint8 ({})",
+            value_str, description
+        );
 
         // Verify type mismatch error is properly created for uint8 context
         let error = ParseError::type_mismatch("value", "uint8", "int8_negative");
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for negative {} in uint8 context ({})",
-            value_str, description);
+            value_str,
+            description
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("uint8") || error_msg.contains("unsigned"),
-            "Error should mention uint8/unsigned type for {}", description);
-        assert!(error_msg.contains("negative") || error_msg.contains("int8"),
-            "Error should mention negative/int8 for {}", description);
+        assert!(
+            error_msg.contains("uint8") || error_msg.contains("unsigned"),
+            "Error should mention uint8/unsigned type for {}",
+            description
+        );
+        assert!(
+            error_msg.contains("negative") || error_msg.contains("int8"),
+            "Error should mention negative/int8 for {}",
+            description
+        );
     }
 }
 
@@ -1616,7 +2076,6 @@ fn test_negative_int32_to_uint32_conversions() {
     /// | -32768 | int16::MIN (common boundary) |
     /// | -2147483648 | int32::MIN (minimum int32) |
     /// | -2147483649 | int32::MIN - 1 |
-
     let test_cases = vec![
         (r#"value: -1"#, "-1", "basic negative"),
         (r#"value: -128"#, "-128", "int8 min"),
@@ -1625,43 +2084,76 @@ fn test_negative_int32_to_uint32_conversions() {
         (r#"value: -65536"#, "-65536", "int16 min - 32768"),
         (r#"value: -2147483648"#, "-2147483648", "int32 min"),
         (r#"value: -2147483649"#, "-2147483649", "int32 min - 1"),
-        (r#"value: -4294967295"#, "-4294967295", "large negative -4294967295"),
-        (r#"value: -4294967296"#, "-4294967296", "large negative -4294967296"),
+        (
+            r#"value: -4294967295"#,
+            "-4294967295",
+            "large negative -4294967295",
+        ),
+        (
+            r#"value: -4294967296"#,
+            "-4294967296",
+            "large negative -4294967296",
+        ),
     ];
 
     for (yaml, value_str, description) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         let field_value = &value["value"];
 
         // Verify it's a negative integer
-        assert!(field_value.is_i64(), "Field should be i64 ({})", description);
+        assert!(
+            field_value.is_i64(),
+            "Field should be i64 ({})",
+            description
+        );
         let int_value = field_value.as_i64().unwrap();
         assert!(int_value < 0, "Field should be negative ({})", description);
 
         // Verify the actual value matches expected
-        assert_eq!(int_value, value_str.parse::<i64>().unwrap(),
-            "Field value should match expected {} ({})", value_str, description);
+        assert_eq!(
+            int_value,
+            value_str.parse::<i64>().unwrap(),
+            "Field value should match expected {} ({})",
+            value_str,
+            description
+        );
 
         // For uint32 conversion simulation - verify it would fail
         // uint32 range is 0 to 4294967295
         let fits_in_uint32 = int_value >= 0 && int_value <= u32::MAX as i64;
-        assert!(!fits_in_uint32,
-            "Negative value {} should not fit in uint32 ({})", value_str, description);
+        assert!(
+            !fits_in_uint32,
+            "Negative value {} should not fit in uint32 ({})",
+            value_str, description
+        );
 
         // Verify type mismatch error is properly created for uint32 context
         let error = ParseError::type_mismatch("value", "uint32", "int32_negative");
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for negative {} in uint32 context ({})",
-            value_str, description);
+            value_str,
+            description
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("uint32") || error_msg.contains("unsigned"),
-            "Error should mention uint32/unsigned type for {}", description);
-        assert!(error_msg.contains("negative") || error_msg.contains("int32"),
-            "Error should mention negative/int32 for {}", description);
+        assert!(
+            error_msg.contains("uint32") || error_msg.contains("unsigned"),
+            "Error should mention uint32/unsigned type for {}",
+            description
+        );
+        assert!(
+            error_msg.contains("negative") || error_msg.contains("int32"),
+            "Error should mention negative/int32 for {}",
+            description
+        );
     }
 }
 
@@ -1682,60 +2174,100 @@ fn test_negative_int64_to_uint64_conversions() {
     /// | -2147483648 | int32::MIN (common boundary) |
     /// | -9223372036854775808 | int64::MIN (minimum int64) |
     /// | -18446744073709551615 | Large negative value |
-
     // Test cases within i64 range
     let valid_test_cases = vec![
         (r#"value: -1"#, "-1", "basic negative"),
         (r#"value: -128"#, "-128", "int8 min"),
         (r#"value: -32768"#, "-32768", "int16 min"),
         (r#"value: -2147483648"#, "-2147483648", "int32 min"),
-        (r#"value: -9223372036854775808"#, "-9223372036854775808", "int64 min"),
+        (
+            r#"value: -9223372036854775808"#,
+            "-9223372036854775808",
+            "int64 min",
+        ),
     ];
 
     for (yaml, value_str, description) in valid_test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         let field_value = &value["value"];
 
         // Verify it's a negative integer
-        assert!(field_value.is_i64(), "Field should be i64 ({})", description);
+        assert!(
+            field_value.is_i64(),
+            "Field should be i64 ({})",
+            description
+        );
         let int_value = field_value.as_i64().unwrap();
         assert!(int_value < 0, "Field should be negative ({})", description);
 
         // Verify the actual value matches expected
-        assert_eq!(int_value, value_str.parse::<i64>().unwrap(),
-            "Field value should match expected {} ({})", value_str, description);
+        assert_eq!(
+            int_value,
+            value_str.parse::<i64>().unwrap(),
+            "Field value should match expected {} ({})",
+            value_str,
+            description
+        );
 
         // For uint64 conversion simulation - verify it would fail
         // uint64 range is 0 to 18446744073709551615
         let fits_in_uint64 = int_value >= 0 && int_value <= u64::MAX as i64;
-        assert!(!fits_in_uint64,
-            "Negative value {} should not fit in uint64 ({})", value_str, description);
+        assert!(
+            !fits_in_uint64,
+            "Negative value {} should not fit in uint64 ({})",
+            value_str, description
+        );
 
         // Verify type mismatch error is properly created for uint64 context
         let error = ParseError::type_mismatch("value", "uint64", "int64_negative");
-        assert!(error.is_type_mismatch(),
+        assert!(
+            error.is_type_mismatch(),
             "Type mismatch error should be created for negative {} in uint64 context ({})",
-            value_str, description);
+            value_str,
+            description
+        );
 
         let error_msg = format!("{}", error.kind);
-        assert!(error_msg.contains("uint64") || error_msg.contains("unsigned"),
-            "Error should mention uint64/unsigned type for {}", description);
-        assert!(error_msg.contains("negative") || error_msg.contains("int64"),
-            "Error should mention negative/int64 for {}", description);
+        assert!(
+            error_msg.contains("uint64") || error_msg.contains("unsigned"),
+            "Error should mention uint64/unsigned type for {}",
+            description
+        );
+        assert!(
+            error_msg.contains("negative") || error_msg.contains("int64"),
+            "Error should mention negative/int64 for {}",
+            description
+        );
     }
 
     // Test values beyond i64 range - these may be parsed as strings or fail
     let beyond_i64_min_cases = vec![
-        (r#"value: "-9223372036854775809""#, "-9223372036854775809", "int64 min - 1 (as string)"),
-        (r#"value: "-18446744073709551615""#, "-18446744073709551615", "large negative as string"),
+        (
+            r#"value: "-9223372036854775809""#,
+            "-9223372036854775809",
+            "int64 min - 1 (as string)",
+        ),
+        (
+            r#"value: "-18446744073709551615""#,
+            "-18446744073709551615",
+            "large negative as string",
+        ),
     ];
 
     for (yaml, value_str, description) in beyond_i64_min_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         let field_value = &value["value"];
@@ -1744,14 +2276,20 @@ fn test_negative_int64_to_uint64_conversions() {
         if field_value.is_string() {
             // String representation of a negative number - still cannot convert to uint64
             let str_value = field_value.as_str().unwrap();
-            assert!(str_value.starts_with('-'),
-                "String should represent negative value for {}", description);
+            assert!(
+                str_value.starts_with('-'),
+                "String should represent negative value for {}",
+                description
+            );
 
             // Verify string to i64 conversion fails (beyond range)
             let result = field_value.as_i64();
-            assert!(result.is_none(),
+            assert!(
+                result.is_none(),
                 "String '{}' beyond i64 range should not convert to i64 ({})",
-                value_str, description);
+                value_str,
+                description
+            );
 
             // Verify type mismatch error is properly created for uint64 context
             let error = ParseError::type_mismatch("value", "uint64", "negative_string");
@@ -1761,19 +2299,28 @@ fn test_negative_int64_to_uint64_conversions() {
         } else if field_value.is_i64() {
             // If somehow parsed as i64, verify it's negative
             let int_value = field_value.as_i64().unwrap();
-            assert!(int_value < 0,
-                "Value should be negative for {}", description);
+            assert!(
+                int_value < 0,
+                "Value should be negative for {}",
+                description
+            );
 
             // Verify it wouldn't fit in uint64
             let fits_in_uint64 = int_value >= 0 && int_value <= u64::MAX as i64;
-            assert!(!fits_in_uint64,
-                "Negative value {} should not fit in uint64 ({})", value_str, description);
+            assert!(
+                !fits_in_uint64,
+                "Negative value {} should not fit in uint64 ({})",
+                value_str, description
+            );
 
             // Verify type mismatch error
             let error = ParseError::type_mismatch("value", "uint64", "int64_negative");
-            assert!(error.is_type_mismatch(),
+            assert!(
+                error.is_type_mismatch(),
                 "Type mismatch error should be created for negative {} in uint64 context ({})",
-                value_str, description);
+                value_str,
+                description
+            );
         }
     }
 }
@@ -1796,7 +2343,6 @@ fn test_floating_point_overflow_values() {
     /// | 1e1000 | Extremely large value |
     /// | 1.7976931348623157e+309 | f64::MAX + 1 |
     /// | inf | Positive infinity |
-
     let test_cases = vec![
         ("1e400", "exponential 400"),
         ("1e1000", "exponential 1000"),
@@ -1813,26 +2359,38 @@ fn test_floating_point_overflow_values() {
             if rate_value.is_string() {
                 // String representation - cannot convert to float
                 let result = rate_value.as_f64();
-                assert!(result.is_none(),
+                assert!(
+                    result.is_none(),
                     "Overflow string '{}' should not convert to float ({})",
-                    input, description);
+                    input,
+                    description
+                );
 
                 // Verify type mismatch error handling
                 let error = ParseError::type_mismatch("rate", "float", "overflow");
-                assert!(error.is_type_mismatch(),
-                    "Type mismatch error should be created for float overflow {}", description);
+                assert!(
+                    error.is_type_mismatch(),
+                    "Type mismatch error should be created for float overflow {}",
+                    description
+                );
             } else if rate_value.is_f64() {
                 let float_value = rate_value.as_f64().unwrap();
                 // Check if it's infinity (overflow indicator)
-                assert!(float_value.is_infinite() || float_value <= f64::MAX,
-                    "Float overflow should result in infinity or be clamped for {}", description);
+                assert!(
+                    float_value.is_infinite() || float_value <= f64::MAX,
+                    "Float overflow should result in infinity or be clamped for {}",
+                    description
+                );
             }
         }
 
         // Verify error handling for float overflow scenario
         let error = ParseError::type_mismatch("rate", "float", "overflow");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for float overflow {}", description);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for float overflow {}",
+            description
+        );
     }
 }
 
@@ -1851,7 +2409,6 @@ fn test_floating_point_underflow_values() {
     /// | -1e1000 | Extremely negative value |
     /// | -1.7976931348623157e+309 | f64::MIN - 1 |
     /// | 1e-400 | Extremely small subnormal |
-
     let test_cases = vec![
         ("-1e400", "negative exponential 400"),
         ("-1e1000", "negative exponential 1000"),
@@ -1869,14 +2426,20 @@ fn test_floating_point_underflow_values() {
             if rate_value.is_string() {
                 // String representation - cannot convert to float
                 let result = rate_value.as_f64();
-                assert!(result.is_none(),
+                assert!(
+                    result.is_none(),
                     "Underflow string '{}' should not convert to float ({})",
-                    input, description);
+                    input,
+                    description
+                );
 
                 // Verify type mismatch error handling
                 let error = ParseError::type_mismatch("rate", "float", "underflow");
-                assert!(error.is_type_mismatch(),
-                    "Type mismatch error should be created for float underflow {}", description);
+                assert!(
+                    error.is_type_mismatch(),
+                    "Type mismatch error should be created for float underflow {}",
+                    description
+                );
             } else if rate_value.is_f64() {
                 let float_value = rate_value.as_f64().unwrap();
                 // Check if it's negative infinity (underflow indicator)
@@ -1887,8 +2450,11 @@ fn test_floating_point_underflow_values() {
 
         // Verify error handling for float underflow scenario
         let error = ParseError::type_mismatch("rate", "float", "underflow");
-        assert!(error.is_type_mismatch(),
-            "Type mismatch error should be created for float underflow {}", description);
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for float underflow {}",
+            description
+        );
     }
 }
 
@@ -1906,7 +2472,6 @@ fn test_floating_point_precision_limits() {
     /// | -1.7976931348623157e+308 | f64::MIN (most negative finite) |
     /// | 2.2250738585072014e-308 | f64::MIN_SUBNORMAL |
     /// | 4.940656458412465e-324 | f64::MIN_POSITIVE |
-
     let test_cases = vec![
         ("1.7976931348623157e+308", "f64_MAX"),
         ("-1.7976931348623157e+308", "f64_MIN"),
@@ -1918,7 +2483,11 @@ fn test_floating_point_precision_limits() {
         let yaml = format!("rate: {}", input);
         let value: Result<Value, _> = serde_yaml::from_str(&yaml);
 
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         let rate_value = &value["rate"];
@@ -1929,18 +2498,29 @@ fn test_floating_point_precision_limits() {
         if let Some(float_value) = result {
             // Verify the value is representable
             if description == "f64_MAX" {
-                assert!(float_value <= f64::MAX, "f64_MAX value should be <= f64::MAX");
+                assert!(
+                    float_value <= f64::MAX,
+                    "f64_MAX value should be <= f64::MAX"
+                );
             } else if description == "f64_MIN" {
-                assert!(float_value >= f64::MIN, "f64_MIN value should be >= f64::MIN");
+                assert!(
+                    float_value >= f64::MIN,
+                    "f64_MIN value should be >= f64::MIN"
+                );
             } else if description == "min_positive" {
-                assert!(float_value >= 0.0 && float_value <= f64::MIN_POSITIVE,
-                    "min_positive value should be in valid range");
+                assert!(
+                    float_value >= 0.0 && float_value <= f64::MIN_POSITIVE,
+                    "min_positive value should be in valid range"
+                );
             }
         } else {
             // If conversion fails, verify error handling
             let error = ParseError::type_mismatch("rate", "float", "precision_limit");
-            assert!(error.is_type_mismatch(),
-                "Type mismatch error should be created for precision limit {}", description);
+            assert!(
+                error.is_type_mismatch(),
+                "Type mismatch error should be created for precision limit {}",
+                description
+            );
         }
     }
 }
@@ -1959,7 +2539,6 @@ fn test_denormal_and_nan_float_values() {
     /// | .inf | Positive infinity |
     /// | -.inf | Negative infinity |
     /// | 0.0 | Zero (can be positive or negative) |
-
     let test_cases = vec![
         (r#"rate: .nan"#, "rate", "nan"),
         (r#"timeout: .inf"#, "timeout", "positive_infinity"),
@@ -1970,7 +2549,11 @@ fn test_denormal_and_nan_float_values() {
 
     for (yaml, field_name, description) in test_cases {
         let value: Result<Value, _> = serde_yaml::from_str(yaml);
-        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
 
         let value = value.unwrap();
         let field_value = &value[field_name];
@@ -1980,26 +2563,43 @@ fn test_denormal_and_nan_float_values() {
         if let Some(float_value) = result {
             match description {
                 "nan" => {
-                    assert!(float_value.is_nan(), "Value should be NaN for {}", description);
+                    assert!(
+                        float_value.is_nan(),
+                        "Value should be NaN for {}",
+                        description
+                    );
                 }
                 "positive_infinity" => {
-                    assert!(float_value.is_infinite() && float_value > 0.0,
-                        "Value should be positive infinity for {}", description);
+                    assert!(
+                        float_value.is_infinite() && float_value > 0.0,
+                        "Value should be positive infinity for {}",
+                        description
+                    );
                 }
                 "negative_infinity" => {
-                    assert!(float_value.is_infinite() && float_value < 0.0,
-                        "Value should be negative infinity for {}", description);
+                    assert!(
+                        float_value.is_infinite() && float_value < 0.0,
+                        "Value should be negative infinity for {}",
+                        description
+                    );
                 }
                 "zero" | "negative_zero" => {
-                    assert!(float_value == 0.0, "Value should be zero for {}", description);
+                    assert!(
+                        float_value == 0.0,
+                        "Value should be zero for {}",
+                        description
+                    );
                 }
                 _ => {}
             }
         } else {
             // If conversion fails, verify error handling
             let error = ParseError::type_mismatch(field_name, "float", description);
-            assert!(error.is_type_mismatch(),
-                "Type mismatch error should be created for {} special float value", description);
+            assert!(
+                error.is_type_mismatch(),
+                "Type mismatch error should be created for {} special float value",
+                description
+            );
         }
     }
 }
@@ -2023,7 +2623,6 @@ fn test_u16_range_limit_violations() {
     /// | 70000 | Value above u16::MAX |
     /// | 100000 | Large value above u16 |
     /// | -1 | Negative value (below 0) |
-
     let test_cases = vec![
         ("65536", "u16_MAX + 1"),
         ("70000", "70000"),
@@ -2044,8 +2643,12 @@ fn test_u16_range_limit_violations() {
             if input.starts_with('-') {
                 if port_value.is_i64() {
                     let int_value = port_value.as_i64().unwrap();
-                    assert!(int_value < 0,
-                        "Value should be negative for {} ({})", input, description);
+                    assert!(
+                        int_value < 0,
+                        "Value should be negative for {} ({})",
+                        input,
+                        description
+                    );
 
                     // Verify type mismatch error for u16 range violation
                     let error = ParseError::type_mismatch("port", "u16", "negative");
@@ -2085,7 +2688,6 @@ fn test_u8_range_limit_violations() {
     /// | 1000 | Value above u8::MAX |
     /// | 500 | Value above u8::MAX |
     /// | -1 | Negative value |
-
     let test_cases = vec![
         ("256", "u8_MAX + 1"),
         ("1000", "1000"),
@@ -2105,8 +2707,12 @@ fn test_u8_range_limit_violations() {
             if input.starts_with('-') {
                 if flags_value.is_i64() {
                     let int_value = flags_value.as_i64().unwrap();
-                    assert!(int_value < 0,
-                        "Value should be negative for {} ({})", input, description);
+                    assert!(
+                        int_value < 0,
+                        "Value should be negative for {} ({})",
+                        input,
+                        description
+                    );
 
                     // Verify type mismatch error for u8 range violation
                     let error = ParseError::type_mismatch("flags", "u8", "negative");
@@ -2120,9 +2726,11 @@ fn test_u8_range_limit_violations() {
                     if int_value > u8::MAX as i64 {
                         // Verify type mismatch error for u8 range violation
                         let error = ParseError::type_mismatch("flags", "u8", "overflow");
-                        assert!(error.is_type_mismatch(),
+                        assert!(
+                            error.is_type_mismatch(),
                             "Type mismatch error should be created for overflow in u8 context ({})",
-                            description);
+                            description
+                        );
                     }
                 }
             }
@@ -2145,7 +2753,6 @@ fn test_i32_range_limit_violations() {
     /// | -2147483649 | i32::MIN - 1 |
     /// | 5000000000 | Large positive value |
     /// | -5000000000 | Large negative value |
-
     let test_cases = vec![
         ("2147483648", "i32_MAX + 1"),
         ("-2147483649", "i32_MIN - 1"),
@@ -2174,11 +2781,25 @@ fn test_i32_range_limit_violations() {
 
                 if exceeds_range {
                     // Verify type mismatch error for i32 range violation
-                    let error = ParseError::type_mismatch("count", "i32",
-                        if int_value > 0 { "overflow" } else { "underflow" });
-                    assert!(error.is_type_mismatch(),
+                    let error = ParseError::type_mismatch(
+                        "count",
+                        "i32",
+                        if int_value > 0 {
+                            "overflow"
+                        } else {
+                            "underflow"
+                        },
+                    );
+                    assert!(
+                        error.is_type_mismatch(),
                         "Type mismatch error should be created for {} in i32 context ({})",
-                        if int_value > 0 { "overflow" } else { "underflow" }, description);
+                        if int_value > 0 {
+                            "overflow"
+                        } else {
+                            "underflow"
+                        },
+                        description
+                    );
                 }
             }
         }
@@ -2205,7 +2826,6 @@ fn test_range_boundary_values() {
     /// | u16 | 65536 | u16::MAX + 1 (invalid) | false |
     /// | i16 | 32767 | i16::MAX (valid) | true |
     /// | i16 | 32768 | i16::MAX + 1 (invalid) | false |
-
     let test_cases = vec![
         ("255", "u8", "u8_MAX", true),
         ("256", "u8", "u8_MAX + 1", false),
@@ -2240,20 +2860,31 @@ fn test_range_boundary_values() {
                     _ => true,
                 };
 
-                assert_eq!(is_in_range, should_be_valid,
+                assert_eq!(
+                    is_in_range,
+                    should_be_valid,
                     "Value {} should {}be in range for {} ({})",
                     input,
                     if should_be_valid { "" } else { "not " },
                     target_type,
-                    description);
+                    description
+                );
 
                 // If out of range, verify error handling
                 if !is_in_range {
-                    let error_type = if int_value < 0 { "underflow" } else { "overflow" };
+                    let error_type = if int_value < 0 {
+                        "underflow"
+                    } else {
+                        "overflow"
+                    };
                     let error = ParseError::type_mismatch("value", target_type, error_type);
-                    assert!(error.is_type_mismatch(),
+                    assert!(
+                        error.is_type_mismatch(),
                         "Type mismatch error should be created for {} violation in {} context ({})",
-                        error_type, target_type, description);
+                        error_type,
+                        target_type,
+                        description
+                    );
                 }
             }
         }

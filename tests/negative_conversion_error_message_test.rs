@@ -21,7 +21,10 @@ fn test_negative_to_unsigned_error_messages_are_clear() {
     let error_msg = format!("{}", error.kind);
 
     println!("int8 -> uint8 error: {}", error_msg);
-    assert!(error_msg.contains("uint8"), "Error should mention uint8 type");
+    assert!(
+        error_msg.contains("uint8"),
+        "Error should mention uint8 type"
+    );
     assert!(error_msg.contains("int8"), "Error should mention int8 type");
     assert!(error.is_type_mismatch(), "Should be type mismatch error");
 
@@ -30,8 +33,14 @@ fn test_negative_to_unsigned_error_messages_are_clear() {
     let error_msg = format!("{}", error.kind);
 
     println!("int16 -> uint16 error: {}", error_msg);
-    assert!(error_msg.contains("uint16"), "Error should mention uint16 type");
-    assert!(error_msg.contains("int16"), "Error should mention int16 type");
+    assert!(
+        error_msg.contains("uint16"),
+        "Error should mention uint16 type"
+    );
+    assert!(
+        error_msg.contains("int16"),
+        "Error should mention int16 type"
+    );
     assert!(error.is_type_mismatch(), "Should be type mismatch error");
 
     // Test int32 to uint32
@@ -39,8 +48,14 @@ fn test_negative_to_unsigned_error_messages_are_clear() {
     let error_msg = format!("{}", error.kind);
 
     println!("int32 -> uint32 error: {}", error_msg);
-    assert!(error_msg.contains("uint32"), "Error should mention uint32 type");
-    assert!(error_msg.contains("int32"), "Error should mention int32 type");
+    assert!(
+        error_msg.contains("uint32"),
+        "Error should mention uint32 type"
+    );
+    assert!(
+        error_msg.contains("int32"),
+        "Error should mention int32 type"
+    );
     assert!(error.is_type_mismatch(), "Should be type mismatch error");
 
     // Test int64 to uint64
@@ -48,8 +63,14 @@ fn test_negative_to_unsigned_error_messages_are_clear() {
     let error_msg = format!("{}", error.kind);
 
     println!("int64 -> uint64 error: {}", error_msg);
-    assert!(error_msg.contains("uint64"), "Error should mention uint64 type");
-    assert!(error_msg.contains("int64"), "Error should mention int64 type");
+    assert!(
+        error_msg.contains("uint64"),
+        "Error should mention uint64 type"
+    );
+    assert!(
+        error_msg.contains("int64"),
+        "Error should mention int64 type"
+    );
     assert!(error.is_type_mismatch(), "Should be type mismatch error");
 
     // Test general signed to unsigned
@@ -57,8 +78,10 @@ fn test_negative_to_unsigned_error_messages_are_clear() {
     let error_msg = format!("{}", error.kind);
 
     println!("signed -> unsigned error: {}", error_msg);
-    assert!(error_msg.contains("unsigned") || error_msg.contains("negative"),
-            "Error should mention unsigned or negative");
+    assert!(
+        error_msg.contains("unsigned") || error_msg.contains("negative"),
+        "Error should mention unsigned or negative"
+    );
     assert!(error.is_type_mismatch(), "Should be type mismatch error");
 
     println!("\n✓ All negative-to-unsigned error messages are clear and accurate");
@@ -133,15 +156,24 @@ fn test_edge_case_coverage() {
         let error_msg = format!("{}", error.kind);
 
         // Verify error message contains both types
-        assert!(error_msg.contains(expected_type) || error_msg.contains("unsigned"),
-                "Error for value {} should mention expected type {}", value_str, expected_type);
+        assert!(
+            error_msg.contains(expected_type) || error_msg.contains("unsigned"),
+            "Error for value {} should mention expected type {}",
+            value_str,
+            expected_type
+        );
 
         // Verify it's a type mismatch
-        assert!(error.is_type_mismatch(),
-                "Error for value {} should be type mismatch", value_str);
+        assert!(
+            error.is_type_mismatch(),
+            "Error for value {} should be type mismatch",
+            value_str
+        );
 
-        println!("{} value {}: {} -> {} ✓",
-                expected_type, value_str, actual_type, error_msg);
+        println!(
+            "{} value {}: {} -> {} ✓",
+            expected_type, value_str, actual_type, error_msg
+        );
     }
 
     println!("\n✓ All edge cases are properly covered");
@@ -163,8 +195,12 @@ fn test_error_message_helpfulness() {
 
     // Error should indicate the problem
     let msg_lower = error_msg.to_lowercase();
-    assert!(msg_lower.contains("uint16") || msg_lower.contains("unsigned") || msg_lower.contains("negative"),
-            "Error should indicate the unsigned/negative mismatch");
+    assert!(
+        msg_lower.contains("uint16")
+            || msg_lower.contains("unsigned")
+            || msg_lower.contains("negative"),
+        "Error should indicate the unsigned/negative mismatch"
+    );
 
     println!("Sample error message: {}", error_msg);
     println!("✓ Error message is descriptive and helpful");
@@ -178,19 +214,31 @@ fn test_all_unsigned_types_covered() {
     // all unsigned integer types: u8, u16, u32, u64.
 
     let unsigned_types = vec!["uint8", "uint16", "uint32", "uint64"];
-    let signed_negative_types = vec!["int8_negative", "int16_negative", "int32_negative", "int64_negative"];
+    let signed_negative_types = vec![
+        "int8_negative",
+        "int16_negative",
+        "int32_negative",
+        "int64_negative",
+    ];
 
-    for (unsigned_type, signed_negative) in unsigned_types.iter().zip(signed_negative_types.iter()) {
+    for (unsigned_type, signed_negative) in unsigned_types.iter().zip(signed_negative_types.iter())
+    {
         let error = ParseError::type_mismatch("field", *unsigned_type, *signed_negative);
         let error_msg = format!("{}", error.kind);
 
         // Verify error mentions the unsigned type
-        assert!(error_msg.contains(unsigned_type),
-                "Error should mention {} type", unsigned_type);
+        assert!(
+            error_msg.contains(unsigned_type),
+            "Error should mention {} type",
+            unsigned_type
+        );
 
         // Verify it's a type mismatch
-        assert!(error.is_type_mismatch(),
-                "Error for {} should be type mismatch", unsigned_type);
+        assert!(
+            error.is_type_mismatch(),
+            "Error for {} should be type mismatch",
+            unsigned_type
+        );
 
         println!("{} conversion error: ✓", unsigned_type);
     }
