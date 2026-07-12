@@ -31,7 +31,7 @@ import (
 type ValidatedSchema interface {
 	// Validate checks if the schema definition itself is valid.
 	// Returns a YAMLError if the schema has invalid configuration.
-	Validate() error
+	Validate() YAMLError
 
 	// Name returns the schema name identifier.
 	Name() string
@@ -60,11 +60,11 @@ type ValidatedSchema interface {
 type SchemaValidationHandler interface {
 	// ValidateSchema validates the schema definition itself.
 	// Returns a YAMLError if the schema is invalid or cannot be used for validation.
-	ValidateSchema(schema ValidatedSchema) error
+	ValidateSchema(schema ValidatedSchema) YAMLError
 
 	// ValidateValue validates a single value against a field definition.
 	// Returns a YAMLError (ValidationError) if the value doesn't satisfy constraints.
-	ValidateValue(fieldPath string, value interface{}, fieldDef *FieldDefinition) error
+	ValidateValue(fieldPath string, value interface{}, fieldDef *FieldDefinition) YAMLError
 
 	// Validate validates YAML data against the schema.
 	// Returns a SchemaValidationResult with detailed error information.
