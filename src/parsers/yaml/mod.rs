@@ -32,6 +32,11 @@
 mod error;
 mod types;
 mod parser;
+mod syntax_validator;
+mod syntax_detector;
+
+#[cfg(test)]
+mod syntax_detector_tests;
 
 // Re-export main types for convenience
 pub use error::{ParseError, ParseErrorKind, Result};
@@ -40,6 +45,8 @@ pub use types::{
     ValidationResult, ValidationError, ValidationWarning, Status,
 };
 pub use parser::Parser as YamlParser;
+pub use syntax_validator::SyntaxValidator;
+pub use syntax_detector::SyntaxDetector;
 
 // Re-export comprehensive configuration from config module
 pub use crate::parsers::config::{

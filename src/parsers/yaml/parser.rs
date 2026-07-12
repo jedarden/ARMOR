@@ -4,8 +4,10 @@
 //! parsing YAML content from various sources.
 
 use crate::parsers::yaml::{
-    types::{ParseResult, ValidationResult},
+    types::{ParseResult, ValidationResult, ValidationError},
     ParserConfig,
+    syntax_validator::SyntaxValidator,
+    syntax_detector::SyntaxDetector,
 };
 
 /// Trait for YAML parsers
@@ -108,13 +110,49 @@ impl Parser for BasicParser {
     }
 
     fn validate_str(&self, content: &str) -> ValidationResult {
-        // Stub implementation
-        ValidationResult::success()
+        // Create syntax validator based on parser mode
+        let validator = if self.config.is_strict() {
+            SyntaxValidator::strict()
+        } else {
+            SyntaxValidator::lenient()
+        };
+
+        // Run syntax validation
+        let mut result = validator.validate(content);
+
+        // If no errors from basic validation, run enhanced detection
+        if result.is_valid() {
+            let mut detector = SyntaxDetector::new();
+            let detector_result = detector.detect_to_validation_result(content);
+
+            // Merge errors from detector
+            if !detector_result.is_valid() {
+                result.valid = false;
+                result.errors.extend(detector_result.errors);
+            }
+        }
+
+        result
     }
 
     fn validate_file(&self, path: &std::path::Path) -> ValidationResult {
-        // Stub implementation
-        ValidationResult::success()
+        // Read file content
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(err) => {
+                return ValidationResult {
+                    valid: false,
+                    errors: vec![ValidationError::new(
+                        path.display().to_string(),
+                        format!("failed to read file: {}", err)
+                    )],
+                    warnings: Vec::new(),
+                };
+            }
+        };
+
+        // Validate the content
+        self.validate_str(&content)
     }
 
     fn config(&self) -> &ParserConfig {
