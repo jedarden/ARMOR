@@ -1,27 +1,27 @@
-# Bead bf-1h60y: Decode SECRET_ACCESS_KEY from base64
+# Bead bf-1h60y Failure Report
 
-## Status: FAILED - Prerequisite not met
+## Task
+Decode base64-encoded LITESTREAM_SECRET_ACCESS_KEY to plain text
 
-## Root Cause
-The prerequisite bead (bf-3llc7) failed to retrieve the actual secret key due to RBAC permissions. The file `/tmp/litestream_secret_key_encoded.b64` contains an error message instead of base64-encoded data:
+## What Happened
+The prerequisite bead (bf-3llc7) was marked complete, but when I attempted to decode the encoded file at `/tmp/litestream_secret_key_encoded.b64`, I found it contained an error message instead of actual base64-encoded data:
 
 ```
 Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
 ```
 
-## What was attempted
-1. Checked that encoded file exists: ✓
-2. Attempted to decode with `base64 -d`: ✗ (failed with "invalid input")
-3. Inspected file content and discovered it contains error message, not base64 data
+## Root Cause
+The previous bead attempted to retrieve the secret using kubectl through the read-only proxy, but the devpod-observer ServiceAccount lacks RBAC permissions to read secrets in the devimprint namespace. Instead of failing gracefully, the error output was redirected to the encoded file.
 
-## Why this cannot be completed
-- The encoded file does not contain valid base64-encoded secret data
-- It contains a kubectl RBAC error message from the failed prerequisite step
-- Without the actual base64-encoded secret, decoding cannot succeed
+## Correct Approach
+To properly retrieve the LITESTREAM_SECRET_ACCESS_KEY, one of these methods should be used:
+1. Use a kubeconfig with proper RBAC permissions (not the read-only proxy)
+2. Access OpenBao directly to retrieve the secret
+3. Use cached secrets if available (as done in bf-520v)
 
-## Prerequisites not met
-- Child bf-3llc7 was supposed to retrieve the encoded key, but it failed due to RBAC
-- The current bead cannot proceed without valid input data
+## Verification Failed
+- ❌ Cannot decode base64 (file doesn't contain valid base64)
+- ❌ The file content is an error message, not a secret key
 
-## Resolution path
-The bead chain needs to be retried with proper RBAC permissions to allow retrieving secrets from the `devimprint` namespace, or an alternative method for accessing the LITESTREAM_SECRET_ACCESS_KEY needs to be used.
+## Status
+**Bead cannot be closed** - the prerequisite condition (actual encoded key retrieved) was not met, despite bf-3llc7 being marked complete.
