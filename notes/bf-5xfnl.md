@@ -75,5 +75,32 @@ Confirmed the following:
 **Status**: BLOCKED - awaiting read/write credentials or kubeconfig
 
 Date: 2026-07-11
-Last verified: 2026-07-11
+Last verified: 2026-07-12 01:01 UTC
 Bead ID: bf-5xfnl
+
+## Re-verification (2026-07-12 01:01 UTC)
+
+Re-verified all access paths:
+- ❌ ord-devimprint proxy still blocks secret access (RBAC Forbidden)
+- ❌ No kubeconfigs exist for ord-devimprint or rs-manager
+- ❌ Only available kubeconfigs: `iad-acb.kubeconfig`, `iad-ci.kubeconfig`
+- ✅ Secret source confirmed: ExternalSecret from OpenBao at `rs-manager/ord-devimprint/armor-writer`
+- ✅ Field mapping confirmed: `auth-access-key` → `LITESTREAM_ACCESS_KEY_ID`
+
+### Available kubeconfigs
+```bash
+$ ls -la ~/.kube/*.kubeconfig
+-rw-r--r-- 1 coding users  282 Jun 25 07:20 /home/coding/.kube/iad-acb.kubeconfig
+-rw-r--r--  coding users 2809 Jun  7 08:31 /home/coding/.kube/iad-ci.kubeconfig
+```
+
+### Secret structure (from ExternalSecret manifest)
+```yaml
+# armor-writer secret in devimprint namespace
+secretKey: auth-access-key
+remoteRef:
+  key: rs-manager/ord-devimprint/armor-writer
+  property: auth-access-key
+```
+
+Infrastructure blocker remains unresolved. Task cannot complete without external access.
