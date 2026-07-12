@@ -1,15 +1,15 @@
 {
-  "bead_id": "bf-4hk7s",
+  "bead_id": "bf-507of",
   "agent": "claude-code-glm-4.7",
   "provider": "zai",
   "model": "glm-4.7",
   "exit_code": 0,
   "outcome": "success",
-  "duration_ms": 92347,
+  "duration_ms": 5433,
   "input_tokens": null,
   "output_tokens": null,
   "cost_usd": null,
-  "captured_at": "2026-07-12T07:29:21.625254574Z",
+  "captured_at": "2026-07-12T07:32:19.022088097Z",
   "trace_format": "claude_json",
   "pruned": false,
   "template_version": null
