@@ -853,7 +853,7 @@ fn test_expected_string_got_number() {
             "Field {} should not be string (got numeric {})", field_name, numeric_value);
 
         // Verify it's a number
-        let is_number = if *value_type == "integer" {
+        let is_number = if value_type == "integer" {
             field_value.is_i64()
         } else {
             field_value.as_f64().is_some()
@@ -925,7 +925,7 @@ fn test_expected_array_got_scalar() {
             field_name, actual_type, actual_value);
 
         // Verify it matches the expected actual type
-        let matches_actual_type = match *actual_type {
+        let matches_actual_type = match actual_type {
             "integer" => field_value.is_i64(),
             "string" => field_value.is_string(),
             "boolean" => field_value.is_bool(),
@@ -1048,7 +1048,7 @@ fn test_integer_float_cross_conversion() {
         let field_value = &value[field_name];
 
         // Verify actual type
-        let is_actual_type = if *actual_type == "integer" {
+        let is_actual_type = if actual_type == "integer" {
             field_value.is_i64()
         } else {
             field_value.as_f64().is_some()
@@ -1057,7 +1057,7 @@ fn test_integer_float_cross_conversion() {
             "Field {} should be {} type", field_name, actual_type);
 
         // Verify conversion to expected type fails
-        let conversion_succeeds = if *expected_type == "integer" {
+        let conversion_succeeds = if expected_type == "integer" {
             field_value.as_i64().is_some()
         } else {
             field_value.as_f64().is_some()
@@ -1066,7 +1066,7 @@ fn test_integer_float_cross_conversion() {
         // For float->integer conversion, we expect failure
         // For integer->float conversion, we expect success in serde_yaml
         // but should fail if strict type checking is required
-        if *actual_type == "float" && *expected_type == "integer" {
+        if actual_type == "float" && expected_type == "integer" {
             assert!(!conversion_succeeds || field_value.as_f64().unwrap().fract() != 0.0,
                 "Float with fractional part should not convert to integer for {}", field_name);
         }
@@ -1210,7 +1210,7 @@ fn test_numeric_string_conversion_mismatch() {
         assert!(field_value.is_string(), "Field {} should be string ('{}')", field_name, string_value);
 
         // Verify conversion to expected numeric type fails
-        let conversion_succeeds = if *expected_type == "integer" {
+        let conversion_succeeds = if expected_type == "integer" {
             field_value.as_i64().is_some()
         } else {
             field_value.as_f64().is_some()
@@ -1269,7 +1269,7 @@ fn test_incompatible_scalar_to_scalar_conversions() {
         let field_value = &value[field_name];
 
         // Verify actual type matches
-        let is_actual_type = match *actual_type {
+        let is_actual_type = match actual_type {
             "boolean" => field_value.is_bool(),
             "string" => field_value.is_string(),
             "integer" => field_value.is_i64(),
@@ -1280,7 +1280,7 @@ fn test_incompatible_scalar_to_scalar_conversions() {
             "Field {} should be {} type", field_name, actual_type);
 
         // Verify conversion to expected type fails
-        let conversion_succeeds = match *expected_type {
+        let conversion_succeeds = match expected_type {
             "boolean" => field_value.as_bool().is_some(),
             "string" => field_value.as_str().is_some(),
             "integer" => field_value.as_i64().is_some(),
