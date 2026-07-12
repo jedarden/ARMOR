@@ -6,6 +6,7 @@ package yamlutil
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 
@@ -387,7 +388,15 @@ func (sv *DefaultSyntaxValidator) ValidateSyntax(yamlContent string) SyntaxValid
 		result.Valid = false
 		result.ParseError = err
 		result.ErrorLine = sv.extractErrorLine(err.Error())
-		result.SyntaxErrors = append(result.SyntaxErrors, sv.convertParseError(err))
+		// Check for specific error types using type assertions
+		if err == io.EOF {
+			result.SyntaxErrors = append(result.SyntaxErrors, SyntaxError{
+				Message:   "Unexpected end of YAML content - content may be incomplete",
+				ErrorCode: ErrCodeFileIOError,
+			})
+		} else {
+			result.SyntaxErrors = append(result.SyntaxErrors, sv.convertParseError(err))
+		}
 	}
 
 	// Detect indentation errors
@@ -437,6 +446,14 @@ func (sv *DefaultSyntaxValidator) ValidateSyntaxInFile(filePath string) SyntaxVa
 	content, err := ReadFile(filePath)
 	if err != nil {
 		result.Valid = false
+		// Check for specific error types using type assertions
+		if err == io.EOF {
+			result.SyntaxErrors = append(result.SyntaxErrors, SyntaxError{
+				Message:   "Unexpected end of file - file may be incomplete or truncated",
+				ErrorCode: ErrCodeFileIOError,
+			})
+			return result
+		}
 		result.SyntaxErrors = append(result.SyntaxErrors, SyntaxError{
 			Message:   fmt.Sprintf("Failed to read file: %v", err),
 			ErrorCode: ErrCodeFileIOError,
@@ -1007,12 +1024,20 @@ func (sv *DefaultSyntaxValidator) GetErrorContext(content string, line int, cont
 
 // convertParseError converts a yaml.v3 parse error to SyntaxError.
 func (sv *DefaultSyntaxValidator) convertParseError(err error) SyntaxError {
-	errMsg := err.Error()
-
 	se := SyntaxError{
-		Message: errMsg,
-		Err:     err,
+		Err: err,
 	}
+
+	// Check for specific YAML error types using type assertions
+	if typeErr, ok := err.(*yaml.TypeError); ok {
+		// This is a YAML type error - provide detailed information
+		se.Message = fmt.Sprintf("YAML type mismatch: %v", typeErr.Errors)
+		se.ErrorCode = ErrCodeTypeMismatch
+		return se
+	}
+
+	errMsg := err.Error()
+	se.Message = errMsg
 
 	// Extract line and column from error message
 	se.Line = sv.extractErrorLine(errMsg)

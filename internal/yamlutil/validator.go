@@ -3,6 +3,7 @@ package yamlutil
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -161,6 +162,18 @@ func (v *Validator) ValidateFile(filePath string) ValidationResult {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		result.Valid = false
+		// Check for specific error types using type assertions
+		if err == io.EOF {
+			// io.EOF indicates incomplete file or unexpected end of file
+			ve := LocalValidationError{
+				FilePath: filePath,
+				Message:  "Unexpected end of file - file may be incomplete or truncated",
+				Type:     ErrorTypeIO,
+				Context:  "The file ended before all expected content was read",
+			}
+			result.Errors = append(result.Errors, ve.ToValidationError())
+			return result
+		}
 		ve := LocalValidationError{
 			FilePath: filePath,
 			Message:  fmt.Sprintf("Failed to read file: %v", err),
@@ -180,6 +193,17 @@ func (v *Validator) parseYAMLError(err error, filePath, content string) LocalVal
 		FilePath: filePath,
 		Message:  err.Error(),
 		Type:     ErrorTypeSyntax,
+	}
+
+	// Check for specific YAML error types using type assertions
+	if typeErr, ok := err.(*yaml.TypeError); ok {
+		// This is a YAML type error - provide detailed information
+		ve.Type = ErrorTypeStructure
+		ve.Message = fmt.Sprintf("YAML type mismatch errors: %v", typeErr.Errors)
+		if len(typeErr.Errors) > 0 {
+			ve.Context = fmt.Sprintf("Type errors: %s", strings.Join(typeErr.Errors, "; "))
+		}
+		return ve
 	}
 
 	// Parse line and column from error message if available
