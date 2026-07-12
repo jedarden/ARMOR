@@ -109,7 +109,7 @@ func TestHumanReadableFormatting(t *testing.T) {
 			err  error
 		}{
 			{"parse error", NewParseError("test.yaml", "bad syntax", 5, 10, "", "", "")},
-			{"validation error", NewValidationError("test.yaml", "invalid value", "", "", "", 5, 10, "", "")},
+			{"validation error", NewValidationError("test.yaml", "invalid value", "", "", "", 5, 10, "", "test.yaml")},
 			{"syntax error", NewSyntaxError("test.yaml", "syntax issue", 5, 10, "", "", "")},
 			{"structure error", NewStructureError("test.yaml", "bad structure", 5, "", "", "")},
 		}
