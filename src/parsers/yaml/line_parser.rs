@@ -1127,17 +1127,17 @@ pub fn strip_inline_comment(line: &str) -> String {
 /// assert!(info.unwrap().is_parent_key);
 /// ```
 pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKeyInfo> {
+    // Check if this is a full-line comment before processing
+    if is_comment_line(line) {
+        return None;
+    }
+
     // Strip inline comments before processing
     let line_without_comments = strip_inline_comment(line);
     let trimmed = line_without_comments.trim();
 
     // Skip empty lines
     if trimmed.is_empty() {
-        return None;
-    }
-
-    // Skip comment lines (lines starting with #)
-    if trimmed.starts_with('#') {
         return None;
     }
 
@@ -2608,5 +2608,103 @@ mod tests {
         assert_eq!(classify_line_type(" \t clé: valeur"), LineType::MappingKey);
         assert_eq!(classify_line_type("  \t 用户名: 密码"), LineType::MappingKey);
         assert_eq!(classify_line_type("\t \t # 注释"), LineType::Comment);
+    }
+
+    // Integration tests for comment filtering in key detection
+
+    #[test]
+    fn test_key_detection_skips_full_line_comments() {
+        // Full-line comments should be ignored
+        let info = detect_mapping_key("# This is a comment", 0);
+        assert!(info.is_none(), "Full-line comment should not be detected as key");
+
+        let info = detect_mapping_key("  # Indented comment", 0);
+        assert!(info.is_none(), "Indented full-line comment should not be detected as key");
+
+        let info = detect_mapping_key("\t# Tab-indented comment", 0);
+        assert!(info.is_none(), "Tab-indented comment should not be detected as key");
+    }
+
+    #[test]
+    fn test_key_detection_strips_inline_comments() {
+        // Inline comments should be stripped before processing
+        let info = detect_mapping_key("key: value # inline comment", 0);
+        assert!(info.is_some(), "Key with inline comment should still be detected");
+        let info = info.unwrap();
+        assert_eq!(info.key, "key");
+        assert_eq!(info.value, Some("value".to_string()));
+
+        let info = detect_mapping_key("  nested: value # comment here", 0);
+        assert!(info.is_some(), "Nested key with inline comment should be detected");
+        let info = info.unwrap();
+        assert_eq!(info.key, "nested");
+        assert_eq!(info.value, Some("value".to_string()));
+    }
+
+    #[test]
+    fn test_key_detection_preserves_hashes_in_values() {
+        // Hashes in URLs and values should be preserved
+        let info = detect_mapping_key("url: http://example.com#anchor", 0);
+        assert!(info.is_some(), "Key with URL hash should be detected");
+        let info = info.unwrap();
+        assert_eq!(info.key, "url");
+        assert_eq!(info.value, Some("http://example.com#anchor".to_string()));
+
+        let info = detect_mapping_key("link: https://api.example.com/v1#section # comment", 0);
+        assert!(info.is_some(), "Key with URL hash and inline comment should be detected");
+        let info = info.unwrap();
+        assert_eq!(info.key, "link");
+        assert_eq!(info.value, Some("https://api.example.com/v1#section".to_string()));
+
+        let info = detect_mapping_key("text: value # hash # in # value", 0);
+        assert!(info.is_some(), "Key with hash characters in value should be detected");
+        let info = info.unwrap();
+        // The first # preceded by whitespace starts the comment, so value should be "value"
+        assert_eq!(info.value, Some("value".to_string()));
+    }
+
+    #[test]
+    fn test_key_detection_preserves_quoted_hashes() {
+        // Hashes in quoted strings should be preserved
+        let info = detect_mapping_key("key: \"value with # hash\"", 0);
+        assert!(info.is_some(), "Key with quoted hash should be detected");
+        let info = info.unwrap();
+        assert_eq!(info.value, Some("\"value with # hash\"".to_string()));
+
+        let info = detect_mapping_key("key: 'value #2' # inline comment", 0);
+        assert!(info.is_some(), "Key with quoted hash and inline comment should be detected");
+        let info = info.unwrap();
+        assert_eq!(info.value, Some("'value #2'".to_string()));
+    }
+
+    #[test]
+    fn test_key_detection_comment_lines_with_colons_ignored() {
+        // Comment lines containing colons should be ignored
+        let info = detect_mapping_key("# TODO: fix this bug", 0);
+        assert!(info.is_none(), "Comment line with colon should not be detected as key");
+
+        let info = detect_mapping_key("  # Note: this is important", 0);
+        assert!(info.is_none(), "Indented comment line with colon should not be detected as key");
+
+        let info = detect_mapping_key("# http://example.com#anchor", 0);
+        assert!(info.is_none(), "Comment line with URL should not be detected as key");
+    }
+
+    #[test]
+    fn test_key_detection_non_comment_lines_unchanged() {
+        // Regular non-comment lines should work as before
+        let info = detect_mapping_key("key: value", 0);
+        assert!(info.is_some(), "Regular key-value pair should be detected");
+        let info = info.unwrap();
+        assert_eq!(info.key, "key");
+        assert_eq!(info.value, Some("value".to_string()));
+
+        let info = detect_mapping_key("  nested: value", 0);
+        assert!(info.is_some(), "Nested key should be detected");
+
+        let info = detect_mapping_key("parent:", 0);
+        assert!(info.is_some(), "Parent key should be detected");
+        let info = info.unwrap();
+        assert!(info.is_parent_key);
     }
 }
