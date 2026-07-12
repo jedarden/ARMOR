@@ -250,6 +250,10 @@ struct DelimiterState {
     quote_state: Option<QuoteType>,
     /// Lines with quote errors
     quote_errors: Vec<usize>,
+    /// Whether we're inside a multiline block (|, >)
+    in_multiline_block: bool,
+    /// Indentation level of the multiline block start
+    multiline_block_indent: usize,
 }
 
 /// Quote type for tracking
@@ -453,14 +457,53 @@ impl SyntaxDetector {
 
     /// Detect delimiter-related errors
     fn detect_delimiter_errors(&mut self, line: &str, line_num: usize, errors: &mut Vec<ValidationError>) {
-        // Check for missing colons after keys
+        let leading_whitespace_len = self.get_leading_whitespace_length(line);
         let trimmed = line.trim();
+
+        // Check if we're inside a multiline block
+        if self.delimiter_state.in_multiline_block {
+            // Multiline blocks continue until we find a line with less or equal indentation
+            // that's not empty or a comment
+            if leading_whitespace_len > self.delimiter_state.multiline_block_indent ||
+               (leading_whitespace_len == self.delimiter_state.multiline_block_indent && (trimmed.is_empty() || trimmed.starts_with('#'))) {
+                return; // Skip lines inside the multiline block
+            } else {
+                // Exit multiline block when indentation decreases
+                self.delimiter_state.in_multiline_block = false;
+                self.delimiter_state.multiline_block_indent = 0;
+            }
+        }
+
+        // Skip empty lines and comments (but not when inside multiline blocks - handled above)
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return;
+        }
+
+        // Handle document markers (---, ...)
+        if trimmed == "---" || trimmed == "..." {
+            return; // Document markers should not be flagged for missing colons
+        }
+
+        // Handle multiline block scalars (|, >, |-, |- , >-, >+, |+)
+        // These appear after a colon, like "key: |" or "key: >"
+        if trimmed.contains(": |") || trimmed.contains(": >") ||
+           trimmed.contains(":|-") || trimmed.contains(":>-") ||
+           trimmed.contains(":|+") || trimmed.contains(":>+") {
+            self.delimiter_state.in_multiline_block = true;
+            self.delimiter_state.multiline_block_indent = leading_whitespace_len; // Content must be MORE indented than this line
+        }
+
+        // Check for missing colons after keys
         if !trimmed.starts_with('-') && // Not a sequence item
            !trimmed.starts_with('?') && // Not an explicit key
            !trimmed.starts_with(':') && // Not a value
-           !trimmed.starts_with('#') && // Not a comment
+           !trimmed.starts_with('&') && // Not an anchor
+           !trimmed.starts_with('*') && // Not an alias
+           !trimmed.starts_with('!') && // Not a tag
            !trimmed.starts_with('|') && // Not a literal block scalar
            !trimmed.starts_with('>') && // Not a folded block scalar
+           !trimmed.contains('{') && // Not flow style mapping
+           !trimmed.contains('[') && // Not flow style sequence
            !trimmed.contains(':') && // No colon at all
            !trimmed.is_empty() &&
            self.looks_like_key(trimmed) {

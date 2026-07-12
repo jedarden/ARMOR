@@ -524,6 +524,242 @@ impl fmt::Display for YamlLine {
     }
 }
 
+/// Indentation details for a YAML line
+///
+/// This struct provides detailed information about the indentation of a line,
+/// including separate counts for spaces and tabs, and the total indentation level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndentationInfo {
+    /// Number of leading spaces
+    pub leading_spaces: usize,
+    /// Number of leading tabs
+    pub leading_tabs: usize,
+    /// Total indentation level (spaces + tabs)
+    pub total_level: usize,
+}
+
+impl IndentationInfo {
+    /// Create new indentation info from a line
+    ///
+    /// # Arguments
+    ///
+    /// * `line` - The line to analyze
+    ///
+    /// # Returns
+    /// A new `IndentationInfo` instance with the indentation details
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::line_parser::IndentationInfo;
+    ///
+    /// let info = IndentationInfo::from_line("  key: value");
+    /// assert_eq!(info.leading_spaces, 2);
+    /// assert_eq!(info.leading_tabs, 0);
+    /// assert_eq!(info.total_level, 2);
+    /// ```
+    pub fn from_line(line: &str) -> Self {
+        let mut leading_spaces = 0;
+        let mut leading_tabs = 0;
+
+        for ch in line.chars() {
+            match ch {
+                ' ' => leading_spaces += 1,
+                '\t' => leading_tabs += 1,
+                _ => break, // Stop at first non-whitespace character
+            }
+        }
+
+        Self {
+            leading_spaces,
+            leading_tabs,
+            total_level: leading_spaces + leading_tabs,
+        }
+    }
+
+    /// Check if the line has mixed indentation (both spaces and tabs)
+    ///
+    /// # Returns
+    /// `true` if the line contains both spaces and tabs in leading whitespace
+    pub fn is_mixed(&self) -> bool {
+        self.leading_spaces > 0 && self.leading_tabs > 0
+    }
+
+    /// Check if the line uses only tab indentation
+    ///
+    /// # Returns
+    /// `true` if the line uses only tabs for indentation
+    pub fn is_tabs_only(&self) -> bool {
+        self.leading_tabs > 0 && self.leading_spaces == 0
+    }
+
+    /// Check if the line uses only space indentation
+    ///
+    /// # Returns
+    /// `true` if the line uses only spaces for indentation
+    pub fn is_spaces_only(&self) -> bool {
+        self.leading_spaces > 0 && self.leading_tabs == 0
+    }
+
+    /// Check if the line has no indentation
+    ///
+    /// # Returns
+    /// `true` if the line has no leading whitespace
+    pub fn is_empty(&self) -> bool {
+        self.total_level == 0
+    }
+}
+
+impl fmt::Display for IndentationInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_mixed() {
+            write!(
+                f,
+                "{} spaces + {} tabs (MIXED)",
+                self.leading_spaces, self.leading_tabs
+            )
+        } else if self.is_tabs_only() {
+            write!(f, "{} tabs", self.leading_tabs)
+        } else if self.is_spaces_only() {
+            write!(f, "{} spaces", self.leading_spaces)
+        } else {
+            write!(f, "no indentation")
+        }
+    }
+}
+
+/// Classify a YAML line into its type
+///
+/// This function analyzes a line and determines its type based on YAML
+/// specification rules and common patterns.
+///
+/// # Arguments
+///
+/// * `line` - The line to classify
+///
+/// # Returns
+/// The classified `LineType` for the line
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::line_parser::{classify_line_type, LineType};
+///
+/// assert_eq!(classify_line_type(""), LineType::Blank);
+/// assert_eq!(classify_line_type("  "), LineType::Blank);
+/// assert_eq!(classify_line_type("# comment"), LineType::Comment);
+/// assert_eq!(classify_line_type("---"), LineType::DocumentStart);
+/// assert_eq!(classify_line_type("key: value"), LineType::MappingKey);
+/// ```
+pub fn classify_line_type(line: &str) -> LineType {
+    let trimmed = line.trim();
+
+    // Empty lines (including whitespace-only lines)
+    if trimmed.is_empty() {
+        return LineType::Blank;
+    }
+
+    // Comment lines
+    if trimmed.starts_with('#') {
+        return LineType::Comment;
+    }
+
+    // Document markers
+    if trimmed == "---" {
+        return LineType::DocumentStart;
+    }
+    if trimmed == "..." {
+        return LineType::DocumentEnd;
+    }
+
+    // YAML directives (start with %)
+    if trimmed.starts_with('%') {
+        return LineType::Directive;
+    }
+
+    // Tags (start with !)
+    if trimmed.starts_with('!') {
+        return LineType::Tag;
+    }
+
+    // Anchors (start with &)
+    if trimmed.starts_with('&') {
+        return LineType::Anchor;
+    }
+
+    // Aliases (start with *)
+    if trimmed.starts_with('*') {
+        return LineType::Alias;
+    }
+
+    // Literal block scalar (|)
+    if trimmed.starts_with('|') {
+        return LineType::LiteralBlockScalar;
+    }
+
+    // Folded block scalar (>)
+    if trimmed.starts_with('>') {
+        return LineType::FoldedBlockScalar;
+    }
+
+    // Sequence items (start with -)
+    if trimmed.starts_with("- ") {
+        return LineType::SequenceItem;
+    }
+
+    // Flow style mapping (starts with {)
+    if trimmed.contains('{') && !trimmed.contains(':') {
+        return LineType::FlowMapping;
+    }
+
+    // Flow style sequence (starts with [)
+    if trimmed.contains('[') {
+        return LineType::FlowSequence;
+    }
+
+    // Default to mapping key for most content lines
+    // This handles "key: value" patterns
+    if trimmed.contains(':') {
+        return LineType::MappingKey;
+    }
+
+    // Fallback to unknown
+    LineType::Unknown
+}
+
+/// Calculate indentation level from a line
+///
+/// This function counts the leading whitespace characters in a line.
+/// It handles both spaces and tabs, counting each character individually.
+///
+/// **Note on tab vs space indentation**: YAML specification allows both
+/// space and tab indentation, but they should never be mixed in the same
+/// document. This function counts tabs and spaces equally (1 tab = 1 level)
+/// for basic indentation tracking. For proper validation, use the
+/// `IndentationInfo::from_line()` function which provides separate counts
+/// and can detect mixed indentation.
+///
+/// # Arguments
+///
+/// * `line` - The line to analyze
+///
+/// # Returns
+/// The number of leading whitespace characters
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::line_parser::calculate_indentation;
+///
+/// assert_eq!(calculate_indentation("key: value"), 0);
+/// assert_eq!(calculate_indentation("  key: value"), 2);
+/// assert_eq!(calculate_indentation("\tkey: value"), 1);
+/// assert_eq!(calculate_indentation("    key: value"), 4);
+/// ```
+pub fn calculate_indentation(line: &str) -> usize {
+    IndentationInfo::from_line(line).total_level
+}
+
 /// Result of parsing a YAML file into lines
 ///
 /// This type contains the complete results of a line-by-line YAML parsing operation.
@@ -709,5 +945,292 @@ mod tests {
 
         let structural_lines: Vec<_> = result.structural_lines().collect();
         assert_eq!(structural_lines.len(), 2);
+    }
+
+    // IndentationInfo tests
+    #[test]
+    fn test_indentation_info_no_indentation() {
+        let info = IndentationInfo::from_line("key: value");
+        assert_eq!(info.leading_spaces, 0);
+        assert_eq!(info.leading_tabs, 0);
+        assert_eq!(info.total_level, 0);
+        assert!(info.is_empty());
+        assert!(!info.is_mixed());
+        assert!(!info.is_tabs_only());
+        assert!(!info.is_spaces_only());
+    }
+
+    #[test]
+    fn test_indentation_info_spaces_only() {
+        let info = IndentationInfo::from_line("  key: value");
+        assert_eq!(info.leading_spaces, 2);
+        assert_eq!(info.leading_tabs, 0);
+        assert_eq!(info.total_level, 2);
+        assert!(!info.is_empty());
+        assert!(!info.is_mixed());
+        assert!(!info.is_tabs_only());
+        assert!(info.is_spaces_only());
+    }
+
+    #[test]
+    fn test_indentation_info_tabs_only() {
+        let info = IndentationInfo::from_line("\t\tkey: value");
+        assert_eq!(info.leading_spaces, 0);
+        assert_eq!(info.leading_tabs, 2);
+        assert_eq!(info.total_level, 2);
+        assert!(!info.is_empty());
+        assert!(!info.is_mixed());
+        assert!(info.is_tabs_only());
+        assert!(!info.is_spaces_only());
+    }
+
+    #[test]
+    fn test_indentation_info_mixed() {
+        let info = IndentationInfo::from_line(" \t key: value");
+        assert_eq!(info.leading_spaces, 1);
+        assert_eq!(info.leading_tabs, 1);
+        assert_eq!(info.total_level, 2);
+        assert!(!info.is_empty());
+        assert!(info.is_mixed());
+        assert!(!info.is_tabs_only());
+        assert!(!info.is_spaces_only());
+    }
+
+    #[test]
+    fn test_indentation_info_deep_indentation() {
+        let info = IndentationInfo::from_line("        key: value");
+        assert_eq!(info.leading_spaces, 8);
+        assert_eq!(info.leading_tabs, 0);
+        assert_eq!(info.total_level, 8);
+    }
+
+    #[test]
+    fn test_indentation_info_whitespace_only_line() {
+        let info = IndentationInfo::from_line("    ");
+        assert_eq!(info.leading_spaces, 4);
+        assert_eq!(info.leading_tabs, 0);
+        assert_eq!(info.total_level, 4);
+        assert!(!info.is_empty());
+    }
+
+    #[test]
+    fn test_indentation_info_empty_line() {
+        let info = IndentationInfo::from_line("");
+        assert_eq!(info.leading_spaces, 0);
+        assert_eq!(info.leading_tabs, 0);
+        assert_eq!(info.total_level, 0);
+        assert!(info.is_empty());
+    }
+
+    #[test]
+    fn test_indentation_info_display() {
+        let info_spaces = IndentationInfo::from_line("  key: value");
+        assert_eq!(format!("{}", info_spaces), "2 spaces");
+
+        let info_tabs = IndentationInfo::from_line("\tkey: value");
+        assert_eq!(format!("{}", info_tabs), "1 tabs");
+
+        let info_mixed = IndentationInfo::from_line(" \t key: value");
+        assert_eq!(format!("{}", info_mixed), "1 spaces + 1 tabs (MIXED)");
+
+        let info_empty = IndentationInfo::from_line("key: value");
+        assert_eq!(format!("{}", info_empty), "no indentation");
+    }
+
+    // classify_line_type tests
+    #[test]
+    fn test_classify_blank_line() {
+        assert_eq!(classify_line_type(""), LineType::Blank);
+        assert_eq!(classify_line_type("   "), LineType::Blank);
+        assert_eq!(classify_line_type("\t\t"), LineType::Blank);
+        assert_eq!(classify_line_type(" \t "), LineType::Blank);
+    }
+
+    #[test]
+    fn test_classify_comment_line() {
+        assert_eq!(classify_line_type("# comment"), LineType::Comment);
+        assert_eq!(classify_line_type("  # indented comment"), LineType::Comment);
+        assert_eq!(classify_line_type("#"), LineType::Comment);
+        assert_eq!(classify_line_type("# TODO: fix this"), LineType::Comment);
+    }
+
+    #[test]
+    fn test_classify_document_markers() {
+        assert_eq!(classify_line_type("---"), LineType::DocumentStart);
+        assert_eq!(classify_line_type("  ---"), LineType::DocumentStart);
+        assert_eq!(classify_line_type("..."), LineType::DocumentEnd);
+        assert_eq!(classify_line_type("  ..."), LineType::DocumentEnd);
+    }
+
+    #[test]
+    fn test_classify_mapping_key() {
+        assert_eq!(classify_line_type("key: value"), LineType::MappingKey);
+        assert_eq!(classify_line_type("  nested: value"), LineType::MappingKey);
+        assert_eq!(classify_line_type("key:"), LineType::MappingKey);
+        assert_eq!(classify_line_type("key: "), LineType::MappingKey);
+        assert_eq!(classify_line_type("my-key: value"), LineType::MappingKey);
+    }
+
+    #[test]
+    fn test_classify_sequence_item() {
+        assert_eq!(classify_line_type("- item"), LineType::SequenceItem);
+        assert_eq!(classify_line_type("  - item"), LineType::SequenceItem);
+        assert_eq!(classify_line_type("- key: value"), LineType::SequenceItem);
+        assert_eq!(classify_line_type("-"), LineType::SequenceItem);
+    }
+
+    #[test]
+    fn test_classify_directive() {
+        assert_eq!(classify_line_type("%YAML 1.2"), LineType::Directive);
+        assert_eq!(classify_line_type("  %YAML 1.2"), LineType::Directive);
+        assert_eq!(classify_line_type("%TAG ! tag:example.com,2014:"), LineType::Directive);
+    }
+
+    #[test]
+    fn test_classify_tag() {
+        assert_eq!(classify_line_type("!tag"), LineType::Tag);
+        assert_eq!(classify_line_type("  !tag"), LineType::Tag);
+        assert_eq!(classify_line_type("!my_tag"), LineType::Tag);
+    }
+
+    #[test]
+    fn test_classify_anchor() {
+        assert_eq!(classify_line_type("&anchor"), LineType::Anchor);
+        assert_eq!(classify_line_type("  &anchor"), LineType::Anchor);
+        assert_eq!(classify_line_type("&my_anchor"), LineType::Anchor);
+    }
+
+    #[test]
+    fn test_classify_alias() {
+        assert_eq!(classify_line_type("*alias"), LineType::Alias);
+        assert_eq!(classify_line_type("  *alias"), LineType::Alias);
+        assert_eq!(classify_line_type("*my_alias"), LineType::Alias);
+    }
+
+    #[test]
+    fn test_classify_literal_block_scalar() {
+        assert_eq!(classify_line_type("|"), LineType::LiteralBlockScalar);
+        assert_eq!(classify_line_type("  |"), LineType::LiteralBlockScalar);
+        assert_eq!(classify_line_type("|-"), LineType::LiteralBlockScalar);
+        assert_eq!(classify_line_type("|+"), LineType::LiteralBlockScalar);
+    }
+
+    #[test]
+    fn test_classify_folded_block_scalar() {
+        assert_eq!(classify_line_type(">"), LineType::FoldedBlockScalar);
+        assert_eq!(classify_line_type("  >"), LineType::FoldedBlockScalar);
+        assert_eq!(classify_line_type(">-"), LineType::FoldedBlockScalar);
+        assert_eq!(classify_line_type(">+"), LineType::FoldedBlockScalar);
+    }
+
+    #[test]
+    fn test_classify_unknown() {
+        // Lines without colons or other YAML patterns are Unknown
+        assert_eq!(classify_line_type("just some text"), LineType::Unknown);
+        assert_eq!(classify_line_type("  random text"), LineType::Unknown);
+    }
+
+    // calculate_indentation tests
+    #[test]
+    fn test_calculate_indentation_no_indent() {
+        assert_eq!(calculate_indentation("key: value"), 0);
+        assert_eq!(calculate_indentation(""), 0);
+        assert_eq!(calculate_indentation("# comment"), 0);
+    }
+
+    #[test]
+    fn test_calculate_indentation_spaces() {
+        assert_eq!(calculate_indentation("  key: value"), 2);
+        assert_eq!(calculate_indentation("    key: value"), 4);
+        assert_eq!(calculate_indentation("      key: value"), 6);
+        assert_eq!(calculate_indentation("        key: value"), 8);
+    }
+
+    #[test]
+    fn test_calculate_indentation_tabs() {
+        assert_eq!(calculate_indentation("\tkey: value"), 1);
+        assert_eq!(calculate_indentation("\t\tkey: value"), 2);
+        assert_eq!(calculate_indentation("\t\t\tkey: value"), 3);
+    }
+
+    #[test]
+    fn test_calculate_indentation_mixed() {
+        // Mixed tabs and spaces are counted as individual characters
+        assert_eq!(calculate_indentation(" \tkey: value"), 2);
+        assert_eq!(calculate_indentation("\t key: value"), 2);
+        assert_eq!(calculate_indentation("  \t key: value"), 4);
+    }
+
+    #[test]
+    fn test_calculate_indentation_whitespace_only() {
+        assert_eq!(calculate_indentation("  "), 2);
+        assert_eq!(calculate_indentation("\t\t"), 2);
+        assert_eq!(calculate_indentation("    "), 4);
+    }
+
+    #[test]
+    fn test_calculate_indentation_edge_cases() {
+        // Test that indentation stops at first non-whitespace
+        assert_eq!(calculate_indentation("  key: value  "), 2);
+        assert_eq!(calculate_indentation("\tkey: value\t"), 1);
+
+        // Test Unicode spaces (if present)
+        assert_eq!(calculate_indentation("  key: value"), 2);
+    }
+
+    // Integration tests combining classification and indentation
+    #[test]
+    fn test_classification_and_indentation_integration() {
+        // Test various YAML patterns together
+        let lines = vec![
+            ("", LineType::Blank, 0),
+            ("   ", LineType::Blank, 3),
+            ("# comment", LineType::Comment, 0),
+            ("  # comment", LineType::Comment, 2),
+            ("---", LineType::DocumentStart, 0),
+            ("  ---", LineType::DocumentStart, 2),
+            ("...", LineType::DocumentEnd, 0),
+            ("key: value", LineType::MappingKey, 0),
+            ("  key: value", LineType::MappingKey, 2),
+            ("    key: value", LineType::MappingKey, 4),
+            ("- item", LineType::SequenceItem, 0),
+            ("  - item", LineType::SequenceItem, 2),
+            ("|", LineType::LiteralBlockScalar, 0),
+            ("  >", LineType::FoldedBlockScalar, 2),
+        ];
+
+        for (line, expected_type, expected_indent) in lines {
+            assert_eq!(
+                classify_line_type(line),
+                expected_type,
+                "Failed to classify line: '{}'",
+                line
+            );
+            assert_eq!(
+                calculate_indentation(line),
+                expected_indent,
+                "Failed to calculate indentation for line: '{}'",
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn test_indentation_info_with_various_yaml_patterns() {
+        // Test indentation info with realistic YAML patterns
+        let info = IndentationInfo::from_line("  - item");
+        assert_eq!(info.leading_spaces, 2);
+        assert_eq!(info.leading_tabs, 0);
+        assert_eq!(info.total_level, 2);
+
+        let info = IndentationInfo::from_line("\t- item");
+        assert_eq!(info.leading_spaces, 0);
+        assert_eq!(info.leading_tabs, 1);
+        assert_eq!(info.total_level, 1);
+
+        let info = IndentationInfo::from_line("    key: value");
+        assert_eq!(info.leading_spaces, 4);
+        assert_eq!(info.leading_tabs, 0);
+        assert_eq!(info.total_level, 4);
     }
 }
