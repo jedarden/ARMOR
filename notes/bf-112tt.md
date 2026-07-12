@@ -1,55 +1,32 @@
-# Bead bf-112tt: LITESTREAM_SECRET_ACCESS_KEY Retrieval Blocker
+# LITESTREAM Credentials Retrieval Status
 
-## Status: BLOCKED by RBAC
+## Context
+Task: bf-112tt - Retrieve and decode LITESTREAM_SECRET_ACCESS_KEY
 
-### Issue
-Cannot retrieve `LITESTREAM_SECRET_ACCESS_KEY` from `armor-writer` secret in `devimprint` namespace due to insufficient RBAC permissions.
+## RBAC Blockade
+The ord-devimprint cluster's read-only kubectl-proxy explicitly denies access to secrets:
 
-### Evidence
-1. **Read-only proxy blocks secret access:**
-   ```
-   kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
-   Error: secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-   ```
-
-2. **No admin kubeconfig available:**
-   - Only kubeconfigs found: `iad-acb.kubeconfig`, `iad-ci.kubeconfig`
-   - No `ord-devimprint.kubeconfig` exists for admin access
-
-3. **OpenBao access failed:**
-   - ExternalSecret syncs from OpenBao (`rs-manager/ord-devimprint/armor-writer`)
-   - Direct OpenBao access via `https://openbao.ardenone.com:8200` times out
-   - Cannot retrieve credentials at source
-
-### ExternalSecret Details
-```yaml
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: armor-writer
-  namespace: devimprint
-spec:
-  data:
-  - secretKey: auth-access-key
-    remoteRef:
-      key: rs-manager/ord-devimprint/armor-writer
-      property: auth-access-key
-  - secretKey: auth-secret-key
-    remoteRef:
-      key: rs-manager/ord-devimprint/armor-writer
-      property: auth-secret-key
+```
+Error from server (Forbidden): secrets "armor-writer" is forbidden: 
+User "system:serviceaccount:devpod-observer:devpod-observer" 
+cannot get resource "secrets" in API group "" in the namespace "devimprint"
 ```
 
-### Resolution Required
-To complete this bead, one of the following is needed:
-1. **Create ord-devimprint.kubeconfig** with cluster-admin or secret-read permissions
-2. **OpenBao VPN access** - OpenBao server may require VPN/TS routing
-3. **Alternative access method** - Direct OpenBao token or API access with proper credentials
+## Current State
+- **ACCESS_KEY_ID**: Not found in cached files
+- **SECRET_ACCESS_KEY**: Cannot retrieve due to RBAC restrictions
+- **Cluster Access**: Read-only proxy only; no direct kubeconfig available
+- **Cached Data**: Previous attempts failed with same RBAC error (verified Jul 12, 2026)
 
-### Note on Key Names
-The bead references `LITESTREAM_SECRET_ACCESS_KEY`, but the ExternalSecret shows `auth-secret-key` as the source property. The Kubernetes secret key mapping may differ from OpenBao property names.
+## Requirements
+To complete this task, one of the following is needed:
+1. Direct kubeconfig with secret read access to ord-devimprint cluster
+2. RBAC policy update to allow devpod-observer SA to read secrets in devimprint namespace
+3. Alternative access method (OpenBao, external secret management)
 
-### References
-- CLAUDE.md: ord-devimprint cluster uses read-only proxy only
-- ExternalSecret: `armor-writer` in `devimprint` namespace
-- OpenBao path: `rs-manager/ord-devimprint/armor-writer`
+## Files
+- /tmp/litestream_access_key_id.txt (empty - retrieval blocked)
+- /tmp/litestream_secret_key_decoded.txt (empty - retrieval blocked)
+
+## Next Steps
+The task bf-112tt cannot be completed without elevated credentials or RBAC changes.
