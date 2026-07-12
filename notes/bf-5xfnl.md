@@ -69,6 +69,10 @@ Update bead to target correct property name (`auth-access-key` instead of `LITES
 - 2026-07-11 23:25: Verified kubeconfig does not exist at expected path
 - 2026-07-11 23:26: Checked ExternalSecret configuration → property name mismatch discovered
 - 2026-07-11 23:30: Confirmed RBAC restriction on devpod-observer SA
+- 2026-07-11 (Current session): Re-verified all blockers remain in place:
+  - Kubeconfig ~/.kube/ord-devimprint.kubeconfig: DOES NOT EXIST
+  - Read-only proxy RBAC: Cannot get secrets (verified: kubectl auth can-i get secrets → "no")
+  - Property name mismatch: Bead specifies LITESTREAM_ACCESS_KEY_ID, ExternalSecret provides auth-access-key
 
 ## Related Beads
 - bf-2p1wr: "Obtain ord-devimprint kubeconfig with write access" - Documented as closed but actually blocked
