@@ -1,35 +1,27 @@
-# Bead bf-1h60y: Decode SECRET_ACCESS_KEY - FAILURE
+# Bead bf-1h60y: Decode SECRET_ACCESS_KEY from base64
 
-## Issue
-Prerequisite bead `bf-3llc7` failed to retrieve the base64-encoded SECRET_ACCESS_KEY but was incorrectly marked as closed.
+## Status: FAILED - Prerequisite not met
 
-## Evidence
-The file `/tmp/litestream_secret_key_encoded.b64` contains:
+## Root Cause
+The prerequisite bead (bf-3llc7) failed to retrieve the actual secret key due to RBAC permissions. The file `/tmp/litestream_secret_key_encoded.b64` contains an error message instead of base64-encoded data:
+
 ```
 Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
 ```
 
-## Root Cause
-The kubectl command in bf-3llc7 used a read-only kubeconfig proxy that lacks permission to access secrets. The error message was written to the output file instead of actual base64 data.
+## What was attempted
+1. Checked that encoded file exists: ✓
+2. Attempted to decode with `base64 -d`: ✗ (failed with "invalid input")
+3. Inspected file content and discovered it contains error message, not base64 data
 
-## Impact
-Cannot decode the SECRET_ACCESS_KEY because there is no valid encoded data to decode.
+## Why this cannot be completed
+- The encoded file does not contain valid base64-encoded secret data
+- It contains a kubectl RBAC error message from the failed prerequisite step
+- Without the actual base64-encoded secret, decoding cannot succeed
 
-## Resolution Required
-Bead bf-3llc7 needs to be re-opened and completed with proper credentials (using a kubeconfig with secret access permissions, not the read-only proxy).
+## Prerequisites not met
+- Child bf-3llc7 was supposed to retrieve the encoded key, but it failed due to RBAC
+- The current bead cannot proceed without valid input data
 
-## Attempt Summary (2026-07-12)
-Attempted to decode with command:
-```bash
-base64 -d /tmp/litestream_secret_key_encoded.b64 > /tmp/litestream_secret_key_decoded.txt
-```
-
-Result: `base64: invalid input`
-
-The encoded file contains a kubectl permission error, not valid base64 data. This confirms the prerequisite bead failed silently.
-
-## Recommendation
-This bead (bf-1h60y) should NOT be closed until:
-1. bf-3llc7 is fixed to retrieve actual encoded data
-2. The encoded file contains valid base64
-3. Decoding succeeds and produces non-empty output
+## Resolution path
+The bead chain needs to be retried with proper RBAC permissions to allow retrieving secrets from the `devimprint` namespace, or an alternative method for accessing the LITESTREAM_SECRET_ACCESS_KEY needs to be used.
