@@ -127,17 +127,16 @@ pub type ValidationResult = Result<(), ParseError>;
 /// ## Validating Primitive Types
 ///
 /// ```
-/// use armor::schema::{Schema, ValidationError};
+/// use armor::schema::Schema;
+/// use armor::parsers::yaml::ParseError;
 ///
 /// struct PositiveIntegerSchema;
 ///
 /// impl Schema<i32> for PositiveIntegerSchema {
-///     fn validate(&self, value: &i32) -> Result<(), ValidationError> {
+///     fn validate(&self, value: &i32) -> Result<(), ParseError> {
 ///         if *value <= 0 {
-///             return Err(ValidationError::new(
-///                 "value",
-///                 "must be a positive integer"
-///             ));
+///             return Err(ParseError::validation("must be a positive integer")
+///                 .with_path("value"));
 ///         }
 ///         Ok(())
 ///     }
@@ -151,7 +150,8 @@ pub type ValidationResult = Result<(), ParseError>;
 /// ## Validating Structs
 ///
 /// ```ignore
-/// use armor::schema::{Schema, ValidationError};
+/// use armor::schema::Schema;
+/// use armor::parsers::yaml::ParseError;
 ///
 /// struct ServerConfig {
 ///     host: String,
