@@ -1064,3 +1064,601 @@ func BenchmarkClassifyLineType(b *testing.B) {
 		ClassifyLineType(line)
 	}
 }
+
+// TestCalculateIndentationEdgeCases tests edge cases for CalculateIndentation.
+func TestCalculateIndentationEdgeCases(t *testing.T) {
+	tests := []struct {
+		name          string
+		line          string
+		spacesPerLevel int
+		expected      IndentationInfo
+	}{
+		{
+			name:          "line with only hash symbol",
+			line:          "#",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      0,
+				SpaceCount: 0,
+				TabCount:   0,
+				TotalWidth: 0,
+				IndentType: "none",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:          "line with only hash symbol with space indent",
+			line:          "  #",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      1,
+				SpaceCount: 2,
+				TabCount:   0,
+				TotalWidth: 2,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:          "line with only hash symbol with tab indent",
+			line:          "\t#",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      1,
+				SpaceCount: 0,
+				TabCount:   1,
+				TotalWidth: 1,
+				IndentType: "tab",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:          "8 space indentation",
+			line:          "        key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      4,
+				SpaceCount: 8,
+				TabCount:   0,
+				TotalWidth: 8,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:          "8 space indentation with 4 space levels",
+			line:          "        key: value",
+			spacesPerLevel: 4,
+			expected: IndentationInfo{
+				Level:      2,
+				SpaceCount: 8,
+				TabCount:   0,
+				TotalWidth: 8,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:          "6 space indentation with 2 space levels",
+			line:          "      key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      3,
+				SpaceCount: 6,
+				TabCount:   0,
+				TotalWidth: 6,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:          "odd space count - 1 space",
+			line:          " key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      0,
+				SpaceCount: 1,
+				TabCount:   0,
+				TotalWidth: 1,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:          "odd space count - 5 spaces",
+			line:          "     key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      2,
+				SpaceCount: 5,
+				TabCount:   0,
+				TotalWidth: 5,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:          "odd space count - 7 spaces",
+			line:          "       key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      3,
+				SpaceCount: 7,
+				TabCount:   0,
+				TotalWidth: 7,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:          "single space with tab",
+			line:          " \tkey: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      0,
+				SpaceCount: 1,
+				TabCount:   1,
+				TotalWidth: 2,
+				IndentType: "mixed",
+				IsMixed:    true,
+			},
+		},
+		{
+			name:          "tab with single space",
+			line:          "\t key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      0,
+				SpaceCount: 1,
+				TabCount:   1,
+				TotalWidth: 2,
+				IndentType: "mixed",
+				IsMixed:    true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CalculateIndentation(tt.line, tt.spacesPerLevel)
+
+			if result.Level != tt.expected.Level {
+				t.Errorf("Expected Level %d, got %d", tt.expected.Level, result.Level)
+			}
+			if result.SpaceCount != tt.expected.SpaceCount {
+				t.Errorf("Expected SpaceCount %d, got %d", tt.expected.SpaceCount, result.SpaceCount)
+			}
+			if result.TabCount != tt.expected.TabCount {
+				t.Errorf("Expected TabCount %d, got %d", tt.expected.TabCount, result.TabCount)
+			}
+			if result.TotalWidth != tt.expected.TotalWidth {
+				t.Errorf("Expected TotalWidth %d, got %d", tt.expected.TotalWidth, result.TotalWidth)
+			}
+			if result.IndentType != tt.expected.IndentType {
+				t.Errorf("Expected IndentType %s, got %s", tt.expected.IndentType, result.IndentType)
+			}
+			if result.IsMixed != tt.expected.IsMixed {
+				t.Errorf("Expected IsMixed %v, got %v", tt.expected.IsMixed, result.IsMixed)
+			}
+		})
+	}
+}
+
+// TestClassifyLineTypeEdgeCases tests edge cases for ClassifyLineType.
+func TestClassifyLineTypeEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected LineType
+	}{
+		{
+			name:     "line with only hash symbol",
+			line:     "#",
+			expected: LineTypeComment,
+		},
+		{
+			name:     "line with only hash symbol with space indent",
+			line:     "  #",
+			expected: LineTypeComment,
+		},
+		{
+			name:     "line with only hash symbol with tab indent",
+			line:     "\t#",
+			expected: LineTypeComment,
+		},
+		{
+			name:     "line with multiple hash symbols",
+			line:     "###",
+			expected: LineTypeComment,
+		},
+		{
+			name:     "line with hash and space but no text",
+			line:     "# ",
+			expected: LineTypeComment,
+		},
+		{
+			name:     "line with indented hash and space but no text",
+			line:     "  # ",
+			expected: LineTypeComment,
+		},
+		{
+			name:     "empty string",
+			line:     "",
+			expected: LineTypeBlank,
+		},
+		{
+			name:     "single space",
+			line:     " ",
+			expected: LineTypeBlank,
+		},
+		{
+			name:     "single tab",
+			line:     "\t",
+			expected: LineTypeBlank,
+		},
+		{
+			name:     "multiple spaces",
+			line:     "    ",
+			expected: LineTypeBlank,
+		},
+		{
+			name:     "multiple tabs",
+			line:     "\t\t\t",
+			expected: LineTypeBlank,
+		},
+		{
+			name:     "mixed whitespace",
+			line:     "  \t  ",
+			expected: LineTypeBlank,
+		},
+		{
+			name:     "content line with deep indent",
+			line:     "          key: value",
+			expected: LineTypeMappingKey,
+		},
+		{
+			name:     "sequence item with deep indent",
+			line:     "          - item",
+			expected: LineTypeSequenceItem,
+		},
+		{
+			name:     "comment with deep indent",
+			line:     "          # comment",
+			expected: LineTypeComment,
+		},
+		{
+			name:     "document start with indent",
+			line:     "  ---",
+			expected: LineTypeDocumentStart,
+		},
+		{
+			name:     "document end with indent",
+			line:     "  ...",
+			expected: LineTypeDocumentEnd,
+		},
+		{
+			name:     "hash followed by non-space colon",
+			line:     "#key: value",
+			expected: LineTypeComment,
+		},
+		{
+			name:     "hash in middle of text",
+			line:     "key#value",
+			expected: LineTypeUnknown, // No colon, doesn't match any pattern
+		},
+		{
+			name:     "hash at end of key",
+			line:     "key#: value",
+			expected: LineTypeMappingKey, // Contains colon, classified as mapping key
+		},
+		{
+			name:     "flow mapping with colon",
+			line:     "{key: value}",
+			expected: LineTypeMappingKey, // Contains colon, classified as mapping key
+		},
+		{
+			name:     "indented flow mapping",
+			line:     "  {key: value}",
+			expected: LineTypeMappingKey, // Contains colon, classified as mapping key
+		},
+		{
+			name:     "flow sequence without colon",
+			line:     "[item1, item2]",
+			expected: LineTypeUnknown, // No colon, doesn't match any pattern
+		},
+		{
+			name:     "indented flow sequence",
+			line:     "  [item1, item2]",
+			expected: LineTypeUnknown, // No colon, doesn't match any pattern
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ClassifyLineType(tt.line)
+			if result != tt.expected {
+				t.Errorf("Expected line type %v (%s), got %v (%s)",
+					tt.expected, tt.expected, result, result)
+			}
+		})
+	}
+}
+
+// TestIndentationComprehensive provides comprehensive coverage of indentation scenarios.
+func TestIndentationComprehensive(t *testing.T) {
+	// Test various indentation levels with 2-space convention
+	t.Run("2-space convention", func(t *testing.T) {
+		testCases := []struct {
+			line     string
+			expected struct {
+				level  int
+				spaces int
+				indentType string
+			}
+		}{
+			{"key: value", struct{ level int; spaces int; indentType string }{0, 0, "none"}},
+			{"  key: value", struct{ level int; spaces int; indentType string }{1, 2, "space"}},
+			{"    key: value", struct{ level int; spaces int; indentType string }{2, 4, "space"}},
+			{"      key: value", struct{ level int; spaces int; indentType string }{3, 6, "space"}},
+			{"        key: value", struct{ level int; spaces int; indentType string }{4, 8, "space"}},
+			{"          key: value", struct{ level int; spaces int; indentType string }{5, 10, "space"}},
+		}
+
+		for _, tc := range testCases {
+			info := CalculateIndentation(tc.line, 2)
+			if info.Level != tc.expected.level {
+				t.Errorf("Line %q: expected level %d, got %d", tc.line, tc.expected.level, info.Level)
+			}
+			if info.SpaceCount != tc.expected.spaces {
+				t.Errorf("Line %q: expected %d spaces, got %d", tc.line, tc.expected.spaces, info.SpaceCount)
+			}
+			if info.IndentType != tc.expected.indentType {
+				t.Errorf("Line %q: expected indent type %s, got %s", tc.line, tc.expected.indentType, info.IndentType)
+			}
+		}
+	})
+
+	// Test various indentation levels with 4-space convention
+	t.Run("4-space convention", func(t *testing.T) {
+		testCases := []struct {
+			line     string
+			expected struct {
+				level  int
+				spaces int
+				indentType string
+			}
+		}{
+			{"key: value", struct{ level int; spaces int; indentType string }{0, 0, "none"}},
+			{"    key: value", struct{ level int; spaces int; indentType string }{1, 4, "space"}},
+			{"        key: value", struct{ level int; spaces int; indentType string }{2, 8, "space"}},
+			{"            key: value", struct{ level int; spaces int; indentType string }{3, 12, "space"}},
+		}
+
+		for _, tc := range testCases {
+			info := CalculateIndentation(tc.line, 4)
+			if info.Level != tc.expected.level {
+				t.Errorf("Line %q: expected level %d, got %d", tc.line, tc.expected.level, info.Level)
+			}
+			if info.SpaceCount != tc.expected.spaces {
+				t.Errorf("Line %q: expected %d spaces, got %d", tc.line, tc.expected.spaces, info.SpaceCount)
+			}
+			if info.IndentType != tc.expected.indentType {
+				t.Errorf("Line %q: expected indent type %s, got %s", tc.line, tc.expected.indentType, info.IndentType)
+			}
+		}
+	})
+
+	// Test tab-based indentation
+	t.Run("tab-based indentation", func(t *testing.T) {
+		testCases := []struct {
+			line     string
+			expected struct {
+				level    int
+				tabs     int
+				indentType string
+			}
+		}{
+			{"key: value", struct{ level int; tabs int; indentType string }{0, 0, "none"}},
+			{"\tkey: value", struct{ level int; tabs int; indentType string }{1, 1, "tab"}},
+			{"\t\tkey: value", struct{ level int; tabs int; indentType string }{2, 2, "tab"}},
+			{"\t\t\tkey: value", struct{ level int; tabs int; indentType string }{3, 3, "tab"}},
+		}
+
+		for _, tc := range testCases {
+			info := CalculateIndentation(tc.line, 1)
+			if info.Level != tc.expected.level {
+				t.Errorf("Line %q: expected level %d, got %d", tc.line, tc.expected.level, info.Level)
+			}
+			if info.TabCount != tc.expected.tabs {
+				t.Errorf("Line %q: expected %d tabs, got %d", tc.line, tc.expected.tabs, info.TabCount)
+			}
+			if info.IndentType != tc.expected.indentType {
+				t.Errorf("Line %q: expected indent type %s, got %s", tc.line, tc.expected.indentType, info.IndentType)
+			}
+		}
+	})
+
+	// Test mixed indentation (invalid)
+	t.Run("mixed indentation", func(t *testing.T) {
+		testCases := []string{
+			"  \tkey: value",
+			"\t  key: value",
+			" \t key: value",
+			"\t \tkey: value",
+		}
+
+		for _, line := range testCases {
+			info := CalculateIndentation(line, 2)
+			if !info.IsMixed {
+				t.Errorf("Line %q: expected mixed indentation, got %s", line, info.IndentType)
+			}
+			if info.IndentType != "mixed" {
+				t.Errorf("Line %q: expected indent type 'mixed', got %s", line, info.IndentType)
+			}
+		}
+	})
+}
+
+// TestIsCommentLineEdgeCases tests edge cases for IsCommentLine.
+func TestIsCommentLineEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected bool
+	}{
+		{"only hash", "#", true},
+		{"hash with trailing space", "# ", true},
+		{"multiple hashes", "###", true},
+		{"hash with numbers", "#123", true},
+		{"indented only hash", "  #", true},
+		{"tab indented only hash", "\t#", true},
+		{"hash not at start after whitespace", "  # key: value", true},
+		{"hash in middle", "key#value", false},
+		{"hash at end of key", "key#", false},
+		{"hash in value", "key: value#test", false},
+		{"hash after colon", "key:# value", false},
+		{"empty line", "", false},
+		{"whitespace only", "   ", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsCommentLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v for line %q", tt.expected, result, tt.line)
+			}
+		})
+	}
+}
+
+// TestIndentationWithVariousWhitespaceCombinations tests complex whitespace scenarios.
+func TestIndentationWithVariousWhitespaceCombinations(t *testing.T) {
+	tests := []struct {
+		name          string
+		line          string
+		spacesPerLevel int
+		check         func(t *testing.T, info IndentationInfo)
+	}{
+		{
+			name:          "space-tab-space pattern",
+			line:          " \t key: value",
+			spacesPerLevel: 2,
+			check: func(t *testing.T, info IndentationInfo) {
+				if !info.IsMixed {
+					t.Error("Expected mixed indentation")
+				}
+				if info.SpaceCount != 2 {
+					t.Errorf("Expected 2 spaces, got %d", info.SpaceCount)
+				}
+				if info.TabCount != 1 {
+					t.Errorf("Expected 1 tab, got %d", info.TabCount)
+				}
+			},
+		},
+		{
+			name:          "tab-space-tab pattern",
+			line:          "\t \tkey: value",
+			spacesPerLevel: 2,
+			check: func(t *testing.T, info IndentationInfo) {
+				if !info.IsMixed {
+					t.Error("Expected mixed indentation")
+				}
+				if info.SpaceCount != 1 {
+					t.Errorf("Expected 1 space, got %d", info.SpaceCount)
+				}
+				if info.TabCount != 2 {
+					t.Errorf("Expected 2 tabs, got %d", info.TabCount)
+				}
+			},
+		},
+		{
+			name:          "alternating space-tab-space-tab",
+			line:          " \t \tkey: value",
+			spacesPerLevel: 2,
+			check: func(t *testing.T, info IndentationInfo) {
+				if !info.IsMixed {
+					t.Error("Expected mixed indentation")
+				}
+				if info.SpaceCount != 2 {
+					t.Errorf("Expected 2 spaces, got %d", info.SpaceCount)
+				}
+				if info.TabCount != 2 {
+					t.Errorf("Expected 2 tabs, got %d", info.TabCount)
+				}
+			},
+		},
+		{
+			name:          "many spaces then tab",
+			line:          "        \tkey: value",
+			spacesPerLevel: 2,
+			check: func(t *testing.T, info IndentationInfo) {
+				if !info.IsMixed {
+					t.Error("Expected mixed indentation")
+				}
+				if info.SpaceCount != 8 {
+					t.Errorf("Expected 8 spaces, got %d", info.SpaceCount)
+				}
+				if info.TabCount != 1 {
+					t.Errorf("Expected 1 tab, got %d", info.TabCount)
+				}
+			},
+		},
+		{
+			name:          "tab then many spaces",
+			line:          "\t        key: value",
+			spacesPerLevel: 2,
+			check: func(t *testing.T, info IndentationInfo) {
+				if !info.IsMixed {
+					t.Error("Expected mixed indentation")
+				}
+				if info.SpaceCount != 8 {
+					t.Errorf("Expected 8 spaces, got %d", info.SpaceCount)
+				}
+				if info.TabCount != 1 {
+					t.Errorf("Expected 1 tab, got %d", info.TabCount)
+				}
+			},
+		},
+		{
+			name:          "pure spaces at various levels",
+			line:          "                key: value", // 16 spaces
+			spacesPerLevel: 2,
+			check: func(t *testing.T, info IndentationInfo) {
+				if info.IsMixed {
+					t.Error("Expected non-mixed indentation")
+				}
+				if info.SpaceCount != 16 {
+					t.Errorf("Expected 16 spaces, got %d", info.SpaceCount)
+				}
+				if info.Level != 8 {
+					t.Errorf("Expected level 8, got %d", info.Level)
+				}
+			},
+		},
+		{
+			name:          "pure tabs at various levels",
+			line:          "\t\t\t\t\t\t\t\tkey: value", // 8 tabs
+			spacesPerLevel: 1,
+			check: func(t *testing.T, info IndentationInfo) {
+				if info.IsMixed {
+					t.Error("Expected non-mixed indentation")
+				}
+				if info.TabCount != 8 {
+					t.Errorf("Expected 8 tabs, got %d", info.TabCount)
+				}
+				if info.Level != 8 {
+					t.Errorf("Expected level 8, got %d", info.Level)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := CalculateIndentation(tt.line, tt.spacesPerLevel)
+			if tt.check != nil {
+				tt.check(t, info)
+			}
+		})
+	}
+}
