@@ -174,6 +174,38 @@ func (v *Validator) ValidateFile(filePath string) ValidationResult {
 			result.Errors = append(result.Errors, ve.ToValidationError())
 			return result
 		}
+
+		// Check for FileError type with structured information
+		if fileErr, ok := err.(*FileError); ok {
+			ve := LocalValidationError{
+				FilePath: filePath,
+				Message:  fileErr.Message,
+				Type:     ErrorTypeFile,
+				Context:  fileErr.Context(),
+			}
+			if fileErr.ErrorCode != "" {
+				ve.Context = fmt.Sprintf("ErrorCode: %s, %s", fileErr.ErrorCode, fileErr.Context())
+			}
+			result.Errors = append(result.Errors, ve.ToValidationError())
+			return result
+		}
+
+		// Check for YAMLError interface
+		if yamlErr, ok := err.(YAMLError); ok {
+			ve := LocalValidationError{
+				FilePath: filePath,
+				Message:  yamlErr.Error(),
+				Type:     yamlErr.YAMLErrorType(),
+				Context:  yamlErr.Context(),
+			}
+			if yamlErr.Code() != "" {
+				ve.Context = fmt.Sprintf("ErrorCode: %s, %s", yamlErr.Code(), yamlErr.Context())
+			}
+			result.Errors = append(result.Errors, ve.ToValidationError())
+			return result
+		}
+
+		// Generic error handling
 		ve := LocalValidationError{
 			FilePath: filePath,
 			Message:  fmt.Sprintf("Failed to read file: %v", err),
@@ -193,6 +225,44 @@ func (v *Validator) parseYAMLError(err error, filePath, content string) LocalVal
 		FilePath: filePath,
 		Message:  err.Error(),
 		Type:     ErrorTypeSyntax,
+	}
+
+	// Standard pattern: sentinel checks → YAMLError interface → specific types → generic fallback
+
+	// Check for SyntaxError type with structured information
+	if syntaxErr, ok := err.(*SyntaxError); ok {
+		ve.Type = ErrorTypeSyntax
+		ve.Message = syntaxErr.Message
+		ve.Line = syntaxErr.Line
+		ve.Column = syntaxErr.Column
+		ve.Context = syntaxErr.Context()
+		if syntaxErr.ErrorCode != "" {
+			ve.Context = fmt.Sprintf("ErrorCode: %s, %s", syntaxErr.ErrorCode, syntaxErr.Context())
+		}
+		return ve
+	}
+
+	// Check for StructureError type with structured information
+	if structErr, ok := err.(*StructureError); ok {
+		ve.Type = ErrorTypeStructure
+		ve.Message = structErr.Message
+		ve.Line = structErr.Line
+		ve.Context = structErr.Context()
+		if structErr.ErrorCode != "" {
+			ve.Context = fmt.Sprintf("ErrorCode: %s, %s", structErr.ErrorCode, structErr.Context())
+		}
+		return ve
+	}
+
+	// Check for YAMLError interface (base interface for all YAML errors)
+	if yamlErr, ok := err.(YAMLError); ok {
+		ve.Type = yamlErr.YAMLErrorType()
+		ve.Message = yamlErr.Error()
+		ve.Context = yamlErr.Context()
+		if yamlErr.Code() != "" {
+			ve.Context = fmt.Sprintf("ErrorCode: %s, %s", yamlErr.Code(), yamlErr.Context())
+		}
+		return ve
 	}
 
 	// Check for specific YAML error types using type assertions
