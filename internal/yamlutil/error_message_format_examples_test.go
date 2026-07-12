@@ -304,7 +304,7 @@ func TestValidationErrorWithLineAndColumn(t *testing.T) {
 //
 //	validation error in config.yaml: validation failed
 func TestValidationErrorWithoutFieldPath(t *testing.T) {
-	err := NewValidationError("config.yaml", "validation failed", "", "", ErrCodeValidationFailed, 0, 0, "", "config.yaml")
+	err := NewValidationError("config.yaml", "validation failed", "", "", ErrCodeValidationFailed, 0, 0, "", "")
 
 	expected := "validation error in config.yaml: validation failed"
 	if err.Error() != expected {
