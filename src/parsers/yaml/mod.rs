@@ -10,6 +10,9 @@
 //! - [`error`] - Comprehensive error types and error handling
 //! - [`types`] - Result types for parsing operations
 //! - [`parser`] - YAML-specific parser trait and implementations
+//! - [`syntax_validator`] - Syntax validation functionality
+//! - [`syntax_detector`] - Syntax error detection (indentation, delimiters, structure)
+//! - [`line_parser`] - Core data structures for representing parsed YAML lines
 //!
 //! ## Quick Start
 //!
@@ -28,12 +31,26 @@
 //!     }
 //! }
 //! ```
+//!
+//! ## Line Parser
+//!
+//! The [`line_parser`] module provides the foundational types for line-based YAML analysis:
+//!
+//! ```ignore
+//! use armor::parsers::yaml::line_parser::{YamlLine, LineType};
+//!
+//! let line = YamlLine::new(1, "key: value", 0, LineType::MappingKey);
+//! assert_eq!(line.line_number(), 1);
+//! assert_eq!(line.raw_content(), "key: value");
+//! assert_eq!(line.line_type(), LineType::MappingKey);
+//! ```
 
 mod error;
 mod types;
 mod parser;
 mod syntax_validator;
 mod syntax_detector;
+mod line_parser;
 
 #[cfg(test)]
 mod syntax_detector_tests;
@@ -46,7 +63,8 @@ pub use types::{
 };
 pub use parser::Parser as YamlParser;
 pub use syntax_validator::SyntaxValidator;
-pub use syntax_detector::SyntaxDetector;
+pub use syntax_detector::{SyntaxDetector, DelimiterErrorType, IndentationErrorType};
+pub use line_parser::{LineType, YamlLine, LineContent, LineParseResult};
 
 // Re-export comprehensive configuration from config module
 pub use crate::parsers::config::{
