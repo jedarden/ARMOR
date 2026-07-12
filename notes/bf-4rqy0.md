@@ -212,3 +212,46 @@ This is a **specification mismatch** between the bead task requirements and the 
 
 ## Timestamp
 2026-07-12 00:18 UTC - Configuration mismatch confirmed; ExternalSecret does not include LITESTREAM_ACCESS_KEY_ID property
+
+---
+
+## Re-verification (2026-07-12 01:03 UTC)
+
+### Validation Attempt - Latest Check
+
+Attempted base64 validation commands specified in the bead task:
+
+1. **Direct kubeconfig approach** - Failed:
+   ```
+   error: stat /home/coding/.kube/ord-devimprint.kubeconfig: no such file or directory
+   ```
+   No kubeconfig exists for ord-devimprint (uses Tailscale proxy only)
+
+2. **Proxy-based approach** - RBAC Blocked:
+   ```
+   Error from server (Forbidden): secrets "armor-writer" is forbidden:
+   User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+   ```
+
+### Confirmed Blockers (Persistent)
+
+Both blockers remain in effect:
+
+1. **RBAC Blocker**: Read-only proxy SA cannot access secrets
+2. **Configuration Mismatch**: `LITESTREAM_ACCESS_KEY_ID` property does not exist in ExternalSecret specification
+
+### Result
+
+**Validation cannot proceed** - The task requires retrieving `LITESTREAM_ACCESS_KEY_ID` which:
+- Does not exist in the `armor-writer` ExternalSecret spec
+- Cannot be accessed directly due to RBAC restrictions
+
+### Recommendation
+
+This bead requires one of the following to proceed:
+1. Infrastructure fix: Update ExternalSecret to include Litestream properties
+2. Task correction: Update bead to reference correct property names (`auth-access-key`, `auth-secret-key`)
+3. Access upgrade: Obtain kubeconfig with secret read permissions
+
+### Timestamp
+2026-07-12 01:03 UTC - Blockers confirmed; validation impossible without infrastructure changes
