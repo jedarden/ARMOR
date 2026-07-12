@@ -67,6 +67,7 @@ pub use syntax_detector::{SyntaxDetector, DelimiterErrorType, IndentationErrorTy
 pub use line_parser::{
     LineType, YamlLine, LineContent, LineParseResult,
     MappingKeyInfo, detect_mapping_key, is_comment_line, strip_inline_comment,
+    classify_line_type, calculate_indentation,
 };
 
 // Re-export comprehensive configuration from config module
