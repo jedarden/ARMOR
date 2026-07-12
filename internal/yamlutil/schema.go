@@ -673,6 +673,14 @@ func LoadSchema(schemaPath string) (*SchemaDefinition, error) {
 
 	// Compile the schema
 	if err := schemaDef.Compile(); err != nil {
+		// Handle YAMLError with structured information
+		if yamlErr, ok := err.(YAMLError); ok {
+			return nil, &SchemaError{
+				Message:  fmt.Sprintf("Failed to compile schema: %w", yamlErr),
+				FilePath: schemaPath,
+			}
+		}
+		// Handle generic errors
 		return nil, &SchemaError{
 			Message:  fmt.Sprintf("Failed to compile schema: %v", err),
 			FilePath: schemaPath,
