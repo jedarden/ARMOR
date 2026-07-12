@@ -1589,6 +1589,151 @@ func TestCalculateIndentationUnicode(t *testing.T) {
 	}
 }
 
+// TestClassifyLineMixedWhitespaceInComments tests mixed whitespace characters in comment lines.
+// This test covers the acceptance criteria requirement for testing tabs and spaces mixed in comment lines.
+func TestClassifyLineMixedWhitespaceInComments(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected SimpleLineCategory
+	}{
+		{
+			name:     "comment with space tab space pattern",
+			line:     " \t # comment with space-tab-space before hash",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with tab space tab pattern",
+			line:     "\t \t# comment with tab-space-tab before hash",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with multiple space tab transitions",
+			line:     "  \t  \t  \t# comment with space-tab-space-tab transitions",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with tab space space tab pattern",
+			line:     "\t  \t# comment with tab-space-space-tab before hash",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with alternating space tab",
+			line:     " \t \t \t # comment with alternating space-tab before hash",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with alternating tab space",
+			line:     "\t \t \t # comment with alternating tab-space before hash",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with spaces then tabs then spaces after hash",
+			line:     "  \t\t# comment  \t with mixed after",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with tabs then spaces then tabs after hash",
+			line:     "\t\t  # comment\t  with mixed after",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with mixed whitespace throughout",
+			line:     " \t # \t comment \t with \t mixed \t everywhere",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with many spaces before tab before hash",
+			line:     "        \t# comment after 8 spaces and tab",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with many tabs before space before hash",
+			line:     "\t\t\t # comment after 3 tabs and space",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with complex alternating pattern before hash",
+			line:     " \t  \t   \t# complex alternating before hash",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with single space single tab repeated",
+			line:     " \t \t \t \t \t# space-tab repeated 5 times",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with double space double tab repeated",
+			line:     "  \t  \t  \t# double-space-double-tab repeated",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with four spaces then tab then four spaces",
+			line:     "    \t    # four-space-tab-four-space before hash",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with tab then two spaces then tab then two spaces",
+			line:     "\t  \t  # tab-two-space-tab-two-space pattern",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with space tab space tab and trailing mixed",
+			line:     " \t \t# comment\t \t with \t trailing \t mixed",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with only whitespace and hash at end",
+			line:     " \t \t \t \t#",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with extreme alternating pattern",
+			line:     " \t \t \t \t \t \t \t \t \t \t# extreme alternating",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with spaces then multiple tabs",
+			line:     "    \t\t\t\t# spaces then 4 tabs",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with tabs then multiple spaces",
+			line:     "\t\t\t        # 3 tabs then 8 spaces",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with mixed at various positions in line",
+			line:     " \t#comment\twith\tmixed\ttabs\tand\tspaces",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with irregular mixed pattern",
+			line:     "   \t  \t   \t\t  \t# irregular mixed whitespace",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with tab in middle of leading whitespace",
+			line:     "  \t\t  # tab sandwiched between spaces",
+			expected: CategoryComment,
+		},
+		{
+			name:     "comment with space in middle of leading tabs",
+			line:     "\t  \t# space sandwiched between tabs",
+			expected: CategoryComment,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := classifyLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("classifyLine(%q) = %v, want %v", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestClassifyLineUnicode verifies Unicode line classification.
 // This test covers the acceptance criteria requirement for testing Unicode content with indentation.
 func TestClassifyLineUnicode(t *testing.T) {
