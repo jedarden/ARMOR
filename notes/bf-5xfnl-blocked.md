@@ -13,12 +13,18 @@ The ord-devimprint cluster has **only a read-only kubectl-proxy** with no availa
 
 ## What Was Attempted
 ```bash
+# Attempt 1 (original field name from task description)
 kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
   get secret armor-writer -n devimprint \
   -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+
+# Attempt 2 (corrected field name after checking deployment files)
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
+  get secret armor-writer -n devimprint \
+  -o jsonpath='{.data.auth-access-key}'
 ```
 
-Error received:
+Error received (same for both attempts):
 ```
 Error from server (Forbidden): secrets "armor-writer" is forbidden
 User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
@@ -46,7 +52,27 @@ To complete this task, one of the following must be provided:
 - Namespace: devimprint
 - Cluster: ord-devimprint (Rackspace Spot cluster)
 - Secret: armor-writer
-- Field: LITESTREAM_ACCESS_KEY_ID (base64-encoded)
+- Field: auth-access-key (mapped to LITESTREAM_ACCESS_KEY_ID env var in deployments)
+- Source: ExternalSecret synced from OpenBao path rs-manager/ord-devimprint/armor-writer
+
+## Field Mapping Discovery (2026-07-11)
+The deployment files show that `LITESTREAM_ACCESS_KEY_ID` environment variable maps to the `auth-access-key` field in the `armor-writer` secret:
+```yaml
+- name: LITESTREAM_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: armor-writer
+      key: auth-access-key
+```
+
+So the correct kubectl command would be:
+```bash
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
+  get secret armor-writer -n devimprint \
+  -o jsonpath='{.data.auth-access-key}'
+```
+
+However, this still fails with the same RBAC error (cannot get secrets).
 
 ## Bead: bf-5xfnl
 Status: BLOCKED - Cannot close without access to secret
