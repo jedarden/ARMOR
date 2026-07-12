@@ -2,6 +2,7 @@
 
 **Bead ID:** bf-45l8s  
 **Search Date:** 2026-07-12  
+**Priority Analysis:** 2026-07-12 (bead bf-678r9)  
 **Scope:** Entire ARMOR codebase  
 
 ## Summary
@@ -23,300 +24,314 @@ This codebase contains **two separate validation systems**:
 
 ---
 
-## Go Validation System - Validate() Method (Uppercase)
+## Priority Assessment: Production Code Call Sites
 
-### Interface Definitions (4 total)
+### Priority Criteria
 
-**File: internal/yamlutil/schema_interfaces.go**
-```go
-// Line 34: Schema interface
-Validate() YAMLError
+**Critical (P0):**
+- validate() calls on direct user input or untrusted external data
+- Missing error handling that could crash or panic
+- Security-sensitive validation (authentication, authorization, file uploads)
 
-// Line 71: SchemaMap interface  
-Validate(data map[string]interface{}) SchemaValidationResult
+**High (P1):**
+- validate() calls in core business logic or public APIs
+- Error handling that loses important context or diagnostic information
+- Validation of external data sources (files, network, configuration files)
 
-// Line 89: Constraint interface
-Validate(value interface{}) *ConstraintError
-```
+**Medium (P2):**
+- validate() calls in internal helpers or library code
+- Error handling that works but could be more informative
+- Validation of internal data structures
 
-**File: internal/yamlutil/schema.go**
-```go
-// Line 51: SchemaDefinition interface
-Validate(value interface{}) error
-```
-
-### Method Implementations (8 total)
-
-**File: internal/yamlutil/schema_interfaces.go**
-```go
-// Line 343: String constraint validation
-func (sc *StringConstraintImpl) Validate(value interface{}) *ConstraintError
-
-// Line 458: Number constraint validation
-func (nc *NumberConstraintImpl) Validate(value interface{}) *ConstraintError
-
-// Line 560: Array constraint validation
-func (ac *ArrayConstraintImpl) Validate(value interface{}) *ConstraintError
-
-// Line 647: Object constraint validation
-func (oc *ObjectConstraintImpl) Validate(value interface{}) *ConstraintError
-
-// Line 746: Boolean constraint validation
-func (bc *BooleanConstraintImpl) Validate(value interface{}) *ConstraintError
-
-// Line 795: Type constraint validation
-func (tc *TypeConstraintImpl) Validate(value interface{}) *ConstraintError
-```
-
-**File: internal/yamlutil/schema.go**
-```go
-// Line 157: Schema validator
-func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult
-
-// Line 770: Schema definition
-func (s *SchemaDefinition) Validate(value interface{}) error
-```
-
-### Production Code Call Sites (2 total)
-
-#### 1. `internal/yamlutil/schema.go:180`
-```go
-if err := sv.schema.Validate(data); err != nil {
-```
-**Context:** SchemaValidator.Validate() method  
-**Usage:** Delegates to underlying schema's Validate() method
-
-#### 2. `internal/yamlutil/schema.go:253`
-```go
-return sv.Validate(data)
-```
-**Context:** ReadAndValidate() helper function  
-**Usage:** Chains into SchemaValidator.Validate() after reading YAML file
-
-### Test Code Call Sites (4 total)
-
-**File: internal/yamlutil/schema_validation_test.go**
-```go
-// Line 94: Table-driven test - schema with no parameters
-err := tt.schema.Validate()
-
-// Line 147: Direct test call to schema.Validate()
-err := schema.Validate()
-
-// Line 224: Table-driven test - validator with data
-result := validator.Validate(tt.data)
-
-// Line 310: Another table-driven test
-result := validator.Validate(tt.data)
-```
-
-### Related Helper Function
-
-**File: internal/yamlutil/parse_error_examples_test.go**
-```go
-// Line 474: parseAndValidate helper (wraps Validate())
-result := parseAndValidate(path)
-```
+**Low (P3):**
+- validate() calls with already-good error handling
+- Validation of trusted internal data
+- Test code or edge cases
 
 ---
 
-## Rust Validation System - validate() Method (Lowercase)
+### Rust Validation System - Production Code (3 call sites)
 
-### Production Code Call Sites (3 total)
+#### Site 1: `src/parsers/config.rs:662` ⭐
 
-#### 1. `src/parsers/config.rs:662`
+**Code:**
 ```rust
-self.config.validate()?;
-```
-**Context:** ConfigParser struct, parsing YAML configuration  
-**Usage:** Validates parsed configuration before returning
-
-#### 2. `src/parsers/config.rs:1007`
-```rust
-self.config.validate()?;
-```
-**Context:** StrictConfigParser struct, parsing strict YAML configuration  
-**Usage:** Validates parsed strict configuration before returning
-
-#### 3. `src/parsers/yaml/parser.rs:121`
-```rust
-let mut result = validator.validate(content);
-```
-**Context:** YAML parsing pipeline  
-**Usage:** Validates YAML content using syntax validator
-
-### Test Code Call Sites (150+ total)
-
-#### `src/parsers/config.rs` (14 call sites)
-**Lines 1202-1320:** Unit test assertions in config parser tests  
-- Testing validation success paths
-- Testing validation error paths  
-- Testing strict vs lenient config validation
-
-#### `src/schema.rs` (60+ call sites)
-**Lines 145-693:** Doctest examples and inline tests  
-- Range validation examples
-- Positive integer validation
-- String validation
-- Server config validation
-- Option validation
-- Composite user validation
-- Edge case testing
-
-#### `src/parsers/yaml/syntax_validator.rs` (9 call sites)
-**Lines 438-503:** YAML syntax validator tests  
-- Testing empty YAML
-- Testing various YAML syntax patterns
-- Testing validator error detection
-
-#### `src/parsers/yaml/syntax_detector_tests.rs` (3 call sites)
-**Lines 131, 567, 728:** YAML syntax detection tests  
-- Testing syntax detection across various YAML patterns
-
-#### `tests/schema_validation_test.rs` (100+ call sites)
-**Lines 148-647:** Comprehensive Schema trait unit tests  
-- Positive integer validation (success & error paths)
-- Range validation (boundaries, edge cases)
-- String validation (empty, whitespace, content)
-- Port validation
-- Server config validation
-- Username validation (length constraints)
-- Age validation (range constraints)
-- Composite user validation (multiple fields)
-- Option validation (Some/None handling)
-- Error message formatting verification
-- Error type classification verification
-
----
-
-## Call Site Categorization
-
-### Category Definitions
-
-- **Direct**: Bare `Validate()` call with no wrapping function
-- **Wrapped**: `Validate()` called inside another function/method
-- **Deferred**: `Validate()` called in a separate goroutine or callback
-
----
-
-### Go Validation System - Validate() Call Site Categories
-
-#### Production Code (2 call sites)
-| File:Line | Pattern | Category | Context |
-|-----------|---------|----------|---------|
-| `internal/yamlutil/schema.go:180` | `sv.schema.Validate(data)` | **Wrapped** | Inside `SchemaValidator.Validate()` method |
-| `internal/yamlutil/schema.go:253` | `sv.Validate(data)` | **Wrapped** | Inside `ReadAndValidate()` helper function |
-
-**Production Counts:** Direct: 0, Wrapped: 2, Deferred: 0
-
-#### Test Code (4 call sites)
-| File:Line | Pattern | Category | Context |
-|-----------|---------|----------|---------|
-| `internal/yamlutil/schema_validation_test.go:94` | `tt.schema.Validate()` | **Direct** | Table-driven test - bare method call |
-| `internal/yamlutil/schema_validation_test.go:147` | `schema.Validate()` | **Direct** | Test function - bare method call |
-| `internal/yamlutil/schema_validation_test.go:224` | `validator.Validate(tt.data)` | **Direct** | Table-driven test - bare method call |
-| `internal/yamlutil/schema_validation_test.go:310` | `validator.Validate(tt.data)` | **Direct** | Table-driven test - bare method call |
-
-#### Related Helper (1 call site)
-| File:Line | Pattern | Category | Context |
-|-----------|---------|----------|---------|
-| `internal/yamlutil/parse_error_examples_test.go:474` | `parseAndValidate(path)` | **Wrapped** | Validate() wrapped inside helper |
-
-**Test Counts:** Direct: 4, Wrapped: 1, Deferred: 0
-
-**Go Validation Total:** Direct: 4, Wrapped: 3, Deferred: 0
-
----
-
-### Rust Validation System - validate() Call Site Categories
-
-#### Production Code (3 call sites)
-| File:Line | Pattern | Category | Context |
-|-----------|---------|----------|---------|
-| `src/parsers/config.rs:662` | `self.config.validate()?` | **Wrapped** | Inside `ConfigParserBuilder::build()` method |
-| `src/parsers/config.rs:1007` | `self.config.validate()?` | **Wrapped** | Inside `StrictConfigParserBuilder::build()` method |
-| `src/parsers/yaml/parser.rs:121` | `validator.validate(content)` | **Wrapped** | Inside YAML parsing pipeline function |
-
-**Production Counts:** Direct: 0, Wrapped: 3, Deferred: 0
-
-#### Test Code (150+ call sites)
-All test code call sites are **Direct** - bare `validate()` calls in test assertions and doctests
-
-**Test Counts:** Direct: 150+, Wrapped: 0, Deferred: 0
-
-**Rust Validation Total:** Direct: 150+, Wrapped: 3, Deferred: 0
-
----
-
-### Combined Summary
-
-| Category | Go Validation | Rust Validation | Total |
-|----------|---------------|-----------------|-------|
-| Direct | 4 | 150+ | 154+ |
-| Wrapped | 3 | 3 | 6 |
-| Deferred | 0 | 0 | 0 |
-| **Total** | **7** | **153+** | **160+** |
-
-**Key Observations:**
-- **No deferred validation**: No goroutine or callback-based Validate() calls found in either system
-- **All production calls are wrapped**: Production code never calls Validate()/validate() directly - always through a wrapper function
-- **Test code uses direct calls**: All test calls are direct method invocations for simplicity and clarity
-- **Rust has heavier test coverage**: 150+ test call sites vs 4 in Go
-
----
-
-## Implementation Details
-
-### Rust Schema Trait Definition
-**File:** `src/schema.rs:224`
-
-```rust
-pub trait Schema<T: ?Sized> {
-    fn validate(&self, value: &T) -> Result<(), ParseError>;
+pub fn build(self) -> Result<ParserConfig, String> {
+    self.config.validate()?;
+    Ok(self.config)
 }
 ```
 
-### Rust Common Usage Patterns
+**Context:** ConfigParserBuilder::build() - validates internal ParserConfig before returning  
 
-1. **Config validation:**
-   ```rust
-   self.config.validate()?;
-   ```
+**Data Source:** Internal configuration object built via builder pattern  
 
-2. **Test assertions:**
-   ```rust
-   assert!(schema.validate(&value).is_ok());
-   let result = schema.validate(&invalid_value);
-   assert!(result.is_err());
-   ```
+**Error Handling:** ✅ **GOOD** - Uses `?` operator for proper error propagation  
 
-3. **Composite validation:**
-   ```rust
-   UsernameSchema.validate(&user.username)
-       .map_err(|e| e.with_path("username"))?;
-   AgeSchema.validate(&user.age)
-       .map_err(|e| e.with_path("age"))?;
-   ```
+**Priority:** 🟢 **P3 (LOW)**
 
-### Rust Schema Implementations (22 total)
+**Rationale:**
+- Already has excellent error handling via `?` operator
+- ParseError type provides rich context (line, column, path, snippet)
+- Validates internal config object, not external input
+- Returns Result type forcing caller to handle errors
+- No action needed
 
-**In src/schema.rs:**
-- `PortSchema` for `u16` (lines 92, 201)
-- `PositiveIntegerSchema` for `i32` (line 134)
-- `ServerConfigSchema` for `ServerConfig` (line 162)
-- `NameSchema` for `String` (line 190)
-- `ConfigSchema` for `Config` (line 213)
-- `RangeSchema<T>` generic (lines 258, 577, 589)
-- `PositiveSchema` for `i32` (line 305)
-- `NonEmptyStringSchema` for `str` (line 414)
-- `NonEmptyVecSchema` for `Vec<String>` (line 449)
-- `PositiveValueSchema` for `Option<i32>` (line 536)
-- `UsernameSchema` for `String` (line 621)
-- `AgeSchema` for `u8` (line 636)
-- `UserSchema` for `User` (line 657)
+---
 
-**In tests/schema_validation_test.rs:**
-- Mock implementations for testing (8 schemas)
+#### Site 2: `src/parsers/config.rs:1007` ⭐
+
+**Code:**
+```rust
+pub fn build(self) -> Result<ValidatorConfig, String> {
+    self.config.validate()?;
+    Ok(self.config)
+}
+```
+
+**Context:** StrictConfigParserBuilder::build() - validates strict ValidatorConfig before returning  
+
+**Data Source:** Internal configuration object built via builder pattern  
+
+**Error Handling:** ✅ **GOOD** - Uses `?` operator for proper error propagation  
+
+**Priority:** 🟢 **P3 (LOW)**
+
+**Rationale:**
+- Already has excellent error handling via `?` operator
+- Same pattern as Site #1
+- Validates internal config object, not external input
+- Returns Result type forcing caller to handle errors
+- No action needed
+
+---
+
+#### Site 3: `src/parsers/yaml/parser.rs:121` ⭐⭐⭐
+
+**Code:**
+```rust
+fn validate_str(&self, content: &str) -> ValidationResult {
+    let validator = if self.config.is_strict() {
+        SyntaxValidator::strict()
+    } else {
+        SyntaxValidator::lenient()
+    };
+
+    let mut result = validator.validate(content);
+
+    // If no errors from basic validation, run enhanced detection
+    if result.is_valid() {
+        let mut detector = SyntaxDetector::new();
+        let detector_result = detector.detect_to_validation_result(content);
+        
+        if !detector_result.is_valid() {
+            result.valid = false;
+            result.errors.extend(detector_result.errors);
+        }
+    }
+
+    result
+}
+```
+
+**Context:** BasicParser.validate_str() - validates YAML string content  
+
+**Data Source:** External string content (potentially user input or files)  
+
+**Error Handling:** ✅ **GOOD** - Accumulates validation errors, returns ValidationResult  
+
+**Priority:** 🟡 **P1 (HIGH)**
+
+**Rationale:**
+- ✅ Handles external data (user input or files)
+- ✅ Error handling is appropriate for use case
+- ✅ Accumulates multiple errors for comprehensive feedback
+- ✅ Returns structured ValidationResult
+- **Priority is HIGH due to external data source, but error handling is already good**
+- **Potential improvement:** Consider adding context about data source (file path, user input origin)
+- No urgent action needed, but worth reviewing for enhanced error context
+
+---
+
+### Go Validation System - Production Code (2 call sites)
+
+#### Site 4: `internal/yamlutil/schema.go:180` ⭐⭐
+
+**Code:**
+```go
+func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult {
+    // ... initialization ...
+
+    // Validate data against schema
+    if err := sv.schema.Validate(data); err != nil {
+        result.Valid = false
+
+        // Handle YAMLError with structured information
+        if yamlErr, ok := err.(YAMLError); ok {
+            result.Errors = append(result.Errors, SchemaValidationError{
+                Message:   yamlErr.Error(),
+                ErrorCode: yamlErr.Code(),
+            })
+        } else {
+            // Handle generic errors
+            result.Errors = append(result.Errors, SchemaValidationError{
+                Message: fmt.Sprintf("Validation failed: %v", err),
+            })
+        }
+        return result
+    }
+
+    // ... field validation ...
+}
+```
+
+**Context:** SchemaValidator.Validate() - validates data against compiled schema  
+
+**Data Source:** Interface{} parameter (could be user-provided or loaded from files)  
+
+**Error Handling:** ✅ **GOOD** - Handles YAMLError specifically, falls back to generic errors  
+
+**Priority:** 🟠 **P2 (MEDIUM)**
+
+**Rationale:**
+- ✅ Handles both structured YAMLError and generic errors
+- ✅ Returns structured SchemaValidationResult with error codes
+- ✅ Error type discrimination via type assertion
+- ⚠️ Generic error handling loses type-specific context
+- **Potential improvement:** Add more structured handling for known error types
+- No urgent action needed, error handling is solid
+
+---
+
+#### Site 5: `internal/yamlutil/schema.go:253` ⭐
+
+**Code:**
+```go
+func ReadAndValidate(path string, schema Schema) SchemaValidationResult {
+    sv := &SchemaValidator{
+        schema: schema,
+        config: ValidationConfig{
+            StopOnFirstError: false,
+        },
+    }
+
+    data, err := os.ReadFile(path)
+    if err != nil {
+        // ... error handling ...
+    }
+
+    var parsedData interface{}
+    if err := yaml.Unmarshal(data, &parsedData); err != nil {
+        // ... error handling ...
+    }
+
+    return sv.Validate(parsedData)
+}
+```
+
+**Context:** ReadAndValidate() helper - reads YAML file and validates against schema  
+
+**Data Source:** External YAML file (file system)  
+
+**Error Handling:** ✅ **GOOD** - Delegates to Site #4 which has proper error handling  
+
+**Priority:** 🟢 **P3 (LOW)**
+
+**Rationale:**
+- Just chains to Site #4 which has good error handling
+- File reading errors handled separately before validation
+- No validation-specific error handling needed here
+- No action needed
+
+---
+
+## Priority Summary
+
+### Action Required: **NONE** ✅
+
+**All production call sites have appropriate error handling for their use cases.**
+
+| Priority | Count | Call Sites | Action Needed |
+|----------|-------|------------|---------------|
+| **P0 (Critical)** | 0 | None | ✅ None - excellent |
+| **P1 (High)** | 1 | Rust parser.rs:121 | ✅ Review for enhanced context |
+| **P2 (Medium)** | 1 | Go schema.go:180 | ✅ Review for type-specific handling |
+| **P3 (Low)** | 3 | Rust config.rs:662, 1007; Go schema.go:253 | ✅ None - already good |
+
+### Detailed Assessment
+
+#### No Critical Issues Found
+
+All production Validate()/validate() call sites:
+- ✅ Have appropriate error handling
+- ✅ Return structured error information
+- ✅ Don't silently ignore errors
+- ✅ Don't panic on validation failures
+- ✅ Propagate errors to callers
+
+#### Potential Enhancements (Optional)
+
+**Rust Site 3 (parser.rs:121) - P1 HIGH:**
+- **Current:** Good error accumulation
+- **Enhancement:** Consider adding data source context (file path, origin) to ValidationResult
+- **Impact:** Better debugging when validation fails
+- **Effort:** Low - add optional source field to ValidationResult
+
+**Go Site 4 (schema.go:180) - P2 MEDIUM:**
+- **Current:** Handles YAMLError and generic errors
+- **Enhancement:** Add type-specific handling for known error types beyond YAMLError
+- **Impact:** More structured error information for different error categories
+- **Effort:** Medium - requires identifying and handling other error types
+
+---
+
+## Recommendations
+
+### For Production Code
+
+1. **No urgent fixes required** - all sites have adequate error handling
+
+2. **Optional enhancements:**
+   - Review Rust parser.rs:121 for adding data source context
+   - Review Go schema.go:180 for more granular error type handling
+
+3. **Documentation:**
+   - Current error handling patterns are well-documented
+   - Consider adding usage examples showing error handling best practices
+
+### For Test Code
+
+**No action needed** - test code (150+ call sites) intentionally uses direct Validate()/validate() calls for simplicity and clarity. This is the correct pattern for tests.
+
+---
+
+## Implementation Notes
+
+### Why These Priorities?
+
+**Rust config.rs sites (P3 LOW):**
+- Validate internal builder patterns
+- Use `?` operator which is Rust idiomatic error handling
+- Return Result types, forcing callers to handle errors
+- ParseError provides rich context (line, column, path, snippet)
+- These are exemplary error handling patterns
+
+**Rust parser.rs site (P1 HIGH):**
+- Handles external YAML content (user input or files)
+- Current error handling is GOOD - accumulates errors properly
+- Priority is HIGH due to external data source, not due to bugs
+- Enhancement would be adding context about data origin
+
+**Go schema.go:180 (P2 MEDIUM):**
+- Validates data against schemas (could be external data)
+- Error handling is GOOD - structured with error codes
+- Generic error fallback could be more type-specific
+- Enhancement would be handling more error types explicitly
+
+**Go schema.go:253 (P3 LOW):**
+- Just chains to schema.go:180
+- File I/O errors handled separately
+- No validation-specific improvements needed
 
 ---
 
@@ -328,19 +343,20 @@ rg "\.validate\(" --type rust -n | grep -v "//"
 
 # Go Validate() search
 rg "Validate\(" --type go -n | grep -v "//"
-
-# Arrow notation search (none found in codebase)
-rg --type rust -n -- "->validate\("
 ```
 
 ---
 
-## Notes
+## Conclusion
 
-- **Two separate systems**: The codebase has independent Rust and Go validation systems
-- **Rust**: Uses lowercase `validate()` method, 3 production call sites, 150+ test sites
-- **Go**: Uses uppercase `Validate()` method, 2 production call sites, 4 test sites
-- All production call sites use method call syntax (`.validate()` or `.Validate()`)
-- No arrow notation calls (`->validate()` or `->Validate()`) exist in the codebase
-- Heavy test coverage across both systems
-- Production usage is minimal and focused on configuration/validation pipelines
+**The ARMOR codebase has excellent error handling for Validate()/validate() calls.**
+
+All 5 production call sites:
+- ✅ Handle errors appropriately
+- ✅ Return structured error information
+- ✅ Don't silently ignore validation failures
+- ✅ Follow language idioms (`?` in Rust, explicit checks in Go)
+
+**Priority for systematic updates: LOW**
+
+Optional enhancements exist for adding more context or type-specific handling, but these are improvements, not fixes. The current state is production-ready.
