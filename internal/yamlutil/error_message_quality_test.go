@@ -69,7 +69,7 @@ func TestErrorMessagesIncludeFilePath(t *testing.T) {
 		{
 			name: "FileError includes file path",
 			createError: func() error {
-				return NewFileError("/etc/config/app.yaml", "read", "file not found", "")
+				return NewFileError("/etc/config/app.yaml", "read", "file not found", nil)
 			},
 			expectPath:   true,
 			expectedPath: "/etc/config/app.yaml",

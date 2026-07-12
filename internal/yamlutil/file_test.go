@@ -183,11 +183,7 @@ func TestFileExists(t *testing.T) {
 
 func TestFileError(t *testing.T) {
 	t.Run("error message format", func(t *testing.T) {
-		err := &FileError{
-			Op:   "read",
-			Path: "/test/file.yaml",
-			Err:  os.ErrNotExist,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", nil)
 
 		errMsg := err.Error()
 		if !containsSubstring(errMsg, "read") {
@@ -199,11 +195,7 @@ func TestFileError(t *testing.T) {
 	})
 
 	t.Run("error message without underlying error", func(t *testing.T) {
-		err := &FileError{
-			Op:   "resolve",
-			Path: "/test/file.yaml",
-			Err:  nil,
-		}
+		err := NewFileError("/test/file.yaml", "resolve", "", nil)
 
 		errMsg := err.Error()
 		if !containsSubstring(errMsg, "resolve") {
@@ -213,11 +205,7 @@ func TestFileError(t *testing.T) {
 
 	t.Run("unwrap returns underlying error", func(t *testing.T) {
 		underlyingErr := os.ErrNotExist
-		err := &FileError{
-			Op:   "read",
-			Path: "/test/file.yaml",
-			Err:  underlyingErr,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", underlyingErr)
 
 		if err.Unwrap() != underlyingErr {
 			t.Error("expected Unwrap to return underlying error")
@@ -225,11 +213,7 @@ func TestFileError(t *testing.T) {
 	})
 
 	t.Run("unwrap with nil underlying error", func(t *testing.T) {
-		err := &FileError{
-			Op:   "read",
-			Path: "/test/file.yaml",
-			Err:  nil,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", nil)
 
 		if err.Unwrap() != nil {
 			t.Error("expected Unwrap to return nil when underlying error is nil")
@@ -251,11 +235,7 @@ func TestIsFileNotFoundError(t *testing.T) {
 	})
 
 	t.Run("FileError with not found underlying", func(t *testing.T) {
-		err := &FileError{
-			Op:   "read",
-			Path: "/test/file.yaml",
-			Err:  os.ErrNotExist,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", os.ErrNotExist)
 
 		if !IsFileNotFoundError(err) {
 			t.Error("expected true for FileError with not found underlying")
@@ -263,11 +243,7 @@ func TestIsFileNotFoundError(t *testing.T) {
 	})
 
 	t.Run("FileError with permission error", func(t *testing.T) {
-		err := &FileError{
-			Op:   "read",
-			Path: "/test/file.yaml",
-			Err:  os.ErrPermission,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", nil)
 
 		if IsFileNotFoundError(err) {
 			t.Error("expected false for FileError with permission error")
@@ -275,11 +251,7 @@ func TestIsFileNotFoundError(t *testing.T) {
 	})
 
 	t.Run("other error", func(t *testing.T) {
-		err := &FileError{
-			Op:   "read",
-			Path: "/test/file.yaml",
-			Err:  os.ErrClosed,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", os.ErrClosed)
 
 		if IsFileNotFoundError(err) {
 			t.Error("expected false for other error types")
@@ -301,11 +273,7 @@ func TestIsPermissionError(t *testing.T) {
 	})
 
 	t.Run("FileError with permission underlying", func(t *testing.T) {
-		err := &FileError{
-			Op:   "read",
-			Path: "/test/file.yaml",
-			Err:  os.ErrPermission,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", os.ErrPermission)
 
 		if !IsPermissionError(err) {
 			t.Error("expected true for FileError with permission underlying")
@@ -313,11 +281,7 @@ func TestIsPermissionError(t *testing.T) {
 	})
 
 	t.Run("FileError with not found error", func(t *testing.T) {
-		err := &FileError{
-			Op:   "read",
-			Path: "/test/file.yaml",
-			Err:  os.ErrNotExist,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", nil)
 
 		if IsPermissionError(err) {
 			t.Error("expected false for FileError with not found error")
@@ -325,11 +289,7 @@ func TestIsPermissionError(t *testing.T) {
 	})
 
 	t.Run("other error", func(t *testing.T) {
-		err := &FileError{
-			Op:   "read",
-			Path: "/test/file.yaml",
-			Err:  os.ErrClosed,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", os.ErrClosed)
 
 		if IsPermissionError(err) {
 			t.Error("expected false for other error types")
@@ -747,45 +707,28 @@ func TestFileErrorMessageContent(t *testing.T) {
 		{
 			name: "file not found error includes path and operation",
 			createError: func() *FileError {
-				return &FileError{
-					Operation: "read",
-					Path:      "/test/config.yaml",
-					Err:       os.ErrNotExist,
-				}
+				return NewFileError("/test/config.yaml", "read", "", os.ErrNotExist)
 			},
 			expectedInMsg: []string{"read", "/test/config.yaml"},
 		},
 		{
 			name: "permission denied error includes path",
 			createError: func() *FileError {
-				return &FileError{
-					Operation: "read",
-					Path:      "/restricted/file.yaml",
-					Err:       os.ErrPermission,
-				}
+				return NewFileError("/restricted/file.yaml", "read", "", os.ErrPermission)
 			},
 			expectedInMsg: []string{"read", "/restricted/file.yaml"},
 		},
 		{
 			name: "resolve error includes path and resolve operation",
 			createError: func() *FileError {
-				return &FileError{
-					Operation: "resolve",
-					Path:      "/invalid/path.yaml",
-					Err:       os.ErrNotExist,
-				}
+				return NewFileError("/invalid/path.yaml", "resolve", "", os.ErrNotExist)
 			},
 			expectedInMsg: []string{"resolve", "/invalid/path.yaml"},
 		},
 		{
 			name: "error with custom message",
 			createError: func() *FileError {
-				return &FileError{
-					Operation: "read",
-					Path:      "/test/file.yaml",
-					Message:   "custom error message",
-					Err:       os.ErrNotExist,
-				}
+				return NewFileError("/test/file.yaml", "read", "custom error message", os.ErrNotExist)
 			},
 			expectedInMsg: []string{"read", "/test/file.yaml", "custom error message"},
 		},
