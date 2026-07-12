@@ -154,13 +154,8 @@ func extractErrorCodes(errors []SchemaValidationError) []string {
 	codes := make([]string, 0, len(errors))
 	for _, err := range errors {
 		if err.ErrorCode != "" {
-			codes = append(codes, err.ErrorCode)
+			codes = append(codes, string(err.ErrorCode))
 		}
 	}
 	return codes
-}
-
-// Helper function to create int pointer
-func intPtr(i int) *int {
-	return &i
 }
