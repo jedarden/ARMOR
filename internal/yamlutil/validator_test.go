@@ -609,11 +609,13 @@ func TestValidator_WarningSummary(t *testing.T) {
 					Type:    ErrorTypeStructure,
 					Message: "Duplicate key detected",
 					Line:    5,
+					Path:    "",
 				},
 				{
 					Type:    ErrorTypeValidation,
 					Message: "Deprecated YAML feature",
 					Line:    10,
+					Path:    "",
 				},
 			},
 		}
@@ -843,6 +845,7 @@ key2: value2
 		Message:  "Test warning",
 		FilePath: "test.yaml",
 		Line:     1,
+		Path:     "",
 	})
 
 	summary := result.WarningSummary()
@@ -866,8 +869,8 @@ func TestWarningSummary_MultipleWarnings(t *testing.T) {
 
 	// Add multiple warnings
 	result.Warnings = append(result.Warnings,
-		ValidationError{Type: ErrorTypeStructure, Message: "Warning 1", FilePath: "test.yaml"},
-		ValidationError{Type: ErrorTypeStructure, Message: "Warning 2", FilePath: "test.yaml"},
+		ValidationError{Type: ErrorTypeStructure, Message: "Warning 1", FilePath: "test.yaml", Path: ""},
+		ValidationError{Type: ErrorTypeStructure, Message: "Warning 2", FilePath: "test.yaml", Path: ""},
 	)
 
 	summary := result.WarningSummary()

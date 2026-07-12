@@ -30,7 +30,7 @@ func TestIsYAMLError(t *testing.T) {
 		},
 		{
 			name:     "ValidationError returns true",
-			err:      &ValidationError{FilePath: "test.yaml"},
+			err:      &ValidationError{FilePath: "test.yaml", Path: ""},
 			expected: true,
 		},
 		{
@@ -78,7 +78,7 @@ func TestGetYAMLErrorType(t *testing.T) {
 		},
 		{
 			name:     "ValidationError returns ErrorTypeValidation",
-			err:      &ValidationError{FilePath: "test.yaml"},
+			err:      &ValidationError{FilePath: "test.yaml", Path: ""},
 			expected: ErrorTypeValidation,
 		},
 		{
@@ -160,7 +160,7 @@ func TestIsParseError(t *testing.T) {
 		},
 		{
 			name:     "ValidationError returns false",
-			err:      &ValidationError{FilePath: "test.yaml"},
+			err:      &ValidationError{FilePath: "test.yaml", Path: ""},
 			expected: false,
 		},
 	}
