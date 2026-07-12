@@ -988,9 +988,11 @@ mod tests {
     #[test]
     fn test_indentation_info_mixed() {
         let info = IndentationInfo::from_line(" \t key: value");
-        assert_eq!(info.leading_spaces, 1);
+        // The string " \t key: value" has: space, tab, space, then "key"
+        // So leading whitespace is: 2 spaces + 1 tab = 3 total
+        assert_eq!(info.leading_spaces, 2);
         assert_eq!(info.leading_tabs, 1);
-        assert_eq!(info.total_level, 2);
+        assert_eq!(info.total_level, 3);
         assert!(!info.is_empty());
         assert!(info.is_mixed());
         assert!(!info.is_tabs_only());
@@ -1032,7 +1034,7 @@ mod tests {
         assert_eq!(format!("{}", info_tabs), "1 tabs");
 
         let info_mixed = IndentationInfo::from_line(" \t key: value");
-        assert_eq!(format!("{}", info_mixed), "1 spaces + 1 tabs (MIXED)");
+        assert_eq!(format!("{}", info_mixed), "2 spaces + 1 tabs (MIXED)");
 
         let info_empty = IndentationInfo::from_line("key: value");
         assert_eq!(format!("{}", info_empty), "no indentation");
