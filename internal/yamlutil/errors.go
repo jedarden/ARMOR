@@ -578,12 +578,12 @@ func IsValidationError(err error) bool {
 }
 
 // NewFileError creates a new FileError with proper initialization.
-func NewFileError(path string, operation string, message string, errorCode ErrorCode) *FileError {
+func NewFileError(path string, operation string, message string, err error) *FileError {
 	return &FileError{
 		Path:       path,
 		Operation:  operation,
 		Message:    message,
-		ErrorCode:  errorCode,
+		Err:        err,
 	}
 }
 
