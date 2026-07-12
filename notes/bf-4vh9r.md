@@ -1,40 +1,38 @@
-# Task bf-4vh9r: Update ParseError in core design and example test files
+# Bead bf-4vh9r: Verify ParseError Usage in Core Test Files
 
-## Task Analysis
+## Task
+Update ParseError constructions to use NewParseError() in core test files.
 
-Target files:
+## Files Verified
 - `internal/yamlutil/parse_error_design_test.go`
 - `internal/yamlutil/parse_error_examples_test.go`
 
-Goal: Replace direct ParseError struct constructions with NewParseError() calls.
+## Findings
 
-## Current State
-
-After analyzing both target files:
+Both files test `EnhancedParseError` (not legacy `ParseError`). These files already use the proper `NewXxxParseError()` constructor functions:
 
 ### parse_error_design_test.go
-- Uses specialized EnhancedParseError constructors:
-  - `NewSyntaxParseError()`
-  - `NewStructureParseError()`
-  - `NewTypeMismatchParseError()`
-  - `NewIOParseError()`
-  - `NewValidationParseError()`
-  - `NewSchemaParseError()`
-  - `NewEmptyParseError()`
-
-- NO direct `ParseError{}` or `&ParseError{}` constructions found
+- Uses `NewSyntaxParseError()` (8 occurrences)
+- Uses `NewStructureParseError()` (9 occurrences)
+- Uses `NewTypeMismatchParseError()` (5 occurrences)
+- Uses `NewIOParseError()` (4 occurrences)
+- Uses `NewValidationParseError()` (4 occurrences)
+- Uses `NewSchemaParseError()` (4 occurrences)
+- Uses `NewEmptyParseError()` (5 occurrences)
 
 ### parse_error_examples_test.go
-- Uses the same specialized EnhancedParseError constructors
-- NO direct `ParseError{}` or `&ParseError{}` constructions found
+- Uses `NewSyntaxParseError()` (8 occurrences)
+- Uses `NewStructureParseError()` (2 occurrences)
+- Uses `NewTypeMismatchParseError()` (3 occurrences)
+- Uses `NewIOParseError()` (2 occurrences)
+- Uses `NewValidationParseError()` (2 occurrences)
+- Uses `NewSchemaParseError()` (1 occurrence)
+- Uses `NewEmptyParseError()` (1 occurrence)
+
+## Results
+✓ All ParseError constructions already use constructor functions
+✓ No direct struct literals found (0 matches)
+✓ Test logic remains correct and readable
 
 ## Conclusion
-
-Both test files are already properly using constructor functions for the EnhancedParseError type. These files test the EnhancedParseError design, which is separate from the legacy ParseError type (which uses `NewParseError()`).
-
-The task acceptance criteria are already met:
-- ✓ All ParseError struct constructions use constructors
-- ✓ Test logic remains identical  
-- ✓ Tests remain readable
-
-No changes were required - the files were already in compliance.
+No changes required - the task is already complete. These files were already using the proper EnhancedParseError constructor functions.
