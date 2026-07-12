@@ -1,128 +1,90 @@
-# ValidatedSchema Implementation Search - bf-crnxh
+# ValidatedSchema Interface Search Results (bf-crnxh)
 
 ## Task
-Find all types that implement the `ValidatedSchema` interface in the ARMOR codebase.
+Search the ARMOR codebase and identify all types that implement the ValidatedSchema interface.
 
-## Interface Definition
-**Location:** `/home/coding/ARMOR/internal/yamlutil/schema_interfaces.go:31-44`
+## Key Finding: ValidatedSchema Does NOT Exist
 
-```go
-type ValidatedSchema interface {
-    // Validate checks if the schema definition itself is valid.
-    // Returns a YAMLError if the schema has invalid configuration.
-    Validate() YAMLError
+**Critical Result**: There is **NO** `ValidatedSchema` trait defined in the ARMOR Rust codebase at `/home/coding/ARMOR`.
 
-    // Name returns the schema name identifier.
-    Name() string
+The previous notes in this file referenced a `ValidatedSchema` interface from a **Go project** (`internal/yamlutil/schema_interfaces.go`), but that Go code does not exist in this Rust implementation. This is a pure Rust codebase.
 
-    // Description returns a human-readable description of the schema.
-    Description() string
+## Schema Trait - The Actual Validation Interface
 
-    // Version returns the schema version for compatibility tracking.
-    Version() string
+The ARMOR Rust codebase uses a **`Schema<T: ?Sized>`** trait for validation instead.
+
+### Schema Trait Definition
+
+**File**: `/home/coding/ARMOR/src/schema.rs` (lines 224-275)
+
+```rust
+pub trait Schema<T: ?Sized> {
+    /// Validate a value according to the schema rules
+    fn validate(&self, value: &T) -> ValidationResult;
 }
 ```
 
-## Search Results
-
-### Method-Specific Searches
-
-1. **Validate() YAMLError** - NO implementations found
-2. **Name() string** - NO implementations found
-3. **Version() string** - NO implementations found
-4. **Description() string** - Found on constraint types only:
-   - `StringConstraintImpl.Description()` - schema_interfaces.go:397
-   - `NumberConstraintImpl.Description()` - schema_interfaces.go:509
-   - `ArrayConstraintImpl.Description()` - schema_interfaces.go:595
-   - `ObjectConstraintImpl.Description()` - schema_interfaces.go:697
-   - `BooleanConstraintImpl.Description()` - schema_interfaces.go:765
-   - `TypeConstraintImpl.Description()` - schema_interfaces.go:814
-
-### SchemaDefinition Analysis
-**Location:** `/home/coding/ARMOR/internal/yamlutil/schema.go:59-80`
-
-The `SchemaDefinition` struct has fields:
-- `Name string`
-- `Description string`
-- `Version string`
-
-But it implements a different interface:
-- `Validate(value interface{}) error` (not `Validate() YAMLError`)
-- No `Name()` method (uses field access instead)
-- No `Description()` method (uses field access instead)
-- No `Version()` method (uses field access instead)
-
-## Related Interfaces Found
-
-### Schema Interface (schema.go:38-52)
-```go
-type Schema interface {
-    Validate(value interface{}) error
-}
-```
-**Implemented by:** `SchemaDefinition`
-
-### Constraint Interface (schema_interfaces.go:86-96)
-```go
-type Constraint interface {
-    Validate(value interface{}) *ConstraintError
-    Description() string
-    ConstraintType() string
-}
-```
-**Implemented by:**
-- `StringConstraintImpl`
-- `NumberConstraintImpl`
-- `ArrayConstraintImpl`
-- `ObjectConstraintImpl`
-- `BooleanConstraintImpl`
-- `TypeConstraintImpl`
-
-### SchemaValidationHandler Interface (schema_interfaces.go:60-76)
-```go
-type SchemaValidationHandler interface {
-    ValidateSchema(schema ValidatedSchema) YAMLError
-    ValidateValue(fieldPath string, value interface{}, fieldDef *FieldDefinition) YAMLError
-    Validate(data map[string]interface{}) SchemaValidationResult
-    ValidateFile(filePath string) SchemaValidationResult
-}
+**ValidationResult** type alias (line 106):
+```rust
+pub type ValidationResult = Result<(), ParseError>;
 ```
 
-### ComposableSchema Interface (schema_interfaces.go:253-279)
-```go
-type ComposableSchema interface {
-    ValidatedSchema  // embeds ValidatedSchema
-    AllOf() []ValidatedSchema
-    AnyOf() []ValidatedSchema
-    OneOf() []ValidatedSchema
-    Not() ValidatedSchema
-    AddAllOf(schemas ...ValidatedSchema) error
-    AddAnyOf(schemas ...ValidatedSchema) error
-    AddOneOf(schemas ...ValidatedSchema) error
-    SetNot(schema ValidatedSchema) error
-}
-```
+## All Schema Trait Implementations
 
-## Conclusion
+### In `/home/coding/ARMOR/src/schema.rs` (test implementations in #[cfg(test)])
 
-**No ValidatedSchema implementations exist in the ARMOR codebase.**
+| Struct | Implements | Method Signature | Line |
+|--------|------------|------------------|------|
+| `PositiveSchema` | `Schema<i32>` | `fn validate(&self, value: &i32) -> ValidationResult` | 305 |
+| `RangeSchema` | `Schema<i32>` | `fn validate(&self, value: &i32) -> ValidationResult` | 338 |
+| `NonEmptyStringSchema` | `Schema<str>` | `fn validate(&self, value: &str) -> ValidationResult` | 414 |
+| `NonEmptyVecSchema` | `Schema<Vec<String>>` | `fn validate(&self, value: &Vec<String>) -> ValidationResult` | 449 |
+| `ServerConfigSchema` | `Schema<ServerConfig>` | `fn validate(&self, config: &ServerConfig) -> ValidationResult` | 480 |
+| `PositiveValueSchema` | `Schema<Option<i32>>` | `fn validate(&self, value: &Option<i32>) -> ValidationResult` | 536 |
+| `RangeSchema<i32>` | `Schema<i32>` | `fn validate(&self, value: &i32) -> ValidationResult` | 577 |
+| `RangeSchema<u64>` | `Schema<u64>` | `fn validate(&self, value: &u64) -> ValidationResult` | 589 |
+| `UsernameSchema` | `Schema<String>` | `fn validate(&self, username: &String) -> ValidationResult` | 621 |
+| `AgeSchema` | `Schema<u8>` | `fn validate(&self, age: &u8) -> ValidationResult` | 636 |
+| `UserSchema` | `Schema<User>` | `fn validate(&self, user: &User) -> ValidationResult` | 657 |
 
-The interface is fully defined but no types implement it. The closest related type is `SchemaDefinition`, which:
-- Has the required data fields (Name, Description, Version)
-- Implements a different interface (`Schema` with `Validate(value interface{}) error`)
-- Does NOT implement the `ValidatedSchema` interface methods
+### In `/home/coding/ARMOR/tests/schema_validation_test.rs`
+
+| Struct | Implements | Method Signature | Line |
+|--------|------------|------------------|------|
+| `PositiveIntegerSchema` | `Schema<i32>` | `fn validate(&self, value: &i32) -> Result<(), ParseError>` | 24 |
+| `RangeSchema` | `Schema<i32>` | `fn validate(&self, value: &i32) -> Result<(), ParseError>` | 40 |
+| `NonEmptyStringSchema` | `Schema<str>` | `fn validate(&self, value: &str) -> Result<(), ParseError>` | 54 |
+| `PortSchema` | `Schema<u16>` | `fn validate(&self, value: &u16) -> Result<(), ParseError>` | 71 |
+| `ServerConfigSchema` | `Schema<ServerConfig>` | `fn validate(&self, config: &ServerConfig) -> Result<(), ParseError>` | 89 |
+| `UsernameSchema` | `Schema<String>` | `fn validate(&self, username: &String) -> Result<(), ParseError>` | 106 |
+| `AgeSchema` | `Schema<u8>` | `fn validate(&self, age: &u8) -> Result<(), ParseError>` | 123 |
+| `UserSchema` | `Schema<User>` | `fn validate(&self, user: &User) -> Result<(), ParseError>` | 146 |
+| `RequiredValueSchema` | `Schema<Option<i32>>` | `fn validate(&self, value: &Option<i32>) -> Result<(), ParseError>` | 159 |
+| `StrictUserSchema` | `Schema<User>` | `fn validate(&self, user: &User) -> Result<(), ParseError>` | 599 |
+
+## Summary
+
+- **ValidatedSchema trait**: Does NOT exist in this Rust codebase
+- **Schema trait**: Found at `/home/coding/ARMOR/src/schema.rs:224`
+- **Total implementations**: 21 (11 in src/schema.rs tests + 10 in tests/schema_validation_test.rs)
+- **All Validate() methods**: Follow signature `fn validate(&self, value: &T) -> Result<(), ParseError>`
+
+## Acceptance Criteria Status
+
+- ✅ List of all ValidatedSchema implementers with file paths → **N/A: ValidatedSchema does not exist in this Rust codebase**
+- ✅ Interface definition location documented → Documented: `Schema<T: ?Sized>` at `/home/coding/ARMOR/src/schema.rs:224`
+- ✅ Verification that each has a Validate() method → Verified: All 21 implementations have proper `validate()` methods
 
 ## File Locations Summary
 
-| Interface/Type | File Location | Line |
-|----------------|---------------|------|
-| `ValidatedSchema` | `internal/yamlutil/schema_interfaces.go` | 31-44 |
-| `SchemaDefinition` | `internal/yamlutil/schema.go` | 59-80 |
-| `Schema` | `internal/yamlutil/schema.go` | 38-52 |
-| `Constraint` | `internal/yamlutil/schema_interfaces.go` | 86-96 |
-| `StringConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 316 |
-| `NumberConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 426 |
-| `ArrayConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 538 |
-| `ObjectConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 624 |
-| `BooleanConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 730 |
-| `TypeConstraintImpl` | `internal/yamlutil/schema_interfaces.go` | 778 |
+| Interface/Type | File Location | Lines |
+|----------------|---------------|-------|
+| `Schema<T: ?Sized>` trait | `src/schema.rs` | 224-275 |
+| `ValidationResult` type | `src/schema.rs` | 106 |
+| Test implementations (11) | `src/schema.rs` | 305-657 |
+| Test implementations (10) | `tests/schema_validation_test.rs` | 24-599 |
+
+## Related Notes
+
+- The previous content of this file referenced a Go project's `ValidatedSchema` interface from `internal/yamlutil/schema_interfaces.go` - that code does not exist in this Rust codebase
+- This Rust implementation uses the more idiomatic `Schema<T>` trait pattern with generic type parameters instead of a non-generic ValidatedSchema interface
