@@ -827,6 +827,87 @@ another: item
         assert result.is_success()
         assert result.data == {'key': 'value', 'another': 'item'}
 
+    # ============================================================================
+    # Basic indentation level comment tests - bf-4dy80
+    # ============================================================================
+
+    def test_comment_at_indentation_level_0(self):
+        """Test that comments at 0 spaces indentation (no indentation) are properly filtered."""
+        yaml_content = """# Comment at 0 spaces
+key: value
+# Another comment at 0 spaces
+another_key: another_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value', 'another_key': 'another_value'}
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_at_indentation_level_2(self):
+        """Test that comments at 2 spaces indentation are properly filtered."""
+        yaml_content = """# Comment at 0 spaces
+key: value
+  # Comment at 2 spaces
+another_key: another_value
+    # Comment at 4 spaces (nested)
+deep_key: deep_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value', 'another_key': 'another_value', 'deep_key': 'deep_value'}
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_at_indentation_level_4(self):
+        """Test that comments at 4 spaces indentation are properly filtered."""
+        yaml_content = """# Comment at 0 spaces
+key: value
+    # Comment at 4 spaces
+another_key: another_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value', 'another_key': 'another_value'}
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_at_indentation_level_6(self):
+        """Test that comments at 6 spaces indentation are properly filtered."""
+        yaml_content = """# Comment at 0 spaces
+key: value
+      # Comment at 6 spaces
+another_key: another_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value', 'another_key': 'another_value'}
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comments_at_all_basic_indentation_levels(self):
+        """Test that comments at all basic indentation levels (0, 2, 4, 6) work together."""
+        yaml_content = """# Level 0 comment
+root_key: root_value
+  # Level 2 comment
+level_2_key: level_2_value
+    # Level 4 comment
+level_4_key: level_4_value
+      # Level 6 comment
+level_6_key: level_6_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # All comments should be filtered, only data remains
+        assert result.data == {
+            'root_key': 'root_value',
+            'level_2_key': 'level_2_value',
+            'level_4_key': 'level_4_value',
+            'level_6_key': 'level_6_value'
+        }
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
 
 if __name__ == '__main__':
     # Run tests with pytest
