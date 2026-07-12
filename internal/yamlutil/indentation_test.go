@@ -1049,6 +1049,292 @@ monitoring:
 	}
 }
 
+// TestMixedWhitespaceInCommentLines tests comment lines with various mixed whitespace patterns.
+func TestMixedWhitespaceInCommentLines(t *testing.T) {
+	tests := []struct {
+		name           string
+		line           string
+		spacesPerLevel int
+		isValid        bool   // Whether the indentation is valid (non-mixed)
+		expectedLevel  int    // Expected indentation level (0 for mixed)
+		expectedType   LineType
+	}{
+		{
+			name:           "valid - 2-space indent with comment",
+			line:           "  # comment",
+			spacesPerLevel: 2,
+			isValid:        true,
+			expectedLevel:  1,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "valid - 4-space indent with comment",
+			line:           "    # comment",
+			spacesPerLevel: 2,
+			isValid:        true,
+			expectedLevel:  2,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "valid - tab indent with comment",
+			line:           "\t# comment",
+			spacesPerLevel: 1,
+			isValid:        true,
+			expectedLevel:  1,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "valid - double tab indent with comment",
+			line:           "\t\t# comment",
+			spacesPerLevel: 1,
+			isValid:        true,
+			expectedLevel:  2,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "invalid - space then tab then comment",
+			line:           "  \t# comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "invalid - tab then space then comment",
+			line:           "\t  # comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "invalid - space tab space pattern",
+			line:           " \t # comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "invalid - tab space tab pattern",
+			line:           "\t \t# comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "invalid - alternating space tab space tab",
+			line:           " \t \t# comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "invalid - many spaces then tab",
+			line:           "        \t# comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "invalid - tab then many spaces",
+			line:           "\t        # comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "mixed - 4 spaces then tab",
+			line:           "    \t# comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "mixed - tab then 4 spaces",
+			line:           "\t    # comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "comment with mixed indent and unicode",
+			line:           "  \t# 这是注释",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "comment with tab and emoji",
+			line:           "\t  # 🎉 comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "deep valid indent with comment",
+			line:           "                # deeply nested comment",
+			spacesPerLevel: 2,
+			isValid:        true,
+			expectedLevel:  8,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "deep mixed indent with comment",
+			line:           "      \t  # mixed deep comment",
+			spacesPerLevel: 2,
+			isValid:        false,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := CalculateIndentation(tt.line, tt.spacesPerLevel)
+
+			// Check if indentation is valid (non-mixed)
+			isValid := HasValidIndentation(tt.line)
+			if isValid != tt.isValid {
+				t.Errorf("HasValidIndentation: expected %v, got %v", tt.isValid, isValid)
+			}
+
+			// Check indentation level
+			if info.Level != tt.expectedLevel {
+				t.Errorf("CalculateIndentation level: expected %d, got %d", tt.expectedLevel, info.Level)
+			}
+
+			// Check line type
+			lineType := ClassifyLineType(tt.line)
+			if lineType != tt.expectedType {
+				t.Errorf("ClassifyLineType: expected %v, got %v", tt.expectedType, lineType)
+			}
+
+			// Verify it's still recognized as a comment line regardless of mixed indentation
+			if !IsCommentLine(tt.line) {
+				t.Error("IsCommentLine: expected true for comment line")
+			}
+
+			// For mixed indentation, verify IsMixed is set correctly
+			if !tt.isValid {
+				if !info.IsMixed {
+					t.Error("Expected IsMixed=true for invalid (mixed) indentation")
+				}
+				if info.IndentType != "mixed" {
+					t.Errorf("Expected IndentType='mixed', got %s", info.IndentType)
+				}
+			}
+		})
+	}
+}
+
+// TestVeryLongIndentation tests extremely long indentation (100+ spaces).
+func TestVeryLongIndentation(t *testing.T) {
+	tests := []struct {
+		name           string
+		line           string
+		spacesPerLevel int
+		expectedLevel  int
+	}{
+		{
+			name:           "exactly 100 spaces",
+			line:           strings.Repeat(" ", 100) + "key: value",
+			spacesPerLevel: 2,
+			expectedLevel:  50,
+		},
+		{
+			name:           "150 spaces",
+			line:           strings.Repeat(" ", 150) + "key: value",
+			spacesPerLevel: 2,
+			expectedLevel:  75,
+		},
+		{
+			name:           "200 spaces",
+			line:           strings.Repeat(" ", 200) + "key: value",
+			spacesPerLevel: 2,
+			expectedLevel:  100,
+		},
+		{
+			name:           "101 spaces (odd count)",
+			line:           strings.Repeat(" ", 101) + "key: value",
+			spacesPerLevel: 2,
+			expectedLevel:  50, // 101 / 2 = 50
+		},
+		{
+			name:           "100 spaces with 4-space levels",
+			line:           strings.Repeat(" ", 100) + "key: value",
+			spacesPerLevel: 4,
+			expectedLevel:  25,
+		},
+		{
+			name:           "120 spaces with 3-space levels",
+			line:           strings.Repeat(" ", 120) + "key: value",
+			spacesPerLevel: 3,
+			expectedLevel:  40,
+		},
+		{
+			name:           "deep tab indent - 50 tabs",
+			line:           strings.Repeat("\t", 50) + "key: value",
+			spacesPerLevel: 1,
+			expectedLevel:  50,
+		},
+		{
+			name:           "mixed deep indent - 100 spaces then tab",
+			line:           strings.Repeat(" ", 100) + "\tkey: value",
+			spacesPerLevel: 2,
+			expectedLevel:  0, // Mixed indent
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := CalculateIndentation(tt.line, tt.spacesPerLevel)
+			if info.Level != tt.expectedLevel {
+				t.Errorf("Expected level %d, got %d", tt.expectedLevel, info.Level)
+			}
+
+			// Verify space/tab counts are accurate for leading whitespace only
+			// CalculateIndentation only counts leading whitespace, not all spaces/tabs in line
+			if !strings.Contains(tt.line, "\t") && info.IndentType == "space" {
+				// Count leading spaces only (stop at first non-space)
+				leadingSpaces := 0
+				for _, ch := range tt.line {
+					if ch == ' ' {
+						leadingSpaces++
+					} else {
+						break
+					}
+				}
+				if info.SpaceCount != leadingSpaces {
+					t.Errorf("Expected %d leading spaces, got %d", leadingSpaces, info.SpaceCount)
+				}
+			}
+			if strings.HasPrefix(tt.line, "\t") && info.IndentType == "tab" {
+				// Count leading tabs only (stop at first non-tab)
+				leadingTabs := 0
+				for _, ch := range tt.line {
+					if ch == '\t' {
+						leadingTabs++
+					} else {
+						break
+					}
+				}
+				if info.TabCount != leadingTabs {
+					t.Errorf("Expected %d leading tabs, got %d", leadingTabs, info.TabCount)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkCalculateIndentation benchmarks the CalculateIndentation function.
 func BenchmarkCalculateIndentation(b *testing.B) {
 	line := "    key: value"
@@ -1526,6 +1812,352 @@ func TestIsCommentLineEdgeCases(t *testing.T) {
 			result := IsCommentLine(tt.line)
 			if result != tt.expected {
 				t.Errorf("Expected %v, got %v for line %q", tt.expected, result, tt.line)
+			}
+		})
+	}
+}
+
+// TestUnicodeContentWithIndentation tests Unicode content with various indentation levels.
+func TestUnicodeContentWithIndentation(t *testing.T) {
+	tests := []struct {
+		name          string
+		line          string
+		spacesPerLevel int
+		expectedLevel int
+		expectedType  LineType
+	}{
+		{
+			name:          "Chinese characters with 2-space indent",
+			line:          "  名称: 测试",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Japanese characters with 4-space indent",
+			line:          "    名前: テスト",
+			spacesPerLevel: 4,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Korean characters with 2-space indent",
+			line:          "  이름: 테스트",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Arabic text with indentation",
+			line:          "  الاسم: اختبار",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Hebrew text with indentation",
+			line:          "    שם: בדיקה",
+			spacesPerLevel: 2,
+			expectedLevel: 2,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Cyrillic text with indentation",
+			line:          "  имя: тест",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Greek text with indentation",
+			line:          "    όνομα: τεστ",
+			spacesPerLevel: 2,
+			expectedLevel: 2,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Emoji with indentation",
+			line:          "  key: 🎉🎊🎈",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Mixed unicode and ASCII",
+			line:          "  café: naïve",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Unicode in sequence item",
+			line:          "  - 项目",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeSequenceItem,
+		},
+		{
+			name:          "Unicode comment with indent",
+			line:          "  # 这是中文注释",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeComment,
+		},
+		{
+			name:          "Deep indent with unicode",
+			line:          "          کی: قیمت",
+			spacesPerLevel: 2,
+			expectedLevel: 5,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Tab indent with unicode",
+			line:          "\tключ: значение",
+			spacesPerLevel: 1,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Multiple tab indent with unicode",
+			line:          "\t\t\tclave: valor",
+			spacesPerLevel: 1,
+			expectedLevel: 3,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Unicode with combining characters",
+			line:          "  émojï: würst",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+		{
+			name:          "Right-to-left text with indent",
+			line:          "  מפתח: ערך",
+			spacesPerLevel: 2,
+			expectedLevel: 1,
+			expectedType:  LineTypeMappingKey,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := CalculateIndentation(tt.line, tt.spacesPerLevel)
+			if info.Level != tt.expectedLevel {
+				t.Errorf("Expected level %d, got %d", tt.expectedLevel, info.Level)
+			}
+
+			lineType := ClassifyLineType(tt.line)
+			if lineType != tt.expectedType {
+				t.Errorf("Expected line type %v, got %v", tt.expectedType, lineType)
+			}
+
+			// Verify that CalculateIndentation correctly counts spaces/tabs with unicode content
+			if tt.spacesPerLevel > 0 && info.IndentType == "space" {
+				// Should correctly count spaces even with unicode content
+				expectedSpaces := tt.expectedLevel * tt.spacesPerLevel
+				if info.SpaceCount != expectedSpaces {
+					t.Errorf("Expected %d spaces, got %d", expectedSpaces, info.SpaceCount)
+				}
+			}
+		})
+	}
+}
+
+// TestLinesWithOnlyHashSymbol tests lines containing only the hash symbol with various indentation.
+func TestLinesWithOnlyHashSymbol(t *testing.T) {
+	tests := []struct {
+		name           string
+		line           string
+		spacesPerLevel int
+		expectedLevel  int
+		expectedType   LineType
+	}{
+		{
+			name:           "only hash no indent",
+			line:           "#",
+			spacesPerLevel: 2,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "hash with trailing space",
+			line:           "# ",
+			spacesPerLevel: 2,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "hash with multiple trailing spaces",
+			line:           "#    ",
+			spacesPerLevel: 2,
+			expectedLevel:  0,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "2-space indent then hash",
+			line:           "  #",
+			spacesPerLevel: 2,
+			expectedLevel:  1,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "4-space indent then hash",
+			line:           "    #",
+			spacesPerLevel: 2,
+			expectedLevel:  2,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "6-space indent then hash",
+			line:           "      #",
+			spacesPerLevel: 2,
+			expectedLevel:  3,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "8-space indent then hash",
+			line:           "        #",
+			spacesPerLevel: 2,
+			expectedLevel:  4,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "10-space indent then hash",
+			line:           "          #",
+			spacesPerLevel: 2,
+			expectedLevel:  5,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "12-space indent then hash",
+			line:           "            #",
+			spacesPerLevel: 2,
+			expectedLevel:  6,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "16-space indent then hash",
+			line:           "                #",
+			spacesPerLevel: 2,
+			expectedLevel:  8,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "20-space indent then hash",
+			line:           "                    #",
+			spacesPerLevel: 2,
+			expectedLevel:  10,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "single tab indent then hash",
+			line:           "\t#",
+			spacesPerLevel: 1,
+			expectedLevel:  1,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "double tab indent then hash",
+			line:           "\t\t#",
+			spacesPerLevel: 1,
+			expectedLevel:  2,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "triple tab indent then hash",
+			line:           "\t\t\t#",
+			spacesPerLevel: 1,
+			expectedLevel:  3,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "2-space indent then hash with space",
+			line:           "  # ",
+			spacesPerLevel: 2,
+			expectedLevel:  1,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "4-space indent then hash with spaces",
+			line:           "    #    ",
+			spacesPerLevel: 2,
+			expectedLevel:  2,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "tab indent then hash with space",
+			line:           "\t# ",
+			spacesPerLevel: 1,
+			expectedLevel:  1,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "mixed space then tab then hash",
+			line:           "  \t#",
+			spacesPerLevel: 2,
+			expectedLevel:  0, // Mixed indent, level is 0
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "mixed tab then space then hash",
+			line:           "\t  #",
+			spacesPerLevel: 2,
+			expectedLevel:  0, // Mixed indent, level is 0
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "deep 24-space indent then hash",
+			line:           "                        #",
+			spacesPerLevel: 2,
+			expectedLevel:  12,
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "odd indentation with hash - 3 spaces",
+			line:           "   #",
+			spacesPerLevel: 2,
+			expectedLevel:  1, // 3 / 2 = 1
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "odd indentation with hash - 5 spaces",
+			line:           "     #",
+			spacesPerLevel: 2,
+			expectedLevel:  2, // 5 / 2 = 2
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "odd indentation with hash - 7 spaces",
+			line:           "       #",
+			spacesPerLevel: 2,
+			expectedLevel:  3, // 7 / 2 = 3
+			expectedType:   LineTypeComment,
+		},
+		{
+			name:           "100-space indent then hash",
+			line:           strings.Repeat(" ", 100) + "#",
+			spacesPerLevel: 2,
+			expectedLevel:  50,
+			expectedType:   LineTypeComment,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := CalculateIndentation(tt.line, tt.spacesPerLevel)
+			if info.Level != tt.expectedLevel {
+				t.Errorf("CalculateIndentation: expected level %d, got %d", tt.expectedLevel, info.Level)
+			}
+
+			lineType := ClassifyLineType(tt.line)
+			if lineType != tt.expectedType {
+				t.Errorf("ClassifyLineType: expected type %v, got %v", tt.expectedType, lineType)
+			}
+
+			// Verify IsCommentLine also works correctly
+			if !IsCommentLine(tt.line) {
+				t.Error("IsCommentLine: expected true for hash-only line")
 			}
 		})
 	}
