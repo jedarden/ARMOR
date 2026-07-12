@@ -189,6 +189,82 @@ let mut result = validator.validate(content);
 
 ---
 
+## Call Site Categorization
+
+### Category Definitions
+
+- **Direct**: Bare `Validate()` call with no wrapping function
+- **Wrapped**: `Validate()` called inside another function/method
+- **Deferred**: `Validate()` called in a separate goroutine or callback
+
+---
+
+### Go Validation System - Validate() Call Site Categories
+
+#### Production Code (2 call sites)
+| File:Line | Pattern | Category | Context |
+|-----------|---------|----------|---------|
+| `internal/yamlutil/schema.go:180` | `sv.schema.Validate(data)` | **Wrapped** | Inside `SchemaValidator.Validate()` method |
+| `internal/yamlutil/schema.go:253` | `sv.Validate(data)` | **Wrapped** | Inside `ReadAndValidate()` helper function |
+
+**Production Counts:** Direct: 0, Wrapped: 2, Deferred: 0
+
+#### Test Code (4 call sites)
+| File:Line | Pattern | Category | Context |
+|-----------|---------|----------|---------|
+| `internal/yamlutil/schema_validation_test.go:94` | `tt.schema.Validate()` | **Direct** | Table-driven test - bare method call |
+| `internal/yamlutil/schema_validation_test.go:147` | `schema.Validate()` | **Direct** | Test function - bare method call |
+| `internal/yamlutil/schema_validation_test.go:224` | `validator.Validate(tt.data)` | **Direct** | Table-driven test - bare method call |
+| `internal/yamlutil/schema_validation_test.go:310` | `validator.Validate(tt.data)` | **Direct** | Table-driven test - bare method call |
+
+#### Related Helper (1 call site)
+| File:Line | Pattern | Category | Context |
+|-----------|---------|----------|---------|
+| `internal/yamlutil/parse_error_examples_test.go:474` | `parseAndValidate(path)` | **Wrapped** | Validate() wrapped inside helper |
+
+**Test Counts:** Direct: 4, Wrapped: 1, Deferred: 0
+
+**Go Validation Total:** Direct: 4, Wrapped: 3, Deferred: 0
+
+---
+
+### Rust Validation System - validate() Call Site Categories
+
+#### Production Code (3 call sites)
+| File:Line | Pattern | Category | Context |
+|-----------|---------|----------|---------|
+| `src/parsers/config.rs:662` | `self.config.validate()?` | **Wrapped** | Inside `ConfigParserBuilder::build()` method |
+| `src/parsers/config.rs:1007` | `self.config.validate()?` | **Wrapped** | Inside `StrictConfigParserBuilder::build()` method |
+| `src/parsers/yaml/parser.rs:121` | `validator.validate(content)` | **Wrapped** | Inside YAML parsing pipeline function |
+
+**Production Counts:** Direct: 0, Wrapped: 3, Deferred: 0
+
+#### Test Code (150+ call sites)
+All test code call sites are **Direct** - bare `validate()` calls in test assertions and doctests
+
+**Test Counts:** Direct: 150+, Wrapped: 0, Deferred: 0
+
+**Rust Validation Total:** Direct: 150+, Wrapped: 3, Deferred: 0
+
+---
+
+### Combined Summary
+
+| Category | Go Validation | Rust Validation | Total |
+|----------|---------------|-----------------|-------|
+| Direct | 4 | 150+ | 154+ |
+| Wrapped | 3 | 3 | 6 |
+| Deferred | 0 | 0 | 0 |
+| **Total** | **7** | **153+** | **160+** |
+
+**Key Observations:**
+- **No deferred validation**: No goroutine or callback-based Validate() calls found in either system
+- **All production calls are wrapped**: Production code never calls Validate()/validate() directly - always through a wrapper function
+- **Test code uses direct calls**: All test calls are direct method invocations for simplicity and clarity
+- **Rust has heavier test coverage**: 150+ test call sites vs 4 in Go
+
+---
+
 ## Implementation Details
 
 ### Rust Schema Trait Definition
