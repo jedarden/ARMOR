@@ -1,183 +1,187 @@
-# Error Test Pattern Manifest
+# ParseError Test Patterns Audit Manifest
 
-## Overview
-This document inventories all test files in `internal/yamlutil` that use direct struct initialization for error types.
+## Audit Summary
 
-**Generated:** 2026-07-12
-**Purpose:** Systematic migration from direct struct initialization to constructor functions
-**Total test files scanned:** 45
-**Files with direct struct initialization:** 10
+**Date:** 2026-07-12  
+**Location:** internal/yamlutil/*_test.go  
+**Scope:** Direct struct initialization patterns for error types
 
-## Summary Table
-
-| File | ParseError | ValidationError | FileError | SchemaValidationError | TypeMismatchError | Total |
-|------|-----------|-----------------|-----------|----------------------|-------------------|-------|
-| debug_helpers_test.go | 0 | 0 | 0 | 0 | 1 | 1 |
-| error_message_format_examples_test.go | 0 | 0 | 0 | 0 | 8 | 8 |
-| error_message_quality_test.go | 0 | 0 | 2 | 0 | 6 | 8 |
-| errors_test.go | 0 | 5 | 2 | 2 | 3 | 12 |
-| file_test.go | 0 | 0 | 18 | 0 | 0 | 18 |
-| missing_file_scenarios_test.go | 0 | 0 | 18 | 0 | 0 | 18 |
-| parse_result_test.go | 2 | 0 | 0 | 0 | 0 | 2 |
-| result_test.go | 3 | 0 | 0 | 0 | 0 | 3 |
-| result_types_test.go | 0 | 9 | 0 | 0 | 0 | 9 |
-| validator_test.go | 0 | 4 | 0 | 0 | 0 | 4 |
-
-## Detailed Findings
-
-### debug_helpers_test.go
-
-| Error Type | Count |
-|-----------|-------|
-| TypeMismatchError | 1 |
-
-**Total changes needed:** 1
+**Total Files Scanned:** 56 test files  
+**Files with Direct Struct Initialization:** 8 files  
+**Total Direct Initializations:** 64
 
 ---
 
-### error_message_format_examples_test.go
+## Error Types Audited
 
-| Error Type | Count |
-|-----------|-------|
-| TypeMismatchError | 8 |
-
-**Total changes needed:** 8
-
----
-
-### error_message_quality_test.go
-
-| Error Type | Count |
-|-----------|-------|
-| FileError | 2 |
-| TypeMismatchError | 6 |
-
-**Total changes needed:** 8
+1. **ParseError**
+2. **ValidationError**
+3. **FileError**
+4. **SchemaValidationError**
+5. **TypeMismatchError**
 
 ---
 
-### errors_test.go
+## Files Requiring Updates
 
-| Error Type | Count |
-|-----------|-------|
-| ValidationError | 5 |
-| FileError | 2 |
-| SchemaValidationError | 2 |
-| TypeMismatchError | 3 |
+### By Error Type
 
-**Total changes needed:** 12
+#### ValidationError (18 instances)
 
----
+| File | Count | Priority |
+|------|-------|----------|
+| result_types_test.go | 9 | HIGH |
+| errors_test.go | 5 | HIGH |
+| validator_test.go | 4 | HIGH |
 
-### file_test.go
+**Subtotal:** 18 instances across 3 files
 
-| Error Type | Count |
-|-----------|-------|
-| FileError | 18 |
+#### FileError (31 instances)
 
-**Total changes needed:** 18
+| File | Count | Priority |
+|------|-------|----------|
+| file_test.go | 14 | HIGH |
+| missing_file_scenarios_test.go | 13 | HIGH |
+| errors_test.go | 2 | MEDIUM |
+| error_message_quality_test.go | 2 | MEDIUM |
 
----
+**Subtotal:** 31 instances across 4 files
 
-### missing_file_scenarios_test.go
+#### TypeMismatchError (18 instances)
 
-| Error Type | Count |
-|-----------|-------|
-| FileError | 18 |
+| File | Count | Priority |
+|------|-------|----------|
+| error_message_format_examples_test.go | 8 | MEDIUM |
+| error_message_quality_test.go | 6 | MEDIUM |
+| errors_test.go | 3 | MEDIUM |
+| debug_helpers_test.go | 1 | LOW |
 
-**Total changes needed:** 18
+**Subtotal:** 18 instances across 4 files
 
----
+#### SchemaValidationError (2 instances)
 
-### parse_result_test.go
+| File | Count | Priority |
+|------|-------|----------|
+| errors_test.go | 2 | MEDIUM |
 
-| Error Type | Count |
-|-----------|-------|
-| ParseError | 2 |
+**Subtotal:** 2 instances across 1 file
 
-**Total changes needed:** 2
+#### ParseError (0 instances)
 
----
-
-### result_test.go
-
-| Error Type | Count |
-|-----------|-------|
-| ParseError | 3 |
-
-**Total changes needed:** 3
+**No direct struct initializations found.**
 
 ---
 
-### result_types_test.go
+## Complete File Inventory
 
-| Error Type | Count |
-|-----------|-------|
-| ValidationError | 9 |
+### 1. debug_helpers_test.go
+- **TypeMismatchError:** 1 instance
+- **Priority:** LOW
+- **Location:** internal/yamlutil/debug_helpers_test.go
 
-**Total changes needed:** 9
+### 2. error_message_format_examples_test.go
+- **TypeMismatchError:** 8 instances
+- **Priority:** MEDIUM
+- **Location:** internal/yamlutil/error_message_format_examples_test.go
+
+### 3. error_message_quality_test.go
+- **FileError:** 2 instances
+- **TypeMismatchError:** 6 instances
+- **Priority:** MEDIUM
+- **Location:** internal/yamlutil/error_message_quality_test.go
+
+### 4. errors_test.go
+- **ValidationError:** 5 instances
+- **FileError:** 2 instances
+- **SchemaValidationError:** 2 instances
+- **TypeMismatchError:** 3 instances
+- **Priority:** HIGH (multiple error types)
+- **Location:** internal/yamlutil/errors_test.go
+
+### 5. file_test.go
+- **FileError:** 14 instances
+- **Priority:** HIGH (highest count per file)
+- **Location:** internal/yamlutil/file_test.go
+
+### 6. missing_file_scenarios_test.go
+- **FileError:** 13 instances
+- **Priority:** HIGH
+- **Location:** internal/yamlutil/missing_file_scenarios_test.go
+
+### 7. result_types_test.go
+- **ValidationError:** 9 instances
+- **Priority:** HIGH
+- **Location:** internal/yamlutil/result_types_test.go
+
+### 8. validator_test.go
+- **ValidationError:** 4 instances
+- **Priority:** HIGH
+- **Location:** internal/yamlutil/validator_test.go
 
 ---
 
-### validator_test.go
+## Systematic Update Strategy
 
-| Error Type | Count |
-|-----------|-------|
-| ValidationError | 4 |
+### Phase 1: High-Priority Files (34 instances)
 
-**Total changes needed:** 4
+1. **file_test.go** - 14 FileError instances
+2. **missing_file_scenarios_test.go** - 13 FileError instances
+3. **result_types_test.go** - 9 ValidationError instances
+4. **validator_test.go** - 4 ValidationError instances
+5. **errors_test.go** - 5 ValidationError + 2 FileError + 2 SchemaValidationError + 3 TypeMismatchError = 12 instances
+
+### Phase 2: Medium-Priority Files (30 instances)
+
+1. **error_message_format_examples_test.go** - 8 TypeMismatchError instances
+2. **error_message_quality_test.go** - 2 FileError + 6 TypeMismatchError = 8 instances
+
+### Phase 3: Low-Priority Files (1 instance)
+
+1. **debug_helpers_test.go** - 1 TypeMismatchError instance
 
 ---
 
-## Overall Totals
+## Pattern Examples Found
 
-| Error Type | Total Count | Files Affected |
-|-----------|--------------|----------------|
-| ParseError | 5 | 2 |
-| ValidationError | 18 | 3 |
-| FileError | 40 | 4 |
-| SchemaValidationError | 2 | 1 |
-| TypeMismatchError | 18 | 4 |
-| **Grand Total** | **83** | **10** |
+### ValidationError{} Pattern
+```go
+// result_types_test.go, validator_test.go, errors_test.go
+ValidationError{Type: ErrorTypeStructure, Message: "...", FilePath: "...", Path: "..."}
+&ValidationError{FilePath: "...", Path: ""}
+```
 
-## Migration Priority
+### FileError{} Pattern
+```go
+// file_test.go, missing_file_scenarios_test.go, errors_test.go
+&FileError{Path: "...", Err: ...}
+&FileError{Err: os.ErrNotExist}
+```
 
-### High Priority (20+ occurrences)
-- **FileError** (40 occurrences across 4 files)
-  - file_test.go: 18
-  - missing_file_scenarios_test.go: 18
-  - errors_test.go: 2
-  - error_message_quality_test.go: 2
+### TypeMismatchError{} Pattern
+```go
+// error_message_format_examples_test.go, error_message_quality_test.go, errors_test.go
+&TypeMismatchError{FilePath: "..."}
+&TypeMismatchError{FilePath: "...", ExpectedType: "...", ActualType: "..."}
+```
 
-### Medium Priority (10+ occurrences)
-- **ValidationError** (18 occurrences across 3 files)
-  - result_types_test.go: 9
-  - errors_test.go: 5
-  - validator_test.go: 4
-- **TypeMismatchError** (18 occurrences across 4 files)
-  - error_message_format_examples_test.go: 8
-  - error_message_quality_test.go: 6
-  - errors_test.go: 3
-  - debug_helpers_test.go: 1
+### SchemaValidationError{} Pattern
+```go
+// errors_test.go
+&SchemaValidationError{FilePath: "..."}
+```
 
-### Low Priority (<10 occurrences)
-- **ParseError** (5 occurrences across 2 files)
-  - result_test.go: 3
-  - parse_result_test.go: 2
-- **SchemaValidationError** (2 occurrences across 1 file)
-  - errors_test.go: 2
-
-## Recommended Migration Order
-
-1. **Phase 1: FileError** (40 occurrences) - Highest volume, focused in 2 major files
-2. **Phase 2: ValidationError** (18 occurrences) - Second highest volume
-3. **Phase 3: TypeMismatchError** (18 occurrences) - Same volume as ValidationError
-4. **Phase 4: ParseError** (5 occurrences) - Low volume, quick wins
-5. **Phase 5: SchemaValidationError** (2 occurrences) - Lowest volume
+---
 
 ## Notes
 
-- All files are located in `internal/yamlutil/` directory
-- Direct struct initialization patterns identified: `ErrorName{...}`
-- Migration should use constructor functions once available
-- Test files should continue to compile and pass tests after migration
+- **No ParseError initializations found** - ParseError appears to be created only via helper functions
+- **ValidationError used as slice element** - Many instances are in `[]ValidationError{}` slice literals
+- **FileError used in error returns** - Most FileError instances are in return statements or table-driven tests
+- **TypeMismatchError heavy in message tests** - Concentrated in formatting/example test files
+
+---
+
+## Audit Completed
+
+**Generated by:** bf-6bevx (claude-code-glm-4.7-bravo)  
+**Commit pending:** Yes - will be committed with bead closure
