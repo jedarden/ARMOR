@@ -1,59 +1,44 @@
-# ord-devimprint Kubeconfig Access Investigation
+# Task bf-2p1wr: Obtain ord-devimprint kubeconfig with write access
 
-## Summary
-Task `bf-2p1wr` requires obtaining a kubeconfig with write access to the `ord-devimprint` cluster to retrieve the `armor-writer` secret.
+## Current Situation
 
-## Findings
+The ord-devimprint cluster is currently accessed via a read-only kubectl-proxy:
+- Server: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001`
+- Access: Read-only via ServiceAccount `system:serviceaccount:devpod-observer:devpod-observer`
+- Limitation: Cannot read secrets (Forbidden error when attempting to access `armor-writer` secret)
 
-### Cluster Identity
-- **Provider:** Rackspace Spot (OpenStack-based managed Kubernetes)
-- **Cluster Server:** `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
-- **Region:** ORD (Chicago)
-- **Age:** ~81 days (based on node ages)
+## Cluster Details
 
-### Current Access Status
-- **Read-only proxy:** Available at `kubectl-proxy-ord-devimprint:8001` via Tailscale
-- **Write access:** NOT available - requires kubeconfig from Spot UI
-- **Existing kubeconfig:** None found at `~/.kube/ord-devimprint.kubeconfig`
-
-### Related Cluster Access
-The cluster is managed by `rs-manager` (also a Rackspace Spot cluster in IAD). However, the rs-manager kubeconfig (`~/.kube/rs-manager.kubeconfig`) is also missing and would need to be regenerated from Spot UI.
-
-### ArgoCD Integration
-The cluster is registered with ArgoCD via ExternalSecret `cluster-ord-devimprint` on rs-manager, which stores cluster credentials in OpenBao at path `secret/rs-manager/ord-devimprint/cluster`. However, this ExternalSecret requires an initial kubeconfig to set up the serviceaccount and token (see `/home/coding/declarative-config/k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml` lines 4-16).
+**ord-devimprint is a Rackspace Spot cluster:**
+- Server URL: `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
+- Exposed via Tailscale operator (hostname: `kubectl-proxy-ord-devimprint`)
+- Similar to: `rs-manager`, `iad-options`, `iad-ci`
 
 ## Required Action
 
-To obtain write access to ord-devimprint, you need to:
+To obtain write access to ord-devimprint:
 
-1. **Access Rackspace Spot UI**
-   - Navigate to the Spot console (URL needed - likely spot.rackspace.com or similar)
-   - Login with appropriate Rackspace credentials
+1. **Access Rackspace Spot UI** - Login to the Spot console at https://spot.rackspace.com
+2. **Navigate to the ord-devimprint cloudspace** - Find the cluster with ID `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330`
+3. **Download kubeconfig** - Use the Spot UI to download a kubeconfig with cloudspace-admin OIDC token
+4. **Store securely** - Save to `~/.kube/ord-devimprint.kubeconfig`
+5. **Verify access** - Run `kubectl get secrets -n devimprint` to confirm write access
 
-2. **Download kubeconfig for ord-devimprint cluster**
-   - Find the cluster `ord-devimprint` (server: `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`)
-   - Download the kubeconfig file
+## Pattern Reference
 
-3. **Store and verify the kubeconfig**
-   ```bash
-   # Store at standard location
-   mv ~/Downloads/kubeconfig-ord-devimprint ~/.kube/ord-devimprint.kubeconfig
-   chmod 600 ~/.kube/ord-devimprint.kubeconfig
-
-   # Verify access
-   kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint
-   ```
-
-4. **(Optional but recommended) Create long-lived serviceaccount for automation**
-   Once you have write access, consider setting up a dedicated serviceaccount with limited scope for automation purposes, similar to what's documented in the ExternalSecret.
-
-## Why This Requires Manual Action
-- Rackspace Spot kubeconfigs require authentication through their web UI
-- The UI likely uses OIDC or session-based authentication that cannot be automated
-- This is analogous to the `iad-options` cluster, which requires regenerating from Spot UI every ~3 days due to expiring OIDC tokens
+This follows the same pattern as `iad-options` (another Spot cluster):
+- Kubeconfig path: `~/.kube/iad-options.kubeconfig`
+- Token type: cloudspace-admin OIDC token
+- Expiration: ~3 days (requires regeneration from Spot UI)
 
 ## Next Steps
-Once the kubeconfig is obtained and verified, this bead can be closed and the next child bead (retrieving armor-writer secret) can proceed.
 
-## Blocker Status
-This is currently blocking downstream work because we cannot retrieve secrets from the devimprint namespace without write access.
+Once kubeconfig is obtained:
+1. Verify secret access: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint`
+2. Retrieve armor-writer secret for ARMOR operations
+3. Proceed with dependent tasks that require cluster write access
+
+## Notes
+
+- The cluster name suggests it may be in us-west-002 (based on B2 bucket references in deployment configs)
+- ExternalSecrets for this cluster reference OpenBao paths under `rs-manager/ord-devimprint/*`
