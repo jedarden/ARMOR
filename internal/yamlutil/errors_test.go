@@ -570,40 +570,19 @@ func TestTypeMismatchErrorFormatting(t *testing.T) {
 	}{
 		{
 			name: "type mismatch with line and field path",
-			err: &TypeMismatchError{
-				FilePath:     "config.yaml",
-				FieldPath:    "server.port",
-				ExpectedType: "integer",
-				ActualType:   "string",
-				Value:        "abc",
-				Line:         15,
-			},
+			err: NewTypeMismatchError("config.yaml", "server.port", "integer", "string", "abc", 15, ErrCodeTypeMismatch),
 			wantMessage: "type mismatch in config.yaml at line 15, field server.port: expected integer, got string",
 			wantContext: "field: server.port, expected type: integer, actual type: string, value: abc",
 		},
 		{
 			name: "type mismatch without line number",
-			err: &TypeMismatchError{
-				FilePath:     "data.yaml",
-				FieldPath:    "database.timeout",
-				ExpectedType: "integer",
-				ActualType:   "boolean",
-				Value:        "true",
-				Line:         0,
-			},
+			err: NewTypeMismatchError("data.yaml", "database.timeout", "integer", "boolean", "true", 0, ErrCodeTypeMismatch),
 			wantMessage: "type mismatch in data.yaml, field database.timeout: expected integer, got boolean",
 			wantContext: "field: database.timeout, expected type: integer, actual type: boolean, value: true",
 		},
 		{
 			name: "type mismatch with nested field path",
-			err: &TypeMismatchError{
-				FilePath:     "app.yaml",
-				FieldPath:    "servers.api.responses[0].statusCode",
-				ExpectedType: "integer",
-				ActualType:   "string",
-				Value:        "\"200\"",
-				Line:         42,
-			},
+			err: NewTypeMismatchError("app.yaml", "servers.api.responses[0].statusCode", "integer", "string", "\"200\"", 42, ErrCodeTypeMismatch),
 			wantMessage: "type mismatch in app.yaml at line 42, field servers.api.responses[0].statusCode: expected integer, got string",
 			wantContext: "field: servers.api.responses[0].statusCode, expected type: integer, actual type: string, value: \"200\"",
 		},
