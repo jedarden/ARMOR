@@ -93,6 +93,90 @@ impl fmt::Display for IndentationErrorType {
     }
 }
 
+/// Classification of delimiter error types
+///
+/// This enum provides structured categorization of different delimiter
+/// error types that can occur in YAML files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelimiterErrorType {
+    /// Missing colon after a key
+    MissingColon,
+    /// Unmatched opening bracket '['
+    UnmatchedOpeningBracket,
+    /// Unmatched closing bracket ']'
+    UnmatchedClosingBracket,
+    /// Unclosed bracket '['
+    UnclosedBracket,
+    /// Unmatched opening brace '{'
+    UnmatchedOpeningBrace,
+    /// Unmatched closing brace '}'
+    UnmatchedClosingBrace,
+    /// Unclosed brace '{'
+    UnclosedBrace,
+    /// Mismatched quotes (single inside double or vice versa)
+    MismatchedQuotes,
+    /// Unclosed single quote
+    UnclosedSingleQuote,
+    /// Unclosed double quote
+    UnclosedDoubleQuote,
+}
+
+impl DelimiterErrorType {
+    /// Get a human-readable description of this error type
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::MissingColon => "missing colon after key",
+            Self::UnmatchedOpeningBracket => "unmatched opening bracket '['",
+            Self::UnmatchedClosingBracket => "unmatched closing bracket ']'",
+            Self::UnclosedBracket => "unclosed bracket '['",
+            Self::UnmatchedOpeningBrace => "unmatched opening brace '{'",
+            Self::UnmatchedClosingBrace => "unmatched closing brace '}'",
+            Self::UnclosedBrace => "unclosed brace '{'",
+            Self::MismatchedQuotes => "mismatched quotes",
+            Self::UnclosedSingleQuote => "unclosed single quote",
+            Self::UnclosedDoubleQuote => "unclosed double quote",
+        }
+    }
+
+    /// Get a short code for this error type
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::MissingColon => "D001",
+            Self::UnmatchedOpeningBracket => "D002",
+            Self::UnmatchedClosingBracket => "D003",
+            Self::UnclosedBracket => "D004",
+            Self::UnmatchedOpeningBrace => "D005",
+            Self::UnmatchedClosingBrace => "D006",
+            Self::UnclosedBrace => "D007",
+            Self::MismatchedQuotes => "D008",
+            Self::UnclosedSingleQuote => "D009",
+            Self::UnclosedDoubleQuote => "D010",
+        }
+    }
+
+    /// Get all delimiter error types
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::MissingColon,
+            Self::UnmatchedOpeningBracket,
+            Self::UnmatchedClosingBracket,
+            Self::UnclosedBracket,
+            Self::UnmatchedOpeningBrace,
+            Self::UnmatchedClosingBrace,
+            Self::UnclosedBrace,
+            Self::MismatchedQuotes,
+            Self::UnclosedSingleQuote,
+            Self::UnclosedDoubleQuote,
+        ]
+    }
+}
+
+impl fmt::Display for DelimiterErrorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.code(), self.description())
+    }
+}
+
 /// Main syntax detector for YAML content
 ///
 /// This struct orchestrates all syntax detection checks and provides
@@ -184,6 +268,8 @@ struct StructureState {
     current_keys: HashSet<String>,
     /// All keys seen in the document (for duplicate detection)
     all_keys: HashMap<String, Vec<usize>>,
+    /// Previous line's indentation level
+    prev_indent: usize,
 }
 
 /// Current structure context
@@ -379,10 +465,11 @@ impl SyntaxDetector {
            !trimmed.is_empty() &&
            self.looks_like_key(trimmed) {
 
+            let error_type = DelimiterErrorType::MissingColon;
             errors.push(ValidationError::new(
                 format!("line_{}", line_num),
-                "missing colon after key"
-            ).with_line(line_num));
+                format!("{}: {}", error_type.code(), error_type.description())
+            ).with_line(line_num).with_delimiter_error_type(error_type));
         }
 
         // Track bracket/brace balance
@@ -395,10 +482,11 @@ impl SyntaxDetector {
                     if let Some(('[', _)) = self.delimiter_state.bracket_stack.last() {
                         self.delimiter_state.bracket_stack.pop();
                     } else {
+                        let error_type = DelimiterErrorType::UnmatchedClosingBracket;
                         errors.push(ValidationError::new(
                             format!("line_{}", line_num),
-                            "unmatched closing bracket ']'"
-                        ).with_line(line_num));
+                            format!("{}: {}", error_type.code(), error_type.description())
+                        ).with_line(line_num).with_delimiter_error_type(error_type));
                     }
                 }
                 '{' => {
@@ -408,10 +496,11 @@ impl SyntaxDetector {
                     if let Some(('{', _)) = self.delimiter_state.bracket_stack.last() {
                         self.delimiter_state.bracket_stack.pop();
                     } else {
+                        let error_type = DelimiterErrorType::UnmatchedClosingBrace;
                         errors.push(ValidationError::new(
                             format!("line_{}", line_num),
-                            "unmatched closing brace '}'"
-                        ).with_line(line_num));
+                            format!("{}: {}", error_type.code(), error_type.description())
+                        ).with_line(line_num).with_delimiter_error_type(error_type));
                     }
                 }
                 '\'' => {
@@ -420,10 +509,11 @@ impl SyntaxDetector {
                         Some(QuoteType::Single) => self.delimiter_state.quote_state = None,
                         Some(QuoteType::Double) => {
                             // Mismatched quote
+                            let error_type = DelimiterErrorType::MismatchedQuotes;
                             errors.push(ValidationError::new(
                                 format!("line_{}", line_num),
-                                "mismatched quotes (single inside double)"
-                            ).with_line(line_num));
+                                format!("{}: {} (single inside double)", error_type.code(), error_type.description())
+                            ).with_line(line_num).with_delimiter_error_type(error_type));
                             self.delimiter_state.quote_errors.push(line_num);
                         }
                     }
@@ -434,10 +524,11 @@ impl SyntaxDetector {
                         Some(QuoteType::Double) => self.delimiter_state.quote_state = None,
                         Some(QuoteType::Single) => {
                             // Mismatched quote
+                            let error_type = DelimiterErrorType::MismatchedQuotes;
                             errors.push(ValidationError::new(
                                 format!("line_{}", line_num),
-                                "mismatched quotes (double inside single)"
-                            ).with_line(line_num));
+                                format!("{}: {} (double inside single)", error_type.code(), error_type.description())
+                            ).with_line(line_num).with_delimiter_error_type(error_type));
                             self.delimiter_state.quote_errors.push(line_num);
                         }
                     }
@@ -572,26 +663,29 @@ impl SyntaxDetector {
     fn finalize_delimiter_checks(&mut self, errors: &mut Vec<ValidationError>) {
         // Check for unclosed brackets
         for (bracket, line_num) in &self.delimiter_state.bracket_stack {
+            let error_type = match *bracket {
+                '[' => DelimiterErrorType::UnclosedBracket,
+                '{' => DelimiterErrorType::UnclosedBrace,
+                _ => continue, // Skip unknown bracket types
+            };
             errors.push(ValidationError::new(
                 "delimiter_balance".to_string(),
-                format!("unclosed '{}'", bracket)
-            ).with_line(*line_num));
+                format!("{}: {}", error_type.code(), error_type.description())
+            ).with_line(*line_num).with_delimiter_error_type(error_type));
         }
 
         // Check for unclosed quotes
         if self.delimiter_state.quote_state.is_some() {
-            let quote_type = match self.delimiter_state.quote_state {
-                Some(QuoteType::Single) => "'",
-                Some(QuoteType::Double) => "\"",
-                None => "",
+            let (error_type, quote_char) = match self.delimiter_state.quote_state {
+                Some(QuoteType::Single) => (DelimiterErrorType::UnclosedSingleQuote, "'"),
+                Some(QuoteType::Double) => (DelimiterErrorType::UnclosedDoubleQuote, "\""),
+                None => unreachable!(),
             };
 
-            if !quote_type.is_empty() {
-                errors.push(ValidationError::new(
-                    "quote_balance".to_string(),
-                    format!("unclosed quote '{}'", quote_type)
-                ).with_line(0)); // Line 0 since we don't track where it opened
-            }
+            errors.push(ValidationError::new(
+                "quote_balance".to_string(),
+                format!("{}: {}", error_type.code(), error_type.description())
+            ).with_line(0).with_delimiter_error_type(error_type)); // Line 0 since we don't track where it opened
         }
     }
 

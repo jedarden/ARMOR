@@ -560,6 +560,8 @@ pub struct ValidationError {
     pub line: Option<usize>,
     /// Indentation error type (if this is an indentation error)
     pub indentation_error_type: Option<crate::parsers::yaml::syntax_detector::IndentationErrorType>,
+    /// Delimiter error type (if this is a delimiter error)
+    pub delimiter_error_type: Option<crate::parsers::yaml::syntax_detector::DelimiterErrorType>,
 }
 
 impl ValidationError {
@@ -570,6 +572,7 @@ impl ValidationError {
             message: message.into(),
             line: None,
             indentation_error_type: None,
+            delimiter_error_type: None,
         }
     }
 
@@ -582,6 +585,12 @@ impl ValidationError {
     /// Set the indentation error type for this error
     pub fn with_indentation_error_type(mut self, error_type: crate::parsers::yaml::syntax_detector::IndentationErrorType) -> Self {
         self.indentation_error_type = Some(error_type);
+        self
+    }
+
+    /// Set the delimiter error type for this error
+    pub fn with_delimiter_error_type(mut self, error_type: crate::parsers::yaml::syntax_detector::DelimiterErrorType) -> Self {
+        self.delimiter_error_type = Some(error_type);
         self
     }
 }
