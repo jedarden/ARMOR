@@ -1,39 +1,50 @@
-# Task bf-5lx60: RBAC Blocker
+# BF-5LX60: Secret Extraction Blocked by RBAC
 
-## Task Description
-Extract base64-encoded LITESTREAM_ACCESS_KEY_ID from armor-writer secret in ord-devimprint cluster.
+## Task
+Extract base64-encoded LITESTREAM_ACCESS_KEY_ID from the armor-writer secret in ord-devimprint cluster.
 
-## Execution Attempt
-Command attempted:
+## Command Attempted
 ```bash
 kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
   get secret armor-writer -n devimprint \
   -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
 ```
 
-## Blocker
-**RBAC Forbidden Error**: The `devpod-observer` service account does not have permission to read `secrets` resources in the `devimprint` namespace.
+## Result
+❌ **RBAC restriction:** The `devpod-observer` ServiceAccount cannot read secrets in the `devimprint` namespace
 
+Error:
 ```
 Error from server (Forbidden): secrets "armor-writer" is forbidden: 
 User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" 
 in API group "" in the namespace "devimprint"
 ```
 
-## Cluster Access Details
-- **Cluster**: ord-devimprint
-- **Access method**: kubectl-proxy over Tailscale (read-only)
-- **ServiceAccount**: devpod-observer
-- **Namespace**: devimprint
-- **Direct kubeconfig**: Not available (checked ~/.kube/*.kubeconfig)
+## Root Cause
+The ord-devimprint cluster is only exposed via a read-only kubectl-proxy (`devpod-observer` serviceaccount) that explicitly denies secret access. This is consistent with security best practices for observer proxies.
 
-## Resolution Required
-This task requires one of the following:
-1. RBAC update to grant secrets read access to devpod-observer SA in devimprint namespace
-2. Direct kubeconfig with appropriate permissions (similar to iad-ci pattern)
-3. Alternative access method to retrieve the secret value
+## Prerequisite Status
+The bead prerequisite stated "Previous child bead complete (kubeconfig works, secret exists)" — however, the verification bead (bf-69dku) was **unable to complete** due to this same RBAC blocker. The secret's existence could not be verified.
 
 ## Acceptance Criteria Status
-❌ Successfully retrieved the base64-encoded value - BLOCKED BY RBAC
-❌ Value is not empty - CANNOT VERIFY
-❌ kubectl command completed without error - RBAC FORBIDDEN
+- ❌ Successfully retrieved the base64-encoded value (RBAC blocked)
+- ❌ Value is not empty (cannot retrieve)
+- ❌ kubectl command completed without error (exit code 1)
+
+## Resolution Required
+This bead cannot complete without one of the following:
+1. A direct kubeconfig with cluster-admin or secret-read permissions for ord-devimprint
+2. RBAC modification to grant the devpod-observer SA secret read access in the devimprint namespace
+3. Alternative access method to ord-devimprint cluster
+
+## Related Beads
+- **bf-69dku:** Verification bead — blocked by same RBAC issue
+- **bf-4rqy0:** Another ord-devimprint operation — likely blocked by same RBAC issue
+
+## Recommendation
+Document this as a known RBAC blocker for ord-devimprint cluster operations. Future beads requiring secret access on this cluster should account for this limitation.
+
+---
+*Date: 2026-07-11*
+*Cluster: ord-devimprint*
+*Proxy: kubectl-proxy-ord-devimprint:8001 (read-only, no secret access)*
