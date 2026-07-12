@@ -28,8 +28,20 @@ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-write
 3. Use ExternalSecret/EternalSecret pattern to sync secrets to a cluster with appropriate access
 4. Obtain the secret value through an alternative authorized channel
 
+## Latest Verification (2026-07-12)
+
+Attempted retrieval via kubectl-proxy:
+```bash
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_SECRET_ACCESS_KEY}'
+```
+
+**Result:** Exit code 1
+```
+Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
+```
+
 ## Status
-**BLOCKED** - Cannot proceed without elevated permissions or alternative secret access method.
+**BLOCKED** - Cannot proceed without elevated permissions or alternative secret access method. The RBAC blockade persists; secret access is explicitly denied for the devpod-observer ServiceAccount on ord-devimprint cluster.
 
 ## Related Beads
 - bf-520v: Similar RBAC blocker documented
