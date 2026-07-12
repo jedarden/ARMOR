@@ -2173,13 +2173,16 @@ fn test_negative_int64_to_uint64_conversions() {
     /// | -32768 | int16::MIN (common boundary) |
     /// | -2147483648 | int32::MIN (common boundary) |
     /// | -9223372036854775808 | int64::MIN (minimum int64) |
-    /// | -9223372036854775809 | int64::MIN - 1 (beyond i64 range) |
+    /// | -9223372036854775809 | int64::MIN - 1 |
     /// | -18446744073709551615 | Large negative value |
     let test_cases = vec![
         (r#"value: -1"#, "-1", "basic negative"),
         (r#"value: -128"#, "-128", "int8 min"),
+        (r#"value: -256"#, "-256", "int8 min - 128"),
         (r#"value: -32768"#, "-32768", "int16 min"),
+        (r#"value: -65536"#, "-65536", "int16 min - 32768"),
         (r#"value: -2147483648"#, "-2147483648", "int32 min"),
+        (r#"value: -4294967296"#, "-4294967296", "large negative -4294967296"),
         (
             r#"value: -9223372036854775808"#,
             "-9223372036854775808",
