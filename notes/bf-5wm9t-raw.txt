@@ -1,0 +1,127 @@
+internal/yamlutil/schema_interfaces.go-23-// Error Handling (bf-68hqo integration):
+internal/yamlutil/schema_interfaces.go:24:// The Validate() method returns YAMLError types from the error hierarchy:
+internal/yamlutil/schema_interfaces.go-25-// - SchemaLoadError (ErrCodeSchemaLoadFailed): when schema cannot be loaded
+--
+internal/yamlutil/schema_interfaces.go-33-	// Returns a YAMLError if the schema has invalid configuration.
+internal/yamlutil/schema_interfaces.go:34:	Validate() YAMLError
+internal/yamlutil/schema_interfaces.go-35-
+--
+internal/yamlutil/schema_interfaces.go-70-	// Returns a SchemaValidationResult with detailed error information.
+internal/yamlutil/schema_interfaces.go:71:	Validate(data map[string]interface{}) SchemaValidationResult
+internal/yamlutil/schema_interfaces.go-72-
+--
+internal/yamlutil/schema_interfaces.go-88-	// Returns nil if the constraint is satisfied, or a ConstraintError if violated.
+internal/yamlutil/schema_interfaces.go:89:	Validate(value interface{}) *ConstraintError
+internal/yamlutil/schema_interfaces.go-90-
+--
+internal/yamlutil/schema_interfaces.go-342-
+internal/yamlutil/schema_interfaces.go:343:func (sc *StringConstraintImpl) Validate(value interface{}) *ConstraintError {
+internal/yamlutil/schema_interfaces.go-344-	str, ok := value.(string)
+--
+internal/yamlutil/schema_interfaces.go-457-
+internal/yamlutil/schema_interfaces.go:458:func (nc *NumberConstraintImpl) Validate(value interface{}) *ConstraintError {
+internal/yamlutil/schema_interfaces.go-459-	num, err := toFloat64(value)
+--
+internal/yamlutil/schema_interfaces.go-559-
+internal/yamlutil/schema_interfaces.go:560:func (ac *ArrayConstraintImpl) Validate(value interface{}) *ConstraintError {
+internal/yamlutil/schema_interfaces.go-561-	arr, ok := value.([]interface{})
+--
+internal/yamlutil/schema_interfaces.go-646-
+internal/yamlutil/schema_interfaces.go:647:func (oc *ObjectConstraintImpl) Validate(value interface{}) *ConstraintError {
+internal/yamlutil/schema_interfaces.go-648-	obj, ok := value.(map[string]interface{})
+--
+internal/yamlutil/schema_interfaces.go-745-
+internal/yamlutil/schema_interfaces.go:746:func (bc *BooleanConstraintImpl) Validate(value interface{}) *ConstraintError {
+internal/yamlutil/schema_interfaces.go-747-	b, ok := value.(bool)
+--
+internal/yamlutil/schema_interfaces.go-794-
+internal/yamlutil/schema_interfaces.go:795:func (tc *TypeConstraintImpl) Validate(value interface{}) *ConstraintError {
+internal/yamlutil/schema_interfaces.go-796-	if value == nil {
+--
+internal/yamlutil/schema.go-30-//	type MySchema struct { ... }
+internal/yamlutil/schema.go:31://	func (s *MySchema) Validate(value interface{}) error { ... }
+internal/yamlutil/schema.go-32-//
+internal/yamlutil/schema.go-33-//	schema := NewMySchema()
+internal/yamlutil/schema.go:34://	err := schema.Validate(data)
+internal/yamlutil/schema.go-35-//	if err != nil {
+--
+internal/yamlutil/schema.go-50-	// The error type may provide additional details about the validation failure.
+internal/yamlutil/schema.go:51:	Validate(value interface{}) error
+internal/yamlutil/schema.go-52-}
+--
+internal/yamlutil/schema.go-156-// - Nested structure validation
+internal/yamlutil/schema.go:157:func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult {
+internal/yamlutil/schema.go-158-	result := SchemaValidationResult{
+--
+internal/yamlutil/schema.go-179-	// Validate data against schema
+internal/yamlutil/schema.go:180:	if err := sv.schema.Validate(data); err != nil {
+internal/yamlutil/schema.go-181-		result.Valid = false
+--
+internal/yamlutil/schema.go-252-	// Validate against schema
+internal/yamlutil/schema.go:253:	return sv.Validate(data)
+internal/yamlutil/schema.go-254-}
+--
+internal/yamlutil/schema.go-769-// map[string]interface{} for YAML/JSON data validation.
+internal/yamlutil/schema.go:770:func (s *SchemaDefinition) Validate(value interface{}) error {
+internal/yamlutil/schema.go-771-	if value == nil {
+--
+internal/yamlutil/schema_validation_test.go-15-// - Schema implements SchemaDefinition interface
+internal/yamlutil/schema_validation_test.go:16:// - Validate() method returns YAMLError-compatible types
+internal/yamlutil/schema_validation_test.go-17-// - Validation properly checks schema definition validity
+--
+internal/yamlutil/schema_validation_test.go-93-		t.Run(tt.name, func(t *testing.T) {
+internal/yamlutil/schema_validation_test.go:94:			err := tt.schema.Validate()
+internal/yamlutil/schema_validation_test.go-95-
+--
+internal/yamlutil/schema_validation_test.go-97-				if err == nil {
+internal/yamlutil/schema_validation_test.go:98:					t.Errorf("%s: Validate() expected error but got nil", tt.name)
+internal/yamlutil/schema_validation_test.go-99-					return
+--
+internal/yamlutil/schema_validation_test.go-104-					if !isYAMLError(err) {
+internal/yamlutil/schema_validation_test.go:105:						t.Errorf("%s: Validate() should return YAMLError-compatible error, got %T", tt.name, err)
+internal/yamlutil/schema_validation_test.go-106-					}
+--
+internal/yamlutil/schema_validation_test.go-112-				if err != nil {
+internal/yamlutil/schema_validation_test.go:113:					t.Errorf("%s: Validate() unexpected error: %v", tt.name, err)
+internal/yamlutil/schema_validation_test.go-114-				}
+--
+internal/yamlutil/schema_validation_test.go-146-	// Validate method should work
+internal/yamlutil/schema_validation_test.go:147:	err := schema.Validate()
+internal/yamlutil/schema_validation_test.go-148-	if err != nil {
+internal/yamlutil/schema_validation_test.go:149:		t.Errorf("Schema.Validate() unexpected error: %v", err)
+internal/yamlutil/schema_validation_test.go-150-	}
+--
+internal/yamlutil/schema_validation_test.go-223-			validator := NewSchemaValidator(schema)
+internal/yamlutil/schema_validation_test.go:224:			result := validator.Validate(tt.data)
+internal/yamlutil/schema_validation_test.go-225-
+--
+internal/yamlutil/schema_validation_test.go-227-				if result.Valid {
+internal/yamlutil/schema_validation_test.go:228:					t.Errorf("%s: Validate() expected errors but got valid result", tt.name)
+internal/yamlutil/schema_validation_test.go-229-				}
+internal/yamlutil/schema_validation_test.go-230-				if !result.HasErrors() {
+internal/yamlutil/schema_validation_test.go:231:					t.Errorf("%s: Validate() should have errors", tt.name)
+internal/yamlutil/schema_validation_test.go-232-				}
+--
+internal/yamlutil/schema_validation_test.go-234-				if !result.Valid {
+internal/yamlutil/schema_validation_test.go:235:					t.Errorf("%s: Validate() unexpected errors: %v", tt.name, result.Errors)
+internal/yamlutil/schema_validation_test.go-236-				}
+--
+internal/yamlutil/schema_validation_test.go-309-			validator := NewSchemaValidator(schema)
+internal/yamlutil/schema_validation_test.go:310:			result := validator.Validate(tt.data)
+internal/yamlutil/schema_validation_test.go-311-
+--
+internal/yamlutil/schema_validation_test.go-313-				if result.Valid {
+internal/yamlutil/schema_validation_test.go:314:					t.Errorf("%s: Validate() expected errors but got valid result", tt.name)
+internal/yamlutil/schema_validation_test.go-315-				}
+--
+internal/yamlutil/schema_validation_test.go-317-				if !result.Valid {
+internal/yamlutil/schema_validation_test.go:318:					t.Errorf("%s: Validate() unexpected errors: %v", tt.name, result.Errors)
+internal/yamlutil/schema_validation_test.go-319-				}
+--
+internal/yamlutil/parse_error_examples_test.go-473-		fmt.Printf("\n=== Testing %s ===\n", path)
+internal/yamlutil/parse_error_examples_test.go:474:		result := parseAndValidate(path)
+internal/yamlutil/parse_error_examples_test.go-475-
+--
+internal/yamlutil/integration_test.go-1268-// TestIntegration_ReadParseValidate tests complete workflow: read → parse → validate
+internal/yamlutil/integration_test.go:1269:func TestIntegration_ReadParseValidate(t *testing.T) {
+internal/yamlutil/integration_test.go-1270-	testFile := "testdata/valid_nested.yaml"
