@@ -1,27 +1,22 @@
-# Validate() Callers Catalog
+# Direct Validate() Callers Catalog
 
-**Bead:** bf-1x2wu  
-**Created:** 2026-07-12  
-**Purpose:** Catalog all direct `validate()` method callers for YAMLError handling updates
+## Overview
+This document catalogs all direct `.Validate()` method callers in the ARMOR codebase that may need YAMLError handling updates.
 
----
+## Search Methodology
+- Searched for `.Validate()` and `.validate()` patterns
+- Excluded test files and test code
+- Focused on production code paths
+- Context: -3 lines before and after each match
 
-## Summary
+## Findings Summary
+**Total Direct Callers: 3**
 
-Total production (non-test) callers found: **3**
-
-- **2 callers** return `Result<(), String>` - Need YAMLError handling updates
-- **1 caller** returns `ValidationResult` - Different pattern, may not need updates
-
----
-
-## Production Callers
-
-### 1. ParserConfigBuilder::build()
-
-**Location:** `src/parsers/config.rs:662`
-
-**Context:**
+### 1. ParserConfigBuilder::build() - Line 662
+**File:** `src/parsers/config.rs`  
+**Line:** 662  
+**Function:** `ParserConfigBuilder::build()`  
+**Code:**
 ```rust
 pub fn build(self) -> Result<ParserConfig, String> {
     self.config.validate()?;
@@ -29,31 +24,33 @@ pub fn build(self) -> Result<ParserConfig, String> {
 }
 ```
 
-**Method Called:**
+**Context:**
+- Located in builder pattern implementation
+- Calls `ParserConfig::validate()` method
+- Returns `Result<ParserConfig, String>`
+- Current error handling: Uses `?` operator, propagates `String` errors
+- Error type: Returns `String` error messages
+
+**Current Error Handling Pattern:**
 ```rust
-impl ParserConfig {
-    pub fn validate(&self) -> Result<(), String> {
-        // Validates configuration consistency
-        // Returns Err(String) on validation failure
-    }
-}
+self.config.validate()?;  // Returns Result<(), String>
 ```
 
-**Current Error Handling:**
-- Uses `?` operator to propagate `String` error
-- Error type: `Result<(), String>`
+**YAMLError Handling Consideration:**
+This call validates configuration consistency (mutually exclusive options). The validation checks for:
+- `warnings_as_errors` requires `emit_warnings` to be true
+- Strict mode should not allow duplicates
+- `strict_types` should align with strict mode
 
-**YAMLError Update Required:** **YES**
-- Should convert any YAML-specific validation errors to `YAMLError`
-- Need to determine if validation can produce YAML parsing errors
+Since this is configuration validation (not YAML parsing), it may not need YAMLError handling, but should be reviewed for consistency with the overall error handling strategy.
 
 ---
 
-### 2. ValidatorConfigBuilder::build()
-
-**Location:** `src/parsers/config.rs:1007`
-
-**Context:**
+### 2. ValidatorConfigBuilder::build() - Line 1007
+**File:** `src/parsers/config.rs`  
+**Line:** 1007  
+**Function:** `ValidatorConfigBuilder::build()`  
+**Code:**
 ```rust
 pub fn build(self) -> Result<ValidatorConfig, String> {
     self.config.validate()?;
@@ -61,109 +58,157 @@ pub fn build(self) -> Result<ValidatorConfig, String> {
 }
 ```
 
-**Method Called:**
+**Context:**
+- Located in builder pattern implementation
+- Calls `ValidatorConfig::validate()` method
+- Returns `Result<ValidatorConfig, String>`
+- Current error handling: Uses `?` operator, propagates `String` errors
+- Error type: Returns `String` error messages
+
+**Current Error Handling Pattern:**
 ```rust
-impl ValidatorConfig {
-    pub fn validate(&self) -> Result<(), String> {
-        // Validates mutually exclusive options
-        // Returns Err(String) on validation failure
-    }
-}
+self.config.validate()?;  // Returns Result<(), String>
 ```
 
-**Current Error Handling:**
-- Uses `?` operator to propagate `String` error
-- Error type: `Result<(), String>`
+**YAMLError Handling Consideration:**
+Similar to ParserConfig, this validates configuration consistency. The validation checks for:
+- Strict mode requires `require_all_fields` to be true
+- Strict mode requires `disallow_unknown_fields` to be true
+- `warnings_as_errors` requires `emit_warnings` to be true
 
-**YAMLError Update Required:** **YES**
-- Should convert any YAML-specific validation errors to `YAMLError`
-- Need to determine if validation can produce YAML parsing errors
+This is configuration validation (not YAML parsing), so YAMLError handling may not be applicable, but should be reviewed for consistency.
 
 ---
 
-### 3. BasicParser::validate_str()
-
-**Location:** `src/parsers/yaml/parser.rs:121`
-
-**Context:**
+### 3. BasicParser::validate_str() - Line 121
+**File:** `src/parsers/yaml/parser.rs`  
+**Line:** 121  
+**Function:** `BasicParser::validate_str()`  
+**Code:**
 ```rust
 fn validate_str(&self, content: &str) -> ValidationResult {
+    // Create syntax validator based on parser mode
     let validator = if self.config.is_strict() {
         SyntaxValidator::strict()
     } else {
         SyntaxValidator::lenient()
     };
 
+    // Run syntax validation
     let mut result = validator.validate(content);
-    
-    // Merge with SyntaxDetector results
+
+    // If no errors from basic validation, run enhanced detection
     if result.is_valid() {
         let mut detector = SyntaxDetector::new();
         let detector_result = detector.detect_to_validation_result(content);
-        // ... merge logic
+
+        // Merge errors from detector
+        if !detector_result.is_valid() {
+            result.valid = false;
+            result.errors.extend(detector_result.errors);
+        }
     }
-    
+
     result
 }
 ```
 
-**Method Called:**
+**Context:**
+- Core YAML validation method in the Parser trait implementation
+- Calls `SyntaxValidator::validate()` method on line 121
+- Returns `ValidationResult` (custom type with `valid`, `errors`, `warnings` fields)
+- Current error handling: Direct assignment, no `?` operator
+- Error type: Returns `ValidationResult` struct
+
+**Current Error Handling Pattern:**
 ```rust
-impl SyntaxValidator {
-    pub fn validate(&self, content: &str) -> ValidationResult {
-        // Returns ValidationResult with errors/warnings
+let mut result = validator.validate(content);
+// Returns ValidationResult, not a Result type
+```
+
+**YAMLError Handling Consideration:**
+This is the **most critical caller** for YAMLError handling. This method:
+- Is the main entry point for YAML syntax validation
+- Currently returns `ValidationResult` (not a `Result` type)
+- Could be updated to return `Result<(), YAMLError>` or similar
+- Would benefit from structured YAMLError types for better error reporting
+
+---
+
+## Validation Method Implementations
+
+For context, here are the validate() method implementations being called:
+
+### ParserConfig::validate() - Line 537
+```rust
+pub fn validate(&self) -> Result<(), String> {
+    // Check for mutually exclusive or inconsistent options
+    if self.warnings_as_errors && !self.emit_warnings {
+        return Err("warnings_as_errors requires emit_warnings to be true".to_string());
     }
+
+    // Strict mode should not allow duplicates
+    if self.mode.is_strict() && self.allow_duplicates {
+        return Err("Strict mode with allow_duplicates=true is inconsistent".to_string());
+    }
+
+    // Strict types should align with strict mode
+    if self.strict_types && self.mode.is_lenient() {
+        return Err("strict_types=true with lenient mode is inconsistent".to_string());
+    }
+
+    Ok(())
 }
 ```
 
-**Current Error Handling:**
-- No error propagation (returns `ValidationResult` directly)
-- Error type: `ValidationResult` (custom struct, not `Result`)
+### ValidatorConfig::validate() - Line 908
+```rust
+pub fn validate(&self) -> Result<(), String> {
+    // Check for mutually exclusive options
+    if self.mode.is_strict() && !self.require_all_fields {
+        return Err("Strict mode requires require_all_fields to be true".to_string());
+    }
 
-**YAMLError Update Required:** **MAYBE**
-- Different pattern: returns `ValidationResult` instead of `Result`
-- Need to check if `ValidationResult` should incorporate `YAMLError`
-- This is YAML syntax validation, more likely to need YAMLError integration
+    if self.mode.is_strict() && !self.disallow_unknown_fields {
+        return Err("Strict mode requires disallow_unknown_fields to be true".to_string());
+    }
 
----
+    if self.warnings_as_errors && !self.emit_warnings {
+        return Err("warnings_as_errors requires emit_warnings to be true".to_string());
+    }
 
-## Excluded Callers (Test Code)
+    Ok(())
+}
+```
 
-All other `validate()` calls are in:
-- `tests/schema_validation_test.rs` - Comprehensive test suite
-- `src/parsers/config.rs` test functions (lines 1202-1320)
-- `src/parsers/yaml/syntax_validator.rs` test functions
-- `src/parsers/yaml/syntax_detector_tests.rs`
-- Doc comment examples in `src/schema.rs`
-
-**Total test/excluded callers:** 100+ (all examples and unit tests)
-
----
-
-## Next Steps for YAMLError Integration
-
-### Priority 1: Investigate Validation Sources
-- Determine if `ParserConfig::validate()` and `ValidatorConfig::validate()` can produce YAML parsing errors
-- Check if validation logic involves YAML parsing internally
-
-### Priority 2: SyntaxValidator Integration
-- `BasicParser::validate_str()` is the most likely candidate for YAMLError
-- Consider converting `ValidationResult` to include `YAMLError` variants
-- Or create a parallel `validate_with_yaml_error()` method
-
-### Priority 3: Update Builder Methods
-- If YAMLError is needed, update `ParserConfigBuilder::build()` and `ValidatorConfigBuilder::build()` signatures
-- Change return types from `Result<T, String>` to `Result<T, YAMLError>` (or use a custom error enum)
+### SyntaxValidator::validate()
+This is called from parser.rs line 121. Implementation is in `src/parsers/yaml/syntax_validator.rs`.
 
 ---
 
-## Related Files
+## Prioritization for Updates
 
-- `src/parsers/config.rs` - Configuration validation (lines 537, 908)
-- `src/parsers/yaml/parser.rs` - Parser trait implementation (line 121)
-- `src/parsers/yaml/syntax_validator.rs` - SyntaxValidator::validate (line 65)
-- `src/parsers/traits.rs` - Parser trait definition
+### High Priority
+1. **BasicParser::validate_str()** (line 121) - Primary YAML validation entry point
+
+### Low Priority
+2. **ParserConfigBuilder::build()** (line 662) - Configuration validation only
+3. **ValidatorConfigBuilder::build()** (line 1007) - Configuration validation only
+
+**Rationale:** The configuration validation methods (low priority) validate struct consistency rather than YAML content, so they may not need YAMLError handling. The parser's `validate_str()` method (high priority) is the actual YAML validation entry point and would benefit most from structured YAMLError types.
 
 ---
 
-**Status:** Catalog complete, ready for systematic YAMLError integration
+## Next Steps
+
+1. Review YAMLError type definition to understand available error variants
+2. Determine if configuration validation should use YAMLError or keep String errors
+3. Update SyntaxValidator to return Result types with YAMLError
+4. Update BasicParser::validate_str() to handle YAMLError properly
+5. Add appropriate error conversion and propagation
+
+---
+
+**Generated:** 2026-07-12  
+**Bead ID:** bf-1x2wu  
+**Search Command:** `rg "\.validate\(" --type rust -g "!test*" -g "!*test*.rs" -C 3`
