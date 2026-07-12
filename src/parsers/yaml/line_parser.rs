@@ -761,6 +761,240 @@ pub fn calculate_indentation(line: &str) -> usize {
     IndentationInfo::from_line(line).total_level
 }
 
+/// Information about a detected mapping key
+///
+/// This struct provides detailed information about a mapping key detected
+/// in a YAML line, including the key identifier and metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MappingKeyInfo {
+    /// The key identifier (text before the colon, trimmed)
+    pub key: String,
+
+    /// The value part, if present on the same line
+    pub value: Option<String>,
+
+    /// Whether the key has a value on the same line
+    pub has_inline_value: bool,
+
+    /// Whether the line appears to be a parent key (no value on same line)
+    pub is_parent_key: bool,
+}
+
+impl MappingKeyInfo {
+    /// Create a new mapping key info
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key identifier
+    /// * `value` - Optional value from the same line
+    ///
+    /// # Returns
+    /// A new `MappingKeyInfo` instance
+    pub fn new(key: String, value: Option<String>) -> Self {
+        let has_inline_value = value.is_some();
+        let is_parent_key = !has_inline_value;
+
+        Self {
+            key,
+            value,
+            has_inline_value,
+            is_parent_key,
+        }
+    }
+
+    /// Check if this is a valid key (non-empty and follows YAML key rules)
+    pub fn is_valid(&self) -> bool {
+        !self.key.is_empty() && self.key.chars().next().map_or(false, |c| {
+            c.is_alphanumeric() || c == '_' || c == '.' || c == '-'
+        })
+    }
+}
+
+impl fmt::Display for MappingKeyInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(v) = &self.value {
+            write!(f, "{}: {}", self.key, v)
+        } else {
+            write!(f, "{}:", self.key)
+        }
+    }
+}
+
+/// Detect if a line is a YAML mapping key and extract key information
+///
+/// This function analyzes a YAML line to determine if it contains a mapping key,
+/// and extracts the key identifier and optional value. It handles various edge cases:
+///
+/// - Lines with colons in values (URLs, timestamps, etc.)
+/// - Comment lines with colons (excluded from detection)
+/// - Nested mappings (proper indentation)
+/// - Parent keys (keys without values on the same line)
+/// - Flow style mappings (excluded)
+/// - Special YAML constructs (anchors, aliases, tags - excluded)
+///
+/// # Arguments
+///
+/// * `line` - The YAML line to analyze
+/// * `parent_indent` - The indentation level of the parent context (for nested mappings)
+///
+/// # Returns
+///
+/// - `Some(MappingKeyInfo)` if the line is a valid mapping key
+/// - `None` if the line is not a mapping key
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::line_parser::detect_mapping_key;
+///
+/// // Simple key-value pair
+/// let info = detect_mapping_key("name: John", 0);
+/// assert!(info.is_some());
+/// assert_eq!(info.unwrap().key, "name");
+///
+/// // Comment line with colon - should not be detected as key
+/// let info = detect_mapping_key("# This: is a comment", 0);
+/// assert!(info.is_none());
+///
+/// // Key with colon in value (URL)
+/// let info = detect_mapping_key("url: http://example.com", 0);
+/// assert!(info.is_some());
+/// assert_eq!(info.unwrap().key, "url");
+///
+/// // Parent key (no value on same line)
+/// let info = detect_mapping_key("nested:", 0);
+/// assert!(info.is_some());
+/// assert_eq!(info.unwrap().key, "nested");
+/// assert!(info.unwrap().is_parent_key);
+/// ```
+pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKeyInfo> {
+    let trimmed = line.trim();
+
+    // Skip empty lines
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Skip comment lines (lines starting with #)
+    if trimmed.starts_with('#') {
+        return None;
+    }
+
+    // Skip document markers
+    if trimmed == "---" || trimmed == "..." {
+        return None;
+    }
+
+    // Skip YAML directives
+    if trimmed.starts_with('%') {
+        return None;
+    }
+
+    // Skip tags (start with !)
+    if trimmed.starts_with('!') {
+        return None;
+    }
+
+    // Skip anchors (start with &)
+    if trimmed.starts_with('&') {
+        return None;
+    }
+
+    // Skip aliases (start with *)
+    if trimmed.starts_with('*') {
+        return None;
+    }
+
+    // Skip sequence items (start with -)
+    if trimmed.starts_with('-') {
+        return None;
+    }
+
+    // Skip explicit key indicators (start with ?)
+    if trimmed.starts_with('?') {
+        return None;
+    }
+
+    // Skip block scalar indicators
+    if trimmed.starts_with('|') || trimmed.starts_with('>') {
+        return None;
+    }
+
+    // Skip flow style mappings and sequences (contain { or [)
+    if trimmed.contains('{') || trimmed.contains('[') {
+        return None;
+    }
+
+    // Find the first colon in the line
+    let colon_pos = trimmed.find(':')?;
+
+    // Get the part before and after the colon
+    let key_part = &trimmed[..colon_pos];
+    let value_part = if colon_pos + 1 < trimmed.len() {
+        Some(trimmed[colon_pos + 1..].trim().to_string())
+    } else {
+        None
+    };
+
+    // Trim the key part
+    let key = key_part.trim();
+
+    // Key must not be empty
+    if key.is_empty() {
+        return None;
+    }
+
+    // Key must not contain special YAML characters
+    // (except for valid key characters: alphanumeric, _, ., -)
+    for ch in key.chars() {
+        if !ch.is_alphanumeric() && ch != '_' && ch != '.' && ch != '-' {
+            // Check if it's a quoted key (single or double quotes)
+            if key.starts_with('\'') && key.ends_with('\'') && key.len() > 1 {
+                break; // Allow quoted keys
+            }
+            if key.starts_with('"') && key.ends_with('"') && key.len() > 1 {
+                break; // Allow quoted keys
+            }
+            return None; // Invalid key character
+        }
+    }
+
+    // Check for proper indentation relative to parent
+    let current_indent = calculate_indentation(line);
+
+    // Indentation validation rules:
+    // - current_indent < parent_indent: Invalid (exiting parent's context - not a child)
+    // - current_indent == parent_indent: Valid (sibling key at same level)
+    // - current_indent > parent_indent: Valid nested key IF:
+    //   - parent_indent > 0 AND indent_increase >= 2 (proper nesting)
+    //   - OR parent_indent == 0 (root level, any indentation is valid)
+
+    if current_indent < parent_indent {
+        // Decreasing indentation means we've exited the parent's context
+        // This line is not a child of the current parent
+        return None;
+    } else if current_indent > parent_indent {
+        let indent_increase = current_indent - parent_indent;
+
+        // When parent is at root level (0), be lenient - allow any positive indent
+        // When nested, require at least 2 spaces for proper nesting
+        if parent_indent > 0 && indent_increase < 2 {
+            return None; // Insufficient indentation for nested key
+        }
+    }
+    // current_indent == parent_indent is valid - sibling key at same level
+
+    // Check if this is a parent key (no value or just whitespace after colon)
+    let is_parent = value_part.as_ref().map_or(true, |v| v.is_empty() || v.starts_with('#'));
+    let value = if is_parent {
+        None
+    } else {
+        value_part
+    };
+
+    Some(MappingKeyInfo::new(key.to_string(), value))
+}
+
 /// Result of parsing a YAML file into lines
 ///
 /// This type contains the complete results of a line-by-line YAML parsing operation.
@@ -1235,5 +1469,403 @@ mod tests {
         assert_eq!(info.leading_spaces, 4);
         assert_eq!(info.leading_tabs, 0);
         assert_eq!(info.total_level, 4);
+    }
+
+    // Mapping key detection tests
+
+    #[test]
+    fn test_detect_mapping_key_simple_pair() {
+        // Simple key: value pair
+        let info = detect_mapping_key("name: John", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "name");
+        assert_eq!(info.value, Some("John".to_string()));
+        assert!(info.has_inline_value);
+        assert!(!info.is_parent_key);
+    }
+
+    #[test]
+    fn test_detect_mapping_key_nested() {
+        // Nested key with proper indentation
+        let info = detect_mapping_key("  nested: value", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "nested");
+        assert_eq!(info.value, Some("value".to_string()));
+        assert!(info.has_inline_value);
+    }
+
+    #[test]
+    fn test_detect_mapping_key_nested_with_parent_indent() {
+        // Nested key with parent indentation
+        let info = detect_mapping_key("    child: value", 2);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "child");
+        assert_eq!(info.value, Some("value".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_insufficient_indent() {
+        // Insufficient indentation for nested key (less than 2 spaces increase)
+        let info = detect_mapping_key(" child: value", 0);
+        assert!(info.is_some()); // Detected as key at root level (1 space indent is valid)
+
+        // For parent_indent=2, a line with 1 space has decreased indent (exiting context)
+        let info = detect_mapping_key(" child: value", 2);
+        assert!(info.is_none()); // Not valid when parent has more indent
+    }
+
+    #[test]
+    fn test_detect_mapping_key_colon_in_value_url() {
+        // Key with colon in value (URL)
+        let info = detect_mapping_key("url: http://example.com", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "url");
+        // Value should be "http://example.com"
+        assert_eq!(info.value, Some("http://example.com".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_colon_in_value_timestamp() {
+        // Key with colon in value (timestamp)
+        let info = detect_mapping_key("time: 12:30:45", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "time");
+        // Value should be "12:30:45"
+        assert_eq!(info.value, Some("12:30:45".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_colon_in_value_multiple() {
+        // Key with multiple colons in value
+        let info = detect_mapping_key("api: http://api.example.com:8080/v1", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "api");
+        // Value should include everything after first colon
+        assert_eq!(info.value, Some("http://api.example.com:8080/v1".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_comment_line_with_colon() {
+        // Comment line with colon - should NOT be detected as key
+        let info = detect_mapping_key("# This: is a comment", 0);
+        assert!(info.is_none(), "Comment lines should not be detected as keys");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_indented_comment_with_colon() {
+        // Indented comment line with colon
+        let info = detect_mapping_key("  # TODO: fix this later", 0);
+        assert!(info.is_none(), "Indented comment lines should not be detected as keys");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_parent_key_no_value() {
+        // Parent key (no value on same line)
+        let info = detect_mapping_key("nested:", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "nested");
+        assert!(info.value.is_none());
+        assert!(info.is_parent_key);
+        assert!(!info.has_inline_value);
+    }
+
+    #[test]
+    fn test_detect_mapping_key_parent_key_with_whitespace() {
+        // Parent key with whitespace after colon
+        let info = detect_mapping_key("nested:   ", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "nested");
+        assert!(info.value.is_none());
+        assert!(info.is_parent_key);
+    }
+
+    #[test]
+    fn test_detect_mapping_key_parent_key_with_comment() {
+        // Parent key with inline comment
+        let info = detect_mapping_key("nested: # comment here", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "nested");
+        assert!(info.is_parent_key);
+        assert!(!info.has_inline_value);
+    }
+
+    #[test]
+    fn test_detect_mapping_key_empty_line() {
+        // Empty line - should not be detected as key
+        let info = detect_mapping_key("", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_whitespace_only() {
+        // Whitespace-only line - should not be detected as key
+        let info = detect_mapping_key("   ", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_document_start() {
+        // Document start marker - should not be detected as key
+        let info = detect_mapping_key("---", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_document_end() {
+        // Document end marker - should not be detected as key
+        let info = detect_mapping_key("...", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_sequence_item() {
+        // Sequence item - should not be detected as key
+        let info = detect_mapping_key("- item", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_sequence_with_key_value() {
+        // Sequence item with key-value - should not be detected as key
+        let info = detect_mapping_key("- key: value", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_anchor() {
+        // Anchor definition - should not be detected as key
+        let info = detect_mapping_key("&anchor", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_alias() {
+        // Alias reference - should not be detected as key
+        let info = detect_mapping_key("*alias", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_tag() {
+        // Tag directive - should not be detected as key
+        let info = detect_mapping_key("!tag", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_directive() {
+        // YAML directive - should not be detected as key
+        let info = detect_mapping_key("%YAML 1.2", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_explicit_key() {
+        // Explicit key indicator - should not be detected as key
+        let info = detect_mapping_key("? explicit_key", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_flow_mapping() {
+        // Flow style mapping - should not be detected as key
+        let info = detect_mapping_key("{key: value}", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_flow_sequence() {
+        // Flow style sequence - should not be detected as key
+        let info = detect_mapping_key("[item1, item2]", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_literal_block_scalar() {
+        // Literal block scalar - should not be detected as key
+        let info = detect_mapping_key("|", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_folded_block_scalar() {
+        // Folded block scalar - should not be detected as key
+        let info = detect_mapping_key(">", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_empty_key() {
+        // Empty key (colon at start) - should not be detected as key
+        let info = detect_mapping_key(": value", 0);
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_detect_mapping_key_with_dash() {
+        // Key with dash character
+        let info = detect_mapping_key("my-key: value", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "my-key");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_with_underscore() {
+        // Key with underscore character
+        let info = detect_mapping_key("my_key: value", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "my_key");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_with_dot() {
+        // Key with dot character
+        let info = detect_mapping_key("my.key: value", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "my.key");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_quoted_single_quotes() {
+        // Quoted key with single quotes
+        let info = detect_mapping_key("'my-key': value", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "'my-key'");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_quoted_double_quotes() {
+        // Quoted key with double quotes
+        let info = detect_mapping_key("\"my-key\": value", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "\"my-key\"");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_invalid_characters() {
+        // Key with invalid characters (should not be detected)
+        let info = detect_mapping_key("key@value: something", 0);
+        assert!(info.is_none(), "Keys with @ character should not be detected");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_with_spaces_around_colon() {
+        // Key with spaces around colon
+        let info = detect_mapping_key("key : value", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "key");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_no_space_after_colon() {
+        // Key with no space after colon
+        let info = detect_mapping_key("key:value", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "key");
+        assert_eq!(info.value, Some("value".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_multiple_colons_value_has_spaces() {
+        // Multiple colons with spaces in value
+        let info = detect_mapping_key("key: value: with: colons", 0);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.key, "key");
+        assert_eq!(info.value, Some("value: with: colons".to_string()));
+    }
+
+    #[test]
+    fn test_detect_mapping_key_valid_key_is_valid() {
+        // Test MappingKeyInfo::is_valid()
+        let info = MappingKeyInfo::new("valid_key".to_string(), Some("value".to_string()));
+        assert!(info.is_valid());
+
+        let info = MappingKeyInfo::new("123key".to_string(), None);
+        assert!(info.is_valid());
+
+        let info = MappingKeyInfo::new("".to_string(), Some("value".to_string()));
+        assert!(!info.is_valid(), "Empty key should not be valid");
+
+        let info = MappingKeyInfo::new("@invalid".to_string(), None);
+        assert!(!info.is_valid(), "Key starting with @ should not be valid");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_display() {
+        // Test Display trait implementation
+        let info_with_value = MappingKeyInfo::new("key".to_string(), Some("value".to_string()));
+        assert_eq!(format!("{}", info_with_value), "key: value");
+
+        let info_parent = MappingKeyInfo::new("parent".to_string(), None);
+        assert_eq!(format!("{}", info_parent), "parent:");
+    }
+
+    #[test]
+    fn test_detect_mapping_key_complex_nested_structure() {
+        // Test complex nested structure
+        let lines = vec![
+            ("root:", 0, true, false),    // parent key
+            ("  child1: value1", 0, true, true),
+            ("  child2:", 0, true, false), // parent key
+            ("    grandchild: value2", 2, true, true),
+            ("  child3: value3", 0, true, true),
+        ];
+
+        for (line, parent_indent, expected_some, expected_has_value) in lines {
+            let info = detect_mapping_key(line, parent_indent);
+            assert_eq!(info.is_some(), expected_some, "Failed for line: {}", line);
+            if expected_some {
+                let info = info.unwrap();
+                assert_eq!(info.has_inline_value, expected_has_value, "Failed for line: {}", line);
+            }
+        }
+    }
+
+    #[test]
+    fn test_detect_mapping_key_sibling_keys() {
+        // Test sibling keys at same indentation level
+        let parent_indent = 0;
+
+        let info1 = detect_mapping_key("sibling1: value1", parent_indent);
+        assert!(info1.is_some());
+
+        let info2 = detect_mapping_key("sibling2: value2", parent_indent);
+        assert!(info2.is_some());
+
+        let info3 = detect_mapping_key("sibling3:", parent_indent);
+        assert!(info3.is_some());
+        assert!(info3.unwrap().is_parent_key);
+    }
+
+    #[test]
+    fn test_detect_mapping_key_decreasing_indentation() {
+        // Test decreasing indentation (exiting nested context)
+        let parent_indent = 4;
+
+        // When parent_indent is 4 and current line has 2 spaces, we're exiting context
+        // This should NOT be detected as a key in the current parent context
+        let info = detect_mapping_key("  back_up: value", parent_indent);
+        assert!(info.is_none(), "Should not detect key when exiting context (decreasing indent)");
+
+        // But if we call it with parent_indent=0 (root level), it should be detected
+        let info = detect_mapping_key("  back_up: value", 0);
+        assert!(info.is_some(), "Should detect key at appropriate indentation level");
     }
 }
