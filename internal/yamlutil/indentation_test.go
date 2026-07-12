@@ -2294,3 +2294,492 @@ func TestIndentationWithVariousWhitespaceCombinations(t *testing.T) {
 		})
 	}
 }
+
+// TestExtremeIndentationWithMixedTabsAndSpaces tests mixed tabs and spaces at extreme depths (100+ characters).
+func TestExtremeIndentationWithMixedTabsAndSpaces(t *testing.T) {
+	tests := []struct {
+		name           string
+		line           string
+		spacesPerLevel int
+		expectedSpaces int
+		expectedTabs   int
+		expectedMixed  bool
+		expectedLevel  int
+	}{
+		{
+			name:           "100 spaces then tab",
+			line:           strings.Repeat(" ", 100) + "\tkey: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 100,
+			expectedTabs:   1,
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "tab then 100 spaces",
+			line:           "\t" + strings.Repeat(" ", 100) + "key: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 100,
+			expectedTabs:   1,
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "50 spaces, tab, 50 spaces",
+			line:           strings.Repeat(" ", 50) + "\t" + strings.Repeat(" ", 50) + "key: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 100, // Counts all leading spaces before tab
+			expectedTabs:   1,
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "alternating pattern 25 times - space tab space tab",
+			line:           strings.Repeat(" \t", 25) + "key: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 25,
+			expectedTabs:   25,
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "150 spaces then tab",
+			line:           strings.Repeat(" ", 150) + "\tkey: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 150,
+			expectedTabs:   1,
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "200 spaces then tab",
+			line:           strings.Repeat(" ", 200) + "\tkey: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 200,
+			expectedTabs:   1,
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "tab then 50 spaces then tab",
+			line:           "\t" + strings.Repeat(" ", 50) + "\tkey: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 50, // Counts all spaces before content
+			expectedTabs:   1,  // Only counts leading tabs before first space
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "10 tabs then 100 spaces",
+			line:           strings.Repeat("\t", 10) + strings.Repeat(" ", 100) + "key: value",
+			spacesPerLevel: 1,
+			expectedSpaces: 100,
+			expectedTabs:   10,
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "100 spaces then 10 tabs",
+			line:           strings.Repeat(" ", 100) + strings.Repeat("\t", 10) + "key: value",
+			spacesPerLevel: 1,
+			expectedSpaces: 100,
+			expectedTabs:   10,
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "complex mixed - 25 spaces, 5 tabs, 25 spaces",
+			line:           strings.Repeat(" ", 25) + strings.Repeat("\t", 5) + strings.Repeat(" ", 25) + "key: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 25, // Only counts spaces before first tab
+			expectedTabs:   5,  // Only counts tabs before first space after tabs
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "extreme alternating - 50 space-tab pairs",
+			line:           strings.Repeat(" \t", 50) + "key: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 50,
+			expectedTabs:   50,
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+		{
+			name:           "extreme alternating - 50 tab-space pairs",
+			line:           strings.Repeat("\t ", 50) + "key: value",
+			spacesPerLevel: 2,
+			expectedSpaces: 50, // Counts all leading spaces (they come after tabs in pattern)
+			expectedTabs:   50,  // Counts all leading tabs (they come before spaces in pattern)
+			expectedMixed:  true,
+			expectedLevel:  0, // Mixed indent has no level
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := CalculateIndentation(tt.line, tt.spacesPerLevel)
+
+			if info.SpaceCount != tt.expectedSpaces {
+				t.Errorf("Expected %d spaces, got %d", tt.expectedSpaces, info.SpaceCount)
+			}
+			if info.TabCount != tt.expectedTabs {
+				t.Errorf("Expected %d tabs, got %d", tt.expectedTabs, info.TabCount)
+			}
+			if info.IsMixed != tt.expectedMixed {
+				t.Errorf("Expected IsMixed=%v, got %v", tt.expectedMixed, info.IsMixed)
+			}
+			if info.Level != tt.expectedLevel {
+				t.Errorf("Expected level %d, got %d", tt.expectedLevel, info.Level)
+			}
+			if tt.expectedMixed && info.IndentType != "mixed" {
+				t.Errorf("Expected IndentType='mixed', got %s", info.IndentType)
+			}
+		})
+	}
+}
+
+// TestExtremeIndentationClassifyLineType tests ClassifyLineType with extreme indentation.
+func TestExtremeIndentationClassifyLineType(t *testing.T) {
+	tests := []struct {
+		name          string
+		line          string
+		expectedType  LineType
+		description   string
+	}{
+		{
+			name:         "100-space indent comment",
+			line:         strings.Repeat(" ", 100) + "# comment",
+			expectedType: LineTypeComment,
+			description:  "Comment line with extreme space indentation",
+		},
+		{
+			name:         "150-space indent comment",
+			line:         strings.Repeat(" ", 150) + "# comment",
+			expectedType: LineTypeComment,
+			description:  "Comment line with 150 spaces",
+		},
+		{
+			name:         "200-space indent comment",
+			line:         strings.Repeat(" ", 200) + "# comment",
+			expectedType: LineTypeComment,
+			description:  "Comment line with 200 spaces",
+		},
+		{
+			name:         "100-space indent mapping key",
+			line:         strings.Repeat(" ", 100) + "key: value",
+			expectedType: LineTypeMappingKey,
+			description:  "Mapping key with extreme space indentation",
+		},
+		{
+			name:         "150-space indent mapping key",
+			line:         strings.Repeat(" ", 150) + "deeply: nested",
+			expectedType: LineTypeMappingKey,
+			description:  "Mapping key with 150 spaces",
+		},
+		{
+			name:         "200-space indent mapping key",
+			line:         strings.Repeat(" ", 200) + "very: deeply",
+			expectedType: LineTypeMappingKey,
+			description:  "Mapping key with 200 spaces",
+		},
+		{
+			name:         "100-space indent sequence item",
+			line:         strings.Repeat(" ", 100) + "- item",
+			expectedType: LineTypeSequenceItem,
+			description:  "Sequence item with extreme space indentation",
+		},
+		{
+			name:         "150-space indent sequence item",
+			line:         strings.Repeat(" ", 150) + "- element",
+			expectedType: LineTypeSequenceItem,
+			description:  "Sequence item with 150 spaces",
+		},
+		{
+			name:         "50-tab indent comment",
+			line:         strings.Repeat("\t", 50) + "# comment",
+			expectedType: LineTypeComment,
+			description:  "Comment line with extreme tab indentation",
+		},
+		{
+			name:         "50-tab indent mapping key",
+			line:         strings.Repeat("\t", 50) + "key: value",
+			expectedType: LineTypeMappingKey,
+			description:  "Mapping key with extreme tab indentation",
+		},
+		{
+			name:         "50-tab indent sequence item",
+			line:         strings.Repeat("\t", 50) + "- item",
+			expectedType: LineTypeSequenceItem,
+			description:  "Sequence item with extreme tab indentation",
+		},
+		{
+			name:         "100-space then tab indent comment",
+			line:         strings.Repeat(" ", 100) + "\t# comment",
+			expectedType: LineTypeComment,
+			description:  "Comment line with mixed extreme indentation (spaces then tab)",
+		},
+		{
+			name:         "tab then 100-space indent comment",
+			line:         "\t" + strings.Repeat(" ", 100) + "# comment",
+			expectedType: LineTypeComment,
+			description:  "Comment line with mixed extreme indentation (tab then spaces)",
+		},
+		{
+			name:         "100-space indent document start",
+			line:         strings.Repeat(" ", 100) + "---",
+			expectedType: LineTypeDocumentStart,
+			description:  "Document start marker with extreme indentation",
+		},
+		{
+			name:         "100-space indent document end",
+			line:         strings.Repeat(" ", 100) + "...",
+			expectedType: LineTypeDocumentEnd,
+			description:  "Document end marker with extreme indentation",
+		},
+		{
+			name:         "250-space indent comment",
+			line:         strings.Repeat(" ", 250) + "# very deep comment",
+			expectedType: LineTypeComment,
+			description:  "Comment line with 250 spaces",
+		},
+		{
+			name:         "300-space indent mapping key",
+			line:         strings.Repeat(" ", 300) + "ultra: deep",
+			expectedType: LineTypeMappingKey,
+			description:  "Mapping key with 300 spaces",
+		},
+		{
+			name:         "alternating space-tab 50 times comment",
+			line:         strings.Repeat(" \t", 50) + "# comment",
+			expectedType: LineTypeComment,
+			description:  "Comment with alternating space-tab pattern at extreme depth",
+		},
+		{
+			name:         "alternating tab-space 50 times comment",
+			line:         strings.Repeat("\t ", 50) + "# comment",
+			expectedType: LineTypeComment,
+			description:  "Comment with alternating tab-space pattern at extreme depth",
+		},
+		{
+			name:         "100-space indent blank line (spaces only)",
+			line:         strings.Repeat(" ", 100),
+			expectedType: LineTypeBlank,
+			description:  "Blank line with 100 spaces only",
+		},
+		{
+			name:         "50-tab indent blank line (tabs only)",
+			line:         strings.Repeat("\t", 50),
+			expectedType: LineTypeBlank,
+			description:  "Blank line with 50 tabs only",
+		},
+		{
+			name:         "mixed extreme whitespace blank line",
+			line:         strings.Repeat(" ", 100) + strings.Repeat("\t", 50),
+			expectedType: LineTypeBlank,
+			description:  "Blank line with mixed extreme whitespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ClassifyLineType(tt.line)
+			if result != tt.expectedType {
+				t.Errorf("%s: Expected line type %v (%s), got %v (%s)",
+					tt.description, tt.expectedType, tt.expectedType, result, result)
+			}
+		})
+	}
+}
+
+// TestExtremeIndentationCalculateIndentation tests CalculateIndentation with extreme indentation values.
+func TestExtremeIndentationCalculateIndentation(t *testing.T) {
+	tests := []struct {
+		name           string
+		line           string
+		spacesPerLevel int
+		expected       IndentationInfo
+	}{
+		{
+			name:           "exactly 100 spaces",
+			line:           strings.Repeat(" ", 100) + "key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      50,
+				SpaceCount: 100,
+				TabCount:   0,
+				TotalWidth: 100,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "exactly 150 spaces",
+			line:           strings.Repeat(" ", 150) + "key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      75,
+				SpaceCount: 150,
+				TabCount:   0,
+				TotalWidth: 150,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "exactly 200 spaces",
+			line:           strings.Repeat(" ", 200) + "key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      100,
+				SpaceCount: 200,
+				TabCount:   0,
+				TotalWidth: 200,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "250 spaces",
+			line:           strings.Repeat(" ", 250) + "key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      125,
+				SpaceCount: 250,
+				TabCount:   0,
+				TotalWidth: 250,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "300 spaces",
+			line:           strings.Repeat(" ", 300) + "key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      150,
+				SpaceCount: 300,
+				TabCount:   0,
+				TotalWidth: 300,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "100 spaces with 4-space levels",
+			line:           strings.Repeat(" ", 100) + "key: value",
+			spacesPerLevel: 4,
+			expected: IndentationInfo{
+				Level:      25,
+				SpaceCount: 100,
+				TabCount:   0,
+				TotalWidth: 100,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "120 spaces with 3-space levels",
+			line:           strings.Repeat(" ", 120) + "key: value",
+			spacesPerLevel: 3,
+			expected: IndentationInfo{
+				Level:      40,
+				SpaceCount: 120,
+				TabCount:   0,
+				TotalWidth: 120,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "exactly 100 tabs",
+			line:           strings.Repeat("\t", 100) + "key: value",
+			spacesPerLevel: 1,
+			expected: IndentationInfo{
+				Level:      100,
+				SpaceCount: 0,
+				TabCount:   100,
+				TotalWidth: 100,
+				IndentType: "tab",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "exactly 150 tabs",
+			line:           strings.Repeat("\t", 150) + "key: value",
+			spacesPerLevel: 1,
+			expected: IndentationInfo{
+				Level:      150,
+				SpaceCount: 0,
+				TabCount:   150,
+				TotalWidth: 150,
+				IndentType: "tab",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "exactly 200 tabs",
+			line:           strings.Repeat("\t", 200) + "key: value",
+			spacesPerLevel: 1,
+			expected: IndentationInfo{
+				Level:      200,
+				SpaceCount: 0,
+				TabCount:   200,
+				TotalWidth: 200,
+				IndentType: "tab",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "101 spaces (odd count)",
+			line:           strings.Repeat(" ", 101) + "key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      50, // 101 / 2 = 50
+				SpaceCount: 101,
+				TabCount:   0,
+				TotalWidth: 101,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+		{
+			name:           "103 spaces (odd count)",
+			line:           strings.Repeat(" ", 103) + "key: value",
+			spacesPerLevel: 2,
+			expected: IndentationInfo{
+				Level:      51, // 103 / 2 = 51
+				SpaceCount: 103,
+				TabCount:   0,
+				TotalWidth: 103,
+				IndentType: "space",
+				IsMixed:    false,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CalculateIndentation(tt.line, tt.spacesPerLevel)
+
+			if result.Level != tt.expected.Level {
+				t.Errorf("Expected Level %d, got %d", tt.expected.Level, result.Level)
+			}
+			if result.SpaceCount != tt.expected.SpaceCount {
+				t.Errorf("Expected SpaceCount %d, got %d", tt.expected.SpaceCount, result.SpaceCount)
+			}
+			if result.TabCount != tt.expected.TabCount {
+				t.Errorf("Expected TabCount %d, got %d", tt.expected.TabCount, result.TabCount)
+			}
+			if result.TotalWidth != tt.expected.TotalWidth {
+				t.Errorf("Expected TotalWidth %d, got %d", tt.expected.TotalWidth, result.TotalWidth)
+			}
+			if result.IndentType != tt.expected.IndentType {
+				t.Errorf("Expected IndentType %s, got %s", tt.expected.IndentType, result.IndentType)
+			}
+			if result.IsMixed != tt.expected.IsMixed {
+				t.Errorf("Expected IsMixed %v, got %v", tt.expected.IsMixed, result.IsMixed)
+			}
+		})
+	}
+}
