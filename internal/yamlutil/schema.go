@@ -676,7 +676,7 @@ func LoadSchema(schemaPath string) (*SchemaDefinition, error) {
 		// Handle YAMLError with structured information
 		if yamlErr, ok := err.(YAMLError); ok {
 			return nil, &SchemaError{
-				Message:  fmt.Sprintf("Failed to compile schema: %w", yamlErr),
+				Message:  fmt.Sprintf("Failed to compile schema: %v", yamlErr),
 				FilePath: schemaPath,
 			}
 		}
@@ -811,8 +811,20 @@ func (s *SchemaDefinition) Compile() error {
 // The value parameter can be of any type but should typically be
 // map[string]interface{} for YAML/JSON data validation.
 func (s *SchemaDefinition) Validate(value interface{}) error {
+	// Check for nil value - only error if there are required fields
 	if value == nil {
-		return NewValidationError("", "value cannot be nil", "", "", ErrCodeValidationFailed, 0, 0, ErrorTypeValidation, "")
+		// If there are no required fields, nil is valid
+		hasRequiredFields := false
+		for _, fieldDef := range s.RootFields {
+			if fieldDef.Required {
+				hasRequiredFields = true
+				break
+			}
+		}
+		if hasRequiredFields {
+			return NewValidationError("", "value cannot be nil when schema has required fields", "", "", ErrCodeValidationFailed, 0, 0, ErrorTypeValidation, "")
+		}
+		return nil
 	}
 
 	// Convert to map if needed
