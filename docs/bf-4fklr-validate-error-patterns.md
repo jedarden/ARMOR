@@ -1,431 +1,493 @@
-# Validate() Error Return Patterns
+# Validate() Error Return Patterns - ARMOR Rust Codebase
 
 ## Overview
 
-This document catalogs all error types returned by Validate() methods and their callers in the ARMOR codebase, along with error handling patterns.
+This document catalogs all error types returned by `validate()` methods and their callers in the ARMOR Rust codebase, along with error handling patterns.
+
+**Note:** This analysis is based on the actual Rust implementation in ARMOR, not a Go codebase.
+
+---
 
 ## Validate() Method Implementations
 
-### 1. SchemaDefinition.Validate(value interface{}) error
-**Location:** `internal/yamlutil/schema.go:757`
+### 1. `Parser<Input, Output>::validate(&self, source: Input) -> Result<(), ParseError>`
+**Location:** `src/parsers/traits.rs:323`
 
 **Error Returns:**
-- `*ValidationError` (via `NewValidationError`)
-  - `ErrCodeValidationFailed` - when value is nil
-  - `ErrCodeSchemaInvalid` - when field has nil definition
-- `*TypeMismatchError` (via `NewTypeMismatchError`)
-  - `ErrCodeTypeMismatch` - when value is not `map[string]interface{}` or field type mismatch
-- `*FieldNotFoundError` (via `NewFieldNotFoundError`)
-  - `ErrCodeRequiredField` - when required field is missing
-- `*ConstraintError` (via `NewConstraintError`)
-  - `ErrCodeConstraintViolation` - min/max/pattern constraint violations
-  - `ErrCodeInvalidValue` - when value not in allowed values list
+- `Err(ParseError)` - Wraps any parsing error that occurs during validation
+  - `ParseError::Yaml(YamlParseError)` - YAML-specific parsing errors
+  - `ParseError::Io(String)` - I/O errors during file reading
+  - `ParseError::Validation(String)` - Validation failures
+  - `ParseError::TypeMismatch {field, expected, actual}` - Type mismatches
+  - `ParseError::Syntax(String)` - Syntax errors
 
-**Error Wrapping:** None - returns direct error types
-
----
-
-### 2. SchemaValidator.Validate(data interface{}) SchemaValidationResult
-**Location:** `internal/yamlutil/schema.go:157`
-
-**Return Type:** `SchemaValidationResult` struct (not an error)
-
-**Error Handling Pattern:**
-```go
-if err := sv.schema.Validate(data); err != nil {
-    result.Valid = false
-    result.Errors = append(result.Errors, SchemaValidationError{
-        Message: fmt.Sprintf("Validation failed: %v", err),
-    })
-    return result
+**Implementation Pattern:**
+```rust
+fn validate(&self, source: Input) -> Result<(), ParseError> {
+    self.parse(source)?;  // Attempt parsing and discard result
+    Ok(())
 }
 ```
 
-**Key Characteristic:** Converts `error` to `SchemaValidationResult` with error list
+**Error Wrapping:** Delegates to `parse()` method, propagates any `ParseError` directly
 
 ---
 
-### 3. SchemaValidator.ValidateFile(filePath string) SchemaValidationResult
-**Location:** `internal/yamlutil/schema.go:212`
+### 2. `SyntaxValidator::validate(&self, content: &str) -> ValidationResult`
+**Location:** `src/parsers/yaml/syntax_validator.rs:65`
 
-**Return Type:** `SchemaValidationResult` struct
+**Return Type:** `ValidationResult` struct (not `Result`)
 
-**Error Handling Pattern:**
-- File read errors → wrapped in `SchemaValidationResult.Errors`
-- YAML parse errors → wrapped in `SchemaValidationResult.Errors`
-- Schema validation → delegates to `Validate()` method above
-
----
-
-### 4. StringConstraintImpl.Validate(value interface{}) *ConstraintError
-**Location:** `internal/yamlutil/schema_interfaces.go:343`
-
-**Error Returns:**
-- `*ConstraintError` (direct struct initialization)
-  - Type mismatch errors
-  - Min/max length violations
-  - Pattern mismatch
-  - Value not in allowed list
-
-**Error Wrapping:** None - returns nil on success, `*ConstraintError` on failure
-
----
-
-### 5. NumberConstraintImpl.Validate(value interface{}) *ConstraintError
-**Location:** `internal/yamlutil/schema_interfaces.go:458`
-
-**Error Returns:**
-- `*ConstraintError` (direct struct initialization)
-  - Non-numeric values
-  - Min/max violations (inclusive/exclusive)
-  - Multiple of violations
-
----
-
-### 6. ArrayConstraintImpl.Validate(value interface{}) *ConstraintError
-**Location:** `internal/yamlutil/schema_interfaces.go:560`
-
-**Error Returns:**
-- `*ConstraintError` (direct struct initialization)
-  - Non-array values
-  - Min/max items violations
-  - Unique items violations
-
----
-
-### 7. ObjectConstraintImpl.Validate(value interface{}) *ConstraintError
-**Location:** `internal/yamlutil/schema_interfaces.go:647`
-
-**Error Returns:**
-- `*ConstraintError` (direct struct initialization)
-  - Non-object values
-  - Required property violations
-  - Additional property violations (in strict mode)
-
----
-
-### 8. BooleanConstraintImpl.Validate(value interface{}) *ConstraintError
-**Location:** `internal/yamlutil/schema_interfaces.go:746`
-
-**Error Returns:**
-- `*ConstraintError` (direct struct initialization)
-  - Non-boolean values
-
----
-
-### 9. TypeConstraintImpl.Validate(value interface{}) *ConstraintError
-**Location:** `internal/yamlutil/schema_interfaces.go:795`
-
-**Error Returns:**
-- `*ConstraintError` (direct struct initialization)
-  - Type expectation violations
-
----
-
-### 10. Validator.ValidateString(yamlContent string) ValidationResult
-**Location:** `internal/yamlutil/validator.go:109`
-
-**Return Type:** `ValidationResult` struct (not an error)
-
-**Error Handling Pattern:**
-```go
-result := ValidationResult{
-    FilePath: filePath,
-    Valid:    true,
-    Errors:   []ValidationError{},
-    Warnings: []ValidationError{},
+**Return Structure:**
+```rust
+pub struct ValidationResult {
+    pub valid: bool,
+    pub errors: Vec<ValidationError>,
+    pub warnings: Vec<ValidationWarning>,
 }
-// ... validation logic ...
-return result
 ```
 
-**Key Characteristic:** Never returns error - always returns `ValidationResult` struct
+**Error Returns:**
+- `ValidationResult` with `valid: false` and populated `errors` vector
+- Each error is a `ValidationError` containing:
+  - `path: String` - Path to the invalid element
+  - `message: String` - Human-readable error description
+  - `code: ErrorCode` - Machine-readable error code from bf-68hqo hierarchy
+  - `line: Option<usize>` - Line number (1-indexed)
+  - `column: Option<usize>` - Column number (1-indexed)
+
+**Implementation Pattern:**
+```rust
+pub fn validate(&self, content: &str) -> ValidationResult {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    
+    // Run validation passes
+    if let Err(mut line_errors) = self.validate_indentation(line, line_num, &context) {
+        errors.append(&mut line_errors);
+    }
+    
+    ValidationResult {
+        valid: errors.is_empty(),
+        errors,
+        warnings,
+    }
+}
+```
+
+**Error Wrapping:** None - returns structured `ValidationResult` directly
 
 ---
 
-### 11. Validator.ValidateFile(filePath string) ValidationResult
-**Location:** `internal/yamlutil/validator.go:152`
+### 3. `YamlParser::validate_str(&self, content: &str) -> ValidationResult`
+**Location:** `src/parsers/yaml/parser.rs` (trait implementation)
 
 **Return Type:** `ValidationResult` struct
 
-**Error Handling Pattern:**
-```go
-if err != nil {
-    result.Valid = false
-    ve := LocalValidationError{
-        FilePath: filePath,
-        Message:  fmt.Sprintf("Failed to read file: %v", err),
-        Type:     ErrorTypeIO,
-    }
-    result.Errors = append(result.Errors, ve.ToValidationError())
-    return result
+**Error Returns:** Delegates to `SyntaxValidator::validate()`, returns `ValidationResult`
+
+**Implementation Pattern:**
+```rust
+fn validate_str(&self, content: &str) -> ValidationResult {
+    let validator = if self.config.is_strict() {
+        SyntaxValidator::strict()
+    } else {
+        SyntaxValidator::lenient()
+    };
+    validator.validate(content)
 }
 ```
 
-**Key Characteristic:** Converts I/O errors to `ValidationError` instances
+---
+
+### 4. `YamlParser::validate_file(&self, path: &Path) -> ValidationResult`
+**Location:** `src/parsers/yaml/parser.rs` (trait implementation)
+
+**Return Type:** `ValidationResult` struct
+
+**Error Returns:**
+- File read errors → `ValidationResult` with I/O error in errors vector
+- YAML syntax errors → Delegates to `validate_str()`
+
+**Implementation Pattern:**
+```rust
+fn validate_file(&self, path: &Path) -> ValidationResult {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(err) => {
+            return ValidationResult {
+                valid: false,
+                errors: vec![ValidationError::new(
+                    format!("file: {}", path.display()),
+                    format!("Failed to read file: {}", err)
+                ).with_code(ErrorCode::IO_READ_FAILED)],
+                warnings: Vec::new(),
+            };
+        }
+    };
+    self.validate_str(&content)
+}
+```
+
+---
+
+### 5. `ParserConfig::validate(&self) -> Result<(), String>`
+**Location:** `src/parsers/config.rs:537`
+
+**Return Type:** `Result<(), String>`
+
+**Error Returns:**
+- `Err(String)` - Configuration inconsistency error messages
+  - "warnings_as_errors requires emit_warnings to be true"
+  - "Strict mode with allow_duplicates=true is inconsistent"
+  - "strict_types=true with lenient mode is inconsistent"
+
+**Implementation Pattern:**
+```rust
+pub fn validate(&self) -> Result<(), String> {
+    if self.warnings_as_errors && !self.emit_warnings {
+        return Err("warnings_as_errors requires emit_warnings to be true".to_string());
+    }
+    // ... other consistency checks
+    Ok(())
+}
+```
+
+---
+
+### 6. `ValidatorConfig::validate(&self) -> Result<(), String>`
+**Location:** `src/parsers/config.rs:908`
+
+**Return Type:** `Result<(), String>`
+
+**Error Returns:**
+- `Err(String)` - Configuration validation error messages
+  - "Strict mode requires require_all_fields to be true"
+  - "Strict mode requires disallow_unknown_fields to be true"
+  - "warnings_as_errors requires emit_warnings to be true"
+
+**Implementation Pattern:**
+```rust
+pub fn validate(&self) -> Result<(), String> {
+    if self.mode.is_strict() && !self.require_all_fields {
+        return Err("Strict mode requires require_all_fields to be true".to_string());
+    }
+    // ... other consistency checks
+    Ok(())
+}
+```
+
+---
+
+### 7. `ValidationHook::validate(&self, field: &str, value: &Value) -> Result<(), String>`
+**Location:** `src/parsers/config.rs:255`
+
+**Return Type:** `Result<(), String>`
+
+**Error Returns:**
+- `Err(String)` - Custom validation error messages from user-provided validation functions
+
+**Implementation Pattern:**
+```rust
+pub fn validate(&self, field: &str, value: &Value) -> Result<(), String> {
+    (self.validator)(field, value)  // Calls user-provided validation function
+}
+```
 
 ---
 
 ## Error Type Hierarchy
 
-### Base Error Types
+### Primary Error Types
 
 ```
-ValidationError (implements YAMLError interface)
-├── TypeMismatchError
-├── FieldNotFoundError
-├── ConstraintError
-├── DuplicateKeyError
-└── SchemaLoadError
+ParseError (enum)
+├── Yaml(YamlParseError)        // YAML-specific errors
+├── Io(String)                   // I/O errors
+├── Validation(String)           // Validation errors
+├── TypeMismatch {field, expected, actual}  // Type mismatches
+├── Syntax(String)               // Syntax errors
+└── Other(String)                 // Other errors
 
-LocalValidationError (convertible to ValidationError)
+ValidationResult (struct)
+├── valid: bool
+├── errors: Vec<ValidationError>
+└── warnings: Vec<ValidationWarning>
+
+ValidationError (struct)
+├── path: String
+├── message: String
+├── code: ErrorCode              // Machine-readable error codes
+├── line: Option<usize>
+├── column: Option<usize>
+└── indentation_error_type: Option<IndentationErrorType>
+└── delimiter_error_type: Option<DelimiterErrorType>
 ```
 
-### Error Types by Function
+### Error Code Types (ErrorCode enum)
 
-| Method | Returns | Error Type |
-|--------|---------|------------|
-| `SchemaDefinition.Validate` | `error` | `ValidationError`, `TypeMismatchError`, `FieldNotFoundError`, `ConstraintError` |
-| `SchemaValidator.Validate` | `SchemaValidationResult` | Struct containing error list |
-| `SchemaValidator.ValidateFile` | `SchemaValidationResult` | Struct containing error list |
-| `Validator.ValidateString` | `ValidationResult` | Struct containing error list |
-| `Validator.ValidateFile` | `ValidationResult` | Struct containing error list |
-| `*ConstraintImpl.Validate` | `*ConstraintError` | Direct struct or nil |
+**Syntax Errors:**
+- `YAML_INVALID_SYNTAX`
+- `YAML_INVALID_INDENTATION`
+- `YAML_INVALID_DELIMITER`
+- `YAML_INVALID_ESCAPE_SEQUENCE`
+- `YAML_INVALID_SCALAR`
 
----
+**Type Mismatches:**
+- `TYPE_EXPECTED_INTEGER`
+- `TYPE_EXPECTED_STRING`
+- `TYPE_EXPECTED_BOOLEAN`
+- `TYPE_EXPECTED_ARRAY`
+- `TYPE_EXPECTED_OBJECT`
+- `TYPE_EXPECTED_NUMBER`
+- `TYPE_UNEXPECTED_NULL`
 
-## Error Construction Patterns
+**Validation Errors:**
+- `VALIDATION_REQUIRED_FIELD_MISSING`
+- `VALIDATION_VALUE_OUT_OF_RANGE`
+- `VALIDATION_STRING_TOO_SHORT`
+- `VALIDATION_STRING_TOO_LONG`
+- `VALIDATION_PATTERN_MISMATCH`
+- `VALIDATION_INVALID_VALUE`
+- `VALIDATION_ARRAY_TOO_FEW_ITEMS`
+- `VALIDATION_ARRAY_TOO_MANY_ITEMS`
+- `VALIDATION_ARRAY_NOT_UNIQUE`
+- `VALIDATION_OBJECT_TOO_FEW_PROPERTIES`
+- `VALIDATION_OBJECT_TOO_MANY_PROPERTIES`
 
-### 1. NewValidationError Constructor
+**I/O Errors:**
+- `IO_FILE_NOT_FOUND`
+- `IO_PERMISSION_DENIED`
+- `IO_READ_FAILED`
+- `IO_WRITE_FAILED`
 
-**Signature:**
-```go
-func NewValidationError(filePath string, message string, fieldPath string, constraint string, code ErrorCode, line int, column int, errorType ErrorType, path string) *ValidationError
-```
-
-**Usage Examples:**
-```go
-// Nil value check
-return NewValidationError("", "value cannot be nil", "", "", ErrCodeValidationFailed, 0, 0, ErrorTypeValidation, "")
-
-// Schema validation error
-return NewValidationError("", fmt.Sprintf("field %s has nil definition", fieldName), fieldName, "", ErrCodeSchemaInvalid, 0, 0, ErrorTypeSchemaValidate, "")
-```
-
----
-
-### 2. NewTypeMismatchError Constructor
-
-**Signature:**
-```go
-func NewTypeMismatchError(filePath string, fieldPath string, expectedType string, actualType string, value string, line int, errorCode ErrorCode) *TypeMismatchError
-```
-
-**Usage Examples:**
-```go
-// Root type mismatch
-return NewTypeMismatchError("", "", "map[string]interface{}", fmt.Sprintf("%T", value), "", 0, ErrCodeTypeMismatch)
-
-// Field type mismatch
-return NewTypeMismatchError("", fieldPath, fieldDef.Type, s.getTypeName(value), fmt.Sprintf("%v", value), 0, ErrCodeTypeMismatch)
-```
-
----
-
-### 3. NewFieldNotFoundError Constructor
-
-**Signature:**
-```go
-func NewFieldNotFoundError(filePath string, fieldPath string, line int, errorCode ErrorCode) *FieldNotFoundError
-```
-
-**Usage Example:**
-```go
-return NewFieldNotFoundError("", fieldName, 0, ErrCodeRequiredField)
-```
-
----
-
-### 4. NewConstraintError Constructor
-
-**Signature:**
-```go
-func NewConstraintError(filePath string, fieldPath string, constraintType string, constraint string, message string, value string, line int, errorCode ErrorCode) *ConstraintError
-```
-
-**Usage Examples:**
-```go
-// Min constraint
-return NewConstraintError("", fieldPath, "min", fmt.Sprintf("must be >= %d", *fieldDef.Min), fmt.Sprintf("value violates minimum constraint %d", *fieldDef.Min), fmt.Sprintf("%v", value), 0, ErrCodeConstraintViolation)
-
-// Pattern constraint
-return NewConstraintError("", fieldPath, "pattern", fieldDef.Pattern, fmt.Sprintf("value does not match pattern '%s'", fieldDef.Pattern), strVal, 0, ErrCodeConstraintViolation)
-
-// Enum constraint
-return NewConstraintError("", fieldPath, "enum", fmt.Sprintf("must be one of: %v", fieldDef.AllowedValues), fmt.Sprintf("value not in allowed list"), fmt.Sprintf("%v", value), 0, ErrCodeInvalidValue)
-```
-
----
-
-### 5. Direct ConstraintError Construction (Constraint Implementations)
-
-**Pattern:**
-```go
-return &ConstraintError{
-    Constraint:     fmt.Sprintf("description here"),
-    ConstraintType: "type_of_constraint",
-    Value:          fmt.Sprintf("%v", value),
-}
-```
-
-**Usage Examples:**
-```go
-// String constraint - type check
-return &ConstraintError{
-    Constraint:     fmt.Sprintf("value is not a string: %T", value),
-    ConstraintType: "string",
-    Value:          fmt.Sprintf("%v", value),
-}
-
-// String constraint - min length
-return &ConstraintError{
-    Constraint:     fmt.Sprintf("string length %d is less than minimum %d", len(str), sc.minLength),
-    ConstraintType: "min_length",
-    Value:          str,
-}
-
-// Number constraint - non-numeric
-return &ConstraintError{
-    Constraint: fmt.Sprintf("value is not a number: %v", err),
-}
-```
+**Other Errors:**
+- `ENCODING_INVALID_UTF8`
+- `ANCHOR_UNKNOWN`
+- `KEY_DUPLICATE`
+- `EOF_UNEXPECTED`
 
 ---
 
 ## Error Handling Patterns in Callers
 
-### Pattern 1: Direct Error Return
+### Pattern 1: Direct Error Propagation
 
-```go
-if err := sv.schema.Validate(data); err != nil {
-    return err  // Direct propagation
+```rust
+// In parser trait implementations
+fn validate(&self, source: Input) -> Result<(), ParseError> {
+    self.parse(source)?;  // Use ? operator for propagation
+    Ok(())
 }
 ```
 
-**Used by:** Low-level validation methods
+**Used by:** Generic parser trait implementations
 
 ---
 
-### Pattern 2: Error to Result Struct Conversion
+### Pattern 2: Structured Result Conversion
 
-```go
-if err := sv.schema.Validate(data); err != nil {
-    result.Valid = false
-    result.Errors = append(result.Errors, SchemaValidationError{
-        Message: fmt.Sprintf("Validation failed: %v", err),
-    })
-    return result
-}
-```
-
-**Used by:** `SchemaValidator.Validate()`, `SchemaValidator.ValidateFile()`
-
----
-
-### Pattern 3: Error to ValidationError List Conversion
-
-```go
-if err != nil {
-    result.Valid = false
-    ve := LocalValidationError{
-        FilePath: filePath,
-        Message:  fmt.Sprintf("Failed to read file: %v", err),
-        Type:     ErrorTypeIO,
+```rust
+// Converting file read errors to ValidationResult
+let content = match std::fs::read_to_string(path) {
+    Ok(content) => content,
+    Err(err) => {
+        return ValidationResult {
+            valid: false,
+            errors: vec![ValidationError::new(
+                format!("file: {}", path.display()),
+                format!("Failed to read file: {}", err)
+            ).with_code(ErrorCode::IO_READ_FAILED)],
+            warnings: Vec::new(),
+        };
     }
-    result.Errors = append(result.Errors, ve.ToValidationError())
-    return result
+};
+```
+
+**Used by:** `YamlParser::validate_file()`
+
+---
+
+### Pattern 3: Error Collection with Context
+
+```rust
+// Collecting multiple validation errors
+let mut errors = Vec::new();
+
+if let Err(mut line_errors) = self.validate_indentation(line, line_num, &context) {
+    errors.append(&mut line_errors);
+}
+
+if let Err(mut line_errors) = self.validate_delimiters(line, line_num) {
+    errors.append(&mut line_errors);
+}
+
+ValidationResult {
+    valid: errors.is_empty(),
+    errors,
+    warnings,
 }
 ```
 
-**Used by:** `Validator.ValidateFile()`, `Validator.ValidateStringWithPath()`
+**Used by:** `SyntaxValidator::validate()`
 
 ---
 
-## Error Code Constants
+### Pattern 4: Conditional Error Creation
 
-| ErrorCode | Description |
-|-----------|-------------|
-| `ErrCodeValidationFailed` | General validation failure |
-| `ErrCodeTypeMismatch` | Type expectation not met |
-| `ErrCodeRequiredField` | Required field missing |
-| `ErrCodeConstraintViolation` | Constraint rule violated |
-| `ErrCodeInvalidValue` | Value invalid for any reason |
-| `ErrCodeSchemaInvalid` | Schema definition error |
-| `ErrCodeDuplicateKey` | Duplicate mapping key |
-
----
-
-## Error Type Constants (ErrorType)
-
-| ErrorType | Description |
-|-----------|-------------|
-| `ErrorTypeValidation` | General validation error |
-| `ErrorTypeTypeMismatch` | Type mismatch |
-| `ErrorTypeFieldNotFound` | Required field missing |
-| `ErrorTypeConstraint` | Constraint violation |
-| `ErrorTypeSyntax` | YAML syntax error |
-| `ErrorTypeStructure` | YAML structure error |
-| `ErrorTypeIO` | I/O error |
-| `ErrorTypeEmpty` | Empty content |
-| `ErrorTypeSchemaValidate` | Schema validation error |
-
----
-
-## Key Observations
-
-### 1. Dual Return Patterns
-
-ARMOR uses two distinct patterns:
-
-- **Error return:** `SchemaDefinition.Validate()` returns `error` directly
-- **Result struct:** `SchemaValidator.Validate()` and `Validator.Validate*()` return result structs
-
-This allows both simple error checking and detailed error collection.
-
-### 2. No Error Wrapping
-
-Validate() methods do NOT wrap errors with `fmt.Errorf()` or `errors.Wrap()`. They return clean error types directly.
-
-### 3. Constructor Pattern
-
-All error types use dedicated constructor functions (`New*Error()`) for consistent initialization.
-
-### 4. Struct Conversion
-
-When converting from error return to result struct, errors are converted via string formatting:
-```go
-Message: fmt.Sprintf("Validation failed: %v", err)
+```rust
+// String-based error returns for configuration validation
+pub fn validate(&self) -> Result<(), String> {
+    if self.warnings_as_errors && !self.emit_warnings {
+        return Err("warnings_as_errors requires emit_warnings to be true".to_string());
+    }
+    Ok(())
+}
 ```
 
-### 5. Constraint Error Variations
+**Used by:** `ParserConfig::validate()`, `ValidatorConfig::validate()`
 
-Two patterns for constraint errors:
-- **SchemaDefinition:** Uses `NewConstraintError()` constructor
-- **Constraint implementations:** Use direct `&ConstraintError{}` struct initialization
+---
+
+### Pattern 5: User-Provided Validation Functions
+
+```rust
+// Delegating to custom validation logic
+pub fn validate(&self, field: &str, value: &Value) -> Result<(), String> {
+    (self.validator)(field, value)  // Calls user function
+}
+
+// Example user function
+fn validate_port(field: &str, value: &Value) -> Result<(), String> {
+    let port = value.as_i64().ok_or("port must be an integer")?;
+    if !(1..=65535).contains(&port) {
+        return Err(format!("port {} out of valid range (1-65535)", port));
+    }
+    Ok(())
+}
+```
+
+**Used by:** `ValidationHook::validate()`, `TypeConstructor::construct()`
+
+---
+
+## Error Construction Patterns
+
+### Pattern 1: Enum Constructor Functions
+
+```rust
+// ParseError constructors
+ParseError::syntax("invalid YAML syntax")
+ParseError::io("file not found")
+ParseError::validation("value out of range")
+ParseError::type_mismatch("port", "integer", "string")
+```
+
+**Location:** `src/parsers/traits.rs` (via `ParseError` enum methods)
+
+---
+
+### Pattern 2: Struct Builder Pattern
+
+```rust
+// ValidationError construction with builder methods
+ValidationError::new("server.port", "port out of range")
+    .with_code(ErrorCode::VALIDATION_VALUE_OUT_OF_RANGE)
+    .with_line(42)
+    .with_column(10)
+```
+
+**Location:** `src/parsers/yaml/types.rs`
+
+---
+
+### Pattern 3: Result Struct Direct Construction
+
+```rust
+// ValidationResult construction
+ValidationResult {
+    valid: false,
+    errors: vec![error1, error2],
+    warnings: vec![warning1],
+}
+
+// Convenience constructors
+ValidationResult::success()
+ValidationResult::failure(errors)
+```
+
+**Location:** `src/parsers/yaml/types.rs`
+
+---
+
+### Pattern 4: Error Type Conversion
+
+```rust
+// Converting std::io::Error to ParseError
+impl From<std::io::Error> for ParseError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err.to_string())
+    }
+}
+
+// Converting YamlParseError to ParseError
+impl From<YamlParseError> for ParseError {
+    fn from(err: YamlParseError) -> Self {
+        Self::Yaml(err)
+    }
+}
+```
+
+**Location:** `src/parsers/traits.rs`
 
 ---
 
 ## Summary Table
 
-| Validate Method | Return Type | Error Types | Wrapping | Constructor |
-|----------------|-------------|-------------|----------|-------------|
-| `SchemaDefinition.Validate` | `error` | ValidationError, TypeMismatchError, FieldNotFoundError, ConstraintError | None | New*Error() |
-| `SchemaValidator.Validate` | `SchemaValidationResult` | SchemaValidationError (list) | String format | N/A |
-| `SchemaValidator.ValidateFile` | `SchemaValidationResult` | SchemaValidationError (list) | String format | N/A |
-| `Validator.ValidateString` | `ValidationResult` | ValidationError (list) | LocalValidationError.ToValidationError() | N/A |
-| `Validator.ValidateFile` | `ValidationResult` | ValidationError (list) | LocalValidationError.ToValidationError() | N/A |
-| `*ConstraintImpl.Validate` | `*ConstraintError` or `nil` | ConstraintError | None | Direct struct init |
+| Validate Method | Return Type | Error Types | Wrapping | Construction Pattern |
+|----------------|-------------|-------------|----------|---------------------|
+| `Parser::validate` | `Result<(), ParseError>` | `ParseError` enum variants | Delegates to `parse()` | Enum constructors |
+| `SyntaxValidator::validate` | `ValidationResult` | `ValidationError` struct | None - returns struct | Struct builder pattern |
+| `YamlParser::validate_str` | `ValidationResult` | `ValidationError` struct | Delegates to `SyntaxValidator` | Inherited |
+| `YamlParser::validate_file` | `ValidationResult` | `ValidationError` struct | Converts I/O errors | Struct construction |
+| `ParserConfig::validate` | `Result<(), String>` | String error messages | None - direct returns | String formatting |
+| `ValidatorConfig::validate` | `Result<(), String>` | String error messages | None - direct returns | String formatting |
+| `ValidationHook::validate` | `Result<(), String>` | User-provided errors | Delegates to user function | User-defined |
+
+---
+
+## Key Observations
+
+### 1. Dual Return Pattern Philosophy
+
+ARMOR uses two distinct error handling patterns:
+
+- **`Result<T, E>` pattern**: Used for parsing operations where failure is exceptional and stops execution
+- **Structured result pattern**: Used for validation operations where multiple errors should be collected and reported together
+
+This allows both simple error checking (via `?` operator) and comprehensive error reporting.
+
+### 2. No Error Wrapping in Validation Results
+
+Validation methods that return `ValidationResult` do NOT use Rust's standard error wrapping (`?` operator, `From` conversions). Instead, they construct result structs directly with error lists.
+
+### 3. Error Code Hierarchy Integration
+
+The `ErrorCode` enum provides machine-readable error codes that map to the `ErrorType` categories, enabling programmatic error handling and classification.
+
+### 4. Rich Location Information
+
+`ValidationError` includes optional line/column numbers and specialized error type fields (indentation_error_type, delimiter_error_type) for detailed error reporting.
+
+### 5. User-Extensible Validation
+
+The `ValidationHook` and `TypeConstructor` systems allow users to provide custom validation logic that integrates with the standard error handling patterns.
+
+### 6. Consistent Error Display
+
+All error types implement `Display` for user-friendly error messages and `Error` trait for compatibility with Rust error handling.
 
 ---
 
 ## Generated: 2026-07-12
+## ARMOR Rust Codebase Analysis
