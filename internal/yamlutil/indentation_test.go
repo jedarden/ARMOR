@@ -571,7 +571,7 @@ func TestGetTrailingComment(t *testing.T) {
 		{"comment in single quotes", "key: 'value # not comment'", ""},
 		{"comment in double quotes", `key: "value # not comment"`, ""},
 		{"comment with leading spaces", "  key: value # comment", " comment"},
-		{"escaped quote before hash", `key: "value\" # not comment"`, " # not comment"},
+		{"escaped quote before hash", `key: "value\" # not comment"`, ""},
 		{"single quote before hash", `key: 'value' # comment`, " comment"},
 		{"empty line", "", ""},
 	}
