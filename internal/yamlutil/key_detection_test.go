@@ -279,6 +279,196 @@ func TestKeyDetectionIntegration(t *testing.T) {
 	}
 }
 
+// TestStripInlineComment verifies the StripInlineComment function.
+func TestStripInlineComment(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected string
+	}{
+		{
+			name:     "inline comment with space before hash",
+			line:     "key: value # this is a comment",
+			expected: "key: value ",
+		},
+		{
+			name:     "inline comment with tab before hash",
+			line:     "key: value\t# this is a comment",
+			expected: "key: value\t",
+		},
+		{
+			name:     "inline comment with multiple spaces",
+			line:     "key: value    # comment",
+			expected: "key: value    ",
+		},
+		{
+			name:     "hash in URL - not a comment",
+			line:     "url: http://example.com#anchor",
+			expected: "url: http://example.com#anchor",
+		},
+		{
+			name:     "hash in value without preceding space",
+			line:     "key: value#not-a-comment",
+			expected: "key: value#not-a-comment",
+		},
+		{
+			name:     "hash in text preceded by space",
+			line:     "text: some # text",
+			expected: "text: some ",
+		},
+		{
+			name:     "no comment - simple key value",
+			line:     "key: value",
+			expected: "key: value",
+		},
+		{
+			name:     "full-line comment - should not be stripped",
+			line:     "# This is a comment",
+			expected: "# This is a comment",
+		},
+		{
+			name:     "indented full-line comment - should not be stripped",
+			line:     "  # This is a comment",
+			expected: "  # This is a comment",
+		},
+		{
+			name:     "empty string",
+			line:     "",
+			expected: "",
+		},
+		{
+			name:     "whitespace only",
+			line:     "   ",
+			expected: "   ",
+		},
+		{
+			name:     "key with trailing space before inline comment",
+			line:     "key: value # comment",
+			expected: "key: value ",
+		},
+		{
+			name:     "inline comment with colon in comment text",
+			line:     "key: value # TODO: fix this",
+			expected: "key: value ",
+		},
+		{
+			name:     "multiple potential comment markers",
+			line:     "key: value # first comment # second comment",
+			expected: "key: value ",
+		},
+		{
+			name:     "hash character as part of value syntax",
+			line:     "color: #FF0000",
+			expected: "color: #FF0000",
+		},
+		{
+			name:     "indented key with inline comment",
+			line:     "  key: value # comment",
+			expected: "  key: value ",
+		},
+		{
+			name:     "sequence item with inline comment",
+			line:     "- item # comment",
+			expected: "- item ",
+		},
+		{
+			name:     "complex URL with query string and fragment",
+			line:     "url: https://example.com/path?query=value#fragment",
+			expected: "url: https://example.com/path?query=value#fragment",
+		},
+		{
+			name:     "key with colon in value and inline comment",
+			line:     "time: 10:30 # morning meeting",
+			expected: "time: 10:30 ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := StripInlineComment(tt.line)
+			if result != tt.expected {
+				t.Errorf("StripInlineComment(%q) = %q, want %q", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestCommentFilteringIntegration tests the full comment filtering workflow.
+func TestCommentFilteringIntegration(t *testing.T) {
+	tests := []struct {
+		name              string
+		line              string
+		isComment         bool
+		stripped          string
+		detectAsKeyAfterStrip bool
+	}{
+		{
+			name:                  "full comment line",
+			line:                  "# This is a comment",
+			isComment:             true,
+			stripped:              "# This is a comment",
+			detectAsKeyAfterStrip: false,
+		},
+		{
+			name:                  "indented comment line",
+			line:                  "  # indented comment",
+			isComment:             true,
+			stripped:              "  # indented comment",
+			detectAsKeyAfterStrip: false,
+		},
+		{
+			name:                  "inline comment should be stripped",
+			line:                  "key: value # comment",
+			isComment:             false,
+			stripped:              "key: value ",
+			detectAsKeyAfterStrip: true,
+		},
+		{
+			name:                  "hash in URL preserved",
+			line:                  "url: http://example.com#anchor",
+			isComment:             false,
+			stripped:              "url: http://example.com#anchor",
+			detectAsKeyAfterStrip: true,
+		},
+		{
+			name:                  "simple key value no comment",
+			line:                  "name: John",
+			isComment:             false,
+			stripped:              "name: John",
+			detectAsKeyAfterStrip: true,
+		},
+		{
+			name:                  "comment with colon detected as key by basic function",
+			line:                  "# TODO: fix this issue",
+			isComment:             true,
+			stripped:              "# TODO: fix this issue",
+			detectAsKeyAfterStrip: true, // IsMappingKey is basic - just checks for colon
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test IsCommentLine
+			isComment := IsCommentLine(tt.line)
+			if isComment != tt.isComment {
+				t.Errorf("IsCommentLine(%q) = %v, want %v", tt.line, isComment, tt.isComment)
+			}
+
+			// Test StripInlineComment
+			stripped := StripInlineComment(tt.line)
+			if stripped != tt.stripped {
+				t.Errorf("StripInlineComment(%q) = %q, want %q", tt.line, stripped, tt.stripped)
+			}
+
+			// Test key detection on stripped line
+			isKey := IsMappingKey(stripped)
+			if isKey != tt.detectAsKeyAfterStrip {
+				t.Errorf("After stripping, IsMappingKey(%q) = %v, want %v", stripped, isKey, tt.detectAsKeyAfterStrip)
+			}
+		})
+	}
+}
+
 // BenchmarkIsMappingKey benchmarks the IsMappingKey function.
 func BenchmarkIsMappingKey(b *testing.B) {
 	line := "name: John"
