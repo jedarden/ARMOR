@@ -30,3 +30,13 @@ To complete this bead, one of the following is needed:
 
 ## Next Steps
 This blocker should be documented in the bead. The extraction task that depends on this verification will also be blocked until secret access is resolved.
+
+---
+
+## Re-verification (2026-07-11)
+Re-verified cluster access and RBAC restrictions. Confirmed:
+- ✅ Cluster access works (pods list successfully)
+- ❌ Secret access still blocked by RBAC (devpod-observer SA cannot read secrets)
+- ❌ `auth can-i get secrets` returns `no` for devimprint namespace
+
+The blocker remains active. This bead cannot complete without elevated credentials or RBAC changes.
