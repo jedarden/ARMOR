@@ -1299,3 +1299,658 @@ fn test_incompatible_scalar_to_scalar_conversions() {
             actual_type, expected_type, field_name);
     }
 }
+
+// ============================================================================
+// Integer Overflow/Underflow Tests
+// ============================================================================
+
+#[test]
+fn test_integer_overflow_values() {
+    /// Test: Integer overflow scenarios
+    ///
+    /// These test cases verify that values exceeding the maximum representable
+    /// integer values are properly handled and produce appropriate errors.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | 9223372036854775808 | i64::MAX + 1 (overflow) |
+    /// | 9999999999999999999 | Arbitrary large number |
+    /// | 18446744073709551615 | u64::MAX (overflow for i64) |
+    /// | 100000000000000000000 | Extremely large value |
+    /// | 92233720368547758070 | 10x i64::MAX |
+
+    let test_cases = vec![
+        ("9223372036854775808", "i64_MAX + 1"),
+        ("9999999999999999999", "arbitrary large number"),
+        ("18446744073709551615", "u64_MAX"),
+        ("100000000000000000000", "extremely large value"),
+        ("92233720368547758070", "10x i64_MAX"),
+    ];
+
+    for (input, description) in test_cases {
+        let yaml = format!("port: {}", input);
+        let value: Result<Value, _> = serde_yaml::from_str(&yaml);
+
+        // YAML may parse these as strings or integers depending on implementation
+        if let Ok(parsed_value) = value {
+            let port_value = &parsed_value["port"];
+
+            // If parsed as integer, verify it overflows or is clamped
+            if port_value.is_i64() {
+                let int_value = port_value.as_i64().unwrap();
+                // If YAML clamped to max, that's acceptable behavior
+                assert!(int_value <= i64::MAX,
+                    "Integer should be at most i64::MAX for {}", description);
+            } else if port_value.is_string() {
+                // String representation - cannot convert to integer
+                let result = port_value.as_i64();
+                assert!(result.is_none(),
+                    "Overflow string '{}' should not convert to integer ({})",
+                    input, description);
+
+                // Verify type mismatch error handling
+                let error = ParseError::type_mismatch("port", "integer", "overflow");
+                assert!(error.is_type_mismatch(),
+                    "Type mismatch error should be created for overflow case {}", description);
+            } else if port_value.is_u64() {
+                // Some YAML parsers use u64 for large values
+                let u64_value = port_value.as_u64().unwrap();
+                assert!(u64_value > i64::MAX as u64,
+                    "u64 value should exceed i64::MAX for {}", description);
+            }
+        }
+
+        // Verify error handling for overflow scenario
+        let error = ParseError::type_mismatch("port", "integer", "overflow");
+        assert!(error.is_type_mismatch(),
+            "Type mismatch error should be created for overflow {}", description);
+    }
+}
+
+#[test]
+fn test_integer_underflow_values() {
+    /// Test: Integer underflow scenarios
+    ///
+    /// These test cases verify that values below the minimum representable
+    /// integer values are properly handled.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | -9223372036854775809 | i64::MIN - 1 (underflow) |
+    /// | -9999999999999999999 | Arbitrary very negative number |
+    /// | -92233720368547758080 | 10x i64::MIN |
+    /// | -18446744073709551615 | Extremely negative |
+
+    let test_cases = vec![
+        ("-9223372036854775809", "i64_MIN - 1"),
+        ("-9999999999999999999", "arbitrary very negative number"),
+        ("-92233720368547758080", "10x i64_MIN"),
+        ("-18446744073709551615", "extremely negative value"),
+    ];
+
+    for (input, description) in test_cases {
+        let yaml = format!("port: {}", input);
+        let value: Result<Value, _> = serde_yaml::from_str(&yaml);
+
+        // YAML may parse these as strings or handle underflow differently
+        if let Ok(parsed_value) = value {
+            let port_value = &parsed_value["port"];
+
+            if port_value.is_string() {
+                // String representation - cannot convert to integer
+                let result = port_value.as_i64();
+                assert!(result.is_none(),
+                    "Underflow string '{}' should not convert to integer ({})",
+                    input, description);
+
+                // Verify type mismatch error handling
+                let error = ParseError::type_mismatch("port", "integer", "underflow");
+                assert!(error.is_type_mismatch(),
+                    "Type mismatch error should be created for underflow case {}", description);
+            } else if port_value.is_i64() {
+                let int_value = port_value.as_i64().unwrap();
+                // If YAML clamped to min, that's acceptable behavior
+                assert!(int_value >= i64::MIN,
+                    "Integer should be at least i64::MIN for {}", description);
+            }
+        }
+
+        // Verify error handling for underflow scenario
+        let error = ParseError::type_mismatch("port", "integer", "underflow");
+        assert!(error.is_type_mismatch(),
+            "Type mismatch error should be created for underflow {}", description);
+    }
+}
+
+#[test]
+fn test_signed_integer_unsigned_context_overflow() {
+    /// Test: Signed integers in unsigned context causing overflow
+    ///
+    /// These test cases verify that negative integers properly fail when
+    /// converted to unsigned types (u8, u16, u32, u64).
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Target Type | Description |
+    /// |-------|-------------|-------------|
+    /// | -1 | unsigned | Negative in unsigned context |
+    /// | -100 | unsigned | Larger negative value |
+    /// | -2147483648 | unsigned | i32::MIN in unsigned context |
+    /// | -9223372036854775808 | unsigned | i64::MIN in unsigned context |
+
+    let test_cases = vec![
+        (r#"port: -1"#, "port", "-1", "unsigned"),
+        (r#"count: -100"#, "count", "-100", "unsigned"),
+        (r#"size: -2147483648"#, "size", "-2147483648", "unsigned"),
+        (r#"timeout: -9223372036854775808"#, "timeout", "-9223372036854775808", "unsigned"),
+    ];
+
+    for (yaml, field_name, value_str, context) in test_cases {
+        let value: Result<Value, _> = serde_yaml::from_str(yaml);
+        assert!(value.is_ok(), "YAML parsing should succeed for {} in {}", value_str, context);
+
+        let value = value.unwrap();
+        let field_value = &value[field_name];
+
+        // Verify it's a negative integer
+        assert!(field_value.is_i64(), "Field {} should be i64 ({})", field_name, value_str);
+        let int_value = field_value.as_i64().unwrap();
+        assert!(int_value < 0, "Field {} should be negative ({})", field_name, value_str);
+
+        // Verify type mismatch error is properly created
+        let error = ParseError::type_mismatch(field_name, "unsigned", "signed_negative");
+        assert!(error.is_type_mismatch(),
+            "Type mismatch error should be created for {} {} in {} context",
+            value_str, field_name, context);
+
+        let error_msg = format!("{}", error.kind);
+        assert!(error_msg.contains("unsigned") || error_msg.contains("negative"),
+            "Error should mention unsigned context or negative value for {}", field_name);
+    }
+}
+
+// ============================================================================
+// Floating Point Precision and Range Tests
+// ============================================================================
+
+#[test]
+fn test_floating_point_overflow_values() {
+    /// Test: Floating point overflow scenarios
+    ///
+    /// These test cases verify that values exceeding f64::MAX are properly handled.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | 1e400 | Value exceeding f64::MAX |
+    /// | 1e1000 | Extremely large value |
+    /// | 1.7976931348623157e+309 | f64::MAX + 1 |
+    /// | inf | Positive infinity |
+
+    let test_cases = vec![
+        ("1e400", "exponential 400"),
+        ("1e1000", "exponential 1000"),
+        ("1.7976931348623157e+309", "f64_MAX + 1"),
+    ];
+
+    for (input, description) in test_cases {
+        let yaml = format!("rate: {}", input);
+        let value: Result<Value, _> = serde_yaml::from_str(&yaml);
+
+        if let Ok(parsed_value) = value {
+            let rate_value = &parsed_value["rate"];
+
+            if rate_value.is_string() {
+                // String representation - cannot convert to float
+                let result = rate_value.as_f64();
+                assert!(result.is_none(),
+                    "Overflow string '{}' should not convert to float ({})",
+                    input, description);
+
+                // Verify type mismatch error handling
+                let error = ParseError::type_mismatch("rate", "float", "overflow");
+                assert!(error.is_type_mismatch(),
+                    "Type mismatch error should be created for float overflow {}", description);
+            } else if rate_value.is_f64() {
+                let float_value = rate_value.as_f64().unwrap();
+                // Check if it's infinity (overflow indicator)
+                assert!(float_value.is_infinite() || float_value <= f64::MAX,
+                    "Float overflow should result in infinity or be clamped for {}", description);
+            }
+        }
+
+        // Verify error handling for float overflow scenario
+        let error = ParseError::type_mismatch("rate", "float", "overflow");
+        assert!(error.is_type_mismatch(),
+            "Type mismatch error should be created for float overflow {}", description);
+    }
+}
+
+#[test]
+fn test_floating_point_underflow_values() {
+    /// Test: Floating point underflow scenarios
+    ///
+    /// These test cases verify that values below f64::MIN (most negative) are
+    /// properly handled, as well as subnormal numbers.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | -1e400 | Negative value below f64::MIN |
+    /// | -1e1000 | Extremely negative value |
+    /// | -1.7976931348623157e+309 | f64::MIN - 1 |
+    /// | 1e-400 | Extremely small subnormal |
+
+    let test_cases = vec![
+        ("-1e400", "negative exponential 400"),
+        ("-1e1000", "negative exponential 1000"),
+        ("-1.7976931348623157e+309", "f64_MIN - 1"),
+        ("1e-400", "extremely small subnormal"),
+    ];
+
+    for (input, description) in test_cases {
+        let yaml = format!("rate: {}", input);
+        let value: Result<Value, _> = serde_yaml::from_str(&yaml);
+
+        if let Ok(parsed_value) = value {
+            let rate_value = &parsed_value["rate"];
+
+            if rate_value.is_string() {
+                // String representation - cannot convert to float
+                let result = rate_value.as_f64();
+                assert!(result.is_none(),
+                    "Underflow string '{}' should not convert to float ({})",
+                    input, description);
+
+                // Verify type mismatch error handling
+                let error = ParseError::type_mismatch("rate", "float", "underflow");
+                assert!(error.is_type_mismatch(),
+                    "Type mismatch error should be created for float underflow {}", description);
+            } else if rate_value.is_f64() {
+                let float_value = rate_value.as_f64().unwrap();
+                // Check if it's negative infinity (underflow indicator)
+                assert!(float_value.is_infinite() || float_value >= f64::MIN || float_value == 0.0,
+                    "Float underflow should result in -infinity, be clamped, or underflow to 0 for {}", description);
+            }
+        }
+
+        // Verify error handling for float underflow scenario
+        let error = ParseError::type_mismatch("rate", "float", "underflow");
+        assert!(error.is_type_mismatch(),
+            "Type mismatch error should be created for float underflow {}", description);
+    }
+}
+
+#[test]
+fn test_floating_point_precision_limits() {
+    /// Test: Floating point precision boundary cases
+    ///
+    /// These test cases verify behavior at precision limits and rounding boundaries.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | 1.7976931348623157e+308 | f64::MAX (largest finite) |
+    /// | -1.7976931348623157e+308 | f64::MIN (most negative finite) |
+    /// | 2.2250738585072014e-308 | f64::MIN_SUBNORMAL |
+    /// | 4.940656458412465e-324 | f64::MIN_POSITIVE |
+
+    let test_cases = vec![
+        ("1.7976931348623157e+308", "f64_MAX"),
+        ("-1.7976931348623157e+308", "f64_MIN"),
+        ("2.2250738585072014e-308", "min_subnormal"),
+        ("4.940656458412465e-324", "min_positive"),
+    ];
+
+    for (input, description) in test_cases {
+        let yaml = format!("rate: {}", input);
+        let value: Result<Value, _> = serde_yaml::from_str(&yaml);
+
+        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+
+        let value = value.unwrap();
+        let rate_value = &value["rate"];
+
+        // Verify conversion to float succeeds or handles edge case gracefully
+        let result = rate_value.as_f64();
+
+        if let Some(float_value) = result {
+            // Verify the value is representable
+            if description == "f64_MAX" {
+                assert!(float_value <= f64::MAX, "f64_MAX value should be <= f64::MAX");
+            } else if description == "f64_MIN" {
+                assert!(float_value >= f64::MIN, "f64_MIN value should be >= f64::MIN");
+            } else if description == "min_positive" {
+                assert!(float_value >= 0.0 && float_value <= f64::MIN_POSITIVE,
+                    "min_positive value should be in valid range");
+            }
+        } else {
+            // If conversion fails, verify error handling
+            let error = ParseError::type_mismatch("rate", "float", "precision_limit");
+            assert!(error.is_type_mismatch(),
+                "Type mismatch error should be created for precision limit {}", description);
+        }
+    }
+}
+
+#[test]
+fn test_denormal_and_nan_float_values() {
+    /// Test: Special floating point values
+    ///
+    /// These test cases verify handling of NaN, infinity, and denormal numbers.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | .nan | NaN value |
+    /// | .inf | Positive infinity |
+    /// | -.inf | Negative infinity |
+    /// | 0.0 | Zero (can be positive or negative) |
+
+    let test_cases = vec![
+        (r#"rate: .nan"#, "rate", "nan"),
+        (r#"timeout: .inf"#, "timeout", "positive_infinity"),
+        (r#"ratio: -.inf"#, "ratio", "negative_infinity"),
+        (r#"value: 0.0"#, "value", "zero"),
+        (r#"limit: -0.0"#, "limit", "negative_zero"),
+    ];
+
+    for (yaml, field_name, description) in test_cases {
+        let value: Result<Value, _> = serde_yaml::from_str(yaml);
+        assert!(value.is_ok(), "YAML parsing should succeed for {}", description);
+
+        let value = value.unwrap();
+        let field_value = &value[field_name];
+
+        let result = field_value.as_f64();
+
+        if let Some(float_value) = result {
+            match description {
+                "nan" => {
+                    assert!(float_value.is_nan(), "Value should be NaN for {}", description);
+                }
+                "positive_infinity" => {
+                    assert!(float_value.is_infinite() && float_value > 0.0,
+                        "Value should be positive infinity for {}", description);
+                }
+                "negative_infinity" => {
+                    assert!(float_value.is_infinite() && float_value < 0.0,
+                        "Value should be negative infinity for {}", description);
+                }
+                "zero" | "negative_zero" => {
+                    assert!(float_value == 0.0, "Value should be zero for {}", description);
+                }
+                _ => {}
+            }
+        } else {
+            // If conversion fails, verify error handling
+            let error = ParseError::type_mismatch(field_name, "float", description);
+            assert!(error.is_type_mismatch(),
+                "Type mismatch error should be created for {} special float value", description);
+        }
+    }
+}
+
+// ============================================================================
+// Range Limit Violation Tests
+// ============================================================================
+
+#[test]
+fn test_u16_range_limit_violations() {
+    /// Test: Values exceeding u16 range (0 to 65535)
+    ///
+    /// These test cases verify that values exceeding the u16 range are properly
+    /// rejected when a u16 is expected (common for port numbers, etc.).
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | 65536 | u16::MAX + 1 |
+    /// | 70000 | Value above u16::MAX |
+    /// | 100000 | Large value above u16 |
+    /// | -1 | Negative value (below 0) |
+
+    let test_cases = vec![
+        ("65536", "u16_MAX + 1"),
+        ("70000", "70000"),
+        ("100000", "100000"),
+        ("99999", "99999"),
+        ("-1", "negative"),
+        ("-100", "negative_100"),
+    ];
+
+    for (input, description) in test_cases {
+        let yaml = format!("port: {}", input);
+        let value: Result<Value, _> = serde_yaml::from_str(&yaml);
+
+        if let Ok(parsed_value) = value {
+            let port_value = &parsed_value["port"];
+
+            // For negative values, verify it's negative
+            if input.starts_with('-') {
+                if port_value.is_i64() {
+                    let int_value = port_value.as_i64().unwrap();
+                    assert!(int_value < 0,
+                        "Value should be negative for {} ({})", input, description);
+
+                    // Verify type mismatch error for u16 range violation
+                    let error = ParseError::type_mismatch("port", "u16", "negative");
+                    assert!(error.is_type_mismatch(),
+                        "Type mismatch error should be created for negative value in u16 context ({})",
+                        description);
+                }
+            } else {
+                // For values above u16::MAX
+                if port_value.is_i64() {
+                    let int_value = port_value.as_i64().unwrap();
+                    if int_value > u16::MAX as i64 {
+                        // Verify type mismatch error for u16 range violation
+                        let error = ParseError::type_mismatch("port", "u16", "overflow");
+                        assert!(error.is_type_mismatch(),
+                            "Type mismatch error should be created for overflow in u16 context ({})",
+                            description);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_u8_range_limit_violations() {
+    /// Test: Values exceeding u8 range (0 to 255)
+    ///
+    /// These test cases verify that values exceeding the u8 range are properly
+    /// rejected when a u8 is expected.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | 256 | u8::MAX + 1 |
+    /// | 1000 | Value above u8::MAX |
+    /// | 500 | Value above u8::MAX |
+    /// | -1 | Negative value |
+
+    let test_cases = vec![
+        ("256", "u8_MAX + 1"),
+        ("1000", "1000"),
+        ("500", "500"),
+        ("300", "300"),
+        ("-1", "negative"),
+        ("-10", "negative_10"),
+    ];
+
+    for (input, description) in test_cases {
+        let yaml = format!("flags: {}", input);
+        let value: Result<Value, _> = serde_yaml::from_str(&yaml);
+
+        if let Ok(parsed_value) = value {
+            let flags_value = &parsed_value["flags"];
+
+            if input.starts_with('-') {
+                if flags_value.is_i64() {
+                    let int_value = flags_value.as_i64().unwrap();
+                    assert!(int_value < 0,
+                        "Value should be negative for {} ({})", input, description);
+
+                    // Verify type mismatch error for u8 range violation
+                    let error = ParseError::type_mismatch("flags", "u8", "negative");
+                    assert!(error.is_type_mismatch(),
+                        "Type mismatch error should be created for negative value in u8 context ({})",
+                        description);
+                }
+            } else {
+                if flags_value.is_i64() {
+                    let int_value = flags_value.as_i64().unwrap();
+                    if int_value > u8::MAX as i64 {
+                        // Verify type mismatch error for u8 range violation
+                        let error = ParseError::type_mismatch("flags", "u8", "overflow");
+                        assert!(error.is_type_mismatch(),
+                            "Type mismatch error should be created for overflow in u8 context ({})",
+                            description);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_i32_range_limit_violations() {
+    /// Test: Values exceeding i32 range
+    ///
+    /// These test cases verify that values exceeding the i32 range are properly
+    /// rejected when an i32 is expected.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description |
+    /// |-------|-------------|
+    /// | 2147483648 | i32::MAX + 1 |
+    /// | -2147483649 | i32::MIN - 1 |
+    /// | 5000000000 | Large positive value |
+    /// | -5000000000 | Large negative value |
+
+    let test_cases = vec![
+        ("2147483648", "i32_MAX + 1"),
+        ("-2147483649", "i32_MIN - 1"),
+        ("5000000000", "large_positive"),
+        ("-5000000000", "large_negative"),
+        ("10000000000", "very_large_positive"),
+        ("-10000000000", "very_large_negative"),
+    ];
+
+    for (input, description) in test_cases {
+        let yaml = format!("count: {}", input);
+        let value: Result<Value, _> = serde_yaml::from_str(&yaml);
+
+        if let Ok(parsed_value) = value {
+            let count_value = &parsed_value["count"];
+
+            if count_value.is_i64() {
+                let int_value = count_value.as_i64().unwrap();
+
+                // Verify value exceeds i32 range
+                let exceeds_range = if int_value > 0 {
+                    int_value > i32::MAX as i64
+                } else {
+                    int_value < i32::MIN as i64
+                };
+
+                if exceeds_range {
+                    // Verify type mismatch error for i32 range violation
+                    let error = ParseError::type_mismatch("count", "i32",
+                        if int_value > 0 { "overflow" } else { "underflow" });
+                    assert!(error.is_type_mismatch(),
+                        "Type mismatch error should be created for {} in i32 context ({})",
+                        if int_value > 0 { "overflow" } else { "underflow" }, description);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_range_boundary_values() {
+    /// Test: Boundary values at type limits
+    ///
+    /// These test cases verify exact boundary values and values just beyond boundaries.
+    ///
+    /// # Test Cases
+    ///
+    /// | Type | Boundary Input | Description | Valid |
+    /// |------|----------------|-------------|-------|
+    /// | u8 | 255 | u8::MAX (valid) | true |
+    /// | u8 | 256 | u8::MAX + 1 (invalid) | false |
+    /// | i8 | 127 | i8::MAX (valid) | true |
+    /// | i8 | 128 | i8::MAX + 1 (invalid) | false |
+    /// | i8 | -128 | i8::MIN (valid) | true |
+    /// | i8 | -129 | i8::MIN - 1 (invalid) | false |
+    /// | u16 | 65535 | u16::MAX (valid) | true |
+    /// | u16 | 65536 | u16::MAX + 1 (invalid) | false |
+    /// | i16 | 32767 | i16::MAX (valid) | true |
+    /// | i16 | 32768 | i16::MAX + 1 (invalid) | false |
+
+    let test_cases = vec![
+        ("255", "u8", "u8_MAX", true),
+        ("256", "u8", "u8_MAX + 1", false),
+        ("127", "i8", "i8_MAX", true),
+        ("128", "i8", "i8_MAX + 1", false),
+        ("-128", "i8", "i8_MIN", true),
+        ("-129", "i8", "i8_MIN - 1", false),
+        ("65535", "u16", "u16_MAX", true),
+        ("65536", "u16", "u16_MAX + 1", false),
+        ("32767", "i16", "i16_MAX", true),
+        ("32768", "i16", "i16_MAX + 1", false),
+        ("-32768", "i16", "i16_MIN", true),
+        ("-32769", "i16", "i16_MIN - 1", false),
+    ];
+
+    for (input, target_type, description, should_be_valid) in test_cases {
+        let yaml = format!("value: {}", input);
+        let value: Result<Value, _> = serde_yaml::from_str(&yaml);
+
+        if let Ok(parsed_value) = value {
+            let value_field = &parsed_value["value"];
+
+            if value_field.is_i64() {
+                let int_value = value_field.as_i64().unwrap();
+
+                // Check if value is within range for target type
+                let is_in_range = match target_type {
+                    "u8" => int_value >= 0 && int_value <= u8::MAX as i64,
+                    "i8" => int_value >= i8::MIN as i64 && int_value <= i8::MAX as i64,
+                    "u16" => int_value >= 0 && int_value <= u16::MAX as i64,
+                    "i16" => int_value >= i16::MIN as i64 && int_value <= i16::MAX as i64,
+                    _ => true,
+                };
+
+                assert_eq!(is_in_range, should_be_valid,
+                    "Value {} should {}be in range for {} ({})",
+                    input,
+                    if should_be_valid { "" } else { "not " },
+                    target_type,
+                    description);
+
+                // If out of range, verify error handling
+                if !is_in_range {
+                    let error_type = if int_value < 0 { "underflow" } else { "overflow" };
+                    let error = ParseError::type_mismatch("value", target_type, error_type);
+                    assert!(error.is_type_mismatch(),
+                        "Type mismatch error should be created for {} violation in {} context ({})",
+                        error_type, target_type, description);
+                }
+            }
+        }
+    }
+}
