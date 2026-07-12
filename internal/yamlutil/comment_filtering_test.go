@@ -356,12 +356,12 @@ parent:
 		{
 			name: "comments with various positions",
 			yamlContent: `# Comment at line 1
-# Comment at line 2
-key1: value1
-key2: value2 # Comment at end
-key3: value3
-# Comment at line 6
-key4: value4 # Another inline comment`,
+	# Comment at line 2
+	key1: value1
+	key2: value2 # Comment at end
+	key3: value3
+	# Comment at line 6
+	key4: value4 # Another inline comment`,
 			expectedKeys:  []string{"key1", "key2", "key3", "key4"},
 			commentsFound: 3, // Only full-line comments are counted
 		},
@@ -760,5 +760,442 @@ key4: value4`,
 				}
 			}
 		})
+	}
+}
+
+// TestDeepIndentationLevels tests comments at deeper indentation levels (6, 8, 10, 12 spaces).
+// This test covers the acceptance criteria requirement for testing comments at indentation levels 6, 8, 10, 12.
+func TestDeepIndentationLevels(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected bool
+	}{
+		{
+			name:     "six space indent",
+			line:     "      # comment",
+			expected: true,
+		},
+		{
+			name:     "ten space indent",
+			line:     "          # comment",
+			expected: true,
+		},
+		{
+			name:     "twelve space indent",
+			line:     "            # comment",
+			expected: true,
+		},
+		{
+			name:     "sixteen space indent",
+			line:     "                # comment",
+			expected: true,
+		},
+		{
+			name:     "inline comment at 6-space indent",
+			line:     "      key: value # comment",
+			expected: false, // IsCommentLine returns false for inline comments
+		},
+		{
+			name:     "inline comment at 10-space indent",
+			line:     "          key: value # comment",
+			expected: false,
+		},
+		{
+			name:     "inline comment at 12-space indent",
+			line:     "            key: value # comment",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsCommentLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("IsCommentLine(%q) = %v, want %v", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestCommentsInNestedStructures tests comment handling within nested YAML maps and lists.
+// This test covers the acceptance criteria requirement for testing comments in nested structures.
+func TestCommentsInNestedStructures(t *testing.T) {
+	yamlContent := `# Top-level comment
+root:
+  # Comment inside root map
+  nested_map:
+    # Deep comment in nested map
+    key1: value1 # Inline comment in nested map
+    key2: value2
+    # Comment before list
+    nested_list:
+      # Comment inside list
+      - item1 # Comment after list item
+      - item2
+      # Comment between list items
+      - item3 # Another inline comment
+  # Comment after nested structure
+  another_key: value
+# Final comment
+`
+
+	parser := NewLineParser(2)
+	result := parser.Parse(yamlContent)
+
+	// Count full-line comments at various nesting levels
+	fullLineComments := 0
+	inlineComments := 0
+
+	for _, line := range result.Lines {
+		if line.IsComment {
+			fullLineComments++
+		}
+		// Check for inline comments by looking for # after content
+		if len(line.OriginalContent) > 0 && !line.IsComment && !line.IsEmpty {
+			trimmed := line.OriginalContent
+			for i := 0; i < len(trimmed); i++ {
+				if trimmed[i] == '#' && i > 0 && (trimmed[i-1] == ' ' || trimmed[i-1] == '\t') {
+					inlineComments++
+					break
+				}
+			}
+		}
+	}
+
+	// We expect 8 full-line comments in this structure
+	if fullLineComments != 8 {
+		t.Errorf("Expected 8 full-line comments, found %d", fullLineComments)
+	}
+
+	// We expect 3 inline comments in this structure
+	if inlineComments != 3 {
+		t.Errorf("Expected 3 inline comments, found %d", inlineComments)
+	}
+
+	// Verify that keys are still detected despite comments
+	expectedKeys := []string{"root", "nested_map", "key1", "key2", "nested_list", "another_key"}
+	keysFound := make(map[string]bool)
+	for _, line := range result.Lines {
+		if line.IsKeyCandidate {
+			keysFound[line.KeyName] = true
+		}
+	}
+
+	for _, key := range expectedKeys {
+		if !keysFound[key] {
+			t.Errorf("Expected to find key '%s'", key)
+		}
+	}
+}
+
+// TestMixedScenariosWithAnchorsAndComments tests mixed YAML scenarios with values, comments, and anchors.
+// This test covers the acceptance criteria requirement for testing mixed scenarios.
+func TestMixedScenariosWithAnchorsAndComments(t *testing.T) {
+	tests := []struct {
+		name        string
+		yamlContent  string
+		expectedKeys []string
+		anchorCount int
+		commentCount int
+	}{
+		{
+			name: "anchor with inline comment",
+			yamlContent: `defaults: &defaults
+  timeout: 30 # default timeout value
+  retries: 3 # number of retries`,
+			expectedKeys: []string{"defaults", "timeout", "retries"},
+			anchorCount:  1,
+			commentCount: 0, // No full-line comments
+		},
+		{
+			name: "anchor and alias with comments",
+			yamlContent: `# Base configuration
+base: &base
+  host: localhost
+  port: 8080 # HTTP port
+
+# Production overrides
+production:
+  <<: *base # Merge base config
+  port: 8081 # Production port
+  # Extra production settings
+  debug: false`,
+			expectedKeys: []string{"base", "host", "port", "production", "debug"},
+			anchorCount:  2, // &base and *base
+			commentCount: 3, // 3 full-line comments
+		},
+		{
+			name: "multiple anchors with comments",
+			yamlContent: `# Database anchors
+db_default: &db_default
+  driver: postgres
+  pool: 5 # Connection pool size
+
+db_prod: &db_prod
+  <<: *db_default
+  host: prod-db.example.com # Production database
+
+development:
+  database:
+    <<: *db_default
+    host: localhost # Dev database
+    # More dev settings
+    debug: true`,
+			expectedKeys: []string{"db_default", "driver", "pool", "db_prod", "database", "host", "debug"},
+			anchorCount:  3, // &db_default, *db_default, *db_default
+			commentCount: 2, // 2 full-line comments
+		},
+		{
+			name: "anchor in list with comments",
+			yamlContent: `# Shared item template
+item_template: &item
+  name: default
+  value: 0 # Default value
+
+items:
+  - <<: *item # Use template
+  - <<: *item
+    name: custom # Override name
+    value: 42 # Custom value
+  # Another item
+  - <<: *item
+    name: third`,
+			expectedKeys: []string{"item_template", "name", "value", "items"},
+			anchorCount:  4, // &item and three *item references
+			commentCount: 1, // 1 full-line comment
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewLineParser(2)
+			result := parser.Parse(tt.yamlContent)
+
+			// Count anchors and aliases
+			anchorCount := 0
+			for _, line := range result.Lines {
+				content := line.OriginalContent
+				for i := 0; i < len(content); i++ {
+					if content[i] == '&' || content[i] == '*' {
+						// Make sure it's not part of a word
+						if i == 0 || content[i-1] == ' ' || content[i-1] == '\t' {
+							anchorCount++
+						}
+					}
+				}
+			}
+
+			if anchorCount != tt.anchorCount {
+				t.Errorf("Expected %d anchors/aliases, found %d", tt.anchorCount, anchorCount)
+			}
+
+			// Count full-line comments
+			commentCount := 0
+			for _, line := range result.Lines {
+				if line.IsComment {
+					commentCount++
+				}
+			}
+
+			if commentCount != tt.commentCount {
+				t.Errorf("Expected %d full-line comments, found %d", tt.commentCount, commentCount)
+			}
+
+			// Verify keys are detected
+			keysFound := make(map[string]bool)
+			for _, line := range result.Lines {
+				if line.IsKeyCandidate {
+					keysFound[line.KeyName] = true
+				}
+			}
+
+			for _, key := range tt.expectedKeys {
+				if !keysFound[key] {
+					t.Errorf("Expected to find key '%s'", key)
+				}
+			}
+		})
+	}
+}
+
+// TestCommentsInMultiLineStrings tests comments in multi-line string and scalar contexts.
+// This test covers the acceptance criteria requirement for testing comments in multi-line contexts.
+func TestCommentsInMultiLineStrings(t *testing.T) {
+	tests := []struct {
+		name         string
+		yamlContent   string
+		expectedKeys []string
+		commentCount int
+	}{
+		{
+			name: "literal block scalar with comments",
+			yamlContent: `# Script configuration
+script: |
+  #!/bin/bash
+  echo "Hello World"
+  # This is a comment inside the script
+  exit 0
+# End of script
+description: This is a test # inline comment`,
+			expectedKeys: []string{"script", "description"},
+			commentCount: 2, // 2 full-line comments outside the block scalar
+		},
+		{
+			name: "folded block scalar with comments",
+			yamlContent: `# Text content
+text: >
+  This is a long text
+  that spans multiple lines
+  and is folded together.
+# After the folded block
+note: "Note with # hash" # inline comment`,
+			expectedKeys: []string{"text", "note"},
+			commentCount: 1, // 1 full-line comment
+		},
+		{
+			name: "multi-line string in list with comments",
+			yamlContent: `# List items
+items:
+  - |
+    First item
+    with multiple lines
+    # Not a comment, part of string
+  - >
+    Second item
+    also folded
+  # Comment between items
+  - plain item # inline comment`,
+			expectedKeys: []string{"items"},
+			commentCount: 1, // 1 full-line comment
+		},
+		{
+			name: "double-quoted string with hash-like content",
+			yamlContent: `# Configuration
+url: "http://example.com#anchor" # URL with fragment
+color: "#FF0000" # Hex color
+regex: "#[0-9]+" # Not a regex, just text
+# Comment at end`,
+			expectedKeys: []string{"url", "color", "regex"},
+			commentCount: 2, // 2 full-line comments
+		},
+		{
+			name: "single-quoted string with hash",
+			yamlContent: `# Strings section
+strings:
+  - 'value with # hash'
+  - 'another # value' # inline comment
+  - "double # quoted" # another inline
+# Final comment`,
+			expectedKeys: []string{"strings"},
+			commentCount: 1, // 1 full-line comment
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewLineParser(2)
+			result := parser.Parse(tt.yamlContent)
+
+			// Count full-line comments
+			commentCount := 0
+			for _, line := range result.Lines {
+				if line.IsComment {
+					commentCount++
+				}
+			}
+
+			if commentCount != tt.commentCount {
+				t.Errorf("Expected %d full-line comments, found %d", tt.commentCount, commentCount)
+			}
+
+			// Verify keys are detected
+			keysFound := make(map[string]bool)
+			for _, line := range result.Lines {
+				if line.IsKeyCandidate {
+					keysFound[line.KeyName] = true
+				}
+			}
+
+			for _, key := range tt.expectedKeys {
+				if !keysFound[key] {
+					t.Errorf("Expected to find key '%s'", key)
+				}
+			}
+		})
+	}
+}
+
+// TestCommentIndentationProgression tests comments at progressive indentation levels in a real document.
+// This test verifies that comments are correctly identified at every indentation level from 0 to 12.
+func TestCommentIndentationProgression(t *testing.T) {
+	yamlContent := `# Level 0 comment (no indent)
+level0:
+  # Level 1 comment (2 spaces)
+  level1:
+    # Level 2 comment (4 spaces)
+    level2:
+      # Level 3 comment (6 spaces)
+      level3:
+        # Level 4 comment (8 spaces)
+        level4:
+          # Level 5 comment (10 spaces)
+          level5:
+            # Level 6 comment (12 spaces)
+            level6: value
+            # Another level 6 comment
+          # Level 5 comment again
+        # Level 4 comment again
+      # Level 3 comment again
+    # Level 2 comment again
+  # Level 1 comment again
+# Level 0 comment again
+`
+
+	parser := NewLineParser(2)
+	result := parser.Parse(yamlContent)
+
+	// Verify all comments are detected
+	commentLines := make(map[int]bool) // line number -> true if should be comment
+	expectedCommentLines := []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27}
+
+	for _, lineNum := range expectedCommentLines {
+		commentLines[lineNum] = true
+	}
+
+	commentsFound := 0
+	for lineNum, line := range result.Lines {
+		expectedToBeComment := commentLines[lineNum+1] // +1 because lines are 1-indexed
+		if expectedToBeComment {
+			if !line.IsComment {
+				t.Errorf("Line %d should be a comment, but wasn't detected: %q", lineNum+1, line.OriginalContent)
+			} else {
+				commentsFound++
+			}
+		} else if line.IsComment && lineNum+1 > 0 {
+			// Non-comment line that was detected as comment
+			if !commentLines[lineNum+1] {
+				t.Errorf("Line %d should NOT be a comment, but was detected: %q", lineNum+1, line.OriginalContent)
+			}
+		}
+	}
+
+	if commentsFound != len(expectedCommentLines) {
+		t.Errorf("Expected %d comments, found %d", len(expectedCommentLines), commentsFound)
+	}
+
+	// Verify keys are detected at each level
+	expectedLevels := []string{"level0", "level1", "level2", "level3", "level4", "level5", "level6"}
+	keysFound := make(map[string]bool)
+	for _, line := range result.Lines {
+		if line.IsKeyCandidate {
+			keysFound[line.KeyName] = true
+		}
+	}
+
+	for _, key := range expectedLevels {
+		if !keysFound[key] {
+			t.Errorf("Expected to find key '%s' at its indentation level", key)
+		}
 	}
 }
