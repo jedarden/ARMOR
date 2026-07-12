@@ -14,14 +14,23 @@ import (
 // Schema Validation Interface
 // ============================================================================
 
-// SchemaDefinition defines the interface for validation rules.
+// ValidatedSchema defines the interface for validation rules.
 //
-// SchemaDefinition implementations define validation rules for YAML documents, including
+// ValidatedSchema implementations define validation rules for YAML documents, including
 // field definitions, type constraints, and validation logic. The Validate method
 // ensures the schema definition itself is valid before use.
-type SchemaDefinition interface {
+//
+// Error Handling (bf-68hqo integration):
+// The Validate() method returns YAMLError types from the error hierarchy:
+// - SchemaLoadError (ErrCodeSchemaLoadFailed): when schema cannot be loaded
+// - SchemaValidationError (ErrCodeSchemaInvalid): when schema definition is invalid
+// - ValidationError (ErrCodeValidationFailed): for general validation failures
+//
+// These error types provide structured error information including error codes,
+// field paths, and detailed context about validation failures.
+type ValidatedSchema interface {
 	// Validate checks if the schema definition itself is valid.
-	// Returns an error if the schema has invalid configuration.
+	// Returns a YAMLError if the schema has invalid configuration.
 	Validate() error
 
 	// Name returns the schema name identifier.
@@ -42,13 +51,19 @@ type SchemaDefinition interface {
 //
 // SchemaValidationHandler implementations validate YAML data against schema definitions,
 // providing comprehensive error reporting for validation failures.
+//
+// Error Handling (bf-68hqo integration):
+// Methods return YAMLError types from the error hierarchy:
+// - ValidateSchema: returns SchemaLoadError or SchemaValidationError
+// - ValidateValue: returns ValidationError with ConstraintError or TypeMismatchError
+// - Validate/ValidateFile: returns SchemaValidationResult containing ValidationError slices
 type SchemaValidationHandler interface {
 	// ValidateSchema validates the schema definition itself.
-	// Returns an error if the schema is invalid or cannot be used for validation.
-	ValidateSchema(schema SchemaDefinition) error
+	// Returns a YAMLError if the schema is invalid or cannot be used for validation.
+	ValidateSchema(schema ValidatedSchema) error
 
 	// ValidateValue validates a single value against a field definition.
-	// Returns a ValidationError if the value doesn't satisfy constraints.
+	// Returns a YAMLError (ValidationError) if the value doesn't satisfy constraints.
 	ValidateValue(fieldPath string, value interface{}, fieldDef *FieldDefinition) error
 
 	// Validate validates YAML data against the schema.
@@ -236,52 +251,61 @@ const (
 // ComposableSchema implementations can combine multiple schemas using
 // composition rules (allOf, anyOf, oneOf, not) to create complex validation logic.
 type ComposableSchema interface {
-	SchemaDefinition
+	ValidatedSchema
 
 	// AllOf returns schemas that must all be satisfied.
-	AllOf() []SchemaDefinition
+	AllOf() []ValidatedSchema
 
 	// AnyOf returns schemas where at least one must be satisfied.
-	AnyOf() []SchemaDefinition
+	AnyOf() []ValidatedSchema
 
 	// OneOf returns schemas where exactly one must be satisfied.
-	OneOf() []SchemaDefinition
+	OneOf() []ValidatedSchema
 
 	// Not returns a schema that must not be satisfied.
-	Not() SchemaDefinition
+	Not() ValidatedSchema
 
 	// AddAllOf adds schemas to the allOf composition.
-	AddAllOf(schemas ...SchemaDefinition) error
+	AddAllOf(schemas ...ValidatedSchema) error
 
 	// AddAnyOf adds schemas to the anyOf composition.
-	AddAnyOf(schemas ...SchemaDefinition) error
+	AddAnyOf(schemas ...ValidatedSchema) error
 
 	// AddOneOf adds schemas to the oneOf composition.
-	AddOneOf(schemas ...SchemaDefinition) error
+	AddOneOf(schemas ...ValidatedSchema) error
 
 	// SetNot sets the schema for the not composition.
-	SetNot(schema SchemaDefinition) error
+	SetNot(schema ValidatedSchema) error
 }
 
 // SchemaComposer defines the interface for composing schemas.
 //
 // SchemaComposer implementations provide logic for evaluating composition
 // rules and determining if data satisfies the composed schema requirements.
+//
+// Error Handling (bf-68hqo integration):
+// Returns SchemaValidationError types from the error hierarchy when
+// composition validation fails, providing detailed context about which
+// schemas were satisfied or violated.
 type SchemaComposer interface {
 	// ValidateComposition validates data against a composed schema.
 	ValidateComposition(data map[string]interface{}, schema ComposableSchema) SchemaValidationResult
 
 	// ValidateAllOf validates that data satisfies all schemas in the list.
-	ValidateAllOf(data map[string]interface{}, schemas []SchemaDefinition) []SchemaValidationError
+	// Returns SchemaValidationErrors for any schemas that fail validation.
+	ValidateAllOf(data map[string]interface{}, schemas []ValidatedSchema) []SchemaValidationError
 
 	// ValidateAnyOf validates that data satisfies at least one schema in the list.
-	ValidateAnyOf(data map[string]interface{}, schemas []SchemaDefinition) []SchemaValidationError
+	// Returns SchemaValidationErrors if no schemas are satisfied.
+	ValidateAnyOf(data map[string]interface{}, schemas []ValidatedSchema) []SchemaValidationError
 
 	// ValidateOneOf validates that data satisfies exactly one schema in the list.
-	ValidateOneOf(data map[string]interface{}, schemas []SchemaDefinition) []SchemaValidationError
+	// Returns SchemaValidationErrors if zero or multiple schemas are satisfied.
+	ValidateOneOf(data map[string]interface{}, schemas []ValidatedSchema) []SchemaValidationError
 
 	// ValidateNot validates that data does not satisfy the given schema.
-	ValidateNot(data map[string]interface{}, schema SchemaDefinition) *SchemaValidationError
+	// Returns a SchemaValidationError if the schema is satisfied.
+	ValidateNot(data map[string]interface{}, schema ValidatedSchema) *SchemaValidationError
 }
 
 // ============================================================================
@@ -290,12 +314,12 @@ type SchemaComposer interface {
 
 // StringConstraintImpl implements StringConstraint.
 type StringConstraintImpl struct {
-	minLength      int
-	maxLength      int
-	pattern        *regexp.Regexp
-	allowedValues  []string
-	format         string
-	description    string
+	minLength     int
+	maxLength     int
+	pattern       *regexp.Regexp
+	allowedValues []string
+	format        string
+	description   string
 }
 
 // NewStringConstraint creates a new StringConstraintImpl.
@@ -516,17 +540,17 @@ type ArrayConstraintImpl struct {
 	maxItems       int
 	uniqueItems    bool
 	itemSchema     *FieldDefinition
-	containsSchema  *FieldDefinition
+	containsSchema *FieldDefinition
 	description    string
 }
 
 // NewArrayConstraint creates a new ArrayConstraintImpl.
 func NewArrayConstraint(minItems, maxItems int, uniqueItems bool, itemSchema, containsSchema *FieldDefinition) *ArrayConstraintImpl {
 	return &ArrayConstraintImpl{
-		minItems:      minItems,
-		maxItems:      maxItems,
-		uniqueItems:   uniqueItems,
-		itemSchema:    itemSchema,
+		minItems:       minItems,
+		maxItems:       maxItems,
+		uniqueItems:    uniqueItems,
+		itemSchema:     itemSchema,
 		containsSchema: containsSchema,
 		description: fmt.Sprintf("array constraint: minItems=%d, maxItems=%d, unique=%v",
 			minItems, maxItems, uniqueItems),
@@ -600,7 +624,7 @@ func (ac *ArrayConstraintImpl) ContainsSchema() *FieldDefinition {
 type ObjectConstraintImpl struct {
 	requiredFields    []string
 	allowedProperties []string
-	patternProperties  []*regexp.Regexp
+	patternProperties []*regexp.Regexp
 	minProperties     int
 	maxProperties     int
 	propertySchema    map[string]*FieldDefinition
@@ -752,7 +776,7 @@ func (bc *BooleanConstraintImpl) AllowedValues() []bool {
 
 // TypeConstraintImpl implements TypeConstraint.
 type TypeConstraintImpl struct {
-	expectedType string
+	expectedType  string
 	isNullable    bool
 	customChecker func(interface{}) bool
 	coercer       func(interface{}) (interface{}, error)
