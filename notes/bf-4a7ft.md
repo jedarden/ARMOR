@@ -12,7 +12,10 @@ According to the manifest from bead bf-6bevx, ParseError has **0 instances** of 
 
 1. **Compilation**: ✓ PASS - `go build ./internal/yamlutil/...` completes successfully
 2. **ParseError usage**: All ParseError instances in test files already use the `NewParseError()` constructor
+   - Direct struct initializations in test files: **0**
+   - Constructor usages in test files: **61**
 3. **Constructor signature**: `NewParseError(filePath, message, line, column, code, expected, actual)` - 7 parameters
+4. **Test execution**: Tests run successfully (pre-existing failures unrelated to ParseError construction)
 
 ### Constructor Usage Examples (Already in Code)
 
