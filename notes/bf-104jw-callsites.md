@@ -126,8 +126,8 @@ All other `validate()` calls are in test code and use assertion patterns:
 
 ### Production Code Call Sites (3 total)
 
-#### Direct Calls (3)
-All production validate() calls are **direct calls** - the method is invoked immediately in the execution flow:
+#### Direct Calls (2)
+validate() is invoked immediately in the execution flow:
 
 1. **ParserConfigBuilder::build()** - Line 662
    - Call Type: Direct call
@@ -139,13 +139,14 @@ All production validate() calls are **direct calls** - the method is invoked imm
    - Pattern: `self.config.validate()?`
    - Error Handling: ✅ Proper with `?` operator
 
-3. **YamlParser::validate_str()** - Line 121
-   - Call Type: Direct call
+#### Wrapped Calls (1)
+validate() is encapsulated within a higher-level method that provides additional functionality:
+
+1. **YamlParser::validate_str()** - Line 121
+   - Call Type: Wrapped call
    - Pattern: `validator.validate(content)` then manual inspection
    - Error Handling: ⚠️ Manual (intentionally uses ValidationResult struct)
-
-#### Wrapped Calls (0)
-No wrapped calls found - no validate() calls are wrapped in helper functions or abstraction layers.
+   - Wrapper functionality: Combines basic validation with enhanced syntax detection, merges results
 
 #### Deferred Calls (0)
 No deferred calls found - no validate() calls are deferred via closures, futures, or lazy evaluation.
@@ -184,8 +185,8 @@ All test validate() calls are **direct calls**:
 ## Summary Statistics by Call Type
 
 ### Production Code
-- **Direct Calls:** 3 (100%)
-- **Wrapped Calls:** 0 (0%)
+- **Direct Calls:** 2 (66.7%)
+- **Wrapped Calls:** 1 (33.3%)
 - **Deferred Calls:** 0 (0%)
 - **Total:** 3 call sites
 
@@ -196,16 +197,18 @@ All test validate() calls are **direct calls**:
 - **Total:** 100+ call sites
 
 ### Overall Codebase
-- **Direct Calls:** 103+ (100%)
-- **Wrapped Calls:** 0 (0%)
+- **Direct Calls:** 102+ (99%)
+- **Wrapped Calls:** 1 (1%)
 - **Deferred Calls:** 0 (0%)
 - **Total:** 103+ call sites
 
 ### Key Findings
-1. **No wrapped calls** - All validate() calls are direct; no abstraction layers or helper functions wrap the validation
-2. **No deferred calls** - No lazy evaluation, closures, or async deferral of validation
-3. **Consistent pattern** - All production calls follow direct invocation patterns appropriate to their context
-4. **Test coverage** - Extensive test coverage with 100+ direct calls in test code
+1. **Mixed call patterns in production** - 2 direct calls and 1 wrapped call in production code
+2. **Single wrapped call** - YamlParser::validate_str() is the only wrapper, providing enhanced validation by combining basic validation with syntax detection
+3. **No deferred calls** - No lazy evaluation, closures, or async deferral of validation anywhere in codebase
+4. **Consistent test patterns** - All test calls are direct assertions or variable assignments
+5. **Test coverage** - Extensive test coverage with 100+ direct calls in test code
+6. **Error handling** - All production calls have appropriate error handling for their context
 
 ---
 
@@ -289,5 +292,7 @@ pub type ValidationResult = Result<(), ParseError>;
 
 **Date Generated:** 2026-07-12
 **Original Bead:** bf-52zl8 (comprehensive Validate() catalog)
-**Current Bead:** bf-cdc05 (documentation task)
+**Documentation Bead:** bf-cdc05 (documentation task)
+**Analysis Bead:** bf-4y58v (error handling analysis)
+**Categorization Bead:** bf-3bqt8 (call type categorization)
 **Related Bead:** bf-2c889 (initial Validate() search in config.rs)
