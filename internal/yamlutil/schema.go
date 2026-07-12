@@ -284,7 +284,14 @@ func (sv *SchemaValidator) ValidateFile(filePath string) SchemaValidationResult 
 // compileSchema compiles and validates the schema definition.
 func (sv *SchemaValidator) compileSchema() error {
 	if schemaDef, ok := sv.schema.(*SchemaDefinition); ok {
-		return schemaDef.Compile()
+		if err := schemaDef.Compile(); err != nil {
+			// Handle YAMLError with structured information
+			if yamlErr, ok := err.(YAMLError); ok {
+				return fmt.Errorf("schema compilation failed: %w", yamlErr)
+			}
+			// Handle generic errors
+			return fmt.Errorf("schema compilation failed: %w", err)
+		}
 	}
 	return nil
 }
