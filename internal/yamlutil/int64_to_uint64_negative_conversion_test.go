@@ -623,6 +623,15 @@ value: 4294967295
 			description: "Value 4294967295 (uint32 max) is valid for uint64",
 		},
 		{
+			name: "int64 2147483647 to uint64 boundary",
+			yamlContent: `
+value: 2147483647
+`,
+			target:      &struct{ Value uint64 }{},
+			shouldError: false,
+			description: "Maximum int32 value is valid for uint64",
+		},
+		{
 			name: "int64 9223372036854775807 to uint64 boundary",
 			yamlContent: `
 value: 9223372036854775807
