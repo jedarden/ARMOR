@@ -1,27 +1,41 @@
-# Task bf-3llc7: Retrieve LITESTREAM_SECRET_ACCESS_KEY from armor-writer secret
+# Task bf-3llc7: Retrieve base64-encoded SECRET_ACCESS_KEY from armor-writer secret
 
-## Issue
-Cannot retrieve secret from ord-devimprint cluster due to access constraints.
+## Finding
 
-## Investigation
-Attempted two methods to access the armor-writer secret in devimprint namespace:
+Cannot retrieve the SECRET_ACCESS_KEY due to access limitations on the ord-devimprint cluster.
 
-1. **Direct kubeconfig approach**: `/home/coding/.kube/ord-devimprint.kubeconfig` does not exist
-2. **Proxy approach**: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001` returns Forbidden error:
-   ```
-   Error from server (Forbidden): secrets "armor-writer" is forbidden: 
-   User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" 
-   in API group "" in the namespace "devimprint"
-   ```
+## Access Methods Attempted
+
+1. **Direct kubeconfig** (as specified in task command):
+   - File `/home/coding/.kube/ord-devimprint.kubeconfig` does not exist
+   - No ord-devimprint kubeconfig is available on this system
+
+2. **kubectl-proxy over Tailscale**:
+   - Command: `kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint`
+   - Result: Forbidden by RBAC
+   - Error: `User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"`
 
 ## Root Cause
-The ord-devimprint cluster uses a read-only observer proxy (`devpod-observer` serviceaccount) that explicitly denies access to secrets. This is a security design constraint - similar to the iad-options cluster's "explicitly denies access to secrets" policy mentioned in CLAUDE.md.
 
-## Resolution Options
-To retrieve this secret value, one of the following would be needed:
-1. A direct kubeconfig with elevated privileges (similar to `ardenone-manager.kubeconfig` or `rs-manager.kubeconfig`)
-2. Secret access granted to the devpod-observer serviceaccount
-3. Access via a cluster with admin rights (if ord-devimprint is managed elsewhere)
+The ord-devimprint cluster is accessed via a read-only proxy (`kubectl-proxy-ord-devimprint:8001`) running in the `devpod-observer` namespace. The ServiceAccount has read-only RBAC that **explicitly denies access to secrets**, similar to the iad-options cluster configuration.
 
-## Status
-**Task blocked** - cannot complete without elevated credentials for ord-devimprint cluster.
+Unlike other clusters (ardenone-manager, rs-manager) which have both a read-only proxy AND a direct kubeconfig with cluster-admin access, ord-devimprint only has the read-only proxy option.
+
+## Available Kubeconfigs
+
+Only the following kubeconfigs exist on this system:
+- `/home/coding/.kube/iad-ci.kubeconfig` (cluster-admin for iad-ci cluster)
+- `/home/coding/.kube/iad-acb.kubeconfig`
+
+## Resolution
+
+To retrieve the secret, one of the following would be needed:
+1. A direct kubeconfig with secret access permissions for ord-devimprint cluster
+2. RBAC modification to allow devpod-observer SA to read secrets (not recommended for security)
+3. Direct cluster access to retrieve the secret through alternative means
+
+## Related Documentation
+
+This limitation is already documented in:
+- CLAUDE.md under "ord-devimprint" cluster access section
+- Workspace learnings bead bf-3llc7: "ord-devimprint secret access limitation"
