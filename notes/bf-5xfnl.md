@@ -1,66 +1,43 @@
-# Bead bf-5xfnl: RBAC Blocker Preventing Secret Access
+# bf-5xfnl: Retrieve base64-encoded LITESTREAM_ACCESS_KEY_ID
 
-## Task
-Retrieve base64-encoded LITESTREAM_ACCESS_KEY_ID from armor-writer secret in ord-devimprint cluster.
+## Attempt
+Attempted to retrieve LITESTREAM_ACCESS_KEY_ID from armor-writer secret in devimprint namespace.
 
-## Blocker Identified
-RBAC on the ord-devimprint kubectl-proxy prevents secret access:
-
-```
-Error from server (Forbidden): secrets "armor-writer" is forbidden: 
-User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" 
-in API group "" in the namespace "devimprint"
+## Command Run
+```bash
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
 ```
 
-## Root Cause
-- The ord-devimprint kubectl-proxy (`http://kubectl-proxy-ord-devimprint:8001`) runs with 
-  read-only ServiceAccount `devpod-observer` in the `devpod-observer` namespace
-- This SA explicitly lacks secrets read permissions (stricter RBAC than other clusters)
-- No read/write kubeconfig is documented for ord-devimprint in CLAUDE.md
+## Result
+**Exit code 1 - Forbidden**
 
-## Options to Unblock
-1. **ExternalSecret direct access**: Access the underlying secret source (e.g., OpenBao, 1Password) 
-   instead of kubectl
-2. **Kubeconfig with secrets access**: Obtain or create a kubeconfig with secret read permissions 
-   for ord-devimprint
-3. **Alternative cluster**: If the same secret exists in another accessible cluster, retrieve it 
-   from there
+```
+Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
+```
 
-## Status
-**BLOCKED** - Cannot retrieve LITESTREAM_ACCESS_KEY_ID without elevated permissions or alternative
-access method. The infrastructure blocker must be resolved before this bead can proceed.
+## Blocker
+RBAC restriction on the ord-devimprint kubectl-proxy:
+- The read-only proxy runs as `system:serviceaccount:devpod-observer:devpod-observer`
+- This service account **explicitly denies access to secrets** (similar to iad-options cluster's stricter observer)
+- Only pod/logs inspection is available through the proxy
 
-## Re-verification (2026-07-12 00:32 UTC)
-- ❌ No kubeconfig exists at ~/.kube/ord-devimprint.kubeconfig
-- ❌ Read-only proxy RBAC denies secret access:
-  ```
-  kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
-  Error: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-  ```
-- ❌ Checked alternative clusters (iad-ci, iad-acb) - devimprint namespace does not exist on those clusters
-- ❌ ExternalSecret armor-writer exists and is synced (SecretSynced status) - confirms secret exists but is inaccessible via kubectl
-- ❌ No alternative cluster access available for devimprint namespace
+## Infrastructure Status
+This is a **persistent infrastructure blocker** that has been verified across multiple commits:
+- 4186964e - re-verify infrastructure blocker - RBAC still denies secret access
+- 1e69b07a - document persistent infrastructure blocker - RBAC prevents secret access
 
-## Re-verification (2026-07-11 20:26 UTC)
-- ❌ No kubeconfig exists at ~/.kube/ord-devimprint.kubeconfig
-- ❌ Read-only proxy RBAC denies secret access:
-  ```
-  kubectl --server=http://kubectl-proxy-ord-devimprint:8001 auth can-i get secrets -n devimprint
-  Response: no
-  ```
-- ❌ Direct secret retrieval still blocked:
-  ```
-  kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
-  Error: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-  ```
-- ❌ No alternative cluster access available for devimprint namespace
+## Alternative Approaches Not Available
+- No read/write kubeconfig exists for ord-devimprint cluster
+- No cluster-admin access like ardenone-manager/iad-ci
+- Proxy is the only documented access method
 
 ## Resolution Required
-One of the following infrastructure changes is needed:
-1. Create ~/.kube/ord-devimprint.kubeconfig with secret read permissions
-2. Update devpod-observer RBAC to allow secret read in devimprint namespace
-3. Use external secret source (OpenBao/1Password) directly
-4. Migrate workload to cluster with appropriate access
+To complete this task, one of the following infrastructure changes is needed:
+1. Add a read/write kubeconfig for ord-devimprint (similar to iad-ci)
+2. Modify the devpod-observer RBAC to allow secret get/list in devimprint namespace
+3. Provide the secret value through an alternative channel (e.g., manual copy, ExternalSecret sync)
 
-## Bead Status
-**OPEN** - Infrastructure blocker persists. Cannot proceed without external intervention.
+## Next Steps
+The bead cannot be completed without infrastructure access. Awaiting:
+- Infrastructure resolution (RBAC update or kubeconfig provision)
+- Or alternative task approach that doesn't require direct secret access
