@@ -127,5 +127,40 @@ If OIDC credentials cannot be obtained:
 - Similar cluster setup: iad-options (uses cloudspace-admin OIDC token)
 - Task acceptance criteria: Must be able to run `kubectl get secrets -n devimprint`
 
+## Required Action
+**USER ACTION REQUIRED**: This task cannot be completed by an automated agent because it requires:
+
+### Option A: Access Rackspace Spot UI (Recommended)
+1. Log in to https://spot.rackspace.com with your Rackspace credentials
+2. Navigate to the ord-devimprint cluster (ID: hcp-5f30c973-cde7-42d9-8c7b-5d0573821330)
+3. Download/Generate kubeconfig with cloudspace-admin permissions
+4. Save to: `/home/coding/.kube/ord-devimprint.kubeconfig`
+5. Run verification commands below
+
+### Option B: Request from Cluster Administrator
+If you don't have Spot UI access, request a kubeconfig or ServiceAccount token from the cluster administrator with:
+- Cluster: ord-devimprint
+- Required permissions: read secrets in devimprint namespace
+- Specific secret needed: armor-writer
+
 ## Status
-**BLOCKED**: Requires manual intervention to obtain credentials from Rackspace Spot UI or cluster administrator.
+**AWAITING USER ACTION**: Agent cannot access Rackspace Spot UI (requires browser authentication). User must either:
+- Access Spot UI and obtain kubeconfig
+- Provide kubeconfig/credentials for agent to use
+- Coordinate with cluster administrator
+
+## After Obtaining Kubeconfig
+Once you have the kubeconfig file, run these verification commands:
+
+```bash
+# Verify basic connectivity
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig get nodes
+
+# Verify secret access (acceptance criteria)
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig get secrets -n devimprint
+
+# Test reading armor-writer secret specifically
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o jsonpath='{.data}'
+```
+
+If all commands succeed, the bead can be closed and you can proceed to retrieve the armor-writer secret.
