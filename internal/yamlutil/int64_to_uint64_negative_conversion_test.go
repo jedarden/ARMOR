@@ -71,7 +71,7 @@ value: -2147483648
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -2147483648 (min int32) cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-2147483648"},
 		},
 
 		{
@@ -93,7 +93,7 @@ value: -4294967296
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -4294967296 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-4294967296"},
 		},
 
 		{
@@ -104,7 +104,7 @@ value: -65536
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -65536 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-65536"},
 		},
 
 		{
@@ -115,7 +115,7 @@ value: -32768
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -32768 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-32768"},
 		},
 
 		{
@@ -137,7 +137,7 @@ value: -256
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -256 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-256"},
 		},
 
 		{
@@ -148,7 +148,7 @@ value: -128
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -128 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-128"},
 		},
 
 		{
@@ -503,7 +503,7 @@ value: -9223372036854775808
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Minimum int64 value cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-9223372036854775808"},
 		},
 		{
 			name: "int64 one above minimum -9223372036854775807 to uint64",
@@ -513,7 +513,7 @@ value: -9223372036854775807
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "One above minimum int64 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-9223372036854775807"},
 		},
 		{
 			name: "int64 -4294967296 to uint64",
@@ -523,7 +523,7 @@ value: -4294967296
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Value -4294967296 (uint32 max + 1) cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-4294967296"},
 		},
 		{
 			name: "int64 -2147483648 to uint64",
@@ -533,7 +533,7 @@ value: -2147483648
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Value -2147483648 (int32 minimum) cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-2147483648"},
 		},
 		{
 			name: "int64 -65536 to uint64",
@@ -543,7 +543,7 @@ value: -65536
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Value -65536 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-65536"},
 		},
 		{
 			name: "int64 -32768 to uint64",
@@ -553,7 +553,7 @@ value: -32768
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Value -32768 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-32768"},
 		},
 		{
 			name: "int64 -256 to uint64",
@@ -563,7 +563,7 @@ value: -256
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Value -256 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-256"},
 		},
 		{
 			name: "int64 -128 to uint64",
@@ -573,7 +573,7 @@ value: -128
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Value -128 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-128"},
 		},
 
 		// Positive boundary values that should work
