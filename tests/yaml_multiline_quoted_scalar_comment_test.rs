@@ -401,12 +401,17 @@ app:
     let stripped = strip_inline_comment(lines[6]);
     assert!(stripped.contains('#'));
 
-    assert!(!is_comment_line(lines[10])); // inline_comment: "Text with # hash"
+    assert!(!is_comment_line(lines[7])); // url: "https://example.com#anchor"
     // Hash in quotes should be preserved
-    let stripped = strip_inline_comment(lines[10]);
+    let stripped = strip_inline_comment(lines[7]);
     assert!(stripped.contains('#'));
 
-    assert!(!is_comment_line(lines[14])); // enabled: true
+    assert!(!is_comment_line(lines[12])); // inline_comment: "Text with # hash" # This is a real comment
+    // Hash in quotes should be preserved (but not the trailing comment)
+    let stripped = strip_inline_comment(lines[12]);
+    assert!(stripped.contains('#'));
+
+    assert!(!is_comment_line(lines[15])); // enabled: true
 }
 
 #[test]
@@ -437,23 +442,23 @@ fn test_realistic_config_with_quoted_multiline() {
     // Verify structure
     assert!(!is_comment_line(lines[1]));     // endpoint: "..."
     assert!(!is_comment_line(lines[2]));     // documentation: |
-    assert!(!is_comment_line(lines[6]));     // url_with_anchor: "..."
+    assert!(!is_comment_line(lines[7]));     // url_with_anchor: "..."
 
     // Hash in quoted URL should be preserved
-    let stripped = strip_inline_comment(lines[6]);
+    let stripped = strip_inline_comment(lines[7]);
     assert!(stripped.contains('#'));
 
-    assert!(!is_comment_line(lines[8]));     // example_request: '...'
-    assert!(!is_comment_line(lines[14]));    // color_scheme: "#..."
+    assert!(!is_comment_line(lines[9]));     // example_request: '...'
+    assert!(!is_comment_line(lines[16]));    // color_scheme: "#..."
 
     // Hash in color code should be preserved
-    let stripped = strip_inline_comment(lines[14]);
+    let stripped = strip_inline_comment(lines[16]);
     assert!(stripped.contains('#'));
 
-    assert!(!is_comment_line(lines[15]));    // fallback_color: '#...'
+    assert!(!is_comment_line(lines[17]));    // fallback_color: '#...'
 
     // Hash in color code should be preserved
-    let stripped = strip_inline_comment(lines[15]);
+    let stripped = strip_inline_comment(lines[17]);
     assert!(stripped.contains('#'));
 }
 
