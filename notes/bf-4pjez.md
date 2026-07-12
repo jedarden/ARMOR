@@ -1,38 +1,22 @@
-# SchemaValidationError Constructor Replacements - Already Complete
+# Bead bf-4pjez: SchemaValidationError Constructor Replacement - Already Completed
 
-## Task Investigation
-
-Task bf-4pjez requested replacement of SchemaValidationError struct constructions with NewSchemaValidationError() constructor calls in `internal/yamlutil/errors_test.go`.
+## Task Description
+Replace direct `SchemaValidationError` struct initialization with `NewSchemaValidationError()` constructor calls in `internal/yamlutil/errors_test.go`.
 
 ## Finding
+**Work already completed.** The target file `internal/yamlutil/errors_test.go` already uses `NewSchemaValidationError()` constructor calls for all SchemaValidationError instances.
 
-**This work was already completed in commit 93f704b0 on 2026-07-12.**
+### Evidence
+1. **Line 43**: `err: NewSchemaValidationError("test.yaml", "", "", "", "", "", 0, "")`
+2. **Line 91**: `err: NewSchemaValidationError("test.yaml", "", "", "", "", "", 0, "")`
 
-The commit message states:
-> "Also includes SchemaValidationError constructor replacements that were previously completed in errors_test.go."
+### Verification
+- No instances of `&SchemaValidationError{` found in errors_test.go
+- Backup file (errors_test.go.bak) also uses NewSchemaValidationError()
+- Tests compile successfully: `go test -c -o /dev/null ./internal/yamlutil/`
 
-## Changes Already Applied
+### Conclusion
+The bead was created based on outdated information. The SchemaValidationError constructor replacements were already completed in a prior change (likely as part of the broader error constructor refactoring effort that also covered ParseError, ValidationError, and FileError).
 
-The 2 instances mentioned in the task were already replaced:
-
-1. **Line 43** in TestIsYAMLError:
-   - Before: `err: &SchemaValidationError{FilePath: "test.yaml"}`
-   - After: `err: NewSchemaValidationError("test.yaml", "", "", "", "", "", 0, "")`
-
-2. **Line 91** in TestGetYAMLErrorType:
-   - Before: `err: &SchemaValidationError{FilePath: "test.yaml"}`  
-   - After: `err: NewSchemaValidationError("test.yaml", "", "", "", "", "", 0, "")`
-
-## Current State
-
-All SchemaValidationError instances in errors_test.go now use the NewSchemaValidationError() constructor. No direct struct initializations remain.
-
-## Acceptance Criteria Met
-
-✅ All SchemaValidationError constructions replaced with NewSchemaValidationError()
-✅ No test logic changed (constructor produces same error instances)
-✅ Tests compile (work was committed and tested)
-
-## Conclusion
-
-Task bf-4pjez requirements were already satisfied by prior work in commit 93f704b0.
+## Recommendation
+Close this bead as completed - no action required.
