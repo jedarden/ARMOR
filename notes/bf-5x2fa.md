@@ -3,46 +3,39 @@
 ## Task
 Decode the base64-encoded SECRET_ACCESS_KEY value retrieved in the previous step to plain text.
 
-## Finding
-The prerequisite base64 file `/tmp/litestream_secret_key.b64` exists but is **empty (0 bytes)**.
-
-This indicates that the previous bead (responsible for retrieving and base64-encoding the SECRET_ACCESS_KEY) did not successfully complete its task.
-
-## Root Cause: RBAC Blockade
-Investigation revealed that the previous step was blocked by RBAC restrictions. The file `/tmp/litestream_secret_key_encoded.b64` contains an error message instead of base64-encoded data:
-
-```
-Error from server (Forbidden): secrets "armor-writer" is forbidden:
-User "system:serviceaccount:devpod-observer:devpod-observer" cannot get
-resource "secrets" in API group "" in the namespace "devimprint"
+## Execution Attempt
+Attempted to decode `/tmp/litestream_secret_key.b64` using:
+```bash
+base64 -d /tmp/litestream_secret_key.b64 > /tmp/litestream_secret_key.txt
 ```
 
-This is the same RBAC blockade documented in **bead bf-2fdy0**: the read-only kubectl proxy explicitly denies access to secrets.
-
-## Files in /tmp
-```
--rw-r--r-- 1 coding users   0 Jul 12 11:29 /tmp/litestream_secret_key.b64
--rw------- 1 coding users 106 Jul 12 10:56 /tmp/litestream_secret_key_decoded.txt
--rw-r--r-- 1 coding users 205 Jul 12 10:40 /tmp/litestream_secret_key_encoded.b64
--rw-r--r-- 1 coding users   0 Jul 12 11:30 /tmp/litestream_secret_key.txt
+## Blockage: Source File Empty
+The source file `/tmp/litestream_secret_key.b64` exists but is empty (0 bytes):
+```bash
+ls -la /tmp/litestream_secret_key.b64
+-rw-r--r-- 1 coding users 0 Jul 12 11:29 /tmp/litestream_secret_key.b64
 ```
 
-All of these files either contain error messages or are empty due to the RBAC blockade.
+## Root Cause
+This is a downstream effect of the RBAC blockade documented in bead `bf-2fdy0`. The previous step failed to retrieve the secret value through the read-only kubectl proxy because:
+1. The proxy has `explicitly denies access to secrets` (stricter than other clusters' observers)
+2. Attempting to retrieve secrets via `kubectl get secret` through the proxy results in empty/failed output
+3. The empty output was redirected to the `.b64` file, creating a 0-byte file
 
-## Conclusion
-The SECRET_ACCESS_KEY cannot be decoded because:
-1. The previous step was blocked by RBAC when trying to retrieve the secret via the read-only proxy
-2. No valid base64-encoded data was produced
-3. This workflow requires read-write access to secrets or an alternative method of secret retrieval
+## RBAC Constraint
+From the cluster documentation:
+- iad-options observer proxy "explicitly denies access to secrets" (stricter than other clusters)
+- Access is read-only and cannot retrieve secret data
+- Direct kubeconfig access would be required (cloudspace-admin OIDC token)
 
-**Related Issue:** Bead bf-2fdy0 documents this RBAC blockade in detail.
+## Impact
+Cannot complete the base64 decode step because the source file is empty. This is not a base64 decode failure but rather a data retrieval failure from the previous step.
 
-**Recommendation:** This workflow cannot proceed via the read-only proxy. Alternative approaches include:
-- Using a cluster-admin kubeconfig with secret access
-- Using ExternalSecrets to sync secrets outside the cluster
-- Executing directly on a pod that has access to the secret (if such a pod exists)
+## Resolution Path
+To complete this task, one of the following would be required:
+1. Use the full cloudspace-admin OIDC kubeconfig (not the read-only proxy)
+2. Have an administrator with direct cluster access retrieve and provide the secret value
+3. Implement a different secret distribution mechanism that doesn't require kubectl proxy access
 
 ## Status
-- ❌ Cannot decode - blocked by RBAC
-- ❌ Previous step blocked: read-only proxy cannot access secrets
-- 🔗 Related to bead bf-2fdy0
+**BLOCKED** - Cannot proceed due to RBAC restrictions on secret access via the read-only proxy.
