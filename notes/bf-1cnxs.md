@@ -1,21 +1,36 @@
-# Bead bf-1cnxs: FileError to NewFileError Replacement
-
-## Task
-Replace all 2 FileError struct initializations with NewFileError() constructor calls in error_message_quality_test.go.
+# Task bf-1cnxs: FileError Replacement Status
 
 ## Finding
-The task has already been completed. All FileError usages in error_message_quality_test.go already use the NewFileError() constructor.
+The task to replace FileError struct initializations with NewFileError() constructor calls in `error_message_quality_test.go` was **already completed**.
 
 ## Evidence
-Git history shows this was completed in two commits:
-- `02e4eb46`: "test: replace FileError constructions with NewFileError() constructor"
-- `09966765`: "refactor: replace all FileError struct initializations with NewFileError() constructor"
+All 3 FileError instances in the file already use `NewFileError()`:
 
-Current usages in the file:
-1. Line 72: `return NewFileError("/etc/config/app.yaml", "read", "file not found", nil)`
-2. Line 402: `return NewFileError("config.yaml", "", "", fmt.Errorf("not found"))`
-3. Line 977: `return NewFileError("f.yaml", "", "", fmt.Errorf("e"))`
+1. **Line 72** (TestErrorMessagesIncludeFilePath):
+   ```go
+   return NewFileError("/etc/config/app.yaml", "read", "file not found", nil)
+   ```
 
-## Status
-✓ All FileError instances already use NewFileError() constructor
-✓ No changes needed - task was pre-completed
+2. **Line 402** (TestErrorTypeCategorization):
+   ```go
+   return NewFileError("config.yaml", "", "", fmt.Errorf("not found"))
+   ```
+
+3. **Line 977** (TestErrorMessagesNonEmpty):
+   ```go
+   return NewFileError("f.yaml", "", "", fmt.Errorf("e"))
+   ```
+
+## Verification
+- ✅ No `&FileError{` struct initializations found in the file
+- ✅ All FileError instances use `NewFileError()` constructor
+- ✅ File compiles without errors (`go test -c ./internal/yamlutil` passed)
+- ✅ No test logic changes were needed
+
+## Conclusion
+The acceptance criteria were already met:
+- Both (actually all 3) FileError instances in error_message_quality_test.go use NewFileError()
+- File compiles without errors
+- No test logic changed
+
+No code changes were required for this task.
