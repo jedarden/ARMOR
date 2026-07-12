@@ -6,6 +6,108 @@ import (
 	"testing"
 )
 
+// TestCalculateIndentationSimple verifies the calculateIndentation function returns count.
+func TestCalculateIndentationSimple(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected int
+	}{
+		{
+			name:     "no leading whitespace",
+			line:     "key: value",
+			expected: 0,
+		},
+		{
+			name:     "one leading space",
+			line:     " key: value",
+			expected: 1,
+		},
+		{
+			name:     "two leading spaces",
+			line:     "  key: value",
+			expected: 2,
+		},
+		{
+			name:     "four leading spaces",
+			line:     "    key: value",
+			expected: 4,
+		},
+		{
+			name:     "eight leading spaces",
+			line:     "        key: value",
+			expected: 8,
+		},
+		{
+			name:     "one leading tab",
+			line:     "\tkey: value",
+			expected: 1,
+		},
+		{
+			name:     "two leading tabs",
+			line:     "\t\tkey: value",
+			expected: 2,
+		},
+		{
+			name:     "mixed spaces and tabs",
+			line:     "  \t  key: value",
+			expected: 5,
+		},
+		{
+			name:     "empty line",
+			line:     "",
+			expected: 0,
+		},
+		{
+			name:     "whitespace only line",
+			line:     "    ",
+			expected: 4,
+		},
+		{
+			name:     "tab only line",
+			line:     "\t",
+			expected: 1,
+		},
+		{
+			name:     "comment with indentation",
+			line:     "  # comment",
+			expected: 2,
+		},
+		{
+			name:     "deeply nested YAML",
+			line:     "          deeply: nested",
+			expected: 10,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calculateIndentation(tt.line)
+			if result != tt.expected {
+				t.Errorf("calculateIndentation(%q) = %d, want %d", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestCalculateIndentationTabsAsSingleCharacter verifies that tabs are counted as single characters.
+func TestCalculateIndentationTabsAsSingleCharacter(t *testing.T) {
+	// Test that tabs are counted as single characters, not expanded to spaces
+	tabLine := "\t\tkey: value"
+	spaceLine := "  key: value"
+
+	tabIndent := calculateIndentation(tabLine)
+	spaceIndent := calculateIndentation(spaceLine)
+
+	// Both should return 2 (2 tabs = 2 characters, 2 spaces = 2 characters)
+	if tabIndent != 2 {
+		t.Errorf("Expected 2 for tab indentation, got %d", tabIndent)
+	}
+	if spaceIndent != 2 {
+		t.Errorf("Expected 2 for space indentation, got %d", spaceIndent)
+	}
+}
+
 // TestNewLineParser verifies line parser creation.
 func TestNewLineParser(t *testing.T) {
 	parser := NewLineParser(2)
