@@ -1,28 +1,26 @@
 # Validate() Call Sites Catalog
 
-**Generated:** 2026-07-12  
 **Bead:** bf-52zl8  
-**Workspace:** /home/coding/ARMOR (Rust codebase)
-
-## Overview
-
-This catalog documents all `validate()` method call sites in the ARMOR Rust codebase. The codebase contains **two distinct validation interfaces** with different return types:
-
-1. **Schema trait** (`src/schema.rs`) - Returns `Result<(), ParseError>`
-2. **Parser trait** (`src/parsers/traits.rs`) - Returns `Result<(), ParseError>`
-3. **YAML validators** (`src/parsers/yaml/`) - Returns custom `ValidationResult` struct
+**Date:** 2026-07-12  
+**Purpose:** Catalog all Validate() call sites in ARMOR codebase for error handling updates
 
 ---
 
-## Production Code Call Sites (NON-TEST)
+## Summary
 
-These are actual `validate()` calls in production code that may need error handling updates:
+- **Total Production Call Sites:** 3
+- **Total Test Call Sites:** ~60 (across multiple test files)
+- **Total Doctest/Documentation Sites:** ~15 (in Schema trait docs)
 
-### 1. `src/parsers/config.rs:662`
+---
 
-**Location:** `ParserConfigBuilder::build()` method  
-**Context:** Builder validation before returning final config
+## Production Call Sites
 
+### 1. ParserConfigBuilder::build()
+
+**Location:** `src/parsers/config.rs:662`
+
+**Context:**
 ```rust
 pub fn build(self) -> Result<ParserConfig, String> {
     self.config.validate()?;
@@ -30,18 +28,42 @@ pub fn build(self) -> Result<ParserConfig, String> {
 }
 ```
 
-**Call Type:** Direct method call  
-**Error Handling:** ✅ **HAS ERROR HANDLING** - Uses `?` operator  
-**Update Priority:** **LOW** - Already properly handles errors  
-**Notes:** Validates ParserConfig in builder pattern before returning
+**Caller Type:** Direct - Builder pattern completion method
+
+**Error Handling:**
+- Uses `?` operator to propagate validation errors
+- Returns `Result<ParserConfig, String>`
+- Error type: `String` (from `ParserConfig::validate()`)
+
+**Implementation Being Called:** `ParserConfig::validate()` (line 537)
+```rust
+pub fn validate(&self) -> Result<(), String> {
+    // Check for mutually exclusive or inconsistent options
+    if self.warnings_as_errors && !self.emit_warnings {
+        return Err("warnings_as_errors requires emit_warnings to be true".to_string());
+    }
+    if self.mode.is_strict() && self.allow_duplicates {
+        return Err("Strict mode with allow_duplicates=true is inconsistent".to_string());
+    }
+    if self.strict_types && self.mode.is_lenient() {
+        return Err("strict_types=true with lenient mode is inconsistent".to_string());
+    }
+    Ok(())
+}
+```
+
+**Update Priority:** MEDIUM
+- ✅ Already has proper error handling with `?` operator
+- ⚠️ Returns generic `String` errors instead of typed `ParseError`
+- 💡 Could benefit from rich error context (line numbers, file paths)
 
 ---
 
-### 2. `src/parsers/config.rs:1007`
+### 2. ValidatorConfigBuilder::build()
 
-**Location:** `ValidatorConfigBuilder::build()` method  
-**Context:** Builder validation before returning final config
+**Location:** `src/parsers/config.rs:1007`
 
+**Context:**
 ```rust
 pub fn build(self) -> Result<ValidatorConfig, String> {
     self.config.validate()?;
@@ -49,145 +71,143 @@ pub fn build(self) -> Result<ValidatorConfig, String> {
 }
 ```
 
-**Call Type:** Direct method call  
-**Error Handling:** ✅ **HAS ERROR HANDLING** - Uses `?` operator  
-**Update Priority:** **LOW** - Already properly handles errors  
-**Notes:** Validates ValidatorConfig in builder pattern before returning
+**Caller Type:** Direct - Builder pattern completion method
+
+**Error Handling:**
+- Uses `?` operator to propagate validation errors
+- Returns `Result<ValidatorConfig, String>`
+- Error type: `String` (from `ValidatorConfig::validate()`)
+
+**Implementation Being Called:** `ValidatorConfig::validate()` (line 908)
+```rust
+pub fn validate(&self) -> Result<(), String> {
+    if self.mode.is_strict() && !self.require_all_fields {
+        return Err("Strict mode requires require_all_fields to be true".to_string());
+    }
+    if self.mode.is_strict() && !self.disallow_unknown_fields {
+        return Err("Strict mode requires disallow_unknown_fields to be true".to_string());
+    }
+    if self.warnings_as_errors && !self.emit_warnings {
+        return Err("warnings_as_errors requires emit_warnings to be true".to_string());
+    }
+    Ok(())
+}
+```
+
+**Update Priority:** MEDIUM
+- ✅ Already has proper error handling with `?` operator
+- ⚠️ Returns generic `String` errors instead of typed `ParseError`
+- 💡 Could benefit from rich error context
 
 ---
 
-### 3. `src/parsers/yaml/parser.rs:121`
+### 3. YamlParser::validate_str()
 
-**Location:** `YamlParser::validate_str()` method  
-**Context:** Delegates to SyntaxValidator for YAML syntax validation
+**Location:** `src/parsers/yaml/parser.rs:121`
 
+**Context:**
 ```rust
 fn validate_str(&self, content: &str) -> ValidationResult {
+    // Create syntax validator based on parser mode
     let validator = if self.config.is_strict() {
         SyntaxValidator::strict()
     } else {
         SyntaxValidator::lenient()
     };
-    
+
+    // Run syntax validation
     let mut result = validator.validate(content);
-    // ... further processing
+
+    // If no errors from basic validation, run enhanced detection
+    if result.is_valid() {
+        let mut detector = SyntaxDetector::new();
+        let detector_result = detector.detect_to_validation_result(content);
+
+        // Merge errors from detector
+        if !detector_result.is_valid() {
+            result.valid = false;
+            result.errors.extend(detector_result.errors);
+        }
+    }
+
+    result
 }
 ```
 
-**Call Type:** Delegated method call  
-**Error Handling:** ⚠️ **DIFFERENT RETURN TYPE** - Returns custom struct, not `Result`  
-**Update Priority:** **N/A** - Uses YAML-specific ValidationResult struct  
-**Notes:** This calls `SyntaxValidator::validate()` which returns `ValidationResult` struct (with `valid` bool and `errors` Vec), NOT a `Result` type
+**Caller Type:** Wrapped - Validates then merges with additional detection
 
----
+**Error Handling:**
+- Stores `ValidationResult` directly (no early return)
+- Checks `is_valid()` before running additional validation
+- Merges errors from multiple sources (syntax validator + detector)
+- Returns: `ValidationResult` (custom struct with `valid`, `errors`, `warnings`)
 
-## Validate() Method Definitions
-
-These are the actual method/trait definitions (not call sites):
-
-### Schema Trait
-
-**Location:** `src/schema.rs:274`
-
+**Implementation Being Called:** `SyntaxValidator::validate()` (src/parsers/yaml/syntax_validator.rs:65)
 ```rust
-pub trait Schema<T: ?Sized> {
-    fn validate(&self, value: &T) -> ValidationResult;
-}
-```
-
-**Return Type:** `ValidationResult = Result<(), ParseError>`  
-**Implementations:** Multiple schema structs throughout `src/schema.rs`
-
----
-
-### Parser Trait
-
-**Location:** `src/parsers/traits.rs:323`
-
-```rust
-pub trait Parser<Input> {
-    fn validate(&self, source: Input) -> Result<(), ParseError> {
-        self.parse(source)?;
-        Ok(())
+pub fn validate(&self, content: &str) -> ValidationResult {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    
+    // ... validation logic ...
+    
+    ValidationResult {
+        valid: errors.is_empty(),
+        errors,
+        warnings,
     }
 }
 ```
 
-**Return Type:** `Result<(), ParseError>`  
-**Default Implementation:** Calls `parse()` and discards result
+**Update Priority:** LOW
+- ✅ Already has sophisticated error handling with merge logic
+- ✅ Returns rich `ValidationResult` with structured errors
+- ✅ No improvements needed
 
 ---
 
-### ParserConfig::validate()
+## Test Call Sites
 
-**Location:** `src/parsers/config.rs:537`
+### SyntaxValidator Unit Tests
 
-```rust
-impl ParserConfig {
-    pub fn validate(&self) -> Result<(), String> {
-        // Validation logic
-    }
-}
-```
+**Location:** `src/parsers/yaml/syntax_validator.rs:438-503`
 
-**Return Type:** `Result<(), String>`  
-**Used by:** `ParserConfigBuilder::build()` at line 662
+**Test Count:** 8 tests
 
----
+**Tests:**
+1. `test_validate_empty_content` (line 438)
+2. `test_validate_simple_valid_yaml` (line 453)
+3. `test_detect_tabs_in_strict_mode` (line 461)
+4. `test_detect_mixed_indentation` (line 470)
+5. `test_detect_unmatched_brace` (line 479)
+6. `test_detect_unmatched_bracket` (line 487)
+7. `test_invalid_block_scalar_indicator` (line 495)
+8. `test_anchor_without_name` (line 503)
 
-### ValidatorConfig::validate()
-
-**Location:** `src/parsers/config.rs:908`
-
-```rust
-impl ValidatorConfig {
-    pub fn validate(&self) -> Result<(), String> {
-        // Validation logic
-    }
-}
-```
-
-**Return Type:** `Result<(), String>`  
-**Used by:** `ValidatorConfigBuilder::build()` at line 1007
+**Update Priority:** NONE - Tests are working as intended
 
 ---
 
-### SyntaxValidator::validate()
+### Schema Validation Tests
 
-**Location:** `src/parsers/yaml/syntax_validator.rs:65`
+**Location:** `tests/schema_validation_test.rs`
 
-```rust
-impl SyntaxValidator {
-    pub fn validate(&self, content: &str) -> ValidationResult {
-        // Returns custom struct with valid/fields/errors
-    }
-}
-```
+**Test Count:** ~40 tests
 
-**Return Type:** `ValidationResult` (custom struct from `src/parsers/yaml/types.rs`)  
-**Used by:** `YamlParser::validate_str()` at line 121
+**Coverage:** All Schema trait implementations
+
+**Update Priority:** NONE - Tests are working as intended
 
 ---
 
-## Test Code Call Sites (REFERENCE ONLY)
+## Documentation/Doctest Sites
 
-These validate() calls are in test code and do NOT need updates for production error handling:
+**Location:** `src/schema.rs` (multiple lines)
 
-### `src/parsers/config.rs` - Tests
-- Lines 1202, 1205, 1216, 1224, 1232, 1297, 1300, 1312, 1320
-- All use `assert!(config.validate().is_ok())` or `assert!(config.validate().is_err())`
+**Purpose:** Examples in Schema trait docstrings
 
-### `src/schema.rs` - Doc Examples & Tests
-- Lines 318, 319, 322, 326, 352, 353, 354, 357, 358, 431, 433, 436, 440, 462, 463, 466, 505, 511, 518, 527, 551, 552, 555, 560, 564, 602, 603, 604, 605, 606, 610, 611, 612, 613, 614, 660, 662, 675, 682, 693
+**Count:** ~15 examples
 
-### `src/parsers/yaml/syntax_validator.rs` - Tests
-- Lines 438, 453, 461, 470, 479, 487, 495, 503
-
-### `src/parsers/yaml/syntax_detector_tests.rs` - Tests
-- Lines 131, 567, 728
-
-### `tests/schema_validation_test.rs` - Comprehensive Tests
-- Over 100 test calls throughout the file
+**Update Priority:** NONE - Documentation should remain as-is
 
 ---
 
@@ -195,65 +215,58 @@ These validate() calls are in test code and do NOT need updates for production e
 
 ### By Call Type
 
-| Category | Count | Description |
-|----------|-------|-------------|
-| **Direct Production Calls** | 2 | Lines 662, 1007 in config.rs |
-| **Delegated Calls** | 1 | Line 121 in yaml/parser.rs |
-| **Test/Doc Calls** | 100+ | All test files and doc examples |
-| **Method Definitions** | 5 | Trait/impl definitions |
+| Type | Count | Sites |
+|------|-------|-------|
+| **Direct** | 2 | ParserConfigBuilder::build(), ValidatorConfigBuilder::build() |
+| **Wrapped** | 1 | YamlParser::validate_str() |
+| **Deferred** | 0 | None found |
 
 ### By Update Priority
 
-| Priority | Count | Locations |
-|----------|-------|-----------|
-| **HIGH** | 0 | No production sites lacking error handling |
-| **MEDIUM** | 0 | No wrapped/deferred sites needing attention |
-| **LOW** | 2 | Lines 662, 1007 (already have proper error handling) |
-| **N/A** | 1 | Line 121 (uses different ValidationResult type) |
-
----
-
-## Key Findings
-
-1. **✅ All production validate() calls already have proper error handling**
-   - Both builder pattern calls use `?` operator correctly
-   - No missing error handling in production code
-
-2. **⚠️ Two different validation result types exist**
-   - `ValidationResult = Result<(), ParseError>` in schema.rs
-   - `ValidationResult` struct in yaml/types.rs
-   - These are NOT interchangeable - different call semantics
-
-3. **🔧 No critical error handling gaps identified**
-   - All production code properly handles validate() results
-   - Test code uses appropriate assert macros
-
-4. **📝 Parser trait provides default validate() implementation**
-   - Delegates to `parse()` and discards result
-   - No direct calls found in production code
+| Priority | Count | Sites |
+|----------|-------|-------|
+| **HIGH** | 0 | None |
+| **MEDIUM** | 2 | ParserConfigBuilder::build(), ValidatorConfigBuilder::build() |
+| **LOW** | 1 | YamlParser::validate_str() |
+| **NONE** | ~55 | All test and doc sites |
 
 ---
 
 ## Recommendations
 
-### No Action Required
-All production `validate()` call sites already have appropriate error handling. The codebase is in good shape regarding validation error propagation.
+### Immediate Actions
 
-### Future Considerations
-- If adding new validate() calls, follow existing patterns:
-  - Use `?` operator for Result-returning validate()
-  - Handle ValidationResult struct appropriately for YAML validation
-  - Prefer builder pattern with build() validation for configs
+1. **ParserConfig::validate() and ValidatorConfig::validate()**
+   - Consider changing return type from `Result<(), String>` to `Result<(), ParseError>`
+   - This would provide rich error context (line numbers, file paths, code snippets)
+   - Aligns with the rest of the codebase which uses `ParseError`
 
-### Type Clarity
-Consider renaming one of the ValidationResult types to avoid confusion:
-- Keep `ValidationResult = Result<(), ParseError>` in schema.rs
-- Rename `ValidationResult` struct in yaml/types.rs to something like `YamlValidationResult` or `SyntaxValidationResult`
+2. **Builder Pattern Consistency**
+   - Current implementation is correct but could be enhanced
+   - Consider adding `with_context()` methods to builders for better error messages
+
+### No Changes Needed
+
+- **YamlParser::validate_str()** - Already has excellent error handling with merge logic
+- **All test sites** - Tests are comprehensive and working correctly
+- **Documentation sites** - Examples are clear and helpful
 
 ---
 
-## End of Catalog
+## Related Files
 
-**Total validate() call sites documented:** 3 production, 5 definitions, 100+ tests  
-**Sites needing error handling updates:** 0  
-**Sites needing review:** 0 (all properly handled)
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/parsers/config.rs` | 537-554, 908-923 | Config validation implementations |
+| `src/parsers/yaml/parser.rs` | 112-136 | YAML parser validation orchestration |
+| `src/parsers/yaml/syntax_validator.rs` | 65-108 | Syntax validation implementation |
+| `src/schema.rs` | 108-274 | Schema trait definition and examples |
+| `tests/schema_validation_test.rs` | All | Comprehensive Schema tests |
+
+---
+
+## Notes
+
+- All production call sites already have error handling (no silent failures)
+- The main improvement opportunity is in error type consistency (String → ParseError)
+- No deferred validation patterns found - all validation happens at call time
