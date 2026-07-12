@@ -42,17 +42,17 @@ func TestCalculateIndentationSimple(t *testing.T) {
 		{
 			name:     "one leading tab",
 			line:     "\tkey: value",
-			expected: 1,
+			expected: 8, // 1 tab expanded to 8 spaces
 		},
 		{
 			name:     "two leading tabs",
 			line:     "\t\tkey: value",
-			expected: 2,
+			expected: 16, // 2 tabs expanded to 8 spaces each = 16
 		},
 		{
 			name:     "mixed spaces and tabs",
 			line:     "  \t  key: value",
-			expected: 5,
+			expected: 10, // 2 spaces + 1 tab expanded to 8 = 10
 		},
 		{
 			name:     "empty line",
@@ -67,7 +67,7 @@ func TestCalculateIndentationSimple(t *testing.T) {
 		{
 			name:     "tab only line",
 			line:     "\t",
-			expected: 1,
+			expected: 8, // 1 tab expanded to 8 spaces
 		},
 		{
 			name:     "comment with indentation",
@@ -91,21 +91,99 @@ func TestCalculateIndentationSimple(t *testing.T) {
 	}
 }
 
-// TestCalculateIndentationTabsAsSingleCharacter verifies that tabs are counted as single characters.
+// TestCalculateIndentationTabsAsSingleCharacter verifies that tabs are expanded to spaces.
 func TestCalculateIndentationTabsAsSingleCharacter(t *testing.T) {
-	// Test that tabs are counted as single characters, not expanded to spaces
-	tabLine := "\t\tkey: value"
-	spaceLine := "  key: value"
+	// Test that tabs are expanded to 8 spaces for YAML spec compliance
+	tabLine := "\tkey: value"        // 1 tab = 8 spaces
+	spaceLine := "        key: value" // 8 spaces
 
 	tabIndent := calculateIndentation(tabLine)
 	spaceIndent := calculateIndentation(spaceLine)
 
-	// Both should return 2 (2 tabs = 2 characters, 2 spaces = 2 characters)
-	if tabIndent != 2 {
-		t.Errorf("Expected 2 for tab indentation, got %d", tabIndent)
+	// Both should return 8 (1 tab expanded to 8 spaces, 8 spaces = 8 spaces)
+	if tabIndent != 8 {
+		t.Errorf("Expected 8 for tab indentation (1 tab expanded to 8 spaces), got %d", tabIndent)
 	}
-	if spaceIndent != 2 {
-		t.Errorf("Expected 2 for space indentation, got %d", spaceIndent)
+	if spaceIndent != 8 {
+		t.Errorf("Expected 8 for space indentation (8 spaces), got %d", spaceIndent)
+	}
+}
+
+// TestCalculateIndentationMultipleTabs verifies expansion of multiple tabs.
+func TestCalculateIndentationMultipleTabs(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected int
+	}{
+		{
+			name:     "one tab",
+			line:     "\tkey: value",
+			expected: 8, // 1 tab = 8 spaces
+		},
+		{
+			name:     "two tabs",
+			line:     "\t\tkey: value",
+			expected: 16, // 2 tabs = 16 spaces
+		},
+		{
+			name:     "three tabs",
+			line:     "\t\t\tkey: value",
+			expected: 24, // 3 tabs = 24 spaces
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calculateIndentation(tt.line)
+			if result != tt.expected {
+				t.Errorf("calculateIndentation(%q) = %d, want %d", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestCalculateIndentationMixedTabSpace verifies mixed tab and space indentation.
+func TestCalculateIndentationMixedTabSpace(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected int
+	}{
+		{
+			name:     "2 spaces then tab",
+			line:     "  \tkey: value",
+			expected: 8, // 2 spaces + 1 tab (rounded to next 8-space boundary) = 8
+		},
+		{
+			name:     "4 spaces then tab",
+			line:     "    \tkey: value",
+			expected: 8, // 4 spaces + 1 tab (rounded to next 8-space boundary) = 8
+		},
+		{
+			name:     "6 spaces then tab",
+			line:     "      \tkey: value",
+			expected: 8, // 6 spaces + 1 tab (rounded to next 8-space boundary) = 8
+		},
+		{
+			name:     "8 spaces then tab",
+			line:     "        \tkey: value",
+			expected: 16, // 8 spaces + 1 tab (rounded to next 8-space boundary) = 16
+		},
+		{
+			name:     "tab then 2 spaces",
+			line:     "\t  key: value",
+			expected: 10, // 1 tab (8 spaces) + 2 spaces = 10
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calculateIndentation(tt.line)
+			if result != tt.expected {
+				t.Errorf("calculateIndentation(%q) = %d, want %d", tt.line, result, tt.expected)
+			}
+		})
 	}
 }
 
@@ -1241,6 +1319,81 @@ monitoring:
 			if result != expectedTypes[i] {
 				t.Errorf("Line %d (%q): classifyLine = %v, want %v",
 					i, line, result, expectedTypes[i])
+			}
+		})
+	}
+}
+
+// TestCalculateIndentationVeryLong tests very long indentation edge cases.
+// This test covers the acceptance criteria requirement for testing very long indentation.
+func TestCalculateIndentationVeryLong(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected int
+	}{
+		{
+			name:     "50 spaces",
+			line:     strings.Repeat(" ", 50) + "key: value",
+			expected: 50,
+		},
+		{
+			name:     "100 spaces",
+			line:     strings.Repeat(" ", 100) + "key: value",
+			expected: 100,
+		},
+		{
+			name:     "200 spaces",
+			line:     strings.Repeat(" ", 200) + "key: value",
+			expected: 200,
+		},
+		{
+			name:     "10 tabs (80 spaces)",
+			line:     strings.Repeat("\t", 10) + "key: value",
+			expected: 80, // 10 tabs * 8 = 80
+		},
+		{
+			name:     "20 tabs (160 spaces)",
+			line:     strings.Repeat("\t", 20) + "key: value",
+			expected: 160, // 20 tabs * 8 = 160
+		},
+		{
+			name:     "mixed 50 spaces then tab",
+			line:     strings.Repeat(" ", 50) + "\tkey: value",
+			expected: 56, // 50 spaces + tab (rounded to next 8-space boundary: 56)
+		},
+		{
+			name:     "mixed 100 spaces then tab",
+			line:     strings.Repeat(" ", 100) + "\tkey: value",
+			expected: 104, // 100 spaces + tab (rounded to next 8-space boundary: 104)
+		},
+		{
+			name:     "alternating spaces and tabs",
+			line:     " \t \t \t \t \t key: value",
+			expected: 41, // space(1) + tab→8 + space(9) + tab→16 + space(17) + tab→24 + space(25) + tab→32 + space(33) + tab→40 + space(41)
+		},
+		{
+			name:     "tab then many spaces",
+			line:     "\t" + strings.Repeat(" ", 100) + "key: value",
+			expected: 108, // 1 tab (8) + 100 spaces = 108
+		},
+		{
+			name:     "only spaces no content",
+			line:     strings.Repeat(" ", 100),
+			expected: 100, // Should count all spaces even without content
+		},
+		{
+			name:     "only tabs no content",
+			line:     strings.Repeat("\t", 15),
+			expected: 120, // 15 tabs * 8 = 120
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calculateIndentation(tt.line)
+			if result != tt.expected {
+				t.Errorf("calculateIndentation(%q) = %d, want %d", tt.line, result, tt.expected)
 			}
 		})
 	}

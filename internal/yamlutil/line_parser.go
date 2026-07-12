@@ -3,6 +3,29 @@
 // The line parser processes YAML content line-by-line to identify potential mapping
 // keys and track their line numbers, providing foundational parsing infrastructure
 // for syntax validation and error detection.
+//
+// ## Indentation Handling
+//
+// This package handles YAML indentation with the following strategy:
+//
+// ### Tab vs Space Indentation
+//
+// Tabs are expanded to 8-space boundaries for indentation counting purposes.
+// This approach follows YAML specification guidance, which discourages tabs
+// and recommends consistent space-based indentation.
+//
+// - Tabs are expanded using traditional 8-space tab stops
+// - Mixed tabs and spaces are detected and flagged via HasMixedIndent
+// - The parser auto-detects the expected spaces-per-indent level (default: 2)
+//
+// ### Rationale
+//
+// Expanding tabs to spaces (rather than counting tabs as single characters) ensures:
+// 1. Consistent behavior across different editing environments
+// 2. Proper alignment when mixed indentation occurs
+// 3. Compatibility with the YAML spec's space-first recommendation
+//
+// See calculateIndentation() for detailed documentation of the expansion algorithm.
 package yamlutil
 
 import (
@@ -207,19 +230,62 @@ func (lp *LineParser) Parse(content string) LineParserResult {
 	return result
 }
 
-// calculateIndentation calculates the indentation level of a YAML line.
+// calculateIndentation calculates the indentation width of a YAML line.
 //
-// This function counts leading spaces and tabs to determine indentation depth.
-// Tabs are counted as single characters, not expanded to spaces.
+// This function counts leading whitespace to determine indentation depth. The indentation
+// strategy follows YAML specification guidance: tabs are expanded to 8-space boundaries
+// for consistent handling of mixed indentation.
+//
+// ## Tab Expansion Strategy
+//
+// Tabs are expanded to 8-space boundaries (traditional tab stop width). This means:
+// - A line starting with 1 tab at column 0 expands to 8 spaces
+// - A line starting with 2 tabs expands to 16 spaces
+// - Mixed indentation like "  \t" (2 spaces + tab) expands to 8 spaces total
+// - Mixed indentation like "        \t" (8 spaces + tab) expands to 16 spaces total
+//
+// ## Rationale for Tab Expansion
+//
+// The YAML 1.2 specification explicitly discourages tab characters for indentation,
+// recommending consistent space-based indentation instead. However, YAML files in the
+// wild may contain tabs, so we need a consistent strategy for handling them.
+//
+// We chose to expand tabs to 8-space boundaries rather than counting them as single
+// characters because:
+// 1. This matches traditional text editor behavior (tab stops every 8 columns)
+// 2. It provides consistent alignment when mixed indentation occurs
+// 3. The YAML spec recommends spaces, so treating tabs as space-equivalents is safer
+// 4. Most YAML generators use spaces, making this the common case
+//
+// ## Examples
+//
+// Input line → Calculated indentation:
+// - "key: value" → 0 (no indentation)
+// - "  key: value" → 2 (two spaces)
+// - "\tkey: value" → 8 (one tab expanded to 8 spaces)
+// - "\t\tkey: value" → 16 (two tabs expanded to 16 spaces)
+// - "  \tkey: value" → 8 (two spaces + tab rounds up to next 8-space boundary)
+// - "        key: value" → 8 (eight spaces = one tab equivalent)
 //
 // Parameters:
 //   - line: The line content to analyze
 //
-// Returns the number of leading whitespace characters (spaces + tabs).
+// Returns the indentation width in space-equivalent characters.
 // Returns 0 for lines with no leading whitespace.
 func calculateIndentation(line string) int {
-	trimmed := strings.TrimLeft(line, " \t")
-	return len(line) - len(trimmed)
+	count := 0
+	for _, ch := range line {
+		if ch == ' ' {
+			count++
+		} else if ch == '\t' {
+			// Expand tab to 8 spaces (YAML spec compliant approach)
+			// Round up to the next 8-space boundary
+			count = ((count + 8) / 8) * 8
+		} else {
+			break // Stop at first non-whitespace character
+		}
+	}
+	return count
 }
 
 // parseLine parses a single line of YAML.
@@ -328,20 +394,11 @@ func (lp *LineParser) detectIndentation(content string) int {
 			continue
 		}
 
-		leadingSpaces := 0
-		for _, ch := range line {
-			if ch == ' ' {
-				leadingSpaces++
-			} else if ch == '\t' {
-				// Assume tabs = don't count for space-based detection
-				break
-			} else {
-				break
-			}
-		}
+		// Calculate indentation using the same tab expansion logic
+		leadingWidth := calculateIndentation(line)
 
-		if leadingSpaces > 0 {
-			indentLevels[leadingSpaces] = true
+		if leadingWidth > 0 {
+			indentLevels[leadingWidth] = true
 		}
 	}
 
@@ -379,6 +436,31 @@ func computeGCD(a, b int) int {
 }
 
 // detectIndentType detects the type of indentation used in a line.
+//
+// This function analyzes the leading whitespace characters to determine whether
+// a line uses spaces, tabs, or mixed indentation. It only examines characters
+// before the first non-whitespace character.
+//
+// ## Indentation Type Classification
+//
+// - "space": Line uses only spaces for indentation
+// - "tab": Line uses only tabs for indentation
+// - "mixed": Line uses both spaces AND tabs in the leading whitespace
+// - "": No indentation (empty string or no leading whitespace)
+//
+// ## Mixed Indentation Detection
+//
+// A line is classified as "mixed" if BOTH spaces and tabs appear in the leading
+// whitespace portion. This is considered problematic because:
+// 1. The YAML spec discourages tabs entirely
+// 2. Mixed indentation leads to ambiguous alignment
+// 3. Different editors may render it inconsistently
+//
+// Examples:
+// - "  key: value" → "space" (2 spaces)
+// - "\tkey: value" → "tab" (1 tab)
+// - "  \tkey: value" → "mixed" (2 spaces + 1 tab)
+// - "\t  key: value" → "mixed" (1 tab + 2 spaces)
 //
 // Parameters:
 //   - line: The line content to analyze
