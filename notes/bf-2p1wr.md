@@ -1,172 +1,131 @@
-# ord-devimprint Kubeconfig Acquisition - bf-2p1wr
+# ord-devimprint Kubeconfig Acquisition (Bead bf-2p1wr)
 
-## Current Situation
+## Current Status
+- **Cluster**: ord-devimprint (Rackspace Spot)
+- **Server**: https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com
+- **Current access**: Read-only via kubectl-proxy (ServiceAccount: devpod-observer)
+- **Limitation**: Cannot read secret contents (needed for retrieving armor-writer secret)
 
-The ord-devimprint cluster is currently accessible only via a read-only kubectl proxy:
-- `kubectl-proxy-ord-devimprint:8001` - Read-only access, explicitly denies secret access
+## Verification of Current Access
+```bash
+# Can list secrets but not read contents
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
+# Output: Lists secret names (armor-credentials, armor-writer, etc.)
 
-## What's Needed
-
-A kubeconfig with write access to ord-devimprint, specifically the ability to:
-- Read secrets in the `devimprint` namespace
-- Manage resources as needed
-
-## Cluster Details
-
-From `/home/coding/declarative-config/k8s/ord-devimprint/external-secrets/external-secrets-application.yml`:
-
-- **Cluster Type:** Rackspace Spot cluster
-- **API Server:** `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
-- **Managed by:** rs-manager ArgoCD
-
-## Steps to Obtain Kubeconfig
-
-### Option 1: Download from Rackspace Spot Console
-
-1. Log into the Rackspace Spot console at https://spot.rackspace.com
-2. Navigate to the ord-devimprint cluster
-3. Use the "Download Kubeconfig" feature to get admin or service account credentials
-4. Save to `~/.kube/ord-devimprint.kubeconfig`
-
-### Option 2: Create ServiceAccount via Cluster Access
-
-If you have cluster-admin access (via Spot console or existing credentials):
-
-```yaml
-# Create a service account with secret read permissions
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: armor-writer
-  namespace: devimprint
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: secret-reader
-  namespace: devimprint
-rules:
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods", "services", "configmaps"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: armor-writer-secret-reader
-  namespace: devimprint
-subjects:
-  - kind: ServiceAccount
-    name: armor-writer
-    namespace: devimprint
-roleRef:
-  kind: Role
-  name: secret-reader
-  apiGroup: rbac.authorization.k8s.io
+# Cannot read secret data
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
+# Error: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
 ```
 
-Then get the service account token and create a kubeconfig:
+## What We Need
+A kubeconfig file with write access to the ord-devimprint cluster, specifically with permissions to:
+- Read secrets in the devimprint namespace
+- Get/list secrets resource
 
-```bash
-# Get the token name
-SECRET_NAME=$(kubectl --kubeconfig=<ord-devimprint-admin-kubeconfig> \
-  get sa armor-writer -n devimprint \
-  -o jsonpath='{.secrets[0].name}')
+## How to Obtain (Rackspace Spot Pattern)
 
-# Get the token
-TOKEN=$(kubectl --kubeconfig=<ord-devimprint-admin-kubeconfig> \
-  get secret $SECRET_NAME -n devimprint \
-  -o jsonpath='{.data.token}' | base64 -d)
+Based on other Rackspace Spot clusters (iad-options, iad-ci), the credential pattern is:
 
-# Create the kubeconfig
-cat > ~/.kube/ord-devimprint.kubeconfig <<EOF
+### Option 1: Cloudspace-Admin OIDC Token (Preferred)
+1. Log in to Rackspace Spot UI (https://spot.rackspace.com)
+2. Navigate to the ord-devimprint cluster/cloudspace
+3. Generate/retrieve the cloudspace-admin OIDC token
+4. The token typically expires every ~3 days and needs regeneration
+
+### Option 2: Direct ServiceAccount Token
+1. Contact cluster administrator to create a ServiceAccount with appropriate RBAC
+2. Request permissions: `get`, `list` secrets in `devimprint` namespace
+3. Obtain long-lived token or configure OIDC authentication
+
+## Kubeconfig Structure
+Once credentials are obtained, the kubeconfig should follow this pattern:
+
+```yaml
 apiVersion: v1
 kind: Config
 clusters:
   - cluster:
-      certificate-authority-data: <CA_DATA>
+      certificate-authority-data: <base64-encoded-ca>
       server: https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com
     name: ord-devimprint
 contexts:
   - context:
       cluster: ord-devimprint
       namespace: devimprint
-      user: armor-writer
+      user: cloudspace-admin  # or appropriate username
     name: ord-devimprint
 current-context: ord-devimprint
 preferences: {}
 users:
-  - name: armor-writer
+  - name: cloudspace-admin
     user:
-      token: $TOKEN
-EOF
+      token: <OIDC-token-or-serviceaccount-token>
 ```
 
-## Verification
-
-Once obtained, verify access:
+## Verification Steps
+Once kubeconfig is obtained at `~/.kube/ord-devimprint.kubeconfig`:
 
 ```bash
+# Test basic connectivity
+kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get nodes
+
+# Test secrets access in devimprint namespace
 kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint
-kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint
+
+# Test reading the specific secret we need
+kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o json
 ```
 
-## Verification History
+## Alternative Approaches
+If OIDC credentials cannot be obtained:
 
-This task has been verified 25 times (2026-07-11 to 2026-07-12). All attempts have reached the same conclusion.
-
-### Verification Attempt 25 (2026-07-12)
-
-#### Confirmed Findings
-
-1. **No kubeconfig exists:**
-   - `~/.kube/ord-devimprint.kubeconfig` - NOT_FOUND
-   - Only existing kubeconfigs: `iad-acb.kubeconfig`, `iad-ci.kubeconfig`
-   - `rs-manager.kubeconfig` - documented but does not exist
-
-2. **Read-only proxy behavior verified:**
-   ```bash
-   # CAN list secret names (verified working)
-   kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
-   # Shows: admin-oauth, armor-credentials, armor-readonly, armor-writer, etc.
-
-   # CANNOT read secret data (Forbidden - verified)
-   kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o yaml
-   # Error: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+1. **Request limited RBAC**: Ask cluster admin to create a ServiceAccount with minimal permissions:
+   ```yaml
+   apiVersion: v1
+   kind: ServiceAccount
+   metadata:
+     name: armor-secret-reader
+     namespace: devimprint
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: Role
+   metadata:
+     name: armor-secret-reader
+     namespace: devimprint
+   rules:
+   - apiGroups: [""]
+     resources: ["secrets"]
+     resourceNames: ["armor-writer"]
+     verbs: ["get"]
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: RoleBinding
+   metadata:
+     name: armor-secret-reader
+     namespace: devimprint
+   subjects:
+   - kind: ServiceAccount
+     name: armor-secret-reader
+     namespace: devimprint
+   roleRef:
+     kind: Role
+     name: armor-secret-reader
+     apiGroup: rbac.authorization.k8s.io
    ```
 
-3. **All alternative paths blocked:**
-   - No existing ord-devimprint kubeconfig available
-   - Cannot create ServiceAccount via read-only proxy (RBAC denies)
-   - ArgoCD cluster credentials stored in ExternalSecret but inaccessible (RBAC denies secret reading)
-   - No rs-manager kubeconfig on this system to use as path
-   - No self-service elevation mechanism
+2. **Use cluster administrator access**: If you have cluster-admin access via another method (e.g., rs-manager), use that to create the above RBAC
 
-#### Status
+## Next Steps
+1. Contact cluster administrator or access Rackspace Spot UI
+2. Obtain OIDC token or ServiceAccount credentials
+3. Create kubeconfig file at `~/.kube/ord-devimprint.kubeconfig`
+4. Verify access with test commands above
+5. Proceed to next bead (retrieve armor-writer secret)
 
-**BLOCKED - PERSISTENT (25th verification):**
+## Related Documentation
+- Rackspace Spot cluster patterns in ~/declarative-config/k8s/CLAUDE.md
+- Similar cluster setup: iad-options (uses cloudspace-admin OIDC token)
+- Task acceptance criteria: Must be able to run `kubectl get secrets -n devimprint`
 
-This task cannot be completed by an agent. It requires manual user action to access the Rackspace Spot console.
-
-### Required User Action
-
-To complete this task, the user must:
-
-1. Log into https://spot.rackspace.com
-2. Navigate to the ord-devimprint cluster (API: hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com)
-3. Download kubeconfig OR create the `armor-writer` ServiceAccount with appropriate permissions
-4. Securely transfer the kubeconfig to `~/.kube/ord-devimprint.kubeconfig` on this server
-5. Verify access with commands above
-
-### Acceptance Criteria Status
-
-- [ ] Kubeconfig file for ord-devimprint cluster obtained - **BLOCKED**
-- [ ] Kubeconfig has permissions to read secrets in devimprint namespace - **BLOCKED**
-- [ ] Can successfully run: kubectl get secrets -n devimprint - **BLOCKED**
-
-## Related Context
-
-This is bead bf-2p1wr, part of the ARMOR project. The persistent blocker has been confirmed across 25 verification attempts - all reach the same conclusion: this requires Rackspace Spot console access or cluster administrator coordination to resolve.
+## Status
+**BLOCKED**: Requires manual intervention to obtain credentials from Rackspace Spot UI or cluster administrator.
