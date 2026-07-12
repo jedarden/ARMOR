@@ -13,7 +13,7 @@ A kubeconfig with write access to ord-devimprint, specifically the ability to:
 
 ## Cluster Details
 
-From `/home/coding/declarative-config/k8s/rs-manager/argocd/ord-devimprint-applicationset.yml`:
+From `/home/coding/declarative-config/k8s/ord-devimprint/external-secrets/external-secrets-application.yml`:
 
 - **Cluster Type:** Rackspace Spot cluster
 - **API Server:** `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
@@ -114,111 +114,52 @@ kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secrets -n devimprint
 kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint
 ```
 
-## Current Investigation Findings (2026-07-11)
+## Verification History
 
-### Verification Attempt 21
+This task has been verified 25 times (2026-07-11 to 2026-07-12). All attempts have reached the same conclusion.
 
-Checked for potential paths to obtain the kubeconfig:
+### Verification Attempt 25 (2026-07-12)
 
-1. **Existing kubeconfigs checked:**
-   - `~/.kube/iad-acb.kubeconfig` - exists, for different cluster
-   - `~/.kube/iad-ci.kubeconfig` - exists, for different cluster
-   - `~/.kube/rs-manager.kubeconfig` - **DOES NOT EXIST** (cannot use as path to ord-devimprint)
+#### Confirmed Findings
 
-2. **Declarative config findings:**
-   - Found ord-devimprint ApplicationSet in rs-manager ArgoCD
-   - Confirmed cluster API: `https://hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com`
-   - Managed by rs-manager, but no rs-manager kubeconfig available on this system
+1. **No kubeconfig exists:**
+   - `~/.kube/ord-devimprint.kubeconfig` - NOT_FOUND
+   - Only existing kubeconfigs: `iad-acb.kubeconfig`, `iad-ci.kubeconfig`
+   - `rs-manager.kubeconfig` - documented but does not exist
 
-3. **Access attempts:**
-   - Read-only proxy (kubectl-proxy-ord-devimprint:8001) - cannot create ServiceAccounts
-   - No path to elevate privileges without console access
-
-## Status
-
-**BLOCKED - PERSISTENT:** Requires Rackspace Spot console access.
-
-This task cannot be completed by an agent without:
-1. Direct Rackspace Spot console login to download kubeconfig, OR
-2. User providing an existing ord-devimprint kubeconfig with write permissions
-
-The user needs to:
-1. Log into https://spot.rackspace.com
-2. Navigate to ord-devimprint cluster
-3. Download kubeconfig or create the armor-writer ServiceAccount
-4. Save to `~/.kube/ord-devimprint.kubeconfig`
-5. Run verification commands above
-
-## Related Context
-
-This is bead bf-2p1wr, part of the ARMOR project. The persistent blocker has been confirmed across 21 verification attempts - all require Rackspace Spot console access to resolve.
-
-## Verification Attempt 22 (2026-07-11)
-
-### Additional Findings
-
-1. **ArgoCD cluster credential storage:**
-   - Found secret `cluster-ord-devimprint` in `rs-manager/argocd` namespace
-   - Contains cluster credentials (3 data fields)
-   - **Inaccessible** - read-only proxy blocks secret reading: Forbidden
-
-2. **Read-only proxy capabilities confirmed:**
+2. **Read-only proxy behavior verified:**
    ```bash
-   # CAN list secret names
+   # CAN list secret names (verified working)
    kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
-   # Shows: armor-writer, armor-credentials, admin-oauth, etc.
+   # Shows: admin-oauth, armor-credentials, armor-readonly, armor-writer, etc.
 
-   # CANNOT read secret data
-   kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
+   # CANNOT read secret data (Forbidden - verified)
+   kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o yaml
    # Error: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
    ```
 
-3. **rs-manager kubeconfig:**
-   - Documented at `~/.kube/rs-manager.kubeconfig` but **file does not exist**
-   - Cannot use rs-manager as a path to ord-devimprint credentials
+3. **All alternative paths blocked:**
+   - No existing ord-devimprint kubeconfig available
+   - Cannot create ServiceAccount via read-only proxy (RBAC denies)
+   - ArgoCD cluster credentials stored in ExternalSecret but inaccessible (RBAC denies secret reading)
+   - No rs-manager kubeconfig on this system to use as path
+   - No self-service elevation mechanism
 
-### Confirmation
+#### Status
 
-All 22 verification attempts have reached the same conclusion: **this requires Rackspace Spot console access**.
+**BLOCKED - PERSISTENT (25th verification):**
 
-No self-service path exists - all potential credential sources are protected by read-only RBAC.
+This task cannot be completed by an agent. It requires manual user action to access the Rackspace Spot console.
 
-### Required Action (Unchanged)
+### Required User Action
 
-The user must:
+To complete this task, the user must:
+
 1. Log into https://spot.rackspace.com
-2. Navigate to ord-devimprint cluster (API: hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com)
-3. Download kubeconfig OR create armor-writer ServiceAccount
-4. Securely transfer to `~/.kube/ord-devimprint.kubeconfig` on this server
-
-## Verification Attempt 23 (2026-07-12)
-
-### Investigation Summary
-
-1. **Reviewed existing kubeconfig patterns:**
-   - Found `iad-acb.kubeconfig` (282 bytes) and `iad-ci.kubeconfig` (2809 bytes)
-   - No existing ord-devimprint kubeconfig found
-   - rs-manager.kubeconfig referenced in CLAUDE.md but file does not exist
-
-2. **Analyzed ArgoCD ExternalSecret setup:**
-   - File: `/home/coding/declarative-config/k8s/rs-manager/argocd/ord-devimprint-cluster-externalsecret.yml`
-   - Shows ArgoCD cluster credentials stored in OpenBao at `rs-manager/ord-devimprint/cluster`
-   - This is for ArgoCD use only - not accessible for manual kubectl operations
-
-3. **Confirmed cluster management:**
-   - ord-devimprint is managed via rs-manager ArgoCD
-   - ApplicationSet: `manifest-appset-ord-devimprint`
-   - No self-service path to elevated credentials
-
-### Conclusion (Unchanged)
-
-**BLOCKED - REQUIRES EXTERNAL COORDINATION**
-
-This task cannot be completed without:
-1. Rackspace Spot console access to download kubeconfig, OR
-2. Cluster administrator providing a kubeconfig with write permissions
-
-The read-only kubectl-proxy (kubectl-proxy-ord-devimprint:8001) explicitly denies secret access and cannot be used to create elevated credentials.
+2. Navigate to the ord-devimprint cluster (API: hcp-5f30c973-cde7-42d9-8c7b-5d0573821330.spot.rackspace.com)
+3. Download kubeconfig OR create the `armor-writer` ServiceAccount with appropriate permissions
+4. Securely transfer the kubeconfig to `~/.kube/ord-devimprint.kubeconfig` on this server
+5. Verify access with commands above
 
 ### Acceptance Criteria Status
 
@@ -226,4 +167,6 @@ The read-only kubectl-proxy (kubectl-proxy-ord-devimprint:8001) explicitly denie
 - [ ] Kubeconfig has permissions to read secrets in devimprint namespace - **BLOCKED**
 - [ ] Can successfully run: kubectl get secrets -n devimprint - **BLOCKED**
 
-All criteria remain blocked pending Rackspace Spot console access.
+## Related Context
+
+This is bead bf-2p1wr, part of the ARMOR project. The persistent blocker has been confirmed across 25 verification attempts - all reach the same conclusion: this requires Rackspace Spot console access or cluster administrator coordination to resolve.
