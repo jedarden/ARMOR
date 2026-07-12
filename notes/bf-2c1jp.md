@@ -1,29 +1,38 @@
-# Bead bf-2c1jp: Verify armor-writer secret exists in devimprint namespace
+# Bead bf-2c1jp: Secret Verification Blocked
 
-## Date
-2026-07-11
+## Issue
 
-## Finding
+Cannot verify `armor-writer` secret in `devimprint` namespace due to missing kubeconfig.
 
-The armor-writer secret cannot be verified with current access configurations:
+## Root Cause
 
-1. **Read-only proxy access** (via `traefik-iad-options:8001`): Explicitly denies access to secrets in the devimprint namespace. This is documented as stricter than other clusters' observers.
+1. **Observer kubeconfig missing**: `/home/coding/.kube/iad-options-observer.kubeconfig` does not exist
+2. **Read/write kubeconfig missing**: `/home/coding/.kube/iad-options.kubeconfig` does not exist
+3. **Observer denies secret access**: Even with proxy access, the observer SA explicitly denies secret access
 
-   ```
-   Error from server (Forbidden): secrets "armor-writer" is forbidden: 
-   User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
-   ```
+## Infrastructure Context
 
-2. **Read/write kubeconfig** (`/home/coding/.kube/iad-options.kubeconfig`): Does not exist. This kubeconfig contains a cloudspace-admin OIDC token that expires every ~3 days and must be regenerated from the Spot UI.
+From CLAUDE.md:
+- Observer proxy has stricter RBAC: "explicitly denies access to secrets"
+- Read/write kubeconfig uses "cloudspace-admin OIDC token, expires every ~3 days — regenerate from Spot UI"
 
-## Prerequisite Status
+## Resolution Required
 
-The prerequisite bead bf-2txcw verified kubectl access to the iad-options cluster, but this only confirmed read-only proxy access — not the read/write access required for secret verification.
+The read/write kubeconfig must be regenerated from the Rackspace Spot UI and saved to:
+`/home/coding/.kube/iad-options.kubeconfig`
 
-## Resolution Path
+This is an OIDC token that expires approximately every 3 days.
 
-To complete this task, the read/write kubeconfig must be regenerated:
-- Access the Rackspace Spot UI
-- Generate a new cloudspace-admin OIDC token
-- Save to `/home/coding/.kube/iad-options.kubeconfig`
-- Retry: `kubectl --kubeconfig=/home/coding/.kube/iad-options.kubeconfig get secret armor-writer -n devimprint`
+## Verification Attempt
+
+```bash
+# Proxy access - denied as expected
+kubectl --server=http://traefik-iad-options:8001 get secret armor-writer -n devimprint
+# Error: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+```
+
+The infrastructure is correctly configured - the observer cannot read secrets. Need read-write kubeconfig with cloudspace-admin OIDC token.
+
+## Status
+
+**BLOCKED** - Requires manual regeneration of kubeconfig from Rackspace Spot UI.
