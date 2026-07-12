@@ -312,7 +312,8 @@ func (ic *IndentationContext) Reset() {
 // GetIndentationLevel extracts the indentation level from a line.
 //
 // This is a convenience function that calculates the indentation level
-// for a line using the configured spaces per level.
+// for a line. It uses a default of 2 spaces per level for space-based
+// indentation, and counts tabs directly for tab-based indentation.
 //
 // Parameters:
 //   - line: The line content to analyze
@@ -325,7 +326,7 @@ func (ic *IndentationContext) Reset() {
 //   - GetIndentationLevel("    key: value") → 2 (with 2 spaces per level)
 //   - GetIndentationLevel("\tkey: value") → 1 (with tab-based indent)
 func GetIndentationLevel(line string) int {
-	info := CalculateIndentation(line, 0) // Auto-detect
+	info := CalculateIndentation(line, 2) // Default to 2 spaces per level
 	return info.Level
 }
 
