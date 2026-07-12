@@ -115,7 +115,7 @@ value: -32768
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -32768 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-32768"},
 		},
 
 		{
@@ -126,7 +126,7 @@ value: -1000
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -1000 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-1000"},
 		},
 
 		{
@@ -137,7 +137,7 @@ value: -256
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -256 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-256"},
 		},
 
 		{
@@ -148,7 +148,7 @@ value: -128
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -128 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-128"},
 		},
 
 		{
@@ -159,7 +159,7 @@ value: -100
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -100 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-100"},
 		},
 
 		{
@@ -170,7 +170,7 @@ value: -10
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -10 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-10"},
 		},
 
 		{
@@ -181,7 +181,7 @@ value: -2
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -2 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-2"},
 		},
 
 		// Note: Values beyond int64 minimum (-9223372036854775808) get wrapped
