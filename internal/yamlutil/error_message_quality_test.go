@@ -374,13 +374,16 @@ func TestErrorTypeCategorization(t *testing.T) {
 		{
 			name: "ConstraintError categorization",
 			createError: func() error {
-				return &ConstraintError{
-					FilePath:       "service.yaml",
-					FieldPath:      "server.port",
-					Constraint:     "must be 1-65535",
-					Value:          "70000",
-					Line:           10,
-				}
+				return NewConstraintError(
+					"service.yaml",
+					"server.port",
+					"",
+					"must be 1-65535",
+					"",
+					"70000",
+					10,
+					"",
+				)
 			},
 			expectedType: ErrorTypeConstraint,
 			expectedCode: ErrCodeConstraintViolation,
