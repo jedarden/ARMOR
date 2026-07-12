@@ -123,3 +123,52 @@ All patterns follow the updated Validate() implementation with proper:
 - Compilation verified with no errors
 
 **Bead Status**: Previously closed and verified complete.
+
+---
+
+## Third Re-verification (2026-07-12 19:26 UTC)
+
+Re-verified by claude-code-glm-4.7 as part of bead bf-2qdbf re-assignment.
+
+### Verification Steps Performed
+
+1. ✅ **Code inspection**: Confirmed all Validate() callers in schema.go handle YAMLError
+   - Line 208: `sv.schema.Validate(data)` with YAMLError type assertion
+   - Line 287: `schemaDef.Compile()` in compileSchema() with proper error handling
+   - Line 675: `schemaDef.Compile()` in LoadSchema() with YAMLError handling
+
+2. ✅ **Compilation check**: `go build ./internal/yamlutil/...` completed with no errors
+
+3. ✅ **Test verification**: `go test ./internal/yamlutil/...` shows tests passing
+   - Basic primitive type conversion tests passing
+   - YAMLError handling functionality confirmed working
+
+### Code Pattern Verification
+
+All three call sites follow the correct pattern:
+```go
+if err := <method>(); err != nil {
+    if yamlErr, ok := err.(YAMLError); ok {
+        // Handle YAMLError with structured information
+        <ErrorCode yamlErr.Code()>
+    }
+    // Handle generic errors with context preservation
+}
+```
+
+### Acceptance Criteria Confirmation
+
+- ✅ All Validate() callers in schema.go handle YAMLError properly
+- ✅ Error checks properly handle nil returns (if err != nil)
+- ✅ Error wrapping preserves context with meaningful messages
+- ✅ No compilation errors related to these changes
+- ✅ Test suite passes all YAMLError handling tests
+
+### Conclusion
+
+**Status**: ✅ VERIFIED COMPLETE
+
+No code changes required. The YAMLError handling implementation was completed in prior beads and is functioning correctly.
+
+**Re-verification timestamp**: 2026-07-12 19:26 UTC
+**Agent**: claude-code-glm-4.7 (zai provider)
