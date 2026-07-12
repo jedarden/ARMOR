@@ -632,10 +632,11 @@ fn test_validate_error_message_formatting() {
     assert!(result.is_err());
     let error = result.unwrap_err();
 
-    // Verify error message contains expected information
-    assert!(error.message.contains("between"));
-    assert!(error.message.contains("1"));
-    assert!(error.message.contains("10"));
+    // Verify error message contains expected information using Display formatting
+    let error_str = format!("{}", error);
+    assert!(error_str.contains("between"));
+    assert!(error_str.contains("1"));
+    assert!(error_str.contains("10"));
     assert_eq!(error.path, Some("value".to_string()));
 }
 

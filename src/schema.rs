@@ -65,7 +65,6 @@
 //! }
 //! ```
 
-use std::fmt;
 use crate::parsers::yaml::ParseError;
 
 /// Result type for validation operations
