@@ -3,6 +3,24 @@
 // This module implements JSON Schema-style validation for YAML documents,
 // enabling structural validation with type checking, required field validation,
 // and constraint enforcement.
+//
+// VALIDATE() CALLERS AUDIT (bf-17y15):
+// This file contains the SchemaDefinition.Validate() method implementation (line 780)
+// and the following call sites:
+//
+// 1. Line 190: sv.schema.Validate(data) - inside SchemaValidator.Validate() method
+//    - Context: Validates data against the schema after compilation
+//    - Error handling (lines 192-205): Type assertion to YAMLError for structured error codes
+//    - Pattern: Checks if err.(YAMLError), extracts ErrorCode if available
+//
+// 2. Line 263: sv.Validate(data) - inside SchemaValidator.ValidateFile() method
+//    - Context: Delegates to SchemaValidator.Validate() after parsing YAML file
+//    - Error handling: Inherits structured error handling from SchemaValidator.Validate()
+//    - Pattern: Returns SchemaValidationResult containing all errors/warnings
+//
+// NOTE: Both calls use the Schema interface (sv.schema is type Schema, not *SchemaDefinition).
+// The actual SchemaDefinition.Validate() implementation is at line 780 and is dispatched
+// via the interface when sv.schema holds a *SchemaDefinition.
 package yamlutil
 
 import (
