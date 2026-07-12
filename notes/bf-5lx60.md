@@ -41,10 +41,29 @@ This bead cannot complete without one of the following:
 - **bf-69dku:** Verification bead — blocked by same RBAC issue
 - **bf-4rqy0:** Another ord-devimprint operation — likely blocked by same RBAC issue
 
+## Re-attempt (2026-07-11 ~20:13)
+
+Re-tried the same command to verify if RBAC restrictions had changed:
+```bash
+kubectl --server=http://kubectl-proxy-ord-devimprint:8001 \
+  get secret armor-writer -n devimprint \
+  -o jsonpath='{.data.LITESTREAM_ACCESS_KEY_ID}'
+```
+
+**Result:** Same RBAC error - the restriction persists. The `devpod-observer` ServiceAccount still cannot read secrets in the `devimprint` namespace.
+
+Error output:
+```
+Error from server (Forbidden): secrets "armor-writer" is forbidden: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"
+```
+
+This confirms the RBAC blocker is a permanent limitation for ord-devimprint cluster access via the kubectl-proxy.
+
 ## Recommendation
 Document this as a known RBAC blocker for ord-devimprint cluster operations. Future beads requiring secret access on this cluster should account for this limitation.
 
 ---
-*Date: 2026-07-11*
+*Initial Date: 2026-07-11*
+*Re-attempt: 2026-07-11 ~20:13*
 *Cluster: ord-devimprint*
 *Proxy: kubectl-proxy-ord-devimprint:8001 (read-only, no secret access)*
