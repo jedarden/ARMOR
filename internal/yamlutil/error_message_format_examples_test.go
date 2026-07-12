@@ -367,14 +367,15 @@ func TestValidationErrorComplete(t *testing.T) {
 //
 //	type mismatch in config.yaml at line 8, field server.port: expected integer, got string
 func TestTypeMismatchErrorFormat(t *testing.T) {
-	err := &TypeMismatchError{
-		FilePath:     "config.yaml",
-		FieldPath:    "server.port",
-		ExpectedType: "integer",
-		ActualType:   "string",
-		Value:        "8080",
-		Line:         8,
-	}
+	err := NewTypeMismatchError(
+		"config.yaml",
+		"server.port",
+		"integer",
+		"string",
+		"8080",
+		8,
+		"",
+	)
 
 	expected := "type mismatch in config.yaml at line 8, field server.port: expected integer, got string"
 	if err.Error() != expected {
