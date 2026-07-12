@@ -1,45 +1,36 @@
-# RBAC Blocker: Cannot Retrieve Secret from ord-devimprint
+# Bead bf-2fdy0: RBAC Blocker - Cannot Retrieve SECRET_ACCESS_KEY
 
-## Task Attempted
-Retrieve LITESTREAM_SECRET_ACCESS_KEY from the `armor-writer` secret in the `devimprint` namespace.
+## Issue
+Cannot retrieve LITESTREAM_SECRET_ACCESS_KEY from armor-writer secret in devimprint namespace due to RBAC restrictions.
 
-## Access Methods Tried
+## Attempts Made
 
-### 1. Direct kubeconfig (file doesn't exist)
+### 1. Direct kubeconfig (FAILED)
 ```bash
-kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint
 ```
-Result: `stat /home/coding/.kube/ord-devimprint.kubeconfig: no such file or directory`
+**Error:** Kubeconfig file `/home/coding/.kube/ord-devimprint.kubeconfig` does not exist.
 
-### 2. Kubectl-proxy over Tailscale
+### 2. Kubectl proxy (FAILED)
 ```bash
 kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
 ```
-Result: Forbidden by RBAC
-
-## RBAC Error Details
-```
-Error from server (Forbidden): secrets "armor-writer" is forbidden: 
-User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" 
-in API group "" in the namespace "devimprint"
-```
+**Error:** `User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets" in API group "" in the namespace "devimprint"`
 
 ## Root Cause
-The `devpod-observer` ServiceAccount used by the kubectl-proxy has **read-only access** and **explicitly denies access to secrets**. This is by design for security - the observer proxy intentionally cannot access sensitive resources.
+- The ord-devimprint cluster only has read-only kubectl-proxy access via the `devpod-observer` ServiceAccount
+- This ServiceAccount explicitly denies secret access (stricter than other clusters' observers)
+- No direct kubeconfig exists for ord-devimprint with elevated permissions
 
 ## Resolution Options
-To complete this task, one of the following would be needed:
-
-1. **Create a dedicated ServiceAccount** with secret access in the devimprint namespace
-2. **Use direct cluster access** with cluster-admin credentials (if available)
-3. **Coordinate with cluster admin** to grant the observer SA limited secret access for this specific secret
-
-## Verification History
-- **2026-07-12 11:26**: Initial documentation of RBAC blocker
-- **2026-07-12 11:27**: Verification attempt - same Forbidden error, temp file empty
-- **2026-07-12 15:35**: Verification attempt - same Forbidden error, temp file empty
+1. Request elevated RBAC permissions for devpod-observer SA (not recommended - breaks security model)
+2. Create a dedicated kubeconfig with secret access for devimprint cluster
+3. Use ExternalSecret/EternalSecret pattern to sync secrets to a cluster with appropriate access
+4. Obtain the secret value through an alternative authorized channel
 
 ## Status
-**BLOCKED** - Cannot proceed without elevated credentials or RBAC changes.
+**BLOCKED** - Cannot proceed without elevated permissions or alternative secret access method.
 
-The task has been verified as blocked on multiple attempts. The devpod-observer ServiceAccount on ord-devimprint lacks the necessary permissions to access secrets, and no kubeconfig with secret access exists at the specified path.
+## Related Beads
+- bf-520v: Similar RBAC blocker documented
+- Various session beads noting ExternalSecret sync issues
