@@ -37,7 +37,7 @@ value: -9223372036854775808
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Minimum int64 value -9223372036854775808 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-9223372036854775808"},
 		},
 
 		// Additional negative values
