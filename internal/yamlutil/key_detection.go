@@ -54,33 +54,6 @@ func ExtractKey(line string) string {
 	return line[:colonPos]
 }
 
-// IsCommentLine checks if a line is a full-line YAML comment.
-//
-// This function detects lines that are entirely comments (not inline comments).
-// A line is considered a comment if, after trimming leading whitespace, it starts
-// with the '#' character.
-//
-// Parameters:
-//   - line: The line content to check
-//
-// Returns true if the line is a full-line comment, false otherwise.
-//
-// Examples:
-//   - IsCommentLine("# This is a comment") → true
-//   - IsCommentLine("  # indented comment") → true
-//   - IsCommentLine("\t# tab-indented comment") → true
-//   - IsCommentLine("key: value # this is a comment") → false (inline comment)
-//   - IsCommentLine("url: http://example.com#anchor") → false
-//   - IsCommentLine("key: value with # hash in it") → false
-//   - IsCommentLine("") → false
-//   - IsCommentLine("   ") → false
-func IsCommentLine(line string) bool {
-	// Trim leading whitespace to check indentation
-	trimmed := strings.TrimLeft(line, " \t")
-	// A line is a comment if it starts with '#' after trimming whitespace
-	return strings.HasPrefix(trimmed, "#")
-}
-
 // StripInlineComment removes inline comments from a YAML line.
 //
 // This function handles inline comments that appear after a value. It only
