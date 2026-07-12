@@ -756,20 +756,20 @@ func (s *SchemaDefinition) Compile() error {
 // map[string]interface{} for YAML/JSON data validation.
 func (s *SchemaDefinition) Validate(value interface{}) error {
 	if value == nil {
-		return fmt.Errorf("value cannot be nil")
+		return NewValidationError("", "value cannot be nil", "", "", ErrCodeValidationFailed, 0, 0, ErrorTypeValidation, "")
 	}
 
 	// Convert to map if needed
 	data, ok := value.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("expected map[string]interface{}, got %T", value)
+		return NewTypeMismatchError("", "", "map[string]interface{}", fmt.Sprintf("%T", value), "", 0, ErrCodeTypeMismatch)
 	}
 
 	// Validate root fields
 	for fieldName, fieldDef := range s.RootFields {
 		if fieldDef.Required {
 			if _, exists := data[fieldName]; !exists {
-				return fmt.Errorf("missing required field: %s", fieldName)
+				return NewFieldNotFoundError("", fieldName, 0, ErrCodeRequiredField)
 			}
 		}
 
@@ -788,7 +788,7 @@ func (s *SchemaDefinition) Validate(value interface{}) error {
 func (s *SchemaDefinition) validateField(value interface{}, fieldDef *FieldDefinition, fieldPath string) error {
 	// Type validation
 	if !s.validateType(value, fieldDef.Type) {
-		return fmt.Errorf("type mismatch at %s: expected %s, got %T", fieldPath, fieldDef.Type, value)
+		return NewTypeMismatchError("", fieldPath, fieldDef.Type, s.getTypeName(value), fmt.Sprintf("%v", value), 0, ErrCodeTypeMismatch)
 	}
 
 	// Constraint validation
@@ -842,14 +842,14 @@ func (s *SchemaDefinition) validateConstraints(value interface{}, fieldDef *Fiel
 	// Min constraint
 	if fieldDef.Min != nil {
 		if !s.checkMinConstraint(value, *fieldDef.Min) {
-			return fmt.Errorf("value violates minimum constraint %d at %s", *fieldDef.Min, fieldPath)
+			return NewConstraintError("", fieldPath, "min", fmt.Sprintf("must be >= %d", *fieldDef.Min), fmt.Sprintf("value violates minimum constraint %d", *fieldDef.Min), fmt.Sprintf("%v", value), 0, ErrCodeConstraintViolation)
 		}
 	}
 
 	// Max constraint
 	if fieldDef.Max != nil {
 		if !s.checkMaxConstraint(value, *fieldDef.Max) {
-			return fmt.Errorf("value violates maximum constraint %d at %s", *fieldDef.Max, fieldPath)
+			return NewConstraintError("", fieldPath, "max", fmt.Sprintf("must be <= %d", *fieldDef.Max), fmt.Sprintf("value violates maximum constraint %d", *fieldDef.Max), fmt.Sprintf("%v", value), 0, ErrCodeConstraintViolation)
 		}
 	}
 
@@ -858,7 +858,7 @@ func (s *SchemaDefinition) validateConstraints(value interface{}, fieldDef *Fiel
 		if strVal, ok := value.(string); ok {
 			matched, err := regexp.MatchString(fieldDef.Pattern, strVal)
 			if err != nil || !matched {
-				return fmt.Errorf("value does not match pattern '%s' at %s", fieldDef.Pattern, fieldPath)
+				return NewConstraintError("", fieldPath, "pattern", fieldDef.Pattern, fmt.Sprintf("value does not match pattern '%s'", fieldDef.Pattern), strVal, 0, ErrCodeConstraintViolation)
 			}
 		}
 	}
@@ -866,7 +866,7 @@ func (s *SchemaDefinition) validateConstraints(value interface{}, fieldDef *Fiel
 	// Allowed values constraint
 	if len(fieldDef.AllowedValues) > 0 {
 		if !s.isAllowedValue(value, fieldDef.AllowedValues) {
-			return fmt.Errorf("value %v not in allowed list %v at %s", value, fieldDef.AllowedValues, fieldPath)
+			return NewConstraintError("", fieldPath, "enum", fmt.Sprintf("must be one of: %v", fieldDef.AllowedValues), fmt.Sprintf("value not in allowed list"), fmt.Sprintf("%v", value), 0, ErrCodeInvalidValue)
 		}
 	}
 
@@ -992,6 +992,26 @@ func (s *SchemaDefinition) valuesEqual(a, b interface{}) bool {
 	return a == b
 }
 
+// getTypeName returns the type name of a value.
+func (s *SchemaDefinition) getTypeName(value interface{}) string {
+	switch value.(type) {
+	case string:
+		return "string"
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return "integer"
+	case float32, float64:
+		return "number"
+	case bool:
+		return "boolean"
+	case []interface{}:
+		return "array"
+	case map[string]interface{}:
+		return "object"
+	default:
+		return "unknown"
+	}
+}
+
 // validateFieldDefinition validates a single field definition.
 func (s *SchemaDefinition) validateFieldDefinition(fieldDef *FieldDefinition, fieldName string) error {
 	// Check type is valid
@@ -1001,14 +1021,14 @@ func (s *SchemaDefinition) validateFieldDefinition(fieldDef *FieldDefinition, fi
 			"boolean": true, "array": true, "object": true,
 		}
 		if !validTypes[fieldDef.Type] {
-			return fmt.Errorf("field %s has invalid type: %s", fieldName, fieldDef.Type)
+			return NewValidationError("", fmt.Sprintf("field %s has invalid type: %s", fieldName, fieldDef.Type), fieldName, "valid type", ErrCodeInvalidValue, 0, 0, ErrorTypeSchemaValidate, "")
 		}
 	}
 
 	// Validate min/max constraints
 	if fieldDef.Min != nil && fieldDef.Max != nil {
 		if *fieldDef.Min > *fieldDef.Max {
-			return fmt.Errorf("field %s has min > max", fieldName)
+			return NewValidationError("", fmt.Sprintf("field %s has min > max", fieldName), fieldName, "min <= max", ErrCodeConstraintViolation, 0, 0, ErrorTypeSchemaValidate, "")
 		}
 	}
 
