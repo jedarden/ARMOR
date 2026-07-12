@@ -87,8 +87,17 @@ func ExtractKey(line string) string {
 //   - StripInlineComment("  # indented comment") → "  # indented comment" (full-line comments not handled)
 //   - StripInlineComment("key: value") → "key: value"
 func StripInlineComment(line string) string {
-	// Check if this is a full-line comment - if so, don't strip anything
-	if IsCommentLine(line) {
+	// Check if this is a full-line comment
+	trimmed := strings.TrimLeft(line, " \t")
+	if len(trimmed) > 0 && trimmed[0] == '#' {
+		// If it's just "#" or "# " with no actual comment content, strip it
+		if len(trimmed) == 1 || (len(trimmed) > 1 && (trimmed[1] == ' ' || trimmed[1] == '\t')) {
+			afterHash := strings.TrimLeft(trimmed[1:], " \t")
+			if len(afterHash) == 0 {
+				return "" // Empty comment, strip it completely
+			}
+		}
+		// Full-line comment with content, preserve it
 		return line
 	}
 
@@ -106,7 +115,7 @@ func StripInlineComment(line string) string {
 			if line[i-1] == ' ' || line[i-1] == '\t' {
 				// Check if this looks like a comment vs a value fragment
 				// Comments typically have space after # or are natural language
-				// Values like hex colors, URL fragments have compact format
+				// Values like hex colors, URL fragments, IDs have compact format
 				afterHash := i + 1
 				if afterHash < len(line) {
 					nextChar := line[afterHash]
@@ -114,28 +123,39 @@ func StripInlineComment(line string) string {
 					if nextChar == ' ' || nextChar == '\t' {
 						return line[:i]
 					}
-					// If it's a hex digit (0-9, A-F, a-f), might be a hex color
-					if (nextChar >= '0' && nextChar <= '9') ||
-						(nextChar >= 'A' && nextChar <= 'F') ||
-						(nextChar >= 'a' && nextChar <= 'f') {
-						// Could be hex color, keep it
-						continue
-					}
-					// If we have several chars that look like hex/ID, keep it
-					// Otherwise treat as comment
-					consumed := 1
-					for consumed < 8 && afterHash+consumed < len(line) {
-						c := line[afterHash+consumed]
-						if !((c >= '0' && c <= '9') ||
-							(c >= 'A' && c <= 'F') ||
-							(c >= 'a' && c <= 'f')) {
-							break
+					// Check if this looks like a value (not a comment)
+					// Values starting with # typically have alphanumeric chars immediately after
+					// Common patterns:
+					// - Hex colors: #FFF, #FF0000
+					// - CSS IDs: #main-content, #sidebar
+					// - Hashtags: #golang, #yaml
+					// - Symbol refs: #define, #include
+					isAlphanumeric := (nextChar >= '0' && nextChar <= '9') ||
+						(nextChar >= 'A' && nextChar <= 'Z') ||
+						(nextChar >= 'a' && nextChar <= 'z') ||
+						nextChar == '_' || nextChar == '-'
+
+					if isAlphanumeric {
+						// Check how many alphanumeric/underscore/hyphen chars follow
+						// If we have 1+ such chars, it's likely a value
+						consumed := 1
+						for consumed < 32 && afterHash+consumed < len(line) {
+							c := line[afterHash+consumed]
+							isValidValueChar := (c >= '0' && c <= '9') ||
+								(c >= 'A' && c <= 'Z') ||
+								(c >= 'a' && c <= 'z') ||
+								c == '_' || c == '-' || c == '.'
+
+							if !isValidValueChar {
+								break
+							}
+							consumed++
 						}
-						consumed++
-					}
-					// If we have 3+ hex-like chars, it's probably a value (hex color, ID)
-					if consumed >= 3 {
-						continue
+						// If we have 1+ chars that look like an ID/tag/hex, preserve it
+						// This handles cases like #1, #a, #fff, etc.
+						if consumed >= 1 {
+							continue
+						}
 					}
 					// Otherwise, treat as comment
 					return line[:i]
