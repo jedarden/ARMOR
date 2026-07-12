@@ -340,11 +340,7 @@ func TestAllErrorCategoriesHaveQualityMessages(t *testing.T) {
 			{
 				name: "structure error",
 				createErr: func() error {
-					return &StructureError{
-						FilePath: "structure.yaml",
-						Line:     5,
-						Message:  "invalid structure",
-					}
+					return NewStructureError("structure.yaml", "invalid structure", 5, "", "", ErrCodeInvalidStructure)
 				},
 				checks: []string{"structure", "structure.yaml"},
 			},
@@ -353,13 +349,7 @@ func TestAllErrorCategoriesHaveQualityMessages(t *testing.T) {
 			{
 				name: "constraint violation",
 				createErr: func() error {
-					return &ConstraintError{
-						FilePath:   "service.yaml",
-						FieldPath:  "server.port",
-						Constraint: "must be 1-65535",
-						Value:      "70000",
-						Line:       10,
-					}
+					return NewConstraintError("service.yaml", "server.port", "", "must be 1-65535", "constraint violation", "70000", 10, ErrCodeConstraintViolation)
 				},
 				checks: []string{"constraint", "violation", "server.port", "1-65535"},
 			},
@@ -375,14 +365,7 @@ func TestAllErrorCategoriesHaveQualityMessages(t *testing.T) {
 			{
 				name: "type mismatch",
 				createErr: func() error {
-					return &TypeMismatchError{
-						FilePath:     "values.yaml",
-						FieldPath:    "server.port",
-						ExpectedType: "integer",
-						ActualType:   "string",
-						Value:        "8080",
-						Line:         10,
-					}
+					return NewTypeMismatchError("values.yaml", "server.port", "integer", "string", "8080", 10, ErrCodeTypeMismatch)
 				},
 				checks: []string{"type mismatch", "expected", "integer", "got", "string"},
 			},
@@ -391,10 +374,7 @@ func TestAllErrorCategoriesHaveQualityMessages(t *testing.T) {
 			{
 				name: "file not found",
 				createErr: func() error {
-					return &FileError{
-						Path: "missing.yaml",
-						Err:  fmt.Errorf("no such file or directory"),
-					}
+					return NewFileError("missing.yaml", "read", "no such file or directory", ErrCodeFileIOError)
 				},
 				checks: []string{"file", "missing.yaml"},
 			},
@@ -403,13 +383,7 @@ func TestAllErrorCategoriesHaveQualityMessages(t *testing.T) {
 			{
 				name: "duplicate key",
 				createErr: func() error {
-					return &DuplicateKeyError{
-						FilePath: "config.yaml",
-						Key:      "server",
-						Location: "root",
-						Line1:    5,
-						Line2:    10,
-					}
+					return NewDuplicateKeyError("config.yaml", "server", "root", 5, 10, ErrCodeDuplicateKey)
 				},
 				checks: []string{"duplicate", "key", "server", "line 5", "line 10"},
 			},
@@ -418,26 +392,14 @@ func TestAllErrorCategoriesHaveQualityMessages(t *testing.T) {
 			{
 				name: "schema load error",
 				createErr: func() error {
-					return &SchemaLoadError{
-						FilePath: "schema.yaml",
-						Message:  "failed to parse schema",
-						Err:      fmt.Errorf("invalid YAML"),
-					}
+					return NewSchemaLoadError("schema.yaml", "failed to parse schema", fmt.Errorf("invalid YAML"), ErrCodeSchemaValidation)
 				},
 				checks: []string{"schema", "load", "schema.yaml"},
 			},
 			{
 				name: "schema validation error",
 				createErr: func() error {
-					return &SchemaValidationError{
-						FilePath:   "config.yaml",
-						SchemaPath: "schema.yaml",
-						FieldPath:  "server.port",
-						Message:    "value out of range",
-						Expected:   "1-65535",
-						Found:      "70000",
-						Line:       15,
-					}
+					return NewSchemaValidationError("config.yaml", "schema.yaml", "server.port", "value out of range", "1-65535", "70000", 15, ErrCodeSchemaValidation)
 				},
 				checks: []string{"schema", "validation", "config.yaml", "port", "out of range"},
 			},
@@ -483,14 +445,7 @@ func TestAllErrorCategoriesHaveQualityMessages(t *testing.T) {
 // TestErrorQualityAcceptanceCriteria verifies all acceptance criteria for bead bf-svgjy
 func TestErrorQualityAcceptanceCriteria(t *testing.T) {
 	t.Run("AC1_ErrorMessagesContainRelevantContext", func(t *testing.T) {
-		err := &TypeMismatchError{
-			FilePath:     "config.yaml",
-			FieldPath:    "server.port",
-			ExpectedType: "integer",
-			ActualType:   "string",
-			Value:        "8080",
-			Line:         10,
-		}
+		err := NewTypeMismatchError("config.yaml", "server.port", "integer", "string", "8080", 10, ErrCodeTypeMismatch)
 
 		errMsg := err.Error()
 		contextMsg := err.Context()

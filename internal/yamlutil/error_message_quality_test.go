@@ -45,14 +45,7 @@ func TestErrorMessagesIncludeFilePath(t *testing.T) {
 		{
 			name: "TypeMismatchError includes file path",
 			createError: func() error {
-				return &TypeMismatchError{
-					FilePath:     "values.yaml",
-					FieldPath:    "server.port",
-					ExpectedType: "integer",
-					ActualType:   "string",
-					Value:        "8080",
-					Line:         20,
-				}
+				return NewTypeMismatchError("values.yaml", "server.port", "integer", "string", "8080", 20, "")
 			},
 			expectPath:   true,
 			expectedPath: "values.yaml",
@@ -60,14 +53,7 @@ func TestErrorMessagesIncludeFilePath(t *testing.T) {
 		{
 			name: "ConstraintError includes file path",
 			createError: func() error {
-				return &ConstraintError{
-					FilePath:       "service.yaml",
-					FieldPath:      "server.port",
-					ConstraintType: "range",
-					Constraint:     "must be between 1-65535",
-					Value:          "70000",
-					Line:           12,
-				}
+				return NewConstraintError("service.yaml", "server.port", "range", "must be between 1-65535", "", "70000", 12, "")
 			},
 			expectPath:   true,
 			expectedPath: "service.yaml",
@@ -83,10 +69,7 @@ func TestErrorMessagesIncludeFilePath(t *testing.T) {
 		{
 			name: "FileError includes file path",
 			createError: func() error {
-				return &FileError{
-					Path: "/etc/config/app.yaml",
-					Err:  fmt.Errorf("file not found"),
-				}
+				return NewFileError("/etc/config/app.yaml", "read", "file not found", "")
 			},
 			expectPath:   true,
 			expectedPath: "/etc/config/app.yaml",
@@ -94,12 +77,7 @@ func TestErrorMessagesIncludeFilePath(t *testing.T) {
 		{
 			name: "SyntaxError includes file path",
 			createError: func() error {
-				return &SyntaxError{
-					FilePath: "broken.yaml",
-					Line:     5,
-					Column:   10,
-					Message:  "invalid syntax",
-				}
+				return NewSyntaxError("broken.yaml", "invalid syntax", 5, 10, "", "", "")
 			},
 			expectPath:   true,
 			expectedPath: "broken.yaml",
@@ -107,11 +85,7 @@ func TestErrorMessagesIncludeFilePath(t *testing.T) {
 		{
 			name: "StructureError includes file path",
 			createError: func() error {
-				return &StructureError{
-					FilePath: "invalid.yaml",
-					Line:     3,
-					Message:  "invalid structure",
-				}
+				return NewStructureError("invalid.yaml", "invalid structure", 3, "", "", "")
 			},
 			expectPath:   true,
 			expectedPath: "invalid.yaml",
@@ -256,13 +230,7 @@ func TestErrorMessagesIncludeLineColumn(t *testing.T) {
 		{
 			name: "TypeMismatchError with line",
 			createError: func() error {
-				return &TypeMismatchError{
-					FilePath:     "values.yaml",
-					FieldPath:    "server.port",
-					ExpectedType: "integer",
-					ActualType:   "string",
-					Line:         25,
-				}
+				return NewTypeMismatchError("values.yaml", "server.port", "integer", "string", "", 25, "")
 			},
 			expectLine:     true,
 			expectColumn:   false,
@@ -271,13 +239,7 @@ func TestErrorMessagesIncludeLineColumn(t *testing.T) {
 		{
 			name: "ConstraintError with line",
 			createError: func() error {
-				return &ConstraintError{
-					FilePath:       "service.yaml",
-					FieldPath:      "server.port",
-					Constraint:     "must be 1-65535",
-					Value:          "70000",
-					Line:           30,
-				}
+				return NewConstraintError("service.yaml", "server.port", "", "must be 1-65535", "", "70000", 30, "")
 			},
 			expectLine:     true,
 			expectColumn:   false,
@@ -295,12 +257,7 @@ func TestErrorMessagesIncludeLineColumn(t *testing.T) {
 		{
 			name: "SyntaxError with line and column",
 			createError: func() error {
-				return &SyntaxError{
-					FilePath: "broken.yaml",
-					Line:     12,
-					Column:   15,
-					Message:  "invalid syntax",
-				}
+				return NewSyntaxError("broken.yaml", "invalid syntax", 12, 15, "", "", "")
 			},
 			expectLine:     true,
 			expectColumn:   true,
@@ -409,13 +366,7 @@ func TestErrorTypeCategorization(t *testing.T) {
 		{
 			name: "TypeMismatchError categorization",
 			createError: func() error {
-				return &TypeMismatchError{
-					FilePath:     "values.yaml",
-					FieldPath:    "server.port",
-					ExpectedType: "integer",
-					ActualType:   "string",
-					Line:         10,
-				}
+				return NewTypeMismatchError("values.yaml", "server.port", "integer", "string", "", 10, "")
 			},
 			expectedType: ErrorTypeTypeMismatch,
 			expectedCode: ErrCodeTypeMismatch,
