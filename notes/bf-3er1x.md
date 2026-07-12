@@ -1,34 +1,73 @@
-# Bead bf-3er1x: Literal Style Multi-line Scalar Comment Tests
+# Bead: bf-3er1x - Add literal style multi-line scalar comment tests
 
-## Status: Already Completed
+**Status:** Work already completed by bead `bf-2l6se`
 
-This bead requested tests for comments in literal style (|) multi-line scalars. The work was already completed in bead **bf-2l6se** via commit 886bf101.
+**Date:** 2026-07-12
 
-## Existing Tests
+---
 
-The test function `TestLiteralStyleMultilineStringCommentDetection` in `internal/yamlutil/comment_filtering_test.go` (line 1290) provides comprehensive coverage:
+## Summary
 
-### Test Coverage (10 test cases):
-1. **Hash-bang and comments** - Scripts with #! and bash-style comments
-2. **Only hash lines** - Content consisting entirely of # prefixed lines
-3. **Multiple literal blocks** - Multiple literal scalars in one document
-4. **Mixed content** - Literal scalars combined with regular YAML comments
-5. **Sequence context** - Literal scalars within YAML arrays
-6. **Indented content** - Deeply nested literal scalars
-7. **Empty lines with hash** - Blank lines separating hash-prefixed content
-8. **Hash-like patterns** - Patterns starting with # that aren't comments
-9. **Nested blocks** - Literal scalars within nested structures
-10. **Consecutive hash lines** - Multiple hash lines in sequence
+This bead requested adding tests for comments in literal style (`|`) multi-line scalars. However, this work was already completed by bead `bf-2l6se` on 2026-07-12 at 09:10 AM.
 
-### Acceptance Criteria Met:
-- ✅ Tests pass for comments in literal scalars
-- ✅ Tests reflect actual parser behavior
-- ✅ Tests document discrepancy between parser and YAML spec
+## Existing Work
+
+**Bead:** `bf-2l6se` (CLOSED)
+**Commit:** `cf7857804779dc1584fd5dc83f0de48b59f7f892`
+**File:** `tests/yaml_literal_multiline_comment_test.rs`
+**Test Count:** 19 tests (all passing)
+
+## Coverage
+
+The existing test file provides comprehensive coverage:
+
+1. **Literal Block Scalar Basics**
+   - Marker classification (`text: |`, `description: |`, etc.)
+   - Modifiers (`|-`, `|+`)
+
+2. **Hash Characters Inside Literal Blocks**
+   - Lines starting with `#` in literal blocks
+   - Hash symbols inline within content
+   - Multiple hashes in a single line
+
+3. **Literal Block with Comments**
+   - Real comments after literal blocks
+   - Inline comments on marker lines
+   - Mixed content scenarios
+
+4. **Integration Tests**
+   - Complete YAML documents with literal blocks and comments
+   - Realistic documentation examples
+   - Configuration file examples
+
+5. **Edge Cases**
+   - Empty literal blocks
+   - Whitespace-only content
+   - Nested indentation preservation
+   - Behavior documentation
 
 ## Test Results
 
-All 10 sub-tests pass successfully, documenting that the parser treats all lines starting with # as comments regardless of context, even though YAML literal scalars should preserve # lines as content.
+```bash
+$ cargo test --test yaml_literal_multiline_comment_test
+running 19 tests
+test result: ok. 19 passed; 0 failed; 0 ignored
+```
+
+## Key Behavior Documented
+
+The tests document the current behavior of the line-based parser:
+
+1. **Literal block marker** (`|`) is classified as `LineType::MappingKey`
+2. **Lines inside literal blocks** that start with `#` are classified as `LineType::Comment` by the line parser (expected behavior since it doesn't track block context statefully)
+3. **Inline comments** after the marker work correctly
+4. **Hash preceded by whitespace** triggers comment stripping (YAML spec)
+5. **Hash NOT preceded by whitespace** is preserved as content
 
 ## Conclusion
 
-Bead bf-3er1x is redundant with bf-2l6se. The work requested in this bead was already completed and verified.
+No new work required. The acceptance criteria for `bf-3er1x` are already met:
+- ✅ Tests pass for comments in literal scalars
+- ✅ Tests reflect actual parser behavior
+
+Bead `bf-3er1x` appears to be a duplicate that was created before it was discovered that `bf-2l6se` had already completed this work.
