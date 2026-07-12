@@ -276,7 +276,7 @@ func TestValidationErrorPathFormatting_WithLineAndColumn(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", tt.line, tt.column, "", "")
+			err := NewValidationError("config.yaml", "test message", tt.fieldPath, "constraint", "", tt.line, tt.column, "", tt.fieldPath)
 			errorMsg := err.Error()
 
 			for _, want := range tt.wantInMsg {
@@ -348,7 +348,7 @@ func TestValidationErrorPathFormatting_ExactFormat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("config.yaml", tt.message, tt.fieldPath, tt.constraint, "", tt.line, tt.column, "", "")
+			err := NewValidationError("config.yaml", tt.message, tt.fieldPath, tt.constraint, "", tt.line, tt.column, "", tt.fieldPath)
 			errorMsg := err.Error()
 
 			if errorMsg != tt.wantExactMsg {
@@ -411,7 +411,7 @@ func TestValidationErrorPathFormatting_StringMethod(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("config.yaml", "test message", tt.fieldPath, tt.constraint, "", tt.line, tt.column, "", "")
+			err := NewValidationError("config.yaml", "test message", tt.fieldPath, tt.constraint, "", tt.line, tt.column, "", tt.fieldPath)
 			result := err.String()
 
 			for _, field := range tt.wantFields {
@@ -479,7 +479,7 @@ func TestValidationErrorPathFormatting_RealWorldExamples(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("k8s-deployment.yaml", "invalid value", tt.fieldPath, "constraint", "", 10, 5, "", "")
+			err := NewValidationError("k8s-deployment.yaml", "invalid value", tt.fieldPath, "constraint", "", 10, 5, "", tt.fieldPath)
 			errorMsg := err.Error()
 
 			// Verify the field path appears in the error message
