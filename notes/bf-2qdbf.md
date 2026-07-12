@@ -1,50 +1,42 @@
-# BF-2QDBF: Validate() YAMLError Handling Verification
+# Bead bf-2qdbf: Validate() YAMLError Handling Verification
 
 ## Task
 Update Validate() callers in internal/yamlutil/schema.go to handle YAMLError return type.
 
-## Analysis
-Verified that all Validate() callers in schema.go already properly handle YAMLError:
+## Verification Result
 
-### Location
-- File: `internal/yamlutil/schema.go`
-- Line: 180-196
+The Validate() callers in schema.go **already properly handle YAMLError**. The implementation was completed in a previous commit.
 
 ### Implementation Details
-```go
-if err := sv.schema.Validate(data); err != nil {
-    result.Valid = false
 
-    // Handle YAMLError with structured information
-    if yamlErr, ok := err.(YAMLError); ok {
-        result.Errors = append(result.Errors, SchemaValidationError{
-            Message:   yamlErr.Error(),
-            ErrorCode: yamlErr.Code(),
-        })
-    } else {
-        // Handle generic errors
-        result.Errors = append(result.Errors, SchemaValidationError{
-            Message: fmt.Sprintf("Validation failed: %v", err),
-        })
-    }
-    return result
-}
-```
+**Location**: `internal/yamlutil/schema.go:208-224`
 
-### Verification
-- ✅ All Validate() callers identified (line 180)
-- ✅ Error checks properly handle nil returns (`if err != nil`)
-- ✅ Error type assertion to YAMLError performed correctly
-- ✅ Context preserved with meaningful messages (Message and ErrorCode extracted)
-- ✅ Fallback for generic errors implemented
-- ✅ Code compiles without errors
+The `SchemaValidator.Validate()` method properly handles YAMLError from `sv.schema.Validate(data)`:
 
-### Other Validate() Calls in schema.go
-- Line 34: Comment/example - not actual code
-- Line 253: Calls `sv.Validate()` wrapper which already handles YAMLError
+1. **Nil Check**: `if err := sv.schema.Validate(data); err != nil {` (line 208)
+2. **Type Assertion**: `if yamlErr, ok := err.(YAMLError); ok {` (line 212)
+3. **Error Code Extraction**: `ErrorCode: yamlErr.Code()` (line 215)
+4. **Context Preservation**: `Message: fmt.Sprintf("Data validation failed: %v", yamlErr)` (line 214)
+5. **Fallback Handling**: Generic error handling for non-YAMLError types (lines 217-221)
+
+### Acceptance Criteria Met
+
+- ✅ All Validate() callers in schema.go updated
+- ✅ Error checks properly handle nil returns
+- ✅ Error wrapping preserves context with meaningful messages
+- ✅ No compilation errors related to these changes
+
+### Test Verification
+
+All YAMLError handling tests pass:
+- `TestValidateYAMLErrorHandling` - PASS
+- `TestValidatePatternConsistency` - PASS
+
+Test output confirms proper error code extraction:
+- ✓ REQUIRED_FIELD
+- ✓ TYPE_MISMATCH
+- ✓ CONSTRAINT_VIOLATION
 
 ## Conclusion
-The existing implementation at lines 180-196 in schema.go already meets all acceptance criteria for proper YAMLError handling. No code changes were required - the task was to verify and confirm the existing implementation is correct.
 
-## Date
-2026-07-12
+The task was already completed. The Validate() callers in schema.go properly handle YAMLError return type according to the acceptance criteria.
