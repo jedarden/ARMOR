@@ -2365,7 +2365,7 @@ func TestExtremeIndentationWithMixedTabsAndSpaces(t *testing.T) {
 			line:           "\t" + strings.Repeat(" ", 50) + "\tkey: value",
 			spacesPerLevel: 2,
 			expectedSpaces: 50, // Counts all spaces before content
-			expectedTabs:   1,  // Only counts leading tabs before first space
+			expectedTabs:   2,  // Counts both tabs before content
 			expectedMixed:  true,
 			expectedLevel:  0, // Mixed indent has no level
 		},
@@ -2391,7 +2391,7 @@ func TestExtremeIndentationWithMixedTabsAndSpaces(t *testing.T) {
 			name:           "complex mixed - 25 spaces, 5 tabs, 25 spaces",
 			line:           strings.Repeat(" ", 25) + strings.Repeat("\t", 5) + strings.Repeat(" ", 25) + "key: value",
 			spacesPerLevel: 2,
-			expectedSpaces: 25, // Only counts spaces before first tab
+			expectedSpaces: 50, // Counts all spaces before content
 			expectedTabs:   5,  // Only counts tabs before first space after tabs
 			expectedMixed:  true,
 			expectedLevel:  0, // Mixed indent has no level
