@@ -466,14 +466,15 @@ func TestTypeMismatchVariousTypes(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			err := &TypeMismatchError{
-				FilePath:     "config.yaml",
-				FieldPath:    tt.fieldPath,
-				ExpectedType: tt.expectedType,
-				ActualType:   tt.actualType,
-				Value:        tt.value,
-				Line:         10,
-			}
+			err := NewTypeMismatchError(
+				"config.yaml",
+				tt.fieldPath,
+				tt.expectedType,
+				tt.actualType,
+				tt.value,
+				10,
+				"",
+			)
 
 			errorMsg := err.Error()
 
@@ -506,14 +507,15 @@ func TestTypeMismatchVariousTypes(t *testing.T) {
 //
 //	type mismatch in app.yaml at line 35, field servers.api.responses[0].statusCode: expected integer, got string
 func TestTypeMismatchNestedFields(t *testing.T) {
-	err := &TypeMismatchError{
-		FilePath:     "app.yaml",
-		FieldPath:    "servers.api.responses[0].statusCode",
-		ExpectedType: "integer",
-		ActualType:   "string",
-		Value:        "\"200\"",
-		Line:         35,
-	}
+	err := NewTypeMismatchError(
+		"app.yaml",
+		"servers.api.responses[0].statusCode",
+		"integer",
+		"string",
+		"\"200\"",
+		35,
+		"",
+	)
 
 	errorMsg := err.Error()
 
@@ -551,14 +553,15 @@ func TestTypeMismatchNestedFields(t *testing.T) {
 //
 //	type mismatch in data.yaml, field database.timeout: expected integer, got boolean
 func TestTypeMismatchWithoutLine(t *testing.T) {
-	err := &TypeMismatchError{
-		FilePath:     "data.yaml",
-		FieldPath:    "database.timeout",
-		ExpectedType: "integer",
-		ActualType:   "boolean",
-		Value:        "true",
-		Line:         0,
-	}
+	err := NewTypeMismatchError(
+		"data.yaml",
+		"database.timeout",
+		"integer",
+		"boolean",
+		"true",
+		0,
+		"",
+	)
 
 	expected := "type mismatch in data.yaml, field database.timeout: expected integer, got boolean"
 	if err.Error() != expected {
@@ -595,14 +598,15 @@ func TestTypeMismatchWithoutLine(t *testing.T) {
 //
 //	type mismatch in config.yaml at line 5, field services[0].port: expected integer, got string
 func TestRealWorldConfigFileError(t *testing.T) {
-	err := &TypeMismatchError{
-		FilePath:     "config.yaml",
-		FieldPath:    "services[0].port",
-		ExpectedType: "integer",
-		ActualType:   "string",
-		Value:        "\"8080\"",
-		Line:         5,
-	}
+	err := NewTypeMismatchError(
+		"config.yaml",
+		"services[0].port",
+		"integer",
+		"string",
+		"\"8080\"",
+		5,
+		"",
+	)
 
 	errorMsg := err.Error()
 
@@ -745,13 +749,15 @@ func TestErrorFormatConsistency(t *testing.T) {
 	}
 
 	// Test TypeMismatchError format consistency
-	typeErr := &TypeMismatchError{
-		FilePath:     "config.yaml",
-		FieldPath:    "server.port",
-		ExpectedType: "integer",
-		ActualType:   "string",
-		Line:         10,
-	}
+	typeErr := NewTypeMismatchError(
+		"config.yaml",
+		"server.port",
+		"integer",
+		"string",
+		"",
+		10,
+		"",
+	)
 	if !contains(typeErr.Error(), "type mismatch in") {
 		t.Error("TypeMismatchError should start with 'type mismatch in'")
 	}
@@ -777,12 +783,15 @@ func TestErrorFormatConsistency(t *testing.T) {
 // TestErrorContextFormat verifies that Context() methods provide structured information
 func TestErrorContextFormat(t *testing.T) {
 	// Test TypeMismatchError Context()
-	typeErr := &TypeMismatchError{
-		FieldPath:    "server.port",
-		ExpectedType: "integer",
-		ActualType:   "string",
-		Value:        "8080",
-	}
+	typeErr := NewTypeMismatchError(
+		"",
+		"server.port",
+		"integer",
+		"string",
+		"8080",
+		0,
+		"",
+	)
 	ctx := typeErr.Context()
 	if !contains(ctx, "field: server.port") {
 		t.Error("Context should include 'field: <path>'")
@@ -843,7 +852,7 @@ func TestErrorRecognition(t *testing.T) {
 	}
 
 	// Test TypeMismatchError recognition
-	typeErr := &TypeMismatchError{FilePath: "test.yaml"}
+	typeErr := NewTypeMismatchError("test.yaml", "", "", "", "", 0, "")
 	if !IsYAMLError(typeErr) {
 		t.Error("TypeMismatchError should be a YAMLError")
 	}
@@ -892,7 +901,7 @@ func TestErrorCodes(t *testing.T) {
 		},
 		{
 			name:     "TypeMismatchError",
-			err:      &TypeMismatchError{FilePath: "test.yaml"},
+			err:      NewTypeMismatchError("test.yaml", "", "", "", "", 0, ""),
 			wantCode: ErrCodeTypeMismatch,
 			wantType: ErrorTypeTypeMismatch,
 		},
