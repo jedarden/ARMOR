@@ -1258,6 +1258,657 @@ app:
         assert 'comment' not in str(result.data).lower()
 
 
+class TestMixedScenarios:
+    """Test YAML comment detection in mixed scenarios - bf-3f73z.
+
+    These tests cover comments alongside regular values, anchors (&), aliases (*),
+    and documents containing all three elements together.
+    """
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = YAMLCoreParser()
+
+    def test_comment_with_anchor_definition(self):
+        """Test that comments work alongside anchor definitions (&anchor)."""
+        yaml_content = """# Default configuration
+defaults: &defaults
+  timeout: 30  # Connection timeout
+  retry: 3  # Number of retries
+
+# Production environment
+production:
+  <<: *defaults
+  host: prod.example.com  # Production host
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify anchor merge worked
+        assert result.data['production']['timeout'] == 30
+        assert result.data['production']['retry'] == 3
+        assert result.data['production']['host'] == 'prod.example.com'
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_multiple_anchors(self):
+        """Test comments with multiple anchor definitions and aliases."""
+        yaml_content = """# Base configuration
+base: &base
+  enabled: true  # Feature enabled by default
+  debug: false  # Debug mode off
+
+# Extended configuration
+extended: &extended
+  <<: *base  # Merge base settings
+  timeout: 60  # Custom timeout
+
+# Production uses extended config
+production:
+  <<: *extended
+  host: prod.example.com  # Production server
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify multi-level anchor merge worked
+        assert result.data['production']['enabled'] is True
+        assert result.data['production']['debug'] is False
+        assert result.data['production']['timeout'] == 60
+        assert result.data['production']['host'] == 'prod.example.com'
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_alias_reference(self):
+        """Test comments with alias references (*alias)."""
+        yaml_content = """# Common settings
+common: &common
+  timeout: 30  # Timeout in seconds
+  retries: 3  # Retry attempts
+
+# Development environment
+development:
+  settings: *common  # Use common settings
+  env: dev  # Development environment
+
+# Staging environment
+staging:
+  settings: *common  # Use common settings
+  env: staging  # Staging environment
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify alias reference worked (both point to same object reference)
+        assert result.data['development']['settings']['timeout'] == 30
+        assert result.data['staging']['settings']['timeout'] == 30
+        assert result.data['development']['env'] == 'dev'
+        assert result.data['staging']['env'] == 'staging'
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_merge_and_override(self):
+        """Test comments with merge keys that override values."""
+        yaml_content = """# Default configuration
+default_config: &default_config
+  timeout: 30  # Default timeout
+  port: 8080  # Default port
+  enabled: true  # Enabled by default
+
+# Custom configuration with overrides
+custom_config:
+  <<: *default_config  # Merge defaults
+  timeout: 60  # Override timeout
+  port: 9090  # Override port
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify override worked (custom values take precedence)
+        assert result.data['custom_config']['timeout'] == 60
+        assert result.data['custom_config']['port'] == 9090
+        assert result.data['custom_config']['enabled'] is True  # Inherited from default
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_nested_anchor_in_list(self):
+        """Test comments with anchors within list items."""
+        yaml_content = """# Item template
+item_template: &item_template
+  name: default  # Default name
+  count: 1  # Default count
+
+# Items list using template
+items:
+  # First item - uses template
+  - <<: *item_template
+    name: item1  # Override name
+    id: 1  # Unique ID
+  # Second item - uses template
+  - <<: *item_template
+    name: item2  # Override name
+    id: 2  # Unique ID
+  # Third item - custom without template
+  - name: item3  # Custom item
+    count: 5  # Custom count
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify nested anchor in list worked
+        assert result.data['items'][0]['name'] == 'item1'
+        assert result.data['items'][0]['count'] == 1  # Inherited from template
+        assert result.data['items'][0]['id'] == 1
+        assert result.data['items'][1]['name'] == 'item2'
+        assert result.data['items'][2]['name'] == 'item3'
+        assert result.data['items'][2]['count'] == 5
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_complex_document_with_all_elements(self):
+        """Test realistic complex document with values, comments, and anchors."""
+        yaml_content = """# Application configuration file
+# Version: 1.0
+
+# Base service configuration
+base_service: &base_service
+  enabled: true  # Services enabled by default
+  timeout: 30  # Default timeout (seconds)
+  retries: 3  # Retry attempts
+
+# Services configuration
+services:
+  # Web service
+  web:
+    <<: *base_service  # Use base config
+    port: 80  # HTTP port
+    ssl_port: 443  # HTTPS port
+    endpoints:  # API endpoints
+      - /api  # Main API
+      - /health  # Health check
+
+  # Database service
+  database:
+    <<: *base_service  # Use base config
+    port: 5432  # PostgreSQL port
+    host: localhost  # DB host
+    credentials:  # DB credentials
+      username: admin  # DB username
+      password: secret  # DB password
+
+  # Cache service
+  cache:
+    <<: *base_service
+    port: 6379  # Redis port
+    host: localhost  # Cache host
+
+# Feature flags
+features:
+  # Feature A - enabled
+  - name: feature_a  # Feature A name
+    enabled: true  # Feature A enabled
+  # Feature B - disabled
+  - name: feature_b  # Feature B name
+    enabled: false  # Feature B disabled
+  # Feature C - enabled with custom config
+  - name: feature_c  # Feature C name
+    enabled: true  # Feature C enabled
+    config:  # Custom config for feature C
+      timeout: 60  # Custom timeout
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify complex structure with all elements
+        assert result.data['services']['web']['enabled'] is True
+        assert result.data['services']['web']['timeout'] == 30
+        assert result.data['services']['web']['port'] == 80
+        assert result.data['services']['web']['endpoints'] == ['/api', '/health']
+        assert result.data['services']['database']['port'] == 5432
+        assert result.data['services']['database']['credentials']['username'] == 'admin'
+        assert result.data['services']['cache']['port'] == 6379
+        assert result.data['features'][0]['name'] == 'feature_a'
+        assert result.data['features'][0]['enabled'] is True
+        assert result.data['features'][1]['enabled'] is False
+        assert result.data['features'][2]['config']['timeout'] == 60
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_anchor_in_nested_structure(self):
+        """Test comments with anchors in deeply nested structures."""
+        yaml_content = """# Level 0 comment
+database: &database_config
+  # Level 1 comment
+  connection:
+    # Level 2 comment
+    primary:
+      # Level 3 comment
+      host: localhost  # Database host
+      port: 5432  # Database port
+      # Level 4 comment
+      credentials:
+        # Level 5 comment
+        username: admin  # DB username
+        password: secret  # DB password
+
+# Use same config for replica
+replica:
+  <<: *database_config  # Reuse database config
+  connection:
+    primary:
+      host: replica.example.com  # Replica host
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify nested structure with anchor
+        assert result.data['database']['connection']['primary']['host'] == 'localhost'
+        assert result.data['database']['connection']['primary']['port'] == 5432
+        assert result.data['database']['connection']['primary']['credentials']['username'] == 'admin'
+        assert result.data['replica']['connection']['primary']['port'] == 5432  # Inherited
+        assert result.data['replica']['connection']['primary']['host'] == 'replica.example.com'  # Overridden
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_multiple_aliases_same_anchor(self):
+        """Test comments when multiple aliases reference the same anchor."""
+        yaml_content = """# Common schema definition
+schema: &schema
+  type: string  # Field type
+  required: true  # Required field
+
+# User fields
+user:
+  username:  # Username field
+    <<: *schema  # Use schema
+    min_length: 3  # Min 3 characters
+  email:  # Email field
+    <<: *schema  # Use schema
+    format: email  # Email format
+
+# Product fields
+product:
+  name:  # Product name
+    <<: *schema  # Use schema
+    max_length: 100  # Max 100 characters
+  description:  # Product description
+    <<: *schema  # Use schema
+    required: false  # Optional field
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify multiple aliases to same anchor
+        assert result.data['user']['username']['type'] == 'string'
+        assert result.data['user']['username']['required'] is True
+        assert result.data['user']['username']['min_length'] == 3
+        assert result.data['user']['email']['format'] == 'email'
+        assert result.data['product']['name']['max_length'] == 100
+        assert result.data['product']['description']['required'] is False
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_inline_anchor_and_alias(self):
+        """Test comments with inline anchor/alias syntax."""
+        yaml_content = """# Inline anchor example
+defaults: &defaults {timeout: 30, retry: 3}  # Default settings
+
+# Use inline alias
+production:
+  settings: *defaults  # Reference defaults
+  host: prod.example.com  # Production host
+
+staging:
+  settings: *defaults  # Reference defaults
+  host: staging.example.com  # Staging host
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify inline anchor/alias worked
+        assert result.data['production']['settings']['timeout'] == 30
+        assert result.data['staging']['settings']['retry'] == 3
+        assert result.data['production']['host'] == 'prod.example.com'
+        assert result.data['staging']['host'] == 'staging.example.com'
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_edge_case_anchor_without_alias(self):
+        """Test comments when anchor is defined but never used."""
+        yaml_content = """# Unused anchor definition
+unused_config: &unused_config
+  timeout: 30  # This will never be referenced
+  retries: 3  # This will never be referenced
+
+# Regular configuration
+actual_config:
+  timeout: 60  # Actual timeout
+  retries: 5  # Actual retries
+  host: localhost  # Actual host
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify unused anchor is still parsed
+        assert result.data['unused_config']['timeout'] == 30
+        assert result.data['actual_config']['timeout'] == 60
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_edge_case_alias_without_anchor(self):
+        """Test comments when alias references non-existent anchor (should fail)."""
+        yaml_content = """# Valid config
+valid_key: valid_value  # Valid key-value pair
+
+# Invalid alias reference (undefined anchor)
+invalid:
+  <<: *undefined_anchor  # This references non-existent anchor
+"""
+        result = self.parser.safe_load(yaml_content)
+        # This should be an error - undefined anchor
+        assert result.is_error()
+        # Error should mention the undefined anchor
+        assert 'anchor' in result.error.message.lower() or 'not found' in result.error.message.lower()
+
+    def test_comment_with_array_anchor_and_alias(self):
+        """Test comments with anchors/aliases on array elements."""
+        yaml_content = """# Common tasks list
+common_tasks: &common_tasks
+  - task1  # First common task
+  - task2  # Second common task
+
+# Deployment tasks
+deployment:
+  tasks:  # Deployment tasks
+    - <<: *common_tasks  # Include common tasks
+    - deploy_build  # Deployment-specific task
+    - run_tests  # Test after deployment
+
+# Development tasks
+development:
+  tasks:  # Development tasks
+    - <<: *common_tasks  # Include common tasks
+    - run_linter  # Development-specific task
+    - format_code  # Format code
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify array anchor/alias worked
+        # Note: YAML's << merge key works with maps, not arrays directly
+        # The structure will be parsed as-is
+        assert result.data['common_tasks'] == ['task1', 'task2']
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_conditional_anchor_merge(self):
+        """Test comments with conditional anchor merge patterns."""
+        yaml_content = """# Base configuration
+base: &base
+  timeout: 30  # Base timeout
+  retries: 3  # Base retries
+
+# Configuration 1 - uses base
+config1:
+  <<: *base  # Merge base
+  custom: value1  # Custom value
+
+# Configuration 2 - uses base with override
+config2:
+  <<: *base  # Merge base
+  timeout: 60  # Override timeout
+  custom: value2  # Custom value
+
+# Configuration 3 - no base
+config3:
+  timeout: 90  # Custom timeout only
+  custom: value3  # Custom value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify conditional merge worked
+        assert result.data['config1']['timeout'] == 30  # From base
+        assert result.data['config1']['retries'] == 3  # From base
+        assert result.data['config1']['custom'] == 'value1'
+        assert result.data['config2']['timeout'] == 60  # Overridden
+        assert result.data['config2']['retries'] == 3  # From base
+        assert result.data['config3']['timeout'] == 90  # Custom
+        assert result.data['config3'].get('retries') is None  # No base merged
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_flow_collections_and_anchors(self):
+        """Test comments with flow collections containing anchors."""
+        yaml_content = """# Flow map with anchor
+defaults: &defaults
+  items: [item1, item2, item3]  # Default items
+  config: {key1: val1, key2: val2}  # Default config
+
+# Use anchor with flow collections
+production:
+  <<: *defaults  # Merge defaults
+  items: [prod1, prod2, prod3]  # Override items
+  config: {key1: prod_val1, key3: prod_val3}  # Override config
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify flow collections with anchors work
+        assert result.data['production']['items'] == ['prod1', 'prod2', 'prod3']
+        assert result.data['production']['config']['key1'] == 'prod_val1'
+        assert result.data['production']['config']['key3'] == 'prod_val3'
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_various_scalar_types_and_anchors(self):
+        """Test comments with all scalar types mixed with anchors."""
+        yaml_content = """# Mixed scalar types with anchor
+scalars: &scalars
+  string_val: "hello"  # String value
+  int_val: 42  # Integer value
+  float_val: 3.14  # Float value
+  bool_val: true  # Boolean value
+  null_val: null  # Null value
+  # List value
+  list_val:
+    - item1  # First item
+    - item2  # Second item
+  # Map value
+  map_val:
+    key1: value1  # Key 1
+    key2: value2  # Key 2
+
+# Reuse scalar types with overrides
+override:
+  <<: *scalars  # Merge scalars
+  string_val: "world"  # Override string
+  int_val: 100  # Override integer
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify all scalar types with anchors work
+        assert result.data['override']['string_val'] == 'world'
+        assert result.data['override']['int_val'] == 100
+        assert result.data['override']['float_val'] == 3.14  # Inherited
+        assert result.data['override']['bool_val'] is True  # Inherited
+        assert result.data['override']['null_val'] is None  # Inherited
+        assert result.data['override']['list_val'] == ['item1', 'item2']
+        assert result.data['override']['map_val'] == {'key1': 'value1', 'key2': 'value2'}
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_edge_case_hash_in_anchored_values(self):
+        """Test hash character handling in anchored values with comments."""
+        yaml_content = """# Anchor with hash in values
+url_config: &url_config
+  base_url: "http://example.com"  # Base URL
+  endpoint: "/api#endpoint"  # Endpoint with anchor
+  full_url: "http://example.com/api#anchor"  # Full URL with anchor
+
+# Use anchor with hash values
+production:
+  <<: *url_config  # Merge URL config
+  # Override specific values
+  base_url: "http://prod.example.com"  # Production base URL
+
+staging:
+  <<: *url_config  # Merge URL config
+  base_url: "http://staging.example.com"  # Staging base URL
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify hash in anchored values is preserved
+        assert 'endpoint' in result.data['url_config']
+        assert '#anchor' in result.data['url_config']['full_url']
+        assert result.data['production']['endpoint'] == '/api#endpoint'  # Inherited
+        assert result.data['production']['base_url'] == 'http://prod.example.com'
+        assert result.data['staging']['full_url'] == 'http://example.com/api#anchor'
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_multiline_and_anchors(self):
+        """Test comments with multiline strings alongside anchors."""
+        yaml_content = """# Multiline string with anchor
+description_template: &desc_template
+  short: "Default description"  # Short description
+  # Multiline description
+  long: |
+    This is a long description
+    that spans multiple lines
+    and includes # hash characters
+    which should be preserved.
+
+# Use template for product
+product:
+  <<: *desc_template  # Merge description template
+  short: "Product A"  # Override short description
+  # Long description inherited
+
+# Use template for service
+service:
+  <<: *desc_template  # Merge description template
+  short: "Service B"  # Override short description
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify multiline strings with anchors work
+        assert 'long description' in result.data['description_template']['long']
+        assert result.data['product']['short'] == 'Product A'
+        assert 'long description' in result.data['product']['long']  # Inherited
+        assert result.data['service']['short'] == 'Service B'
+        assert 'hash characters' in result.data['service']['long']  # Inherited
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_merge_key_variations_and_lists(self):
+        """Test comments with complex merge key scenarios including lists."""
+        yaml_content = """# Multiple anchor definitions
+defaults: &defaults
+  timeout: 30  # Default timeout
+  retries: 3  # Default retries
+
+list_defaults: &list_defaults
+  - item1  # Default item 1
+  - item2  # Default item 2
+
+map_defaults: &map_defaults
+  key1: value1  # Default key 1
+  key2: value2  # Default key 2
+
+# Complex merge scenario
+complex_config:
+  <<: [*defaults, *map_defaults]  # Merge both defaults (maps)
+  timeout: 60  # Override timeout
+  # List values
+  items: *list_defaults  # Reference list defaults
+  custom_list:  # Custom list
+    - custom1  # Custom item 1
+    - custom2  # Custom item 2
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify complex merge scenario works
+        assert result.data['complex_config']['timeout'] == 60
+        assert result.data['complex_config']['retries'] == 3
+        assert result.data['complex_config']['key1'] == 'value1'
+        assert result.data['complex_config']['items'] == ['item1', 'item2']
+        assert result.data['complex_config']['custom_list'] == ['custom1', 'custom2']
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_deeply_nested_merge_and_overrides(self):
+        """Test comments with deeply nested merge chains and multiple overrides."""
+        yaml_content = """# Level 0 base
+level0: &level0
+  key0: value0  # Level 0 key
+  # Level 1 nested
+  level1: &level1
+    key1: value1  # Level 1 key
+    # Level 2 nested
+    level2: &level2
+      key2: value2  # Level 2 key
+      # Level 3 nested
+      level3: &level3
+        key3: value3  # Level 3 key
+        key4: value4  # Another level 3 key
+
+# Complex nested merge
+nested_config:
+  <<: *level0  # Merge level 0
+  # Override at various levels
+  key0: overridden0  # Override level 0
+  level1:
+    <<: *level1  # Merge level 1
+    key1: overridden1  # Override level 1
+    level2:
+      <<: *level2  # Merge level 2
+      key2: overridden2  # Override level 2
+      level3:
+        <<: *level3  # Merge level 3
+        key3: overridden3  # Override level 3
+        # key4 inherited from level3
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify deeply nested merge with overrides
+        assert result.data['nested_config']['key0'] == 'overridden0'
+        assert result.data['nested_config']['level1']['key1'] == 'overridden1'
+        assert result.data['nested_config']['level1']['level2']['key2'] == 'overridden2'
+        assert result.data['nested_config']['level1']['level2']['level3']['key3'] == 'overridden3'
+        assert result.data['nested_config']['level1']['level2']['level3']['key4'] == 'value4'  # Inherited
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_with_empty_and_null_values_in_anchors(self):
+        """Test comments with empty strings and nulls in anchored values."""
+        yaml_content = """# Anchor with null/empty values
+nullable_defaults: &nullable_defaults
+  empty_string: ""  # Empty string
+  null_value: null  # Explicit null
+  tilde_null: ~  # Tilde null
+  normal_value: "normal"  # Normal value
+  # Mixed in collections
+  list_with_nulls:
+    - item1  # Normal item
+    - ""  # Empty string
+    - null  # Null item
+    - item4  # Another normal
+  map_with_nulls:
+    key1: value1  # Normal key
+    key2: ""  # Empty value
+    key3: null  # Null value
+
+# Use nullable defaults
+production:
+  <<: *nullable_defaults  # Merge nullable defaults
+  empty_string: "not empty"  # Override empty string
+  normal_value: "production normal"  # Override normal
+
+staging:
+  <<: *nullable_defaults  # Merge nullable defaults
+  null_value: "not null"  # Override null
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify nullable values in anchors work
+        assert result.data['production']['empty_string'] == 'not empty'
+        assert result.data['production']['null_value'] is None  # Inherited
+        assert result.data['production']['normal_value'] == 'production normal'
+        assert result.data['production']['list_with_nulls'] == ['item1', '', None, 'item4']
+        assert result.data['staging']['null_value'] == 'not null'
+        assert result.data['staging']['empty_string'] == ''  # Inherited
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+
 if __name__ == '__main__':
     # Run tests with pytest
     pytest.main([__file__, '-v'])
