@@ -545,7 +545,7 @@ func TestNewResultMethods_Comprehensive(t *testing.T) {
 			FilePath: "config.yaml",
 			Valid:    false,
 			Errors: []ValidationError{
-				*NewValidationError("config.yaml", "port out of range", "server.port", "1-65535", ErrCodeInvalidValue, 15, 0, "", ""),
+				*NewValidationError("config.yaml", "port out of range", "server.port", "1-65535", ErrCodeInvalidValue, 15, 0, "", "server.port"),
 			},
 		}
 
