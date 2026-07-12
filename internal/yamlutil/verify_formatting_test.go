@@ -8,14 +8,7 @@ import (
 // TestErrorFormattingExamples verifies the exact output format of error messages
 func TestErrorFormattingExamples(t *testing.T) {
 	t.Run("ParseError with line:column context", func(t *testing.T) {
-		pe := &ParseError{
-			FilePath: "config.yaml",
-			Line:     10,
-			Column:   5,
-			Message:  "invalid syntax",
-			Expected: "identifier",
-			Actual:   "123",
-		}
+		pe := NewParseError("config.yaml", "invalid syntax", 10, 5, "", "identifier", "123")
 		
 		errMsg := pe.Error()
 		t.Logf("ParseError output:\n%s", errMsg)
@@ -111,7 +104,7 @@ func TestHumanReadableFormatting(t *testing.T) {
 			name string
 			err  error
 		}{
-			{"parse error", &ParseError{FilePath: "test.yaml", Line: 5, Column: 10, Message: "bad syntax"}},
+			{"parse error", NewParseError("test.yaml", "bad syntax", 5, 10, "", "", "")},
 			{"validation error", &ValidationError{FilePath: "test.yaml", Line: 5, Column: 10, Message: "invalid value"}},
 			{"syntax error", &SyntaxError{FilePath: "test.yaml", Line: 5, Column: 10, Message: "syntax issue"}},
 			{"structure error", &StructureError{FilePath: "test.yaml", Line: 5, Message: "bad structure"}},
