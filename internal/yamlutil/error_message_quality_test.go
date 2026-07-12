@@ -399,10 +399,7 @@ func TestErrorTypeCategorization(t *testing.T) {
 		{
 			name: "FileError categorization",
 			createError: func() error {
-				return &FileError{
-					Path: "config.yaml",
-					Err:  fmt.Errorf("not found"),
-				}
+				return NewFileError("config.yaml", "", "", fmt.Errorf("not found"))
 			},
 			expectedType: ErrorTypeFile,
 			expectedCode: ErrCodeFileIOError,
@@ -977,7 +974,7 @@ func TestErrorMessagesNonEmpty(t *testing.T) {
 		func() error { return NewFieldNotFoundError("f.yaml", "f", 1, "") },
 		func() error { return &SyntaxError{FilePath: "f.yaml", Message: "m"} },
 		func() error { return &StructureError{FilePath: "f.yaml", Message: "m"} },
-		func() error { return &FileError{Path: "f.yaml", Err: fmt.Errorf("e")} },
+		func() error { return NewFileError("f.yaml", "", "", fmt.Errorf("e")) },
 	}
 
 	for i, testErr := range testErrors {

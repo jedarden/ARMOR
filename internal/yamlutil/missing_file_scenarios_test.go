@@ -537,11 +537,7 @@ func TestFileError_ErrorMessages(t *testing.T) {
 		{
 			name: "error with operation and path",
 			createError: func() *FileError {
-				return &FileError{
-					Operation: "read",
-					Path:      "/test/file.yaml",
-					Err:       os.ErrNotExist,
-				}
+				return NewFileError("/test/file.yaml", "read", "", os.ErrNotExist)
 			},
 			wantContain: []string{"read", "/test/file.yaml"},
 			description: "Should include operation and path in error message",
@@ -549,11 +545,7 @@ func TestFileError_ErrorMessages(t *testing.T) {
 		{
 			name: "error with message field",
 			createError: func() *FileError {
-				return &FileError{
-					Operation: "resolve",
-					Path:      "/config.yaml",
-					Message:   "failed to resolve absolute path",
-				}
+				return NewFileError("/config.yaml", "resolve", "failed to resolve absolute path", nil)
 			},
 			wantContain: []string{"resolve", "/config.yaml", "failed to resolve"},
 			description: "Should include custom message in error",
@@ -561,11 +553,7 @@ func TestFileError_ErrorMessages(t *testing.T) {
 		{
 			name: "error with wrapped os.ErrNotExist",
 			createError: func() *FileError {
-				return &FileError{
-					Operation: "read",
-					Path:      "/missing/file.yaml",
-					Err:       os.ErrNotExist,
-				}
+				return NewFileError("/missing/file.yaml", "read", "", os.ErrNotExist)
 			},
 			wantContain: []string{"read", "/missing/file.yaml"},
 			description: "Should include wrapped error information",
@@ -573,11 +561,7 @@ func TestFileError_ErrorMessages(t *testing.T) {
 		{
 			name: "error with wrapped os.ErrPermission",
 			createError: func() *FileError {
-				return &FileError{
-					Operation: "read",
-					Path:      "/protected/file.yaml",
-					Err:       os.ErrPermission,
-				}
+				return NewFileError("/protected/file.yaml", "read", "", os.ErrPermission)
 			},
 			wantContain: []string{"read", "/protected/file.yaml"},
 			description: "Should include permission error information",
@@ -585,10 +569,7 @@ func TestFileError_ErrorMessages(t *testing.T) {
 		{
 			name: "error using Op field (backward compatibility)",
 			createError: func() *FileError {
-				return &FileError{
-					Op:   "write",
-					Path: "/output/file.yaml",
-				}
+				return NewFileError("/output/file.yaml", "write", "", nil)
 			},
 			wantContain: []string{"write", "/output/file.yaml"},
 			description: "Should support Op field for backward compatibility",
@@ -615,10 +596,7 @@ func TestFileError_ErrorMessages(t *testing.T) {
 // TestFileError_InterfaceChecks verifies FileError implements all required interfaces
 func TestFileError_InterfaceChecks(t *testing.T) {
 	t.Run("FileError implements error interface", func(t *testing.T) {
-		err := &FileError{
-			Operation: "read",
-			Path:      "/test/file.yaml",
-		}
+		err := NewFileError("/test/file.yaml", "read", "", nil)
 		var _ error = err
 		if err.Error() == "" {
 			t.Error("FileError.Error() should return non-empty string")
@@ -627,10 +605,7 @@ func TestFileError_InterfaceChecks(t *testing.T) {
 	})
 
 	t.Run("FileError implements YAMLError interface", func(t *testing.T) {
-		err := &FileError{
-			Operation: "read",
-			Path:      "/test/file.yaml",
-		}
+		err := NewFileError("/test/file.yaml", "read", "", nil)
 		var _ YAMLError = err
 
 		// Test YAMLError methods
@@ -648,11 +623,7 @@ func TestFileError_InterfaceChecks(t *testing.T) {
 
 	t.Run("FileError unwraps correctly", func(t *testing.T) {
 		underlyingErr := errors.New("underlying error")
-		err := &FileError{
-			Operation: "read",
-			Path:      "/test/file.yaml",
-			Err:       underlyingErr,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", underlyingErr)
 
 		if err.Unwrap() != underlyingErr {
 			t.Error("FileError.Unwrap() should return underlying error")
@@ -661,11 +632,7 @@ func TestFileError_InterfaceChecks(t *testing.T) {
 	})
 
 	t.Run("FileError with nil underlying error", func(t *testing.T) {
-		err := &FileError{
-			Operation: "read",
-			Path:      "/test/file.yaml",
-			Err:       nil,
-		}
+		err := NewFileError("/test/file.yaml", "read", "", nil)
 
 		if err.Unwrap() != nil {
 			t.Error("FileError.Unwrap() should return nil when underlying error is nil")
@@ -738,12 +705,12 @@ func TestIsFileNotFoundError_Verify(t *testing.T) {
 		},
 		{
 			name:     "wrapped os.ErrNotExist",
-			err:      &FileError{Err: os.ErrNotExist},
+			err:      NewFileError("", "", "", os.ErrNotExist),
 			expected: true,
 		},
 		{
 			name:     "deeply wrapped os.ErrNotExist",
-			err:      &FileError{Err: fmt.Errorf("wrapped: %w", os.ErrNotExist)},
+			err:      NewFileError("", "", "", fmt.Errorf("wrapped: %w", os.ErrNotExist)),
 			expected: true,
 		},
 		{
@@ -790,12 +757,12 @@ func TestIsPermissionError_Verify(t *testing.T) {
 		},
 		{
 			name:     "wrapped os.ErrPermission",
-			err:      &FileError{Err: os.ErrPermission},
+			err:      NewFileError("", "", "", os.ErrPermission),
 			expected: true,
 		},
 		{
 			name:     "deeply wrapped os.ErrPermission",
-			err:      &FileError{Err: fmt.Errorf("wrapped: %w", os.ErrPermission)},
+			err:      NewFileError("", "", "", fmt.Errorf("wrapped: %w", os.ErrPermission)),
 			expected: true,
 		},
 		{
