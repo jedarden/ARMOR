@@ -168,9 +168,19 @@ func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult {
 	if !sv.compiled {
 		if err := sv.compileSchema(); err != nil {
 			result.Valid = false
-			result.Errors = append(result.Errors, SchemaValidationError{
-				Message: fmt.Sprintf("Invalid schema: %v", err),
-			})
+
+			// Handle YAMLError with structured information
+			if yamlErr, ok := err.(YAMLError); ok {
+				result.Errors = append(result.Errors, SchemaValidationError{
+					Message:   fmt.Sprintf("Schema compilation failed: %s", yamlErr.Error()),
+					ErrorCode: yamlErr.Code(),
+				})
+			} else {
+				// Handle generic errors
+				result.Errors = append(result.Errors, SchemaValidationError{
+					Message: fmt.Sprintf("Schema compilation failed: %v", err),
+				})
+			}
 			return result
 		}
 		sv.compiled = true
