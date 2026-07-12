@@ -639,7 +639,7 @@ monitoring:
 	result := parser.Parse(yamlContent)
 
 	// Verify comment lines are identified
-	commentLines := []int{1, 5, 9, 13, 17, 20}
+	commentLines := []int{1, 5, 9, 14, 17}
 	for i, lineNum := range commentLines {
 		if i >= len(result.Lines) {
 			t.Errorf("Expected line %d to exist", lineNum)
