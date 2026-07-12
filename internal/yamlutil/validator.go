@@ -54,6 +54,7 @@ func (ve LocalValidationError) ToValidationError() ValidationError {
 		Line:       ve.Line,
 		Column:     ve.Column,
 		Type:       ve.Type,
+		Path:       "", // Path is context-specific and populated by caller if needed
 	}
 }
 
