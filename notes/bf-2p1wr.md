@@ -1,5 +1,48 @@
 # bf-2p1wr: ord-devimprint Kubeconfig Acquisition
 
+## Latest Verification (2026-07-12 16:40 UTC)
+
+### Current Session Tests
+```bash
+# 1. Verify secret listing works (read-only proxy allows this)
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
+NAME                    TYPE                             DATA   AGE
+admin-oauth             Opaque                           3      63d
+armor-credentials       Opaque                           7      81d
+armor-readonly          Opaque                           2      81d
+armor-writer            Opaque                           2      81d
+devimprint-b2-workers   Opaque                           5      66d
+devimprint-cloudflare   Opaque                           8      81d
+docker-hub-registry     kubernetes.io/dockerconfigjson   1      81d
+github-oauth            Opaque                           2      32d
+github-pat              Opaque                           1      81d
+queue-api-auth          Opaque                           2      3d13h
+
+# 2. Verify secret reading is blocked
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
+Error from server (Forbidden): secrets "armor-writer" is forbidden:
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+in API group "" in the namespace "devimprint"
+```
+
+### Status Confirmation
+**EXTERNAL ACTION REQUIRED** - This task cannot be completed without manual intervention:
+
+1. ❌ **No kubeconfig file exists** at `~/.kube/ord-devimprint.kubeconfig`
+2. ❌ **Read-only proxy blocks secret access** - can list names, not contents
+3. ⚠️ **Cluster administrator action required** to obtain write-access kubeconfig
+
+This matches the same access pattern as **iad-options** cluster (also Rackspace Spot).
+
+### Next Steps (External)
+1. Access https://spot.rackspace.com with valid credentials
+2. Navigate to ord-devimprint cloudspace (ID: `hcp-5f30c973-cde7-42d9-8c7b-5d0573821330`)
+3. Download kubeconfig with cloudspace-admin OIDC token
+4. Store at `~/.kube/ord-devimprint.kubeconfig` with `chmod 600`
+5. Verify with: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o json`
+
+---
+
 ## Summary
 
 This task requires obtaining a kubeconfig file with write access to the ord-devimprint cluster to retrieve the `armor-writer` secret in the `devimprint` namespace.
