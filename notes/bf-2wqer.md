@@ -68,6 +68,28 @@ All existing callers of `NewValidationError` in the ARMOR codebase already pass 
 
 **No code changes were required** - this was a verification-only task that confirmed all existing callers are already compliant.
 
+## Re-verification (2026-07-12)
+
+Re-verified all callers pass path parameter:
+- **46-50 calls found** via grep across all Go files
+- **All test files** pass path as 9th argument
+- **Tests pass**: `go test ./internal/yamlutil/... -run ".*Error.*"` successful
+- **No production code callers** (all calls are in test files)
+
+Sample verified calls:
+```go
+// error_message_quality_test.go:40
+NewValidationError("deployment.yaml", "invalid port", "server.port", "must be 1-65535", ErrCodeInvalidValue, 15, 12, "", "server.port")
+
+// errors_test.go:457
+NewValidationError(tt.filePath, tt.message, tt.fieldPath, tt.constraint, tt.code, tt.line, tt.column, tt.wantErrorType, tt.fieldPath)
+
+// verify_formatting_test.go:35-45 (multi-line)
+NewValidationError("deployment.yaml", "port out of range", "spec.replicas", "must be between 1-65535", "", 15, 12, "", "spec.replicas")
+```
+
+**Status confirmed**: All callers compliant with path parameter requirement.
+
 ## Related Work
 This bead is part of a sequence ensuring ValidationError has proper Path field support:
 - bf-62s4e: Initial Path field fixes
@@ -75,4 +97,4 @@ This bead is part of a sequence ensuring ValidationError has proper Path field s
 - bf-4kfsf: Comprehensive Path field coverage
 - bf-g1zmv: Regression verification
 - bf-5b3z6: Complete verification of all instantiations
-- bf-2wqer: (This bead) Final caller verification
+- bf-2wqer: (This bead) Final caller verification - REVERIFIED 2026-07-12
