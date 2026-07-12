@@ -218,6 +218,7 @@ type DelimiterError struct {
 	Found          string // Actual delimiter found
 	ContextStr     string // Contextual information (renamed to avoid method conflict)
 	SuggestedFix   string // Suggested fix for the delimiter issue
+	ErrorCategory  string // Classification of error ("missing_colon", "unmatched_bracket", "unmatched_brace", "unclosed_string", "invalid_spacing")
 }
 
 // Error implements the error interface.
@@ -237,6 +238,10 @@ func (de DelimiterError) Error() string {
 
 	if de.DelimiterType != "" {
 		sb.WriteString(fmt.Sprintf(" [delimiter: %s]", de.DelimiterType))
+	}
+
+	if de.ErrorCategory != "" {
+		sb.WriteString(fmt.Sprintf(" [category: %s]", de.ErrorCategory))
 	}
 
 	if de.Expected != "" || de.Found != "" {
@@ -526,7 +531,92 @@ func (sv *DefaultSyntaxValidator) DetectDelimiterErrors(yamlContent string) []De
 	bracketStack := make([]rune, 0)
 	braceStack := make([]rune, 0)
 
+	// Track multi-line string blocks
+	inMultiLineBlock := false
+	multiLineBlockIndent := 0
+
+
 	for lineNum, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		leadingSpaces := len(line) - len(trimmed)
+
+		// Check if we're inside a multi-line block
+		if inMultiLineBlock {
+			// Multi-line blocks continue until we find a line with less or equal indentation
+			// that's not empty or a comment
+			if leadingSpaces > multiLineBlockIndent ||
+			   (leadingSpaces == multiLineBlockIndent && (trimmed == "" || strings.HasPrefix(trimmed, "#"))) {
+				continue // Skip lines inside the multi-line block
+			} else {
+				// Exit multi-line block when indentation decreases
+				inMultiLineBlock = false
+				multiLineBlockIndent = 0
+			}
+		}
+
+		// Skip empty lines and comments (but don't skip them inside multi-line blocks - handled above)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		// Handle multi-line block scalars (|, >, |-, |- , >-, >+, |+)
+		// These appear after a colon, like "key: |" or "key: >"
+		if strings.Contains(trimmed, ": |") || strings.Contains(trimmed, ": >") ||
+		   strings.Contains(trimmed, ":|-") || strings.Contains(trimmed, ":>-") ||
+		   strings.Contains(trimmed, ":|+") || strings.Contains(trimmed, ":>+") {
+			inMultiLineBlock = true
+			multiLineBlockIndent = leadingSpaces // Content must be MORE indented than this line
+		}
+
+		// Check for missing colons in mapping lines
+		// A mapping line should have a colon unless it's a sequence item or flow style
+		if !strings.HasPrefix(trimmed, "- ") &&
+		   !strings.HasPrefix(trimmed, "---") &&
+		   !strings.HasPrefix(trimmed, "...") &&
+		   !strings.Contains(trimmed, "{") &&
+		   !strings.HasPrefix(trimmed, "&") &&
+		   !strings.HasPrefix(trimmed, "*") &&
+		   !strings.HasPrefix(trimmed, "!!") {
+
+			// Check if this looks like a mapping line (starts with alphanumeric or quote)
+			if len(trimmed) > 0 {
+				firstChar := rune(trimmed[0])
+				isMappingCandidate := unicode.IsLetter(firstChar) || unicode.IsDigit(firstChar) ||
+				                      firstChar == '\'' || firstChar == '"' || firstChar == '_'
+
+				// Additional check: if the line has less indentation than previous line,
+				// it's more likely to be a key at a higher level
+				if isMappingCandidate && !strings.Contains(trimmed, ":") {
+					// Extract the first word to see if it looks like a key
+					words := strings.Fields(trimmed)
+					if len(words) > 0 {
+						firstWord := words[0]
+						// Check if first word looks like a YAML key (alphanumeric with possible underscores)
+						looksLikeKey := true
+						for _, ch := range firstWord {
+							if !unicode.IsLetter(ch) && !unicode.IsDigit(ch) && ch != '_' && ch != '-' && ch != '.' {
+								looksLikeKey = false
+								break
+							}
+						}
+
+						if looksLikeKey {
+							errors = append(errors, DelimiterError{
+								Line:          lineNum + 1,
+								Column:        leadingSpaces + 1,
+								Message:       fmt.Sprintf("Missing colon in mapping key %q", firstWord),
+								DelimiterType: ":",
+								Found:         "no colon",
+								Expected:      ":",
+								SuggestedFix:  fmt.Sprintf("Add colon after key %q", firstWord),
+								ErrorCategory: "missing_colon",
+							})
+						}
+					}
+				}
+			}
+		}
+
 		inString := false
 		stringChar := rune(0)
 
@@ -556,12 +646,13 @@ func (sv *DefaultSyntaxValidator) DetectDelimiterErrors(yamlContent string) []De
 			case ')':
 				if len(parenStack) == 0 || parenStack[len(parenStack)-1] != '(' {
 					errors = append(errors, DelimiterError{
-						Line:         lineNum + 1,
-						Column:       colNum + 1,
-						Message:      "Unmatched closing parenthesis",
+						Line:          lineNum + 1,
+						Column:        colNum + 1,
+						Message:       "Unmatched closing parenthesis",
 						DelimiterType: ")",
-						Found:        ")",
-						Expected:     "(",
+						Found:         ")",
+						Expected:      "(",
+						ErrorCategory: "unmatched_paren",
 					})
 				} else {
 					parenStack = parenStack[:len(parenStack)-1]
@@ -571,12 +662,13 @@ func (sv *DefaultSyntaxValidator) DetectDelimiterErrors(yamlContent string) []De
 			case ']':
 				if len(bracketStack) == 0 || bracketStack[len(bracketStack)-1] != '[' {
 					errors = append(errors, DelimiterError{
-						Line:         lineNum + 1,
-						Column:       colNum + 1,
-						Message:      "Unmatched closing bracket",
+						Line:          lineNum + 1,
+						Column:        colNum + 1,
+						Message:       "Unmatched closing bracket",
 						DelimiterType: "]",
-						Found:        "]",
-						Expected:     "[",
+						Found:         "]",
+						Expected:      "[",
+						ErrorCategory: "unmatched_bracket",
 					})
 				} else {
 					bracketStack = bracketStack[:len(bracketStack)-1]
@@ -586,29 +678,31 @@ func (sv *DefaultSyntaxValidator) DetectDelimiterErrors(yamlContent string) []De
 			case '}':
 				if len(braceStack) == 0 || braceStack[len(braceStack)-1] != '{' {
 					errors = append(errors, DelimiterError{
-						Line:         lineNum + 1,
-						Column:       colNum + 1,
-						Message:      "Unmatched closing brace",
+						Line:          lineNum + 1,
+						Column:        colNum + 1,
+						Message:       "Unmatched closing brace",
 						DelimiterType: "}",
-						Found:        "}",
-						Expected:     "{",
+						Found:         "}",
+						Expected:      "{",
+						ErrorCategory: "unmatched_brace",
 					})
 				} else {
 					braceStack = braceStack[:len(braceStack)-1]
 				}
 			case ':':
-				// Check for invalid colon usage (not followed by space or end of line)
+				// Check for invalid colon spacing (not followed by space or end of line)
 				if colNum+1 < len(line) && line[colNum+1] != ' ' && line[colNum+1] != '\t' && line[colNum+1] != '\n' && line[colNum+1] != '\r' {
-					// This might be valid (value part of key: value), but could be an error
-					// Only warn in strict mode
-					if sv.strict && !unicode.IsSpace(rune(line[colNum+1])) {
+					// This might be valid in flow collections, but could be an error in block mappings
+					// Only warn in strict mode for non-flow contexts
+					if sv.strict && !unicode.IsSpace(rune(line[colNum+1])) && !strings.Contains(line, "{") && !strings.Contains(line, "[") {
 						errors = append(errors, DelimiterError{
-							Line:         lineNum + 1,
-							Column:       colNum + 1,
-							Message:      "Colon not followed by space in mapping",
+							Line:          lineNum + 1,
+							Column:        colNum + 1,
+							Message:       "Colon not followed by space in mapping",
 							DelimiterType: ":",
-							Found:        string(line[colNum:min(colNum+2, len(line))]),
-							SuggestedFix: "Add space after colon",
+							Found:         string(line[colNum:min(colNum+2, len(line))]),
+							SuggestedFix:  "Add space after colon",
+							ErrorCategory: "invalid_spacing",
 						})
 					}
 				}
@@ -618,42 +712,46 @@ func (sv *DefaultSyntaxValidator) DetectDelimiterErrors(yamlContent string) []De
 		// Check for unclosed strings at end of line
 		if inString {
 			errors = append(errors, DelimiterError{
-				Line:         lineNum + 1,
-				Column:       len(line) + 1,
-				Message:      "Unclosed string at end of line",
+				Line:          lineNum + 1,
+				Column:        len(line) + 1,
+				Message:       "Unclosed string at end of line",
 				DelimiterType: string(stringChar),
-				Found:        "end of line",
-				Expected:     string(stringChar),
-				SuggestedFix: "Close the string with matching quote",
+				Found:         "end of line",
+				Expected:      string(stringChar),
+				SuggestedFix:  "Close the string with matching quote",
+				ErrorCategory: "unclosed_string",
 			})
 		}
 	}
 
 	// Check for unmatched delimiters at end of file
-	if len(parenStack) > 0 {
+	for _, paren := range parenStack {
 		errors = append(errors, DelimiterError{
-			Line:         len(lines),
-			Message:      "Unclosed parenthesis at end of file",
-			DelimiterType: "(",
-			Expected:     ")",
+			Line:          len(lines),
+			Message:       "Unclosed parenthesis at end of file",
+			DelimiterType: string(paren),
+			Expected:      ")",
+			ErrorCategory: "unmatched_paren",
 		})
 	}
 
-	if len(bracketStack) > 0 {
+	for _, bracket := range bracketStack {
 		errors = append(errors, DelimiterError{
-			Line:         len(lines),
-			Message:      "Unclosed bracket at end of file",
-			DelimiterType: "[",
-			Expected:     "]",
+			Line:          len(lines),
+			Message:       "Unclosed bracket at end of file",
+			DelimiterType: string(bracket),
+			Expected:      "]",
+			ErrorCategory: "unmatched_bracket",
 		})
 	}
 
-	if len(braceStack) > 0 {
+	for _, brace := range braceStack {
 		errors = append(errors, DelimiterError{
-			Line:         len(lines),
-			Message:      "Unclosed brace at end of file",
-			DelimiterType: "{",
-			Expected:     "}",
+			Line:          len(lines),
+			Message:       "Unclosed brace at end of file",
+			DelimiterType: string(brace),
+			Expected:      "}",
+			ErrorCategory: "unmatched_brace",
 		})
 	}
 
@@ -674,6 +772,15 @@ func (sv *DefaultSyntaxValidator) DetectStructureErrors(yamlContent string) []St
 
 	// Check for duplicate keys
 	errors = append(errors, sv.checkDuplicateKeys(&node, yamlContent)...)
+
+	// Check for invalid mapping structures
+	errors = append(errors, sv.checkInvalidMappings(&node, yamlContent)...)
+
+	// Check for invalid sequence structures
+	errors = append(errors, sv.checkInvalidSequences(&node, yamlContent)...)
+
+	// Check for mixed content types
+	errors = append(errors, sv.checkMixedContent(&node, yamlContent)...)
 
 	return errors
 }
@@ -717,6 +824,147 @@ func (sv *DefaultSyntaxValidator) checkDuplicateKeys(node *yaml.Node, content st
 	}
 
 	return errors
+}
+
+// checkInvalidMappings checks for invalid mapping structures.
+func (sv *DefaultSyntaxValidator) checkInvalidMappings(node *yaml.Node, content string) []StructureError {
+	var errors []StructureError
+
+	if node == nil {
+		return errors
+	}
+
+	// Check this node if it's a mapping
+	if node.Kind == yaml.MappingNode {
+		// Mappings must have an even number of children (key-value pairs)
+		if len(node.Content)%2 != 0 {
+			errors = append(errors, StructureError{
+				FilePath:  "",
+				Line:      node.Line,
+				Message:   "Mapping has odd number of nodes (missing value for key)",
+				Location:  fmt.Sprintf("mapping at line %d", node.Line),
+				ErrorCode: ErrCodeInvalidStructure,
+			})
+		}
+
+		// Check for non-scalar keys (keys must be scalar)
+		for i := 0; i < len(node.Content); i += 2 {
+			if i < len(node.Content) {
+				keyNode := node.Content[i]
+				if keyNode.Kind != yaml.ScalarNode {
+					errors = append(errors, StructureError{
+						FilePath:  "",
+						Line:      keyNode.Line,
+						Message:   fmt.Sprintf("Mapping key must be scalar, found %s", kindToString(keyNode.Kind)),
+						Location:  fmt.Sprintf("key at line %d", keyNode.Line),
+						ErrorCode: ErrCodeInvalidStructure,
+					})
+				}
+			}
+		}
+	}
+
+	// Recursively check child nodes
+	for _, child := range node.Content {
+		errors = append(errors, sv.checkInvalidMappings(child, content)...)
+	}
+
+	return errors
+}
+
+// checkInvalidSequences checks for invalid sequence structures.
+func (sv *DefaultSyntaxValidator) checkInvalidSequences(node *yaml.Node, content string) []StructureError {
+	var errors []StructureError
+
+	if node == nil {
+		return errors
+	}
+
+	// Check this node if it's a sequence
+	if node.Kind == yaml.SequenceNode {
+		// Check for inconsistent indentation in multi-line sequences
+		lines := strings.Split(content, "\n")
+		for i, child := range node.Content {
+			if child.Line-1 < len(lines) {
+				line := lines[child.Line-1]
+				// Check if sequence items have consistent indentation
+				trimmed := strings.TrimLeft(line, " \t")
+				if strings.HasPrefix(trimmed, "- ") {
+					// Valid sequence item
+				} else if !strings.HasPrefix(trimmed, "-") && trimmed != "" {
+					// Potential structure issue - sequence item without dash
+					if child.Kind == yaml.ScalarNode {
+						errors = append(errors, StructureError{
+							FilePath:  "",
+							Line:      child.Line,
+							Message:   "Sequence item should start with '-'",
+							Location:  fmt.Sprintf("item %d at line %d", i+1, child.Line),
+							ErrorCode: ErrCodeInvalidStructure,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// Recursively check child nodes
+	for _, child := range node.Content {
+		errors = append(errors, sv.checkInvalidSequences(child, content)...)
+	}
+
+	return errors
+}
+
+// checkMixedContent checks for mixed content types in collections.
+func (sv *DefaultSyntaxValidator) checkMixedContent(node *yaml.Node, content string) []StructureError {
+	var errors []StructureError
+
+	if node == nil {
+		return errors
+	}
+
+	// Check sequences for mixed types
+	if node.Kind == yaml.SequenceNode && len(node.Content) > 1 {
+		firstKind := node.Content[0].Kind
+		for i, child := range node.Content {
+			if child.Kind != firstKind && child.Kind != yaml.ScalarNode {
+				// Allow mixing scalars with other types, but flag mixed complex types
+				errors = append(errors, StructureError{
+					FilePath:  "",
+					Line:      child.Line,
+					Message:   fmt.Sprintf("Sequence contains mixed content types (%s and %s)",
+						kindToString(firstKind), kindToString(child.Kind)),
+					Location:  fmt.Sprintf("item %d at line %d", i+1, child.Line),
+					ErrorCode: ErrCodeInvalidStructure,
+				})
+			}
+		}
+	}
+
+	// Recursively check child nodes
+	for _, child := range node.Content {
+		errors = append(errors, sv.checkMixedContent(child, content)...)
+	}
+
+	return errors
+}
+
+// kindToString converts a yaml.Node Kind to a readable string.
+func kindToString(kind yaml.Kind) string {
+	switch kind {
+	case yaml.DocumentNode:
+		return "document"
+	case yaml.MappingNode:
+		return "mapping"
+	case yaml.SequenceNode:
+		return "sequence"
+	case yaml.ScalarNode:
+		return "scalar"
+	case yaml.AliasNode:
+		return "alias"
+	default:
+		return "unknown"
+	}
 }
 
 // GetErrorContext provides contextual information around an error location.
@@ -825,6 +1073,34 @@ func (sv *DefaultSyntaxValidator) extractErrorColumn(errMsg string) int {
 	}
 
 	return 0
+}
+
+// extractQuotedKey extracts a quoted key from a line.
+// Returns the quoted string (including quotes) if found, empty string otherwise.
+func extractQuotedKey(line string) string {
+	if len(line) == 0 {
+		return ""
+	}
+
+	// Check for single-quoted key
+	if line[0] == '\'' {
+		for i := 1; i < len(line); i++ {
+			if line[i] == '\'' && (i == 0 || line[i-1] != '\\') {
+				return line[:i+1]
+			}
+		}
+	}
+
+	// Check for double-quoted key
+	if line[0] == '"' {
+		for i := 1; i < len(line); i++ {
+			if line[i] == '"' && (i == 0 || line[i-1] != '\\') {
+				return line[:i+1]
+			}
+		}
+	}
+
+	return ""
 }
 
 // Helper functions
