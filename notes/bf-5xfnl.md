@@ -30,6 +30,15 @@ in API group "" in the namespace "devimprint"
 **BLOCKED** - Cannot retrieve LITESTREAM_ACCESS_KEY_ID without elevated permissions or alternative
 access method. The infrastructure blocker must be resolved before this bead can proceed.
 
+## Re-verification (2026-07-12 00:26 UTC)
+- ❌ No kubeconfig exists at ~/.kube/ord-devimprint.kubeconfig
+- ❌ Read-only proxy RBAC denies secret access (basic metadata also blocked):
+  ```
+  kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint
+  Error: User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets"
+  ```
+- ❌ No alternative cluster access available for devimprint namespace
+
 ## Re-verification (2026-07-11 20:26 UTC)
 - ❌ No kubeconfig exists at ~/.kube/ord-devimprint.kubeconfig
 - ❌ Read-only proxy RBAC denies secret access:
