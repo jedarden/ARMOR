@@ -73,7 +73,7 @@ type SchemaDefinition struct {
 	RootFields map[string]*FieldDefinition
 
 	// NestedSchemas contains subschemas for nested structures.
-	NestedSchemas map[string]*Schema
+	NestedSchemas map[string]Schema
 
 	// definitions stores reusable schema definitions.
 	definitions map[string]*FieldDefinition
@@ -109,7 +109,7 @@ type FieldDefinition struct {
 	DefaultValue interface{}
 
 	// NestedSchema defines the schema for nested objects/arrays.
-	NestedSchema *Schema
+	NestedSchema Schema
 
 	// ArrayItemSchema defines the schema for array items.
 	ArrayItemSchema *FieldDefinition
@@ -179,9 +179,19 @@ func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult {
 	// Validate data against schema
 	if err := sv.schema.Validate(data); err != nil {
 		result.Valid = false
-		result.Errors = append(result.Errors, SchemaValidationError{
-			Message: fmt.Sprintf("Validation failed: %v", err),
-		})
+
+		// Handle YAMLError with structured information
+		if yamlErr, ok := err.(YAMLError); ok {
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message:   yamlErr.Error(),
+				ErrorCode: yamlErr.Code(),
+			})
+		} else {
+			// Handle generic errors
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message: fmt.Sprintf("Validation failed: %v", err),
+			})
+		}
 		return result
 	}
 
@@ -312,7 +322,10 @@ func (sv *SchemaValidator) validateField(
 	if fieldDef.NestedSchema != nil {
 		if nestedMap, ok := value.(map[string]interface{}); ok {
 			nestedPrefix := fieldPath
-			sv.validateFields(nestedMap, fieldDef.NestedSchema.RootFields, nestedPrefix, result)
+			// Type assert to SchemaDefinition to access RootFields
+			if nestedSchemaDef, ok := fieldDef.NestedSchema.(*SchemaDefinition); ok {
+				sv.validateFields(nestedMap, nestedSchemaDef.RootFields, nestedPrefix, result)
+			}
 		}
 	}
 
@@ -639,7 +652,7 @@ func buildSchemaFromData(data map[string]interface{}) (*SchemaDefinition, error)
 	schema := &SchemaDefinition{
 		Type:          SchemaTypeJSON,
 		RootFields:    make(map[string]*FieldDefinition),
-		NestedSchemas: make(map[string]*SchemaDefinition),
+		NestedSchemas: make(map[string]Schema),
 		definitions:   make(map[string]*FieldDefinition),
 	}
 
