@@ -967,9 +967,9 @@ monitoring:
   enabled: true
   metrics:
     - name: request_count
-      type: counter
+    type: counter
     - name: response_time
-      type: histogram
+    type: histogram
 `
 
 	lines := strings.Split(yamlContent, "\n")
