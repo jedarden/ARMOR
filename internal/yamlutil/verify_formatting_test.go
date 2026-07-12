@@ -32,14 +32,17 @@ func TestErrorFormattingExamples(t *testing.T) {
 	})
 
 	t.Run("ValidationError with field path and constraint", func(t *testing.T) {
-		ve := &ValidationError{
-			FilePath:   "deployment.yaml",
-			Line:       15,
-			Column:     12,
-			FieldPath:  "spec.replicas",
-			Message:    "port out of range",
-			Constraint: "must be between 1-65535",
-		}
+		ve := NewValidationError(
+			"deployment.yaml",
+			"port out of range",
+			"spec.replicas",
+			"must be between 1-65535",
+			"",
+			15,
+			12,
+			"",
+			"spec.replicas",
+		)
 		
 		errMsg := ve.Error()
 		t.Logf("ValidationError output:\n%s", errMsg)
@@ -60,14 +63,15 @@ func TestErrorFormattingExamples(t *testing.T) {
 	})
 
 	t.Run("TypeMismatchError with expected vs actual types", func(t *testing.T) {
-		tme := &TypeMismatchError{
-			FilePath:     "config.yaml",
-			Line:         20,
-			FieldPath:    "server.port",
-			ExpectedType: "integer",
-			ActualType:   "string",
-			Value:        "8080",
-		}
+		tme := NewTypeMismatchError(
+			"config.yaml",
+			"server.port",
+			"integer",
+			"string",
+			"8080",
+			20,
+			"",
+		)
 		
 		errMsg := tme.Error()
 		t.Logf("TypeMismatchError output:\n%s", errMsg)
@@ -105,9 +109,9 @@ func TestHumanReadableFormatting(t *testing.T) {
 			err  error
 		}{
 			{"parse error", NewParseError("test.yaml", "bad syntax", 5, 10, "", "", "")},
-			{"validation error", &ValidationError{FilePath: "test.yaml", Line: 5, Column: 10, Message: "invalid value"}},
-			{"syntax error", &SyntaxError{FilePath: "test.yaml", Line: 5, Column: 10, Message: "syntax issue"}},
-			{"structure error", &StructureError{FilePath: "test.yaml", Line: 5, Message: "bad structure"}},
+			{"validation error", NewValidationError("test.yaml", "invalid value", "", "", "", 5, 10, "", "")},
+			{"syntax error", NewSyntaxError("test.yaml", "syntax issue", 5, 10, "", "", "")},
+			{"structure error", NewStructureError("test.yaml", "bad structure", 5, "", "", "")},
 		}
 		
 		for _, tt := range errors {
