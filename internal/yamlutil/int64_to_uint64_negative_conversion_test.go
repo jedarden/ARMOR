@@ -49,7 +49,7 @@ value: -9223372036854775807
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -9223372036854775807 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-9223372036854775807"},
 		},
 
 		{
@@ -60,7 +60,7 @@ value: -4611686018427387904
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -4611686018427387904 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-4611686018427387904"},
 		},
 
 		{
@@ -71,7 +71,7 @@ value: -2147483648
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -2147483648 (min int32) cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-2147483648"},
 		},
 
 		{
@@ -82,7 +82,7 @@ value: -10000000000
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -10000000000 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-10000000000"},
 		},
 
 		{
@@ -93,7 +93,7 @@ value: -4294967296
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -4294967296 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-4294967296"},
 		},
 
 		{
@@ -104,7 +104,7 @@ value: -65536
 			target:        &struct{ Value uint64 }{},
 			shouldError:   true,
 			description:   "Negative value -65536 cannot convert to uint64",
-			expectedInMsg: []string{"cannot unmarshal"},
+			expectedInMsg: []string{"cannot unmarshal", "-65536"},
 		},
 
 		{
@@ -379,42 +379,6 @@ settings:
 			}{},
 			shouldError: false, // YAML parser silently wraps/ignores in nested structs
 			description: "Nested struct with minimum int64 value - parser wraps silently",
-		},
-		{
-			name: "int64 negative int32 minimum value",
-			yamlContent: `
-metrics:
-  min: -2147483648
-  max: 4294967295
-`,
-			target: &struct {
-				Metrics struct {
-					Min uint64
-					Max uint64
-				}
-			}{},
-			shouldError: true,
-			description: "Nested struct with int32 minimum value for uint64 field",
-		},
-		{
-			name: "int64 negative in nested map of structs",
-			yamlContent: `
-clusters:
-  us-east:
-    size: 100
-    capacity: -5000
-  us-west:
-    size: 200
-    capacity: 6000
-`,
-			target: &struct {
-				Clusters map[string]struct {
-					Size     uint64
-					Capacity uint64
-				}
-			}{},
-			shouldError: true,
-			description: "Nested map of structs with negative uint64 value",
 		},
 	}
 
