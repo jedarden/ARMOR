@@ -1,58 +1,52 @@
-# Int32 Test Pattern Structure Analysis
+# Int32 Test Pattern Structure Documentation
 
-## Task: bf-4d1ij
-Analyze int32 test pattern structure to understand proper structure for boundary values and error message quality tests for int64 implementation.
+## Overview
 
----
+This document analyzes the structure and patterns used in `int32_to_uint32_negative_conversion_test.go` to provide a clear template for int64 and similar integer conversion tests.
 
 ## Test Case Structure
 
-### Standard Test Case Object
+### Core Fields
 
-All test cases use the following struct structure:
+All test cases use this standard structure:
 
 ```go
 tests := []struct {
-    name          string    // Test case name for t.Run()
-    yamlContent   string    // YAML content to parse (triple-quoted template)
-    target        interface{} // Target struct to unmarshal into
-    shouldError   bool      // Whether parsing should produce an error
-    description   string    // Human-readable description of what's being tested
-    expectedInMsg []string  // OPTIONAL: Patterns that should appear in error message
-}{
-    // test cases...
+    name          string        // Test case name for t.Run()
+    yamlContent   string        // YAML input to parse
+    target        interface{}   // Target struct for unmarshaling
+    shouldError   bool          // Expected error state
+    description   string        // Human-readable test description
+    expectedInMsg []string      // Optional: strings that should appear in error message
 }
 ```
 
 ### Field Descriptions
 
-| Field | Type | Required | Purpose |
-|-------|------|----------|---------|
-| `name` | string | Yes | Test identifier used in `t.Run(name, ...)` |
-| `yamlContent` | string | Yes | YAML input to parse, typically triple-quoted with template values |
-| `target` | interface{} | Yes | Pointer to target struct (e.g., `&struct{ Value uint32 }{}`) |
-| `shouldError` | bool | Yes | Whether error is expected (true) or success (false) |
-| `description` | string | Yes | Human-readable explanation of test intent |
-| `expectedInMsg` | []string | No | Error message patterns to verify (only for error tests) |
+| Field | Type | Purpose | Example |
+|-------|------|---------|---------|
+| `name` | string | Test case identifier | `"int32 -1 to uint32 should error"` |
+| `yamlContent` | string | YAML input to parse | `\nvalue: -1\n` |
+| `target` | interface{} | Destination struct for unmarshal | `&struct{ Value uint32 }{}` |
+| `shouldError` | bool | Whether error is expected | `true` for negative values |
+| `description` | string | What the test validates | `"Negative value -1 cannot convert to uint32"` |
+| `expectedInMsg` | []string | Error message substrings to verify | `[]string{"cannot unmarshal", "-1"}` |
 
----
+## Test Function Types
 
-## Test Function Patterns
+### 1. Main Conversion Test
 
-### 1. Basic Negative Conversion Test
+**Function**: `TestInt32ToUint32NegativeConversion`
 
-**Function:** `TestInt32ToUint32NegativeConversion`
+Tests basic negative int32 to uint32 conversion scenarios.
 
-Tests the fundamental negative-to-unsigned conversion scenarios.
+**Key test categories**:
+- Edge cases: -1, minimum value (-2147483648)
+- Common negative values: -100, -256, -1000, etc.
+- Values beyond int32 range (parser behavior tests)
+- Positive control values (should succeed)
 
-**Structure:**
-- Edge case: `-1` (most common negative)
-- Edge case: minimum value (`-2147483648`)
-- Additional negative values across the range
-- Extreme negative values beyond type range
-- Positive control cases (should succeed)
-
-**Example:**
+**Example structure**:
 ```go
 {
     name: "int32 -1 to uint32 should error",
@@ -66,164 +60,92 @@ value: -1
 },
 ```
 
-### 2. Boundary Values Test
+### 2. Nested Structures Test
 
-**Function:** `TestInt32ToUint32BoundaryValues`
+**Function**: `TestInt32ToUint32NegativeInNestedStructs`
 
-Tests type boundaries systematically.
+Tests negative values in complex data structures.
 
-**Structure:**
-- Negative boundary values (minimum, one above minimum, powers of 2)
-- Positive boundary values (zero, uint8/uint16 max, type max)
-- Overflow cases (values exceeding type maximum)
-
-**Example:**
+**Structure** (note: no `expectedInMsg` field):
 ```go
 {
-    name: "int32 minimum -2147483648 to uint32",
-    yamlContent: `
-value: -2147483648
-`,
-    target:        &struct{ Value uint32 }{},
-    shouldError:   true,
-    description:   "Minimum int32 value cannot convert to uint32",
-    expectedInMsg: []string{"cannot unmarshal"},
-},
-```
-
-### 3. Error Message Quality Test
-
-**Function:** `TestInt32ToUint32ErrorMessageQuality`
-
-Specifically validates error message content and helpfulness.
-
-**Structure:**
-- Uses `errorPatterns` field (alias for `expectedInMsg`)
-- Focuses on key values that should produce informative errors
-- Validates pattern matching in error messages
-
-**Example:**
-```go
-{
-    name: "int32 -1 error message quality",
-    yamlContent: `
-value: -1
-`,
-    target:        &struct{ Value uint32 }{},
-    errorPatterns: []string{"cannot unmarshal", "-1"},
-    description:   "Error for -1 should mention the value",
-},
-```
-
-### 4. Nested Structures Test
-
-**Function:** `TestInt32ToUint32NegativeInNestedStructs`
-
-Tests conversions in complex YAML structures.
-
-**Structure:**
-- Nested struct fields
-- Arrays/slices
-- Maps
-- Slices of structs
-
-**Note:** May have `shouldError: false` for some cases due to YAML parser behavior.
-
-### 5. Format Variations Test
-
-**Function:** `TestInt32ToUint32NegativeWithDifferentFormats`
-
-Tests different YAML number representations.
-
-**Structure:**
-- Decimal format (`-100.0`)
-- Zero-padded (`-00050`)
-- Quoted strings (`"-256"`)
-- Octal strings (`"-0400"`)
-- Hex strings (`"-0x100"`)
-
----
-
-## Test Execution Pattern
-
-All test functions use the same execution loop:
-
-```go
-for _, tt := range tests {
-    t.Run(tt.name, func(t *testing.T) {
-        parser := NewParser()
-        err := parser.ParseString(tt.yamlContent, tt.target)
-
-        if tt.shouldError {
-            if err == nil {
-                t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
-            } else {
-                t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
-
-                // Verify error message contains expected patterns
-                errMsg := err.Error()
-                lowerErrMsg := strings.ToLower(errMsg)
-
-                for _, expected := range tt.expectedInMsg {
-                    if !strings.Contains(errMsg, expected) && 
-                       !strings.Contains(lowerErrMsg, strings.ToLower(expected)) {
-                        t.Logf("Note: Error message doesn't contain expected pattern %q: %s", expected, errMsg)
-                    }
-                }
-
-                // Verify negative value indication in error
-                if containsAny(lowerErrMsg, []string{"negative", "cannot unmarshal", "out of range", "invalid"}) {
-                    t.Logf("✓ Error message indicates invalid conversion for negative value")
-                } else {
-                    t.Logf("Note: Error message doesn't explicitly mention negative value: %s", errMsg)
-                }
-            }
-        } else {
-            if err != nil {
-                t.Errorf("Test '%s' should succeed but errored: %v - %s", tt.name, err, tt.description)
-            } else {
-                t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
-            }
-        }
-    })
+    name:        string,
+    yamlContent: string,
+    target:      interface{},
+    shouldError: bool,
+    description: string,
 }
 ```
 
----
+**Test scenarios**:
+- Nested struct with negative value
+- Arrays containing negative values
+- Maps with negative values
+- Slices of structs with negative values
 
-## Key Differences: Int32 vs Int64
+### 3. Different Formats Test
 
-### Value Ranges
+**Function**: `TestInt32ToUint32NegativeWithDifferentFormats`
 
-| Type | Minimum | Maximum | Positive Limit |
-|------|---------|---------|----------------|
-| int32 | `-2147483648` | `2147483647` | uint32 max: `4294967295` |
-| int64 | `-9223372036854775808` | `9223372036854775807` | uint64 max: `18446744073709551615` |
+Tests various YAML format representations.
 
-### Target Struct Types
+**Same structure as Nested Structures** (no `expectedInMsg`).
 
-- **Int32 tests:** `&struct{ Value uint32 }{}`
-- **Int64 tests:** `&struct{ Value uint64 }{}`
+**Test scenarios**:
+- Negative decimal format: `-100.0`
+- Zero-padded: `-00050`
+- String-quoted: `"-256"`
+- Octal: `"-0400"`
+- Hexadecimal: `"-0x100"`
 
-### Behavior Differences
+### 4. Boundary Values Test
 
-1. **Decimal format handling:**
-   - Int32: `-100.0` → errors
-   - Int64: `-100.0` → **succeeds** with value `100` (YAML parser converts)
+**Function**: `TestInt32ToUint32BoundaryValues`
 
-2. **Overflow handling:**
-   - Int32: `4294967296` → errors (exceeds uint32 max)
-   - Int64: `18446744073709551616` → **succeeds** silently (YAML parser wraps)
+Tests numeric boundaries and edge cases.
 
-3. **Beyond-minimum values:**
-   - Both wrap silently by YAML parser
-   - Example: `-9223372036854775809` wraps to `9223372036854775808`
+**Structure** (includes `expectedInMsg`):
+```go
+{
+    name:          string,
+    yamlContent:   string,
+    target:        interface{},
+    shouldError:   bool,
+    description:   string,
+    expectedInMsg: []string,  // Used for error quality verification
+}
+```
 
----
+**Negative boundaries**:
+- Minimum int32: `-2147483648`
+- One above minimum: `-2147483647`
+- Powers of 2: `-65536`, `-32768`, `-256`, `-128`
 
-## Helper Functions
+**Positive boundaries**:
+- Zero: `0`
+- Type maximums: `255` (uint8), `65535` (uint16), `4294967295` (uint32)
+- Overflow cases: `4294967296` (should error)
 
-### containsAny
+### 5. Error Message Quality Test
+
+**Function**: `TestInt32ToUint32ErrorMessageQuality`
+
+Verifies that error messages contain useful information.
+
+**Structure** (uses `errorPatterns` instead of `expectedInMsg`):
+```go
+{
+    name:          string,
+    yamlContent:   string,
+    target:        interface{},
+    errorPatterns: []string,  // Note: different field name
+    description:   string,
+}
+```
+
+**Purpose**: Each test case verifies that error messages contain specific patterns for debugging.
+
+## Helper Function: containsAny
 
 ```go
 func containsAny(s string, patterns []string) bool {
@@ -236,95 +158,153 @@ func containsAny(s string, patterns []string) bool {
 }
 ```
 
-**Purpose:** Check if a string contains any of the given patterns (case-sensitive).
+**Usage**: Checks if error message contains any of several valid indicators.
 
-**Usage:** Validates error messages contain expected keywords.
+**Example**:
+```go
+if containsAny(lowerErrMsg, []string{"negative", "cannot unmarshal", "out of range", "invalid"}) {
+    t.Logf("✓ Error message indicates invalid conversion")
+}
+```
 
----
+## Test Execution Pattern
 
-## Template for New Int64 Boundary Value Tests
+### Standard Test Runner Loop
+
+```go
+for _, tt := range tests {
+    t.Run(tt.name, func(t *testing.T) {
+        parser := NewParser()
+        err := parser.ParseString(tt.yamlContent, tt.target)
+
+        if tt.shouldError {
+            if err == nil {
+                t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
+            } else {
+                t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
+                // Optional: Verify error message quality
+            }
+        } else {
+            if err != nil {
+                t.Errorf("Test '%s' should succeed but errored: %v - %s", tt.name, err, tt.description)
+            } else {
+                t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
+            }
+        }
+    })
+}
+```
+
+### Error Message Verification Pattern
+
+When `expectedInMsg` is provided:
+
+```go
+errMsg := err.Error()
+lowerErrMsg := strings.ToLower(errMsg)
+
+for _, expected := range tt.expectedInMsg {
+    if !strings.Contains(errMsg, expected) && !strings.Contains(lowerErrMsg, strings.ToLower(expected)) {
+        t.Logf("Note: Error message doesn't contain expected pattern %q: %s", expected, errMsg)
+    }
+}
+```
+
+## Key Differences: Int32 vs Int64
+
+### Value Ranges
+
+| Type | Minimum | Maximum |
+|------|---------|---------|
+| int32 | -2147483648 | 2147483647 |
+| int64 | -9223372036854775808 | 9223372036854775807 |
+| uint32 | 0 | 4294967295 |
+| uint64 | 0 | 18446744073709551615 |
+
+### Target Types
+
+- **Int32 tests**: Use `uint32` target
+- **Int64 tests**: Use `uint64` target
+
+### Behavioral Differences
+
+1. **Overflow handling**: 
+   - int32: `4294967296` produces error
+   - int64: `18446744073709551616` wraps silently (YAML parser difference)
+
+2. **Decimal format**:
+   - int32: `-100.0` produces error
+   - int64: `-100.0` converts to 100 (no error)
+
+## Template for New Tests
+
+### Basic Test Case Template
 
 ```go
 {
-    name: "int64 [value] to uint64",
+    name: "<type> <value> to <target-type> should error",
     yamlContent: `
-value: [value]
+value: <test-value>
 `,
-    target:        &struct{ Value uint64 }{},
-    shouldError:   [true/false],
-    description:   "[Description of what value represents and expected behavior]",
-    expectedInMsg: []string{"cannot unmarshal"[, additional patterns]},
+    target:        &struct{ Value <target-type> }{},
+    shouldError:   true,
+    description:   "<human-readable description>",
+    expectedInMsg: []string{"cannot unmarshal", "<value>"},
 },
 ```
 
-**Example for int64:**
+### Boundary Test Template
+
 ```go
 {
-    name: "int64 minimum -9223372036854775808 to uint64",
+    name: "<type> <boundary-name> <value> to <target-type>",
     yamlContent: `
-value: -9223372036854775808
+value: <value>
 `,
-    target:        &struct{ Value uint64 }{},
-    shouldError:   true,
-    description:   "Minimum int64 value cannot convert to uint64",
+    target:        &struct{ Value <target-type> }{},
+    shouldError:   <true-for-negative-false-for-positive>,
+    description:   "<boundary-description>",
     expectedInMsg: []string{"cannot unmarshal"},
 },
 ```
 
----
-
-## Template for New Int64 Error Message Quality Tests
+### Error Quality Test Template
 
 ```go
 {
-    name: "int64 [value] error message quality",
+    name: "<type> <value> error message quality",
     yamlContent: `
-value: [value]
+value: <value>
 `,
-    target:        &struct{ Value uint64 }{},
-    errorPatterns: []string{"cannot unmarshal"[, value string]},
-    description:   "Error for [value] should [description of expected message content]",
+    target:        &struct{ Value <target-type> }{},
+    errorPatterns: []string{"cannot unmarshal", "<value>"},
+    description:   "Error for <value> should mention the value",
 },
 ```
 
-**Example for int64:**
-```go
-{
-    name: "int64 -9223372036854775808 error message quality",
-    yamlContent: `
-value: -9223372036854775808
-`,
-    target:        &struct{ Value uint64 }{},
-    errorPatterns: []string{"cannot unmarshal", "-9223372036854775808"},
-    description:   "Error for minimum int64 should mention the value",
-},
-```
+## Naming Conventions
 
----
+### Test Function Names
+- Format: `TestInt<Source>To<Target><Scenario>`
+- Examples:
+  - `TestInt32ToUint32NegativeConversion`
+  - `TestInt64ToUint64BoundaryValues`
+  - `TestInt32ToUint32ErrorMessageQuality`
+
+### Test Case Names
+- Format: `"<source-type> <value> to <target-type> <expectation>"`
+- Examples:
+  - `"int32 -1 to uint32 should error"`
+  - `"int32 2147483647 to uint32 boundary"`
+  - `"int32 minimum -2147483648 to uint32"`
 
 ## Summary
 
-### Key Fields for Boundary Tests:
-1. `name` - descriptive identifier
-2. `yamlContent` - YAML with value to test
-3. `target` - `&struct{ Value uint64 }{}` for int64 tests
-4. `shouldError` - true for negatives, false for valid positives
-5. `description` - explains what boundary is being tested
-6. `expectedInMsg` - `[]string{"cannot unmarshal"}` minimum for errors
+The int32 test pattern provides a comprehensive, structured approach to testing integer type conversions with:
 
-### Key Fields for Error Message Quality Tests:
-1. `name` - "int64 [value] error message quality"
-2. `yamlContent` - YAML with error-causing value
-3. `target` - `&struct{ Value uint64 }{}`
-4. `errorPatterns` - array of expected patterns (value + "cannot unmarshal")
-5. `description` - explains what message should contain
+1. **Consistent structure** across all test functions
+2. **Clear separation of concerns** (basic conversion, nested structures, formats, boundaries, error quality)
+3. **Verifiable error messages** through pattern matching
+4. **Scalable template** that can be adapted for int64 and other integer types
 
-### Pattern Differences Noted:
-- Int64 has additional larger negative values to test
-- Int64 decimal format succeeds (differs from int32)
-- Int64 overflow wraps silently (differs from int32)
-- Both use identical test structure and validation logic
-
----
-
-**Generated for bead bf-4d1ij** - Task: Analyze int32 test pattern structure
+The pattern emphasizes both correctness (does it error when it should?) and quality (are the error messages useful?).
