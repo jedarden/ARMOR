@@ -581,11 +581,7 @@ metadata:
 
 func TestYAMLParseError(t *testing.T) {
 	t.Run("error message includes file path", func(t *testing.T) {
-		err := &YAMLParseError{
-			FilePath: "/test/file.yaml",
-			Message:  "syntax error",
-			Line:     5,
-		}
+		err := NewYAMLParseError("/test/file.yaml", "syntax error", 5, 0, nil)
 
 		errMsg := err.Error()
 		if !containsString(errMsg, "/test/file.yaml") {
@@ -594,11 +590,7 @@ func TestYAMLParseError(t *testing.T) {
 	})
 
 	t.Run("error message includes line number", func(t *testing.T) {
-		err := &YAMLParseError{
-			FilePath: "/test/file.yaml",
-			Message:  "syntax error",
-			Line:     5,
-		}
+		err := NewYAMLParseError("/test/file.yaml", "syntax error", 5, 0, nil)
 
 		errMsg := err.Error()
 		if !containsString(errMsg, "line 5") {
@@ -607,12 +599,7 @@ func TestYAMLParseError(t *testing.T) {
 	})
 
 	t.Run("error message includes line and column", func(t *testing.T) {
-		err := &YAMLParseError{
-			FilePath: "/test/file.yaml",
-			Message:  "syntax error",
-			Line:     5,
-			Column:   12,
-		}
+		err := NewYAMLParseError("/test/file.yaml", "syntax error", 5, 12, nil)
 
 		errMsg := err.Error()
 		if !containsString(errMsg, "line 5, column 12") {
@@ -621,10 +608,7 @@ func TestYAMLParseError(t *testing.T) {
 	})
 
 	t.Run("error message without line number", func(t *testing.T) {
-		err := &YAMLParseError{
-			FilePath: "/test/file.yaml",
-			Message:  "syntax error",
-		}
+		err := NewYAMLParseError("/test/file.yaml", "syntax error", 0, 0, nil)
 
 		errMsg := err.Error()
 		if !containsString(errMsg, "YAML syntax error") {
@@ -634,11 +618,7 @@ func TestYAMLParseError(t *testing.T) {
 
 	t.Run("unwrap returns underlying error", func(t *testing.T) {
 		underlyingErr := fmt.Errorf("underlying error")
-		err := &YAMLParseError{
-			FilePath: "/test/file.yaml",
-			Message:  "syntax error",
-			RawError: underlyingErr,
-		}
+		err := NewYAMLParseError("/test/file.yaml", "syntax error", 0, 0, underlyingErr)
 
 		if err.Unwrap() != underlyingErr {
 			t.Error("expected Unwrap to return underlying error")
@@ -646,10 +626,7 @@ func TestYAMLParseError(t *testing.T) {
 	})
 
 	t.Run("unwrap with nil underlying error", func(t *testing.T) {
-		err := &YAMLParseError{
-			FilePath: "/test/file.yaml",
-			Message:  "syntax error",
-		}
+		err := NewYAMLParseError("/test/file.yaml", "syntax error", 0, 0, nil)
 
 		if err.Unwrap() != nil {
 			t.Error("expected Unwrap to return nil when RawError is nil")
