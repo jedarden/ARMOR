@@ -6,25 +6,43 @@ Decode the base64-encoded SECRET_ACCESS_KEY value retrieved in the previous step
 ## Finding
 The prerequisite base64 file `/tmp/litestream_secret_key.b64` exists but is **empty (0 bytes)**.
 
-This indicates that the previous bead (responsible for retrieving and base64-encoding the SECRET_ACCESS_KEY) did not successfully complete its task, or the file was not properly written.
+This indicates that the previous bead (responsible for retrieving and base64-encoding the SECRET_ACCESS_KEY) did not successfully complete its task.
 
-## Attempted Commands
-```bash
-base64 -d /tmp/litestream_secret_key.b64 > /tmp/litestream_secret_key.txt
+## Root Cause: RBAC Blockade
+Investigation revealed that the previous step was blocked by RBAC restrictions. The file `/tmp/litestream_secret_key_encoded.b64` contains an error message instead of base64-encoded data:
+
+```
+Error from server (Forbidden): secrets "armor-writer" is forbidden:
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get
+resource "secrets" in API group "" in the namespace "devimprint"
 ```
 
-Result: Decode operation produced an empty output file because the source was empty.
+This is the same RBAC blockade documented in **bead bf-2fdy0**: the read-only kubectl proxy explicitly denies access to secrets.
 
-## Source File Status
+## Files in /tmp
 ```
--rw-r--r-- 1 coding users 0 Jul 12 11:09 /tmp/litestream_secret_key.b64
+-rw-r--r-- 1 coding users   0 Jul 12 11:29 /tmp/litestream_secret_key.b64
+-rw------- 1 coding users 106 Jul 12 10:56 /tmp/litestream_secret_key_decoded.txt
+-rw-r--r-- 1 coding users 205 Jul 12 10:40 /tmp/litestream_secret_key_encoded.b64
+-rw-r--r-- 1 coding users   0 Jul 12 11:30 /tmp/litestream_secret_key.txt
 ```
+
+All of these files either contain error messages or are empty due to the RBAC blockade.
 
 ## Conclusion
-The SECRET_ACCESS_KEY cannot be decoded because the base64-encoded source file is empty. The previous step in the workflow needs to be completed successfully before this decode operation can proceed.
+The SECRET_ACCESS_KEY cannot be decoded because:
+1. The previous step was blocked by RBAC when trying to retrieve the secret via the read-only proxy
+2. No valid base64-encoded data was produced
+3. This workflow requires read-write access to secrets or an alternative method of secret retrieval
 
-**Recommendation:** Re-run the previous bead to properly retrieve and encode the SECRET_ACCESS_KEY, then retry this decode operation.
+**Related Issue:** Bead bf-2fdy0 documents this RBAC blockade in detail.
+
+**Recommendation:** This workflow cannot proceed via the read-only proxy. Alternative approaches include:
+- Using a cluster-admin kubeconfig with secret access
+- Using ExternalSecrets to sync secrets outside the cluster
+- Executing directly on a pod that has access to the secret (if such a pod exists)
 
 ## Status
-- ❌ Cannot decode - source file is empty
-- ❌ Previous step needs to be completed first
+- ❌ Cannot decode - blocked by RBAC
+- ❌ Previous step blocked: read-only proxy cannot access secrets
+- 🔗 Related to bead bf-2fdy0
