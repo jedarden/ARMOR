@@ -80,7 +80,7 @@ func TestIsMappingKey(t *testing.T) {
 		{
 			name:     "comment with colon",
 			line:     "# TODO: fix this",
-			expected: true,
+			expected: false, // Comment lines should be filtered out
 		},
 		{
 			name:     "sequence item",
@@ -438,11 +438,11 @@ func TestCommentFilteringIntegration(t *testing.T) {
 			detectAsKeyAfterStrip: true,
 		},
 		{
-			name:                  "comment with colon detected as key by basic function",
+			name:                  "comment line with colon is filtered out",
 			line:                  "# TODO: fix this issue",
 			isComment:             true,
 			stripped:              "# TODO: fix this issue",
-			detectAsKeyAfterStrip: true, // IsMappingKey is basic - just checks for colon
+			detectAsKeyAfterStrip: false, // Comment lines are now properly filtered by IsMappingKey
 		},
 	}
 
