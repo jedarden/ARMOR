@@ -1,49 +1,39 @@
-# Task bf-3bnpe: Verification Complete
+# BF-3BNPE: Update NewValidationError calls to pass path parameter
 
-## Task
-Update example and formatting test files to pass path parameter to NewValidationError calls.
+## Status: Already Completed
 
-## Scope
-- internal/yamlutil/error_message_format_examples_test.go (8 calls)
-- internal/yamlutil/verify_formatting_test.go (2 calls)
-- internal/yamlutil/validation_error_demo_test.go (3 calls)
+This task was already completed in commit d8d59082:
+- "test(bf-3bnpe): update NewValidationError calls to pass path parameter in example and formatting tests"
 
-## Verification Status: COMPLETE ✓
+## Verification
 
-The work was already completed in commit `d8d59082` on 2026-07-12:
-```
-test(bf-3bnpe): update NewValidationError calls to pass path parameter in example and formatting tests
-```
+Verified on 2026-07-12 that all acceptance criteria are met:
 
-### All 13 NewValidationError calls verified:
+### 1. All NewValidationError calls pass path parameter ✓
+- `internal/yamlutil/error_message_format_examples_test.go`: 8 calls - all pass path parameter
+- `internal/yamlutil/verify_formatting_test.go`: 2 calls - all pass path parameter  
+- `internal/yamlutil/validation_error_demo_test.go`: 3 calls - all pass path parameter
 
-1. **error_message_format_examples_test.go** (8 calls):
-   - Line 195: path="server.port" ✓
-   - Line 258: path=tt.fieldPath ✓
-   - Line 283: path="server.port" ✓
-   - Line 307: path="config.yaml" ✓
-   - Line 336: path="spec.template.spec.containers[0].image" ✓
-   - Line 739: path="server.port" ✓
-   - Line 837: path="field" ✓
-   - Line 889: path="field" ✓
+Total: 13 NewValidationError calls across 3 files
 
-2. **verify_formatting_test.go** (2 calls):
-   - Line 35-45: path="spec.replicas" ✓
-   - Line 112: path="test.yaml" (filePath as fallback when fieldPath is empty) ✓
+### 2. Path values reflect actual validation error location ✓
+- When fieldPath is available, it is used as the path parameter
+- When fieldPath is empty, filePath is used as fallback
+- Examples:
+  - `NewValidationError(..., "server.port", ..., "server.port")` - uses fieldPath
+  - `NewValidationError(..., "", ..., "config.yaml")` - uses filePath when no fieldPath
 
-3. **validation_error_demo_test.go** (3 calls):
-   - Line 15-25: path="server.port" ✓
-   - Line 31-41: path="spec.template.spec.containers[0].image" ✓
-   - Line 47-57: path="spec.replicas" ✓
+### 3. Tests still pass after changes ✓
+All tests in the affected files pass:
+- `TestErrorFormattingExamples` - PASS
+- `TestValidationErrorDemo` - PASS
+- All ValidationError formatting tests - PASS
 
-### Acceptance Criteria Met:
-- ✓ All NewValidationError calls in these 3 files pass path parameter
-- ✓ Path values reflect actual validation error location (fieldPath when available, filePath as fallback)
-- ✓ Tests still pass after changes
+## Changes Made in Original Commit
 
-### Test Results:
-```
-ok  	github.com/jedarden/armor/internal/yamlutil	0.036s
-```
+Commit d8d59082 made the following changes:
+- Updated line 307 in `error_message_format_examples_test.go`
+- Updated line 112 in `verify_formatting_test.go`
+- Both changes added the path parameter to NewValidationError calls
 
-All tests pass successfully.
+No additional changes needed.
