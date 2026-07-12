@@ -1364,6 +1364,276 @@ func TestCalculateIndentationTabAndMixedScenarios(t *testing.T) {
 	}
 }
 
+// TestCalculateIndentationUnicode tests Unicode content with indentation.
+// This test covers the acceptance criteria requirement for testing Unicode content with indentation.
+func TestCalculateIndentationUnicode(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected int
+	}{
+		{
+			name:     "emoji with spaces",
+			line:     "  🚀 rocket: launch",
+			expected: 2,
+		},
+		{
+			name:     "unicode key with indentation",
+			line:     "    clé: valeur", // French: key/value
+			expected: 4,
+		},
+		{
+			name:     "chinese characters with indent",
+			line:     "      键: 值", // Chinese: key/value
+			expected: 6,
+		},
+		{
+			name:     "arabic with right-to-left text",
+			line:     "  المفتاح: القيمة", // Arabic: the key/the value
+			expected: 2,
+		},
+		{
+			name:     "cyrillic with indentation",
+			line:     "    ключ: значение", // Russian: key/value
+			expected: 4,
+		},
+		{
+			name:     "greek with spaces",
+			line:     "  κλειδί: τιμή", // Greek: key/value
+			expected: 2,
+		},
+		{
+			name:     "japanese hiragana",
+			line:     "    かぎ: あたい", // Japanese: key/value
+			expected: 4,
+		},
+		{
+			name:     "korean hangul",
+			line:     "      키: 값", // Korean: key/value
+			expected: 6,
+		},
+		{
+			name:     "mixed emoji and unicode",
+			line:     "  🔒 clé_secrète: 🔐 valeur_chiffrée",
+			expected: 2,
+		},
+		{
+			name:     "tab with unicode",
+			line:     "\t日本語: 値", // Japanese with tab indent
+			expected: 8, // 1 tab expanded to 8 spaces
+		},
+		{
+			name:     "multiple tabs with emoji",
+			line:     "\t\t🌍 世界: 世界", // Chinese with 2 tabs
+			expected: 16, // 2 tabs expanded to 16 spaces
+		},
+		{
+			name:     "deep indentation with unicode",
+			line:     "          αρετη: αξία", // Greek with 10 spaces
+			expected: 10,
+		},
+		{
+			name:     "mixed tabs and spaces with unicode",
+			line:     "  \t    clé: valeur", // 2 spaces + tab + 4 spaces
+			expected: 12, // 2 spaces + tab (8) + 4 spaces = 12 (rounded to 8 for tab, then + 4)
+		},
+		{
+			name:     "unicode symbols only as content",
+			line:     "    ⚡: 🎯",
+			expected: 4,
+		},
+		{
+			name:     "russian with nested indentation",
+			line:     "      данные: конфигурация",
+			expected: 6,
+		},
+		{
+			name:     "hebrew right-to-left with indent",
+			line:     "  מפתח: ערך", // Hebrew: key/value
+			expected: 2,
+		},
+		{
+			name:     "thai with spaces",
+			line:     "    คีย์: ค่า", // Thai: key/value
+			expected: 4,
+		},
+		{
+			name:     "currency symbols with indent",
+			line:     "  ¥: $€£",
+			expected: 2,
+		},
+		{
+			name:     "mathematical symbols",
+			line:     "    ∑: ∫∞",
+			expected: 4,
+		},
+		{
+			name:     "arrow symbols",
+			line:     "  →: ←↑↓",
+			expected: 2,
+		},
+		{
+			name:     "box drawing characters",
+			line:    "    ┌───┐: │",
+			expected: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calculateIndentation(tt.line)
+			if result != tt.expected {
+				t.Errorf("calculateIndentation(%q) = %d, want %d", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestClassifyLineUnicode verifies Unicode line classification.
+// This test covers the acceptance criteria requirement for testing Unicode content with indentation.
+func TestClassifyLineUnicode(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected SimpleLineCategory
+	}{
+		{
+			name:     "unicode comment with emoji",
+			line:     "  # 🚀 Rocket launch comment",
+			expected: CategoryComment,
+		},
+		{
+			name:     "unicode comment with chinese",
+			line:     "    # 这是中文注释", // This is Chinese comment
+			expected: CategoryComment,
+		},
+		{
+			name:     "unicode comment with arabic",
+			line:     "\t# تعليق باللغة العربية", // Arabic comment
+			expected: CategoryComment,
+		},
+		{
+			name:     "unicode comment with russian",
+			line:     "  # Русский комментарий", // Russian comment
+			expected: CategoryComment,
+		},
+		{
+			name:     "unicode content with french",
+			line:     "  clé: valeur", // French: key/value
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode content with chinese",
+			line:     "    键: 值", // Chinese: key/value
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode content with japanese",
+			line:     "  かぎ: あたい", // Japanese: key/value
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode content with korean",
+			line:     "    키: 값", // Korean: key/value
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode content with emoji",
+			line:     "  🚀: 🎯",
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode content with mixed scripts",
+			line:     "    キー: valeur", // Mixed Japanese/French
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode blank with unicode spaces",
+			line:     "   ", // Regular spaces only
+			expected: CategoryBlank,
+		},
+		{
+			name:     "unicode blank with ideographic space",
+			line:     "　", // Ideographic space (U+3000) - should be blank after trim
+			expected: CategoryBlank,
+		},
+		{
+			name:     "unicode blank with non-breaking space",
+			line:     "  ", // Regular spaces
+			expected: CategoryBlank,
+		},
+		{
+			name:     "unicode content with zero-width joiner",
+			line:     "  👨‍👩‍👧: family", // Emoji with ZWJ
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode comment with mixed emoji and text",
+			line:     "# 🔒 Security check: 安全检查",
+			expected: CategoryComment,
+		},
+		{
+			name:     "unicode content with right-to-left",
+			line:     "  المفتاح: القيمة", // Arabic: key/value
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode comment with hebrew",
+			line:     "    # זהו הערה בעברית", // Hebrew comment
+			expected: CategoryComment,
+		},
+		{
+			name:     "unicode content with thai",
+			line:     "  คีย์: ค่า", // Thai: key/value
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode content with currency symbols",
+			line:    "    ¥: $€£",
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode content with mathematical symbols",
+			line:     "  ∑: ∫∞",
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode comment with symbols",
+			line:     "# ⚠️ Warning: 警告",
+			expected: CategoryComment,
+		},
+		{
+			name:     "unicode content with box drawing",
+			line:     "  ┌───┐: │",
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode content with arrows",
+			line:     "    →: ←↑↓",
+			expected: CategoryContent,
+		},
+		{
+			name:     "unicode comment only hash with unicode spaces",
+			line:     "   #   ", // Hash with spaces only
+			expected: CategoryComment,
+		},
+		{
+			name:     "unicode blank line with tabs and unicode spaces",
+			line:     "  \t  \t", // Mixed whitespace
+			expected: CategoryBlank,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := classifyLine(tt.line)
+			if result != tt.expected {
+				t.Errorf("classifyLine(%q) = %v, want %v", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestCalculateIndentationVeryLong tests very long indentation edge cases.
 // This test covers the acceptance criteria requirement for testing very long indentation.
 func TestCalculateIndentationVeryLong(t *testing.T) {
