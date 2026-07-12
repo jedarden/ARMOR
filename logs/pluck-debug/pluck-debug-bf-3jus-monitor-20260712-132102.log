@@ -1,0 +1,480 @@
+[2026-07-12 13:21:04] Check #1 - Stdout: 0 bytes (+0), Stderr: 3789 bytes (+3789)
+[2026-07-12 13:21:04] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:04] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:06] Check #2 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+5311)
+[2026-07-12 13:21:06] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:06] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:08] Check #3 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:08] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:08] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:10] Check #4 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:10] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:10] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:12] Check #5 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:12] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:12] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:14] Check #6 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:14] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:14] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:16] Check #7 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:16] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:16] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:18] Check #8 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:18] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:18] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:21] Check #9 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:21] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:21] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:23] Check #10 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:23] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:23] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:25] Check #11 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:25] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:25] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:27] Check #12 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:27] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:27] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:29] Check #13 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:29] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:29] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:31] Check #14 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:31] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:31] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:33] Check #15 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:33] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:33] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:35] Check #16 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:35] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:35] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:37] Check #17 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:37] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:37] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:39] Check #18 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:39] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:39] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:41] Check #19 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:41] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:41] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:43] Check #20 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:43] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:43] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:45] Check #21 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:45] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:45] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:47] Check #22 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:47] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:47] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:49] Check #23 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:49] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:49] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:51] Check #24 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:51] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:51] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:53] Check #25 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:53] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:53] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:55] Check #26 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:55] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:55] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:57] Check #27 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:57] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:57] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:21:59] Check #28 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:21:59] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:21:59] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:01] Check #29 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:01] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:01] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:03] Check #30 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:03] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:03] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:05] Check #31 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:05] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:05] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:07] Check #32 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:07] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:07] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:09] Check #33 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:09] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:09] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:11] Check #34 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:11] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:11] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:13] Check #35 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:13] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:13] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:15] Check #36 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:15] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:15] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:17] Check #37 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:17] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:17] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:19] Check #38 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:19] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:19] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:21] Check #39 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:21] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:21] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:23] Check #40 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:23] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:23] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:25] Check #41 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:25] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:25] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:27] Check #42 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:27] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:27] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:29] Check #43 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:29] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:29] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:31] Check #44 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:31] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:31] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:33] Check #45 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:33] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:33] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:35] Check #46 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:35] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:35] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:37] Check #47 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:37] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:37] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:39] Check #48 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:39] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:39] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:41] Check #49 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:41] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:41] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:43] Check #50 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:43] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:43] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:45] Check #51 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:45] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:45] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:47] Check #52 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:47] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:47] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:49] Check #53 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:49] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:49] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:51] Check #54 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:51] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:51] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:53] Check #55 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:53] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:53] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:55] Check #56 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:55] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:55] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:57] Check #57 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:57] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:57] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:22:59] Check #58 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:22:59] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:22:59] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:01] Check #59 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:01] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:01] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:03] Check #60 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:03] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:03] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:05] Check #61 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:05] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:05] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:07] Check #62 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:07] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:07] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:09] Check #63 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:09] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:09] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:11] Check #64 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:11] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:11] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:13] Check #65 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:13] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:13] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:15] Check #66 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:15] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:15] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:17] Check #67 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:17] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:17] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:19] Check #68 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:19] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:19] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:21] Check #69 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:21] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:21] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:23] Check #70 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:23] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:23] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:25] Check #71 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:25] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:25] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:27] Check #72 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:27] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:27] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:29] Check #73 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:29] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:29] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:31] Check #74 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:31] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:31] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:33] Check #75 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:33] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:33] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:35] Check #76 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:35] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:35] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:37] Check #77 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:37] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:37] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:39] Check #78 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:39] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:39] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:41] Check #79 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:41] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:41] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:43] Check #80 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:43] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:43] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:45] Check #81 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:45] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:45] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:47] Check #82 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:47] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:47] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:49] Check #83 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:49] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:49] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:51] Check #84 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:51] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:51] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:53] Check #85 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:53] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:53] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:55] Check #86 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:55] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:55] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:57] Check #87 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:57] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:57] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:23:59] Check #88 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:23:59] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:23:59] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:01] Check #89 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:01] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:01] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:03] Check #90 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:03] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:03] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:05] Check #91 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:05] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:05] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:08] Check #92 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:08] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:08] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:10] Check #93 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:10] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:10] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:12] Check #94 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:12] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:12] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:14] Check #95 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:14] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:14] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:16] Check #96 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:16] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:16] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:18] Check #97 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:18] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:18] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:20] Check #98 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:20] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:20] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:22] Check #99 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:22] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:22] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:24] Check #100 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:24] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:24] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:26] Check #101 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:26] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:26] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:28] Check #102 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:28] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:28] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:30] Check #103 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:30] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:30] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:32] Check #104 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:32] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:32] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:34] Check #105 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:34] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:34] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:36] Check #106 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:36] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:36] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:38] Check #107 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:38] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:38] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:40] Check #108 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:40] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:40] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:42] Check #109 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:42] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:42] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:44] Check #110 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:44] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:44] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:46] Check #111 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:46] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:46] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:48] Check #112 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:48] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:48] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:50] Check #113 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:50] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:50] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:52] Check #114 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:52] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:52] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:54] Check #115 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:54] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:54] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:56] Check #116 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:56] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:56] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:24:58] Check #117 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:24:58] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:24:58] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:00] Check #118 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:00] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:00] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:02] Check #119 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:02] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:02] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:04] Check #120 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:04] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:04] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:06] Check #121 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:06] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:06] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:08] Check #122 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:08] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:08] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:10] Check #123 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:10] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:10] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:12] Check #124 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:12] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:12] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:14] Check #125 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:14] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:14] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:16] Check #126 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:16] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:16] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:18] Check #127 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:18] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:18] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:20] Check #128 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:20] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:20] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:22] Check #129 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:22] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:22] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:24] Check #130 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:24] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:24] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:26] Check #131 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:26] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:26] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:28] Check #132 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:28] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:28] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:30] Check #133 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:30] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:30] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:32] Check #134 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:32] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:32] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:34] Check #135 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:34] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:34] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:36] Check #136 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:36] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:36] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:38] Check #137 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:38] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:38] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:40] Check #138 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:40] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:40] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:42] Check #139 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:42] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:42] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:44] Check #140 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:44] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:44] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:46] Check #141 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:46] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:46] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:48] Check #142 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:48] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:48] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:50] Check #143 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:50] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:50] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:52] Check #144 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:52] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:52] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:54] Check #145 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:54] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:54] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:56] Check #146 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:56] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:56] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:25:58] Check #147 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:25:58] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:25:58] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:00] Check #148 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:26:00] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:00] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:02] Check #149 - Stdout: 0 bytes (+0), Stderr: 9100 bytes (+0)
+[2026-07-12 13:26:02] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:02] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:04] Check #150 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+95)
+[2026-07-12 13:26:04] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:04] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:06] Check #151 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+0)
+[2026-07-12 13:26:06] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:06] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:08] Check #152 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+0)
+[2026-07-12 13:26:08] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:08] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:10] Check #153 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+0)
+[2026-07-12 13:26:10] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:10] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:12] Check #154 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+0)
+[2026-07-12 13:26:12] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:12] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:14] Check #155 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+0)
+[2026-07-12 13:26:14] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:14] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:16] Check #156 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+0)
+[2026-07-12 13:26:16] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:16] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:18] Check #157 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+0)
+[2026-07-12 13:26:18] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:18] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:20] Check #158 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+0)
+[2026-07-12 13:26:20] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:20] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:22] Check #159 - Stdout: 0 bytes (+0), Stderr: 9195 bytes (+0)
+[2026-07-12 13:26:22] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:22] ⚠️  WARNINGS DETECTED: 1 warning(s) found
+[2026-07-12 13:26:24] Check #160 - Stdout: 0 bytes (+0), Stderr: 11635 bytes (+2440)
+[2026-07-12 13:26:24] 🚨 ERRORS DETECTED: 9 error(s) found
+[2026-07-12 13:26:24] ⚠️  WARNINGS DETECTED: 1 warning(s) found
