@@ -697,8 +697,8 @@ value: -1
 value: -9223372036854775808
 `,
 			target:        &struct{ Value uint64 }{},
-			errorPatterns: []string{"cannot unmarshal"},
-			description:   "Error for minimum int64 should indicate unmarshal failure",
+			errorPatterns: []string{"cannot unmarshal", "-9223372036854775808"},
+			description:   "Error for minimum int64 should mention the value",
 		},
 		{
 			name: "int64 -2147483648 error message quality",
