@@ -1,9 +1,229 @@
 //! Result types for YAML parsing operations
 //!
 //! This module defines the result types used by the YAML parser.
+//! This module also integrates error types from bf-68hqo for comprehensive
+//! error categorization and handling.
 
 use crate::parsers::yaml::error::{ParseError, Result};
 use std::fmt;
+
+/// Error type categorization for validation and parsing errors
+///
+/// This enum defines the high-level categories of errors that can occur
+/// during YAML processing and schema validation, following the bf-68hqo
+/// error hierarchy design.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorType {
+    /// Syntax errors in YAML source (invalid structure, malformed tokens)
+    Syntax,
+    /// I/O errors (file not found, permission denied, read failures)
+    Io,
+    /// Validation errors (constraint violations, required field missing)
+    Validation,
+    /// Type mismatch errors (unexpected type for a field)
+    TypeMismatch,
+    /// UTF-8 encoding errors
+    InvalidUtf8,
+    /// Unexpected end of input
+    UnexpectedEof,
+    /// Unknown anchor or alias references
+    UnknownAnchor,
+    /// Duplicate key in mapping
+    DuplicateKey,
+    /// Other uncategorized errors
+    Other,
+}
+
+impl fmt::Display for ErrorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Syntax => write!(f, "syntax error"),
+            Self::Io => write!(f, "I/O error"),
+            Self::Validation => write!(f, "validation error"),
+            Self::TypeMismatch => write!(f, "type mismatch"),
+            Self::InvalidUtf8 => write!(f, "invalid UTF-8 encoding"),
+            Self::UnexpectedEof => write!(f, "unexpected end of input"),
+            Self::UnknownAnchor => write!(f, "unknown anchor"),
+            Self::DuplicateKey => write!(f, "duplicate key"),
+            Self::Other => write!(f, "error"),
+        }
+    }
+}
+
+/// Specific error codes for programmatic error handling
+///
+/// These codes provide machine-readable identifiers for specific error conditions,
+/// enabling automated error handling and reporting. Following the bf-68hqo design,
+/// each code maps to a specific validation or parsing failure scenario.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
+pub enum ErrorCode {
+    // ========== Syntax Errors ==========
+    /// Invalid YAML syntax structure
+    YAML_INVALID_SYNTAX,
+    /// Invalid indentation in YAML
+    YAML_INVALID_INDENTATION,
+    /// Invalid delimiter (colon, bracket, brace)
+    YAML_INVALID_DELIMITER,
+    /// Invalid escape sequence
+    YAML_INVALID_ESCAPE_SEQUENCE,
+    /// Invalid scalar value
+    YAML_INVALID_SCALAR,
+
+    // ========== Type Mismatches ==========
+    /// Expected integer, got another type
+    TYPE_EXPECTED_INTEGER,
+    /// Expected string, got another type
+    TYPE_EXPECTED_STRING,
+    /// Expected boolean, got another type
+    TYPE_EXPECTED_BOOLEAN,
+    /// Expected array, got another type
+    TYPE_EXPECTED_ARRAY,
+    /// Expected object/map, got another type
+    TYPE_EXPECTED_OBJECT,
+    /// Expected number, got another type
+    TYPE_EXPECTED_NUMBER,
+    /// Null value where non-null required
+    TYPE_UNEXPECTED_NULL,
+
+    // ========== Validation Errors ==========
+    /// Required field is missing
+    VALIDATION_REQUIRED_FIELD_MISSING,
+    /// Value out of allowed range
+    VALIDATION_VALUE_OUT_OF_RANGE,
+    /// String too short
+    VALIDATION_STRING_TOO_SHORT,
+    /// String too long
+    VALIDATION_STRING_TOO_LONG,
+    /// String doesn't match pattern
+    VALIDATION_PATTERN_MISMATCH,
+    /// Value not in allowed set
+    VALIDATION_INVALID_VALUE,
+    /// Array has too few items
+    VALIDATION_ARRAY_TOO_FEW_ITEMS,
+    /// Array has too many items
+    VALIDATION_ARRAY_TOO_MANY_ITEMS,
+    /// Array items not unique
+    VALIDATION_ARRAY_NOT_UNIQUE,
+    /// Object has too few properties
+    VALIDATION_OBJECT_TOO_FEW_PROPERTIES,
+    /// Object has too many properties
+    VALIDATION_OBJECT_TOO_MANY_PROPERTIES,
+
+    // ========== I/O Errors ==========
+    /// File not found
+    IO_FILE_NOT_FOUND,
+    /// Permission denied
+    IO_PERMISSION_DENIED,
+    /// Read failed
+    IO_READ_FAILED,
+    /// Write failed
+    IO_WRITE_FAILED,
+
+    // ========== Encoding Errors ==========
+    /// Invalid UTF-8 sequence
+    ENCODING_INVALID_UTF8,
+
+    // ========== Other Errors ==========
+    /// Unknown anchor reference
+    ANCHOR_UNKNOWN,
+    /// Duplicate key in mapping
+    KEY_DUPLICATE,
+    /// Unexpected end of input
+    EOF_UNEXPECTED,
+}
+
+impl ErrorCode {
+    /// Get the error type category for this error code
+    pub fn error_type(&self) -> ErrorType {
+        match self {
+            // Syntax errors
+            Self::YAML_INVALID_SYNTAX | Self::YAML_INVALID_INDENTATION |
+            Self::YAML_INVALID_DELIMITER | Self::YAML_INVALID_ESCAPE_SEQUENCE |
+            Self::YAML_INVALID_SCALAR => ErrorType::Syntax,
+
+            // Type mismatches
+            Self::TYPE_EXPECTED_INTEGER | Self::TYPE_EXPECTED_STRING |
+            Self::TYPE_EXPECTED_BOOLEAN | Self::TYPE_EXPECTED_ARRAY |
+            Self::TYPE_EXPECTED_OBJECT | Self::TYPE_EXPECTED_NUMBER |
+            Self::TYPE_UNEXPECTED_NULL => ErrorType::TypeMismatch,
+
+            // Validation errors
+            Self::VALIDATION_REQUIRED_FIELD_MISSING | Self::VALIDATION_VALUE_OUT_OF_RANGE |
+            Self::VALIDATION_STRING_TOO_SHORT | Self::VALIDATION_STRING_TOO_LONG |
+            Self::VALIDATION_PATTERN_MISMATCH | Self::VALIDATION_INVALID_VALUE |
+            Self::VALIDATION_ARRAY_TOO_FEW_ITEMS | Self::VALIDATION_ARRAY_TOO_MANY_ITEMS |
+            Self::VALIDATION_ARRAY_NOT_UNIQUE | Self::VALIDATION_OBJECT_TOO_FEW_PROPERTIES |
+            Self::VALIDATION_OBJECT_TOO_MANY_PROPERTIES => ErrorType::Validation,
+
+            // I/O errors
+            Self::IO_FILE_NOT_FOUND | Self::IO_PERMISSION_DENIED |
+            Self::IO_READ_FAILED | Self::IO_WRITE_FAILED => ErrorType::Io,
+
+            // Encoding errors
+            Self::ENCODING_INVALID_UTF8 => ErrorType::InvalidUtf8,
+
+            // Other errors
+            Self::ANCHOR_UNKNOWN => ErrorType::UnknownAnchor,
+            Self::KEY_DUPLICATE => ErrorType::DuplicateKey,
+            Self::EOF_UNEXPECTED => ErrorType::UnexpectedEof,
+        }
+    }
+
+    /// Get a human-readable description for this error code
+    pub fn description(&self) -> &'static str {
+        match self {
+            // Syntax errors
+            Self::YAML_INVALID_SYNTAX => "Invalid YAML syntax structure",
+            Self::YAML_INVALID_INDENTATION => "Invalid YAML indentation",
+            Self::YAML_INVALID_DELIMITER => "Invalid YAML delimiter",
+            Self::YAML_INVALID_ESCAPE_SEQUENCE => "Invalid escape sequence",
+            Self::YAML_INVALID_SCALAR => "Invalid scalar value",
+
+            // Type mismatches
+            Self::TYPE_EXPECTED_INTEGER => "Expected integer type",
+            Self::TYPE_EXPECTED_STRING => "Expected string type",
+            Self::TYPE_EXPECTED_BOOLEAN => "Expected boolean type",
+            Self::TYPE_EXPECTED_ARRAY => "Expected array type",
+            Self::TYPE_EXPECTED_OBJECT => "Expected object type",
+            Self::TYPE_EXPECTED_NUMBER => "Expected number type",
+            Self::TYPE_UNEXPECTED_NULL => "Unexpected null value",
+
+            // Validation errors
+            Self::VALIDATION_REQUIRED_FIELD_MISSING => "Required field is missing",
+            Self::VALIDATION_VALUE_OUT_OF_RANGE => "Value out of allowed range",
+            Self::VALIDATION_STRING_TOO_SHORT => "String too short",
+            Self::VALIDATION_STRING_TOO_LONG => "String too long",
+            Self::VALIDATION_PATTERN_MISMATCH => "Pattern mismatch",
+            Self::VALIDATION_INVALID_VALUE => "Invalid value",
+            Self::VALIDATION_ARRAY_TOO_FEW_ITEMS => "Array has too few items",
+            Self::VALIDATION_ARRAY_TOO_MANY_ITEMS => "Array has too many items",
+            Self::VALIDATION_ARRAY_NOT_UNIQUE => "Array items not unique",
+            Self::VALIDATION_OBJECT_TOO_FEW_PROPERTIES => "Object has too few properties",
+            Self::VALIDATION_OBJECT_TOO_MANY_PROPERTIES => "Object has too many properties",
+
+            // I/O errors
+            Self::IO_FILE_NOT_FOUND => "File not found",
+            Self::IO_PERMISSION_DENIED => "Permission denied",
+            Self::IO_READ_FAILED => "Read failed",
+            Self::IO_WRITE_FAILED => "Write failed",
+
+            // Encoding errors
+            Self::ENCODING_INVALID_UTF8 => "Invalid UTF-8 encoding",
+
+            // Other errors
+            Self::ANCHOR_UNKNOWN => "Unknown anchor reference",
+            Self::KEY_DUPLICATE => "Duplicate key in mapping",
+            Self::EOF_UNEXPECTED => "Unexpected end of input",
+        }
+    }
+}
+
+impl fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
 
 /// Status enum representing success/error states for Result types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -550,14 +770,20 @@ impl Default for ValidationResult {
 }
 
 /// A validation error
+///
+/// Enhanced with error codes from bf-68hqo for comprehensive error categorization.
 #[derive(Debug, Clone)]
 pub struct ValidationError {
     /// Path to the invalid element (e.g., "server.port")
     pub path: String,
     /// Error message
     pub message: String,
+    /// Machine-readable error code from bf-68hqo hierarchy
+    pub code: ErrorCode,
     /// Line number where the error occurred (1-indexed)
     pub line: Option<usize>,
+    /// Column number where the error occurred (1-indexed)
+    pub column: Option<usize>,
     /// Indentation error type (if this is an indentation error)
     pub indentation_error_type: Option<crate::parsers::yaml::syntax_detector::IndentationErrorType>,
     /// Delimiter error type (if this is a delimiter error)
@@ -570,15 +796,29 @@ impl ValidationError {
         Self {
             path: path.into(),
             message: message.into(),
+            code: ErrorCode::VALIDATION_INVALID_VALUE, // Default error code
             line: None,
+            column: None,
             indentation_error_type: None,
             delimiter_error_type: None,
         }
     }
 
+    /// Set the error code for this validation error
+    pub fn with_code(mut self, code: ErrorCode) -> Self {
+        self.code = code;
+        self
+    }
+
     /// Set the line number for this error
     pub fn with_line(mut self, line: usize) -> Self {
         self.line = Some(line);
+        self
+    }
+
+    /// Set the column number for this error
+    pub fn with_column(mut self, column: usize) -> Self {
+        self.column = Some(column);
         self
     }
 
@@ -593,13 +833,28 @@ impl ValidationError {
         self.delimiter_error_type = Some(error_type);
         self
     }
+
+    /// Get the error type category for this error
+    pub fn error_type(&self) -> ErrorType {
+        self.code.error_type()
+    }
 }
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.line {
-            Some(line) => write!(f, "{}: validation error at '{}': {}", line, self.path, self.message),
-            None => write!(f, "validation error at '{}': {}", self.path, self.message),
+        match (&self.line, &self.column) {
+            (Some(line), Some(col)) => {
+                write!(f, "{}:{}: validation error at '{}': {}", line, col, self.path, self.message)
+            }
+            (Some(line), None) => {
+                write!(f, "{}: validation error at '{}': {}", line, self.path, self.message)
+            }
+            (None, Some(col)) => {
+                write!(f, "col {}: validation error at '{}': {}", col, self.path, self.message)
+            }
+            (None, None) => {
+                write!(f, "validation error at '{}': {}", self.path, self.message)
+            }
         }
     }
 }
