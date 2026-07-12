@@ -2,30 +2,36 @@
 
 ## Status: Already Completed
 
-This task was already completed in previous commits:
-- `b795b194`: Replaced 4 ValidationError struct constructions in validator_test.go
-- `2c8e1e49`: Replaced 3 ValidationError struct constructions in errors_test.go
+## Investigation Results
 
-## Verification on 2026-07-12
+The task to replace direct ValidationError struct initializations with NewValidationError() constructor calls has already been completed in previous commits.
 
-Current state of both test files:
-- `internal/yamlutil/errors_test.go`: 13 NewValidationError() calls
-- `internal/yamlutil/validator_test.go`: 5 NewValidationError() calls
+### Evidence
 
-No direct `ValidationError{...}` struct initializations remain in either file.
+1. **Git History**: Commit `2c8e1e49` on 2026-07-12:
+   ```
+   test: replace remaining ValidationError struct constructions with NewValidationError() calls
+   
+   Replace 3 direct ValidationError struct initializations in errors_test.go
+   with NewValidationError() constructor calls.
+   ```
 
-## Build Verification
+2. **Current Code State**:
+   - `errors_test.go`: Contains 13 instances of `NewValidationError()` calls
+   - `validator_test.go`: Contains 5 instances of `NewValidationError()` calls
+   - Zero direct `ValidationError{}` or `&ValidationError{}` struct literals found
 
-Package compiles successfully:
-```bash
-go build ./internal/yamlutil/...
+3. **Verification**: 
+   - Tests compile successfully without errors
+   - All tests pass (`go test ./internal/yamlutil/`)
+
+### Previous Completion
+
+The bead was marked as closed in commit `b5584f1f`:
 ```
-Exit code: 0 (success)
+docs(bf-4bd2w): verify ValidationError replacement already completed
+```
 
-## Acceptance Criteria Met
+## Conclusion
 
-✅ All ValidationError constructions across both files use NewValidationError()
-✅ Files compile without errors
-✅ No test logic changed, only construction syntax
-
-The task was completed prior to this bead being assigned.
+No work was required for this task as it was already completed in a previous session. All ValidationError instances across both test files are using the NewValidationError() constructor as required.
