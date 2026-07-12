@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -90,7 +91,7 @@ func (e *Encryptor) EncryptStream(plaintext io.Reader, ciphertext io.Writer, pla
 	for blockIndex := uint32(0); blockIndex < blockCount; blockIndex++ {
 		// Read a block
 		n, err := io.ReadFull(plaintext, buf)
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 			return nil, fmt.Errorf("read error: %w", err)
 		}
 		if n == 0 {
