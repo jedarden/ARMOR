@@ -908,6 +908,135 @@ level_6_key: level_6_value
         # Comments should be filtered out
         assert 'comment' not in str(result.data).lower()
 
+    # ============================================================================
+    # Deep indentation level comment tests - bf-455dc
+    # ============================================================================
+
+    def test_comment_at_indentation_level_8(self):
+        """Test that comments at 8 spaces indentation are properly filtered."""
+        yaml_content = """# Comment at 0 spaces
+key: value
+        # Comment at 8 spaces
+another_key: another_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value', 'another_key': 'another_value'}
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_at_indentation_level_10(self):
+        """Test that comments at 10 spaces indentation are properly filtered."""
+        yaml_content = """# Comment at 0 spaces
+key: value
+          # Comment at 10 spaces
+another_key: another_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value', 'another_key': 'another_value'}
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comment_at_indentation_level_12(self):
+        """Test that comments at 12 spaces indentation are properly filtered."""
+        yaml_content = """# Comment at 0 spaces
+key: value
+            # Comment at 12 spaces
+another_key: another_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        assert result.data == {'key': 'value', 'another_key': 'another_value'}
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comments_at_all_deep_indentation_levels(self):
+        """Test that comments at all deep indentation levels (8, 10, 12) work together."""
+        yaml_content = """# Level 0 comment
+root_key: root_value
+        # Level 8 comment
+level_8_key: level_8_value
+          # Level 10 comment
+level_10_key: level_10_value
+            # Level 12 comment
+level_12_key: level_12_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # All comments should be filtered, only data remains
+        assert result.data == {
+            'root_key': 'root_value',
+            'level_8_key': 'level_8_value',
+            'level_10_key': 'level_10_value',
+            'level_12_key': 'level_12_value'
+        }
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comments_combined_basic_and_deep_levels(self):
+        """Test that comments at all indentation levels (0, 2, 4, 6, 8, 10, 12) work together."""
+        yaml_content = """# Level 0 comment
+root_key: root_value
+  # Level 2 comment
+level_2_key: level_2_value
+    # Level 4 comment
+level_4_key: level_4_value
+      # Level 6 comment
+level_6_key: level_6_value
+        # Level 8 comment
+level_8_key: level_8_value
+          # Level 10 comment
+level_10_key: level_10_value
+            # Level 12 comment
+level_12_key: level_12_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # All comments should be filtered, only data remains
+        assert result.data == {
+            'root_key': 'root_value',
+            'level_2_key': 'level_2_value',
+            'level_4_key': 'level_4_value',
+            'level_6_key': 'level_6_value',
+            'level_8_key': 'level_8_value',
+            'level_10_key': 'level_10_value',
+            'level_12_key': 'level_12_value'
+        }
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
+    def test_deeply_nested_structure_with_comments(self):
+        """Test comments in a deeply nested YAML structure with realistic data."""
+        yaml_content = """# Top-level configuration
+database:
+  # Connection settings
+  connection:
+    # Primary database
+    primary:
+      # Host configuration
+      host: localhost  # Database host
+      port: 5432  # Database port
+      # Authentication settings
+      credentials:
+        # Username
+        username: admin  # DB username
+        # Password
+        password: secret  # DB password (change in production)
+            # Comment at level 12
+            fallback: true  # Use fallback connection
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success()
+        # Verify deeply nested data is parsed correctly
+        assert result.data['database']['connection']['primary']['host'] == 'localhost'
+        assert result.data['database']['connection']['primary']['port'] == 5432
+        assert result.data['database']['connection']['primary']['credentials']['username'] == 'admin'
+        assert result.data['database']['connection']['primary']['credentials']['password'] == 'secret'
+        assert result.data['database']['connection']['primary']['fallback'] is True
+        # Comments should be filtered out
+        assert 'comment' not in str(result.data).lower()
+
 
 if __name__ == '__main__':
     # Run tests with pytest
