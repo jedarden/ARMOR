@@ -24,4 +24,7 @@ $ cat /tmp/litestream_secret_key_encoded.b64
 - Once bf-3llc7 produces a non-empty encoded file, this bead can be retried
 
 ## Timeline
-- 2026-07-12 10:35: Attempted decode - found empty encoded file
+- 2026-07-12 10:35: Initial attempt - found empty encoded file
+- 2026-07-12 ~10:36: Retry verification - encoded file still empty (0 bytes)
+- 2026-07-12 ~10:36: Prerequisite bf-3llc7 shows as "closed" but verification failed
+- 2026-07-12: Documented persistent failure - task blocked on empty prerequisite file
