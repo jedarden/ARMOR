@@ -843,11 +843,7 @@ func TestFieldNotFoundError(t *testing.T) {
 }
 
 func TestTypeMismatchError(t *testing.T) {
-	err := &TypeMismatchError{
-		FieldPath:    "server.port",
-		ExpectedType: "int",
-		ActualType:   "string",
-	}
+	err := NewTypeMismatchError("", "server.port", "int", "string", "", 0, "")
 	// The actual format is "type mismatch in <filepath>, field <fieldpath>: expected <expected>, got <actual>"
 	expected := "type mismatch in , field server.port: expected int, got string"
 	if err.Error() != expected {
