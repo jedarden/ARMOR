@@ -848,6 +848,145 @@ pub fn is_comment_line(line: &str) -> bool {
     trimmed.starts_with('#')
 }
 
+/// Check if a line contains unquoted brackets or braces
+///
+/// This helper function checks if `{` or `[` appear outside of quoted strings
+/// in a line. This is used to distinguish between flow style mappings/sequences
+/// and quoted strings that happen to contain these characters.
+///
+/// # Arguments
+///
+/// * `line` - The line to check
+///
+/// # Returns
+///
+/// `true` if unquoted `{` or `[` are found, `false` otherwise
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::line_parser::check_for_unquoted_brackets;
+///
+/// // Flow style mapping - has unquoted braces
+/// assert!(check_for_unquoted_brackets("{key: value}"));
+///
+/// // Flow style sequence - has unquoted brackets
+/// assert!(check_for_unquoted_brackets("[item1, item2]"));
+///
+/// // Quoted string with brackets - no unquoted brackets
+/// assert!(!check_for_unquoted_brackets("key: \"value [with] brackets\""));
+///
+/// // Mixed - quoted brackets are OK, unquoted are not
+/// assert!(check_for_unquoted_brackets("key: [value] \"more\""));
+/// ```
+fn check_for_unquoted_brackets(line: &str) -> bool {
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escaped = false;
+
+    for ch in line.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                escaped = true;
+            }
+            '\'' if !in_double_quote => {
+                in_single_quote = !in_single_quote;
+            }
+            '"' if !in_single_quote => {
+                in_double_quote = !in_double_quote;
+            }
+            '[' if !in_single_quote && !in_double_quote => {
+                return true; // Found unquoted opening bracket
+            }
+            '{' if !in_single_quote && !in_double_quote => {
+                return true; // Found unquoted opening brace
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
+
+/// Find the first unquoted colon in a line
+///
+/// This helper function finds the first colon that is outside of quoted strings
+/// and square brackets (for IPv6 addresses). This is used to locate the mapping
+/// key separator in YAML lines.
+///
+/// # Arguments
+///
+/// * `line` - The line to search
+///
+/// # Returns
+///
+/// `Some(usize)` with the position of the first unquoted colon, or `None` if not found
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::line_parser::find_unquoted_colon;
+///
+/// // Simple key-value
+/// assert_eq!(find_unquoted_colon("key: value"), Some(3));
+///
+/// // Colon in quoted value
+/// assert_eq!(find_unquoted_colon("time: \"12:30:00\""), Some(4));
+///
+/// // Quoted key with colon
+/// assert_eq!(find_unquoted_colon("'key:with:colons': value"), Some(17));
+///
+/// // IPv6 URL - colons inside brackets are skipped
+/// assert_eq!(find_unquoted_colon("url: http://[2001:db8::1]:8080"), Some(3));
+///
+/// // No colon
+/// assert_eq!(find_unquoted_colon("no colon here"), None);
+/// ```
+fn find_unquoted_colon(line: &str) -> Option<usize> {
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_brackets = 0; // Track nested brackets for IPv6 addresses
+    let mut escaped = false;
+
+    for (pos, ch) in line.chars().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                escaped = true;
+            }
+            '\'' if !in_double_quote => {
+                in_single_quote = !in_single_quote;
+            }
+            '"' if !in_single_quote => {
+                in_double_quote = !in_double_quote;
+            }
+            '[' if !in_single_quote && !in_double_quote => {
+                in_brackets += 1;
+            }
+            ']' if !in_single_quote && !in_double_quote => {
+                if in_brackets > 0 {
+                    in_brackets -= 1;
+                }
+            }
+            ':' if !in_single_quote && !in_double_quote && in_brackets == 0 => {
+                return Some(pos); // Found unquoted colon outside of brackets
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 /// Strip inline comment from a YAML line
 ///
 /// This function removes inline comments from a YAML line while preserving:
@@ -1042,21 +1181,38 @@ pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKey
         return None;
     }
 
-    // Skip flow style mappings and sequences (contain { or [)
-    if trimmed.contains('{') || trimmed.contains('[') {
-        return None;
-    }
+    // Find the first unquoted colon in the line
+    // This skips colons inside quotes and brackets (for IPv6 addresses)
+    let colon_pos = find_unquoted_colon(&trimmed)?;
 
-    // Find the first colon in the line
-    let colon_pos = trimmed.find(':')?;
+    // Now check for flow style mappings/sequences more carefully
+    // We need to allow URLs with IPv6 addresses like "key: http://[2001:db8::1]:8080"
+    // But reject flow style like "key: {value}" or "key: [items]"
 
-    // Get the part before and after the colon
+    // Get the key and value parts
     let key_part = &trimmed[..colon_pos];
     let value_part = if colon_pos + 1 < trimmed.len() {
-        Some(trimmed[colon_pos + 1..].trim().to_string())
+        Some(trimmed[colon_pos + 1..].trim())
     } else {
         None
     };
+
+    // Check if key part contains { or [ (invalid for keys)
+    if check_for_unquoted_brackets(key_part) {
+        return None;
+    }
+
+    // Check if value is flow style (starts with { or [)
+    // But allow it if it looks like a URL (contains ://)
+    if let Some(value) = value_part {
+        let trimmed_value = value.trim();
+        if (trimmed_value.starts_with('{') || trimmed_value.starts_with('[')) && !trimmed_value.contains("://") {
+            return None;
+        }
+    }
+
+    // Convert value_part to String for the final result
+    let value_part_string = value_part.map(|v| v.to_string());
 
     // Trim the key part
     let key = key_part.trim();
@@ -1066,20 +1222,19 @@ pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKey
         return None;
     }
 
-    // Key must not contain special YAML characters
-    // (except for valid key characters: alphanumeric, _, ., -)
-    for ch in key.chars() {
-        if !ch.is_alphanumeric() && ch != '_' && ch != '.' && ch != '-' {
-            // Check if it's a quoted key (single or double quotes)
-            if key.starts_with('\'') && key.ends_with('\'') && key.len() > 1 {
-                break; // Allow quoted keys
+    // Check if this is a quoted key (single or double quotes)
+    let is_quoted_key = (key.starts_with('\'') && key.ends_with('\'') && key.len() > 1) ||
+                        (key.starts_with('"') && key.ends_with('"') && key.len() > 1);
+
+    // For non-quoted keys, validate that they only contain valid characters
+    if !is_quoted_key {
+        for ch in key.chars() {
+            if !ch.is_alphanumeric() && ch != '_' && ch != '.' && ch != '-' {
+                return None; // Invalid key character for unquoted key
             }
-            if key.starts_with('"') && key.ends_with('"') && key.len() > 1 {
-                break; // Allow quoted keys
-            }
-            return None; // Invalid key character
         }
     }
+    // Quoted keys can contain any characters, so we skip validation for them
 
     // Check for proper indentation relative to parent
     let current_indent = calculate_indentation(line);
@@ -1107,14 +1262,65 @@ pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKey
     // current_indent == parent_indent is valid - sibling key at same level
 
     // Check if this is a parent key (no value or just whitespace after colon)
-    let is_parent = value_part.as_ref().map_or(true, |v| v.is_empty() || v.starts_with('#'));
+    let is_parent = value_part_string.as_ref().map_or(true, |v| v.is_empty() || v.starts_with('#'));
     let value = if is_parent {
         None
     } else {
-        value_part
+        value_part_string
     };
 
     Some(MappingKeyInfo::new(key.to_string(), value))
+}
+
+/// Combined function to detect mapping key and return key with child indentation
+///
+/// This is a convenience wrapper that integrates all detection logic and returns
+/// a simple `(String, usize)` tuple containing the key name and the child's indentation level.
+///
+/// This function handles all edge cases including:
+/// - Quoted values with colons: `message: "Hello: World"`
+/// - URLs with colons: `url: http://example.com`
+/// - Time values: `time: 10:30:00`
+/// - Nested mappings: `parent:\n  child: value`
+/// - Comment filtering: `# comment: text` is rejected
+/// - Special constructs: sequences, anchors, aliases are rejected
+///
+/// # Arguments
+///
+/// * `line` - The YAML line to analyze
+/// * `parent_indent` - The indentation level of the parent context
+///
+/// # Returns
+///
+/// - `Some((String, usize))` where the String is the key name and usize is the child's indentation level
+/// - `None` if the line is not a valid mapping key
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::line_parser::detect_mapping_key_simple;
+///
+/// // Simple key-value pair
+/// let result = detect_mapping_key_simple("name: John", 0);
+/// assert_eq!(result, Some(("name".to_string(), 0)));
+///
+/// // Nested key
+/// let result = detect_mapping_key_simple("  child: value", 0);
+/// assert_eq!(result, Some(("child".to_string(), 2)));
+///
+/// // Comment line - rejected
+/// let result = detect_mapping_key_simple("# comment: text", 0);
+/// assert_eq!(result, None);
+///
+/// // URL with colon
+/// let result = detect_mapping_key_simple("url: http://example.com", 0);
+/// assert_eq!(result, Some(("url".to_string(), 0)));
+/// ```
+pub fn detect_mapping_key_simple(line: &str, parent_indent: usize) -> Option<(String, usize)> {
+    detect_mapping_key(line, parent_indent).map(|info| {
+        let child_indent = calculate_indentation(line);
+        (info.key, child_indent)
+    })
 }
 
 /// Result of parsing a YAML file into lines
@@ -2215,5 +2421,192 @@ mod tests {
         assert_eq!(info.key, "api");
         // Value should preserve the URL hash in quoted string
         assert_eq!(info.value, Some("\"https://api.example.com/v1#endpoint\"".to_string()));
+    }
+
+    // Edge case tests for indentation parsing
+    #[test]
+    fn test_calculate_indentation_very_long_indentation() {
+        // Very long indentation (100+ spaces)
+        let long_indent = " ".repeat(100) + "key: value";
+        assert_eq!(calculate_indentation(&long_indent), 100);
+
+        let very_long_indent = " ".repeat(200) + "key: value";
+        assert_eq!(calculate_indentation(&very_long_indent), 200);
+
+        let extremely_long_indent = " ".repeat(500) + "key: value";
+        assert_eq!(calculate_indentation(&extremely_long_indent), 500);
+    }
+
+    #[test]
+    fn test_classify_line_type_hash_only() {
+        // Lines with only "#" symbol (no text after)
+        assert_eq!(classify_line_type("#"), LineType::Comment);
+        assert_eq!(classify_line_type("  #"), LineType::Comment);
+        assert_eq!(classify_line_type("\t#"), LineType::Comment);
+        assert_eq!(classify_line_type("    #"), LineType::Comment);
+    }
+
+    #[test]
+    fn test_classify_line_type_whitespace_and_hash() {
+        // Lines with only whitespace and "#"
+        assert_eq!(classify_line_type(" #"), LineType::Comment);
+        assert_eq!(classify_line_type("  #"), LineType::Comment);
+        assert_eq!(classify_line_type("   #"), LineType::Comment);
+        assert_eq!(classify_line_type("\t#"), LineType::Comment);
+        assert_eq!(classify_line_type("  \t #"), LineType::Comment);
+        assert_eq!(classify_line_type(" \t  #"), LineType::Comment);
+    }
+
+    #[test]
+    fn test_calculate_indentation_unicode_content() {
+        // Unicode content with indentation
+        let unicode_line = "  clé: valeur";
+        assert_eq!(calculate_indentation(unicode_line), 2);
+
+        let unicode_line2 = "    名前: 値";
+        assert_eq!(calculate_indentation(unicode_line2), 4);
+
+        let unicode_line3 = "\t用户名: 密码";
+        assert_eq!(calculate_indentation(unicode_line3), 1);
+
+        let unicode_line4 = "      ελληνικά: Greek";
+        assert_eq!(calculate_indentation(unicode_line4), 6);
+
+        let unicode_line5 = "    🎨: emoji";
+        assert_eq!(calculate_indentation(unicode_line5), 4);
+
+        let unicode_line6 = "  ñoño: value";
+        assert_eq!(calculate_indentation(unicode_line6), 2);
+
+        let unicode_line7 = "    -key-with-accents: value";
+        assert_eq!(calculate_indentation(unicode_line7), 4);
+    }
+
+    #[test]
+    fn test_calculate_indentation_mixed_whitespace() {
+        // Mixed whitespace in comment lines
+        assert_eq!(calculate_indentation(" \t# comment"), 2);
+        assert_eq!(calculate_indentation("  \t# comment"), 3);
+        assert_eq!(calculate_indentation("\t # comment"), 2);
+        assert_eq!(calculate_indentation(" \t # comment"), 3);
+        assert_eq!(calculate_indentation("  \t  # comment"), 5);
+        assert_eq!(calculate_indentation("\t \t# comment"), 3);
+    }
+
+    #[test]
+    fn test_indentation_info_very_long_indentation() {
+        // Very long indentation (100+ spaces)
+        let long_indent = " ".repeat(100) + "key: value";
+        let info = IndentationInfo::from_line(&long_indent);
+        assert_eq!(info.leading_spaces, 100);
+        assert_eq!(info.leading_tabs, 0);
+        assert_eq!(info.total_level, 100);
+        assert!(info.is_spaces_only());
+        assert!(!info.is_mixed());
+    }
+
+    #[test]
+    fn test_indentation_info_mixed_whitespace_variations() {
+        // Various mixed whitespace patterns
+        let info1 = IndentationInfo::from_line(" \t#");
+        assert_eq!(info1.leading_spaces, 1);
+        assert_eq!(info1.leading_tabs, 1);
+        assert!(info1.is_mixed());
+
+        let info2 = IndentationInfo::from_line("  \t#");
+        assert_eq!(info2.leading_spaces, 2);
+        assert_eq!(info2.leading_tabs, 1);
+        assert!(info2.is_mixed());
+
+        let info3 = IndentationInfo::from_line("\t #");
+        assert_eq!(info3.leading_spaces, 1);
+        assert_eq!(info3.leading_tabs, 1);
+        assert!(info3.is_mixed());
+
+        let info4 = IndentationInfo::from_line("\t\t  #");
+        assert_eq!(info4.leading_spaces, 2);
+        assert_eq!(info4.leading_tabs, 2);
+        assert!(info4.is_mixed());
+    }
+
+    #[test]
+    fn test_classify_line_type_unicode_with_indentation() {
+        // Unicode content classification with various indentation levels
+        assert_eq!(classify_line_type("  clé: valeur"), LineType::MappingKey);
+        assert_eq!(classify_line_type("    名前: 値"), LineType::MappingKey);
+        assert_eq!(classify_line_type("\t用户名: 密码"), LineType::MappingKey);
+        assert_eq!(classify_line_type("  # комментарий"), LineType::Comment);
+        assert_eq!(classify_line_type("    # תגובה"), LineType::Comment);
+    }
+
+    #[test]
+    fn test_classify_line_type_mixed_whitespace_with_content() {
+        // Mixed whitespace with different content types
+        assert_eq!(classify_line_type(" \t key: value"), LineType::MappingKey);
+        assert_eq!(classify_line_type(" \t # comment"), LineType::Comment);
+        assert_eq!(classify_line_type("  \t - item"), LineType::SequenceItem);
+        assert_eq!(classify_line_type("\t #"), LineType::Comment);
+        assert_eq!(classify_line_type(" \t  "), LineType::Blank);
+    }
+
+    #[test]
+    fn test_calculate_indentation_empty_lines_edge_cases() {
+        // Empty and whitespace-only edge cases
+        assert_eq!(calculate_indentation(""), 0);
+        assert_eq!(calculate_indentation(" "), 1);
+        assert_eq!(calculate_indentation("  "), 2);
+        assert_eq!(calculate_indentation("\t"), 1);
+        assert_eq!(calculate_indentation("\t\t"), 2);
+        assert_eq!(calculate_indentation(" \t"), 2);
+        assert_eq!(calculate_indentation("\t "), 2);
+        assert_eq!(calculate_indentation(" \t "), 3);
+    }
+
+    #[test]
+    fn test_calculate_indentation_only_comments_edge_cases() {
+        // Comments with various indentation patterns
+        assert_eq!(calculate_indentation("#"), 0);
+        assert_eq!(calculate_indentation(" #"), 1);
+        assert_eq!(calculate_indentation("  #"), 2);
+        assert_eq!(calculate_indentation("\t#"), 1);
+        assert_eq!(calculate_indentation(" \t#"), 2);
+        assert_eq!(calculate_indentation("\t #"), 2);
+        assert_eq!(calculate_indentation("    # comment"), 4);
+        assert_eq!(calculate_indentation("  \t # deep comment"), 4);
+    }
+
+    #[test]
+    fn test_indentation_info_unicode_edge_cases() {
+        // Unicode with various edge cases
+        let info = IndentationInfo::from_line("  👍: thumbs up");
+        assert_eq!(info.leading_spaces, 2);
+        assert_eq!(info.total_level, 2);
+
+        let info = IndentationInfo::from_line("    🔥: fire");
+        assert_eq!(info.leading_spaces, 4);
+        assert_eq!(info.total_level, 4);
+
+        let info = IndentationInfo::from_line("\t🌍: world");
+        assert_eq!(info.leading_tabs, 1);
+        assert_eq!(info.total_level, 1);
+    }
+
+    #[test]
+    fn test_classify_line_type_combined_edge_cases() {
+        // Combined edge case testing
+        // Very long indentation with various content types
+        let very_long_indent = " ".repeat(100);
+        assert_eq!(classify_line_type(&format!("{}key: value", very_long_indent)), LineType::MappingKey);
+        assert_eq!(classify_line_type(&format!("{}# comment", very_long_indent)), LineType::Comment);
+        assert_eq!(classify_line_type(&format!("{}- item", very_long_indent)), LineType::SequenceItem);
+
+        // Hash only with various indentation
+        assert_eq!(classify_line_type(&format!("{}#", " ".repeat(50))), LineType::Comment);
+        assert_eq!(classify_line_type(&format!("{}#", "\t".repeat(10))), LineType::Comment);
+
+        // Mixed whitespace with unicode
+        assert_eq!(classify_line_type(" \t clé: valeur"), LineType::MappingKey);
+        assert_eq!(classify_line_type("  \t 用户名: 密码"), LineType::MappingKey);
+        assert_eq!(classify_line_type("\t \t # 注释"), LineType::Comment);
     }
 }
