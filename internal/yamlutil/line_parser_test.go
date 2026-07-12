@@ -1143,7 +1143,7 @@ func TestClassifyLineEdgeCases(t *testing.T) {
 		{
 			name:     "zero-width space",
 			line:   "​",
-			expected: CategoryBlank, // Zero-width space is whitespace
+			expected: CategoryContent, // Zero-width space is not whitespace, it is content
 		},
 		{
 			name:     "unicode whitespace",
