@@ -1,9 +1,16 @@
 //! YAML Comment Detection in Plain Multi-Line Scalars Tests
 //!
 //! These tests verify YAML comment detection behavior within plain multi-line
-//! scalars (values without explicit style indicators like `|` or `>`). Unlike
-//! literal or folded block scalars, plain scalars treat `#` as the start of a
-//! comment per YAML spec rules.
+//! scalars (values without explicit style indicators like `|` or `>`).
+//!
+//! ## YAML Specification for Comments in Plain Scalars
+//!
+//! In plain scalars, the `#` character has context-dependent behavior:
+//! - When preceded by whitespace (or at line start): `#` starts a comment
+//! - When NOT preceded by whitespace: `#` is preserved as content (e.g., URLs, anchors)
+//!
+//! This differs from literal/ folded block scalars where `#` is ALWAYS preserved
+//! as content and never starts a comment.
 //!
 //! Bead: bf-4ukhl
 //! Acceptance Criteria:
@@ -587,6 +594,6 @@ fn test_plain_scalar_vs_block_scalars_comment_handling() {
     assert!(is_comment_line(folded_content));
     // But in a full parser tracking folded block state, this would be content
 
-    // The key difference: plain scalars never treat # as content
-    // Block scalars preserve # as content when in block context
+    // The key difference: plain scalars treat # as comment only when preceded by whitespace
+    // Block scalars preserve # as content regardless of context
 }
