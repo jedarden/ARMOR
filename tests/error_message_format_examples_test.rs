@@ -34,7 +34,7 @@
 //! - Nested field: `"database.port"`
 //! - Deeply nested: `"servers[0].port"`
 
-use armor::parsers::yaml::{ParseError, ParseErrorKind, ValidationError, ValidationResult};
+use armor::parsers::yaml::{ParseError, ParseErrorKind, ValidationError, ValidationResult, ErrorCode};
 
 // ============================================================================
 // ParseError with line:column formatting
@@ -288,7 +288,9 @@ fn test_validation_error_format() {
     let error = ValidationError {
         path: "server.port".to_string(),
         message: "port must be between 1 and 65535".to_string(),
+        code: ErrorCode::VALIDATION_VALUE_OUT_OF_RANGE,
         line: Some(15),
+        column: None,
         indentation_error_type: None,
         delimiter_error_type: None,
     };
@@ -310,7 +312,9 @@ fn test_validation_error_top_level_field() {
     let error = ValidationError {
         path: "name".to_string(),
         message: "field is required".to_string(),
+        code: ErrorCode::VALIDATION_REQUIRED_FIELD_MISSING,
         line: Some(10),
+        column: None,
         indentation_error_type: None,
         delimiter_error_type: None,
     };
@@ -326,7 +330,9 @@ fn test_validation_error_nested_field() {
     let error = ValidationError {
         path: "database.host".to_string(),
         message: "hostname cannot be empty".to_string(),
+        code: ErrorCode::VALIDATION_REQUIRED_FIELD_MISSING,
         line: Some(25),
+        column: None,
         indentation_error_type: None,
         delimiter_error_type: None,
     };
@@ -342,7 +348,9 @@ fn test_validation_error_deeply_nested() {
     let error = ValidationError {
         path: "servers[0].config.port".to_string(),
         message: "port out of range".to_string(),
+        code: ErrorCode::VALIDATION_VALUE_OUT_OF_RANGE,
         line: Some(42),
+        column: None,
         indentation_error_type: None,
         delimiter_error_type: None,
     };
@@ -358,7 +366,9 @@ fn test_validation_error_without_line() {
     let error = ValidationError {
         path: "database.name".to_string(),
         message: "field cannot be empty".to_string(),
+        code: ErrorCode::VALIDATION_REQUIRED_FIELD_MISSING,
         line: None,
+        column: None,
         indentation_error_type: None,
         delimiter_error_type: None,
     };
@@ -378,14 +388,18 @@ fn test_validation_result_multiple_errors() {
         ValidationError {
             path: "server.port".to_string(),
             message: "port must be between 1 and 65535".to_string(),
+            code: ErrorCode::VALIDATION_VALUE_OUT_OF_RANGE,
             line: Some(10),
+            column: None,
             indentation_error_type: None,
             delimiter_error_type: None,
         },
         ValidationError {
             path: "server.host".to_string(),
             message: "host cannot be empty".to_string(),
+            code: ErrorCode::VALIDATION_REQUIRED_FIELD_MISSING,
             line: Some(12),
+            column: None,
             indentation_error_type: None,
             delimiter_error_type: None,
         },
