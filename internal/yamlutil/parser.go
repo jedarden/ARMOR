@@ -2,7 +2,9 @@
 package yamlutil
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -47,6 +49,16 @@ func (p *Parser) ParseFile(filePath string, data interface{}) ParseResult {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		result.Success = false
+		// Check for specific error types using type assertions
+		if errors.Is(err, io.EOF) {
+			// io.EOF indicates incomplete file or unexpected end of file
+			result.Error = &YAMLParseError{
+				FilePath: filePath,
+				Message:  "Unexpected end of file - file may be incomplete or truncated",
+				RawError: err,
+			}
+			return result
+		}
 		result.Error = fmt.Errorf("failed to read file: %w", err)
 		return result
 	}
@@ -54,7 +66,17 @@ func (p *Parser) ParseFile(filePath string, data interface{}) ParseResult {
 	// Parse YAML content
 	if err := yaml.Unmarshal(content, data); err != nil {
 		result.Success = false
-		result.Error = fmt.Errorf("YAML parse error: %w", err)
+		// Check if this is a YAML type error for better error reporting
+		if typeErr, ok := err.(*yaml.TypeError); ok {
+			// Provide detailed type error information
+			result.Error = &YAMLParseError{
+				FilePath: filePath,
+				Message:  fmt.Sprintf("YAML type error: %v", typeErr.Errors),
+				RawError: err,
+			}
+		} else {
+			result.Error = fmt.Errorf("YAML parse error: %w", err)
+		}
 		return result
 	}
 
@@ -75,6 +97,16 @@ func (p *Parser) ParseFileToMap(filePath string) ParseResult {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		result.Success = false
+		// Check for specific error types using type assertions
+		if errors.Is(err, io.EOF) {
+			// io.EOF indicates incomplete file or unexpected end of file
+			result.Error = &YAMLParseError{
+				FilePath: filePath,
+				Message:  "Unexpected end of file - file may be incomplete or truncated",
+				RawError: err,
+			}
+			return result
+		}
 		result.Error = fmt.Errorf("failed to read file: %w", err)
 		return result
 	}
@@ -83,7 +115,17 @@ func (p *Parser) ParseFileToMap(filePath string) ParseResult {
 	var data map[string]interface{}
 	if err := yaml.Unmarshal(content, &data); err != nil {
 		result.Success = false
-		result.Error = fmt.Errorf("YAML parse error: %w", err)
+		// Check if this is a YAML type error for better error reporting
+		if typeErr, ok := err.(*yaml.TypeError); ok {
+			// Provide detailed type error information
+			result.Error = &YAMLParseError{
+				FilePath: filePath,
+				Message:  fmt.Sprintf("YAML type error: %v", typeErr.Errors),
+				RawError: err,
+			}
+		} else {
+			result.Error = fmt.Errorf("YAML parse error: %w", err)
+		}
 		return result
 	}
 
@@ -256,6 +298,24 @@ func ParseYAML(filePath string) (map[string]interface{}, error) {
 	// Parse YAML content with detailed error handling
 	var data map[string]interface{}
 	if err := yaml.Unmarshal(content, &data); err != nil {
+		// Check for specific error types using type assertions
+		if errors.Is(err, io.EOF) {
+			// io.EOF indicates incomplete YAML content
+			return nil, &YAMLParseError{
+				FilePath: filePath,
+				Message:  "Unexpected end of YAML content - file may be incomplete",
+				RawError: err,
+			}
+		}
+		if typeErr, ok := err.(*yaml.TypeError); ok {
+			// Provide detailed type error information
+			return nil, &YAMLParseError{
+				FilePath: filePath,
+				Message:  fmt.Sprintf("YAML type error: %v", typeErr.Errors),
+				RawError: err,
+				Line:     extractErrorLine(err),
+			}
+		}
 		// Create detailed YAMLParseError with line information
 		return nil, &YAMLParseError{
 			FilePath: filePath,

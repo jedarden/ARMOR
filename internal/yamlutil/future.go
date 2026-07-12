@@ -8,6 +8,7 @@
 package yamlutil
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -47,6 +48,11 @@ func (sp *StreamParser) ParseStream(reader io.Reader, data interface{}) error {
 	// Stub implementation: read all content and parse normally
 	content, err := io.ReadAll(reader)
 	if err != nil {
+		// Check for io.EOF - this is actually expected behavior for streams
+		if errors.Is(err, io.EOF) {
+			// EOF indicates the stream ended normally but no content was read
+			return fmt.Errorf("empty YAML stream: %w", err)
+		}
 		return fmt.Errorf("stream read error: %w", err)
 	}
 
@@ -61,11 +67,21 @@ func (sp *StreamParser) ParseStreamToMap(reader io.Reader) (map[string]interface
 	// Stub implementation: read all content and parse normally
 	content, err := io.ReadAll(reader)
 	if err != nil {
+		// Check for io.EOF - this is actually expected behavior for streams
+		if errors.Is(err, io.EOF) {
+			// EOF indicates the stream ended normally but no content was read
+			return nil, fmt.Errorf("empty YAML stream: %w", err)
+		}
 		return nil, fmt.Errorf("stream read error: %w", err)
 	}
 
 	var data map[string]interface{}
 	if err := yaml.Unmarshal(content, &data); err != nil {
+		// Check for specific YAML error types
+		if typeErr, ok := err.(*yaml.TypeError); ok {
+			// Provide detailed type error information
+			return nil, fmt.Errorf("YAML type error: %v", typeErr.Errors)
+		}
 		return nil, fmt.Errorf("YAML parse error: %w", err)
 	}
 

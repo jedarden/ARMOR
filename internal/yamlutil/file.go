@@ -2,7 +2,9 @@
 package yamlutil
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -55,6 +57,18 @@ func FileExists(filePath string) bool {
 
 // wrapFileError wraps OS-level file errors with descriptive context.
 func wrapFileError(err error) error {
+	// Check for io.EOF - not really an error for file operations, just end of content
+	if errors.Is(err, io.EOF) {
+		// EOF is not an error in this context - it means we reached the end of the file
+		return err
+	}
+
+	// Check for os.PathError for more specific path-related error information
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return fmt.Errorf("path error during %s: %w", pathErr.Op, pathErr)
+	}
+
 	if os.IsNotExist(err) {
 		return fmt.Errorf("file not found: %w", err)
 	}
