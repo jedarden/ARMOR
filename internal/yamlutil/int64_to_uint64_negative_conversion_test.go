@@ -632,13 +632,13 @@ value: 18446744073709551615
 			description: "Maximum uint64 value",
 		},
 		{
-			name: "uint64 overflow 18446744073709551616 should error",
+			name: "uint64 overflow 18446744073709551616 wraps silently",
 			yamlContent: `
 value: 18446744073709551616
 `,
-			target:        &struct{ Value uint64 }{},
-			shouldError:   false,
-			description:   "Value 18446744073709551616 exceeds uint64 maximum - YAML parser wraps silently (differs from int32 behavior)",
+			target:      &struct{ Value uint64 }{},
+			shouldError: false,
+			description: "Value 18446744073709551616 exceeds uint64 maximum - YAML parser wraps silently (differs from int32 behavior)",
 		},
 	}
 
