@@ -703,7 +703,8 @@ pub fn classify_line_type(line: &str) -> LineType {
     }
 
     // Sequence items (start with -)
-    if trimmed.starts_with("- ") {
+    // Note: YAML spec requires "- " but we're lenient for lone "-" as well
+    if trimmed.starts_with("-") {
         return LineType::SequenceItem;
     }
 
