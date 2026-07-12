@@ -1,15 +1,15 @@
 # ValidationError Instantiation Catalog
 
-**Generated:** 2026-07-12  
-**Bead ID:** bf-30p0u  
-**Total Instantiations Found:** 30
+**Generated:** 2026-07-12
+**Bead ID:** bf-30p0u
+**Total Instantiations Found:** 27
 
 ## Summary
 
 All ValidationError instantiations in the ARMOR codebase have been cataloged. **All instantiations include the Path field** - no missing Path fields were found.
 
 The instantiations fall into two categories:
-1. **ValidationError::new()** - Constructor method calls (23 instances)
+1. **ValidationError::new()** - Constructor method calls (20 instances)
 2. **ValidationError {}** - Struct literal instantiations (7 instances)
 
 ---
@@ -101,7 +101,7 @@ The struct literal syntax requires all fields to be explicitly set. All 7 struct
 
 ## Conclusion
 
-**✅ All 30 ValidationError instantiations include the Path field.**
+**✅ All 27 ValidationError instantiations include the Path field.**
 
 **No instances missing the Path field were found.**
 
@@ -118,7 +118,7 @@ The Path field is guaranteed to be present in all cases:
 grep -rn "ValidationError" --include="*.rs" /home/coding/ARMOR/src/ /home/coding/ARMOR/tests/ 2>/dev/null | grep -E "ValidationError \{|ValidationError::new" | grep -v "pub struct"
 ```
 
-**Total Results:** 30 ValidationError instantiations
+**Total Results:** 27 ValidationError instantiations
 
 **Files Scanned:**
 - `/home/coding/ARMOR/src/**/*.rs` (source code)
