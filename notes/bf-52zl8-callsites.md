@@ -1,366 +1,485 @@
 # Validate() Call Sites Catalog
 
-**Generated:** 2026-07-12
-**Bead:** bf-52zl8
-**Task:** Catalog all Validate() call sites in ARMOR codebase
-**Total distinct validate() methods:** 6
-**Production call sites:** 3
+**Bead:** bf-52zl8  
+**Date:** 2026-07-12  
+**Scope:** ARMOR Go codebase (github.com/jedarden/armor)
+**Task:** Catalog all Validate() call sites
+
+## Summary
+
+This catalog documents all `Validate()` method call sites in the ARMOR Go codebase to support systematic error handling updates.
 
 ---
 
-## Executive Summary
+## Interface Definitions
 
-The ARMOR codebase has **6 distinct `validate()` method signatures** across different types:
+### 1. Schema Interface
+**File:** `internal/yamlutil/schema.go:38`  
+**Signature:** `Validate(value interface{}) error`
 
-1. **Schema trait** (`Schema::validate()`) - Test-only, no production usage
-2. **ParserConfig** (`ParserConfig::validate()`) - Builder pattern, properly handled
-3. **ValidatorConfig** (`ValidatorConfig::validate()`) - Builder pattern, properly handled
-4. **ValidationHook** (`ValidationHook::validate()`) - Defined but never called
-5. **SyntaxValidator** (`SyntaxValidator::validate()`) - YAML syntax validation, custom return type
-6. **Parser trait** (`Parser::validate()`) - Default trait implementation, never called
-
-**Key Finding:** All production `validate()` call sites already have proper error handling. No systematic updates required.
-
----
-
-## Method Signature Catalog
-
-### 1. Schema Trait (`schema::Schema<T>`)
-
-```rust
-// src/schema.rs:274
-fn validate(&self, value: &T) -> ValidationResult
-// where ValidationResult = Result<(), ParseError>
-```
-
-**Definition:** `src/schema.rs:274` - Schema trait definition
-
-**Production Call Sites:** None
-
-**Test Call Sites:**
-- `tests/schema_validation_test.rs` - 20+ test assertions
-- `src/schema.rs` - Module tests (lines 318-695)
-
-**Status:** ✅ **TEST-ONLY** - No production usage, no error handling updates needed
-
----
-
-### 2. ParserConfig::validate()
-
-```rust
-// src/parsers/config.rs:537-554
-pub fn validate(&self) -> Result<(), String>
-```
-
-**Definition:** `src/parsers/config.rs:537-554`
-
-**Production Call Site:** `src/parsers/config.rs:662`
-
-```rust
-pub fn build(self) -> Result<ParserConfig, String> {
-    self.config.validate()?;
-    Ok(self.config)
+```go
+type Schema interface {
+    Validate(value interface{}) error
 }
 ```
 
-**Call Type:** Direct with `?` operator
-**Error Handling:** ✅ **CORRECT** - Uses `?` operator to propagate `String` errors
-**Update Priority:** **LOW** - Already uses proper error propagation
-
-**Validation Rules:**
-- Checks `warnings_as_errors` requires `emit_warnings`
-- Checks strict mode conflicts with `allow_duplicates`
-- Checks `strict_types` alignment with mode
+**Purpose:** Generic validation interface for validating values against schema rules.  
+**Returns:** `error` - nil if valid, error if validation fails.
 
 ---
 
-### 3. ValidatorConfig::validate()
+### 2. ValidatedSchema Interface
+**File:** `internal/yamlutil/schema_interfaces.go:31`  
+**Signature:** `Validate() YAMLError`
 
-```rust
-// src/parsers/config.rs:908-923
-pub fn validate(&self) -> Result<(), String>
-```
-
-**Definition:** `src/parsers/config.rs:908-923`
-
-**Production Call Site:** `src/parsers/config.rs:1007`
-
-```rust
-pub fn build(self) -> Result<ValidatorConfig, String> {
-    self.config.validate()?;
-    Ok(self.config)
+```go
+type ValidatedSchema interface {
+    Validate() YAMLError
+    Name() string
+    Description() string
 }
 ```
 
-**Call Type:** Direct with `?` operator
-**Error Handling:** ✅ **CORRECT** - Uses `?` operator to propagate `String` errors
-**Update Priority:** **LOW** - Already uses proper error propagation
-
-**Validation Rules:**
-- Checks strict mode requires `require_all_fields`
-- Checks strict mode requires `disallow_unknown_fields`
-- Checks `warnings_as_errors` requires `emit_warnings`
+**Purpose:** Validates the schema definition itself (not data against schema).  
+**Returns:** `YAMLError` if schema definition is invalid.
 
 ---
 
-### 4. ValidationHook::validate()
+### 3. SchemaValidator Interface
+**File:** `internal/yamlutil/schema_interfaces.go:71`  
+**Signature:** `Validate(data map[string]interface{}) SchemaValidationResult`
 
-```rust
-// src/parsers/config.rs:255-257
-pub fn validate(&self, field: &str, value: &serde_yaml::Value) -> Result<(), String>
-```
-
-**Definition:** `src/parsers/config.rs:255-257`
-
-**Production Call Sites:** None
-
-**Implementation:**
-```rust
-pub fn validate(&self, field: &str, value: &serde_yaml::Value) -> Result<(), String> {
-    (self.validator)(field, value)
+```go
+type SchemaValidator interface {
+    Validate(data map[string]interface{}) SchemaValidationResult
+    ValidateFile(filePath string) SchemaValidationResult
 }
 ```
 
-**Status:** ⚠️ **UNUSED** - Defined but never called in the codebase
+**Purpose:** Validates YAML data against a schema.  
+**Returns:** `SchemaValidationResult` with detailed error information.
 
 ---
 
-### 5. SyntaxValidator::validate()
+### 4. Constraint Interface
+**File:** `internal/yamlutil/schema_interfaces.go:89`  
+**Signature:** `Validate(value interface{}) *ConstraintError`
 
-```rust
-// src/parsers/yaml/syntax_validator.rs:65-105
-pub fn validate(&self, content: &str) -> ValidationResult
-// Note: Returns custom ValidationResult struct, NOT the schema type alias
+```go
+type Constraint interface {
+    Validate(value interface{}) *ConstraintError
+    Description() string
+    ConstraintType() string
+}
 ```
 
-**Definition:** `src/parsers/yaml/syntax_validator.rs:65-105`
+**Purpose:** Checks if a value satisfies a constraint.  
+**Returns:** `*ConstraintError` if constraint violated, nil otherwise.
 
-**Production Call Site:** `src/parsers/yaml/parser.rs:121`
+---
 
-```rust
-fn validate_str(&self, content: &str) -> ValidationResult {
-    let validator = if self.config.is_strict() {
-        SyntaxValidator::strict()
-    } else {
-        SyntaxValidator::lenient()
-    };
+### 5. Validator Interface (main yamlutil API)
+**File:** `internal/yamlutil/interfaces.go:106`  
+**Signature:** Multiple Validate methods
 
-    let mut result = validator.validate(content);
+```go
+type Validator interface {
+    ValidateFile(filePath string) ValidationResult
+    ValidateString(yamlContent string) ValidationResult
+    ValidateStringWithPath(yamlContent, filePath string) ValidationResult
+    ValidateMultipleFiles(filePaths []string) []ValidationResult
+}
+```
 
-    if result.is_valid() {
-        let mut detector = SyntaxDetector::new();
-        let detector_result = detector.detect_to_validation_result(content);
+**Purpose:** Main API for YAML validation with syntax, schema, and custom validation.  
+**Returns:** `ValidationResult` with errors, warnings, and timing info.
 
-        if !detector_result.is_valid() {
-            result.valid = false;
-            result.errors.extend(detector_result.errors);
+---
+
+## Production Code Call Sites
+
+### Direct Calls (HIGH PRIORITY - Need Error Handling Updates)
+
+#### 1. SchemaValidator.Validate() → Schema.Validate()
+**File:** `internal/yamlutil/schema.go:180`  
+**Context:** SchemaValidator validates data against compiled schema
+
+```go
+func (sv *SchemaValidator) Validate(data interface{}) SchemaValidationResult {
+    // ... setup code ...
+    
+    // Validate data against schema
+    if err := sv.schema.Validate(data); err != nil {
+        result.Valid = false
+        
+        // Handle YAMLError with structured information
+        if yamlErr, ok := err.(YAMLError); ok {
+            result.Errors = append(result.Errors, SchemaValidationError{
+                Message:   yamlErr.Error(),
+                ErrorCode: yamlErr.Code(),
+            })
+        } else {
+            // Handle generic errors
+            result.Errors = append(result.Errors, SchemaValidationError{
+                Message: fmt.Sprintf("Validation failed: %v", err),
+            })
+        }
+        return result
+    }
+    // ... continue ...
+}
+```
+
+**Status:** ✅ **HAS ERROR HANDLING** - Already handles YAMLError type checking  
+**Type:** Direct call to Schema interface  
+**Update Priority:** LOW - Already has proper error handling  
+**Notes:** This is the primary call site that other code paths use indirectly.
+
+---
+
+#### 2. SchemaValidator.ValidateFile() → SchemaValidator.Validate()
+**File:** `internal/yamlutil/schema.go:253`  
+**Context:** ValidateFile delegates to Validate
+
+```go
+func (sv *SchemaValidator) ValidateFile(filePath string) SchemaValidationResult {
+    // ... file reading code ...
+    
+    return sv.Validate(data)
+}
+```
+
+**Status:** ✅ **WRAPPED CALL** - Delegates to Validate() above  
+**Type:** Wrapped call  
+**Update Priority:** LOW - Inherits error handling from Validate()  
+**Notes:** This is a wrapper that returns the result from Validate().
+
+---
+
+#### 3. Validator.ValidateString() → ValidateStringWithPath()
+**File:** `internal/yamlutil/validator.go:110`  
+**Context:** ValidateString delegates to ValidateStringWithPath
+
+```go
+func (v *Validator) ValidateString(yamlContent string) ValidationResult {
+    return v.ValidateStringWithPath(yamlContent, "<string>")
+}
+```
+
+**Status:** ✅ **WRAPPED CALL**  
+**Type:** Wrapper delegation  
+**Update Priority:** N/A - No direct Validate() call  
+**Notes:** Simple delegation wrapper.
+
+---
+
+#### 4. Validator.ValidateFile() → ValidateStringWithPath()
+**File:** `internal/yamlutil/validator.go:174`  
+**Context:** ValidateFile reads and delegates to ValidateStringWithPath
+
+```go
+func (v *Validator) ValidateFile(filePath string) ValidationResult {
+    content, err := os.ReadFile(filePath)
+    // ... error handling ...
+    return v.ValidateStringWithPath(string(content), filePath)
+}
+```
+
+**Status:** ✅ **WRAPPED CALL**  
+**Type:** Wrapper delegation  
+**Update Priority:** N/A - No direct Validate() call  
+**Notes:** Reads file then delegates.
+
+---
+
+#### 5. Validator.ValidateMultipleFiles()
+**File:** `internal/yamlutil/validator.go:315`  
+**Context:** Loop calling ValidateFile on each path
+
+```go
+func (v *Validator) ValidateMultipleFiles(filePaths []string) []ValidationResult {
+    results := make([]ValidationResult, len(filePaths))
+    for i, path := range filePaths {
+        result := v.ValidateFile(path)
+        results[i] = result
+    }
+    return results
+}
+```
+
+**Status:** ✅ **INDIRECT CALL** - Calls ValidateFile() which calls ValidateStringWithPath()  
+**Type:** Indirect call chain  
+**Update Priority:** N/A - No direct Validate() call  
+**Notes:** Iterates over files calling ValidateFile for each.
+
+---
+
+## SchemaDefinition Implementation
+
+#### SchemaDefinition.Validate() Implementation
+**File:** `internal/yamlutil/schema.go:770`  
+**Signature:** `func (s *SchemaDefinition) Validate(value interface{}) error`
+
+```go
+func (s *SchemaDefinition) Validate(value interface{}) error {
+    if value == nil {
+        return NewValidationError("", "value cannot be nil", "", "", 
+            ErrCodeValidationFailed, 0, 0, ErrorTypeValidation, "")
+    }
+    
+    data, ok := value.(map[string]interface{})
+    if !ok {
+        return NewTypeMismatchError("", "", "map[string]interface{}", 
+            fmt.Sprintf("%T", value), "", 0, ErrCodeTypeMismatch)
+    }
+    
+    // Validate root fields
+    for fieldName, fieldDef := range s.RootFields {
+        if fieldDef.Required {
+            if _, exists := data[fieldName]; !exists {
+                return NewFieldNotFoundError("", fieldName, 0, ErrCodeRequiredField)
+            }
+        }
+        
+        if fieldValue, exists := data[fieldName]; exists {
+            if err := s.validateField(fieldValue, fieldDef, fieldName); err != nil {
+                return err
+            }
         }
     }
-
-    result
+    
+    return nil
 }
 ```
 
-**Call Type:** Direct assignment
-**Error Handling:** N/A - Returns custom `ValidationResult` struct, not `Result` type
-**Update Priority:** **N/A** - Custom return type, no `?` operator applicable
-
-**Test Call Sites:**
-- `src/parsers/yaml/syntax_validator.rs` - Multiple test cases (lines 438-503)
-- `src/parsers/yaml/syntax_detector_tests.rs` - Multiple test cases (lines 131, 567, 728)
+**Status:** ✅ **IMPLEMENTATION** - Returns YAMLError types  
+**Type:** Method implementation  
+**Update Priority:** LOW - Already returns proper error types  
+**Notes:** This is the Schema interface implementation used by SchemaValidator.
 
 ---
 
-### 6. Parser Trait validate() (Default Implementation)
+## Test Code Call Sites
 
-```rust
-// src/parsers/traits.rs:323-326
-fn validate(&self, source: Input) -> Result<(), ParseError>
-```
+### Test Files Using Validate()
 
-**Definition:** `src/parsers/traits.rs:323-326` - Default trait implementation
+#### 1. schema_validation_test.go - ValidatedSchema.Validate() tests
+**File:** `internal/yamlutil/schema_validation_test.go:94`  
+**Context:** Testing ValidatedSchema interface
 
-**Production Call Sites:** None
+```go
+err := tt.schema.Validate()
 
-**Implementation:**
-```rust
-fn validate(&self, source: Input) -> Result<(), ParseError> {
-    self.parse(source)?;
-    Ok(())
+if tt.wantErr {
+    if err == nil {
+        t.Errorf("%s: Validate() expected error but got nil", tt.name)
+    }
+    
+    if err != nil {
+        // Verify it's YAMLError-compatible
+        if _, ok := err.(YAMLError); !ok {
+            t.Errorf("%s: Validate() should return YAMLError-compatible error, got %T", 
+                tt.name, err)
+        }
+    }
+} else {
+    if err != nil {
+        t.Errorf("%s: Validate() unexpected error: %v", tt.name, err)
+    }
 }
 ```
 
-**Status:** ⚠️ **UNUSED** - Default implementation exists but no production usage
+**Status:** ✅ **TEST CODE** - Already validates YAMLError compatibility  
+**Type:** Test code  
+**Update Priority:** N/A - Test code already checks error types  
+**Notes:** Tests verify that Validate() returns YAMLError-compatible errors.
+
+---
+
+#### 2. schema_validation_test.go - Basic functionality test
+**File:** `internal/yamlutil/schema_validation_test.go:147`  
+**Context:** Basic Validate() call
+
+```go
+err := schema.Validate()
+if err != nil {
+    t.Errorf("Schema.Validate() unexpected error: %v", err)
+}
+```
+
+**Status:** ✅ **TEST CODE**  
+**Type:** Test code  
+**Update Priority:** N/A - Test code  
+**Notes:** Simple validation test.
+
+---
+
+#### 3. schema_validation_test.go - SchemaValidator.Validate() tests
+**File:** `internal/yamlutil/schema_validation_test.go:224`  
+**Context:** Testing SchemaValidator.Validate()
+
+```go
+validator := NewSchemaValidator(schema)
+result := validator.Validate(tt.data)
+
+if tt.wantErr {
+    if result.Valid {
+        t.Errorf("%s: Validate() expected errors but got valid result", tt.name)
+    }
+    if len(result.Errors) == 0 {
+        t.Errorf("%s: Validate() should have errors", tt.name)
+    }
+} else {
+    if len(result.Errors) > 0 {
+        t.Errorf("%s: Validate() unexpected errors: %v", tt.name, result.Errors)
+    }
+}
+```
+
+**Status:** ✅ **TEST CODE** - Tests SchemaValidator result structure  
+**Type:** Test code  
+**Update Priority:** N/A - Test code validates result structure  
+**Notes:** Tests verify SchemaValidationResult structure.
+
+---
+
+#### 4. schema_validation_test.go - Additional Validate() test
+**File:** `internal/yamlutil/schema_validation_test.go:310`  
+**Context:** Another SchemaValidator.Validate() test
+
+```go
+validator := NewSchemaValidator(schema)
+result := validator.Validate(tt.data)
+
+if tt.wantErr {
+    if result.Valid {
+        t.Errorf("%s: Validate() expected errors but got valid result", tt.name)
+    }
+} else {
+    if len(result.Errors) > 0 {
+        t.Errorf("%s: Validate() unexpected errors: %v", tt.name, result.Errors)
+    }
+}
+```
+
+**Status:** ✅ **TEST CODE**  
+**Type:** Test code  
+**Update Priority:** N/A - Test code  
+**Notes:** Similar to test #3.
+
+---
+
+## Call Chain Summary
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        ENTRY POINTS                              │
+├─────────────────────────────────────────────────────────────────┤
+│ Validator.ValidateFile()                                        │
+│ Validator.ValidateString()                                       │
+│ Validator.ValidateMultipleFiles()                               │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    SchemaValidator                               │
+├─────────────────────────────────────────────────────────────────┤
+│ SchemaValidator.Validate(data)                                   │
+│ SchemaValidator.ValidateFile(filePath)                           │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Schema Interface                            │
+├─────────────────────────────────────────────────────────────────┤
+│ schema.Validate(data) error                                     │
+│   └── SchemaDefinition.Validate(data) error (YAMLError types)   │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Categorization Summary
 
-### By Update Priority
-
-| Method | Priority | Reason |
-|--------|----------|--------|
-| `ParserConfig::validate()` | LOW | Already uses `?` operator |
-| `ValidatorConfig::validate()` | LOW | Already uses `?` operator |
-| `SyntaxValidator::validate()` | N/A | Custom return type, no `?` operator |
-| `Schema::validate()` | N/A | Test-only, no production usage |
-| `ValidationHook::validate()` | N/A | Unused method |
-| `Parser::validate()` | N/A | Unused default implementation |
-
 ### By Type
 
-| Type | Count | Methods |
-|------|-------|---------|
-| Production call sites | 3 | ParserConfig, ValidatorConfig, SyntaxValidator |
-| Test-only implementations | 10+ | All Schema trait implementations |
-| Unused methods | 2 | ValidationHook, Parser trait default |
-| Proper error handling | 2 | ParserConfig::validate(), ValidatorConfig::validate() |
-| Custom return type | 1 | SyntaxValidator::validate() |
+| Category | Count | Sites |
+|----------|-------|-------|
+| **Interface Definitions** | 5 | Schema, ValidatedSchema, SchemaValidator, Constraint, Validator |
+| **Production Implementations** | 1 | SchemaDefinition.Validate() |
+| **Production Call Sites** | 5 | SchemaValidator.Validate, wrappers, delegates |
+| **Test Call Sites** | 4 | schema_validation_test.go |
+| **TOTAL** | 15 | All Validate() sites in codebase |
 
-### Test Code Distribution
+### By Update Priority
 
-The Schema trait has extensive test coverage in:
-
-#### `tests/schema_validation_test.rs` (70+ assertions)
-- Lines: 148, 150, 180-184, 192-194, 202-206, 214-218, 230-264, 276-292, 304-575
-
-**Pattern examples:**
-```rust
-assert!(schema.validate(&1).is_ok());
-assert!(schema.validate(&0).is_err());
-let result = schema.validate(&invalid_value);
-```
-
-**Status:** ✅ **NO CHANGES NEEDED** - Test-only code
-
-#### `src/schema.rs` module tests
-- Lines: 318-695
-
-**Status:** ✅ **NO CHANGES NEEDED** - Test-only code
-
-#### `src/parsers/config.rs` test module
-- Lines: 1202, 1205, 1216, 1224, 1232, 1297, 1300, 1312, 1320
-
-**Pattern examples:**
-```rust
-assert!(config.validate().is_ok());
-assert!(config.validate().is_err());
-```
-
-**Status:** ✅ **NO CHANGES NEEDED** - Test-only code
-
-#### `src/parsers/yaml/syntax_validator.rs` tests
-- Lines: 438, 453, 461, 470, 479, 487, 495, 503
-
-**Status:** ✅ **NO CHANGES NEEDED** - Test-only code
-
-#### `src/parsers/yaml/syntax_detector_tests.rs` tests
-- Lines: 131, 567, 728
-
-**Status:** ✅ **NO CHANGES NEEDED** - Test-only code
+| Priority | Count | Rationale |
+|----------|-------|-----------|
+| **HIGH** | 0 | All production code already has proper error handling |
+| **MEDIUM** | 0 | No identified gaps in error handling |
+| **LOW** | 2 | SchemaDefinition.Validate() - already returns YAMLError types |
+| **N/A** | 13 | Test code, wrappers, interfaces |
 
 ---
 
-## Error Type Analysis
+## Key Findings
 
-### Return Type Patterns
+### ✅ Good News
+1. **Primary call site already has proper error handling**: `SchemaValidator.Validate()` at schema.go:180 already checks for YAMLError type and handles both typed and generic errors appropriately.
 
-| Type | Method | Return Type | Used By |
-|------|--------|-------------|---------|
-| Config validation | `ParserConfig::validate()` | `Result<(), String>` | `build()` methods |
-| Config validation | `ValidatorConfig::validate()` | `Result<(), String>` | `build()` methods |
-| Field validation | `ValidationHook::validate()` | `Result<(), String>` | None (unused) |
-| Syntax validation | `SyntaxValidator::validate()` | `ValidationResult` (custom struct) | YAML parser |
-| Schema validation | `Schema::validate()` | `Result<(), ParseError>` | Tests/docs |
-| Parser validation | `Parser::validate()` | `Result<(), ParseError>` | Trait definition |
+2. **All implementations return proper error types**: `SchemaDefinition.Validate()` returns YAMLError-derived types (ValidationError, TypeMismatchError, FieldNotFoundError).
 
-### Error Conversion Status
+3. **Test code already validates error types**: Test files verify that Validate() returns YAMLError-compatible errors.
 
-**Current State:**
+4. **No unhandled direct calls**: All production call sites either:
+   - Have proper error handling (SchemaValidator.Validate)
+   - Are wrappers that delegate to handled code
+   - Are test code
 
-1. **ParserConfig/ValidatorConfig**: Return `Result<(), String>` - No ParseError conversion needed
-2. **SyntaxValidator**: Returns custom struct - No error conversion applicable
-3. **Schema trait**: Returns `Result<(), ParseError>` - Test-only, already correct type
-4. **ValidationHook**: Returns `Result<(), String>` - Unused
-5. **Parser trait**: Returns `Result<(), ParseError>` - Unused default
-
-**Recommendation:**
-
-**No error handling updates required** for any production call sites:
-- Builder patterns (ParserConfig, ValidatorConfig) already use `?` operator properly
-- SyntaxValidator returns custom struct, not Result type
-- Schema trait is test-only
+### No Critical Updates Needed
+The codebase already has comprehensive error handling for Validate() calls. The error handling hierarchy is:
+- `SchemaValidator.Validate()` catches errors and converts to `SchemaValidationResult`
+- `SchemaDefinition.Validate()` returns YAMLError-derived types
+- Test code validates error type compatibility
 
 ---
 
-## Schema Trait Implementations
+## Recommendations
 
-All Schema trait implementations are **test-only**:
+1. **No immediate updates required** - All production code has proper error handling.
 
-| Implementation | Location | Type Being Validated |
-|----------------|----------|---------------------|
-| PositiveIntegerSchema | tests/schema_validation_test.rs:24 | i32 |
-| RangeSchema | tests/schema_validation_test.rs:40 | i32 |
-| NonEmptyStringSchema | tests/schema_validation_test.rs:54 | str |
-| PortSchema | tests/schema_validation_test.rs:71 | u16 |
-| ServerConfigSchema | tests/schema_validation_test.rs:89 | ServerConfig |
-| UsernameSchema | tests/schema_validation_test.rs:106 | String |
-| AgeSchema | tests/schema_validation_test.rs:123 | u8 |
-| UserSchema | tests/schema_validation_test.rs:146 | User |
-| RequiredValueSchema | tests/schema_validation_test.rs:159 | Option<i32> |
-| StrictUserSchema | tests/schema_validation_test.rs:599 | User |
+2. **Document current patterns** - The error handling in SchemaValidator.Validate() should be used as a reference pattern for any new validation code.
 
-**None of these are used in production code.**
+3. **Test coverage is adequate** - Existing tests already verify YAMLError type compatibility.
+
+4. **Future code should follow existing patterns** - Any new Validate() implementations should:
+   - Return YAMLError-derived types for schema validation
+   - Use type assertions to check for YAMLError in error handling
+   - Convert to appropriate result types for API responses
 
 ---
 
-## Analysis Summary
+## Files Analyzed
 
-### Key Finding
-
-**All production Validate() call sites already have proper error handling.**
-
-1. **ParserConfig/ValidatorConfig builders** - Use `?` operator with correct `Result` types
-2. **YAML parser** - Uses custom `ValidationResult` type directly
-3. **Test code** - Uses assertions for testing (appropriate)
-4. **Documentation** - Non-executable examples
-
-### No Migration Required
-
-Unlike bead bf-4fklr which documented `Validate()` error return patterns requiring systematic updates, **this catalog found that all actual call sites in production code are already correctly implemented**.
-
-### Return Type Patterns
-
-| Type | Method | Return Type | Used By |
-|------|--------|-------------|---------|
-| Config validation | `ParserConfig::validate()` | `Result<(), String>` | `build()` methods |
-| Config validation | `ValidatorConfig::validate()` | `Result<(), String>` | `build()` methods |
-| Syntax validation | `SyntaxValidator::validate()` | `ValidationResult` | YAML parser |
-| Schema validation | `Schema::validate()` | `ValidationResult` | Tests/docs |
-| Parser validation | `Parser::validate()` | `Result<(), ParseError>` | Trait definition |
-
----
-
-## Update Priority Matrix
-
-| Site | Priority | Action Required |
-|------|----------|-----------------|
-| src/parsers/config.rs:662 | ✅ None | Already correct |
-| src/parsers/config.rs:1007 | ✅ None | Already correct |
-| src/parsers/yaml/parser.rs:121 | ✅ None | Already correct |
-| All test code | ✅ None | Test-only, no changes |
-| All doc comments | ✅ None | Documentation only |
-
-**Total sites requiring updates: 0**
+- `internal/yamlutil/schema.go` - Schema interface, SchemaDefinition, SchemaValidator
+- `internal/yamlutil/schema_interfaces.go` - ValidatedSchema, Constraint, SchemaComposer interfaces
+- `internal/yamlutil/interfaces.go` - Main Validator interface
+- `internal/yamlutil/validator.go` - Validator implementation with wrapper methods
+- `internal/yamlutil/schema_validation_test.go` - Comprehensive test coverage
 
 ---
 
 ## Conclusion
 
-The ARMOR codebase has **142 Validate() call sites**, but after categorization:
+The ARMOR Go codebase has **15 distinct Validate() sites**, categorized as:
 
-- **3 production sites** - All correctly implemented ✅
-- **102 test sites** - All use appropriate assertions ✅  
-- **37 documentation sites** - All non-executable examples ✅
+- **5 interface definitions** - All properly typed with YAMLError returns
+- **1 production implementation** - SchemaDefinition.Validate() returns YAMLError types
+- **5 production call sites** - All have proper error handling or delegate to handled code
+- **4 test call sites** - All use appropriate test assertions
 
 **No systematic updates are required.** The error handling infrastructure is already in place and functioning correctly for all production code paths.
+
+---
+
+**End of Catalog**
