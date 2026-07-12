@@ -1,4 +1,12 @@
-# Validate() Call Sites Catalog
+# Validate() Call Sites Documentation
+
+## Document Purpose
+This document catalogs all `Validate()` call site locations found in the ARMOR Rust codebase. Created as part of bead **bf-cdc05** to provide structured documentation of validation method usage patterns.
+
+## Bead Relationship
+- **bf-2c889**: Initial search for Validate() call sites (focused on `src/parsers/config.rs`)
+- **bf-52zl8**: Comprehensive Validate() catalog (entire codebase, all validate() methods)
+- **bf-cdc05**: Documentation task to structure and present the findings
 
 ## Overview
 This document catalogs all locations in the ARMOR codebase where `validate()` methods are called. The codebase has two distinct `validate()` method families:
@@ -194,4 +202,6 @@ pub type ValidationResult = Result<(), ParseError>;
 - `fn validate` - Find all validate() method definitions
 
 **Date Generated:** 2026-07-12
-**Bead:** bf-52zl8
+**Original Bead:** bf-52zl8 (comprehensive Validate() catalog)
+**Current Bead:** bf-cdc05 (documentation task)
+**Related Bead:** bf-2c889 (initial Validate() search in config.rs)
