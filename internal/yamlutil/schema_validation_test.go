@@ -15,19 +15,19 @@ import (
 // - Schema implements SchemaDefinition interface
 // - Validate() method returns YAMLError-compatible types
 // - Validation properly checks schema definition validity
-func TestSchema_Validate_Contract(t *testing.T) {
+func TestSchemaDefinition_Validate_Contract(t *testing.T) {
 	tests := []struct {
 		name        string
-		schema      *Schema
+		schema      *SchemaDefinition
 		wantErr     bool
 		errorType   string // "schema" for SchemaError, "yaml" for YAMLError
 		description string
 	}{
 		{
 			name: "valid schema",
-			schema: &Schema{
+			schema: &SchemaDefinition{
 				Type:       SchemaTypeJSON,
-				name:       "test-schema",
+				Name:       "test-schema",
 				RootFields: map[string]*FieldDefinition{},
 			},
 			wantErr:     false,
@@ -36,8 +36,8 @@ func TestSchema_Validate_Contract(t *testing.T) {
 		},
 		{
 			name: "nil schema",
-			schema: func() *Schema {
-				var s *Schema
+			schema: func() *SchemaDefinition {
+				var s *SchemaDefinition
 				return s
 			}(),
 			wantErr:     true,
@@ -46,9 +46,9 @@ func TestSchema_Validate_Contract(t *testing.T) {
 		},
 		{
 			name: "schema with nil field definition",
-			schema: &Schema{
+			schema: &SchemaDefinition{
 				Type:       SchemaTypeJSON,
-				name:       "invalid-schema",
+				Name:       "invalid-schema",
 				RootFields: map[string]*FieldDefinition{"field1": nil},
 			},
 			wantErr:     true,
@@ -57,9 +57,9 @@ func TestSchema_Validate_Contract(t *testing.T) {
 		},
 		{
 			name: "schema with invalid field type",
-			schema: &Schema{
+			schema: &SchemaDefinition{
 				Type:       SchemaTypeJSON,
-				name:       "invalid-type-schema",
+				Name:       "invalid-type-schema",
 				RootFields: map[string]*FieldDefinition{
 					"field1": {
 						Type: "invalid_type",
@@ -72,9 +72,9 @@ func TestSchema_Validate_Contract(t *testing.T) {
 		},
 		{
 			name: "schema with min > max constraint",
-			schema: &Schema{
+			schema: &SchemaDefinition{
 				Type:       SchemaTypeJSON,
-				name:       "invalid-constraint-schema",
+				Name:       "invalid-constraint-schema",
 				RootFields: map[string]*FieldDefinition{
 					"field1": {
 						Type: "string",
@@ -91,7 +91,7 @@ func TestSchema_Validate_Contract(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.schema.Validate()
+			err := tt.schema.Compile()
 
 			if tt.wantErr {
 				if err == nil {
@@ -117,45 +117,45 @@ func TestSchema_Validate_Contract(t *testing.T) {
 	}
 }
 
-// TestSchemaDefinition_Interface verifies Schema implements SchemaDefinition interface.
+// TestSchemaDefinition_Interface verifies SchemaDefinition implements Schema interface.
 func TestSchemaDefinition_Interface(t *testing.T) {
-	schema := &Schema{
-		Type:       SchemaTypeJSON,
-		name:       "interface-test-schema",
-		version:    "1.0.0",
-		description: "Test schema for interface validation",
-		RootFields: map[string]*FieldDefinition{},
+	schema := &SchemaDefinition{
+		Type:        SchemaTypeJSON,
+		Name:        "interface-test-schema",
+		Version:     "1.0.0",
+		Description: "Test schema for interface validation",
+		RootFields:  map[string]*FieldDefinition{},
 	}
 
-	// Verify Schema implements SchemaDefinition interface
-	var _ SchemaDefinition = schema
+	// Verify SchemaDefinition implements Schema interface
+	var _ Schema = schema
 
-	// Test interface methods
-	if schema.Name() != "interface-test-schema" {
-		t.Errorf("Schema.Name() = %q, want %q", schema.Name(), "interface-test-schema")
+	// Test struct fields
+	if schema.Name != "interface-test-schema" {
+		t.Errorf("SchemaDefinition.Name = %q, want %q", schema.Name, "interface-test-schema")
 	}
 
-	if schema.Version() != "1.0.0" {
-		t.Errorf("Schema.Version() = %q, want %q", schema.Version(), "1.0.0")
+	if schema.Version != "1.0.0" {
+		t.Errorf("SchemaDefinition.Version = %q, want %q", schema.Version, "1.0.0")
 	}
 
-	if schema.Description() != "Test schema for interface validation" {
-		t.Errorf("Schema.Description() = %q, want %q", schema.Description(), "Test schema for interface validation")
+	if schema.Description != "Test schema for interface validation" {
+		t.Errorf("SchemaDefinition.Description = %q, want %q", schema.Description, "Test schema for interface validation")
 	}
 
-	// Validate method should work
-	err := schema.Validate()
+	// Compile method should work
+	err := schema.Compile()
 	if err != nil {
-		t.Errorf("Schema.Validate() unexpected error: %v", err)
+		t.Errorf("SchemaDefinition.Compile() unexpected error: %v", err)
 	}
 }
 
-// TestSchema_Validate_GenericValues tests generic value validation capability.
-func TestSchema_Validate_GenericValues(t *testing.T) {
-	schema := &Schema{
+// TestSchemaDefinition_Validate_GenericValues tests generic value validation capability.
+func TestSchemaDefinition_Validate_GenericValues(t *testing.T) {
+	schema := &SchemaDefinition{
 		Type:     SchemaTypeJSON,
-		name:     "generic-validation-schema",
-		version:  "1.0.0",
+		Name:     "generic-validation-schema",
+		Version:  "1.0.0",
 		RootFields: map[string]*FieldDefinition{
 			"stringField": {
 				Type:     "string",
@@ -239,16 +239,16 @@ func TestSchema_Validate_GenericValues(t *testing.T) {
 	}
 }
 
-// TestSchema_Validate_NestedStructures tests nested object and array validation.
-func TestSchema_Validate_NestedStructures(t *testing.T) {
-	schema := &Schema{
+// TestSchemaDefinition_Validate_NestedStructures tests nested object and array validation.
+func TestSchemaDefinition_Validate_NestedStructures(t *testing.T) {
+	schema := &SchemaDefinition{
 		Type:     SchemaTypeJSON,
-		name:     "nested-validation-schema",
-		version:  "1.0.0",
+		Name:     "nested-validation-schema",
+		Version:  "1.0.0",
 		RootFields: map[string]*FieldDefinition{
 			"nestedObject": {
 				Type: "object",
-				NestedSchema: &Schema{
+				NestedSchema: &SchemaDefinition{
 					RootFields: map[string]*FieldDefinition{
 						"field1": {Type: "string", Required: true},
 						"field2": {Type: "integer"},
@@ -322,63 +322,36 @@ func TestSchema_Validate_NestedStructures(t *testing.T) {
 	}
 }
 
-// TestSchema_Name_Version_Description tests metadata methods.
-func TestSchema_Name_Version_Description(t *testing.T) {
-	schema := &Schema{
+// TestSchemaDefinition_Name_Version_Description tests metadata fields.
+func TestSchemaDefinition_Name_Version_Description(t *testing.T) {
+	schema := &SchemaDefinition{
 		Type:        SchemaTypeJSON,
-		name:        "metadata-test-schema",
-		description: "A test schema for metadata validation",
-		version:     "2.0.0",
+		Name:        "metadata-test-schema",
+		Description: "A test schema for metadata validation",
+		Version:     "2.0.0",
 		RootFields:  map[string]*FieldDefinition{},
 	}
 
-	tests := []struct {
-		name       string
-		method     func() string
-		want       string
-		wantPanic  bool
-	}{
-		{
-			name:   "Name method",
-			method: schema.Name,
-			want:   "metadata-test-schema",
-		},
-		{
-			name:   "Version method",
-			method: schema.Version,
-			want:   "2.0.0",
-		},
-		{
-			name:   "Description method",
-			method: schema.Description,
-			want:   "A test schema for metadata validation",
-		},
+	// Test field values
+	if schema.Name != "metadata-test-schema" {
+		t.Errorf("SchemaDefinition.Name = %q, want %q", schema.Name, "metadata-test-schema")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			defer func() {
-				if r := recover(); r != nil {
-					if !tt.wantPanic {
-						t.Errorf("%s: unexpected panic: %v", tt.name, r)
-					}
-				}
-			}()
+	if schema.Version != "2.0.0" {
+		t.Errorf("SchemaDefinition.Version = %q, want %q", schema.Version, "2.0.0")
+	}
 
-			got := tt.method()
-			if got != tt.want {
-				t.Errorf("%s() = %q, want %q", tt.name, got, tt.want)
-			}
-		})
+	if schema.Description != "A test schema for metadata validation" {
+		t.Errorf("SchemaDefinition.Description = %q, want %q", schema.Description, "A test schema for metadata validation")
 	}
 }
 
-// TestSchema_ValidateFile tests file-based validation.
-func TestSchema_ValidateFile(t *testing.T) {
-	schema := &Schema{
+// TestSchemaDefinition_ValidateFile tests file-based validation.
+func TestSchemaDefinition_ValidateFile(t *testing.T) {
+	schema := &SchemaDefinition{
 		Type:     SchemaTypeJSON,
-		name:     "file-validation-schema",
-		version:  "1.0.0",
+		Name:     "file-validation-schema",
+		Version:  "1.0.0",
 		RootFields: map[string]*FieldDefinition{
 			"field1": {Type: "string", Required: true},
 			"field2": {Type: "integer"},
