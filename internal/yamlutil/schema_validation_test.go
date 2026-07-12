@@ -9,12 +9,12 @@ import (
 	"testing"
 )
 
-// TestSchema_Validate_Contract verifies that Schema implements the validation contract.
+// TestSchemaDefinition_Validate_Contract verifies that SchemaDefinition compiles correctly.
 //
 // This test ensures that:
-// - Schema implements SchemaDefinition interface
-// - Validate() method returns YAMLError-compatible types
-// - Validation properly checks schema definition validity
+// - SchemaDefinition implements the Schema interface
+// - Compile() method returns YAMLError-compatible types for schema errors
+// - Compile() properly checks schema definition validity
 func TestSchemaDefinition_Validate_Contract(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -95,22 +95,27 @@ func TestSchemaDefinition_Validate_Contract(t *testing.T) {
 
 			if tt.wantErr {
 				if err == nil {
-					t.Errorf("%s: Validate() expected error but got nil", tt.name)
+					t.Errorf("%s: Compile() expected error but got nil", tt.name)
 					return
 				}
 
 				// Verify error implements YAMLError interface
 				if tt.errorType == "yaml" {
 					if !isYAMLError(err) {
-						t.Errorf("%s: Validate() should return YAMLError-compatible error, got %T", tt.name, err)
+						t.Errorf("%s: Compile() should return YAMLError-compatible error, got %T", tt.name, err)
 					}
 					if err != nil && !isYAMLError(err) {
 						t.Logf("%s: Error type: %T, Error: %v", tt.name, err, err)
 					}
+					// Log YAMLError details for debugging
+					if err != nil && isYAMLError(err) {
+						yamlErr := err.(YAMLError)
+						t.Logf("%s: YAMLError details - Code: %v, Type: %v, Context: %v", tt.name, yamlErr.Code(), yamlErr.YAMLErrorType(), yamlErr.Context())
+					}
 				}
 			} else {
 				if err != nil {
-					t.Errorf("%s: Validate() unexpected error: %v", tt.name, err)
+					t.Errorf("%s: Compile() unexpected error: %v", tt.name, err)
 				}
 			}
 		})
