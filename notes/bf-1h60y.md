@@ -17,3 +17,19 @@ Cannot decode the SECRET_ACCESS_KEY because there is no valid encoded data to de
 
 ## Resolution Required
 Bead bf-3llc7 needs to be re-opened and completed with proper credentials (using a kubeconfig with secret access permissions, not the read-only proxy).
+
+## Attempt Summary (2026-07-12)
+Attempted to decode with command:
+```bash
+base64 -d /tmp/litestream_secret_key_encoded.b64 > /tmp/litestream_secret_key_decoded.txt
+```
+
+Result: `base64: invalid input`
+
+The encoded file contains a kubectl permission error, not valid base64 data. This confirms the prerequisite bead failed silently.
+
+## Recommendation
+This bead (bf-1h60y) should NOT be closed until:
+1. bf-3llc7 is fixed to retrieve actual encoded data
+2. The encoded file contains valid base64
+3. Decoding succeeds and produces non-empty output
