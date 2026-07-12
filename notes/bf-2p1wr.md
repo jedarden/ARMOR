@@ -185,3 +185,51 @@ This task **cannot be completed by automated agents** as it requires:
 
 ### Bead Status
 The bead remains **OPEN** pending external action. Do not close - the task will be automatically released for retry once the kubeconfig is obtained manually.
+
+## Latest Verification (2026-07-12)
+
+### Current Session Verification
+```bash
+# 1. Check for existing kubeconfig files
+$ ls -la ~/.kube/*.kubeconfig
+-rw-r--r-- 1 coding users  282 Jun 25 07:20 /home/coding/.kube/iad-acb.kubeconfig
+-rw-r--r-- 1 coding users 2809 Jun  7 08:31 /home/coding/.kube/iad-ci.kubeconfig
+# No ord-devimprint.kubeconfig found
+
+# 2. Check if ord-devimprint kubeconfig exists
+$ ls -la ~/.kube/ | grep -i "ord-devimprint"
+# No ord-devimprint kubeconfig found
+
+# 3. Test secret access through read-only proxy
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secrets -n devimprint
+NAME                    TYPE                             DATA   AGE
+admin-oauth             Opaque                           3      63d
+armor-credentials       Opaque                           7      81d
+armor-readonly          Opaque                           2      81d
+armor-writer            Opaque                           2      81d
+# ... secrets are listed but cannot be read
+
+# 4. Test secret value access
+$ kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get secret armor-writer -n devimprint -o json
+Error from server (Forbidden): secrets "armor-writer" is forbidden:
+User "system:serviceaccount:devpod-observer:devpod-observer" cannot get
+resource "secrets" in API group "" in the namespace "devimprint"
+```
+
+### Acceptance Criteria Verification
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| Kubeconfig file obtained | ❌ FAILED | No file at `~/.kube/ord-devimprint.kubeconfig` |
+| Can read secrets in devimprint namespace | ❌ FAILED | Read-only proxy blocks secret value access |
+| Can run `kubectl get secrets -n devimprint` | ⚠️ PARTIAL | Can list names, not contents |
+
+### Task Status
+**EXTERNAL ACTION REQUIRED** - This task cannot be completed by automated agents.
+
+### Required Actions (Manual)
+1. Login to https://spot.rackspace.com
+2. Navigate to ord-devimprint cloudspace (ID: hcp-5f30c973-cde7-42d9-8c7b-5d0573821330)
+3. Download kubeconfig with cloudspace-admin OIDC token
+4. Save to `~/.kube/ord-devimprint.kubeconfig` with `chmod 600`
+5. Verify access: `kubectl --kubeconfig=~/.kube/ord-devimprint.kubeconfig get secret armor-writer -n devimprint -o json`
