@@ -605,6 +605,15 @@ value: 65535
 			description: "Value 65535 (uint16 max) is valid for uint64",
 		},
 		{
+			name: "int64 65536 to uint64",
+			yamlContent: `
+value: 65536
+`,
+			target:      &struct{ Value uint64 }{},
+			shouldError: false,
+			description: "Value 65536 is valid for uint64",
+		},
+		{
 			name: "int64 4294967295 to uint64",
 			yamlContent: `
 value: 4294967295
