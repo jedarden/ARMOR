@@ -221,16 +221,19 @@ fn test_exit_to_scope_removes_deeper_scopes() {
 }
 
 #[test]
-fn test_exit_to_nonexistent_scope_creates_fallback() {
+fn test_exit_to_nonexistent_scope_uses_closest_parent() {
     let mut stack = ScopeStack::new(2);
 
     stack.enter_scope(2, 1, Some("level1".to_string()));
 
-    // Exit to a scope that doesn't exist (level 3 when we only have 0 and 2)
+    // Exit to a scope that doesn't exist (indent 3 when we only have 0 and 2)
+    // New behavior: find closest parent scope instead of creating fallback
     stack.exit_to_scope(3);
 
-    // Should create a fallback scope at level 3
-    assert_eq!(stack.current_indent(), 3);
+    // Should stay at closest parent scope (indent 2, level1)
+    assert_eq!(stack.current_indent(), 2);
+    assert_eq!(stack.get_scope_path(), "level1");
+    assert_eq!(stack.depth(), 2); // root + level1
 }
 
 #[test]
