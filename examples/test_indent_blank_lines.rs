@@ -1,7 +1,7 @@
 use armor::parsers::yaml::parser::{Parser, BasicParser};
 
 fn main() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     
     // Test 1: Blank lines with different indentation
     let yaml1 = r#"
