@@ -198,6 +198,10 @@ pub struct ScopeStack {
     base_indent: usize,
     /// Sequence item counter for generating unique IDs
     sequence_item_counter: usize,
+    /// History of indent transitions (whether or not they have keys)
+    indent_transitions: Vec<IndentTransition>,
+    /// The last recorded indent level (to detect transitions)
+    last_indent: usize,
 }
 
 impl ScopeStack {
@@ -219,6 +223,8 @@ impl ScopeStack {
             scopes: vec![Scope::new(0, 0, None)], // Root scope
             base_indent,
             sequence_item_counter: 0,
+            indent_transitions: Vec::new(),
+            last_indent: 0,
         }
     }
 
@@ -414,25 +420,25 @@ impl ScopeStack {
         }
 
         // Ensure we have a scope at the target level
-        // Check if there's a scope at target_indent + base_indent (for parent key scopes)
-        let adjusted_target = target_indent + self.base_indent;
+        // In normal YAML parsing, when exiting to target_indent, there should already be a scope
+        // at that level (created when we entered that scope via enter_scope).
+        // However, in edge cases (e.g., manually creating weird state, certain invalid YAML),
+        // we might not have a scope at the target level.
+        //
+        // We handle this by:
+        // 1. If a scope exists at target_indent, we're done
+        // 2. If no scope at target_indent, we create a fallback scope there
+        //    (this handles edge cases gracefully and maintains correct indent tracking)
         if !self.scopes.iter().any(|s| s.indent_level == target_indent) {
-            // Check if there's a scope at the adjusted level (parent key scope)
-            if self.scopes.iter().any(|s| s.indent_level == adjusted_target) {
-                #[cfg(debug_assertions)]
-                {
-                    log_debug!("[SCOPE EXIT] Found scope at adjusted indent={}, no fallback needed", adjusted_target);
-                }
-                // Scope exists at adjusted level, no need for fallback
-            } else {
-                // This shouldn't happen in valid YAML, but handle gracefully
-                #[cfg(debug_assertions)]
-                {
-                    log_warn!("[SCOPE EXIT] WARNING: No scope found at indent={} or adjusted_indent={}, creating fallback scope at target_indent", target_indent, adjusted_target);
-                }
-                let fallback_scope = Scope::new(target_indent, 0, None);
-                self.scopes.push(fallback_scope);
+            // No scope at target level - create a fallback
+            // This is unusual but we handle it gracefully
+            #[cfg(debug_assertions)]
+            {
+                log_warn!("[SCOPE EXIT] WARNING: No scope found at target_indent={}, creating fallback scope",
+                         target_indent);
             }
+            let fallback_scope = Scope::new(target_indent, 0, None);
+            self.scopes.push(fallback_scope);
         }
 
         #[cfg(debug_assertions)]
@@ -565,6 +571,7 @@ impl ScopeStack {
     /// This resets the scope stack to its initial state with only the root scope.
     pub fn reset(&mut self) {
         self.scopes = vec![Scope::new(0, 0, None)];
+        self.clear_indent_transitions();
     }
 
     /// Get the base indentation size
@@ -612,26 +619,29 @@ impl ScopeStack {
             );
         }
 
-        // Remove all scopes deeper than this level, but preserve parent mapping scopes
-        // When entering a sequence scope, we need to keep the parent mapping scope intact
-        // while clearing any nested scopes from previous content
+        // Remove all scopes at or deeper than this level
+        // When entering a sequence scope, we clear any existing scope at this level
+        // (including parent mappings) and all deeper scopes, then add a new sequence scope
         let before_depth = self.depth();
         let before_path = self.get_scope_path();
 
         #[cfg(debug_assertions)]
         {
             let scopes_to_remove: Vec<_> = self.scopes.iter()
-                .filter(|s| s.indent_level >= indent_level && s.parent_key.is_none())
+                .filter(|s| s.indent_level >= indent_level)
                 .map(|s| format!("(indent={}, parent={:?})", s.indent_level, s.parent_key))
                 .collect();
             if !scopes_to_remove.is_empty() {
-                log_debug!("[SCOPE EXIT] type=Sequence entry cleanup, removing {} non-parent scopes: {:?}",
+                log_debug!("[SCOPE EXIT] type=Sequence entry cleanup, removing {} scopes at or deeper than indent={}: {:?}",
                          scopes_to_remove.len(),
+                         indent_level,
                          scopes_to_remove);
             }
         }
 
-        self.scopes.retain(|s| s.indent_level < indent_level || s.parent_key.is_some());
+        // Only retain scopes shallower than indent_level
+        // This clears any existing scope at this level (including parent mappings) and all deeper scopes
+        self.scopes.retain(|s| s.indent_level < indent_level);
 
         #[cfg(debug_assertions)]
         {
@@ -692,6 +702,127 @@ impl ScopeStack {
         self.scopes.last()
             .map(|scope| scope.in_sequence_context)
             .unwrap_or(false)
+    }
+
+    /// Record an indent transition
+    ///
+    /// This method tracks indentation level changes during parsing, whether or not
+    /// they occur on lines with key tokens. This enables detection of indent changes
+    /// on blank lines, comments, or other non-key lines.
+    ///
+    /// # Arguments
+    ///
+    /// * `line_number` - The line number where this transition occurred (1-indexed)
+    /// * `new_indent` - The new indentation level
+    /// * `has_key` - Whether this transition occurred on a line with a key token
+    /// * `raw_line` - The raw line content (for debugging)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::scope::ScopeStack;
+    ///
+    /// let mut stack = ScopeStack::new(2);
+    /// stack.record_indent_transition(5, 2, false, "  # blank line with indent");
+    /// ```
+    pub fn record_indent_transition(&mut self, line_number: usize, new_indent: usize, has_key: bool, raw_line: &str) {
+        // Only record if the indent actually changed
+        if new_indent != self.last_indent {
+            let transition = IndentTransition::new(
+                line_number,
+                self.last_indent,
+                new_indent,
+                has_key,
+                raw_line,
+            );
+            self.indent_transitions.push(transition);
+            self.last_indent = new_indent;
+
+            #[cfg(debug_assertions)]
+            {
+                let direction = if new_indent > self.last_indent.saturating_sub(1) {
+                    "increase"
+                } else {
+                    "decrease"
+                };
+                let key_status = if has_key { "with-key" } else { "without-key" };
+                log_debug!(
+                    "[INDENT TRANSITION] line={}, {}→{}, {}, raw='{}'",
+                    line_number,
+                    self.last_indent.saturating_sub(1),
+                    new_indent,
+                    key_status,
+                    raw_line.trim()
+                );
+            }
+        }
+    }
+
+    /// Get all recorded indent transitions
+    ///
+    /// # Returns
+    ///
+    /// A slice of all indent transitions recorded during parsing
+    pub fn get_indent_transitions(&self) -> &[IndentTransition] {
+        &self.indent_transitions
+    }
+
+    /// Get indent transitions without keys
+    ///
+    /// Returns only those transitions that occurred on lines without key tokens,
+    /// such as blank lines or comments.
+    ///
+    /// # Returns
+    ///
+    /// A vector of indent transitions that occurred without keys
+    pub fn get_transitions_without_keys(&self) -> Vec<&IndentTransition> {
+        self.indent_transitions
+            .iter()
+            .filter(|t| t.is_without_key())
+            .collect()
+    }
+
+    /// Get indent transitions with keys
+    ///
+    /// Returns only those transitions that occurred on lines with key tokens.
+    ///
+    /// # Returns
+    ///
+    /// A vector of indent transitions that occurred with keys
+    pub fn get_transitions_with_keys(&self) -> Vec<&IndentTransition> {
+        self.indent_transitions
+            .iter()
+            .filter(|t| t.has_key)
+            .collect()
+    }
+
+    /// Clear all indent transitions
+    ///
+    /// This is typically called when resetting the scope stack for a new document.
+    pub fn clear_indent_transitions(&mut self) {
+        self.indent_transitions.clear();
+        self.last_indent = 0;
+    }
+
+    /// Get the last recorded indent level
+    ///
+    /// # Returns
+    ///
+    /// The most recent indent level recorded
+    pub fn get_last_indent(&self) -> usize {
+        self.last_indent
+    }
+
+    /// Set the last indent level directly
+    ///
+    /// This can be used to initialize the indent tracking or to correct it after
+    /// document markers or other special constructs.
+    ///
+    /// # Arguments
+    ///
+    /// * `indent` - The indent level to set
+    pub fn set_last_indent(&mut self, indent: usize) {
+        self.last_indent = indent;
     }
 }
 
@@ -922,6 +1053,83 @@ pub fn extract_key_context(line: &str) -> Option<KeyContext> {
 /// ```
 pub fn get_leading_whitespace_length(line: &str) -> usize {
     line.chars().take_while(|c| c.is_whitespace()).count()
+}
+
+/// Indent transition event recorded during parsing
+///
+/// This struct captures information about indentation level changes that occur
+/// during YAML parsing, whether or not a key token is present.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndentTransition {
+    /// The line number where this transition occurred (1-indexed)
+    pub line_number: usize,
+    /// The previous indentation level
+    pub from_indent: usize,
+    /// The new indentation level
+    pub to_indent: usize,
+    /// Whether this transition occurred on a line with a key token
+    pub has_key: bool,
+    /// The raw line content (for debugging)
+    pub raw_line: String,
+}
+
+impl IndentTransition {
+    /// Create a new indent transition record
+    ///
+    /// # Arguments
+    ///
+    /// * `line_number` - The line number where this transition occurred (1-indexed)
+    /// * `from_indent` - The previous indentation level
+    /// * `to_indent` - The new indentation level
+    /// * `has_key` - Whether this transition occurred on a line with a key token
+    /// * `raw_line` - The raw line content
+    pub fn new(line_number: usize, from_indent: usize, to_indent: usize, has_key: bool, raw_line: &str) -> Self {
+        Self {
+            line_number,
+            from_indent,
+            to_indent,
+            has_key,
+            raw_line: raw_line.to_string(),
+        }
+    }
+
+    /// Check if this is an indent increase
+    pub fn is_increase(&self) -> bool {
+        self.to_indent > self.from_indent
+    }
+
+    /// Check if this is an indent decrease
+    pub fn is_decrease(&self) -> bool {
+        self.to_indent < self.from_indent
+    }
+
+    /// Get the indent change amount (positive for increase, negative for decrease)
+    pub fn change_amount(&self) -> isize {
+        self.to_indent as isize - self.from_indent as isize
+    }
+
+    /// Check if this transition occurred without a key
+    pub fn is_without_key(&self) -> bool {
+        !self.has_key
+    }
+}
+
+impl fmt::Display for IndentTransition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let direction = if self.is_increase() {
+            "increase"
+        } else if self.is_decrease() {
+            "decrease"
+        } else {
+            "no-change"
+        };
+        let key_status = if self.has_key { "with-key" } else { "without-key" };
+        write!(
+            f,
+            "IndentTransition(line={}, {}→{}, {}, {})",
+            self.line_number, self.from_indent, self.to_indent, direction, key_status
+        )
+    }
 }
 
 // Comprehensive tests are in the separate tests.rs file

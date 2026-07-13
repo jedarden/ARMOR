@@ -132,13 +132,11 @@ impl BasicParser {
             // Handle blank lines and comments
             // Blank lines should be transparent to scope tracking - they don't trigger
             // any scope transitions. The next content line will handle any needed scope changes.
+            // However, we DO track the indent transitions themselves for analysis.
             if trimmed.is_empty() || trimmed.starts_with('#') {
-                // Track blank lines with different indentation for debugging, but don't
-                // change scope. Scope transitions only happen on content lines.
-                #[cfg(debug_assertions)]
-                if indent != scope_stack.current_indent() && !trimmed.starts_with('#') {
-                    log_debug!("[detect_duplicate] Blank line with indent change detected: line={}, indent={}, current_indent={}, skipping (will handle on next content line)",
-                        line_num_1index, indent, scope_stack.current_indent());
+                // Track indent changes even on blank lines for detection purposes
+                if indent != scope_stack.get_last_indent() && !trimmed.starts_with('#') {
+                    scope_stack.record_indent_transition(line_num_1index, indent, false, line);
                 }
                 continue;
             }
@@ -148,6 +146,9 @@ impl BasicParser {
             match indent.cmp(&scope_stack.current_indent()) {
                 Ordering::Greater => {
                     // Indent increased - entering deeper scope
+                    // Record the indent transition with key
+                    scope_stack.record_indent_transition(line_num_1index, indent, true, line);
+
                     if let Some(ctx) = extract_key_context(line) {
                         if ctx.is_parent_key() {
                             // Add the parent key to current scope
@@ -197,6 +198,9 @@ impl BasicParser {
                 }
                 Ordering::Less => {
                     // Indent decreased - exit to parent scope
+                    // Record the indent transition with key
+                    scope_stack.record_indent_transition(line_num_1index, indent, true, line);
+
                     #[cfg(debug_assertions)]
                     {
                         let current_path = scope_stack.get_scope_path();
@@ -238,6 +242,10 @@ impl BasicParser {
                 }
                 Ordering::Equal => {
                     // Same scope - check for keys
+                    // Still record the transition even if indent is the same
+                    // (this helps track all content lines)
+                    scope_stack.record_indent_transition(line_num_1index, indent, true, line);
+
                     if let Some(ctx) = extract_key_context(line) {
                         if ctx.is_parent_key() {
                             // This is a sibling parent key at same indent level
@@ -348,13 +356,11 @@ impl Parser for BasicParser {
             // Handle blank lines and comments
             // Blank lines should be transparent to scope tracking - they don't trigger
             // any scope transitions. The next content line will handle any needed scope changes.
+            // However, we DO track the indent transitions themselves for analysis.
             if trimmed.is_empty() || trimmed.starts_with('#') {
-                // Track blank lines with different indentation for debugging, but don't
-                // change scope. Scope transitions only happen on content lines.
-                #[cfg(debug_assertions)]
-                if indent != scope_stack.current_indent() && !trimmed.starts_with('#') {
-                    log_debug!("[parse_str] Blank line with indent change detected: line={}, indent={}, current_indent={}, skipping (will handle on next content line)",
-                        line_num_1index, indent, scope_stack.current_indent());
+                // Track indent changes even on blank lines for detection purposes
+                if indent != scope_stack.get_last_indent() && !trimmed.starts_with('#') {
+                    scope_stack.record_indent_transition(line_num_1index, indent, false, line);
                 }
                 continue;
             }
@@ -364,6 +370,9 @@ impl Parser for BasicParser {
             match indent.cmp(&scope_stack.current_indent()) {
                 Ordering::Greater => {
                     // Indent increased - entering deeper scope
+                    // Record the indent transition with key
+                    scope_stack.record_indent_transition(line_num_1index, indent, true, line);
+
                     if let Some(ctx) = extract_key_context(line) {
                         if ctx.is_parent_key() {
                             // Add the parent key to current scope
@@ -413,6 +422,9 @@ impl Parser for BasicParser {
                 }
                 Ordering::Less => {
                     // Indent decreased - exit to parent scope
+                    // Record the indent transition with key
+                    scope_stack.record_indent_transition(line_num_1index, indent, true, line);
+
                     #[cfg(debug_assertions)]
                     {
                         let current_path = scope_stack.get_scope_path();
@@ -453,6 +465,10 @@ impl Parser for BasicParser {
                 }
                 Ordering::Equal => {
                     // Same scope - check for keys
+                    // Still record the transition even if indent is the same
+                    // (this helps track all content lines)
+                    scope_stack.record_indent_transition(line_num_1index, indent, true, line);
+
                     if let Some(ctx) = extract_key_context(line) {
                         if ctx.is_parent_key() {
                             // This is a sibling parent key at same indent level
