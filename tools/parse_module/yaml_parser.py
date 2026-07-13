@@ -509,7 +509,8 @@ class ScopeStack:
         # Remove sequence dash prefix if present
         if key.startswith("- "):
             key = key[2:].strip()
-        elif key.startswith('-') and len(key) > 1:
+        elif key.startswith('-'):
+            # Handle both single dash and dash followed by non-space
             key = key[1:].strip()
 
         # Key must not be empty after stripping dash
