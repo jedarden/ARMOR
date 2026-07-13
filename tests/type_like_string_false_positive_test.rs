@@ -3263,6 +3263,291 @@ fn test_rate_limiting_config() {
     }
 }
 
+#[test]
+fn test_mixed_quoted_unquoted_values_with_exclamation() {
+    // Real-world configs often mix quoted and unquoted values
+    let test_cases = vec![
+        "title: Welcome!",
+        "subtitle: \"Get Started!\"",
+        "description: 'Hello World!'",
+        "message: Check this out!",
+        "error: \"Something went wrong!\"",
+        "warning: Please be careful!",
+        "success: 'Operation complete!'",
+        "info: Processing...!",
+        "note: Important: Read this!",
+        "alert: Action required!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Mixed quoted/unquoted values with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_complex_user_interface_messages() {
+    // Complex UI message patterns with exclamation
+    let test_cases = vec![
+        "toast_message: Save successful!",
+        "modal_title: Confirm action!",
+        "notification: New message received!",
+        "banner_text: Welcome back!",
+        "tooltip: Click for more info!",
+        "placeholder: Enter your email!",
+        "help_text: Contact support for help!",
+        "error_message: Invalid input detected!",
+        "success_message: Changes saved!",
+        "warning_message: This action cannot be undone!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "UI message with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_api_response_messages_with_exclamation() {
+    // API response message patterns
+    let test_cases = vec![
+        "response_message: Request completed successfully!",
+        "error_detail: Resource not found!",
+        "status_message: Operation in progress!",
+        "alert_message: High load detected!",
+        "info_message: System maintenance scheduled!",
+        "warning_message: Rate limit approaching!",
+        "confirmation_message: Are you sure!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "API response message with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_configuration_validation_messages() {
+    // Configuration validation and error messages
+    let test_cases = vec![
+        "validation_error: Invalid configuration value!",
+        "schema_error: Configuration schema mismatch!",
+        "parse_error: Failed to parse config file!",
+        "validation_warning: Deprecated config option!",
+        "load_message: Configuration loaded successfully!",
+        "reload_message: Configuration reloaded!",
+        "export_message: Configuration exported!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Config validation message with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_complex_multiline_block_with_exclamation() {
+    // Complex multiline block scenarios with exclamation marks
+    let lines = vec![
+        "# IMPORTANT: Review all settings before deployment!",
+        "production_config:",
+        "  environment: production!",
+        "  debug_mode: false!",
+        "  database:",
+        "    host: db.prod.example.com!",
+        "    port: 5432!",
+        "    ssl_enabled: true!",
+        "  cache:",
+        "    enabled: true!",
+        "    backend: redis!",
+        "    host: redis.prod.example.com!",
+        "  features:",
+        "    new_ui: enabled!",
+        "    api_v2: true!",
+        "  monitoring:",
+        "    enabled: true!",
+        "    metrics_port: 9090!",
+        "staging_config:",
+        "  environment: staging!",
+        "  debug_mode: true!",
+    ];
+
+    for line in lines {
+        if line.starts_with('#') {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::Comment,
+                "Comment should be Comment: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Complex multiline block should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_web_server_configuration_with_exclamation() {
+    // Web server configuration patterns
+    let test_cases = vec![
+        "server:",
+        "  host: 0.0.0.0!",
+        "  port: 8080!",
+        "  ssl_enabled: true!",
+        "  ssl_cert: /etc/ssl/cert.pem!",
+        "  ssl_key: /etc/ssl/key.pem!",
+        "  worker_processes: 4!",
+        "  max_connections: 1000!",
+        "  timeout: 30s!",
+        "  keep_alive: true!",
+        "  compression: enabled!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Web server config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_notification_system_config() {
+    // Notification system configuration
+    let test_cases = vec![
+        "notifications:",
+        "  email_enabled: true!",
+        "  sms_enabled: false!",
+        "  push_enabled: true!",
+        "  email_address: admin@example.com!",
+        "  webhook_url: https://hooks.example.com!",
+        "  retry_attempts: 3!",
+        "  timeout: 10s!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Notification config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Test webhook URLs in sequences
+    let webhook_lines = vec![
+        "  webhooks:",
+        "    - https://hooks1.example.com!",
+        "    - https://hooks2.example.com!",
+        "    - https://hooks3.example.com!",
+    ];
+
+    for line in webhook_lines {
+        if line.starts_with("    -") {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::SequenceItem,
+                "Webhook URL with ! should be SequenceItem: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Notification parent key should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_backup_and_storage_config() {
+    // Backup and storage configuration
+    let test_cases = vec![
+        "backup:",
+        "  enabled: true!",
+        "  schedule: daily!",
+        "  retention_days: 30!",
+        "  compression: true!",
+        "  encryption: aes256!",
+        "  storage:",
+        "    type: s3!",
+        "    bucket: my-backups!",
+        "    region: us-east-1!",
+        "  paths:",
+        "    - /var/data!",
+        "    - /etc/config!",
+    ];
+
+    for line in test_cases {
+        if line.starts_with("    -") {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::SequenceItem,
+                "Backup path with ! should be SequenceItem: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Backup config with ! should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_performance_tuning_config() {
+    // Performance tuning configuration
+    let test_cases = vec![
+        "performance:",
+        "  caching: enabled!",
+        "  connection_pooling: true!",
+        "  query_optimization: on!",
+        "  index_usage: aggressive!",
+        "  buffer_size: 1024MB!",
+        "  worker_threads: 8!",
+        "  max_requests: 10000!",
+        "  gc_enabled: true!",
+        "  gc_interval: 300s!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Performance config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
 // ============================================================================
 // Section 13: Error Code-like Strings in Values
 // ============================================================================
