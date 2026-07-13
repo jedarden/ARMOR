@@ -18,47 +18,120 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // ============================================================================
 // Test Infrastructure Macros and Helpers
 // ============================================================================
-// This section provides reusable infrastructure for folded scalar explicit
-// indent tests. Bead: bf-63gy6
 //
-// Pattern Documentation:
-// ---------------------
-// Folded scalar explicit indent tests follow a consistent pattern.
-// For concrete examples, see Section 12B (line 7816) and its subsections:
+// This section provides reusable infrastructure for YAML folded/literal scalar
+// tests with explicit indentation syntax. The patterns here have been refined
+// through extensive testing of YAML edge cases, particularly around strings
+// containing exclamation marks that might be mistaken for YAML tags.
+//
+// Bead: bf-63gy6 (Initial infrastructure pattern documentation)
+// Bead: bf-68ime (Section 12B comprehensive analysis and coverage mapping)
+//
+// QUICK REFERENCE: Section 12B Pattern Examples
+// ---------------------------------------------
+// For concrete implementations demonstrating these patterns, see Section 12B
+// and its subsections. These tests show the patterns in action with real YAML:
+//
 //   - Section 12B: Multiline String Scenarios with Exclamation Marks (line 7816)
-//   - Section 12B.1: Comprehensive Folded Block Scalar Tests with Exclamation (line 10645)
+//     * Core test: test_folded_block_scalar_with_exclamation_marks()
+//     * Demonstrates basic folded scalar syntax with ! in content
+//
+//   - Section 12B.1: Comprehensive Folded Block Scalar Tests (line 10645)
+//     * All modifier variants (>, >-, >+, |, |-, |+) with various indents
+//     * Tests for content lines, continuation lines, and edge cases
+//
 //   - Section 12B.2: Folded Scalar Indicator Line Tests (line 10439)
-//   - Section 12B.2: Basic Folded Scalar Indicator Tests (line 11098)
-//   - Section 12B.3: Folded Scalar Explicit Indent Infrastructure Pattern (line 12573)
+//     * Focus on indicator line recognition (e.g., "description: >")
+//     * Continuation line patterns and ! handling
 //
-// NOTE: Line numbers updated 2026-07-13 after Section 12B analysis (Bead: bf-68ime)
+//   - Section 12B.3: Explicit Indent Infrastructure Pattern (line 12573)
+//     * Comprehensive level coverage (spaces, tabs, mixed)
+//     * Helper functions for bulk test generation
 //
-// 1. Test Case Structure:
-//    - Use vec! of tuples: (input_line, expected_key_name, expected_line_type)
-//    - Input line format: "<indent><key_name>: <modifier><indent_level>"
-//    - Modifiers: > (plain folded), >- (strip), >+ (keep), | (literal), |- (literal strip), |+ (literal keep)
-//    - Indent levels: 1-9 (e.g., >2, >-3, >+4, |2, |-3, |+4)
-//    - Example from Section 12B.1: ("description: >", "description", LineType::MappingKey)
+// NOTE: Section 12B line numbers updated 2026-07-13 (Bead: bf-68ime)
 //
-// 2. Indentation Levels:
-//    - Level 1: 2 spaces ("  ")
-//    - Level 2: 4 spaces ("    ")
-//    - Level 3: 6 spaces ("      ")
-//    - Level 4: 8 spaces ("        ")
-//    - Tab: ("\t")
-//    - Mixed: ("\t  ", "\t    ", etc.)
-//    - See Section 12B.3 for comprehensive level coverage pattern
+// ============================================================================
+// Pattern 1: Test Case Data Structure
+// ============================================================================
 //
-// 3. Test Naming Convention:
-//    - test_folded_scalar_<variant>_at_<indentation>_level
-//    - Or: test_folded_scalar_explicit_indent_modifiers_at_various_levels
-//    - Or: test_literal_scalar_<variant>_at_<indentation>_level
-//    - Examples from Section 12B:
-//      * test_folded_block_scalar_with_exclamation_marks()
-//      * test_literal_block_scalar_with_exclamation_marks()
-//      * test_folded_scalar_strip_indent_explicit_indent_modifiers_at_2_space()
+// Test cases are organized as vec! of tuples with three elements:
 //
-// 4. Assertion Patterns:
+//   (input_line, expected_key_name, expected_line_type)
+//
+// Components:
+//   - input_line: Raw YAML line to test (e.g., "description: >2")
+//   - expected_key_name: The key that should be extracted (e.g., "description")
+//   - expected_line_type: LineType classification (MappingKey, Tag, Unknown, etc.)
+//
+// Input Line Format:
+//   "<indent><key_name>: <modifier><indent_level>"
+//
+// Where:
+//   - <indent>: Leading whitespace (spaces/tabs) before the key
+//   - <key_name>: YAML mapping key (e.g., "description", "content", "text")
+//   - <modifier>: Block scalar modifier
+//     * > : Plain folded scalar (newlines become spaces)
+//     * >- : Folded scalar, strip final trailing blank lines
+//     * >+ : Folded scalar, retain final trailing blank lines
+//     * | : Literal scalar (newlines preserved)
+//     * |- : Literal scalar, strip final trailing blank lines
+//     * |+ : Literal scalar, retain final trailing blank lines
+//   - <indent_level>: Explicit content indent (1-9, e.g., >2, >-3, >+4)
+//
+// Example from Section 12B.1 (line 10645):
+//   ("description: >", "description", LineType::MappingKey)
+//   ("content: >2", "content", LineType::MappingKey)
+//
+// ============================================================================
+// Pattern 2: Indentation Level Specifications
+// ============================================================================
+//
+// Indentation levels define the leading whitespace for content lines following
+// the indicator line. Each level corresponds to a specific number of spaces:
+//
+//   Level 1: 2 spaces  ("    ")
+//   Level 2: 4 spaces  ("      ")
+//   Level 3: 6 spaces  ("        ")
+//   Level 4: 8 spaces  ("          ")
+//   Level 5+: Continue 2-space progression
+//
+// Additional variations:
+//   - Tab: ("\t")
+//   - Mixed tab+space: ("\t  ", "\t    ", etc.)
+//
+// Usage in test data:
+//   - Indicator line: "description: >2"  (sets explicit indent to level 2)
+//   - Content line: "    This is content"  (4 spaces = level 2 indent)
+//
+// See Section 12B.3 for comprehensive coverage of all level variants.
+//
+// ============================================================================
+// Pattern 3: Test Naming Conventions
+// ============================================================================
+//
+// Tests follow a hierarchical naming scheme that indicates:
+//   1. Scalar type (folded/literal)
+//   2. Modifier variant (plain/strip/keep)
+//   3. Indentation type (spaces/tabs/mixed/level number)
+//   4. Special characteristics (exclamation marks, continuation, etc.)
+//
+// Standard patterns:
+//   test_folded_scalar_<variant>_at_<indentation>_level
+//   test_literal_scalar_<variant>_at_<indentation>_level
+//
+// Examples from Section 12B:
+//   - test_folded_block_scalar_with_exclamation_marks()
+//     Tests folded scalars containing ! characters that might be mistaken for tags
+//
+//   - test_literal_block_scalar_with_exclamation_marks()
+//     Tests literal scalars (| modifier) with ! characters
+//
+//   - test_folded_scalar_strip_indent_explicit_indent_modifiers_at_2_space()
+//     Tests >- modifier with explicit indent at level 1 (2 spaces)
+//
+// ============================================================================
+// Pattern 4: Assertion Patterns
+// ============================================================================
 //    A. Basic indicator line assertion:
 //       assert_eq!(classify_line_type(line), LineType::MappingKey, "...", line)
 //       Example from Section 12B (line 7853): "Folded block scalar indicator should be MappingKey: '{}'"
@@ -13393,6 +13466,105 @@ fn test_folded_scalar_helper_macro_level0_template() {
         assert!(
             !line.starts_with(' '),
             "Level 0 test case should not start with space: '{}'",
+            line
+        );
+    }
+
+    run_folded_scalar_tests!(test_cases);
+}
+
+#[test]
+fn test_folded_scalar_explicit_indent_2space() {
+    // Test folded scalars with explicit indent at 2-space level
+    // Covers all three modifiers: > (plain), >- (strip), >+ (keep)
+    // Covers indent levels 1-5
+    // Bead: bf-5jm9g - 2-space explicit indent comprehensive coverage
+
+    let test_cases = generate_folded_explicit_indent_tests!(
+        "  ",                    // 2-space base indentation
+        "level1",               // Level 1 = 2 spaces
+        &[">", ">-", ">+"],     // All three modifiers
+        &[1, 2, 3, 4, 5],      // Indent numbers 1-5
+        "test"                  // Key prefix for generated names
+    );
+
+    // Verify all test cases have 2 leading spaces
+    for (line, _, _) in &test_cases {
+        assert!(
+            line.starts_with("  "),
+            "2-space test case should start with 2 spaces: '{}'",
+            line
+        );
+        // Should not have 4 leading spaces (that would be level 2)
+        assert!(
+            !line.starts_with("    "),
+            "2-space test case should not start with 4 spaces: '{}'",
+            line
+        );
+    }
+
+    run_folded_scalar_tests!(test_cases);
+}
+
+#[test]
+fn test_folded_scalar_explicit_indent_4space() {
+    // Test folded scalars with explicit indent at 4-space level
+    // Covers all three modifiers: > (plain), >- (strip), >+ (keep)
+    // Covers indent levels 1-5
+    // Bead: bf-5jm9g - 4-space explicit indent comprehensive coverage
+
+    let test_cases = generate_folded_explicit_indent_tests!(
+        "    ",                  // 4-space base indentation
+        "level2",               // Level 2 = 4 spaces
+        &[">", ">-", ">+"],     // All three modifiers
+        &[1, 2, 3, 4, 5],      // Indent numbers 1-5
+        "test"                  // Key prefix for generated names
+    );
+
+    // Verify all test cases have 4 leading spaces
+    for (line, _, _) in &test_cases {
+        assert!(
+            line.starts_with("    "),
+            "4-space test case should start with 4 spaces: '{}'",
+            line
+        );
+        // Should not have 6 leading spaces (that would be level 3)
+        assert!(
+            !line.starts_with("      "),
+            "4-space test case should not start with 6 spaces: '{}'",
+            line
+        );
+    }
+
+    run_folded_scalar_tests!(test_cases);
+}
+
+#[test]
+fn test_folded_scalar_explicit_indent_tab() {
+    // Test folded scalars with explicit indent at tab level
+    // Covers all three modifiers: > (plain), >- (strip), >+ (keep)
+    // Covers indent levels 1-5
+    // Bead: bf-5jm9g - Tab explicit indent comprehensive coverage
+
+    let test_cases = generate_folded_explicit_indent_tests!(
+        "\t",                    // Tab base indentation
+        "tab",                  // Tab indentation
+        &[">", ">-", ">+"],     // All three modifiers
+        &[1, 2, 3, 4, 5],      // Indent numbers 1-5
+        "test"                  // Key prefix for generated names
+    );
+
+    // Verify all test cases start with tab
+    for (line, _, _) in &test_cases {
+        assert!(
+            line.starts_with('\t'),
+            "Tab test case should start with tab character: '{}'",
+            line
+        );
+        // Should not start with space
+        assert!(
+            !line.starts_with(' '),
+            "Tab test case should not start with space: '{}'",
             line
         );
     }
