@@ -46,13 +46,13 @@
 //! assert_eq!(line.line_type(), LineType::MappingKey);
 //! ```
 
-mod error;
-mod types;
-mod parser;
-mod syntax_validator;
-mod syntax_detector;
-mod line_parser;
-mod scope;
+pub mod error;
+pub mod types;
+pub mod parser;
+pub mod syntax_validator;
+pub mod syntax_detector;
+pub mod line_parser;
+pub mod scope;
 
 #[cfg(test)]
 mod syntax_detector_tests;
