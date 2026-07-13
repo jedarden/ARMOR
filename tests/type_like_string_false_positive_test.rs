@@ -6840,6 +6840,171 @@ fn test_literal_block_scalar_with_exclamation_marks() {
 }
 
 #[test]
+fn test_literal_scalar_basic_modifiers_at_various_indentation_levels() {
+    // Test literal scalars with basic modifiers (|- strip, |+ keep) at various indentation levels
+    // Level 1: 2-space, Level 2: 4-space, Level 3: 6-space, Level 4: 8-space, plus tab
+    // This provides comprehensive coverage of strip (-) and keep (+) modifiers
+
+    let test_cases = vec![
+        // Level 1: 2-space indentation with literal strip modifier (|-)
+        ("  level1_text: |-", "level1_text", LineType::MappingKey),
+        ("  warning!msg: |-", "warning!msg", LineType::MappingKey),
+        ("  error!log: |-", "error!log", LineType::MappingKey),
+        ("  simple!test: |-", "simple!test", LineType::MappingKey),
+
+        // Level 1: 2-space indentation with literal keep modifier (|+)
+        ("  level1_note: |+", "level1_note", LineType::MappingKey),
+        ("  info!data: |+", "info!data", LineType::MappingKey),
+        ("  message!log: |+", "message!log", LineType::MappingKey),
+        ("  content!text: |+", "content!text", LineType::MappingKey),
+
+        // Level 2: 4-space indentation with literal strip modifier (|-)
+        ("    level2_text: |-", "level2_text", LineType::MappingKey),
+        ("    nested!warning: |-", "nested!warning", LineType::MappingKey),
+        ("    deep!error: |-", "deep!error", LineType::MappingKey),
+        ("    inner!test: |-", "inner!test", LineType::MappingKey),
+
+        // Level 2: 4-space indentation with literal keep modifier (|+)
+        ("    level2_note: |+", "level2_note", LineType::MappingKey),
+        ("    nested!info: |+", "nested!info", LineType::MappingKey),
+        ("    deep!message: |+", "deep!message", LineType::MappingKey),
+        ("    inner!content: |+", "inner!content", LineType::MappingKey),
+
+        // Level 3: 6-space indentation with literal strip modifier (|-)
+        ("      level3_text: |-", "level3_text", LineType::MappingKey),
+        ("      deeper!warning: |-", "deeper!warning", LineType::MappingKey),
+        ("      very!deep!error: |-", "very!deep!error", LineType::MappingKey),
+        ("      complex!test!here: |-", "complex!test!here", LineType::MappingKey),
+
+        // Level 3: 6-space indentation with literal keep modifier (|+)
+        ("      level3_note: |+", "level3_note", LineType::MappingKey),
+        ("      deeper!info: |+", "deeper!info", LineType::MappingKey),
+        ("      very!deep!message: |+", "very!deep!message", LineType::MappingKey),
+        ("      complex!content!now: |+", "complex!content!now", LineType::MappingKey),
+
+        // Level 4: 8-space indentation with literal strip modifier (|-)
+        ("        level4_text: |-", "level4_text", LineType::MappingKey),
+        ("        deepest!warning: |-", "deepest!warning", LineType::MappingKey),
+        ("        super!deep!error: |-", "super!deep!error", LineType::MappingKey),
+        ("        extra!complex!test: |-", "extra!complex!test", LineType::MappingKey),
+
+        // Level 4: 8-space indentation with literal keep modifier (|+)
+        ("        level4_note: |+", "level4_note", LineType::MappingKey),
+        ("        deepest!info: |+", "deepest!info", LineType::MappingKey),
+        ("        super!deep!message: |+", "super!deep!message", LineType::MappingKey),
+        ("        extra!complex!content: |+", "extra!complex!content", LineType::MappingKey),
+
+        // Tab indentation with literal strip modifier (|-)
+        ("\ttab_text: |-", "tab_text", LineType::MappingKey),
+        ("\ttab!warning: |-", "tab!warning", LineType::MappingKey),
+        ("\ttab!error!log: |-", "tab!error!log", LineType::MappingKey),
+
+        // Tab indentation with literal keep modifier (|+)
+        ("\ttab_note: |+", "tab_note", LineType::MappingKey),
+        ("\ttab!info: |+", "tab!info", LineType::MappingKey),
+        ("\ttab!message!log: |+", "tab!message!log", LineType::MappingKey),
+
+        // Mixed indentation with tab + spaces
+        ("\t  mixed_tab_spaces_text: |-", "mixed_tab_spaces_text", LineType::MappingKey),
+        ("\t    mixed_tab!spaces!warning: |-", "mixed_tab!spaces!warning", LineType::MappingKey),
+        ("\t  mixed_tab_note: |+", "mixed_tab_note", LineType::MappingKey),
+        ("\t    mixed_tab!spaces!info: |+", "mixed_tab!spaces!info", LineType::MappingKey),
+
+        // Keys with multiple exclamation marks at different levels
+        ("  key!!: |-", "key!!", LineType::MappingKey),
+        ("    deep!!key: |+", "deep!!key", LineType::MappingKey),
+        ("      very!!deep!!key: |-", "very!!deep!!key", LineType::MappingKey),
+        ("        super!!!deep!!!key: |+", "super!!!deep!!!key", LineType::MappingKey),
+        ("\ttab!!key!!!test: |-", "tab!!key!!!test", LineType::MappingKey),
+
+        // Edge case: Single character keys with ! at different levels
+        ("  a!: |-", "a!", LineType::MappingKey),
+        ("    b!: |+", "b!", LineType::MappingKey),
+        ("      c!: |-", "c!", LineType::MappingKey),
+        ("        d!: |+", "d!", LineType::MappingKey),
+        ("\te!: |-", "e!", LineType::MappingKey),
+
+        // Edge case: Keys ending with ! at different levels
+        ("  end!with!bang!: |-", "end!with!bang!", LineType::MappingKey),
+        ("    deep!end!with!bang!: |+", "deep!end!with!bang!", LineType::MappingKey),
+        ("      very!deep!end!bang!: |-", "very!deep!end!bang!", LineType::MappingKey),
+        ("        super!deep!end!bang!: |+", "super!deep!end!bang!", LineType::MappingKey),
+        ("\ttab!end!with!bang!: |-", "tab!end!with!bang!", LineType::MappingKey),
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Literal scalar basic modifier test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for literal scalar with basic modifier: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Key mismatch for literal scalar with basic modifier: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+
+    // Test continuation lines for literal scalars with basic modifiers
+    let continuation_lines = vec![
+        // Level 1 continuation lines with ! characters
+        ("  This is content with! exclamation", vec![LineType::MappingKey, LineType::Unknown]),
+        ("  More! text! here! for! testing!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // Level 2 continuation lines with ! characters
+        ("    Deeper! content! with! more! bangs!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("    Nested! text! continues! here!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // Level 3 continuation lines with ! characters
+        ("      Very! deep! content! with! emphasis!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("      Complex! continuation! line! test!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // Level 4 continuation lines with ! characters
+        ("        Super! deep! content! with! many! bangs!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("        Extra! complex! continuation! here!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // Tab continuation lines with ! characters
+        ("\tTab! content! with! exclamation!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("\tMore! tab! text! continues! here!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // Lines starting with ! (may be classified as Tag)
+        ("  !Starting! with! emphasis!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("    !Deep! tag! like! content!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("      !Very! deep! tag! line!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        let result = classify_line_type(line);
+        // Continuation lines should be one of the expected types
+        assert!(
+            expected_types.contains(&result),
+            "Continuation line for literal scalar basic modifier should be one of {:?}: '{}' (got {:?})",
+            expected_types, line, result
+        );
+
+        // Continuation lines should NOT detect as mapping keys
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_none(),
+            "Continuation line should NOT detect mapping key: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
 fn test_multiline_mixed_with_singleline_exclamation_patterns() {
     // Test mixed multiline blocks containing single-line configs with exclamation marks
     // This simulates real-world config files with various structures mixed together
