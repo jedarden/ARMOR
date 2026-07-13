@@ -32,19 +32,19 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // For concrete implementations demonstrating these patterns, see Section 12B
 // and its subsections. These tests show the patterns in action with real YAML:
 //
-//   - Section 12B: Multiline String Scenarios with Exclamation Marks (line 7816)
+//   - Section 12B: Multiline String Scenarios with Exclamation Marks (line 7897)
 //     * Core test: test_folded_block_scalar_with_exclamation_marks()
 //     * Demonstrates basic folded scalar syntax with ! in content
 //
-//   - Section 12B.1: Comprehensive Folded Block Scalar Tests (line 10645)
+//   - Section 12B.1: Comprehensive Folded Block Scalar Tests (line 10726)
 //     * All modifier variants (>, >-, >+, |, |-, |+) with various indents
 //     * Tests for content lines, continuation lines, and edge cases
 //
-//   - Section 12B.2: Folded Scalar Indicator Line Tests (line 10439)
+//   - Section 12B.2: Folded Scalar Indicator Line Tests (line 10520)
 //     * Focus on indicator line recognition (e.g., "description: >")
 //     * Continuation line patterns and ! handling
 //
-//   - Section 12B.3: Explicit Indent Infrastructure Pattern (line 12573)
+//   - Section 12B.3: Explicit Indent Infrastructure Pattern (line 12654)
 //     * Comprehensive level coverage (spaces, tabs, mixed)
 //     * Helper functions for bulk test generation
 //
@@ -78,7 +78,7 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //     * |+ : Literal scalar, retain final trailing blank lines
 //   - <indent_level>: Explicit content indent (1-9, e.g., >2, >-3, >+4)
 //
-// Example from Section 12B.1 (line 10645):
+// Example from Section 12B.1 (line 10726):
 //   ("description: >", "description", LineType::MappingKey)
 //   ("content: >2", "content", LineType::MappingKey)
 //
