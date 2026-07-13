@@ -919,6 +919,14 @@ def test_folded_scalar_explicit_indent_2space():
 
     At 2-space base indentation, the key is indented with 2 spaces and content
     lines are indented with 2 + N spaces.
+
+    Bead: bf-1ana1
+    Acceptance Criteria:
+    - Cover all three modifiers: > (plain), >- (strip), >+ (keep)
+    - Cover indent levels 1-5 for each modifier
+    - Verify folded scalar behavior with 2-space indentation
+    - Verify content preservation at each indent level
+    - Verify mapping keys are properly detected with folded scalar modifiers
     """
     parser = YAMLCoreParser()
 
@@ -1074,6 +1082,54 @@ def test_folded_scalar_explicit_indent_2space():
         "Keep >+5 with 2-space base should preserve quint-indented content"
     assert 'Line 2 quint-indented at level 5' in result.data['keep_indent_5'], \
         "Keep >+5 with 2-space base should preserve all quint-indented lines"
+
+    # ===== Indicator Line Test Cases =====
+    # Test that indicator lines (lines with folded scalar modifiers) are properly
+    # detected as mapping keys and parsed correctly.
+    #
+    # These tests verify key detection and modifier recognition across all three
+    # modifier types (>, >-, >+) at indent levels 1-5 with 2-space base indentation.
+
+    # Test cases: (yaml_snippet, key_name, description)
+    indicator_test_cases = [
+        # ===== Plain modifier >n (n=1-5) =====
+        ("plain1: >1\n test content\n", "plain1", "Plain modifier >1"),
+        ("plain2: >2\n  test content\n", "plain2", "Plain modifier >2"),
+        ("plain3: >3\n   test content\n", "plain3", "Plain modifier >3"),
+        ("plain4: >4\n    test content\n", "plain4", "Plain modifier >4"),
+        ("plain5: >5\n     test content\n", "plain5", "Plain modifier >5"),
+
+        # ===== Strip modifier >-n (n=1-5) =====
+        ("strip1: >-1\n test content\n", "strip1", "Strip modifier >-1"),
+        ("strip2: >-2\n  test content\n", "strip2", "Strip modifier >-2"),
+        ("strip3: >-3\n   test content\n", "strip3", "Strip modifier >-3"),
+        ("strip4: >-4\n    test content\n", "strip4", "Strip modifier >-4"),
+        ("strip5: >-5\n     test content\n", "strip5", "Strip modifier >-5"),
+
+        # ===== Keep modifier >+n (n=1-5) =====
+        ("keep1: >+1\n test content\n", "keep1", "Keep modifier >+1"),
+        ("keep2: >+2\n  test content\n", "keep2", "Keep modifier >+2"),
+        ("keep3: >+3\n   test content\n", "keep3", "Keep modifier >+3"),
+        ("keep4: >+4\n    test content\n", "keep4", "Keep modifier >+4"),
+        ("keep5: >+5\n     test content\n", "keep5", "Keep modifier >+5"),
+
+        # ===== Realistic key names with modifiers =====
+        ("description: >1\n test\n", "description", "Realistic key: description with >1"),
+        ("content: >2\n  test\n", "content", "Realistic key: content with >2"),
+        ("message: >-3\n   test\n", "message", "Realistic key: message with >-3"),
+        ("text: >+4\n    test\n", "text", "Realistic key: text with >+4"),
+        ("note: >5\n     test\n", "note", "Realistic key: note with >5"),
+    ]
+
+    # Assertion loop for indicator line tests
+    for yaml_snippet, key_name, description in indicator_test_cases:
+        result = parser.safe_load(yaml_snippet)
+        assert result.is_success(), \
+            f"{description}: Indicator line parsing should succeed"
+        assert key_name in result.data, \
+            f"{description}: Key '{key_name}' should be detected as mapping key"
+        assert isinstance(result.data[key_name], str), \
+            f"{description}: Key '{key_name}' should map to string value (folded scalar content)"
 
 
 def test_folded_scalar_explicit_indent_4space():
