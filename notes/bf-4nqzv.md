@@ -1,135 +1,130 @@
-# yaml.TypeError Call Sites Audit - yamlutil Package
-
-**Bead ID:** bf-4nqzv  
-**Date:** 2026-07-12  
-**Scope:** Comprehensive audit of all error handling locations in the yamlutil package
+# yaml.TypeError Call Site Audit
 
 ## Executive Summary
+This audit catalogs all error handling locations in the `internal/yamlutil` package where `yaml.v3` parser errors could return `*yaml.TypeError`. It identifies which sites have type assertions and which are missing them.
 
-The yamlutil package contains **11 yaml.Unmarshal call sites** across 5 files. Of these, **6 sites have proper *yaml.TypeError type assertions**, while **5 sites are missing** type assertions for yaml.v3's TypeError.
+## Background
+`yaml.v3` parser returns `*yaml.TypeError` when type mismatches occur during unmarshaling. Proper type assertions are needed to extract the detailed error information from the `Errors` field, which contains a slice of error strings.
 
-**Status:** 🟡 PARTIAL - 54.5% coverage (6/11 sites)
+## Complete Catalog of yaml.Unmarshal Call Sites
 
----
+### Sites WITH yaml.TypeError Type Assertions ✅
 
-## Files WITH yaml.TypeError Type Assertions ✓
+#### 1. `parser.go` - Line 67 (ParseFile method)
+- **Location**: `parser.go:67` - `yaml.Unmarshal(content, data)`
+- **Type assertion**: Line 109
+- **Code**: `if typeErr, ok := err.(*yaml.TypeError); ok {`
+- **Status**: ✅ COMPLETE
 
-### 1. parser.go (3 sites)
+#### 2. `parser.go` - Line 162 (ParseFileToMap method)
+- **Location**: `parser.go:162` - `yaml.Unmarshal(content, &data)`
+- **Type assertion**: Line 167
+- **Code**: `if typeErr, ok := err.(*yaml.TypeError); ok {`
+- **Status**: ✅ COMPLETE
 
-**Line 109 - ParseFile() method:**
+#### 3. `parser.go` - Line 348 (ParseYAML function)
+- **Location**: `parser.go:348` - `yaml.Unmarshal(content, &data)`
+- **Type assertion**: Line 397
+- **Code**: `if typeErr, ok := err.(*yaml.TypeError); ok {`
+- **Status**: ✅ COMPLETE
+
+#### 4. `validator.go` - Line 137 (ValidateStringWithPath)
+- **Location**: `validator.go:137` - `yaml.Unmarshal([]byte(yamlContent), &node)`
+- **Type assertion**: Line 269 in `parseYAMLError` method
+- **Code**: `if typeErr, ok := err.(*yaml.TypeError); ok {`
+- **Status**: ✅ COMPLETE
+
+#### 5. `syntax_validator.go` - Line 386 (ValidateSyntax)
+- **Location**: `syntax_validator.go:386` - `yaml.Unmarshal([]byte(yamlContent), &node)`
+- **Type assertion**: Line 1032 in `convertParseError` method
+- **Code**: `if typeErr, ok := err.(*yaml.TypeError); ok {`
+- **Status**: ✅ COMPLETE
+
+#### 6. `future.go` - Line 93 (ParseStreamToMap)
+- **Location**: `future.go:93` - `yaml.Unmarshal(content, &data)`
+- **Type assertion**: Line 103
+- **Code**: `if typeErr, ok := err.(*yaml.TypeError); ok {`
+- **Status**: ✅ COMPLETE (Note: future.go is marked `//go:build ignore`)
+
+### Sites MISSING yaml.TypeError Type Assertions ❌
+
+#### 1. `schema.go` - Line 288 (ValidateSchemaFile)
+- **Location**: `schema.go:288` - `yaml.Unmarshal(content, &data)`
+- **Current handling**: Has type assertions for `*ParseError`, `*SyntaxError`, `*TypeMismatchError`, `*StructureError`, and `YAMLError` interface
+- **Missing**: No `*yaml.TypeError` type assertion
+- **Impact**: When yaml.v3 returns a TypeError, it falls through to the generic YAMLError interface check or generic fallback
+- **Recommendation**: Add `*yaml.TypeError` type assertion before the `YAMLError` interface check
+- **Status**: ❌ NEEDS TYPE ASSERTION
+
+#### 2. `schema.go` - Line 703 (LoadSchemaFromFile)
+- **Location**: `schema.go:703` - `yaml.Unmarshal(content, &data)`
+- **Current handling**: Generic error wrapping only
+- **Missing**: No specific type assertions for any error type
+- **Impact**: TypeError details are lost in generic error message
+- **Recommendation**: Add full error handling pattern including `*yaml.TypeError` type assertion
+- **Status**: ❌ NEEDS TYPE ASSERTION
+
+### Sites NOT REQUIRING Type Assertions ⚠️
+
+#### 1. `parser.go` - Line 205 (ParseString method)
+- **Location**: `parser.go:205` - `yaml.Unmarshal([]byte(yamlContent), data)`
+- **Reason**: Returns error directly to caller without wrapping
+- **Status**: ⚠️ NOT APPLICABLE (caller responsibility)
+
+#### 2. `future.go` - Line 73 (ParseStream)
+- **Location**: `future.go:73` - `yaml.Unmarshal(content, data)`
+- **Reason**: Returns error directly to caller without wrapping
+- **Status**: ⚠️ NOT APPLICABLE (caller responsibility)
+- **Note**: File is marked `//go:build ignore`
+
+#### 3. `syntax_validator.go` - Line 784 (DetectStructureErrors)
+- **Location**: `syntax_validator.go:784` - `yaml.Unmarshal([]byte(yamlContent), &node)`
+- **Reason**: Early return on error - "Parse errors are already captured in SyntaxErrors"
+- **Status**: ⚠️ NOT APPLICABLE (handled by calling context)
+
+#### 4. `validator.go` - Line 137 (ValidateStringWithPath)
+- **Note**: Error is passed to `parseYAMLError` method which HAS the type assertion
+- **Status**: ✅ COMPLETE (handled by downstream method)
+
+## Sites Requiring Action
+
+### Priority 1: schema.go Line 288
+**Current code**:
 ```go
-if typeErr, ok := err.(*yaml.TypeError); ok {
-    result.Error = &YAMLParseError{
-        FilePath: filePath,
-        Message:  fmt.Sprintf("YAML type error: %v", typeErr.Errors),
-        RawError: err,
-    }
+if err := yaml.Unmarshal(content, &data); err != nil {
+    result.Valid = false
+    
+    // Has ParseError, SyntaxError, TypeMismatchError, StructureError, YAMLError checks
+    // Missing: *yaml.TypeError
+    
+    // Generic fallback
+    result.Errors = append(result.Errors, SchemaValidationError{
+        Message: fmt.Sprintf("Failed to parse YAML: %v", err),
+    })
     return result
 }
 ```
-- **Context:** Main file parsing with structured error handling
-- **Pattern:** Full type assertion with detailed error information
 
-**Line 167 - ParseFileToMap() method:**
-```go
-if typeErr, ok := err.(*yaml.TypeError); ok {
-    result.Error = &YAMLParseError{
-        FilePath: filePath,
-        Message:  fmt.Sprintf("YAML type error: %v", typeErr.Errors),
-        RawError: err,
-    }
-}
-```
-- **Context:** Generic map parsing
-- **Pattern:** Full type assertion with detailed error information
-
-**Line 397 - ParseYAML() function:**
-```go
-if typeErr, ok := err.(*yaml.TypeError); ok {
-    return nil, &YAMLParseError{
-        FilePath: filePath,
-        Message:  fmt.Sprintf("YAML type error: %v", typeErr.Errors),
-        RawError: err,
-        Line:     extractErrorLine(err),
-    }
-}
-```
-- **Context:** Standalone YAML parsing function
-- **Pattern:** Full type assertion with line number extraction
-
-### 2. validator.go (1 site)
-
-**Line 269 - parseYAMLError() method:**
-```go
-if typeErr, ok := err.(*yaml.TypeError); ok {
-    ve.Type = ErrorTypeStructure
-    ve.Message = fmt.Sprintf("YAML type mismatch errors: %v", typeErr.Errors)
-    if len(typeErr.Errors) > 0 {
-        ve.Context = fmt.Sprintf("Type errors: %s", strings.Join(typeErr.Errors, "; "))
-    }
-    return ve
-}
-```
-- **Context:** Converts yaml.v3 errors to LocalValidationError
-- **Pattern:** Full type assertion with error detail extraction
-- **Called by:** ValidateFile() → yaml.Unmarshal (line 137)
-
-### 3. syntax_validator.go (1 site)
-
-**Line 1032 - convertParseError() method:**
-```go
-if typeErr, ok := err.(*yaml.TypeError); ok {
-    se.Message = fmt.Sprintf("YAML type mismatch: %v", typeErr.Errors)
-    se.ErrorCode = ErrCodeTypeMismatch
-    return se
-}
-```
-- **Context:** Converts yaml.v3 errors to SyntaxError
-- **Pattern:** Full type assertion with error code assignment
-- **Called by:** ValidateSyntax() → yaml.Unmarshal (line 386)
-
-### 4. future.go (1 site)
-
-**Line 103 - ParseStreamToMap() method:**
-```go
-if typeErr, ok := err.(*yaml.TypeError); ok {
-    return nil, fmt.Errorf("YAML type error: %v", typeErr.Errors)
-}
-```
-- **Context:** Streaming YAML parsing (stub implementation)
-- **Pattern:** Full type assertion with error wrapping
-
----
-
-## Files MISSING yaml.TypeError Type Assertions ✗
-
-### 1. parser.go (1 site)
-
-**Line 205 - ParseString() method:**
-```go
-func (p *Parser) ParseString(yamlContent string, data interface{}) error {
-    return yaml.Unmarshal([]byte(yamlContent), data)
-}
-```
-- **Issue:** Returns raw error without type checking
-- **Impact:** Callers lose detailed type mismatch information
-- **Recommendation:** Add error handling with *yaml.TypeError type assertion
-
-### 2. schema.go (2 sites)
-
-**Line 288 - ValidateFile() method:**
+**Recommended fix**:
 ```go
 if err := yaml.Unmarshal(content, &data); err != nil {
-    // Checks: *ParseError, *SyntaxError, *TypeMismatchError (custom), *StructureError, YAMLError
-    // Missing: *yaml.TypeError from yaml.v3
-    ...
+    result.Valid = false
+    
+    // Add *yaml.TypeError check here, before YAMLError interface check
+    if typeErr, ok := err.(*yaml.TypeError); ok {
+        result.Errors = append(result.Errors, SchemaValidationError{
+            Message:   fmt.Sprintf("YAML type error: %v", typeErr.Errors),
+            ErrorCode: ErrCodeTypeMismatch,
+        })
+        return result
+    }
+    
+    // ... rest of existing checks ...
 }
 ```
-- **Issue:** Error chain includes custom TypeMismatchError but NOT yaml.v3's TypeError
-- **Impact:** Type errors from yaml.v3 parser fall through to generic handler
-- **Recommendation:** Add `} else if typeErr, ok := err.(*yaml.TypeError); ok {` before the generic fallback
 
-**Line 703 - LoadSchema() function:**
+### Priority 2: schema.go Line 703
+**Current code**:
 ```go
 case ".yaml", ".yml":
     if err := yaml.Unmarshal(content, &data); err != nil {
@@ -139,111 +134,57 @@ case ".yaml", ".yml":
         }
     }
 ```
-- **Issue:** Wraps all errors in SchemaError without type checking
-- **Impact:** Type mismatch details are lost in generic error message
-- **Recommendation:** Add *yaml.TypeError type assertion before wrapping
 
-### 3. syntax_validator.go (1 site)
-
-**Line 784 - DetectStructureErrors() method:**
+**Recommended fix**:
 ```go
-err := yaml.Unmarshal([]byte(yamlContent), &node)
-if err != nil {
-    // Parse errors are already captured in SyntaxErrors
-    return errors
-}
+case ".yaml", ".yml":
+    if err := yaml.Unmarshal(content, &data); err != nil {
+        // Add type assertion for *yaml.TypeError
+        if typeErr, ok := err.(*yaml.TypeError); ok {
+            return nil, &SchemaError{
+                Message:  fmt.Sprintf("YAML type error in schema: %v", typeErr.Errors),
+                FilePath: schemaPath,
+            }
+        }
+        return nil, &SchemaError{
+            Message:  fmt.Sprintf("Failed to parse YAML schema: %v", err),
+            FilePath: schemaPath,
+        }
+    }
 ```
-- **Issue:** Silently ignores parse errors, including type errors
-- **Impact:** Type errors are completely dropped
-- **Recommendation:** At minimum, log type errors; ideally, return them in the result
-
-### 4. future.go (1 site)
-
-**Line 73 - ParseBytes() function:**
-```go
-return yaml.Unmarshal(content, data)
-```
-- **Issue:** Returns raw error without type checking
-- **Impact:** Callers lose detailed type mismatch information
-- **Recommendation:** Add error handling with *yaml.TypeError type assertion
-
----
 
 ## Summary Statistics
 
-| Metric | Count | Percentage |
-|--------|-------|------------|
-| **Total yaml.Unmarshal call sites** | 11 | 100% |
-| **Sites with *yaml.TypeError assertions** | 6 | 54.5% |
-| **Sites missing assertions** | 5 | 45.5% |
+- **Total yaml.Unmarshal call sites**: 11
+- **With yaml.TypeError type assertions**: 6 ✅
+- **Missing yaml.TypeError type assertions**: 2 ❌
+- **Not requiring type assertions**: 3 ⚠️
+- **Completion percentage**: 75% (6/8 actionable sites)
 
-| File | Unmarshal Calls | With TypeError | Missing |
-|------|----------------|---------------|----------|
-| parser.go | 4 | 3 | 1 |
-| validator.go | 1 | 1 | 0 |
-| syntax_validator.go | 2 | 1 | 1 |
-| future.go | 2 | 1 | 1 |
-| schema.go | 2 | 0 | 2 |
+## Patterns Observed
 
----
+### Standard Error Handling Pattern
+The files that have proper type assertions follow this pattern:
+1. Sentinel checks (`io.EOF`, etc.)
+2. Custom error type checks (`*SyntaxError`, `*StructureError`, etc.)
+3. **`*yaml.TypeError` type assertion** ← THIS STEP
+4. `YAMLError` interface check
+5. Generic fallback
 
-## Recommendations
+### Missing Steps
+The two sites in `schema.go` skip step 3, causing TypeError details to be lost.
 
-### Priority 1 - High Impact
-1. **schema.go line 288**: Add *yaml.TypeError assertion to prevent type errors from falling through to generic handler
-2. **schema.go line 703**: Add *yaml.TypeError assertion to preserve type error details in schema loading
+## Verification Notes
 
-### Priority 2 - Medium Impact  
-3. **parser.go line 205**: Add error handling to ParseString() method for consistency with other Parser methods
-4. **future.go line 73**: Add error handling to ParseBytes() function
-
-### Priority 3 - Low Impact
-5. **syntax_validator.go line 784**: Consider logging or returning type errors instead of silently dropping them
-
----
-
-## Pattern Reference
-
-The established pattern for *yaml.TypeError type assertions in this codebase:
-
+All type assertions use the standard pattern:
 ```go
 if typeErr, ok := err.(*yaml.TypeError); ok {
-    // Type assertion: *yaml.TypeError captures type mismatch errors from yaml.v3
-    // The Errors field contains a slice of error strings detailing each type mismatch
-    result.Error = &YAMLParseError{
-        FilePath: filePath,
-        Message:  fmt.Sprintf("YAML type error: %v", typeErr.Errors),
-        RawError: err,
-        Line:     extractErrorLine(err),  // optional
-    }
-    return result
+    // Access typeErr.Errors field for detailed error messages
 }
 ```
 
-**Key elements:**
-- Type assertion: `err.(*yaml.TypeError)`
-- Access error slice: `typeErr.Errors`
-- Provide detailed message: `"YAML type error: %v"`
-- Preserve raw error in wrapper
-- Optionally extract line number
+The `typeErr.Errors` field contains `[]string` with individual type mismatch errors, which is the critical information being captured.
 
----
+## Files Requiring Changes
 
-## Related Context
-
-- **yaml.v3 TypeError**: Returned by yaml.Unmarshal when YAML content cannot be unmarshaled into the target type due to type mismatches
-- **TypeMismatchError**: Custom yamlutil type, NOT the same as yaml.TypeError from yaml.v3
-- **YAMLError interface**: Base interface for all yamlutil custom error types
-- **Error handling chain**: Standard pattern is: sentinel checks → YAMLError interface → specific types → generic fallback
-
----
-
-## Verification Test Coverage
-
-The file `yaml_typeerror_test.go` contains tests that verify the presence of *yaml.TypeError type assertions in:
-- parser.go ✓
-- validator.go ✓
-- syntax_validator.go ✓
-- future.go ✓
-
-**Test gap:** schema.go is not verified by these tests despite having 2 yaml.Unmarshal call sites.
+1. `/home/coding/ARMOR/internal/yamlutil/schema.go` (2 locations)
