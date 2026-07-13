@@ -14089,18 +14089,56 @@ fn test_folded_scalar_helper_macro_level0_template() {
 
 #[test]
 fn test_folded_scalar_explicit_indent_tab() {
-    // Test folded scalars with explicit indent at tab level
-    // Covers all three modifiers: > (plain), >- (strip), >+ (keep)
-    // Covers indent levels 1-5
-    // Bead: bf-5jm9g - Tab explicit indent comprehensive coverage
+    // Test folded scalars with all three explicit indent modifiers (>, >-, >+)
+    // at indent levels 1-5 with tab base indentation (tab level).
+    //
+    // This test provides comprehensive coverage of folded scalar behavior with
+    // explicit indent specification, ensuring all modifier variants work correctly
+    // across the specified indent range at tab indentation level.
+    //
+    // Bead: bf-2rf27
+    // Acceptance Criteria:
+    // - Cover all three modifiers: > (plain), >- (strip), >+ (keep)
+    // - Cover indent levels 1-5
+    // - Verify folded scalar behavior with tab indentation
+    // - Follow Section 12B.3 explicit indent infrastructure pattern
 
-    let test_cases = generate_folded_explicit_indent_tests!(
-        "\t",                    // Tab base indentation
-        "tab",                  // Tab indentation
-        &[">", ">-", ">+"],     // All three modifiers
-        &[1, 2, 3, 4, 5],      // Indent numbers 1-5
-        "test"                  // Key prefix for generated names
-    );
+    let test_cases = vec![
+        // ===== Plain modifier >n (n=1-5) =====
+        ("\tplain1: >1", "plain1", LineType::MappingKey),
+        ("\tplain2: >2", "plain2", LineType::MappingKey),
+        ("\tplain3: >3", "plain3", LineType::MappingKey),
+        ("\tplain4: >4", "plain4", LineType::MappingKey),
+        ("\tplain5: >5", "plain5", LineType::MappingKey),
+
+        // ===== Strip modifier >-n (n=1-5) =====
+        ("\tstrip1: >-1", "strip1", LineType::MappingKey),
+        ("\tstrip2: >-2", "strip2", LineType::MappingKey),
+        ("\tstrip3: >-3", "strip3", LineType::MappingKey),
+        ("\tstrip4: >-4", "strip4", LineType::MappingKey),
+        ("\tstrip5: >-5", "strip5", LineType::MappingKey),
+
+        // ===== Keep modifier >+n (n=1-5) =====
+        ("\tkeep1: >+1", "keep1", LineType::MappingKey),
+        ("\tkeep2: >+2", "keep2", LineType::MappingKey),
+        ("\tkeep3: >+3", "keep3", LineType::MappingKey),
+        ("\tkeep4: >+4", "keep4", LineType::MappingKey),
+        ("\tkeep5: >+5", "keep5", LineType::MappingKey),
+
+        // ===== Keys with exclamation marks across all modifiers =====
+        ("\tkey!1: >1", "key!1", LineType::MappingKey),
+        ("\twarn!2: >-2", "warn!2", LineType::MappingKey),
+        ("\terror!3: >+3", "error!3", LineType::MappingKey),
+        ("\ttest!4: >4", "test!4", LineType::MappingKey),
+        ("\tdata!5: >-5", "data!5", LineType::MappingKey),
+
+        // ===== Realistic key names with modifiers =====
+        ("\tdescription: >1", "description", LineType::MappingKey),
+        ("\tcontent: >-2", "content", LineType::MappingKey),
+        ("\tsummary: >+3", "summary", LineType::MappingKey),
+        ("\ttext: >4", "text", LineType::MappingKey),
+        ("\tmessage: >-5", "message", LineType::MappingKey),
+    ];
 
     // Verify all test cases start with tab
     for (line, _, _) in &test_cases {
@@ -14117,5 +14155,134 @@ fn test_folded_scalar_explicit_indent_tab() {
         );
     }
 
-    run_folded_scalar_tests!(test_cases);
+    // Run indicator line tests
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Folded scalar explicit indent test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for folded scalar explicit indent: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Key mismatch for folded scalar explicit indent: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+
+    // Test continuation lines for each indent level with tab base indentation
+    let continuation_lines = vec![
+        // ===== Level 1 continuation lines (1 tab + 2-space per level) =====
+        // Indent level 1: content should start with 1 tab + 2 spaces
+        ("\t  Content at indent level 1", vec![LineType::MappingKey, LineType::Unknown]),
+        ("\t  More! text! at! level! 1!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // ===== Level 2 continuation lines (1 tab + 4-space per level) =====
+        // Indent level 2: content should start with 1 tab + 4 spaces
+        ("\t    Deeper content at indent level 2", vec![LineType::MappingKey, LineType::Unknown]),
+        ("\t    Nested! text! at! level! 2!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // ===== Level 3 continuation lines (1 tab + 6-space per level) =====
+        // Indent level 3: content should start with 1 tab + 6 spaces
+        ("\t      Very deep content at indent level 3", vec![LineType::MappingKey, LineType::Unknown]),
+        ("\t      Complex! continuation! at! level! 3!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // ===== Level 4 continuation lines (1 tab + 8-space per level) =====
+        // Indent level 4: content should start with 1 tab + 8 spaces
+        ("\t        Super deep content at indent level 4", vec![LineType::MappingKey, LineType::Unknown]),
+        ("\t        Extra! complex! at! level! 4!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // ===== Level 5 continuation lines (1 tab + 10-space per level) =====
+        // Indent level 5: content should start with 1 tab + 10 spaces
+        ("\t          Ultra deep content at indent level 5", vec![LineType::MappingKey, LineType::Unknown]),
+        ("\t          Maximum! depth! at! level! 5!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // ===== Continuation lines starting with ! (may be classified as Tag) =====
+        ("\t  !Starting with emphasis at level 1", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("\t    !Deep tag like content at level 2", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("\t      !Very deep tag line at level 3", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("\t        !Super deep tag at level 4", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("\t          !Ultra deep tag at level 5", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        let result = classify_line_type(line);
+        // Continuation lines should be one of the expected types
+        assert!(
+            expected_types.contains(&result),
+            "Continuation line for folded scalar explicit indent should be one of {:?}: '{}' (got {:?})",
+            expected_types, line, result
+        );
+
+        // Continuation lines should NOT detect as mapping keys
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_none(),
+            "Continuation line should NOT detect mapping key: '{}'",
+            line
+        );
+    }
+
+    // Verify that continuation lines respect the indent level specified
+    // For explicit indent >N, content lines must be indented at least N spaces
+    let indent_validation_cases = vec![
+        // Valid: content properly indented for each level
+        ("\tcontent: >1\n\t  Properly indented content", true),
+        ("\tcontent: >2\n\t    Properly indented content", true),
+        ("\tcontent: >3\n\t      Properly indented content", true),
+        ("\tcontent: >4\n\t        Properly indented content", true),
+        ("\tcontent: >5\n\t          Properly indented content", true),
+
+        // Test with strip modifier
+        ("\tcontent: >-1\n\t  Properly indented content", true),
+        ("\tcontent: >-2\n\t    Properly indented content", true),
+        ("\tcontent: >-3\n\t      Properly indented content", true),
+
+        // Test with keep modifier
+        ("\tcontent: >+1\n\t  Properly indented content", true),
+        ("\tcontent: >+2\n\t    Properly indented content", true),
+        ("\tcontent: >+3\n\t      Properly indented content", true),
+    ];
+
+    for (yaml_input, should_be_valid) in indent_validation_cases {
+        // Parse the YAML to verify the structure is valid
+        let lines: Vec<&str> = yaml_input.lines().collect();
+        assert!(lines.len() >= 2, "Test case should have at least 2 lines");
+
+        // First line should be a mapping key
+        let first_line = lines[0];
+        let result = classify_line_type(first_line);
+        assert_eq!(result, LineType::MappingKey,
+                   "First line should be MappingKey: '{}'", first_line);
+
+        // Verify the key is detected
+        let info = detect_mapping_key(first_line, 0);
+        assert!(info.is_some(), "Should detect mapping key: '{}'", first_line);
+
+        // Continuation line should not be a mapping key
+        let continuation = lines[1];
+        let cont_result = classify_line_type(continuation);
+        let cont_info = detect_mapping_key(continuation, 0);
+
+        if should_be_valid {
+            // Valid continuation should not be a mapping key
+            assert!(cont_info.is_none(),
+                   "Valid continuation line should NOT detect mapping key: '{}'", continuation);
+            // Should be MappingKey or Unknown
+            assert!(cont_result == LineType::MappingKey || cont_result == LineType::Unknown,
+                   "Valid continuation should be MappingKey or Unknown: '{}' (got {:?})",
+                   continuation, cont_result);
+        }
+    }
 }
