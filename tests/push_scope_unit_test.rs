@@ -87,6 +87,47 @@ fn test_push_scope_different_types() {
 }
 
 #[test]
+fn test_push_scope_all_five_types() {
+    let mut parser = BasicParser::new();
+
+    // Push ALL five scope types
+    parser.push_scope(ScopeInfo::root());                          // Root (depth 0)
+    parser.push_scope(ScopeInfo::block(1));                       // Block (depth 1)
+    parser.push_scope(ScopeInfo::new(ScopeType::BlockSequence, 2));  // BlockSequence (depth 2)
+    parser.push_scope(ScopeInfo::new(ScopeType::FlowMapping, 3));     // FlowMapping (depth 3)
+    parser.push_scope(ScopeInfo::new(ScopeType::FlowSequence, 4));     // FlowSequence (depth 4)
+
+    // Verify all were added
+    assert_eq!(parser.scope_info_stack().len(), 5, "Scope info stack should have 5 items");
+
+    // Verify types in order
+    let scopes = parser.scope_info_stack();
+    assert_eq!(scopes[0].scope_type(), ScopeType::Root, "First scope should be Root");
+    assert_eq!(scopes[1].scope_type(), ScopeType::Block, "Second scope should be Block");
+    assert_eq!(scopes[2].scope_type(), ScopeType::BlockSequence, "Third scope should be BlockSequence");
+    assert_eq!(scopes[3].scope_type(), ScopeType::FlowMapping, "Fourth scope should be FlowMapping");
+    assert_eq!(scopes[4].scope_type(), ScopeType::FlowSequence, "Fifth scope should be FlowSequence");
+
+    // Verify depths
+    assert_eq!(scopes[0].scope_depth(), 0, "Root should have depth 0");
+    assert_eq!(scopes[1].scope_depth(), 1, "Block should have depth 1");
+    assert_eq!(scopes[2].scope_depth(), 2, "BlockSequence should have depth 2");
+    assert_eq!(scopes[3].scope_depth(), 3, "FlowMapping should have depth 3");
+    assert_eq!(scopes[4].scope_depth(), 4, "FlowSequence should have depth 4");
+
+    // Verify scope type helper methods
+    assert!(scopes[0].is_root(), "Root should identify as root");
+    assert!(scopes[1].is_block(), "Block should identify as block");
+    assert!(scopes[1].is_mapping(), "Block should identify as mapping");
+    assert!(scopes[2].is_sequence(), "BlockSequence should identify as sequence");
+    assert!(scopes[2].is_block(), "BlockSequence should identify as block");
+    assert!(scopes[3].is_flow(), "FlowMapping should identify as flow");
+    assert!(scopes[3].is_mapping(), "FlowMapping should identify as mapping");
+    assert!(scopes[4].is_flow(), "FlowSequence should identify as flow");
+    assert!(scopes[4].is_sequence(), "FlowSequence should identify as sequence");
+}
+
+#[test]
 fn test_push_scope_root_type() {
     let mut parser = BasicParser::new();
 
