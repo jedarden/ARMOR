@@ -1,7 +1,8 @@
 # Scope Behavior Edge Case Tests - Results
 
 **Bead ID:** bf-5wvxiw
-**Date:** 2026-07-13
+**Date Run:** 2026-07-13 19:34 UTC
+**Last Updated:** 2026-07-13 (current run confirms same results)
 **Task:** Run scope behavior edge case tests
 
 ## Tests Executed
@@ -131,3 +132,12 @@ Environment:
 - Rust: cargo with debug build
 - Platform: Linux 6.12.63
 - Workspace: /home/coding/ARMOR
+
+## Current Run Confirmation (2026-07-13)
+
+Re-ran all three test files to verify results:
+- **exit_to_scope_edge_cases_test:** Same 14 failures confirmed
+- **state_preservation_scope_exit_test:** Same 5 failures confirmed
+- **target_scope_lookup_test:** Same 7 failures confirmed
+
+The test failures are **persistent and reproducible**, indicating genuine implementation issues with scope management that require code fixes rather than test corrections.
