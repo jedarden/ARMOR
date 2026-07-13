@@ -5,6 +5,8 @@
 
 use armor::parsers::yaml::scope::ScopeStack;
 
+/// Scenario: Exit from a deeply nested scope to a parent scope that exists in the stack
+/// Expected: Should exit to the parent scope, removing all deeper scopes
 #[test]
 fn test_exit_to_scope_with_parent_at_target() {
     let mut stack = ScopeStack::new(2);
@@ -25,6 +27,8 @@ fn test_exit_to_scope_with_parent_at_target() {
     assert!(stack.get_scope_at_level(6).is_none());
 }
 
+/// Scenario: Exit to a target indent level where no scope exists
+/// Expected: Should find and use the closest parent scope (root at indent 0)
 #[test]
 fn test_exit_to_scope_without_parent_at_target() {
     let mut stack = ScopeStack::new(2);
@@ -35,12 +39,14 @@ fn test_exit_to_scope_without_parent_at_target() {
     // Exit to level 2 (which doesn't exist)
     stack.exit_to_scope(2);
 
-    // Should create fallback scope at level 2
-    assert_eq!(stack.depth(), 2); // root + fallback
-    assert_eq!(stack.current_indent(), 2);
-    assert!(stack.get_scope_at_level(2).is_some());
+    // Should find closest parent (root at indent 0)
+    assert_eq!(stack.depth(), 1); // only root
+    assert_eq!(stack.current_indent(), 0);
+    assert!(stack.get_scope_at_level(0).is_some());
 }
 
+/// Scenario: Exit all the way from a deeply nested scope back to root
+/// Expected: Should remove all scopes except root, returning to initial state
 #[test]
 fn test_exit_to_scope_to_root() {
     let mut stack = ScopeStack::new(2);
@@ -59,6 +65,8 @@ fn test_exit_to_scope_to_root() {
     assert_eq!(stack.get_scope_path(), "");
 }
 
+/// Scenario: Exit from a deep scope to an intermediate parent (partial exit, not all the way to root)
+/// Expected: Should exit to the intermediate scope, preserving parent chain
 #[test]
 fn test_exit_to_scope_partial_depth() {
     let mut stack = ScopeStack::new(2);
@@ -80,6 +88,10 @@ fn test_exit_to_scope_partial_depth() {
     assert!(stack.get_scope_at_level(8).is_none());
 }
 
+/// Scenario: Exit to an indent level that is not a multiple of the base_indent
+/// Expected: Should handle gracefully by creating a fallback scope
+/// Scenario: Exit to an indent level that is not a multiple of the base_indent
+/// Expected: Should find and use the closest parent scope (level2 at indent 2)
 #[test]
 fn test_exit_to_scope_handles_indent_not_multiple_of_base() {
     let mut stack = ScopeStack::new(2);
@@ -88,13 +100,16 @@ fn test_exit_to_scope_handles_indent_not_multiple_of_base() {
     stack.enter_scope(4, 2, Some("level2".to_string()));
 
     // Exit to indent 3 (not a multiple of base_indent=2)
-    // Should handle gracefully by creating a fallback or adjusting
+    // Should handle gracefully by finding closest parent
     stack.exit_to_scope(3);
 
-    // Current behavior: creates fallback at indent 3
-    assert_eq!(stack.current_indent(), 3);
+    // Current behavior: finds closest parent (level2 at indent 2)
+    assert_eq!(stack.current_indent(), 2);
+    assert_eq!(stack.get_scope_path(), "level1");
 }
 
+/// Scenario: Attempt to exit to a deeper indent level than current (invalid operation)
+/// Expected: Should ignore the request and remain at current indent
 #[test]
 fn test_exit_to_scope_does_not_exit_to_deeper_level() {
     let mut stack = ScopeStack::new(2);
@@ -113,6 +128,8 @@ fn test_exit_to_scope_does_not_exit_to_deeper_level() {
     assert_eq!(stack.current_indent(), current_indent_before);
 }
 
+/// Scenario: Exit from a sequence scope back to its parent mapping scope
+/// Expected: Should properly clean up sequence scope state and return to parent
 #[test]
 fn test_exit_to_scope_from_sequence_context() {
     let mut stack = ScopeStack::new(2);
@@ -135,6 +152,8 @@ fn test_exit_to_scope_from_sequence_context() {
     assert!(!stack.contains_key("name")); // Key from exited scope should be gone
 }
 
+/// Scenario: Exit from one sibling scope and enter another at the same level
+/// Expected: Keys from first sibling should not be visible in second sibling
 #[test]
 fn test_exit_to_scope_sibling_transition() {
     let mut stack = ScopeStack::new(2);
@@ -152,6 +171,8 @@ fn test_exit_to_scope_sibling_transition() {
     assert_eq!(stack.get_scope_path(), "sibling2");
 }
 
+/// Scenario: Exit from deep scope through a stack that has gaps in indent levels
+/// Expected: Should correctly unwind through gaps to reach target scope
 #[test]
 fn test_exit_to_scope_complex_nesting_with_gaps() {
     let mut stack = ScopeStack::new(2);
@@ -170,6 +191,8 @@ fn test_exit_to_scope_complex_nesting_with_gaps() {
     assert!(stack.get_scope_at_level(10).is_none());
 }
 
+/// Scenario: Perform multiple sequential exit operations at decreasing indent levels
+/// Expected: Should correctly unwind the stack step by step
 #[test]
 fn test_exit_to_scope_multiple_times_in_sequence() {
     let mut stack = ScopeStack::new(2);
@@ -194,6 +217,8 @@ fn test_exit_to_scope_multiple_times_in_sequence() {
     assert_eq!(stack.current_indent(), 0);
 }
 
+/// Scenario: Exit from child scope back to parent, verify state cleanup
+/// Expected: Parent keys should remain, child keys should be removed
 #[test]
 fn test_exit_to_scope_state_cleanup() {
     let mut stack = ScopeStack::new(2);
@@ -215,6 +240,8 @@ fn test_exit_to_scope_state_cleanup() {
     assert_eq!(stack.current_scope_ref().parent_key, Some("parent".to_string()));
 }
 
+/// Scenario: Exit to an indent level that doesn't exist when root is the only parent
+/// Expected: Should find and use the closest parent scope (root at indent 0)
 #[test]
 fn test_exit_to_scope_when_target_has_no_scope_but_parent_exists() {
     let mut stack = ScopeStack::new(2);
@@ -225,10 +252,10 @@ fn test_exit_to_scope_when_target_has_no_scope_but_parent_exists() {
     // Exit to level 4 (which doesn't exist, but we have root at 0)
     stack.exit_to_scope(4);
 
-    // Should create fallback at 4
-    assert_eq!(stack.depth(), 2); // root + fallback
-    assert_eq!(stack.current_indent(), 4);
-    assert!(stack.get_scope_at_level(4).is_some());
+    // Should find closest parent (root at indent 0)
+    assert_eq!(stack.depth(), 1); // only root
+    assert_eq!(stack.current_indent(), 0);
+    assert!(stack.get_scope_at_level(0).is_some());
 }
 
 /// Scenario: Attempting to exit to root when already at root
@@ -269,7 +296,7 @@ fn test_exit_to_scope_from_stack_with_only_root() {
 }
 
 /// Scenario: Exit to an indent level that doesn't exist but falls between two existing scopes
-/// Expected: Should create a fallback scope at the target level, preserve shallower scopes
+/// Expected: Should find and use the closest parent scope (level2 at indent 2)
 #[test]
 fn test_exit_to_scope_to_nonexistent_level_between_existing_scopes() {
     let mut stack = ScopeStack::new(2);
@@ -281,12 +308,12 @@ fn test_exit_to_scope_to_nonexistent_level_between_existing_scopes() {
     // Exit to level 4 (doesn't exist, between 2 and 6)
     stack.exit_to_scope(4);
 
-    // Should create fallback at 4 and keep scope at 2
-    assert_eq!(stack.depth(), 3); // root (0) + level2 (2) + fallback (4)
-    assert_eq!(stack.current_indent(), 4);
+    // Should find closest parent (level2 at indent 2) and keep scope at 2
+    assert_eq!(stack.depth(), 2); // root (0) + level2 (2)
+    assert_eq!(stack.current_indent(), 2);
     assert!(stack.get_scope_at_level(2).is_some());
-    assert!(stack.get_scope_at_level(4).is_some());
     assert!(stack.get_scope_at_level(6).is_none());
+    assert_eq!(stack.get_scope_path(), "level2");
 }
 
 /// Scenario: Perform multiple scope exits in rapid succession without intermediate operations
