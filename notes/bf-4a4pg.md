@@ -1,65 +1,46 @@
-# Type Assertions in validator.go (bf-4a4pg)
+# Bead bf-4a4pg: Type Assertions in validator.go
 
 ## Summary
+Completed comprehensive type assertions for FileError and YAMLError types in validator.go.
 
-Comprehensive type assertions have been successfully implemented in validator.go for FileError and YAMLError types, following the standard pattern: sentinel checks → YAMLError interface → specific types → generic fallback.
+## Implementation Details
 
-## Changes Made
+### FileError Type Assertion (ValidateFile, lines 179-191)
+- Checks for `*FileError` type using type assertion
+- Extracts `Message`, `ErrorCode`, and `Context()`
+- Formats context with ErrorCode prefix when present
+- Returns early with structured error details
 
-### 1. ValidateFile() - Lines 178-206 (Site 2.2)
+### SyntaxError Type Assertion (parseYAMLError, lines 233-243)
+- Checks for `*SyntaxError` type
+- Extracts `Line`, `Column`, `ErrorCode`, and `Context()`
+- Sets error type to `ErrorTypeSyntax`
+- Formats context with ErrorCode prefix when present
 
-Added comprehensive type assertions for file read error handling:
+### StructureError Type Assertion (parseYAMLError, lines 246-255)
+- Checks for `*StructureError` type
+- Extracts `Line`, `ErrorCode`, and `Context()`
+- Sets error type to `ErrorTypeStructure`
+- Formats context with ErrorCode prefix when present
 
-- **Sentinel check**: io.EOF check (lines 166-176) - handles incomplete files
-- **FileError type assertion** (lines 179-191): Extracts ErrorCode and Context from FileError
-  - Extracts structured Message from FileError
-  - Sets error type to ErrorTypeFile
-  - Includes ErrorCode in Context when available
-- **YAMLError interface check** (lines 194-206): Handles any YAMLError implementation
-  - Extracts ErrorCode and Context from YAMLError interface
-  - Uses YAMLErrorType() for proper error categorization
-- **Generic fallback** (lines 208-215): Default error handling for untyped errors
+### YAMLError Interface Assertion (parseYAMLError, lines 258-266)
+- Checks for `YAMLError` interface (base interface for all YAML errors)
+- Extracts `YAMLErrorType()`, `Error()`, `Code()`, and `Context()`
+- Formats context with ErrorCode prefix when present
+- Provides fallback for any error implementing YAMLError
 
-### 2. parseYAMLError() - Lines 232-277 (Site 2.4)
+## Pattern Used
+Standard type assertion pattern with early returns:
+1. Sentinel checks (io.EOF)
+2. YAMLError interface check (most general)
+3. Specific type checks (*SyntaxError, *StructureError, *FileError)
+4. Generic fallback
 
-Enhanced parseYAMLError() with comprehensive type assertions:
+## Verification
+- Code compiles without errors: `go build ./internal/yamlutil/...`
+- Type assertions properly extract ErrorCode and Context
+- Error messages include structured error codes and context information
 
-- **SyntaxError type assertion** (lines 233-243):
-  - Extracts Line and Column information
-  - Extracts ErrorCode and Context from SyntaxError
-  - Sets error type to ErrorTypeSyntax
-- **StructureError type assertion** (lines 246-255):
-  - Extracts Line information
-  - Extracts ErrorCode and Context from StructureError
-  - Sets error type to ErrorTypeStructure
-- **YAMLError interface check** (lines 258-266):
-  - Handles any YAMLError implementation
-  - Extracts ErrorCode and Context from interface methods
-  - Uses YAMLErrorType() for proper categorization
-- **yaml.TypeError fallback** (lines 269-277): Handles yaml.v3 type errors
-- **Generic message parsing** (lines 279-322): Extracts line/column from error messages as fallback
-
-## Acceptance Criteria Met
-
-✅ FileError type assertion added at line 179-191 in ValidateFile()
-✅ parseYAMLError() includes type assertions for SyntaxError, StructureError, and YAMLError
-✅ Error messages include structured error codes and context
-✅ Code compiles without errors
-✅ All existing tests pass
-
-## Testing Results
-
-- Compilation: Successful (no errors)
-- Test suite: All 40 validator tests pass
-- Error type handling: Properly extracts ErrorCode and Context from all typed errors
-- Line/column info: Correctly extracted from SyntaxError and StructureError
-
-## Implementation Pattern
-
-The implementation follows the established standard pattern:
-1. Sentinel checks for known error values (io.EOF)
-2. YAMLError interface check for typed errors
-3. Specific type assertions (FileError, SyntaxError, StructureError)
-4. Generic fallback for untyped errors
-
-This ensures maximum error information extraction while maintaining backward compatibility.
+## Commits
+- f40ecffb docs(bf-4a4pg): Complete type assertions in validator.go
+- bd677ced feat(yamlutil): add comprehensive type assertions in validator.go
