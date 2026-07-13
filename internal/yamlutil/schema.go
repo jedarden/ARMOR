@@ -261,9 +261,25 @@ func (sv *SchemaValidator) ValidateFile(filePath string) SchemaValidationResult 
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		result.Valid = false
-		result.Errors = append(result.Errors, SchemaValidationError{
-			Message: fmt.Sprintf("Failed to read file: %v", err),
-		})
+
+		// FileError type assertion with structured error codes
+		if fileErr, ok := err.(*FileError); ok {
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message:   fmt.Sprintf("Failed to read file: %s", fileErr.Error()),
+				ErrorCode: fileErr.Code(),
+			})
+		} else if yamlErr, ok := err.(YAMLError); ok {
+			// Handle YAMLError interface
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message:   fmt.Sprintf("Failed to read file: %s", yamlErr.Error()),
+				ErrorCode: yamlErr.Code(),
+			})
+		} else {
+			// Generic error fallback
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message: fmt.Sprintf("Failed to read file: %v", err),
+			})
+		}
 		return result
 	}
 
@@ -271,9 +287,44 @@ func (sv *SchemaValidator) ValidateFile(filePath string) SchemaValidationResult 
 	var data map[string]interface{}
 	if err := yaml.Unmarshal(content, &data); err != nil {
 		result.Valid = false
-		result.Errors = append(result.Errors, SchemaValidationError{
-			Message: fmt.Sprintf("Failed to parse YAML: %v", err),
-		})
+
+		// YAMLError type assertions with structured error codes
+		if parseErr, ok := err.(*ParseError); ok {
+			// Handle ParseError type
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message:   fmt.Sprintf("Failed to parse YAML: %s", parseErr.Error()),
+				ErrorCode: parseErr.Code(),
+			})
+		} else if syntaxErr, ok := err.(*SyntaxError); ok {
+			// Handle SyntaxError type
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message:   fmt.Sprintf("Failed to parse YAML: %s", syntaxErr.Error()),
+				ErrorCode: syntaxErr.Code(),
+			})
+		} else if typeErr, ok := err.(*TypeMismatchError); ok {
+			// Handle TypeMismatchError type
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message:   fmt.Sprintf("Failed to parse YAML: %s", typeErr.Error()),
+				ErrorCode: typeErr.Code(),
+			})
+		} else if structErr, ok := err.(*StructureError); ok {
+			// Handle StructureError type
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message:   fmt.Sprintf("Failed to parse YAML: %s", structErr.Error()),
+				ErrorCode: structErr.Code(),
+			})
+		} else if yamlErr, ok := err.(YAMLError); ok {
+			// Handle generic YAMLError interface
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message:   fmt.Sprintf("Failed to parse YAML: %s", yamlErr.Error()),
+				ErrorCode: yamlErr.Code(),
+			})
+		} else {
+			// Generic error fallback
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message: fmt.Sprintf("Failed to parse YAML: %v", err),
+			})
+		}
 		return result
 	}
 
