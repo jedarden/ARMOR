@@ -422,3 +422,183 @@ fn test_exit_to_scope_when_target_is_same_as_current_indent() {
     assert_eq!(stack.current_indent(), indent_before);
     assert_eq!(stack.get_scope_path(), "level1.level2");
 }
+
+/// Scenario: Verify that scopes with many keys are properly cleaned up on exit
+/// Expected: All keys should be cleared and no references remain to the exited scope
+#[test]
+fn test_exit_to_scope_clears_large_scope_data() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create a parent scope with many keys
+    stack.enter_scope(2, 1, Some("parent".to_string()));
+    for i in 0..100 {
+        stack.add_key(&format!("key_{}", i), 2 + i).unwrap();
+    }
+    let parent_key_count = stack.current_scope_ref().key_count();
+    assert_eq!(parent_key_count, 100);
+
+    // Create a child scope with even more keys
+    stack.enter_scope(4, 102, Some("child".to_string()));
+    for i in 0..200 {
+        stack.add_key(&format!("child_key_{}", i), 103 + i).unwrap();
+    }
+    let child_key_count = stack.current_scope_ref().key_count();
+    assert_eq!(child_key_count, 200);
+
+    // Exit to parent - child should be cleaned up
+    stack.exit_to_scope(2);
+
+    // Parent should still have its keys
+    assert_eq!(stack.current_scope_ref().key_count(), 100);
+    assert!(stack.contains_key("key_0"));
+    assert!(stack.contains_key("key_99"));
+
+    // Child keys should be completely gone
+    assert!(!stack.contains_key("child_key_0"));
+    assert!(!stack.contains_key("child_key_199"));
+}
+
+/// Scenario: Verify that sequence context flags are properly reset on scope exit
+/// Expected: Exiting from sequence scope should reset sequence flags in parent
+#[test]
+fn test_exit_to_scope_resets_sequence_context_flags() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create parent mapping
+    stack.enter_scope(2, 1, Some("items".to_string()));
+
+    // Enter sequence scope (sets in_sequence_context=true on new scope)
+    stack.enter_sequence_scope(4, 2);
+    assert!(stack.current_scope_ref().in_sequence_context);
+    assert!(stack.current_scope_ref().sequence_item_id.is_some());
+
+    // Add some keys in sequence scope
+    stack.add_key("seq_key1", 3).unwrap();
+    stack.add_key("seq_key2", 4).unwrap();
+
+    // Exit back to parent mapping
+    stack.exit_to_scope(2);
+
+    // Verify we're back in mapping context (not sequence)
+    assert!(!stack.current_scope_ref().in_sequence_context);
+    assert!(stack.current_scope_ref().sequence_item_id.is_none());
+
+    // Verify sequence keys are gone
+    assert!(!stack.contains_key("seq_key1"));
+    assert!(!stack.contains_key("seq_key2"));
+}
+
+/// Scenario: Verify that nested scope cleanup doesn't leave intermediate state
+/// Expected: Multiple levels of nested scopes should all be cleaned up properly
+#[test]
+fn test_exit_to_scope_cleanup_multiple_nested_levels() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create deep nesting with keys at each level
+    stack.enter_scope(2, 1, Some("level1".to_string()));
+    stack.add_key("l1_key", 2).unwrap();
+
+    stack.enter_scope(4, 3, Some("level2".to_string()));
+    stack.add_key("l2_key", 4).unwrap();
+
+    stack.enter_scope(6, 5, Some("level3".to_string()));
+    stack.add_key("l3_key", 6).unwrap();
+
+    stack.enter_scope(8, 7, Some("level4".to_string()));
+    stack.add_key("l4_key", 8).unwrap();
+
+    // Exit directly to root - all nested scopes should be cleaned up
+    stack.exit_to_scope(0);
+
+    // Should be at root with no keys from nested scopes
+    assert_eq!(stack.depth(), 1);
+    assert_eq!(stack.current_indent(), 0);
+    assert!(!stack.contains_key("l1_key"));
+    assert!(!stack.contains_key("l2_key"));
+    assert!(!stack.contains_key("l3_key"));
+    assert!(!stack.contains_key("l4_key"));
+}
+
+/// Scenario: Verify that scope cleanup works when exiting through gaps in indent levels
+/// Expected: Gaps in indent levels should not prevent proper cleanup
+#[test]
+fn test_exit_to_scope_cleanup_with_indent_gaps() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create scopes with gaps: 0 -> 2 -> 6 -> 10
+    stack.enter_scope(2, 1, Some("gap1".to_string()));
+    stack.add_key("gap1_key", 2).unwrap();
+
+    stack.enter_scope(6, 3, Some("gap2".to_string()));
+    stack.add_key("gap2_key", 4).unwrap();
+
+    stack.enter_scope(10, 5, Some("gap3".to_string()));
+    stack.add_key("gap3_key", 6).unwrap();
+
+    // Exit from indent 10 to indent 2 (skipping indent 6)
+    stack.exit_to_scope(2);
+
+    // Should have cleaned up indent 6 and 10
+    assert_eq!(stack.depth(), 2); // root + gap1
+    assert_eq!(stack.current_indent(), 2);
+    assert!(stack.contains_key("gap1_key"));
+    assert!(!stack.contains_key("gap2_key"));
+    assert!(!stack.contains_key("gap3_key"));
+}
+
+/// Scenario: Verify that rapid successive exits don't leave stale state
+/// Expected: Each exit should fully clean up before the next exit
+#[test]
+fn test_exit_to_scope_rapid_exits_no_stale_state() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create deep nesting
+    stack.enter_scope(2, 1, Some("a".to_string()));
+    stack.add_key("a_key", 2).unwrap();
+
+    stack.enter_scope(4, 3, Some("b".to_string()));
+    stack.add_key("b_key", 4).unwrap();
+
+    stack.enter_scope(6, 5, Some("c".to_string()));
+    stack.add_key("c_key", 6).unwrap();
+
+    stack.enter_scope(8, 7, Some("d".to_string()));
+    stack.add_key("d_key", 8).unwrap();
+
+    // Rapid exits
+    stack.exit_to_scope(6);  // Remove d
+    stack.exit_to_scope(2);  // Remove c and b
+    stack.exit_to_scope(0);  // Remove a
+
+    // Verify all state is cleaned up
+    assert_eq!(stack.depth(), 1);
+    assert_eq!(stack.current_indent(), 0);
+    assert_eq!(stack.get_scope_path(), "");
+
+    // Verify none of the keys exist
+    assert!(!stack.contains_key("a_key"));
+    assert!(!stack.contains_key("b_key"));
+    assert!(!stack.contains_key("c_key"));
+    assert!(!stack.contains_key("d_key"));
+}
+
+/// Scenario: Verify that re-entering a scope after exit gets fresh state
+/// Expected: Re-entering should not inherit state from previous scope at same level
+#[test]
+fn test_exit_to_scope_allows_clean_reentry() {
+    let mut stack = ScopeStack::new(2);
+
+    // First scope at indent 2
+    stack.enter_scope(2, 1, Some("first".to_string()));
+    stack.add_key("old_key", 2).unwrap();
+    stack.current_scope().is_flow_style = true;
+
+    // Exit and re-enter at same level
+    stack.exit_to_scope(0);
+    stack.enter_scope(2, 3, Some("second".to_string()));
+
+    // Should have fresh state, not inheriting from previous scope
+    assert!(!stack.contains_key("old_key"));
+    assert_eq!(stack.current_scope_ref().key_count(), 0);
+    assert!(!stack.current_scope_ref().is_flow_style);
+}
