@@ -35,7 +35,7 @@ import (
 //
 //	parse error in config.yaml at line 10, column 5: missing colon
 func TestParseErrorLineColumnFullFormat(t *testing.T) {
-	err := NewParseError("config.yaml", "missing colon", 10, 5, ErrCodeInvalidSyntax, "", "")
+	err := NewParseError("config.yaml", "missing colon", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 
 	expected := "parse error in config.yaml at line 10, column 5: missing colon"
 	if err.Error() != expected {
@@ -96,7 +96,7 @@ func TestParseErrorLineColumnVariations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewParseError(tt.filePath, tt.message, tt.line, tt.column, "", "", "")
+			err := NewParseError(tt.filePath, tt.message, tt.line, tt.column, "", "", "", "")
 			if err.Error() != tt.expected {
 				t.Errorf("Error() = %q, want %q", err.Error(), tt.expected)
 			}
@@ -112,7 +112,7 @@ func TestParseErrorLineColumnVariations(t *testing.T) {
 //
 //	parse error in schema.yaml at line 7, column 12: type mismatch (expected: string, actual: integer)
 func TestParseErrorWithExpectedActual(t *testing.T) {
-	err := NewParseError("schema.yaml", "type mismatch", 7, 12, ErrCodeTypeMismatch, "string", "integer")
+	err := NewParseError("schema.yaml", "type mismatch", 7, 12, ErrCodeTypeMismatch, "string", "integer", "")
 
 	expected := "parse error in schema.yaml at line 7, column 12: type mismatch (expected: string, actual: integer)"
 	if err.Error() != expected {
@@ -169,7 +169,7 @@ func TestParseErrorAllErrorCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewParseError("test.yaml", "test message", 1, 1, tt.code, "", "")
+			err := NewParseError("test.yaml", "test message", 1, 1, tt.code, "", "", "")
 			if err.Code() != tt.code {
 				t.Errorf("Code() = %q, want %q", err.Code(), tt.code)
 			}
@@ -192,7 +192,7 @@ func TestParseErrorAllErrorCodes(t *testing.T) {
 //
 //	validation error in config.yaml at field server.port: port must be between 1 and 65535 (constraint: must be between 1-65535)
 func TestValidationErrorWithFieldPath(t *testing.T) {
-	err := NewValidationError("config.yaml", "port must be between 1 and 65535", "server.port", "must be between 1-65535", ErrCodeInvalidValue, 0, 0, "", "server.port")
+	err := NewValidationError("config.yaml", "port must be between 1 and 65535", "server.port", "must be between 1-65535", ErrCodeInvalidValue, 0, 0, "", "server.port", "", "")
 
 	expected := "validation error in config.yaml at field server.port: port must be between 1 and 65535 (constraint: must be between 1-65535)"
 	if err.Error() != expected {
@@ -255,7 +255,7 @@ func TestValidationErrorNestedFieldPaths(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewValidationError("config.yaml", tt.message, tt.fieldPath, tt.constraint, ErrCodeConstraintViolation, 0, 0, "", tt.fieldPath)
+			err := NewValidationError("config.yaml", tt.message, tt.fieldPath, tt.constraint, ErrCodeConstraintViolation, 0, 0, "", tt.fieldPath, "", "")
 
 			errorMsg := err.Error()
 
@@ -280,7 +280,7 @@ func TestValidationErrorNestedFieldPaths(t *testing.T) {
 //
 //	validation error in app.yaml at line 15, column 12 at field server.port: port out of range (constraint: must be between 1-65535)
 func TestValidationErrorWithLineAndColumn(t *testing.T) {
-	err := NewValidationError("app.yaml", "port out of range", "server.port", "must be between 1-65535", ErrCodeInvalidValue, 15, 12, ErrorTypeValidation, "server.port")
+	err := NewValidationError("app.yaml", "port out of range", "server.port", "must be between 1-65535", ErrCodeInvalidValue, 15, 12, ErrorTypeValidation, "server.port", "", "")
 
 	expected := "validation error in app.yaml at line 15, column 12 at field server.port: port out of range (constraint: must be between 1-65535)"
 	if err.Error() != expected {
@@ -304,7 +304,7 @@ func TestValidationErrorWithLineAndColumn(t *testing.T) {
 //
 //	validation error in config.yaml: validation failed
 func TestValidationErrorWithoutFieldPath(t *testing.T) {
-	err := NewValidationError("config.yaml", "validation failed", "", "", ErrCodeValidationFailed, 0, 0, "", "config.yaml")
+	err := NewValidationError("config.yaml", "validation failed", "", "", ErrCodeValidationFailed, 0, 0, "", "config.yaml", "", "")
 
 	expected := "validation error in config.yaml: validation failed"
 	if err.Error() != expected {
@@ -333,7 +333,7 @@ func TestValidationErrorWithoutFieldPath(t *testing.T) {
 //
 //	validation error in deployment.yaml at line 22, column 18 at field spec.template.spec.containers[0].image: invalid image tag (constraint: must match registry/*:tag pattern)
 func TestValidationErrorComplete(t *testing.T) {
-	err := NewValidationError("deployment.yaml", "invalid image tag", "spec.template.spec.containers[0].image", "must match registry/*:tag pattern", ErrCodeInvalidValue, 22, 18, ErrorTypeValidation, "spec.template.spec.containers[0].image")
+	err := NewValidationError("deployment.yaml", "invalid image tag", "spec.template.spec.containers[0].image", "must match registry/*:tag pattern", ErrCodeInvalidValue, 22, 18, ErrorTypeValidation, "spec.template.spec.containers[0].image", "", "")
 
 	errorMsg := err.Error()
 
@@ -731,7 +731,7 @@ func TestRealWorldFieldNotFoundError(t *testing.T) {
 // 5. Constraints use "(constraint: <details>)" or "constraint: <details>" format
 func TestErrorFormatConsistency(t *testing.T) {
 	// Test ParseError format consistency
-	parseErr := NewParseError("config.yaml", "test", 10, 5, "", "", "")
+	parseErr := NewParseError("config.yaml", "test", 10, 5, "", "", "", "")
 	if !contains(parseErr.Error(), "parse error in") {
 		t.Error("ParseError should start with 'parse error in'")
 	}
@@ -740,7 +740,7 @@ func TestErrorFormatConsistency(t *testing.T) {
 	}
 
 	// Test ValidationError format consistency
-	validationErr := NewValidationError("config.yaml", "test", "server.port", "constraint", "", 10, 5, "", "server.port")
+	validationErr := NewValidationError("config.yaml", "test", "server.port", "constraint", "", 10, 5, "", "server.port", "", "")
 	if !contains(validationErr.Error(), "validation error in") {
 		t.Error("ValidationError should start with 'validation error in'")
 	}
@@ -834,7 +834,7 @@ func TestErrorContextFormat(t *testing.T) {
 // TestErrorRecognition verifies that error types are correctly recognized
 func TestErrorRecognition(t *testing.T) {
 	// Test ParseError recognition
-	parseErr := NewParseError("test.yaml", "test", 1, 1, "", "", "")
+	parseErr := NewParseError("test.yaml", "test", 1, 1, "", "", "", "")
 	if !IsParseError(parseErr) {
 		t.Error("Should recognize ParseError")
 	}
@@ -843,7 +843,7 @@ func TestErrorRecognition(t *testing.T) {
 	}
 
 	// Test ValidationError recognition
-	validationErr := NewValidationError("test.yaml", "test", "field", "constraint", "", 1, 1, "", "field")
+	validationErr := NewValidationError("test.yaml", "test", "field", "constraint", "", 1, 1, "", "field", "", "")
 	if !IsValidationError(validationErr) {
 		t.Error("Should recognize ValidationError")
 	}
@@ -889,13 +889,13 @@ func TestErrorCodes(t *testing.T) {
 	}{
 		{
 			name:     "ParseError with invalid syntax",
-			err:      NewParseError("test.yaml", "test", 1, 1, ErrCodeInvalidSyntax, "", ""),
+			err:      NewParseError("test.yaml", "test", 1, 1, ErrCodeInvalidSyntax, "", "", ""),
 			wantCode: ErrCodeInvalidSyntax,
 			wantType: ErrorTypeParse,
 		},
 		{
 			name:     "ValidationError with invalid value",
-			err:      NewValidationError("test.yaml", "test", "field", "constraint", ErrCodeInvalidValue, 1, 1, "", "field"),
+			err:      NewValidationError("test.yaml", "test", "field", "constraint", ErrCodeInvalidValue, 1, 1, ErrorTypeValidation, "field", "", ""),
 			wantCode: ErrCodeInvalidValue,
 			wantType: ErrorTypeValidation,
 		},
