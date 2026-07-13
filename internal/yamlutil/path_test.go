@@ -106,6 +106,8 @@ func TestNewValidationErrorPathHandling(t *testing.T) {
 				tt.column,
 				tt.errorType,
 				tt.path,
+				"", // expectedType
+				"", // actualType
 			)
 
 			// Verify the error was created without crashing

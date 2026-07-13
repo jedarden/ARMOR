@@ -8,7 +8,7 @@ import (
 // TestErrorFormattingExamples verifies the exact output format of error messages
 func TestErrorFormattingExamples(t *testing.T) {
 	t.Run("ParseError with line:column context", func(t *testing.T) {
-		pe := NewParseError("config.yaml", "invalid syntax", 10, 5, "", "identifier", "123")
+		pe := NewParseError("config.yaml", "invalid syntax", 10, 5, "", "identifier", "123", "")
 		
 		errMsg := pe.Error()
 		t.Logf("ParseError output:\n%s", errMsg)
@@ -37,11 +37,13 @@ func TestErrorFormattingExamples(t *testing.T) {
 			"port out of range",
 			"spec.replicas",
 			"must be between 1-65535",
-			"",
+			ErrCodeInvalidValue,
 			15,
 			12,
-			"",
+			ErrorTypeValidation,
 			"spec.replicas",
+			"",
+			"",
 		)
 		
 		errMsg := ve.Error()
@@ -108,8 +110,8 @@ func TestHumanReadableFormatting(t *testing.T) {
 			name string
 			err  error
 		}{
-			{"parse error", NewParseError("test.yaml", "bad syntax", 5, 10, "", "", "")},
-			{"validation error", NewValidationError("test.yaml", "invalid value", "", "", "", 5, 10, "", "test.yaml")},
+			{"parse error", NewParseError("test.yaml", "bad syntax", 5, 10, ErrCodeInvalidSyntax, "", "", "")},
+			{"validation error", NewValidationError("test.yaml", "invalid value", "", "", ErrCodeInvalidValue, 5, 10, ErrorTypeValidation, "", "test.yaml", "")},
 			{"syntax error", NewSyntaxError("test.yaml", "syntax issue", 5, 10, "", "", "")},
 			{"structure error", NewStructureError("test.yaml", "bad structure", 5, "", "", "")},
 		}

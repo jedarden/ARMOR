@@ -25,7 +25,7 @@ func TestAcceptanceCriteria_ContextualErrorFormatting(t *testing.T) {
 
 	t.Run("AC2_ValidationError_FieldPath", func(t *testing.T) {
 		// ValidationError messages include field path (e.g., "spec.replicas")
-		err := NewValidationError("deployment.yaml", "port out of range", "spec.replicas", "must be between 1-65535", ErrCodeInvalidValue, 15, 12, "", "spec.replicas")
+		err := NewValidationError("deployment.yaml", "port out of range", "spec.replicas", "must be between 1-65535", ErrCodeInvalidValue, 15, 12, ErrorTypeValidation, "spec.replicas", "", "")
 		msg := err.Error()
 		
 		if !contains(msg, "field spec.replicas") {
@@ -69,7 +69,7 @@ func TestAcceptanceCriteria_ContextualErrorFormatting(t *testing.T) {
 			err  error
 		}{
 			{"ParseError", NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "identifier", "123", "")},
-			{"ValidationError", NewValidationError("deployment.yaml", "invalid value", "spec.replicas", "must be positive", ErrCodeInvalidValue, 15, 12, "", "spec.replicas"),},
+			{"ValidationError", NewValidationError("deployment.yaml", "invalid value", "spec.replicas", "must be positive", ErrCodeInvalidValue, 15, 12, ErrorTypeValidation, "spec.replicas", "", ""),},
 			{"TypeMismatchError", NewTypeMismatchError("config.yaml", "server.port", "int", "string", "\"8080\"", 20, ErrCodeTypeMismatch)},
 			{"ConstraintError", NewConstraintError("manifest.yaml", "spec.replicas", "range", "must be >= 0", "value violates minimum constraint", "-1", 25, ErrCodeConstraintViolation)},
 		}
