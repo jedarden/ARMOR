@@ -2,8 +2,8 @@
 running 262 tests
 test test_actual_yaml_tags_vs_string_values ... ok
 test test_all_lowercase_vs_uppercase_variations ... ok
-test test_alternative_type_names ... ok
 test test_ambiguous_tag_with_trailing_content ... ok
+test test_alternative_type_names ... ok
 test test_analytics_tracking_config ... ok
 test test_api_gateway_config ... ok
 test test_api_response_messages_with_exclamation ... ok
@@ -60,8 +60,8 @@ test test_detect_mapping_key_with_leading_trailing_junk ... ok
 test test_detect_mapping_key_with_multiple_typos_combined ... ok
 test test_detect_mapping_key_with_type_like_strings ... ok
 test test_detect_mapping_key_with_typos_in_error_messages ... ok
-test test_detect_mapping_key_with_type_name_typos ... ok
 test test_detect_mapping_key_with_typos_in_quoted_values ... ok
+test test_detect_mapping_key_with_type_name_typos ... ok
 test test_detect_mapping_key_with_unicode_whitespace ... ok
 test test_detect_mapping_key_with_vowel_substitution_typos ... ok
 test test_detect_mapping_key_with_whitespace_variations ... ok
@@ -116,8 +116,8 @@ test test_folded_and_literal_mixed_contexts ... ok
 test test_folded_block_scalar_with_exclamation_marks ... ok
 test test_folded_scalar_all_modifier_combinations ... ok
 test test_folded_scalar_basic_modifiers ... ok
-test test_folded_scalar_continuation_exclamation_various_contexts ... ok
 test test_folded_scalar_continuation_lines_starting_with_exclamation ... ok
+test test_folded_scalar_continuation_exclamation_various_contexts ... ok
 test test_folded_scalar_continuation_lines_with_exclamation ... ok
 test test_folded_scalar_continuation_lines_with_exclamation_marks ... ok
 test test_folded_scalar_exclamation_at_different_positions ... ok
@@ -127,21 +127,21 @@ test test_folded_scalar_indicator_classification ... ok
 test test_folded_scalar_indicator_lines ... ok
 test test_folded_scalar_numeric_modifiers ... ok
 test test_folded_scalar_modifiers_comprehensive ... ok
-test test_folded_scalar_with_continuation_content ... ok
 test test_folded_scalar_various_indentation_levels ... ok
+test test_folded_scalar_with_continuation_content ... ok
 test test_hex_error_codes ... ok
 test test_folded_style_scalars_with_exclamation ... FAILED
 test test_indented_tag_like_pattern ... ok
-test test_internationalization_config ... ok
 test test_invalid_error_code_formats ... ok
 test test_invalid_tag_patterns ... ok
 test test_json_schema_types ... ok
 test test_keyboard_adjacent_typos ... ok
+test test_internationalization_config ... ok
 test test_kubernetes_deployment_config ... ok
 test test_literal_block_scalar_with_exclamation_marks ... ok
 test test_literal_scalar_exclamation_at_different_positions ... ok
-test test_literal_style_scalars_with_exclamation ... FAILED
 test test_load_balancer_config ... ok
+test test_literal_style_scalars_with_exclamation ... FAILED
 test test_logging_config_with_exclamation ... ok
 test test_lowercase_type_variations_in_values ... ok
 test test_message_queue_configuration ... ok
@@ -161,8 +161,8 @@ test test_multiline_comment_and_config_mixed_with_exclamation ... FAILED
 test test_multiline_edge_cases_with_exclamation ... ok
 test test_multiline_scenario_with_exclamation ... ok
 test test_multiline_mixed_with_singleline_exclamation_patterns ... ok
-test test_multiline_sequence_with_exclamation_in_block_scalars ... ok
 test test_multiline_with_inline_comments_and_exclamation ... ok
+test test_multiline_sequence_with_exclamation_in_block_scalars ... ok
 test test_multiline_yaml_strings_with_exclamation ... ok
 test test_multiple_consecutive_bangs_in_values ... ok
 test test_multiline_yaml_strings_with_exclamation_in_nested_contexts ... ok
@@ -184,12 +184,12 @@ test test_repeated_character_typos ... ok
 test test_real_world_multiline_config_with_exclamation ... ok
 test test_reversed_and_scrambled_type_names ... ok
 test test_reversed_type_names ... ok
-test test_security_config ... ok
 test test_simple_message_patterns_with_exclamation ... ok
+test test_security_config ... ok
 test test_sql_data_types ... ok
 test test_string_values_resembling_tags ... ok
-test test_tab_vs_space_before_exclamation ... ok
 test test_tab_indented_folded_scalars_with_exclamation ... ok
+test test_tab_vs_space_before_exclamation ... ok
 test test_tag_detection_with_context_clues ... ok
 test test_tag_like_false_positives_in_flow_collections ... ok
 test test_tag_like_false_positives_in_quoted_strings ... ok
@@ -210,8 +210,8 @@ test test_type_like_in_conversion_contexts ... ok
 test test_type_like_in_data_pipeline_config ... ok
 test test_type_like_in_deeply_nested_mappings ... ok
 test test_type_like_in_documentation ... ok
-test test_type_like_in_enum_values ... ok
 test test_type_like_in_edge_case_nested_structures ... ok
+test test_type_like_in_enum_values ... ok
 test test_type_like_in_error_descriptions ... ok
 test test_type_like_in_flow_collection_nesting ... ok
 test test_type_like_in_function_descriptions ... ok
@@ -267,23 +267,23 @@ failures:
 
 ---- test_detect_mapping_key_sequence_items_rejected stdout ----
 
-thread 'test_detect_mapping_key_sequence_items_rejected' (3934687) panicked at tests/type_like_string_false_positive_test.rs:2110:9:
+thread 'test_detect_mapping_key_sequence_items_rejected' (3940214) panicked at tests/type_like_string_false_positive_test.rs:2110:9:
 Sequence item should be rejected by detect_mapping_key: '- !ns:tag'
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 ---- test_folded_style_scalars_with_exclamation stdout ----
 
-thread 'test_folded_style_scalars_with_exclamation' (3934771) panicked at tests/type_like_string_false_positive_test.rs:4149:13:
+thread 'test_folded_style_scalars_with_exclamation' (3940298) panicked at tests/type_like_string_false_positive_test.rs:4149:13:
 Folded scalar continuation should be Unknown or Tag: '  This is important! Read carefully.' (got MappingKey)
 
 ---- test_literal_style_scalars_with_exclamation stdout ----
 
-thread 'test_literal_style_scalars_with_exclamation' (3934782) panicked at tests/type_like_string_false_positive_test.rs:4216:9:
+thread 'test_literal_style_scalars_with_exclamation' (3940309) panicked at tests/type_like_string_false_positive_test.rs:4216:9:
 Literal scalar patterns with ! should be valid: '  !start and end!'
 
 ---- test_multiline_comment_and_config_mixed_with_exclamation stdout ----
 
-thread 'test_multiline_comment_and_config_mixed_with_exclamation' (3934799) panicked at tests/type_like_string_false_positive_test.rs:7255:9:
+thread 'test_multiline_comment_and_config_mixed_with_exclamation' (3940326) panicked at tests/type_like_string_false_positive_test.rs:7255:9:
 assertion `left == right` failed: Mixed multiline line 4 should be Unknown: '  This is a multiline'
   left: MappingKey
  right: Unknown
@@ -295,7 +295,7 @@ failures:
     test_literal_style_scalars_with_exclamation
     test_multiline_comment_and_config_mixed_with_exclamation
 
-test result: FAILED. 258 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: FAILED. 258 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 warning: unused variable: `content`
   --> src/parsers/yaml/parser.rs:97:25
@@ -397,19 +397,19 @@ warning: function `detect_mapping_key_simple` is never used
      |        ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: `armor` (lib) generated 14 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
      Running tests/type_like_string_false_positive_test.rs (target/debug/deps/type_like_string_false_positive_test-3d3d098a0dafc82b)
 
 running 262 tests
 test test_actual_yaml_tags_vs_string_values ... ok
 test test_all_lowercase_vs_uppercase_variations ... ok
 test test_alternative_type_names ... ok
+test test_analytics_tracking_config ... ok
 test test_ambiguous_tag_with_trailing_content ... ok
 test test_api_gateway_config ... ok
-test test_analytics_tracking_config ... ok
 test test_api_response_messages_with_exclamation ... ok
-test test_bang_after_quoted_value ... ok
 test test_backup_and_storage_config ... ok
+test test_bang_after_quoted_value ... ok
 test test_bang_at_end_of_quoted_string ... ok
 test test_bang_in_block_scalar ... ok
 test test_bang_in_flow_style_values ... ok
@@ -417,34 +417,34 @@ test test_bang_in_key_name ... ok
 test test_bang_in_numeric_contexts ... ok
 test test_bang_with_boolean_like_values ... ok
 test test_bang_with_colon_variations ... ok
-test test_basic_config_patterns_exclamation_variations ... ok
 test test_basic_folded_scalar_indicator_as_mapping_key ... ok
+test test_basic_config_patterns_exclamation_variations ... ok
 test test_build_configuration ... ok
 test test_cdn_configuration ... ok
 test test_cicd_pipeline_config ... ok
 test test_cloud_infrastructure_config ... ok
 test test_common_type_misspellings ... ok
 test test_complete_extraction_pipeline_verification ... ok
-test test_complex_multiline_block_with_exclamation ... ok
 test test_complex_mixed_indentation_with_exclamation_marks ... ok
-test test_complex_multiline_production_config ... ok
+test test_complex_multiline_block_with_exclamation ... ok
 test test_complex_user_interface_messages ... ok
+test test_complex_multiline_production_config ... ok
 test test_comprehensive_tab_indented_folded_scalars_with_exclamation ... ok
 test test_configuration_validation_messages ... ok
-test test_content_management_config ... ok
 test test_comprehensive_various_indentation_levels_with_exclamation ... ok
+test test_content_management_config ... ok
 test test_critical_error_codes ... ok
 test test_css_and_ui_config ... ok
 test test_custom_error_code_formats ... ok
 test test_database_connection_config ... ok
 test test_delimiter_error_variations ... ok
 test test_deployment_strategy_config ... ok
-test test_detect_mapping_key_end_to_end_integration ... ok
 test test_deep_indentation_levels_with_exclamation_marks ... ok
+test test_detect_mapping_key_end_to_end_integration ... ok
 test test_detect_mapping_key_in_nested_context ... ok
 test test_detect_mapping_key_parent_keys ... ok
-test test_detect_mapping_key_quoted_tag_patterns_accepted ... ok
 test test_detect_mapping_key_rejects_actual_tag_lines ... ok
+test test_detect_mapping_key_quoted_tag_patterns_accepted ... ok
 test test_detect_mapping_key_rejects_special_constructs ... ok
 test test_detect_mapping_key_sequence_items_rejected ... FAILED
 test test_detect_mapping_key_tag_like_in_values_accepted ... ok
@@ -502,8 +502,8 @@ test test_exclamation_in_url_value ... ok
 test test_exclamation_mid_line_in_value ... ok
 test test_exclamation_only_in_comment ... ok
 test test_exclamation_whitespace_integration_full ... ok
-test test_exclamation_with_special_whitespace ... ok
 test test_exclamation_with_leading_whitespace_in_mapping_keys ... ok
+test test_exclamation_with_special_whitespace ... ok
 test test_exclamation_with_special_yaml_chars ... ok
 test test_exclamation_with_whitespace_in_flow_mappings ... ok
 test test_exclamation_with_whitespace_in_flow_sequences ... ok
@@ -511,14 +511,14 @@ test test_exclamation_with_whitespace_in_quoted_values ... ok
 test test_exclamation_with_whitespace_variations_in_values ... ok
 test test_extended_unicode_whitespace_with_exclamation ... ok
 test test_extra_letter_typos ... ok
-test test_extensive_tab_indentation_with_exclamation_marks ... ok
 test test_feature_flags_config ... ok
+test test_extensive_tab_indentation_with_exclamation_marks ... ok
 test test_folded_and_literal_mixed_contexts ... ok
 test test_folded_block_scalar_with_exclamation_marks ... ok
 test test_folded_scalar_all_modifier_combinations ... ok
 test test_folded_scalar_basic_modifiers ... ok
-test test_folded_scalar_continuation_exclamation_various_contexts ... ok
 test test_folded_scalar_continuation_lines_starting_with_exclamation ... ok
+test test_folded_scalar_continuation_exclamation_various_contexts ... ok
 test test_folded_scalar_continuation_lines_with_exclamation ... ok
 test test_folded_scalar_continuation_lines_with_exclamation_marks ... ok
 test test_folded_scalar_exclamation_at_different_positions ... ok
@@ -557,8 +557,8 @@ test test_mixed_multiline_with_singleline_exclamation_patterns ... ok
 test test_mixed_quoted_unquoted_values_with_exclamation ... ok
 test test_mobile_app_configuration ... ok
 test test_monitoring_alerts_config ... ok
-test test_multiline_comment_and_config_mixed_with_exclamation ... FAILED
 test test_multiline_block_scalar_modifiers_with_exclamation ... ok
+test test_multiline_comment_and_config_mixed_with_exclamation ... FAILED
 test test_multiline_edge_cases_with_exclamation ... ok
 test test_multiline_scenario_with_exclamation ... ok
 test test_multiline_mixed_with_singleline_exclamation_patterns ... ok
@@ -642,11 +642,11 @@ test test_type_like_with_special_chars ... ok
 test test_type_mentions_at_different_positions ... ok
 test test_type_name_case_variations ... ok
 test test_type_name_in_context_of_error_message ... ok
-test test_type_name_leading_trailing_junk ... ok
 test test_type_name_typos_in_values ... ok
+test test_type_name_leading_trailing_junk ... ok
 test test_type_name_with_hyphens ... ok
-test test_type_name_with_numbers ... ok
 test test_type_name_with_underscores ... ok
+test test_type_name_with_numbers ... ok
 test test_type_prefix_suffix_patterns ... ok
 test test_unicode_exclamation_mark_variations ... ok
 test test_unicode_exclamation_with_whitespace_combinations ... ok
@@ -668,23 +668,23 @@ failures:
 
 ---- test_detect_mapping_key_sequence_items_rejected stdout ----
 
-thread 'test_detect_mapping_key_sequence_items_rejected' (3934968) panicked at tests/type_like_string_false_positive_test.rs:2110:9:
+thread 'test_detect_mapping_key_sequence_items_rejected' (3940486) panicked at tests/type_like_string_false_positive_test.rs:2110:9:
 Sequence item should be rejected by detect_mapping_key: '- !ns:tag'
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 ---- test_folded_style_scalars_with_exclamation stdout ----
 
-thread 'test_folded_style_scalars_with_exclamation' (3935052) panicked at tests/type_like_string_false_positive_test.rs:4149:13:
+thread 'test_folded_style_scalars_with_exclamation' (3940570) panicked at tests/type_like_string_false_positive_test.rs:4149:13:
 Folded scalar continuation should be Unknown or Tag: '  This is important! Read carefully.' (got MappingKey)
 
 ---- test_literal_style_scalars_with_exclamation stdout ----
 
-thread 'test_literal_style_scalars_with_exclamation' (3935063) panicked at tests/type_like_string_false_positive_test.rs:4216:9:
+thread 'test_literal_style_scalars_with_exclamation' (3940581) panicked at tests/type_like_string_false_positive_test.rs:4216:9:
 Literal scalar patterns with ! should be valid: '  !start and end!'
 
 ---- test_multiline_comment_and_config_mixed_with_exclamation stdout ----
 
-thread 'test_multiline_comment_and_config_mixed_with_exclamation' (3935080) panicked at tests/type_like_string_false_positive_test.rs:7255:9:
+thread 'test_multiline_comment_and_config_mixed_with_exclamation' (3940598) panicked at tests/type_like_string_false_positive_test.rs:7255:9:
 assertion `left == right` failed: Mixed multiline line 4 should be Unknown: '  This is a multiline'
   left: MappingKey
  right: Unknown
