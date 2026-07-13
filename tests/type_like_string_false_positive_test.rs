@@ -6742,6 +6742,18 @@ fn test_folded_block_scalar_with_exclamation_marks() {
         "info: >+",                     // Folded with keep modifier
         "text: >-2",                    // Folded with explicit indent
         "content: >2",                   // Folded with explicit indent
+        // Various indentation levels with '!' in keys (not starting with '!')
+        "  key_with_bang!: >",          // 2-space indent with '!' at end
+        "    another!key: >",            // 4-space indent with '!' in middle
+        "        deep!nest!ed: >",       // 8-space indent with multiple '!'
+        "\t  two_space_tab!key: >",    // Tab + 2 spaces with '!'
+        "\t    four_space_tab!key: >", // Tab + 4 spaces with '!'
+        "  key!bang!test: >",           // 2-space indent with multiple '!' in key
+        "  end!with!bang!: >",          // 2-space indent with '!' at end and middle
+        "      middle!bang: >",         // 6-space indent with '!' in middle
+        "\t\ttab!tab!key: >",          // Double tab with '!' in key
+        "    multiple!!!here: >",       // 4-space indent with multiple consecutive '!'
+        "  spaced!out!keys!: >",       // 2-space indent with multiple spaced '!'
     ];
 
     for line in test_cases {
