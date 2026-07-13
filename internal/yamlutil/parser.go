@@ -104,6 +104,8 @@ func (p *Parser) ParseFile(filePath string, data interface{}) ParseResult {
 		}
 
 		// Check for specific YAML error types using type assertions
+		// Type assertion: *yaml.TypeError captures type mismatch errors from yaml.v3
+		// The Errors field contains a slice of error strings detailing each type mismatch
 		if typeErr, ok := err.(*yaml.TypeError); ok {
 			// Provide detailed type error information
 			result.Error = &YAMLParseError{
@@ -159,7 +161,9 @@ func (p *Parser) ParseFileToMap(filePath string) ParseResult {
 	var data map[string]interface{}
 	if err := yaml.Unmarshal(content, &data); err != nil {
 		result.Success = false
-		// Check if this is a YAML type error for better error reporting
+			// Type assertion: *yaml.TypeError captures type mismatch errors from yaml.v3
+			// The Errors field contains a slice of error strings detailing each type mismatch
+			// This preserves error information through the type assertion
 		if typeErr, ok := err.(*yaml.TypeError); ok {
 			// Provide detailed type error information
 			result.Error = &YAMLParseError{
@@ -387,7 +391,9 @@ func ParseYAML(filePath string) (map[string]interface{}, error) {
 			}
 		}
 
-		// Check for specific YAML error types using type assertions
+		// Type assertion: *yaml.TypeError captures type mismatch errors from yaml.v3
+		// The Errors field contains a slice of error strings detailing each type mismatch
+		// This preserves error information through the type assertion
 		if typeErr, ok := err.(*yaml.TypeError); ok {
 			// Provide detailed type error information
 			return nil, &YAMLParseError{
