@@ -13,6 +13,7 @@
 //! - [`syntax_validator`] - Syntax validation functionality
 //! - [`syntax_detector`] - Syntax error detection (indentation, delimiters, structure)
 //! - [`line_parser`] - Core data structures for representing parsed YAML lines
+//! - [`scope`] - Hierarchical scope representation for duplicate key detection
 //!
 //! ## Quick Start
 //!
@@ -51,6 +52,7 @@ mod parser;
 mod syntax_validator;
 mod syntax_detector;
 mod line_parser;
+mod scope;
 
 #[cfg(test)]
 mod syntax_detector_tests;
@@ -69,6 +71,10 @@ pub use line_parser::{
     LineType, YamlLine, LineContent, LineParseResult,
     MappingKeyInfo, detect_mapping_key, is_comment_line, strip_inline_comment,
     classify_line_type, calculate_indentation,
+};
+pub use scope::{
+    Scope, ScopeStack, DuplicateKeyError, KeyContext,
+    extract_key_context, get_leading_whitespace_length,
 };
 
 // Re-export comprehensive configuration from config module
