@@ -151,8 +151,17 @@ func extractTypeName(errorStr string) string {
 	// Pattern 11: Type name at end in "type <type>": "...error type <type>"
 	// This pattern is very restrictive to avoid matching regular words
 	// Must start with special char ([, ], *, {, }) or be a known basic type
-	re11 := regexp.MustCompile(`\btype\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*{}]+[\w\-*]*(?:\.[\w\-*]+)*|(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|rune|byte|interface|struct)(?:\s*[,\.\s]*|$))`)
+	re11 := regexp.MustCompile(`\btype\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|map\[[^\]]+\][\w\-*]+|interface\{\}|struct\{\}|[\[\]\*{}]+[\w\-*]*(?:\.[\w\-*]+)*|(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|rune|byte|interface|struct)(?:\s*[,\.\s]*|$))`)
 	if matches := re11.FindStringSubmatch(errorStr); matches != nil {
+		typeName := strings.TrimRight(matches[1], ".,")
+		return typeName
+	}
+
+	// Pattern 12: Type name after "into" as fallback: "...into <type>"
+	// This is a permissive fallback pattern that matches "into <type>" at the end
+	// Used when more specific patterns don't match but "into" suggests type information
+	re12 := regexp.MustCompile(`\binto\s+([\w\-*]+(?:\.[\w\-*]+)*)\b`)
+	if matches := re12.FindStringSubmatch(errorStr); matches != nil {
 		typeName := strings.TrimRight(matches[1], ".,")
 		return typeName
 	}
