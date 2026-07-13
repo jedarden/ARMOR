@@ -82,6 +82,10 @@ pub struct Scope {
     pub parent_key: Option<String>,
     /// Whether this scope is in flow-style mapping ({key: value})
     pub is_flow_style: bool,
+    /// Whether this scope is within a sequence context
+    pub in_sequence_context: bool,
+    /// Unique identifier for sequence items to distinguish them at same indent
+    pub sequence_item_id: Option<usize>,
 }
 
 impl Scope {
@@ -110,6 +114,8 @@ impl Scope {
             start_line,
             parent_key,
             is_flow_style: false,
+            in_sequence_context: false,
+            sequence_item_id: None,
         }
     }
 
@@ -183,6 +189,8 @@ pub struct ScopeStack {
     scopes: Vec<Scope>,
     /// Base indentation size (usually 2 or 4 spaces)
     base_indent: usize,
+    /// Sequence item counter for generating unique IDs
+    sequence_item_counter: usize,
 }
 
 impl ScopeStack {
@@ -203,6 +211,7 @@ impl ScopeStack {
         Self {
             scopes: vec![Scope::new(0, 0, None)], // Root scope
             base_indent,
+            sequence_item_counter: 0,
         }
     }
 
@@ -442,6 +451,63 @@ impl ScopeStack {
     /// * `base_indent` - The new base indentation size in spaces
     pub fn set_base_indent(&mut self, base_indent: usize) {
         self.base_indent = base_indent;
+    }
+
+    /// Enter a sequence context (when we see a `-` item)
+    ///
+    /// This method is called when the parser encounters a sequence item,
+    /// creating a new scope for that item to prevent false duplicate detection
+    /// between items at the same indentation level.
+    ///
+    /// # Arguments
+    ///
+    /// * `indent_level` - The indentation level of the sequence item
+    /// * `line` - The line number where this sequence item starts (1-indexed)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::scope::ScopeStack;
+    ///
+    /// let mut stack = ScopeStack::new(2);
+    /// stack.enter_sequence_scope(2, 5); // Enter sequence item at indent 2
+    /// ```
+    pub fn enter_sequence_scope(&mut self, indent_level: usize, line: usize) {
+        // Remove all scopes deeper than this level
+        self.scopes.retain(|s| s.indent_level < indent_level);
+
+        // Check if there's already a scope at this level that's in a sequence context
+        let needs_new_scope = self.scopes.last()
+            .map(|scope| scope.indent_level != indent_level || !scope.in_sequence_context)
+            .unwrap_or(true);
+
+        if needs_new_scope {
+            // Create a new scope for this sequence item
+            let mut new_scope = Scope::new(indent_level, line, None);
+            new_scope.in_sequence_context = true;
+            self.sequence_item_counter += 1;
+            new_scope.sequence_item_id = Some(self.sequence_item_counter);
+            self.scopes.push(new_scope);
+        } else {
+            // Reset the existing scope for a new sequence item
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.keys.clear();
+                scope.start_line = line;
+                self.sequence_item_counter += 1;
+                scope.sequence_item_id = Some(self.sequence_item_counter);
+            }
+        }
+    }
+
+    /// Check if we're in a sequence context
+    ///
+    /// # Returns
+    ///
+    /// `true` if the current scope is within a sequence context, `false` otherwise
+    pub fn in_sequence_context(&self) -> bool {
+        self.scopes.last()
+            .map(|scope| scope.in_sequence_context)
+            .unwrap_or(false)
     }
 }
 
@@ -873,5 +939,85 @@ mod tests {
         assert!(display.contains("Scope"));
         assert!(display.contains("indent=2"));
         assert!(display.contains("parent=parent"));
+    }
+
+    #[test]
+    fn test_enter_sequence_scope() {
+        let mut stack = ScopeStack::new(2);
+
+        // Enter first sequence item
+        stack.enter_sequence_scope(2, 1);
+        assert!(stack.in_sequence_context());
+        assert_eq!(stack.current_indent(), 2);
+
+        // Add a key to the first sequence item
+        stack.add_key("name", 2).unwrap();
+
+        // Enter second sequence item (same indent level)
+        stack.enter_sequence_scope(2, 3);
+        assert!(stack.in_sequence_context());
+
+        // Same key should be OK in different sequence item
+        stack.add_key("name", 4).unwrap();
+
+        // But duplicate in same sequence item should fail
+        assert!(stack.add_key("name", 5).is_err());
+    }
+
+    #[test]
+    fn test_sequence_scope_with_unique_ids() {
+        let mut stack = ScopeStack::new(2);
+
+        // Enter first sequence item
+        stack.enter_sequence_scope(2, 1);
+        let first_id = stack.current_scope_ref().sequence_item_id;
+        assert_eq!(first_id, Some(1));
+
+        // Enter second sequence item
+        stack.enter_sequence_scope(2, 3);
+        let second_id = stack.current_scope_ref().sequence_item_id;
+        assert_eq!(second_id, Some(2));
+
+        // IDs should be different
+        assert_ne!(first_id, second_id);
+    }
+
+    #[test]
+    fn test_sequence_scope_clears_keys() {
+        let mut stack = ScopeStack::new(2);
+
+        // Enter first sequence item and add keys
+        stack.enter_sequence_scope(2, 1);
+        stack.add_key("first", 2).unwrap();
+        stack.add_key("second", 3).unwrap();
+        assert_eq!(stack.current_scope_ref().key_count(), 2);
+
+        // Enter second sequence item (should clear keys from first)
+        stack.enter_sequence_scope(2, 5);
+        assert_eq!(stack.current_scope_ref().key_count(), 0);
+
+        // Keys from first item should not be in second
+        stack.add_key("first", 6).unwrap();
+        stack.add_key("second", 7).unwrap();
+    }
+
+    #[test]
+    fn test_mixed_regular_and_sequence_scopes() {
+        let mut stack = ScopeStack::new(2);
+
+        // Enter regular scope
+        stack.enter_scope(2, 1, Some("items".to_string()));
+        stack.add_key("item1", 2).unwrap();
+
+        // Enter sequence scope within regular scope
+        stack.enter_sequence_scope(4, 3);
+        stack.add_key("name", 4).unwrap();
+
+        // Exit sequence scope back to regular
+        stack.exit_to_scope(2);
+        assert!(!stack.in_sequence_context());
+
+        // Add another key to regular scope
+        stack.add_key("item2", 5).unwrap();
     }
 }
