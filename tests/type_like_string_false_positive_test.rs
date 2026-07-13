@@ -48,7 +48,7 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //     * Comprehensive level coverage (spaces, tabs, mixed)
 //     * Helper functions for bulk test generation
 //
-// NOTE: Section 12B line numbers updated 2026-07-13 (Bead: bf-68ime)
+// NOTE: Section 12B line numbers verified 2026-07-13 (Bead: bf-1am6b)
 //
 // ============================================================================
 // Pattern 1: Test Case Data Structure
