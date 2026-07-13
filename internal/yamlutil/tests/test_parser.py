@@ -1909,6 +1909,253 @@ staging:
         assert 'comment' not in str(result.data).lower()
 
 
+class TestCompleteDocumentCommentFiltering:
+    """Test complete YAML document comment filtering - bf-12nez.
+
+    These tests specifically focus on:
+    - Complete multi-line YAML documents with comments
+    - Nested structure comments
+    - Document boundary comments
+
+    This addresses the acceptance criteria for the mixed YAML scenarios task.
+    """
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = YAMLCoreParser()
+
+    def test_complete_document_with_mixed_comments(self):
+        """Test complete document filtering with various comment patterns."""
+        yaml_content = """# Configuration header
+# Multi-line header comment
+# Version 1.0
+
+# Database section
+database:
+  # Primary database
+  host: localhost  # Database host
+  port: 5432  # Database port
+  # Connection settings
+  pool_size: 10  # Connection pool size
+  timeout: 30  # Query timeout
+
+# Cache section
+cache:
+  # Redis configuration
+  host: redis.example.com  # Redis host
+  port: 6379  # Redis port
+  # Cache settings
+  ttl: 3600  # Time to live
+
+# End of configuration
+# Footer comment
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success(), "Complete document should parse successfully"
+        assert result.data['database']['host'] == 'localhost'
+        assert result.data['database']['port'] == 5432
+        assert result.data['database']['pool_size'] == 10
+        assert result.data['cache']['host'] == 'redis.example.com'
+        assert result.data['cache']['port'] == 6379
+        # Comments should be filtered
+        assert 'comment' not in str(result.data).lower()
+
+    def test_nested_structure_with_comprehensive_comments(self):
+        """Test nested structure comments at multiple levels."""
+        yaml_content = """# Level 0 comment
+application:
+  # Level 1 comment
+  name: MyApp  # App name
+  # Level 1 settings section
+  settings:
+    # Level 2 comment
+    database:
+      # Level 3 comment
+      primary:
+        # Level 4 comment
+        host: localhost  # Primary DB host
+        port: 5432  # Primary DB port
+        # Level 4 credentials section
+        credentials:
+          # Level 5 comment
+          username: admin  # DB username
+          password: secret  # DB password
+    # Level 2 cache section
+    cache:
+      # Level 3 Redis comment
+      redis:
+        host: redis.example.com  # Redis host
+        port: 6379  # Redis port
+# End level 0 comment
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success(), "Nested structure should parse successfully"
+        assert result.data['application']['name'] == 'MyApp'
+        assert result.data['application']['settings']['database']['primary']['host'] == 'localhost'
+        assert result.data['application']['settings']['database']['primary']['port'] == 5432
+        assert result.data['application']['settings']['database']['primary']['credentials']['username'] == 'admin'
+        assert result.data['application']['settings']['cache']['redis']['host'] == 'redis.example.com'
+        # Comments at all levels should be filtered
+        assert 'comment' not in str(result.data).lower()
+
+    def test_document_boundary_comments(self):
+        """Test comments at document boundaries (start and end)."""
+        yaml_content = """# Start of document
+# Configuration file
+# Generated automatically
+
+# First section
+key1: value1  # Inline comment
+key2: value2
+
+# Middle section with comments
+# Between key-value pairs
+key3: value3
+# Comment between key3 and key4
+key4: value4
+
+# Final section
+key5: value5  # Final inline
+
+# End of document
+# Footer comment
+# Last line comment
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success(), "Document with boundary comments should parse successfully"
+        assert result.data == {
+            'key1': 'value1',
+            'key2': 'value2',
+            'key3': 'value3',
+            'key4': 'value4',
+            'key5': 'value5'
+        }
+        # All comments including boundaries should be filtered
+        assert 'comment' not in str(result.data).lower()
+
+    def test_comments_between_key_value_pairs(self):
+        """Test comments placed between key-value pairs."""
+        yaml_content = """# Header
+key1: value1
+# Comment between key1 and key2
+key2: value2
+# Another comment between pairs
+key3: value3
+# Comment before final pair
+key4: value4
+# Footer
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success(), "Comments between pairs should parse successfully"
+        assert result.data == {
+            'key1': 'value1',
+            'key2': 'value2',
+            'key3': 'value3',
+            'key4': 'value4'
+        }
+        # Comments between pairs should be filtered
+        assert 'comment' not in str(result.data).lower()
+
+    def test_complex_nested_with_mixed_comment_types(self):
+        """Test complex nested structure with all comment types."""
+        yaml_content = """# Document start
+# Multi-section configuration
+
+# Web service configuration
+services:
+  # Web service section
+  web:
+    # Service name
+    name: web-service  # Web service
+    # Service ports
+    ports:
+      # HTTP port
+      - 80  # HTTP
+      # HTTPS port
+      - 443  # HTTPS
+    # Service endpoints
+    endpoints:
+      # API endpoint
+      - /api  # Main API
+      # Health endpoint
+      - /health  # Health check
+
+# Database configuration
+database:
+  # Primary database
+  primary:
+    # Connection details
+    host: db.primary.example.com  # Primary host
+    port: 5432  # PostgreSQL port
+    # Database credentials
+    credentials:
+      # Admin user
+      username: admin  # Admin
+      password: secret  # DB password
+
+  # Replica database
+  replica:
+    # Replica connection
+    host: db.replica.example.com  # Replica host
+    port: 5432  # Same port
+    # No credentials section for replica
+
+# Document end
+# Configuration complete
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success(), "Complex nested structure should parse successfully"
+        assert result.data['services']['web']['name'] == 'web-service'
+        assert result.data['services']['web']['ports'] == [80, 443]
+        assert result.data['services']['web']['endpoints'] == ['/api', '/health']
+        assert result.data['database']['primary']['host'] == 'db.primary.example.com'
+        assert result.data['database']['primary']['credentials']['username'] == 'admin'
+        assert result.data['database']['replica']['host'] == 'db.replica.example.com'
+        # All comment types should be filtered
+        assert 'comment' not in str(result.data).lower()
+
+    def test_multiline_document_with_various_indentation_comments(self):
+        """Test multi-line document with comments at various indentation levels."""
+        yaml_content = """# Root level comment (0 spaces)
+root_key: root_value
+
+# Level 1 section (2 spaces)
+level1_section:
+  # Level 1 key 1
+  key1: value1  # Inline at level 1
+  # Level 1 nested section
+  level2_section:
+    # Level 2 key 1 (4 spaces)
+    key2: value2  # Inline at level 2
+    # Level 2 nested section
+    level3_section:
+      # Level 3 key 1 (6 spaces)
+      key3: value3  # Inline at level 3
+      # Level 3 nested section
+      level4_section:
+        # Level 4 key 1 (8 spaces)
+        key4: value4  # Inline at level 4
+        # Level 4 nested section
+        level5_section:
+          # Level 5 key 1 (10 spaces)
+          key5: value5  # Inline at level 5
+
+# Another root section
+another_root: another_value
+"""
+        result = self.parser.safe_load(yaml_content)
+        assert result.is_success(), "Multi-indentation document should parse successfully"
+        assert result.data['root_key'] == 'root_value'
+        assert result.data['level1_section']['key1'] == 'value1'
+        assert result.data['level1_section']['level2_section']['key2'] == 'value2'
+        assert result.data['level1_section']['level2_section']['level3_section']['key3'] == 'value3'
+        assert result.data['level1_section']['level2_section']['level3_section']['level4_section']['key4'] == 'value4'
+        assert result.data['level1_section']['level2_section']['level3_section']['level4_section']['level5_section']['key5'] == 'value5'
+        assert result.data['another_root'] == 'another_value'
+        # Comments at all indentation levels should be filtered
+        assert 'comment' not in str(result.data).lower()
+
+
 if __name__ == '__main__':
     # Run tests with pytest
     pytest.main([__file__, '-v'])
