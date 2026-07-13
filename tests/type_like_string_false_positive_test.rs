@@ -8001,6 +8001,297 @@ fn test_level3_indentation_with_exclamation_marks() {
     }
 }
 
+#[test]
+fn test_level4_indentation_with_exclamation_marks() {
+    // Test level 4 (8-space) indentation with '!' character in Section 12B
+    // This test focuses specifically on four-level indentation scenarios with exclamation marks
+    // Level 4 uses 8-space indentation as the standard fourth-level indentation
+
+    let test_cases = vec![
+        // Basic level 4 keys with '!' at various positions
+        ("        key!: >", "key!", LineType::MappingKey),
+        ("        test!here: >", "test!here", LineType::MappingKey),
+        ("        simple!test: >", "simple!test", LineType::MappingKey),
+        ("        basic!: >-", "basic!", LineType::MappingKey),
+        ("        another!one: >+", "another!one", LineType::MappingKey),
+
+        // Level 4 with multiple '!' characters
+        ("        key!!: >", "key!!", LineType::MappingKey),
+        ("        test!here!now: >", "test!here!now", LineType::MappingKey),
+        ("        multiple!!!: >", "multiple!!!", LineType::MappingKey),
+        ("        spaced!out!keys!: >", "spaced!out!keys!", LineType::MappingKey),
+        ("        end!with!bang!: >", "end!with!bang!", LineType::MappingKey),
+
+        // Level 4 tag keys (starting with '!')
+        ("        !tag: >", "!tag", LineType::Tag),
+        ("        !.custom: >", "!.custom", LineType::Tag),
+        ("        !local: >", "!local", LineType::Tag),
+        ("        !!double: >", "!!double", LineType::Tag),
+
+        // Level 4 keys with '!' in various positions
+        ("        !start: >", "!start", LineType::Tag),
+        ("        middle!bang: >", "middle!bang", LineType::MappingKey),
+        ("        end!with!bang!: >", "end!with!bang!", LineType::MappingKey),
+        ("        !somewhere: >", "!somewhere", LineType::Tag),
+        ("        complex!key!here!: >", "complex!key!here!", LineType::MappingKey),
+
+        // Level 4 with different folded scalar modifiers
+        ("        level4_key!: >", "level4_key!", LineType::MappingKey),
+        ("        first!: >-", "first!", LineType::MappingKey),
+        ("        second!: >+", "second!", LineType::MappingKey),
+        ("        third!: >-2", "third!", LineType::MappingKey),
+        ("        fourth!: >+2", "fourth!", LineType::MappingKey),
+
+        // Edge cases for level 4
+        ("        !: >", "!", LineType::Tag),
+        ("        !!: >", "!!", LineType::Tag),
+        ("        a!: >", "a!", LineType::MappingKey),
+        ("        a!b: >", "a!b", LineType::MappingKey),
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Level 4 indentation test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for level 4 indentation: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Key mismatch for level 4 indentation: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+
+    // Test level 4 continuation lines with '!' characters
+    // Note: Lines starting with '!' may be classified as Tag, which is correct behavior
+    let continuation_lines = vec![
+        ("        Content with! exclamations!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("        More! indented! level! 4! content!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("        Single! line! with! multiple! bangs!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("        !Starting! with! emphasis!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("        Ending! with! bang! here!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("        Complex! continuation! line! test!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("        !At! start! and! middle!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("        Throughout! the! entire! line!", vec![LineType::MappingKey, LineType::Unknown]),
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        let result = classify_line_type(line);
+        // Level 4 continuation lines should be one of the expected types
+        assert!(
+            expected_types.contains(&result),
+            "Level 4 continuation result should be one of {:?}: '{}' (got {:?})",
+            expected_types, line, result
+        );
+    }
+}
+
+#[test]
+fn test_level5_indentation_with_exclamation_marks() {
+    // Test level 5 (10-space) indentation with '!' character in Section 12B
+    // This test focuses specifically on five-level indentation scenarios with exclamation marks
+    // Level 5 uses 10-space indentation as the standard fifth-level indentation
+
+    let test_cases = vec![
+        // Basic level 5 keys with '!' at various positions
+        ("          key!: >", "key!", LineType::MappingKey),
+        ("          test!here: >", "test!here", LineType::MappingKey),
+        ("          simple!test: >", "simple!test", LineType::MappingKey),
+        ("          basic!: >-", "basic!", LineType::MappingKey),
+        ("          another!one: >+", "another!one", LineType::MappingKey),
+
+        // Level 5 with multiple '!' characters
+        ("          key!!: >", "key!!", LineType::MappingKey),
+        ("          test!here!now: >", "test!here!now", LineType::MappingKey),
+        ("          multiple!!!: >", "multiple!!!", LineType::MappingKey),
+        ("          spaced!out!keys!: >", "spaced!out!keys!", LineType::MappingKey),
+        ("          end!with!bang!: >", "end!with!bang!", LineType::MappingKey),
+
+        // Level 5 tag keys (starting with '!')
+        ("          !tag: >", "!tag", LineType::Tag),
+        ("          !.custom: >", "!.custom", LineType::Tag),
+        ("          !local: >", "!local", LineType::Tag),
+        ("          !!double: >", "!!double", LineType::Tag),
+
+        // Level 5 keys with '!' in various positions
+        ("          !start: >", "!start", LineType::Tag),
+        ("          middle!bang: >", "middle!bang", LineType::MappingKey),
+        ("          end!with!bang!: >", "end!with!bang!", LineType::MappingKey),
+        ("          !somewhere: >", "!somewhere", LineType::Tag),
+        ("          complex!key!here!: >", "complex!key!here!", LineType::MappingKey),
+
+        // Level 5 with different folded scalar modifiers
+        ("          level5_key!: >", "level5_key!", LineType::MappingKey),
+        ("          first!: >-", "first!", LineType::MappingKey),
+        ("          second!: >+", "second!", LineType::MappingKey),
+        ("          third!: >-2", "third!", LineType::MappingKey),
+        ("          fourth!: >+2", "fourth!", LineType::MappingKey),
+
+        // Edge cases for level 5
+        ("          !: >", "!", LineType::Tag),
+        ("          !!: >", "!!", LineType::Tag),
+        ("          a!: >", "a!", LineType::MappingKey),
+        ("          a!b: >", "a!b", LineType::MappingKey),
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Level 5 indentation test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for level 5 indentation: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Key mismatch for level 5 indentation: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+
+    // Test level 5 continuation lines with '!' characters
+    // Note: Lines starting with '!' may be classified as Tag, which is correct behavior
+    let continuation_lines = vec![
+        ("          Content with! exclamations!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("          More! indented! level! 5! content!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("          Single! line! with! multiple! bangs!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("          !Starting! with! emphasis!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("          Ending! with! bang! here!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("          Complex! continuation! line! test!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("          !At! start! and! middle!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("          Throughout! the! entire! line!", vec![LineType::MappingKey, LineType::Unknown]),
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        let result = classify_line_type(line);
+        // Level 5 continuation lines should be one of the expected types
+        assert!(
+            expected_types.contains(&result),
+            "Level 5 continuation result should be one of {:?}: '{}' (got {:?})",
+            expected_types, line, result
+        );
+    }
+}
+
+#[test]
+fn test_level6_indentation_with_exclamation_marks() {
+    // Test level 6 (12-space) indentation with '!' character in Section 12B
+    // This test focuses specifically on six-level indentation scenarios with exclamation marks
+    // Level 6 uses 12-space indentation as the standard sixth-level indentation
+
+    let test_cases = vec![
+        // Basic level 6 keys with '!' at various positions
+        ("            key!: >", "key!", LineType::MappingKey),
+        ("            test!here: >", "test!here", LineType::MappingKey),
+        ("            simple!test: >", "simple!test", LineType::MappingKey),
+        ("            basic!: >-", "basic!", LineType::MappingKey),
+        ("            another!one: >+", "another!one", LineType::MappingKey),
+
+        // Level 6 with multiple '!' characters
+        ("            key!!: >", "key!!", LineType::MappingKey),
+        ("            test!here!now: >", "test!here!now", LineType::MappingKey),
+        ("            multiple!!!: >", "multiple!!!", LineType::MappingKey),
+        ("            spaced!out!keys!: >", "spaced!out!keys!", LineType::MappingKey),
+        ("            end!with!bang!: >", "end!with!bang!", LineType::MappingKey),
+
+        // Level 6 tag keys (starting with '!')
+        ("            !tag: >", "!tag", LineType::Tag),
+        ("            !.custom: >", "!.custom", LineType::Tag),
+        ("            !local: >", "!local", LineType::Tag),
+        ("            !!double: >", "!!double", LineType::Tag),
+
+        // Level 6 keys with '!' in various positions
+        ("            !start: >", "!start", LineType::Tag),
+        ("            middle!bang: >", "middle!bang", LineType::MappingKey),
+        ("            end!with!bang!: >", "end!with!bang!", LineType::MappingKey),
+        ("            !somewhere: >", "!somewhere", LineType::Tag),
+        ("            complex!key!here!: >", "complex!key!here!", LineType::MappingKey),
+
+        // Level 6 with different folded scalar modifiers
+        ("            level6_key!: >", "level6_key!", LineType::MappingKey),
+        ("            first!: >-", "first!", LineType::MappingKey),
+        ("            second!: >+", "second!", LineType::MappingKey),
+        ("            third!: >-2", "third!", LineType::MappingKey),
+        ("            fourth!: >+2", "fourth!", LineType::MappingKey),
+
+        // Edge cases for level 6
+        ("            !: >", "!", LineType::Tag),
+        ("            !!: >", "!!", LineType::Tag),
+        ("            a!: >", "a!", LineType::MappingKey),
+        ("            a!b: >", "a!b", LineType::MappingKey),
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Level 6 indentation test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for level 6 indentation: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Key mismatch for level 6 indentation: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+
+    // Test level 6 continuation lines with '!' characters
+    // Note: Lines starting with '!' may be classified as Tag, which is correct behavior
+    let continuation_lines = vec![
+        ("            Content with! exclamations!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("            More! indented! level! 6! content!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("            Single! line! with! multiple! bangs!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("            !Starting! with! emphasis!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("            Ending! with! bang! here!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("            Complex! continuation! line! test!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("            !At! start! and! middle!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("            Throughout! the! entire! line!", vec![LineType::MappingKey, LineType::Unknown]),
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        let result = classify_line_type(line);
+        // Level 6 continuation lines should be one of the expected types
+        assert!(
+            expected_types.contains(&result),
+            "Level 6 continuation result should be one of {:?}: '{}' (got {:?})",
+            expected_types, line, result
+        );
+    }
+}
+
 // ============================================================================
 // Section 12B.2: Folded Scalar Indicator Line Tests
 // ============================================================================
