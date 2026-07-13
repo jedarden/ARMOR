@@ -1,128 +1,173 @@
-# Section 12B Folded Scalar Test Pattern Analysis
+# Research: Folded Scalar Test Patterns in Section 12B
 
 **Bead:** bf-4r3ae  
 **Date:** 2026-07-13  
-**Task:** Research existing test patterns for folded scalar tests in `type_like_string_false_positive_test.rs` Section 12B
-
----
+**Purpose:** Document existing test patterns for folded scalars to guide future test development
 
 ## Overview
 
-Section 12B focuses on multiline string scenarios with YAML folded scalars (`>`). The section is organized into multiple subsections:
-
-- **12B:** Multiline String Scenarios with Exclamation Marks (basic folded scalar indicators)
-- **12B.1:** Comprehensive Folded Block Scalar Tests with Exclamation
-- **12B.2:** Basic Folded Scalar Indicator Tests
-- **12B.3:** Folded Scalar Explicit Indent Infrastructure Pattern (template/macro-based)
+Section 12B of `tests/type_like_string_false_positive_test.rs` contains comprehensive tests for YAML folded block scalars (using the `>` indicator). These tests verify that folded scalars are correctly classified as `MappingKey` and that continuation lines are handled appropriately.
 
 ---
 
 ## Test Pattern Structure
 
-### 1. Basic Test Function Pattern
+### 1. Basic Test Case Format
 
-The fundamental test function structure for folded scalars follows this pattern:
+All folded scalar tests use a consistent tuple structure:
 
 ```rust
-#[test]
-fn test_folded_block_scalar_with_<variant>() {
-    // 1. Define test cases as vec of tuples: (line, expected_key, expected_type)
-    let test_cases = vec![
-        ("  text: >", "text", LineType::MappingKey),
-        ("  warning: >-", "warning", LineType::MappingKey),
-        ("    note: >+", "note", LineType::MappingKey),
-    ];
+(input_line, expected_key_name, expected_line_type)
+```
 
-    // 2. Iterate through test cases with standard assertions
-    for (line, expected_key, expected_type) in test_cases {
-        let result = classify_line_type(line);
-        
-        // Assert line type classification
-        assert_eq!(result, expected_type, "test failed: '{}'", line);
-        
-        // If MappingKey, verify key detection
-        if result == LineType::MappingKey {
-            let info = detect_mapping_key(line, 0);
-            assert!(info.is_some(), "Should detect mapping key: '{}'", line);
-            let detected = info.unwrap();
-            assert_eq!(detected.key, expected_key, "Key mismatch: '{}'", line);
-        }
-    }
+**Example:**
+```rust
+("  text: >-", "text", LineType::MappingKey)
+```
+
+- `input_line`: The YAML line being tested (includes indentation, key, and folded scalar indicator)
+- `expected_key_name`: The key name that should be extracted
+- `expected_line_type`: Should be `LineType::MappingKey` for folded scalar indicator lines
+
+---
+
+### 2. Two-Part Assertion Pattern
+
+Every test follows a two-part assertion pattern:
+
+**First Assertion - Line Type Classification:**
+```rust
+let result = classify_line_type(line);
+assert_eq!(result, expected_type, "...");
+```
+
+**Second Assertion - Key Detection (if MappingKey):**
+```rust
+if result == LineType::MappingKey {
+    let info = detect_mapping_key(line, 0);
+    assert!(info.is_some(), "Should detect mapping key: '{}'", line);
+    let detected = info.unwrap();
+    assert_eq!(detected.key, expected_key, "Key mismatch...");
 }
 ```
 
-**Key characteristics of a good folded scalar test:**
-1. Tests various indentation levels (2-space, 4-space, 6-space, 8-space, tab)
-2. Tests all three modifiers: `>` (plain), `>-` (strip), `>+` (keep)
-3. Tests explicit indent numbers (e.g., `>2`, `>-3`, `>+4`)
-4. Includes exclamation marks in keys to test false-positive scenarios
-5. Uses descriptive comments to group tests by indentation level
-6. Uses `assert_eq!` with meaningful error messages
+---
+
+### 3. Folded Scalar Indicator Patterns
+
+Folded scalars use the `>` indicator with three modifier types:
+
+| Modifier | Meaning |
+|----------|---------|
+| `>`      | Plain folded scalar |
+| `>-`     | Folded with strip modifier (removes trailing newlines) |
+| `>+`     | Folded with keep modifier (preserves trailing newlines) |
+
+**Explicit Indent Modifiers:**
+- `>n`, `>-n`, `>+n` where n = 1-9
+- Example: `>-2` means "folded scalar with strip modifier, 2×indent = 4 spaces"
 
 ---
 
-## Macro-Based Infrastructure Pattern (Section 12B.3)
+### 4. Indentation Levels
 
-Section 12B.3 provides a reusable macro infrastructure for generating folded scalar tests systematically.
+Tests cover 5 standard indentation levels:
 
-### Macro: `generate_folded_explicit_indent_tests!`
+| Level | Indentation | Name |
+|-------|-------------|------|
+| 1 | `"  "` (2 spaces) | level1 |
+| 2 | `"    "` (4 spaces) | level2 |
+| 3 | `"      "` (6 spaces) | level3 |
+| 4 | `"        "` (8 spaces) | level4 |
+| Tab | `"\t"` | tab |
+| Mixed | `"\t  "`, `"\t    "` | mixed |
 
-**Purpose:** Generate test cases for folded scalars with explicit indent modifiers (`>-n`, `>+n`, `>n`)
+---
 
-**Signature:**
-```rust
-generate_folded_explicit_indent_tests!(
-    $indent:expr,      // Base indentation (e.g., "  ", "\t")
-    $level_name:expr,  // Descriptive name (e.g., "level1", "tab")
-    $modifiers:expr,   // Array of modifiers: [">", ">-", ">+"]
-    $indent_nums:expr, // Array of indent numbers: [1, 2, 3, 4]
-    $key_prefix:expr   // Prefix for generated key names
-)
+## What Makes a Good Folded Scalar Test
+
+### 1. Comprehensive Coverage
+
+Good tests cover:
+- **All modifier types:** `>`, `>-`, `>+`
+- **All explicit indent levels:** 1-9 (e.g., `>1` through `>9`)
+- **All base indentation levels:** 2-space, 4-space, 6-space, 8-space, tab
+- **Edge cases:** Keys with `!`, single-char keys, multiple `!` in keys
+- **Continuation lines:** Lines following the indicator line
+
+### 2. Test Naming Convention
+
+Tests follow a descriptive naming pattern:
+```
+test_folded_scalar_<variant>_<modifier_type>_at_<indentation>
 ```
 
-**Example usage:**
+**Examples:**
+- `test_folded_scalar_basic_modifiers_at_various_indentation_levels`
+- `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space`
+- `test_folded_scalar_strip_explicit_indent_modifiers_at_2_space`
+
+### 3. Continuation Line Testing
+
+Continuation lines (lines following the folded scalar indicator) use a different pattern:
+
+```rust
+// Accept multiple possible types for continuation lines
+let continuation_lines = vec![
+    ("  Content line with! text", vec![LineType::MappingKey, LineType::Unknown]),
+];
+
+for (line, expected_types) in continuation_lines {
+    let result = classify_line_type(line);
+    assert!(
+        expected_types.contains(&result),
+        "Should be one of {:?}: '{}' (got {:?})",
+        expected_types, line, result
+    );
+    
+    // Continuation lines should NOT detect as mapping keys
+    let info = detect_mapping_key(line, 0);
+    assert!(info.is_none(), "Should NOT detect mapping key: '{}'", line);
+}
+```
+
+---
+
+## Macro and Helper Function Patterns
+
+### 1. Generation Macro
+
+**`generate_folded_explicit_indent_tests!`** - Auto-generates test cases:
+
 ```rust
 let test_cases = generate_folded_explicit_indent_tests!(
-    "  ",                    // 2-space base indentation
-    "level1",               // Descriptive level name
-    [">", ">-", ">+"],      // All three modifier types
-    [1, 2, 3],             // Indent numbers 1-3
-    "template"             // Key prefix for generated names
+    "  ",                    // indent: 2 spaces
+    "level1",               // level_name: descriptive name
+    [">", ">-", ">+"],      // modifiers: array of modifier patterns
+    [1, 2, 3, 4, 5],       // indent_nums: array of indent numbers
+    "test"                  // key_prefix: prefix for generated key names
 );
-// Generates cases like:
-// ("  template__1: >1", "template__1", LineType::MappingKey)
-// ("  template_-_1: >-1", "template_-_1", LineType::MappingKey)
-// ("  template_+_1: >+1", "template_+_1", LineType::MappingKey)
 ```
 
----
+**Output:** `Vec<(String, String, LineType)>`
 
-### Macro: `run_folded_scalar_tests!`
+### 2. Runner Macro
 
-**Purpose:** Execute test cases with standard assertions (line type + key detection)
+**`run_folded_scalar_tests!`** - Executes test cases with standard assertions:
 
-**Signature:**
-```rust
-run_folded_scalar_tests!($test_cases:expr)
-```
-
-**Example usage:**
 ```rust
 run_folded_scalar_tests!(test_cases);
-// Internally iterates and performs:
-// 1. assert_eq!(result, expected_type, "...")
-// 2. if MappingKey: detect_mapping_key() + assert key matches
 ```
 
----
+This macro automatically:
+1. Iterates over all test cases
+2. Calls `classify_line_type()` for each
+3. Asserts line type matches expected
+4. If `MappingKey`, calls `detect_mapping_key()` and asserts key is correct
 
-### Helper Functions
+### 3. Helper Functions
 
-#### `create_folded_scalar_test`
-
-**Purpose:** Non-macro alternative for building individual test cases
-
-**Signature:**
+**`create_folded_scalar_test()`** - Creates a single test case tuple:
 ```rust
 fn create_folded_scalar_test(
     indent: &str,
@@ -132,19 +177,7 @@ fn create_folded_scalar_test(
 ) -> (String, String, LineType)
 ```
 
-**Example:**
-```rust
-cases.push(create_folded_scalar_test("  ", "my_key", ">", 2));
-// Returns: ("  my_key: >2", "my_key", LineType::MappingKey)
-```
-
----
-
-#### `generate_folded_scalar_tests_multi_level`
-
-**Purpose:** Bulk generate test cases for multiple indentation levels
-
-**Signature:**
+**`generate_folded_scalar_tests_multi_level()`** - Bulk generates tests across all indentation levels:
 ```rust
 fn generate_folded_scalar_tests_multi_level(
     keys: &[&str],
@@ -153,114 +186,49 @@ fn generate_folded_scalar_tests_multi_level(
 ) -> Vec<(String, String, LineType)>
 ```
 
-**Indentation levels used:**
-- `"  "` (level1) - 2 spaces
-- `"    "` (level2) - 4 spaces
-- `"      "` (level3) - 6 spaces
-- `"        "` (level4) - 8 spaces
-- `"\t"` (tab) - Tab character
+---
+
+## Test Organization by Section
+
+### Section 12B.1: Basic Folded Block Scalars
+- Location: Lines 6889-6947
+- Tests: Basic `>`, `>-`, `>+` indicators with `!` in keys
+- Coverage: Simple cases, continuation lines
+
+### Section 12B.2: Comprehensive Tests
+- Location: Lines 7165-7327
+- Tests: Basic modifiers at all indentation levels
+- Coverage: Level 1-4, tab, mixed indentation, keys with `!`
+
+### Section 12B.3: Explicit Indent Tests
+- Location: Lines 7330-7655
+- Tests: Explicit indent modifiers `>n`, `>-n`, `>+n` for n=1-9
+- Coverage: All combinations, split into focused tests (plain, strip, keep)
+
+### Section 12B.4: Infrastructure Pattern
+- Location: Lines 11642-11840
+- Documentation: Template patterns for future tests
+- Examples: Shows how to use macros and helpers
 
 ---
 
-## Template Test Function Pattern
+## Key Learnings
 
-### Copy-Paste Template (from Section 12B.3)
-
-```rust
-#[test]
-fn test_folded_scalar_explicit_indent_<variant>() {
-    // Generate test cases for 2-space indentation with various modifiers
-    let test_cases = generate_folded_explicit_indent_tests!(
-        "  ",                    // indent: 2 spaces
-        "level1",               // level_name: descriptive name
-        [">", ">-", ">+"],      // modifiers: array of modifier patterns
-        [1, 2, 3, 4, 5],       // indent_nums: array of indent numbers
-        "test"                  // key_prefix: prefix for generated key names
-    );
-
-    // Run tests with standard assertions
-    run_folded_scalar_tests!(test_cases);
-}
-```
+1. **Consistency is critical:** All tests use the same tuple structure and two-assertion pattern
+2. **Coverage matters:** Good tests test all modifier types, all indent levels, and edge cases
+3. **Infrastructure exists:** Use the provided macros and helpers instead of writing raw test cases
+4. **Continuation lines differ:** They accept multiple possible types and should NOT detect as mapping keys
+5. **Documentation is integrated:** Section 12B.3 serves as both documentation and executable template
 
 ---
 
-## What Makes a Good Folded Scalar Test Pattern
+## References
 
-### 1. **Comprehensive Indentation Coverage**
-- Test all standard YAML indentation levels: 2, 4, 6, 8 spaces
-- Test tab indentation
-- Test mixed indentation (tab + spaces)
-
-### 2. **Complete Modifier Coverage**
-- `>` (plain folded scalar)
-- `>-` (strip modifier - removes trailing newlines)
-- `>+` (keep modifier - preserves trailing newlines)
-
-### 3. **Explicit Indent Numbers**
-- Test numbers 1-9 for all modifiers (e.g., `>1` through `>9`, `>-1` through `>-9`)
-- Tests that the parser correctly handles the indent multiplier
-
-### 4. **Exclamation Mark Handling**
-- Keys with `!` at end: `key!`
-- Keys with `!` in middle: `key!name`
-- Keys with multiple `!`: `key!!name`, `key!bang!`
-- Tests false-positive prevention (ensuring `!` doesn't trigger Tag classification)
-
-### 5. **Consistent Assertion Pattern**
-- Always verify line type classification
-- For `MappingKey` type, always verify key detection
-- Use descriptive error messages with the actual line content
-
-### 6. **Clear Test Organization**
-- Group by indentation level with comment headers
-- Use descriptive test function names
-- Document what specific scenario is being tested
+- File: `/home/coding/ARMOR/tests/type_like_string_false_positive_test.rs`
+- Lines 21-174: Macro and helper definitions with pattern documentation
+- Lines 6885-11840: Section 12B folded scalar tests
+- Related bead: bf-63gy6 (infrastructure pattern setup)
 
 ---
 
-## Continuation Line Testing
-
-Folded scalars also test continuation lines (the content lines following the indicator):
-
-```rust
-let continuation_lines = vec![
-    "  This is folded text with! exclamation marks",
-    "    Multiple! exclamations! in! folded! style",
-    "\tMore! content! with! bangs!",
-];
-
-for line in continuation_lines {
-    let result = classify_line_type(line);
-    assert!(
-        result == LineType::MappingKey || result == LineType::Unknown,
-        "Folded scalar continuation should be MappingKey or Unknown: '{}'",
-        line
-    );
-}
-```
-
----
-
-## Related Beads
-
-Based on the Section 12B.3 documentation, these beads are related to folded scalar test infrastructure:
-
-- **bf-63gy6:** Folded Scalar Explicit Indent Infrastructure Pattern (Section 12B.3)
-- **bf-45gyh:** Folded scalar strip explicit indent tests at 2-space
-- **bf-5rzoh:** Folded scalar keep explicit indent tests at 2-space
-- **bf-15c4t:** Related folded scalar work
-
----
-
-## Summary
-
-Section 12B demonstrates a well-structured, scalable approach to testing YAML folded scalar parsing:
-
-1. **Basic tests** use manual `vec!` definitions for clarity and specific scenarios
-2. **Macro infrastructure** provides systematic coverage of modifier × indent combinations
-3. **Helper functions** offer flexibility for custom test generation
-4. **Template functions** serve as copy-paste patterns for new tests
-5. **Standard assertions** ensure consistent testing behavior across all tests
-
-The pattern ensures comprehensive coverage of folded scalar syntax while maintaining test code readability and maintainability.
+**Next Steps:** When creating new folded scalar tests, copy the template from Section 12B.3 and modify for the specific variant being tested.
