@@ -16,6 +16,162 @@
 use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 
 // ============================================================================
+// Test Infrastructure Macros and Helpers
+// ============================================================================
+// This section provides reusable infrastructure for folded scalar explicit
+// indent tests. Bead: bf-63gy6
+//
+// Pattern Documentation:
+// ---------------------
+// Folded scalar explicit indent tests follow a consistent pattern:
+//
+// 1. Test Case Structure:
+//    - Use vec! of tuples: (input_line, expected_key_name, expected_line_type)
+//    - Input line format: "<indent><key_name>: <modifier><indent_level>"
+//    - Modifiers: > (plain), >- (strip), >+ (keep)
+//    - Indent levels: 1-9 (e.g., >2, >-3, >+4)
+//
+// 2. Indentation Levels:
+//    - Level 1: 2 spaces ("  ")
+//    - Level 2: 4 spaces ("    ")
+//    - Level 3: 6 spaces ("      ")
+//    - Level 4: 8 spaces ("        ")
+//    - Tab: ("\t")
+//    - Mixed: ("\t  ", "\t    ", etc.)
+//
+// 3. Test Naming Convention:
+//    - test_folded_scalar_<variant>_at_<indentation>_level
+//    - Or: test_folded_scalar_explicit_indent_modifiers_at_various_levels
+//
+// 4. Assertion Pattern:
+//    - First assert: classify_line_type() returns expected LineType
+//    - Second assert: if MappingKey, verify detect_mapping_key() finds correct key
+//
+// Example Usage:
+// -------------
+// ```rust
+// let test_cases = generate_folded_scalar_tests!(
+//     level1_indent = "  ",
+//     modifiers = [">", ">-", ">+"],
+//     indent_levels = [1, 2, 3],
+//     keys = ["text", "warning", "error"]
+// );
+// run_folded_scalar_tests!(test_cases);
+// ```
+
+/// Macro to generate folded scalar explicit indent test cases
+/// at a specific indentation level with given modifiers and indent levels.
+///
+/// Parameters:
+/// - $indent: the base indentation (e.g., "  ", "    ", "\t")
+/// - $level_name: descriptive name for this indentation level
+/// - $modifiers: array of modifier patterns (e.g., [">", ">-", ">+"])
+/// - $indent_nums: array of indent numbers (e.g., [1, 2, 3, 4, 5])
+/// - $key_prefix: prefix for key names
+///
+/// Returns: vec of (line, expected_key, expected_type) tuples
+macro_rules! generate_folded_explicit_indent_tests {
+    ($indent:expr, $level_name:expr, $modifiers:expr, $indent_nums:expr, $key_prefix:expr) => {{
+        let mut cases = vec![];
+
+        for modifier in $modifiers.iter() {
+            for num in $indent_nums.iter() {
+                let modifier_str = format!("{}{}", modifier, num);
+                let key_name = format!("{}_{}_{}", $key_prefix, modifier.replace(">", "").trim(), num);
+                let line = format!("{}{}: {}", $indent, key_name, modifier_str);
+
+                cases.push((line, key_name, armor::parsers::yaml::LineType::MappingKey));
+            }
+        }
+
+        cases
+    }};
+}
+
+/// Macro to run folded scalar explicit indent tests with assertions
+/// This handles the standard assertion pattern:
+/// 1. Assert line type matches expected
+/// 2. If MappingKey, assert key detection works correctly
+macro_rules! run_folded_scalar_tests {
+    ($test_cases:expr) => {
+        for (line, expected_key, expected_type) in $test_cases {
+            let result = classify_line_type(line);
+
+            assert_eq!(
+                result, *expected_type,
+                "Folded scalar explicit indent test failed: '{}' - expected {:?}, got {:?}",
+                line, expected_type, result
+            );
+
+            // Verify that the key is correctly detected for MappingKey types
+            if result == armor::parsers::yaml::LineType::MappingKey {
+                let info = detect_mapping_key(line, 0);
+                assert!(
+                    info.is_some(),
+                    "Should detect mapping key for folded scalar with explicit indent modifier: '{}'",
+                    line
+                );
+                let detected = info.unwrap();
+                assert_eq!(
+                    detected.key, expected_key,
+                    "Key mismatch for folded scalar with explicit indent modifier: '{}' - expected '{}', got '{}'",
+                    line, expected_key, detected.key
+                );
+            }
+        }
+    };
+}
+
+/// Helper function to create a folded scalar test case tuple
+/// This provides a non-macro alternative for building test cases
+fn create_folded_scalar_test(
+    indent: &str,
+    key: &str,
+    modifier: &str,
+    indent_level: u32,
+) -> (String, String, armor::parsers::yaml::LineType) {
+    let modifier_str = format!("{}{}", modifier, indent_level);
+    let line = format!("{}{}: {}", indent, key, modifier_str);
+    (line, key.to_string(), armor::parsers::yaml::LineType::MappingKey)
+}
+
+/// Bulk generate folded scalar test cases for multiple indentation levels
+/// This is a convenience function for generating comprehensive test suites
+fn generate_folded_scalar_tests_multi_level(
+    keys: &[&str],
+    modifiers: &[&str],
+    indent_levels: &[u32],
+) -> Vec<(String, String, armor::parsers::yaml::LineType)> {
+    let mut cases = vec![];
+
+    let indents = vec![
+        ("  ", "level1"),
+        ("    ", "level2"),
+        ("      ", "level3"),
+        ("        ", "level4"),
+        ("\t", "tab"),
+    ];
+
+    for (indent, level_name) in indents {
+        for key in keys {
+            for modifier in modifiers {
+                for indent_level in indent_levels {
+                    let full_key = format!("{}_{}", level_name, key);
+                    cases.push(create_folded_scalar_test(
+                        indent,
+                        &full_key,
+                        modifier,
+                        *indent_level,
+                    ));
+                }
+            }
+        }
+    }
+
+    cases
+}
+
+// ============================================================================
 // Section 1: Exclamation Mark in Comments (Not Tags)
 // ============================================================================
 
