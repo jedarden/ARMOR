@@ -15,6 +15,27 @@
 //	└── SchemaError (schema-related errors)
 //		├── SchemaLoadError (schema loading errors)
 //		└── SchemaValidationError (schema validation errors)
+//
+// CONSTRUCTOR USAGE PATTERNS:
+//
+// IMPORTANT: Always use the provided constructor functions to create error instances.
+// Direct struct initialization (e.g., ValidationError{...}) is strongly discouraged
+// as it may result in improperly initialized errors.
+//
+// Constructor functions:
+//   - NewValidationError(filePath, message, fieldPath, constraint, code, line, column, errorType, path, expectedType, actualType)
+//   - NewParseError(filePath, message, line, column, code, expected, actual, contextStr)
+//   - NewSyntaxError(filePath, message, line, column, expected, found, errorCode)
+//   - NewStructureError(filePath, message, line, duplicateKey, location, errorCode)
+//   - NewTypeMismatchError(filePath, fieldPath, expectedType, actualType, value, line, errorCode)
+//   - NewFieldNotFoundError(filePath, fieldPath, line, errorCode)
+//   - NewConstraintError(filePath, fieldPath, constraintType, constraint, message, value, line, errorCode)
+//   - NewDuplicateKeyError(filePath, key, location, line1, line2, code)
+//   - NewSchemaLoadError(filePath, message, err, code)
+//   - NewSchemaValidationError(filePath, schemaPath, fieldPath, message, expected, found, line, errorCode)
+//   - NewFileError(path, operation, message, err)
+//
+// For detailed usage examples and patterns, see: notes/bf-558ti.md
 package yamlutil
 
 import (
@@ -361,8 +382,8 @@ func (pe *ParseError) Unwrap() error {
 //
 // Example usage:
 //
-//	err := NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "identifier", "123")
-func NewParseError(filePath string, message string, line int, column int, code ErrorCode, expected string, actual string) *ParseError {
+//	err := NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "identifier", "123", "while parsing config")
+func NewParseError(filePath string, message string, line int, column int, code ErrorCode, expected string, actual string, contextStr string) *ParseError {
 	// Use provided code or default to generic parse error
 	errorCode := code
 	if errorCode == "" {
@@ -370,14 +391,15 @@ func NewParseError(filePath string, message string, line int, column int, code E
 	}
 
 	return &ParseError{
-		FilePath:  filePath,
-		Message:   message,
-		Line:      line,
-		Column:    column,
-		ErrorCode: errorCode,
-		ErrorType: ErrorTypeParse,
-		Expected:  expected,
-		Actual:    actual,
+		FilePath:   filePath,
+		Message:    message,
+		Line:       line,
+		Column:     column,
+		ErrorCode:  errorCode,
+		ErrorType:  ErrorTypeParse,
+		Expected:   expected,
+		Actual:     actual,
+		ContextStr: contextStr,
 	}
 }
 
@@ -537,8 +559,8 @@ func (ve *ValidationError) String() string {
 //
 // Example usage:
 //
-//	err := NewValidationError("config.yaml", "invalid port number", "server.port", "must be between 1-65535", ErrCodeInvalidValue, 10, 5, "", "spec.replicas")
-func NewValidationError(filePath string, message string, fieldPath string, constraint string, code ErrorCode, line int, column int, errorType ErrorType, path string) *ValidationError {
+//	err := NewValidationError("config.yaml", "invalid port number", "server.port", "must be between 1-65535", ErrCodeInvalidValue, 10, 5, "", "spec.replicas", "integer", "string")
+func NewValidationError(filePath string, message string, fieldPath string, constraint string, code ErrorCode, line int, column int, errorType ErrorType, path string, expectedType string, actualType string) *ValidationError {
 	// Use provided code or default to generic validation error
 	errorCode := code
 	if errorCode == "" {
@@ -559,15 +581,17 @@ func NewValidationError(filePath string, message string, fieldPath string, const
 	}
 
 	return &ValidationError{
-		FilePath:   filePath,
-		Message:    message,
-		FieldPath:  fieldPath,
-		Constraint: constraint,
-		ErrorCode:  errorCode,
-		Line:       line,
-		Column:     column,
-		Type:       eType,
-		Path:       validPath,
+		FilePath:     filePath,
+		Message:      message,
+		FieldPath:    fieldPath,
+		Constraint:   constraint,
+		ErrorCode:    errorCode,
+		Line:         line,
+		Column:       column,
+		Type:         eType,
+		Path:         validPath,
+		ExpectedType: expectedType,
+		ActualType:   actualType,
 	}
 }
 
