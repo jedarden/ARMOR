@@ -834,17 +834,18 @@ class YAMLParser:
         lines = yaml_content.split('\n')
 
         for line_num, raw_line in enumerate(lines, start=1):
-            # Update current line tracking
-            self.current_line_number = line_num
-
-            # Classify the line type
-            line_type = self.scope_stack._classify_line_type(raw_line)
-            self.current_line_type = line_type
-
             trimmed = raw_line.strip()
 
             # Skip empty lines and comments for key detection
             is_empty = not trimmed or trimmed.startswith('#')
+
+            # Update current line number for ALL lines (including empty)
+            self.current_line_number = line_num
+
+            # Update current line type only for meaningful lines
+            if not is_empty:
+                line_type = self.scope_stack._classify_line_type(raw_line)
+                self.current_line_type = line_type
 
             # Get indent level
             indent = len(raw_line) - len(raw_line.lstrip())
