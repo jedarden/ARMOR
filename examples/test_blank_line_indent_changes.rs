@@ -1,7 +1,7 @@
 use armor::parsers::yaml::parser::{Parser, BasicParser};
 
 fn main() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     println!("=== Testing blank line indent change handling ===\n");
 
