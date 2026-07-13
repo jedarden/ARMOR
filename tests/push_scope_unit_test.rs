@@ -142,3 +142,56 @@ fn test_push_scope_stack_isolation() {
     assert_eq!(parser1.scope_info_stack()[0].scope_depth(), 1, "First parser scope should have depth 1");
     assert_eq!(parser2.scope_info_stack()[0].scope_depth(), 2, "Second parser scope should have depth 2");
 }
+
+#[test]
+fn test_push_scope_consecutive_incremental_growth() {
+    let mut parser = BasicParser::new();
+
+    // Initially empty
+    assert_eq!(parser.scope_info_stack().len(), 0, "Stack should be empty initially");
+
+    // First push
+    parser.push_scope(ScopeInfo::block(1));
+    assert_eq!(parser.scope_info_stack().len(), 1, "Stack should have 1 item after first push");
+
+    // Second push
+    parser.push_scope(ScopeInfo::block(2));
+    assert_eq!(parser.scope_info_stack().len(), 2, "Stack should have 2 items after second push");
+
+    // Third push
+    parser.push_scope(ScopeInfo::block(3));
+    assert_eq!(parser.scope_info_stack().len(), 3, "Stack should have 3 items after third push");
+
+    // Verify stack growth was consistent
+    let scopes = parser.scope_info_stack();
+    assert_eq!(scopes.len(), 3, "Final stack size should be 3");
+}
+
+#[test]
+fn test_push_scope_consecutive_lifo_order() {
+    let mut parser = BasicParser::new();
+
+    // Push scopes in sequence with different depths to track order
+    parser.push_scope(ScopeInfo::block(10));
+    parser.push_scope(ScopeInfo::block(20));
+    parser.push_scope(ScopeInfo::block(30));
+
+    // Verify LIFO order: last pushed is last in stack (top of stack)
+    let scopes = parser.scope_info_stack();
+
+    // First element should be the first pushed (bottom of stack)
+    assert_eq!(scopes[0].scope_depth(), 10, "Bottom of stack should be first pushed (depth 10)");
+
+    // Middle element should be the second pushed
+    assert_eq!(scopes[1].scope_depth(), 20, "Middle of stack should be second pushed (depth 20)");
+
+    // Last element should be the last pushed (top of stack)
+    assert_eq!(scopes[2].scope_depth(), 30, "Top of stack should be last pushed (depth 30)");
+
+    // Verify that .last() returns the most recently pushed item
+    assert_eq!(
+        scopes.last().unwrap().scope_depth(),
+        30,
+        "last() should return the most recently pushed scope"
+    );
+}
