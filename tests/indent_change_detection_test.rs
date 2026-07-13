@@ -22,7 +22,7 @@ use armor::parsers::yaml::parser::Parser;
 
 #[test]
 fn test_detects_indent_change_on_blank_line() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 root:
@@ -38,7 +38,7 @@ root:
 
 #[test]
 fn test_tracks_indent_transitions_across_blank_lines() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let yaml = "
 root:
   level2:
@@ -59,7 +59,7 @@ root:
 
 #[test]
 fn test_blank_line_indent_decrease() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 level1:
@@ -79,7 +79,7 @@ level1_b: value
 
 #[test]
 fn test_detects_indent_change_on_comment_line() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 root:
@@ -95,7 +95,7 @@ root:
 
 #[test]
 fn test_comment_with_decreased_indent() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 level1:
@@ -111,7 +111,7 @@ level1:
 
 #[test]
 fn test_multiple_comments_at_different_indents() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 root:
@@ -135,7 +135,7 @@ key3: value3
 
 #[test]
 fn test_distinguishes_key_bearing_from_non_key_lines() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 key1: value1
@@ -215,7 +215,7 @@ fn test_get_transitions_with_keys() {
 
 #[test]
 fn test_indent_tracking_doesnt_break_duplicate_detection() {
-    let parser = BasicParser::strict();
+    let mut parser = BasicParser::strict();
 
     let yaml = r#"
 root:
@@ -238,7 +238,7 @@ root:
 
 #[test]
 fn test_indent_tracking_preserves_scope_isolation() {
-    let parser = BasicParser::strict();
+    let mut parser = BasicParser::strict();
 
     let yaml = r#"
 scope1:
@@ -254,7 +254,7 @@ scope2:
 
 #[test]
 fn test_parser_with_complex_indent_changes() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 level1:
@@ -279,7 +279,7 @@ key3: value3
 
 #[test]
 fn test_indent_change_on_only_blank_lines() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 key1: value1
@@ -294,7 +294,7 @@ key2: value2
 
 #[test]
 fn test_indent_change_from_blank_to_content() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 root:
@@ -309,7 +309,7 @@ root:
 
 #[test]
 fn test_sequence_with_indent_changes() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 items:
@@ -327,7 +327,7 @@ items:
 
 #[test]
 fn test_deeply_nested_with_indent_transitions() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 level1:
@@ -353,7 +353,7 @@ level1:
 
 #[test]
 fn test_real_world_config_with_blank_lines() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 # Database configuration
@@ -380,7 +380,7 @@ server:
 
 #[test]
 fn test_kubernetes_style_yaml() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 apiVersion: v1
@@ -407,7 +407,7 @@ spec:
 
 #[test]
 fn test_complex_nested_sequence() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 services:

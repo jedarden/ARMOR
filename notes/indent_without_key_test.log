@@ -1,0 +1,20 @@
+
+running 15 tests
+test test_blank_line_at_document_end ... ok
+test test_blank_line_at_document_start ... ok
+test test_comments_with_different_indents ... ok
+test test_blank_lines_dont_create_duplicate_key_errors ... ok
+test test_deep_nesting_with_blank_line_scope_exit ... ok
+test test_complex_nesting_with_blank_lines ... ok
+test test_detect_indent_changes_on_blank_lines ... ok
+test test_indent_tracking_distinguishes_key_from_non_key ... ok
+test test_indent_decrease_on_blank_line_between_siblings ... ok
+test test_multiple_blank_lines_with_indent_changes ... ok
+test test_mixed_blank_lines_and_keys ... ok
+test test_no_false_scope_entry_on_blank_line_increase ... ok
+test test_no_interference_with_existing_key_parsing ... ok
+test test_scope_exit_on_blank_line ... ok
+test test_sequence_with_blank_lines ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
