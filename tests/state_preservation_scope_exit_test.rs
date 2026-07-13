@@ -130,9 +130,9 @@ mod parent_scope_exit_tests {
         stack.exit_to_scope(2);
 
         // Verify parent sequence context is preserved
-        assert!(stack.current_scope_ref().in_sequence_context,
+        assert!(stack.current_scope_ref().unwrap().in_sequence_context,
                 "Parent in_sequence_context should be preserved");
-        assert_eq!(stack.current_scope_ref().sequence_item_id, parent_item_id,
+        assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, parent_item_id,
                    "Parent sequence_item_id should be preserved");
     }
 }
@@ -219,8 +219,8 @@ mod grandparent_scope_exit_tests {
 
         // Create grandparent with metadata
         stack.enter_scope(2, 1, Some("root_config".to_string()));
-        stack.current_scope().is_flow_style = true;
-        let grandparent_metadata = stack.current_scope_ref().is_flow_style;
+        stack.current_scope().unwrap().is_flow_style = true;
+        let grandparent_metadata = stack.current_scope_ref().unwrap().is_flow_style;
 
         // Create parent scope
         stack.enter_scope(4, 2, Some("section".to_string()));
@@ -232,9 +232,9 @@ mod grandparent_scope_exit_tests {
         stack.exit_to_scope(2);
 
         // Verify grandparent metadata is preserved
-        assert_eq!(stack.current_scope_ref().is_flow_style, grandparent_metadata,
+        assert_eq!(stack.current_scope_ref().unwrap().is_flow_style, grandparent_metadata,
                    "Grandparent is_flow_style should be preserved");
-        assert_eq!(stack.current_scope_ref().parent_key, Some("root_config".to_string()));
+        assert_eq!(stack.current_scope_ref().unwrap().parent_key, Some("root_config".to_string()));
     }
 
     /// Test multi-level grandparent exit (great-grandparent)
@@ -293,7 +293,7 @@ mod grandparent_scope_exit_tests {
         stack.exit_to_scope(2);
 
         // Verify grandparent key count is accurate
-        assert_eq!(stack.current_scope_ref().key_count(), expected_key_count,
+        assert_eq!(stack.current_scope_ref().unwrap().key_count(), expected_key_count,
                    "Grandparent key count should be accurate after cleanup");
     }
 }
@@ -402,7 +402,7 @@ mod edge_case_tests {
 
         // Create parent scope with no keys
         stack.enter_scope(2, 1, Some("empty_parent".to_string()));
-        let parent_key_count = stack.current_scope_ref().key_count();
+        let parent_key_count = stack.current_scope_ref().unwrap().key_count();
         assert_eq!(parent_key_count, 0);
 
         // Create child scope with keys

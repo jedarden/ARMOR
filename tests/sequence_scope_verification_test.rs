@@ -42,13 +42,13 @@ fn test_sequence_scope_entry_clears_previous_keys() {
     stack.enter_sequence_scope(2, 1);
     stack.add_key("name", 2).unwrap();
     stack.add_key("value", 3).unwrap();
-    assert_eq!(stack.current_scope_ref().key_count(), 2);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 2);
 
     // Enter second sequence item at same indent
     stack.enter_sequence_scope(2, 5);
 
     // Keys should be cleared for new item
-    assert_eq!(stack.current_scope_ref().key_count(), 0);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 0);
     assert!(!stack.contains_key("name"));
     assert!(!stack.contains_key("value"));
 }
@@ -58,13 +58,13 @@ fn test_sequence_scope_entry_increments_item_id() {
     let mut stack = ScopeStack::new(2);
 
     stack.enter_sequence_scope(2, 1);
-    let id1 = stack.current_scope_ref().sequence_item_id;
+    let id1 = stack.current_scope_ref().unwrap().sequence_item_id;
 
     stack.enter_sequence_scope(2, 3);
-    let id2 = stack.current_scope_ref().sequence_item_id;
+    let id2 = stack.current_scope_ref().unwrap().sequence_item_id;
 
     stack.enter_sequence_scope(2, 5);
-    let id3 = stack.current_scope_ref().sequence_item_id;
+    let id3 = stack.current_scope_ref().unwrap().sequence_item_id;
 
     assert_eq!(id1, Some(1));
     assert_eq!(id2, Some(2));
@@ -87,7 +87,7 @@ fn test_sequence_scope_entry_creates_isolated_scope() {
     stack.add_key("host", 6).unwrap();
     stack.add_key("port", 7).unwrap();
 
-    assert_eq!(stack.current_scope_ref().key_count(), 2);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 2);
 }
 
 // =============================================================================
@@ -176,7 +176,7 @@ fn test_sequence_nested_in_mapping_scope_isolation() {
     stack.add_key("name", 7).unwrap();
 
     // Both items should have same keys without conflict
-    assert_eq!(stack.current_scope_ref().key_count(), 2);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 2);
     assert!(stack.contains_key("id"));
     assert!(stack.contains_key("name"));
 }
@@ -462,7 +462,7 @@ fn test_complex_real_world_structure() {
 
 #[test]
 fn test_parser_sequence_nested_in_mapping() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 items:
@@ -484,7 +484,7 @@ items:
 
 #[test]
 fn test_parser_mapping_nested_in_sequence() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 - name: service1
@@ -507,7 +507,7 @@ fn test_parser_mapping_nested_in_sequence() {
 
 #[test]
 fn test_parser_complex_nested_structure() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 services:
@@ -540,7 +540,7 @@ services:
 
 #[test]
 fn test_parser_no_false_duplicates_in_sequences_simple() {
-    let parser = BasicParser::strict();
+    let mut parser = BasicParser::strict();
 
     let yaml = r#"
 items:
@@ -563,7 +563,7 @@ items:
 
 #[test]
 fn test_parser_detects_duplicate_within_sequence_item() {
-    let parser = BasicParser::strict();
+    let mut parser = BasicParser::strict();
 
     let yaml = r#"
 items:
@@ -578,7 +578,7 @@ items:
 
 #[test]
 fn test_parser_sequence_at_root_level() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 - name: item1
@@ -597,7 +597,7 @@ fn test_parser_sequence_at_root_level() {
 
 #[test]
 fn test_parser_mixed_root_sequences_and_mappings() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     let yaml = r#"
 version: "1.0"
@@ -635,7 +635,7 @@ fn test_sequence_with_empty_items() {
 
     // Should still be in sequence context
     assert!(stack.in_sequence_context());
-    assert_eq!(stack.current_scope_ref().key_count(), 0);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 0);
 }
 
 #[test]
@@ -645,7 +645,7 @@ fn test_sequence_with_single_key() {
     stack.enter_sequence_scope(2, 1);
     stack.add_key("only_key", 2).unwrap();
 
-    assert_eq!(stack.current_scope_ref().key_count(), 1);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 1);
     assert!(stack.contains_key("only_key"));
 }
 
@@ -694,7 +694,7 @@ fn test_multiple_consecutive_sequence_entries_same_indent() {
     stack.enter_sequence_scope(2, 3);
 
     // Should have incremented item IDs each time
-    assert_eq!(stack.current_scope_ref().sequence_item_id, Some(3));
+    assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(3));
 }
 
 #[test]
