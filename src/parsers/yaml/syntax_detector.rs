@@ -663,8 +663,7 @@ impl SyntaxDetector {
             // A parent key typically has nothing after the colon or just whitespace/comments
             let after_colon = trimmed[colon_pos + 1..].trim();
             let is_parent_key = after_colon.is_empty() ||
-                                after_colon.starts_with('#') ||
-                                (colon_pos > 0 && !key_part.contains(':'));
+                                after_colon.starts_with('#');
 
             if is_parent_key {
                 // Clear current keys when we encounter a new parent key
