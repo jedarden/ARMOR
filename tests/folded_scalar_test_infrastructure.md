@@ -59,6 +59,134 @@ Each test case is a tuple with three elements:
 - **expected_line_type**: The line type classification
   - Usually `LineType::MappingKey` for scalar declarations
 
+---
+
+### Pattern 4: Basic Indicator Line Assertions
+
+**Purpose:** Test classification of YAML block scalar indicator lines (folded `>` or literal `|`)
+
+**Structure:** `vec!` of input lines with `assert_eq!` assertions for `MappingKey` classification
+
+**Example from Section 12B:**
+```rust
+// Section 12B: Multiline String Scenarios with Exclamation Marks (line 7892)
+fn test_folded_block_scalar_with_exclamation_marks() {
+    let test_cases = vec![
+        "description: >",               // Basic folded scalar
+        "  folded_text: >",              // Indented folded scalar
+        "    note: >",                   // Deep indented folded scalar
+        "\tmessage: >",                 // Tab-indented folded scalar
+        "\tkey_with_exclamation!: >",   // Tab-indented key with ! followed by folded scalar
+        "warning: >-",                  // Folded with strip modifier
+        "info: >+",                     // Folded with keep modifier
+        "text: >-2",                    // Folded with explicit indent
+        "content: >2",                   // Folded with explicit indent
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Folded block scalar indicator should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+```
+
+**Assertion Pattern:**
+- Single `assert_eq!` comparing result to `LineType::MappingKey`
+- Descriptive error message includes the failing line
+- Tests the indicator line itself (key followed by `>` or `|`)
+
+**Used in Section 12B:**
+- Line 7892: Folded scalar indicators with exclamation marks
+- Line 7937: Literal scalar indicators with basic modifiers
+- Line 10451: Indicator line classification tests (Section 12B.2)
+
+**When to use this pattern:**
+- Testing YAML block scalar indicator lines
+- Verifying basic line classification for block scalars
+- Simple validation without key extraction checks
+
+---
+
+### Pattern 5: Continuation Line Assertion Patterns with Allowed Types
+
+**Purpose:** Test continuation lines of block scalars where multiple line types may be valid
+
+**Structure:** `vec!` of tuples `(line, vec![allowed_types])` with `assert!(expected_types.contains(&result))`
+
+**Example from Section 12B:**
+```rust
+// Section 12B: Continuation lines with exclamation marks (line 7916)
+fn test_folded_block_scalar_with_exclamation_marks() {
+    let continuation_lines = vec![
+        "  This is folded text with! exclamation marks",
+        "    Multiple! exclamations! in! folded! style",
+        "\tMore! content! with! bangs!",
+        "  Important! message! continues!",
+    ];
+
+    for line in continuation_lines {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::Unknown,
+            "Folded scalar continuation with ! should be MappingKey or Unknown: '{}'",
+            line
+        );
+    }
+}
+```
+
+**Advanced Example with Multiple Allowed Types:**
+```rust
+// Section 12B: Literal scalar continuation with Tag types allowed (line 7952)
+fn test_literal_block_scalar_with_exclamation_marks() {
+    let continuation_lines = vec![
+        ("  This is literal text with! exclamation marks", vec![LineType::MappingKey, LineType::Unknown]),
+        ("    Multiple! exclamations! in! literal! style", vec![LineType::MappingKey, LineType::Unknown]),
+        ("\tMore! content! with! bangs!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("    !Start! Middle! End!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("  !important!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        let result = classify_line_type(line);
+        assert!(
+            expected_types.contains(&result),
+            "Literal scalar continuation with ! should be one of {:?}: '{}' (got {:?})",
+            expected_types, line, result
+        );
+    }
+}
+```
+
+**Assertion Pattern:**
+- Tuple structure: `(test_line, vec![allowed_types])`
+- `assert!(expected_types.contains(&result))` for flexible matching
+- Detailed error message shows all allowed types and actual result
+- Handles cases where line starting with `!` could be `Tag`, `MappingKey`, or `Unknown`
+
+**When to use this pattern:**
+- Continuation lines of block scalars (indented content following indicator)
+- Lines with ambiguous classification (multiple valid types)
+- Testing exclamation marks at various positions in continuation lines
+- When `Tag` type is possible for lines starting with `!`
+
+**Allowed Types:**
+- `vec![LineType::MappingKey, LineType::Unknown]` - Most continuation lines
+- `vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]` - Lines starting with `!`
+
+**Used in Section 12B:**
+- Line 7916: Folded scalar continuation lines (basic pattern)
+- Line 7948: Literal scalar continuation lines (with Tag type support)
+- Line 7965: Tuple-based tests with comprehensive allowed types
+- Line 10708: Folded scalar continuation with exclamation (Section 12B.1)
+
+---
+
 ### Modifiers
 
 YAML folded scalars support three modifiers:
