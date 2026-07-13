@@ -335,7 +335,7 @@ impl fmt::Display for Scope {
 #[derive(Debug, Clone)]
 pub struct ScopeStack {
     /// Stack of active scopes (top = current scope)
-    scopes: Vec<Scope>,
+    pub scopes: Vec<Scope>,
     /// Base indentation size (usually 2 or 4 spaces)
     base_indent: usize,
     /// Sequence item counter for generating unique IDs
