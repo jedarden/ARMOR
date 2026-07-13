@@ -407,11 +407,7 @@ func TestErrorTypeCategorization(t *testing.T) {
 		{
 			name: "SyntaxError categorization",
 			createError: func() error {
-				return &SyntaxError{
-					FilePath: "broken.yaml",
-					Line:     10,
-					Message:  "invalid syntax",
-				}
+				return NewSyntaxError("broken.yaml", "invalid syntax", 10, 0, "", "", "")
 			},
 			expectedType: ErrorTypeSyntax,
 			expectedCode: ErrCodeInvalidSyntax,
@@ -419,11 +415,7 @@ func TestErrorTypeCategorization(t *testing.T) {
 		{
 			name: "StructureError categorization",
 			createError: func() error {
-				return &StructureError{
-					FilePath: "invalid.yaml",
-					Line:     5,
-					Message:  "invalid structure",
-				}
+				return NewStructureError("invalid.yaml", "invalid structure", 5, "", "", "")
 			},
 			expectedType: ErrorTypeStructure,
 			expectedCode: ErrCodeInvalidStructure,
@@ -755,12 +747,7 @@ func TestErrorMessagesAcrossAllCategories(t *testing.T) {
 					return NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "")
 				},
 				func() error {
-					return &SyntaxError{
-						FilePath: "test.yaml",
-						Line:     5,
-						Column:   10,
-						Message:  "malformed YAML",
-					}
+					return NewSyntaxError("test.yaml", "malformed YAML", 5, 10, "", "", "")
 				},
 			},
 			qualityChecks: func(err error) []string {
@@ -909,8 +896,8 @@ func TestErrorMessagesNonEmpty(t *testing.T) {
 		func() error { return NewTypeMismatchError("f.yaml", "", "", "", "", 0, "") },
 		func() error { return NewConstraintError("f.yaml", "", "", "", "", "", 0, "") },
 		func() error { return NewFieldNotFoundError("f.yaml", "f", 1, "") },
-		func() error { return &SyntaxError{FilePath: "f.yaml", Message: "m"} },
-		func() error { return &StructureError{FilePath: "f.yaml", Message: "m"} },
+		func() error { return NewSyntaxError("f.yaml", "m", 0, 0, "", "", "") },
+		func() error { return NewStructureError("f.yaml", "m", 0, "", "", "") },
 		func() error { return NewFileError("f.yaml", "", "", fmt.Errorf("e")) },
 	}
 
