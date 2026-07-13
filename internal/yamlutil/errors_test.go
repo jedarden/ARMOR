@@ -812,10 +812,9 @@ func TestValidationErrorWithTypeInformation(t *testing.T) {
 				5,
 				ErrorTypeValidation,
 				tt.fieldPath,
+				tt.expectedType,
+				tt.actualType,
 			)
-			// Set type information directly
-			err.ExpectedType = tt.expectedType
-			err.ActualType = tt.actualType
 
 			errorMsg := err.Error()
 
@@ -854,9 +853,9 @@ func TestValidationErrorStringWithTypeInformation(t *testing.T) {
 		5,
 		ErrorTypeValidation,
 		"server.port",
+		"integer",
+		"string",
 	)
-	err.ExpectedType = "integer"
-	err.ActualType = "string"
 
 	stringOutput := err.String()
 
