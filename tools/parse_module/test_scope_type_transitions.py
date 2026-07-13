@@ -159,8 +159,9 @@ def test_scope_transition_classification_accuracy():
     yaml_content = """
 outer:
   inner_key: inner_value
-  - list_item_1
-  - list_item_2
+  items:
+    - list_item_1
+    - list_item_2
   another_key: another_value
 """
     result = parser.parse_with_scope_tracking(yaml_content)
