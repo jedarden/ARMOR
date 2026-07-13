@@ -443,8 +443,9 @@ service:
         yaml_content = """
 outer:
   inner_key: inner_value
-  - list_item_1
-  - list_item_2
+  items:
+    - list_item_1
+    - list_item_2
   another_key: another_value
 """
         result = self.parser.parse_with_scope_tracking(yaml_content)
