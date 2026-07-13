@@ -11993,3 +11993,81 @@ fn test_folded_scalar_keep_explicit_indent_modifiers_at_2_space() {
         );
     }
 }
+
+// ============================================================================
+// Skeleton Template for Future Folded Scalar Explicit Indent Tests
+// ============================================================================
+
+#[test]
+fn test_folded_scalar_explicit_indent_skeleton() {
+    // SKELETON FUNCTION - Template for future folded scalar explicit indent tests
+    //
+    // This function serves as a skeleton/template that can be copied and modified
+    // for new folded scalar explicit indent test variants.
+    //
+    // Bead: bf-41ba1 - Skeleton template creation
+    //
+    // Usage Instructions:
+    // 1. Copy this entire function
+    // 2. Rename to: test_folded_scalar_<variant>_explicit_indent_<level>()
+    //    - <variant>: e.g., "plain", "strip", "keep", "custom", etc.
+    //    - <level>: e.g., "2_space", "4_space", "tab", "various_levels", etc.
+    // 3. Replace the placeholder test cases below with actual test data
+    // 4. Update the comment to describe what you're testing
+    //
+    // Example patterns to follow:
+    // - test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()
+    // - test_folded_scalar_strip_explicit_indent_modifiers_at_2_space()
+    // - test_folded_scalar_keep_explicit_indent_modifiers_at_2_space()
+    //
+    // Available modifiers: ">", ">-", ">+"
+    // Indent numbers: 1-9 (e.g., >2, >-3, >+4)
+    // Indentation levels: "  " (2-space), "    " (4-space), "\t" (tab)
+
+    // Placeholder test cases - replace with actual test data
+    let test_cases: Vec<(String, String, LineType)> = vec![
+        // Example: ("  key1: >1", "key1", LineType::MappingKey),
+        // Add your test cases here following the pattern:
+        // (input_line, expected_key_name, expected_line_type)
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(&line);
+        assert_eq!(
+            result, expected_type,
+            "Folded scalar explicit indent test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(&line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for folded scalar with explicit indent: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, &expected_key[..],
+                "Key mismatch for folded scalar with explicit indent: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+
+    // Optional: Add continuation line tests if needed
+    // let continuation_lines: Vec<(String, Vec<LineType>)> = vec![
+    //     // Example: ("  continuation content", vec![LineType::Unknown]),
+    // ];
+
+    // for (line, expected_types) in continuation_lines {
+    //     let result = classify_line_type(&line);
+    //     assert!(
+    //         expected_types.contains(&result),
+    //         "Continuation line should be one of {:?}: '{}' (got {:?})",
+    //         expected_types, line, result
+    //     );
+    // }
+}
+
