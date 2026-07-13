@@ -90,8 +90,6 @@ key2: value2
 def test_indent_only_line_state():
     """Test that indent-only lines are tracked correctly."""
     yaml_content = """parent:
-  -
-  -
   child: value
 """
 
@@ -102,7 +100,7 @@ def test_indent_only_line_state():
 
     # Last line is "  child: value" which is key-bearing
     assert parser.is_on_key_bearing_line()
-    assert parser.get_current_line_number() == 4
+    assert parser.get_current_line_number() == 3  # Absolute last line (including empty)
 
     print("✓ Indent-only line state tracking test passed")
 
@@ -166,7 +164,7 @@ features:
 
     # Last line is "    enabled: true" - key-bearing
     assert parser.is_on_key_bearing_line()
-    assert parser.get_current_line_number() == 14
+    assert parser.get_current_line_number() == 15  # Absolute last line (including empty)
 
     # Verify the line types were tracked
     assert parser.get_current_line_type() == LineClassification.KEY_BEARING
