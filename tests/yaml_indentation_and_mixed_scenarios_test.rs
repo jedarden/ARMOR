@@ -23,6 +23,151 @@ use armor::parsers::yaml::{
 // Indentation Level Tests (0-12 spaces)
 // ============================================================================
 
+// Bead: bf-463jg - Test functions for indentation levels with descriptive names
+
+#[test]
+fn test_root_level_comments() {
+    // Test for root-level comments (zero indentation)
+    let test_cases = vec![
+        "# Root level comment",
+        "#",
+        "# TODO: implement feature",
+        "# FIXME: needs attention",
+        "# Configuration header",
+        "# ---",
+    ];
+
+    for line in test_cases {
+        let indent = calculate_indentation(line);
+        assert_eq!(indent, 0, "Root-level comment should have 0 indentation: '{}'", line);
+
+        let line_type = classify_line_type(line);
+        assert_eq!(line_type, LineType::Comment, "Root-level comment should be Comment type: '{}'", line);
+
+        let is_comment = is_comment_line(line);
+        assert!(is_comment, "Root-level line should be identified as comment: '{}'", line);
+
+        let stripped = strip_inline_comment(line);
+        assert_eq!(stripped, "", "Root-level comment should strip to empty: '{}'", line);
+    }
+}
+
+#[test]
+fn test_single_indent_comments() {
+    // Test for single-indent comments (2 spaces)
+    let test_cases = vec![
+        "  # Indented comment (2 spaces)",
+        "  #",
+        "  # Nested configuration section",
+        "  # Section header",
+        "  # Note: important info",
+    ];
+
+    for line in test_cases {
+        let indent = calculate_indentation(line);
+        assert_eq!(indent, 2, "Single-indent comment should have 2 spaces: '{}'", line);
+
+        let line_type = classify_line_type(line);
+        assert_eq!(line_type, LineType::Comment, "Single-indent comment should be Comment type: '{}'", line);
+
+        let is_comment = is_comment_line(line);
+        assert!(is_comment, "Single-indent line should be identified as comment: '{}'", line);
+
+        let stripped = strip_inline_comment(line);
+        assert_eq!(stripped, "  ", "Single-indent comment should preserve indentation: '{}'", line);
+    }
+
+    // Also test that inline comments at single indent work correctly
+    let inline_cases = vec![
+        ("  key: value # inline comment", "  key: value "),
+        ("  - item # comment", "  - item "),
+    ];
+
+    for (line, expected_stripped) in inline_cases {
+        assert_eq!(calculate_indentation(line), 2, "Inline comment line should have 2 spaces");
+        assert!(!is_comment_line(line), "Inline comment line should not be a full comment line");
+        assert_eq!(strip_inline_comment(line), expected_stripped);
+    }
+}
+
+#[test]
+fn test_double_indent_comments() {
+    // Test for double-indent comments (4 spaces)
+    let test_cases = vec![
+        "    # Double-nested comment (4 spaces)",
+        "    #",
+        "    # Deep configuration option",
+        "    # Deep section header",
+        "    # Note: very important",
+    ];
+
+    for line in test_cases {
+        let indent = calculate_indentation(line);
+        assert_eq!(indent, 4, "Double-indent comment should have 4 spaces: '{}'", line);
+
+        let line_type = classify_line_type(line);
+        assert_eq!(line_type, LineType::Comment, "Double-indent comment should be Comment type: '{}'", line);
+
+        let is_comment = is_comment_line(line);
+        assert!(is_comment, "Double-indent line should be identified as comment: '{}'", line);
+
+        let stripped = strip_inline_comment(line);
+        assert_eq!(stripped, "    ", "Double-indent comment should preserve indentation: '{}'", line);
+    }
+
+    // Also test that inline comments at double indent work correctly
+    let inline_cases = vec![
+        ("    key: value # inline comment", "    key: value "),
+        ("    - item # comment", "    - item "),
+    ];
+
+    for (line, expected_stripped) in inline_cases {
+        assert_eq!(calculate_indentation(line), 4, "Inline comment line should have 4 spaces");
+        assert!(!is_comment_line(line), "Inline comment line should not be a full comment line");
+        assert_eq!(strip_inline_comment(line), expected_stripped);
+    }
+}
+
+#[test]
+fn test_deep_indent_comments() {
+    // Test for deep-indent comments (8+ spaces)
+    let test_cases = vec![
+        ("        # Quad-nested comment (8 spaces)", 8),
+        ("          # Penta-nested comment (10 spaces)", 10),
+        ("            # Hexa-nested comment (12 spaces)", 12),
+        ("              # Very deep comment (14 spaces)", 14),
+        ("                # Extremely deep comment (16 spaces)", 16),
+    ];
+
+    for (line, expected_indent) in test_cases {
+        let indent = calculate_indentation(line);
+        assert_eq!(indent, expected_indent, "Deep-indent comment should have {} spaces: '{}'", expected_indent, line);
+
+        let line_type = classify_line_type(line);
+        assert_eq!(line_type, LineType::Comment, "Deep-indent comment should be Comment type: '{}'", line);
+
+        let is_comment = is_comment_line(line);
+        assert!(is_comment, "Deep-indent line should be identified as comment: '{}'", line);
+
+        let stripped = strip_inline_comment(line);
+        let expected_spaces = " ".repeat(expected_indent);
+        assert_eq!(stripped, expected_spaces, "Deep-indent comment should preserve indentation: '{}'", line);
+    }
+
+    // Also test that inline comments at deep indents work correctly
+    let inline_cases = vec![
+        ("        key: value # inline comment", "        key: value ", 8),
+        ("          key: value # comment", "          key: value ", 10),
+        ("            key: value # comment", "            key: value ", 12),
+    ];
+
+    for (line, expected_stripped, expected_indent) in inline_cases {
+        assert_eq!(calculate_indentation(line), expected_indent, "Inline comment line should have {} spaces", expected_indent);
+        assert!(!is_comment_line(line), "Inline comment line should not be a full comment line");
+        assert_eq!(strip_inline_comment(line), expected_stripped);
+    }
+}
+
 #[test]
 fn test_comment_at_indentation_level_0() {
     // Comments with no indentation (level 0)
