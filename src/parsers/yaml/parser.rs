@@ -350,6 +350,36 @@ impl BasicParser {
         self.scope_info_stack.push(scope_info);
     }
 
+    /// Pop scope information from the scope info stack
+    ///
+    /// This method is called when exiting a scope to remove its type and depth
+    /// from the tracking stack. Returns None if the stack is empty.
+    ///
+    /// # Returns
+    ///
+    /// `Some(ScopeInfo)` if there was a scope to pop, `None` if the stack is empty
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::scope::{ScopeInfo, ScopeType};
+    /// use armor::parsers::yaml::parser::BasicParser;
+    ///
+    /// let mut parser = BasicParser::new();
+    /// let info = ScopeInfo::block(1);
+    /// parser.push_scope(info);
+    ///
+    /// let popped = parser.pop_scope();
+    /// assert!(popped.is_some());
+    /// assert_eq!(popped.unwrap().scope_depth(), 1);
+    ///
+    /// // Popping from empty stack returns None
+    /// assert!(parser.pop_scope().is_none());
+    /// ```
+    pub fn pop_scope(&mut self) -> Option<ScopeInfo> {
+        self.scope_info_stack.pop()
+    }
+
     /// Update scope depth to match the current scope stack state
     ///
     /// This should be called after operations that modify the scope stack
@@ -775,6 +805,9 @@ impl Parser for BasicParser {
                                 line_num_1index,
                                 Some(ctx.key_name().to_string())
                             );
+                            // Track scope info on the parser's scope info stack
+                            let scope_info = ScopeInfo::block(scope_stack.depth());
+                            self.push_scope(scope_info);
                         } else {
                             // Indent increased but not a parent key - this is an inline scalar at deeper indent
                             // Just add the key to current scope, don't create a new scope
@@ -2344,5 +2377,94 @@ a:
         assert_eq!(scopes[1].scope_type(), ScopeType::Block, "Second scope should be Block");
         assert_eq!(scopes[2].scope_type(), ScopeType::BlockSequence, "Third scope should be BlockSequence");
         assert_eq!(scopes[3].scope_type(), ScopeType::FlowMapping, "Fourth scope should be FlowMapping");
+    }
+
+    /// Test pop_scope returns None on empty stack
+    #[test]
+    fn test_pop_scope_empty_stack() {
+        let mut parser = BasicParser::new();
+
+        // Initially scope_info_stack should be empty
+        assert_eq!(parser.scope_info_stack().len(), 0, "Initial scope info stack should be empty");
+
+        // Pop from empty stack should return None
+        let popped = parser.pop_scope();
+        assert!(popped.is_none(), "Pop from empty stack should return None");
+    }
+
+    /// Test pop_scope returns and removes the last scope
+    #[test]
+    fn test_pop_scope_single_item() {
+        let mut parser = BasicParser::new();
+
+        // Push a single scope
+        parser.push_scope(ScopeInfo::block(1));
+
+        // Verify it was added
+        assert_eq!(parser.scope_info_stack().len(), 1, "Scope info stack should have 1 item after push");
+
+        // Pop should return the scope
+        let popped = parser.pop_scope();
+        assert!(popped.is_some(), "Pop should return Some(ScopeInfo)");
+        assert_eq!(popped.unwrap().scope_depth(), 1, "Popped scope should have depth 1");
+
+        // Verify stack is now empty
+        assert_eq!(parser.scope_info_stack().len(), 0, "Scope info stack should be empty after pop");
+    }
+
+    /// Test pop_scope removes items in LIFO order
+    #[test]
+    fn test_pop_scope_lifo_order() {
+        let mut parser = BasicParser::new();
+
+        // Push multiple scopes
+        parser.push_scope(ScopeInfo::block(1));
+        parser.push_scope(ScopeInfo::block(2));
+        parser.push_scope(ScopeInfo::block(3));
+
+        // Verify all were added
+        assert_eq!(parser.scope_info_stack().len(), 3, "Scope info stack should have 3 items");
+
+        // Pop should return items in reverse order (LIFO)
+        let first_pop = parser.pop_scope();
+        assert!(first_pop.is_some());
+        assert_eq!(first_pop.unwrap().scope_depth(), 3, "First pop should return depth 3");
+
+        let second_pop = parser.pop_scope();
+        assert!(second_pop.is_some());
+        assert_eq!(second_pop.unwrap().scope_depth(), 2, "Second pop should return depth 2");
+
+        let third_pop = parser.pop_scope();
+        assert!(third_pop.is_some());
+        assert_eq!(third_pop.unwrap().scope_depth(), 1, "Third pop should return depth 1");
+
+        // Stack should now be empty
+        assert_eq!(parser.scope_info_stack().len(), 0, "Scope info stack should be empty after all pops");
+    }
+
+    /// Test pop_scope preserves remaining items
+    #[test]
+    fn test_pop_scope_preserves_remaining() {
+        let mut parser = BasicParser::new();
+
+        // Push multiple scopes
+        parser.push_scope(ScopeInfo::root());
+        parser.push_scope(ScopeInfo::block(1));
+        parser.push_scope(ScopeInfo::block(2));
+
+        // Verify all were added
+        assert_eq!(parser.scope_info_stack().len(), 3, "Scope info stack should have 3 items");
+
+        // Pop one item
+        let popped = parser.pop_scope();
+        assert!(popped.is_some());
+
+        // Verify remaining items are still there
+        assert_eq!(parser.scope_info_stack().len(), 2, "Scope info stack should have 2 items after one pop");
+
+        // Verify the remaining items are the first two pushed
+        let scopes = parser.scope_info_stack();
+        assert_eq!(scopes[0].scope_type(), ScopeType::Root, "First remaining scope should be Root");
+        assert_eq!(scopes[1].scope_depth(), 1, "Second remaining scope should have depth 1");
     }
 }
