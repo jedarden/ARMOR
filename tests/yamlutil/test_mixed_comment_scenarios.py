@@ -705,6 +705,205 @@ item2:
         "Anchor with literal block should work correctly"
 
 
+def test_folded_scalar_explicit_indent_tab():
+    """Test folded scalars with explicit indent levels and tab rejection.
+
+    This test verifies that folded scalars with explicit indentation work correctly
+    with spaces, and that tab indentation is properly rejected as invalid YAML.
+
+    YAML folded scalar modifiers:
+    - > or >N  : plain (keeps single trailing newline)
+    - >- or >-N: strip (removes trailing newlines)
+    - >+ or >+N: keep (keeps all trailing newlines)
+
+    where N is the explicit indentation level (number of spaces).
+
+    Per YAML spec: tabs are invalid for indentation and should be rejected.
+    """
+    parser = YAMLCoreParser()
+
+    # Test modifier > (plain) with indent levels 1-5, using spaces
+    yaml_content_plain = """# Plain folded scalar with explicit indent
+plain_indent_1: >1
+ Line 1 indented
+ Line 2 indented
+
+plain_indent_2: >2
+  Line 1 double-indented
+  Line 2 double-indented
+
+plain_indent_3: >3
+   Line 1 triple-indented
+   Line 2 triple-indented
+
+plain_indent_4: >4
+    Line 1 quad-indented
+    Line 2 quad-indented
+
+plain_indent_5: >5
+     Line 1 quint-indented
+     Line 2 quint-indented
+"""
+    result = parser.safe_load(yaml_content_plain)
+    assert result.is_success(), "Plain folded scalar parsing should succeed"
+
+    # Verify plain modifier content is preserved (newlines folded to spaces)
+    assert 'Line 1 indented' in result.data['plain_indent_1'], \
+        "Plain >1 should preserve indented content"
+    assert 'Line 2 indented' in result.data['plain_indent_1'], \
+        "Plain >1 should preserve all indented lines"
+
+    assert 'Line 1 double-indented' in result.data['plain_indent_2'], \
+        "Plain >2 should preserve double-indented content"
+    assert 'Line 2 double-indented' in result.data['plain_indent_2'], \
+        "Plain >2 should preserve all double-indented lines"
+
+    assert 'Line 1 triple-indented' in result.data['plain_indent_3'], \
+        "Plain >3 should preserve triple-indented content"
+    assert 'Line 2 triple-indented' in result.data['plain_indent_3'], \
+        "Plain >3 should preserve all triple-indented lines"
+
+    assert 'Line 1 quad-indented' in result.data['plain_indent_4'], \
+        "Plain >4 should preserve quad-indented content"
+    assert 'Line 2 quad-indented' in result.data['plain_indent_4'], \
+        "Plain >4 should preserve all quad-indented lines"
+
+    assert 'Line 1 quint-indented' in result.data['plain_indent_5'], \
+        "Plain >5 should preserve quint-indented content"
+    assert 'Line 2 quint-indented' in result.data['plain_indent_5'], \
+        "Plain >5 should preserve all quint-indented lines"
+
+    # Test modifier >- (strip) with indent levels 1-5, using spaces
+    yaml_content_strip = """# Strip folded scalar with explicit indent
+strip_indent_1: >-1
+ Line 1 indented
+ Line 2 indented
+
+strip_indent_2: >-2
+  Line 1 double-indented
+  Line 2 double-indented
+
+strip_indent_3: >-3
+   Line 1 triple-indented
+   Line 2 triple-indented
+
+strip_indent_4: >-4
+    Line 1 quad-indented
+    Line 2 quad-indented
+
+strip_indent_5: >-5
+     Line 1 quint-indented
+     Line 2 quint-indented
+"""
+    result = parser.safe_load(yaml_content_strip)
+    assert result.is_success(), "Strip folded scalar parsing should succeed"
+
+    # Verify strip modifier content is preserved (trailing newlines removed)
+    assert 'Line 1 indented' in result.data['strip_indent_1'], \
+        "Strip >-1 should preserve indented content"
+    assert 'Line 2 indented' in result.data['strip_indent_1'], \
+        "Strip >-1 should preserve all indented lines"
+
+    assert 'Line 1 double-indented' in result.data['strip_indent_2'], \
+        "Strip >-2 should preserve double-indented content"
+    assert 'Line 2 double-indented' in result.data['strip_indent_2'], \
+        "Strip >-2 should preserve all double-indented lines"
+
+    assert 'Line 1 triple-indented' in result.data['strip_indent_3'], \
+        "Strip >-3 should preserve triple-indented content"
+    assert 'Line 2 triple-indented' in result.data['strip_indent_3'], \
+        "Strip >-3 should preserve all triple-indented lines"
+
+    assert 'Line 1 quad-indented' in result.data['strip_indent_4'], \
+        "Strip >-4 should preserve quad-indented content"
+    assert 'Line 2 quad-indented' in result.data['strip_indent_4'], \
+        "Strip >-4 should preserve all quad-indented lines"
+
+    assert 'Line 1 quint-indented' in result.data['strip_indent_5'], \
+        "Strip >-5 should preserve quint-indented content"
+    assert 'Line 2 quint-indented' in result.data['strip_indent_5'], \
+        "Strip >-5 should preserve all quint-indented lines"
+
+    # Test modifier >+ (keep) with indent levels 1-5, using spaces
+    yaml_content_keep = """# Keep folded scalar with explicit indent
+keep_indent_1: >+1
+ Line 1 indented
+ Line 2 indented
+
+keep_indent_2: >+2
+  Line 1 double-indented
+  Line 2 double-indented
+
+keep_indent_3: >+3
+   Line 1 triple-indented
+   Line 2 triple-indented
+
+keep_indent_4: >+4
+    Line 1 quad-indented
+    Line 2 quad-indented
+
+keep_indent_5: >+5
+     Line 1 quint-indented
+     Line 2 quint-indented
+"""
+    result = parser.safe_load(yaml_content_keep)
+    assert result.is_success(), "Keep folded scalar parsing should succeed"
+
+    # Verify keep modifier content is preserved (all trailing newlines kept)
+    assert 'Line 1 indented' in result.data['keep_indent_1'], \
+        "Keep >+1 should preserve indented content"
+    assert 'Line 2 indented' in result.data['keep_indent_1'], \
+        "Keep >+1 should preserve all indented lines"
+
+    assert 'Line 1 double-indented' in result.data['keep_indent_2'], \
+        "Keep >+2 should preserve double-indented content"
+    assert 'Line 2 double-indented' in result.data['keep_indent_2'], \
+        "Keep >+2 should preserve all double-indented lines"
+
+    assert 'Line 1 triple-indented' in result.data['keep_indent_3'], \
+        "Keep >+3 should preserve triple-indented content"
+    assert 'Line 2 triple-indented' in result.data['keep_indent_3'], \
+        "Keep >+3 should preserve all triple-indented lines"
+
+    assert 'Line 1 quad-indented' in result.data['keep_indent_4'], \
+        "Keep >+4 should preserve quad-indented content"
+    assert 'Line 2 quad-indented' in result.data['keep_indent_4'], \
+        "Keep >+4 should preserve all quad-indented lines"
+
+    assert 'Line 1 quint-indented' in result.data['keep_indent_5'], \
+        "Keep >+5 should preserve quint-indented content"
+    assert 'Line 2 quint-indented' in result.data['keep_indent_5'], \
+        "Keep >+5 should preserve all quint-indented lines"
+
+    # Test that tab indentation is rejected for folded scalars
+    yaml_content_tabs = """# Folded scalar with tab indentation (invalid)
+tab_indent: >1
+\tLine 1 tab-indented
+\tLine 2 tab-indented
+"""
+    result = parser.safe_load(yaml_content_tabs)
+    assert not result.is_success(), "Tab-indented folded scalar should fail parsing"
+    assert result.error is not None, "Should have error details"
+    assert 'tab' in result.error.message.lower() or '\\t' in result.error.message or 'cannot start any token' in result.error.message, \
+        "Error should mention tab issue"
+
+    # Test tabs with >- modifier
+    yaml_content_tabs_strip = """tab_strip: >-1
+\tTab line 1
+\tTab line 2
+"""
+    result = parser.safe_load(yaml_content_tabs_strip)
+    assert not result.is_success(), "Tab-indented strip folded scalar should fail"
+
+    # Test tabs with >+ modifier
+    yaml_content_tabs_keep = """tab_keep: >+1
+\tTab line 1
+\tTab line 2
+"""
+    result = parser.safe_load(yaml_content_tabs_keep)
+    assert not result.is_success(), "Tab-indented keep folded scalar should fail"
+
+
 def main():
     """Run all mixed scenario tests."""
     print("Running YAML Mixed Scenario Comment Tests")
@@ -740,6 +939,8 @@ def main():
         ("Multi-line: mixed block scalars with comments", test_multiline_mixed_block_scalars_with_comments),
         ("Multi-line: deeply nested block scalars with #", test_multiline_deeply_nested_block_scalars_with_hash),
         ("Multi-line: block scalar with anchors and #", test_multiline_block_scalar_with_anchors_and_hash),
+        # Folded scalar explicit indent with tab tests
+        ("Folded scalar: explicit indent with tabs", test_folded_scalar_explicit_indent_tab),
     ]
 
     passed = 0
