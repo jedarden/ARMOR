@@ -236,3 +236,74 @@ fn test_push_scope_consecutive_lifo_order() {
         "last() should return the most recently pushed scope"
     );
 }
+
+#[test]
+fn test_push_scope_mixed_type_identification() {
+    let mut parser = BasicParser::new();
+
+    // Push a variety of scope types in mixed order
+    parser.push_scope(ScopeInfo::root());                          // Root
+    parser.push_scope(ScopeInfo::block(1));                       // Block mapping
+    parser.push_scope(ScopeInfo::new(ScopeType::FlowSequence, 2)); // Flow sequence
+    parser.push_scope(ScopeInfo::block_sequence(3));              // Block sequence
+    parser.push_scope(ScopeInfo::flow_mapping(4));                // Flow mapping
+
+    let scopes = parser.scope_info_stack();
+    assert_eq!(scopes.len(), 5, "Should have 5 scopes");
+
+    // Verify each scope type is correctly identified using multiple methods
+    // Root scope
+    assert_eq!(scopes[0].scope_type(), ScopeType::Root, "First should be Root");
+    assert!(scopes[0].is_root(), "Root should identify as root");
+    assert!(!scopes[0].is_block(), "Root should not identify as block");
+    assert!(!scopes[0].is_flow(), "Root should not identify as flow");
+    assert!(!scopes[0].is_sequence(), "Root should not identify as sequence");
+    assert!(!scopes[0].is_mapping(), "Root should not identify as mapping");
+
+    // Block mapping scope
+    assert_eq!(scopes[1].scope_type(), ScopeType::Block, "Second should be Block");
+    assert!(scopes[1].is_block(), "Block should identify as block");
+    assert!(scopes[1].is_mapping(), "Block should identify as mapping");
+    assert!(!scopes[1].is_flow(), "Block should not identify as flow");
+    assert!(!scopes[1].is_sequence(), "Block should not identify as sequence");
+    assert!(!scopes[1].is_root(), "Block should not identify as root");
+
+    // Flow sequence scope
+    assert_eq!(scopes[2].scope_type(), ScopeType::FlowSequence, "Third should be FlowSequence");
+    assert!(scopes[2].is_flow(), "FlowSequence should identify as flow");
+    assert!(scopes[2].is_sequence(), "FlowSequence should identify as sequence");
+    assert!(!scopes[2].is_block(), "FlowSequence should not identify as block");
+    assert!(!scopes[2].is_mapping(), "FlowSequence should not identify as mapping");
+    assert!(!scopes[2].is_root(), "FlowSequence should not identify as root");
+
+    // Block sequence scope
+    assert_eq!(scopes[3].scope_type(), ScopeType::BlockSequence, "Fourth should be BlockSequence");
+    assert!(scopes[3].is_block(), "BlockSequence should identify as block");
+    assert!(scopes[3].is_sequence(), "BlockSequence should identify as sequence");
+    assert!(!scopes[3].is_flow(), "BlockSequence should not identify as flow");
+    assert!(!scopes[3].is_mapping(), "BlockSequence should not identify as mapping");
+    assert!(!scopes[3].is_root(), "BlockSequence should not identify as root");
+
+    // Flow mapping scope
+    assert_eq!(scopes[4].scope_type(), ScopeType::FlowMapping, "Fifth should be FlowMapping");
+    assert!(scopes[4].is_flow(), "FlowMapping should identify as flow");
+    assert!(scopes[4].is_mapping(), "FlowMapping should identify as mapping");
+    assert!(!scopes[4].is_block(), "FlowMapping should not identify as block");
+    assert!(!scopes[4].is_sequence(), "FlowMapping should not identify as sequence");
+    assert!(!scopes[4].is_root(), "FlowMapping should not identify as root");
+}
+
+#[test]
+fn test_push_scope_flow_sequence_type() {
+    let mut parser = BasicParser::new();
+
+    // Push a flow sequence scope
+    parser.push_scope(ScopeInfo::new(ScopeType::FlowSequence, 2));
+
+    // Verify it was added with correct type
+    let pushed_info = parser.scope_info_stack().last().unwrap();
+    assert_eq!(pushed_info.scope_type(), ScopeType::FlowSequence, "Pushed scope should be FlowSequence type");
+    assert!(pushed_info.is_sequence(), "Pushed scope should identify as sequence");
+    assert!(pushed_info.is_flow(), "Pushed scope should identify as flow");
+    assert!(!pushed_info.is_block(), "Pushed scope should not identify as block");
+}
