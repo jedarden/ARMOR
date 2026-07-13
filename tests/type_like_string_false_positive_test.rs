@@ -2863,6 +2863,35 @@ fn test_message_template_config() {
 }
 
 #[test]
+fn test_simple_message_patterns_with_exclamation() {
+    // Simple message patterns with exclamation marks (acceptance criteria verification)
+    // This tests the exact pattern "message: Hello!" mentioned in acceptance criteria
+    let test_cases = vec![
+        "message: Hello!",
+        "greeting: Hi!",
+        "alert: Warning!",
+        "note: Important!",
+        "status: Ready!",
+        "error: Failed!",
+        "success: Done!",
+        "info: Notice!",
+        "debug: Check!",
+        "trace: Logged!",
+        "warning: Caution!",
+        "critical: Alert!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Simple message pattern with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
 fn test_css_and_ui_config() {
     // CSS and UI configuration with !important patterns
     let test_cases = vec![
