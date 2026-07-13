@@ -6,10 +6,12 @@
 Verified all *yaml.TypeError type assertions added in previous beads (bf-3kag8, bf-5h1k5).
 
 ## Files Verified
-- **parser.go**: Type assertions at lines 107, 164, 394 with proper comments
-- **validator.go**: Type assertion at line 269  
-- **syntax_validator.go**: Type assertion at line 1032
-- **future.go**: Type assertion at line 103
+- **parser.go**: Type assertions at lines 109, 167, 397 (3 instances)
+- **validator.go**: Type assertion at line 269 (1 instance)
+- **syntax_validator.go**: Type assertion at line 1032 (1 instance)
+- **future.go**: Type assertion at line 103 (1 instance)
+
+**Total: 6 type assertions across 4 files**
 
 ## Tests Created and Passed
 1. **TestYAMLTypeErrorTypeAssertions** - Verifies parser, validator, and syntax validator handle type errors
