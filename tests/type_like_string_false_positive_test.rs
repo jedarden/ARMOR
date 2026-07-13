@@ -7408,6 +7408,61 @@ fn test_basic_indentation_levels_with_exclamation_marks() {
 }
 
 #[test]
+fn test_level_1_indentation_with_exclamation_mark() {
+    // Test level 1 (single-level indentation) with '!' character
+    // Level 1: 2-space indentation - the most common single-level indentation scenario
+    // This test focuses exclusively on level 1 indentation with exclamation marks
+
+    let test_cases = vec![
+        // Level 1: 2-space indentation with '!' at various positions
+        ("  key!: >", LineType::MappingKey),
+        ("  simple!test: >", LineType::MappingKey),
+        ("  end!with!bang!: >", LineType::MappingKey),
+        ("  multiple!!!here: >", LineType::MappingKey),
+        ("  spaced!out!keys!: >", LineType::MappingKey),
+
+        // Level 1: Keys starting with '!' (Tag type)
+        ("  !tag: >", LineType::Tag),
+        ("  !.custom: >", LineType::Tag),
+        ("  !start!end: >", LineType::Tag),
+        ("  !!double: >", LineType::Tag),
+
+        // Level 1: Folded scalar with modifiers
+        ("  level1_key!: >-", LineType::MappingKey),
+        ("  first!: >+", LineType::MappingKey),
+        ("  basic!: >-2", LineType::MappingKey),
+        ("  simple!test: >2", LineType::MappingKey),
+    ];
+
+    for (line, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Level 1 indentation test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+    }
+
+    // Test continuation lines for level 1 indentation with '!'
+    let continuation_lines = vec![
+        "  Content with! exclamations!",
+        "  Multiple! bangs! in! line!",
+        "  Important! message! continues!",
+        "  Another! line! with! emphasis!",
+    ];
+
+    for line in continuation_lines {
+        let result = classify_line_type(line);
+        // Continuation lines should be MappingKey or Unknown
+        assert!(
+            result == LineType::MappingKey || result == LineType::Unknown,
+            "Level 1 continuation should be MappingKey or Unknown: '{}' (got {:?})",
+            line, result
+        );
+    }
+}
+
+#[test]
 fn test_various_indentation_levels_with_exclamation_marks() {
     // Test various indentation levels with folded scalars and exclamation marks in keys
     // This provides comprehensive coverage of indentation scenarios with '!' characters
