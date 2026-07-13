@@ -4957,6 +4957,328 @@ fn test_multiple_typos_in_single_type_name() {
     }
 }
 
+#[test]
+fn test_detect_mapping_key_with_type_name_typos() {
+    // Verify that type name typos are correctly identified as string values (not tags)
+    // This is critical for acceptance criterion: "Verify typos are correctly identified as strings not types"
+    let test_cases = vec![
+        // Basic typos should be extracted as string values
+        ("datatype: strign", "datatype", Some("strign")),
+        ("value: integre", "value", Some("integre")),
+        ("flag: boolan", "flag", Some("boolan")),
+        ("items: arrary", "items", Some("arrary")),
+        ("config: objec", "config", Some("objec")),
+        // Truncated type names (from acceptance criteria)
+        ("type: Strin", "type", Some("Strin")),
+        ("type: Intger", "type", Some("Intger")),
+        ("type: Bool", "type", Some("Bool")),
+        ("type: Arr", "type", Some("Arr")),
+        ("type: Obj", "type", Some("Obj")),
+        // Case variations (from acceptance criteria)
+        ("type: String", "type", Some("String")),
+        ("type: STRING", "type", Some("STRING")),
+        ("type: INTEGER", "type", Some("INTEGER")),
+        ("type: Boolean", "type", Some("Boolean")),
+        ("type: Array", "type", Some("Array")),
+        // Misspelled type names
+        ("type: strnig", "type", Some("strnig")),
+        ("type: interger", "type", Some("interger")),
+        ("type: boolena", "type", Some("boolena")),
+        ("type: arraay", "type", Some("arraay")),
+        ("type: objject", "type", Some("objject")),
+        // Transposed letters
+        ("type: tsring", "type", Some("tsring")),
+        ("type: itneger", "type", Some("itneger")),
+        ("type: boolena", "type", Some("boolena")),
+        ("type: rarray", "type", Some("rarray")),
+        ("type: ojbect", "type", Some("ojbect")),
+        // Missing letters
+        ("type: strng", "type", Some("strng")),
+        ("type: interer", "type", Some("interer")),
+        ("type: boolan", "type", Some("boolan")),
+        ("type: arry", "type", Some("arry")),
+        ("type: objec", "type", Some("objec")),
+        // Extra letters
+        ("type: striing", "type", Some("striing")),
+        ("type: inteeger", "type", Some("inteeger")),
+        ("type: booleann", "type", Some("booleann")),
+        ("type: arrayy", "type", Some("arrayy")),
+        ("type: objectt", "type", Some("objectt")),
+        // With numbers
+        ("type: str1ng", "type", Some("str1ng")),
+        ("type: int3ger", "type", Some("int3ger")),
+        ("type: b00l3an", "type", Some("b00l3an")),
+        // Reversed type names
+        ("type: gnirts", "type", Some("gnirts")),
+        ("type: regetni", "type", Some("regetni")),
+        ("type: naelooB", "type", Some("naelooB")),
+        ("type: yarra", "type", Some("yarra")),
+        ("type: tcejo", "type", Some("tcejo")),
+        // Alternative type names
+        ("type: text", "type", Some("text")),
+        ("type: number", "type", Some("number")),
+        ("type: flag", "type", Some("flag")),
+        ("type: list", "type", Some("list")),
+        ("type: dict", "type", Some("dict")),
+        ("type: str", "type", Some("str")),
+        ("type: int", "type", Some("int")),
+        ("type: bool", "type", Some("bool")),
+        // Programming language types
+        ("type: i32", "type", Some("i32")),
+        ("type: Vec", "type", Some("Vec")),
+        ("type: HashMap", "type", Some("HashMap")),
+        ("type: Integer", "type", Some("Integer")),
+        ("type: List", "type", Some("List")),
+        ("type: Map", "type", Some("Map")),
+        ("type: NSString", "type", Some("NSString")),
+        ("type: std::string", "type", Some("std::string")),
+        // SQL types
+        ("type: varchar", "type", Some("varchar")),
+        ("type: varchar(255)", "type", Some("varchar(255)")),
+        ("type: bigint", "type", Some("bigint")),
+        ("type: decimal", "type", Some("decimal")),
+        ("type: uuid", "type", Some("uuid")),
+        // JSON Schema union types (with pipes)
+        ("type: string|null", "type", Some("string|null")),
+        ("type: array|string", "type", Some("array|string")),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Type name typo should be detected as mapping key (not rejected as tag): '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(
+            info.key, expected_key,
+            "Should extract correct key from typo value: '{}'",
+            line
+        );
+        assert_eq!(
+            info.value, expected_value.map(String::from),
+            "Should extract typo as string value (not interpret as type): '{}'",
+            line
+        );
+        assert!(
+            info.has_inline_value,
+            "Should have inline value: '{}'",
+            line
+        );
+        assert!(
+            !info.is_parent_key,
+            "Should not be parent key (should have value): '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_typos_in_quoted_values() {
+    // Type name typos in quoted strings should still be extracted correctly
+    let test_cases = vec![
+        ("error: \"Expected Strin\"", "error", Some("\"Expected Strin\"")),
+        ("message: 'type INTEGER'", "message", Some("'type INTEGER'")),
+        ("description: \"invalid Intger\"", "description", Some("\"invalid Intger\"")),
+        ("note: 'type Arrya'", "note", Some("'type Arrya'")),
+        ("warning: \"Boolan error\"", "warning", Some("\"Boolan error\"")),
+        ("text: 'Objcet not found'", "text", Some("'Objcet not found'")),
+        ("status: \"got Strig\"", "status", Some("\"got Strig\"")),
+        ("msg: 'Interger deprecated'", "msg", Some("'Interger deprecated'")),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Quoted type name typo should be detected as mapping key: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract correct key: '{}'", line);
+        assert_eq!(
+            info.value, expected_value.map(String::from),
+            "Should extract quoted value with typo: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_typos_in_error_messages() {
+    // Type name typos appearing in error message contexts
+    let test_cases = vec![
+        ("error: Expected String but got Strin", "error", Some("Expected String but got Strin")),
+        ("message: type INTEGER is invalid", "message", Some("type INTEGER is invalid")),
+        ("warning: field type Intger not recognized", "warning", Some("field type Intger not recognized")),
+        ("error: type 'Arrya' does not exist", "error", Some("type 'Arrya' does not exist")),
+        ("description: invalid type Boolan", "description", Some("invalid type Boolan")),
+        ("note: type Objcet is not defined", "note", Some("type Objcet is not defined")),
+        ("error: cannot convert to Strig", "error", Some("cannot convert to Strig")),
+        ("message: type Interger is deprecated", "message", Some("type Interger is deprecated")),
+        ("warning: field type Arary is unknown", "warning", Some("field type Arary is unknown")),
+        ("error: expected Boolen got boolean", "error", Some("expected Boolen got boolean")),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Error message with type typo should be detected as mapping key: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract key from error message: '{}'", line);
+        assert_eq!(
+            info.value, expected_value.map(String::from),
+            "Should extract error message with typo: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_keyboard_adjacent_typos() {
+    // Keyboard-adjacent typos should be extracted as string values
+    let test_cases = vec![
+        ("type: strung", "type", Some("strung")),     // 'u' next to 'i'
+        ("type: intzger", "type", Some("intzger")),   // 'z' next to 't'
+        ("type: boolzan", "type", Some("boolzan")),   // 'z' next to 'a'
+        ("type: atrray", "type", Some("atrray")),     // 't' next to 'r'
+        ("type: ibject", "type", Some("ibject")),     // 'i' next to 'o'
+        ("type: striny", "type", Some("striny")),     // 'y' next to 'u'
+        ("type: integrr", "type", Some("integrr")),   // 'r' next to 'e'
+        ("type: boolran", "type", Some("boolran")),   // 'r' next to 'e'
+        ("type: aeeay", "type", Some("aeeay")),       // 'e' next to 'r'
+        ("type: ohject", "type", Some("ohject")),     // 'h' next to 'j'
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Keyboard adjacent typo should be detected as mapping key: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract key: '{}'", line);
+        assert_eq!(
+            info.value, expected_value.map(String::from),
+            "Should extract keyboard typo as string: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_vowel_substitution_typos() {
+    // Vowel substitution typos should be extracted as string values
+    let test_cases = vec![
+        ("type: streng", "type", Some("streng")),      // 'e' instead of 'i'
+        ("type: strung", "type", Some("strung")),      // 'u' instead of 'i'
+        ("type: strang", "type", Some("strang")),      // 'a' instead of 'i'
+        ("type: enteger", "type", Some("enteger")),     // 'e' instead of 'i'
+        ("type: intagar", "type", Some("intagar")),     // 'a' instead of 'e'
+        ("type: intoger", "type", Some("intoger")),     // 'o' instead of 'e'
+        ("type: boolian", "type", Some("boolian")),     // 'i' instead of 'e'
+        ("type: boolaen", "type", Some("boolaen")),     // 'a' instead of 'e'
+        ("type: booloen", "type", Some("booloen")),     // 'o' instead of 'e'
+        ("type: ereay", "type", Some("ereay")),       // 'e' instead of 'a'
+        ("type: orray", "type", Some("orray")),       // 'o' instead of 'a'
+        ("type: urray", "type", Some("urray")),       // 'u' instead of 'a'
+        ("type: ebject", "type", Some("ebject")),      // 'e' instead of 'o'
+        ("type: abject", "type", Some("abject")),      // 'a' instead of 'o'
+        ("type: ubject", "type", Some("ubject")),      // 'u' instead of 'o'
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Vowel substitution typo should be detected as mapping key: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract key: '{}'", line);
+        assert_eq!(
+            info.value, expected_value.map(String::from),
+            "Should extract vowel substitution as string: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_leading_trailing_junk() {
+    // Type names with junk characters should be extracted as string values
+    let test_cases = vec![
+        ("type: xstring", "type", Some("xstring")),     // leading 'x'
+        ("type: xinteger", "type", Some("xinteger")),    // leading 'x'
+        ("type: stringx", "type", Some("stringx")),     // trailing 'x'
+        ("type: integerx", "type", Some("integerx")),    // trailing 'x'
+        ("type: xxstring", "type", Some("xxstring")),    // leading 'xx'
+        ("type: stringxx", "type", Some("stringxx")),    // trailing 'xx'
+        ("type: _string", "type", Some("_string")),     // leading underscore
+        ("type: _integer", "type", Some("_integer")),    // leading underscore
+        ("type: string_", "type", Some("string_")),     // trailing underscore
+        ("type: integer_", "type", Some("integer_")),    // trailing underscore
+        ("type: -string", "type", Some("-string")),     // leading dash
+        ("type: string-", "type", Some("string-")),     // trailing dash
+        ("type: .string", "type", Some(".string")),     // leading dot
+        ("type: string.", "type", Some("string.")),     // trailing dot
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Type name with junk should be detected as mapping key: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract key: '{}'", line);
+        assert_eq!(
+            info.value, expected_value.map(String::from),
+            "Should extract type with junk as string: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_multiple_typos_combined() {
+    // Multiple typos in a single type name should still be extracted as string
+    let test_cases = vec![
+        ("type: strnig", "type", Some("strnig")),      // missing 'i', wrong 'n' position
+        ("type: itneger", "type", Some("itneger")),     // 'i' and 'e' swapped
+        ("type: boolaen", "type", Some("boolaen")),     // 'a' instead of 'e', 'e' instead of 'a'
+        ("type: arary", "type", Some("arary")),       // 'r' duplication, missing second 'r'
+        ("type: ojbect", "type", Some("ojbect")),      // 'j' and 'b' swapped
+        ("type: tsringg", "type", Some("tsringg")),     // 's' and 't' swapped, 'g' duplicated
+        ("type: integr", "type", Some("integr")),      // missing 'e' at end
+        ("type: boolena", "type", Some("boolena")),     // 'e' and 'a' swapped
+        ("type: arrey", "type", Some("arrey")),       // 'e' and 'y' swapped
+        ("type: objict", "type", Some("objict")),      // 'c' and 't' swapped
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Multiple typos should still be detected as mapping key: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract key: '{}'", line);
+        assert_eq!(
+            info.value, expected_value.map(String::from),
+            "Should extract multiple typos as string: '{}'",
+            line
+        );
+    }
+}
+
 // ============================================================================
 // Section 15: Type-like Strings in Complex Contexts
 // ============================================================================
