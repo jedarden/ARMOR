@@ -569,4 +569,3 @@ value: "-0100001"
 	}
 }
 
-// Helper function to check if a string contains any of the given patterns
