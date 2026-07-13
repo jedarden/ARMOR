@@ -996,6 +996,30 @@ fn test_valid_yaml_tag_patterns() {
         "!custom_type",
         "!ns:tag",
         "!!type",
+        // Additional valid patterns
+        "!local-tag",
+        "!my_type",
+        "!CustomTag",
+        "!tag123",
+        "!ns:name",
+        "!com:example:tag",
+        "!yaml:org:yaml:tag",
+        "!!int",
+        "!!float",
+        "!!bool",
+        "!!null",
+        "!!timestamp",
+        "!myNamespace:myTag",
+        "!verb",
+        "!handle",
+        // Tags with hyphens and underscores
+        "!my-tag",
+        "!my_tag",
+        "!tag-name",
+        "!tag_name",
+        // More complex namespace patterns
+        "!example.com:tag",
+        "!org.example.project:type",
     ];
 
     for line in valid_tags {
@@ -1009,6 +1033,30 @@ fn test_valid_yaml_tag_patterns() {
 }
 
 #[test]
+fn test_valid_yaml_tag_patterns_with_indents() {
+    // Valid YAML tags with various indentation levels
+    let valid_tags = vec![
+        "  !tag",
+        "    !custom",
+        "  !!str",
+        "\t!local",
+        "    !!type",
+        "  !ns:tag",
+        "      !my-tag",
+        "\t\t!!int",
+    ];
+
+    for line in valid_tags {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::Tag,
+            "Indented valid YAML tag should be classified as Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
 fn test_invalid_tag_patterns() {
     // Patterns that look like tags but aren't valid YAML
     let test_cases = vec![
@@ -1016,6 +1064,35 @@ fn test_invalid_tag_patterns() {
         "!$",               // Tag with special char
         "!@tag",            // Tag starting with @ (invalid)
         "! space",          // Tag with space immediately after
+        // Additional invalid patterns
+        "!",                // Just exclamation (too short)
+        "!!",               // Just double exclamation
+        "!$",               // Special character only
+        "!#",               // Hash character (comment-like)
+        "!.",               // Dot only
+        "!,",               // Comma only
+        "!$",               // Dollar only
+        "!@tag",            // Invalid @ at start
+        "!#tag",            // Invalid # at start
+        "! tag",            // Space after ! (malformed)
+        "!  tag",           // Multiple spaces after !
+        "!.tag",            // Dot at start
+        "!,tag",            // Comma at start
+        "!:tag",            // Colon at start (invalid)
+        "!;tag",            // Semicolon at start
+        "!|tag",            // Pipe at start
+        "!>tag",            // Greater than at start
+        "!<tag",            // Less than at start
+        "!?tag",            // Question mark at start
+        "!*tag",            // Asterisk at start
+        "!&tag",            // Ampersand at start
+        "!%tag",            // Percent at start
+        "!^tag",            // Caret at start
+        "!~tag",            // Tilde at start
+        "!(tag)",           // Parentheses (invalid)
+        "![tag]",           // Brackets (invalid)
+        "!{tag}",           // Braces (invalid)
+        "!<tag>",           // Angle brackets (invalid)
     ];
 
     for line in test_cases {
@@ -1032,6 +1109,133 @@ fn test_invalid_tag_patterns() {
     }
 }
 
+#[test]
+fn test_tag_like_false_positives_in_values() {
+    // These look like tags but are actually values (after colon)
+    let test_cases = vec![
+        "key: !tag",              // !tag as value
+        "field: !!str",           // !!str as value
+        "data: !custom",          // !custom as value
+        "config: !ns:tag",       // !ns:tag as value
+        "setting: !!type",       // !!type as value
+        "value: !my-tag",        // !my-tag as value
+        "option: !123",          // !123 as value
+        "param: !$value",        // !$value as value
+        "data: !@tag",           // !@tag as value
+        "text: ! important",     // ! with space as value
+        "msg: !todo",            // !todo as value
+        "note: !!",              // !! as value
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Tag-like pattern in value should be MappingKey, not Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_tag_like_false_positives_in_quoted_strings() {
+    // Tag-like patterns inside quoted strings (should not be detected as tags)
+    let test_cases = vec![
+        "key: \"!tag\"",           // Quoted tag
+        "field: '!!str'",          // Single quoted tag
+        "data: \"!custom\"",       // Quoted custom tag
+        "text: '!ns:tag'",         // Single quoted namespaced tag
+        "value: \"!!type\"",       // Quoted double-bang tag
+        "desc: \"Use !tag here\"", // Tag in quoted sentence
+        "note: 'Value is !!str'",  // Tag in single quoted text
+        "msg: \"Ref !ns:tag\"",    // Namespaced tag in quoted text
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Quoted tag-like pattern should be MappingKey, not Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_tag_like_false_positives_in_sequence_items() {
+    // Tag-like patterns in sequence items (should not be detected as tags)
+    let test_cases = vec![
+        "- !tag",                  // Tag-like as sequence item
+        "- !!str",                 // Double-bang as sequence item
+        "- !custom",               // Custom tag-like as sequence item
+        "- \"!tag\"",              // Quoted tag in sequence
+        "- !!str",                 // Double quoted tag in sequence
+        "- !ns:tag",               // Namespaced tag-like in sequence
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Tag-like pattern in sequence should be SequenceItem, not Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_tag_like_false_positives_in_flow_collections() {
+    // Tag-like patterns in flow collections (should not be detected as tags)
+    let test_cases = vec![
+        "items: [!tag, !!str]",           // Tag-like in flow sequence
+        "map: {!key: value}",              // Tag-like in flow mapping
+        "data: [!custom, !tag]",           // Multiple tag-like in flow seq
+        "nested: {key: !value}",           // Tag-like as flow mapping value
+        "complex: [!a, !b, !c]",           // Multiple tag-like patterns
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowSequence || result == LineType::FlowMapping,
+            "Tag-like in flow collection should be MappingKey or Flow type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_actual_yaml_tags_vs_string_values() {
+    // Verify that actual YAML tags are detected while string values with ! are not
+    let test_cases = vec![
+        // These ARE tags (line starts with !, no colon)
+        ("!tag", LineType::Tag, true),
+        ("!!str", LineType::Tag, true),
+        ("!custom", LineType::Tag, true),
+        ("!ns:tag", LineType::Tag, true),
+        ("!!type", LineType::Tag, true),
+        // These are NOT tags (colon present, ! is in value)
+        ("key: !tag", LineType::MappingKey, false),
+        ("field: !!str", LineType::MappingKey, false),
+        ("data: !custom", LineType::MappingKey, false),
+        ("config: !ns:tag", LineType::MappingKey, false),
+        ("setting: !!type", LineType::MappingKey, false),
+        // Tag-like in comments (should be Comment, not Tag)
+        ("# !tag", LineType::Comment, false),
+        ("# !!str", LineType::Comment, false),
+        ("  # !custom", LineType::Comment, false),
+    ];
+
+    for (line, expected_type, is_actual_tag) in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            expected_type,
+            "Line should be classified as {:?} (is_tag: {}): '{}'",
+            expected_type, is_actual_tag, line
+        );
+    }
+}
+
 // ============================================================================
 // Section 11: Whitespace and Exclamation Combinations
 // ============================================================================
@@ -1044,6 +1248,17 @@ fn test_whitespace_before_exclamation() {
         "key: value !",     // Space before !
         "key:  value!",     // Multiple spaces
         "key:\tvalue!",     // Tab separator
+        // Additional whitespace scenarios
+        "key:   value!",    // Three spaces
+        "key:\t\tvalue!",   // Multiple tabs
+        "key: value\t!",    // Tab before !
+        "key: value\n!",    // Newline (if supported)
+        "key:  value  !",   // Spaces around !
+        "key:\tvalue\t!",   // Tabs around !
+        "key :value!",      // Space before colon, no space after
+        "key : value!",     // Space before colon, space after
+        "key  :  value!",   // Multiple spaces around colon
+        "key\t:\tvalue!",   // Tabs around colon
     ];
 
     for line in test_cases {
@@ -1063,6 +1278,17 @@ fn test_exclamation_with_special_whitespace() {
         "key: value\u{200B}!", // Zero-width space before !
         "key: !value",         // Regular space
         "key:\u{3000}value!",  // Ideographic space
+        // Additional Unicode whitespace tests
+        "key: value\u{00A0}!", // Non-breaking space
+        "key: value\u{2002}!", // En space
+        "key: value\u{2003}!", // Em space
+        "key: value\u{2009}!", // Thin space
+        "key: value\u{202F}!", // Narrow no-break space
+        "key: value\u{205F}!", // Medium mathematical space
+        "key:\u{2003}!value",  // Em space after colon
+        "key:\u{00A0}!value",  // Non-breaking space after colon
+        "key:\u{2009}value!",  // Thin space before !
+        "key:\u{202F}value!",  // Narrow space before !
     ];
 
     for line in test_cases {
@@ -1076,6 +1302,206 @@ fn test_exclamation_with_special_whitespace() {
                 line
             );
         }
+    }
+}
+
+#[test]
+fn test_whitespace_only_before_exclamation() {
+    // Lines with only whitespace before ! (edge cases)
+    let test_cases = vec![
+        " !tag",              // Single space before tag
+        "  !tag",             // Two spaces before tag
+        "\t!tag",             // Tab before tag
+        "   !custom",         // Multiple spaces
+        "\t\t!!str",          // Multiple tabs
+        " \t!tag",            // Mixed space and tab
+        "\t !tag",            // Tab then space
+        "  \t!tag",           // Spaces then tab
+        "\t  !tag",           // Tab then spaces
+    ];
+
+    for line in test_cases {
+        // Lines with leading whitespace but starting with ! should still be Tag
+        assert_eq!(
+            classify_line_type(line),
+            LineType::Tag,
+            "Whitespace followed by ! should still be Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_with_whitespace_variations_in_values() {
+    // ! in values with various whitespace patterns
+    let test_cases = vec![
+        "key: value !",       // Space before ! in value
+        "key: value! ",       // Space after ! in value
+        "key: value ! ",      // Spaces around ! in value
+        "key: value  !",      // Multiple spaces before !
+        "key: value!  ",      // Multiple spaces after !
+        "key: value  !  ",    // Multiple spaces around !
+        "key: value\t!",      // Tab before ! in value
+        "key: value!\t",      // Tab after ! in value
+        "key: value\t!\t",    // Tabs around ! in value
+        "key: value \t!",     // Space then tab before !
+        "key: value!\t ",     // Tab then space after !
+        "key: value \t !\t ", // Mixed whitespace around !
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Value with ! and whitespace variations should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_in_comments_with_whitespace() {
+    // ! in comments with various whitespace patterns
+    let test_cases = vec![
+        "# ! important",       // Space after #, then !
+        "#  ! important",      // Multiple spaces
+        "#\t! important",      // Tab after #
+        "# !important",        // No space after !
+        "#  !important",       // Multiple spaces, no space after !
+        "#\t!important",       // Tab, no space after !
+        "#   !   important",   // Multiple spaces throughout
+        "#\t\t!\t\timportant",  // Multiple tabs throughout
+        "#  ! value!",         // Multiple ! in comment
+        "# !!tag",             // Double ! in comment
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::Comment,
+            "Comment with ! and whitespace should be Comment, not Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_with_leading_whitespace_in_mapping_keys() {
+    // Mapping keys with leading whitespace and ! in values
+    let test_cases = vec![
+        "  key: value!",       // Two spaces indent, ! in value
+        "    key: !important", // Four spaces indent, ! starts value
+        "\tkey: value!",       // Tab indent, ! in value
+        "  \tkey: value!",     // Mixed indent, ! in value
+        "\t  key: value!",     // Tab then spaces, ! in value
+        "    key: value !",    // Deep indent, space before !
+        "\t\tkey: value!\t",   // Double tab indent, ! with tab after
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Indented mapping key with ! in value should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_at_sequence_item_with_whitespace() {
+    // Sequence items with ! and various whitespace
+    let test_cases = vec![
+        "- value!",            // Sequence item with ! at end
+        "-  value!",           // Sequence item with space and !
+        "-\tvalue!",           // Sequence item with tab and !
+        "- value !",           // Sequence item with space before !
+        "- value! ",           // Sequence item with space after !
+        "-  value  !  ",       // Sequence item with spaces around !
+        "- !important",        // Sequence item starting with !
+        "-  !important",       // Sequence item with space, starting with !
+        "-\t!tag",             // Sequence item with tab, starting with !
+        "- !!str",             // Sequence item with double ! starting value
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Sequence item with ! and whitespace should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_unicode_exclamation_mark_variations() {
+    // Test various exclamation mark characters and similar symbols
+    let test_cases = vec![
+        "key: value!",        // Regular exclamation (U+0021)
+        "key: value\u{FF01}", // Fullwidth exclamation (U+FF01)
+        "key: value‼",       // Double exclamation (U+203C)
+        "key: value⁉",       // Exclamation question mark (U+2049)
+        "key: value❗",       // Heavy exclamation (U+2757)
+        "key: value❕",       // White exclamation (U+2755)
+        "key: value⚠",       // Warning sign (not exclamation but similar)
+        "key: value⛔",       // No entry sign
+    ];
+
+    for line in test_cases {
+        // Most of these should be classified as MappingKey since they're in values
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Value with exclamation-like symbol should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_whitespace_combinations_with_exclamation_in_different_contexts() {
+    // Complex whitespace scenarios with ! in different YAML contexts
+    let test_cases = vec![
+        // Mapping keys
+        ("key: value!", LineType::MappingKey),
+        ("key: value !", LineType::MappingKey),
+        ("key: value! ", LineType::MappingKey),
+        ("key : value!", LineType::MappingKey),
+        ("key  :  value!", LineType::MappingKey),
+
+        // Tags (whitespace before ! on line, not after colon)
+        (" !tag", LineType::Tag),
+        ("  !custom", LineType::Tag),
+        ("\t!!str", LineType::Tag),
+        ("  \t!ns:tag", LineType::Tag),
+
+        // Comments
+        ("# ! comment", LineType::Comment),
+        ("#  ! comment", LineType::Comment),
+        ("#\t! comment", LineType::Comment),
+
+        // Sequence items
+        ("- value!", LineType::SequenceItem),
+        ("-  value !", LineType::SequenceItem),
+        ("-\tvalue!", LineType::SequenceItem),
+
+        // Flow sequences as values (classified by flow structure)
+        ("items: [value!, other!]", LineType::FlowSequence),
+        ("data: [ !a, !b ]", LineType::FlowSequence),
+
+        // Flow mappings as values (classified as mapping keys with flow content)
+        ("map: {key: value!}", LineType::MappingKey),
+        ("data: {k: !v}", LineType::MappingKey),
+    ];
+
+    for (line, expected) in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            expected,
+            "Complex whitespace with ! should be classified as {:?}: '{}'",
+            expected, line
+        );
     }
 }
 
