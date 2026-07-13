@@ -101,25 +101,37 @@ func extractTypeName(errorStr string) string {
 	}
 
 	// Pattern 8: Type name at end after "expected": "...invalid type, expected <type>"
-	// This pattern only matches known Go types to avoid matching regular words
-	// Must start with special char ([, ], *, {, }) or be a known basic type
-	re8 := regexp.MustCompile(`\bexpected\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*{}]+[\w\-*]*(?:\.[\w\-*]+)*|(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|rune|byte|interface|struct)(?:\s*[,\.\s]*|$))`)
+	// Handles: basic types, complex types (map, slice, pointer, array, channel), package-qualified types
+	// Matches patterns like:
+	// - "expected int", "expected string", "expected bool"
+	// - "expected []string", "expected *int", "expected map[string]int"
+	// - "expected [10]int", "expected chan string", "expected time.Time"
+	// - "expected interface{}", "expected struct{}"
+	// Note: More restrictive to avoid matching common English words
+	re8 := regexp.MustCompile(`\bexpected\s+((?:(?:chan|chan<-|<-chan)\s+)?map\[[^\]]+\][\w\-*]+|(?:(?:chan|chan<-|<-chan)\s+)?\[[\d\]]*[\w\-*]+|(?:(?:chan|chan<-|<-chan)\s+)?\*[\w\-*]+|(?:(?:chan|chan<-|<-chan)\s+)?interface\{\}|(?:(?:chan|chan<-|<-chan)\s+)?struct\{\}|(?:(?:chan|chan<-|<-chan)\s+)?[\w\-*]+\.[\w\-*]+|(?:chan|chan<-|<-chan)\s+[\w\-*]+|(?:(?:\*|\[)?(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|time\.Time|rune|byte)))`)
 	if matches := re8.FindStringSubmatch(errorStr); matches != nil {
 		typeName := strings.TrimRight(matches[1], ".,")
 		return typeName
 	}
 
 	// Pattern 9: Type name at end after "want": "...error, want <type>"
-	// Must start with special char ([, ], *, {, }) or be a known basic type
-	re9 := regexp.MustCompile(`\bwant\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*{}]+[\w\-*]*(?:\.[\w\-*]+)*|(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|rune|byte|interface|struct)(?:\s*[,\.\s]*|$))`)
+	// Handles: basic types, complex types (map, slice, pointer, array, channel), package-qualified types
+	// Matches patterns like:
+	// - "want int", "want string", "want bool"
+	// - "want []string", "want *int", "want map[string]int"
+	// - "want [10]int", "want chan string", "want time.Time"
+	// - "want interface{}", "want struct{}"
+	// Note: More restrictive to avoid matching common English words
+	re9 := regexp.MustCompile(`\bwant\s+((?:(?:chan|chan<-|<-chan)\s+)?map\[[^\]]+\][\w\-*]+|(?:(?:chan|chan<-|<-chan)\s+)?\[[\d\]]*[\w\-*]+|(?:(?:chan|chan<-|<-chan)\s+)?\*[\w\-*]+|(?:(?:chan|chan<-|<-chan)\s+)?interface\{\}|(?:(?:chan|chan<-|<-chan)\s+)?struct\{\}|(?:(?:chan|chan<-|<-chan)\s+)?[\w\-*]+\.[\w\-*]+|(?:chan|chan<-|<-chan)\s+[\w\-*]+|(?:(?:\*|\[)?(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|time\.Time|rune|byte)))`)
 	if matches := re9.FindStringSubmatch(errorStr); matches != nil {
 		typeName := strings.TrimRight(matches[1], ".,")
 		return typeName
 	}
 
 	// Pattern 10: Type name at end after "got" (extract actual type): "...error, got <type>"
-	// Must start with special char ([, ], *, {, }) or be a known basic type
-	re10 := regexp.MustCompile(`\bgot\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*{}]+[\w\-*]*(?:\.[\w\-*]+)*|(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|rune|byte|interface|struct)(?:\s*[,\.\s]*|$))`)
+	// Handles: basic types, complex types (map, slice, pointer, array, channel), package-qualified types
+	// Note: More restrictive to avoid matching common English words
+	re10 := regexp.MustCompile(`\bgot\s+((?:(?:chan|chan<-|<-chan)\s+)?map\[[^\]]+\][\w\-*]+|(?:(?:chan|chan<-|<-chan)\s+)?\[[\d\]]*[\w\-*]+|(?:(?:chan|chan<-|<-chan)\s+)?\*[\w\-*]+|(?:(?:chan|chan<-|<-chan)\s+)?interface\{\}|(?:(?:chan|chan<-|<-chan)\s+)?struct\{\}|(?:(?:chan|chan<-|<-chan)\s+)?[\w\-*]+\.[\w\-*]+|(?:chan|chan<-|<-chan)\s+[\w\-*]+|(?:(?:\*|\[)?(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|time\.Time|rune|byte)))`)
 	if matches := re10.FindStringSubmatch(errorStr); matches != nil {
 		typeName := strings.TrimRight(matches[1], ".,")
 		return typeName
