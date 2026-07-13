@@ -1506,7 +1506,7 @@ fn test_whitespace_combinations_with_exclamation_in_different_contexts() {
 }
 
 // ============================================================================
-// Section 12: Integration - Detect Mapping Key with False Positives
+// Section 11A: Integration - Detect Mapping Key with False Positives
 // ============================================================================
 
 #[test]
@@ -1572,7 +1572,7 @@ fn test_detect_mapping_key_rejects_actual_tag_lines() {
 }
 
 // ============================================================================
-// Section 13: Complex Real-World Scenarios
+// Section 12: Complex Real-World Scenarios
 // ============================================================================
 
 #[test]
@@ -1628,7 +1628,7 @@ fn test_multiline_scenario_with_exclamation() {
 }
 
 // ============================================================================
-// Section 14: Error Code-like Strings in Values
+// Section 13: Error Code-like Strings in Values
 // ============================================================================
 
 #[test]
@@ -1988,7 +1988,7 @@ fn test_hex_error_codes() {
 }
 
 // ============================================================================
-// Section 16: Type Name Typos and Variations
+// Section 14: Type Name Typos and Variations
 // ============================================================================
 
 #[test]
@@ -2360,7 +2360,7 @@ fn test_json_schema_types() {
 }
 
 // ============================================================================
-// Section 17: Type-like Strings in Complex Contexts
+// Section 15: Type-like Strings in Complex Contexts
 // ============================================================================
 
 #[test]
