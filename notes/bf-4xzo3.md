@@ -1,48 +1,65 @@
-# Bead bf-4xzo3: Section 12B Test Code Location
+# Section 12B Test Code Analysis
 
-## Task
-Locate Section 12B test code in `tests/type_like_string_false_positive_test.rs`
+**Bead:** bf-4xzo3  
+**Date:** 2026-07-13  
+**File:** tests/type_like_string_false_positive_test.rs
 
-## Findings
+## Exact Line Range
 
-### Exact Line Range
-**Lines 7824–10444** (2,621 total lines)
+**Section 12B spans lines 7824-13500** (approximately 5,676 lines)
 
-### Section 12B Summary
+### Section Boundaries
 
-**Section 12B: Multiline String Scenarios with Exclamation Marks**
+| Section | Line Range | Description |
+|---------|------------|-------------|
+| **Section 12B (main)** | 7824-10446 | Multiline String Scenarios with Exclamation Marks |
+| **Section 12B.2** | 10447-10652 | Folded Scalar Indicator Line Tests |
+| **Section 12B.1** | 10653-11105 | Comprehensive Folded Block Scalar Tests with Exclamation |
+| **Section 12B.2 (Basic)** | 11106-12580 | Basic Folded Scalar Indicator Tests |
+| **Section 12B.3** | 12581-13500 | Folded Scalar Explicit Indent Infrastructure Pattern |
 
-This section provides comprehensive test coverage for YAML block scalar classification with exclamation marks.
+*Note: Subsection numbering is non-sequential due to organic test development*
 
-#### What Section 12B Contains
+## What Section 12B Contains
 
-1. **Folded Block Scalars (`>`)**: Tests folded scalars with exclamation marks at various positions
-2. **Literal Block Scalars (`|`)**: Tests literal scalars with exclamation marks at various positions
-3. **Scalar Modifiers**: Tests with `-` (strip), `+` (keep), and explicit indent (e.g., `>2`, `|2`)
-4. **Indentation Levels**: Comprehensive coverage from level 1 (2-space) through level 6 (12-space)
-5. **Exclamation Mark Positions**: Keys ending with `!`, middle `!`, multiple `!`, tab-indented keys with `!`
-6. **Continuation Lines**: Tests continuation lines of block scalars with exclamation marks
-7. **Mixed Patterns**: Single-line and multiline YAML patterns with exclamation marks
-8. **Nested Contexts**: Exclamation marks in nested YAML structures
-9. **Real-World Configs**: Practical YAML configuration examples with exclamation marks
-10. **Sequence Items**: Block scalars within YAML sequences
+### Main Section 12B (lines 7824-10446)
+- **test_folded_block_scalar_with_exclamation_marks** (7827-7865)
+- **test_literal_block_scalar_with_exclamation_marks** (7867-7923)
+- **test_folded_scalar_continuation_lines_with_exclamation_marks** (7925-8013)
+- **test_literal_scalar_continuation_lines_with_exclamation_marks** (8015-8114)
+- Additional folded/literal scalar tests with various edge cases (8116-10446)
 
-#### Key Test Functions (Sample)
+### Section 12B.2 - Folded Scalar Indicator Line Tests (10447-10652)
+- **test_folded_scalar_indicator_lines** - Basic folded scalar indicator (>) classification
+- **test_folded_scalar_indicator_with_exclamation_in_key** - Exclamation marks in keys
+- **test_folded_scalar_continuation_lines** - Continuation line behavior
 
-- `test_folded_block_scalar_with_exclamation_marks()`
-- `test_literal_block_scalar_with_exclamation_marks()`
-- `test_literal_scalar_basic_modifiers_at_various_indentation_levels()`
-- `test_folded_scalar_basic_modifiers_at_various_indentation_levels()`
-- `test_level1_indentation_with_exclamation_marks()` through `test_level_6_indentation_with_exclamation_mark()`
-- `test_multiline_mixed_with_singleline_exclamation_patterns()`
-- `test_real_world_multiline_config_with_exclamation()`
+### Section 12B.1 - Comprehensive Folded Block Scalar Tests (10653-11105)
+- **test_folded_scalar_indicator_classification** - Comprehensive indicator coverage
+- **test_folded_scalar_with_basic_modifier** - Strip modifier (-) tests
+- **test_folded_scalar_with_keep_modifier** - Keep modifier (+) tests
 
-#### Purpose
+### Section 12B.2 - Basic Folded Scalar Indicator Tests (11106-12580)
+- **test_basic_folded_scalar_indicator_as_mapping_key** - Basic '>' classification
+- **test_folded_scalar_strip_modifier_as_mapping_key** - Strip modifier tests
+- **test_folded_scalar_keep_modifier_as_mapping_key** - Keep modifier tests
+- **test_folded_scalar_explicit_indent_as_mapping_key** - Explicit indent tests
+- Multiple additional test functions for continuation lines and indentation levels
 
-Ensures the `classify_line_type` function correctly handles block scalar indicators as `LineType::MappingKey` even when exclamation marks appear in the content or keys.
+### Section 12B.3 - Folded Scalar Explicit Indent Infrastructure (12581-13500)
+- Infrastructure Pattern Documentation
+- Macro definitions for parameterized test generation
+- Helper functions for test case creation
+- Parameterized test functions for all indentation levels (level 1-6, tab)
 
-## Acceptance Criteria Met
+## Key Test Patterns
 
-- ✅ Read `type_like_string_false_positive_test.rs` around line 6885
-- ✅ Identified Section 12B test patterns
-- ✅ Confirmed the exact line range: **7824–10444**
+1. **Folded Scalar Indicators**: Tests for `>`, `>-`, `>+` with explicit indents (1-6)
+2. **Exclamation Marks**: Tests with `!` in various key positions
+3. **Indentation Levels**: 2-space through 12-space, plus tab indentation
+4. **Continuation Lines**: Ensures proper classification of content following indicators
+5. **Edge Cases**: Multiple `!` characters, mixed indentation, whitespace variations
+
+## Summary
+
+Section 12B provides comprehensive test coverage for folded and literal block scalar scenarios in YAML-like syntax, with special emphasis on exclamation mark handling, multiple indentation strategies, modifier behavior, and proper continuation line classification. The section spans approximately 5,676 lines and includes over 30 test functions.
