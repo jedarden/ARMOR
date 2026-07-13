@@ -6,6 +6,12 @@
 //! - False positive scenarios in tag/type detection
 //! - Strings that resemble type names in error messages
 //! - Edge cases where classification might be incorrect
+//!
+//! Bead: bf-rn9gx
+//! Acceptance Criteria:
+//! - Test messages with type-like strings that aren't real types
+//! - Test false positive scenarios
+//! - Verify extraction correctly rejects these cases
 
 use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 
@@ -628,6 +634,182 @@ fn test_multiline_scenario_with_exclamation() {
             classify_line_type(line),
             *expected_type,
             "Multiline scenario failed for: '{}'",
+            line
+        );
+    }
+}
+
+// ============================================================================
+// Section 13: Error Code-like Strings in Values
+// ============================================================================
+
+#[test]
+fn test_error_code_patterns_in_values() {
+    // Error codes (E001, D001, etc.) appearing in values should not affect classification
+    let test_cases = vec![
+        "error_code: E001",
+        "delimiter_error: D123",
+        "message: Error E456 occurred",
+        "status: E789 active",
+        "code: D012",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Error code in value should be MappingKey, not special type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_invalid_error_code_formats() {
+    // Invalid error code formats in values
+    let test_cases = vec![
+        "code: E1",      // Too short
+        "code: D12",     // Too short
+        "code: E1234",   // Too long
+        "code: Z001",    // Wrong letter
+        "code: Q123",    // Wrong letter
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Invalid error code format should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+// ============================================================================
+// Section 14: Type Name Typos and Variations
+// ============================================================================
+
+#[test]
+fn test_type_name_typos_in_values() {
+    // Common typos of type names in values
+    let test_cases = vec![
+        "datatype: strign",    // typo of "string"
+        "value: integre",      // typo of "integer"
+        "flag: boolan",        // typo of "boolean"
+        "items: arrary",       // typo of "array"
+        "config: objec",       // typo of "object"
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name typo should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_name_case_variations() {
+    // Type names with wrong capitalization in values
+    let test_cases = vec![
+        "type: String",      // Capitalized
+        "type: INTEGER",     // All caps
+        "type: Boolean",     // Capitalized
+        "type: Array",       // Capitalized
+        "type: sTrInG",      // Mixed case
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with wrong case should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_partial_type_matches_in_values() {
+    // Strings containing type names as substrings
+    let test_cases = vec![
+        "description: stringy value",
+        "field: integer_value",
+        "setting: boolean_field",
+        "data: array_data",
+        "config: object_type",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Partial type match should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+// ============================================================================
+// Section 15: Type-like Strings in Complex Contexts
+// ============================================================================
+
+#[test]
+fn test_type_like_in_nested_structures() {
+    // Type-like strings in nested mappings/sequences
+    let test_cases = vec![
+        "outer: {inner: string}",
+        "items: [integer, boolean]",
+        "data: {values: [array, object]}",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowMapping || result == LineType::FlowSequence,
+            "Type-like in nested structure should be valid type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_with_special_chars() {
+    // Type-like strings with special characters
+    let test_cases = vec![
+        "format: string!",
+        "value: integer?",
+        "data: boolean*",
+        "type: array+",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type-like with special char should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_multiline_values() {
+    // Type-like strings that might appear in continuation lines
+    let test_cases = vec![
+        "description: This is a",
+        "note: string value that",
+        "text: continues on next",
+        "comment: line with integer",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type-like word in multiline value should be MappingKey: '{}'",
             line
         );
     }
