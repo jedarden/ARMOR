@@ -395,8 +395,11 @@ impl Parser for BasicParser {
                 }
                 Ordering::Less => {
                     // Indent decreased - exit to parent scope
-                    log_debug!("DEBUG [parse_str]: Exiting from indent {} to indent {} on line {}",
-                        scope_stack.current_indent(), indent, line_num_1index);
+                    #[cfg(debug_assertions)]
+                    {
+                        log_debug!("[parse_str] Scope exit: from_indent={}, to_indent={}, line={}",
+                            scope_stack.current_indent(), indent, line_num_1index);
+                    }
                     scope_stack.exit_to_scope(indent);
 
                     // After exiting, check if this line has a key
@@ -409,8 +412,11 @@ impl Parser for BasicParser {
                                     dup_err.message()
                                 ).with_line(line_num_1index));
                             }
-                            log_debug!("DEBUG [parse_str]: Entering scope for parent key '{}' at indent {} on line {}",
-                                ctx.key_name(), indent, line_num_1index);
+                            #[cfg(debug_assertions)]
+                            {
+                                log_debug!("[parse_str] Entering scope: type=Mapping, key='{}', indent={}, line={}",
+                                    ctx.key_name(), indent, line_num_1index);
+                            }
                             scope_stack.enter_scope(
                                 indent + scope_stack.base_indent(),
                                 line_num_1index,
@@ -432,8 +438,11 @@ impl Parser for BasicParser {
                         if ctx.is_parent_key() {
                             // This is a sibling parent key at same indent level
                             // Exit and re-enter scope for the sibling
-                            log_debug!("DEBUG [parse_str]: Sibling parent key '{}' at indent {} on line {}",
-                                ctx.key_name(), indent, line_num_1index);
+                            #[cfg(debug_assertions)]
+                            {
+                                log_debug!("[parse_str] Sibling parent key: key='{}', indent={}, line={}",
+                                    ctx.key_name(), indent, line_num_1index);
+                            }
                             scope_stack.exit_to_scope(indent);
                             if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
                                 parse_errors.push(ValidationError::new(
@@ -441,8 +450,11 @@ impl Parser for BasicParser {
                                     dup_err.message()
                                 ).with_line(line_num_1index));
                             }
-                            log_debug!("DEBUG [parse_str]: Re-entering scope for sibling parent key '{}' at indent {} on line {}",
-                                ctx.key_name(), indent, line_num_1index);
+                            #[cfg(debug_assertions)]
+                            {
+                                log_debug!("[parse_str] Re-entering scope: type=Mapping, key='{}', indent={}, line={}",
+                                    ctx.key_name(), indent, line_num_1index);
+                            }
                             scope_stack.enter_scope(
                                 indent + scope_stack.base_indent(),
                                 line_num_1index,
@@ -464,8 +476,11 @@ impl Parser for BasicParser {
             if trimmed.starts_with("- ") {
                 if let Some(ctx) = extract_key_context(line) {
                     // Enter a sequence scope for this item
-                    log_debug!("DEBUG [parse_str]: Entering sequence scope for key '{}' at indent {} on line {}",
-                        ctx.key_name(), indent, line_num_1index);
+                    #[cfg(debug_assertions)]
+                    {
+                        log_debug!("[parse_str] Entering scope: type=Sequence, key='{}', indent={}, line={}",
+                            ctx.key_name(), indent, line_num_1index);
+                    }
                     scope_stack.enter_sequence_scope(indent, line_num_1index);
                     // Add the key to the sequence scope
                     if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
@@ -476,8 +491,11 @@ impl Parser for BasicParser {
                     }
                 } else {
                     // Sequence item without a key context
-                    log_debug!("DEBUG [parse_str]: Entering sequence scope (no key) at indent {} on line {}",
-                        indent, line_num_1index);
+                    #[cfg(debug_assertions)]
+                    {
+                        log_debug!("[parse_str] Entering scope: type=Sequence (no key), indent={}, line={}",
+                            indent, line_num_1index);
+                    }
                     scope_stack.enter_sequence_scope(indent, line_num_1index);
                 }
             }
