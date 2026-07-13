@@ -9,7 +9,7 @@ use crate::parsers::yaml::{
     ParserConfig,
     syntax_validator::SyntaxValidator,
     syntax_detector::SyntaxDetector,
-    scope::{ScopeStack, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType},
+    scope::{ScopeStack, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo},
     line_parser::{calculate_indentation},
     scope::extract_key_context,
 };
@@ -70,6 +70,8 @@ pub struct BasicParser {
     config: ParserConfig,
     /// Scope stack for tracking keys within their proper scope contexts
     scope_stack: ScopeStack,
+    /// Stack of scope information tracking the scope hierarchy (type and depth at each level)
+    scope_info_stack: Vec<ScopeInfo>,
     /// Current line type being processed (key-bearing vs indent-only)
     current_line_type: LineClassification,
     /// Current indent transition state for tracking scope operations
@@ -84,6 +86,7 @@ impl BasicParser {
         Self {
             config: ParserConfig::default(),
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            scope_info_stack: Vec::new(),    // Empty stack initially
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
             scope_depth: 1, // Root scope is always present
@@ -95,6 +98,7 @@ impl BasicParser {
         Self {
             config,
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            scope_info_stack: Vec::new(),    // Empty stack initially
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
             scope_depth: 1, // Root scope is always present
@@ -109,6 +113,7 @@ impl BasicParser {
         Self {
             config: ParserConfig::strict(),
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            scope_info_stack: Vec::new(),    // Empty stack initially
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
             scope_depth: 1, // Root scope is always present
@@ -242,6 +247,19 @@ impl BasicParser {
     /// Get all scopes in the hierarchy as a slice
     pub fn scope_hierarchy(&self) -> &[crate::parsers::yaml::scope::Scope] {
         &self.scope_stack.scopes
+    }
+
+    /// Get the scope info stack
+    ///
+    /// Returns a reference to the stack containing scope type and depth information
+    /// for each level in the scope hierarchy.
+    pub fn scope_info_stack(&self) -> &[ScopeInfo] {
+        &self.scope_info_stack
+    }
+
+    /// Get mutable reference to the scope info stack
+    pub fn scope_info_stack_mut(&mut self) -> &mut Vec<ScopeInfo> {
+        &mut self.scope_info_stack
     }
 
     /// Update scope depth to match the current scope stack state
@@ -907,6 +925,7 @@ impl Parser for BasicParser {
         Self {
             config,
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            scope_info_stack: Vec::new(),    // Empty stack initially
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
             scope_depth: 1, // Root scope is always present
