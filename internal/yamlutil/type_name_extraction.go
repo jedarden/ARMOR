@@ -167,6 +167,31 @@ func extractTypeName(errorStr string) string {
 		return typeName
 	}
 
+	// Pattern 13: Final fallback for "into <type>" without keyword prefix
+	// This catches cases like "some error message into float64"
+	// Handles complex types like map[string]int, chan int, []string, etc.
+	// More restrictive than Pattern 7 to avoid matching common English phrases
+	// Does NOT match when "unmarshal", "marshal", "convert", or "type" appear earlier (those are handled by Patterns 7, 11, & 12)
+	// First check if unmarshal/marshal/convert/type keywords appear - if so, skip this pattern
+	hasUnmarshalKeyword := regexp.MustCompile(`(?:unmarshal|marshal|convert|type)`).MatchString(errorStr)
+	if !hasUnmarshalKeyword {
+		re13 := regexp.MustCompile(`\binto\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|map\[[^\]]+\][\w\-*]*|interface\{\}|struct\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*|\w+)\b`)
+		if matches := re13.FindStringSubmatch(errorStr); matches != nil {
+			typeName := strings.TrimRight(matches[1], ".,")
+			// Filter out common English words that might match
+			excludedWords := []string{"the", "a", "an", "this", "that", "room", "place", "area", "space"}
+			for _, word := range excludedWords {
+				if typeName == word {
+					return ""
+				}
+			}
+			// Only return if it looks like a type name
+			if typeName != "" && len(typeName) <= 50 {
+				return typeName
+			}
+		}
+	}
+
 	return ""
 }
 
