@@ -3,7 +3,7 @@
 //! This test demonstrates that scope entry and exit events are properly logged
 //! with debug-level logging that includes scope type, indent level, and context.
 
-use armor::parsers::yaml::SyntaxValidator;
+use armor::parsers::yaml::{new_parser, YamlParser};
 
 fn main() {
     // Initialize the logger to see debug output
@@ -27,10 +27,21 @@ services:
     println!("--- YAML ---");
     println!("{}", yaml1.trim());
     println!("--- Logging Output ---");
-    let validator = SyntaxValidator::new();
-    let result1 = validator.validate(yaml1);
-    println!("\nValid: {}\n", result1.valid);
+    let parser = new_parser();
+    let result1 = parser.parse_str(yaml1);
+    println!("\nValid: {}\n", result1.is_success());
 
+    // Test 2: Deep nesting (multiple scope entries and exits)
+    let yaml2 = r#"
+level1:
+  level2:
+    level3:
+      key1: value1
+      key2: value2
+    key3: value3
+  key4: value4
+key5: value5
+"#;
     // Test 2: Deep nesting (multiple scope entries and exits)
     let yaml2 = r#"
 level1:
@@ -46,8 +57,9 @@ key5: value5
     println!("--- YAML ---");
     println!("{}", yaml2.trim());
     println!("--- Logging Output ---");
-    let result2 = validator.validate(yaml2);
-    println!("\nValid: {}\n", result2.valid);
+    let parser2 = new_parser();
+    let result2 = parser2.parse_str(yaml2);
+    println!("\nValid: {}\n", result2.is_success());
 
     // Test 3: Sequence items (sequence scope entry)
     let yaml3 = r#"
@@ -63,8 +75,9 @@ items:
     println!("--- YAML ---");
     println!("{}", yaml3.trim());
     println!("--- Logging Output ---");
-    let result3 = validator.validate(yaml3);
-    println!("\nValid: {}\n", result3.valid);
+    let parser3 = new_parser();
+    let result3 = parser3.parse_str(yaml3);
+    println!("\nValid: {}\n", result3.is_success());
 
     println!("=== All logging verification tests completed ===");
     println!("\nKey observations:");
