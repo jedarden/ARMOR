@@ -1846,6 +1846,91 @@ colon_test: >1
             "Multiple colon patterns must NOT create nested mapping"
 
 
+class TestFoldedScalarStripModifierBaseIndentValidation:
+    """Test cases for strip modifier (>-) validation at base indentation levels 1-3.
+
+    The strip modifier (>-) removes trailing newlines and trailing whitespace.
+    This test class validates that content indentation is correctly validated
+    at each base indentation level for the strip modifier.
+
+    Base indentation levels:
+    - Level 1: 2-space base indent with >- modifier
+    - Level 2: 4-space base indent with >- modifier
+    - Level 3: 6-space base indent with >- modifier
+    """
+
+    def test_strip_modifier_base_indent_validation(self):
+        """Test strip modifier (>-) validation at base indentation levels 1-3.
+
+        This test verifies that the strip modifier correctly removes trailing
+        newlines and trailing whitespace while preserving content indentation
+        at base indentation levels 1, 2, and 3.
+
+        YAML folded scalar modifiers:
+        - >-: strip (removes trailing newlines and trailing whitespace)
+
+        Each test verifies:
+        - Strip modifier (>-) removes trailing newlines
+        - Strip modifier (>-) removes trailing whitespace
+        - Content indentation is correctly preserved at each level
+        """
+        parser = YAMLCoreParser()
+
+        # Level 1: 2-space base indent with strip modifier
+        yaml_content_level1 = """# Strip modifier at level 1 (2-space base indent)
+strip_base_level_1: >-
+  Line 1 indented at level 1
+  Line 2 indented at level 1
+"""
+        result = parser.safe_load(yaml_content_level1)
+        assert result.is_success(), "Strip modifier parsing at base level 1 should succeed"
+
+        # Verify strip modifier content is preserved (trailing newlines removed)
+        assert 'Line 1 indented at level 1' in result.data['strip_base_level_1'], \
+            "Strip >- at base level 1 should preserve indented content"
+        assert 'Line 2 indented at level 1' in result.data['strip_base_level_1'], \
+            "Strip >- at base level 1 should preserve all indented lines"
+        # Verify trailing whitespace is removed (strip modifier removes it)
+        assert result.data['strip_base_level_1'] == result.data['strip_base_level_1'].rstrip(), \
+            "Strip >- at base level 1 should remove trailing newlines/whitespace"
+
+        # Level 2: 4-space base indent with strip modifier
+        yaml_content_level2 = """# Strip modifier at level 2 (4-space base indent)
+    strip_base_level_2: >-
+      Line 1 double-indented at level 2
+      Line 2 double-indented at level 2
+"""
+        result = parser.safe_load(yaml_content_level2)
+        assert result.is_success(), "Strip modifier parsing at base level 2 should succeed"
+
+        # Verify strip modifier content is preserved (trailing newlines removed)
+        assert 'Line 1 double-indented at level 2' in result.data['strip_base_level_2'], \
+            "Strip >- at base level 2 should preserve double-indented content"
+        assert 'Line 2 double-indented at level 2' in result.data['strip_base_level_2'], \
+            "Strip >- at base level 2 should preserve all double-indented lines"
+        # Verify trailing whitespace is removed (strip modifier removes it)
+        assert result.data['strip_base_level_2'] == result.data['strip_base_level_2'].rstrip(), \
+            "Strip >- at base level 2 should remove trailing newlines/whitespace"
+
+        # Level 3: 6-space base indent with strip modifier
+        yaml_content_level3 = """# Strip modifier at level 3 (6-space base indent)
+      strip_base_level_3: >-
+        Line 1 triple-indented at level 3
+        Line 2 triple-indented at level 3
+"""
+        result = parser.safe_load(yaml_content_level3)
+        assert result.is_success(), "Strip modifier parsing at base level 3 should succeed"
+
+        # Verify strip modifier content is preserved (trailing newlines removed)
+        assert 'Line 1 triple-indented at level 3' in result.data['strip_base_level_3'], \
+            "Strip >- at base level 3 should preserve triple-indented content"
+        assert 'Line 2 triple-indented at level 3' in result.data['strip_base_level_3'], \
+            "Strip >- at base level 3 should preserve all triple-indented lines"
+        # Verify trailing whitespace is removed (strip modifier removes it)
+        assert result.data['strip_base_level_3'] == result.data['strip_base_level_3'].rstrip(), \
+            "Strip >- at base level 3 should remove trailing newlines/whitespace"
+
+
 if __name__ == '__main__':
     # Run the tests when executed directly
     pytest.main([__file__, '-v'])
