@@ -1,0 +1,268 @@
+
+running 19 tests
+test test_exit_to_scope_after_blank_line_with_indent_change ... ok
+test test_exit_to_root_scope ... FAILED
+test test_exit_to_scope_deeply_nested_sequence ... ok
+test test_exit_to_scope_exits_to_root_without_intermediate_scopes ... FAILED
+test test_exit_to_scope_finds_parent_in_middle_of_stack ... FAILED
+test test_exit_to_scope_from_complex_structure ... ok
+test test_exit_to_scope_handles_zero_indent ... FAILED
+test test_exit_to_scope_ignores_deeper_target ... ok
+test test_exit_to_scope_multiple_calls_same_target ... ok
+test test_exit_to_scope_preserves_keys_in_parent ... ok
+test test_exit_to_scope_preserves_scope_integrity ... ok
+test test_exit_to_scope_same_indent_does_nothing ... ok
+test test_exit_to_scope_sequence_of_exits_to_missing_targets ... ok
+test test_exit_to_scope_skips_multiple_levels ... ok
+test test_exit_to_scope_uses_closest_parent_when_exact_not_found ... FAILED
+test test_exit_to_scope_uses_root_when_no_intermediate_parent ... FAILED
+test test_exit_to_scope_when_target_exists ... FAILED
+test test_exit_to_scope_with_sequence_context ... ok
+test test_exit_to_scope_yaml_with_inconsistent_indentation ... ok
+
+failures:
+
+---- test_exit_to_root_scope stdout ----
+
+thread 'test_exit_to_root_scope' (1195531) panicked at tests/target_scope_lookup_test.rs:57:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_exit_to_scope_exits_to_root_without_intermediate_scopes stdout ----
+
+thread 'test_exit_to_scope_exits_to_root_without_intermediate_scopes' (1195534) panicked at tests/target_scope_lookup_test.rs:150:40:
+called `Option::unwrap()` on a `None` value
+
+---- test_exit_to_scope_finds_parent_in_middle_of_stack stdout ----
+
+thread 'test_exit_to_scope_finds_parent_in_middle_of_stack' (1195535) panicked at tests/target_scope_lookup_test.rs:88:5:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+---- test_exit_to_scope_handles_zero_indent stdout ----
+
+thread 'test_exit_to_scope_handles_zero_indent' (1195537) panicked at tests/target_scope_lookup_test.rs:366:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_uses_closest_parent_when_exact_not_found stdout ----
+
+thread 'test_exit_to_scope_uses_closest_parent_when_exact_not_found' (1195545) panicked at tests/target_scope_lookup_test.rs:77:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_uses_root_when_no_intermediate_parent stdout ----
+
+thread 'test_exit_to_scope_uses_root_when_no_intermediate_parent' (1195546) panicked at tests/target_scope_lookup_test.rs:125:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_when_target_exists stdout ----
+
+thread 'test_exit_to_scope_when_target_exists' (1195547) panicked at tests/target_scope_lookup_test.rs:36:5:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+
+failures:
+    test_exit_to_root_scope
+    test_exit_to_scope_exits_to_root_without_intermediate_scopes
+    test_exit_to_scope_finds_parent_in_middle_of_stack
+    test_exit_to_scope_handles_zero_indent
+    test_exit_to_scope_uses_closest_parent_when_exact_not_found
+    test_exit_to_scope_uses_root_when_no_intermediate_parent
+    test_exit_to_scope_when_target_exists
+
+test result: FAILED. 12 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running tests/target_scope_lookup_test.rs (target/debug/deps/target_scope_lookup_test-c284bed353b9087d)
+
+running 19 tests
+test test_exit_to_scope_after_blank_line_with_indent_change ... ok
+test test_exit_to_root_scope ... FAILED
+test test_exit_to_scope_deeply_nested_sequence ... ok
+test test_exit_to_scope_exits_to_root_without_intermediate_scopes ... FAILED
+test test_exit_to_scope_finds_parent_in_middle_of_stack ... FAILED
+test test_exit_to_scope_from_complex_structure ... ok
+test test_exit_to_scope_handles_zero_indent ... FAILED
+test test_exit_to_scope_ignores_deeper_target ... ok
+test test_exit_to_scope_multiple_calls_same_target ... ok
+test test_exit_to_scope_preserves_keys_in_parent ... ok
+test test_exit_to_scope_preserves_scope_integrity ... ok
+test test_exit_to_scope_same_indent_does_nothing ... ok
+test test_exit_to_scope_sequence_of_exits_to_missing_targets ... ok
+test test_exit_to_scope_skips_multiple_levels ... ok
+test test_exit_to_scope_uses_closest_parent_when_exact_not_found ... FAILED
+test test_exit_to_scope_uses_root_when_no_intermediate_parent ... FAILED
+test test_exit_to_scope_when_target_exists ... FAILED
+test test_exit_to_scope_with_sequence_context ... ok
+test test_exit_to_scope_yaml_with_inconsistent_indentation ... ok
+
+failures:
+
+---- test_exit_to_root_scope stdout ----
+
+thread 'test_exit_to_root_scope' (1195560) panicked at tests/target_scope_lookup_test.rs:57:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_exit_to_scope_exits_to_root_without_intermediate_scopes stdout ----
+
+thread 'test_exit_to_scope_exits_to_root_without_intermediate_scopes' (1195563) panicked at tests/target_scope_lookup_test.rs:150:40:
+called `Option::unwrap()` on a `None` value
+
+---- test_exit_to_scope_finds_parent_in_middle_of_stack stdout ----
+
+thread 'test_exit_to_scope_finds_parent_in_middle_of_stack' (1195564) panicked at tests/target_scope_lookup_test.rs:88:5:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+---- test_exit_to_scope_handles_zero_indent stdout ----
+
+thread 'test_exit_to_scope_handles_zero_indent' (1195566) panicked at tests/target_scope_lookup_test.rs:366:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_uses_closest_parent_when_exact_not_found stdout ----
+
+thread 'test_exit_to_scope_uses_closest_parent_when_exact_not_found' (1195574) panicked at tests/target_scope_lookup_test.rs:77:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_uses_root_when_no_intermediate_parent stdout ----
+
+thread 'test_exit_to_scope_uses_root_when_no_intermediate_parent' (1195575) panicked at tests/target_scope_lookup_test.rs:125:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_when_target_exists stdout ----
+
+thread 'test_exit_to_scope_when_target_exists' (1195576) panicked at tests/target_scope_lookup_test.rs:36:5:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+
+failures:
+    test_exit_to_root_scope
+    test_exit_to_scope_exits_to_root_without_intermediate_scopes
+    test_exit_to_scope_finds_parent_in_middle_of_stack
+    test_exit_to_scope_handles_zero_indent
+    test_exit_to_scope_uses_closest_parent_when_exact_not_found
+    test_exit_to_scope_uses_root_when_no_intermediate_parent
+    test_exit_to_scope_when_target_exists
+
+test result: FAILED. 12 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test target_scope_lookup_test`

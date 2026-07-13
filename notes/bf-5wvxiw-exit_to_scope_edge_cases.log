@@ -1,0 +1,403 @@
+
+running 26 tests
+test test_exit_to_scope_allows_clean_reentry ... ok
+test test_exit_to_scope_cleanup_multiple_nested_levels ... FAILED
+test test_exit_to_scope_cleanup_with_indent_gaps ... FAILED
+test test_exit_to_scope_complex_nesting_with_gaps ... FAILED
+test test_exit_to_scope_does_not_exit_to_deeper_level ... ok
+test test_exit_to_scope_from_root_to_root_is_idempotent ... ok
+test test_exit_to_scope_from_sequence_context ... ok
+test test_exit_to_scope_from_stack_with_only_root ... FAILED
+test test_exit_to_scope_handles_indent_not_multiple_of_base ... ok
+test test_exit_to_scope_multiple_times_in_sequence ... FAILED
+test test_exit_to_scope_partial_depth ... FAILED
+test test_exit_to_scope_preserves_root_scope_even_in_edge_cases ... FAILED
+test test_exit_to_scope_rapid_exits_no_stale_state ... FAILED
+test test_exit_to_scope_clears_large_scope_data ... ok
+test test_exit_to_scope_rapid_successive_exits ... FAILED
+test test_exit_to_scope_resets_sequence_context_flags ... ok
+test test_exit_to_scope_sequence_item_id_preservation_in_parent ... ok
+test test_exit_to_scope_sibling_transition ... ok
+test test_exit_to_scope_state_cleanup ... ok
+test test_exit_to_scope_to_nonexistent_level_between_existing_scopes ... FAILED
+test test_exit_to_scope_to_root ... FAILED
+test test_exit_to_scope_when_target_has_no_scope_but_parent_exists ... FAILED
+test test_exit_to_scope_when_target_is_same_as_current_indent ... ok
+test test_exit_to_scope_with_flow_style_preservation ... ok
+test test_exit_to_scope_with_parent_at_target ... FAILED
+test test_exit_to_scope_without_parent_at_target ... FAILED
+
+failures:
+
+---- test_exit_to_scope_cleanup_multiple_nested_levels stdout ----
+
+thread 'test_exit_to_scope_cleanup_multiple_nested_levels' (1194676) panicked at tests/exit_to_scope_edge_cases_test.rs:514:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_exit_to_scope_cleanup_with_indent_gaps stdout ----
+
+thread 'test_exit_to_scope_cleanup_with_indent_gaps' (1194677) panicked at tests/exit_to_scope_edge_cases_test.rs:542:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_complex_nesting_with_gaps stdout ----
+
+thread 'test_exit_to_scope_complex_nesting_with_gaps' (1194679) panicked at tests/exit_to_scope_edge_cases_test.rs:189:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_from_stack_with_only_root stdout ----
+
+thread 'test_exit_to_scope_from_stack_with_only_root' (1194683) panicked at tests/exit_to_scope_edge_cases_test.rs:287:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_multiple_times_in_sequence stdout ----
+
+thread 'test_exit_to_scope_multiple_times_in_sequence' (1194685) panicked at tests/exit_to_scope_edge_cases_test.rs:206:5:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+---- test_exit_to_scope_partial_depth stdout ----
+
+thread 'test_exit_to_scope_partial_depth' (1194686) panicked at tests/exit_to_scope_edge_cases_test.rs:84:5:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+---- test_exit_to_scope_preserves_root_scope_even_in_edge_cases stdout ----
+
+thread 'test_exit_to_scope_preserves_root_scope_even_in_edge_cases' (1194687) panicked at tests/exit_to_scope_edge_cases_test.rs:353:5:
+assertion failed: stack.get_scope_at_level(0).is_some()
+
+---- test_exit_to_scope_rapid_exits_no_stale_state stdout ----
+
+thread 'test_exit_to_scope_rapid_exits_no_stale_state' (1194688) panicked at tests/exit_to_scope_edge_cases_test.rs:574:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_rapid_successive_exits stdout ----
+
+thread 'test_exit_to_scope_rapid_successive_exits' (1194689) panicked at tests/exit_to_scope_edge_cases_test.rs:337:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_to_nonexistent_level_between_existing_scopes stdout ----
+
+thread 'test_exit_to_scope_to_nonexistent_level_between_existing_scopes' (1194694) panicked at tests/exit_to_scope_edge_cases_test.rs:312:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_to_root stdout ----
+
+thread 'test_exit_to_scope_to_root' (1194695) panicked at tests/exit_to_scope_edge_cases_test.rs:63:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_when_target_has_no_scope_but_parent_exists stdout ----
+
+thread 'test_exit_to_scope_when_target_has_no_scope_but_parent_exists' (1194696) panicked at tests/exit_to_scope_edge_cases_test.rs:256:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_with_parent_at_target stdout ----
+
+thread 'test_exit_to_scope_with_parent_at_target' (1194699) panicked at tests/exit_to_scope_edge_cases_test.rs:23:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_without_parent_at_target stdout ----
+
+thread 'test_exit_to_scope_without_parent_at_target' (1194700) panicked at tests/exit_to_scope_edge_cases_test.rs:43:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+
+failures:
+    test_exit_to_scope_cleanup_multiple_nested_levels
+    test_exit_to_scope_cleanup_with_indent_gaps
+    test_exit_to_scope_complex_nesting_with_gaps
+    test_exit_to_scope_from_stack_with_only_root
+    test_exit_to_scope_multiple_times_in_sequence
+    test_exit_to_scope_partial_depth
+    test_exit_to_scope_preserves_root_scope_even_in_edge_cases
+    test_exit_to_scope_rapid_exits_no_stale_state
+    test_exit_to_scope_rapid_successive_exits
+    test_exit_to_scope_to_nonexistent_level_between_existing_scopes
+    test_exit_to_scope_to_root
+    test_exit_to_scope_when_target_has_no_scope_but_parent_exists
+    test_exit_to_scope_with_parent_at_target
+    test_exit_to_scope_without_parent_at_target
+
+test result: FAILED. 12 passed; 14 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+warning: unused variable: `item_id`
+   --> tests/exit_to_scope_edge_cases_test.rs:374:9
+    |
+374 |     let item_id = stack.current_scope_ref().unwrap().sequence_item_id;
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_item_id`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (test "exit_to_scope_edge_cases_test") generated 1 warning (run `cargo fix --test "exit_to_scope_edge_cases_test" -p armor` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running tests/exit_to_scope_edge_cases_test.rs (target/debug/deps/exit_to_scope_edge_cases_test-69fe2d18aedf1c95)
+
+running 26 tests
+test test_exit_to_scope_allows_clean_reentry ... ok
+test test_exit_to_scope_cleanup_multiple_nested_levels ... FAILED
+test test_exit_to_scope_cleanup_with_indent_gaps ... FAILED
+test test_exit_to_scope_complex_nesting_with_gaps ... FAILED
+test test_exit_to_scope_does_not_exit_to_deeper_level ... ok
+test test_exit_to_scope_from_root_to_root_is_idempotent ... ok
+test test_exit_to_scope_from_sequence_context ... ok
+test test_exit_to_scope_from_stack_with_only_root ... FAILED
+test test_exit_to_scope_handles_indent_not_multiple_of_base ... ok
+test test_exit_to_scope_multiple_times_in_sequence ... FAILED
+test test_exit_to_scope_partial_depth ... FAILED
+test test_exit_to_scope_preserves_root_scope_even_in_edge_cases ... FAILED
+test test_exit_to_scope_rapid_exits_no_stale_state ... FAILED
+test test_exit_to_scope_clears_large_scope_data ... ok
+test test_exit_to_scope_rapid_successive_exits ... FAILED
+test test_exit_to_scope_resets_sequence_context_flags ... ok
+test test_exit_to_scope_sequence_item_id_preservation_in_parent ... ok
+test test_exit_to_scope_state_cleanup ... ok
+test test_exit_to_scope_sibling_transition ... ok
+test test_exit_to_scope_to_nonexistent_level_between_existing_scopes ... FAILED
+test test_exit_to_scope_to_root ... FAILED
+test test_exit_to_scope_when_target_has_no_scope_but_parent_exists ... FAILED
+test test_exit_to_scope_when_target_is_same_as_current_indent ... ok
+test test_exit_to_scope_with_flow_style_preservation ... ok
+test test_exit_to_scope_with_parent_at_target ... FAILED
+test test_exit_to_scope_without_parent_at_target ... FAILED
+
+failures:
+
+---- test_exit_to_scope_cleanup_multiple_nested_levels stdout ----
+
+thread 'test_exit_to_scope_cleanup_multiple_nested_levels' (1194712) panicked at tests/exit_to_scope_edge_cases_test.rs:514:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_exit_to_scope_cleanup_with_indent_gaps stdout ----
+
+thread 'test_exit_to_scope_cleanup_with_indent_gaps' (1194713) panicked at tests/exit_to_scope_edge_cases_test.rs:542:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_complex_nesting_with_gaps stdout ----
+
+thread 'test_exit_to_scope_complex_nesting_with_gaps' (1194715) panicked at tests/exit_to_scope_edge_cases_test.rs:189:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_from_stack_with_only_root stdout ----
+
+thread 'test_exit_to_scope_from_stack_with_only_root' (1194719) panicked at tests/exit_to_scope_edge_cases_test.rs:287:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_multiple_times_in_sequence stdout ----
+
+thread 'test_exit_to_scope_multiple_times_in_sequence' (1194721) panicked at tests/exit_to_scope_edge_cases_test.rs:206:5:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+---- test_exit_to_scope_partial_depth stdout ----
+
+thread 'test_exit_to_scope_partial_depth' (1194722) panicked at tests/exit_to_scope_edge_cases_test.rs:84:5:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+---- test_exit_to_scope_preserves_root_scope_even_in_edge_cases stdout ----
+
+thread 'test_exit_to_scope_preserves_root_scope_even_in_edge_cases' (1194723) panicked at tests/exit_to_scope_edge_cases_test.rs:353:5:
+assertion failed: stack.get_scope_at_level(0).is_some()
+
+---- test_exit_to_scope_rapid_exits_no_stale_state stdout ----
+
+thread 'test_exit_to_scope_rapid_exits_no_stale_state' (1194724) panicked at tests/exit_to_scope_edge_cases_test.rs:574:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_rapid_successive_exits stdout ----
+
+thread 'test_exit_to_scope_rapid_successive_exits' (1194725) panicked at tests/exit_to_scope_edge_cases_test.rs:337:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_to_nonexistent_level_between_existing_scopes stdout ----
+
+thread 'test_exit_to_scope_to_nonexistent_level_between_existing_scopes' (1194730) panicked at tests/exit_to_scope_edge_cases_test.rs:312:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_to_root stdout ----
+
+thread 'test_exit_to_scope_to_root' (1194731) panicked at tests/exit_to_scope_edge_cases_test.rs:63:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_when_target_has_no_scope_but_parent_exists stdout ----
+
+thread 'test_exit_to_scope_when_target_has_no_scope_but_parent_exists' (1194732) panicked at tests/exit_to_scope_edge_cases_test.rs:256:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_scope_with_parent_at_target stdout ----
+
+thread 'test_exit_to_scope_with_parent_at_target' (1194735) panicked at tests/exit_to_scope_edge_cases_test.rs:23:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_to_scope_without_parent_at_target stdout ----
+
+thread 'test_exit_to_scope_without_parent_at_target' (1194736) panicked at tests/exit_to_scope_edge_cases_test.rs:43:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+
+failures:
+    test_exit_to_scope_cleanup_multiple_nested_levels
+    test_exit_to_scope_cleanup_with_indent_gaps
+    test_exit_to_scope_complex_nesting_with_gaps
+    test_exit_to_scope_from_stack_with_only_root
+    test_exit_to_scope_multiple_times_in_sequence
+    test_exit_to_scope_partial_depth
+    test_exit_to_scope_preserves_root_scope_even_in_edge_cases
+    test_exit_to_scope_rapid_exits_no_stale_state
+    test_exit_to_scope_rapid_successive_exits
+    test_exit_to_scope_to_nonexistent_level_between_existing_scopes
+    test_exit_to_scope_to_root
+    test_exit_to_scope_when_target_has_no_scope_but_parent_exists
+    test_exit_to_scope_with_parent_at_target
+    test_exit_to_scope_without_parent_at_target
+
+test result: FAILED. 12 passed; 14 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test exit_to_scope_edge_cases_test`

@@ -1,0 +1,255 @@
+
+running 24 tests
+test edge_case_tests::test_exit_to_current_indent_is_idempotent ... ok
+test edge_case_tests::test_deeply_nested_scope_exit_preserves_correct_level_state ... FAILED
+test edge_case_tests::test_flow_style_flag_preservation_through_scope_exits ... ok
+test edge_case_tests::test_root_scope_state_preserved_in_aggressive_exits ... FAILED
+test edge_case_tests::test_scope_exit_preserves_scope_path_accuracy ... ok
+test edge_case_tests::test_scope_exit_preserves_depth_tracking ... FAILED
+test edge_case_tests::test_scope_exit_to_nonexistent_target_preserves_closest_parent ... ok
+test edge_case_tests::test_scope_exit_with_empty_parent_scope ... ok
+test edge_case_tests::test_scope_exit_with_multiple_keys_per_level ... ok
+test edge_case_tests::test_scope_exit_with_non_standard_indents ... ok
+test edge_case_tests::test_scope_exit_with_sequence_scope_in_hierarchy ... ok
+test edge_case_tests::test_single_level_scope_exit_preserves_root_state ... FAILED
+test grandparent_scope_exit_tests::test_grandparent_key_count_accurate_after_multi_level_cleanup ... ok
+test grandparent_scope_exit_tests::test_grandparent_metadata_preserved_through_multiple_levels ... ok
+test grandparent_scope_exit_tests::test_grandparent_scope_keys_preserved_after_multi_level_exit ... ok
+test grandparent_scope_exit_tests::test_great_grandparent_scope_preserved_after_deep_exit ... ok
+test grandparent_scope_exit_tests::test_intermediate_parent_scope_removed_on_grandparent_exit ... FAILED
+test integration_tests::test_nested_config_with_partial_exits ... ok
+test integration_tests::test_realistic_service_config_scenario ... ok
+test parent_scope_exit_tests::test_parent_scope_keys_preserved_after_child_exit ... ok
+test parent_scope_exit_tests::test_parent_scope_key_count_preserved_after_child_exit ... ok
+test parent_scope_exit_tests::test_parent_scope_metadata_preserved_after_child_exit ... ok
+test parent_scope_exit_tests::test_parent_scope_sequence_context_preserved ... ok
+test parent_scope_exit_tests::test_parent_scope_start_line_preserved_after_child_exit ... ok
+
+failures:
+
+---- edge_case_tests::test_deeply_nested_scope_exit_preserves_correct_level_state stdout ----
+
+thread 'edge_case_tests::test_deeply_nested_scope_exit_preserves_correct_level_state' (1194848) panicked at tests/state_preservation_scope_exit_test.rs:395:9:
+assertion `left == right` failed
+  left: 3
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- edge_case_tests::test_root_scope_state_preserved_in_aggressive_exits stdout ----
+
+thread 'edge_case_tests::test_root_scope_state_preserved_in_aggressive_exits' (1194851) panicked at tests/state_preservation_scope_exit_test.rs:330:32:
+index out of bounds: the len is 0 but the index is 0
+
+---- edge_case_tests::test_scope_exit_preserves_depth_tracking stdout ----
+
+thread 'edge_case_tests::test_scope_exit_preserves_depth_tracking' (1194852) panicked at tests/state_preservation_scope_exit_test.rs:454:9:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+---- edge_case_tests::test_single_level_scope_exit_preserves_root_state stdout ----
+
+thread 'edge_case_tests::test_single_level_scope_exit_preserves_root_state' (1194859) panicked at tests/state_preservation_scope_exit_test.rs:348:9:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- grandparent_scope_exit_tests::test_intermediate_parent_scope_removed_on_grandparent_exit stdout ----
+
+thread 'grandparent_scope_exit_tests::test_intermediate_parent_scope_removed_on_grandparent_exit' (1194864) panicked at tests/state_preservation_scope_exit_test.rs:198:9:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+
+failures:
+    edge_case_tests::test_deeply_nested_scope_exit_preserves_correct_level_state
+    edge_case_tests::test_root_scope_state_preserved_in_aggressive_exits
+    edge_case_tests::test_scope_exit_preserves_depth_tracking
+    edge_case_tests::test_single_level_scope_exit_preserves_root_state
+    grandparent_scope_exit_tests::test_intermediate_parent_scope_removed_on_grandparent_exit
+
+test result: FAILED. 19 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+warning: unused variable: `level2_count`
+   --> tests/state_preservation_scope_exit_test.rs:539:13
+    |
+539 |         let level2_count = stack.current_scope_ref().unwrap().key_count();
+    |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_level2_count`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (test "state_preservation_scope_exit_test") generated 1 warning (run `cargo fix --test "state_preservation_scope_exit_test" -p armor` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running tests/state_preservation_scope_exit_test.rs (target/debug/deps/state_preservation_scope_exit_test-4313f7ea78fa57c9)
+
+running 24 tests
+test edge_case_tests::test_exit_to_current_indent_is_idempotent ... ok
+test edge_case_tests::test_deeply_nested_scope_exit_preserves_correct_level_state ... FAILED
+test edge_case_tests::test_flow_style_flag_preservation_through_scope_exits ... ok
+test edge_case_tests::test_root_scope_state_preserved_in_aggressive_exits ... FAILED
+test edge_case_tests::test_scope_exit_preserves_depth_tracking ... FAILED
+test edge_case_tests::test_scope_exit_preserves_scope_path_accuracy ... ok
+test edge_case_tests::test_scope_exit_to_nonexistent_target_preserves_closest_parent ... ok
+test edge_case_tests::test_scope_exit_with_empty_parent_scope ... ok
+test edge_case_tests::test_scope_exit_with_multiple_keys_per_level ... ok
+test edge_case_tests::test_scope_exit_with_non_standard_indents ... ok
+test edge_case_tests::test_scope_exit_with_sequence_scope_in_hierarchy ... ok
+test edge_case_tests::test_single_level_scope_exit_preserves_root_state ... FAILED
+test grandparent_scope_exit_tests::test_grandparent_key_count_accurate_after_multi_level_cleanup ... ok
+test grandparent_scope_exit_tests::test_grandparent_metadata_preserved_through_multiple_levels ... ok
+test grandparent_scope_exit_tests::test_grandparent_scope_keys_preserved_after_multi_level_exit ... ok
+test grandparent_scope_exit_tests::test_great_grandparent_scope_preserved_after_deep_exit ... ok
+test grandparent_scope_exit_tests::test_intermediate_parent_scope_removed_on_grandparent_exit ... FAILED
+test integration_tests::test_nested_config_with_partial_exits ... ok
+test integration_tests::test_realistic_service_config_scenario ... ok
+test parent_scope_exit_tests::test_parent_scope_keys_preserved_after_child_exit ... ok
+test parent_scope_exit_tests::test_parent_scope_key_count_preserved_after_child_exit ... ok
+test parent_scope_exit_tests::test_parent_scope_metadata_preserved_after_child_exit ... ok
+test parent_scope_exit_tests::test_parent_scope_sequence_context_preserved ... ok
+test parent_scope_exit_tests::test_parent_scope_start_line_preserved_after_child_exit ... ok
+
+failures:
+
+---- edge_case_tests::test_deeply_nested_scope_exit_preserves_correct_level_state stdout ----
+
+thread 'edge_case_tests::test_deeply_nested_scope_exit_preserves_correct_level_state' (1194882) panicked at tests/state_preservation_scope_exit_test.rs:395:9:
+assertion `left == right` failed
+  left: 3
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- edge_case_tests::test_root_scope_state_preserved_in_aggressive_exits stdout ----
+
+thread 'edge_case_tests::test_root_scope_state_preserved_in_aggressive_exits' (1194885) panicked at tests/state_preservation_scope_exit_test.rs:330:32:
+index out of bounds: the len is 0 but the index is 0
+
+---- edge_case_tests::test_scope_exit_preserves_depth_tracking stdout ----
+
+thread 'edge_case_tests::test_scope_exit_preserves_depth_tracking' (1194886) panicked at tests/state_preservation_scope_exit_test.rs:454:9:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+---- edge_case_tests::test_single_level_scope_exit_preserves_root_state stdout ----
+
+thread 'edge_case_tests::test_single_level_scope_exit_preserves_root_state' (1194893) panicked at tests/state_preservation_scope_exit_test.rs:348:9:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- grandparent_scope_exit_tests::test_intermediate_parent_scope_removed_on_grandparent_exit stdout ----
+
+thread 'grandparent_scope_exit_tests::test_intermediate_parent_scope_removed_on_grandparent_exit' (1194898) panicked at tests/state_preservation_scope_exit_test.rs:198:9:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+
+failures:
+    edge_case_tests::test_deeply_nested_scope_exit_preserves_correct_level_state
+    edge_case_tests::test_root_scope_state_preserved_in_aggressive_exits
+    edge_case_tests::test_scope_exit_preserves_depth_tracking
+    edge_case_tests::test_single_level_scope_exit_preserves_root_state
+    grandparent_scope_exit_tests::test_intermediate_parent_scope_removed_on_grandparent_exit
+
+test result: FAILED. 19 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test state_preservation_scope_exit_test`
