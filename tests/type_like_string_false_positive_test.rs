@@ -1673,6 +1673,320 @@ fn test_invalid_error_code_formats() {
     }
 }
 
+#[test]
+fn test_error_codes_with_descriptions() {
+    // Error codes with descriptive text
+    let test_cases = vec![
+        "error: E001 - Invalid input parameter",
+        "message: D123 delimiter not found in file",
+        "status: E456 - Connection timeout",
+        "description: E789 authentication failed",
+        "detail: D012 - Duplicate key detected",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Error code with description should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_multiple_error_codes_in_values() {
+    // Multiple error codes in a single value
+    let test_cases = vec![
+        "errors: [E001, E002, E003]",
+        "codes: E123!E456!E789",
+        "message: Errors E001 and D123 occurred",
+        "status: See errors: E100, E200",
+        "details: E001|D123|E456",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowSequence,
+            "Multiple error codes in value should be valid type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_error_code_case_variations() {
+    // Error codes with different letter casing
+    let test_cases = vec![
+        "code: e001",    // lowercase
+        "code: E001",    // mixed case
+        "code: d123",    // lowercase
+        "code: ERROR001", // uppercase prefix
+        "code: Err123",  // mixed prefix
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Error code with case variation should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_error_codes_in_nested_structures() {
+    // Error codes in flow collections
+    let test_cases = vec![
+        "errors: {E001: input, D123: delimiter}",
+        "codes: [E001, E002, D123]",
+        "status: {major: E001, minor: D123}",
+        "exceptions: {E100: timeout, E200: overflow}",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowMapping || result == LineType::FlowSequence,
+            "Error code in nested structure should be valid type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_delimiter_error_variations() {
+    // Various delimiter error patterns
+    let test_cases = vec![
+        "delimiter_error: D001",
+        "delim_error: D002",
+        "delimiter: D003",
+        "delim: D004",
+        "error: delimiter D005 not found",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Delimiter error variation should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_error_codes_with_context() {
+    // Error codes in various contexts
+    let test_cases = vec![
+        "log: Error E001 occurred in module",
+        "trace: At line 42, error D123",
+        "debug: Check error E456 in logs",
+        "info: See error code E789 for details",
+        "warning: Error D012 deprecated",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Error code with context should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_warning_and_info_codes() {
+    // Warning and info codes (W, I prefixes)
+    let test_cases = vec![
+        "warning: W001 - Deprecated feature",
+        "info: I123 - Operation successful",
+        "notice: W456 - Configuration change",
+        "msg: I789 - Process started",
+        "alert: W012 - High memory usage",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Warning/info code should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_critical_error_codes() {
+    // Critical error codes (C, F prefixes)
+    let test_cases = vec![
+        "critical: C001 - System failure",
+        "fatal: F123 - Cannot recover",
+        "emergency: C456 - Shutdown required",
+        "panic: F789 - Inconsistent state",
+        "alert: C012 - Security breach",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Critical/fatal error code should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_error_codes_with_special_separators() {
+    // Error codes with various separators
+    let test_cases = vec![
+        "codes: E001-E002-E003",
+        "errors: E001,E002,E003",
+        "status: E001|E002|E003",
+        "codes: E001;E002;E003",
+        "list: E001/E002/E003",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Error codes with separators should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_error_code_boundaries() {
+    // Error codes at number boundaries
+    let test_cases = vec![
+        "code: E000",    // Lower boundary
+        "code: E999",    // Upper boundary
+        "code: D000",    // Delimiter lower boundary
+        "code: D999",    // Delimiter upper boundary
+        "code: E00",     // Too short (edge case)
+        "code: E1000",   // Too long (edge case)
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Error code at boundary should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_mixed_error_types_in_sequence() {
+    // Mixed error codes in sequences
+    let test_cases = vec![
+        "errors: [E001, W123, D456]",
+        "codes: (E001, I002, W003)",
+        "list: E001, F123, D456",
+        "all: [E001, D002, W003, I004, C005]",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowSequence,
+            "Mixed error types in sequence should be valid type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_error_codes_in_quoted_strings() {
+    // Error codes in quoted strings
+    let test_cases = vec![
+        "message: \"Error E001 occurred\"",
+        "description: 'Code D123 not found'",
+        "text: \"See error E456\"",
+        "note: 'Reference E789'",
+        "detail: \"Check D012\"",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Error code in quoted string should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_error_codes_with_exclamation() {
+    // Error codes combined with exclamation marks
+    let test_cases = vec![
+        "error: E001!",
+        "message: Critical D123!",
+        "status: E456 - failed!",
+        "alert: Error E789!",
+        "warning: Code D012!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Error code with exclamation should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_custom_error_code_formats() {
+    // Custom error code formats
+    let test_cases = vec![
+        "error: APP-E001",
+        "code: MOD-D123",
+        "status: SYS-E456",
+        "error: LIB-D789",
+        "code: SRV-E012",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Custom error code format should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_hex_error_codes() {
+    // Hexadecimal error codes
+    let test_cases = vec![
+        "code: 0xE001",
+        "error: 0xD123",
+        "status: 0xE456",
+        "code: 0xFFE",
+        "error: 0xABC",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Hex error code should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
 // ============================================================================
 // Section 16: Type Name Typos and Variations
 // ============================================================================
@@ -1735,6 +2049,311 @@ fn test_partial_type_matches_in_values() {
             classify_line_type(line),
             LineType::MappingKey,
             "Partial type match should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_common_type_misspellings() {
+    // Common misspellings of basic type names
+    let test_cases = vec![
+        "type: strnig",    // typo of "string"
+        "type: interger",   // typo of "integer"
+        "type: boolena",    // typo of "boolean"
+        "type: arraay",     // typo of "array"
+        "type: objject",    // typo of "object"
+        "type: srting",     // typo of "string"
+        "type: ingeger",    // typo of "integer"
+        "type: bollean",    // typo of "boolean"
+        "type: arary",      // typo of "array"
+        "type: objct",      // typo of "object"
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Common type misspelling should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_transposed_letter_typos() {
+    // Type names with transposed letters
+    let test_cases = vec![
+        "type: tsring",     // "string" with transposed letters
+        "type: itneger",    // "integer" with transposed letters
+        "type: boolena",    // "boolean" with transposed letters
+        "type: rarray",     // "array" with transposed letters
+        "type: ojbect",     // "object" with transposed letters
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with transposed letters should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_double_letter_typos() {
+    // Type names with doubled letters
+    let test_cases = vec![
+        "type: sstring",    // "string" with doubled 's'
+        "type: iinteger",   // "integer" with doubled 'i'
+        "type: bboolean",   // "boolean" with doubled 'b'
+        "type: aarray",     // "array" with doubled 'a'
+        "type: oobject",    // "object" with doubled 'o'
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with doubled letters should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_missing_letter_typos() {
+    // Type names with missing letters
+    let test_cases = vec![
+        "type: strng",      // "string" missing 'i'
+        "type: interer",    // "integer" missing 'g'
+        "type: boolan",     // "boolean" missing 'e'
+        "type: arry",       // "array" missing 'a'
+        "type: objec",      // "object" missing 't'
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with missing letter should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_extra_letter_typos() {
+    // Type names with extra letters
+    let test_cases = vec![
+        "type: striing",    // "string" with extra 'i'
+        "type: inteeger",   // "integer" with extra 'e'
+        "type: booleann",   // "boolean" with extra 'n'
+        "type: arrayy",     // "array" with extra 'y'
+        "type: objectt",    // "object" with extra 't'
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with extra letter should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_name_with_numbers() {
+    // Type names with numbers mixed in
+    let test_cases = vec![
+        "type: str1ng",
+        "type: int3ger",
+        "type: b00l3an",
+        "type: arr4y",
+        "type: 0bj3ct",
+        "type: string1",
+        "type: integer2",
+        "type: boolean3",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with numbers should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_name_with_underscores() {
+    // Type names with underscores (common in configs)
+    let test_cases = vec![
+        "type: str_ing",
+        "type: inte_ger",
+        "type: boo_lean",
+        "type: arr_ay",
+        "type: obj_ect",
+        "type: _string",
+        "type: integer_",
+        "type: __boolean__",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with underscores should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_name_with_hyphens() {
+    // Type names with hyphens
+    let test_cases = vec![
+        "type: str-ing",
+        "type: int-eger",
+        "type: boo-lean",
+        "type: arr-ay",
+        "type: obj-ect",
+        "type: -string",
+        "type: integer-",
+        "type: --boolean--",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with hyphens should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_reversed_type_names() {
+    // Type names with letters reversed
+    let test_cases = vec![
+        "type: gnirts",     // "string" reversed
+        "type: regetni",    // "integer" reversed
+        "type: naelooB",    // "boolean" reversed
+        "type: yarra",      // "array" reversed
+        "type: tcejo",      // "object" reversed
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Reversed type name should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_alternative_type_names() {
+    // Alternative names for common types
+    let test_cases = vec![
+        "type: text",       // Alternative for "string"
+        "type: number",     // Alternative for "integer"
+        "type: flag",       // Alternative for "boolean"
+        "type: list",       // Alternative for "array"
+        "type: dict",       // Alternative for "object"
+        "type: str",        // Abbreviation for "string"
+        "type: int",        // Abbreviation for "integer"
+        "type: bool",       // Abbreviation for "boolean"
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Alternative type name should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_programming_language_types() {
+    // Type names from various programming languages
+    let test_cases = vec![
+        "type: str",        // Python
+        "type: i32",        // Rust
+        "type: Vec",        // Rust
+        "type: HashMap",    // Rust
+        "type: String",     // Java/C#
+        "type: Integer",    // Java
+        "type: Boolean",    // Java
+        "type: List",       // Java
+        "type: Map",        // Java
+        "type: NSString",   // Objective-C
+        "type: std::string", // C++
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Programming language type should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_sql_data_types() {
+    // SQL data type names in values
+    let test_cases = vec![
+        "type: varchar",
+        "type: varchar(255)",
+        "type: text",
+        "type: int",
+        "type: bigint",
+        "type: decimal",
+        "type: timestamp",
+        "type: boolean",
+        "type: json",
+        "type: uuid",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "SQL data type should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_json_schema_types() {
+    // JSON Schema type formats
+    let test_cases = vec![
+        "type: string",
+        "type: number",
+        "type: integer",
+        "type: boolean",
+        "type: array",
+        "type: object",
+        "type: null",
+        "type: string|null",
+        "type: array|string",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "JSON Schema type should be MappingKey: '{}'",
             line
         );
     }
