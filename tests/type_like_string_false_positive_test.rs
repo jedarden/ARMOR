@@ -11527,3 +11527,141 @@ fn test_folded_scalar_basic_modifiers_at_indentation_levels() {
         );
     }
 }
+
+// ============================================================================
+// Section 12B.3: Folded Scalar Explicit Indent Infrastructure Pattern
+// ============================================================================
+// This section demonstrates the infrastructure pattern for folded scalar
+// explicit indent tests. Bead: bf-63gy6
+//
+// Pattern for children (bf-4aw6b and related beads):
+// ------------------------------------------------
+// 1. Use the `generate_folded_explicit_indent_tests!` macro to create test cases
+//    for specific indentation levels and modifier combinations.
+//
+// 2. Use the `run_folded_scalar_tests!` macro to execute the test cases with
+//    standard assertions (line type classification and key detection).
+//
+// 3. Or use helper functions `create_folded_scalar_test` and
+//    `generate_folded_scalar_tests_multi_level` for non-macro test building.
+//
+// Template Test Function (Copy this pattern for new tests):
+// ```rust
+// #[test]
+// fn test_folded_scalar_explicit_indent_<variant>() {
+//     // Generate test cases for 2-space indentation with various modifiers
+//     let test_cases = generate_folded_explicit_indent_tests!(
+//         "  ",                    // indent: 2 spaces
+//         "level1",               // level_name: descriptive name
+//         [">", ">-", ">+"],      // modifiers: array of modifier patterns
+//         [1, 2, 3, 4, 5],       // indent_nums: array of indent numbers
+//         "test"                  // key_prefix: prefix for generated key names
+//     );
+//
+//     // Run tests with standard assertions
+//     run_folded_scalar_tests!(test_cases);
+// }
+// ```
+//
+// Available Modifiers:
+// - ">"     : Plain folded scalar
+// - ">-"    : Folded with strip modifier (removes trailing newlines)
+// - ">+"    : Folded with keep modifier (preserves trailing newlines)
+//
+// Indent Numbers: 1-9 (e.g., >2 means 2 * 2 = 4 spaces indentation)
+//
+// Indentation Levels:
+// - "  "    : 2 spaces (level1)
+// - "    "  : 4 spaces (level2)
+// - "      ": 6 spaces (level3)
+// - "        ": 8 spaces (level4)
+// - "\t"    : Tab (tab)
+//
+// Example: Using helper functions instead of macros:
+// ```rust
+// #[test]
+// fn test_folded_scalar_custom_pattern() {
+//     let mut cases = vec![];
+//
+//     // Add custom test cases using helper function
+//     cases.push(create_folded_scalar_test("  ", "my_key", ">", 2));
+//     cases.push(create_folded_scalar_test("    ", "another", ">-", 3));
+//
+//     // Run with standard macro
+//     run_folded_scalar_tests!(cases);
+// }
+// ```
+//
+// Example: Bulk generation for multiple levels:
+// ```rust
+// #[test]
+// fn test_folded_scalar_multi_level() {
+//     let test_cases = generate_folded_scalar_tests_multi_level(
+//         &["text", "note", "message"],  // keys
+//         &[">", ">-", ">+"],           // modifiers
+//         &[1, 2, 3, 4]                 // indent levels
+//     );
+//
+//     run_folded_scalar_tests!(test_cases);
+// }
+// ```
+
+#[test]
+fn test_folded_scalar_explicit_indent_template_example() {
+    // TEMPLATE EXAMPLE - This demonstrates the infrastructure pattern.
+    // Copy this function and modify for your specific test needs.
+    //
+    // Bead: bf-63gy6 - Infrastructure pattern setup
+    // See Section 12B.3 documentation above for full pattern details.
+
+    // Example: Generate test cases for 2-space indentation
+    let test_cases = generate_folded_explicit_indent_tests!(
+        "  ",                    // 2-space base indentation
+        "level1",               // Descriptive level name
+        [">", ">-", ">+"],      // All three modifier types
+        [1, 2, 3],             // Indent numbers 1-3
+        "template"             // Key prefix for generated names
+    );
+
+    // Run tests with standard assertions
+    run_folded_scalar_tests!(test_cases);
+}
+
+#[test]
+fn test_folded_scalar_explicit_indent_tab_template() {
+    // TEMPLATE EXAMPLE for tab indentation
+    // Copy this pattern for tab-based folded scalar tests
+
+    let test_cases = generate_folded_explicit_indent_tests!(
+        "\t",                    // Tab base indentation
+        "tab",                  // Descriptive level name
+        [">", ">-", ">+"],      // All three modifier types
+        [1, 2, 3, 4],          // Indent numbers 1-4
+        "tab_test"             // Key prefix
+    );
+
+    run_folded_scalar_tests!(test_cases);
+}
+
+#[test]
+fn test_folded_scalar_explicit_indent_helper_function_example() {
+    // TEMPLATE EXAMPLE using helper functions instead of macros
+    // Use this when you need more control over test case generation
+
+    let mut cases = vec![];
+
+    // Build custom test cases using helper function
+    cases.push(create_folded_scalar_test("  ", "custom_key", ">", 1));
+    cases.push(create_folded_scalar_test("    ", "another_key", ">-", 2));
+    cases.push(create_folded_scalar_test("\t", "tab_key", ">+", 3));
+
+    // Or manually add tuples:
+    // (line, expected_key, expected_type)
+    cases.push((
+        "      manual: >4".to_string(),
+        "manual".to_string(),
+        LineType::MappingKey
+    ));
+
+    run_folded_scalar_tests!(cases);
+}
