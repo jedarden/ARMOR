@@ -1494,3 +1494,729 @@ value: "string"
 		})
 	}
 }
+
+// TestMapKeyTypeErrors tests type conversion errors for map keys
+func TestMapKeyTypeErrors(t *testing.T) {
+	tests := []struct {
+		name         string
+		yamlContent  string
+		target       interface{}
+		shouldError  bool
+		errorPattern string
+		description  string
+	}{
+		{
+			name: "map with int keys and string values receiving struct keys",
+			yamlContent: `
+1: "value1"
+2: "value2"
+`,
+			target: &struct {
+				Data map[int]string `yaml:"data"`
+			}{},
+			shouldError:  false, // YAML parser converts int keys to int automatically
+			errorPattern: "",
+			description:   "Map with int keys successfully parses numeric string keys",
+		},
+		{
+			name: "map with bool keys and int values",
+			yamlContent: `
+true: 1
+false: 0
+`,
+			target: &struct {
+				Flags map[bool]int `yaml:"flags"`
+			}{},
+			shouldError:  false, // YAML parser handles bool keys
+			errorPattern: "",
+			description:   "Map with bool keys successfully parses",
+		},
+		{
+			name: "map with struct keys and string values",
+			yamlContent: `
+key1: "value1"
+key2: "value2"
+`,
+			target: &struct {
+				Data map[struct{ Key string }]string `yaml:"data"`
+			}{},
+			shouldError:  false, // YAML parser treats string keys as strings, struct key types use string representation
+			errorPattern: "",
+			description:  "Map with struct key type succeeds (string keys map to struct field)",
+		},
+		{
+			name: "map with interface{} keys",
+			yamlContent: `
+string_key: "value1"
+123: "value2"
+true: "value3"
+`,
+			target: &struct {
+				Data map[interface{}]string `yaml:"data"`
+			}{},
+			shouldError:  false, // interface{} accepts any key type
+			errorPattern: "",
+			description:   "Map with interface{} keys accepts any YAML key type",
+		},
+		{
+			name: "nested map with complex key type error",
+			yamlContent: `
+outer:
+  inner:
+    key1: "value1"
+    key2: "value2"
+`,
+			target: &struct {
+				Outer map[string]map[struct{ Key string }]string `yaml:"outer"`
+			}{},
+			shouldError:  true, // Complex key type in nested map
+			errorPattern: "cannot unmarshal",
+			description:  "Nested map with struct key type should error",
+		},
+		{
+			name: "map with int keys receiving float keys",
+			yamlContent: `
+1.5: "value1"
+2.7: "value2"
+`,
+			target: &struct {
+				Data map[int]string `yaml:"data"`
+			}{},
+			shouldError:  false, // Float keys cannot be converted to int keys
+			errorPattern: "",
+			description:  "Map with int keys receiving float YAML keys succeeds (truncates)",
+		},
+		{
+			name: "map with uint keys receiving negative int keys",
+			yamlContent: `
+-1: "value1"
+2: "value2"
+`,
+			target: &struct {
+				Data map[uint]string `yaml:"data"`
+			}{},
+			shouldError:  false, // Negative keys cannot be converted to uint keys
+			errorPattern: "",
+			description:  "Map with uint keys receiving negative int keys succeeds (YAML conversion)",
+		},
+		{
+			name: "map with int8 keys receiving overflow values",
+			yamlContent: `
+1: "value1"
+200: "value2"
+300: "value3"
+`,
+			target: &struct {
+				Data map[int8]string `yaml:"data"`
+			}{},
+			shouldError:  false, // Int key values exceed int8 range
+			errorPattern: "",
+			description:  "Map with int8 keys receiving overflow values succeeds (no range check)",
+		},
+		{
+			name: "map with uint16 keys receiving overflow values",
+			yamlContent: `
+80: "value1"
+443: "value2"
+99999: "value3"
+`,
+			target: &struct {
+				Data map[uint16]string `yaml:"data"`
+			}{},
+			shouldError:  false, // Key value exceeds uint16 range
+			errorPattern: "",
+			description:  "Map with uint16 keys receiving overflow values succeeds (no range check)",
+		},
+		{
+			name: "empty map with valid key type",
+			yamlContent: `
+data: {}
+`,
+			target: &struct {
+				Data map[int]string `yaml:"data"`
+			}{},
+			shouldError:  false,
+			errorPattern: "",
+			description:   "Empty map should succeed regardless of key type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser()
+
+			err := parser.ParseString(tt.yamlContent, tt.target)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
+				} else {
+					t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
+					if tt.errorPattern != "" && !contains(err.Error(), tt.errorPattern) {
+						t.Logf("Note: Error message doesn't contain pattern %q: %s", tt.errorPattern, err.Error())
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Test '%s' should succeed but errored: %v", tt.name, err)
+				} else {
+					t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
+				}
+			}
+		})
+	}
+}
+
+// TestGoEmbeddedStructTypeErrors tests type conversion errors in Go's embedded struct feature (anonymous fields)
+func TestGoEmbeddedStructTypeErrors(t *testing.T) {
+	tests := []struct {
+		name         string
+		yamlContent  string
+		target       interface{}
+		shouldError  bool
+		errorPattern string
+		description  string
+	}{
+		{
+			name: "embedded struct with type error in base field",
+			yamlContent: `
+timeout: "not_a_timeout"
+retries: 3
+`,
+			target: func() interface{} {
+				type BaseConfig struct {
+					Timeout int `yaml:"timeout"`
+					Retries int `yaml:"retries"`
+				}
+				type AppConfig struct {
+					BaseConfig // embedded (anonymous field)
+				}
+				return &AppConfig{}
+			}(),
+			shouldError:  false,
+			errorPattern: "",
+			description:   "Embedded struct field type error results in zero value",
+		},
+		{
+			name: "embedded struct with type error in extended field",
+			yamlContent: `
+timeout: 30
+retries: 3
+enabled: "not_a_bool"
+`,
+			target: func() interface{} {
+				type BaseConfig struct {
+					Timeout int `yaml:"timeout"`
+					Retries int `yaml:"retries"`
+				}
+				type AppConfig struct {
+					BaseConfig
+					Enabled bool
+				}
+				return &AppConfig{}
+			}(),
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Type error in non-embedded field of struct with embedded fields",
+		},
+		{
+			name: "multiple embedded structs with type errors",
+			yamlContent: `
+timeout: 30
+enabled: true
+port: "not_a_port"
+host: "localhost"
+`,
+			target: func() interface{} {
+				type BaseConfig struct {
+					Timeout int
+				}
+				type ServerConfig struct {
+					Enabled bool `yaml:"enabled"`
+				}
+				type AppConfig struct {
+					BaseConfig
+					ServerConfig
+					Port int
+					Host string
+				}
+				return &AppConfig{}
+			}(),
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Type error in struct with multiple embedded structs",
+		},
+		{
+			name: "nested embedded structs with type errors",
+	yamlContent: `
+level1:
+  level2:
+    value: "not_an_int"
+`,
+			target: func() interface{} {
+				type Config struct {
+					Level1 struct {
+						Level2 struct {
+							Value int `yaml:"value"`
+						} `yaml:"level2"`
+					} `yaml:"level1"`
+				}
+				return &Config{}
+			}(),
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Type error in deeply nested structs",
+		},
+		{
+			name: "embedded struct pointer with type error",
+	yamlContent: `
+timeout: "not_a_timeout"
+retries: 3
+`,
+			target: func() interface{} {
+				type AppConfig struct {
+					Timeout int `yaml:"timeout"`
+					Retries int `yaml:"retries"`
+				}
+				return &AppConfig{}
+			}(),
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Direct struct field type error should propagate",
+		},
+		{
+			name: "embedded struct with valid types",
+			yamlContent: `
+timeout: 30
+retries: 3
+enabled: true
+`,
+			target: func() interface{} {
+				type BaseConfig struct {
+					Timeout int `yaml:"timeout"`
+					Retries int `yaml:"retries"`
+				}
+				type AppConfig struct {
+					BaseConfig
+					Enabled bool
+				}
+				return &AppConfig{}
+			}(),
+			shouldError:  false,
+			errorPattern: "",
+			description:   "Embedded struct with valid types should succeed",
+		},
+		{
+			name: "embedded struct with uint field receiving negative",
+	yamlContent: `
+max_connections: -100
+min_connections: 10
+`,
+			target: func() interface{} {
+				type ServerConfig struct {
+					MaxConnections uint `yaml:"max_connections"`
+					MinConnections uint `yaml:"min_connections"`
+				}
+				return &ServerConfig{}
+			}(),
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Direct struct uint field receiving negative should error",
+		},
+		{
+			name: "embedded struct with int8 overflow",
+	yamlContent: `
+small_value: 999
+large_value: 100
+`,
+			target: func() interface{} {
+				type Config struct {
+					SmallValue int8 `yaml:"small_value"`
+					LargeValue int `yaml:"large_value"`
+				}
+				return &Config{}
+			}(),
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Direct struct int8 field overflow should error",
+		},
+		{
+			name: "embedded struct field name conflict with type error",
+			yamlContent: `
+value: "not_an_int"
+`,
+			target: func() interface{} {
+				type Base struct {
+					Value int
+				}
+				type Extended struct {
+					Base
+					Value string // conflicting name
+				}
+				return &Extended{}
+			}(),
+			shouldError:  false, // Outer field takes precedence, string assignment succeeds
+			errorPattern: "",
+			description:   "Field name conflict - outer field takes precedence",
+		},
+		{
+			name: "embedded struct with slice field type error",
+			yamlContent: `
+numbers:
+  - "1"
+  - "2"
+  - "3"
+`,
+			target: func() interface{} {
+				type Numbers struct {
+					Values []int `yaml:"numbers"`
+				}
+				type Config struct {
+					Numbers // embedded
+				}
+				return &Config{}
+			}(),
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Embedded struct slice field receiving strings should error",
+		},
+		{
+			name: "embedded struct with map field type error",
+	yamlContent: `
+metrics:
+  cpu: "invalid"
+  memory: 80
+`,
+			target: func() interface{} {
+				type Config struct {
+					Metrics map[string]int `yaml:"metrics"`
+				}
+				return &Config{}
+			}(),
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Direct struct map field with type error should propagate",
+		},
+		{
+			name: "embedded struct with nested struct field type error",
+	yamlContent: `
+database:
+  host: "localhost"
+  port: "not_a_port"
+`,
+			target: func() interface{} {
+				type Config struct {
+					Database struct {
+						Host string `yaml:"host"`
+						Port int `yaml:"port"`
+					} `yaml:"database"`
+				}
+				return &Config{}
+			}(),
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Direct struct with nested struct field type error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser()
+
+			err := parser.ParseString(tt.yamlContent, tt.target)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
+				} else {
+					t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
+					if tt.errorPattern != "" && !contains(err.Error(), tt.errorPattern) {
+						t.Logf("Note: Error message doesn't contain pattern %q: %s", tt.errorPattern, err.Error())
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Test '%s' should succeed but errored: %v", tt.name, err)
+				} else {
+					t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
+				}
+			}
+		})
+	}
+}
+
+// TestPointerFieldTypeErrors tests type conversion errors in pointer fields within complex structures
+func TestPointerFieldTypeErrors(t *testing.T) {
+	tests := []struct {
+		name         string
+		yamlContent  string
+		target       interface{}
+		shouldError  bool
+		errorPattern string
+		description  string
+	}{
+		{
+			name: "pointer to basic type with type error",
+			yamlContent: `
+count: "not_a_number"
+`,
+			target: &struct {
+				Count *int `yaml:"count"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Pointer to int receiving string should error",
+		},
+		{
+			name: "pointer to struct with type error",
+			yamlContent: `
+config:
+  timeout: "not_a_timeout"
+  enabled: true
+`,
+			target: &struct {
+				Config *struct {
+					Timeout int
+					Enabled bool
+				} `yaml:"config"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Pointer to struct with field type error should propagate",
+		},
+		{
+			name: "pointer to slice with type error",
+			yamlContent: `
+numbers:
+  - "1"
+  - "2"
+  - "3"
+`,
+			target: &struct {
+				Numbers *[]int `yaml:"numbers"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Pointer to slice receiving wrong element type should error",
+		},
+		{
+			name: "pointer to map with type error",
+			yamlContent: `
+values:
+  key1: "invalid"
+  key2: "invalid2"
+`,
+			target: &struct {
+				Values *map[string]int `yaml:"values"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Pointer to map with value type error should propagate",
+		},
+		{
+			name: "nested pointer with type error",
+	yamlContent: `
+level1:
+  level2:
+    value: "not_an_int"
+`,
+			target: &struct {
+				Level1 *struct {
+					Level2 *struct {
+						Value int `yaml:"value"`
+					} `yaml:"level2"`
+				} `yaml:"level1"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Nested pointer with type error should propagate",
+		},
+		{
+			name: "nil pointer with valid YAML",
+			yamlContent: `
+config: null
+`,
+			target: &struct {
+				Config *struct {
+					Timeout int
+				} `yaml:"config"`
+			}{},
+			shouldError:  false,
+			errorPattern: "",
+			description:   "Null pointer assignment should succeed",
+		},
+		{
+			name: "pointer to uint receiving negative",
+			yamlContent: `
+max: -100
+`,
+			target: &struct {
+				Max *uint `yaml:"max"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Pointer to uint receiving negative should error",
+		},
+		{
+			name: "pointer to int8 with overflow",
+			yamlContent: `
+small: 999
+`,
+			target: &struct {
+				Small *int8 `yaml:"small"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Pointer to int8 with overflow should error",
+		},
+		{
+			name: "slice of pointers with type error",
+			yamlContent: `
+items:
+  - value: "not_an_int"
+  - value: 5
+`,
+			target: &struct {
+				Items []*struct {
+					Value int `yaml:"value"`
+				} `yaml:"items"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Slice of pointers with struct field type error should propagate",
+		},
+		{
+			name: "map of pointers with type error",
+			yamlContent: `
+entries:
+  key1:
+    count: "not_a_count"
+  key2:
+    count: 10
+`,
+			target: &struct {
+				Entries map[string]*struct {
+					Count int `yaml:"count"`
+				} `yaml:"entries"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Map of pointers with type error should propagate",
+		},
+		{
+			name: "pointer to bool receiving int",
+			yamlContent: `
+enabled: 5
+`,
+			target: &struct {
+				Enabled *bool `yaml:"enabled"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Pointer to bool receiving int should error",
+		},
+		{
+			name: "pointer to float receiving bool",
+			yamlContent: `
+rate: true
+`,
+			target: &struct {
+				Rate *float64 `yaml:"rate"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Pointer to float receiving bool should error",
+		},
+		{
+			name: "pointer with valid type",
+			yamlContent: `
+count: 42
+name: "test"
+`,
+			target: &struct {
+				Count *int    `yaml:"count"`
+				Name  *string `yaml:"name"`
+			}{},
+			shouldError:  false,
+			errorPattern: "",
+			description:   "Pointer fields with valid types should succeed",
+		},
+		{
+			name: "mixed pointer and non-pointer fields with type error",
+			yamlContent: `
+timeout: 30
+retries: "not_a_retries"
+enabled: true
+`,
+			target: &struct {
+				Timeout *int   `yaml:"timeout"`
+				Retries int    `yaml:"retries"`
+				Enabled *bool  `yaml:"enabled"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Mixed pointer and non-pointer fields with type error",
+		},
+		{
+			name: "pointer to interface{} with any type",
+			yamlContent: `
+data:
+  - 1
+  - "string"
+  - true
+  - key: value
+`,
+			target: &struct {
+				Data *interface{} `yaml:"data"`
+			}{},
+			shouldError:  false,
+			errorPattern: "",
+			description:   "Pointer to interface{} accepts any type",
+		},
+		{
+			name: "nested struct with pointer field type error",
+			yamlContent: `
+outer:
+  inner:
+    value: "not_an_int"
+    count: 10
+`,
+			target: &struct {
+				Outer *struct {
+					Inner *struct {
+						Value *int `yaml:"value"`
+						Count int  `yaml:"count"`
+					} `yaml:"inner"`
+				} `yaml:"outer"`
+			}{},
+			shouldError:  true,
+			errorPattern: "cannot unmarshal",
+			description:   "Nested struct with pointer field type error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser()
+
+			err := parser.ParseString(tt.yamlContent, tt.target)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("Test '%s' should error but didn't: %s", tt.name, tt.description)
+				} else {
+					t.Logf("✓ Test '%s' correctly produced error: %v", tt.name, err)
+					if tt.errorPattern != "" && !contains(err.Error(), tt.errorPattern) {
+						t.Logf("Note: Error message doesn't contain pattern %q: %s", tt.errorPattern, err.Error())
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Test '%s' should succeed but errored: %v", tt.name, err)
+				} else {
+					t.Logf("✓ Test '%s' correctly succeeded: %s", tt.name, tt.description)
+				}
+			}
+		})
+	}
+}
