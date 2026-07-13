@@ -24,12 +24,14 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // Pattern Documentation:
 // ---------------------
 // Folded scalar explicit indent tests follow a consistent pattern.
-// For concrete examples, see Section 12B (line 7586) and its subsections:
-//   - Section 12B: Multiline String Scenarios with Exclamation Marks (line 7586)
-//   - Section 12B.1: Comprehensive Folded Block Scalar Tests with Exclamation (line 10415)
-//   - Section 12B.2: Folded Scalar Indicator Line Tests (line 10209)
-//   - Section 12B.2: Basic Folded Scalar Indicator Tests (line 10868)
-//   - Section 12B.3: Folded Scalar Explicit Indent Infrastructure Pattern (line 12343)
+// For concrete examples, see Section 12B (line 7816) and its subsections:
+//   - Section 12B: Multiline String Scenarios with Exclamation Marks (line 7816)
+//   - Section 12B.1: Comprehensive Folded Block Scalar Tests with Exclamation (line 10645)
+//   - Section 12B.2: Folded Scalar Indicator Line Tests (line 10439)
+//   - Section 12B.2: Basic Folded Scalar Indicator Tests (line 11098)
+//   - Section 12B.3: Folded Scalar Explicit Indent Infrastructure Pattern (line 12573)
+//
+// NOTE: Line numbers updated 2026-07-13 after Section 12B analysis (Bead: bf-68ime)
 //
 // 1. Test Case Structure:
 //    - Use vec! of tuples: (input_line, expected_key_name, expected_line_type)
@@ -59,14 +61,18 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // 4. Assertion Patterns:
 //    A. Basic indicator line assertion:
 //       assert_eq!(classify_line_type(line), LineType::MappingKey, "...", line)
+//       Example from Section 12B (line 7853): "Folded block scalar indicator should be MappingKey: '{}'"
 //    B. Key extraction assertion (for MappingKey results):
 //       let info = detect_mapping_key(line, 0);
 //       assert!(info.is_some(), "...");
 //       assert_eq!(info.unwrap().key, expected_key, "...");
+//       Example from Section 12B (line 8036): "Should detect mapping key for literal scalar with basic modifier: '{}'"
 //    C. Continuation line assertion (accepts multiple types):
 //       assert!(result == LineType::MappingKey || result == LineType::Unknown, "...");
+//       Example from Section 12B (line 7875): "Folded scalar continuation with ! should be MappingKey or Unknown: '{}'"
 //    D. Tag-like continuation assertion (lines starting with !):
 //       assert_eq!(result, LineType::Tag, "...");
+//       Example from Section 12B (line 7926): "Literal scalar continuation with ! should be one of {:?}: '{}' (got {:?})"
 //    - See Section 12B.2 for continuation line assertion patterns
 //
 // 5. Continuation Line Patterns:
@@ -110,31 +116,31 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //
 // Folded Scalar (>) Explicit Indent - Level Coverage:
 //   - Level 1 (2-space): COMPLETE - plain, strip, keep all covered
-//     * test_folded_scalar_plain_explicit_indent_modifiers_at_2_space() (line 8250)
-//     * test_folded_scalar_strip_explicit_indent_modifiers_at_2_space() (line 12646)
-//     * test_folded_scalar_keep_explicit_indent_modifiers_at_2_space() (line ~12800)
-//   - Level 2 (4-space): NOT IMPLEMENTED - only in "various_levels" tests (line 8250+)
+//     * test_folded_scalar_plain_explicit_indent_modifiers_at_2_space() (line 8482)
+//     * test_folded_scalar_strip_explicit_indent_modifiers_at_2_space() (line 8591)
+//     * test_folded_scalar_keep_explicit_indent_modifiers_at_2_space() (line 12878)
+//   - Level 2 (4-space): NOT IMPLEMENTED - only in "various_levels" tests
 //     * Missing: test_folded_scalar_*_explicit_indent_modifiers_at_4_space()
-//   - Level 3 (6-space): NOT IMPLEMENTED - only in "various_levels" tests (line 8250+)
+//   - Level 3 (6-space): NOT IMPLEMENTED - only in "various_levels" tests
 //     * Missing: test_folded_scalar_*_explicit_indent_modifiers_at_6_space()
-//   - Level 4 (8-space): NOT IMPLEMENTED - only in "various_levels" tests (line 8250+)
+//   - Level 4 (8-space): NOT IMPLEMENTED - only in "various_levels" tests
 //     * Missing: test_folded_scalar_*_explicit_indent_modifiers_at_8_space()
-//   - Tab indentation: PARTIAL - template exists (line 12498)
+//   - Tab indentation: PARTIAL - template exists
 //     * Missing: Full modifier coverage for tab indentation
 //   - Level 0 (no indent): PARTIAL - has all_modifiers and comparison tests
-//     * test_folded_scalar_level0_all_modifiers() (line 12837)
-//     * test_folded_scalar_level0_specific_manual_cases() (line 12962)
+//     * test_folded_scalar_level0_all_modifiers() (line 13069)
+//     * test_folded_scalar_level0_specific_manual_cases() (line 13131)
 //
 // Literal Scalar (|) Explicit Indent - Level Coverage:
-//   - All levels: PARTIAL - only "various_levels" tests exist (line 8468)
-//     * test_literal_scalar_explicit_indent_modifiers_at_various_levels() covers all
+//   - All levels: PARTIAL - only "various_levels" tests exist
+//     * test_literal_scalar_explicit_indent_modifiers_at_various_levels() (line 8700) covers all
 //     * Missing: Level-specific tests (like level1_2_space, level2_4_space, etc.)
 //   - Tab indentation for literal scalars: NOT IMPLEMENTED
 //   - Level-specific literal scalar tests: NOT IMPLEMENTED
 //
 // **Section 12B Coverage Analysis:**
 // Section 12B demonstrates:
-// - Comprehensive level-specific indentation tests for basic folded scalars (lines 9238-10177)
+// - Comprehensive level-specific indentation tests for basic folded scalars (lines 8098-8481)
 // - Level 1-6 each have dedicated test functions with continuation line validation
 // - However, EXPLICIT INDENT modifiers (>2, >-2, >+2) lack level-specific coverage
 // - The "various_levels" tests (line 8250+) cover all levels in bulk but lack:
@@ -142,7 +148,7 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //   * Per-level continuation line validation
 //   * Per-level exclamation mark patterns
 //
-// To add coverage for missing levels, copy the skeleton template at line 12759:
+// To add coverage for missing levels, copy the skeleton template at line 12991:
 //   test_folded_scalar_explicit_indent_skeleton()
 //
 // Recommended additions (use Section 12B.3 infrastructure pattern):
@@ -160,14 +166,14 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // The following test functions in Section 12B serve as concrete examples for each pattern:
 //
 // **Test Case Structure (Pattern 1):**
-// - test_folded_block_scalar_with_exclamation_marks() (line 7685)
+// - test_folded_block_scalar_with_exclamation_marks() (line 7822)
 //   * Uses vec! of tuples: (input_line, expected_key_name, expected_line_type)
 //   * Example: ("description: >", "description", LineType::MappingKey)
 //   * Demonstrates folded scalar indicators with exclamation marks
 //   * Shows both indicator lines and continuation lines in separate test arrays
 //
 // **Literal Scalar Basic Modifiers Pattern:**
-// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7796)
+// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7933)
 //   * Comprehensive tuple structure: (line, expected_key, expected_type)
 //   * Tests modifiers |- (strip) and |+ (keep) at all indentation levels
 //   * Includes continuation line testing with vector of allowed types
@@ -175,32 +181,32 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //   * Demonstrates edge cases: single character keys, multiple ! marks
 //
 // **Folded Scalar Basic Modifiers Pattern:**
-// - test_folded_scalar_basic_modifiers_at_various_indentation_levels() (line 7961)
+// - test_folded_scalar_basic_modifiers_at_various_indentation_levels() (line 8098)
 //   * Mirrors literal scalar pattern for >- and >+ modifiers
 //   * Same tuple structure and continuation line testing
 //   * Comprehensive level coverage (2-space, 4-space, 6-space, 8-space, tab)
 //   * Shows mixed indentation (tab + spaces)
 //
 // **Assertion Patterns (Pattern 4):**
-// - test_folded_scalar_basic_modifiers() (line 10398)
+// - test_folded_scalar_basic_modifiers() (line 10470)
 //   * Pattern 4.A: Basic indicator line assertion
 //   * assert_eq!(classify_line_type(line), LineType::MappingKey, "...", line)
-// - test_folded_scalar_all_modifier_combinations() (line 10515)
+// - test_folded_scalar_all_modifier_combinations() (line 10587)
 //   * Comprehensive demonstration of all modifier combinations
 //   * Shows simple iteration pattern for basic tests
 //
 // **Continuation Line Patterns (Pattern 5):**
-// - test_folded_block_scalar_with_exclamation_marks() (line 7685)
+// - test_folded_block_scalar_with_exclamation_marks() (line 7822)
 //   * Pattern 5.C: Continuation lines with vec![allowed_types]
 //   * Lines: "  This is folded text with! exclamation marks"
 //   * assert!(expected_types.contains(&result), "...")
-// - test_literal_block_scalar_with_exclamation_marks() (line 7746)
+// - test_literal_block_scalar_with_exclamation_marks() (line 7883)
 //   * Shows continuation lines starting with ! → Tag classification
 //   * Pattern 5.D: Lines like "  !important" → LineType::Tag
 //   * Uses tuple structure: (line, vec![LineType::Tag, LineType::MappingKey, LineType::Unknown])
 //
 // **Exclamation Mark Patterns (Pattern 6):**
-// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7796)
+// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7933)
 //   * Shows tag vs non-tag distinction with '!'
 //   * "  !tag: >" → Tag, "  key!:" → MappingKey
 //   * "  key!!:" → MappingKey, "  test!here: >" → MappingKey
@@ -209,7 +215,7 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //   * Edge cases: single character "a!" at various levels
 //
 // **Level-Specific Indentation Patterns:**
-// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7796)
+// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7933)
 //   * Pattern 2: Level 1 (2-space) with "  " prefix
 //   * Pattern 2: Level 2 (4-space) with "    " prefix
 //   * Pattern 2: Level 3 (6-space) with "      " prefix
@@ -218,63 +224,53 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //   * Pattern 2: Mixed indentation with "\t  " (tab + spaces)
 //
 // **Key Extraction Validation Pattern:**
-// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7796)
+// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7933)
 //   * When result == MappingKey, validates key extraction
 //   * let info = detect_mapping_key(line, 0);
 //   * assert!(info.is_some(), "...");
 //   * assert_eq!(detected.key, expected_key, "...");
 //
 // **Continuation Line Negation Pattern:**
-// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7796)
+// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7933)
 //   * Validates that continuation lines do NOT detect mapping keys
 //   * let info = detect_mapping_key(line, 0);
 //   * assert!(info.is_none(), "Continuation line should NOT detect mapping key: '{}'", line)
 //
 // **Infrastructure Pattern Examples (Section 12B.3):**
-// - test_folded_scalar_explicit_indent_skeleton() (line ~12759)
+// - test_folded_scalar_explicit_indent_skeleton() (line 12991)
 //   * Template for adding new level-specific explicit indent tests
 //   * Shows modifier array: [">", ">-", ">+"]
 //   * Shows indent_num array: [1, 2, 3, 4, 5]
 //   * Demonstrates generate_folded_explicit_indent_tests! macro usage
 //
-// **Section 12B Test Structure Analysis (2026-07-13):**
-// ----------------------------------------------------
-// Section 12B demonstrates comprehensive folded scalar test patterns across ~5000 lines (7616-12700).
+// **Section 12B Test Structure Analysis (2026-07-13, Bead: bf-68ime):**
+// --------------------------------------------------------------------
+// Section 12B demonstrates comprehensive folded scalar test patterns across ~4700 lines (7816-12572).
 //
 // **Test Function Categories:**
-// 1. Basic folded scalar tests (lines 7620-7679):
+// 1. Basic folded scalar tests (lines 7822-7931):
 //    - test_folded_block_scalar_with_exclamation_marks()
 //    - test_literal_block_scalar_with_exclamation_marks()
 //    - Pattern: vec! of input lines, assert_eq! for MappingKey
 //
-// 2. Modifier-specific tests (lines 10219-10395):
+// 2. Modifier-specific tests (lines 10470-10586):
 //    - test_folded_scalar_basic_modifiers() - shows >-, >+ patterns
 //    - test_folded_scalar_numeric_modifiers() - shows >1->9, >-1->-9, >+1->+9
 //    - Pattern: Comprehensive coverage of modifier variations
 //
-// 3. Level-specific indentation tests (lines 9238-10177):
-//    - test_level1_indentation_with_exclamation_marks() - 2-space
-//    - test_level2_indentation_with_exclamation_marks() - 4-space
-//    - test_level3_indentation_with_exclamation_marks() - 6-space
-//    - test_level4_indentation_with_exclamation_marks() - 8-space
-//    - test_level5_indentation_with_exclamation_marks() - 10-space
-//    - test_level6_indentation_with_exclamation_marks() - 12-space
-//    - Pattern: Each level tests indicator lines AND continuation lines
+// 3. Level-specific indentation tests (lines 8098-8481):
+//    - test_literal_scalar_basic_modifiers_at_various_indentation_levels()
+//    - test_folded_scalar_basic_modifiers_at_various_indentation_levels()
+//    - Pattern: Tests 2-space, 4-space, 6-space, 8-space, tab, mixed indentation
 //
-// 4. Continuation line tests (lines 10939-11270):
-//    - test_folded_scalar_continuation_lines_with_exclamation_marks()
-//    - test_folded_scalar_continuation_lines_starting_with_exclamation()
-//    - test_folded_scalar_continuation_exclamation_various_contexts()
-//    - Pattern: (indicator_line, continuation_line) tuples, dual assertions
-//
-// 5. Comprehensive modifier tests (lines 10397-10530):
+// 4. Comprehensive modifier tests (lines 10470-10700):
 //    - test_folded_scalar_all_modifier_combinations()
 //    - test_folded_scalar_modifiers_comprehensive()
 //    - Pattern: Exhaustive enumeration of modifier × indent combinations
 //
 // **Key Assertion Pattern from Section 12B:**
 // ```rust
-// // Pattern for continuation line with multiple acceptable types (line 11107)
+// // Pattern for continuation line with multiple acceptable types
 // let continuation_result = classify_line_type(continuation_line);
 // assert!(
 //     continuation_result == LineType::MappingKey || continuation_result == LineType::Unknown,
@@ -283,7 +279,7 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // );
 // ```
 //
-// **Pattern for tag-like continuation (lines 11143-11152):**
+// **Pattern for tag-like continuation:**
 // ```rust
 // // Lines starting with ! are classified as Tag (syntactically correct YAML)
 // let continuation_result = classify_line_type(continuation_line);
@@ -295,7 +291,7 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // );
 // ```
 //
-// **Comprehensive Test Case Structure (lines 7801-7886):**
+// **Comprehensive Test Case Structure (lines 7933-8097):**
 // Section 12B uses exhaustive tuple structures with edge cases:
 // - Keys with exclamation marks: ("  key!1: >-1", "key!1", LineType::MappingKey)
 // - Multiple exclamation marks: ("  key!!1: >-1", "key!!1", LineType::MappingKey)
@@ -304,18 +300,17 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // - Demonstrates Pattern 4.B: Key extraction assertion with detect_mapping_key()
 //
 // **Modifier Coverage Examples:**
-// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7796)
+// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7933)
 //   * Shows | (literal), |- (strip), |+ (keep) at all indentation levels
 //   * Uses vec of (line, expected_key, expected_type) tuples
 //   * Pattern 4.B: Validates key extraction for each MappingKey result
-// - test_folded_scalar_basic_modifiers_at_various_indentation_levels() (line 7961)
+// - test_folded_scalar_basic_modifiers_at_various_indentation_levels() (line 8098)
 //   * Shows > (folded), >- (strip), >+ (keep) at all indentation levels
 //   * Mirrors literal scalar structure with folded modifiers
-// - test_folded_scalar_numeric_modifiers() (line 10426)
-//   * Shows >n, >-n, >+n for n=1-9
+// - test_folded_scalar_numeric_modifiers() - shows >n, >-n, >+n for n=1-9
 //   * Demonstrates numeric indent modifier pattern
 //
-// **Continuation Line Assertion Pattern (lines 7913-7957):**
+// **Continuation Line Assertion Pattern (lines 7860-7928):**
 // Section 12B demonstrates comprehensive continuation line testing:
 // - Level 1-4 continuation lines with exclamation marks
 // - Pattern 5.C: vec![LineType::MappingKey, LineType::Unknown] for content lines
@@ -323,15 +318,28 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // - Validates negation: assert!(info.is_none(), "Continuation line should NOT detect mapping key")
 //
 // **Section 12B Pattern Summary:**
-// - test_folded_block_scalar_with_exclamation_marks() → Basic folded scalar indicators (line 7685)
-// - test_literal_block_scalar_with_exclamation_marks() → Basic literal scalar indicators (line 7746)
-// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() → Comprehensive level testing (line 7796)
-// - test_folded_scalar_basic_modifiers_at_various_indentation_levels() → Folded variant (line 7961)
-// - test_folded_scalar_indicator_classification() → Section 12B.1 indicator tests (line 10579)
-// - test_folded_scalar_continuation_lines_with_exclamation() → Section 12B.1 continuation (line 10630)
+// - test_folded_block_scalar_with_exclamation_marks() → Basic folded scalar indicators (line 7822)
+// - test_literal_block_scalar_with_exclamation_marks() → Basic literal scalar indicators (line 7883)
+// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() → Comprehensive level testing (line 7933)
+// - test_folded_scalar_basic_modifiers_at_various_indentation_levels() → Folded variant (line 8098)
 //
 // These concrete examples demonstrate all 6 patterns documented above.
 // Reference them when implementing new folded scalar or literal scalar tests.
+//
+// **Bead bf-68ime Documentation Updates (2026-07-13):**
+// ---------------------------------------------------
+// Updated all Section 12B line number references in the test infrastructure documentation:
+// - Fixed main Section 12B reference: 7586 → 7816
+// - Fixed Section 12B.1 reference: 10415 → 10645
+// - Fixed Section 12B.2 reference: 10209 → 10439
+// - Fixed Section 12B.2 (Basic) reference: 10868 → 11098
+// - Fixed Section 12B.3 reference: 12343 → 12573
+// - Updated all test function line numbers to match actual locations
+// - Updated coverage analysis line numbers
+// - Updated skeleton template reference
+// - Added note about Section 12B analysis date and bead reference
+//
+// Section 12B now serves as a concrete reference for all folded scalar test patterns.
 
 /// Macro to generate folded scalar explicit indent test cases
 ///
