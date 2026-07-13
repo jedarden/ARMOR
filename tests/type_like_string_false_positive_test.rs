@@ -4697,6 +4697,266 @@ fn test_json_schema_types() {
     }
 }
 
+#[test]
+fn test_truncated_type_names() {
+    // Incomplete/truncated type names (specific examples from acceptance criteria)
+    let test_cases = vec![
+        "type: Strin",      // truncated "string"
+        "type: Intger",     // truncated "integer"
+        "type: Bool",       // truncated "boolean"
+        "type: Arr",        // truncated "array"
+        "type: Obj",        // truncated "object"
+        "type: Str",        // very truncated "string"
+        "type: Int",        // very truncated "integer"
+        "type: Boo",        // very truncated "boolean"
+        "type: sTring",     // mixed case truncated
+        "type: inTeger",    // mixed case truncated
+        "type: bOOLEAN",    // mixed case truncated
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Truncated type name should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_all_lowercase_vs_uppercase_variations() {
+    // All lowercase vs all uppercase variations (acceptance criteria examples)
+    let test_cases = vec![
+        "type: string",     // all lowercase
+        "type: STRING",     // all uppercase
+        "type: integer",    // all lowercase
+        "type: INTEGER",    // all uppercase
+        "type: boolean",    // all lowercase
+        "type: BOOLEAN",    // all uppercase
+        "type: array",      // all lowercase
+        "type: ARRAY",      // all uppercase
+        "type: object",     // all lowercase
+        "type: OBJECT",     // all uppercase
+        "type: map",        // all lowercase
+        "type: MAP",        // all uppercase
+        "type: seq",        // all lowercase
+        "type: SEQ",        // all uppercase
+        "type: null",       // all lowercase
+        "type: NULL",       // all uppercase
+        "type: str",        // lowercase type hint
+        "type: STR",        // uppercase type hint
+        "type: int",        // lowercase type hint
+        "type: INT",        // uppercase type hint
+        "type: bool",       // lowercase type hint
+        "type: BOOL",       // uppercase type hint
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name case variation should be MappingKey, not Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_reversed_and_scrambled_type_names() {
+    // Type names with reversed or scrambled letters
+    let test_cases = vec![
+        "type: gnirts",     // "string" reversed
+        "type: regetni",    // "integer" reversed
+        "type: naeloob",    // "boolean" reversed
+        "type: yarra",      // "array" reversed
+        "type: tcejo",      // "object" reversed
+        "type: stirng",     // "string" scrambled
+        "type: inetger",    // "integer" scrambled
+        "type: boolena",    // "boolean" scrambled
+        "type: arary",      // "array" scrambled
+        "type: obcjet",     // "object" scrambled
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Reversed/scrambled type name should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_keyboard_adjacent_typos() {
+    // Typos from adjacent keyboard keys
+    let test_cases = vec![
+        "type: strung",     // 'u' next to 'i' on QWERTY
+        "type: intzger",    // 'z' next to 't' on QWERTY
+        "type: boolzan",    // 'z' next to 'a' on QWERTY
+        "type: atrray",     // 't' next to 'r' on QWERTY
+        "type: ibject",     // 'i' next to 'o' on QWERTY
+        "type: striny",     // 'y' next to 'u' on QWERTY
+        "type: integrr",    // 'r' next to 'e' on QWERTY
+        "type: boolran",    // 'r' next to 'e' on QWERTY
+        "type: aeeay",      // 'e' next to 'r' on QWERTY
+        "type: ohject",     // 'h' next to 'j' on QWERTY
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Keyboard adjacent typo should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_repeated_character_typos() {
+    // Type names with characters incorrectly repeated
+    let test_cases = vec![
+        "type: striiing",    // too many 'i's
+        "type: integeer",   // too many 'e's
+        "type: booleean",   // too many 'e's
+        "type: arrray",     // too many 'r's
+        "type: objeect",    // too many 'e's
+        "type: sstring",    // doubled 's'
+        "type: intteger",   // doubled 't'
+        "type: booleann",   // doubled 'n'
+        "type: arrayy",     // doubled 'y'
+        "type: objectt",    // doubled 't'
+        "type: striingg",   // doubled 'g'
+        "type: integerr",   // doubled 'r'
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Repeated character typo should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_vowel_substitution_typos() {
+    // Type names with substituted vowels
+    let test_cases = vec![
+        "type: streng",      // 'e' instead of 'i'
+        "type: string",     // correct (sanity check)
+        "type: strung",      // 'u' instead of 'i'
+        "type: streng",      // 'e' instead of 'i'
+        "type: strang",      // 'a' instead of 'i'
+        "type: enteger",     // 'e' instead of 'i'
+        "type: intagar",     // 'a' instead of 'e'
+        "type: intoger",     // 'o' instead of 'e'
+        "type: boolian",     // 'i' instead of 'e'
+        "type: boolaen",     // 'a' instead of 'e'
+        "type: booloen",     // 'o' instead of 'e'
+        "type: ereay",       // 'e' instead of 'a'
+        "type: orray",       // 'o' instead of 'a'
+        "type: urray",       // 'u' instead of 'a'
+        "type: ebject",      // 'e' instead of 'o'
+        "type: abject",      // 'a' instead of 'o'
+        "type: ubject",      // 'u' instead of 'o'
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Vowel substitution typo should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_name_leading_trailing_junk() {
+    // Type names with junk characters before/after
+    let test_cases = vec![
+        "type: xstring",     // leading 'x'
+        "type: xinteger",    // leading 'x'
+        "type: stringx",     // trailing 'x'
+        "type: integerx",    // trailing 'x'
+        "type: xxstring",    // leading 'xx'
+        "type: stringxx",    // trailing 'xx'
+        "type: _string",     // leading underscore
+        "type: _integer",    // leading underscore
+        "type: string_",     // trailing underscore
+        "type: integer_",    // trailing underscore
+        "type: -string",     // leading dash
+        "type: string-",     // trailing dash
+        "type: .string",     // leading dot
+        "type: string.",     // trailing dot
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with leading/trailing junk should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_name_in_context_of_error_message() {
+    // Type names appearing in error message context
+    let test_cases = vec![
+        "error: Expected String but got Strin",
+        "message: type INTEGER is invalid",
+        "warning: field type Intger not recognized",
+        "error: type 'Arrya' does not exist",
+        "description: invalid type Boolan",
+        "note: type Objcet is not defined",
+        "error: cannot convert to Strig",
+        "message: type Interger is deprecated",
+        "warning: field type Arary is unknown",
+        "error: expected Boolen got boolean",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Typo in error message context should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_multiple_typos_in_single_type_name() {
+    // Type names with multiple typos combined
+    let test_cases = vec![
+        "type: strnig",      // missing 'i', wrong 'n' position
+        "type: itneger",     // 'i' and 'e' swapped, wrong order
+        "type: boolaen",     // 'a' instead of first 'e', 'e' instead of second 'a'
+        "type: arary",       // 'r' duplication, missing second 'r'
+        "type: ojbect",      // 'j' and 'b' swapped
+        "type: tsringg",     // 's' and 't' swapped, 'g' duplicated
+        "type: integr",      // missing 'e' at end
+        "type: boolena",     // 'e' and 'a' swapped
+        "type: arrey",       // 'e' and 'y' swapped
+        "type: objict",      // 'c' and 't' swapped
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Multiple typos in type name should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
 // ============================================================================
 // Section 15: Type-like Strings in Complex Contexts
 // ============================================================================
