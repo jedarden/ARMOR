@@ -570,11 +570,3 @@ value: "-0100001"
 }
 
 // Helper function to check if a string contains any of the given patterns
-func containsAny(s string, patterns []string) bool {
-	for _, pattern := range patterns {
-		if strings.Contains(s, pattern) {
-			return true
-		}
-	}
-	return false
-}
