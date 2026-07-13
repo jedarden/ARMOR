@@ -12772,6 +12772,89 @@ fn test_folded_scalar_explicit_indent_helper_function_example() {
 }
 
 #[test]
+fn test_folded_scalar_macro_example() {
+    // EXAMPLE: Comprehensive demonstration of generate_folded_explicit_indent_tests! macro
+    //
+    // This function demonstrates how to use the generate_folded_explicit_indent_tests!
+    // macro with various combinations of:
+    // - Indentation levels (2-space, 4-space, tab)
+    // - Modifiers (>, >-, >+)
+    // - Explicit indent numbers (1, 2, 3)
+    //
+    // Bead: bf-2mfe1 - Macro usage demonstration
+    //
+    // Each test case is a tuple of (line, expected_key, expected_type)
+    // - line: The YAML line to classify
+    // - expected_key: The key that should be extracted
+    // - expected_type: The line type classification (always LineType::MappingKey for these tests)
+
+    // Test Case 1: 2-space indentation with all three modifier types
+    let cases_2space = generate_folded_explicit_indent_tests!(
+        "  ",                    // 2-space base indentation
+        "level1",               // Descriptive level name
+        [">", ">-", ">+"],      // All three modifier types: plain, strip, keep
+        [1, 2, 3],             // Explicit indent numbers 1-3
+        "two_space"            // Key prefix for generated names
+    );
+    // Generates 9 test cases: 3 modifiers × 3 indent numbers
+    // Example generated lines:
+    //   "  two_space_: >1"
+    //   "  two_space_->-: >-2"
+    //   "  two_space_+: >+3"
+    run_folded_scalar_tests!(cases_2space);
+
+    // Test Case 2: 4-space indentation with specific modifiers
+    let cases_4space = generate_folded_explicit_indent_tests!(
+        "    ",                  // 4-space base indentation
+        "level2",               // Descriptive level name
+        [">-", ">+"],           // Strip and keep modifiers only
+        [1, 2],                // Explicit indent numbers 1-2
+        "four_space"           // Key prefix
+    );
+    // Generates 4 test cases: 2 modifiers × 2 indent numbers
+    // Example generated lines:
+    //   "    four_space_->-: >-1"
+    //   "    four_space_+: >+2"
+    run_folded_scalar_tests!(cases_4space);
+
+    // Test Case 3: Tab indentation with all modifiers
+    let cases_tab = generate_folded_explicit_indent_tests!(
+        "\t",                    // Tab base indentation
+        "tab_level",            // Descriptive level name
+        [">", ">-", ">+"],      // All three modifier types
+        [1, 2, 3],             // Explicit indent numbers 1-3
+        "tab_key"              // Key prefix
+    );
+    // Generates 9 test cases: 3 modifiers × 3 indent numbers
+    // Example generated lines:
+    //   "\ttab_key_: >1"
+    //   "\ttab_key_->-: >-2"
+    //   "\ttab_key_+: >+3"
+    run_folded_scalar_tests!(cases_tab);
+
+    // Test Case 4: Demonstrate single modifier with multiple indent numbers
+    let cases_plain = generate_folded_explicit_indent_tests!(
+        "  ",                    // 2-space base indentation
+        "plain_only",           // Descriptive level name
+        [">"],                  // Plain modifier only
+        [1, 2, 3],             // Multiple indent numbers
+        "plain"                // Key prefix
+    );
+    // Generates 3 test cases: 1 modifier × 3 indent numbers
+    // Example generated lines:
+    //   "  plain: >1"
+    //   "  plain: >2"
+    //   "  plain: >3"
+    run_folded_scalar_tests!(cases_plain);
+
+    // Total: 25 test cases generated and validated
+    // All test cases verify that:
+    // 1. The line is classified as LineType::MappingKey
+    // 2. The key is correctly detected (no leading/trailing whitespace)
+    // 3. The explicit indent modifier pattern is properly recognized
+}
+
+#[test]
 fn test_folded_scalar_strip_indent_explicit_indent_modifiers_at_2_space() {
     // Test folded scalars with strip indent explicit indent modifiers: >-n for n=1-9
     // At 2-space indentation level only
