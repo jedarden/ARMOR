@@ -346,25 +346,18 @@ impl BasicParser {
                 scope_stack.record_indent_transition(line_num_1index, indent, has_key, line);
             }
 
-            // Handle blank lines and comments with type-specific logic
-            // Blank lines should be transparent to scope tracking - they don't trigger
+            // Handle blank lines, comments, and indent-only lines with consistent logic
+            // These lines should be transparent to scope tracking - they don't trigger
             // any scope transitions. The next content line will handle any needed scope changes.
-            // However, we DO process indent decreases on blank lines to exit scopes properly.
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                // Process indent transitions for empty/indent-only lines
-                // Comments are treated as indent-only for scope tracking purposes
-                if indent_changed && line_type.is_empty() {
-                    scope_stack.process_indent_transition_without_key(line_num_1index, indent);
-                }
-                continue;
-            }
-
-            // Type-specific handling: indent-only lines (no key token)
-            // These lines don't trigger scope entry but may trigger scope exit on indent decrease
-            if !line_type.is_key_bearing() {
-                // Indent-only line - handle scope exit if indent decreased
-                if indent < scope_stack.current_indent() {
-                    scope_stack.exit_to_scope(indent);
+            //
+            // IMPORTANT: We do NOT exit scopes on indent-only transitions.
+            // Scope exit only happens when we encounter a KEY at a decreased indent level.
+            // This ensures the scope stack remains consistent through blank/empty lines.
+            if trimmed.is_empty() || trimmed.starts_with('#') || !line_type.is_key_bearing() {
+                // Update last_indent tracking so the next line can detect indent changes
+                // but don't trigger any scope transitions
+                if indent != scope_stack.get_last_indent() {
+                    scope_stack.set_last_indent(indent);
                 }
                 continue;
             }
@@ -592,25 +585,18 @@ impl Parser for BasicParser {
                 scope_stack.record_indent_transition(line_num_1index, indent, has_key, line);
             }
 
-            // Handle blank lines and comments with type-specific logic
-            // Blank lines should be transparent to scope tracking - they don't trigger
+            // Handle blank lines, comments, and indent-only lines with consistent logic
+            // These lines should be transparent to scope tracking - they don't trigger
             // any scope transitions. The next content line will handle any needed scope changes.
-            // However, we DO process indent decreases on blank lines to exit scopes properly.
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                // Process indent transitions for empty/indent-only lines
-                // Comments are treated as indent-only for scope tracking purposes
-                if indent_changed && line_type.is_empty() {
-                    scope_stack.process_indent_transition_without_key(line_num_1index, indent);
-                }
-                continue;
-            }
-
-            // Type-specific handling: indent-only lines (no key token)
-            // These lines don't trigger scope entry but may trigger scope exit on indent decrease
-            if !line_type.is_key_bearing() {
-                // Indent-only line - handle scope exit if indent decreased
-                if indent < scope_stack.current_indent() {
-                    scope_stack.exit_to_scope(indent);
+            //
+            // IMPORTANT: We do NOT exit scopes on indent-only transitions.
+            // Scope exit only happens when we encounter a KEY at a decreased indent level.
+            // This ensures the scope stack remains consistent through blank/empty lines.
+            if trimmed.is_empty() || trimmed.starts_with('#') || !line_type.is_key_bearing() {
+                // Update last_indent tracking so the next line can detect indent changes
+                // but don't trigger any scope transitions
+                if indent != scope_stack.get_last_indent() {
+                    scope_stack.set_last_indent(indent);
                 }
                 continue;
             }
