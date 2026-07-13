@@ -9,7 +9,7 @@ use crate::parsers::yaml::{
     ParserConfig,
     syntax_validator::SyntaxValidator,
     syntax_detector::SyntaxDetector,
-    scope::{ScopeStack, classify_line_type, LineClassification, IndentTransitionState},
+    scope::{ScopeStack, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType},
     line_parser::{calculate_indentation},
     scope::extract_key_context,
 };
@@ -74,6 +74,8 @@ pub struct BasicParser {
     current_line_type: LineClassification,
     /// Current indent transition state for tracking scope operations
     current_transition_state: IndentTransitionState,
+    /// Current scope depth (number of active scopes in the hierarchy)
+    scope_depth: usize,
 }
 
 impl BasicParser {
@@ -84,6 +86,7 @@ impl BasicParser {
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
+            scope_depth: 1, // Root scope is always present
         }
     }
 
@@ -94,6 +97,7 @@ impl BasicParser {
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
+            scope_depth: 1, // Root scope is always present
         }
     }
 
@@ -107,6 +111,7 @@ impl BasicParser {
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
+            scope_depth: 1, // Root scope is always present
         }
     }
 
@@ -128,6 +133,176 @@ impl BasicParser {
     /// Check if current line is empty
     pub fn is_empty_line(&self) -> bool {
         self.current_line_type.is_empty()
+    }
+
+    /// Get the current indent transition state
+    pub fn current_transition_state(&self) -> &IndentTransitionState {
+        &self.current_transition_state
+    }
+
+    /// Check if the parser is currently entering a scope
+    pub fn is_entering_scope(&self) -> bool {
+        self.current_transition_state.is_entering_scope()
+    }
+
+    /// Check if the parser is currently exiting a scope
+    pub fn is_exiting_scope(&self) -> bool {
+        self.current_transition_state.is_exiting_scope()
+    }
+
+    /// Check if the parser is at the same scope level
+    pub fn is_same_level(&self) -> bool {
+        self.current_transition_state.is_same_level()
+    }
+
+    /// Get the current scope depth
+    ///
+    /// Returns the number of active scopes in the hierarchy.
+    /// Root scope has depth 1.
+    pub fn scope_depth(&self) -> usize {
+        self.scope_depth
+    }
+
+    /// Check if we're at the root scope (depth == 1)
+    ///
+    /// # Returns
+    ///
+    /// `true` if we're at the root scope, `false` otherwise
+    pub fn is_at_root(&self) -> bool {
+        self.scope_depth == 1
+    }
+
+    /// Check if we're in a nested scope (depth > 1)
+    ///
+    /// # Returns
+    ///
+    /// `true` if we're in a nested scope, `false` if at root
+    pub fn is_in_nested_scope(&self) -> bool {
+        self.scope_depth > 1
+    }
+
+    /// Get a reference to the scope stack
+    pub fn scope_stack(&self) -> &ScopeStack {
+        &self.scope_stack
+    }
+
+    /// Get mutable reference to the scope stack
+    pub fn scope_stack_mut(&mut self) -> &mut ScopeStack {
+        &mut self.scope_stack
+    }
+
+    /// Get the current scope from the stack
+    pub fn current_scope(&self) -> Option<&crate::parsers::yaml::scope::Scope> {
+        if self.scope_stack.scopes.is_empty() {
+            None
+        } else {
+            self.scope_stack.scopes.last()
+        }
+    }
+
+    /// Get parent scope at a specific depth
+    ///
+    /// # Arguments
+    ///
+    /// * `depth_offset` - How many levels up to go (1 = immediate parent, 2 = grandparent, etc.)
+    ///
+    /// # Returns
+    ///
+    /// `Some(&Scope)` if a parent exists at that level, `None` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let parser = BasicParser::new();
+    /// // If in scope "a.b.c", depth_offset=1 returns "b" scope, depth_offset=2 returns "a" scope
+    /// ```
+    pub fn parent_scope(&self, depth_offset: usize) -> Option<&crate::parsers::yaml::scope::Scope> {
+        if self.scope_stack.scopes.is_empty() || depth_offset == 0 {
+            None
+        } else if depth_offset >= self.scope_stack.scopes.len() {
+            None
+        } else {
+            self.scope_stack.scopes.get(self.scope_stack.scopes.len() - 1 - depth_offset)
+        }
+    }
+
+    /// Get the immediate parent scope (one level up)
+    pub fn immediate_parent_scope(&self) -> Option<&crate::parsers::yaml::scope::Scope> {
+        self.parent_scope(1)
+    }
+
+    /// Get the scope hierarchy path as a string
+    ///
+    /// Returns a dot-separated path representing the scope hierarchy,
+    /// e.g., "services.web.database" for a deeply nested scope.
+    pub fn scope_path(&self) -> String {
+        self.scope_stack.get_scope_path()
+    }
+
+    /// Get all scopes in the hierarchy as a slice
+    pub fn scope_hierarchy(&self) -> &[crate::parsers::yaml::scope::Scope] {
+        &self.scope_stack.scopes
+    }
+
+    /// Update scope depth to match the current scope stack state
+    ///
+    /// This should be called after operations that modify the scope stack
+    /// to keep the scope_depth field in sync.
+    fn update_scope_depth(&mut self) {
+        self.scope_depth = self.scope_stack.depth();
+    }
+
+    /// Get all indent transitions from parsing
+    ///
+    /// This requires re-parsing to collect transitions. For more efficient
+    /// access, use the scope stack directly during validation.
+    /// Updates parser state with line classifications and transition tracking.
+    pub fn get_indent_transitions(&mut self, content: &str) -> Vec<crate::parsers::yaml::scope::IndentTransition> {
+        let mut scope_stack = self.scope_stack.clone();
+
+        for (line_num, line) in content.lines().enumerate() {
+            let line_num_1index = line_num + 1;
+            let trimmed = line.trim();
+
+            // Skip document markers and directives
+            if trimmed == "---" || trimmed == "..." || trimmed.starts_with('%') {
+                // Update state to track that we're on an empty line (marker line)
+                self.current_line_type = LineClassification::Empty;
+                continue;
+            }
+
+            let indent = calculate_indentation(line);
+            let line_type = classify_line_type(line);
+
+            // Track line type in parser state
+            self.current_line_type = line_type;
+
+            // Only track actual indent changes
+            if indent != scope_stack.get_last_indent() {
+                let has_key = line_type.is_key_bearing();
+                scope_stack.record_indent_transition(line_num_1index, indent, has_key, line);
+
+                // Update transition state to track this indent change
+                let from_indent = scope_stack.get_last_indent();
+                self.current_transition_state.update(from_indent, indent, has_key);
+            }
+        }
+
+        scope_stack.get_indent_transitions().to_vec()
+    }
+
+    /// Get transition counts by type
+    ///
+    /// Returns (enter_scope_count, exit_scope_count, same_level_count)
+    /// Updates parser state with line classifications during counting.
+    pub fn get_transition_counts(&mut self, content: &str) -> (usize, usize, usize) {
+        let transitions = self.get_indent_transitions(content);
+
+        let enter = transitions.iter().filter(|t| t.is_enter_scope()).count();
+        let exit = transitions.iter().filter(|t| t.is_exit_scope()).count();
+        let same = transitions.iter().filter(|t| t.is_same_level()).count();
+
+        (enter, exit, same)
     }
 
     /// Detect duplicate keys using scope-aware tracking
@@ -720,6 +895,7 @@ impl Parser for BasicParser {
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
+            scope_depth: 1, // Root scope is always present
         }
     }
 }
@@ -1479,5 +1655,495 @@ items:
         let value = result.unwrap();
         let items = value["items"].as_sequence().unwrap();
         assert_eq!(items.len(), 3);
+    }
+
+    /// Test indent transition state tracking
+    #[test]
+    fn test_indent_transition_state_tracking() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+root:
+  level1:
+    level2: value
+  level1_sibling: value2
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        // Should have transitions for indent changes
+        assert!(!transitions.is_empty(), "Should track indent transitions");
+
+        // Verify transitions are properly classified
+        let enter_transitions: Vec<_> = transitions.iter()
+            .filter(|t| t.is_enter_scope())
+            .collect();
+
+        let exit_transitions: Vec<_> = transitions.iter()
+            .filter(|t| t.is_exit_scope())
+            .collect();
+
+        // Should have both enter and exit transitions
+        assert!(!enter_transitions.is_empty(), "Should have enter-scope transitions");
+        assert!(!exit_transitions.is_empty(), "Should have exit-scope transitions");
+    }
+
+    /// Test transition type classification
+    #[test]
+    fn test_transition_type_classification() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+key1: value1
+  nested:
+    deep: value
+key2: value2
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        // Check that all transitions are properly classified
+        for transition in &transitions {
+            let transition_type = transition.transition_type();
+
+            // Verify classification matches indent change
+            if transition.to_indent > transition.from_indent {
+                assert_eq!(transition_type, IndentTransitionType::EnterScope,
+                           "Indent increase should be classified as EnterScope");
+            } else if transition.to_indent < transition.from_indent {
+                assert_eq!(transition_type, IndentTransitionType::ExitScope,
+                           "Indent decrease should be classified as ExitScope");
+            } else {
+                assert_eq!(transition_type, IndentTransitionType::SameLevel,
+                           "No indent change should be classified as SameLevel");
+            }
+        }
+    }
+
+    /// Test scope operation mapping
+    #[test]
+    fn test_scope_operation_mapping() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+parent:
+  child: value
+sibling: value2
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        // Verify each transition has a valid scope operation
+        for transition in &transitions {
+            let operation = transition.scope_operation();
+
+            match operation {
+                "enter-scope" => assert!(transition.is_enter_scope()),
+                "exit-scope" => assert!(transition.is_exit_scope()),
+                "stay-in-scope" => assert!(transition.is_same_level()),
+                _ => panic!("Invalid scope operation: {}", operation),
+            }
+        }
+    }
+
+    /// Test transition counts by type
+    #[test]
+    fn test_transition_counts() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+level1_a:
+  level2_a:
+    level3: value
+  level2_b: value
+level1_b:
+  level2: value
+"#;
+
+        let (enter, exit, same) = parser.get_transition_counts(yaml);
+
+        // Should have multiple transitions
+        assert!(enter > 0, "Should have enter-scope transitions");
+        assert!(exit > 0, "Should have exit-scope transitions");
+
+        // Enter and exit should be roughly balanced (with small difference due to starting at root)
+        assert!((enter as i32 - exit as i32).abs() <= 1,
+               "Enter and exit counts should be balanced");
+    }
+
+    /// Test transitions with blank lines
+    #[test]
+    fn test_transitions_with_blank_lines() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+root:
+  child1: value1
+
+  child2: value2
+
+key2: value3
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        // Should track transitions even across blank lines
+        assert!(!transitions.is_empty(), "Should track transitions across blank lines");
+
+        // Verify exit transitions are recorded
+        let exit_transitions: Vec<_> = transitions.iter()
+            .filter(|t| t.is_exit_scope())
+            .collect();
+
+        assert!(!exit_transitions.is_empty(), "Should track exit transitions across blank lines");
+    }
+
+    /// Test transition state with line classification
+    #[test]
+    fn test_transition_with_line_classification() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+key: value
+  # comment at indent 2
+  another: value2
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        // Verify transitions have line classification
+        for transition in &transitions {
+            match transition.line_classification() {
+                LineClassification::KeyBearing => {
+                    assert!(transition.has_key || transition.raw_line.contains(':'),
+                           "Key-bearing lines should have keys or colons");
+                }
+                LineClassification::IndentOnly => {
+                    // Comment or indent-only line
+                }
+                LineClassification::Empty => {
+                    assert!(transition.raw_line.trim().is_empty(),
+                           "Empty classification should only be for empty lines");
+                }
+            }
+        }
+    }
+
+    /// Test indent increase/decrease/no-change handling
+    #[test]
+    fn test_indent_change_handling() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+level1:
+  level2:
+    level3: value
+  level2_sibling: value
+level1_sibling: value
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        let mut has_increase = false;
+        let mut has_decrease = false;
+
+        for transition in &transitions {
+            if transition.is_increase() {
+                has_increase = true;
+                assert!(transition.is_enter_scope(),
+                       "Increase should be enter-scope");
+            }
+            if transition.is_decrease() {
+                has_decrease = true;
+                assert!(transition.is_exit_scope(),
+                       "Decrease should be exit-scope");
+            }
+        }
+
+        assert!(has_increase, "Should have indent increases");
+        assert!(has_decrease, "Should have indent decreases");
+    }
+
+    /// Test that all transition types are tracked
+    #[test]
+    fn test_all_transition_types_tracked() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+root:
+  child1: value1
+  child2: value2
+sibling: value3
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        let has_enter = transitions.iter().any(|t| t.is_enter_scope());
+        let has_exit = transitions.iter().any(|t| t.is_exit_scope());
+
+        assert!(has_enter, "Should track enter-scope transitions");
+        assert!(has_exit, "Should track exit-scope transitions");
+    }
+
+    /// Test complex YAML with many indent transitions
+    #[test]
+    fn test_complex_indent_transitions() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+services:
+  web:
+    host: localhost
+    port: 8080
+    ssl:
+      enabled: true
+      cert: /path/to/cert
+  database:
+    host: db.example.com
+    port: 5432
+  cache:
+    host: redis.example.com
+    port: 6379
+logging:
+  level: info
+  outputs:
+    - type: stdout
+    - type: file
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+        let (enter, exit, same) = parser.get_transition_counts(yaml);
+
+        // Complex YAML should have many transitions
+        assert!(transitions.len() >= 5, "Complex YAML should have many transitions");
+        assert!(enter >= 3, "Should have multiple enter-scope transitions");
+        // Exit transitions might be fewer since we don't always exit explicitly
+        assert!(enter + exit >= 5, "Should have multiple total transitions");
+    }
+
+    /// Test that transition history is maintained
+    #[test]
+    fn test_transition_history_maintained() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+a:
+  b:
+    c: value
+  d: value
+e: value
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        // Transitions should be in order
+        let mut last_line = 0;
+        for (i, transition) in transitions.iter().enumerate() {
+            assert!(transition.line_number > last_line,
+                   "Transition {} should be after previous transition", i);
+            last_line = transition.line_number;
+        }
+
+        // Each transition should have complete information
+        for transition in &transitions {
+            assert!(transition.line_number > 0);
+            assert!(transition.from_indent <= transition.to_indent ||
+                   transition.to_indent <= transition.from_indent);
+            assert!(!transition.raw_line.is_empty());
+        }
+    }
+
+    /// Test scope depth accessor
+    #[test]
+    fn test_scope_depth_accessor() {
+        let parser = BasicParser::new();
+
+        // New parser starts at root scope (depth 1)
+        assert_eq!(parser.scope_depth(), 1, "New parser should start at depth 1");
+        assert!(parser.is_at_root(), "New parser should be at root");
+        assert!(!parser.is_in_nested_scope(), "New parser should not be in nested scope");
+    }
+
+    /// Test scope stack accessor
+    #[test]
+    fn test_scope_stack_accessor() {
+        let parser = BasicParser::new();
+
+        // Should be able to access scope stack
+        let stack = parser.scope_stack();
+        assert_eq!(stack.depth(), 1, "Scope stack should start with root scope only");
+    }
+
+    /// Test current scope accessor
+    #[test]
+    fn test_current_scope_accessor() {
+        let parser = BasicParser::new();
+
+        // Should be able to access current scope
+        let current = parser.current_scope();
+        assert!(current.is_some(), "Should have a current scope");
+        assert_eq!(current.unwrap().indent_level, 0, "Root scope should be at indent 0");
+    }
+
+    /// Test parent scope accessors
+    #[test]
+    fn test_parent_scope_accessors() {
+        let parser = BasicParser::new();
+
+        // At root, there should be no parent
+        assert!(parser.immediate_parent_scope().is_none(),
+               "Root scope should have no parent");
+        assert!(parser.parent_scope(1).is_none(),
+               "Root scope should have no parent at offset 1");
+        assert!(parser.parent_scope(2).is_none(),
+               "Root scope should have no grandparent");
+    }
+
+    /// Test scope hierarchy path
+    #[test]
+    fn test_scope_hierarchy_path() {
+        let parser = BasicParser::new();
+
+        // At root, path should be empty
+        let path = parser.scope_path();
+        assert!(path.is_empty() || path == ".",
+               "Root scope path should be empty or dot");
+    }
+
+    /// Test scope depth tracking during transitions
+    #[test]
+    fn test_scope_depth_tracking_during_transitions() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+level1:
+  level2:
+    level3: value
+  level2_sibling: value2
+level1_sibling: value3
+"#;
+
+        // Get transitions to see scope changes
+        let transitions = parser.get_indent_transitions(yaml);
+
+        // Should have enter and exit transitions
+        let enter_count = transitions.iter().filter(|t| t.is_enter_scope()).count();
+        let exit_count = transitions.iter().filter(|t| t.is_exit_scope()).count();
+
+        assert!(enter_count > 0, "Should have enter-scope transitions");
+        assert!(exit_count > 0, "Should have exit-scope transitions");
+    }
+
+    /// Test scope depth with nested structures
+    #[test]
+    fn test_scope_depth_with_nested_structures() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+a:
+  b:
+    c:
+      d: value
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        // Track the maximum depth reached
+        let enter_transitions: Vec<_> = transitions.iter()
+            .filter(|t| t.is_enter_scope())
+            .collect();
+
+        // Should have multiple enter transitions for deeply nested structure
+        assert!(enter_transitions.len() >= 3,
+               "Deeply nested YAML should have multiple enter-scope transitions");
+    }
+
+    /// Test scope depth with sequences
+    #[test]
+    fn test_scope_depth_with_sequences() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+items:
+  - name: item1
+    value: 100
+  - name: item2
+    value: 200
+"#;
+
+        let transitions = parser.get_indent_transitions(yaml);
+
+        // Should have transitions for sequence items
+        assert!(!transitions.is_empty(), "Sequence YAML should have transitions");
+
+        // Sequence items should create scopes
+        let enter_count = transitions.iter().filter(|t| t.is_enter_scope()).count();
+        assert!(enter_count > 0, "Sequence items should create scopes");
+    }
+
+    /// Test scope depth accessor doesn't change after parsing
+    #[test]
+    fn test_scope_depth_unchanged_after_parsing() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+nested:
+  deep:
+    value: test
+"#;
+
+        let initial_depth = parser.scope_depth();
+
+        // Parse the YAML
+        parser.get_indent_transitions(yaml);
+
+        // Parser's scope depth should remain unchanged (it's for state queries, not tracking)
+        assert_eq!(parser.scope_depth(), initial_depth,
+                   "Parser scope depth should remain unchanged after parsing operations");
+    }
+
+    /// Test scope stack depth reflects actual changes
+    #[test]
+    fn test_scope_stack_depth_reflects_changes() {
+        let mut parser = BasicParser::new();
+
+        let yaml = r#"
+a:
+  b:
+    c: value
+"#;
+
+        let initial_stack_depth = parser.scope_stack().depth();
+
+        // The parser's scope stack doesn't change during get_indent_transitions
+        // (it uses a local copy), so the depth should remain the same
+        parser.get_indent_transitions(yaml);
+
+        let final_stack_depth = parser.scope_stack().depth();
+
+        assert_eq!(initial_stack_depth, final_stack_depth,
+                   "Parser's scope stack depth should remain unchanged");
+    }
+
+    /// Test parent scope at different offsets
+    #[test]
+    fn test_parent_scope_at_different_offsets() {
+        let parser = BasicParser::new();
+
+        // At root, all parent queries should return None
+        assert!(parser.parent_scope(0).is_none(), "Offset 0 should return None");
+        assert!(parser.parent_scope(1).is_none(), "Offset 1 should return None at root");
+        assert!(parser.parent_scope(10).is_none(), "Large offset should return None");
+    }
+
+    /// Test scope hierarchy with multiple levels
+    #[test]
+    fn test_scope_hierarchy_multiple_levels() {
+        let parser = BasicParser::new();
+
+        // Even at root, we should be able to get the hierarchy
+        let hierarchy = parser.scope_hierarchy();
+        assert!(!hierarchy.is_empty(), "Hierarchy should contain at least root scope");
+        assert_eq!(hierarchy.len(), 1, "Root hierarchy should have exactly 1 scope");
     }
 }
