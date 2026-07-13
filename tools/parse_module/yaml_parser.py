@@ -281,6 +281,54 @@ class ScopeStack:
         self.exit_to_scope(parent_indent)
         return True
 
+    def scope_exit_to_level(self, target_depth: int) -> bool:
+        """
+        Exit to a specific scope depth level (grandparent or any ancestor).
+
+        This allows exiting multiple levels at once to reach any valid ancestor scope.
+        For example, from depth 5 you can exit directly to depth 2 (skpping depths 4 and 3).
+
+        Args:
+            target_depth: The target depth level to exit to (1-indexed, where 1 is root scope).
+                          Must be a valid ancestor depth between 1 and current depth.
+
+        Returns:
+            True if successfully exited to target depth
+
+        Raises:
+            ValueError: If target depth is invalid (<= 0, > current depth, or not an ancestor)
+        """
+        if target_depth <= 0:
+            raise ValueError(f"Target depth must be positive (got {target_depth})")
+
+        current_depth = self.depth()
+
+        if target_depth > current_depth:
+            raise ValueError(
+                f"Cannot exit to depth {target_depth} (current depth is {current_depth})"
+            )
+
+        if target_depth == current_depth:
+            # Already at target depth - no action needed
+            return True
+
+        # Convert to 0-indexed and get the target scope
+        target_index = target_depth - 1
+
+        if target_index >= len(self.scopes):
+            raise ValueError(
+                f"Invalid target depth {target_depth} (no scope at that level)"
+            )
+
+        # Get the target scope and its indent level
+        target_scope = self.scopes[target_index]
+        target_indent = target_scope.indent_level
+
+        # Exit to that scope's indent level
+        self.exit_to_scope(target_indent)
+
+        return True
+
     def contains_key(self, key: str) -> bool:
         """Check if current scope contains a key."""
         if not self.scopes:
