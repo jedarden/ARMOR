@@ -5676,3 +5676,660 @@ fn test_type_like_in_mixed_collections() {
         );
     }
 }
+
+// ============================================================================
+// Section 15: Type-Like Strings in Complex Nested Structures
+// ============================================================================
+
+#[test]
+fn test_type_like_in_deeply_nested_mappings() {
+    // Type-like strings deeply nested in mapping structures
+    let test_cases = vec![
+        "config:",
+        "  database:",
+        "    connection:",
+        "      host: localhost",
+        "      type: string",
+        "    credentials:",
+        "      username: admin",
+        "      password_type: boolean",
+        "  cache:",
+        "    backend:",
+        "      type: redis",
+        "      config:",
+        "        ttl: integer",
+        "  logging:",
+        "    level: string",
+        "    format: json",
+        "  metrics:",
+        "    enabled: boolean",
+    ];
+
+    for line in test_cases {
+        if line.starts_with('#') {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::Comment,
+                "Comment should be Comment: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Deeply nested mapping with type-like should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_type_like_in_complex_production_yaml() {
+    // Realistic production configuration with deeply nested type-like strings
+    let test_cases = vec![
+        "# Production Application Configuration",
+        "application:",
+        "  name: MyApp",
+        "  version: 2.0.0",
+        "  environment:",
+        "    type: production",
+        "    region: us-east-1",
+        "  database:",
+        "    primary:",
+        "      host: db1.prod.example.com",
+        "      port: 5432",
+        "      schema_type: postgresql",
+        "      connection_pool:",
+        "        max_size: integer",
+        "        timeout: integer",
+        "    replica:",
+        "      enabled: boolean",
+        "      lag_threshold: integer",
+        "  cache:",
+        "    provider: redis",
+        "    config:",
+        "      ttl: integer",
+        "      max_memory: string",
+        "      eviction_policy: string",
+        "  api:",
+        "    rest:",
+        "      timeout: integer",
+        "      rate_limit: integer",
+        "    graphql:",
+        "      complexity: integer",
+        "      depth: integer",
+        "  monitoring:",
+        "    metrics:",
+        "      enabled: boolean",
+        "      retention: string",
+        "    tracing:",
+        "      sample_rate: integer",
+        "      export_type: string",
+    ];
+
+    for line in test_cases {
+        if line.starts_with('#') {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::Comment,
+                "Comment should be Comment: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Production YAML with type-like should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_type_like_in_nested_sequence_structures() {
+    // Type-like strings in nested sequence structures
+    let test_cases = vec![
+        "services:",
+        "  - name: auth",
+        "    config:",
+        "      port: integer",
+        "      timeout: integer",
+        "      enabled: boolean",
+        "  - name: user",
+        "    config:",
+        "      database: string",
+        "      cache_type: string",
+        "      replicas: integer",
+        "  - name: payment",
+        "    config:",
+        "      gateway: string",
+        "      timeout: integer",
+        "      retry_count: integer",
+    ];
+
+    for line in test_cases {
+        if line.starts_with("  -") {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::SequenceItem,
+                "Nested sequence item with type-like should be SequenceItem: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Nested mapping with type-like should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_type_like_in_flow_collection_nesting() {
+    // Type-like strings in deeply nested flow collections
+    let test_cases = vec![
+        "schema: {fields: [{name: id, type: integer}, {name: value, type: string}]}",
+        "config: {nested: {deep: {type: string, value: integer}}}",
+        "data: {items: [{type: boolean}, {type: array, elements: [integer, string]}]}",
+        "structure: {level1: {level2: {level3: {type: object}}}}",
+        "complex: {mapping: {types: [string, integer, boolean], nested: {deep: integer}}}",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowMapping || result == LineType::FlowSequence,
+            "Deeply nested flow collection with type-like should be valid type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_kubernetes_style_config() {
+    // Kubernetes-style configuration with deeply nested type-like strings
+    let test_cases = vec![
+        "apiVersion: v1",
+        "kind: ConfigMap",
+        "metadata:",
+        "  name: app-config",
+        "  namespace: production",
+        "data:",
+        "  database_type: postgresql",
+        "  cache_backend: string",
+        "  log_level: string",
+        "  max_connections: integer",
+        "  timeout_seconds: integer",
+        "  enabled_features: array",
+        "  config_type: object",
+        "  monitoring_enabled: boolean",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Kubernetes-style config with type-like should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_hierarchical_config_tree() {
+    // Hierarchical configuration tree with type-like strings at multiple levels
+    let test_cases = vec![
+        "root:",
+        "  level1:",
+        "    setting1: string",
+        "    level2:",
+        "      setting2: integer",
+        "      level3:",
+        "        setting3: boolean",
+        "        level4:",
+        "          setting4: array",
+        "          type: object",
+        "  another_level1:",
+        "    config_type: string",
+        "    nested:",
+        "      deep:",
+        "        setting: integer",
+        "        type: boolean",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Hierarchical config with type-like should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_microservice_architecture_config() {
+    // Microservice architecture configuration with nested type-like strings
+    let test_cases = vec![
+        "microservices:",
+        "  auth_service:",
+        "    endpoints:",
+        "      login:",
+        "        method: string",
+        "        timeout: integer",
+        "        rate_limit: integer",
+        "      logout:",
+        "        method: string",
+        "        enabled: boolean",
+        "    dependencies:",
+        "      - name: database",
+        "        type: string",
+        "      - name: cache",
+        "        type: string",
+        "  user_service:",
+        "    config:",
+        "      database_type: string",
+        "      cache_type: string",
+        "      timeout: integer",
+        "      retries: integer",
+        "      debug_mode: boolean",
+    ];
+
+    for line in test_cases {
+        if line.starts_with("      -") {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::SequenceItem,
+                "Microservice sequence item with type-like should be SequenceItem: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Microservice config with type-like should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_type_like_in_data_pipeline_config() {
+    // Data pipeline configuration with nested structures
+    let test_cases = vec![
+        "pipeline:",
+        "  sources:",
+        "    - name: input_stream",
+        "      type: string",
+        "      format: json",
+        "  transforms:",
+        "    filter:",
+        "      field: string",
+        "      operator: string",
+        "      value_type: string",
+        "    map:",
+        "      input_type: integer",
+        "      output_type: string",
+        "  sinks:",
+        "    - name: output_db",
+        "      connection_type: string",
+        "      batch_size: integer",
+        "      retry_count: integer",
+    ];
+
+    for line in test_cases {
+        if line.starts_with("    -") {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::SequenceItem,
+                "Pipeline sequence item with type-like should be SequenceItem: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Pipeline config with type-like should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_type_like_in_multi_environment_config() {
+    // Multi-environment configuration with nested type-like strings
+    let test_cases = vec![
+        "environments:",
+        "  development:",
+        "    database:",
+        "      host: localhost",
+        "      port: integer",
+        "      schema_type: string",
+        "    cache:",
+        "      enabled: boolean",
+        "      ttl: integer",
+        "    logging:",
+        "      level: string",
+        "      format: string",
+        "  staging:",
+        "    database:",
+        "      host: db.staging.example.com",
+        "      port: integer",
+        "      schema_type: string",
+        "    cache:",
+        "      enabled: boolean",
+        "      ttl: integer",
+        "  production:",
+        "    database:",
+        "      host: db.prod.example.com",
+        "      port: integer",
+        "      schema_type: string",
+        "      ssl_enabled: boolean",
+        "    cache:",
+        "      enabled: boolean",
+        "      ttl: integer",
+        "      cluster_type: string",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Multi-environment config with type-like should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_nested_validation_schemas() {
+    // Validation schemas with nested type-like strings
+    let test_cases = vec![
+        "schema:",
+        "  type: object",
+        "  properties:",
+        "    user:",
+        "      type: object",
+        "      properties:",
+        "        id:",
+        "          type: integer",
+        "          required: boolean",
+        "        name:",
+        "          type: string",
+        "          format: string",
+        "        email:",
+        "          type: string",
+        "          format: string",
+        "        roles:",
+        "          type: array",
+        "          items:",
+        "            type: string",
+        "    settings:",
+        "      type: object",
+        "      properties:",
+        "        notifications:",
+        "          type: boolean",
+        "        theme:",
+        "          type: string",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Validation schema with type-like should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_complex_flow_sequences() {
+    // Complex flow sequences with type-like strings at various nesting levels
+    let test_cases = vec![
+        "items: [{name: test1, type: string}, {name: test2, type: integer}]",
+        "nested: [{a: {b: {c: string}}}, {x: {y: {z: integer}}}]",
+        "complex: [{type: array, elements: [string, integer, boolean]}]",
+        "deep: [{level1: {level2: {level3: string}}}]",
+        "mixed: [{simple: string}, {nested: {deep: integer}}, {array: [string, boolean]}]",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowSequence,
+            "Complex flow sequence with type-like should be valid type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_realistic_app_config() {
+    // Realistic application configuration with all common patterns
+    let test_cases = vec![
+        "# Application Configuration",
+        "app:",
+        "  name: MyApp",
+        "  version: 2.0.0",
+        "  server:",
+        "    host: 0.0.0.0",
+        "    port: integer",
+        "    ssl_enabled: boolean",
+        "  database:",
+        "    type: string",
+        "    host: localhost",
+        "    port: integer",
+        "    pool_size: integer",
+        "  cache:",
+        "    backend: string",
+        "    ttl: integer",
+        "    max_size: integer",
+        "  logging:",
+        "    level: string",
+        "    format: string",
+        "    output: string",
+        "  features:",
+        "    new_ui: boolean",
+        "    api_v2: boolean",
+        "    dark_mode: boolean",
+        "  limits:",
+        "    max_users: integer",
+        "    max_requests: integer",
+        "    timeout: integer",
+    ];
+
+    for line in test_cases {
+        if line.starts_with('#') {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::Comment,
+                "Comment should be Comment: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Realistic app config with type-like should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_type_like_in_edge_case_nested_structures() {
+    // Edge cases with extremely nested type-like strings
+    let test_cases = vec![
+        "level1:",
+        "  level2:",
+        "    level3:",
+        "      level4:",
+        "        level5:",
+        "          type: string",
+        "          value: integer",
+        "          flag: boolean",
+        "deep:",
+        "    nested:",
+        "        structure:",
+        "          with:",
+        "            many:",
+        "              levels:",
+        "                type: object",
+        "                array_type: array",
+        "                bool_type: boolean",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Deeply nested edge case with type-like should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_mixed_indentation_scenarios() {
+    // Mixed indentation patterns with type-like strings
+    let test_cases = vec![
+        "config:",
+        "  simple: string",
+        "  nested:",
+        "    value: integer",
+        "  deeply:",
+        "    nested:",
+        "      value: boolean",
+        "    with:",
+        "      mixed:",
+        "        levels: integer",
+        "  another:",
+        "    branch: string",
+        "      with:",
+        "        deeper: array",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Mixed indentation with type-like should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_in_nested_context() {
+    // Test detect_mapping_key with nested structures containing type-like strings
+    let test_cases = vec![
+        ("  config: value", 0, Some("config"), Some("value")),
+        ("    database: postgres", 0, Some("database"), Some("postgres")),
+        ("      type: string", 2, Some("type"), Some("string")),
+        ("        timeout: integer", 4, Some("timeout"), Some("integer")),
+        ("          enabled: boolean", 6, Some("enabled"), Some("boolean")),
+    ];
+
+    for (line, parent_indent, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, parent_indent);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key in nested context: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key.unwrap(), "Should extract correct key: '{}'", line);
+        assert_eq!(info.value, expected_value.map(String::from), "Should extract correct value: '{}'", line);
+    }
+}
+
+#[test]
+fn test_complete_extraction_pipeline_verification() {
+    // End-to-end verification of the complete extraction pipeline
+    // with deeply nested type-like strings in realistic production scenarios
+    let yaml_lines = vec![
+        "# Production Database Configuration",
+        "database:",
+        "  primary:",
+        "    host: db1.prod.example.com",
+        "    port: integer",
+        "    schema_type: string",
+        "    pool:",
+        "      max_size: integer",
+        "      min_size: integer",
+        "      timeout: integer",
+        "  replica:",
+        "    enabled: boolean",
+        "    lag_threshold: integer",
+        "    connection_type: string",
+        "cache:",
+        "  backend: string",
+        "  config:",
+        "    ttl: integer",
+        "    max_memory: string",
+        "    eviction_policy: string",
+    ];
+
+    // Verify line classification
+    for (i, line) in yaml_lines.iter().enumerate() {
+        if line.starts_with('#') {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::Comment,
+                "Line {} should be Comment: '{}'",
+                i,
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Line {} should be MappingKey: '{}'",
+                i,
+                line
+            );
+        }
+    }
+
+    // Verify key extraction for non-comment lines
+    let expected_keys = vec![
+        "database", "primary", "host", "port", "schema_type", "pool",
+        "max_size", "min_size", "timeout", "replica", "enabled",
+        "lag_threshold", "connection_type", "cache", "backend", "config",
+        "ttl", "max_memory", "eviction_policy",
+    ];
+
+    let mut key_index = 0;
+    for line in &yaml_lines {
+        if !line.starts_with('#') {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for extraction: '{}'",
+                line
+            );
+            let info = info.unwrap();
+            assert!(
+                key_index < expected_keys.len(),
+                "Expected key index {} out of bounds",
+                key_index
+            );
+            assert_eq!(
+                info.key,
+                expected_keys[key_index],
+                "Should extract correct key at index {}: '{}'",
+                key_index,
+                line
+            );
+            key_index += 1;
+        }
+    }
+}
