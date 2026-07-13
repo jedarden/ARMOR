@@ -192,8 +192,9 @@ impl BasicParser {
                     // Indent decreased - exit to parent scope
                     #[cfg(debug_assertions)]
                     {
-                        log_debug!("[detect_duplicate] Scope exit: from_indent={}, to_indent={}, line={}",
-                            scope_stack.current_indent(), indent, line_num_1index);
+                        let current_path = scope_stack.get_scope_path();
+                        log_debug!("[detect_duplicate] Scope exit: from_indent={}, to_indent={}, line={}, current_scope='{}'",
+                            scope_stack.current_indent(), indent, line_num_1index, current_path);
                     }
                     scope_stack.exit_to_scope(indent);
 
@@ -236,8 +237,9 @@ impl BasicParser {
                             // Exit and re-enter scope for the sibling
                             #[cfg(debug_assertions)]
                             {
-                                log_debug!("[detect_duplicate] Sibling parent key: key='{}', indent={}, line={}",
-                                    ctx.key_name(), indent, line_num_1index);
+                                let current_path = scope_stack.get_scope_path();
+                                log_debug!("[detect_duplicate] Scope exit for sibling: key='{}', indent={}, line={}, current_scope='{}'",
+                                    ctx.key_name(), indent, line_num_1index, current_path);
                             }
                             scope_stack.exit_to_scope(indent);
                             if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
@@ -397,8 +399,9 @@ impl Parser for BasicParser {
                     // Indent decreased - exit to parent scope
                     #[cfg(debug_assertions)]
                     {
-                        log_debug!("[parse_str] Scope exit: from_indent={}, to_indent={}, line={}",
-                            scope_stack.current_indent(), indent, line_num_1index);
+                        let current_path = scope_stack.get_scope_path();
+                        log_debug!("[parse_str] Scope exit: from_indent={}, to_indent={}, line={}, current_scope='{}'",
+                            scope_stack.current_indent(), indent, line_num_1index, current_path);
                     }
                     scope_stack.exit_to_scope(indent);
 
@@ -440,8 +443,9 @@ impl Parser for BasicParser {
                             // Exit and re-enter scope for the sibling
                             #[cfg(debug_assertions)]
                             {
-                                log_debug!("[parse_str] Sibling parent key: key='{}', indent={}, line={}",
-                                    ctx.key_name(), indent, line_num_1index);
+                                let current_path = scope_stack.get_scope_path();
+                                log_debug!("[parse_str] Scope exit for sibling: key='{}', indent={}, line={}, current_scope='{}'",
+                                    ctx.key_name(), indent, line_num_1index, current_path);
                             }
                             scope_stack.exit_to_scope(indent);
                             if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
