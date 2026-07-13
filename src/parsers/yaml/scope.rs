@@ -498,6 +498,78 @@ impl ScopeStack {
         }
     }
 
+    /// Exit one level to immediate parent scope
+    ///
+    /// This method exits from the current scope to its immediate parent scope.
+    /// It's a convenience method for single-level scope exits.
+    ///
+    /// # Returns
+    ///
+    /// `true` if successfully exited to parent, `false` if already at root scope
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::scope::ScopeStack;
+    ///
+    /// let mut stack = ScopeStack::new(2);
+    /// stack.enter_scope(2, 1, Some("parent".to_string()));
+    /// stack.enter_scope(4, 2, Some("child".to_string()));
+    ///
+    /// // Exit from child to parent
+    /// let exited = stack.exit_one_level();
+    /// assert!(exited);
+    /// assert_eq!(stack.current_indent(), 2);
+    ///
+    /// // Exit from parent to root
+    /// let exited = stack.exit_one_level();
+    /// assert!(exited);
+    /// assert_eq!(stack.current_indent(), 0);
+    ///
+    /// // Already at root - cannot exit further
+    /// let exited = stack.exit_one_level();
+    /// assert!(!exited);
+    /// ```
+    pub fn exit_one_level(&mut self) -> bool {
+        // Edge case: already at root scope (depth of 1)
+        if self.depth() <= 1 {
+            #[cfg(debug_assertions)]
+            {
+                log_debug!("[SCOPE EXIT ONE LEVEL] Already at root scope (depth={}), cannot exit further", self.depth());
+            }
+            return false;
+        }
+
+        // Get the current scope's indent level
+        let current_indent = self.current_indent();
+
+        // Find the parent scope's indent level
+        // The parent is the second-to-last scope in the stack
+        let parent_indent = if self.depth() >= 2 {
+            self.scopes[self.depth() - 2].indent_level
+        } else {
+            // Should not reach here due to the depth check above,
+            // but handle gracefully by defaulting to root indent (0)
+            0
+        };
+
+        #[cfg(debug_assertions)]
+        {
+            let before_path = self.get_scope_path();
+            log_debug!(
+                "[SCOPE EXIT ONE LEVEL] exiting from indent={} to parent indent={}, path='{}'",
+                current_indent,
+                parent_indent,
+                before_path
+            );
+        }
+
+        // Use the existing exit_to_scope method with the parent's indent
+        self.exit_to_scope(parent_indent);
+
+        true
+    }
+
     /// Exit to parent scope (when indent decreases)
     ///
     /// This method is called when the parser encounters decreased indentation,
@@ -1862,5 +1934,174 @@ mod tests {
 
         assert_eq!(stack.get_indent_transitions().len(), 0);
         assert_eq!(stack.get_last_indent(), 0);
+    }
+
+    #[test]
+    fn test_exit_one_level_nested_scopes() {
+        let mut stack = ScopeStack::new(2);
+
+        // Enter root scope (already exists by default)
+        assert_eq!(stack.depth(), 1);
+        assert_eq!(stack.current_indent(), 0);
+
+        // Enter parent scope
+        stack.enter_scope(2, 1, Some("parent".to_string()));
+        assert_eq!(stack.depth(), 2);
+        assert_eq!(stack.current_indent(), 2);
+
+        // Enter child scope
+        stack.enter_scope(4, 2, Some("child".to_string()));
+        assert_eq!(stack.depth(), 3);
+        assert_eq!(stack.current_indent(), 4);
+
+        // Exit from child to parent
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 2);
+        assert_eq!(stack.current_indent(), 2);
+        assert_eq!(stack.get_scope_path(), "parent");
+
+        // Exit from parent to root
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 1);
+        assert_eq!(stack.current_indent(), 0);
+        assert_eq!(stack.get_scope_path(), "");
+    }
+
+    #[test]
+    fn test_exit_one_level_at_root() {
+        let mut stack = ScopeStack::new(2);
+
+        // Already at root scope
+        assert_eq!(stack.depth(), 1);
+        assert_eq!(stack.current_indent(), 0);
+
+        // Attempting to exit from root should return false
+        let exited = stack.exit_one_level();
+        assert!(!exited);
+        assert_eq!(stack.depth(), 1); // Should still be at root
+        assert_eq!(stack.current_indent(), 0);
+    }
+
+    #[test]
+    fn test_exit_one_level_single_level_nesting() {
+        let mut stack = ScopeStack::new(2);
+
+        // Enter a single level of nesting
+        stack.enter_scope(2, 1, Some("level1".to_string()));
+        assert_eq!(stack.depth(), 2);
+        assert_eq!(stack.current_indent(), 2);
+
+        // Exit back to root
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 1);
+        assert_eq!(stack.current_indent(), 0);
+
+        // Attempting to exit again should return false
+        let exited = stack.exit_one_level();
+        assert!(!exited);
+        assert_eq!(stack.depth(), 1);
+    }
+
+    #[test]
+    fn test_exit_one_level_deeply_nested() {
+        let mut stack = ScopeStack::new(2);
+
+        // Create deeply nested structure (5 levels)
+        stack.enter_scope(2, 1, Some("level1".to_string()));
+        stack.enter_scope(4, 2, Some("level2".to_string()));
+        stack.enter_scope(6, 3, Some("level3".to_string()));
+        stack.enter_scope(8, 4, Some("level4".to_string()));
+        stack.enter_scope(10, 5, Some("level5".to_string()));
+
+        assert_eq!(stack.depth(), 6); // Root + 5 nested levels
+        assert_eq!(stack.current_indent(), 10);
+        assert_eq!(stack.get_scope_path(), "level1.level2.level3.level4.level5");
+
+        // Exit one level at a time and verify
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 5);
+        assert_eq!(stack.current_indent(), 8);
+        assert_eq!(stack.get_scope_path(), "level1.level2.level3.level4");
+
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 4);
+        assert_eq!(stack.current_indent(), 6);
+        assert_eq!(stack.get_scope_path(), "level1.level2.level3");
+
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 3);
+        assert_eq!(stack.current_indent(), 4);
+        assert_eq!(stack.get_scope_path(), "level1.level2");
+
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 2);
+        assert_eq!(stack.current_indent(), 2);
+        assert_eq!(stack.get_scope_path(), "level1");
+
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 1);
+        assert_eq!(stack.current_indent(), 0);
+        assert_eq!(stack.get_scope_path(), "");
+
+        // One more attempt should fail
+        let exited = stack.exit_one_level();
+        assert!(!exited);
+        assert_eq!(stack.depth(), 1);
+    }
+
+    #[test]
+    fn test_exit_one_level_with_sequence_scope() {
+        let mut stack = ScopeStack::new(2);
+
+        // Enter a mapping scope
+        stack.enter_scope(2, 1, Some("mapping".to_string()));
+
+        // Enter a sequence scope
+        stack.enter_sequence_scope(4, 2);
+
+        assert_eq!(stack.depth(), 3); // Root, mapping, sequence
+        assert_eq!(stack.current_indent(), 4);
+
+        // Exit from sequence scope
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 2);
+        assert_eq!(stack.current_indent(), 2);
+
+        // Exit from mapping scope
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.depth(), 1);
+        assert_eq!(stack.current_indent(), 0);
+    }
+
+    #[test]
+    fn test_exit_one_level_mixed_indent_sizes() {
+        let mut stack = ScopeStack::new(2);
+
+        // Test with various indent sizes (not just multiples of 2)
+        stack.enter_scope(3, 1, Some("indent3".to_string()));
+        assert_eq!(stack.current_indent(), 3);
+
+        stack.enter_scope(7, 2, Some("indent7".to_string()));
+        assert_eq!(stack.current_indent(), 7);
+
+        // Exit from indent7 to indent3
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.current_indent(), 3);
+
+        // Exit from indent3 to root (indent 0)
+        let exited = stack.exit_one_level();
+        assert!(exited);
+        assert_eq!(stack.current_indent(), 0);
     }
 }
