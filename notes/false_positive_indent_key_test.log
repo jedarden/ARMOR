@@ -1,0 +1,165 @@
+
+running 13 tests
+test test_colon_in_value_context_not_a_key ... ok
+test test_block_scalar_indicator_not_a_key ... FAILED
+test test_colon_only_not_a_key ... ok
+test test_comment_like_pattern_not_a_key ... ok
+test test_empty_after_colon_is_parent_key ... ok
+test test_empty_key_part_not_a_key ... ok
+test test_flow_collection_markers_not_in_key ... ok
+test test_multiple_colons_in_key_position ... ok
+test test_sequence_dash_only_not_a_key ... FAILED
+test test_single_char_colon_not_valid_key ... ok
+test test_special_chars_only_not_a_key ... FAILED
+test test_whitespace_around_colon_not_a_key ... ok
+test test_no_false_positive_from_complex_indent ... FAILED
+
+failures:
+
+failures:
+    test_block_scalar_indicator_not_a_key
+    test_no_false_positive_from_complex_indent
+    test_sequence_dash_only_not_a_key
+    test_special_chars_only_not_a_key
+
+test result: FAILED. 9 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running tests/false_positive_indent_key_test.rs (target/debug/deps/false_positive_indent_key_test-fe27ef6b78c4f3d1)
+
+running 13 tests
+
+thread 'test_block_scalar_indicator_not_a_key' (1203581) panicked at tests/false_positive_indent_key_test.rs:83:5:
+Block scalar indicator with colon should not extract key context
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test test_colon_in_value_context_not_a_key ... ok
+test test_block_scalar_indicator_not_a_key ... FAILED
+test test_colon_only_not_a_key ... ok
+test test_comment_like_pattern_not_a_key ... ok
+test test_empty_after_colon_is_parent_key ... ok
+test test_empty_key_part_not_a_key ... ok
+test test_flow_collection_markers_not_in_key ... ok
+test test_multiple_colons_in_key_position ... ok
+
+thread 'test_sequence_dash_only_not_a_key' (1203590) panicked at tests/false_positive_indent_key_test.rs:93:5:
+Dash-only with colon should not extract valid key context
+test test_sequence_dash_only_not_a_key ... FAILED
+test test_single_char_colon_not_valid_key ... ok
+
+thread 'test_special_chars_only_not_a_key' (1203592) panicked at tests/false_positive_indent_key_test.rs:55:5:
+Special chars only with colon should not extract key context
+test test_special_chars_only_not_a_key ... FAILED
+
+thread 'test_no_false_positive_from_complex_indent' (1203589) panicked at tests/false_positive_indent_key_test.rs:113:5:
+Should parse successfully despite indent-only line with colon pattern
+test test_whitespace_around_colon_not_a_key ... ok
+test test_no_false_positive_from_complex_indent ... FAILED
+
+failures:
+
+failures:
+    test_block_scalar_indicator_not_a_key
+    test_no_false_positive_from_complex_indent
+    test_sequence_dash_only_not_a_key
+    test_special_chars_only_not_a_key
+
+test result: FAILED. 9 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test false_positive_indent_key_test`

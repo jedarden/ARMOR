@@ -1,0 +1,28 @@
+
+running 23 tests
+test test_clear_indent_transitions ... ok
+test test_blank_line_indent_decrease ... ok
+test test_comment_with_decreased_indent ... ok
+test test_deeply_nested_with_indent_transitions ... ok
+test test_complex_nested_sequence ... ok
+test test_detects_indent_change_on_blank_line ... ok
+test test_distinguishes_key_bearing_from_non_key_lines ... ok
+test test_detects_indent_change_on_comment_line ... ok
+test test_get_transitions_with_keys ... ok
+test test_indent_change_detection_comprehensive ... ok
+test test_indent_change_from_blank_to_content ... ok
+test test_indent_change_on_only_blank_lines ... ok
+test test_indent_tracking_doesnt_break_duplicate_detection ... ok
+test test_indent_tracking_preserves_scope_isolation ... ok
+test test_last_indent_tracking ... ok
+test test_multiple_comments_at_different_indents ... ok
+test test_kubernetes_style_yaml ... ok
+test test_parser_with_complex_indent_changes ... ok
+test test_scope_stack_records_all_indent_changes ... ok
+test test_real_world_config_with_blank_lines ... ok
+test test_sequence_with_indent_changes ... ok
+test test_tracks_indent_transitions_across_blank_lines ... ok
+test test_tracks_key_presence_in_indent_transitions ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

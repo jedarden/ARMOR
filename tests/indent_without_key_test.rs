@@ -8,7 +8,7 @@ use armor::parsers::yaml::YamlParser as Parser;
 
 #[test]
 fn test_detect_indent_changes_on_blank_lines() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // YAML with blank line that decreases indent
     let yaml = r#"
@@ -29,7 +29,7 @@ key3: value3
 
 #[test]
 fn test_scope_exit_on_blank_line() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // YAML where scope exit happens on a blank line
     let yaml = r#"
@@ -51,7 +51,7 @@ sibling: value2
 
 #[test]
 fn test_multiple_blank_lines_with_indent_changes() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Multiple blank lines at different indent levels
     let yaml = r#"
@@ -77,7 +77,7 @@ key3: value3
 
 #[test]
 fn test_indent_tracking_distinguishes_key_from_non_key() {
-    let parser = BasicParser::strict();
+    let mut parser = BasicParser::strict();
 
     // This test verifies that the parser can distinguish between
     // indent changes with keys vs without keys
@@ -94,7 +94,7 @@ section1:
 
 #[test]
 fn test_no_false_scope_entry_on_blank_line_increase() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Blank line with increased indent should NOT enter a new scope
     let yaml = r#"
@@ -114,7 +114,7 @@ key2: value2
 
 #[test]
 fn test_complex_nesting_with_blank_lines() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Complex nesting with blank lines at various levels
     let yaml = r#"
@@ -151,7 +151,7 @@ app:
 
 #[test]
 fn test_blank_lines_dont_create_duplicate_key_errors() {
-    let parser = BasicParser::strict();
+    let mut parser = BasicParser::strict();
 
     // Blank lines should not cause false duplicate key detection
     let yaml = r#"
@@ -171,7 +171,7 @@ section2:
 
 #[test]
 fn test_sequence_with_blank_lines() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Sequence items separated by blank lines
     let yaml = r#"
@@ -196,7 +196,7 @@ items:
 
 #[test]
 fn test_indent_decrease_on_blank_line_between_siblings() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Blank line between sibling mappings
     let yaml = r#"
@@ -219,7 +219,7 @@ parent2:
 
 #[test]
 fn test_deep_nesting_with_blank_line_scope_exit() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Deep nesting where scope exit happens on blank line
     let yaml = r#"
@@ -243,7 +243,7 @@ level5: value2
 
 #[test]
 fn test_no_interference_with_existing_key_parsing() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Ensure indent detection on blank lines doesn't interfere with key parsing
     let yaml = r#"
@@ -267,7 +267,7 @@ inline:
 
 #[test]
 fn test_comments_with_different_indents() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Comments at various indent levels (should not affect scope)
     let yaml = r#"
@@ -292,7 +292,7 @@ root2: value3
 
 #[test]
 fn test_blank_line_at_document_start() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Blank line at document start
     let yaml = r#"
@@ -310,7 +310,7 @@ key2: value2
 
 #[test]
 fn test_blank_line_at_document_end() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Blank line at document end
     let yaml = r#"
@@ -329,7 +329,7 @@ key2: value2
 
 #[test]
 fn test_mixed_blank_lines_and_keys() {
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
 
     // Mix of blank lines and keys with varying indents
     let yaml = r#"
