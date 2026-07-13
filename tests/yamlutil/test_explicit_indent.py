@@ -385,6 +385,185 @@ class TestFoldedScalarExplicitIndent4Space:
             "Keep >+5 with 4-space base should preserve all quint-indented lines"
 
 
+class TestFoldedScalarExplicitIndentTab:
+    """Test cases for folded scalars with explicit indent at tab base indentation.
+
+    At tab base indentation, the key is indented with 1 tab and content
+    lines are indented with 1 tab + N spaces, where N is the explicit indent level.
+    """
+
+    def test_folded_scalar_explicit_indent_tab(self):
+        """Test folded scalars with explicit indent at tab base indentation.
+
+        This test verifies that folded scalars with explicit indentation work correctly
+        at tab base indentation.
+
+        YAML folded scalar modifiers:
+        - > or >N  : plain (keeps single trailing newline)
+        - >- or >-N: strip (removes trailing newlines)
+        - >+ or >+N: keep (keeps all trailing newlines)
+
+        where N is the explicit indentation level (number of spaces).
+
+        At tab base indentation, the key is indented with 1 tab and content
+        lines are indented with 1 tab + N spaces.
+        """
+        parser = YAMLCoreParser()
+
+        # Test modifier > (plain) with indent levels 1-5, using tab base indentation
+        yaml_content_plain = """# Plain folded scalar with explicit indent at tab level
+\tplain_indent_1: >1
+\t Line 1 indented at level 1
+\t Line 2 indented at level 1
+
+\tplain_indent_2: >2
+\t  Line 1 double-indented at level 2
+\t  Line 2 double-indented at level 2
+
+\tplain_indent_3: >3
+\t   Line 1 triple-indented at level 3
+\t   Line 2 triple-indented at level 3
+
+\tplain_indent_4: >4
+\t    Line 1 quad-indented at level 4
+\t    Line 2 quad-indented at level 4
+
+\tplain_indent_5: >5
+\t     Line 1 quint-indented at level 5
+\t     Line 2 quint-indented at level 5
+"""
+        result = parser.safe_load(yaml_content_plain)
+        assert result.is_success(), "Plain folded scalar parsing with tab base should succeed"
+
+        # Verify plain modifier content is preserved (newlines folded to spaces)
+        assert 'Line 1 indented at level 1' in result.data['plain_indent_1'], \
+            "Plain >1 with tab base should preserve indented content"
+        assert 'Line 2 indented at level 1' in result.data['plain_indent_1'], \
+            "Plain >1 with tab base should preserve all indented lines"
+
+        assert 'Line 1 double-indented at level 2' in result.data['plain_indent_2'], \
+            "Plain >2 with tab base should preserve double-indented content"
+        assert 'Line 2 double-indented at level 2' in result.data['plain_indent_2'], \
+            "Plain >2 with tab base should preserve all double-indented lines"
+
+        assert 'Line 1 triple-indented at level 3' in result.data['plain_indent_3'], \
+            "Plain >3 with tab base should preserve triple-indented content"
+        assert 'Line 2 triple-indented at level 3' in result.data['plain_indent_3'], \
+            "Plain >3 with tab base should preserve all triple-indented lines"
+
+        assert 'Line 1 quad-indented at level 4' in result.data['plain_indent_4'], \
+            "Plain >4 with tab base should preserve quad-indented content"
+        assert 'Line 2 quad-indented at level 4' in result.data['plain_indent_4'], \
+            "Plain >4 with tab base should preserve all quad-indented lines"
+
+        assert 'Line 1 quint-indented at level 5' in result.data['plain_indent_5'], \
+            "Plain >5 with tab base should preserve quint-indented content"
+        assert 'Line 2 quint-indented at level 5' in result.data['plain_indent_5'], \
+            "Plain >5 with tab base should preserve all quint-indented lines"
+
+        # Test modifier >- (strip) with indent levels 1-5, using tab base indentation
+        yaml_content_strip = """# Strip folded scalar with explicit indent at tab level
+\tstrip_indent_1: >-1
+\t Line 1 indented at level 1
+\t Line 2 indented at level 1
+
+\tstrip_indent_2: >-2
+\t  Line 1 double-indented at level 2
+\t  Line 2 double-indented at level 2
+
+\tstrip_indent_3: >-3
+\t   Line 1 triple-indented at level 3
+\t   Line 2 triple-indented at level 3
+
+\tstrip_indent_4: >-4
+\t    Line 1 quad-indented at level 4
+\t    Line 2 quad-indented at level 4
+
+\tstrip_indent_5: >-5
+\t     Line 1 quint-indented at level 5
+\t     Line 2 quint-indented at level 5
+"""
+        result = parser.safe_load(yaml_content_strip)
+        assert result.is_success(), "Strip folded scalar parsing with tab base should succeed"
+
+        # Verify strip modifier content is preserved (trailing newlines removed)
+        assert 'Line 1 indented at level 1' in result.data['strip_indent_1'], \
+            "Strip >-1 with tab base should preserve indented content"
+        assert 'Line 2 indented at level 1' in result.data['strip_indent_1'], \
+            "Strip >-1 with tab base should preserve all indented lines"
+
+        assert 'Line 1 double-indented at level 2' in result.data['strip_indent_2'], \
+            "Strip >-2 with tab base should preserve double-indented content"
+        assert 'Line 2 double-indented at level 2' in result.data['strip_indent_2'], \
+            "Strip >-2 with tab base should preserve all double-indented lines"
+
+        assert 'Line 1 triple-indented at level 3' in result.data['strip_indent_3'], \
+            "Strip >-3 with tab base should preserve triple-indented content"
+        assert 'Line 2 triple-indented at level 3' in result.data['strip_indent_3'], \
+            "Strip >-3 with tab base should preserve all triple-indented lines"
+
+        assert 'Line 1 quad-indented at level 4' in result.data['strip_indent_4'], \
+            "Strip >-4 with tab base should preserve quad-indented content"
+        assert 'Line 2 quad-indented at level 4' in result.data['strip_indent_4'], \
+            "Strip >-4 with tab base should preserve all quad-indented lines"
+
+        assert 'Line 1 quint-indented at level 5' in result.data['strip_indent_5'], \
+            "Strip >-5 with tab base should preserve quint-indented content"
+        assert 'Line 2 quint-indented at level 5' in result.data['strip_indent_5'], \
+            "Strip >-5 with tab base should preserve all quint-indented lines"
+
+        # Test modifier >+ (keep) with indent levels 1-5, using tab base indentation
+        yaml_content_keep = """# Keep folded scalar with explicit indent at tab level
+\tkeep_indent_1: >+1
+\t Line 1 indented at level 1
+\t Line 2 indented at level 1
+
+\tkeep_indent_2: >+2
+\t  Line 1 double-indented at level 2
+\t  Line 2 double-indented at level 2
+
+\tkeep_indent_3: >+3
+\t   Line 1 triple-indented at level 3
+\t   Line 2 triple-indented at level 3
+
+\tkeep_indent_4: >+4
+\t    Line 1 quad-indented at level 4
+\t    Line 2 quad-indented at level 4
+
+\tkeep_indent_5: >+5
+\t     Line 1 quint-indented at level 5
+\t     Line 2 quint-indented at level 5
+"""
+        result = parser.safe_load(yaml_content_keep)
+        assert result.is_success(), "Keep folded scalar parsing with tab base should succeed"
+
+        # Verify keep modifier content is preserved (all trailing newlines kept)
+        assert 'Line 1 indented at level 1' in result.data['keep_indent_1'], \
+            "Keep >+1 with tab base should preserve indented content"
+        assert 'Line 2 indented at level 1' in result.data['keep_indent_1'], \
+            "Keep >+1 with tab base should preserve all indented lines"
+
+        assert 'Line 1 double-indented at level 2' in result.data['keep_indent_2'], \
+            "Keep >+2 with tab base should preserve double-indented content"
+        assert 'Line 2 double-indented at level 2' in result.data['keep_indent_2'], \
+            "Keep >+2 with tab base should preserve all double-indented lines"
+
+        assert 'Line 1 triple-indented at level 3' in result.data['keep_indent_3'], \
+            "Keep >+3 with tab base should preserve triple-indented content"
+        assert 'Line 2 triple-indented at level 3' in result.data['keep_indent_3'], \
+            "Keep >+3 with tab base should preserve all triple-indented lines"
+
+        assert 'Line 1 quad-indented at level 4' in result.data['keep_indent_4'], \
+            "Keep >+4 with tab base should preserve quad-indented content"
+        assert 'Line 2 quad-indented at level 4' in result.data['keep_indent_4'], \
+            "Keep >+4 with tab base should preserve all quad-indented lines"
+
+        assert 'Line 1 quint-indented at level 5' in result.data['keep_indent_5'], \
+            "Keep >+5 with tab base should preserve quint-indented content"
+        assert 'Line 2 quint-indented at level 5' in result.data['keep_indent_5'], \
+            "Keep >+5 with tab base should preserve all quint-indented lines"
+
+
 if __name__ == '__main__':
     # Run the tests when executed directly
     pytest.main([__file__, '-v'])
