@@ -11159,6 +11159,241 @@ fn test_folded_scalar_indicator_lines() {
 }
 
 #[test]
+fn test_folded_scalar_indicator_lines_at_all_levels() {
+    // Test folded scalar indicator lines (>, >-, >+) at levels 1-5 with 2-space base indent
+    // Level 1: 2 spaces, Level 2: 4 spaces, Level 3: 6 spaces, Level 4: 8 spaces, Level 5: 10 spaces
+    // Follows the vec![(input_line, expected_key, expected_type)] pattern from Section 12B
+
+    let test_cases = vec![
+        // Level 1: 2-space indentation with basic > modifier
+        ("  description: >", "description", LineType::MappingKey),
+        ("  content: >", "content", LineType::MappingKey),
+        ("  message: >", "message", LineType::MappingKey),
+        ("  text: >", "text", LineType::MappingKey),
+        ("  note: >", "note", LineType::MappingKey),
+        ("  summary: >", "summary", LineType::MappingKey),
+        ("  key!1: >", "key!1", LineType::MappingKey),
+        ("  warning!msg: >", "warning!msg", LineType::MappingKey),
+        ("  error!log: >", "error!log", LineType::MappingKey),
+        ("  simple!test: >", "simple!test", LineType::MappingKey),
+
+        // Level 1: 2-space indentation with strip >- modifier
+        ("  description: >-", "description", LineType::MappingKey),
+        ("  content: >-", "content", LineType::MappingKey),
+        ("  message: >-", "message", LineType::MappingKey),
+        ("  text: >-", "text", LineType::MappingKey),
+        ("  note: >-", "note", LineType::MappingKey),
+        ("  summary: >-", "summary", LineType::MappingKey),
+        ("  key!1: >-", "key!1", LineType::MappingKey),
+        ("  warning!msg: >-", "warning!msg", LineType::MappingKey),
+        ("  error!log: >-", "error!log", LineType::MappingKey),
+        ("  simple!test: >-", "simple!test", LineType::MappingKey),
+
+        // Level 1: 2-space indentation with keep >+ modifier
+        ("  description: >+", "description", LineType::MappingKey),
+        ("  content: >+", "content", LineType::MappingKey),
+        ("  message: >+", "message", LineType::MappingKey),
+        ("  text: >+", "text", LineType::MappingKey),
+        ("  note: >+", "note", LineType::MappingKey),
+        ("  summary: >+", "summary", LineType::MappingKey),
+        ("  key!1: >+", "key!1", LineType::MappingKey),
+        ("  warning!msg: >+", "warning!msg", LineType::MappingKey),
+        ("  error!log: >+", "error!log", LineType::MappingKey),
+        ("  simple!test: >+", "simple!test", LineType::MappingKey),
+
+        // Level 2: 4-space indentation with basic > modifier
+        ("    description: >", "description", LineType::MappingKey),
+        ("    content: >", "content", LineType::MappingKey),
+        ("    message: >", "message", LineType::MappingKey),
+        ("    text: >", "text", LineType::MappingKey),
+        ("    note: >", "note", LineType::MappingKey),
+        ("    summary: >", "summary", LineType::MappingKey),
+        ("    key!2: >", "key!2", LineType::MappingKey),
+        ("    nested!warning: >", "nested!warning", LineType::MappingKey),
+        ("    deep!error: >", "deep!error", LineType::MappingKey),
+        ("    inner!test: >", "inner!test", LineType::MappingKey),
+
+        // Level 2: 4-space indentation with strip >- modifier
+        ("    description: >-", "description", LineType::MappingKey),
+        ("    content: >-", "content", LineType::MappingKey),
+        ("    message: >-", "message", LineType::MappingKey),
+        ("    text: >-", "text", LineType::MappingKey),
+        ("    note: >-", "note", LineType::MappingKey),
+        ("    summary: >-", "summary", LineType::MappingKey),
+        ("    key!2: >-", "key!2", LineType::MappingKey),
+        ("    nested!warning: >-", "nested!warning", LineType::MappingKey),
+        ("    deep!error: >-", "deep!error", LineType::MappingKey),
+        ("    inner!test: >-", "inner!test", LineType::MappingKey),
+
+        // Level 2: 4-space indentation with keep >+ modifier
+        ("    description: >+", "description", LineType::MappingKey),
+        ("    content: >+", "content", LineType::MappingKey),
+        ("    message: >+", "message", LineType::MappingKey),
+        ("    text: >+", "text", LineType::MappingKey),
+        ("    note: >+", "note", LineType::MappingKey),
+        ("    summary: >+", "summary", LineType::MappingKey),
+        ("    key!2: >+", "key!2", LineType::MappingKey),
+        ("    nested!warning: >+", "nested!warning", LineType::MappingKey),
+        ("    deep!error: >+", "deep!error", LineType::MappingKey),
+        ("    inner!test: >+", "inner!test", LineType::MappingKey),
+
+        // Level 3: 6-space indentation with basic > modifier
+        ("      description: >", "description", LineType::MappingKey),
+        ("      content: >", "content", LineType::MappingKey),
+        ("      message: >", "message", LineType::MappingKey),
+        ("      text: >", "text", LineType::MappingKey),
+        ("      note: >", "note", LineType::MappingKey),
+        ("      summary: >", "summary", LineType::MappingKey),
+        ("      key!3: >", "key!3", LineType::MappingKey),
+        ("      deeper!warning: >", "deeper!warning", LineType::MappingKey),
+        ("      very!deep!error: >", "very!deep!error", LineType::MappingKey),
+        ("      complex!test!here: >", "complex!test!here", LineType::MappingKey),
+
+        // Level 3: 6-space indentation with strip >- modifier
+        ("      description: >-", "description", LineType::MappingKey),
+        ("      content: >-", "content", LineType::MappingKey),
+        ("      message: >-", "message", LineType::MappingKey),
+        ("      text: >-", "text", LineType::MappingKey),
+        ("      note: >-", "note", LineType::MappingKey),
+        ("      summary: >-", "summary", LineType::MappingKey),
+        ("      key!3: >-", "key!3", LineType::MappingKey),
+        ("      deeper!warning: >-", "deeper!warning", LineType::MappingKey),
+        ("      very!deep!error: >-", "very!deep!error", LineType::MappingKey),
+        ("      complex!test!here: >-", "complex!test!here", LineType::MappingKey),
+
+        // Level 3: 6-space indentation with keep >+ modifier
+        ("      description: >+", "description", LineType::MappingKey),
+        ("      content: >+", "content", LineType::MappingKey),
+        ("      message: >+", "message", LineType::MappingKey),
+        ("      text: >+", "text", LineType::MappingKey),
+        ("      note: >+", "note", LineType::MappingKey),
+        ("      summary: >+", "summary", LineType::MappingKey),
+        ("      key!3: >+", "key!3", LineType::MappingKey),
+        ("      deeper!warning: >+", "deeper!warning", LineType::MappingKey),
+        ("      very!deep!error: >+", "very!deep!error", LineType::MappingKey),
+        ("      complex!test!here: >+", "complex!test!here", LineType::MappingKey),
+
+        // Level 4: 8-space indentation with basic > modifier
+        ("        description: >", "description", LineType::MappingKey),
+        ("        content: >", "content", LineType::MappingKey),
+        ("        message: >", "message", LineType::MappingKey),
+        ("        text: >", "text", LineType::MappingKey),
+        ("        note: >", "note", LineType::MappingKey),
+        ("        summary: >", "summary", LineType::MappingKey),
+        ("        key!4: >", "key!4", LineType::MappingKey),
+        ("        deepest!warning: >", "deepest!warning", LineType::MappingKey),
+        ("        super!deep!error: >", "super!deep!error", LineType::MappingKey),
+        ("        extra!complex!test: >", "extra!complex!test", LineType::MappingKey),
+
+        // Level 4: 8-space indentation with strip >- modifier
+        ("        description: >-", "description", LineType::MappingKey),
+        ("        content: >-", "content", LineType::MappingKey),
+        ("        message: >-", "message", LineType::MappingKey),
+        ("        text: >-", "text", LineType::MappingKey),
+        ("        note: >-", "note", LineType::MappingKey),
+        ("        summary: >-", "summary", LineType::MappingKey),
+        ("        key!4: >-", "key!4", LineType::MappingKey),
+        ("        deepest!warning: >-", "deepest!warning", LineType::MappingKey),
+        ("        super!deep!error: >-", "super!deep!error", LineType::MappingKey),
+        ("        extra!complex!test: >-", "extra!complex!test", LineType::MappingKey),
+
+        // Level 4: 8-space indentation with keep >+ modifier
+        ("        description: >+", "description", LineType::MappingKey),
+        ("        content: >+", "content", LineType::MappingKey),
+        ("        message: >+", "message", LineType::MappingKey),
+        ("        text: >+", "text", LineType::MappingKey),
+        ("        note: >+", "note", LineType::MappingKey),
+        ("        summary: >+", "summary", LineType::MappingKey),
+        ("        key!4: >+", "key!4", LineType::MappingKey),
+        ("        deepest!warning: >+", "deepest!warning", LineType::MappingKey),
+        ("        super!deep!error: >+", "super!deep!error", LineType::MappingKey),
+        ("        extra!complex!test: >+", "extra!complex!test", LineType::MappingKey),
+
+        // Level 5: 10-space indentation with basic > modifier
+        ("          description: >", "description", LineType::MappingKey),
+        ("          content: >", "content", LineType::MappingKey),
+        ("          message: >", "message", LineType::MappingKey),
+        ("          text: >", "text", LineType::MappingKey),
+        ("          note: >", "note", LineType::MappingKey),
+        ("          summary: >", "summary", LineType::MappingKey),
+        ("          key!5: >", "key!5", LineType::MappingKey),
+        ("          extreme!warning: >", "extreme!warning", LineType::MappingKey),
+        ("          ultra!deep!error: >", "ultra!deep!error", LineType::MappingKey),
+        ("          mega!complex!test: >", "mega!complex!test", LineType::MappingKey),
+
+        // Level 5: 10-space indentation with strip >- modifier
+        ("          description: >-", "description", LineType::MappingKey),
+        ("          content: >-", "content", LineType::MappingKey),
+        ("          message: >-", "message", LineType::MappingKey),
+        ("          text: >-", "text", LineType::MappingKey),
+        ("          note: >-", "note", LineType::MappingKey),
+        ("          summary: >-", "summary", LineType::MappingKey),
+        ("          key!5: >-", "key!5", LineType::MappingKey),
+        ("          extreme!warning: >-", "extreme!warning", LineType::MappingKey),
+        ("          ultra!deep!error: >-", "ultra!deep!error", LineType::MappingKey),
+        ("          mega!complex!test: >-", "mega!complex!test", LineType::MappingKey),
+
+        // Level 5: 10-space indentation with keep >+ modifier
+        ("          description: >+", "description", LineType::MappingKey),
+        ("          content: >+", "content", LineType::MappingKey),
+        ("          message: >+", "message", LineType::MappingKey),
+        ("          text: >+", "text", LineType::MappingKey),
+        ("          note: >+", "note", LineType::MappingKey),
+        ("          summary: >+", "summary", LineType::MappingKey),
+        ("          key!5: >+", "key!5", LineType::MappingKey),
+        ("          extreme!warning: >+", "extreme!warning", LineType::MappingKey),
+        ("          ultra!deep!error: >+", "ultra!deep!error", LineType::MappingKey),
+        ("          mega!complex!test: >+", "mega!complex!test", LineType::MappingKey),
+
+        // Keys with multiple exclamation marks at different levels
+        ("  key!!: >", "key!!", LineType::MappingKey),
+        ("    deep!!key: >-", "deep!!key", LineType::MappingKey),
+        ("      very!!deep!!key: >+", "very!!deep!!key", LineType::MappingKey),
+        ("        super!!!deep!!!key: >", "super!!!deep!!!key", LineType::MappingKey),
+        ("          ultra!!!!deep!!!!key: >-", "ultra!!!!deep!!!!key", LineType::MappingKey),
+
+        // Realistic configuration key names at various levels
+        ("  api_endpoint: >", "api_endpoint", LineType::MappingKey),
+        ("    database_url: >-", "database_url", LineType::MappingKey),
+        ("      cache_config: >+", "cache_config", LineType::MappingKey),
+        ("        log_settings: >", "log_settings", LineType::MappingKey),
+        ("          feature_flags: >-", "feature_flags", LineType::MappingKey),
+
+        // Mixed realistic keys with exclamation marks
+        ("  config!default: >", "config!default", LineType::MappingKey),
+        ("    setting!enabled: >-", "setting!enabled", LineType::MappingKey),
+        ("      option!debug: >+", "option!debug", LineType::MappingKey),
+        ("        flag!production: >", "flag!production", LineType::MappingKey),
+        ("          toggle!feature: >-", "toggle!feature", LineType::MappingKey),
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Folded scalar indicator test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for folded scalar indicator: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Key mismatch for folded scalar indicator: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+}
+
+#[test]
 fn test_folded_scalar_basic_modifiers() {
     // Test folded scalar with basic modifiers (>-, >+)
     // This covers the second acceptance criterion
