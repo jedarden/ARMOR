@@ -349,15 +349,29 @@ impl BasicParser {
             // Handle blank lines, comments, and indent-only lines with consistent logic
             // These lines should be transparent to scope tracking - they don't trigger
             // any scope transitions. The next content line will handle any needed scope changes.
-            //
-            // IMPORTANT: We do NOT exit scopes on indent-only transitions.
-            // Scope exit only happens when we encounter a KEY at a decreased indent level.
-            // This ensures the scope stack remains consistent through blank/empty lines.
-            if trimmed.is_empty() || trimmed.starts_with('#') || !line_type.is_key_bearing() {
+            // Comments are also transparent to scope tracking since YAML parsers ignore them.
+            if trimmed.is_empty() || trimmed.starts_with('#') {
                 // Update last_indent tracking so the next line can detect indent changes
                 // but don't trigger any scope transitions
                 if indent != scope_stack.get_last_indent() {
                     scope_stack.set_last_indent(indent);
+                }
+                continue;
+            }
+
+            // Type-specific handling: indent-only lines (no key token)
+            // These lines don't trigger scope entry but DO trigger scope exit on indent decrease
+            // This ensures proper scope cleanup when returning to outer levels through blank lines
+            // CRITICAL: Scope stack must exit on indent decrease even without keys to maintain consistency
+            if !line_type.is_key_bearing() {
+                // Indent-only line - handle scope exit if indent decreased
+                if indent < scope_stack.current_indent() {
+                    // Record the indent transition with has_key=false for indent-only lines
+                    scope_stack.record_indent_transition(line_num_1index, indent, false, line);
+                    scope_stack.exit_to_scope(indent);
+                } else if indent > scope_stack.current_indent() {
+                    // Indent increased on indent-only line - just record the transition, don't enter scope
+                    scope_stack.record_indent_transition(line_num_1index, indent, false, line);
                 }
                 continue;
             }
@@ -588,15 +602,29 @@ impl Parser for BasicParser {
             // Handle blank lines, comments, and indent-only lines with consistent logic
             // These lines should be transparent to scope tracking - they don't trigger
             // any scope transitions. The next content line will handle any needed scope changes.
-            //
-            // IMPORTANT: We do NOT exit scopes on indent-only transitions.
-            // Scope exit only happens when we encounter a KEY at a decreased indent level.
-            // This ensures the scope stack remains consistent through blank/empty lines.
-            if trimmed.is_empty() || trimmed.starts_with('#') || !line_type.is_key_bearing() {
+            // Comments are also transparent to scope tracking since YAML parsers ignore them.
+            if trimmed.is_empty() || trimmed.starts_with('#') {
                 // Update last_indent tracking so the next line can detect indent changes
                 // but don't trigger any scope transitions
                 if indent != scope_stack.get_last_indent() {
                     scope_stack.set_last_indent(indent);
+                }
+                continue;
+            }
+
+            // Type-specific handling: indent-only lines (no key token)
+            // These lines don't trigger scope entry but DO trigger scope exit on indent decrease
+            // This ensures proper scope cleanup when returning to outer levels through blank lines
+            // CRITICAL: Scope stack must exit on indent decrease even without keys to maintain consistency
+            if !line_type.is_key_bearing() {
+                // Indent-only line - handle scope exit if indent decreased
+                if indent < scope_stack.current_indent() {
+                    // Record the indent transition with has_key=false for indent-only lines
+                    scope_stack.record_indent_transition(line_num_1index, indent, false, line);
+                    scope_stack.exit_to_scope(indent);
+                } else if indent > scope_stack.current_indent() {
+                    // Indent increased on indent-only line - just record the transition, don't enter scope
+                    scope_stack.record_indent_transition(line_num_1index, indent, false, line);
                 }
                 continue;
             }
