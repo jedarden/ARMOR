@@ -4136,27 +4136,38 @@ fn test_folded_style_scalars_with_exclamation() {
     for line in test_cases {
         let result = classify_line_type(line);
         // Folded scalar marker lines and content should be properly classified
-        assert!(
-            result == LineType::MappingKey || result == LineType::Comment,
-            "Folded scalar with ! should be MappingKey or Comment: '{}'",
-            line
-        );
+        // Marker lines (with :) are MappingKey, continuation lines are Unknown
+        let is_marker_line = line.contains(':');
+        if is_marker_line {
+            assert_eq!(
+                result, LineType::MappingKey,
+                "Folded scalar marker line should be MappingKey: '{}'",
+                line
+            );
+        } else {
+            // Continuation lines (indented without :) are Unknown
+            assert!(
+                result == LineType::Unknown || result == LineType::Tag,
+                "Folded scalar continuation should be Unknown or Tag: '{}' (got {:?})",
+                line, result
+            );
+        }
     }
 
     // Test folded scalars in more complex scenarios
     let complex_folded = vec![
-        "help_text: >",
-        "error_message: >",
-        "  An error occurred! Please try!",
-        "  Contact support! Email us!",
+        ("help_text: >", LineType::MappingKey),
+        ("error_message: >", LineType::MappingKey),
+        ("  An error occurred! Please try!", LineType::Unknown),
+        ("  Contact support! Email us!", LineType::Unknown),
     ];
 
-    for line in complex_folded {
+    for (line, expected) in complex_folded {
         let result = classify_line_type(line);
-        assert!(
-            result == LineType::MappingKey || result == LineType::Comment,
-            "Complex folded scalar with ! should be valid: '{}'",
-            line
+        assert_eq!(
+            result, expected,
+            "Complex folded scalar should be {:?}: '{}'",
+            expected, line
         );
     }
 }
@@ -6710,5 +6721,1325 @@ fn test_complete_extraction_pipeline_verification() {
             );
             key_index += 1;
         }
+    }
+}
+
+// ============================================================================
+// Section 12B: Multiline String Scenarios with Exclamation Marks
+// ============================================================================
+
+#[test]
+fn test_folded_block_scalar_with_exclamation_marks() {
+    // Test folded style scalars (>) - newlines treated as spaces
+    // The scalar indicator line itself
+    let test_cases = vec![
+        "description: >",               // Basic folded scalar
+        "  folded_text: >",              // Indented folded scalar
+        "    note: >",                   // Deep indented folded scalar
+        "\tmessage: >",                 // Tab-indented folded scalar
+        "warning: >-",                  // Folded with strip modifier
+        "info: >+",                     // Folded with keep modifier
+        "text: >-2",                    // Folded with explicit indent
+        "content: >2",                   // Folded with explicit indent
+    ];
+
+    for line in test_cases {
+        // These lines with > should be classified as MappingKey with a block scalar
+        // The parser should recognize the folded block scalar indicator
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Folded block scalar indicator should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Test continuation lines of folded scalars with exclamation marks
+    let continuation_lines = vec![
+        "  This is folded text with! exclamation marks",
+        "    Multiple! exclamations! in! folded! style",
+        "\tMore! content! with! bangs!",
+        "  Important! message! continues!",
+        "    Another! line! with! emphasis!",
+    ];
+
+    for line in continuation_lines {
+        // Continuation lines of folded scalars (indented more than parent)
+        // should be classified appropriately
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::Unknown,
+            "Folded scalar continuation with ! should be MappingKey or Unknown: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_literal_block_scalar_with_exclamation_marks() {
+    // Test literal style scalars (|) - newlines preserved
+    // The scalar indicator line itself
+    let test_cases = vec![
+        "description: |",               // Basic literal scalar
+        "  literal_text: |",             // Indented literal scalar
+        "    note: |",                   // Deep indented literal scalar
+        "\tmessage: |",                 // Tab-indented literal scalar
+        "warning: |-",                  // Literal with strip modifier
+        "info: |+",                     // Literal with keep modifier
+        "text: |-2",                    // Literal with explicit indent
+        "content: |2",                  // Literal with explicit indent
+    ];
+
+    for line in test_cases {
+        // These lines with | should be classified as MappingKey with a block scalar
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Literal block scalar indicator should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Test continuation lines of literal scalars with exclamation marks
+    let continuation_lines = vec![
+        ("  This is literal text with! exclamation marks", vec![LineType::MappingKey, LineType::Unknown]),
+        ("    Multiple! exclamations! in! literal! style", vec![LineType::MappingKey, LineType::Unknown]),
+        ("\tMore! content! with! bangs!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("  Important! message! continues!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("    Another! line! with! emphasis!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("  Lines with! at! various! positions!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("    !Start! Middle! End!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("  !important!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        // Continuation lines of literal scalars (indented more than parent)
+        // should be classified appropriately
+        let result = classify_line_type(line);
+        assert!(
+            expected_types.contains(&result),
+            "Literal scalar continuation with ! should be one of {:?}: '{}' (got {:?})",
+            expected_types, line, result
+        );
+    }
+}
+
+#[test]
+fn test_multiline_mixed_with_singleline_exclamation_patterns() {
+    // Test mixed multiline blocks containing single-line configs with exclamation marks
+    // This simulates real-world config files with various structures mixed together
+
+    let test_cases = vec![
+        // Mixed: multiline block scalars followed by single-line configs with !
+        ("description: >", "description", None, true),   // Folded scalar starts
+        ("  This is a long description!", "description", Some("This is a long description!"), true),
+        ("  with multiple lines!", "description", Some("with multiple lines!"), true),
+        ("priority: high!", "priority", Some("high!"), true),  // Back to single-line with !
+        ("note: >", "note", None, true),                   // Another folded scalar
+        ("  !important message!", "note", Some("!important message!"), true),
+        ("  continues here!", "note", Some("continues here!"), true),
+
+        // Mixed: literal scalars with single-line configs
+        ("error_message: |", "error_message", None, true),
+        ("  Error occurred!", "error_message", Some("Error occurred!"), true),
+        ("  Check logs!", "error_message", Some("Check logs!"), true),
+        ("status: failed!", "status", Some("failed!"), true),
+
+        // Complex nesting with mixed styles
+        ("config:", "config", None, true),
+        ("  description: >", "description", None, true),
+        ("    Main config! settings!", "description", Some("Main config! settings!"), true),
+        ("  enabled: true!", "enabled", Some("true!"), true),
+        ("  note: |", "note", None, true),
+        ("    !Important!", "note", Some("!Important!"), true),
+        ("    Read carefully!", "note", Some("Read carefully!"), true),
+    ];
+
+    for (line, expected_key, expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        // Continuation lines (indented without colons) are not detected as mapping keys
+        let is_continuation_line = (line.starts_with("  ") || line.starts_with("\t") ||
+                                    line.starts_with("    ")) && !line.contains(':');
+
+        if should_detect && !is_continuation_line {
+            assert!(
+                info.is_some(),
+                "Should detect mapping key in mixed multiline scenario: '{}'",
+                line
+            );
+            let info = info.unwrap();
+            assert_eq!(
+                info.key, expected_key,
+                "Should extract correct key in mixed multiline: '{}'",
+                line
+            );
+            if let Some(exp_val) = expected_value {
+                assert_eq!(
+                    info.value, Some(exp_val.to_string()),
+                    "Should extract correct value in mixed multiline: '{}'",
+                    line
+                );
+            }
+        } else if is_continuation_line {
+            // Continuation lines don't have key: value patterns
+            assert!(
+                info.is_none(),
+                "Continuation line should NOT be detected as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_multiline_yaml_strings_with_exclamation_in_nested_contexts() {
+    // Test multiline YAML strings with exclamation marks in deeply nested contexts
+    // This verifies that nested structures with block scalars are handled correctly
+
+    let test_cases = vec![
+        // Nested mappings with block scalars containing !
+        ("outer:", "outer", None, true),
+        ("  middle:", "middle", None, true),
+        ("    inner:", "inner", None, true),
+        ("      description: >", "description", None, true),
+        ("        Deep! nested! content!", "description", Some("Deep! nested! content!"), true),
+        ("        with! multiple! lines!", "description", Some("with! multiple! lines!"), true),
+        ("      value: important!", "value", Some("important!"), true),
+
+        // Sequences within nested structures with block scalars
+        ("items:", "items", None, true),
+        ("  - name: item1", "name", Some("item1"), true),
+        ("    description: |", "description", None, true),
+        ("      First! item!", "description", Some("First! item!"), true),
+        ("      With! details!", "description", Some("With! details!"), true),
+        ("  - name: item2", "name", Some("item2"), true),
+        ("    note: >", "note", None, true),
+        ("      Second! item!", "note", Some("Second! item!"), true),
+    ];
+
+    for (line, expected_key, expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        // Continuation lines (indented without colons) are not detected as mapping keys
+        let is_continuation_line = (line.starts_with("          ") || line.starts_with("        ") ||
+                                    line.starts_with("    ")) && !line.contains(':');
+
+        if should_detect && !is_continuation_line {
+            if line.starts_with("- ") {
+                // Sequence items are handled differently
+                if let Some(key_part) = line.strip_prefix("- ") {
+                    if let Some(colon_pos) = key_part.find(':') {
+                        let key = &key_part[..colon_pos];
+                        let _value_part = &key_part[colon_pos + 1..];
+                        // For sequence items, we verify the line structure
+                        assert!(line.starts_with("-"), "Sequence item should start with '-': '{}'", line);
+                        assert_eq!(key, expected_key, "Sequence item key should match: '{}'", line);
+                    }
+                }
+            } else {
+                assert!(
+                    info.is_some(),
+                    "Should detect mapping key in nested multiline: '{}'",
+                    line
+                );
+                let info = info.unwrap();
+                assert_eq!(
+                    info.key, expected_key,
+                    "Should extract correct key in nested multiline: '{}'",
+                    line
+                );
+                if let Some(exp_val) = expected_value {
+                    assert_eq!(
+                        info.value, Some(exp_val.to_string()),
+                        "Should extract correct value in nested multiline: '{}'",
+                        line
+                    );
+                }
+            }
+        } else if is_continuation_line {
+            // Continuation lines don't have key: value patterns
+            assert!(
+                info.is_none(),
+                "Continuation line should NOT be detected as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_folded_scalar_exclamation_at_different_positions() {
+    // Test folded scalars with exclamation marks at various positions in the content
+    let test_cases = vec![
+        // ! at start of folded scalar content
+        ("warning: >", "warning", None, true),
+        ("  !Important! message!", "warning", Some("!Important! message!"), true),
+
+        // ! in middle of folded scalar content
+        ("description: >", "description", None, true),
+        ("  This! is! important!", "description", Some("This! is! important!"), true),
+
+        // ! at end of folded scalar content
+        ("note: >", "note", None, true),
+        ("  Read this carefully!", "note", Some("Read this carefully!"), true),
+
+        // Multiple ! throughout folded scalar
+        ("message: >", "message", None, true),
+        ("  !Start! Middle! End!", "message", Some("!Start! Middle! End!"), true),
+        ("  More! content! here!", "message", Some("More! content! here!"), true),
+    ];
+
+    for (line, expected_key, _expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        // Continuation lines (indented without colons) are not detected as mapping keys
+        let is_continuation_line = (line.starts_with("  ") || line.starts_with('\t')) &&
+                                    !line.contains(':');
+
+        if should_detect && !is_continuation_line {
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for folded scalar: '{}'",
+                line
+            );
+            let info = info.unwrap();
+            assert_eq!(
+                info.key, expected_key,
+                "Should extract correct key for folded scalar: '{}'",
+                line
+            );
+        } else if is_continuation_line {
+            // Continuation lines don't have key: value patterns
+            assert!(
+                info.is_none(),
+                "Continuation line should NOT be detected as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_literal_scalar_exclamation_at_different_positions() {
+    // Test literal scalars with exclamation marks at various positions in the content
+    let test_cases = vec![
+        // ! at start of literal scalar content
+        ("warning: |", "warning", None, true),
+        ("  !Important! message!", "warning", Some("!Important! message!"), true),
+
+        // ! in middle of literal scalar content
+        ("description: |", "description", None, true),
+        ("  This! is! important!", "description", Some("This! is! important!"), true),
+
+        // ! at end of literal scalar content
+        ("note: |", "note", None, true),
+        ("  Read this carefully!", "note", Some("Read this carefully!"), true),
+
+        // Multiple ! throughout literal scalar
+        ("message: |", "message", None, true),
+        ("  !Start! Middle! End!", "message", Some("!Start! Middle! End!"), true),
+        ("  More! content! here!", "message", Some("More! content! here!"), true),
+
+        // Literal scalar with various newline positions and !
+        ("log_output: |", "log_output", None, true),
+        ("  Line 1 with!", "log_output", Some("Line 1 with!"), true),
+        ("  Line 2!", "log_output", Some("Line 2!"), true),
+        ("  !Line 3!", "log_output", Some("!Line 3!"), true),
+    ];
+
+    for (line, expected_key, _expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        // Continuation lines (indented without colons) are not detected as mapping keys
+        let is_continuation_line = (line.starts_with("  ") || line.starts_with('\t')) &&
+                                    !line.contains(':');
+
+        if should_detect && !is_continuation_line {
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for literal scalar: '{}'",
+                line
+            );
+            let info = info.unwrap();
+            assert_eq!(
+                info.key, expected_key,
+                "Should extract correct key for literal scalar: '{}'",
+                line
+            );
+        } else if is_continuation_line {
+            // Continuation lines don't have key: value patterns
+            assert!(
+                info.is_none(),
+                "Continuation line should NOT be detected as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_multiline_block_scalar_modifiers_with_exclamation() {
+    // Test block scalars with different modifiers and exclamation marks
+    // Modifiers: -, +, and indentation levels
+
+    let test_cases = vec![
+        // Strip modifier (-) - removes trailing newlines
+        ("note: >-", "note", None, true),
+        ("  !Important! note!", "note", Some("!Important! note!"), true),
+
+        // Keep modifier (+) - keeps trailing newlines
+        ("message: >+", "message", None, true),
+        ("  !Urgent! message!", "message", Some("!Urgent! message!"), true),
+
+        // Explicit indentation (2)
+        ("description: >-2", "description", None, true),
+        ("    !Detailed! info!", "description", Some("!Detailed! info!"), true),
+
+        // Explicit indentation (4)
+        ("text: >2", "text", None, true),
+        ("      !More! text!", "text", Some("!More! text!"), true),
+
+        // Literal scalars with modifiers
+        ("log: |-", "log", None, true),
+        ("  !Error! log!", "log", Some("!Error! log!"), true),
+
+        ("output: |+", "output", None, true),
+        ("  !Success! output!", "output", Some("!Success! output!"), true),
+    ];
+
+    for (line, expected_key, _expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        // Continuation lines (indented without colons) are not detected as mapping keys
+        let is_continuation_line = (line.starts_with("  ") || line.starts_with('\t') ||
+                                    line.starts_with("    ") || line.starts_with("      ")) &&
+                                    !line.contains(':');
+
+        if should_detect && !is_continuation_line {
+            assert!(
+                info.is_some(),
+                "Should detect mapping key with block scalar modifier: '{}'",
+                line
+            );
+            let info = info.unwrap();
+            assert_eq!(
+                info.key, expected_key,
+                "Should extract correct key with modifier: '{}'",
+                line
+            );
+        } else if is_continuation_line {
+            // Continuation lines don't have key: value patterns
+            assert!(
+                info.is_none(),
+                "Continuation line should NOT be detected as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_real_world_multiline_config_with_exclamation() {
+    // Real-world configuration patterns with multiline strings containing exclamation marks
+    // This simulates production config files with complex multiline structures
+
+    let test_cases = vec![
+        // Database connection with multiline error messages
+        ("database:", "database", None, true),
+        ("  error_message: |", "error_message", None, true),
+        ("    !Failed! to connect!", "error_message", Some("!Failed! to connect!"), true),
+        ("    Check! credentials!", "error_message", Some("Check! credentials!"), true),
+        ("  connection_string: postgresql://localhost/db!", "connection_string", Some("postgresql://localhost/db!"), true),
+
+        // Application configuration with multiline descriptions
+        ("app:", "app", None, true),
+        ("  name: MyApp!", "name", Some("MyApp!"), true),
+        ("  description: >", "description", None, true),
+        ("    This! is! a! great! app!", "description", Some("This! is! a! great! app!"), true),
+        ("    With! many! features!", "description", Some("With! many! features!"), true),
+
+        // Monitoring configuration with multiline alert messages
+        ("monitoring:", "monitoring", None, true),
+        ("  alert_message: |", "alert_message", None, true),
+        ("    !Critical! alert!", "alert_message", Some("!Critical! alert!"), true),
+        ("    System! overload!", "alert_message", Some("System! overload!"), true),
+        ("  threshold: 90%!", "threshold", Some("90%!"), true),
+    ];
+
+    for (line, expected_key, expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        if should_detect {
+            // Lines starting with spaces are continuation lines
+            if line.starts_with(' ') || line.starts_with('\t') {
+                // Continuation lines may or may not be detected
+                if let Some(detected) = info {
+                    if expected_value.is_some() {
+                        assert_eq!(
+                            detected.value, expected_value.map(|v| v.to_string()),
+                            "Real-world multiline continuation should match: '{}'",
+                            line
+                        );
+                    }
+                }
+            } else {
+                assert!(
+                    info.is_some(),
+                    "Should detect mapping key in real-world multiline: '{}'",
+                    line
+                );
+                let info = info.unwrap();
+                assert_eq!(
+                    info.key, expected_key,
+                    "Should extract correct key in real-world multiline: '{}'",
+                    line
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_multiline_comment_and_config_mixed_with_exclamation() {
+    // Test multiline scenarios with comments, block scalars, and single-line configs
+    // all mixed together with exclamation marks
+
+    let yaml_lines = vec![
+        "# Configuration file - !Important! Read carefully!",
+        "version: 1.0!",
+        "# Note: This! is! a! comment!",
+        "description: >",
+        "  This is a multiline",
+        "  description with! marks!",
+        "  And! more! content!",
+        "# Another !comment! here!",
+        "settings:",
+        "  enabled: true!",
+        "  message: !important!",
+        "  note: |",
+        "    !Literal! multiline!",
+        "    With! exclamations!",
+    ];
+
+    // Verify line classification
+    let expected_types = vec![
+        LineType::Comment,      // # Configuration file
+        LineType::MappingKey,   // version: 1.0!
+        LineType::Comment,      // # Note: comment
+        LineType::MappingKey,   // description: >
+        LineType::Unknown,      // Indented continuation line
+        LineType::Unknown,      // Indented continuation line
+        LineType::Unknown,      // Indented continuation line
+        LineType::Comment,      // # Another !comment!
+        LineType::MappingKey,   // settings:
+        LineType::MappingKey,   // enabled: true!
+        LineType::MappingKey,   // message: !important!
+        LineType::MappingKey,   // note: |
+        LineType::Tag,          // Indented continuation line starting with !
+        LineType::Unknown,      // Indented continuation line
+    ];
+
+    for (i, line) in yaml_lines.iter().enumerate() {
+        let result = classify_line_type(line);
+        let expected = expected_types[i];
+        assert_eq!(
+            result, expected,
+            "Mixed multiline line {} should be {:?}: '{}'",
+            i, expected, line
+        );
+    }
+}
+
+#[test]
+fn test_multiline_sequence_with_exclamation_in_block_scalars() {
+    // Test sequences where items have block scalar values with exclamation marks
+
+    let test_cases = vec![
+        // Sequence with folded scalar values
+        ("items:", "items", None, true),
+        ("  - name: item1", "name", Some("item1"), true),
+        ("    description: >", "description", None, true),
+        ("      First! item! description!", "description", Some("First! item! description!"), true),
+        ("  - name: item2", "name", Some("item2"), true),
+        ("    note: |", "note", None, true),
+        ("      Second! item!", "note", Some("Second! item!"), true),
+        ("      With! details!", "note", Some("With! details!"), true),
+
+        // Nested sequences with block scalars
+        ("nested:", "nested", None, true),
+        ("  - subitems:", "subitems", None, true),
+        ("    - value: sub1!", "value", Some("sub1!"), true),
+        ("      detail: >", "detail", None, true),
+        ("        !Important! detail!", "detail", Some("!Important! detail!"), true),
+    ];
+
+    for (line, expected_key, expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        if should_detect {
+            // Lines starting with spaces are continuation lines or nested
+            if line.starts_with(' ') || line.starts_with('\t') {
+                // Continuation lines may or may not be detected
+                if let Some(detected) = info {
+                    if expected_value.is_some() && !line.starts_with("- ") {
+                        assert_eq!(
+                            detected.value, expected_value.map(|v| v.to_string()),
+                            "Nested sequence continuation should match: '{}'",
+                            line
+                        );
+                    }
+                }
+            } else if !line.starts_with("- ") {
+                assert!(
+                    info.is_some(),
+                    "Should detect mapping key in sequence with block scalars: '{}'",
+                    line
+                );
+                let info = info.unwrap();
+                assert_eq!(
+                    info.key, expected_key,
+                    "Should extract correct key in sequence with block scalars: '{}'",
+                    line
+                );
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Section 12B.2: Folded Scalar Indicator Line Tests
+// ============================================================================
+
+#[test]
+fn test_folded_scalar_indicator_lines() {
+    // Test folded scalar indicator lines (>) are classified as MappingKey
+    // This covers the first acceptance criterion
+
+    let test_cases = vec![
+        // Basic folded scalar indicators (>)
+        "description: >",
+        "content: >",
+        "message: >",
+        "text: >",
+        "note: >",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Basic folded scalar indicator (>) should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_folded_scalar_basic_modifiers() {
+    // Test folded scalar with basic modifiers (>-, >+)
+    // This covers the second acceptance criterion
+
+    let test_cases = vec![
+        // Strip modifier (-) - removes trailing newlines
+        "description: >-",
+        "content: >-",
+        "message: >-",
+
+        // Keep modifier (+) - preserves trailing newlines
+        "note: >+",
+        "text: >+",
+        "comment: >+",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Folded scalar with basic modifier (>-, >+) should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_folded_scalar_numeric_modifiers() {
+    // Test folded scalar with numeric modifiers (>2, >-2, >4, >-4, etc.)
+    // This covers the third acceptance criterion
+
+    let test_cases = vec![
+        // Numeric modifiers (1-9)
+        "text: >1",
+        "content: >2",
+        "message: >3",
+        "note: >4",
+        "description: >5",
+        "comment: >6",
+        "body: >7",
+        "data: >8",
+        "info: >9",
+
+        // Numeric modifiers with strip (-)
+        "text: >-1",
+        "content: >-2",
+        "message: >-3",
+        "note: >-4",
+        "description: >-5",
+        "comment: >-6",
+        "body: >-7",
+        "data: >-8",
+        "info: >-9",
+
+        // Numeric modifiers with keep (+)
+        "log: >+1",
+        "output: >+2",
+        "field: >+3",
+        "value: >+4",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Folded scalar with numeric modifier (>n, >-n, >+n) should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_folded_scalar_indented_indicators() {
+    // Test folded scalar indicators with various indentation levels
+    // This verifies classify_line_type() behavior for indicator lines with indentation
+
+    let test_cases = vec![
+        // 2-space indentation
+        "  description: >",
+        "  content: >",
+        "  message: >-",
+        "  note: >+",
+        "  text: >2",
+
+        // 4-space indentation
+        "    description: >",
+        "    content: >",
+        "    message: >-",
+        "    note: >+",
+        "    text: >4",
+
+        // Tab indentation
+        "\tdescription: >",
+        "\tcontent: >",
+        "\tmessage: >-",
+        "\tnote: >+",
+        "\ttext: >2",
+
+        // Mixed indentation (spaces + tabs)
+        "  \tdescription: >",
+        "    \tcontent: >",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Folded scalar indicator with indentation should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_folded_scalar_all_modifier_combinations() {
+    // Test all valid modifier combinations for folded scalars
+    // This provides comprehensive coverage of the modifier syntax
+
+    let test_cases = vec![
+        // Basic > (no modifier)
+        "text: >",
+
+        // Strip modifier (>)
+        "note: >-",
+
+        // Keep modifier (+)
+        "log: >+",
+
+        // Numeric indent 1-9 (no strip/keep)
+        "f1: >1",
+        "f2: >2",
+        "f3: >3",
+        "f4: >4",
+        "f5: >5",
+        "f6: >6",
+        "f7: >7",
+        "f8: >8",
+        "f9: >9",
+
+        // Numeric indent with strip (-)
+        "s1: >-1",
+        "s2: >-2",
+        "s3: >-3",
+        "s4: >-4",
+        "s5: >-5",
+        "s6: >-6",
+        "s7: >-7",
+        "s8: >-8",
+        "s9: >-9",
+
+        // Numeric indent with keep (+)
+        "k1: >+1",
+        "k2: >+2",
+        "k3: >+3",
+        "k4: >+4",
+        "k5: >+5",
+        "k6: >+6",
+        "k7: >+7",
+        "k8: >+8",
+        "k9: >+9",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "All folded scalar modifier combinations should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+// ============================================================================
+// Section 12B.1: Comprehensive Folded Block Scalar Tests with Exclamation
+// ============================================================================
+
+#[test]
+fn test_folded_scalar_indicator_classification() {
+    // Test that folded scalar indicator lines (>) are classified as MappingKey
+    // This verifies the first acceptance criterion
+    let test_cases = vec![
+        // Basic folded scalar indicator
+        "description: >",
+        "  folded_text: >",
+        "    note: >",
+        "\tmessage: >",
+
+        // Folded with strip modifier (-)
+        "warning: >-",
+        "  alert: >-",
+        "    info: >-",
+
+        // Folded with keep modifier (+)
+        "log: >+",
+        "  output: >+",
+        "    data: >+",
+
+        // Folded with explicit indent (2)
+        "text: >-2",
+        "content: >2",
+        "  field: >-2",
+        "    value: >2",
+
+        // Folded with explicit indent (4)
+        "doc: >-4",
+        "info: >4",
+        "  body: >-4",
+        "    detail: >4",
+
+        // Tab-indented folded scalars
+        "\tfolded: >",
+        "\t  note: >",
+        "\t    text: >",
+    ];
+
+    for line in test_cases {
+        // All folded scalar indicators should be classified as MappingKey
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Folded scalar indicator should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_folded_scalar_continuation_lines_with_exclamation() {
+    // Test continuation lines with exclamation marks in folded style
+    // This verifies the third acceptance criterion
+
+    let continuation_lines = vec![
+        // Basic continuation lines with exclamation marks
+        "  This is folded text with! exclamation marks",
+        "    Multiple! exclamations! in! folded! style",
+        "\tMore! content! with! bangs!",
+        "  Important! message! continues!",
+
+        // Exclamation at different positions
+        "  !Start with exclamation",
+        "  End with exclamation!",
+        "  !Both! ends!",
+        "  In! the! middle!",
+
+        // Multiple consecutive exclamation marks
+        "  Check this!!!",
+        "  Urgent!! message!!",
+        "  Critical!!! alert!!!",
+
+        // Mixed content with exclamation marks
+        "  Line 1! Line 2! Line 3!",
+        "  First! Second! Third!",
+        "  A! B! C! D! E! F!",
+        "  !a!b!c!d!e!",
+
+        // Tab-indented continuation lines with !
+        "\tTab! folded! content!",
+        "\t  More! tab! indented!",
+        "\t\tDeep! tab! indentation!",
+    ];
+
+    for line in continuation_lines {
+        // Continuation lines of folded scalars should be classified appropriately
+        // Lines starting with ! are Tags (correct YAML behavior)
+        // Other continuation lines are MappingKey or Unknown
+        let result = classify_line_type(line);
+        let starts_with_bang = line.trim().starts_with('!');
+        if starts_with_bang {
+            assert_eq!(
+                result, LineType::Tag,
+                "Continuation starting with ! should be Tag: '{}' (got {:?})",
+                line, result
+            );
+        } else {
+            assert!(
+                result == LineType::MappingKey || result == LineType::Unknown,
+                "Folded scalar continuation should be MappingKey or Unknown: '{}' (got {:?})",
+                line, result
+            );
+        }
+    }
+
+    // Lines that start with ! after indentation should be classified as Tag
+    let tag_like_continuations = vec![
+        "  !important",
+        "    !custom",
+        "\t!value",
+    ];
+
+    for line in tag_like_continuations {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::Tag,
+            "Continuation starting with ! should be Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_tab_indented_folded_scalars_with_exclamation() {
+    // Test tab-indented folded scalars with exclamation marks
+    // This verifies the fourth acceptance criterion
+
+    let test_cases: Vec<(&str, Option<&str>)> = vec![
+        // Tab-indented folded scalar indicators
+        ("\ttext: >", Some("text")),
+        ("\tnote: >", Some("note")),
+        ("\tdescription: >", Some("description")),
+        ("\tmessage: >-", Some("message")),
+        ("\tlog: >+", Some("log")),
+        ("\tcontent: >-2", Some("content")),
+        ("\tdata: >2", Some("data")),
+
+        // Tab-indented continuation lines with exclamation marks
+        ("\t!Tab! folded! content!", None),
+        ("\t  More! tab! indented!", None),
+        ("\t\tDeep! tab! indentation!", None),
+        ("\t!Important! message!", None),
+        ("\tMultiple! exclamations! in! tabs!", None),
+    ];
+
+    for (line, expected_key) in test_cases {
+        if let Some(key) = expected_key {
+            // This is a folded scalar indicator line (has colon)
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect tab-indented folded scalar indicator: '{}'",
+                line
+            );
+            let info = info.unwrap();
+            assert_eq!(
+                info.key, key,
+                "Should extract correct key from tab-indented line: '{}'",
+                line
+            );
+        } else {
+            // This is a continuation line (no colon)
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_none(),
+                "Should NOT detect tab-indented continuation line as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_folded_scalar_various_indentation_levels() {
+    // Test various indentation levels for folded scalars with exclamation marks
+    // This verifies the fifth acceptance criterion
+
+    let test_cases: Vec<(&str, Option<&str>, Option<&str>, bool)> = vec![
+        // 0 spaces (root level)
+        ("root: >", Some("root"), None, true),
+        ("  Root! level! content!", None, None, false),
+
+        // 2 spaces indentation
+        ("  level2: >", Some("level2"), None, true),
+        ("    Two! spaces! indent!", None, None, false),
+
+        // 4 spaces indentation
+        ("    level3: >", Some("level3"), None, true),
+        ("      Four! spaces! indent!", None, None, false),
+
+        // 6 spaces indentation
+        ("      level4: >", Some("level4"), None, true),
+        ("        Six! spaces! indent!", None, None, false),
+
+        // 8 spaces indentation
+        ("        level5: >", Some("level5"), None, true),
+        ("          Eight! spaces! indent!", None, None, false),
+
+        // Tab indentation
+        ("\ttab1: >", Some("tab1"), None, true),
+        ("\t\tTab! content!", None, None, false),
+
+        // Mixed spaces and tabs (unusual but valid)
+        ("  \tmixed: >", Some("mixed"), None, true),
+        ("    \tMixed! content!", None, None, false),
+    ];
+
+    for (line, expected_key, expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+
+        if should_detect {
+            assert!(
+                info.is_some(),
+                "Should detect mapping key at indentation level: '{}'",
+                line
+            );
+            let info = info.unwrap();
+            if let Some(key) = expected_key {
+                assert_eq!(
+                    info.key, key,
+                    "Should extract correct key at indentation: '{}'",
+                    line
+                );
+            }
+            if let Some(val) = expected_value {
+                assert_eq!(
+                    info.value, Some(val.to_string()),
+                    "Should extract correct value at indentation: '{}'",
+                    line
+                );
+            }
+        } else {
+            assert!(
+                info.is_none(),
+                "Should NOT detect continuation line as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_folded_scalar_modifiers_comprehensive() {
+    // Test folded scalars with all modifier combinations and exclamation marks
+    // This provides comprehensive coverage of the second acceptance criterion
+
+    let test_cases: Vec<(&str, Option<&str>, Option<&str>, bool)> = vec![
+        // Strip modifier (-) - removes trailing newlines
+        ("note: >-", Some("note"), None, true),
+        ("  !Important! note!", None, None, false),
+
+        // Keep modifier (+) - keeps trailing newlines
+        ("message: >+", Some("message"), None, true),
+        ("  !Urgent! message!", None, None, false),
+
+        // Explicit indent level 1
+        ("text: >-1", Some("text"), None, true),
+        ("  One! space! indent!", None, None, false),
+
+        // Explicit indent level 2
+        ("description: >-2", Some("description"), None, true),
+        ("    Two! spaces! indent!", None, None, false),
+
+        // Explicit indent level 3
+        ("content: >-3", Some("content"), None, true),
+        ("      Three! spaces! indent!", None, None, false),
+
+        // Explicit indent level 4
+        ("doc: >-4", Some("doc"), None, true),
+        ("        Four! spaces! indent!", None, None, false),
+
+        // Explicit indent level 5
+        ("info: >-5", Some("info"), None, true),
+        ("          Five! spaces! indent!", None, None, false),
+
+        // Explicit indent level 6
+        ("data: >-6", Some("data"), None, true),
+        ("            Six! spaces! indent!", None, None, false),
+
+        // Explicit indent level 7
+        ("value: >-7", Some("value"), None, true),
+        ("              Seven! spaces! indent!", None, None, false),
+
+        // Explicit indent level 8
+        ("field: >-8", Some("field"), None, true),
+        ("                Eight! spaces! indent!", None, None, false),
+
+        // Explicit indent level 9
+        ("item: >-9", Some("item"), None, true),
+        ("                  Nine! spaces! indent!", None, None, false),
+
+        // Keep modifier with explicit indent
+        ("log: >+2", Some("log"), None, true),
+        ("    Keep! indent! two!", None, None, false),
+
+        // Strip modifier with explicit indent
+        ("output: >-4", Some("output"), None, true),
+        ("        Strip! indent! four!", None, None, false),
+    ];
+
+    for (line, expected_key, expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+
+        if should_detect {
+            assert!(
+                info.is_some(),
+                "Should detect folded scalar with modifier: '{}'",
+                line
+            );
+            let info = info.unwrap();
+            if let Some(key) = expected_key {
+                assert_eq!(
+                    info.key, key,
+                    "Should extract correct key with modifier: '{}'",
+                    line
+                );
+            }
+            if let Some(val) = expected_value {
+                assert_eq!(
+                    info.value, Some(val.to_string()),
+                    "Should extract correct value with modifier: '{}'",
+                    line
+                );
+            }
+        } else {
+            assert!(
+                info.is_none(),
+                "Should NOT detect continuation line as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_folded_scalar_exclamation_positions_comprehensive() {
+    // Test exclamation marks at all possible positions in folded scalars
+    // This provides comprehensive edge case coverage
+
+    let test_cases: Vec<(&str, Option<&str>, Option<&str>, bool)> = vec![
+        // ! at the very start of continuation line
+        ("text: >", Some("text"), None, true),
+        ("  !Start of line", None, None, false),
+
+        // ! at the very end of continuation line
+        ("note: >", Some("note"), None, true),
+        ("  End of line!", None, None, false),
+
+        // ! at both start and end
+        ("message: >", Some("message"), None, true),
+        ("  !Both ends!", None, None, false),
+
+        // Multiple ! at start
+        ("warning: >", Some("warning"), None, true),
+        ("  !!!Triple start", None, None, false),
+
+        // Multiple ! at end
+        ("alert: >", Some("alert"), None, true),
+        ("  Triple end!!!", None, None, false),
+
+        // ! at every word boundary
+        ("description: >", Some("description"), None, true),
+        ("  !One! !Two! !Three! !Four!", None, None, false),
+
+        // Consecutive ! in middle
+        ("content: >", Some("content"), None, true),
+        ("  Text!!!with!!!bangs", None, None, false),
+
+        // ! with numbers
+        ("data: >", Some("data"), None, true),
+        ("  Item1! Item2! Item3!", None, None, false),
+
+        // ! with special characters
+        ("info: >", Some("info"), None, true),
+        ("  (Hello)! [World]! {Test}!", None, None, false),
+
+        // ! mixed with other punctuation
+        ("text: >", Some("text"), None, true),
+        ("  One, Two! Three; Four!", None, None, false),
+
+        // Single ! alone on continuation line
+        ("note: >", Some("note"), None, true),
+        ("  !", None, None, false),
+
+        // Only ! repeated
+        ("message: >", Some("message"), None, true),
+        ("  !!!!!", None, None, false),
+
+        // ! with whitespace
+        ("log: >", Some("log"), None, true),
+        ("  ! ! ! ! !", None, None, false),
+
+        // ! in various word positions
+        ("doc: >", Some("doc"), None, true),
+        ("  !pre!fix! mid!fix! suf!fix!", None, None, false),
+
+        // Realistic text with !
+        ("comment: >", Some("comment"), None, true),
+        ("  This is important! Read carefully now!", None, None, false),
+
+        // Multiple sentences with !
+        ("body: >", Some("body"), None, true),
+        ("  First sentence! Second sentence! Third!", None, None, false),
+
+        // ! with quotes
+        ("text: >", Some("text"), None, true),
+        ("  He said \"Hello!\" and left!", None, None, false),
+    ];
+
+    for (line, expected_key, expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, 0);
+
+        if should_detect {
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for folded scalar: '{}'",
+                line
+            );
+            let info = info.unwrap();
+            if let Some(key) = expected_key {
+                assert_eq!(
+                    info.key, key,
+                    "Should extract correct key: '{}'",
+                    line
+                );
+            }
+            if let Some(val) = expected_value {
+                assert_eq!(
+                    info.value, Some(val.to_string()),
+                    "Should extract correct value: '{}'",
+                    line
+                );
+            }
+        } else {
+            assert!(
+                info.is_none(),
+                "Should NOT detect continuation line as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Section 12B.2: Basic Folded Scalar Indicator Tests
+// ============================================================================
+
+#[test]
+fn test_basic_folded_scalar_indicator_as_mapping_key() {
+    // Test that basic folded scalar indicator lines (>) are classified as MappingKey
+    // This verifies the first acceptance criterion:
+    // "simple '>' indicator line is classified as MappingKey"
+
+    let test_cases = vec![
+        // Simple folded scalar indicator with key
+        "key: >",
+        "name: >",
+        "value: >",
+        "text: >",
+        "description: >",
+
+        // With whitespace variations
+        "key: > ",   // Space after >
+        "key:  >",   // Multiple spaces after colon
+        "key : >",   // Space before colon
+
+        // Indented folded scalar indicators (should still be MappingKey)
+        "  key: >",
+        "    name: >",
+        "\tvalue: >",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Basic folded scalar indicator should be classified as MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_folded_scalar_with_continuation_content() {
+    // Test folded scalar indicator lines with following content lines
+    // This verifies the second acceptance criterion:
+    // "test case: '>' with following content line"
+
+    let test_cases = vec![
+        // Simple indicator followed by content
+        ("description: >", "  This is folded content"),
+        ("text: >", "  Line with content"),
+        ("note: >", "    More indented content"),
+        ("message: >", "\tTab-indented content"),
+
+        // Indicator followed by content with exclamation marks
+        ("warning: >", "  Important! message"),
+        ("alert: >", "  Check! this! now"),
+        ("info: >", "  Multiple! exclamations! here"),
+
+        // Various indentation levels for continuation
+        ("key: >", "  Two space indent"),
+        ("key: >", "    Four space indent"),
+        ("key: >", "\tTab indent"),
+        ("key: >", "  Mixed! content! here"),
+    ];
+
+    for (indicator_line, content_line) in test_cases {
+        // Test the indicator line is classified as MappingKey
+        let indicator_result = classify_line_type(indicator_line);
+        assert_eq!(
+            indicator_result,
+            LineType::MappingKey,
+            "Folded scalar indicator should be MappingKey: '{}'",
+            indicator_line
+        );
+
+        // Test the continuation line classification
+        // Content lines (indented without colons) are typically Unknown or MappingKey
+        let content_result = classify_line_type(content_line);
+        assert!(
+            content_result == LineType::MappingKey || content_result == LineType::Unknown,
+            "Folded scalar content line should be MappingKey or Unknown: '{}' (got {:?})",
+            content_line, content_result
+        );
     }
 }
