@@ -1,0 +1,270 @@
+
+running 32 tests
+test test_alternating_sequence_and_mapping ... ok
+test test_complex_real_world_structure ... ok
+test test_deeply_nested_sequence_in_mapping ... FAILED
+test test_deeply_nested_mapping_in_sequence ... FAILED
+test test_mapping_nested_in_sequence_isolation_between_items ... ok
+test test_mapping_nested_in_sequence_scope ... ok
+test test_multiple_consecutive_sequence_entries_same_indent ... ok
+test test_multiple_mappings_in_same_sequence_item ... ok
+test test_multiple_sequences_in_same_mapping ... ok
+test test_parser_detects_duplicate_within_sequence_item ... ok
+test test_parser_mapping_nested_in_sequence ... ok
+test test_parser_complex_nested_structure ... ok
+test test_parser_mixed_root_sequences_and_mappings ... ok
+test test_parser_no_false_duplicates_in_sequences_simple ... FAILED
+test test_parser_sequence_at_root_level ... ok
+test test_sequence_entry_after_deep_nesting ... ok
+test test_parser_sequence_nested_in_mapping ... ok
+test test_sequence_entry_preserves_parent_scopes ... FAILED
+test test_sequence_exit_from_deeply_nested ... ok
+test test_sequence_mapping_sequence_pattern ... FAILED
+test test_sequence_nested_in_mapping_parent_context_preserved ... ok
+test test_sequence_nested_in_mapping_scope_isolation ... ok
+test test_sequence_scope_entry_clears_previous_keys ... ok
+test test_sequence_scope_entry_creates_isolated_scope ... ok
+test test_sequence_scope_entry_increments_item_id ... ok
+test test_sequence_scope_entry_sets_in_sequence_context ... ok
+test test_sequence_scope_exit_clears_sequence_keys ... ok
+test test_sequence_scope_exit_to_different_indents ... ok
+test test_sequence_scope_exit_updates_scope_state ... ok
+test test_sequence_with_empty_items ... ok
+test test_sequence_with_single_key ... ok
+test test_sibling_sequences_with_nested_mappings ... ok
+
+failures:
+
+---- test_deeply_nested_sequence_in_mapping stdout ----
+
+thread 'test_deeply_nested_sequence_in_mapping' (1162325) panicked at tests/sequence_scope_verification_test.rs:241:5:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+---- test_deeply_nested_mapping_in_sequence stdout ----
+
+thread 'test_deeply_nested_mapping_in_sequence' (1162324) panicked at tests/sequence_scope_verification_test.rs:325:5:
+assertion `left == right` failed
+  left: 4
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_parser_no_false_duplicates_in_sequences_simple stdout ----
+Validation error: Line 5: duplicate key 'name' in scope ''
+  First defined at: Line 3
+Validation error: Line 7: duplicate key 'name' in scope ''
+  First defined at: Line 5
+
+thread 'test_parser_no_false_duplicates_in_sequences_simple' (1162335) panicked at tests/sequence_scope_verification_test.rs:561:5:
+Should not report false duplicates in sequence items with different keys
+
+---- test_sequence_entry_preserves_parent_scopes stdout ----
+
+thread 'test_sequence_entry_preserves_parent_scopes' (1162339) panicked at tests/sequence_scope_verification_test.rs:715:5:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+---- test_sequence_mapping_sequence_pattern stdout ----
+
+thread 'test_sequence_mapping_sequence_pattern' (1162341) panicked at tests/sequence_scope_verification_test.rs:356:5:
+assertion `left == right` failed
+  left: 4
+ right: 5
+
+
+failures:
+    test_deeply_nested_mapping_in_sequence
+    test_deeply_nested_sequence_in_mapping
+    test_parser_no_false_duplicates_in_sequences_simple
+    test_sequence_entry_preserves_parent_scopes
+    test_sequence_mapping_sequence_pattern
+
+test result: FAILED. 27 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running tests/sequence_scope_verification_test.rs (target/debug/deps/sequence_scope_verification_test-7ec17eda8bc3ee6e)
+
+running 32 tests
+test test_alternating_sequence_and_mapping ... ok
+test test_complex_real_world_structure ... ok
+test test_deeply_nested_sequence_in_mapping ... FAILED
+test test_deeply_nested_mapping_in_sequence ... FAILED
+test test_mapping_nested_in_sequence_isolation_between_items ... ok
+test test_mapping_nested_in_sequence_scope ... ok
+test test_multiple_consecutive_sequence_entries_same_indent ... ok
+test test_multiple_mappings_in_same_sequence_item ... ok
+test test_multiple_sequences_in_same_mapping ... ok
+test test_parser_detects_duplicate_within_sequence_item ... ok
+test test_parser_mapping_nested_in_sequence ... ok
+test test_parser_complex_nested_structure ... ok
+test test_parser_mixed_root_sequences_and_mappings ... ok
+test test_parser_no_false_duplicates_in_sequences_simple ... FAILED
+test test_parser_sequence_at_root_level ... ok
+test test_sequence_entry_after_deep_nesting ... ok
+test test_sequence_entry_preserves_parent_scopes ... FAILED
+test test_parser_sequence_nested_in_mapping ... ok
+test test_sequence_exit_from_deeply_nested ... ok
+test test_sequence_nested_in_mapping_parent_context_preserved ... ok
+test test_sequence_mapping_sequence_pattern ... FAILED
+test test_sequence_nested_in_mapping_scope_isolation ... ok
+test test_sequence_scope_entry_clears_previous_keys ... ok
+test test_sequence_scope_entry_creates_isolated_scope ... ok
+test test_sequence_scope_entry_increments_item_id ... ok
+test test_sequence_scope_entry_sets_in_sequence_context ... ok
+test test_sequence_scope_exit_clears_sequence_keys ... ok
+test test_sequence_scope_exit_to_different_indents ... ok
+test test_sequence_scope_exit_updates_scope_state ... ok
+test test_sequence_with_empty_items ... ok
+test test_sequence_with_single_key ... ok
+test test_sibling_sequences_with_nested_mappings ... ok
+
+failures:
+
+---- test_deeply_nested_sequence_in_mapping stdout ----
+
+thread 'test_deeply_nested_sequence_in_mapping' (1162367) panicked at tests/sequence_scope_verification_test.rs:241:5:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+---- test_deeply_nested_mapping_in_sequence stdout ----
+
+thread 'test_deeply_nested_mapping_in_sequence' (1162366) panicked at tests/sequence_scope_verification_test.rs:325:5:
+assertion `left == right` failed
+  left: 4
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_parser_no_false_duplicates_in_sequences_simple stdout ----
+Validation error: Line 5: duplicate key 'name' in scope ''
+  First defined at: Line 3
+Validation error: Line 7: duplicate key 'name' in scope ''
+  First defined at: Line 5
+
+thread 'test_parser_no_false_duplicates_in_sequences_simple' (1162377) panicked at tests/sequence_scope_verification_test.rs:561:5:
+Should not report false duplicates in sequence items with different keys
+
+---- test_sequence_entry_preserves_parent_scopes stdout ----
+
+thread 'test_sequence_entry_preserves_parent_scopes' (1162381) panicked at tests/sequence_scope_verification_test.rs:715:5:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+---- test_sequence_mapping_sequence_pattern stdout ----
+
+thread 'test_sequence_mapping_sequence_pattern' (1162383) panicked at tests/sequence_scope_verification_test.rs:356:5:
+assertion `left == right` failed
+  left: 4
+ right: 5
+
+
+failures:
+    test_deeply_nested_mapping_in_sequence
+    test_deeply_nested_sequence_in_mapping
+    test_parser_no_false_duplicates_in_sequences_simple
+    test_sequence_entry_preserves_parent_scopes
+    test_sequence_mapping_sequence_pattern
+
+test result: FAILED. 27 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test sequence_scope_verification_test`

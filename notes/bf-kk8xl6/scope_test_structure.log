@@ -1,0 +1,162 @@
+
+running 6 tests
+test test_scope_stack_auto_creates_root_scope ... ok
+test test_scope_stack_exists_as_list ... FAILED
+test test_scope_stack_initialized_empty_at_startup ... FAILED
+test test_scope_stack_holds_information_at_each_level ... ok
+test test_scope_stack_tracks_full_hierarchy ... ok
+test test_scope_stack_with_real_yaml ... ok
+
+failures:
+
+---- test_scope_stack_exists_as_list stdout ----
+
+thread 'test_scope_stack_exists_as_list' (1161336) panicked at tests/scope_stack_structure_test.rs:19:5:
+Scope stack should start empty
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_scope_stack_initialized_empty_at_startup stdout ----
+
+thread 'test_scope_stack_initialized_empty_at_startup' (1161338) panicked at tests/scope_stack_structure_test.rs:32:5:
+assertion `left == right` failed: Stack should start empty (depth = 0)
+  left: 1
+ right: 0
+
+
+failures:
+    test_scope_stack_exists_as_list
+    test_scope_stack_initialized_empty_at_startup
+
+test result: FAILED. 4 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running tests/scope_stack_structure_test.rs (target/debug/deps/scope_stack_structure_test-06110c1a8cb8c37c)
+
+running 6 tests
+test test_scope_stack_auto_creates_root_scope ... ok
+test test_scope_stack_exists_as_list ... FAILED
+test test_scope_stack_holds_information_at_each_level ... ok
+test test_scope_stack_initialized_empty_at_startup ... FAILED
+test test_scope_stack_tracks_full_hierarchy ... ok
+test test_scope_stack_with_real_yaml ... ok
+
+failures:
+
+---- test_scope_stack_exists_as_list stdout ----
+
+thread 'test_scope_stack_exists_as_list' (1161352) panicked at tests/scope_stack_structure_test.rs:19:5:
+Scope stack should start empty
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_scope_stack_initialized_empty_at_startup stdout ----
+
+thread 'test_scope_stack_initialized_empty_at_startup' (1161354) panicked at tests/scope_stack_structure_test.rs:32:5:
+assertion `left == right` failed: Stack should start empty (depth = 0)
+  left: 1
+ right: 0
+
+
+failures:
+    test_scope_stack_exists_as_list
+    test_scope_stack_initialized_empty_at_startup
+
+test result: FAILED. 4 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test scope_stack_structure_test`

@@ -1,0 +1,11 @@
+
+running 6 tests
+test test_empty_stack_at_startup ... ok
+test test_push_pop_sequence_maintains_state ... ok
+test test_reset_returns_to_empty_state ... ok
+test test_push_pop_with_sequence_scopes ... ok
+test test_stack_depth_tracking_matches_nested_scope_depth ... ok
+test test_state_preservation_across_cycles ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
