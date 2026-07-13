@@ -62,13 +62,13 @@ test test_scope_exit_on_blank_line ... ok
 test test_sequence_with_blank_lines ... ok
 ```
 
-**Verification:** ✅ False positive prevention confirmed
+**Verification:** ✅ False positive prevention confirmed for blank lines
 - Blank lines don't create false duplicate key errors
 - Indent-only changes don't enter new scopes
 - Comments with different indents don't affect parsing
 - Multiple blank lines with indent changes handled correctly
 
-### 3. false_positive_indent_key_test.rs ⚠️
+### 3. false_positive_indent_key_test.rs ❌
 **Status:** FAILED - 9 passed, 4 failed
 
 **Passed Tests:**
@@ -90,7 +90,7 @@ test test_sequence_with_blank_lines ... ok
 **Actual:** Extracts key context for `:::` and `@#:`
 **Issue:** Lines like `  :::` and `  @#:` are being treated as potential keys when they shouldn't be
 
-#### 2. test_sequence_dash_only_not_a_key  
+#### 2. test_sequence_dash_only_not_a_key
 **Line:** 93
 **Expected:** Dash-only with colon should not extract valid key context
 **Actual:** Extracts key context for `  -:`
@@ -98,7 +98,7 @@ test test_sequence_with_blank_lines ... ok
 
 #### 3. test_block_scalar_indicator_not_a_key
 **Line:** 83
-**Expected:** Block scalar indicator with colon should not extract key context  
+**Expected:** Block scalar indicator with colon should not extract key context
 **Actual:** Extracts key context for `  |:`
 **Issue:** Block scalar indicators (like `|`) followed by colon should not be treated as keys
 
@@ -122,7 +122,7 @@ root:
 - ✅ All 3 indent tests executed successfully
 - ✅ Test output captured and saved to notes/
 - ✅ Indent detection behavior verified (38/38 tests passed in first two files)
-- ⚠️ False positive prevention partially confirmed (9/13 tests passed in third file)
+- ⚠️ False positive prevention PARTIALLY confirmed (9/13 tests passed in third file)
 - ⚠️ 4 failures documented with full error details
 
 ## Issues Identified
@@ -143,13 +143,9 @@ The `extract_key_context()` function should be enhanced to:
 3. Reject sequence markers (`-`) when followed only by a colon or invalid pattern
 4. Validate that key names contain at least one alphanumeric character
 
-## Files Modified
-
-- `tests/indent_without_key_test.rs` - Added `mut` keyword to parser declarations to fix compilation
-
 ## Test Output Locations
 
 Full test outputs saved to:
-- `/tmp/indent_change_detection_test.log`
-- `/tmp/indent_without_key_test.log`
-- `/tmp/false_positive_indent_key_test.log`
+- `notes/indent_change_detection_test.log`
+- `notes/indent_without_key_test.log`
+- `notes/false_positive_indent_key_test.log`
