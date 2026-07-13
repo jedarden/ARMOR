@@ -60,16 +60,132 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // ```
 
 /// Macro to generate folded scalar explicit indent test cases
-/// at a specific indentation level with given modifiers and indent levels.
 ///
-/// Parameters:
-/// - $indent: the base indentation (e.g., "  ", "    ", "\t")
-/// - $level_name: descriptive name for this indentation level
-/// - $modifiers: array of modifier patterns (e.g., [">", ">-", ">+"])
-/// - $indent_nums: array of indent numbers (e.g., [1, 2, 3, 4, 5])
-/// - $key_prefix: prefix for key names
+/// This macro creates test case tuples for folded scalar YAML values with
+/// explicit indent modifiers. Use this when you need to generate test cases
+/// at a specific indentation level with various modifier combinations.
 ///
-/// Returns: vec of (line, expected_key, expected_type) tuples
+/// Bead: bf-63gy6 - Helper macro for folded scalar indent tests
+///
+/// MACRO PARAMETERS
+/// ---------------
+/// - `$indent:expr` - The base indentation string (e.g., `"  "`, `"    "`, `"\t"`, `""`)
+/// - `$level_name:expr` - Descriptive name for this indentation level (e.g., `"level1"`, `"tab"`)
+///   This is used as a prefix in generated key names
+/// - `$modifiers:expr` - Array slice of modifier patterns (e.g., `&[">", ">-", ">+"]`)
+/// - `$indent_nums:expr` - Array slice of indent numbers (e.g., `&[1, 2, 3, 4, 5]`)
+/// - `$key_prefix:expr` - Prefix string for generated key names
+///
+/// MACRO SYNTAX
+/// ------------
+/// ```rust
+/// generate_folded_explicit_indent_tests!(
+///     "  ",          // $indent - base indentation
+///     "level1",      // $level_name - descriptive name
+///     &[">", ">-"],  // $modifiers - modifier patterns
+///     &[1, 2, 3],    // $indent_nums - indent numbers
+///     "sample"       // $key_prefix - key name prefix
+/// )
+/// ```
+///
+/// MACRO EXPANSION
+/// --------------
+/// The macro iterates over all combinations of modifiers and indent numbers,
+/// generating test case tuples for each combination.
+///
+/// Total cases generated: len(modifiers) × len(indent_nums)
+///
+/// For each combination, generates:
+/// - Key name: `"{key_prefix}_{modifier_cleaned}_{indent_num}"`
+///   where `modifier_cleaned` = modifier with ">" removed and trimmed
+/// - Line string: `"{indent}{key_name}: {modifier}{indent_num}"`
+/// - Expected type: `LineType::MappingKey`
+///
+/// MACRO RETURNS
+/// -------------
+/// `Vec<(String, String, LineType)>` - Vector of test case tuples where:
+/// - `.0` (String): Full YAML line with indentation and modifier
+/// - `.1` (String): Expected key name extracted from the line
+/// - `.2` (LineType): Expected line type (always `MappingKey`)
+///
+/// GENERATION ORDER
+/// ---------------
+/// Iterates: modifiers → indent_nums
+///
+/// Example with modifiers `&[">", ">-"]` and indent_nums `&[1, 2]`:
+/// 1. ">", 1 → ("  sample__1: >1", "sample__1", MappingKey)
+/// 2. ">", 2 → ("  sample__2: >2", "sample__2", MappingKey)
+/// 3. ">-", 1 → ("  sample_-_1: >-1", "sample_-_1", MappingKey)
+/// 4. ">-", 2 → ("  sample_-_2: >-2", "sample_-_2", MappingKey)
+///
+/// MODIFIER TYPES
+/// -------------
+/// - `>` - Plain folded scalar (default behavior)
+/// - `>-` - Strip trailing newlines and indentation
+/// - `>+` - Keep trailing newlines and indentation
+///
+/// INDENT LEVELS
+/// -------------
+/// Explicit indent numbers range from 1-9, specifying the indentation
+/// depth for multi-line folded scalar content.
+///
+/// USAGE EXAMPLES
+/// --------------
+/// ```rust
+/// // Generate test cases for level 1 (2-space indent)
+/// let test_cases = generate_folded_explicit_indent_tests!(
+///     "  ",           // level 1 indent
+///     "level1",       // level name
+///     &[">", ">-"],   // modifiers
+///     &[1, 2, 3],     // indent numbers
+///     "text"          // key prefix
+/// );
+/// // Generates 6 cases: 2 modifiers × 3 indent numbers
+///
+/// run_folded_scalar_tests!(test_cases);
+///
+/// // Generate test cases for tab indentation
+/// let tab_cases = generate_folded_explicit_indent_tests!(
+///     "\t",           // tab indent
+///     "tab",          // level name
+///     &[">+", ">"],   // modifiers
+///     &[2, 4],        // indent numbers
+///     "data"          // key prefix
+/// );
+/// // Generates 4 cases: 2 modifiers × 2 indent numbers
+/// ```
+///
+/// COMBINING WITH OTHER HELPERS
+/// ----------------------------
+/// This macro is typically used alongside other helper functions for
+/// comprehensive test coverage:
+///
+/// ```rust
+/// // Generate tests for a specific level only
+/// let level1_cases = generate_folded_explicit_indent_tests!(...);
+///
+/// // Generate tests for multiple levels at once
+/// let multi_level_cases = generate_folded_scalar_tests_multi_level(
+///     &["text", "note"],
+///     &[">", ">-", ">+"],
+///     &[1, 2, 3]
+/// );
+///
+/// // Generate tests for all levels (including level 0)
+/// let all_levels_cases = generate_folded_scalar_tests_all_levels(
+///     &["sample"],
+///     &[">"],
+///     &[1, 2]
+/// );
+/// ```
+///
+/// SEE ALSO
+/// --------
+/// - [`run_folded_scalar_tests!`] - Macro to execute the test cases with assertions
+/// - [`create_folded_scalar_test`] - Function version for single test case creation
+/// - [`generate_folded_scalar_tests_multi_level`] - Bulk generation for multiple levels
+/// - [`generate_folded_scalar_tests_all_levels`] - Comprehensive generation including level 0
+/// - [`generate_folded_scalar_tests_for_level`] - Level-specific bulk generation
 macro_rules! generate_folded_explicit_indent_tests {
     ($indent:expr, $level_name:expr, $modifiers:expr, $indent_nums:expr, $key_prefix:expr) => {{
         let mut cases = vec![];
@@ -89,9 +205,138 @@ macro_rules! generate_folded_explicit_indent_tests {
 }
 
 /// Macro to run folded scalar explicit indent tests with assertions
-/// This handles the standard assertion pattern:
-/// 1. Assert line type matches expected
-/// 2. If MappingKey, assert key detection works correctly
+///
+/// This macro executes test cases generated by the helper functions and macros,
+/// performing comprehensive validation of line classification and key detection.
+/// It handles the standard two-assertion pattern for folded scalar tests.
+///
+/// Bead: bf-63gy6 - Test execution macro for folded scalar tests
+///
+/// MACRO PARAMETERS
+/// ---------------
+/// - `$test_cases:expr` - Expression evaluating to a vector of test case tuples
+///   Each tuple must be: `(line: String, expected_key: String, expected_type: LineType)`
+///
+/// MACRO SYNTAX
+/// ------------
+/// ```rust
+/// run_folded_scalar_tests!(test_cases);
+/// // where test_cases is Vec<(String, String, LineType)>
+/// ```
+///
+/// ASSERTION PATTERN
+/// ---------------
+/// The macro performs two levels of assertions for each test case:
+///
+/// 1. **Line Type Classification**
+///    - Calls `classify_line_type(&line)` on the test input
+///    - Asserts the result matches `expected_type`
+///    - Provides detailed error message with line content and expected/got types
+///
+/// 2. **Key Detection (conditional)**
+///    - Only executed if the classified line type is `MappingKey`
+///    - Calls `detect_mapping_key(&line, 0)` to extract the key
+///    - Asserts the key detection succeeded (returns `Some`)
+///    - Asserts the detected key matches `expected_key`
+///    - Provides detailed error message with line content and expected/got keys
+///
+/// ERROR MESSAGES
+/// -------------
+/// The macro provides detailed error messages on assertion failure:
+///
+/// - **Line type mismatch**: Shows the line content, expected type, and actual type
+/// - **Key detection failure**: Indicates that key detection should have succeeded
+/// - **Key mismatch**: Shows the line content, expected key, and detected key
+///
+/// USAGE EXAMPLES
+/// --------------
+/// ```rust
+/// // Use with macro-generated test cases
+/// let test_cases = generate_folded_explicit_indent_tests!(
+///     "  ", "level1", &[">"], &[1, 2], "sample"
+/// );
+/// run_folded_scalar_tests!(test_cases);
+///
+/// // Use with function-generated test cases
+/// let cases = generate_folded_scalar_tests_all_levels(
+///     &["text", "note"],
+///     &[">", ">-"],
+///     &[1, 2, 3]
+/// );
+/// run_folded_scalar_tests!(cases);
+///
+/// // Use with manually defined test cases
+/// let manual_cases = vec![
+///     ("  key: >1".to_string(), "key".to_string(), LineType::MappingKey),
+///     ("root: >2".to_string(), "root".to_string(), LineType::MappingKey),
+/// ];
+/// run_folded_scalar_tests!(manual_cases);
+/// ```
+///
+/// TEST CASE STRUCTURE
+/// ------------------
+/// Each test case tuple consists of:
+///
+/// **Element 0 - Line (String)**
+/// Full YAML line to classify, including indentation, key, and modifier.
+/// Examples: `"  my_key: >1"`, `"root: >-2"`, `"\ttabbed: >+3"`
+///
+/// **Element 1 - Expected Key (String)**
+/// The key name that should be extracted from the line.
+/// Examples: `"my_key"`, `"root"`, `"tabbed"`
+///
+/// **Element 2 - Expected Type (LineType)**
+/// The expected classification result from `classify_line_type()`.
+/// For folded scalars, this is typically `LineType::MappingKey`.
+///
+/// ASSERTION DETAILS
+/// ----------------
+///
+/// **First Assertion - Line Type:**
+/// ```rust
+/// let result = classify_line_type(&line);
+/// assert_eq!(result, expected_type, ...);
+/// ```
+///
+/// **Second Assertion - Key Detection:**
+/// ```rust
+/// if result == LineType::MappingKey {
+///     let info = detect_mapping_key(&line, 0);
+///     assert!(info.is_some(), ...);
+///     let detected = info.unwrap();
+///     assert_eq!(detected.key, &expected_key[..], ...);
+/// }
+/// ```
+///
+/// INTEGRATION WITH HELPERS
+/// ------------------------
+/// This macro is designed to work with the folded scalar test generation helpers:
+///
+/// ```rust
+/// // Pattern 1: Single-level macro generation
+/// let cases = generate_folded_explicit_indent_tests!(...);
+/// run_folded_scalar_tests!(cases);
+///
+/// // Pattern 2: Multi-level function generation
+/// let cases = generate_folded_scalar_tests_multi_level(...);
+/// run_folded_scalar_tests!(cases);
+///
+/// // Pattern 3: All-levels comprehensive generation
+/// let cases = generate_folded_scalar_tests_all_levels(...);
+/// run_folded_scalar_tests!(cases);
+///
+/// // Pattern 4: Level-specific generation
+/// let cases = generate_folded_scalar_tests_for_level(...);
+/// run_folded_scalar_tests!(cases);
+/// ```
+///
+/// SEE ALSO
+/// --------
+/// - [`generate_folded_explicit_indent_tests!`] - Macro for single-level test generation
+/// - [`create_folded_scalar_test`] - Function for single test case creation
+/// - [`generate_folded_scalar_tests_multi_level`] - Multi-level bulk generation
+/// - [`generate_folded_scalar_tests_all_levels`] - Comprehensive generation including level 0
+/// - [`generate_folded_scalar_tests_for_level`] - Level-specific bulk generation
 macro_rules! run_folded_scalar_tests {
     ($test_cases:expr) => {
         for (line, expected_key, expected_type) in $test_cases {
