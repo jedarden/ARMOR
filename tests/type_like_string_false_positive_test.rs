@@ -2508,6 +2508,11 @@ fn test_real_world_config_with_exclamation() {
         "message: Error: check logs!",
         "priority: high!important",
         "url: https://example.com/path!query",
+        "selector: div!important",
+        "regex: .*!.*",
+        "flag: enabled!",
+        "status: done!",
+        "alert: critical!",
     ];
 
     for line in test_cases {
@@ -2515,6 +2520,451 @@ fn test_real_world_config_with_exclamation() {
             classify_line_type(line),
             LineType::MappingKey,
             "Real-world config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_production_yaml_app_config() {
+    // Production application configuration patterns
+    let test_cases = vec![
+        "app_name: MyApp!",
+        "version: 1.0.0!",
+        "environment: production!",
+        "debug_mode: false!",
+        "log_level: info!",
+        "max_connections: 100!",
+        "timeout: 30!",
+        "retry_count: 3!",
+        "cache_enabled: true!",
+        "health_check: /health!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Production app config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_cicd_pipeline_config() {
+    // CI/CD pipeline configuration with exclamation in messages
+    let test_cases = vec![
+        "pipeline_name: deploy-to-prod!",
+        "stage: build!",
+        "job: test!",
+        "script: ./run-tests!",
+        "variables:",
+        "  DEPLOY_ENV: production!",
+        "  RETRY_COUNT: 3!",
+        "  NOTIFY_ON_FAILURE: true!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "CI/CD config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Flow sequences should be classified correctly
+    let flow_line = "artifacts: [build!, test-results!]";
+    let result = classify_line_type(flow_line);
+    assert!(
+        result == LineType::MappingKey || result == LineType::FlowSequence,
+        "CI/CD config with flow sequence should be valid type: '{}'",
+        flow_line
+    );
+}
+
+#[test]
+fn test_kubernetes_deployment_config() {
+    // Kubernetes deployment YAML patterns
+    let test_cases = vec![
+        "apiVersion: apps/v1!",
+        "kind: Deployment!",
+        "metadata:",
+        "  name: my-app!",
+        "  namespace: production!",
+        "  labels:",
+        "    app: frontend!",
+        "    env: prod!",
+        "spec:",
+        "  replicas: 3!",
+        "  selector:",
+        "    matchLabels:",
+        "      app: frontend!",
+        "  template:",
+        "    metadata:",
+        "      labels:",
+        "        app: frontend!",
+        "    spec:",
+        "      containers:",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Kubernetes config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Sequence items should be classified as SequenceItem
+    let sequence_items = vec![
+        "      - name: app!",
+        "        - containerPort: 8080!",
+    ];
+
+    for line in sequence_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Kubernetes sequence item should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_database_connection_config() {
+    // Database configuration with exclamation in values
+    let test_cases = vec![
+        "database:",
+        "  host: localhost!",
+        "  port: 5432!",
+        "  name: myapp_db!",
+        "  user: admin!",
+        "  password: secret123!",
+        "  ssl_mode: require!",
+        "  pool_size: 10!",
+        "  timeout: 30!",
+        "  max_retries: 3!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Database config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_logging_config_with_exclamation() {
+    // Logging configuration patterns
+    let test_cases = vec![
+        "logging:",
+        "  level: INFO!",
+        "  format: json!",
+        "  output: stdout!",
+        "  file: /var/log/app.log!",
+        "  max_size: 100MB!",
+        "  max_age: 30!",
+        "  compress: true!",
+        "  fields:",
+        "    service: myapp!",
+        "    environment: prod!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Logging config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_feature_flags_config() {
+    // Feature flag configuration with exclamation marks
+    let test_cases = vec![
+        "features:",
+        "  new_ui: enabled!",
+        "  beta_api: true!",
+        "  dark_mode: false!",
+        "  notifications: enabled!",
+        "  analytics: true!",
+        "  cache_v2: enabled!",
+        "  rate_limiting: true!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Feature flags with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_api_gateway_config() {
+    // API gateway configuration patterns
+    let test_cases = vec![
+        "api:",
+        "  base_url: https://api.example.com!",
+        "  version: v2!",
+        "  timeout: 30!",
+        "  retry_policy: exponential!",
+        "  rate_limit: 1000!",
+        "  auth_method: oauth2!",
+        "  endpoints:",
+        "    users: /api/users!",
+        "    posts: /api/posts!",
+        "    comments: /api/comments!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "API gateway config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_docker_compose_config() {
+    // Docker Compose configuration patterns
+    let test_cases = vec![
+        "version: '3.8'!",
+        "services:",
+        "  web:",
+        "    image: nginx:latest!",
+        "    ports:",
+        "    environment:",
+        "      ENV: production!",
+        "  db:",
+        "    image: postgres:13!",
+        "    environment:",
+        "      POSTGRES_DB: myapp!",
+        "      POSTGRES_USER: admin!",
+        "volumes:",
+        "networks:",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Docker Compose config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Sequence items should be classified as SequenceItem
+    let sequence_items = vec![
+        "    - 80:80!",
+        "  data:!",
+        "  frontend:!",
+    ];
+
+    for line in sequence_items {
+        // The first is a sequence item, the others are parent keys
+        if line.starts_with("    -") {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::SequenceItem,
+                "Docker Compose sequence item should be SequenceItem: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Docker Compose parent key should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_monitoring_alerts_config() {
+    // Monitoring and alerting configuration
+    let test_cases = vec![
+        "monitoring:",
+        "  enabled: true!",
+        "  metrics:",
+        "  alerts:",
+        "    high_cpu:",
+        "      threshold: 80%!",
+        "      duration: 5m!",
+        "      action: notify!",
+        "    high_memory:",
+        "      threshold: 90%!",
+        "      duration: 3m!",
+        "      action: alert!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Monitoring config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Sequence items should be classified as SequenceItem
+    let sequence_items = vec![
+        "    - cpu_usage!",
+        "    - memory_usage!",
+        "    - response_time!",
+    ];
+
+    for line in sequence_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Monitoring sequence item should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_message_template_config() {
+    // Message templates with exclamation marks
+    let test_cases = vec![
+        "messages:",
+        "  welcome: Welcome to our app!",
+        "  success: Operation completed successfully!",
+        "  error: Something went wrong!",
+        "  warning: Please check your input!",
+        "  info: Processing your request!",
+        "  confirmation: Are you sure!",
+        "  notification: You have a new message!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Message templates with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_css_and_ui_config() {
+    // CSS and UI configuration with !important patterns
+    let test_cases = vec![
+        "ui:",
+        "  primary_color: #FF0000!",
+        "  secondary_color: #00FF00!",
+        "  font_size: 14px!",
+        "  button_style: .primary!important",
+        "  layout: flex!",
+        "  theme: dark!",
+        "  responsive: true!",
+        "  animations:",
+        "    fade_in: 0.3s!",
+        "    slide_up: 0.5s!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "CSS/UI config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_build_configuration() {
+    // Build system configuration
+    let test_cases = vec![
+        "build:",
+        "  target: release!",
+        "  optimization: O3!",
+        "  debug_symbols: false!",
+        "  parallel_jobs: 4!",
+        "  output_dir: ./dist!",
+        "  artifacts:",
+        "  dependencies:",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Build config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Sequence items should be classified as SequenceItem
+    let sequence_items = vec![
+        "    - binary!",
+        "    - docs!",
+        "    - library!",
+        "    - framework!",
+    ];
+
+    for line in sequence_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Build config sequence item with ! should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_security_config() {
+    // Security configuration
+    let test_cases = vec![
+        "security:",
+        "  encryption: AES256!",
+        "  authentication: jwt!",
+        "  session_timeout: 3600!",
+        "  password_policy: strong!",
+        "  two_factor: enabled!",
+        "  allowed_origins:",
+        "  csrf_protection: true!",
+        "  rate_limiting: enabled!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Security config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Sequence items should be classified as SequenceItem
+    let sequence_items = vec![
+        "    - https://example.com!",
+        "    - https://app.example.com!",
+    ];
+
+    for line in sequence_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Security sequence item should be SequenceItem: '{}'",
             line
         );
     }
@@ -2546,6 +2996,268 @@ fn test_multiline_scenario_with_exclamation() {
             classify_line_type(line),
             *expected_type,
             "Multiline scenario failed for: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_complex_multiline_production_config() {
+    // Complex multiline production configuration with exclamation
+    let lines = vec![
+        "# Production Configuration - Updated 2024! Check weekly",
+        "application:",
+        "  name: ProductionAPI!",
+        "  version: 2.0.0!",
+        "  environment: production!",
+        "server:",
+        "  host: 0.0.0.0!",
+        "  port: 8080!",
+        "  ssl_enabled: true!",
+        "  ssl_cert: /etc/ssl/cert.pem!",
+        "database:",
+        "  primary:",
+        "    host: db1.prod.example.com!",
+        "    port: 5432!",
+        "    name: app_db!",
+        "  replica:",
+        "    host: db2.prod.example.com!",
+        "    port: 5432!",
+        "cache:",
+        "  enabled: true!",
+        "  backend: redis!",
+        "  host: redis.prod.example.com!",
+        "  port: 6379!",
+        "logging:",
+        "  level: INFO!",
+        "  format: json!",
+        "  output: /var/log/app.log!",
+        "features:",
+        "  new_dashboard: true!",
+        "  api_v2: enabled!",
+        "  rate_limiting: active!",
+    ];
+
+    for line in lines {
+        if line.starts_with('#') {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::Comment,
+                "Comment should be Comment: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Complex multiline production config should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_multiline_with_inline_comments_and_exclamation() {
+    // Multiline YAML with inline comments containing exclamation
+    let test_cases = vec![
+        "app_name: MyApp # Production instance!",
+        "version: 1.0.0 # Latest stable!",
+        "debug: false # Security: disable in prod!",
+        "max_users: 1000 # License limit!",
+        "timeout: 30 # Seconds!",
+        "retries: 3 # Max attempts!",
+    ];
+
+    for line in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key with inline comment containing !: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert!(info.value.is_some(), "Should have value: '{}'", line);
+    }
+}
+
+#[test]
+fn test_quoted_values_with_exclamation_variations() {
+    // Quoted string values with various exclamation patterns
+    let test_cases = vec![
+        "title: \"Welcome!\"",
+        "subtitle: 'Get Started!'",
+        "description: \"Hello World!\"",
+        "message: 'Check this out!'",
+        "error: \"Something went wrong!\"",
+        "warning: 'Please be careful!'",
+        "success: \"Operation complete!\"",
+        "info: 'Processing...!'",
+        "note: \"Important: Read this!\"",
+        "alert: 'Action required!'",
+        "hint: \"Try this first!\"",
+        "tip: 'Pro tip: save often!'",
+        "footer: \"© 2024 MyApp!\"",
+        "header: 'Welcome back!'",
+        "caption: \"Figure 1: Architecture!\"",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Quoted values with exclamation should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_real_world_env_config() {
+    // Environment-specific configuration patterns
+    let test_cases = vec![
+        "# Development Environment",
+        "env: dev!",
+        "debug: true!",
+        "log_level: debug!",
+        "",
+        "# Staging Environment",
+        "env: staging!",
+        "debug: false!",
+        "log_level: info!",
+        "",
+        "# Production Environment",
+        "env: prod!",
+        "debug: false!",
+        "log_level: warn!",
+        "monitoring: enabled!",
+    ];
+
+    for line in test_cases {
+        if line.starts_with('#') {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::Comment,
+                "Comment should be Comment: '{}'",
+                line
+            );
+        } else if !line.is_empty() {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "Env config with ! should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_microservices_config() {
+    // Microservices architecture configuration
+    let test_cases = vec![
+        "services:",
+        "  auth:",
+        "    enabled: true!",
+        "    port: 3001!",
+        "  user:",
+        "    enabled: true!",
+        "    port: 3002!",
+        "  payment:",
+        "    enabled: false!",
+        "    port: 3003!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Microservices config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Flow sequences with dependencies should be FlowSequence or MappingKey
+    let flow_lines = vec![
+        "    dependencies: [db, cache]!",
+        "    dependencies: [db, auth]!",
+        "    dependencies: [db, user]!",
+    ];
+
+    for line in flow_lines {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowSequence,
+            "Microservices config with flow sequence should be valid type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_deployment_strategy_config() {
+    // Deployment strategy configuration
+    let test_cases = vec![
+        "deployment:",
+        "  strategy: rolling!",
+        "  max_surge: 1!",
+        "  max_unavailable: 0!",
+        "  health_check:",
+        "    path: /health!",
+        "    interval: 10s!",
+        "    timeout: 5s!",
+        "    threshold: 3!",
+        "  rollback:",
+        "    enabled: true!",
+        "    timeout: 300s!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Deployment strategy config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_rate_limiting_config() {
+    // Rate limiting configuration
+    let test_cases = vec![
+        "rate_limit:",
+        "  enabled: true!",
+        "  requests_per_second: 100!",
+        "  burst: 200!",
+        "  window_size: 60s!",
+        "  strategies:",
+        "  whitelist:",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Rate limiting config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Sequence items should be classified as SequenceItem
+    let sequence_items = vec![
+        "    - ip_based!",
+        "    - user_based!",
+        "    - api_key_based!",
+        "    - 192.168.1.0/24!",
+        "    - trusted-partners!",
+    ];
+
+    for line in sequence_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Rate limiting sequence item should be SequenceItem: '{}'",
             line
         );
     }
