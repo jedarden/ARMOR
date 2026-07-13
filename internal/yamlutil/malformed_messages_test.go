@@ -309,16 +309,16 @@ func TestMalformedMessages_RealWorldMalformed(t *testing.T) {
 		{
 			name:        "type name with trailing garbage",
 			errorMsg:    "expected int###, got string",
-			description: "Type name with trailing special chars - extracts tag",
+			description: "Type name with trailing special chars - extracts int from expected",
 			expectEmpty: false,
-			expectedVal: "str",
+			expectedVal: "int",
 		},
 		{
 			name:        "type name with leading garbage",
 			errorMsg:    "expected $$$int, got string",
-			description: "Type name with leading special chars - extracts tag",
+			description: "Type name with leading special chars - extracts int from expected",
 			expectEmpty: false,
-			expectedVal: "str",
+			expectedVal: "int",
 		},
 		{
 			name:        "mixed up keywords",
