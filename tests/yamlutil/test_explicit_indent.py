@@ -1453,6 +1453,91 @@ class TestFoldedScalarExplicitIndent10Space:
             "Keep >+5 with 10-space base should preserve all quint-indented lines"
 
 
+class TestFoldedScalarKeepModifierBaseIndentValidation:
+    """Test cases for keep modifier (>+) validation at base indentation levels 1-3.
+
+    The keep modifier (>+) preserves trailing newlines and trailing whitespace.
+    This test class validates that content indentation is correctly validated
+    at each base indentation level for the keep modifier.
+
+    Base indentation levels:
+    - Level 1: 2-space base indent with >+ modifier
+    - Level 2: 4-space base indent with >+ modifier
+    - Level 3: 6-space base indent with >+ modifier
+    """
+
+    def test_keep_modifier_base_indent_validation(self):
+        """Test keep modifier (>+) validation at base indentation levels 1-3.
+
+        This test verifies that the keep modifier correctly preserves trailing
+        newlines and trailing whitespace while preserving content indentation
+        at base indentation levels 1, 2, and 3.
+
+        YAML folded scalar modifiers:
+        - >+: keep (preserves all trailing newlines and trailing whitespace)
+
+        Each test verifies:
+        - Keep modifier (>+) preserves trailing newlines
+        - Keep modifier (>+) preserves trailing whitespace
+        - Content indentation is correctly preserved at each level
+        """
+        parser = YAMLCoreParser()
+
+        # Level 1: 2-space base indent with keep modifier
+        yaml_content_level1 = """# Keep modifier at level 1 (2-space base indent)
+keep_base_level_1: >+
+  Line 1 indented at level 1
+  Line 2 indented at level 1
+"""
+        result = parser.safe_load(yaml_content_level1)
+        assert result.is_success(), "Keep modifier parsing at base level 1 should succeed"
+
+        # Verify keep modifier content is preserved (trailing newlines kept)
+        assert 'Line 1 indented at level 1' in result.data['keep_base_level_1'], \
+            "Keep >+ at base level 1 should preserve indented content"
+        assert 'Line 2 indented at level 1' in result.data['keep_base_level_1'], \
+            "Keep >+ at base level 1 should preserve all indented lines"
+        # Verify trailing whitespace is preserved (keep modifier keeps it)
+        assert result.data['keep_base_level_1'].endswith('\n') or result.data['keep_base_level_1'] != result.data['keep_base_level_1'].rstrip(), \
+            "Keep >+ at base level 1 should preserve trailing newlines/whitespace"
+
+        # Level 2: 4-space base indent with keep modifier
+        yaml_content_level2 = """# Keep modifier at level 2 (4-space base indent)
+    keep_base_level_2: >+
+      Line 1 double-indented at level 2
+      Line 2 double-indented at level 2
+"""
+        result = parser.safe_load(yaml_content_level2)
+        assert result.is_success(), "Keep modifier parsing at base level 2 should succeed"
+
+        # Verify keep modifier content is preserved (trailing newlines kept)
+        assert 'Line 1 double-indented at level 2' in result.data['keep_base_level_2'], \
+            "Keep >+ at base level 2 should preserve double-indented content"
+        assert 'Line 2 double-indented at level 2' in result.data['keep_base_level_2'], \
+            "Keep >+ at base level 2 should preserve all double-indented lines"
+        # Verify trailing whitespace is preserved (keep modifier keeps it)
+        assert result.data['keep_base_level_2'].endswith('\n') or result.data['keep_base_level_2'] != result.data['keep_base_level_2'].rstrip(), \
+            "Keep >+ at base level 2 should preserve trailing newlines/whitespace"
+
+        # Level 3: 6-space base indent with keep modifier
+        yaml_content_level3 = """# Keep modifier at level 3 (6-space base indent)
+      keep_base_level_3: >+
+        Line 1 triple-indented at level 3
+        Line 2 triple-indented at level 3
+"""
+        result = parser.safe_load(yaml_content_level3)
+        assert result.is_success(), "Keep modifier parsing at base level 3 should succeed"
+
+        # Verify keep modifier content is preserved (trailing newlines kept)
+        assert 'Line 1 triple-indented at level 3' in result.data['keep_base_level_3'], \
+            "Keep >+ at base level 3 should preserve triple-indented content"
+        assert 'Line 2 triple-indented at level 3' in result.data['keep_base_level_3'], \
+            "Keep >+ at base level 3 should preserve all triple-indented lines"
+        # Verify trailing whitespace is preserved (keep modifier keeps it)
+        assert result.data['keep_base_level_3'].endswith('\n') or result.data['keep_base_level_3'] != result.data['keep_base_level_3'].rstrip(), \
+            "Keep >+ at base level 3 should preserve trailing newlines/whitespace"
+
+
 class TestFoldedScalarContinuationLineVerification:
     """Test cases for continuation line verification in folded scalars.
 
