@@ -133,6 +133,70 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //   - test_literal_scalar_strip_explicit_indent_modifiers_at_2_space()
 //   - test_literal_scalar_keep_explicit_indent_modifiers_at_2_space()
 //   - (Repeat for 4-space, 6-space, 8-space, tab)
+//
+// Section 12B Test Functions - Concrete Pattern Examples:
+// -------------------------------------------------------
+// The following test functions in Section 12B serve as concrete examples for each pattern:
+//
+// **Test Case Structure (Pattern 1):**
+// - test_folded_block_scalar_with_exclamation_marks() (line 7587)
+//   * vec! of tuples: (input_line, expected_key_name, expected_line_type)
+//   * Example: ("description: >", "description", LineType::MappingKey)
+//   * Demonstrates folded scalar indicators with exclamation marks
+//
+// **Assertion Patterns (Pattern 4):**
+// - test_folded_scalar_basic_modifiers() (line 10219)
+//   * Shows Pattern 4.A: Basic indicator line assertion
+// - test_folded_scalar_all_modifier_combinations() (line 10292)
+//   * Comprehensive demonstration of all modifier combinations
+//   * Shows key extraction assertion (Pattern 4.B)
+//
+// **Continuation Line Patterns (Pattern 5):**
+// - test_folded_block_scalar_with_exclamation_marks() (line 7587)
+//   * Shows Pattern 4.C: Continuation lines with vec![allowed_types]
+//   * Lines: "  This is folded text with! exclamation marks"
+// - test_literal_block_scalar_with_exclamation_marks() (line 7607)
+//   * Shows continuation lines starting with ! → Tag classification
+//   * Pattern 4.D: Lines like "  !important" → LineType::Tag
+//
+// **Exclamation Mark Patterns (Pattern 6):**
+// - test_level1_indentation_with_exclamation_marks() (line ~9238)
+//   * Shows tag vs non-tag distinction with '!'
+//   * "  !tag: >" → Tag, "  key!:" → MappingKey
+//   * "  key!!:" → MappingKey, "  test!here: >" → MappingKey
+// - test_folded_block_scalar_with_exclamation_marks() (line 7587)
+//   * Keys ending with !: "key!bang!:" → MappingKey (not Tag)
+//   * Multiple !: "multiple!!!:" → MappingKey
+//
+// **Level-Specific Indentation Patterns:**
+// - test_level1_indentation_with_exclamation_marks() (line ~9238)
+//   * Pattern 2: Level 1 (2-space) with "  " prefix
+// - test_level2_indentation_with_exclamation_marks() (line ~9700)
+//   * Pattern 2: Level 2 (4-space) with "    " prefix
+// - test_level3_indentation_with_exclamation_marks() (line ~9780)
+//   * Pattern 2: Level 3 (6-space) with "      " prefix
+// - test_level4_indentation_with_exclamation_marks() (line ~9860)
+//   * Pattern 2: Level 4 (8-space) with "        " prefix
+//
+// **Infrastructure Pattern Examples (Section 12B.3):**
+// - test_folded_scalar_explicit_indent_template_example() (line 12433)
+//   * Full template using generate_folded_explicit_indent_tests! macro
+//   * Shows Pattern 3 naming convention in action
+// - test_folded_scalar_explicit_indent_tab_template() (line 12454)
+//   * Tab indentation template example
+// - test_folded_scalar_explicit_indent_helper_function_example() (line 12470)
+//   * Helper function approach (create_folded_scalar_test)
+//
+// **Modifier Coverage Examples:**
+// - test_literal_scalar_basic_modifiers_at_various_indentation_levels() (line 7657)
+//   * Shows | (literal), |- (strip), |+ (keep) at all indentation levels
+//   * Uses vec of (line, expected_key, expected_type) tuples
+// - test_folded_scalar_numeric_modifiers() (line 10247)
+//   * Shows >n, >-n, >+n for n=1-9
+//   * Demonstrates numeric indent modifier pattern
+//
+// These concrete examples demonstrate all 6 patterns documented above.
+// Reference them when implementing new folded scalar or literal scalar tests.
 
 /// Macro to generate folded scalar explicit indent test cases
 ///
