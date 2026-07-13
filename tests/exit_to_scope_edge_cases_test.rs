@@ -237,7 +237,7 @@ fn test_exit_to_scope_state_cleanup() {
     // Child key should be gone
     assert!(!stack.contains_key("child_key"));
     // Should be at parent scope
-    assert_eq!(stack.current_scope_ref().parent_key, Some("parent".to_string()));
+    assert_eq!(stack.current_scope_ref().unwrap().parent_key, Some("parent".to_string()));
 }
 
 /// Scenario: Exit to an indent level that doesn't exist when root is the only parent
@@ -371,14 +371,14 @@ fn test_exit_to_scope_sequence_item_id_preservation_in_parent() {
 
     // Enter sequence scope
     stack.enter_sequence_scope(4, 2);
-    let item_id = stack.current_scope_ref().sequence_item_id;
+    let item_id = stack.current_scope_ref().unwrap().sequence_item_id;
 
     // Exit back to parent
     stack.exit_to_scope(2);
 
     // Parent scope should not have sequence item ID
-    assert!(stack.current_scope_ref().sequence_item_id.is_none());
-    assert_eq!(stack.current_scope_ref().parent_key, Some("items".to_string()));
+    assert!(stack.current_scope_ref().unwrap().sequence_item_id.is_none());
+    assert_eq!(stack.current_scope_ref().unwrap().parent_key, Some("items".to_string()));
 }
 
 /// Scenario: Exit from child scope back to parent that was marked as flow-style
@@ -389,7 +389,7 @@ fn test_exit_to_scope_with_flow_style_preservation() {
 
     // Create scope and mark as flow style
     stack.enter_scope(2, 1, Some("flow_style_scope".to_string()));
-    stack.current_scope().is_flow_style = true;
+    stack.current_scope().unwrap().is_flow_style = true;
 
     // Enter child scope
     stack.enter_scope(4, 2, Some("child".to_string()));
@@ -398,8 +398,8 @@ fn test_exit_to_scope_with_flow_style_preservation() {
     stack.exit_to_scope(2);
 
     // Flow style should be preserved on parent scope
-    assert!(stack.current_scope_ref().is_flow_style);
-    assert_eq!(stack.current_scope_ref().parent_key, Some("flow_style_scope".to_string()));
+    assert!(stack.current_scope_ref().unwrap().is_flow_style);
+    assert_eq!(stack.current_scope_ref().unwrap().parent_key, Some("flow_style_scope".to_string()));
 }
 
 /// Scenario: Attempt to exit to the same indent level we're currently at
@@ -434,7 +434,7 @@ fn test_exit_to_scope_clears_large_scope_data() {
     for i in 0..100 {
         stack.add_key(&format!("key_{}", i), 2 + i).unwrap();
     }
-    let parent_key_count = stack.current_scope_ref().key_count();
+    let parent_key_count = stack.current_scope_ref().unwrap().key_count();
     assert_eq!(parent_key_count, 100);
 
     // Create a child scope with even more keys
@@ -442,14 +442,14 @@ fn test_exit_to_scope_clears_large_scope_data() {
     for i in 0..200 {
         stack.add_key(&format!("child_key_{}", i), 103 + i).unwrap();
     }
-    let child_key_count = stack.current_scope_ref().key_count();
+    let child_key_count = stack.current_scope_ref().unwrap().key_count();
     assert_eq!(child_key_count, 200);
 
     // Exit to parent - child should be cleaned up
     stack.exit_to_scope(2);
 
     // Parent should still have its keys
-    assert_eq!(stack.current_scope_ref().key_count(), 100);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 100);
     assert!(stack.contains_key("key_0"));
     assert!(stack.contains_key("key_99"));
 
@@ -469,8 +469,8 @@ fn test_exit_to_scope_resets_sequence_context_flags() {
 
     // Enter sequence scope (sets in_sequence_context=true on new scope)
     stack.enter_sequence_scope(4, 2);
-    assert!(stack.current_scope_ref().in_sequence_context);
-    assert!(stack.current_scope_ref().sequence_item_id.is_some());
+    assert!(stack.current_scope_ref().unwrap().in_sequence_context);
+    assert!(stack.current_scope_ref().unwrap().sequence_item_id.is_some());
 
     // Add some keys in sequence scope
     stack.add_key("seq_key1", 3).unwrap();
@@ -480,8 +480,8 @@ fn test_exit_to_scope_resets_sequence_context_flags() {
     stack.exit_to_scope(2);
 
     // Verify we're back in mapping context (not sequence)
-    assert!(!stack.current_scope_ref().in_sequence_context);
-    assert!(stack.current_scope_ref().sequence_item_id.is_none());
+    assert!(!stack.current_scope_ref().unwrap().in_sequence_context);
+    assert!(stack.current_scope_ref().unwrap().sequence_item_id.is_none());
 
     // Verify sequence keys are gone
     assert!(!stack.contains_key("seq_key1"));
@@ -591,7 +591,7 @@ fn test_exit_to_scope_allows_clean_reentry() {
     // First scope at indent 2
     stack.enter_scope(2, 1, Some("first".to_string()));
     stack.add_key("old_key", 2).unwrap();
-    stack.current_scope().is_flow_style = true;
+    stack.current_scope().unwrap().is_flow_style = true;
 
     // Exit and re-enter at same level
     stack.exit_to_scope(0);
@@ -599,6 +599,6 @@ fn test_exit_to_scope_allows_clean_reentry() {
 
     // Should have fresh state, not inheriting from previous scope
     assert!(!stack.contains_key("old_key"));
-    assert_eq!(stack.current_scope_ref().key_count(), 0);
-    assert!(!stack.current_scope_ref().is_flow_style);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 0);
+    assert!(!stack.current_scope_ref().unwrap().is_flow_style);
 }

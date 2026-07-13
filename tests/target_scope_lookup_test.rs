@@ -147,7 +147,7 @@ fn test_exit_to_scope_exits_to_root_without_intermediate_scopes() {
     // Should exit to root (closest parent scope)
     assert_eq!(stack.current_indent(), 0);
     assert_eq!(stack.get_scope_path(), "");
-    assert!(!stack.current_scope_ref().in_sequence_context);
+    assert!(!stack.current_scope_ref().unwrap().in_sequence_context);
 }
 
 // =============================================================================
