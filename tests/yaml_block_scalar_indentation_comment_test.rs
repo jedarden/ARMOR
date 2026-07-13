@@ -565,3 +565,317 @@ fn test_literal_vs_folded_identical_indentation_handling() {
         );
     }
 }
+
+// ============================================================================
+// Strip Modifier (>-) Indentation Validation
+// ============================================================================
+
+#[test]
+fn test_strip_modifier_classification() {
+    // Test that strip modifier (>-) markers are correctly classified
+    let strip_markers = vec![
+        "text: >-",
+        "  text: >-",
+        "    text: >-",
+        "      text: >-",
+        "description: >-",
+        "  description: >-",
+        "content: >-",
+        "  content: >-",
+    ];
+
+    for marker in strip_markers {
+        // Strip modifier markers should be classified as mapping keys
+        assert_eq!(
+            classify_line_type(marker),
+            LineType::MappingKey,
+            "Strip marker should be mapping key: {:?}",
+            marker
+        );
+        assert!(
+            !is_comment_line(marker),
+            "Strip marker should not be comment: {:?}",
+            marker
+        );
+    }
+}
+
+#[test]
+fn test_strip_modifier_indent_level_1() {
+    // Test strip modifier with content at level 1 (2-space indent)
+    let test_cases = vec![
+        // Strip marker at base level
+        "text: >-",
+        // Content at 2-space indent (level 1)
+        "  Line 1 indented at level 1",
+        "  Line 2 indented at level 1",
+        // Comment at base level
+        "# This is a comment at base level",
+        // More content
+        "  Line 3 indented at level 1",
+    ];
+
+    // Verify strip marker classification
+    assert_eq!(classify_line_type(test_cases[0]), LineType::MappingKey);
+    assert!(!is_comment_line(test_cases[0]));
+
+    // Verify content lines are not comments
+    for (i, line) in test_cases.iter().enumerate().skip(1) {
+        if line.trim().starts_with('#') {
+            // Lines starting with # are comments
+            assert!(
+                is_comment_line(line),
+                "Comment line should be classified as comment at index {}: {:?}",
+                i,
+                line
+            );
+        } else {
+            // Content lines are not comments
+            assert!(
+                !is_comment_line(line),
+                "Content line should not be comment at index {}: {:?}",
+                i,
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_strip_modifier_indent_level_2() {
+    // Test strip modifier with content at level 2 (4-space indent)
+    let test_cases = vec![
+        // Strip marker at base level
+        "text: >-",
+        // Content at 4-space indent (level 2)
+        "    Line 1 double-indented at level 2",
+        "    Line 2 double-indented at level 2",
+        // Comment at base level
+        "# This is a comment at base level",
+        // More content at level 2
+        "    Line 3 double-indented at level 2",
+    ];
+
+    // Verify strip marker classification
+    assert_eq!(classify_line_type(test_cases[0]), LineType::MappingKey);
+    assert!(!is_comment_line(test_cases[0]));
+
+    // Verify content lines are not comments
+    for (i, line) in test_cases.iter().enumerate().skip(1) {
+        if line.trim().starts_with('#') {
+            // Lines starting with # are comments
+            assert!(
+                is_comment_line(line),
+                "Comment line should be classified as comment at index {}: {:?}",
+                i,
+                line
+            );
+        } else {
+            // Content lines are not comments
+            assert!(
+                !is_comment_line(line),
+                "Content line should not be comment at index {}: {:?}",
+                i,
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_strip_modifier_indent_level_3() {
+    // Test strip modifier with content at level 3 (6-space indent)
+    let test_cases = vec![
+        // Strip marker at base level
+        "text: >-",
+        // Content at 6-space indent (level 3)
+        "      Line 1 triple-indented at level 3",
+        "      Line 2 triple-indented at level 3",
+        // Comment at base level
+        "# This is a comment at base level",
+        // More content at level 3
+        "      Line 3 triple-indented at level 3",
+    ];
+
+    // Verify strip marker classification
+    assert_eq!(classify_line_type(test_cases[0]), LineType::MappingKey);
+    assert!(!is_comment_line(test_cases[0]));
+
+    // Verify content lines are not comments
+    for (i, line) in test_cases.iter().enumerate().skip(1) {
+        if line.trim().starts_with('#') {
+            // Lines starting with # are comments
+            assert!(
+                is_comment_line(line),
+                "Comment line should be classified as comment at index {}: {:?}",
+                i,
+                line
+            );
+        } else {
+            // Content lines are not comments
+            assert!(
+                !is_comment_line(line),
+                "Content line should not be comment at index {}: {:?}",
+                i,
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_strip_modifier_with_explicit_indent_levels() {
+    // Test strip modifier with explicit indentation specifications
+    // Format: >-N where N is the explicit indent level
+    let explicit_indent_cases = vec![
+        // Strip with explicit indent level 1
+        ("text: >-1", " Line 1 at explicit level 1"),
+        // Strip with explicit indent level 2
+        ("text: >-2", "  Line 1 at explicit level 2"),
+        // Strip with explicit indent level 3
+        ("text: >-3", "   Line 1 at explicit level 3"),
+    ];
+
+    for (marker, content) in explicit_indent_cases {
+        // Explicit strip marker should be classified as mapping key
+        assert_eq!(
+            classify_line_type(marker),
+            LineType::MappingKey,
+            "Explicit strip marker should be mapping key: {:?}",
+            marker
+        );
+        assert!(
+            !is_comment_line(marker),
+            "Explicit strip marker should not be comment: {:?}",
+            marker
+        );
+
+        // Content line should not be comment
+        assert!(
+            !is_comment_line(content),
+            "Content line should not be comment: {:?}",
+            content
+        );
+    }
+}
+
+#[test]
+fn test_strip_modifier_preserves_indented_hash_content() {
+    // Test that hash characters in strip-modified content are preserved
+    // when they're part of the content (not preceded by space)
+    let strip_content_cases = vec![
+        // Level 1: 2-space indent
+        "  URL:http://example.com#anchor",
+        // Level 2: 4-space indent
+        "    value#hash",
+        // Level 3: 6-space indent
+        "      config#key=value",
+        // Hash not preceded by space should be preserved at all levels
+    ];
+
+    for line in strip_content_cases {
+        // These content lines don't start with #, so they're not comment lines
+        assert!(
+            !is_comment_line(line),
+            "Hash in content should not make it a comment: {:?}",
+            line
+        );
+
+        // Hash should be preserved when stripping inline comments
+        let stripped = strip_inline_comment(line);
+        assert_eq!(
+            stripped, line,
+            "Hash not preceded by space should be preserved: {:?}",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_strip_modifier_with_space_before_hash() {
+    // Test that hash preceded by space triggers comment stripping
+    // in strip-modified content at various indentation levels
+    let strip_comment_cases = vec![
+        // Level 1: 2-space indent
+        ("  text # comment", "  text "),
+        // Level 2: 4-space indent
+        ("    value # comment", "    value "),
+        // Level 3: 6-space indent
+        ("      config # comment", "      config "),
+    ];
+
+    for (line, expected) in strip_comment_cases {
+        // These are not comment lines (don't start with #)
+        assert!(!is_comment_line(line));
+
+        // Space before # triggers comment stripping
+        let stripped = strip_inline_comment(line);
+        assert_eq!(
+            stripped, expected,
+            "Space before hash should trigger comment stripping at level: {:?}",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_strip_modifier_nested_indentation() {
+    // Test strip modifier with nested indentation variations
+    // Content with varying indentation levels within the same block
+    let nested_cases = vec![
+        // Base marker
+        "text: >-",
+        // Level 1: 2-space
+        "  Base level content",
+        // Level 2: 4-space (preserves line break in folded blocks)
+        "    Double-indented content",
+        // Level 3: 6-space
+        "      Triple-indented content",
+        // Back to level 1
+        "  Back to base level",
+    ];
+
+    for line in nested_cases {
+        // None of these are comment lines (don't start with #)
+        assert!(
+            !is_comment_line(line),
+            "Content line should not be comment: {:?}",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_strip_modifier_indented_marker_with_content() {
+    // Test strip modifier when the marker itself is indented
+    let test_cases = vec![
+        // Marker at level 1 (2-space), content at level 1+1=level 2 (4-space)
+        ("  text: >-", "    Line content"),
+        // Marker at level 2 (4-space), content at level 2+1=level 3 (6-space)
+        ("    text: >-", "      Line content"),
+        // Marker at level 3 (6-space), content at level 3+1=level 4 (8-space)
+        ("      text: >-", "        Line content"),
+    ];
+
+    for (marker, content) in test_cases {
+        // Strip marker should be mapping key
+        assert_eq!(
+            classify_line_type(marker),
+            LineType::MappingKey,
+            "Strip marker should be mapping key: {:?}",
+            marker
+        );
+        assert!(
+            !is_comment_line(marker),
+            "Strip marker should not be comment: {:?}",
+            marker
+        );
+
+        // Content should not be comment
+        assert!(
+            !is_comment_line(content),
+            "Content should not be comment: {:?}",
+            content
+        );
+    }
+}
