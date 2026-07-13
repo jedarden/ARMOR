@@ -174,6 +174,15 @@ func GetRequiredField(data map[string]interface{}, path string) (interface{}, er
 func GetRequiredString(data map[string]interface{}, path string) (string, error) {
 	value, err := GetRequiredField(data, path)
 	if err != nil {
+		// Type assertion: check for FieldNotFoundError
+		if fieldNotFoundErr, ok := err.(*FieldNotFoundError); ok {
+			return "", fieldNotFoundErr
+		}
+		// Type assertion: check for ValidationError
+		if validationErr, ok := err.(*ValidationError); ok {
+			return "", validationErr
+		}
+		// Return other errors as-is
 		return "", err
 	}
 
@@ -182,7 +191,7 @@ func GetRequiredString(data map[string]interface{}, path string) (string, error)
 	}
 
 	return "", &TypeMismatchError{
-		FieldPath:   path,
+		FieldPath:    path,
 		ExpectedType: "string",
 		ActualType:   fmt.Sprintf("%T", value),
 	}
@@ -193,6 +202,19 @@ func GetRequiredString(data map[string]interface{}, path string) (string, error)
 func GetRequiredInt(data map[string]interface{}, path string) (int, error) {
 	value, err := GetRequiredField(data, path)
 	if err != nil {
+		// Type assertion: check for FieldNotFoundError
+		if fieldNotFoundErr, ok := err.(*FieldNotFoundError); ok {
+			return 0, fieldNotFoundErr
+		}
+		// Type assertion: check for ValidationError
+		if validationErr, ok := err.(*ValidationError); ok {
+			return 0, validationErr
+		}
+		// Type assertion: check for TypeMismatchError
+		if typeMismatchErr, ok := err.(*TypeMismatchError); ok {
+			return 0, typeMismatchErr
+		}
+		// Return other errors as-is
 		return 0, err
 	}
 
@@ -223,7 +245,7 @@ func GetRequiredInt(data map[string]interface{}, path string) (int, error) {
 			return int(v), nil
 		}
 		return 0, &TypeMismatchError{
-			FieldPath:   path,
+			FieldPath:    path,
 			ExpectedType: "integer",
 			ActualType:   "float",
 		}
@@ -232,7 +254,7 @@ func GetRequiredInt(data map[string]interface{}, path string) (int, error) {
 			return int(v), nil
 		}
 		return 0, &TypeMismatchError{
-			FieldPath:   path,
+			FieldPath:    path,
 			ExpectedType: "integer",
 			ActualType:   "float",
 		}
@@ -242,13 +264,13 @@ func GetRequiredInt(data map[string]interface{}, path string) (int, error) {
 			return int(i), nil
 		}
 		return 0, &TypeMismatchError{
-			FieldPath:   path,
+			FieldPath:    path,
 			ExpectedType: "integer",
 			ActualType:   "string",
 		}
 	default:
 		return 0, &TypeMismatchError{
-			FieldPath:   path,
+			FieldPath:    path,
 			ExpectedType: "integer",
 			ActualType:   fmt.Sprintf("%T", value),
 		}
@@ -260,6 +282,19 @@ func GetRequiredInt(data map[string]interface{}, path string) (int, error) {
 func GetRequiredBool(data map[string]interface{}, path string) (bool, error) {
 	value, err := GetRequiredField(data, path)
 	if err != nil {
+		// Type assertion: check for FieldNotFoundError
+		if fieldNotFoundErr, ok := err.(*FieldNotFoundError); ok {
+			return false, fieldNotFoundErr
+		}
+		// Type assertion: check for ValidationError
+		if validationErr, ok := err.(*ValidationError); ok {
+			return false, validationErr
+		}
+		// Type assertion: check for TypeMismatchError
+		if typeMismatchErr, ok := err.(*TypeMismatchError); ok {
+			return false, typeMismatchErr
+		}
+		// Return other errors as-is
 		return false, err
 	}
 
@@ -268,7 +303,7 @@ func GetRequiredBool(data map[string]interface{}, path string) (bool, error) {
 	}
 
 	return false, &TypeMismatchError{
-		FieldPath:   path,
+		FieldPath:    path,
 		ExpectedType: "boolean",
 		ActualType:   fmt.Sprintf("%T", value),
 	}
