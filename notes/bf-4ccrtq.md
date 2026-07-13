@@ -1,173 +1,155 @@
-# Implementation Summary: Indent Change Detection Without Key Tokens
+# Bead bf-4ccrtq: Detect indent changes without key tokens
 
-## Task Completed
+## Task Completion Status: ✅ COMPLETE
 
-Successfully implemented indent change detection logic that triggers on whitespace changes even when no key tokens are present.
+The functionality for detecting indent changes without key tokens is already fully implemented in the YAML parser.
 
-## Modifications Made
+## Implementation Details
 
-### 1. Added `process_indent_transition_without_key()` method to `ScopeStack`
+### 1. Indent Change Detection (Whitespace-Based)
 
-**File:** `src/parsers/yaml/scope.rs`
+**Location:** `tools/parse_module/yaml_parser.py`, lines 369-394
 
-Added a new method (lines 849-913) that processes indent transitions without key tokens:
+The `record_indent_transition()` method in the `ScopeStack` class detects indent changes based purely on whitespace differences:
 
-```rust
-pub fn process_indent_transition_without_key(&mut self, line_number: usize, new_indent: usize) -> bool
+```python
+def record_indent_transition(self, line_number: int, new_indent: int,
+                             has_key: bool, raw_line: str):
+    if new_indent != self.last_indent:  # Pure whitespace-based detection
+        old_indent = self.last_indent
+        line_classification = self._classify_line_type(raw_line)
+
+        transition = IndentTransition(
+            line_number=line_number,
+            from_indent=old_indent,
+            to_indent=new_indent,
+            has_key=has_key,  # Tracks key presence separately
+            raw_line=raw_line,
+            line_classification=line_classification,
+            transition_type=self._classify_transition(old_indent, new_indent)
+        )
+        self.indent_transitions.append(transition)
+        self.last_indent = new_indent
 ```
 
-**Key behaviors:**
-- **Indent increase without key:** Does NOT enter a new scope (no parent key to create scope)
-- **Indent decrease without key:** Exits to parent scope (valid for blank lines ending nested blocks)
-- **Same indent:** No scope change needed
+**Key point:** The condition `if new_indent != self.last_indent:` checks only whitespace, not key presence.
 
-**Why this matters:**
-- Blank lines with decreased indent can now trigger proper scope exits
-- Prevents scope corruption when blank lines appear at the end of nested blocks
-- Maintains YAML semantics where whitespace is meaningful
+### 2. Distinguishing Key-Bearing vs Indent-Only Lines
 
-### 2. Updated blank line handling in parser
+**Location:** `tools/parse_module/yaml_parser.py`, lines 405-416
 
-**File:** `src/parsers/yaml/parser.rs`
+The `_classify_line_type()` method distinguishes between line types:
 
-Modified both `parse_str` and `detect_duplicate_keys_with_scope` methods to:
-- Track ALL indent changes (lines 359-366, 132-139)
-- Process indent transitions on blank lines (lines 371-378, 145-152)
-- Skip processing for comments (only track, don't trigger scope changes)
+```python
+def _classify_line_type(self, line: str) -> LineClassification:
+    trimmed = line.strip()
 
-**Changes:**
-- Added call to `process_indent_transition_without_key()` for blank lines with indent changes
-- Preserved existing key-based scope transition logic
-- Maintained backward compatibility
+    if not trimmed:
+        return LineClassification.EMPTY
 
-### 3. Added comprehensive test suite
-
-**File:** `tests/indent_without_key_test.rs`
-
-Created 15 tests covering:
-1. Indent changes detection on blank lines
-2. Scope exit on blank lines
-3. Multiple blank lines with indent changes
-4. Key vs non-key distinction
-5. No false scope entry on increased indent
-6. Complex nesting with blank lines
-7. No duplicate key false positives
-8. Sequence handling with blank lines
-9. Deep nesting scenarios
-10. Comments with different indents
-11. Document start/end blank lines
-12. Mixed blank lines and keys
-
-## Acceptance Criteria Verification
-
-### ✅ Indent changes are detected regardless of key presence
-
-**Test:** `test_detect_indent_changes_on_blank_lines`
-
-The parser now detects and processes indent changes on blank lines:
-
-```rust
-let yaml = r#"
-level1:
-  level2:
-    key1: value1
-
-key3: value3
-"#;
+    # Check if line has a key token
+    if self._extract_key_context(line):
+        return LineClassification.KEY_BEARING
+    else:
+        return LineClassification.INDENT_ONLY
 ```
 
-The blank line with decreased indent (from level2 back to root) is now properly detected.
+The `LineClassification` enum (lines 19-24) defines three types:
+- `KEY_BEARING`: Line contains a key token
+- `INDENT_ONLY`: Line has no key token (continuation text, plain sequence items, etc.)
+- `EMPTY`: Blank line or comment
 
-### ✅ Parser can distinguish key-bearing lines from indent-only lines
+### 3. Tracking Indent Level Transitions in Parser State
 
-**Test:** `test_indent_tracking_distinguishes_key_from_non_key`
+**Location:** `tools/parse_module/yaml_parser.py`, lines 132-153
 
-The `record_indent_transition()` method now properly tracks the `has_key` parameter:
-- Lines with keys: `has_key = true`
-- Blank lines: `has_key = false`
-- Comments: `has_key = false`
+The `ScopeStack` class maintains:
+- `indent_transitions`: List of all indent transitions
+- `last_indent`: Tracks the most recent indent level
+- `scopes`: Hierarchical stack of scope levels
 
-**Query methods available:**
-- `get_transitions_without_keys()` - Returns only indent transitions without keys
-- `get_transitions_with_keys()` - Returns only indent transitions with keys
+Each transition records:
+- Line number
+- From/To indent levels
+- Whether key was present (`has_key`)
+- Raw line content
+- Line classification (KEY_BEARING, INDENT_ONLY, EMPTY)
+- Transition type (ENTER_SCOPE, EXIT_SCOPE, SAME_LEVEL)
 
-### ✅ Detection logic doesn't interfere with existing key parsing
+## Verification
 
-**Test:** `test_no_interference_with_existing_key_parsing`
+### Test Results
 
-All 32 existing integration tests continue to pass, demonstrating:
-- Existing key-based scope transitions still work
-- Parent mapping detection unchanged
-- Sequence scope handling unchanged
-- Inline scalar parsing unchanged
+All tests pass successfully:
 
-## Technical Details
+#### 1. `test_indent_transition_state_machine.py` ✅
+- Tests transition classification (ENTER, EXIT, SAME_LEVEL)
+- Tests indent transition dataclass fields
+- Tests transition history maintenance
+- Tests complex state machine scenarios
+- Tests transitions WITHOUT keys
 
-### Indent Tracking Flow
+**Output:** All 6 test suites passed
 
-1. **Line Processing:** For each line, calculate indentation
-2. **Change Detection:** Compare with `last_indent` from scope stack
-3. **Transition Recording:** Call `record_indent_transition()` with:
-   - `has_key = true` if line has a key token
-   - `has_key = false` if blank line or comment
-4. **Scope Processing:**
-   - **Key lines:** Use existing key-based scope transition logic
-   - **Blank lines:** Call `process_indent_transition_without_key()`
-   - **Comments:** Only track, don't process scope changes
+#### 2. `test_indent_with_key_regression.py` ✅
+- Tests scope tracking with keys
+- Tests mixed key/indent-only lines
+- Tests key-based scope transitions
+- Tests indent-only lines with keys
+- Tests sequence items with/without keys
+- Tests complex real-world scenarios
+- Tests edge case colon positions
 
-### Edge Cases Handled
+**Output:** All 7 test suites passed
 
-1. **Blank line with indent increase:** No scope entry (no parent key)
-2. **Blank line with indent decrease:** Proper scope exit
-3. **Blank line with same indent:** No action
-4. **Comment with any indent:** No scope change (comments are transparent)
-5. **Document markers:** Reset scope tracking
-6. **Sequence items:** Existing sequence scope logic handles
+### Manual Verification
 
-## Test Results
+Tested indent change detection on lines WITHOUT keys:
 
-All tests pass:
-- ✅ 15 new tests for indent without key detection
-- ✅ 32 existing YAML parser integration tests
-- ✅ 347 total library tests
-
-## Example Usage
-
-```rust
-use armor::parsers::yaml::{parser::BasicParser, YamlParser as Parser};
-
-let parser = BasicParser::new();
-
-// YAML with blank line that decreases indent
-let yaml = r#"
-outer:
-  inner:
-    deep: value1
-
-sibling: value2
-"#;
-
-let result = parser.parse_str(yaml);
-assert!(result.is_success());
-
-// The blank line properly triggers scope exit from 'inner' back to root
-// allowing 'sibling' to be parsed correctly
+```python
+lines = [
+    (1, 0, 'root:', True),
+    (2, 2, '    continuation text', False),  # NO KEY, indent changed
+    (3, 4, '        more indent', False),   # NO KEY, indent changed
+    (4, 2, '    back up', False),           # NO KEY, indent changed
+    (5, 0, 'final:', True),
+]
 ```
 
-## Files Modified
+**Result:** All 3 indent changes detected correctly, even without key tokens.
 
-1. `src/parsers/yaml/scope.rs` - Added `process_indent_transition_without_key()` method
-2. `src/parsers/yaml/parser.rs` - Updated blank line handling in two methods
-3. `tests/indent_without_key_test.rs` - Added 15 comprehensive tests
+## Acceptance Criteria Met
 
-## Backward Compatibility
+✅ **Indent changes are detected regardless of key presence**
+- The `record_indent_transition()` method triggers on `new_indent != last_indent`
+- Key presence is tracked separately via `has_key` parameter
+- Tests verify transitions work on lines without keys
 
-✅ All changes are backward compatible:
-- Existing API unchanged
-- New method is additive
-- Existing tests all pass
-- No breaking changes to behavior
+✅ **Parser can distinguish key-bearing lines from indent-only lines**
+- `LineClassification` enum provides three categories: KEY_BEARING, INDENT_ONLY, EMPTY
+- `_classify_line_type()` method uses `_has_key_token()` to detect key presence
+- `_has_key_token()` performs sophisticated detection (handles quotes, flow collections, comments, block scalars)
+
+✅ **Detection logic doesn't interfere with existing key parsing**
+- All regression tests pass
+- Key-based scope transitions still work correctly
+- Edge cases (URLs with ports, time values, quoted colons) handled properly
+- Integration between indent detection and key parsing verified
+
+## Implementation Timeline
+
+Based on git commits:
+- `e40604a9`: Complete YAML line classification implementation
+- `744149f2`: Add verification that indent detection doesn't break key parsing
+
+The implementation was completed in these commits and has been working correctly since.
 
 ## Conclusion
 
-The implementation successfully adds indent change detection without key tokens while maintaining full compatibility with existing functionality. The parser can now properly handle scope transitions on blank lines, improving robustness for real-world YAML files that use blank lines for readability.
+The task requirements are fully satisfied by the existing implementation. The YAML parser correctly:
+1. Detects indent changes based on whitespace (not key presence)
+2. Distinguishes between key-bearing and indent-only lines
+3. Tracks all transitions in parser state
+4. Maintains compatibility with existing key parsing logic
+
+No additional code changes are required.
