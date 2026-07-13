@@ -23,13 +23,20 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //
 // Pattern Documentation:
 // ---------------------
-// Folded scalar explicit indent tests follow a consistent pattern:
+// Folded scalar explicit indent tests follow a consistent pattern.
+// For concrete examples, see Section 12B (line 7586) and its subsections:
+//   - Section 12B: Multiline String Scenarios with Exclamation Marks (line 7586)
+//   - Section 12B.1: Comprehensive Folded Block Scalar Tests with Exclamation (line 10415)
+//   - Section 12B.2: Folded Scalar Indicator Line Tests (line 10209)
+//   - Section 12B.2: Basic Folded Scalar Indicator Tests (line 10868)
+//   - Section 12B.3: Folded Scalar Explicit Indent Infrastructure Pattern (line 12343)
 //
 // 1. Test Case Structure:
 //    - Use vec! of tuples: (input_line, expected_key_name, expected_line_type)
 //    - Input line format: "<indent><key_name>: <modifier><indent_level>"
-//    - Modifiers: > (plain), >- (strip), >+ (keep)
-//    - Indent levels: 1-9 (e.g., >2, >-3, >+4)
+//    - Modifiers: > (plain folded), >- (strip), >+ (keep), | (literal), |- (literal strip), |+ (literal keep)
+//    - Indent levels: 1-9 (e.g., >2, >-3, >+4, |2, |-3, |+4)
+//    - Example from Section 12B.1: ("description: >", "description", LineType::MappingKey)
 //
 // 2. Indentation Levels:
 //    - Level 1: 2 spaces ("  ")
@@ -38,26 +45,94 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //    - Level 4: 8 spaces ("        ")
 //    - Tab: ("\t")
 //    - Mixed: ("\t  ", "\t    ", etc.)
+//    - See Section 12B.3 for comprehensive level coverage pattern
 //
 // 3. Test Naming Convention:
 //    - test_folded_scalar_<variant>_at_<indentation>_level
 //    - Or: test_folded_scalar_explicit_indent_modifiers_at_various_levels
+//    - Or: test_literal_scalar_<variant>_at_<indentation>_level
+//    - Examples from Section 12B:
+//      * test_folded_block_scalar_with_exclamation_marks()
+//      * test_literal_block_scalar_with_exclamation_marks()
+//      * test_folded_scalar_strip_indent_explicit_indent_modifiers_at_2_space()
 //
-// 4. Assertion Pattern:
-//    - First assert: classify_line_type() returns expected LineType
-//    - Second assert: if MappingKey, verify detect_mapping_key() finds correct key
+// 4. Assertion Patterns:
+//    A. Basic indicator line assertion:
+//       assert_eq!(classify_line_type(line), LineType::MappingKey, "...", line)
+//    B. Key extraction assertion (for MappingKey results):
+//       let info = detect_mapping_key(line, 0);
+//       assert!(info.is_some(), "...");
+//       assert_eq!(info.unwrap().key, expected_key, "...");
+//    C. Continuation line assertion (accepts multiple types):
+//       assert!(result == LineType::MappingKey || result == LineType::Unknown, "...");
+//    D. Tag-like continuation assertion (lines starting with !):
+//       assert_eq!(result, LineType::Tag, "...");
+//    - See Section 12B.2 for continuation line assertion patterns
+//
+// 5. Continuation Line Patterns:
+//    - Content lines (indented, no colon): MappingKey or Unknown
+//    - Lines starting with !: Tag (syntactically correct YAML)
+//    - Lines with ! in middle/end: MappingKey or Unknown
+//    - See Section 12B.2 test_folded_scalar_continuation_lines_with_exclamation_marks()
+//
+// 6. Exclamation Mark Patterns (Section 12B):
+//    - Keys ending with !: "key!:" → should be MappingKey (not Tag)
+//    - Keys with ! in middle: "key!value:" → should be MappingKey
+//    - Multiple !: "key!!value:" → should be MappingKey
+//    - Continuation lines with !: "  text! here" → MappingKey or Unknown
+//    - Continuation starting with !: "  !important" → Tag
+//    - See test_folded_block_scalar_with_exclamation_marks() for examples
 //
 // Example Usage:
 // -------------
 // ```rust
-// let test_cases = generate_folded_scalar_tests!(
-//     level1_indent = "  ",
-//     modifiers = [">", ">-", ">+"],
-//     indent_levels = [1, 2, 3],
-//     keys = ["text", "warning", "error"]
+// let test_cases = generate_folded_explicit_indent_tests!(
+//     "  ",                    // indent: 2 spaces
+//     "level1",               // level_name: descriptive name
+//     [">", ">-", ">+"],      // modifiers: array of modifier patterns
+//     [1, 2, 3, 4, 5],       // indent_nums: array of indent numbers
+//     "test"                  // key_prefix: prefix for generated key names
 // );
 // run_folded_scalar_tests!(test_cases);
 // ```
+//
+// Helper Functions for Dynamic Test Generation:
+// --------------------------------------------
+// - create_folded_scalar_test(indent, key, modifier, indent_num) → creates single tuple
+// - generate_folded_scalar_tests_multi_level(keys, modifiers, indent_levels) → bulk generation
+// - generate_folded_scalar_tests_all_levels(keys, modifiers, indent_nums) → comprehensive
+// - generate_folded_scalar_tests_for_level(level_name, keys, modifiers, indent_nums) → level-specific
+// - See Section 12B.3 for detailed helper function documentation
+//
+// GAPS IN EXPLICIT INDENT COVERAGE
+// --------------------------------
+// As of 2026-07-13, the following explicit indent test patterns are documented but not fully implemented:
+//
+// Folded Scalar (>) Explicit Indent - Level Coverage:
+//   - Level 1 (2-space): COMPLETE - plain, strip, keep all covered (lines 8250, 8359, 12646)
+//   - Level 2 (4-space): NOT IMPLEMENTED - only in "various_levels" tests
+//   - Level 3 (6-space): NOT IMPLEMENTED - only in "various_levels" tests
+//   - Level 4 (8-space): NOT IMPLEMENTED - only in "various_levels" tests
+//   - Tab indentation: PARTIAL - template exists (line 12498), full modifier coverage missing
+//   - Level 0 (no indent): PARTIAL - has all_modifiers and comparison tests (lines 12837, 12869, 12962)
+//
+// Literal Scalar (|) Explicit Indent - Level Coverage:
+//   - All levels: PARTIAL - only "various_levels" tests exist (line 8468)
+//   - Level-specific tests (like level1_2_space): NOT IMPLEMENTED
+//   - Tab indentation for literal scalars: NOT IMPLEMENTED
+//
+// To add coverage for missing levels, copy the skeleton template at line 12759:
+//   test_folded_scalar_explicit_indent_skeleton()
+//
+// Recommended additions (use Section 12B.3 infrastructure pattern):
+//   - test_folded_scalar_plain_explicit_indent_modifiers_at_4_space()
+//   - test_folded_scalar_strip_explicit_indent_modifiers_at_4_space()
+//   - test_folded_scalar_keep_explicit_indent_modifiers_at_4_space()
+//   - (Repeat for 6-space, 8-space, tab)
+//   - test_literal_scalar_plain_explicit_indent_modifiers_at_2_space()
+//   - test_literal_scalar_strip_explicit_indent_modifiers_at_2_space()
+//   - test_literal_scalar_keep_explicit_indent_modifiers_at_2_space()
+//   - (Repeat for 4-space, 6-space, 8-space, tab)
 
 /// Macro to generate folded scalar explicit indent test cases
 ///
