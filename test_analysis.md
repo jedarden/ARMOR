@@ -1,11 +1,25 @@
 # Test Failure Analysis for YAML Syntax Detector
 
+> **Analysis Date:** 2026-07-13
+> **Bead Context:** Step 2 of bf-3o3g6l, building on baseline capture from bf-67kemy
+> **Test Results Source:** test_results.txt
+
+---
+
 ## Executive Summary
 
 **Total Tests Run:** 54
 **Passed:** 51 (94.4%)
 **Failed:** 3 (5.6%)
 **Failure Type:** All assertion failures (panic on `errors.is_empty()` check)
+
+### Failure Categories
+| Category | Count | Tests |
+|----------|-------|-------|
+| **False Positive: Global duplicate detection** | 2 | test_valid_complete_yaml, test_complex_nested_structure |
+| **False Positive: Flow-style parsing** | 1 | test_complex_delimiter_balance |
+
+---
 
 ## Failing Tests
 
