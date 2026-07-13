@@ -724,8 +724,9 @@ pub fn classify_line_type(line: &str) -> LineType {
         return LineType::MappingKey;
     }
 
-    // Fallback to unknown
-    LineType::Unknown
+    // Default to mapping key for lines without special patterns
+    // This handles literal content lines that may contain ! or other characters
+    LineType::MappingKey
 }
 
 /// Calculate indentation level from a line
@@ -1166,13 +1167,26 @@ pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKey
         return None;
     }
 
-    // Skip sequence items (start with -)
-    if trimmed.starts_with('-') {
+    // Handle sequence items that contain mappings (e.g., "- name: value")
+    // These should have their mapping key extracted
+    let line_to_process = if trimmed.starts_with("- ") {
+        // Strip the sequence item prefix to get the mapping content
+        if let Some(rest) = trimmed.strip_prefix("- ") {
+            rest
+        } else {
+            // Lone "-" without space - not a mapping
+            return None;
+        }
+    } else if trimmed == "-" {
+        // Lone dash is just a sequence item, not a mapping
         return None;
-    }
+    } else {
+        // Not a sequence item, process the original line
+        trimmed
+    };
 
     // Skip explicit key indicators (start with ?)
-    if trimmed.starts_with('?') {
+    if line_to_process.starts_with('?') {
         return None;
     }
 
@@ -1183,16 +1197,16 @@ pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKey
 
     // Find the first unquoted colon in the line
     // This skips colons inside quotes and brackets (for IPv6 addresses)
-    let colon_pos = find_unquoted_colon(&trimmed)?;
+    let colon_pos = find_unquoted_colon(line_to_process)?;
 
     // Now check for flow style mappings/sequences more carefully
     // We need to allow URLs with IPv6 addresses like "key: http://[2001:db8::1]:8080"
     // But reject flow style like "key: {value}" or "key: [items]"
 
     // Get the key and value parts
-    let key_part = &trimmed[..colon_pos];
-    let value_part = if colon_pos + 1 < trimmed.len() {
-        Some(trimmed[colon_pos + 1..].trim())
+    let key_part = &line_to_process[..colon_pos];
+    let value_part = if colon_pos + 1 < line_to_process.len() {
+        Some(line_to_process[colon_pos + 1..].trim())
     } else {
         None
     };
@@ -1227,10 +1241,25 @@ pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKey
                         (key.starts_with('"') && key.ends_with('"') && key.len() > 1);
 
     // For non-quoted keys, validate that they only contain valid characters
+    // YAML keys can contain: alphanumeric, and most special characters except
+    // those with special meaning in YAML (colon, braces, brackets, commas, etc.)
     if !is_quoted_key {
         for ch in key.chars() {
-            if !ch.is_alphanumeric() && ch != '_' && ch != '.' && ch != '-' {
+            // Allow alphanumeric and common safe characters
+            if ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == '-' || ch == '!' {
+                continue;
+            }
+            // Reject characters with special YAML meaning
+            if ch == ':' || ch == '{' || ch == '}' || ch == '[' || ch == ']' || ch == ',' {
                 return None; // Invalid key character for unquoted key
+            }
+            // Reject YAML special markers
+            if ch == '&' || ch == '*' || ch == '?' || ch == '|' || ch == '>' || ch == '#' || ch == '%' || ch == '@' || ch == '`' {
+                return None; // These have special meaning in YAML
+            }
+            // Reject whitespace and control characters
+            if ch.is_whitespace() || ch.is_control() {
+                return None; // Invalid key character
             }
         }
     }
@@ -1409,6 +1438,11 @@ impl LineParseResult {
         self.lines.iter().filter(|line| line.is_structural())
     }
 }
+
+// Include the comprehensive exclamation mark tests
+#[cfg(test)]
+#[path = "exclamation_mark_tests.rs"]
+mod exclamation_mark_tests;
 
 #[cfg(test)]
 mod tests {
