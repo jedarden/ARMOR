@@ -9,7 +9,7 @@ use crate::parsers::yaml::{
     ParserConfig,
     syntax_validator::SyntaxValidator,
     syntax_detector::SyntaxDetector,
-    scope::{ScopeStack, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo},
+    scope::{ScopeStack, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, ScopeType},
     line_parser::{calculate_indentation},
     scope::extract_key_context,
 };
@@ -29,19 +29,19 @@ pub trait Parser {
     ///
     /// # Returns
     /// A ParseResult containing the parsed data or an error
-    fn parse_str(&self, content: &str) -> ParseResult<serde_yaml::Value>;
+    fn parse_str(&mut self, content: &str) -> ParseResult<serde_yaml::Value>;
 
     /// Parse YAML content from a byte slice
-    fn parse_bytes(&self, content: &[u8]) -> ParseResult<serde_yaml::Value>;
+    fn parse_bytes(&mut self, content: &[u8]) -> ParseResult<serde_yaml::Value>;
 
     /// Parse YAML content from a file
-    fn parse_file(&self, path: &std::path::Path) -> ParseResult<serde_yaml::Value>;
+    fn parse_file(&mut self, path: &std::path::Path) -> ParseResult<serde_yaml::Value>;
 
     /// Validate YAML content without fully parsing it
-    fn validate_str(&self, content: &str) -> ValidationResult;
+    fn validate_str(&mut self, content: &str) -> ValidationResult;
 
     /// Validate a YAML file without fully parsing it
-    fn validate_file(&self, path: &std::path::Path) -> ValidationResult;
+    fn validate_file(&mut self, path: &std::path::Path) -> ValidationResult;
 
     /// Get the parser configuration
     ///
@@ -60,6 +60,69 @@ pub trait Parser {
     where
         Self: Sized;
 }
+
+    /// Test push_scope adds scope info to stack
+    #[test]
+    fn test_push_scope() {
+        let mut parser = BasicParser::new();
+
+        // Initially scope_info_stack should be empty
+        assert_eq!(parser.scope_info_stack().len(), 0, "Initial scope info stack should be empty");
+
+        // Create a scope info and push it
+        let scope_info = ScopeInfo::block(1);
+        parser.push_scope(scope_info);
+
+        // Verify it was added
+        assert_eq!(parser.scope_info_stack().len(), 1, "Scope info stack should have 1 item after push");
+
+        // Verify the pushed scope info matches
+        let pushed_info = parser.scope_info_stack().last().unwrap();
+        assert_eq!(pushed_info.scope_type(), ScopeType::Block, "Pushed scope should be Block type");
+        assert_eq!(pushed_info.scope_depth(), 1, "Pushed scope should have depth 1");
+    }
+
+    /// Test push_scope multiple times
+    #[test]
+    fn test_push_scope_multiple() {
+        let mut parser = BasicParser::new();
+
+        // Push multiple scopes
+        parser.push_scope(ScopeInfo::block(1));
+        parser.push_scope(ScopeInfo::block(2));
+        parser.push_scope(ScopeInfo::block(3));
+
+        // Verify all were added
+        assert_eq!(parser.scope_info_stack().len(), 3, "Scope info stack should have 3 items");
+
+        // Verify they're in order
+        let scopes = parser.scope_info_stack();
+        assert_eq!(scopes[0].scope_depth(), 1, "First scope should have depth 1");
+        assert_eq!(scopes[1].scope_depth(), 2, "Second scope should have depth 2");
+        assert_eq!(scopes[2].scope_depth(), 3, "Third scope should have depth 3");
+    }
+
+    /// Test push_scope with different scope types
+    #[test]
+    fn test_push_scope_different_types() {
+        let mut parser = BasicParser::new();
+
+        // Push different scope types
+        parser.push_scope(ScopeInfo::root());
+        parser.push_scope(ScopeInfo::block(1));
+        parser.push_scope(ScopeInfo::new(ScopeType::BlockSequence, 2));
+        parser.push_scope(ScopeInfo::new(ScopeType::FlowMapping, 3));
+
+        // Verify all were added
+        assert_eq!(parser.scope_info_stack().len(), 4, "Scope info stack should have 4 items");
+
+        // Verify types
+        let scopes = parser.scope_info_stack();
+        assert_eq!(scopes[0].scope_type(), ScopeType::Root, "First scope should be Root");
+        assert_eq!(scopes[1].scope_type(), ScopeType::Block, "Second scope should be Block");
+        assert_eq!(scopes[2].scope_type(), ScopeType::BlockSequence, "Third scope should be BlockSequence");
+        assert_eq!(scopes[3].scope_type(), ScopeType::FlowMapping, "Fourth scope should be FlowMapping");
+    }
 
 /// Basic YAML parser implementation
 ///
@@ -262,6 +325,31 @@ impl BasicParser {
         &mut self.scope_info_stack
     }
 
+    /// Push scope information onto the scope info stack
+    ///
+    /// This method is called when entering a new scope to track its type and depth.
+    /// The scope info stack provides lightweight metadata about each scope level
+    /// without duplicating the full scope state.
+    ///
+    /// # Arguments
+    ///
+    /// * `scope_info` - The scope information to push onto the stack
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::scope::{ScopeInfo, ScopeType};
+    /// use armor::parsers::yaml::parser::BasicParser;
+    ///
+    /// let mut parser = BasicParser::new();
+    /// let info = ScopeInfo::block(1);
+    /// parser.push_scope(info);
+    /// assert_eq!(parser.scope_info_stack().len(), 1);
+    /// ```
+    pub fn push_scope(&mut self, scope_info: ScopeInfo) {
+        self.scope_info_stack.push(scope_info);
+    }
+
     /// Update scope depth to match the current scope stack state
     ///
     /// This should be called after operations that modify the scope stack
@@ -328,7 +416,7 @@ impl BasicParser {
     /// This method processes YAML content line-by-line, tracking keys within
     /// their proper scope contexts. It returns a list of validation errors
     /// for any duplicate keys found within the same scope.
-    fn detect_duplicate_keys_with_scope(&self, content: &str, scope_stack: &mut ScopeStack) -> Vec<ValidationError> {
+    fn detect_duplicate_keys_with_scope(&mut self, content: &str, scope_stack: &mut ScopeStack) -> Vec<ValidationError> {
         let mut duplicate_errors = Vec::new();
 
         for (line_num, line) in content.lines().enumerate() {
@@ -419,6 +507,9 @@ impl BasicParser {
                                 line_num_1index,
                                 Some(ctx.key_name().to_string())
                             );
+                            // Track scope info on the parser's scope info stack
+                            let scope_info = ScopeInfo::block(scope_stack.depth());
+                            self.push_scope(scope_info);
                         } else {
                             // Indent increased but not a parent key - this is an inline scalar at deeper indent
                             // Just add the key to current scope, don't create a new scope
@@ -485,6 +576,9 @@ impl BasicParser {
                                 line_num_1index,
                                 Some(ctx.key_name().to_string())
                             );
+                            // Track scope info on the parser's scope info stack
+                            let scope_info = ScopeInfo::block(scope_stack.depth());
+                            self.push_scope(scope_info);
                         } else if ctx.is_inline_scalar() {
                             if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
                                 duplicate_errors.push(ValidationError::new(
@@ -525,6 +619,9 @@ impl BasicParser {
                                 line_num_1index,
                                 Some(ctx.key_name().to_string())
                             );
+                            // Track scope info on the parser's scope info stack
+                            let scope_info = ScopeInfo::block(scope_stack.depth());
+                            self.push_scope(scope_info);
                         } else if ctx.is_inline_scalar() {
                             if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
                                 duplicate_errors.push(ValidationError::new(
@@ -548,6 +645,9 @@ impl BasicParser {
                             ctx.key_name(), indent, line_num_1index);
                     }
                     scope_stack.enter_sequence_scope(indent, line_num_1index);
+                    // Track scope info on the parser's scope info stack
+                    let scope_info = ScopeInfo::new(ScopeType::BlockSequence, scope_stack.depth());
+                    self.push_scope(scope_info);
                     // Add the key to the sequence scope
                     if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
                         duplicate_errors.push(ValidationError::new(
@@ -563,6 +663,9 @@ impl BasicParser {
                             indent, line_num_1index);
                     }
                     scope_stack.enter_sequence_scope(indent, line_num_1index);
+                    // Track scope info on the parser's scope info stack
+                    let scope_info = ScopeInfo::new(ScopeType::BlockSequence, scope_stack.depth());
+                    self.push_scope(scope_info);
                 }
             }
         }
@@ -578,7 +681,7 @@ impl Default for BasicParser {
 }
 
 impl Parser for BasicParser {
-    fn parse_str(&self, content: &str) -> ParseResult<serde_yaml::Value> {
+    fn parse_str(&mut self, content: &str) -> ParseResult<serde_yaml::Value> {
         // Create a new scope stack for this parsing operation
         let mut scope_stack = ScopeStack::new(2);
         let mut parse_errors = Vec::new();
@@ -842,7 +945,7 @@ impl Parser for BasicParser {
         }
     }
 
-    fn parse_bytes(&self, content: &[u8]) -> ParseResult<serde_yaml::Value> {
+    fn parse_bytes(&mut self, content: &[u8]) -> ParseResult<serde_yaml::Value> {
         // Convert bytes to string and parse
         match std::str::from_utf8(content) {
             Ok(utf8_content) => self.parse_str(utf8_content),
@@ -850,7 +953,7 @@ impl Parser for BasicParser {
         }
     }
 
-    fn parse_file(&self, path: &std::path::Path) -> ParseResult<serde_yaml::Value> {
+    fn parse_file(&mut self, path: &std::path::Path) -> ParseResult<serde_yaml::Value> {
         // Read file content
         match std::fs::read_to_string(path) {
             Ok(content) => self.parse_str(&content),
@@ -858,7 +961,7 @@ impl Parser for BasicParser {
         }
     }
 
-    fn validate_str(&self, content: &str) -> ValidationResult {
+    fn validate_str(&mut self, content: &str) -> ValidationResult {
         // Create syntax validator based on parser mode
         let validator = if self.config.is_strict() {
             SyntaxValidator::strict()
@@ -894,7 +997,7 @@ impl Parser for BasicParser {
         result
     }
 
-    fn validate_file(&self, path: &std::path::Path) -> ValidationResult {
+    fn validate_file(&mut self, path: &std::path::Path) -> ValidationResult {
         // Read file content
         let content = match std::fs::read_to_string(path) {
             Ok(content) => content,
@@ -944,7 +1047,7 @@ mod integration_tests {
     /// Test parse_str with nested YAML structures
     #[test]
     fn test_parse_str_with_nested_yaml() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
         let yaml = r#"
 services:
   web:
@@ -967,7 +1070,7 @@ services:
     /// Test parse_str with deeply nested YAML
     #[test]
     fn test_parse_str_with_deeply_nested_yaml() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
         let yaml = r#"
 application:
   server:
@@ -991,7 +1094,7 @@ application:
     /// Test that same key in different scopes passes
     #[test]
     fn test_same_key_different_scopes_passes() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         // This YAML has 'host' and 'port' in different scopes
         let yaml = r#"
@@ -1020,7 +1123,7 @@ services:
     /// Test that duplicate key in same scope is detected by strict parser
     #[test]
     fn test_duplicate_key_same_scope_detected() {
-        let parser = BasicParser::strict(); // Strict parser doesn't allow duplicates
+        let mut parser = BasicParser::strict(); // Strict parser doesn't allow duplicates
 
         let yaml = r#"
 config:
@@ -1045,7 +1148,7 @@ config:
     /// Test parse_str with sequence items having same keys
     #[test]
     fn test_parse_str_sequence_items_same_keys() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 items:
@@ -1068,7 +1171,7 @@ items:
     /// Test parse_str with mixed mapping and sequence scopes
     #[test]
     fn test_parse_str_mixed_mapping_sequence() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 services:
@@ -1095,7 +1198,7 @@ services:
     /// Test parse_str with multiple indent transitions
     #[test]
     fn test_parse_str_multiple_indent_transitions() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 level1_a:
@@ -1118,7 +1221,7 @@ level1_b:
     /// Test parse_str with inline scalars (no scope creation)
     #[test]
     fn test_parse_str_inline_scalars() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 name: test
@@ -1137,7 +1240,7 @@ author: example
     /// Test parse_str with empty lines and comments
     #[test]
     fn test_parse_str_with_comments_and_empty_lines() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 # Configuration file
@@ -1162,7 +1265,7 @@ database:
     /// Test validate_str detects duplicate keys
     #[test]
     fn test_validate_str_duplicate_detection() {
-        let parser = BasicParser::strict();
+        let mut parser = BasicParser::strict();
 
         let yaml = r#"
 config:
@@ -1179,7 +1282,7 @@ config:
     /// Test validate_str allows same key in different scopes
     #[test]
     fn test_validate_str_same_key_different_scopes() {
-        let parser = BasicParser::strict();
+        let mut parser = BasicParser::strict();
 
         let yaml = r#"
 section1:
@@ -1197,7 +1300,7 @@ section3:
     /// Test real-world config scenario
     #[test]
     fn test_real_world_config_scenario() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 application:
@@ -1241,7 +1344,7 @@ logging:
     /// Test parse_str with document markers
     #[test]
     fn test_parse_str_with_document_markers() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 ---
@@ -1260,7 +1363,7 @@ value: 123
     /// Test scope tracking with complex nested structure
     #[test]
     fn test_scope_tracking_complex_nesting() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 outer:
@@ -1284,7 +1387,7 @@ outer:
     /// Test that parent key followed by nested content creates proper scope
     #[test]
     fn test_parent_key_creates_scope() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 parent:
@@ -1305,7 +1408,7 @@ parent:
     /// Test sequence scope isolation
     #[test]
     fn test_sequence_scope_isolation() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 items:
@@ -1334,7 +1437,7 @@ items:
     /// Test validation with multiple duplicates in different scopes
     #[test]
     fn test_validate_multiple_scopes_with_duplicates() {
-        let parser = BasicParser::strict();
+        let mut parser = BasicParser::strict();
 
         let yaml = r#"
 scope1:
@@ -1357,7 +1460,7 @@ scope3:
     /// Test parse_str with various indentation patterns
     #[test]
     fn test_parse_str_various_indentation_patterns() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 root:
@@ -1379,7 +1482,7 @@ root:
     /// Test that empty document parses successfully
     #[test]
     fn test_parse_empty_document() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = "";
 
@@ -1391,7 +1494,7 @@ root:
     /// Test that document with only comments parses successfully
     #[test]
     fn test_parse_only_comments() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 # Comment 1
@@ -1406,7 +1509,7 @@ root:
     /// Test validation error message quality
     #[test]
     fn test_validation_error_message_quality() {
-        let parser = BasicParser::strict();
+        let mut parser = BasicParser::strict();
 
         let yaml = r#"
 config:
@@ -1431,7 +1534,7 @@ config:
     /// Test blank line with decreased indent (scope should exit properly)
     #[test]
     fn test_blank_line_with_decreased_indent() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 root:
@@ -1452,7 +1555,7 @@ key2: value2
     /// Test blank line at same indent as current scope
     #[test]
     fn test_blank_line_same_indent() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 root:
@@ -1475,7 +1578,7 @@ root:
     /// Test multiple blank lines at various indents
     #[test]
     fn test_multiple_blank_lines_various_indents() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 level1:
@@ -1499,7 +1602,7 @@ level3: value3
     /// Test comment at different indent (should not affect scope)
     #[test]
     fn test_comment_different_indent() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 root:
@@ -1523,7 +1626,7 @@ key3: value3
     /// Test blank line followed by key at same indent
     #[test]
     fn test_blank_line_key_same_indent() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 services:
@@ -1547,7 +1650,7 @@ services:
     /// Test indent transition without key (just blank line)
     #[test]
     fn test_indent_transition_blank_line_only() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 level1:
@@ -1569,7 +1672,7 @@ key3: value3
     /// Test scope consistency after indent changes on blank lines
     #[test]
     fn test_scope_consistency_after_blank_indents() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 outer1:
@@ -1597,7 +1700,7 @@ outer2:
     /// Test that blank lines don't create false duplicate key errors
     #[test]
     fn test_blank_lines_no_false_duplicates() {
-        let parser = BasicParser::strict();
+        let mut parser = BasicParser::strict();
 
         let yaml = r#"
 section:
@@ -1617,7 +1720,7 @@ section2:
     /// Test complex nesting with blank lines
     #[test]
     fn test_complex_nesting_blank_lines() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 app:
@@ -1652,7 +1755,7 @@ app:
     /// Test that increased indent on blank line doesn't enter scope
     #[test]
     fn test_increased_indent_blank_line_no_scope() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 key1: value1
@@ -1668,7 +1771,7 @@ key2: value2
     /// Test blank lines in sequence contexts
     #[test]
     fn test_blank_lines_in_sequence() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         let yaml = r#"
 items:
@@ -1989,7 +2092,7 @@ e: value
     /// Test scope depth accessor
     #[test]
     fn test_scope_depth_accessor() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         // New parser starts at root scope (depth 1)
         assert_eq!(parser.scope_depth(), 1, "New parser should start at depth 1");
@@ -2000,7 +2103,7 @@ e: value
     /// Test scope stack accessor
     #[test]
     fn test_scope_stack_accessor() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         // Should be able to access scope stack
         let stack = parser.scope_stack();
@@ -2010,7 +2113,7 @@ e: value
     /// Test current scope accessor
     #[test]
     fn test_current_scope_accessor() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         // Should be able to access current scope
         let current = parser.current_scope();
@@ -2021,7 +2124,7 @@ e: value
     /// Test parent scope accessors
     #[test]
     fn test_parent_scope_accessors() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         // At root, there should be no parent
         assert!(parser.immediate_parent_scope().is_none(),
@@ -2035,7 +2138,7 @@ e: value
     /// Test scope hierarchy path
     #[test]
     fn test_scope_hierarchy_path() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         // At root, path should be empty
         let path = parser.scope_path();
@@ -2161,7 +2264,7 @@ a:
     /// Test parent scope at different offsets
     #[test]
     fn test_parent_scope_at_different_offsets() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         // At root, all parent queries should return None
         assert!(parser.parent_scope(0).is_none(), "Offset 0 should return None");
@@ -2172,11 +2275,74 @@ a:
     /// Test scope hierarchy with multiple levels
     #[test]
     fn test_scope_hierarchy_multiple_levels() {
-        let parser = BasicParser::new();
+        let mut parser = BasicParser::new();
 
         // Even at root, we should be able to get the hierarchy
         let hierarchy = parser.scope_hierarchy();
         assert!(!hierarchy.is_empty(), "Hierarchy should contain at least root scope");
         assert_eq!(hierarchy.len(), 1, "Root hierarchy should have exactly 1 scope");
+    }
+
+    /// Test push_scope adds scope info to stack
+    #[test]
+    fn test_push_scope() {
+        let mut parser = BasicParser::new();
+
+        // Initially scope_info_stack should be empty
+        assert_eq!(parser.scope_info_stack().len(), 0, "Initial scope info stack should be empty");
+
+        // Create a scope info and push it
+        let scope_info = ScopeInfo::block(1);
+        parser.push_scope(scope_info);
+
+        // Verify it was added
+        assert_eq!(parser.scope_info_stack().len(), 1, "Scope info stack should have 1 item after push");
+
+        // Verify the pushed scope info matches
+        let pushed_info = parser.scope_info_stack().last().unwrap();
+        assert_eq!(pushed_info.scope_type(), ScopeType::Block, "Pushed scope should be Block type");
+        assert_eq!(pushed_info.scope_depth(), 1, "Pushed scope should have depth 1");
+    }
+
+    /// Test push_scope multiple times
+    #[test]
+    fn test_push_scope_multiple() {
+        let mut parser = BasicParser::new();
+
+        // Push multiple scopes
+        parser.push_scope(ScopeInfo::block(1));
+        parser.push_scope(ScopeInfo::block(2));
+        parser.push_scope(ScopeInfo::block(3));
+
+        // Verify all were added
+        assert_eq!(parser.scope_info_stack().len(), 3, "Scope info stack should have 3 items");
+
+        // Verify they're in order
+        let scopes = parser.scope_info_stack();
+        assert_eq!(scopes[0].scope_depth(), 1, "First scope should have depth 1");
+        assert_eq!(scopes[1].scope_depth(), 2, "Second scope should have depth 2");
+        assert_eq!(scopes[2].scope_depth(), 3, "Third scope should have depth 3");
+    }
+
+    /// Test push_scope with different scope types
+    #[test]
+    fn test_push_scope_different_types() {
+        let mut parser = BasicParser::new();
+
+        // Push different scope types
+        parser.push_scope(ScopeInfo::root());
+        parser.push_scope(ScopeInfo::block(1));
+        parser.push_scope(ScopeInfo::new(ScopeType::BlockSequence, 2));
+        parser.push_scope(ScopeInfo::new(ScopeType::FlowMapping, 3));
+
+        // Verify all were added
+        assert_eq!(parser.scope_info_stack().len(), 4, "Scope info stack should have 4 items");
+
+        // Verify types
+        let scopes = parser.scope_info_stack();
+        assert_eq!(scopes[0].scope_type(), ScopeType::Root, "First scope should be Root");
+        assert_eq!(scopes[1].scope_type(), ScopeType::Block, "Second scope should be Block");
+        assert_eq!(scopes[2].scope_type(), ScopeType::BlockSequence, "Third scope should be BlockSequence");
+        assert_eq!(scopes[3].scope_type(), ScopeType::FlowMapping, "Fourth scope should be FlowMapping");
     }
 }
