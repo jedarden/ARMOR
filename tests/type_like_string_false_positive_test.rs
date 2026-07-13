@@ -7170,6 +7170,224 @@ fn test_folded_scalar_basic_modifiers_at_various_indentation_levels() {
 }
 
 #[test]
+fn test_folded_scalar_explicit_indent_modifiers_at_various_levels() {
+    // Test folded scalars with explicit indent modifiers: >n, >-n, >+n for n=1-9
+    // Tested at various base indentation levels: 2-space, 4-space, 6-space, 8-space, tab
+    // This provides comprehensive coverage of explicit indent specification for folded scalars
+
+    let test_cases = vec![
+        // ===== Level 1: 2-space indentation with explicit indent modifiers =====
+        // Plain >n (n=1-9)
+        ("  text1: >1", "text1", LineType::MappingKey),
+        ("  text2: >2", "text2", LineType::MappingKey),
+        ("  text3: >3", "text3", LineType::MappingKey),
+        ("  text4: >4", "text4", LineType::MappingKey),
+        ("  text5: >5", "text5", LineType::MappingKey),
+        ("  text6: >6", "text6", LineType::MappingKey),
+        ("  text7: >7", "text7", LineType::MappingKey),
+        ("  text8: >8", "text8", LineType::MappingKey),
+        ("  text9: >9", "text9", LineType::MappingKey),
+
+        // Strip modifier >-n (n=1-9)
+        ("  strip1: >-1", "strip1", LineType::MappingKey),
+        ("  strip2: >-2", "strip2", LineType::MappingKey),
+        ("  strip3: >-3", "strip3", LineType::MappingKey),
+        ("  strip4: >-4", "strip4", LineType::MappingKey),
+        ("  strip5: >-5", "strip5", LineType::MappingKey),
+        ("  strip6: >-6", "strip6", LineType::MappingKey),
+        ("  strip7: >-7", "strip7", LineType::MappingKey),
+        ("  strip8: >-8", "strip8", LineType::MappingKey),
+        ("  strip9: >-9", "strip9", LineType::MappingKey),
+
+        // Keep modifier >+n (n=1-9)
+        ("  keep1: >+1", "keep1", LineType::MappingKey),
+        ("  keep2: >+2", "keep2", LineType::MappingKey),
+        ("  keep3: >+3", "keep3", LineType::MappingKey),
+        ("  keep4: >+4", "keep4", LineType::MappingKey),
+        ("  keep5: >+5", "keep5", LineType::MappingKey),
+        ("  keep6: >+6", "keep6", LineType::MappingKey),
+        ("  keep7: >+7", "keep7", LineType::MappingKey),
+        ("  keep8: >+8", "keep8", LineType::MappingKey),
+        ("  keep9: >+9", "keep9", LineType::MappingKey),
+
+        // Keys with exclamation marks at Level 1
+        ("  key!1: >1", "key!1", LineType::MappingKey),
+        ("  warn!2: >-2", "warn!2", LineType::MappingKey),
+        ("  error!3: >+3", "error!3", LineType::MappingKey),
+        ("  test!4: >4", "test!4", LineType::MappingKey),
+        ("  data!5: >-5", "data!5", LineType::MappingKey),
+        ("  info!6: >+6", "info!6", LineType::MappingKey),
+
+        // ===== Level 2: 4-space indentation with explicit indent modifiers =====
+        // Plain >n (n=1-9)
+        ("    level2_1: >1", "level2_1", LineType::MappingKey),
+        ("    level2_2: >2", "level2_2", LineType::MappingKey),
+        ("    level2_3: >3", "level2_3", LineType::MappingKey),
+        ("    level2_4: >4", "level2_4", LineType::MappingKey),
+        ("    level2_5: >5", "level2_5", LineType::MappingKey),
+        ("    level2_6: >6", "level2_6", LineType::MappingKey),
+        ("    level2_7: >7", "level2_7", LineType::MappingKey),
+        ("    level2_8: >8", "level2_8", LineType::MappingKey),
+        ("    level2_9: >9", "level2_9", LineType::MappingKey),
+
+        // Strip modifier >-n (n=1-9)
+        ("    nested_strip1: >-1", "nested_strip1", LineType::MappingKey),
+        ("    nested_strip2: >-2", "nested_strip2", LineType::MappingKey),
+        ("    nested_strip3: >-3", "nested_strip3", LineType::MappingKey),
+        ("    nested_strip4: >-4", "nested_strip4", LineType::MappingKey),
+        ("    nested_strip5: >-5", "nested_strip5", LineType::MappingKey),
+        ("    nested_strip6: >-6", "nested_strip6", LineType::MappingKey),
+        ("    nested_strip7: >-7", "nested_strip7", LineType::MappingKey),
+        ("    nested_strip8: >-8", "nested_strip8", LineType::MappingKey),
+        ("    nested_strip9: >-9", "nested_strip9", LineType::MappingKey),
+
+        // Keep modifier >+n (n=1-9)
+        ("    nested_keep1: >+1", "nested_keep1", LineType::MappingKey),
+        ("    nested_keep2: >+2", "nested_keep2", LineType::MappingKey),
+        ("    nested_keep3: >+3", "nested_keep3", LineType::MappingKey),
+        ("    nested_keep4: >+4", "nested_keep4", LineType::MappingKey),
+        ("    nested_keep5: >+5", "nested_keep5", LineType::MappingKey),
+        ("    nested_keep6: >+6", "nested_keep6", LineType::MappingKey),
+        ("    nested_keep7: >+7", "nested_keep7", LineType::MappingKey),
+        ("    nested_keep8: >+8", "nested_keep8", LineType::MappingKey),
+        ("    nested_keep9: >+9", "nested_keep9", LineType::MappingKey),
+
+        // Keys with exclamation marks at Level 2
+        ("    deep!key1: >1", "deep!key1", LineType::MappingKey),
+        ("    deep!warn2: >-2", "deep!warn2", LineType::MappingKey),
+        ("    deep!error3: >+3", "deep!error3", LineType::MappingKey),
+        ("    deep!test4: >4", "deep!test4", LineType::MappingKey),
+        ("    deep!data5: >-5", "deep!data5", LineType::MappingKey),
+        ("    deep!info6: >+6", "deep!info6", LineType::MappingKey),
+
+        // ===== Level 3: 6-space indentation with explicit indent modifiers =====
+        // Plain >n (n=1-9)
+        ("      level3_1: >1", "level3_1", LineType::MappingKey),
+        ("      level3_2: >2", "level3_2", LineType::MappingKey),
+        ("      level3_3: >3", "level3_3", LineType::MappingKey),
+        ("      level3_4: >4", "level3_4", LineType::MappingKey),
+        ("      level3_5: >5", "level3_5", LineType::MappingKey),
+        ("      level3_6: >6", "level3_6", LineType::MappingKey),
+        ("      level3_7: >7", "level3_7", LineType::MappingKey),
+        ("      level3_8: >8", "level3_8", LineType::MappingKey),
+        ("      level3_9: >9", "level3_9", LineType::MappingKey),
+
+        // Strip modifier >-n (n=1-9) - sample
+        ("      deeper_strip1: >-1", "deeper_strip1", LineType::MappingKey),
+        ("      deeper_strip3: >-3", "deeper_strip3", LineType::MappingKey),
+        ("      deeper_strip5: >-5", "deeper_strip5", LineType::MappingKey),
+        ("      deeper_strip7: >-7", "deeper_strip7", LineType::MappingKey),
+        ("      deeper_strip9: >-9", "deeper_strip9", LineType::MappingKey),
+
+        // Keep modifier >+n (n=1-9) - sample
+        ("      deeper_keep1: >+1", "deeper_keep1", LineType::MappingKey),
+        ("      deeper_keep3: >+3", "deeper_keep3", LineType::MappingKey),
+        ("      deeper_keep5: >+5", "deeper_keep5", LineType::MappingKey),
+        ("      deeper_keep7: >+7", "deeper_keep7", LineType::MappingKey),
+        ("      deeper_keep9: >+9", "deeper_keep9", LineType::MappingKey),
+
+        // Keys with exclamation marks at Level 3
+        ("      very!deep!1: >1", "very!deep!1", LineType::MappingKey),
+        ("      very!deep!2: >-2", "very!deep!2", LineType::MappingKey),
+        ("      very!deep!3: >+3", "very!deep!3", LineType::MappingKey),
+        ("      very!deep!4: >4", "very!deep!4", LineType::MappingKey),
+        ("      very!deep!5: >-5", "very!deep!5", LineType::MappingKey),
+        ("      very!deep!6: >+6", "very!deep!6", LineType::MappingKey),
+
+        // ===== Level 4: 8-space indentation with explicit indent modifiers =====
+        // Plain >n (n=1-9) - sample
+        ("        level4_1: >1", "level4_1", LineType::MappingKey),
+        ("        level4_3: >3", "level4_3", LineType::MappingKey),
+        ("        level4_5: >5", "level4_5", LineType::MappingKey),
+        ("        level4_7: >7", "level4_7", LineType::MappingKey),
+        ("        level4_9: >9", "level4_9", LineType::MappingKey),
+
+        // Strip modifier >-n (n=1-9) - sample
+        ("        deepest_strip1: >-1", "deepest_strip1", LineType::MappingKey),
+        ("        deepest_strip3: >-3", "deepest_strip3", LineType::MappingKey),
+        ("        deepest_strip5: >-5", "deepest_strip5", LineType::MappingKey),
+        ("        deepest_strip7: >-7", "deepest_strip7", LineType::MappingKey),
+        ("        deepest_strip9: >-9", "deepest_strip9", LineType::MappingKey),
+
+        // Keep modifier >+n (n=1-9) - sample
+        ("        deepest_keep1: >+1", "deepest_keep1", LineType::MappingKey),
+        ("        deepest_keep3: >+3", "deepest_keep3", LineType::MappingKey),
+        ("        deepest_keep5: >+5", "deepest_keep5", LineType::MappingKey),
+        ("        deepest_keep7: >+7", "deepest_keep7", LineType::MappingKey),
+        ("        deepest_keep9: >+9", "deepest_keep9", LineType::MappingKey),
+
+        // Keys with exclamation marks at Level 4
+        ("        super!deep!1: >1", "super!deep!1", LineType::MappingKey),
+        ("        super!deep!2: >-2", "super!deep!2", LineType::MappingKey),
+        ("        super!deep!3: >+3", "super!deep!3", LineType::MappingKey),
+        ("        super!deep!4: >4", "super!deep!4", LineType::MappingKey),
+        ("        super!deep!5: >-5", "super!deep!5", LineType::MappingKey),
+        ("        super!deep!6: >+6", "super!deep!6", LineType::MappingKey),
+
+        // ===== Tab indentation with explicit indent modifiers =====
+        // Plain >n (n=1-9) - sample
+        ("\ttab_1: >1", "tab_1", LineType::MappingKey),
+        ("\ttab_3: >3", "tab_3", LineType::MappingKey),
+        ("\ttab_5: >5", "tab_5", LineType::MappingKey),
+        ("\ttab_7: >7", "tab_7", LineType::MappingKey),
+        ("\ttab_9: >9", "tab_9", LineType::MappingKey),
+
+        // Strip modifier >-n (n=1-9) - sample
+        ("\ttab_strip1: >-1", "tab_strip1", LineType::MappingKey),
+        ("\ttab_strip3: >-3", "tab_strip3", LineType::MappingKey),
+        ("\ttab_strip5: >-5", "tab_strip5", LineType::MappingKey),
+        ("\ttab_strip7: >-7", "tab_strip7", LineType::MappingKey),
+        ("\ttab_strip9: >-9", "tab_strip9", LineType::MappingKey),
+
+        // Keep modifier >+n (n=1-9) - sample
+        ("\ttab_keep1: >+1", "tab_keep1", LineType::MappingKey),
+        ("\ttab_keep3: >+3", "tab_keep3", LineType::MappingKey),
+        ("\ttab_keep5: >+5", "tab_keep5", LineType::MappingKey),
+        ("\ttab_keep7: >+7", "tab_keep7", LineType::MappingKey),
+        ("\ttab_keep9: >+9", "tab_keep9", LineType::MappingKey),
+
+        // Keys with exclamation marks at tab level
+        ("\ttab!key1: >1", "tab!key1", LineType::MappingKey),
+        ("\ttab!warn2: >-2", "tab!warn2", LineType::MappingKey),
+        ("\ttab!error3: >+3", "tab!error3", LineType::MappingKey),
+        ("\ttab!test4: >4", "tab!test4", LineType::MappingKey),
+        ("\ttab!data5: >-5", "tab!data5", LineType::MappingKey),
+        ("\ttab!info6: >+6", "tab!info6", LineType::MappingKey),
+
+        // ===== Mixed indentation (tab + spaces) =====
+        ("\t  mixed1: >1", "mixed1", LineType::MappingKey),
+        ("\t  mixed2: >2", "mixed2", LineType::MappingKey),
+        ("\t  mixed3: >-3", "mixed3", LineType::MappingKey),
+        ("\t    mixed4: >4", "mixed4", LineType::MappingKey),
+        ("\t    mixed5: >-5", "mixed5", LineType::MappingKey),
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Folded scalar explicit indent modifier test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for folded scalar with explicit indent modifier: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Key mismatch for folded scalar with explicit indent modifier: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+}
+#[test]
 fn test_literal_scalar_explicit_indent_modifiers_at_various_levels() {
     // Test literal scalars with explicit indent modifiers: |n, |-n, |+n for n=1-9
     // Tested at various base indentation levels: 2-space, 4-space, 6-space, 8-space, tab
