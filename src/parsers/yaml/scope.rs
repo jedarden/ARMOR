@@ -72,6 +72,330 @@ use log::warn as log_warn;
 #[cfg(debug_assertions)]
 use log::trace as log_trace;
 
+/// Classification of scope types in YAML documents
+///
+/// This enum represents the different types of scopes that can exist
+/// during YAML parsing, helping to distinguish between block-style
+/// mappings, flow-style collections, sequences, and document root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeType {
+    /// Block-style mapping scope (indentation-based nesting)
+    ///
+    /// This is the most common YAML scope type, where nesting is indicated
+    /// by increased indentation. For example:
+    /// ```yaml
+    /// parent:
+    ///   child: value
+    /// ```
+    Block,
+
+    /// Flow-style mapping scope (inline `{key: value}` syntax)
+    ///
+    /// Flow-style mappings use curly braces and can span multiple lines
+    /// or be entirely on a single line. For example:
+    /// ```yaml
+    /// # Single line
+    /// mapping: {key1: value1, key2: value2}
+    ///
+    /// # Multi-line
+    /// mapping: {
+    ///   key1: value1,
+    ///   key2: value2
+    /// }
+    /// ```
+    FlowMapping,
+
+    /// Flow-style sequence scope (inline `[item1, item2]` syntax)
+    ///
+    /// Flow-style sequences use square brackets. For example:
+    /// ```yaml
+    /// items: [first, second, third]
+    /// ```
+    FlowSequence,
+
+    /// Block-style sequence scope (dash-prefixed items)
+    ///
+    /// Block sequences use dashes to indicate items, with indentation
+    /// showing nesting. For example:
+    /// ```yaml
+    /// items:
+    ///   - first
+    ///   - second
+    ///   - third
+    /// ```
+    BlockSequence,
+
+    /// Document root scope
+    ///
+    /// The top-level scope of a YAML document.
+    Root,
+}
+
+impl fmt::Display for ScopeType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Block => write!(f, "block"),
+            Self::FlowMapping => write!(f, "flow-mapping"),
+            Self::FlowSequence => write!(f, "flow-sequence"),
+            Self::BlockSequence => write!(f, "block-sequence"),
+            Self::Root => write!(f, "root"),
+        }
+    }
+}
+
+/// Information about a scope in the scope stack
+///
+/// `ScopeInfo` captures metadata about scopes during YAML parsing.
+/// Unlike the `Scope` struct which tracks the contents of a scope (keys,
+/// parent key, etc.), `ScopeInfo` tracks the scope's structural properties:
+/// its type and its depth in the nesting hierarchy.
+///
+/// # Purpose
+///
+/// This struct serves as a lightweight descriptor for stack entries,
+/// enabling efficient scope classification and hierarchy tracking without
+/// duplicating the full scope state. It is particularly useful for:
+///
+/// - Determining scope type transitions (block → flow, etc.)
+/// - Tracking nesting depth for validation and diagnostics
+/// - Providing context in error messages
+/// - Optimizing scope stack operations
+///
+/// # Fields
+///
+/// - `scope_type`: The type of scope (block, flow, sequence, root)
+/// - `scope_depth`: The nesting depth (0 for root, 1 for top-level keys, etc.)
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::scope::{ScopeInfo, ScopeType};
+///
+/// // Create a block scope at depth 2
+/// let info = ScopeInfo::new(ScopeType::Block, 2);
+/// assert_eq!(info.scope_type(), ScopeType::Block);
+/// assert_eq!(info.scope_depth(), 2);
+///
+/// // Create a flow mapping at depth 1
+/// let flow_info = ScopeInfo::new(ScopeType::FlowMapping, 1);
+/// assert_eq!(flow_info.scope_type(), ScopeType::FlowMapping);
+/// assert_eq!(flow_info.scope_depth(), 1);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeInfo {
+    /// The type of this scope (block, flow, sequence, root)
+    scope_type: ScopeType,
+    /// The nesting depth of this scope (0-based, root = 0)
+    scope_depth: usize,
+}
+
+impl ScopeInfo {
+    /// Create a new scope info
+    ///
+    /// # Arguments
+    ///
+    /// * `scope_type` - The type of scope
+    /// * `scope_depth` - The nesting depth (0 for root, 1 for top-level keys, etc.)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::scope::{ScopeInfo, ScopeType};
+    ///
+    /// let info = ScopeInfo::new(ScopeType::Block, 1);
+    /// assert_eq!(info.scope_type(), ScopeType::Block);
+    /// assert_eq!(info.scope_depth(), 1);
+    /// ```
+    pub fn new(scope_type: ScopeType, scope_depth: usize) -> Self {
+        Self {
+            scope_type,
+            scope_depth,
+        }
+    }
+
+    /// Create a root scope info (depth 0)
+    ///
+    /// # Returns
+    ///
+    /// A `ScopeInfo` representing the document root
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::scope::ScopeInfo;
+    ///
+    /// let root = ScopeInfo::root();
+    /// assert_eq!(root.scope_depth(), 0);
+    /// ```
+    pub fn root() -> Self {
+        Self {
+            scope_type: ScopeType::Root,
+            scope_depth: 0,
+        }
+    }
+
+    /// Create a block scope info
+    ///
+    /// # Arguments
+    ///
+    /// * `scope_depth` - The nesting depth
+    ///
+    /// # Returns
+    ///
+    /// A `ScopeInfo` representing a block-style scope
+    pub fn block(scope_depth: usize) -> Self {
+        Self {
+            scope_type: ScopeType::Block,
+            scope_depth,
+        }
+    }
+
+    /// Create a flow mapping scope info
+    ///
+    /// # Arguments
+    ///
+    /// * `scope_depth` - The nesting depth
+    ///
+    /// # Returns
+    ///
+    /// A `ScopeInfo` representing a flow-style mapping scope
+    pub fn flow_mapping(scope_depth: usize) -> Self {
+        Self {
+            scope_type: ScopeType::FlowMapping,
+            scope_depth,
+        }
+    }
+
+    /// Create a block sequence scope info
+    ///
+    /// # Arguments
+    ///
+    /// * `scope_depth` - The nesting depth
+    ///
+    /// # Returns
+    ///
+    /// A `ScopeInfo` representing a block-style sequence scope
+    pub fn block_sequence(scope_depth: usize) -> Self {
+        Self {
+            scope_type: ScopeType::BlockSequence,
+            scope_depth,
+        }
+    }
+
+    /// Get the scope type
+    ///
+    /// # Returns
+    ///
+    /// The `ScopeType` of this scope
+    pub fn scope_type(&self) -> ScopeType {
+        self.scope_type
+    }
+
+    /// Get the scope depth
+    ///
+    /// # Returns
+    ///
+    /// The nesting depth of this scope (0 for root, 1 for top-level, etc.)
+    pub fn scope_depth(&self) -> usize {
+        self.scope_depth
+    }
+
+    /// Check if this is a root scope
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is the document root scope
+    pub fn is_root(&self) -> bool {
+        self.scope_type == ScopeType::Root
+    }
+
+    /// Check if this is a block-style scope
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is a block-style mapping or sequence scope
+    pub fn is_block(&self) -> bool {
+        matches!(self.scope_type, ScopeType::Block | ScopeType::BlockSequence)
+    }
+
+    /// Check if this is a flow-style scope
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is a flow-style mapping or sequence scope
+    pub fn is_flow(&self) -> bool {
+        matches!(self.scope_type, ScopeType::FlowMapping | ScopeType::FlowSequence)
+    }
+
+    /// Check if this is a sequence scope
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is a sequence scope (block or flow)
+    pub fn is_sequence(&self) -> bool {
+        matches!(self.scope_type, ScopeType::BlockSequence | ScopeType::FlowSequence)
+    }
+
+    /// Check if this is a mapping scope
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is a mapping scope (block or flow)
+    pub fn is_mapping(&self) -> bool {
+        matches!(self.scope_type, ScopeType::Block | ScopeType::FlowMapping)
+    }
+
+    /// Set the scope type
+    ///
+    /// # Arguments
+    ///
+    /// * `scope_type` - The new scope type
+    pub fn set_scope_type(&mut self, scope_type: ScopeType) {
+        self.scope_type = scope_type;
+    }
+
+    /// Set the scope depth
+    ///
+    /// # Arguments
+    ///
+    /// * `scope_depth` - The new scope depth
+    pub fn set_scope_depth(&mut self, scope_depth: usize) {
+        self.scope_depth = scope_depth;
+    }
+
+    /// Increment the scope depth by 1
+    ///
+    /// This is useful when entering a nested scope.
+    pub fn increment_depth(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    /// Decrement the scope depth by 1
+    ///
+    /// This is useful when exiting to a parent scope.
+    /// Will not go below 0.
+    pub fn decrement_depth(&mut self) {
+        if self.scope_depth > 0 {
+            self.scope_depth -= 1;
+        }
+    }
+
+    /// Get a description of this scope info
+    ///
+    /// # Returns
+    ///
+    /// A human-readable description of the scope
+    pub fn describe(&self) -> String {
+        format!("ScopeInfo(type={}, depth={})", self.scope_type, self.scope_depth)
+    }
+}
+
+impl fmt::Display for ScopeInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ScopeInfo(type={}, depth={})", self.scope_type, self.scope_depth)
+    }
+}
+
 /// Classification of indent transition types
 ///
 /// This enum represents the three possible types of indent transitions
@@ -362,7 +686,7 @@ impl ScopeStack {
     /// ```
     pub fn new(base_indent: usize) -> Self {
         Self {
-            scopes: vec![Scope::new(0, 0, None)], // Root scope
+            scopes: Vec::new(), // Empty stack - initialized with no scopes
             base_indent,
             sequence_item_counter: 0,
             indent_transitions: Vec::new(),
@@ -372,20 +696,20 @@ impl ScopeStack {
 
     /// Get the current scope (top of stack)
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics if the scope stack is empty (should never happen in normal operation)
-    pub fn current_scope(&mut self) -> &mut Scope {
-        self.scopes.last_mut().expect("Scope stack should never be empty")
+    /// `Some(&mut Scope)` if the stack has at least one scope, `None` if empty
+    pub fn current_scope(&mut self) -> Option<&mut Scope> {
+        self.scopes.last_mut()
     }
 
     /// Get the current scope as an immutable reference
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics if the scope stack is empty
-    pub fn current_scope_ref(&self) -> &Scope {
-        self.scopes.last().expect("Scope stack should never be empty")
+    /// `Some(&Scope)` if the stack has at least one scope, `None` if empty
+    pub fn current_scope_ref(&self) -> Option<&Scope> {
+        self.scopes.last()
     }
 
     /// Get scope for a specific indentation level
@@ -735,11 +1059,16 @@ impl ScopeStack {
     /// assert!(stack.add_key("host", 2).is_err());
     /// ```
     pub fn add_key(&mut self, key: &str, line: usize) -> Result<(), DuplicateKeyError> {
+        // Auto-create root scope if stack is empty
+        if self.scopes.is_empty() {
+            self.scopes.push(Scope::new(0, 0, None));
+        }
+
         let scope_path = self.get_scope_path();
 
         // Check if key exists before adding
         if self.contains_key(key) {
-            let scope = self.current_scope();
+            let scope = self.current_scope().unwrap();
             Err(DuplicateKeyError {
                 key: key.to_string(),
                 scope_path,
@@ -747,7 +1076,7 @@ impl ScopeStack {
                 duplicate_line: line,
             })
         } else {
-            let scope = self.current_scope();
+            let scope = self.current_scope().unwrap();
             scope.add_key(key);
             Ok(())
         }
@@ -786,7 +1115,7 @@ impl ScopeStack {
     ///
     /// # Returns
     ///
-    /// The indentation level of the current scope
+    /// The indentation level of the current scope, or 0 if stack is empty
     pub fn current_indent(&self) -> usize {
         self.scopes.last()
             .map(|scope| scope.indent_level)
@@ -798,11 +1127,12 @@ impl ScopeStack {
         self.scopes.len()
     }
 
-    /// Clear all scopes and reset to root
+    /// Clear all scopes and reset to empty
     ///
-    /// This resets the scope stack to its initial state with only the root scope.
+    /// This resets the scope stack to its initial state with no scopes.
+    /// The next add_key() will auto-create a root scope.
     pub fn reset(&mut self) {
-        self.scopes = vec![Scope::new(0, 0, None)];
+        self.scopes.clear();
         self.clear_indent_transitions();
     }
 
@@ -1940,7 +2270,8 @@ mod tests {
     fn test_exit_one_level_nested_scopes() {
         let mut stack = ScopeStack::new(2);
 
-        // Enter root scope (already exists by default)
+        // Auto-create root scope by adding a key
+        assert!(stack.add_key("root_key", 0).is_ok());
         assert_eq!(stack.depth(), 1);
         assert_eq!(stack.current_indent(), 0);
 
@@ -1973,7 +2304,8 @@ mod tests {
     fn test_exit_one_level_at_root() {
         let mut stack = ScopeStack::new(2);
 
-        // Already at root scope
+        // Auto-create root scope
+        assert!(stack.add_key("root_key", 0).is_ok());
         assert_eq!(stack.depth(), 1);
         assert_eq!(stack.current_indent(), 0);
 
@@ -1987,6 +2319,11 @@ mod tests {
     #[test]
     fn test_exit_one_level_single_level_nesting() {
         let mut stack = ScopeStack::new(2);
+
+        // Auto-create root scope
+        assert!(stack.add_key("root_key", 0).is_ok());
+        assert_eq!(stack.depth(), 1);
+        assert_eq!(stack.current_indent(), 0);
 
         // Enter a single level of nesting
         stack.enter_scope(2, 1, Some("level1".to_string()));
@@ -2008,6 +2345,9 @@ mod tests {
     #[test]
     fn test_exit_one_level_deeply_nested() {
         let mut stack = ScopeStack::new(2);
+
+        // Auto-create root scope
+        assert!(stack.add_key("root_key", 0).is_ok());
 
         // Create deeply nested structure (5 levels)
         stack.enter_scope(2, 1, Some("level1".to_string()));
@@ -2061,6 +2401,9 @@ mod tests {
     fn test_exit_one_level_with_sequence_scope() {
         let mut stack = ScopeStack::new(2);
 
+        // Auto-create root scope
+        assert!(stack.add_key("root_key", 0).is_ok());
+
         // Enter a mapping scope
         stack.enter_scope(2, 1, Some("mapping".to_string()));
 
@@ -2087,6 +2430,9 @@ mod tests {
     fn test_exit_one_level_mixed_indent_sizes() {
         let mut stack = ScopeStack::new(2);
 
+        // Auto-create root scope
+        assert!(stack.add_key("root_key", 0).is_ok());
+
         // Test with various indent sizes (not just multiples of 2)
         stack.enter_scope(3, 1, Some("indent3".to_string()));
         assert_eq!(stack.current_indent(), 3);
@@ -2103,5 +2449,199 @@ mod tests {
         let exited = stack.exit_one_level();
         assert!(exited);
         assert_eq!(stack.current_indent(), 0);
+    }
+
+    #[test]
+    fn test_scope_type_display() {
+        assert_eq!(format!("{}", ScopeType::Block), "block");
+        assert_eq!(format!("{}", ScopeType::FlowMapping), "flow-mapping");
+        assert_eq!(format!("{}", ScopeType::FlowSequence), "flow-sequence");
+        assert_eq!(format!("{}", ScopeType::BlockSequence), "block-sequence");
+        assert_eq!(format!("{}", ScopeType::Root), "root");
+    }
+
+    #[test]
+    fn test_scope_info_new() {
+        let info = ScopeInfo::new(ScopeType::Block, 2);
+        assert_eq!(info.scope_type(), ScopeType::Block);
+        assert_eq!(info.scope_depth(), 2);
+    }
+
+    #[test]
+    fn test_scope_info_root() {
+        let root = ScopeInfo::root();
+        assert_eq!(root.scope_type(), ScopeType::Root);
+        assert_eq!(root.scope_depth(), 0);
+        assert!(root.is_root());
+    }
+
+    #[test]
+    fn test_scope_info_block() {
+        let block = ScopeInfo::block(1);
+        assert_eq!(block.scope_type(), ScopeType::Block);
+        assert_eq!(block.scope_depth(), 1);
+        assert!(block.is_block());
+        assert!(!block.is_flow());
+        assert!(block.is_mapping());
+        assert!(!block.is_sequence());
+    }
+
+    #[test]
+    fn test_scope_info_flow_mapping() {
+        let flow = ScopeInfo::flow_mapping(1);
+        assert_eq!(flow.scope_type(), ScopeType::FlowMapping);
+        assert_eq!(flow.scope_depth(), 1);
+        assert!(flow.is_flow());
+        assert!(!flow.is_block());
+        assert!(flow.is_mapping());
+        assert!(!flow.is_sequence());
+    }
+
+    #[test]
+    fn test_scope_info_block_sequence() {
+        let seq = ScopeInfo::block_sequence(2);
+        assert_eq!(seq.scope_type(), ScopeType::BlockSequence);
+        assert_eq!(seq.scope_depth(), 2);
+        assert!(seq.is_block());
+        assert!(!seq.is_flow());
+        assert!(seq.is_sequence());
+        assert!(!seq.is_mapping());
+    }
+
+    #[test]
+    fn test_scope_info_flow_sequence() {
+        // This would require adding a flow_sequence constructor
+        // For now, test via new()
+        let seq = ScopeInfo::new(ScopeType::FlowSequence, 2);
+        assert_eq!(seq.scope_type(), ScopeType::FlowSequence);
+        assert_eq!(seq.scope_depth(), 2);
+        assert!(seq.is_flow());
+        assert!(!seq.is_block());
+        assert!(seq.is_sequence());
+        assert!(!seq.is_mapping());
+    }
+
+    #[test]
+    fn test_scope_info_setters() {
+        let mut info = ScopeInfo::new(ScopeType::Block, 1);
+
+        // Test set_scope_type
+        info.set_scope_type(ScopeType::FlowMapping);
+        assert_eq!(info.scope_type(), ScopeType::FlowMapping);
+        assert!(info.is_flow());
+
+        // Test set_scope_depth
+        info.set_scope_depth(3);
+        assert_eq!(info.scope_depth(), 3);
+    }
+
+    #[test]
+    fn test_scope_info_increment_depth() {
+        let mut info = ScopeInfo::new(ScopeType::Block, 1);
+        info.increment_depth();
+        assert_eq!(info.scope_depth(), 2);
+        info.increment_depth();
+        assert_eq!(info.scope_depth(), 3);
+    }
+
+    #[test]
+    fn test_scope_info_decrement_depth() {
+        let mut info = ScopeInfo::new(ScopeType::Block, 3);
+        info.decrement_depth();
+        assert_eq!(info.scope_depth(), 2);
+        info.decrement_depth();
+        assert_eq!(info.scope_depth(), 1);
+
+        // Decrementing at 0 should stay at 0
+        info.set_scope_depth(0);
+        info.decrement_depth();
+        assert_eq!(info.scope_depth(), 0);
+    }
+
+    #[test]
+    fn test_scope_info_equality() {
+        let info1 = ScopeInfo::new(ScopeType::Block, 2);
+        let info2 = ScopeInfo::new(ScopeType::Block, 2);
+        let info3 = ScopeInfo::new(ScopeType::FlowMapping, 2);
+        let info4 = ScopeInfo::new(ScopeType::Block, 3);
+
+        // Same type and depth should be equal
+        assert_eq!(info1, info2);
+
+        // Different type should not be equal
+        assert_ne!(info1, info3);
+
+        // Different depth should not be equal
+        assert_ne!(info1, info4);
+    }
+
+    #[test]
+    fn test_scope_info_clone() {
+        let info1 = ScopeInfo::new(ScopeType::Block, 2);
+        let info2 = info1.clone();
+        assert_eq!(info1, info2);
+    }
+
+    #[test]
+    fn test_scope_info_describe() {
+        let info = ScopeInfo::new(ScopeType::Block, 2);
+        let description = info.describe();
+        assert!(description.contains("type=block"));
+        assert!(description.contains("depth=2"));
+    }
+
+    #[test]
+    fn test_scope_info_display() {
+        let info = ScopeInfo::new(ScopeType::FlowMapping, 3);
+        let display = format!("{}", info);
+        assert!(display.contains("ScopeInfo"));
+        assert!(display.contains("type=flow-mapping"));
+        assert!(display.contains("depth=3"));
+    }
+
+    #[test]
+    fn test_scope_info_depth_tracking() {
+        // Simulate entering nested scopes
+        let mut info = ScopeInfo::root();
+        assert_eq!(info.scope_depth(), 0);
+
+        info.increment_depth();
+        assert_eq!(info.scope_depth(), 1);
+
+        info.increment_depth();
+        assert_eq!(info.scope_depth(), 2);
+
+        // Simulate exiting scopes
+        info.decrement_depth();
+        assert_eq!(info.scope_depth(), 1);
+
+        info.decrement_depth();
+        assert_eq!(info.scope_depth(), 0);
+    }
+
+    #[test]
+    fn test_scope_info_type_transitions() {
+        let mut info = ScopeInfo::block(1);
+        assert!(info.is_block());
+        assert!(!info.is_flow());
+
+        // Transition from block to flow
+        info.set_scope_type(ScopeType::FlowMapping);
+        assert!(info.is_flow());
+        assert!(!info.is_block());
+    }
+
+    #[test]
+    fn test_scope_info_all_scope_types() {
+        let types = vec![
+            (ScopeType::Root, ScopeInfo::root()),
+            (ScopeType::Block, ScopeInfo::block(1)),
+            (ScopeType::FlowMapping, ScopeInfo::flow_mapping(1)),
+            (ScopeType::BlockSequence, ScopeInfo::block_sequence(1)),
+        ];
+
+        for (scope_type, info) in types {
+            assert_eq!(info.scope_type(), scope_type);
+        }
     }
 }
