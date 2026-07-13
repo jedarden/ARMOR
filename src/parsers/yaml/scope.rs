@@ -717,6 +717,19 @@ impl ScopeStack {
     /// * `has_key` - Whether this transition occurred on a line with a key token
     /// * `raw_line` - The raw line content (for debugging)
     ///
+    /// Record an indent transition
+    ///
+    /// This method tracks indentation level changes during parsing, whether or not
+    /// they occur on lines with key tokens. This enables detection of indent changes
+    /// on blank lines, comments, or other non-key lines.
+    ///
+    /// # Arguments
+    ///
+    /// * `line_number` - The line number where this transition occurred (1-indexed)
+    /// * `new_indent` - The new indentation level
+    /// * `has_key` - Whether this transition occurred on a line with a key token
+    /// * `raw_line` - The raw line content (for debugging)
+    ///
     /// # Examples
     ///
     /// ```
@@ -728,12 +741,16 @@ impl ScopeStack {
     pub fn record_indent_transition(&mut self, line_number: usize, new_indent: usize, has_key: bool, raw_line: &str) {
         // Only record if the indent actually changed
         if new_indent != self.last_indent {
+            // Classify the line type
+            let line_classification = classify_line_type(raw_line);
+
             let transition = IndentTransition::new(
                 line_number,
                 self.last_indent,
                 new_indent,
                 has_key,
                 raw_line,
+                line_classification,
             );
             self.indent_transitions.push(transition);
             self.last_indent = new_indent;
@@ -747,11 +764,12 @@ impl ScopeStack {
                 };
                 let key_status = if has_key { "with-key" } else { "without-key" };
                 log_debug!(
-                    "[INDENT TRANSITION] line={}, {}→{}, {}, raw='{}'",
+                    "[INDENT TRANSITION] line={}, {}→{}, {}, {}, raw='{}'",
                     line_number,
                     self.last_indent.saturating_sub(1),
                     new_indent,
                     key_status,
+                    line_classification,
                     raw_line.trim()
                 );
             }
@@ -1140,6 +1158,127 @@ pub fn get_leading_whitespace_length(line: &str) -> usize {
     line.chars().take_while(|c| c.is_whitespace()).count()
 }
 
+/// Classify a YAML line as key-bearing or indent-only
+///
+/// This function analyzes a line to determine if it contains a key token,
+/// which is essential for proper scope transition handling.
+///
+/// # Arguments
+///
+/// * `line` - The YAML line to classify
+///
+/// # Returns
+///
+/// The `LineClassification` for the line
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::scope::classify_line_type;
+///
+/// // Key-bearing lines
+/// assert!(matches!(classify_line_type("key: value"), armor::parsers::yaml::scope::LineClassification::KeyBearing));
+/// assert!(matches!(classify_line_type("  nested:"), armor::parsers::yaml::scope::LineClassification::KeyBearing));
+/// assert!(matches!(classify_line_type("- item"), armor::parsers::yaml::scope::LineClassification::KeyBearing));
+///
+/// // Indent-only lines (no key token)
+/// assert!(matches!(classify_line_type("  some value"), armor::parsers::yaml::scope::LineClassification::IndentOnly));
+/// assert!(matches!(classify_line_type("    more text"), armor::parsers::yaml::scope::LineClassification::IndentOnly));
+///
+/// // Empty lines
+/// assert!(matches!(classify_line_type(""), armor::parsers::yaml::scope::LineClassification::Empty));
+/// assert!(matches!(classify_line_type("    "), armor::parsers::yaml::scope::LineClassification::Empty));
+/// ```
+pub fn classify_line_type(line: &str) -> LineClassification {
+    let trimmed = line.trim();
+
+    // Empty or whitespace-only lines
+    if trimmed.is_empty() {
+        return LineClassification::Empty;
+    }
+
+    // Check if line has a key token by using existing extract_key_context
+    // This handles all YAML key patterns including:
+    // - Simple keys: "key: value"
+    // - Parent keys: "key:"
+    // - Sequence items with keys: "- key: value"
+    // - Nested keys with proper indentation
+    if extract_key_context(line).is_some() {
+        LineClassification::KeyBearing
+    } else {
+        LineClassification::IndentOnly
+    }
+}
+
+/// Check if a line contains key tokens
+///
+/// This is a convenience function that returns true if the line is key-bearing.
+///
+/// # Arguments
+///
+/// * `line` - The YAML line to check
+///
+/// # Returns
+///
+/// `true` if the line contains key tokens, `false` otherwise
+///
+/// # Examples
+///
+/// ```
+/// use armor::parsers::yaml::scope::has_key_token;
+///
+/// assert!(has_key_token("key: value"));
+/// assert!(has_key_token("  nested: value"));
+/// assert!(!has_key_token("  some text"));
+/// assert!(!has_key_token(""));
+/// ```
+pub fn has_key_token(line: &str) -> bool {
+    classify_line_type(line).is_key_bearing()
+}
+
+/// Line classification for YAML parsing
+///
+/// This enum categorizes lines based on whether they contain key tokens,
+/// which is essential for proper scope transition handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineClassification {
+    /// Key-bearing line (contains a YAML key token like "key:", "- key:", etc.)
+    KeyBearing,
+
+    /// Indent-only line (no key token, only whitespace/content)
+    IndentOnly,
+
+    /// Empty or whitespace-only line
+    Empty,
+}
+
+impl LineClassification {
+    /// Check if this line type is key-bearing
+    pub fn is_key_bearing(&self) -> bool {
+        matches!(self, Self::KeyBearing)
+    }
+
+    /// Check if this line type is indent-only
+    pub fn is_indent_only(&self) -> bool {
+        matches!(self, Self::IndentOnly)
+    }
+
+    /// Check if this line type is empty
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
+    }
+}
+
+impl fmt::Display for LineClassification {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::KeyBearing => write!(f, "key-bearing"),
+            Self::IndentOnly => write!(f, "indent-only"),
+            Self::Empty => write!(f, "empty"),
+        }
+    }
+}
+
 /// Indent transition event recorded during parsing
 ///
 /// This struct captures information about indentation level changes that occur
@@ -1156,6 +1295,8 @@ pub struct IndentTransition {
     pub has_key: bool,
     /// The raw line content (for debugging)
     pub raw_line: String,
+    /// Line classification (key-bearing vs indent-only)
+    pub line_classification: LineClassification,
 }
 
 impl IndentTransition {
@@ -1168,13 +1309,15 @@ impl IndentTransition {
     /// * `to_indent` - The new indentation level
     /// * `has_key` - Whether this transition occurred on a line with a key token
     /// * `raw_line` - The raw line content
-    pub fn new(line_number: usize, from_indent: usize, to_indent: usize, has_key: bool, raw_line: &str) -> Self {
+    /// * `line_classification` - Classification of the line type
+    pub fn new(line_number: usize, from_indent: usize, to_indent: usize, has_key: bool, raw_line: &str, line_classification: LineClassification) -> Self {
         Self {
             line_number,
             from_indent,
             to_indent,
             has_key,
             raw_line: raw_line.to_string(),
+            line_classification,
         }
     }
 
@@ -1197,6 +1340,11 @@ impl IndentTransition {
     pub fn is_without_key(&self) -> bool {
         !self.has_key
     }
+
+    /// Get the line classification for this transition
+    pub fn line_classification(&self) -> LineClassification {
+        self.line_classification
+    }
 }
 
 impl fmt::Display for IndentTransition {
@@ -1211,8 +1359,8 @@ impl fmt::Display for IndentTransition {
         let key_status = if self.has_key { "with-key" } else { "without-key" };
         write!(
             f,
-            "IndentTransition(line={}, {}→{}, {}, {})",
-            self.line_number, self.from_indent, self.to_indent, direction, key_status
+            "IndentTransition(line={}, {}→{}, {}, {}, {})",
+            self.line_number, self.from_indent, self.to_indent, direction, key_status, self.line_classification
         )
     }
 }
