@@ -415,6 +415,121 @@ class ScopeStack:
         else:
             return LineClassification.INDENT_ONLY
 
+    def _has_key_token(self, line: str) -> bool:
+        """
+        Detect if a line contains a key token (colon that starts a key-value pair).
+
+        A key token is a colon that:
+        - Is not inside quotes (single or double)
+        - Is not inside a flow collection ({ } or [ ])
+        - Is not part of a block scalar indicator (| or >)
+        - Is not in a comment (after #)
+        - Has a valid key before it
+
+        Args:
+            line: The line to check
+
+        Returns:
+            True if the line contains a key token, False otherwise
+        """
+        trimmed = line.strip()
+
+        # Skip empty lines and comments
+        if not trimmed or trimmed.startswith('#'):
+            return False
+
+        # Check for block scalar indicators at the start (after stripping sequence dash)
+        check_line = trimmed
+        if check_line.startswith('- '):
+            check_line = check_line[2:].strip()
+        elif check_line.startswith('-') and len(check_line) > 1:
+            check_line = check_line[1:].strip()
+
+        if check_line.startswith('|') or check_line.startswith('>'):
+            return False
+
+        # Track state while scanning for colon
+        in_single_quote = False
+        in_double_quote = False
+        flow_depth = 0  # Depth of nested {} or []
+
+        for i, char in enumerate(trimmed):
+            # Handle quote state changes
+            if char == '"' and not in_single_quote:
+                # Toggle double quote (unless escaped)
+                if i == 0 or trimmed[i - 1] != '\\':
+                    in_double_quote = not in_double_quote
+            elif char == "'" and not in_double_quote:
+                in_single_quote = not in_single_quote
+
+            # Track flow collection depth (only outside quotes)
+            if not in_single_quote and not in_double_quote:
+                if char == '#':
+                    # Rest of line is a comment - stop looking
+                    break
+                elif char in '{[':
+                    flow_depth += 1
+                elif char in '}]':
+                    flow_depth = max(0, flow_depth - 1)
+
+            # Check for colon as key token
+            if char == ':' and not in_single_quote and not in_double_quote and flow_depth == 0:
+                # Check if this could be a key token
+                key_part = trimmed[:i].strip()
+
+                # Validate the key
+                if self._is_valid_key(key_part):
+                    # Check what comes after the colon
+                    if i + 1 >= len(trimmed):
+                        # Colon at end of line - this is a key token (parent mapping)
+                        return True
+                    else:
+                        next_char = trimmed[i + 1]
+                        # Colon followed by whitespace or end of line
+                        if next_char.isspace() or next_char == '#':
+                            return True
+
+        return False
+
+    def _is_valid_key(self, key_part: str) -> bool:
+        """
+        Check if a key part is a valid YAML key.
+
+        Args:
+            key_part: The text before a colon
+
+        Returns:
+            True if this is a valid key, False otherwise
+        """
+        if not key_part:
+            return False
+
+        key = key_part
+
+        # Remove sequence dash prefix if present
+        if key.startswith("- "):
+            key = key[2:].strip()
+        elif key.startswith('-') and len(key) > 1:
+            key = key[1:].strip()
+
+        # Key must not be empty after stripping dash
+        if not key:
+            return False
+
+        # Key must not contain flow collection markers
+        if any(c in key for c in ['{', '}', '[', ']']):
+            return False
+
+        # Key must not contain comment or block scalar markers
+        if any(c in key for c in ['#', '|', '>']):
+            return False
+
+        # Key must not be just special characters
+        if not any(c.isalnum() or c in '_-.' for c in key):
+            return False
+
+        return True
+
     def _extract_key_context(self, line: str) -> Optional[Dict[str, Any]]:
         """
         Extract key context from a line.
@@ -424,7 +539,11 @@ class ScopeStack:
         """
         trimmed = line.strip()
 
-        # Find colon position
+        # Find colon position using improved key token detection
+        if not self._has_key_token(line):
+            return None
+
+        # Find the actual colon position
         colon_pos = trimmed.find(':')
         if colon_pos == -1:
             return None
@@ -432,12 +551,8 @@ class ScopeStack:
         key_part = trimmed[:colon_pos]
         after_colon = trimmed[colon_pos + 1:]
 
-        # Skip if key is empty or contains invalid characters
-        key = key_part.strip()
-        if not key or any(c in key for c in ['{', '}', '[', ']']):
-            return None
-
         # Strip sequence dash from key if present
+        key = key_part.strip()
         if key.startswith("- "):
             key = key[2:].strip()
         elif key.startswith('-') and len(key) > 1:
