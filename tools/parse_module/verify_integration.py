@@ -14,8 +14,9 @@ Demonstrates that all acceptance criteria are met:
 import sys
 from pathlib import Path
 
-# Add parent directory to path for imports
+# Add parent directory and project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from yaml_parser import YAMLParser
 from result import ParseResult, ParseStatus
@@ -250,12 +251,12 @@ def test_module_exports():
     print("TEST 9: Module Exports - Public API")
     print("=" * 60)
 
-    import yamlutil
     from tools.parse_module import YAMLParser, ParseResult, ParseStatus
+    import tools.parse_module as parse_module
 
-    assert hasattr(yamlutil, 'YAMLParser'), "Module exports YAMLParser"
-    assert hasattr(yamlutil, 'ParseResult'), "Module exports ParseResult"
-    assert hasattr(yamlutil, 'ParseStatus'), "Module exports ParseStatus"
+    assert hasattr(parse_module, 'YAMLParser'), "Module exports YAMLParser"
+    assert hasattr(parse_module, 'ParseResult'), "Module exports ParseResult"
+    assert hasattr(parse_module, 'ParseStatus'), "Module exports ParseStatus"
 
     print("✓ YAMLParser exported")
     print("✓ ParseResult exported")
