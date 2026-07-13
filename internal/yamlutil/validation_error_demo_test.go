@@ -20,8 +20,10 @@ func TestValidationErrorDemo(t *testing.T) {
 		ErrCodeInvalidValue,
 		0,
 		0,
-		"",
+		ErrorTypeValidation,
 		"server.port",
+		"int",
+		"string",
 	)
 	fmt.Println("Test 1 - Basic field path and constraint:")
 	fmt.Println(err1.Error())
@@ -36,8 +38,10 @@ func TestValidationErrorDemo(t *testing.T) {
 		ErrCodeInvalidValue,
 		22,
 		18,
-		"",
+		ErrorTypeValidation,
 		"spec.template.spec.containers[0].image",
+		"string",
+		"int",
 	)
 	fmt.Println("Test 2 - Nested field path with line/column:")
 	fmt.Println(err2.Error())
@@ -52,8 +56,10 @@ func TestValidationErrorDemo(t *testing.T) {
 		ErrCodeConstraintViolation,
 		8,
 		0,
-		"",
+		ErrorTypeValidation,
 		"spec.replicas",
+		"int",
+		"string",
 	)
 	fmt.Println("Test 3 - spec.replicas field path:")
 	fmt.Println(err3.Error())
