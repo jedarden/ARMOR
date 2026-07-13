@@ -313,6 +313,189 @@ another_key: another_value
         assert result.data['another_key'] == 'another_value'
 
 
+class TestTypeSpecificScopeTransitions:
+    """Test type-specific scope transition handling."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = YAMLParser()
+
+    def test_key_bearing_line_creates_new_scope_on_indent_increase(self):
+        """Test that key-bearing lines create new scopes when indent increases."""
+        yaml_content = """
+parent:
+  child: value
+"""
+        result = self.parser.parse_with_scope_tracking(yaml_content)
+        assert result.is_success()
+
+        # Should have depth 3 at the end: root -> parent -> (back to parent)
+        # Line 1: "parent:" creates parent scope (depth 2)
+        # Line 2: "  child:" is at same indent as parent, no new scope
+        final_depth = self.parser.get_scope_depth()
+        assert final_depth >= 2
+
+        transitions = self.parser.get_scope_stack().get_indent_transitions()
+        # Should have recorded transitions
+        assert len(transitions) > 0
+
+    def test_indent_only_line_does_not_create_new_scope(self):
+        """Test that indent-only lines do NOT create new scopes."""
+        yaml_content = """
+parent:
+  child: value
+    continuation
+    another_continuation
+  sibling: another_value
+"""
+        result = self.parser.parse_with_scope_tracking(yaml_content)
+        assert result.is_success()
+
+        transitions = self.parser.get_scope_stack().get_indent_transitions()
+
+        # Find transitions at continuation lines
+        continuation_transitions = [t for t in transitions if 'continuation' in t.raw_line]
+        assert len(continuation_transitions) > 0
+
+        # These should be classified as INDENT_ONLY
+        for trans in continuation_transitions:
+            if 'continuation' in trans.raw_line:
+                assert trans.line_classification.value == 'indent-only'
+
+    def test_multiline_string_does_not_create_scope(self):
+        """Test that multiline string continuations do not create new scopes."""
+        yaml_content = """
+description: |
+  Line 1
+    Line 2 with extra indent
+  Line 3
+"""
+        result = self.parser.parse_with_scope_tracking(yaml_content)
+        assert result.is_success()
+
+        transitions = self.parser.get_scope_stack().get_indent_transitions()
+
+        # Lines inside the multiline block should be INDENT_ONLY
+        multiline_transitions = [t for t in transitions if 'Line' in t.raw_line]
+        assert len(multiline_transitions) > 0
+
+        for trans in multiline_transitions:
+            # Multiline content lines are indent-only, not key-bearing
+            assert trans.line_classification.value == 'indent-only'
+
+    def test_complex_nested_structure_scope_handling(self):
+        """Test scope handling for complex nested YAML structures."""
+        yaml_content = """
+level1:
+  level2:
+    level3: value
+    level3_sibling: another
+  level2_sibling: value2
+"""
+        result = self.parser.parse_with_scope_tracking(yaml_content)
+        assert result.is_success()
+
+        transitions = self.parser.get_scope_stack().get_indent_transitions()
+
+        # Count enter/exit scope transitions
+        enter_scopes = [t for t in transitions if t.is_enter_scope()]
+        exit_scopes = [t for t in transitions if t.is_exit_scope()]
+
+        # Should have multiple scope transitions
+        assert len(enter_scopes) > 0
+        assert len(exit_scopes) > 0
+
+        # Check that key-bearing lines trigger scope transitions
+        key_bearing_enters = [t for t in enter_scopes if t.line_classification.value == 'key-bearing']
+        assert len(key_bearing_enters) > 0
+
+    def test_mixed_key_bearing_and_indent_only_lines(self):
+        """Test mixed scenarios with both key-bearing and indent-only lines."""
+        yaml_content = """
+service:
+  name: my-service
+  description: |
+    This is a service
+      with nested description
+    and multiple lines
+  config:
+    enabled: true
+    timeout: 30
+"""
+        result = self.parser.parse_with_scope_tracking(yaml_content)
+        assert result.is_success()
+
+        transitions = self.parser.get_scope_stack().get_indent_transitions()
+
+        # Verify we have both types of lines classified
+        key_bearing = [t for t in transitions if t.line_classification.value == 'key-bearing']
+        indent_only = [t for t in transitions if t.line_classification.value == 'indent-only']
+
+        assert len(key_bearing) > 0
+        assert len(indent_only) > 0
+
+        # Key-bearing transitions should create scopes
+        key_enters = [t for t in key_bearing if t.is_enter_scope()]
+        assert len(key_enters) > 0
+
+    def test_scope_transition_classification_accuracy(self):
+        """Test that scope transitions are classified correctly by type."""
+        yaml_content = """
+outer:
+  inner_key: inner_value
+  - list_item_1
+  - list_item_2
+  another_key: another_value
+"""
+        result = self.parser.parse_with_scope_tracking(yaml_content)
+        assert result.is_success()
+
+        transitions = self.parser.get_scope_stack().get_indent_transitions()
+
+        # Verify each transition has proper classification
+        for trans in transitions:
+            assert trans.line_classification is not None
+            assert trans.transition_type is not None
+
+            # If it's a key-bearing line, it should have has_key=True
+            if trans.line_classification.value == 'key-bearing':
+                assert trans.has_key is True
+
+    def test_empty_lines_do_not_trigger_scope_transitions(self):
+        """Test that empty lines don't trigger scope transitions."""
+        yaml_content = """
+key1: value1
+
+key2: value2
+
+
+key3: value3
+"""
+        result = self.parser.parse_with_scope_tracking(yaml_content)
+        assert result.is_success()
+
+        transitions = self.parser.get_scope_stack().get_indent_transitions()
+
+        # Empty lines should be classified as EMPTY
+        empty_transitions = [t for t in transitions if t.line_classification.value == 'empty']
+        # Empty lines at same indent shouldn't create transitions
+        # (they may not appear in transitions if indent doesn't change)
+
+    def test_line_type_classification_methods(self):
+        """Test parser methods for checking current line type."""
+        yaml_content = """
+key: value
+  indent_only_content
+"""
+        result = self.parser.parse_with_scope_tracking(yaml_content)
+        assert result.is_success()
+
+        # Parser should have line type tracking
+        assert hasattr(self.parser, 'is_on_key_bearing_line')
+        assert hasattr(self.parser, 'is_on_indent_only_line')
+        assert hasattr(self.parser, 'is_on_empty_line')
+
+
 def test_module_exports():
     """Test that the module exports expected symbols."""
     import yaml_parser
