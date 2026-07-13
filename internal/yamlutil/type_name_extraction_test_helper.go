@@ -271,3 +271,14 @@ func NormalizeTestInput(input string) string {
 func ShouldMatchType(got, want string) bool {
 	return got == want
 }
+
+// containsAny checks if a string contains any of the given patterns.
+// This is a helper function for error message validation.
+func containsAny(s string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(s, pattern) {
+			return true
+		}
+	}
+	return false
+}
