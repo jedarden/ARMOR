@@ -55,10 +55,11 @@ func extractTypeName(errorStr string) string {
 	// Pattern 1: "cannot unmarshal !!<tag> into <type>" (handles complex types)
 	// Matches: basic types (int), dotted types (time.Time), spaced types (chan int),
 	//          arrays ([]string), maps (map[string]int), fixed arrays ([10]string)
-	re1 := regexp.MustCompile(`cannot\s+unmarshal\s+!!\w+\s+into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*)`)
+	// Note: Requires valid YAML tag (at least one char after !!)
+	re1 := regexp.MustCompile(`cannot\s+unmarshal\s+!!(\w+)\s+into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*)`)
 	if matches := re1.FindStringSubmatch(errorStr); matches != nil {
 		// Trim any trailing punctuation
-		typeName := strings.TrimRight(matches[1], ".,")
+		typeName := strings.TrimRight(matches[2], ".,")
 		return typeName
 	}
 
@@ -81,10 +82,19 @@ func extractTypeName(errorStr string) string {
 	}
 
 	// Pattern 5: Simple type name at start of error: "<type>: error message"
-	// Make sure it doesn't match prefixes like "yaml:" or "line 10:"
+	// Make sure it doesn't match prefixes like "yaml:", "field:", "error:", "warning:", "fatal:", "panic:", or "line:"
+	// These are common error message prefixes, not type names
 	re5 := regexp.MustCompile(`^([a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)*):`)
 	if matches := re5.FindStringSubmatch(errorStr); matches != nil {
-		return matches[1]
+		typeName := matches[1]
+		// Filter out common error message prefixes that aren't type names
+		excludedPrefixes := []string{"yaml", "field", "error", "warning", "fatal", "panic", "line"}
+		for _, prefix := range excludedPrefixes {
+			if typeName == prefix {
+				return ""
+			}
+		}
+		return typeName
 	}
 
 	// Pattern 6: Quoted type name "cannot unmarshal "<type>" into "<type>""
@@ -94,7 +104,8 @@ func extractTypeName(errorStr string) string {
 	}
 
 	// Pattern 7: Type name after "into": "...into <type>" (handles complex types)
-	re7 := regexp.MustCompile(`into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*)`)
+	// Must be preceded by unmarshal or similar context to avoid matching common English phrases
+	re7 := regexp.MustCompile(`(?:unmarshal|marshal|convert)\s+(?:[\w\s]+)?\s+into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*)`)
 	if matches := re7.FindStringSubmatch(errorStr); matches != nil {
 		typeName := strings.TrimRight(matches[1], ".,")
 		return typeName
@@ -653,8 +664,18 @@ func ExtractTypeNameBasic(errorMsg string) string {
 
 	// Pattern 5: Go basic types (e.g., string, int, bool, float64)
 	// This pattern matches common Go type names at word boundaries
-	basicTypeRegex := regexp.MustCompile(`\b(string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|interface|interface\{\}|rune|byte)\b`)
+	// IMPORTANT: Must match complete words only, not substrings (e.g., "int" in "internal" should NOT match)
+	// Uses trailing \b to ensure complete word matches
+	// IMPORTANT: Longer types must come before shorter ones to avoid partial matches
+	// (e.g., "interface" before "int", "string" before nothing, etc.)
+	basicTypeRegex := regexp.MustCompile(`(interface|string|int8|int16|int32|int64|uint8|uint16|uint32|uint64|float32|float64|int|uint|bool|rune|byte)\b`)
 	if matches := basicTypeRegex.FindStringSubmatch(errorMsg); matches != nil {
+		return matches[1]
+	}
+
+	// Pattern 5a: Special case for interface{} which needs exact match
+	interfaceRegex := regexp.MustCompile(`\b(interface\{\})`)
+	if matches := interfaceRegex.FindStringSubmatch(errorMsg); matches != nil {
 		return matches[1]
 	}
 
