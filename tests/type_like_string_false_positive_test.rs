@@ -95,17 +95,17 @@ macro_rules! generate_folded_explicit_indent_tests {
 macro_rules! run_folded_scalar_tests {
     ($test_cases:expr) => {
         for (line, expected_key, expected_type) in $test_cases {
-            let result = classify_line_type(line);
+            let result = classify_line_type(&line);
 
             assert_eq!(
-                result, *expected_type,
+                result, expected_type,
                 "Folded scalar explicit indent test failed: '{}' - expected {:?}, got {:?}",
                 line, expected_type, result
             );
 
             // Verify that the key is correctly detected for MappingKey types
             if result == armor::parsers::yaml::LineType::MappingKey {
-                let info = detect_mapping_key(line, 0);
+                let info = detect_mapping_key(&line, 0);
                 assert!(
                     info.is_some(),
                     "Should detect mapping key for folded scalar with explicit indent modifier: '{}'",
@@ -113,7 +113,7 @@ macro_rules! run_folded_scalar_tests {
                 );
                 let detected = info.unwrap();
                 assert_eq!(
-                    detected.key, expected_key,
+                    detected.key, &expected_key[..],
                     "Key mismatch for folded scalar with explicit indent modifier: '{}' - expected '{}', got '{}'",
                     line, expected_key, detected.key
                 );
@@ -124,6 +124,7 @@ macro_rules! run_folded_scalar_tests {
 
 /// Helper function to create a folded scalar test case tuple
 /// This provides a non-macro alternative for building test cases
+/// Returns (line, key, type) tuple for use with run_folded_scalar_tests! macro
 fn create_folded_scalar_test(
     indent: &str,
     key: &str,
