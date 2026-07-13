@@ -55,7 +55,7 @@ func extractTypeName(errorStr string) string {
 	// Pattern 1: "cannot unmarshal !!<tag> into <type>" (handles complex types)
 	// Matches: basic types (int), dotted types (time.Time), spaced types (chan int),
 	//          arrays ([]string), maps (map[string]int), fixed arrays ([10]string)
-	re1 := regexp.MustCompile(`cannot\s+unmarshal\s+!!\w+\s+into\s+(\S+)`)
+	re1 := regexp.MustCompile(`cannot\s+unmarshal\s+!!\w+\s+into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*)`)
 	if matches := re1.FindStringSubmatch(errorStr); matches != nil {
 		// Trim any trailing punctuation
 		typeName := strings.TrimRight(matches[1], ".,")
@@ -82,7 +82,7 @@ func extractTypeName(errorStr string) string {
 
 	// Pattern 5: Simple type name at start of error: "<type>: error message"
 	// Make sure it doesn't match prefixes like "yaml:" or "line 10:"
-	re5 := regexp.MustCompile(`^([a-z][A-Za-z0-9]*):`)
+	re5 := regexp.MustCompile(`^([a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)*):`)
 	if matches := re5.FindStringSubmatch(errorStr); matches != nil {
 		return matches[1]
 	}
@@ -94,7 +94,7 @@ func extractTypeName(errorStr string) string {
 	}
 
 	// Pattern 7: Type name after "into": "...into <type>" (handles complex types)
-	re7 := regexp.MustCompile(`into\s+(\S+)`)
+	re7 := regexp.MustCompile(`into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*)`)
 	if matches := re7.FindStringSubmatch(errorStr); matches != nil {
 		typeName := strings.TrimRight(matches[1], ".,")
 		return typeName
