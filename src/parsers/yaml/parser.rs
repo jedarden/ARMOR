@@ -16,8 +16,6 @@ use crate::parsers::yaml::{
 
 #[cfg(debug_assertions)]
 use log::debug as log_debug;
-#[cfg(debug_assertions)]
-use log::warn as log_warn;
 
 /// Trait for YAML parsers
 ///
@@ -131,19 +129,17 @@ impl BasicParser {
 
             let indent = calculate_indentation(line);
 
-            // Handle blank lines with indentation changes
+            // Handle blank lines and comments
+            // Blank lines should be transparent to scope tracking - they don't trigger
+            // any scope transitions. The next content line will handle any needed scope changes.
             if trimmed.is_empty() || trimmed.starts_with('#') {
-                // Check if blank line has a different indentation than current scope
+                // Track blank lines with different indentation for debugging, but don't
+                // change scope. Scope transitions only happen on content lines.
+                #[cfg(debug_assertions)]
                 if indent != scope_stack.current_indent() && !trimmed.starts_with('#') {
-                    #[cfg(debug_assertions)]
-                    {
-                        log_debug!("[detect_duplicate] Blank line with indent change: line={}, indent={}, current_indent={}, skipping",
-                            line_num_1index, indent, scope_stack.current_indent());
-                    }
-                    // Blank lines with indent changes are skipped but don't affect scope
-                    continue;
+                    log_debug!("[detect_duplicate] Blank line with indent change detected: line={}, indent={}, current_indent={}, skipping (will handle on next content line)",
+                        line_num_1index, indent, scope_stack.current_indent());
                 }
-                // Regular blank lines at same indent are skipped
                 continue;
             }
 
@@ -349,25 +345,17 @@ impl Parser for BasicParser {
 
             let indent = calculate_indentation(line);
 
-            // Handle blank lines with indentation changes
+            // Handle blank lines and comments
+            // Blank lines should be transparent to scope tracking - they don't trigger
+            // any scope transitions. The next content line will handle any needed scope changes.
             if trimmed.is_empty() || trimmed.starts_with('#') {
-                // Check if blank line has a different indentation than current scope
+                // Track blank lines with different indentation for debugging, but don't
+                // change scope. Scope transitions only happen on content lines.
+                #[cfg(debug_assertions)]
                 if indent != scope_stack.current_indent() && !trimmed.starts_with('#') {
-                    #[cfg(debug_assertions)]
-                    {
-                        log_debug!("[parse_str] Blank line with indent change: line={}, indent={}, current_indent={}",
-                            line_num_1index, indent, scope_stack.current_indent());
-                    }
-                    // Update scope to match blank line indentation
-                    // This handles the case where blank lines appear at different indentation levels
-                    if indent < scope_stack.current_indent() {
-                        scope_stack.exit_to_scope(indent);
-                    }
-                    // Note: we don't enter scopes on blank lines with increased indent,
-                    // only exit when indent decreases
-                    continue;
+                    log_debug!("[parse_str] Blank line with indent change detected: line={}, indent={}, current_indent={}, skipping (will handle on next content line)",
+                        line_num_1index, indent, scope_stack.current_indent());
                 }
-                // Regular blank lines at same indent are skipped
                 continue;
             }
 
@@ -1133,5 +1121,267 @@ config:
                 assert!(error.message.contains("Line"), "Error should mention line number");
             }
         }
+    }
+
+    /// Test blank line with decreased indent (scope should exit properly)
+    #[test]
+    fn test_blank_line_with_decreased_indent() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+root:
+  nested:
+    key1: value1
+
+key2: value2
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Blank line with decreased indent should parse successfully");
+
+        let value = result.unwrap();
+        assert!(value.get("root").is_some());
+        assert!(value.get("key2").is_some());
+    }
+
+    /// Test blank line at same indent as current scope
+    #[test]
+    fn test_blank_line_same_indent() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+root:
+  key1: value1
+
+  key2: value2
+  key3: value3
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Blank line at same indent should parse successfully");
+
+        let value = result.unwrap();
+        let root = &value["root"];
+        assert_eq!(root["key1"], "value1");
+        assert_eq!(root["key2"], "value2");
+        assert_eq!(root["key3"], "value3");
+    }
+
+    /// Test multiple blank lines at various indents
+    #[test]
+    fn test_multiple_blank_lines_various_indents() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+level1:
+  level2:
+    key1: value1
+
+
+  key2: value2
+
+level3: value3
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Multiple blank lines at various indents should parse successfully");
+
+        let value = result.unwrap();
+        assert!(value.get("level1").is_some());
+        assert!(value.get("level3").is_some());
+    }
+
+    /// Test comment at different indent (should not affect scope)
+    #[test]
+    fn test_comment_different_indent() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+root:
+  key1: value1
+  # Comment at indent 2
+  key2: value2
+# Comment at indent 0
+key3: value3
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Comments at different indents should not affect parsing");
+
+        let value = result.unwrap();
+        let root = &value["root"];
+        assert_eq!(root["key1"], "value1");
+        assert_eq!(root["key2"], "value2");
+        assert_eq!(value["key3"], "value3");
+    }
+
+    /// Test blank line followed by key at same indent
+    #[test]
+    fn test_blank_line_key_same_indent() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+services:
+  web:
+    host: localhost
+
+  database:
+    host: db.example.com
+    port: 5432
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Blank line followed by key at same indent should parse successfully");
+
+        let value = result.unwrap();
+        let services = &value["services"];
+        assert!(services.get("web").is_some());
+        assert!(services.get("database").is_some());
+    }
+
+    /// Test indent transition without key (just blank line)
+    #[test]
+    fn test_indent_transition_blank_line_only() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+level1:
+  level2:
+    key1: value1
+
+
+key3: value3
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Indent transition via blank lines should parse successfully");
+
+        let value = result.unwrap();
+        assert!(value.get("level1").is_some());
+        assert!(value.get("key3").is_some());
+    }
+
+    /// Test scope consistency after indent changes on blank lines
+    #[test]
+    fn test_scope_consistency_after_blank_indents() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+outer1:
+  inner1:
+    deep1: value1
+
+  inner2:
+    deep2: value2
+
+outer2:
+  inner3:
+    deep3: value3
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Scope should remain consistent after indent changes on blank lines");
+
+        let value = result.unwrap();
+        let outer1 = &value["outer1"];
+        assert!(outer1.get("inner1").is_some());
+        assert!(outer1.get("inner2").is_some());
+        assert!(value.get("outer2").is_some());
+    }
+
+    /// Test that blank lines don't create false duplicate key errors
+    #[test]
+    fn test_blank_lines_no_false_duplicates() {
+        let parser = BasicParser::strict();
+
+        let yaml = r#"
+section:
+  key1: value1
+
+  key2: value2
+
+section2:
+  key1: value3
+  key2: value4
+"#;
+
+        let result = parser.validate_str(yaml);
+        assert!(result.is_valid(), "Blank lines should not cause false duplicate key errors");
+    }
+
+    /// Test complex nesting with blank lines
+    #[test]
+    fn test_complex_nesting_blank_lines() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+app:
+  server:
+    host: localhost
+    port: 8080
+
+    ssl:
+      enabled: true
+      cert: /path/to/cert
+
+  database:
+
+    primary:
+      host: db1.example.com
+      port: 5432
+
+    replica:
+      host: db2.example.com
+      port: 5432
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Complex nesting with blank lines should parse successfully");
+
+        let value = result.unwrap();
+        let app = &value["app"];
+        assert!(app.get("server").is_some());
+        assert!(app.get("database").is_some());
+    }
+
+    /// Test that increased indent on blank line doesn't enter scope
+    #[test]
+    fn test_increased_indent_blank_line_no_scope() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+key1: value1
+
+
+key2: value2
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Increased indent on blank line should not affect scope");
+    }
+
+    /// Test blank lines in sequence contexts
+    #[test]
+    fn test_blank_lines_in_sequence() {
+        let parser = BasicParser::new();
+
+        let yaml = r#"
+items:
+  - name: item1
+    value: 100
+
+  - name: item2
+    value: 200
+
+  - name: item3
+    value: 300
+"#;
+
+        let result = parser.parse_str(yaml);
+        assert!(result.is_success(), "Blank lines in sequences should parse successfully");
+
+        let value = result.unwrap();
+        let items = value["items"].as_sequence().unwrap();
+        assert_eq!(items.len(), 3);
     }
 }
