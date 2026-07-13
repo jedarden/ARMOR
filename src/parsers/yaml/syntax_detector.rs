@@ -265,13 +265,133 @@ enum QuoteType {
     Double,
 }
 
+/// A scope representing a mapping context at a specific nesting level
+#[derive(Debug, Clone)]
+struct Scope {
+    /// Indentation level (number of leading spaces)
+    indent_level: usize,
+    /// Keys defined within this scope
+    keys: HashSet<String>,
+    /// Line number where this scope started (for error reporting)
+    start_line: usize,
+    /// Parent key that created this scope (e.g., "web" in "services: {...}")
+    parent_key: Option<String>,
+    /// Whether this scope is in flow-style mapping ({key: value})
+    is_flow_style: bool,
+}
+
+impl Scope {
+    /// Create a new scope
+    fn new(indent_level: usize, start_line: usize, parent_key: Option<String>) -> Self {
+        Self {
+            indent_level,
+            keys: HashSet::new(),
+            start_line,
+            parent_key,
+            is_flow_style: false,
+        }
+    }
+
+    /// Add a key to this scope, returning true if it's a duplicate
+    fn add_key(&mut self, key: &str) -> bool {
+        !self.keys.insert(key.to_string())
+    }
+
+    /// Check if this scope contains a key
+    fn contains_key(&self, key: &str) -> bool {
+        self.keys.contains(key)
+    }
+}
+
+/// Hierarchical stack of active scopes
+#[derive(Debug, Clone)]
+struct ScopeStack {
+    /// Stack of active scopes (top = current scope)
+    scopes: Vec<Scope>,
+    /// Base indentation size (usually 2 or 4 spaces)
+    base_indent: usize,
+}
+
+impl ScopeStack {
+    /// Create a new scope stack
+    fn new(base_indent: usize) -> Self {
+        Self {
+            scopes: vec![Scope::new(0, 0, None)], // Root scope
+            base_indent,
+        }
+    }
+
+    /// Get the current scope (top of stack)
+    fn current_scope(&mut self) -> &mut Scope {
+        self.scopes.last_mut().expect("Scope stack should never be empty")
+    }
+
+    /// Get scope for a specific indentation level
+    fn get_scope_at_level(&self, indent_level: usize) -> Option<&Scope> {
+        self.scopes.iter().find(|s| s.indent_level == indent_level)
+    }
+
+    /// Enter a new scope (when indent increases)
+    fn enter_scope(&mut self, indent_level: usize, line: usize, parent_key: Option<String>) {
+        // Remove all scopes deeper than this level (fresh start for sibling mappings)
+        self.scopes.retain(|s| s.indent_level < indent_level);
+
+        // Create a fresh scope at this level
+        let new_scope = Scope::new(indent_level, line, parent_key);
+        self.scopes.push(new_scope);
+    }
+
+    /// Exit to parent scope (when indent decreases)
+    fn exit_to_scope(&mut self, target_indent: usize) {
+        // Remove all scopes deeper than target
+        self.scopes.retain(|s| s.indent_level <= target_indent);
+    }
+
+    /// Check if current scope contains a key
+    fn contains_key(&self, key: &str) -> bool {
+        self.scopes.last()
+            .map(|scope| scope.contains_key(key))
+            .unwrap_or(false)
+    }
+
+    /// Add a key to current scope
+    fn add_key(&mut self, key: &str) {
+        let scope = self.current_scope();
+        scope.add_key(key);
+    }
+
+    /// Get human-readable path to current scope
+    fn get_scope_path(&self) -> String {
+        let mut path = Vec::new();
+        for scope in &self.scopes {
+            if let Some(ref key) = scope.parent_key {
+                path.push(key.clone());
+            }
+        }
+        path.join(".")
+    }
+
+    /// Get current indent level
+    fn current_indent(&self) -> usize {
+        self.scopes.last()
+            .map(|scope| scope.indent_level)
+            .unwrap_or(0)
+    }
+}
+
+impl Default for ScopeStack {
+    fn default() -> Self {
+        Self::new(2) // Default base indent of 2 spaces
+    }
+}
+
 /// State tracking for structure analysis
 #[derive(Debug, Clone, Default)]
 struct StructureState {
     /// Stack of nested structures (mapping, sequence, etc.)
     context_stack: Vec<StructureContext>,
-    /// Keys seen at current indentation level
-    current_keys: HashSet<String>,
+    /// Hierarchical scope-based key tracking
+    scope_stack: ScopeStack,
     /// Previous line's indentation level
     prev_indent: usize,
 }
@@ -646,7 +766,7 @@ impl SyntaxDetector {
         }
     }
 
-    /// Detect duplicate key errors
+    /// Detect duplicate key errors using scope-aware tracking
     fn detect_duplicate_key_errors(&mut self, line: &str, line_num: usize, errors: &mut Vec<ValidationError>) {
         // Skip duplicate key detection when inside flow-style contexts ([] or {})
         // Flow-style YAML uses {key: value} syntax which should not be treated as duplicate keys
@@ -656,16 +776,6 @@ impl SyntaxDetector {
 
         let trimmed = line.trim();
         let indent = self.get_leading_whitespace_length(line);
-
-        // Check if we're moving to a new context (indentation decreased)
-        // This indicates we've exited a nested structure
-        if indent < self.structure_state.prev_indent {
-            // Clear keys when we exit a context
-            self.structure_state.current_keys.clear();
-        }
-
-        // Update previous indentation for next comparison
-        self.structure_state.prev_indent = indent;
 
         // Extract key if this is a key-value pair
         if let Some(colon_pos) = trimmed.find(':') {
@@ -678,8 +788,18 @@ impl SyntaxDetector {
                                 after_colon.starts_with('#');
 
             if is_parent_key {
-                // Clear current keys when we encounter a new parent key
-                self.structure_state.current_keys.clear();
+                // This is a parent key - extract the key name and enter a new scope
+                if !key_part.is_empty() && !key_part.contains('-') && !key_part.contains('?') {
+                    let key = key_part.trim();
+                    if !key.starts_with('\'') && !key.starts_with('"') && !key.contains('#') {
+                        // Enter a new scope for the parent key's nested content
+                        self.structure_state.scope_stack.enter_scope(
+                            indent + self.config.base_indent_size,
+                            line_num,
+                            Some(key.to_string())
+                        );
+                    }
+                }
                 return;
             }
 
@@ -695,16 +815,43 @@ impl SyntaxDetector {
                 return;
             }
 
-            // Check for duplicates at this indentation level
-            if self.structure_state.current_keys.contains(key) {
+            // Handle scope transitions based on indentation changes
+            use std::cmp::Ordering;
+            match indent.cmp(&self.structure_state.scope_stack.current_indent()) {
+                Ordering::Greater => {
+                    // Indent increased - this should be a parent key (handled above)
+                    // If we get here, it's a regular key at deeper indent without a parent
+                    // Enter an anonymous scope
+                    self.structure_state.scope_stack.enter_scope(indent, line_num, None);
+                }
+                Ordering::Less => {
+                    // Indent decreased - exit to the appropriate parent scope
+                    self.structure_state.scope_stack.exit_to_scope(indent);
+                }
+                Ordering::Equal => {
+                    // Same scope level - continue checking for duplicates
+                }
+            }
+
+            // Check for duplicates in the current scope
+            if self.structure_state.scope_stack.contains_key(key) {
+                let scope_path = self.structure_state.scope_stack.get_scope_path();
+                let error_message = if scope_path.is_empty() {
+                    format!("duplicate key '{}' in mapping scope", key)
+                } else {
+                    format!("duplicate key '{}' in mapping scope '{}'", key, scope_path)
+                };
                 errors.push(ValidationError::new(
                     format!("key_{}", key),
-                    format!("duplicate key '{}' at same indentation level", key)
+                    error_message
                 ).with_line(line_num));
             } else {
-                self.structure_state.current_keys.insert(key.to_string());
+                self.structure_state.scope_stack.add_key(key);
             }
         }
+
+        // Update previous indentation for next comparison
+        self.structure_state.prev_indent = indent;
     }
 
     /// Finalize delimiter checks after processing all lines
