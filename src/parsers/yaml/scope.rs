@@ -277,8 +277,10 @@ impl ScopeStack {
         #[cfg(debug_assertions)]
         {
             let parent_info = parent_key.as_ref().map(|k| k.as_str()).unwrap_or("<anonymous>");
+            let scope_type = "Mapping";
             log_debug!(
-                "[SCOPE ENTRY] line={}, indent={}, parent='{}', current_depth={}, path='{}'",
+                "[SCOPE ENTRY] type={}, line={}, indent={}, parent='{}', current_depth={}, path='{}'",
+                scope_type,
                 line,
                 indent_level,
                 parent_info,
@@ -300,7 +302,7 @@ impl ScopeStack {
 
             #[cfg(debug_assertions)]
             {
-                log_debug!("[SCOPE ENTRY] Reusing existing scope level, cleared scopes deeper than indent={}", indent_level);
+                log_debug!("[SCOPE ENTRY] type=Mapping (reuse), indent={}, cleared scopes deeper than this level", indent_level);
             }
         } else {
             // Create new scope
@@ -309,7 +311,7 @@ impl ScopeStack {
 
             #[cfg(debug_assertions)]
             {
-                log_debug!("[SCOPE ENTRY] Created new scope at indent={}", indent_level);
+                log_debug!("[SCOPE ENTRY] type=Mapping (new), indent={}, created new scope at this level", indent_level);
             }
         }
 
@@ -573,7 +575,7 @@ impl ScopeStack {
         #[cfg(debug_assertions)]
         {
             log_debug!(
-                "[SEQ SCOPE ENTRY] line={}, indent={}, current_depth={}, path='{}'",
+                "[SCOPE ENTRY] type=Sequence, line={}, indent={}, current_depth={}, path='{}'",
                 line,
                 indent_level,
                 self.depth(),
@@ -588,7 +590,7 @@ impl ScopeStack {
 
         #[cfg(debug_assertions)]
         {
-            log_debug!("[SEQ SCOPE ENTRY] Cleared scopes deeper than indent={}, preserved parent mappings", indent_level);
+            log_debug!("[SCOPE ENTRY] type=Sequence, indent={}, cleared scopes deeper than this level, preserved parent mappings", indent_level);
         }
 
         // Check if there's already a scope at this level that's in a sequence context
@@ -606,7 +608,7 @@ impl ScopeStack {
 
             #[cfg(debug_assertions)]
             {
-                log_debug!("[SEQ SCOPE ENTRY] Created new sequence scope with item_id={}", self.sequence_item_counter);
+                log_debug!("[SCOPE ENTRY] type=Sequence (new), item_id={}, created new sequence scope", self.sequence_item_counter);
             }
         } else {
             // Reset the existing scope for a new sequence item
@@ -618,14 +620,14 @@ impl ScopeStack {
 
                 #[cfg(debug_assertions)]
                 {
-                    log_debug!("[SEQ SCOPE ENTRY] Reset existing sequence scope with new item_id={}", self.sequence_item_counter);
+                    log_debug!("[SCOPE ENTRY] type=Sequence (reset), item_id={}, reset existing sequence scope", self.sequence_item_counter);
                 }
             }
         }
 
         #[cfg(debug_assertions)]
         {
-            log_debug!("[SEQ SCOPE ENTRY] After entry: depth={}, in_sequence={}", self.depth(), self.in_sequence_context());
+            log_debug!("[SCOPE ENTRY] type=Sequence, after entry: depth={}, in_sequence={}", self.depth(), self.in_sequence_context());
         }
     }
 
