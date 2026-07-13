@@ -863,7 +863,7 @@ func (s *SchemaDefinition) Compile() error {
 	// Validate root fields
 	for fieldName, fieldDef := range s.RootFields {
 		if fieldDef == nil {
-			return NewValidationError("", fmt.Sprintf("field %s has nil definition", fieldName), fieldName, "", ErrCodeSchemaInvalid, 0, 0, ErrorTypeSchemaValidate, "")
+			return NewValidationError("", fmt.Sprintf("field %s has nil definition", fieldName), fieldName, "", ErrCodeSchemaInvalid, 0, 0, ErrorTypeSchemaValidate, "", "", "")
 		}
 		if err := s.validateFieldDefinition(fieldDef, fieldName); err != nil {
 			return err
@@ -892,7 +892,7 @@ func (s *SchemaDefinition) Validate(value interface{}) error {
 			}
 		}
 		if hasRequiredFields {
-			return NewValidationError("", "value cannot be nil when schema has required fields", "", "", ErrCodeValidationFailed, 0, 0, ErrorTypeValidation, "")
+			return NewValidationError("", "value cannot be nil when schema has required fields", "", "", ErrCodeValidationFailed, 0, 0, ErrorTypeValidation, "", "", "")
 		}
 		return nil
 	}
@@ -1159,14 +1159,14 @@ func (s *SchemaDefinition) validateFieldDefinition(fieldDef *FieldDefinition, fi
 			"boolean": true, "array": true, "object": true,
 		}
 		if !validTypes[fieldDef.Type] {
-			return NewValidationError("", fmt.Sprintf("field %s has invalid type: %s", fieldName, fieldDef.Type), fieldName, "valid type", ErrCodeInvalidValue, 0, 0, ErrorTypeSchemaValidate, "")
+			return NewValidationError("", fmt.Sprintf("field %s has invalid type: %s", fieldName, fieldDef.Type), fieldName, "valid type", ErrCodeInvalidValue, 0, 0, ErrorTypeSchemaValidate, "", "", "")
 		}
 	}
 
 	// Validate min/max constraints
 	if fieldDef.Min != nil && fieldDef.Max != nil {
 		if *fieldDef.Min > *fieldDef.Max {
-			return NewValidationError("", fmt.Sprintf("field %s has min > max", fieldName), fieldName, "min <= max", ErrCodeConstraintViolation, 0, 0, ErrorTypeSchemaValidate, "")
+			return NewValidationError("", fmt.Sprintf("field %s has min > max", fieldName), fieldName, "min <= max", ErrCodeConstraintViolation, 0, 0, ErrorTypeSchemaValidate, "", "", "")
 		}
 	}
 
