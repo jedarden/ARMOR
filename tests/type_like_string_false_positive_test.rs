@@ -6737,6 +6737,7 @@ fn test_folded_block_scalar_with_exclamation_marks() {
         "  folded_text: >",              // Indented folded scalar
         "    note: >",                   // Deep indented folded scalar
         "\tmessage: >",                 // Tab-indented folded scalar
+        "\tkey_with_exclamation!: >",   // Tab-indented key with ! followed by folded scalar
         "warning: >-",                  // Folded with strip modifier
         "info: >+",                     // Folded with keep modifier
         "text: >-2",                    // Folded with explicit indent
