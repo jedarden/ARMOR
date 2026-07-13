@@ -1,76 +1,39 @@
-# Bead bf-1ana1: 2-space folded scalar explicit indent test
+# Bead bf-1ana1: Add 2-space folded scalar explicit indent test function
 
-**Task:** Add test function `test_folded_scalar_explicit_indent_2space()`
+## Status: Already Complete
 
-## Finding
-
-The requested test function already exists in the codebase at line 13705 of `tests/type_like_string_false_positive_test.rs`. It was implemented by bead bf-5jm9g.
-
-## Existing Implementation
-
-**Location:** `tests/type_like_string_false_positive_test.rs:13705`
-
-**Coverage:**
-- ✅ All three modifiers: > (plain), >- (strip), >+ (keep) 
-- ✅ Indent levels 1-5
-- ✅ Uses macro-based pattern (`generate_folded_explicit_indent_tests!` and `run_folded_scalar_tests!`)
-- ✅ Follows established pattern from bead bf-63gy6
-
-**Test Code:**
-```rust
-#[test]
-fn test_folded_scalar_explicit_indent_2space() {
-    // Test folded scalars with explicit indent at 2-space level
-    // Covers all three modifiers: > (plain), >- (strip), >+ (keep)
-    // Covers indent levels 1-5
-    // Bead: bf-5jm9g - 2-space explicit indent comprehensive coverage
-
-    let test_cases = generate_folded_explicit_indent_tests!(
-        "  ",                    // 2-space base indentation
-        "level1",               // Level 1 = 2 spaces
-        &[">", ">-", ">+"],     // All three modifiers
-        &[1, 2, 3, 4, 5],      // Indent numbers 1-5
-        "test"                  // Key prefix for generated names
-    );
-
-    // Verify all test cases have 2 leading spaces
-    for (line, _, _) in &test_cases {
-        assert!(
-            line.starts_with("  "),
-            "2-space test case should start with 2 spaces: '{}'",
-            line
-        );
-        // Should not have 4 leading spaces (that would be level 2)
-        assert!(
-            !line.starts_with("    "),
-            "2-space test case should not start with 4 spaces: '{}'",
-            line
-        );
-    }
-
-    run_folded_scalar_tests!(test_cases);
-}
-```
+The test function `test_folded_scalar_explicit_indent_2space()` was already implemented in commit `5e9d1d52` on 2026-07-13.
 
 ## Verification
 
-The test passes successfully:
-```bash
-cargo test test_folded_scalar_explicit_indent_2space --test type_like_string_false_positive_test
-```
+The function at line 9007 in `tests/type_like_string_false_positive_test.rs` meets all acceptance criteria:
 
-Result: `test test_folded_scalar_explicit_indent_2space ... ok`
+### ✅ Acceptance Criteria Met
 
-## Acceptance Criteria Status
+1. **Test function exists**: `test_folded_scalar_explicit_indent_2space()` defined at line 9007
+2. **All three modifiers covered**:
+   - Plain `>` modifier (lines 9024-9028)
+   - Strip `>-` modifier (lines 9031-9035)  
+   - Keep `>+` modifier (lines 9038-9042)
+3. **Indent levels 1-5 covered**: Each modifier tests levels 1 through 5
+4. **Pattern followed**: Follows Section 12B.3 explicit indent infrastructure pattern
+5. **2-space indentation verified**: Tests use 2-space base indentation (Level 1)
 
-All acceptance criteria are met by the existing implementation:
+### Test Coverage
 
-- ✅ Add test function `test_folded_scalar_explicit_indent_2space()` - EXISTS
-- ✅ Cover all three modifiers: > (plain), >- (strip), >+ (keep) - COVERED
-- ✅ Cover indent levels 1-5 - COVERED  
-- ✅ Follow the pattern documented in child beads - FOLLOWS MACRO PATTERN
-- ✅ Tests should verify folded scalar behavior with 2-space indentation - VERIFIED
+The function includes comprehensive test cases:
+- Indicator line tests for all modifiers and indent levels
+- Continuation line tests for each indent level (2, 4, 6, 8, 10 spaces)
+- Keys with exclamation marks across all modifiers
+- Realistic key names with modifiers
+- Indent validation cases for all three modifiers
 
-## Conclusion
+### Compilation
 
-No code changes required. The work was already completed by bead bf-5jm9g. The test exists, passes, and meets all specified requirements.
+Test compiles successfully with `cargo test test_folded_scalar_explicit_indent_2space --no-run`.
+
+## References
+
+- Commit: `5e9d1d52` - "test(bf-1ana1): Add test_folded_scalar_explicit_indent_2space() function"
+- Commit: `7d5189c3` - "docs(bf-1ana1): Document existing test_folded_scalar_explicit_indent_2space() implementation"
+- File: `tests/type_like_string_false_positive_test.rs` lines 9007-9189
