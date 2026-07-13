@@ -2421,3 +2421,338 @@ fn test_type_like_in_multiline_values() {
         );
     }
 }
+
+#[test]
+fn test_type_like_in_documentation() {
+    // Type names in documentation strings
+    let test_cases = vec![
+        "doc: Returns string value",
+        "description: Expects integer input",
+        "help: Boolean flag for feature",
+        "note: Array of objects",
+        "summary: Object with string keys",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in documentation should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_error_descriptions() {
+    // Type names in error descriptions
+    let test_cases = vec![
+        "error: Expected string, got integer",
+        "message: Cannot convert boolean to string",
+        "warning: Array index out of bounds",
+        "exception: Object key not found",
+        "fatal: Integer overflow detected",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in error description should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_config_descriptions() {
+    // Type names in configuration value descriptions
+    let test_cases = vec![
+        "desc: Set to boolean for true/false",
+        "help: Integer value for timeout",
+        "note: String path to file",
+        "info: Array of allowed values",
+        "detail: Object with user data",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in config description should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_validation_messages() {
+    // Type names in validation error messages
+    let test_cases = vec![
+        "validation: Field must be string",
+        "error: Value is not integer",
+        "message: Expected boolean type",
+        "warning: Invalid array format",
+        "alert: Malformed object structure",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in validation message should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_api_responses() {
+    // Type names in API response descriptions
+    let test_cases = vec![
+        "response: Returns string data",
+        "body: JSON object with fields",
+        "result: Array of user objects",
+        "data: Boolean success flag",
+        "value: Integer count",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in API response should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_schema_definitions() {
+    // Type names in schema/contract definitions
+    let test_cases = vec![
+        "schema: User object with string ID",
+        "contract: Request with integer body",
+        "type: Response as boolean array",
+        "format: Object containing nested objects",
+        "structure: Array of string arrays",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in schema definition should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_log_messages() {
+    // Type names in log messages
+    let test_cases = vec![
+        "log: Processing string value",
+        "debug: Parsing integer from input",
+        "info: Storing boolean in cache",
+        "warn: Array size exceeds limit",
+        "error: Object serialization failed",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in log message should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_comments_inline() {
+    // Type names in inline comments
+    let test_cases = vec![
+        "value: 42 # integer value",
+        "flag: true # boolean setting",
+        "name: test # string identifier",
+        "items: [] # empty array",
+        "data: {} # empty object",
+    ];
+
+    for line in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key with type comment: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_with_exclamation_complex() {
+    // Type names combined with exclamation in complex scenarios
+    let test_cases = vec![
+        "message: Use string! not integer",
+        "warning: Check array! size",
+        "error: Object! not found",
+        "note: Boolean! value required",
+        "alert: Integer! overflow",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name with exclamation should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_enum_values() {
+    // Type names appearing in enum-like values
+    let test_cases = vec![
+        "type: string_type",
+        "kind: integer_kind",
+        "format: boolean_format",
+        "mode: array_mode",
+        "style: object_style",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in enum value should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_regex_patterns() {
+    // Type names in regex pattern descriptions
+    let test_cases = vec![
+        "pattern: Matches string value",
+        "regex: Integer number pattern",
+        "format: Boolean true/false",
+        "validation: Array of items",
+        "constraint: Object structure",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in regex description should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_conversion_contexts() {
+    // Type names in type conversion/error messages
+    let test_cases = vec![
+        "convert: string to integer",
+        "cast: Boolean to string",
+        "parse: Array from string",
+        "format: Object to JSON",
+        "transform: Integer to string",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in conversion context should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_function_descriptions() {
+    // Type names in function/method descriptions
+    let test_cases = vec![
+        "returns: String value",
+        "param: Integer input",
+        "arg: Boolean flag",
+        "result: Array of results",
+        "output: Object with data",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in function description should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_template_strings() {
+    // Type names in template/format string descriptions
+    let test_cases = vec![
+        "template: String {value}",
+        "format: Integer {count}",
+        "pattern: Boolean {flag}",
+        "layout: Array of {items}",
+        "structure: Object with {fields}",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type name in template description should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_nested_flow_collections() {
+    // Type names deeply nested in flow collections
+    let test_cases = vec![
+        "data: {inner: {type: string}}",
+        "items: [integer, [string, boolean]]",
+        "config: {types: [array, object], flags: {enabled: boolean}}",
+        "structure: {nested: {deep: {type: integer}}}",
+        "complex: [{a: string}, {b: integer}, [{c: boolean}]]",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowMapping || result == LineType::FlowSequence,
+            "Type-like in deeply nested flow collection should be valid type: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_in_mixed_collections() {
+    // Type names in mixed mapping/sequence structures
+    let test_cases = vec![
+        "fields: {name: string, age: integer, active: boolean}",
+        "values: [string, 123, true, {key: value}]",
+        "schema: {type: object, properties: {id: integer, name: string}}",
+        "response: {status: integer, data: array, errors: []}",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::FlowMapping || result == LineType::FlowSequence,
+            "Type-like in mixed collection should be valid type: '{}'",
+            line
+        );
+    }
+}
