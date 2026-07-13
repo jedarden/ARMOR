@@ -1,0 +1,311 @@
+# yaml.TypeError Message Format Test Fixtures
+# This file contains test fixtures for various yaml.TypeError message formats
+# found in the ARMOR codebase and yaml.v3 library
+
+# Basic Type Tag Errors
+basic_string_into_int: "line 10: cannot unmarshal !!str into int"
+basic_seq_into_array: "yaml: line 15: cannot unmarshal !!seq into []string"
+basic_map_into_struct: "line 20: cannot unmarshal !!map into struct"
+
+# Column Information Errors
+with_column: "line 10, column 5: cannot unmarshal !!str into int"
+with_column_complex: "line 15, column 8: cannot unmarshal !!seq into []string"
+
+# Field Path Errors
+field_path_simple: "field server.port type mismatch: expected int, got string"
+field_path_array: "field items[0].name type mismatch: expected string, got int"
+field_path_nested: "field metadata.annotations.version type mismatch: expected string, got int"
+field_path_cannot: "field items[0].name cannot unmarshal !!str into int"
+
+# Expected/Got Format Errors
+expected_got_basic: "expected int, got string"
+expected_got_bool: "expected bool, got string"
+expected_got_array: "expected []string, got int"
+
+# Cannot Convert Format Errors
+cannot_convert: "string cannot be converted to int"
+cannot_convert_bool: "int cannot be converted to bool"
+
+# Value Format Errors
+with_value: "cannot unmarshal !!str `hello` into int"
+with_value_number: "cannot unmarshal !!str `123abc` into float64"
+with_value_quoted: "cannot unmarshal !!str 'world' into int"
+
+# Complex Error Messages
+complex_yaml_prefix: "error converting YAML to JSON: yaml: line 10: cannot unmarshal !!str into int"
+complex_nested: "error converting YAML to JSON: yaml: line 15: cannot unmarshal !!seq into []string"
+
+# Multiple Errors Format
+multiple_errors: |
+  yaml: unmarshal errors:
+    line 5: cannot unmarshal !!seq into []string
+    line 10: cannot unmarshal !!str into int
+
+# Boolean Type Errors
+bool_into_int: "line 20: cannot unmarshal !!bool into int"
+string_into_bool: "line 25: cannot unmarshal !!str into bool"
+
+# Complex Go Type Errors
+complex_map_type: "cannot unmarshal !!map into map[string]int"
+complex_array_type: "cannot unmarshal !!seq into []CustomType"
+pointer_type: "cannot unmarshal !!str into *string"
+channel_type: "line 5: cannot unmarshal !!str into chan int"
+interface_type: "cannot unmarshal !!str into interface{}"
+
+# Package-Qualified Type Errors
+package_time: "cannot unmarshal !!str into time.Time"
+package_http: "cannot unmarshal !!seq into []http.Response"
+package_encoding: "cannot unmarshal !!map into encoding/json.RawMessage"
+
+# Array Size Specifications
+fixed_array: "cannot unmarshal !!seq into [10]string"
+fixed_array_int: "cannot unmarshal !!seq into [5]int"
+
+# Multiple Pointer Levels
+double_pointer: "cannot unmarshal !!str into **string"
+pointer_to_custom: "cannot unmarshal !!str into *CustomType"
+
+# Channel Directionality
+channel_basic: "cannot unmarshal !!str into chan int"
+channel_receive: "expected <-chan string, got !!seq"
+channel_send: "expected chan<- int, got !!float"
+
+# Complex Map Types
+map_interface: "field metadata type mismatch: expected map[string]interface{}, got !!map"
+map_nested: "field config type mismatch: expected map[string][]int, got string"
+map_complex_key: "field cache type mismatch: expected map[int]string, got !!map"
+
+# Nested Array Types
+nested_array: "cannot unmarshal !!seq into [][]string"
+array_of_structs: "cannot unmarshal !!seq into []time.Time"
+array_of_pointers: "cannot unmarshal !!seq into []*string"
+
+# Line Number Variations
+line_at_start: "10: cannot unmarshal !!str into int"
+at_line_format: "error at line 25: cannot unmarshal !!str into int"
+error_at_line: "error at line 30: cannot unmarshal !!str into int"
+
+# No Line Number Errors
+no_line_number: "cannot unmarshal !!map into struct"
+no_line_unmarshal: "cannot unmarshal string into int"
+
+# Quoted Type Errors
+quoted_types: 'cannot unmarshal "string" into "int"'
+quoted_single: "cannot unmarshal 'world' into int"
+
+# Want/Got Format
+want_got_basic: "want float64, got int"
+want_got_string: "want string, got bool"
+
+# Real-world yaml.v3 Errors (from actual yaml.v3 output)
+real_world_1: "yaml: line 10: cannot unmarshal !!str `hello` into int"
+real_world_2: "yaml: line 15: cannot unmarshal !!seq into []string"
+real_world_3: "yaml: line 20: cannot unmarshal !!map into struct"
+real_world_4: "line 5: cannot unmarshal !!seq into []string"
+real_world_5: "line 10: cannot unmarshal !!str `hello` into int"
+
+# Edge Cases
+empty_error: ""
+invalid_line: "line abc: cannot unmarshal !!str into int"
+partial_error: "cannot unmarshal"
+only_type_tag: "!!str"
+only_field: "field server.port"
+
+# Common ARMOR Use Cases
+armor_config_port: "field server.port type mismatch: expected int, got string"
+armor_config_timeout: "field config.timeout type mismatch: expected int, got string"
+armor_metadata: "field metadata.annotations version type mismatch: expected string, got int"
+armor_replicas: "field spec.replicas type mismatch: expected int, got string"
+
+# Kubernetes-Type Config Errors
+k8s_replicas: "field spec.replicas type mismatch: expected int, got string"
+k8s_container_port: "field containers[0].ports[0].containerPort type mismatch: expected int, got string"
+k8s_namespace: "field metadata.namespace type mismatch: expected string, got int"
+k8s_labels: "field metadata.labels type mismatch: expected map[string]string, got !!map"
+
+# Database Config Errors
+db_port: "field database.port type mismatch: expected int, got string"
+db_host: "field database.host type mismatch: expected string, got int"
+db_ssl: "field database.ssl type mismatch: expected bool, got string"
+
+# API Config Errors
+api_timeout: "field api.timeout type mismatch: expected int, got string"
+api_retries: "field api.maxRetries type mismatch: expected int, got string"
+api_endpoints: "field api.endpoints type mismatch: expected []string, got !!map"
+
+# Feature Flag Errors
+feature_enabled: "field features.newFeature.enabled type mismatch: expected bool, got string"
+feature_percentage: "field features.beta.rolloutPercentage type mismatch: expected int, got string"
+
+# Validation Rule Errors
+validation_min: "field validation.constraints.min type mismatch: expected int, got string"
+validation_pattern: "field validation.pattern type mismatch: expected string, got int"
+validation_enum: "field validation.allowedValues type mismatch: expected []string, got !!seq"
+
+# Timestamp Errors
+timestamp_format: "field timestamps.createdAt type mismatch: expected time.Time, got string"
+timestamp_duration: "field config.timeout type mismatch: expected time.Duration, got string"
+
+# Nested Object Errors
+nested_config: "field server.config.port type mismatch: expected int, got string"
+deep_nested: "field config.cluster.nodes[0].settings.replicas type mismatch: expected int, got string"
+nested_map: "field data.items[key].value type mismatch: expected string, got int"
+
+# Array Element Errors
+array_element_type: "field items[0] type mismatch: expected string, got int"
+array_element_nested: "field items[0].name type mismatch: expected string, got int"
+array_of_objects: "field users[0].age type mismatch: expected int, got string"
+
+# Interface Errors
+interface_field: "field data type mismatch: expected interface{}, got !!map"
+interface_slice: "field items type mismatch: expected []interface{}, got !!seq"
+
+# Nullable Field Errors
+nullable_pointer: "field optionalValue type mismatch: expected *string, got string"
+nullable_int: "field count type mismatch: expected *int, got string"
+
+# Struct Tag Errors
+struct_tag_missing: "field name type mismatch: expected string, got int"
+struct_tag_wrong: "field age type mismatch: expected int, got string"
+
+# Union Type Errors
+union_type_string: "field value type mismatch: expected string|int, got bool"
+union_type_array: "field items type mismatch: expected []string|[]int, got !!map"
+
+# Default Value Errors
+default_string: "field defaultValue type mismatch: expected string, got int"
+default_number: "field timeout type mismatch: expected int, got string"
+
+# Metadata Errors
+metadata_version: "field metadata.version type mismatch: expected string, got int"
+metadata_name: "field metadata.name type mismatch: expected string, got int"
+metadata_labels: "field metadata.labels type mismatch: expected map[string]string, got !!map"
+
+# Logging Config Errors
+logging_level: "field logging.level type mismatch: expected string, got int"
+logging_format: "field logging.format type mismatch: expected string, got bool"
+logging_output: "field logging.output type mismatch: expected []string, got !!seq"
+
+# Metrics Config Errors
+metrics_port: "field metrics.port type mismatch: expected int, got string"
+metrics_path: "field metrics.path type mismatch: expected string, got int"
+metrics_enabled: "field metrics.enabled type mismatch: expected bool, got string"
+
+# Security Config Errors
+security_enabled: "field security.enabled type mismatch: expected bool, got string"
+security_tls: "field security.tls.certificate type mismatch: expected string, got int"
+security_allowed_ips: "field security.allowedIPs type mismatch: expected []string, got !!seq"
+
+# Performance Config Errors
+performance_workers: "field performance.maxWorkers type mismatch: expected int, got string"
+performance_buffer: "field performance.bufferSize type mismatch: expected int, got string"
+performance_cache: "field performance.cacheSize type mismatch: expected int, got string"
+
+# Rate Limiting Errors
+rate_limit_requests: "field rateLimit.requestsPerSecond type mismatch: expected int, got string"
+rate_limit_window: "field rateLimit.timeWindowSeconds type mismatch: expected int, got string"
+rate_limit_burst: "field rateLimit.burstSize type mismatch: expected int, got string"
+
+# Circuit Breaker Errors
+circuit_threshold: "field circuitBreaker.failureThreshold type mismatch: expected int, got string"
+circuit_timeout: "field circuitBreaker.timeoutSeconds type mismatch: expected int, got string"
+circuit_half_open: "field circuitBreaker.halfOpenAttempts type mismatch: expected int, got string"
+
+# Retry Config Errors
+retry_max_attempts: "field retry.maxAttempts type mismatch: expected int, got string"
+retry_backoff: "field retry.backoffMilliseconds type mismatch: expected int, got string"
+retry_multiplier: "field retry.multiplier type mismatch: expected float64, got string"
+
+# Pagination Errors
+pagination_page: "field pagination.page type mismatch: expected int, got string"
+pagination_size: "field pagination.pageSize type mismatch: expected int, got string"
+pagination_total: "field pagination.totalPages type mismatch: expected int, got string"
+
+# Sort/Filter Errors
+sort_field: "field sort.field type mismatch: expected string, got int"
+sort_direction: "field sort.direction type mismatch: expected string, got bool"
+filter_operator: "field filter.operator type mismatch: expected string, got int"
+
+# Response Format Errors
+response_format: "field response.format type mismatch: expected string, got int"
+response_version: "field response.apiVersion type mismatch: expected string, got int"
+response_include: "field response.include type mismatch: expected []string, got !!seq"
+
+# Error Response Errors
+error_code: "field error.code type mismatch: expected string, got int"
+error_message: "field error.message type mismatch: expected string, got int"
+error_details: "field error.details type mismatch: expected map[string]interface{}, got !!map"
+
+# Webhook Config Errors
+webhook_url: "field webhook.url type mismatch: expected string, got int"
+webhook_events: "field webhook.events type mismatch: expected []string, got !!seq"
+webhook_headers: "field webhook.headers type mismatch: expected map[string]string, got !!map"
+
+# Notification Errors
+notification_channels: "field notifications.channels type mismatch: expected []string, got !!seq"
+notification_priority: "field notifications.priority type mismatch: expected string, got int"
+notification_retry: "field notifications.maxRetries type mismatch: expected int, got string"
+
+# Storage Config Errors
+storage_type: "field storage.type type mismatch: expected string, got int"
+storage_path: "field storage.path type mismatch: expected string, got int"
+storage_capacity: "field storage.capacity type mismatch: expected int, got string"
+
+# Cache Config Errors
+cache_ttl: "field cache.ttlSeconds type mismatch: expected int, got string"
+cache_size: "field cache.maxSize type mismatch: expected int, got string"
+cache_eviction: "field cache.evictionPolicy type mismatch: expected string, got int"
+
+# Session Config Errors
+session_timeout: "field session.timeoutMinutes type mismatch: expected int, got string"
+session_max: "field session.maxSessions type mismatch: expected int, got string"
+session_cookie: "field session.cookieSecure type mismatch: expected bool, got string"
+
+# CORS Errors
+cors_origins: "field cors.allowedOrigins type mismatch: expected []string, got !!seq"
+cors_methods: "field cors.allowedMethods type mismatch: expected []string, got !!map"
+cors_credentials: "field cors.allowCredentials type mismatch: expected bool, got string"
+
+# Compression Errors
+compression_enabled: "field compression.enabled type mismatch: expected bool, got string"
+compression_level: "field compression.level type mismatch: expected int, got string"
+compression_types: "field compression.mimeTypes type mismatch: expected []string, got !!seq"
+
+# Encoding Errors
+encoding_charset: "field encoding.charset type mismatch: expected string, got int"
+encoding_content_type: "field encoding.contentType type mismatch: expected string, got bool"
+
+# Localization Errors
+localization_locale: "field localization.defaultLocale type mismatch: expected string, got int"
+localization_timezone: "field localization.timezone type mismatch: expected string, got bool"
+localization_currency: "field localization.currency type mismatch: expected string, got int"
+
+# Feature Configuration Errors
+feature_flags: "field features.flags type mismatch: expected map[string]bool, got !!map"
+feature_rollout: "field features.rolloutPercentage type mismatch: expected int, got string"
+feature_whitelist: "field features.whitelistedUsers type mismatch: expected []string, got !!seq"
+
+# A/B Testing Errors
+abtest_variant: "field abTest.variant type mismatch: expected string, got int"
+abtest_percentage: "field abTest.trafficPercentage type mismatch: expected int, got string"
+abtest_buckets: "field abTest.buckets type mismatch: expected []int, got !!seq"
+
+# Analytics Errors
+analytics_enabled: "field analytics.enabled type mismatch: expected bool, got string"
+analytics_sampling: "field analytics.samplingRate type mismatch: expected float64, got string"
+analytics_events: "field analytics.trackedEvents type mismatch: expected []string, got !!map"
+
+# Debug/Trace Errors
+debug_enabled: "field debug.enabled type mismatch: expected bool, got string"
+debug_level: "field debug.logLevel type mismatch: expected string, got int"
+trace_sampling: "field tracing.samplingRate type mismatch: expected float64, got string"
+
+# Health Check Errors
+health_endpoint: "field health.endpoint type mismatch: expected string, got int"
+health_interval: "field health.checkIntervalSeconds type mismatch: expected int, got string"
+health_timeout: "field health.timeoutSeconds type mismatch: expected int, got string"
+
+# Graceful Shutdown Errors
+shutdown_timeout: "field shutdown.timeoutSeconds type mismatch: expected int, got string"
+shutdown_wait: "field shutdown.waitPeriodSeconds type mismatch: expected int, got string"
+shutdown_force: "field shutdown.forceAfterSeconds type mismatch: expected int, got string"
