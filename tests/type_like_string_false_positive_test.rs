@@ -172,6 +172,93 @@ fn generate_folded_scalar_tests_multi_level(
     cases
 }
 
+/// Bulk generate folded scalar test cases for ALL indentation levels (0, 1, 2, 3, 4, tab)
+/// This is the comprehensive version that includes level 0 (no indentation)
+/// Bead: bf-2w54h - Enhanced helper macros supporting all indent levels
+fn generate_folded_scalar_tests_all_levels(
+    keys: &[&str],
+    modifiers: &[&str],
+    indent_levels: &[u32],
+) -> Vec<(String, String, armor::parsers::yaml::LineType)> {
+    let mut cases = vec![];
+
+    // All indent levels including level 0 (no indentation)
+    let indents = vec![
+        ("", "level0"),      // Level 0: no indentation
+        ("  ", "level1"),    // Level 1: 2 spaces
+        ("    ", "level2"),  // Level 2: 4 spaces
+        ("      ", "level3"),// Level 3: 6 spaces
+        ("        ", "level4"),// Level 4: 8 spaces
+        ("\t", "tab"),      // Tab indentation
+    ];
+
+    for (indent, level_name) in indents {
+        for key in keys {
+            for modifier in modifiers {
+                for indent_level in indent_levels {
+                    let full_key = format!("{}_{}", level_name, key);
+                    cases.push(create_folded_scalar_test(
+                        indent,
+                        &full_key,
+                        modifier,
+                        *indent_level,
+                    ));
+                }
+            }
+        }
+    }
+
+    cases
+}
+
+/// Generate folded scalar test cases for a specific indent level
+/// This provides focused generation for a single indent level (0-4 or tab)
+/// Bead: bf-2w54h - Level-specific helper macro
+///
+/// Parameters:
+/// - level: the indent level (0-4, or "tab")
+/// - keys: array of key names to test
+/// - modifiers: array of modifiers (e.g., [">", ">-", ">+"])
+/// - indent_nums: array of explicit indent numbers (e.g., [1, 2, 3])
+///
+/// Returns: vec of (line, expected_key, expected_type) tuples
+///
+/// Generation order: For each key, generate all modifier × indent_num combinations
+/// Iterates: keys → modifiers → indent_nums
+fn generate_folded_scalar_tests_for_level(
+    level: &str,
+    keys: &[&str],
+    modifiers: &[&str],
+    indent_nums: &[u32],
+) -> Vec<(String, String, armor::parsers::yaml::LineType)> {
+    let indent = match level {
+        "level0" => "",
+        "level1" => "  ",
+        "level2" => "    ",
+        "level3" => "      ",
+        "level4" => "        ",
+        "tab" => "\t",
+        _ => "  ", // default to 2-space
+    };
+
+    let mut cases = vec![];
+    for key in keys {
+        for modifier in modifiers {
+            for indent_num in indent_nums {
+                let full_key = format!("{}_{}", level, key);
+                cases.push(create_folded_scalar_test(
+                    indent,
+                    &full_key,
+                    modifier,
+                    *indent_num,
+                ));
+            }
+        }
+    }
+
+    cases
+}
+
 // ============================================================================
 // Section 1: Exclamation Mark in Comments (Not Tags)
 // ============================================================================
@@ -12071,3 +12158,253 @@ fn test_folded_scalar_explicit_indent_skeleton() {
     // }
 }
 
+// ============================================================================
+// Enhanced Helper Macro Examples - Level 0 (No Indentation) Support
+// ============================================================================
+// Bead: bf-2w54h - Comprehensive helper macros with level 0 support
+
+#[test]
+fn test_folded_scalar_level0_all_modifiers() {
+    // Test folded scalars with NO indentation (level 0) - all modifiers
+    // This demonstrates the new level 0 support in helper macros
+    // Bead: bf-2w54h - Level 0 (no indentation) testing
+
+    let test_cases = generate_folded_scalar_tests_for_level(
+        "level0",               // Level 0 = no indentation
+        &["text", "data", "info"], // Key names
+        &[">", ">-", ">+"],      // All three modifiers
+        &[1, 2, 3, 4, 5],       // Explicit indent numbers
+    );
+
+    // Verify level 0 generates correct lines without leading spaces
+    // Generation order: keys → modifiers → indent_nums
+    assert_eq!(test_cases[0].0, "level0_text: >1");
+    assert_eq!(test_cases[1].0, "level0_text: >2");  // Note: same modifier, next indent
+    assert_eq!(test_cases[5].0, "level0_text: >-1"); // After all >n, starts >-n
+    assert_eq!(test_cases[10].0, "level0_text: >+1"); // After all >-n, starts >+n
+
+    // Verify all lines have no leading spaces (level 0)
+    for (line, _, _) in &test_cases {
+        assert!(
+            !line.starts_with(' '),
+            "Level 0 line should not start with space: '{}'",
+            line
+        );
+    }
+
+    run_folded_scalar_tests!(test_cases);
+}
+
+#[test]
+fn test_folded_scalar_all_levels_comprehensive() {
+    // Test folded scalars across ALL indent levels (0, 1, 2, 3, 4, tab)
+    // This demonstrates the comprehensive helper macro
+    // Bead: bf-2w54h - All levels comprehensive testing
+
+    let test_cases = generate_folded_scalar_tests_all_levels(
+        &["sample"],            // Single key for all levels
+        &[">"],                  // Plain modifier only
+        &[1, 2],                // Two indent numbers
+    );
+
+    // Verify we have cases for all 6 levels (0, 1, 2, 3, 4, tab)
+    assert_eq!(test_cases.len(), 12, "Should have 12 test cases (6 levels × 2 indent nums)");
+
+    // Spot check level 0 (no indentation)
+    assert_eq!(test_cases[0].0, "level0_sample: >1");
+
+    // Spot check level 1 (2-space)
+    assert_eq!(test_cases[2].0, "  level1_sample: >1");
+
+    // Spot check level 4 (8-space)
+    assert_eq!(test_cases[8].0, "        level4_sample: >1");
+
+    // Spot check tab
+    assert_eq!(test_cases[10].0, "\ttab_sample: >1");
+
+    run_folded_scalar_tests!(test_cases);
+}
+
+#[test]
+fn test_folded_scalar_level0_specific_manual_cases() {
+    // Manually specified level 0 test cases with explicit expectations
+    // Level 0 = no leading spaces (key: >n)
+    // Bead: bf-2w54h - Manual level 0 test cases
+
+    let test_cases = vec![
+        // ===== Level 0: No indentation with explicit indent >n =====
+        // Plain >n (n=1-9)
+        ("text: >1", "text", LineType::MappingKey),
+        ("data: >2", "data", LineType::MappingKey),
+        ("info: >3", "info", LineType::MappingKey),
+        ("config: >4", "config", LineType::MappingKey),
+        ("settings: >5", "settings", LineType::MappingKey),
+
+        // Strip >-n
+        ("value: >-1", "value", LineType::MappingKey),
+        ("field: >-2", "field", LineType::MappingKey),
+        ("item: >-3", "item", LineType::MappingKey),
+
+        // Keep >+n
+        ("output: >+1", "output", LineType::MappingKey),
+        ("result: >+2", "result", LineType::MappingKey),
+        ("response: >+3", "response", LineType::MappingKey),
+
+        // Keys with special characters at level 0
+        ("key!with: >1", "key!with", LineType::MappingKey),
+        ("field_name: >2", "field_name", LineType::MappingKey),
+        ("camelCase: >3", "camelCase", LineType::MappingKey),
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        // Verify the line has no leading spaces (level 0)
+        assert!(
+            line.starts_with(expected_key),
+            "Level 0 line should start with key, no spaces: '{}'",
+            line
+        );
+
+        let result = classify_line_type(&line);
+        assert_eq!(
+            result, expected_type,
+            "Level 0 folded scalar test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(&line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for level 0 folded scalar: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Level 0 key mismatch: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+}
+
+#[test]
+fn test_folded_scalar_level0_vs_level1_comparison() {
+    // Compare level 0 (no indent) with level 1 (2-space) to verify proper handling
+    // Bead: bf-2w54h - Level comparison testing
+
+    let level0_cases = generate_folded_scalar_tests_for_level(
+        "level0",
+        &["test"],
+        &[">"],
+        &[1, 2, 3],
+    );
+
+    let level1_cases = generate_folded_scalar_tests_for_level(
+        "level1",
+        &["test"],
+        &[">"],
+        &[1, 2, 3],
+    );
+
+    // Level 0 should have no leading spaces
+    assert_eq!(level0_cases[0].0, "level0_test: >1");
+    assert!(!level0_cases[0].0.starts_with(' '));
+
+    // Level 1 should have 2 leading spaces
+    assert_eq!(level1_cases[0].0, "  level1_test: >1");
+    assert!(level1_cases[0].0.starts_with("  "));
+
+    // Both should classify as MappingKey
+    run_folded_scalar_tests!(level0_cases);
+    run_folded_scalar_tests!(level1_cases);
+}
+
+#[test]
+fn test_folded_scalar_level0_with_exclamation() {
+    // Level 0 test cases with exclamation marks in keys
+    // Bead: bf-2w54h - Level 0 with special characters
+
+    let test_cases = vec![
+        // Keys with ! at level 0 (NOT at start - these are MappingKey)
+        ("warn!msg: >1", "warn!msg", LineType::MappingKey),
+        ("error!code: >2", "error!code", LineType::MappingKey),
+        ("info!detail: >3", "info!detail", LineType::MappingKey),
+
+        // Multiple exclamation marks
+        ("alert!!critical: >1", "alert!!critical", LineType::MappingKey),
+        ("debug!!trace!!verbose: >2", "debug!!trace!!verbose", LineType::MappingKey),
+
+        // Exclamation at different positions (NOT at start)
+        ("suffix!: >2", "suffix!", LineType::MappingKey),
+        ("mid!dle: >3", "mid!dle", LineType::MappingKey),
+
+        // Note: Keys starting with ! are classified as Tag, not MappingKey
+        // This is correct per YAML spec
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(&line);
+        assert_eq!(
+            result, expected_type,
+            "Level 0 with ! test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(&line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for level 0 with !: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Level 0 with ! key mismatch: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+
+    // Separately test that keys starting with ! are classified as Tag
+    let tag_cases = vec![
+        ("!prefix: >1", LineType::Tag),
+        ("!tag: >2", LineType::Tag),
+        ("!local: >3", LineType::Tag),
+    ];
+
+    for (line, expected_type) in tag_cases {
+        let result = classify_line_type(&line);
+        assert_eq!(
+            result, expected_type,
+            "Key starting with ! should be Tag: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+    }
+}
+
+#[test]
+fn test_folded_scalar_helper_macro_level0_template() {
+    // TEMPLATE EXAMPLE for level 0 (no indentation) testing
+    // Copy this pattern for level 0 specific tests
+    // Bead: bf-2w54h - Level 0 template example
+
+    let test_cases = generate_folded_scalar_tests_for_level(
+        "level0",              // Level 0 = no indentation
+        &["custom", "test"],   // Your key names here
+        &[">", ">-", ">+"],    // Modifiers to test
+        &[1, 2, 3, 4, 5],     // Explicit indent numbers
+    );
+
+    // All generated lines should start with the key (no leading spaces)
+    for (line, _, _) in &test_cases {
+        assert!(
+            !line.starts_with(' '),
+            "Level 0 test case should not start with space: '{}'",
+            line
+        );
+    }
+
+    run_folded_scalar_tests!(test_cases);
+}
