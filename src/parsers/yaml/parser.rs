@@ -9,7 +9,7 @@ use crate::parsers::yaml::{
     ParserConfig,
     syntax_validator::SyntaxValidator,
     syntax_detector::SyntaxDetector,
-    scope::ScopeStack,
+    scope::{ScopeStack, classify_line_type, LineClassification, IndentTransitionState},
     line_parser::{calculate_indentation},
     scope::extract_key_context,
 };
@@ -70,6 +70,10 @@ pub struct BasicParser {
     config: ParserConfig,
     /// Scope stack for tracking keys within their proper scope contexts
     scope_stack: ScopeStack,
+    /// Current line type being processed (key-bearing vs indent-only)
+    current_line_type: LineClassification,
+    /// Current indent transition state for tracking scope operations
+    current_transition_state: IndentTransitionState,
 }
 
 impl BasicParser {
@@ -78,6 +82,8 @@ impl BasicParser {
         Self {
             config: ParserConfig::default(),
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            current_line_type: LineClassification::Empty,
+            current_transition_state: IndentTransitionState::new(),
         }
     }
 
@@ -86,6 +92,8 @@ impl BasicParser {
         Self {
             config,
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            current_line_type: LineClassification::Empty,
+            current_transition_state: IndentTransitionState::new(),
         }
     }
 
@@ -97,7 +105,29 @@ impl BasicParser {
         Self {
             config: ParserConfig::strict(),
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            current_line_type: LineClassification::Empty,
+            current_transition_state: IndentTransitionState::new(),
         }
+    }
+
+    /// Get the current line type being processed
+    pub fn current_line_type(&self) -> LineClassification {
+        self.current_line_type
+    }
+
+    /// Check if current line is key-bearing
+    pub fn is_key_bearing_line(&self) -> bool {
+        self.current_line_type.is_key_bearing()
+    }
+
+    /// Check if current line is indent-only
+    pub fn is_indent_only_line(&self) -> bool {
+        self.current_line_type.is_indent_only()
+    }
+
+    /// Check if current line is empty
+    pub fn is_empty_line(&self) -> bool {
+        self.current_line_type.is_empty()
     }
 
     /// Detect duplicate keys using scope-aware tracking
@@ -111,6 +141,9 @@ impl BasicParser {
         for (line_num, line) in content.lines().enumerate() {
             let line_num_1index = line_num + 1;
             let trimmed = line.trim();
+
+            // Classify the line type to enable type-specific scope handling
+            let line_type = classify_line_type(line);
 
             // Handle document markers - reset scope tracking
             if trimmed == "---" || trimmed == "..." {
@@ -133,19 +166,30 @@ impl BasicParser {
             // This enables analysis of indent transitions even on blank lines, comments, etc.
             let indent_changed = indent != scope_stack.get_last_indent();
             if indent_changed {
-                // Check if this line has a key context
-                let has_key = extract_key_context(line).is_some();
+                // Use line classification to determine if this line has a key
+                let has_key = line_type.is_key_bearing();
                 scope_stack.record_indent_transition(line_num_1index, indent, has_key, line);
             }
 
-            // Handle blank lines and comments
+            // Handle blank lines and comments with type-specific logic
             // Blank lines should be transparent to scope tracking - they don't trigger
             // any scope transitions. The next content line will handle any needed scope changes.
             // However, we DO process indent decreases on blank lines to exit scopes properly.
             if trimmed.is_empty() || trimmed.starts_with('#') {
-                // Process indent transitions without keys (e.g., scope exit on blank line)
-                if indent_changed && !trimmed.starts_with('#') {
+                // Process indent transitions for empty/indent-only lines
+                // Comments are treated as indent-only for scope tracking purposes
+                if indent_changed && line_type.is_empty() {
                     scope_stack.process_indent_transition_without_key(line_num_1index, indent);
+                }
+                continue;
+            }
+
+            // Type-specific handling: indent-only lines (no key token)
+            // These lines don't trigger scope entry but may trigger scope exit on indent decrease
+            if !line_type.is_key_bearing() {
+                // Indent-only line - handle scope exit if indent decreased
+                if indent < scope_stack.current_indent() {
+                    scope_stack.exit_to_scope(indent);
                 }
                 continue;
             }
@@ -344,6 +388,9 @@ impl Parser for BasicParser {
             let line_num_1index = line_num + 1;
             let trimmed = line.trim();
 
+            // Classify the line type to enable type-specific scope handling
+            let line_type = classify_line_type(line);
+
             // Handle document markers - reset scope tracking
             if trimmed == "---" || trimmed == "..." {
                 #[cfg(debug_assertions)]
@@ -365,19 +412,30 @@ impl Parser for BasicParser {
             // This enables analysis of indent transitions even on blank lines, comments, etc.
             let indent_changed = indent != scope_stack.get_last_indent();
             if indent_changed {
-                // Check if this line has a key context
-                let has_key = extract_key_context(line).is_some();
+                // Use line classification to determine if this line has a key
+                let has_key = line_type.is_key_bearing();
                 scope_stack.record_indent_transition(line_num_1index, indent, has_key, line);
             }
 
-            // Handle blank lines and comments
+            // Handle blank lines and comments with type-specific logic
             // Blank lines should be transparent to scope tracking - they don't trigger
             // any scope transitions. The next content line will handle any needed scope changes.
             // However, we DO process indent decreases on blank lines to exit scopes properly.
             if trimmed.is_empty() || trimmed.starts_with('#') {
-                // Process indent transitions without keys (e.g., scope exit on blank line)
-                if indent_changed && !trimmed.starts_with('#') {
+                // Process indent transitions for empty/indent-only lines
+                // Comments are treated as indent-only for scope tracking purposes
+                if indent_changed && line_type.is_empty() {
                     scope_stack.process_indent_transition_without_key(line_num_1index, indent);
+                }
+                continue;
+            }
+
+            // Type-specific handling: indent-only lines (no key token)
+            // These lines don't trigger scope entry but may trigger scope exit on indent decrease
+            if !line_type.is_key_bearing() {
+                // Indent-only line - handle scope exit if indent decreased
+                if indent < scope_stack.current_indent() {
+                    scope_stack.exit_to_scope(indent);
                 }
                 continue;
             }
@@ -660,6 +718,8 @@ impl Parser for BasicParser {
         Self {
             config,
             scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            current_line_type: LineClassification::Empty,
+            current_transition_state: IndentTransitionState::new(),
         }
     }
 }

@@ -72,6 +72,148 @@ use log::warn as log_warn;
 #[cfg(debug_assertions)]
 use log::trace as log_trace;
 
+/// Classification of indent transition types
+///
+/// This enum represents the three possible types of indent transitions
+/// that can occur during YAML parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndentTransitionType {
+    /// Indent increased, indicating entry into a deeper scope
+    EnterScope,
+    /// Indent decreased, indicating exit to a parent scope
+    ExitScope,
+    /// No indent change, staying at the same scope level
+    SameLevel,
+}
+
+impl IndentTransitionType {
+    /// Classify an indent transition based on from/to indents
+    pub fn classify(from_indent: usize, to_indent: usize) -> Self {
+        use std::cmp::Ordering;
+        match to_indent.cmp(&from_indent) {
+            Ordering::Greater => Self::EnterScope,
+            Ordering::Less => Self::ExitScope,
+            Ordering::Equal => Self::SameLevel,
+        }
+    }
+
+    /// Check if this is an EnterScope transition
+    pub fn is_enter_scope(&self) -> bool {
+        matches!(self, Self::EnterScope)
+    }
+
+    /// Check if this is an ExitScope transition
+    pub fn is_exit_scope(&self) -> bool {
+        matches!(self, Self::ExitScope)
+    }
+
+    /// Check if this is a SameLevel transition
+    pub fn is_same_level(&self) -> bool {
+        matches!(self, Self::SameLevel)
+    }
+}
+
+impl fmt::Display for IndentTransitionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EnterScope => write!(f, "enter-scope"),
+            Self::ExitScope => write!(f, "exit-scope"),
+            Self::SameLevel => write!(f, "same-level"),
+        }
+    }
+}
+
+/// State machine for tracking indent level transitions
+///
+/// This struct maintains the current state of the parser's indent transition
+/// tracking, enabling classification of scope operations during parsing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndentTransitionState {
+    /// The previous indentation level
+    pub from_indent: usize,
+    /// The current indentation level
+    pub to_indent: usize,
+    /// The type of the last transition
+    pub last_transition_type: IndentTransitionType,
+    /// Whether the last transition had a key token
+    pub last_had_key: bool,
+}
+
+impl IndentTransitionState {
+    /// Create a new transition state in initial state
+    pub fn new() -> Self {
+        Self {
+            from_indent: 0,
+            to_indent: 0,
+            last_transition_type: IndentTransitionType::SameLevel,
+            last_had_key: false,
+        }
+    }
+
+    /// Update the state with a new indent transition
+    ///
+    /// # Arguments
+    ///
+    /// * `from_indent` - The previous indentation level
+    /// * `to_indent` - The new indentation level
+    /// * `has_key` - Whether this transition occurred on a line with a key token
+    pub fn update(&mut self, from_indent: usize, to_indent: usize, has_key: bool) {
+        self.from_indent = from_indent;
+        self.to_indent = to_indent;
+        self.last_transition_type = IndentTransitionType::classify(from_indent, to_indent);
+        self.last_had_key = has_key;
+    }
+
+    /// Get the current transition type
+    pub fn current_transition_type(&self) -> IndentTransitionType {
+        self.last_transition_type
+    }
+
+    /// Check if the last transition was an enter-scope
+    pub fn is_entering_scope(&self) -> bool {
+        self.last_transition_type.is_enter_scope()
+    }
+
+    /// Check if the last transition was an exit-scope
+    pub fn is_exiting_scope(&self) -> bool {
+        self.last_transition_type.is_exit_scope()
+    }
+
+    /// Check if the last transition was same-level
+    pub fn is_same_level(&self) -> bool {
+        self.last_transition_type.is_same_level()
+    }
+
+    /// Get a description of the current state
+    pub fn describe(&self) -> String {
+        format!(
+            "IndentTransitionState(from={}, to={}, type={}, had_key={})",
+            self.from_indent, self.to_indent, self.last_transition_type, self.last_had_key
+        )
+    }
+
+    /// Reset to initial state
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+}
+
+impl Default for IndentTransitionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for IndentTransitionState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "IndentTransitionState(from={}, to={}, type={}, had_key={})",
+            self.from_indent, self.to_indent, self.last_transition_type, self.last_had_key
+        )
+    }
+}
+
 /// A scope representing a mapping context at a specific nesting level
 ///
 /// Scopes are created when the parser encounters a parent mapping (a key whose value
@@ -741,12 +883,15 @@ impl ScopeStack {
     pub fn record_indent_transition(&mut self, line_number: usize, new_indent: usize, has_key: bool, raw_line: &str) {
         // Only record if the indent actually changed
         if new_indent != self.last_indent {
+            // Store the old indent before updating
+            let old_indent = self.last_indent;
+
             // Classify the line type
             let line_classification = classify_line_type(raw_line);
 
             let transition = IndentTransition::new(
                 line_number,
-                self.last_indent,
+                old_indent,
                 new_indent,
                 has_key,
                 raw_line,
@@ -757,7 +902,7 @@ impl ScopeStack {
 
             #[cfg(debug_assertions)]
             {
-                let direction = if new_indent > self.last_indent.saturating_sub(1) {
+                let direction = if new_indent > old_indent {
                     "increase"
                 } else {
                     "decrease"
@@ -766,7 +911,7 @@ impl ScopeStack {
                 log_debug!(
                     "[INDENT TRANSITION] line={}, {}→{}, {}, {}, raw='{}'",
                     line_number,
-                    self.last_indent.saturating_sub(1),
+                    old_indent,
                     new_indent,
                     key_status,
                     line_classification,
@@ -812,6 +957,62 @@ impl ScopeStack {
             .iter()
             .filter(|t| t.has_key)
             .collect()
+    }
+
+    /// Get enter-scope transitions
+    ///
+    /// Returns only those transitions that represent entering a deeper scope.
+    ///
+    /// # Returns
+    ///
+    /// A vector of enter-scope transitions
+    pub fn get_enter_scope_transitions(&self) -> Vec<&IndentTransition> {
+        self.indent_transitions
+            .iter()
+            .filter(|t| t.is_enter_scope())
+            .collect()
+    }
+
+    /// Get exit-scope transitions
+    ///
+    /// Returns only those transitions that represent exiting to a parent scope.
+    ///
+    /// # Returns
+    ///
+    /// A vector of exit-scope transitions
+    pub fn get_exit_scope_transitions(&self) -> Vec<&IndentTransition> {
+        self.indent_transitions
+            .iter()
+            .filter(|t| t.is_exit_scope())
+            .collect()
+    }
+
+    /// Get same-level transitions
+    ///
+    /// Returns only those transitions that represent staying at the same level.
+    ///
+    /// # Returns
+    ///
+    /// A vector of same-level transitions
+    pub fn get_same_level_transitions(&self) -> Vec<&IndentTransition> {
+        self.indent_transitions
+            .iter()
+            .filter(|t| t.is_same_level())
+            .collect()
+    }
+
+    /// Get transition count by type
+    ///
+    /// Returns a tuple of (enter_count, exit_count, same_level_count).
+    ///
+    /// # Returns
+    ///
+    /// A tuple with counts of each transition type
+    pub fn get_transition_counts(&self) -> (usize, usize, usize) {
+        let enter = self.get_enter_scope_transitions().len();
+        let exit = self.get_exit_scope_transitions().len();
+        let same = self.get_same_level_transitions().len();
+        (enter, exit, same)
     }
 
     /// Clear all indent transitions
@@ -1297,6 +1498,8 @@ pub struct IndentTransition {
     pub raw_line: String,
     /// Line classification (key-bearing vs indent-only)
     pub line_classification: LineClassification,
+    /// Classification of the transition type (enter-scope, exit-scope, same-level)
+    pub transition_type: IndentTransitionType,
 }
 
 impl IndentTransition {
@@ -1311,6 +1514,7 @@ impl IndentTransition {
     /// * `raw_line` - The raw line content
     /// * `line_classification` - Classification of the line type
     pub fn new(line_number: usize, from_indent: usize, to_indent: usize, has_key: bool, raw_line: &str, line_classification: LineClassification) -> Self {
+        let transition_type = IndentTransitionType::classify(from_indent, to_indent);
         Self {
             line_number,
             from_indent,
@@ -1318,6 +1522,7 @@ impl IndentTransition {
             has_key,
             raw_line: raw_line.to_string(),
             line_classification,
+            transition_type,
         }
     }
 
@@ -1345,6 +1550,38 @@ impl IndentTransition {
     pub fn line_classification(&self) -> LineClassification {
         self.line_classification
     }
+
+    /// Get the transition type (enter-scope, exit-scope, same-level)
+    pub fn transition_type(&self) -> IndentTransitionType {
+        self.transition_type
+    }
+
+    /// Check if this is an enter-scope transition
+    pub fn is_enter_scope(&self) -> bool {
+        self.transition_type.is_enter_scope()
+    }
+
+    /// Check if this is an exit-scope transition
+    pub fn is_exit_scope(&self) -> bool {
+        self.transition_type.is_exit_scope()
+    }
+
+    /// Check if this is a same-level transition
+    pub fn is_same_level(&self) -> bool {
+        self.transition_type.is_same_level()
+    }
+
+    /// Map this indent transition to a scope operation description
+    ///
+    /// Returns a human-readable description of what scope operation
+    /// this transition represents.
+    pub fn scope_operation(&self) -> &'static str {
+        match self.transition_type {
+            IndentTransitionType::EnterScope => "enter-scope",
+            IndentTransitionType::ExitScope => "exit-scope",
+            IndentTransitionType::SameLevel => "stay-in-scope",
+        }
+    }
 }
 
 impl fmt::Display for IndentTransition {
@@ -1359,12 +1596,271 @@ impl fmt::Display for IndentTransition {
         let key_status = if self.has_key { "with-key" } else { "without-key" };
         write!(
             f,
-            "IndentTransition(line={}, {}→{}, {}, {}, {})",
-            self.line_number, self.from_indent, self.to_indent, direction, key_status, self.line_classification
+            "IndentTransition(line={}, {}→{}, {}, {}, {}, type={})",
+            self.line_number, self.from_indent, self.to_indent, direction, key_status, self.line_classification, self.transition_type
         )
     }
 }
 
-// Comprehensive tests are in the separate tests.rs file
+// Tests for indent transition tracking
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_indent_transition_type_classify() {
+        // Test enter-scope (indent increase)
+        let trans_type = IndentTransitionType::classify(0, 2);
+        assert_eq!(trans_type, IndentTransitionType::EnterScope);
+        assert!(trans_type.is_enter_scope());
+        assert!(!trans_type.is_exit_scope());
+        assert!(!trans_type.is_same_level());
+
+        // Test exit-scope (indent decrease)
+        let trans_type = IndentTransitionType::classify(4, 2);
+        assert_eq!(trans_type, IndentTransitionType::ExitScope);
+        assert!(!trans_type.is_enter_scope());
+        assert!(trans_type.is_exit_scope());
+        assert!(!trans_type.is_same_level());
+
+        // Test same-level (no indent change)
+        let trans_type = IndentTransitionType::classify(2, 2);
+        assert_eq!(trans_type, IndentTransitionType::SameLevel);
+        assert!(!trans_type.is_enter_scope());
+        assert!(!trans_type.is_exit_scope());
+        assert!(trans_type.is_same_level());
+    }
+
+    #[test]
+    fn test_indent_transition_type_display() {
+        assert_eq!(format!("{}", IndentTransitionType::EnterScope), "enter-scope");
+        assert_eq!(format!("{}", IndentTransitionType::ExitScope), "exit-scope");
+        assert_eq!(format!("{}", IndentTransitionType::SameLevel), "same-level");
+    }
+
+    #[test]
+    fn test_indent_transition_state() {
+        let mut state = IndentTransitionState::new();
+
+        // Initial state
+        assert_eq!(state.from_indent, 0);
+        assert_eq!(state.to_indent, 0);
+        assert_eq!(state.current_transition_type(), IndentTransitionType::SameLevel);
+        assert!(!state.last_had_key);
+
+        // Update with enter-scope transition
+        state.update(0, 2, true);
+        assert_eq!(state.from_indent, 0);
+        assert_eq!(state.to_indent, 2);
+        assert!(state.is_entering_scope());
+        assert!(!state.is_exiting_scope());
+        assert!(!state.is_same_level());
+        assert!(state.last_had_key);
+
+        // Update with exit-scope transition
+        state.update(2, 0, false);
+        assert_eq!(state.from_indent, 2);
+        assert_eq!(state.to_indent, 0);
+        assert!(!state.is_entering_scope());
+        assert!(state.is_exiting_scope());
+        assert!(!state.is_same_level());
+        assert!(!state.last_had_key);
+
+        // Update with same-level transition
+        state.update(0, 0, true);
+        assert!(state.is_same_level());
+    }
+
+    #[test]
+    fn test_indent_transition_state_describe() {
+        let mut state = IndentTransitionState::new();
+        state.update(0, 2, true);
+
+        let description = state.describe();
+        assert!(description.contains("from=0"));
+        assert!(description.contains("to=2"));
+        assert!(description.contains("enter-scope"));
+        assert!(description.contains("had_key=true"));
+
+        let display = format!("{}", state);
+        assert!(display.contains("IndentTransitionState"));
+    }
+
+    #[test]
+    fn test_indent_transition_state_reset() {
+        let mut state = IndentTransitionState::new();
+        state.update(0, 4, true);
+        state.reset();
+
+        assert_eq!(state.from_indent, 0);
+        assert_eq!(state.to_indent, 0);
+        assert_eq!(state.current_transition_type(), IndentTransitionType::SameLevel);
+        assert!(!state.last_had_key);
+    }
+
+    #[test]
+    fn test_indent_transition_with_type() {
+        let transition = IndentTransition::new(
+            5,
+            0,
+            2,
+            true,
+            "key: value",
+            LineClassification::KeyBearing,
+        );
+
+        assert_eq!(transition.line_number, 5);
+        assert_eq!(transition.from_indent, 0);
+        assert_eq!(transition.to_indent, 2);
+        assert!(transition.has_key);
+        assert!(transition.is_increase());
+        assert!(!transition.is_decrease());
+        assert!(transition.is_enter_scope());
+        assert!(!transition.is_exit_scope());
+        assert!(transition.is_without_key() == false);
+        assert_eq!(transition.transition_type(), IndentTransitionType::EnterScope);
+        assert_eq!(transition.scope_operation(), "enter-scope");
+    }
+
+    #[test]
+    fn test_indent_transition_exit_scope() {
+        let transition = IndentTransition::new(
+            10,
+            4,
+            2,
+            false,
+            "  # comment",
+            LineClassification::IndentOnly,
+        );
+
+        assert!(transition.is_decrease());
+        assert!(!transition.is_increase());
+        assert!(transition.is_exit_scope());
+        assert!(!transition.is_enter_scope());
+        assert!(transition.is_without_key());
+        assert_eq!(transition.transition_type(), IndentTransitionType::ExitScope);
+        assert_eq!(transition.scope_operation(), "exit-scope");
+    }
+
+    #[test]
+    fn test_indent_transition_same_level() {
+        let transition = IndentTransition::new(
+            15,
+            2,
+            2,
+            true,
+            "  another: value",
+            LineClassification::KeyBearing,
+        );
+
+        assert!(!transition.is_increase());
+        assert!(!transition.is_decrease());
+        assert!(transition.is_same_level());
+        assert_eq!(transition.change_amount(), 0);
+        assert_eq!(transition.transition_type(), IndentTransitionType::SameLevel);
+        assert_eq!(transition.scope_operation(), "stay-in-scope");
+    }
+
+    #[test]
+    fn test_indent_transition_display() {
+        let transition = IndentTransition::new(
+            5,
+            0,
+            2,
+            true,
+            "key: value",
+            LineClassification::KeyBearing,
+        );
+
+        let display = format!("{}", transition);
+        assert!(display.contains("line=5"));
+        assert!(display.contains("0→2"));
+        assert!(display.contains("increase"));
+        assert!(display.contains("with-key"));
+        assert!(display.contains("key-bearing"));
+        assert!(display.contains("type=enter-scope"));
+    }
+
+    #[test]
+    fn test_scope_stack_transition_tracking() {
+        let mut stack = ScopeStack::new(2);
+
+        // Record some transitions
+        stack.record_indent_transition(1, 2, true, "  key: value");
+        stack.record_indent_transition(3, 4, true, "    nested:");
+        stack.record_indent_transition(5, 2, false, "  ");
+
+        let transitions = stack.get_indent_transitions();
+        assert_eq!(transitions.len(), 3);
+
+        // Check first transition (enter-scope)
+        assert!(transitions[0].is_enter_scope());
+        assert_eq!(transitions[0].line_number, 1);
+
+        // Check second transition (enter-scope)
+        assert!(transitions[1].is_enter_scope());
+        assert_eq!(transitions[1].line_number, 3);
+
+        // Check third transition (exit-scope)
+        assert!(transitions[2].is_exit_scope());
+        assert_eq!(transitions[2].line_number, 5);
+    }
+
+    #[test]
+    fn test_scope_stack_transition_filtering() {
+        let mut stack = ScopeStack::new(2);
+
+        // Record transitions
+        stack.record_indent_transition(1, 2, true, "  key: value");
+        stack.record_indent_transition(2, 4, true, "    nested:");
+        stack.record_indent_transition(3, 2, false, "  ");
+        // Note: line 4 (2→2) won't be recorded since indent doesn't change
+        stack.record_indent_transition(4, 2, true, "  sibling: value");
+
+        let enter_transitions = stack.get_enter_scope_transitions();
+        assert_eq!(enter_transitions.len(), 2); // 0→2, 2→4
+
+        let exit_transitions = stack.get_exit_scope_transitions();
+        assert_eq!(exit_transitions.len(), 1); // 4→2
+
+        let same_level = stack.get_same_level_transitions();
+        assert_eq!(same_level.len(), 0); // No same-level transitions
+
+        let with_keys = stack.get_transitions_with_keys();
+        assert_eq!(with_keys.len(), 2); // Lines 1 and 2 only (line 4 not recorded due to no indent change)
+
+        let without_keys = stack.get_transitions_without_keys();
+        assert_eq!(without_keys.len(), 1); // Only line 3
+    }
+
+    #[test]
+    fn test_scope_stack_transition_counts() {
+        let mut stack = ScopeStack::new(2);
+
+        // Record transitions
+        stack.record_indent_transition(1, 2, true, "  key: value");
+        stack.record_indent_transition(2, 4, true, "    nested:");
+        stack.record_indent_transition(3, 2, false, "  ");
+        stack.record_indent_transition(4, 2, true, "  sibling:");
+
+        let (enter, exit, same) = stack.get_transition_counts();
+        assert_eq!(enter, 2);
+        assert_eq!(exit, 1);
+        assert_eq!(same, 0);
+    }
+
+    #[test]
+    fn test_scope_stack_clear_transitions() {
+        let mut stack = ScopeStack::new(2);
+
+        stack.record_indent_transition(1, 2, true, "  key: value");
+        stack.record_indent_transition(2, 4, true, "    nested:");
+
+        assert_eq!(stack.get_indent_transitions().len(), 2);
+
+        stack.clear_indent_transitions();
+
+        assert_eq!(stack.get_indent_transitions().len(), 0);
+        assert_eq!(stack.get_last_indent(), 0);
+    }
+}
