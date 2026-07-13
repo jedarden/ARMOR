@@ -9048,12 +9048,69 @@ fn test_folded_scalar_explicit_indent_2space() {
         ("  test!4: >4", "test!4", LineType::MappingKey),
         ("  data!5: >-5", "data!5", LineType::MappingKey),
 
-        // ===== Realistic key names with modifiers =====
+        // ===== Realistic key names with > modifier at levels 1-5 =====
         ("  description: >1", "description", LineType::MappingKey),
-        ("  content: >-2", "content", LineType::MappingKey),
-        ("  summary: >+3", "summary", LineType::MappingKey),
+        ("  content: >2", "content", LineType::MappingKey),
+        ("  message: >3", "message", LineType::MappingKey),
         ("  text: >4", "text", LineType::MappingKey),
-        ("  message: >-5", "message", LineType::MappingKey),
+        ("  note: >5", "note", LineType::MappingKey),
+
+        // ===== Realistic key names with >- modifier at levels 1-5 =====
+        ("  summary: >-1", "summary", LineType::MappingKey),
+        ("  body: >-2", "body", LineType::MappingKey),
+        ("  details: >-3", "details", LineType::MappingKey),
+        ("  info: >-4", "info", LineType::MappingKey),
+        ("  documentation: >-5", "documentation", LineType::MappingKey),
+
+        // ===== Realistic key names with >+ modifier at levels 1-5 =====
+        ("  comment: >+1", "comment", LineType::MappingKey),
+        ("  remark: >+2", "remark", LineType::MappingKey),
+        ("  annotation: >+3", "annotation", LineType::MappingKey),
+        ("  observation: >+4", "observation", LineType::MappingKey),
+        ("  note: >+5", "note", LineType::MappingKey),
+
+        // ===== Additional exclamation mark combinations with all modifiers =====
+        // > modifier with exclamation marks at levels 1-5
+        ("  key!1: >1", "key!1", LineType::MappingKey),
+        ("  key!2: >2", "key!2", LineType::MappingKey),
+        ("  key!3: >3", "key!3", LineType::MappingKey),
+        ("  key!4: >4", "key!4", LineType::MappingKey),
+        ("  key!5: >5", "key!5", LineType::MappingKey),
+
+        // >- modifier with exclamation marks at levels 1-5
+        ("  key!1: >-1", "key!1", LineType::MappingKey),
+        ("  key!2: >-2", "key!2", LineType::MappingKey),
+        ("  key!3: >-3", "key!3", LineType::MappingKey),
+        ("  key!4: >-4", "key!4", LineType::MappingKey),
+        ("  key!5: >-5", "key!5", LineType::MappingKey),
+
+        // >+ modifier with exclamation marks at levels 1-5
+        ("  key!1: >+1", "key!1", LineType::MappingKey),
+        ("  key!2: >+2", "key!2", LineType::MappingKey),
+        ("  key!3: >+3", "key!3", LineType::MappingKey),
+        ("  key!4: >+4", "key!4", LineType::MappingKey),
+        ("  key!5: >+5", "key!5", LineType::MappingKey),
+
+        // ===== Realistic application keys with exclamation marks =====
+        ("  alert!warning: >1", "alert!warning", LineType::MappingKey),
+        ("  error!critical: >2", "error!critical", LineType::MappingKey),
+        ("  success!completed: >3", "success!completed", LineType::MappingKey),
+        ("  info!debug: >4", "info!debug", LineType::MappingKey),
+        ("  trace!verbose: >5", "trace!verbose", LineType::MappingKey),
+
+        // ===== Multiple exclamation marks in keys =====
+        ("  key!!bang: >-1", "key!!bang", LineType::MappingKey),
+        ("  test!!!case: >-2", "test!!!case", LineType::MappingKey),
+        ("  multiple!!here: >-3", "multiple!!here", LineType::MappingKey),
+        ("  exclamation!!marks: >-4", "exclamation!!marks", LineType::MappingKey),
+        ("  urgent!!!alert: >-5", "urgent!!!alert", LineType::MappingKey),
+
+        // ===== Realistic application keys with >+ modifier =====
+        ("  log!entry: >+1", "log!entry", LineType::MappingKey),
+        ("  config!value: >+2", "config!value", LineType::MappingKey),
+        ("  state!transition: >+3", "state!transition", LineType::MappingKey),
+        ("  event!handler: >+4", "event!handler", LineType::MappingKey),
+        ("  callback!function: >+5", "callback!function", LineType::MappingKey),
     ];
 
     // Run indicator line tests
