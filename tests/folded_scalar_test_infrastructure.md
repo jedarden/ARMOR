@@ -7,6 +7,26 @@
 
 This infrastructure simplifies creating comprehensive tests for YAML folded scalars with explicit indent modifiers. Folded scalars (using `>`) treat newlines as spaces, and explicit indent modifiers (like `>2`, `>-3`, `+4`) specify exactly how many spaces of indentation to use.
 
+## Quick Reference: Pattern to Example Mappings
+
+This section provides direct links from each pattern to its concrete implementations in Section 12B.
+
+| Pattern | Purpose | Concrete Example | Function | Line |
+|---------|---------|------------------|----------|------|
+| **Pattern 1** | Multi-level comprehensive testing | All modifiers at all indent levels | `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` | 8342 |
+| **Pattern 2** | Single-indent focused testing | Plain (>) modifier at 2-space only | `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()` | 8561 |
+| **Pattern 2** | Single-indent focused testing | Strip (>-) modifier at 2-space only | `test_folded_scalar_strip_explicit_indent_modifiers_at_2_space()` | 8670 |
+| **Pattern 2** | Single-indent focused testing | Keep (>+) modifier at 2-space only | `test_folded_scalar_keep_explicit_indent_modifiers_at_2_space()` | 13040 |
+| **Pattern 3** | Template for new tests | Macro-based test generation | `test_folded_scalar_explicit_indent_template_example()` | 12788 |
+| **Pattern 4** | Indicator line classification | Basic folded scalar indicators | `test_folded_block_scalar_with_exclamation_marks()` | 7901 |
+| **Pattern 4** | Indicator line classification | Literal scalar indicators | `test_literal_block_scalar_with_exclamation_marks()` | 7962 |
+| **Pattern 4** | Indicator line classification | Comprehensive all-variant indicators | `test_folded_scalar_indicator_classification()` | 10730 |
+| **Pattern 5** | Continuation line testing | Basic binary allowed types | `test_folded_block_scalar_with_exclamation_marks()` | 7941 |
+| **Pattern 5** | Continuation line testing | Tuple-based with Tag support | `test_literal_block_scalar_with_exclamation_marks()` | 7988 |
+| **Pattern 6** | Key extraction assertions | Verify key name extraction | `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` | 8390 |
+
+**Usage:** When implementing a new test, find the pattern that matches your needs and jump to the concrete example function/line listed above.
+
 ## Quick Start
 
 ### Using the Helper Macros
@@ -697,23 +717,139 @@ If your test covers unusual cases, add comments explaining:
 
 ## Assertion Pattern
 
-The `run_folded_scalar_tests!` macro performs two assertions:
+This section documents the complete assertion patterns used in Section 12B tests.
 
-1. **Line Type Assertion**
+### Complete Assertion Pattern (Two-Step Validation)
+
+**Purpose:** Validate both line classification and key extraction for MappingKey lines
+
+**Concrete Example from Section 12B:**
+```rust
+// Section 12B: Explicit indent modifiers at various levels (line 8342)
+// Key extraction assertions at lines 8390-8399
+fn test_folded_scalar_explicit_indent_modifiers_at_various_levels() {
+    let test_cases = vec![
+        ("  text1: >1", "text1", LineType::MappingKey),
+        ("  strip2: >-2", "strip2", LineType::MappingKey),
+        ("    keep3: >+3", "keep3", LineType::MappingKey),
+        // ... more test cases
+    ];
+
+    // Step 1: Line Type Classification
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            expected_type,
+            "Should detect mapping key for folded scalar with explicit indent: '{}'",
+            line
+        );
+
+        // Step 2: Key Extraction (only for MappingKey types)
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key info for: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key,
+                expected_key,
+                "Should extract correct key name for: '{}'",
+                line
+            );
+        }
+    }
+}
+```
+
+**Assertion Pattern Structure:**
+
+1. **Line Type Assertion** (always executed)
    ```rust
+   let result = classify_line_type(line);
    assert_eq!(result, expected_type, "...");
    ```
+   - Validates that `classify_line_type()` returns the expected `LineType`
+   - Used for all test cases regardless of type
 
-2. **Key Detection Assertion** (only for MappingKey types)
+2. **Key Extraction Assertion** (conditional on type)
    ```rust
-   let info = detect_mapping_key(line, 0);
-   assert!(info.is_some(), "...");
-   assert_eq!(detected.key, expected_key, "...");
+   if result == LineType::MappingKey {
+       let info = detect_mapping_key(line, 0);
+       assert!(info.is_some(), "...");
+       let detected = info.unwrap();
+       assert_eq!(detected.key, expected_key, "...");
+   }
    ```
+   - Only executed for `MappingKey` types
+   - Validates that `detect_mapping_key()` successfully parses the line
+   - Validates that the extracted key name matches the expected value
 
-This ensures both:
+**This pattern ensures:**
 - The line is correctly classified
-- The key name is correctly extracted
+- The key name is correctly extracted (for MappingKey lines)
+
+**Used in Section 12B:**
+- Line 8390-8399: `test_folded_scalar_explicit_indent_modifiers_at_various_levels()`
+- Line 8561-8669: `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()`
+- Line 8670-8778: `test_folded_scalar_strip_explicit_indent_modifiers_at_2_space()`
+- Line 13040-13147: `test_folded_scalar_keep_explicit_indent_modifiers_at_2_space()`
+
+**Alternative: Macro-based Assertions**
+
+The `run_folded_scalar_tests!` macro encapsulates this pattern:
+
+```rust
+// Using macro (simpler)
+let test_cases = vec![
+    ("  text1: >1", "text1", LineType::MappingKey),
+    ("  strip2: >-2", "strip2", LineType::MappingKey),
+];
+run_folded_scalar_tests!(test_cases);
+
+// Equivalent to manual assertions above
+```
+
+### Negative Assertion Pattern
+
+**Purpose:** Ensure continuation lines are NOT detected as mapping keys
+
+**Concrete Example:**
+```rust
+// Section 12B.3: Template example (line 12788)
+// Negative assertions for continuation lines
+fn test_folded_scalar_explicit_indent_template_example() {
+    // ... indicator line tests with positive assertions ...
+
+    // Continuation lines should NOT detect as mapping keys
+    let continuation_lines = vec![
+        "    This is continuation text",
+        "      More continuation content",
+    ];
+
+    for line in continuation_lines {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_none(),
+            "Continuation line should NOT detect mapping key: '{}'",
+            line
+        );
+    }
+}
+```
+
+**Pattern:**
+```rust
+let info = detect_mapping_key(line, 0);
+assert!(info.is_none(), "...");
+```
+
+**Used in Section 12B:**
+- Line 12788-12806: Template example with negative assertions
+- Most comprehensive tests include both positive and negative assertions
 
 ## YAML Specification Reference
 
@@ -744,3 +880,95 @@ When modifying this infrastructure:
 2. Update this documentation
 3. Add examples for new patterns
 4. Test both macro and function-based approaches
+
+## Complete Cross-Reference Index
+
+This section provides a comprehensive index of all Section 12B test functions, organized by function name with line numbers and pattern classifications.
+
+### Section 12B Test Functions
+
+| Function Name | Line | Pattern(s) | Description |
+|--------------|------|-----------|-------------|
+| `test_folded_block_scalar_with_exclamation_marks()` | 7901 | Pattern 4, 5 | Section 12B entry point: folded scalars with exclamation marks, indicator lines, continuation lines |
+| `test_literal_block_scalar_with_exclamation_marks()` | 7962 | Pattern 4, 5 | Literal scalars with exclamation marks, indicator lines, continuation lines with Tag support |
+| `test_literal_scalar_basic_modifiers_at_various_indentation_levels()` | 8012 | Pattern 1, 6 | Literal scalars with basic modifiers (|-, |+) at various levels |
+| `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` | 8342 | Pattern 1, 6 | Comprehensive explicit indent testing: all modifiers (>, >-, >+) at all levels (2,4,6,8,tab) with levels 1-9 |
+| `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()` | 8561 | Pattern 2, 6 | Plain modifier (>) explicit indent at 2-space indentation only |
+| `test_folded_scalar_strip_explicit_indent_modifiers_at_2_space()` | 8670 | Pattern 2, 6 | Strip modifier (>-) explicit indent at 2-space indentation only |
+| `test_literal_scalar_explicit_indent_modifiers_at_various_levels()` | 8779 | Pattern 1, 6 | Literal scalar explicit indent comprehensive testing |
+| `test_folded_scalar_basic_modifiers()` | 10549 | Pattern 4, 5 | Section 12B.2: Basic modifier (>-, >+) testing |
+| `test_folded_scalar_indicator_lines()` | 10524 | Pattern 4 | Section 12B.2: Basic folded scalar indicator line tests |
+| `test_folded_scalar_indicator_classification()` | 10730 | Pattern 4, 6 | Section 12B.1: Comprehensive indicator classification across all variants |
+| `test_folded_scalar_explicit_indent_template_example()` | 12788 | Pattern 3, 6 | Section 12B.3: Template example for macro-based test generation |
+| `test_folded_scalar_explicit_indent_tab_template()` | 12809 | Pattern 3 | Template example for tab indentation testing |
+| `test_folded_scalar_explicit_indent_helper_function_example()` | 12825 | Pattern 3 | Template example for helper function approach |
+| `test_folded_scalar_keep_explicit_indent_modifiers_at_2_space()` | 13040 | Pattern 2, 6 | Keep modifier (>+) explicit indent at 2-space indentation only |
+
+### Pattern to Function Mapping
+
+**Pattern 1: Comprehensive Multi-Level Testing**
+- `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` (8342)
+- `test_literal_scalar_explicit_indent_modifiers_at_various_levels()` (8779)
+- `test_literal_scalar_basic_modifiers_at_various_indentation_levels()` (8012)
+
+**Pattern 2: Single-Indent Level Focused Testing**
+- `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()` (8561)
+- `test_folded_scalar_strip_explicit_indent_modifiers_at_2_space()` (8670)
+- `test_folded_scalar_keep_explicit_indent_modifiers_at_2_space()` (13040)
+
+**Pattern 3: Template/Infrastructure Pattern**
+- `test_folded_scalar_explicit_indent_template_example()` (12788)
+- `test_folded_scalar_explicit_indent_tab_template()` (12809)
+- `test_folded_scalar_explicit_indent_helper_function_example()` (12825)
+
+**Pattern 4: Basic Indicator Line Assertions**
+- `test_folded_block_scalar_with_exclamation_marks()` (7901)
+- `test_literal_block_scalar_with_exclamation_marks()` (7962)
+- `test_folded_scalar_indicator_classification()` (10730)
+- `test_folded_scalar_indicator_lines()` (10524)
+- `test_folded_scalar_basic_modifiers()` (10549)
+
+**Pattern 5: Continuation Line Assertions with Allowed Types**
+- `test_folded_block_scalar_with_exclamation_marks()` (7901)
+- `test_literal_block_scalar_with_exclamation_marks()` (7962)
+- `test_folded_scalar_basic_modifiers()` (10549)
+
+**Pattern 6: Key Extraction Assertions**
+- `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` (8342)
+- `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()` (8561)
+- `test_folded_scalar_strip_explicit_indent_modifiers_at_2_space()` (8670)
+- `test_folded_scalar_keep_explicit_indent_modifiers_at_2_space()` (13040)
+- `test_literal_scalar_explicit_indent_modifiers_at_various_levels()` (8779)
+- `test_folded_scalar_indicator_classification()` (10730)
+
+### Line Number Reference Summary
+
+**Section 12B: Multiline String Scenarios with Exclamation Marks** (line 7897)
+- Entry point for folded scalar testing with exclamation marks
+
+**Section 12B.1: Comprehensive Folded Block Scalar Tests** (line 10726)
+- Comprehensive indicator classification tests
+- Continuation line tests with exclamation marks
+
+**Section 12B.2: Folded Scalar Indicator Line Tests** (line 10520)
+- Basic indicator line validation
+- Basic modifier testing
+
+**Section 12B.3: Folded Scalar Explicit Indent Infrastructure Pattern** (line 12654)
+- Template examples for new test development
+- Infrastructure pattern documentation
+
+### Quick Navigation
+
+To find a specific pattern implementation:
+1. Look up the pattern in the "Pattern to Function Mapping" above
+2. Navigate to the function using the line number provided
+3. See the "Quick Reference: Pattern to Example Mappings" table at the top of this document for direct links
+
+To find all functions using a specific pattern:
+1. Find the pattern in the "Pattern to Function Mapping" above
+2. All functions demonstrating that pattern are listed beneath it
+
+To verify coverage:
+1. See "Explicit Indent Coverage Gap Analysis" section for missing functions
+2. See "Section 12B Test Function Index by Pattern" for comprehensive pattern coverage
