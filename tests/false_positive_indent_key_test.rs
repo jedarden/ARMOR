@@ -106,12 +106,12 @@ root:
 
     use armor::parsers::yaml::parser::{Parser, BasicParser};
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     // Should parse successfully - the ":::" line should not cause a duplicate key error
     assert!(result.is_success(),
-            "Should parse successfully despite indent-only line with colon pattern: {:#?}", result");
+            "Should parse successfully despite indent-only line with colon pattern");
 
     let value = result.unwrap();
     assert_eq!(value["root"]["child1"], "value1");
@@ -123,10 +123,10 @@ fn test_comment_like_pattern_not_a_key() {
     // Patterns that look like comments should not be treated as keys
     let line = "  #key:";
     let ctx = extract_key_context(line);
-    // This extracts "#key" as the key, which is technically correct YAML parsing
+    // This extracts a hash-prefixed key as the key, which is technically correct YAML parsing
     // but the key should be validated as invalid (starts with #)
     assert!(ctx.is_some(), "Should extract context for comment-like pattern");
-    // The key name should be "#key"
+    // The key name should start with #
     if let Some(ctx) = ctx {
         let key_name = ctx.key_name();
         assert!(key_name.starts_with('#'), "Key should start with #");
@@ -136,7 +136,7 @@ fn test_comment_like_pattern_not_a_key() {
 #[test]
 fn test_flow_collection_markers_not_in_key() {
     // Keys with flow collection markers should be rejected
-    let line = "  key{test}:value";
+    let line = "  key{test}: value";
     let ctx = extract_key_context(line);
     // The key "key{test}" contains flow collection markers and should be rejected
     assert!(ctx.is_none(),
