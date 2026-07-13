@@ -114,11 +114,6 @@ impl BasicParser {
             let line_num_1index = line_num + 1;
             let trimmed = line.trim();
 
-            // Skip empty lines and comments
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-
             // Handle document markers - reset scope tracking
             if trimmed == "---" || trimmed == "..." {
                 #[cfg(debug_assertions)]
@@ -135,6 +130,22 @@ impl BasicParser {
             }
 
             let indent = calculate_indentation(line);
+
+            // Handle blank lines with indentation changes
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                // Check if blank line has a different indentation than current scope
+                if indent != scope_stack.current_indent() && !trimmed.starts_with('#') {
+                    #[cfg(debug_assertions)]
+                    {
+                        log_debug!("[detect_duplicate] Blank line with indent change: line={}, indent={}, current_indent={}, skipping",
+                            line_num_1index, indent, scope_stack.current_indent());
+                    }
+                    // Blank lines with indent changes are skipped but don't affect scope
+                    continue;
+                }
+                // Regular blank lines at same indent are skipped
+                continue;
+            }
 
             // Handle scope transitions based on indentation changes
             use std::cmp::Ordering;
@@ -321,11 +332,6 @@ impl Parser for BasicParser {
             let line_num_1index = line_num + 1;
             let trimmed = line.trim();
 
-            // Skip empty lines and comments for key tracking
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-
             // Handle document markers - reset scope tracking
             if trimmed == "---" || trimmed == "..." {
                 #[cfg(debug_assertions)]
@@ -342,6 +348,28 @@ impl Parser for BasicParser {
             }
 
             let indent = calculate_indentation(line);
+
+            // Handle blank lines with indentation changes
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                // Check if blank line has a different indentation than current scope
+                if indent != scope_stack.current_indent() && !trimmed.starts_with('#') {
+                    #[cfg(debug_assertions)]
+                    {
+                        log_debug!("[parse_str] Blank line with indent change: line={}, indent={}, current_indent={}",
+                            line_num_1index, indent, scope_stack.current_indent());
+                    }
+                    // Update scope to match blank line indentation
+                    // This handles the case where blank lines appear at different indentation levels
+                    if indent < scope_stack.current_indent() {
+                        scope_stack.exit_to_scope(indent);
+                    }
+                    // Note: we don't enter scopes on blank lines with increased indent,
+                    // only exit when indent decreases
+                    continue;
+                }
+                // Regular blank lines at same indent are skipped
+                continue;
+            }
 
             // Handle scope transitions based on indentation changes
             use std::cmp::Ordering;
