@@ -61,68 +61,6 @@ pub trait Parser {
         Self: Sized;
 }
 
-    /// Test push_scope adds scope info to stack
-    #[test]
-    fn test_push_scope() {
-        let mut parser = BasicParser::new();
-
-        // Initially scope_info_stack should be empty
-        assert_eq!(parser.scope_info_stack().len(), 0, "Initial scope info stack should be empty");
-
-        // Create a scope info and push it
-        let scope_info = ScopeInfo::block(1);
-        parser.push_scope(scope_info);
-
-        // Verify it was added
-        assert_eq!(parser.scope_info_stack().len(), 1, "Scope info stack should have 1 item after push");
-
-        // Verify the pushed scope info matches
-        let pushed_info = parser.scope_info_stack().last().unwrap();
-        assert_eq!(pushed_info.scope_type(), ScopeType::Block, "Pushed scope should be Block type");
-        assert_eq!(pushed_info.scope_depth(), 1, "Pushed scope should have depth 1");
-    }
-
-    /// Test push_scope multiple times
-    #[test]
-    fn test_push_scope_multiple() {
-        let mut parser = BasicParser::new();
-
-        // Push multiple scopes
-        parser.push_scope(ScopeInfo::block(1));
-        parser.push_scope(ScopeInfo::block(2));
-        parser.push_scope(ScopeInfo::block(3));
-
-        // Verify all were added
-        assert_eq!(parser.scope_info_stack().len(), 3, "Scope info stack should have 3 items");
-
-        // Verify they're in order
-        let scopes = parser.scope_info_stack();
-        assert_eq!(scopes[0].scope_depth(), 1, "First scope should have depth 1");
-        assert_eq!(scopes[1].scope_depth(), 2, "Second scope should have depth 2");
-        assert_eq!(scopes[2].scope_depth(), 3, "Third scope should have depth 3");
-    }
-
-    /// Test push_scope with different scope types
-    #[test]
-    fn test_push_scope_different_types() {
-        let mut parser = BasicParser::new();
-
-        // Push different scope types
-        parser.push_scope(ScopeInfo::root());
-        parser.push_scope(ScopeInfo::block(1));
-        parser.push_scope(ScopeInfo::new(ScopeType::BlockSequence, 2));
-        parser.push_scope(ScopeInfo::new(ScopeType::FlowMapping, 3));
-
-        // Verify all were added
-        assert_eq!(parser.scope_info_stack().len(), 4, "Scope info stack should have 4 items");
-
-        // Verify types
-        let scopes = parser.scope_info_stack();
-        assert_eq!(scopes[0].scope_type(), ScopeType::Root, "First scope should be Root");
-        assert_eq!(scopes[1].scope_type(), ScopeType::Block, "Second scope should be Block");
-        assert_eq!(scopes[2].scope_type(), ScopeType::BlockSequence, "Third scope should be BlockSequence");
-        assert_eq!(scopes[3].scope_type(), ScopeType::FlowMapping, "Fourth scope should be FlowMapping");
-    }
 
 /// Basic YAML parser implementation
 ///
@@ -907,6 +845,9 @@ impl Parser for BasicParser {
                                 line_num_1index,
                                 Some(ctx.key_name().to_string())
                             );
+                            // Track scope info on the parser's scope info stack
+                            let scope_info = ScopeInfo::block(scope_stack.depth());
+                            self.push_scope(scope_info);
                         } else if ctx.is_inline_scalar() {
                             if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
                                 parse_errors.push(ValidationError::new(
@@ -1076,6 +1017,69 @@ impl Parser for BasicParser {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+
+    /// Test push_scope adds scope info to stack
+    #[test]
+    fn test_push_scope() {
+        let mut parser = BasicParser::new();
+
+        // Initially scope_info_stack should be empty
+        assert_eq!(parser.scope_info_stack().len(), 0, "Initial scope info stack should be empty");
+
+        // Create a scope info and push it
+        let scope_info = ScopeInfo::block(1);
+        parser.push_scope(scope_info);
+
+        // Verify it was added
+        assert_eq!(parser.scope_info_stack().len(), 1, "Scope info stack should have 1 item after push");
+
+        // Verify the pushed scope info matches
+        let pushed_info = parser.scope_info_stack().last().unwrap();
+        assert_eq!(pushed_info.scope_type(), ScopeType::Block, "Pushed scope should be Block type");
+        assert_eq!(pushed_info.scope_depth(), 1, "Pushed scope should have depth 1");
+    }
+
+    /// Test push_scope multiple times
+    #[test]
+    fn test_push_scope_multiple() {
+        let mut parser = BasicParser::new();
+
+        // Push multiple scopes
+        parser.push_scope(ScopeInfo::block(1));
+        parser.push_scope(ScopeInfo::block(2));
+        parser.push_scope(ScopeInfo::block(3));
+
+        // Verify all were added
+        assert_eq!(parser.scope_info_stack().len(), 3, "Scope info stack should have 3 items");
+
+        // Verify they're in order
+        let scopes = parser.scope_info_stack();
+        assert_eq!(scopes[0].scope_depth(), 1, "First scope should have depth 1");
+        assert_eq!(scopes[1].scope_depth(), 2, "Second scope should have depth 2");
+        assert_eq!(scopes[2].scope_depth(), 3, "Third scope should have depth 3");
+    }
+
+    /// Test push_scope with different scope types
+    #[test]
+    fn test_push_scope_different_types() {
+        let mut parser = BasicParser::new();
+
+        // Push different scope types
+        parser.push_scope(ScopeInfo::root());
+        parser.push_scope(ScopeInfo::block(1));
+        parser.push_scope(ScopeInfo::new(ScopeType::BlockSequence, 2));
+        parser.push_scope(ScopeInfo::new(ScopeType::FlowMapping, 3));
+
+        // Verify all were added
+        assert_eq!(parser.scope_info_stack().len(), 4, "Scope info stack should have 4 items");
+
+        // Verify types
+        let scopes = parser.scope_info_stack();
+        assert_eq!(scopes[0].scope_type(), ScopeType::Root, "First scope should be Root");
+        assert_eq!(scopes[1].scope_type(), ScopeType::Block, "Second scope should be Block");
+        assert_eq!(scopes[2].scope_type(), ScopeType::BlockSequence, "Third scope should be BlockSequence");
+        assert_eq!(scopes[3].scope_type(), ScopeType::FlowMapping, "Fourth scope should be FlowMapping");
+    }
 
     /// Test parse_str with nested YAML structures
     #[test]
@@ -2314,69 +2318,6 @@ a:
         let hierarchy = parser.scope_hierarchy();
         assert!(!hierarchy.is_empty(), "Hierarchy should contain at least root scope");
         assert_eq!(hierarchy.len(), 1, "Root hierarchy should have exactly 1 scope");
-    }
-
-    /// Test push_scope adds scope info to stack
-    #[test]
-    fn test_push_scope() {
-        let mut parser = BasicParser::new();
-
-        // Initially scope_info_stack should be empty
-        assert_eq!(parser.scope_info_stack().len(), 0, "Initial scope info stack should be empty");
-
-        // Create a scope info and push it
-        let scope_info = ScopeInfo::block(1);
-        parser.push_scope(scope_info);
-
-        // Verify it was added
-        assert_eq!(parser.scope_info_stack().len(), 1, "Scope info stack should have 1 item after push");
-
-        // Verify the pushed scope info matches
-        let pushed_info = parser.scope_info_stack().last().unwrap();
-        assert_eq!(pushed_info.scope_type(), ScopeType::Block, "Pushed scope should be Block type");
-        assert_eq!(pushed_info.scope_depth(), 1, "Pushed scope should have depth 1");
-    }
-
-    /// Test push_scope multiple times
-    #[test]
-    fn test_push_scope_multiple() {
-        let mut parser = BasicParser::new();
-
-        // Push multiple scopes
-        parser.push_scope(ScopeInfo::block(1));
-        parser.push_scope(ScopeInfo::block(2));
-        parser.push_scope(ScopeInfo::block(3));
-
-        // Verify all were added
-        assert_eq!(parser.scope_info_stack().len(), 3, "Scope info stack should have 3 items");
-
-        // Verify they're in order
-        let scopes = parser.scope_info_stack();
-        assert_eq!(scopes[0].scope_depth(), 1, "First scope should have depth 1");
-        assert_eq!(scopes[1].scope_depth(), 2, "Second scope should have depth 2");
-        assert_eq!(scopes[2].scope_depth(), 3, "Third scope should have depth 3");
-    }
-
-    /// Test push_scope with different scope types
-    #[test]
-    fn test_push_scope_different_types() {
-        let mut parser = BasicParser::new();
-
-        // Push different scope types
-        parser.push_scope(ScopeInfo::root());
-        parser.push_scope(ScopeInfo::block(1));
-        parser.push_scope(ScopeInfo::new(ScopeType::BlockSequence, 2));
-        parser.push_scope(ScopeInfo::new(ScopeType::FlowMapping, 3));
-
-        // Verify all were added
-        assert_eq!(parser.scope_info_stack().len(), 4, "Scope info stack should have 4 items");
-
-        // Verify types
-        let scopes = parser.scope_info_stack();
-        assert_eq!(scopes[0].scope_type(), ScopeType::Root, "First scope should be Root");
-        assert_eq!(scopes[1].scope_type(), ScopeType::Block, "Second scope should be Block");
-        assert_eq!(scopes[2].scope_type(), ScopeType::BlockSequence, "Third scope should be BlockSequence");
-        assert_eq!(scopes[3].scope_type(), ScopeType::FlowMapping, "Fourth scope should be FlowMapping");
     }
 
     /// Test pop_scope returns None on empty stack
