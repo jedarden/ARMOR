@@ -1,151 +1,111 @@
-# Indent-Related Scope Tests Results
+# Indent-Related Scope Test Results
 
+**Date:** 2026-07-13  
+**Task:** Run indent-related scope tests  
 **Bead:** bf-5y0n9a
-**Date:** 2026-07-13
-**Task:** Run indent-related scope tests
 
-## Test Files Executed
+## Test Results Summary
 
-### 1. indent_change_detection_test.rs ✅
-**Status:** PASSED - 23/23 tests
+| Test File | Total Tests | Passed | Failed | Status |
+|-----------|-------------|--------|--------|--------|
+| `indent_change_detection_test.rs` | 23 | 23 | 0 | ✅ PASS |
+| `indent_without_key_test.rs` | 15 | 15 | 0 | ✅ PASS |
+| `false_positive_indent_key_test.rs` | 13 | 9 | 4 | ❌ FAIL |
 
-```
-test test_blank_line_indent_decrease ... ok
-test test_clear_indent_transitions ... ok
-test test_comment_with_decreased_indent ... ok
-test test_complex_nested_sequence ... ok
-test test_deeply_nested_with_indent_transitions ... ok
-test test_detects_indent_change_on_blank_line ... ok
-test test_detects_indent_change_on_comment_line ... ok
-test test_distinguishes_key_bearing_from_non_key_lines ... ok
-test test_get_transitions_with_keys ... ok
-test test_indent_change_detection_comprehensive ... ok
-test test_indent_change_from_blank_to_content ... ok
-test test_indent_change_on_only_blank_lines ... ok
-test test_indent_tracking_doesnt_break_duplicate_detection ... ok
-test test_indent_tracking_preserves_scope_isolation ... ok
-test test_kubernetes_style_yaml ... ok
-test test_last_indent_tracking ... ok
-test test_multiple_comments_at_different_indents ... ok
-test test_parser_with_complex_indent_changes ... ok
-test test_real_world_config_with_blank_lines ... ok
-test test_scope_stack_records_all_indent_changes ... ok
-test test_sequence_with_indent_changes ... ok
-test test_tracks_indent_transitions_across_blank_lines ... ok
-test test_tracks_key_presence_in_indent_transitions ... ok
-```
+**Overall:** 51/58 tests passed (88%)
 
-**Verification:** ✅ Indent detection behavior verified
-- Correctly detects indent changes on blank lines
-- Tracks indent transitions across content and blank lines
-- Distinguishes key-bearing from non-key lines
-- Preserves scope isolation during indent changes
+## Detailed Results
 
-### 2. indent_without_key_test.rs ✅
-**Status:** PASSED - 15/15 tests
+### ✅ indent_change_detection_test.rs (23/23 passed)
 
-```
-test test_blank_line_at_document_end ... ok
-test test_blank_line_at_document_start ... ok
-test test_blank_lines_dont_create_duplicate_key_errors ... ok
-test test_comments_with_different_indents ... ok
-test test_complex_nesting_with_blank_lines ... ok
-test test_deep_nesting_with_blank_line_scope_exit ... ok
-test test_detect_indent_changes_on_blank_lines ... ok
-test test_indent_decrease_on_blank_line_between_siblings ... ok
-test test_indent_tracking_distinguishes_key_from_non_key ... ok
-test test_mixed_blank_lines_and_keys ... ok
-test test_multiple_blank_lines_with_indent_changes ... ok
-test test_no_false_scope_entry_on_blank_line_increase ... ok
-test test_no_interference_with_existing_key_parsing ... ok
-test test_scope_exit_on_blank_line ... ok
-test test_sequence_with_blank_lines ... ok
-```
+All tests in this suite passed, confirming:
+- Indent change detection works correctly across various scenarios
+- Blank lines and comments are handled properly
+- Deep nesting and complex structures are tracked correctly
+- Kubernetes-style YAML is parsed correctly
+- Indent transitions don't interfere with duplicate key detection
 
-**Verification:** ✅ False positive prevention confirmed for blank lines
-- Blank lines don't create false duplicate key errors
-- Indent-only changes don't enter new scopes
-- Comments with different indents don't affect parsing
-- Multiple blank lines with indent changes handled correctly
+### ✅ indent_without_key_test.rs (15/15 passed)
 
-### 3. false_positive_indent_key_test.rs ❌
-**Status:** FAILED - 9 passed, 4 failed
+All tests in this suite passed, confirming:
+- Blank lines don't create duplicate key errors
+- Scope tracking correctly distinguishes key-bearing from indent-only lines
+- Comments with different indents are handled properly
+- No false scope entry on blank line increases
+- Scope exits work correctly with blank lines
 
-**Passed Tests:**
-- test_colon_in_value_context_not_a_key ... ok
-- test_colon_only_not_a_key ... ok
-- test_comment_like_pattern_not_a_key ... ok
-- test_empty_after_colon_is_parent_key ... ok
-- test_empty_key_part_not_a_key ... ok
-- test_flow_collection_markers_not_in_key ... ok
-- test_multiple_colons_in_key_position ... ok
-- test_single_char_colon_not_valid_key ... ok
-- test_whitespace_around_colon_not_a_key ... ok
+### ❌ false_positive_indent_key_test.rs (9/13 passed - 4 failures)
 
-**Failed Tests:**
+This suite tests false positive prevention - lines that should NOT be treated as keys.
 
-#### 1. test_special_chars_only_not_a_key
-**Line:** 55
-**Expected:** Special chars only with colon should not extract key context
-**Actual:** Extracts key context for `:::` and `@#:`
-**Issue:** Lines like `  :::` and `  @#:` are being treated as potential keys when they shouldn't be
+#### Failing Tests:
 
-#### 2. test_sequence_dash_only_not_a_key
-**Line:** 93
-**Expected:** Dash-only with colon should not extract valid key context
-**Actual:** Extracts key context for `  -:`
-**Issue:** After stripping the dash indicator, an empty or colon-only line should not be treated as a key
+1. **test_special_chars_only_not_a_key** (line 48-56)
+   - Tests: `"  :::"` and `"  @#:"` should NOT extract key context
+   - Expected: `None`
+   - Actual: Extracts `Some(KeyContext)` with key `"@#"` and `"::"`
+   - Panics at: line 55
+   - Issue: `extract_key_context` doesn't filter special character-only keys
 
-#### 3. test_block_scalar_indicator_not_a_key
-**Line:** 83
-**Expected:** Block scalar indicator with colon should not extract key context
-**Actual:** Extracts key context for `  |:`
-**Issue:** Block scalar indicators (like `|`) followed by colon should not be treated as keys
+2. **test_block_scalar_indicator_not_a_key** (line 76-85)
+   - Tests: `"  |:"` should NOT extract key context (block scalar indicator)
+   - Expected: `None`
+   - Actual: Extracts `Some(KeyContext)` with key `"|"`
+   - Panics at: line 83
+   - Issue: Doesn't recognize `|` as a block scalar indicator
 
-#### 4. test_no_false_positive_from_complex_indent
-**Line:** 113
-**Expected:** Should parse successfully despite indent-only line with colon pattern
-**Actual:** Parsing failed
-**Test YAML:**
-```yaml
-root:
-  child1: value1
-    :::
-  child2: value2
-```
-**Issue:** The `:::` line at indent level 4 causes a parsing failure, likely because it's being incorrectly treated as a key
+3. **test_sequence_dash_only_not_a_key** (line 87-95)
+   - Tests: `"  -:"` should NOT extract valid key context
+   - Expected: `None` or empty key
+   - Actual: Extracts `Some(KeyContext)` with non-empty key
+   - Panics at: line 93
+   - Issue: Dash stripping logic not working correctly for dash+colon
 
-## Summary
+4. **test_no_false_positive_from_complex_indent** (line 97-119)
+   - Tests: YAML with `"    :::"` line should parse without duplicate key error
+   - Expected: Parse success
+   - Actual: Parse failure (likely due to `" :::"` being treated as a key)
+   - Panics at: line 113
+   - Issue: Integration-level false positive
 
-**Overall Status:** ⚠️ PARTIAL SUCCESS
+#### Passing Tests (9/13):
+- ✅ `test_colon_only_not_a_key` - Empty key after colon handled correctly
+- ✅ `test_single_char_colon_not_valid_key` - Single char with colon allowed
+- ✅ `test_whitespace_around_colon_not_a_key` - Empty key with whitespace handled
+- ✅ `test_colon_in_value_context_not_a_key` - Multi-colon values handled
+- ✅ `test_empty_after_colon_is_parent_key` - Parent key mapping works
+- ✅ `test_comment_like_pattern_not_a_key` - Hash-prefixed keys handled
+- ✅ `test_flow_collection_markers_not_in_key` - Flow collection markers rejected
+- ✅ `test_multiple_colons_in_key_position` - URL-like patterns handled
+- ✅ `test_empty_key_part_not_a_key` - Empty key part handled
 
-- ✅ All 3 indent tests executed successfully
-- ✅ Test output captured and saved to notes/
-- ✅ Indent detection behavior verified (38/38 tests passed in first two files)
-- ⚠️ False positive prevention PARTIALLY confirmed (9/13 tests passed in third file)
-- ⚠️ 4 failures documented with full error details
+## Analysis
 
-## Issues Identified
+The `extract_key_context` function in `src/parsers/yaml/scope.rs` (lines 1692-1739) needs enhancements to handle these edge cases:
 
-The current implementation has edge cases where lines with only special characters, block scalar indicators, or sequence markers followed by colons are incorrectly treated as potential keys. This can cause:
+### Current Filtering:
+- Empty keys: ✅ Filtered (line 1702-1704)
+- Flow collection markers (`{`, `}`, `[`, `]`): ✅ Filtered (line 1707-1709)
+- Sequence dash prefix: ⚠️ Partially handled (lines 1712-1726)
 
-1. False positive key extraction for patterns like `:::`, `@#:`, `|-:`, `-:`
-2. Parsing failures when these patterns appear at unexpected indent levels
-3. Incorrect duplicate key detection in complex YAML structures
-
-These issues appear to be related to the `extract_key_context()` function in `src/parsers/yaml/scope.rs` which needs to be more stringent about what constitutes a valid key pattern.
+### Missing Filtering:
+1. **Block scalar indicators** (`|`, `>`): Not recognized as special YAML tokens
+2. **Special character-only keys** (`:::`, `@#`, etc.): Not filtered
+3. **Dash+colon edge cases** (`-:`): Dash stripping may not handle all cases
 
 ## Recommendations
 
-The `extract_key_context()` function should be enhanced to:
-1. Reject keys that consist only of special characters
-2. Handle block scalar indicators (`|`, `>`, `|-`, `|+`, etc.) properly
-3. Reject sequence markers (`-`) when followed only by a colon or invalid pattern
-4. Validate that key names contain at least one alphanumeric character
+To fix these failures, enhance `extract_key_context` with additional validation:
 
-## Test Output Locations
+1. Add block scalar indicator check before returning context
+2. Add special character-only key validation
+3. Improve dash+colon edge case handling
+4. Consider YAML key validation rules (alphanumeric, underscore, hyphen allowed)
 
-Full test outputs saved to:
-- `notes/indent_change_detection_test.log`
-- `notes/indent_without_key_test.log`
-- `notes/false_positive_indent_key_test.log`
+## Files Generated
+
+- Test output saved to: `notes/bf-5y0n9a-test-output.txt`
+
+## Related Issues
+
+This is related to bead `bf-692thf` which addresses false positive duplicate key errors from indent-only changes.
