@@ -678,9 +678,9 @@ impl SyntaxDetector {
                 // Only enter sequence scope if it looks like a valid mapping key
                 if !key.is_empty() && !key.starts_with('\'') && !key.starts_with('"')
                     && !key.contains('#') && !key.contains('?') {
-                    // Use the proper scope module to enter a new scope for this sequence item
+                    // Use the proper scope module to enter a sequence scope for this item
                     // Each sequence item gets its own scope to prevent false duplicate detection
-                    self.structure_state.scope_stack.enter_scope(indent, line_num, None);
+                    self.structure_state.scope_stack.enter_sequence_scope(indent, line_num);
                 }
             }
             // Sequence items don't need duplicate checking at this level
