@@ -9,7 +9,7 @@ use crate::parsers::yaml::{
     ParserConfig,
     syntax_validator::SyntaxValidator,
     syntax_detector::SyntaxDetector,
-    scope::{ScopeStack, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, ScopeType},
+    scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, ScopeType},
     line_parser::{calculate_indentation},
     scope::extract_key_context,
 };
@@ -84,9 +84,13 @@ pub struct BasicParser {
 impl BasicParser {
     /// Create a new BasicParser with default configuration
     pub fn new() -> Self {
+        // Initialize scope stack with a root scope
+        let mut scope_stack = ScopeStack::new(2); // Standard 2-space YAML indentation
+        scope_stack.scopes.push(Scope::new(0, 0, None)); // Add root scope at indent 0
+
         Self {
             config: ParserConfig::default(),
-            scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            scope_stack,
             scope_info_stack: Vec::new(),    // Empty stack initially
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
@@ -96,9 +100,13 @@ impl BasicParser {
 
     /// Create a new BasicParser with the specified configuration
     pub fn with_config(config: ParserConfig) -> Self {
+        // Initialize scope stack with a root scope
+        let mut scope_stack = ScopeStack::new(2); // Standard 2-space YAML indentation
+        scope_stack.scopes.push(Scope::new(0, 0, None)); // Add root scope at indent 0
+
         Self {
             config,
-            scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            scope_stack,
             scope_info_stack: Vec::new(),    // Empty stack initially
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
@@ -111,9 +119,13 @@ impl BasicParser {
     /// A strict parser enables strict mode and disallows duplicate keys.
     /// Uses the comprehensive strict configuration from ParserConfig.
     pub fn strict() -> Self {
+        // Initialize scope stack with a root scope
+        let mut scope_stack = ScopeStack::new(2); // Standard 2-space YAML indentation
+        scope_stack.scopes.push(Scope::new(0, 0, None)); // Add root scope at indent 0
+
         Self {
             config: ParserConfig::strict(),
-            scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            scope_stack,
             scope_info_stack: Vec::new(),    // Empty stack initially
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
@@ -806,6 +818,9 @@ impl Parser for BasicParser {
                                 line_num_1index,
                                 Some(ctx.key_name().to_string())
                             );
+                            // Track scope info on the parser's scope info stack
+                            let scope_info = ScopeInfo::block(scope_stack.depth());
+                            self.push_scope(scope_info);
                         } else if ctx.is_inline_scalar() {
                             if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
                                 parse_errors.push(ValidationError::new(
@@ -880,6 +895,9 @@ impl Parser for BasicParser {
                             ctx.key_name(), indent, line_num_1index);
                     }
                     scope_stack.enter_sequence_scope(indent, line_num_1index);
+                    // Track scope info on the parser's scope info stack
+                    let scope_info = ScopeInfo::new(ScopeType::BlockSequence, scope_stack.depth());
+                    self.push_scope(scope_info);
                     // Add the key to the sequence scope
                     if let Err(dup_err) = scope_stack.add_key(ctx.key_name(), line_num_1index) {
                         parse_errors.push(ValidationError::new(
@@ -895,6 +913,9 @@ impl Parser for BasicParser {
                             indent, line_num_1index);
                     }
                     scope_stack.enter_sequence_scope(indent, line_num_1index);
+                    // Track scope info on the parser's scope info stack
+                    let scope_info = ScopeInfo::new(ScopeType::BlockSequence, scope_stack.depth());
+                    self.push_scope(scope_info);
                 }
             }
         }
@@ -999,9 +1020,13 @@ impl Parser for BasicParser {
     where
         Self: Sized,
     {
+        // Initialize scope stack with a root scope
+        let mut scope_stack = ScopeStack::new(2); // Standard 2-space YAML indentation
+        scope_stack.scopes.push(Scope::new(0, 0, None)); // Add root scope at indent 0
+
         Self {
             config,
-            scope_stack: ScopeStack::new(2), // Standard 2-space YAML indentation
+            scope_stack,
             scope_info_stack: Vec::new(),    // Empty stack initially
             current_line_type: LineClassification::Empty,
             current_transition_state: IndentTransitionState::new(),
