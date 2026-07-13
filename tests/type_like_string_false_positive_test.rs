@@ -1506,6 +1506,412 @@ fn test_whitespace_combinations_with_exclamation_in_different_contexts() {
 }
 
 // ============================================================================
+// Section 11B: Advanced Whitespace and Exclamation Edge Cases
+// ============================================================================
+
+#[test]
+fn test_tab_vs_space_before_exclamation() {
+    // Test that tabs and spaces are handled consistently
+    let test_cases = vec![
+        ("key: value!", "key: value!"),  // No whitespace before !
+        ("key: value !", "key: value !"), // Space before !
+        ("key: value\t!", "key: value\t!"), // Tab before !
+        ("key: value  !", "key: value  !"), // Multiple spaces
+        ("key:\tvalue!", "key:\tvalue!"),   // Tab before colon
+        ("key: value \t!", "key: value \t!"), // Space then tab
+        ("key: value\t !", "key: value\t !"), // Tab then space
+    ];
+
+    for (line, _repr) in test_cases {
+        // All should be classified as MappingKey since they have colons
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Tab/space before ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_extended_unicode_whitespace_with_exclamation() {
+    // Test additional Unicode whitespace characters
+    let test_cases = vec![
+        "key: value\u{2000}!",   // En quad
+        "key: value\u{2001}!",   // Em quad
+        "key: value\u{2004}!",   // Three-per-em space
+        "key: value\u{2005}!",   // Four-per-em space
+        "key: value\u{2006}!",   // Six-per-em space
+        "key: value\u{2007}!",   // Figure space
+        "key: value\u{2008}!",   // Punctuation space
+        "key: value\u{2009}!",   // Thin space (already tested)
+        "key: value\u{200A}!",   // Hair space
+        "key: value\u{2028}!",   // Line separator
+        "key: value\u{2029}!",   // Paragraph separator
+        "key: value\u{202F}!",   // Narrow no-break space (already tested)
+        "key: value\u{205F}!",   // Medium mathematical space (already tested)
+        "key: value\u{3000}!",   // Ideographic space (already tested)
+        "key: value\u{FEFF}!",   // Zero-width no-break space (BOM)
+    ];
+
+    for line in test_cases {
+        // Unicode whitespace in values should still be MappingKey
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Extended Unicode whitespace before ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_zero_width_characters_with_exclamation() {
+    // Test zero-width characters before exclamation
+    let test_cases = vec![
+        "key: value\u{200B}!", // Zero-width space
+        "key: value\u{FEFF}!", // Zero-width no-break space (BOM)
+        "key: value\u{2060}!", // Word joiner
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Zero-width char before ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_multiple_consecutive_whitespace_before_exclamation() {
+    // Test multiple consecutive whitespace characters
+    let test_cases = vec![
+        "key: value   !",     // 3 spaces
+        "key: value\t\t\t!",  // 3 tabs
+        "key: value \t !",    // space, tab, space
+        "key: value  \t  !",  // 2 spaces, tab, 2 spaces
+        "key: value\t \t!",   // tab, space, tab
+        "key: value \n !",    // space, newline, space (if supported)
+        "key: value\r\t!",    // carriage return, tab
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Multiple consecutive whitespace before ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_with_whitespace_in_flow_sequences() {
+    // Flow sequences with whitespace and ! patterns
+    let test_cases = vec![
+        ("items: [value!, other!]", LineType::FlowSequence),
+        ("list: [ value!, item! ]", LineType::FlowSequence),
+        ("data: [!a, !b, !c]", LineType::FlowSequence),
+        ("array: [  !x,  !y,  !z  ]", LineType::FlowSequence),
+        ("seq:\t[!1,\t!2,\t!3]", LineType::FlowSequence),
+    ];
+
+    for (line, expected) in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            expected,
+            "Flow sequence with ! and whitespace should be FlowSequence: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_with_whitespace_in_flow_mappings() {
+    // Flow mappings with whitespace and ! patterns
+    let test_cases = vec![
+        ("map: {key: value!}", LineType::MappingKey),
+        ("data: {k: !important}", LineType::MappingKey),
+        ("obj: { a: !x, b: !y }", LineType::MappingKey),
+        ("dict:\t{key:\t!val}", LineType::MappingKey),
+    ];
+
+    for (line, expected) in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            expected,
+            "Flow mapping with ! and whitespace should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_at_different_positions_after_whitespace() {
+    // Test ! at different positions relative to whitespace in values
+    let test_cases = vec![
+        "key: !",           // ! is the entire value
+        "key: ! ",           // ! with trailing space
+        "key:  !",           // ! with leading space
+        "key:  !  ",         // ! with leading and trailing spaces
+        "key: \t!",          // ! with leading tab
+        "key: !\t",          // ! with trailing tab
+        "key: \t!\t",        // ! with leading and trailing tabs
+        "key: !important",   // ! starting a word
+        "key: important!",   // ! ending a word
+        "key: im!portant",   // ! in middle of word
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "! at various positions in value should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_unicode_exclamation_with_whitespace_combinations() {
+    // Test various Unicode exclamation-like characters with whitespace
+    let test_cases = vec![
+        "key: value !",       // Regular ! with space
+        "key: value\u{FF01}", // Fullwidth ! (U+FF01)
+        "key: value \u{FF01}", // Fullwidth ! with space
+        "key: value‽",       // Interrobang (U+203D)
+        "key: value ⁇",      // Double exclamation (U+203C)
+        "key: value❗",       // Heavy exclamation (U+2757)
+        "key: value ❗",      // Heavy ! with space
+        "key: value\u{2009}❗", // Thin space before heavy !
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Unicode exclamation with whitespace should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_whitespace_preserves_yaml_tag_detection() {
+    // Verify that actual YAML tags are still detected correctly despite whitespace
+    // These should all be Tags, not MappingKey or other types
+    let actual_tags = vec![
+        "!tag",
+        "  !tag",
+        "\t!tag",
+        "    !custom",
+        "\t\t!!str",
+        "  !ns:tag",
+        "\t!verb",
+        "  !!type",
+        "\t!handle",
+        "   !my-tag",        // 3 spaces
+        "\t\t!my_tag",       // 2 tabs
+        " \t!local",         // space then tab
+        "\t !global",        // tab then space
+    ];
+
+    for line in actual_tags {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::Tag,
+            "Actual YAML tag with whitespace should be Tag: '{}'",
+            line
+        );
+    }
+
+    // Verify that ! after colon is NOT a tag (even with whitespace)
+    let not_tags = vec![
+        "key: !value",
+        "field: ! important",
+        "data:  !custom",
+        "item:\t!tag",
+        "val:  !!str",
+    ];
+
+    for line in not_tags {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "! after colon (even with whitespace) should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_edge_case_long_whitespace_sequences() {
+    // Test very long whitespace sequences (edge cases)
+    let test_cases = vec![
+        "key: value      !",  // Many spaces
+        "key:\t\t\t\t\t!",   // Many tabs
+        "key:     value!",    // Many spaces before value
+        "key:\t\t\t\tvalue!", // Many tabs before value
+        "key: value     !    ", // Many spaces around !
+        "key:\t!\t\t\t\t",   // Tab before !, many tabs after
+        "     key: value!",  // Many leading spaces before key
+        "\t\t\tkey: value!", // Many leading tabs before key
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Long whitespace sequences should be handled correctly: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_whitespace_in_sequence_items_with_exclamation() {
+    // Sequence items with various whitespace and ! patterns
+    let test_cases = vec![
+        "- value!",           // Basic
+        "-  value!",          // Space after -
+        "-\tvalue!",          // Tab after -
+        "-  value !",         // Spaces around !
+        "-\tvalue\t!",        // Tabs around !
+        "-   !important",     // Multiple spaces, ! starts value
+        "-\t\t!custom",       // Multiple tabs, ! starts value
+        "-  ! tag",           // Space after ! (unusual but valid)
+        "-\t!\tvalue",        // Tab before and after !
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Sequence item with whitespace and ! should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_mixed_line_endings_with_exclamation() {
+    // Test that different line ending styles don't affect ! handling
+    // (This mainly tests parsing consistency)
+    let test_cases = vec![
+        "key: value!",      // Unix-style
+        "key: value!\r",    // Old Mac-style (if present)
+        "key: value!\n",    // Unix-style
+        "key: value!\r\n",  // Windows-style (if present)
+    ];
+
+    for line in test_cases {
+        // Strip any trailing line ending characters for the test
+        let clean_line = line.trim_end_matches(|c| c == '\r' || c == '\n');
+        assert_eq!(
+            classify_line_type(clean_line),
+            LineType::MappingKey,
+            "Line ending style should not affect ! handling: '{}'",
+            clean_line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_with_whitespace_in_quoted_values() {
+    // Quoted values containing ! and whitespace
+    let test_cases = vec![
+        "key: \"value !\"",       // Space and ! in quotes
+        "key: 'value !'",         // Single quotes
+        "key: \"! important\"",   // ! with space in quotes
+        "key: '!important '",     // ! with trailing space in quotes
+        "key: \" value! \"",      // Spaces around ! in quotes
+        "key: '\t!'",             // Tab and ! in quotes
+        "key: \" ! \"",           // Just ! with spaces in quotes
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Quoted value with ! and whitespace should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_unicode_whitespace() {
+    // Test detect_mapping_key with Unicode whitespace
+    let test_cases = vec![
+        ("key: value\u{00A0}!", "key"),   // Non-breaking space
+        ("key: value\u{2009}!", "key"),   // Thin space
+        ("key: value\u{202F}!", "key"),   // Narrow no-break space
+        ("key:\u{2003}value!", "key"),   // Em space after colon
+    ];
+
+    for (line, expected_key) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key with Unicode whitespace: '{}'",
+            line
+        );
+        assert_eq!(info.unwrap().key, expected_key);
+    }
+}
+
+#[test]
+fn test_exclamation_whitespace_integration_full() {
+    // Comprehensive integration test for all whitespace and ! patterns
+    let yaml_content = vec![
+        "# Comment with ! important",
+        "!tag",
+        "  !!str",
+        "key: value!",
+        "field: value !",
+        "data: value  !",
+        "item:\tvalue!",
+        "  nested: !important",
+        "    deep: value !",
+        "- sequence!",
+        "-  seq with !",
+        "-\tseq\t!",
+        "flow: [!a, !b, !c]",
+        "map: {key: value!}",
+        "empty: !",
+    ];
+
+    let expected_types = vec![
+        LineType::Comment,      // # Comment
+        LineType::Tag,          // !tag
+        LineType::Tag,          // !!str
+        LineType::MappingKey,   // key: value!
+        LineType::MappingKey,   // field: value !
+        LineType::MappingKey,   // data: value  !
+        LineType::MappingKey,   // item: value!
+        LineType::MappingKey,   // nested
+        LineType::MappingKey,   // deep
+        LineType::SequenceItem, // - sequence!
+        LineType::SequenceItem, // - seq with !
+        LineType::SequenceItem, // - seq!
+        LineType::FlowSequence, // flow
+        LineType::MappingKey,   // map
+        LineType::MappingKey,   // empty
+    ];
+
+    for (line, expected) in yaml_content.iter().zip(expected_types.iter()) {
+        assert_eq!(
+            classify_line_type(line),
+            *expected,
+            "Integration test failed for: '{}'",
+            line
+        );
+    }
+}
+
+// ============================================================================
 // Section 11A: Integration - Detect Mapping Key with False Positives
 // ============================================================================
 
