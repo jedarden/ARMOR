@@ -486,9 +486,7 @@ func TestWithContext(t *testing.T) {
 
 	// Err result with existing context
 	errWithContext := Err[int, *ParseError](func() *ParseError {
-		err := NewParseError("", "error", 0, 0, "", "", "")
-		err.ContextStr = "initial"
-		return err
+		return NewParseError("", "error", 0, 0, "", "", "", "initial")
 	}())
 	withMoreCtx := WithContext(errWithContext, "while parsing")
 	if got := withMoreCtx.UnwrapErr().ContextStr; got != "while parsing: initial" {
