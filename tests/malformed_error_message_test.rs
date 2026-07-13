@@ -376,7 +376,357 @@ fn test_parse_error_summary_with_all_empty_fields() {
 }
 
 // ============================================================================
-// Section 6: Error Type Detection Malformations
+// Section 6: Special Characters Only (No Alphanumeric)
+// ============================================================================
+
+#[test]
+fn test_parse_error_with_symbols_only() {
+    // Tests ParseError with messages containing only symbols (no alphanumeric)
+    //
+    // Expected behavior: Should handle symbol-only messages gracefully
+    let symbol_only_messages = vec![
+        "!@#$%^&*()",
+        "+++=---",
+        "***///",
+        ":::::",
+        "|||||",
+        "#####",
+        "~~~~~",
+        "+++++",
+        "-----",
+        "======",
+        "*****",
+        "%%%%%",
+        "&&&&&",
+        "|||||",
+        "#####",
+        ":::::",
+        ";;;;;",
+        "<<<<<",
+        ">>>>>",
+        "?????",
+    ];
+
+    for msg in symbol_only_messages {
+        let error = ParseError::syntax(msg);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle symbol-only message: '{}'", msg);
+    }
+}
+
+#[test]
+fn test_parse_error_with_punctuation_only() {
+    // Tests ParseError with messages containing only punctuation
+    //
+    // Expected behavior: Should handle punctuation-only messages
+    let punctuation_only = vec![
+        "...",
+        ",,,",
+        ";;;",
+        ":::",
+        "!!!",
+        "???",
+        "???...",
+        "!!!???",
+        "...",
+        "---",
+        "___",
+        "'''",
+        "\"\"\"",
+        "```",
+        "~~~",
+    ];
+
+    for msg in punctuation_only {
+        let error = ParseError::syntax(msg);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle punctuation-only message: '{}'", msg);
+    }
+}
+
+#[test]
+fn test_parse_error_with_brackets_only() {
+    // Tests ParseError with messages containing only brackets/braces
+    //
+    // Expected behavior: Should handle bracket-only messages
+    let bracket_only = vec![
+        "[]{}()",
+        "{{{{",
+        "}}}}",
+        "((((",
+        "))))",
+        "[[[[",
+        "]]]]",
+        "<{{{",
+        ">}}}",
+        "()[]{}",
+        "<<>>",
+    ];
+
+    for msg in bracket_only {
+        let error = ParseError::syntax(msg);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle bracket-only message: '{}'", msg);
+    }
+}
+
+#[test]
+fn test_parse_error_with_mixed_special_chars_only() {
+    // Tests ParseError with various combinations of special characters (no alphanumeric)
+    //
+    // Expected behavior: Should handle mixed special character messages
+    let mixed_special = vec![
+        "!@#$%^&*()_+-=[]{}|;':\",./<>?",
+        "~`!@#$%^&*()_+-=[]{}\\|;':\",./<>?",
+        "^&*()_+-=",
+        "!@#$%",
+        "^&*()",
+        "_+-=",
+        "[]\\|;':\",./<>?",
+        "~`",
+        "!!!@@@###",
+        "^^^&&&***(((",
+        "___---===",
+        "```~~~",
+    ];
+
+    for msg in mixed_special {
+        let error = ParseError::syntax(msg);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle mixed special chars: '{}'", msg);
+    }
+}
+
+#[test]
+fn test_validation_error_with_special_char_only_path() {
+    // Tests ValidationError with special character-only field paths
+    //
+    // Expected behavior: Should handle special character-only paths
+    let special_paths = vec![
+        "!",
+        "@",
+        "#",
+        "$",
+        "%",
+        "^",
+        "&",
+        "*",
+        "...",
+        ":::",
+        "++",
+        "--",
+        "==",
+        "(((",
+        ")))",
+        "[[",
+        "]]",
+        "{{",
+        "}}",
+    ];
+
+    for path in special_paths {
+        let error = ValidationError::new(path, "validation failed");
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle special-char-only path: '{}'", path);
+    }
+}
+
+#[test]
+fn test_validation_error_with_special_char_only_message() {
+    // Tests ValidationError with special character-only error messages
+    //
+    // Expected behavior: Should handle special character-only messages
+    let special_messages = vec![
+        "!!!",
+        "???",
+        "...",
+        "!!!",
+        "@@@",
+        "###",
+        "$$$",
+        "^^^",
+        "&&&",
+        "***",
+        "+++",
+        "---",
+        "===",
+        ":::",
+        ";;;",
+        "|||",
+        "~~~",
+        "```",
+    ];
+
+    for msg in special_messages {
+        let error = ValidationError::new("field", msg);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle special-char-only message: '{}'", msg);
+    }
+}
+
+#[test]
+fn test_parse_error_with_whitespace_variations() {
+    // Tests ParseError with various whitespace-only patterns
+    //
+    // Expected behavior: Should handle different whitespace patterns
+    let whitespace_variations = vec![
+        "     ",      // spaces only
+        "\t\t\t",     // tabs only
+        "\n\n\n",     // newlines only
+        " \t \t ",    // mixed spaces and tabs
+        " \n \n ",    // mixed spaces and newlines
+        "\t\n\t\n",   // mixed tabs and newlines
+        " \t\n ",     // all three
+        "\r\r\r",     // carriage returns
+        " \r \r ",    // spaces and CR
+        "\r\n\r\n",   // CRLF sequences
+    ];
+
+    for msg in whitespace_variations {
+        let error = ParseError::syntax(msg);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle whitespace variation: {:?}", msg);
+    }
+}
+
+#[test]
+fn test_parse_error_with_single_special_chars() {
+    // Tests ParseError with single special character messages
+    //
+    // Expected behavior: Should handle single special character messages
+    let single_chars = vec![
+        "!", "@", "#", "$", "%", "^", "&", "*", "(", ")",
+        "-", "_", "=", "+", "[", "]", "{", "}", "|", "\\",
+        ";", ":", "\"", "'", "<", ">", ",", ".", "?", "/",
+        "~", "`",
+    ];
+
+    for msg in single_chars {
+        let error = ParseError::syntax(msg);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle single special char: '{}'", msg);
+    }
+}
+
+#[test]
+fn test_parse_error_with_repeated_special_chars() {
+    // Tests ParseError with repeated special character patterns
+    //
+    // Expected behavior: Should handle repeated special characters
+    let repeated_patterns = vec![
+        "!!!!!!!!",        // 8 exclamation marks
+        "@@@@@@@@",        // 8 at signs
+        "########",        // 8 hashes
+        "$$$$$$$$",        // 8 dollar signs
+        "%%%%%%%%",        // 8 percent signs
+        "^^^^^^^^",        // 8 carets
+        "&&&&&&&&",        // 8 ampersands
+        "********",        // 8 asterisks
+        "::::::::",        // 8 colons
+        ";;;;;;;;",        // 8 semicolons
+        "????????",        // 8 question marks
+        "~~~~~~~~",        // 8 tildes
+        "````````",        // 8 backticks
+    ];
+
+    for msg in repeated_patterns {
+        let error = ParseError::syntax(msg);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle repeated special chars: '{}'", msg);
+    }
+}
+
+#[test]
+fn test_parse_error_context_with_special_chars_only() {
+    // Tests ParseError with special character-only context
+    //
+    // Expected behavior: Should handle special character-only context
+    let error = ParseError::syntax("syntax error")
+        .with_context("!@#$%^&*()");
+
+    let display = format!("{}", error);
+    assert!(!display.is_empty(), "Should handle special-char-only context");
+}
+
+#[test]
+fn test_parse_error_path_with_special_chars_only() {
+    // Tests ParseError with special character-only paths
+    //
+    // Expected behavior: Should handle special character-only paths
+    let special_paths = vec![
+        "!@#$",
+        "^&*()",
+        "_+-=",
+        "[]{}",
+        "|\\:",
+        ";'",
+        "<>",
+        "?/",
+        "~`",
+    ];
+
+    for path in special_paths {
+        let error = ParseError::syntax("error").with_path(path);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle special-char-only path: '{}'", path);
+    }
+}
+
+#[test]
+fn test_validation_error_with_both_special_char_fields() {
+    // Tests ValidationError with both path and message as special chars only
+    //
+    // Expected behavior: Should handle both fields being special characters
+    let error = ValidationError::new("!!!", "@@@");
+
+    let display = format!("{}", error);
+    assert!(!display.is_empty(), "Should handle both fields as special chars only");
+}
+
+#[test]
+fn test_error_kind_with_special_char_messages() {
+    // Tests various ParseErrorKind with special character-only messages
+    //
+    // Expected behavior: All error kinds should handle special char messages
+    use armor::parsers::yaml::ParseErrorKind;
+
+    let test_cases = vec![
+        ParseErrorKind::Syntax("!!!".to_string()),
+        ParseErrorKind::Io("@@@".to_string()),
+        ParseErrorKind::Validation("###".to_string()),
+        ParseErrorKind::UnknownAnchor("$$$".to_string()),
+        ParseErrorKind::DuplicateKey("%%%".to_string()),
+        ParseErrorKind::Other("^^^".to_string()),
+    ];
+
+    for kind in test_cases {
+        let display = format!("{}", kind);
+        assert!(!display.is_empty(), "Error kind should handle special chars: {:?}", kind);
+    }
+}
+
+#[test]
+fn test_parse_error_with_escaped_special_chars() {
+    // Tests ParseError with escaped special character sequences
+    //
+    // Expected behavior: Should handle escaped sequences properly
+    let escaped_sequences = vec![
+        "\\n\\t\\r",      // escaped whitespace
+        "\\\\////",       // mixed slashes
+        "\\\"\\'\\`",      // escaped quotes
+        "\\[\\]\\{\\}",   // escaped brackets
+        "\\<\\>",         // escaped angle brackets
+    ];
+
+    for msg in escaped_sequences {
+        let error = ParseError::syntax(msg);
+        let display = format!("{}", error);
+        assert!(!display.is_empty(), "Should handle escaped sequences: '{}'", msg);
+    }
+}
+
+// ============================================================================
+// Section 7: Error Type Detection Malformations
 // ============================================================================
 
 #[test]
