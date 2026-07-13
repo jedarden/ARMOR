@@ -898,7 +898,21 @@ class YAMLParser:
                     key_type = key_context.get('type')
                     key_name = key_context.get('key')
 
-                    if key_type == 'inline_scalar':
+                    if key_type == 'parent_mapping':
+                        # Parent mapping key creates a new scope for its children
+                        # First add the parent key to the current scope
+                        try:
+                            self.scope_stack.add_key(key_name, line_num)
+                        except DuplicateKeyError:
+                            pass  # Ignore duplicate keys for now
+
+                        # Create a new scope for this parent mapping
+                        # This scope will hold the parent's children
+                        self.scope_stack.enter_scope(indent, line_num, key_name)
+                        self.scope_depth = self.get_scope_depth()
+
+                    elif key_type == 'inline_scalar':
+                        # Inline scalar key - just add to current scope
                         try:
                             self.scope_stack.add_key(key_name, line_num)
                         except DuplicateKeyError:
