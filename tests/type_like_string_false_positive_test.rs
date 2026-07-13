@@ -8558,3 +8558,101 @@ fn test_mixed_indentation_scenarios_with_folded_scalars() {
         }
     }
 }
+
+#[test]
+fn test_odd_indentation_levels_with_exclamation_marks() {
+    // Test odd indentation levels (1, 3, 5, 7, 9, 11 spaces) with folded scalars and exclamation marks
+    // These complement the existing even indentation level tests
+
+    let test_cases: Vec<(&str, LineType, bool, Option<&str>)> = vec![
+        // 1 space indentation
+        (" level1: >", LineType::MappingKey, true, Some("level1")),
+        ("  One! space! indent!", LineType::MappingKey, false, None),
+
+        // 3 spaces indentation
+        ("   level3: >", LineType::MappingKey, true, Some("level3")),
+        ("     Three! spaces! indent!", LineType::MappingKey, false, None),
+
+        // 5 spaces indentation
+        ("     level5: >", LineType::MappingKey, true, Some("level5")),
+        ("       Five! spaces! indent!", LineType::MappingKey, false, None),
+
+        // 7 spaces indentation
+        ("       level7: >", LineType::MappingKey, true, Some("level7")),
+        ("         Seven! spaces! indent!", LineType::MappingKey, false, None),
+
+        // 9 spaces indentation
+        ("         level9: >", LineType::MappingKey, true, Some("level9")),
+        ("           Nine! spaces! indent!", LineType::MappingKey, false, None),
+
+        // 11 spaces indentation
+        ("           level11: >", LineType::MappingKey, true, Some("level11")),
+        ("             Eleven! spaces! indent!", LineType::MappingKey, false, None),
+
+        // Odd indentation with folded scalar modifiers
+        (" odd1: >-", LineType::MappingKey, true, Some("odd1")),
+        ("  Stripped! odd! indent!", LineType::MappingKey, false, None),
+
+        ("   odd3: >+", LineType::MappingKey, true, Some("odd3")),
+        ("     Kept! odd! indent!", LineType::MappingKey, false, None),
+
+        ("     odd5: >2", LineType::MappingKey, true, Some("odd5")),
+        ("       Explicit! indent! level!", LineType::MappingKey, false, None),
+
+        // Odd indentation with exclamation in various positions
+        // Note: Keys starting with '!' are Tags in YAML, not MappingKey
+        (" !start: >", LineType::Tag, false, None),
+        ("  !End! with! exclamations!", LineType::Tag, false, None),
+
+        ("   !both: >", LineType::Tag, false, None),
+        ("     In! the! middle! here!", LineType::MappingKey, false, None),
+
+        // Odd indentation continuation lines with multiple !
+        ("       Multiple!!!", LineType::MappingKey, false, None),
+        ("         Urgent!! message!!", LineType::MappingKey, false, None),
+        ("           Critical!!! alert!!!", LineType::MappingKey, false, None),
+    ];
+
+    for (line, expected_type, should_detect_key, expected_key) in test_cases {
+        let result = classify_line_type(line);
+
+        // For lines without colons (continuation lines), MappingKey, Unknown, or Tag are acceptable
+        // Tag is acceptable because lines starting with '!' are classified as tags
+        if line.contains(':') {
+            assert_eq!(
+                result, expected_type,
+                "Line type classification failed for odd indentation: '{}' (expected {:?}, got {:?})",
+                line, expected_type, result
+            );
+        } else {
+            assert!(
+                result == LineType::MappingKey || result == LineType::Unknown || result == LineType::Tag,
+                "Continuation line should be MappingKey, Unknown, or Tag: '{}' (expected {:?}, got {:?})",
+                line, expected_type, result
+            );
+        }
+
+        // Test detect_mapping_key behavior
+        let info = detect_mapping_key(line, 0);
+        if should_detect_key {
+            assert!(
+                info.is_some(),
+                "Should detect mapping key at odd indentation level: '{}'",
+                line
+            );
+            if let Some(key) = expected_key {
+                assert_eq!(
+                    info.unwrap().key, key,
+                    "Should extract correct key at odd indentation: '{}'",
+                    line
+                );
+            }
+        } else {
+            assert!(
+                info.is_none(),
+                "Should NOT detect continuation line as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
