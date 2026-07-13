@@ -105,7 +105,7 @@ func extractTypeName(errorStr string) string {
 
 	// Pattern 7: Type name after "into": "...into <type>" (handles complex types)
 	// Must be preceded by unmarshal or similar context to avoid matching common English phrases
-	re7 := regexp.MustCompile(`(?:unmarshal|marshal|convert)\s+(?:[\w\s]+)?\s+into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*)`)
+	re7 := regexp.MustCompile(`(?:unmarshal|marshal|convert)\s+(?:[\w\s]*)?\s*into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*)`)
 	if matches := re7.FindStringSubmatch(errorStr); matches != nil {
 		typeName := strings.TrimRight(matches[1], ".,")
 		return typeName
@@ -160,7 +160,8 @@ func extractTypeName(errorStr string) string {
 	// Pattern 12: Type name after "into" as fallback: "...into <type>"
 	// This is a permissive fallback pattern that matches "into <type>" at the end
 	// Used when more specific patterns don't match but "into" suggests type information
-	re12 := regexp.MustCompile(`\binto\s+([\w\-*]+(?:\.[\w\-*]+)*)\b`)
+	// Must be preceded by common error message keywords to avoid matching English phrases
+	re12 := regexp.MustCompile(`(?:unmarshal|marshal|convert|expected|want|got)\s+(?:[\w\s]*)?\s*into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|[\w\-*]+(?:\.[\w\-*]+)*)\b`)
 	if matches := re12.FindStringSubmatch(errorStr); matches != nil {
 		typeName := strings.TrimRight(matches[1], ".,")
 		return typeName
