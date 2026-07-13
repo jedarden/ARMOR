@@ -724,9 +724,9 @@ pub fn classify_line_type(line: &str) -> LineType {
         return LineType::MappingKey;
     }
 
-    // Default to mapping key for lines without special patterns
+    // Default to Unknown for lines without special patterns
     // This handles literal content lines that may contain ! or other characters
-    LineType::MappingKey
+    LineType::Unknown
 }
 
 /// Calculate indentation level from a line
@@ -1167,23 +1167,13 @@ pub fn detect_mapping_key(line: &str, parent_indent: usize) -> Option<MappingKey
         return None;
     }
 
-    // Handle sequence items that contain mappings (e.g., "- name: value")
-    // These should have their mapping key extracted
-    let line_to_process = if trimmed.starts_with("- ") {
-        // Strip the sequence item prefix to get the mapping content
-        if let Some(rest) = trimmed.strip_prefix("- ") {
-            rest
-        } else {
-            // Lone "-" without space - not a mapping
-            return None;
-        }
-    } else if trimmed == "-" {
-        // Lone dash is just a sequence item, not a mapping
+    // Handle sequence items - they are not mapping keys
+    if trimmed.starts_with("- ") || trimmed == "-" {
+        // Sequence items should not be detected as mapping keys
         return None;
-    } else {
-        // Not a sequence item, process the original line
-        trimmed
-    };
+    }
+
+    let line_to_process = trimmed;
 
     // Skip explicit key indicators (start with ?)
     if line_to_process.starts_with('?') {
