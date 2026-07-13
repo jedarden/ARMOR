@@ -640,6 +640,161 @@ fn generate_folded_scalar_tests_all_levels(
 ///     &[2, 3, 4],
 /// );
 /// ```
+/// Generate folded scalar test cases for a SPECIFIC indentation level
+///
+/// This function generates test cases for a single indentation level only.
+/// Use this when you need focused testing on one particular indentation level
+/// rather than comprehensive multi-level coverage.
+///
+/// Bead: bf-2w54h - Level-specific helper macro
+///
+/// LEVEL MAPPING TABLE
+/// ------------------
+/// This function maps level identifiers to their corresponding indentation strings:
+///
+/// | Level ID | Indentation String | Description |
+/// |----------|-------------------|-------------|
+/// | `"level0"` | `""` | No indentation (root level) |
+/// | `"level1"` | `"  "` | 2 spaces |
+/// | `"level2"` | `"    "` | 4 spaces |
+/// | `"level3"` | `"      "` | 6 spaces |
+/// | `"level4"` | `"        "` | 8 spaces |
+/// | `"tab"` | `"\t"` | Tab character |
+/// | (any other) | `"  "` | Defaults to 2-space indent |
+///
+/// LEVEL NAMING PATTERN
+/// -------------------
+/// Each generated key is prefixed with the level identifier to prevent collisions
+/// when combining test cases from multiple levels.
+///
+/// Pattern: `"{level}_{key}"`
+///
+/// Examples:
+/// - level="level1", key="text" → full_key="level1_text"
+/// - level="tab", key="note" → full_key="tab_note"
+/// - level="level0", key="root" → full_key="level0_root"
+///
+/// PARAMETERS
+/// ----------
+/// - `level: &str` - Level identifier from the mapping table above
+/// - `keys: &[&str]` - Array of key name suffixes to test
+/// - `modifiers: &[&str]` - Array of modifier patterns (e.g., `&[">", ">-", ">+"]`)
+/// - `indent_nums: &[u32]` - Array of indent numbers (e.g., `&[1, 2, 3, 4]`)
+///
+/// RETURNS
+/// -------
+/// `Vec<(String, String, LineType)>` - Vector of test case tuples where:
+/// - `.0` (String): Full YAML line with indentation and modifier
+/// - `.1` (String): Expected key name (prefixed with level)
+/// - `.2` (LineType): Expected line type (always `MappingKey`)
+///
+/// GENERATION FORMAT
+/// -----------------
+/// For each combination of key, modifier, and indent_num, generates:
+///
+/// ```text
+/// Line format: "{indent}{level}_{key}: {modifier}{indent_num}"
+/// Key name:   "{level}_{key}"
+/// ```
+///
+/// GENERATION ORDER
+/// ---------------
+/// Iterates: keys → modifiers → indent_nums
+/// Total cases = len(keys) × len(modifiers) × len(indent_nums)
+///
+/// USAGE EXAMPLES
+/// --------------
+/// ```rust
+/// // Example 1: Generate tests for level 1 (2-space indent)
+/// let test_cases = generate_folded_scalar_tests_for_level(
+///     "level1",              // 2-space indentation
+///     &["text", "note"],     // 2 keys
+///     &[">", ">-"],          // 2 modifiers
+///     &[1, 2, 3],            // 3 indent numbers
+/// );
+/// // Generates: 2 keys × 2 modifiers × 3 indent_nums = 12 cases
+/// // Example cases:
+/// // ("  level1_text: >1", "level1_text", MappingKey)
+/// // ("  level1_text: >2", "level1_text", MappingKey)
+/// // ("  level1_note: >-1", "level1_note", MappingKey)
+///
+/// run_folded_scalar_tests!(test_cases);
+///
+/// // Example 2: Generate tests for tab indentation
+/// let tab_cases = generate_folded_scalar_tests_for_level(
+///     "tab",                  // tab indentation
+///     &["data", "value"],     // 2 keys
+///     &[">+"],                // 1 modifier
+///     &[2, 4],                // 2 indent numbers
+/// );
+/// // Generates: 2 keys × 1 modifier × 2 indent_nums = 4 cases
+/// // Example cases:
+/// // ("\ttab_data: >+2", "tab_data", MappingKey)
+/// // ("\ttab_value: >+4", "tab_value", MappingKey)
+///
+/// run_folded_scalar_tests!(tab_cases);
+///
+/// // Example 3: Generate tests for level 0 (no indentation)
+/// let level0_cases = generate_folded_scalar_tests_for_level(
+///     "level0",               // no indentation
+///     &["root", "base"],      // 2 keys
+///     &[">", ">-"],           // 2 modifiers
+///     &[1, 2],                // 2 indent numbers
+/// );
+/// // Generates: 2 keys × 2 modifiers × 2 indent_nums = 8 cases
+/// // Example cases:
+/// // ("level0_root: >1", "level0_root", MappingKey)
+/// // ("level0_base: >-2", "level0_base", MappingKey)
+///
+/// run_folded_scalar_tests!(level0_cases);
+///
+/// // Example 4: Combine multiple levels into comprehensive test suite
+/// let mut all_cases = vec![];
+///
+/// for level in &["level0", "level1", "level2", "tab"] {
+///     let level_cases = generate_folded_scalar_tests_for_level(
+///         level,
+///         &["sample"],
+///         &[">"],
+///         &[1, 2, 3],
+///     );
+///     all_cases.extend(level_cases);
+/// }
+/// // Total: 4 levels × 1 key × 1 modifier × 3 indent_nums = 12 cases
+///
+/// run_folded_scalar_tests!(all_cases);
+/// ```
+///
+/// COMBINING MULTIPLE LEVELS
+/// ------------------------
+/// To generate tests for multiple levels, either:
+///
+/// 1. Call this function multiple times and combine results:
+/// ```rust
+/// let mut all_cases = vec![];
+/// for level in &["level0", "level1", "level2"] {
+///     let cases = generate_folded_scalar_tests_for_level(level, &["key"], &[">"], &[1, 2]);
+///     all_cases.extend(cases);
+/// }
+/// ```
+///
+/// 2. Use `generate_folded_scalar_tests_all_levels()` for comprehensive coverage:
+/// ```rust
+/// let all_cases = generate_folded_scalar_tests_all_levels(&["key"], &[">"], &[1, 2]);
+/// ```
+///
+/// COMPARISON TO OTHER HELPERS
+/// ---------------------------
+/// - `generate_folded_scalar_tests_for_level()` - THIS FUNCTION: Single level only
+/// - `generate_folded_scalar_tests_multi_level()` - Multiple levels (excludes level 0)
+/// - `generate_folded_scalar_tests_all_levels()` - All levels including level 0
+///
+/// SEE ALSO
+/// --------
+/// - [`create_folded_scalar_test()`] - Single test case creation
+/// - [`run_folded_scalar_tests!`] - Macro to execute test cases with assertions
+/// - [`generate_folded_scalar_tests_multi_level()`] - Multi-level generation (no level 0)
+/// - [`generate_folded_scalar_tests_all_levels()`] - Comprehensive generation (with level 0)
 fn generate_folded_scalar_tests_for_level(
     level: &str,
     keys: &[&str],
