@@ -10,7 +10,7 @@ import (
 func TestAcceptanceCriteria_ContextualErrorFormatting(t *testing.T) {
 	t.Run("AC1_ParseError_LineColumnContext", func(t *testing.T) {
 		// ParseError messages include "line X, column Y" context
-		err := NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "")
+		err := NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 		msg := err.Error()
 		
 		if !contains(msg, "line 10") {
@@ -68,7 +68,7 @@ func TestAcceptanceCriteria_ContextualErrorFormatting(t *testing.T) {
 			name string
 			err  error
 		}{
-			{"ParseError", NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "identifier", "123")},
+			{"ParseError", NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "identifier", "123", "")},
 			{"ValidationError", NewValidationError("deployment.yaml", "invalid value", "spec.replicas", "must be positive", ErrCodeInvalidValue, 15, 12, "", "spec.replicas"),},
 			{"TypeMismatchError", NewTypeMismatchError("config.yaml", "server.port", "int", "string", "\"8080\"", 20, ErrCodeTypeMismatch)},
 			{"ConstraintError", NewConstraintError("manifest.yaml", "spec.replicas", "range", "must be >= 0", "value violates minimum constraint", "-1", 25, ErrCodeConstraintViolation)},
