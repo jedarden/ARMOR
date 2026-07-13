@@ -1,22 +1,23 @@
 # Bead bf-2ds7q: Fix verify_error_formatting_test.go parameters
 
-## Status: Already Fixed
+## Task
+Fix NewValidationError calls in verify_error_formatting_test.go lines 28 and 72.
+Add missing ErrorType and expectedType, actualType parameters.
 
-The task described in this bead was **already completed** in commit `93d4bc81` on July 13, 2026 at 12:01:17.
-
-## What Was Fixed
-
-Commit `93d4bc81` updated the `NewValidationError` calls in `verify_error_formatting_test.go` to include:
-- `ErrorTypeValidation` for the `errorType` parameter
-- Empty string `""` for the `expectedType` parameter
-- Empty string `""` for the `actualType` parameter
+## Status
+**ALREADY FIXED** - This issue was resolved in commit `93d4bc81` on 2026-07-13.
 
 ## Verification
+- Line 28: `NewValidationError` call has all required parameters including `ErrorTypeValidation`, path, expectedType (""), and actualType ("")
+- Line 72: `NewValidationError` call has all required parameters including `ErrorTypeValidation`, path, expectedType (""), and actualType ("")
 
-- Lines 28 and 72 of `internal/yamlutil/verify_error_formatting_test.go` now correctly include all required parameters
-- The package compiles successfully with `go build ./internal/yamlutil/...`
-- All error constructor calls now match the expected signature
+## Test Results
+```
+✓ AC2: ValidationError includes field path + constraint
+  Example: validation error in deployment.yaml at line 15, column 12 at field spec.replicas: port out of range (constraint: must be between 1-65535)
+```
 
-## Conclusion
+The test `TestAcceptanceCriteria_ContextualErrorFormatting` passes successfully.
 
-No additional code changes are required. The fix has already been applied and verified.
+## Related
+- Commit: 93d4bc81 - "test(yamlutil): Update error constructor calls with type parameters"
