@@ -1,0 +1,288 @@
+
+running 54 tests
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_accept_valid_delimiters ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_complex_delimiter_balance ... FAILED
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_mismatched_quotes ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_missing_colon ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unclosed_brace ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unclosed_bracket ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unclosed_double_quote ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unclosed_single_quote ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unmatched_closing_bracket ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_type_codes ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_type_display ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_mismatched_quotes ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_missing_colon_after_key ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unclosed_double_quote ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unmatched_closing_brace ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unmatched_closing_bracket ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unmatched_opening_brace ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unmatched_opening_bracket ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_multiple_delimiter_errors_same_line ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_nested_brackets_and_braces ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_quote_escaping_detection ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_accept_consistent_spaces ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_accept_four_space_indentation ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_detect_inconsistent_indentation ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_detect_large_indentation_increase ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_detect_mixed_tabs_and_spaces ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_detect_tab_only_indentation ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_excessive_increase ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_invalid_increase ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_invalid_level ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_mixed ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_tab_character ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_type_codes ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_type_display ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_multiple_indentation_errors ... ok
+test parsers::yaml::syntax_detector_tests::integration_tests::test_empty_and_comment_only_content ... ok
+test parsers::yaml::syntax_detector_tests::integration_tests::test_multiple_error_types ... ok
+test parsers::yaml::syntax_detector_tests::integration_tests::test_complex_nested_structure ... FAILED
+test parsers::yaml::syntax_detector_tests::integration_tests::test_valid_complete_yaml ... FAILED
+test parsers::yaml::syntax_detector_tests::performance_tests::test_deep_nesting_performance ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_flow_style_with_braces ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_flow_style_with_brackets ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_no_false_positives_for_anchors_and_aliases ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_no_false_positives_for_quoted_keys ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_no_false_positives_for_time_values ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_no_false_positives_for_urls ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_accept_valid_mappings ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_accept_valid_sequences ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_duplicate_keys_same_level ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_global_duplicate_keys ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_invalid_colon_at_start ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_invalid_sequence_syntax ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_nested_duplicate_keys ... ok
+test parsers::yaml::syntax_detector_tests::performance_tests::test_large_file_performance ... ok
+
+failures:
+
+---- parsers::yaml::syntax_detector_tests::delimiter_tests::test_complex_delimiter_balance stdout ----
+DEBUG - Found 2 errors in complex delimiter YAML:
+  0 path=key_{name line=Some(3) msg=duplicate key '{name' at same indentation level
+  1 path=key_{name line=Some(2) msg=duplicate key '{name' appears 2 times in document
+
+thread 'parsers::yaml::syntax_detector_tests::delimiter_tests::test_complex_delimiter_balance' (560170) panicked at src/parsers/yaml/syntax_detector_tests.rs:495:9:
+assertion failed: errors.is_empty()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- parsers::yaml::syntax_detector_tests::integration_tests::test_complex_nested_structure stdout ----
+
+thread 'parsers::yaml::syntax_detector_tests::integration_tests::test_complex_nested_structure' (560204) panicked at src/parsers/yaml/syntax_detector_tests.rs:701:9:
+assertion failed: errors.is_empty()
+
+---- parsers::yaml::syntax_detector_tests::integration_tests::test_valid_complete_yaml stdout ----
+DEBUG - Found 2 errors in valid YAML:
+  0 path=key_host line=Some(4) msg=duplicate key 'host' appears 2 times in document
+  1 path=key_port line=Some(5) msg=duplicate key 'port' appears 2 times in document
+
+thread 'parsers::yaml::syntax_detector_tests::integration_tests::test_valid_complete_yaml' (560207) panicked at src/parsers/yaml/syntax_detector_tests.rs:641:9:
+assertion failed: errors.is_empty()
+
+
+failures:
+    parsers::yaml::syntax_detector_tests::delimiter_tests::test_complex_delimiter_balance
+    parsers::yaml::syntax_detector_tests::integration_tests::test_complex_nested_structure
+    parsers::yaml::syntax_detector_tests::integration_tests::test_valid_complete_yaml
+
+test result: FAILED. 51 passed; 3 failed; 0 ignored; 0 measured; 195 filtered out; finished in 0.00s
+
+warning: unused import: `crate::parsers::yaml::types::ValidationError`
+  --> src/parsers/yaml/syntax_detector_tests.rs:10:5
+   |
+10 | use crate::parsers::yaml::types::ValidationError;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `content`
+  --> src/parsers/yaml/parser.rs:97:25
+   |
+97 |     fn parse_str(&self, content: &str) -> ParseResult<serde_yaml::Value> {
+   |                         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_content`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `content`
+   --> src/parsers/yaml/parser.rs:102:27
+    |
+102 |     fn parse_bytes(&self, content: &[u8]) -> ParseResult<serde_yaml::Value> {
+    |                           ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_content`
+
+warning: unused variable: `path`
+   --> src/parsers/yaml/parser.rs:107:26
+    |
+107 |     fn parse_file(&self, path: &std::path::Path) -> ParseResult<serde_yaml::Value> {
+    |                          ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:519:14
+    |
+519 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:721:30
+    |
+721 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `detect_mapping_key_simple` is never used
+    --> src/parsers/yaml/line_parser.rs:1338:8
+     |
+1338 | pub fn detect_mapping_key_simple(line: &str, parent_indent: usize) -> Option<(String, usize)> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: comparison is useless due to type limits
+   --> src/schema.rs:490:20
+    |
+490 |                 if config.port > 65535 {
+    |                    ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: `armor` (lib test) generated 15 warnings (run `cargo fix --lib -p armor --tests` to apply 12 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (target/debug/deps/armor-ed57650da3fa8170)
+
+running 54 tests
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_accept_valid_delimiters ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_complex_delimiter_balance ... FAILED
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_mismatched_quotes ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_missing_colon ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unclosed_brace ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unclosed_double_quote ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unclosed_bracket ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unclosed_single_quote ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_classification_unmatched_closing_bracket ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_type_codes ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_delimiter_error_type_display ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_mismatched_quotes ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_missing_colon_after_key ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unclosed_double_quote ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unmatched_closing_brace ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unmatched_closing_bracket ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unmatched_opening_brace ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_detect_unmatched_opening_bracket ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_multiple_delimiter_errors_same_line ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_nested_brackets_and_braces ... ok
+test parsers::yaml::syntax_detector_tests::delimiter_tests::test_quote_escaping_detection ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_accept_consistent_spaces ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_accept_four_space_indentation ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_detect_inconsistent_indentation ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_detect_large_indentation_increase ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_detect_mixed_tabs_and_spaces ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_detect_tab_only_indentation ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_excessive_increase ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_invalid_increase ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_invalid_level ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_mixed ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_classification_tab_character ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_type_codes ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_indentation_error_type_display ... ok
+test parsers::yaml::syntax_detector_tests::indentation_tests::test_multiple_indentation_errors ... ok
+test parsers::yaml::syntax_detector_tests::integration_tests::test_empty_and_comment_only_content ... ok
+test parsers::yaml::syntax_detector_tests::integration_tests::test_multiple_error_types ... ok
+test parsers::yaml::syntax_detector_tests::integration_tests::test_complex_nested_structure ... FAILED
+test parsers::yaml::syntax_detector_tests::integration_tests::test_valid_complete_yaml ... FAILED
+test parsers::yaml::syntax_detector_tests::performance_tests::test_deep_nesting_performance ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_flow_style_with_braces ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_flow_style_with_brackets ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_no_false_positives_for_anchors_and_aliases ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_no_false_positives_for_quoted_keys ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_no_false_positives_for_time_values ... ok
+test parsers::yaml::syntax_detector_tests::regression_tests::test_no_false_positives_for_urls ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_accept_valid_mappings ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_accept_valid_sequences ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_duplicate_keys_same_level ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_global_duplicate_keys ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_invalid_colon_at_start ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_invalid_sequence_syntax ... ok
+test parsers::yaml::syntax_detector_tests::structure_tests::test_detect_nested_duplicate_keys ... ok
+test parsers::yaml::syntax_detector_tests::performance_tests::test_large_file_performance ... ok
+
+failures:
+
+---- parsers::yaml::syntax_detector_tests::delimiter_tests::test_complex_delimiter_balance stdout ----
+DEBUG - Found 2 errors in complex delimiter YAML:
+  0 path=key_{name line=Some(3) msg=duplicate key '{name' at same indentation level
+  1 path=key_{name line=Some(2) msg=duplicate key '{name' appears 2 times in document
+
+thread 'parsers::yaml::syntax_detector_tests::delimiter_tests::test_complex_delimiter_balance' (560234) panicked at src/parsers/yaml/syntax_detector_tests.rs:495:9:
+assertion failed: errors.is_empty()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- parsers::yaml::syntax_detector_tests::integration_tests::test_complex_nested_structure stdout ----
+
+thread 'parsers::yaml::syntax_detector_tests::integration_tests::test_complex_nested_structure' (560268) panicked at src/parsers/yaml/syntax_detector_tests.rs:701:9:
+assertion failed: errors.is_empty()
+
+---- parsers::yaml::syntax_detector_tests::integration_tests::test_valid_complete_yaml stdout ----
+DEBUG - Found 2 errors in valid YAML:
+  0 path=key_port line=Some(5) msg=duplicate key 'port' appears 2 times in document
+  1 path=key_host line=Some(4) msg=duplicate key 'host' appears 2 times in document
+
+thread 'parsers::yaml::syntax_detector_tests::integration_tests::test_valid_complete_yaml' (560271) panicked at src/parsers/yaml/syntax_detector_tests.rs:641:9:
+assertion failed: errors.is_empty()
+
+
+failures:
+    parsers::yaml::syntax_detector_tests::delimiter_tests::test_complex_delimiter_balance
+    parsers::yaml::syntax_detector_tests::integration_tests::test_complex_nested_structure
+    parsers::yaml::syntax_detector_tests::integration_tests::test_valid_complete_yaml
+
+test result: FAILED. 51 passed; 3 failed; 0 ignored; 0 measured; 195 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
