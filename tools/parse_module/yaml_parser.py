@@ -863,34 +863,46 @@ class YAMLParser:
             current_indent = self.scope_stack.current_indent()
 
             if indent > current_indent:
-                # Indent increased - enter new scope
-                parent_key = None
-                if key_context and key_context.get('type') == 'parent_mapping':
-                    parent_key = key_context['key']
-                    # Add parent key to current scope first
-                    try:
-                        self.scope_stack.add_key(parent_key, line_num)
-                    except DuplicateKeyError:
-                        pass  # Ignore duplicate parent keys for now
+                # Indent increased - handle based on line type
+                if line_type == LineClassification.KEY_BEARING:
+                    # Key-bearing line: indent increase creates a new scope
+                    parent_key = None
+                    if key_context and key_context.get('type') == 'parent_mapping':
+                        parent_key = key_context['key']
+                        # Add parent key to current scope first
+                        try:
+                            self.scope_stack.add_key(parent_key, line_num)
+                        except DuplicateKeyError:
+                            pass  # Ignore duplicate parent keys for now
 
-                self.scope_stack.enter_scope(indent, line_num, parent_key)
-                self.scope_depth = self.get_scope_depth()
+                    self.scope_stack.enter_scope(indent, line_num, parent_key)
+                    self.scope_depth = self.get_scope_depth()
+                elif line_type == LineClassification.INDENT_ONLY:
+                    # Indent-only line: indent increase does NOT create a new scope
+                    # This is a continuation line - just update tracking, stay in current scope
+                    # The indent increase represents multi-line value content
+                    pass
+                else:
+                    # Empty lines don't trigger scope transitions
+                    pass
 
             elif indent < current_indent:
-                # Indent decreased - exit to parent scope
+                # Indent decreased - always exit to parent scope regardless of line type
+                # This ensures proper scope cleanup when returning to outer levels
                 self.scope_stack.exit_to_scope(indent)
                 self.scope_depth = self.get_scope_depth()
 
-            # Add key to current scope if present
-            if key_context and has_key:
-                key_type = key_context.get('type')
-                key_name = key_context.get('key')
+            else:
+                # Same indent level - add key to current scope if present
+                if key_context and has_key:
+                    key_type = key_context.get('type')
+                    key_name = key_context.get('key')
 
-                if key_type == 'inline_scalar':
-                    try:
-                        self.scope_stack.add_key(key_name, line_num)
-                    except DuplicateKeyError:
-                        pass  # Ignore for now
+                    if key_type == 'inline_scalar':
+                        try:
+                            self.scope_stack.add_key(key_name, line_num)
+                        except DuplicateKeyError:
+                            pass  # Ignore for now
 
     def get_scope_summary(self) -> Dict[str, Any]:
         """
