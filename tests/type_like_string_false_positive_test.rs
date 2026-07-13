@@ -1248,7 +1248,7 @@ fn test_invalid_error_code_formats() {
 }
 
 // ============================================================================
-// Section 14: Type Name Typos and Variations
+// Section 16: Type Name Typos and Variations
 // ============================================================================
 
 #[test]
@@ -1315,7 +1315,7 @@ fn test_partial_type_matches_in_values() {
 }
 
 // ============================================================================
-// Section 15: Type-like Strings in Complex Contexts
+// Section 17: Type-like Strings in Complex Contexts
 // ============================================================================
 
 #[test]
