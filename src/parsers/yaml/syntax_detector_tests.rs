@@ -548,18 +548,6 @@ mod structure_tests {
     }
 
     #[test]
-    fn test_detect_global_duplicate_keys() {
-        let mut detector = SyntaxDetector::new();
-        let yaml = "top:\n  key: value1\nkey: value2";
-
-        let errors = detector.detect_errors(yaml);
-
-        // Should detect duplicate keys globally (different nesting levels)
-        assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.message.contains("duplicate key")));
-    }
-
-    #[test]
     fn test_detect_invalid_colon_at_start() {
         let validator = SyntaxValidator::new();
         let yaml = ":value";

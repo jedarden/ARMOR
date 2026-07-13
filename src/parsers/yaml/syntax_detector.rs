@@ -254,6 +254,8 @@ struct DelimiterState {
     in_multiline_block: bool,
     /// Indentation level of the multiline block start
     multiline_block_indent: usize,
+    /// Whether we're inside flow-style context (within [] or {})
+    in_flow_context: bool,
 }
 
 /// Quote type for tracking
@@ -270,8 +272,6 @@ struct StructureState {
     context_stack: Vec<StructureContext>,
     /// Keys seen at current indentation level
     current_keys: HashSet<String>,
-    /// All keys seen in the document (for duplicate detection)
-    all_keys: HashMap<String, Vec<usize>>,
     /// Previous line's indentation level
     prev_indent: usize,
 }
@@ -515,15 +515,18 @@ impl SyntaxDetector {
             ).with_line(line_num).with_delimiter_error_type(error_type));
         }
 
-        // Track bracket/brace balance
+        // Track bracket/brace balance and flow context
         for (char_pos, ch) in line.chars().enumerate() {
             match ch {
                 '[' => {
                     self.delimiter_state.bracket_stack.push(('[', line_num));
+                    self.delimiter_state.in_flow_context = true;
                 }
                 ']' => {
                     if let Some(('[', _)) = self.delimiter_state.bracket_stack.last() {
                         self.delimiter_state.bracket_stack.pop();
+                        // Update flow context when stack becomes empty
+                        self.delimiter_state.in_flow_context = !self.delimiter_state.bracket_stack.is_empty();
                     } else {
                         let error_type = DelimiterErrorType::UnmatchedClosingBracket;
                         errors.push(ValidationError::new(
@@ -534,10 +537,13 @@ impl SyntaxDetector {
                 }
                 '{' => {
                     self.delimiter_state.bracket_stack.push(('{', line_num));
+                    self.delimiter_state.in_flow_context = true;
                 }
                 '}' => {
                     if let Some(('{', _)) = self.delimiter_state.bracket_stack.last() {
                         self.delimiter_state.bracket_stack.pop();
+                        // Update flow context when stack becomes empty
+                        self.delimiter_state.in_flow_context = !self.delimiter_state.bracket_stack.is_empty();
                     } else {
                         let error_type = DelimiterErrorType::UnmatchedClosingBrace;
                         errors.push(ValidationError::new(
@@ -642,6 +648,12 @@ impl SyntaxDetector {
 
     /// Detect duplicate key errors
     fn detect_duplicate_key_errors(&mut self, line: &str, line_num: usize, errors: &mut Vec<ValidationError>) {
+        // Skip duplicate key detection when inside flow-style contexts ([] or {})
+        // Flow-style YAML uses {key: value} syntax which should not be treated as duplicate keys
+        if self.delimiter_state.in_flow_context {
+            return;
+        }
+
         let trimmed = line.trim();
         let indent = self.get_leading_whitespace_length(line);
 
@@ -692,12 +704,6 @@ impl SyntaxDetector {
             } else {
                 self.structure_state.current_keys.insert(key.to_string());
             }
-
-            // Track all keys for global duplicate detection
-            self.structure_state.all_keys
-                .entry(key.to_string())
-                .or_insert_with(Vec::new)
-                .push(line_num);
         }
     }
 
@@ -732,20 +738,8 @@ impl SyntaxDetector {
     }
 
     /// Finalize structure checks after processing all lines
-    fn finalize_structure_checks(&mut self, errors: &mut Vec<ValidationError>) {
-        // Check for global duplicate keys
-        for (key, line_nums) in &self.structure_state.all_keys {
-            if line_nums.len() > 1 {
-                // Only report if not at same indentation level (already reported)
-                let is_same_level = line_nums.windows(2).all(|w| w[0] == w[1]);
-                if !is_same_level {
-                    errors.push(ValidationError::new(
-                        format!("key_{}", key),
-                        format!("duplicate key '{}' appears {} times in document", key, line_nums.len())
-                    ).with_line(line_nums[0]));
-                }
-            }
-        }
+    fn finalize_structure_checks(&mut self, _errors: &mut Vec<ValidationError>) {
+        // No-op - same-level duplicate detection is handled in detect_duplicate_key_errors
     }
 
     /// Get leading whitespace length from a line
