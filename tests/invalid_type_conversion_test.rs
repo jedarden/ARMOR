@@ -2078,6 +2078,9 @@ fn test_negative_int32_to_uint32_conversions() {
     /// | -2147483649 | int32::MIN - 1 |
     let test_cases = vec![
         (r#"value: -1"#, "-1", "basic negative"),
+        (r#"value: -10"#, "-10", "basic negative -10"),
+        (r#"value: -100"#, "-100", "basic negative -100"),
+        (r#"value: -1000"#, "-1000", "basic negative -1000"),
         (r#"value: -128"#, "-128", "int8 min"),
         (r#"value: -256"#, "-256", "int8 min - 128"),
         (r#"value: -32768"#, "-32768", "int16 min"),
