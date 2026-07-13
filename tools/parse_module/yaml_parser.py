@@ -615,6 +615,8 @@ class YAMLParser:
         self.scope_stack: Optional[ScopeStack] = None
         self.base_indent = base_indent
         self.scope_depth: int = 0
+        self.current_line_type: Optional[LineClassification] = None
+        self.current_line_number: int = 0
 
     def _import_yaml(self) -> None:
         """
@@ -722,9 +724,13 @@ class YAMLParser:
         if self.enable_scope_tracking:
             self.scope_stack = ScopeStack(base_indent=self.base_indent)
             self.scope_depth = 0
+            self.current_line_type = None
+            self.current_line_number = 0
         else:
             self.scope_stack = None
             self.scope_depth = 0
+            self.current_line_type = None
+            self.current_line_number = 0
 
     def get_scope_depth(self) -> int:
         """
@@ -828,6 +834,13 @@ class YAMLParser:
         lines = yaml_content.split('\n')
 
         for line_num, raw_line in enumerate(lines, start=1):
+            # Update current line tracking
+            self.current_line_number = line_num
+
+            # Classify the line type
+            line_type = self.scope_stack._classify_line_type(raw_line)
+            self.current_line_type = line_type
+
             trimmed = raw_line.strip()
 
             # Skip empty lines and comments for key detection
@@ -843,10 +856,10 @@ class YAMLParser:
 
             has_key = key_context is not None
 
-            # Record indent transition
+            # Record indent transition (with line type already captured in IndentTransition)
             self.scope_stack.record_indent_transition(line_num, indent, has_key, raw_line)
 
-            # Handle scope transitions based on indent
+            # Handle scope transitions based on indent and line type
             current_indent = self.scope_stack.current_indent()
 
             if indent > current_indent:
@@ -889,6 +902,8 @@ class YAMLParser:
             - path: Current scope path
             - stack_size: Number of scopes in the stack
             - in_sequence: Whether currently in a sequence context
+            - current_line_type: Line type of the most recently processed line
+            - current_line_number: Line number of the most recently processed line
             Returns empty dict if scope tracking is not enabled.
         """
         if not self.scope_stack:
@@ -899,4 +914,55 @@ class YAMLParser:
             'path': self.get_scope_path(),
             'stack_size': self.scope_stack.depth(),
             'in_sequence': self.scope_stack.in_sequence_context(),
+            'current_line_type': self.current_line_type.value if self.current_line_type else None,
+            'current_line_number': self.current_line_number,
         }
+
+    def get_current_line_type(self) -> Optional[LineClassification]:
+        """
+        Get the line type of the most recently processed line.
+
+        Returns:
+            The LineClassification of the current line, or None if no line has been processed
+            or scope tracking is not enabled.
+        """
+        return self.current_line_type
+
+    def get_current_line_number(self) -> int:
+        """
+        Get the line number of the most recently processed line.
+
+        Returns:
+            The 1-indexed line number of the current line, or 0 if no line has been processed.
+        """
+        return self.current_line_number
+
+    def is_on_key_bearing_line(self) -> bool:
+        """
+        Check if the parser is currently on a key-bearing line.
+
+        Returns:
+            True if the current line is key-bearing, False otherwise.
+            Returns False if scope tracking is not enabled or no line has been processed.
+        """
+        return self.current_line_type == LineClassification.KEY_BEARING
+
+    def is_on_indent_only_line(self) -> bool:
+        """
+        Check if the parser is currently on an indent-only line.
+
+        Returns:
+            True if the current line is indent-only, False otherwise.
+            Returns False if scope tracking is not enabled or no line has been processed.
+        """
+        return self.current_line_type == LineClassification.INDENT_ONLY
+
+    def is_on_empty_line(self) -> bool:
+        """
+        Check if the parser is currently on an empty line.
+
+        Returns:
+            True if the current line is empty, False otherwise.
+            Returns False if scope tracking is not enabled or no line has been processed.
+        """
+        return self.current_line_type == LineClassification.EMPTY
