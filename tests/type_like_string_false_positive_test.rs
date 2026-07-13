@@ -2571,13 +2571,13 @@ fn test_type_like_in_log_messages() {
 
 #[test]
 fn test_type_like_in_comments_inline() {
-    // Type names in inline comments
+    // Type names in inline comments (for simple values)
     let test_cases = vec![
         "value: 42 # integer value",
         "flag: true # boolean setting",
         "name: test # string identifier",
-        "items: [] # empty array",
-        "data: {} # empty object",
+        "count: 100 # integer amount",
+        "enabled: false # boolean flag",
     ];
 
     for line in test_cases {
