@@ -1,38 +1,59 @@
-# Bead bf-1c5q5: Fix verify_formatting_test.go parameters
+# bf-1c5q5: Fix verify_formatting_test.go parameters
 
-## Status: Already Fixed
+## Task
+Fix NewParseError calls (lines 11, 111) and NewValidationError call (line 44, 112) in verify_formatting_test.go. Add missing ErrorCode, ErrorType, and expectedType/actualType parameters.
 
-## Issue
-The bead requested fixing `NewParseError` and `NewValidationError` constructor calls in `internal/yamlutil/verify_formatting_test.go` by adding missing `ErrorCode`, `ErrorType`, and `expectedType`/`actualType` parameters.
+## Verification Status: ✅ COMPLETE
 
-## Resolution
-This issue was already fixed in commit `93d4bc81` on 2026-07-13 12:01:17.
+The required parameters were already fixed in commit 93d4bc81:
+- `test(yamlutil): Update error constructor calls with type parameters`
 
-### Changes Applied
-The commit updated the following calls:
+### Current State (Verified 2026-07-13)
 
-1. **Line 11** - `NewParseError`:
-   - Added missing `contextStr` parameter (empty string)
-   
-2. **Lines 35-47** - `NewValidationError`:
-   - Changed empty string code to `ErrCodeInvalidValue`
-   - Added `ErrorTypeValidation`
-   - Added `expectedType` and `actualType` parameters (empty strings)
+**Line 11 - NewParseError:**
+```go
+NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "identifier", "123", "")
+```
+✅ All 8 parameters present: filePath, message, line, column, code, expected, actual, contextStr
 
-3. **Line 113** - `NewParseError` (in test array):
-   - Changed empty string to `ErrCodeInvalidSyntax`
+**Line 36-47 - NewValidationError:**
+```go
+NewValidationError(
+    "deployment.yaml",
+    "port out of range",
+    "spec.replicas",
+    "must be between 1-65535",
+    ErrCodeInvalidValue,
+    15,
+    12,
+    ErrorTypeValidation,
+    "spec.replicas",
+    "",
+    "",
+)
+```
+✅ All 11 parameters present: filePath, message, fieldPath, constraint, code, line, column, errorType, path, expectedType, actualType
 
-4. **Line 114** - `NewValidationError` (in test array):
-   - Changed empty string code to `ErrCodeInvalidValue`
-   - Added `ErrorTypeValidation`
-   - Added `expectedType` and `actualType` parameters (empty strings)
+**Line 113 - NewParseError:**
+```go
+NewParseError("test.yaml", "bad syntax", 5, 10, ErrCodeInvalidSyntax, "", "", "")
+```
+✅ All 8 parameters present
 
-## Verification
-All tests in `verify_formatting_test.go` now pass:
+**Line 114 - NewValidationError:**
+```go
+NewValidationError("test.yaml", "invalid value", "", "", ErrCodeInvalidValue, 5, 10, ErrorTypeValidation, "", "test.yaml", "")
+```
+✅ All 11 parameters present
 
-```bash
-go test ./internal/yamlutil -run TestErrorFormattingExamples -v
-go test ./internal/yamlutil -run TestHumanReadableFormatting -v
+### Test Results
+All formatting tests pass:
+```
+=== RUN   TestErrorFormattingExamples
+--- PASS: TestErrorFormattingExamples (0.00s)
+=== RUN   TestHumanReadableFormatting
+--- PASS: TestHumanReadableFormatting (0.00s)
+PASS
 ```
 
-Both test functions pass successfully, confirming the error constructors have correct parameter signatures.
+No action required - the file is already in the correct state.
