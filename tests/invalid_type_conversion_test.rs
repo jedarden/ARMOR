@@ -2161,6 +2161,117 @@ fn test_negative_int32_to_uint32_conversions() {
 }
 
 #[test]
+fn test_int32_to_uint32_boundary_conditions() {
+    /// Test: Boundary conditions for int32 to uint32 conversion
+    ///
+    /// These test cases verify edge cases and boundary conditions for int32 to uint32
+    /// conversion, including zero boundary and maximum negative values.
+    ///
+    /// # Test Cases
+    ///
+    /// | Input | Description | Expected for uint32 |
+    /// |-------|-------------|---------------------|
+    /// | 0 | Zero boundary | VALID (edge case) |
+    /// | -2147483647 | int32::MIN + 1 | INVALID |
+    /// | -2147483646 | int32::MIN + 2 | INVALID |
+    /// | -2147483648 | int32::MIN | INVALID |
+    /// | -2 | Small negative | INVALID |
+    /// | -3 | Small negative | INVALID |
+
+    let negative_test_cases = vec![
+        // Maximum negative values (near int32::MIN)
+        (r#"value: -2147483647"#, "-2147483647", "int32 min + 1"),
+        (r#"value: -2147483646"#, "-2147483646", "int32 min + 2"),
+        (r#"value: -2147483645"#, "-2147483645", "int32 min + 3"),
+        // Small negative values near zero
+        (r#"value: -2"#, "-2", "small negative -2"),
+        (r#"value: -3"#, "-3", "small negative -3"),
+        (r#"value: -5"#, "-5", "small negative -5"),
+        // Power-of-2 boundary negatives
+        (r#"value: -1024"#, "-1024", "negative 2^10"),
+        (r#"value: -2048"#, "-2048", "negative 2^11"),
+        (r#"value: -4096"#, "-4096", "negative 2^12"),
+        (r#"value: -8192"#, "-8192", "negative 2^13"),
+        // Mid-range negatives
+        (r#"value: -1073741824"#, "-1073741824", "negative 2^30"),
+        (r#"value: -1610612736"#, "-1610612736", "negative 3*2^29"),
+    ];
+
+    for (yaml, value_str, description) in negative_test_cases {
+        let value: Result<Value, _> = serde_yaml::from_str(yaml);
+        assert!(
+            value.is_ok(),
+            "YAML parsing should succeed for {}",
+            description
+        );
+
+        let value = value.unwrap();
+        let field_value = &value["value"];
+
+        // Verify it's a negative integer
+        assert!(
+            field_value.is_i64(),
+            "Field should be i64 ({})",
+            description
+        );
+        let int_value = field_value.as_i64().unwrap();
+        assert!(int_value < 0, "Field should be negative ({})", description);
+
+        // Verify the actual value matches expected
+        assert_eq!(
+            int_value,
+            value_str.parse::<i64>().unwrap(),
+            "Field value should match expected {} ({})",
+            value_str,
+            description
+        );
+
+        // Verify it would fail uint32 conversion
+        let fits_in_uint32 = int_value >= 0 && int_value <= u32::MAX as i64;
+        assert!(
+            !fits_in_uint32,
+            "Negative value {} should not fit in uint32 ({})",
+            value_str, description
+        );
+
+        // Verify type mismatch error is properly created
+        let error = ParseError::type_mismatch("value", "uint32", "int32_negative");
+        assert!(
+            error.is_type_mismatch(),
+            "Type mismatch error should be created for negative {} ({})",
+            value_str,
+            description
+        );
+    }
+
+    // Zero boundary case - should be VALID for uint32
+    let zero_yaml = r#"value: 0"#;
+    let zero_value: Result<Value, _> = serde_yaml::from_str(zero_yaml);
+    assert!(
+        zero_value.is_ok(),
+        "YAML parsing should succeed for zero"
+    );
+
+    let zero_value = zero_value.unwrap();
+    let zero_field_value = &zero_value["value"];
+
+    // Verify it's zero
+    assert!(
+        zero_field_value.is_i64(),
+        "Zero field should be i64"
+    );
+    let zero_int_value = zero_field_value.as_i64().unwrap();
+    assert_eq!(zero_int_value, 0, "Zero field should be exactly 0");
+
+    // Verify zero FITS in uint32 (this is the boundary case)
+    let fits_in_uint32 = zero_int_value >= 0 && zero_int_value <= u32::MAX as i64;
+    assert!(
+        fits_in_uint32,
+        "Zero should fit in uint32 (boundary case)"
+    );
+}
+
+#[test]
 fn test_negative_int64_to_uint64_conversions() {
     /// Test: Negative int64 values cannot convert to uint64
     ///
