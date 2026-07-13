@@ -278,6 +278,10 @@ struct Scope {
     parent_key: Option<String>,
     /// Whether this scope is in flow-style mapping ({key: value})
     is_flow_style: bool,
+    /// Whether this scope is within a sequence context
+    in_sequence_context: bool,
+    /// Unique identifier for sequence items to distinguish them at same indent
+    sequence_item_id: Option<usize>,
 }
 
 impl Scope {
@@ -289,6 +293,8 @@ impl Scope {
             start_line,
             parent_key,
             is_flow_style: false,
+            in_sequence_context: false,
+            sequence_item_id: None,
         }
     }
 
@@ -301,6 +307,14 @@ impl Scope {
     fn contains_key(&self, key: &str) -> bool {
         self.keys.contains(key)
     }
+
+    /// Check if this scope is equivalent to another for duplicate key purposes
+    /// (same indent level and same sequence item)
+    fn is_same_scope_as(&self, other: &Scope) -> bool {
+        self.indent_level == other.indent_level
+            && self.in_sequence_context == other.in_sequence_context
+            && self.sequence_item_id == other.sequence_item_id
+    }
 }
 
 /// Hierarchical stack of active scopes
@@ -310,6 +324,8 @@ struct ScopeStack {
     scopes: Vec<Scope>,
     /// Base indentation size (usually 2 or 4 spaces)
     base_indent: usize,
+    /// Sequence item counter for generating unique IDs
+    sequence_item_counter: usize,
 }
 
 impl ScopeStack {
@@ -318,6 +334,7 @@ impl ScopeStack {
         Self {
             scopes: vec![Scope::new(0, 0, None)], // Root scope
             base_indent,
+            sequence_item_counter: 0,
         }
     }
 
@@ -376,6 +393,41 @@ impl ScopeStack {
         self.scopes.last()
             .map(|scope| scope.indent_level)
             .unwrap_or(0)
+    }
+
+    /// Enter a sequence context (when we see a `-` item)
+    fn enter_sequence_scope(&mut self, indent_level: usize, line: usize) {
+        // Remove all scopes deeper than this level
+        self.scopes.retain(|s| s.indent_level < indent_level);
+
+        // Check if there's already a scope at this level that's in a sequence context
+        let needs_new_scope = self.scopes.last()
+            .map(|scope| scope.indent_level != indent_level || !scope.in_sequence_context)
+            .unwrap_or(true);
+
+        if needs_new_scope {
+            // Create a new scope for this sequence item
+            let mut new_scope = Scope::new(indent_level, line, None);
+            new_scope.in_sequence_context = true;
+            self.sequence_item_counter += 1;
+            new_scope.sequence_item_id = Some(self.sequence_item_counter);
+            self.scopes.push(new_scope);
+        } else {
+            // Reset the existing scope for a new sequence item
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.keys.clear();
+                scope.start_line = line;
+                self.sequence_item_counter += 1;
+                scope.sequence_item_id = Some(self.sequence_item_counter);
+            }
+        }
+    }
+
+    /// Check if we're in a sequence context
+    fn in_sequence_context(&self) -> bool {
+        self.scopes.last()
+            .map(|scope| scope.in_sequence_context)
+            .unwrap_or(false)
     }
 }
 
@@ -776,6 +828,25 @@ impl SyntaxDetector {
 
         let trimmed = line.trim();
         let indent = self.get_leading_whitespace_length(line);
+
+        // Check if this is a sequence item with a key-value pair (e.g., "- key: value")
+        // This creates a new scope for each sequence item
+        if trimmed.starts_with("- ") {
+            if let Some(colon_pos) = trimmed.find(':') {
+                // We have "- key: value" format
+                let key_part = &trimmed[2..colon_pos]; // Skip "- " to get the key
+                let key = key_part.trim();
+
+                // Only enter sequence scope if it looks like a valid mapping key
+                if !key.is_empty() && !key.starts_with('\'') && !key.starts_with('"')
+                    && !key.contains('#') && !key.contains('?') {
+                    self.structure_state.scope_stack.enter_sequence_scope(indent, line_num);
+                }
+            }
+            // Sequence items don't need duplicate checking at this level
+            // The keys within the sequence item will be checked when we process them
+            return;
+        }
 
         // Extract key if this is a key-value pair
         if let Some(colon_pos) = trimmed.find(':') {

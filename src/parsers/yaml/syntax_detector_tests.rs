@@ -580,6 +580,139 @@ mod structure_tests {
         // Should accept valid mapping syntax
         assert!(errors.is_empty());
     }
+
+    #[test]
+    fn test_scope_aware_duplicate_detection_sibling_mappings() {
+        let mut detector = SyntaxDetector::new();
+        let yaml = r#"
+services:
+  web:
+    host: localhost
+    port: 8080
+  database:
+    host: db.example.com
+    port: 5432
+"#;
+
+        let errors = detector.detect_errors(yaml);
+
+        // Same key names in sibling nested mappings should NOT be flagged as duplicates
+        assert!(errors.is_empty(), "Should not flag keys in different scopes as duplicates");
+    }
+
+    #[test]
+    fn test_scope_aware_duplicate_detection_deep_nesting() {
+        let mut detector = SyntaxDetector::new();
+        let yaml = r#"
+level1:
+  level2:
+    level3:
+      key: value1
+    key: value2
+  key: value3
+key: value4
+"#;
+
+        let errors = detector.detect_errors(yaml);
+
+        // Same key names at different nesting levels should NOT be flagged as duplicates
+        assert!(errors.is_empty(), "Should not flag keys at different nesting levels as duplicates");
+    }
+
+    #[test]
+    fn test_scope_aware_duplicate_detection_complex_scenario() {
+        let mut detector = SyntaxDetector::new();
+        let yaml = r#"
+server:
+  host: localhost
+  port: 8080
+  ssl:
+    enabled: true
+    cert: /path/to/cert.pem
+
+database:
+  host: db.example.com
+  port: 5432
+  credentials:
+    username: admin
+    password: secret
+
+cache:
+  host: redis.example.com
+  port: 6379
+"#;
+
+        let errors = detector.detect_errors(yaml);
+
+        // Complex real-world scenario with repeated key names in different scopes
+        assert!(errors.is_empty(), "Should handle complex nested structures with repeated key names");
+    }
+
+    #[test]
+    fn test_scope_aware_duplicate_detection_with_sequences() {
+        let mut detector = SyntaxDetector::new();
+        let yaml = r#"
+servers:
+  - name: web1
+    host: localhost
+    port: 8080
+  - name: web2
+    host: localhost
+    port: 8081
+
+databases:
+  - name: db1
+    host: db1.example.com
+    port: 5432
+  - name: db2
+    host: db2.example.com
+    port: 5432
+"#;
+
+        let errors = detector.detect_errors(yaml);
+
+        // Should handle repeated key names in sequence items correctly
+        assert!(errors.is_empty(), "Should handle repeated key names in sequence items");
+    }
+
+    #[test]
+    fn test_scope_aware_duplicate_detection_nested_same_scope_fails() {
+        let mut detector = SyntaxDetector::new();
+        let yaml = r#"
+config:
+  host: localhost
+  host: duplicate
+  port: 8080
+"#;
+
+        let errors = detector.detect_errors(yaml);
+
+        // Should detect duplicate keys in the same scope
+        assert!(!errors.is_empty(), "Should detect duplicate keys in the same scope");
+        assert!(errors.iter().any(|e| e.message.contains("duplicate key")),
+                "Should report duplicate key error");
+    }
+
+    #[test]
+    fn test_scope_aware_duplicate_detection_multiple_levels_same_keys() {
+        let mut detector = SyntaxDetector::new();
+        let yaml = r#"
+app:
+  name: myapp
+  version: 1.0
+  config:
+    name: inner_config
+    version: 2.0
+    nested:
+      name: deepest
+      version: 3.0
+"#;
+
+        let errors = detector.detect_errors(yaml);
+
+        // Same key names at multiple nesting levels should be OK
+        assert!(errors.is_empty(), "Should allow same key names at different nesting levels");
+    }
 }
 
 #[cfg(test)]
@@ -676,6 +809,14 @@ deployment:
 "#;
 
         let errors = detector.detect_errors(yaml);
+
+        // Debug: Print errors to see what's being detected
+        if !errors.is_empty() {
+            eprintln!("Errors detected in test_complex_nested_structure:");
+            for (i, error) in errors.iter().enumerate() {
+                eprintln!("  Error {}: {:?}", i, error);
+            }
+        }
 
         // Should accept complex nested structure
         assert!(errors.is_empty());
