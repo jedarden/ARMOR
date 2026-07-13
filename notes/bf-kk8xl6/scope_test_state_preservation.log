@@ -1,0 +1,244 @@
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+   Compiling armor v0.1.0 (/home/coding/ARMOR)
+error: unexpected token: `;`
+   --> tests/state_preservation_scope_exit_test.rs:478:62
+    |
+478 |         let seq_item_id = stack.current_scope_ref().unwrap().;
+    |                                                              ^
+
+error: unexpected token: `)`
+   --> tests/state_preservation_scope_exit_test.rs:488:52
+    |
+488 |         assert!(stack.current_scope_ref().unwrap().);
+    |                                                    ^
+
+error: unexpected token: `,`
+   --> tests/state_preservation_scope_exit_test.rs:489:55
+    |
+489 |         assert_eq!(stack.current_scope_ref().unwrap()., seq_item_id);
+    |                                                       ^
+
+error: unexpected token: `)`
+   --> tests/state_preservation_scope_exit_test.rs:496:53
+    |
+496 |         assert!(!stack.current_scope_ref().unwrap().);
+    |                                                     ^
+
+error: unexpected token: `,`
+   --> tests/state_preservation_scope_exit_test.rs:518:52
+    |
+518 |         assert!(stack.current_scope_ref().unwrap().,
+    |                                                    ^
+
+error: unexpected token: `,`
+   --> tests/state_preservation_scope_exit_test.rs:520:55
+    |
+520 |         assert_eq!(stack.current_scope_ref().unwrap()., Some("flow_parent".to_string()));
+    |                                                       ^
+
+error[E0369]: binary operation `==` cannot be applied to type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:112:9
+    |
+112 | /         assert_eq!(stack.current_scope_ref().unwrap(), parent_key_count,
+113 | |                    "Parent scope key count should be preserved");
+    | |                                                                ^
+    | |                                                                |
+    | |________________________________________________________________&armor::parsers::yaml::Scope
+    |                                                                  &armor::parsers::yaml::Scope
+    |
+note: `armor::parsers::yaml::Scope` does not implement `PartialEq`
+   --> src/parsers/yaml/scope.rs:547:1
+    |
+547 | pub struct Scope {
+    | ^^^^^^^^^^^^^^^^ `armor::parsers::yaml::Scope` is defined in another crate
+
+error[E0369]: binary operation `==` cannot be applied to type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:114:9
+    |
+114 |         assert_eq!(stack.current_scope_ref().unwrap(), 10);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |         |
+    |         &armor::parsers::yaml::Scope
+    |         {integer}
+
+error[E0600]: cannot apply unary operator `!` to type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:488:9
+    |
+488 |         assert!(stack.current_scope_ref().unwrap().);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot apply unary operator `!`
+
+error[E0369]: binary operation `==` cannot be applied to type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:489:9
+    |
+489 |         assert_eq!(stack.current_scope_ref().unwrap()., seq_item_id);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |         |
+    |         &armor::parsers::yaml::Scope
+    |         &armor::parsers::yaml::Scope
+    |
+note: `armor::parsers::yaml::Scope` does not implement `PartialEq`
+   --> src/parsers/yaml/scope.rs:547:1
+    |
+547 | pub struct Scope {
+    | ^^^^^^^^^^^^^^^^ `armor::parsers::yaml::Scope` is defined in another crate
+
+error[E0600]: cannot apply unary operator `!` to type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:496:17
+    |
+496 |         assert!(!stack.current_scope_ref().unwrap().);
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot apply unary operator `!`
+
+error[E0609]: no field `d` on type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:497:52
+    |
+497 |         assert!(stack.current_scope_ref().unwrap().d.is_none());
+    |                                                    ^ unknown field
+    |
+    = note: available fields are: `indent_level`, `keys`, `start_line`, `parent_key`, `is_flow_style` ... and 2 others
+
+error[E0600]: cannot apply unary operator `!` to type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:518:9
+    |
+518 | /         assert!(stack.current_scope_ref().unwrap().,
+519 | |                 "Parent flow_style flag should be preserved");
+    | |_____________________________________________________________^ cannot apply unary operator `!`
+
+error[E0369]: binary operation `==` cannot be applied to type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:520:9
+    |
+520 |         assert_eq!(stack.current_scope_ref().unwrap()., Some("flow_parent".to_string()));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |         |
+    |         &armor::parsers::yaml::Scope
+    |         Option<String>
+
+error[E0369]: binary operation `==` cannot be applied to type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:545:9
+    |
+545 | /         assert_eq!(stack.current_scope_ref().unwrap(), level1_count,
+546 | |                    "Level 1 key count should be preserved");
+    | |                                                           ^
+    | |                                                           |
+    | |___________________________________________________________&armor::parsers::yaml::Scope
+    |                                                             &armor::parsers::yaml::Scope
+    |
+note: `armor::parsers::yaml::Scope` does not implement `PartialEq`
+   --> src/parsers/yaml/scope.rs:547:1
+    |
+547 | pub struct Scope {
+    | ^^^^^^^^^^^^^^^^ `armor::parsers::yaml::Scope` is defined in another crate
+
+error[E0369]: binary operation `==` cannot be applied to type `&armor::parsers::yaml::Scope`
+   --> tests/state_preservation_scope_exit_test.rs:572:9
+    |
+572 |         assert_eq!(stack.current_scope_ref().unwrap(), before_key_count);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |         |
+    |         &armor::parsers::yaml::Scope
+    |         &armor::parsers::yaml::Scope
+    |
+note: `armor::parsers::yaml::Scope` does not implement `PartialEq`
+   --> src/parsers/yaml/scope.rs:547:1
+    |
+547 | pub struct Scope {
+    | ^^^^^^^^^^^^^^^^ `armor::parsers::yaml::Scope` is defined in another crate
+
+Some errors have detailed explanations: E0369, E0600, E0609.
+For more information about an error, try `rustc --explain E0369`.
+error: could not compile `armor` (test "state_preservation_scope_exit_test") due to 16 previous errors

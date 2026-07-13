@@ -1,0 +1,30 @@
+
+running 25 tests
+test test_depth_across_complex_operations ... ok
+test test_can_rebuild_after_reset ... ok
+test test_depth_does_not_go_below_one ... ok
+test test_depth_with_sequence_scopes ... ok
+test test_empty_stack_at_startup ... ok
+test test_exit_one_level_behavior ... ok
+test test_mixed_indent_sizes ... ok
+test test_multiple_push_pop_cycles ... ok
+test test_pop_decreases_depth_by_one ... ok
+test test_pop_removes_exited_scopes ... ok
+test test_pop_updates_current_indent ... ok
+test test_push_increases_depth_by_one ... ok
+test test_push_maintains_parent_scope_state ... ok
+test test_push_pop_push_sequence ... ok
+test test_push_pop_sequence_maintains_correct_state ... ok
+test test_push_sequence_creates_scope_path ... ok
+test test_push_to_existing_level_clears_deeper ... ok
+test test_push_updates_current_indent ... ok
+test test_realistic_yaml_structure ... ok
+test test_reset_clears_all_state ... ok
+test test_sequence_of_mappings_structure ... ok
+test test_sibling_scope_isolation ... ok
+test test_stack_creates_root_scope_on_first_add ... ok
+test test_stack_depth_matches_nested_scope_depth ... ok
+test test_very_deep_nesting ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
