@@ -31,7 +31,7 @@
 //! ```
 
 use crate::parsers::yaml::types::{ValidationError, ValidationResult};
-use std::collections::{HashMap, HashSet};
+use crate::parsers::yaml::scope::ScopeStack;
 use std::fmt;
 
 /// Classification of indentation error types
@@ -265,180 +265,8 @@ enum QuoteType {
     Double,
 }
 
-/// A scope representing a mapping context at a specific nesting level
-#[derive(Debug, Clone)]
-struct Scope {
-    /// Indentation level (number of leading spaces)
-    indent_level: usize,
-    /// Keys defined within this scope
-    keys: HashSet<String>,
-    /// Line number where this scope started (for error reporting)
-    start_line: usize,
-    /// Parent key that created this scope (e.g., "web" in "services: {...}")
-    parent_key: Option<String>,
-    /// Whether this scope is in flow-style mapping ({key: value})
-    is_flow_style: bool,
-    /// Whether this scope is within a sequence context
-    in_sequence_context: bool,
-    /// Unique identifier for sequence items to distinguish them at same indent
-    sequence_item_id: Option<usize>,
-}
-
-impl Scope {
-    /// Create a new scope
-    fn new(indent_level: usize, start_line: usize, parent_key: Option<String>) -> Self {
-        Self {
-            indent_level,
-            keys: HashSet::new(),
-            start_line,
-            parent_key,
-            is_flow_style: false,
-            in_sequence_context: false,
-            sequence_item_id: None,
-        }
-    }
-
-    /// Add a key to this scope, returning true if it's a duplicate
-    fn add_key(&mut self, key: &str) -> bool {
-        !self.keys.insert(key.to_string())
-    }
-
-    /// Check if this scope contains a key
-    fn contains_key(&self, key: &str) -> bool {
-        self.keys.contains(key)
-    }
-
-    /// Check if this scope is equivalent to another for duplicate key purposes
-    /// (same indent level and same sequence item)
-    fn is_same_scope_as(&self, other: &Scope) -> bool {
-        self.indent_level == other.indent_level
-            && self.in_sequence_context == other.in_sequence_context
-            && self.sequence_item_id == other.sequence_item_id
-    }
-}
-
-/// Hierarchical stack of active scopes
-#[derive(Debug, Clone)]
-struct ScopeStack {
-    /// Stack of active scopes (top = current scope)
-    scopes: Vec<Scope>,
-    /// Base indentation size (usually 2 or 4 spaces)
-    base_indent: usize,
-    /// Sequence item counter for generating unique IDs
-    sequence_item_counter: usize,
-}
-
-impl ScopeStack {
-    /// Create a new scope stack
-    fn new(base_indent: usize) -> Self {
-        Self {
-            scopes: vec![Scope::new(0, 0, None)], // Root scope
-            base_indent,
-            sequence_item_counter: 0,
-        }
-    }
-
-    /// Get the current scope (top of stack)
-    fn current_scope(&mut self) -> &mut Scope {
-        self.scopes.last_mut().expect("Scope stack should never be empty")
-    }
-
-    /// Get scope for a specific indentation level
-    fn get_scope_at_level(&self, indent_level: usize) -> Option<&Scope> {
-        self.scopes.iter().find(|s| s.indent_level == indent_level)
-    }
-
-    /// Enter a new scope (when indent increases)
-    fn enter_scope(&mut self, indent_level: usize, line: usize, parent_key: Option<String>) {
-        // Remove all scopes deeper than this level (fresh start for sibling mappings)
-        self.scopes.retain(|s| s.indent_level < indent_level);
-
-        // Create a fresh scope at this level
-        let new_scope = Scope::new(indent_level, line, parent_key);
-        self.scopes.push(new_scope);
-    }
-
-    /// Exit to parent scope (when indent decreases)
-    fn exit_to_scope(&mut self, target_indent: usize) {
-        // Remove all scopes deeper than target
-        self.scopes.retain(|s| s.indent_level <= target_indent);
-    }
-
-    /// Check if current scope contains a key
-    fn contains_key(&self, key: &str) -> bool {
-        self.scopes.last()
-            .map(|scope| scope.contains_key(key))
-            .unwrap_or(false)
-    }
-
-    /// Add a key to current scope
-    fn add_key(&mut self, key: &str) {
-        let scope = self.current_scope();
-        scope.add_key(key);
-    }
-
-    /// Get human-readable path to current scope
-    fn get_scope_path(&self) -> String {
-        let mut path = Vec::new();
-        for scope in &self.scopes {
-            if let Some(ref key) = scope.parent_key {
-                path.push(key.clone());
-            }
-        }
-        path.join(".")
-    }
-
-    /// Get current indent level
-    fn current_indent(&self) -> usize {
-        self.scopes.last()
-            .map(|scope| scope.indent_level)
-            .unwrap_or(0)
-    }
-
-    /// Enter a sequence context (when we see a `-` item)
-    fn enter_sequence_scope(&mut self, indent_level: usize, line: usize) {
-        // Remove all scopes deeper than this level
-        self.scopes.retain(|s| s.indent_level < indent_level);
-
-        // Check if there's already a scope at this level that's in a sequence context
-        let needs_new_scope = self.scopes.last()
-            .map(|scope| scope.indent_level != indent_level || !scope.in_sequence_context)
-            .unwrap_or(true);
-
-        if needs_new_scope {
-            // Create a new scope for this sequence item
-            let mut new_scope = Scope::new(indent_level, line, None);
-            new_scope.in_sequence_context = true;
-            self.sequence_item_counter += 1;
-            new_scope.sequence_item_id = Some(self.sequence_item_counter);
-            self.scopes.push(new_scope);
-        } else {
-            // Reset the existing scope for a new sequence item
-            if let Some(scope) = self.scopes.last_mut() {
-                scope.keys.clear();
-                scope.start_line = line;
-                self.sequence_item_counter += 1;
-                scope.sequence_item_id = Some(self.sequence_item_counter);
-            }
-        }
-    }
-
-    /// Check if we're in a sequence context
-    fn in_sequence_context(&self) -> bool {
-        self.scopes.last()
-            .map(|scope| scope.in_sequence_context)
-            .unwrap_or(false)
-    }
-}
-
-impl Default for ScopeStack {
-    fn default() -> Self {
-        Self::new(2) // Default base indent of 2 spaces
-    }
-}
-
 /// State tracking for structure analysis
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct StructureState {
     /// Stack of nested structures (mapping, sequence, etc.)
     context_stack: Vec<StructureContext>,
@@ -446,6 +274,16 @@ struct StructureState {
     scope_stack: ScopeStack,
     /// Previous line's indentation level
     prev_indent: usize,
+}
+
+impl Default for StructureState {
+    fn default() -> Self {
+        Self {
+            context_stack: Vec::new(),
+            scope_stack: ScopeStack::new(2), // Default base indent of 2 spaces
+            prev_indent: 0,
+        }
+    }
 }
 
 /// Current structure context
@@ -840,7 +678,9 @@ impl SyntaxDetector {
                 // Only enter sequence scope if it looks like a valid mapping key
                 if !key.is_empty() && !key.starts_with('\'') && !key.starts_with('"')
                     && !key.contains('#') && !key.contains('?') {
-                    self.structure_state.scope_stack.enter_sequence_scope(indent, line_num);
+                    // Use the proper scope module to enter a new scope for this sequence item
+                    // Each sequence item gets its own scope to prevent false duplicate detection
+                    self.structure_state.scope_stack.enter_scope(indent, line_num, None);
                 }
             }
             // Sequence items don't need duplicate checking at this level
@@ -904,20 +744,18 @@ impl SyntaxDetector {
                 }
             }
 
-            // Check for duplicates in the current scope
-            if self.structure_state.scope_stack.contains_key(key) {
-                let scope_path = self.structure_state.scope_stack.get_scope_path();
-                let error_message = if scope_path.is_empty() {
-                    format!("duplicate key '{}' in mapping scope", key)
-                } else {
-                    format!("duplicate key '{}' in mapping scope '{}'", key, scope_path)
-                };
-                errors.push(ValidationError::new(
-                    format!("key_{}", key),
-                    error_message
-                ).with_line(line_num));
-            } else {
-                self.structure_state.scope_stack.add_key(key);
+            // Check for duplicates in the current scope using the scope module's Result type
+            match self.structure_state.scope_stack.add_key(key, line_num) {
+                Ok(()) => {
+                    // Key was added successfully
+                }
+                Err(dup_error) => {
+                    // Duplicate key detected - add to errors
+                    errors.push(ValidationError::new(
+                        format!("key_{}", key),
+                        dup_error.message()
+                    ).with_line(line_num));
+                }
             }
         }
 
