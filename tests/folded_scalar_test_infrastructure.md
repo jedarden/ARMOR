@@ -179,6 +179,117 @@ cargo test test_folded_scalar_explicit_indent
 cargo test -- section-12b
 ```
 
+## Section 12B Test Function Index by Pattern
+
+### Pattern 1: Comprehensive Multi-Level Testing
+**Functions demonstrating this pattern:**
+- `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` (line 8342)
+  - Tests all modifier types (>, >-, >+) at all indentation levels (2, 4, 6, 8-space, tab)
+  - Covers indent levels 1-9 for each modifier
+  - **Pattern:** Comprehensive single-function coverage across all dimensions
+  - **See:** Lines 8342-8399 for implementation
+
+### Pattern 2: Single-Indent Level Focused Testing
+**Functions demonstrating this pattern:**
+- `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()` (line 8561)
+  - Tests plain modifier (>) at 2-space indentation only
+  - Indent levels 1-9
+  - **Pattern:** Focused coverage for specific indent-modifier combination
+  - **See:** Lines 8561-8669 for implementation
+
+- `test_folded_scalar_strip_explicit_indent_modifiers_at_2_space()` (line 8670)
+  - Tests strip modifier (>-) at 2-space indentation only
+  - Indent levels 1-9
+  - **Pattern:** Focused coverage for specific indent-modifier combination
+  - **See:** Lines 8670-8778 for implementation
+
+- `test_folded_scalar_keep_explicit_indent_modifiers_at_2_space()` (line 13040)
+  - Tests keep modifier (>+) at 2-space indentation only
+  - Indent levels 1-9
+  - **Pattern:** Focused coverage for specific indent-modifier combination
+  - **See:** Lines 13040-13147 for implementation
+
+- `test_literal_scalar_explicit_indent_modifiers_at_various_levels()` (line 8779)
+  - Tests all literal scalar modifiers (|, |-, |+) at all levels
+  - **Pattern:** Comprehensive coverage for literal scalars
+  - **See:** Lines 8779-9229 for implementation
+
+### Pattern 3: Template/Infrastructure Pattern
+**Functions demonstrating this pattern:**
+- `test_folded_scalar_explicit_indent_template_example()` (line 12788)
+  - Demonstrates macro-based test generation
+  - **Pattern:** Template for new test development
+  - **See:** Lines 12788-12806 for implementation
+
+- `test_folded_scalar_explicit_indent_tab_template()` (line 12809)
+  - Demonstrates tab indentation testing
+  - **Pattern:** Template for tab-based tests
+  - **See:** Lines 12809-12822 for implementation
+
+- `test_folded_scalar_explicit_indent_helper_function_example()` (line 12825)
+  - Demonstrates helper function approach
+  - **Pattern:** Template for function-based test generation
+  - **See:** Lines 12825-12859 for implementation
+
+### Pattern 4: Basic Indicator Line Assertions
+**Functions demonstrating this pattern:**
+- `test_folded_block_scalar_with_exclamation_marks()` (lines 7901-7959)
+  - Section 12B entry point for folded scalars with exclamation marks
+  - Tests indicator lines at lines 7904-7919
+  - **Pattern:** Basic indicator classification with `assert_eq!` to `MappingKey`
+  - **See:** Lines 7904-7919 for indicator tests, 7941-7959 for continuation tests
+
+- `test_literal_block_scalar_with_exclamation_marks()` (lines 7962-8009)
+  - Tests literal scalar indicators at lines 7965-7974
+  - **Pattern:** Basic indicator classification for literal scalars
+  - **See:** Lines 7965-7974 for indicator tests, 7988-8008 for continuation tests
+
+- `test_folded_scalar_indicator_classification()` (line 10730)
+  - Section 12B.1 comprehensive indicator tests
+  - Tests at lines 10733-10766
+  - **Pattern:** Comprehensive indicator classification across all variants
+  - **See:** Lines 10730-10779 for full implementation
+
+- `test_folded_scalar_indicator_lines()` (line 10524)
+  - Section 12B.2 basic indicator tests
+  - Tests at lines 10528-10535
+  - **Pattern:** Simple indicator line validation
+  - **See:** Lines 10524-10546 for implementation
+
+### Pattern 5: Continuation Line Assertions with Allowed Types
+**Functions demonstrating this pattern:**
+- `test_folded_block_scalar_with_exclamation_marks()` (lines 7941-7959)
+  - Continuation lines at lines 7942-7958
+  - Uses basic pattern: `assert!(result == MappingKey || result == Unknown)`
+  - **Pattern:** Binary allowed types without tuple structure
+  - **See:** Lines 7941-7959 for implementation
+
+- `test_literal_block_scalar_with_exclamation_marks()` (lines 7988-8008)
+  - Continuation lines at lines 7989-7997
+  - Uses tuple pattern: `(line, vec![allowed_types])`
+  - Includes Tag type support for lines starting with `!`
+  - **Pattern:** Tuple-based with multiple allowed types including Tag
+  - **See:** Lines 7988-8008 for implementation
+
+- `test_folded_scalar_basic_modifiers()` (line 10549)
+  - Continuation lines for strip (>-) and keep (>+) modifiers
+  - **Pattern:** Tuple-based continuation testing for modified scalars
+  - **See:** Lines 10549-10594 for implementation
+
+### Pattern 6: Key Extraction Assertions
+**Functions demonstrating this pattern:**
+- `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` (line 8342)
+  - Key extraction tests at lines 8390-8399
+  - **Pattern:** `detect_mapping_key()` followed by key assertion
+  - **See:** Lines 8390-8399 for implementation
+
+- `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()` (line 8561)
+  - Key extraction tests throughout
+  - **Pattern:** Verifies correct key extraction for explicit indent cases
+  - **See:** Lines 8561-8669 for implementation
+
+**Note:** Key extraction assertions typically follow indicator line assertions in the same test function, providing complete validation of both classification and parsing.
+
 ## Pattern Documentation
 
 ### Test Case Structure
@@ -207,9 +318,12 @@ Each test case is a tuple with three elements:
 
 **Structure:** `vec!` of input lines with `assert_eq!` assertions for `MappingKey` classification
 
-**Example from Section 12B:**
+**Concrete Implementations in Section 12B:**
+
+#### Function: `test_folded_block_scalar_with_exclamation_marks()` (line 7901)
 ```rust
-// Section 12B: Multiline String Scenarios with Exclamation Marks (line 7892)
+// Section 12B: Multiline String Scenarios with Exclamation Marks (line 7901)
+// Indicator line tests at lines 7904-7919
 fn test_folded_block_scalar_with_exclamation_marks() {
     let test_cases = vec![
         "description: >",               // Basic folded scalar
@@ -221,6 +335,7 @@ fn test_folded_block_scalar_with_exclamation_marks() {
         "info: >+",                     // Folded with keep modifier
         "text: >-2",                    // Folded with explicit indent
         "content: >2",                   // Folded with explicit indent
+        // ... more test cases
     ];
 
     for line in test_cases {
@@ -235,20 +350,123 @@ fn test_folded_block_scalar_with_exclamation_marks() {
 }
 ```
 
+#### Function: `test_literal_block_scalar_with_exclamation_marks()` (line 7962)
+```rust
+// Section 12B: Literal scalars with exclamation marks (line 7962)
+// Indicator line tests at lines 7965-7974
+fn test_literal_block_scalar_with_exclamation_marks() {
+    let test_cases = vec![
+        "description: |",               // Basic literal scalar
+        "  literal_text: |",             // Indented literal scalar
+        "    note: |",                   // Deep indented literal scalar
+        "\tmessage: |",                 // Tab-indented literal scalar
+        "warning: |-",                  // Literal with strip modifier
+        "info: |+",                     // Literal with keep modifier
+        "text: |-2",                    // Literal with explicit indent
+        "content: |2",                  // Literal with explicit indent
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Literal block scalar indicator should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+```
+
+#### Function: `test_folded_scalar_indicator_classification()` (line 10730)
+```rust
+// Section 12B.1: Comprehensive indicator classification (line 10730)
+// Indicator line tests at lines 10733-10766
+fn test_folded_scalar_indicator_classification() {
+    let test_cases = vec![
+        // Basic folded scalar indicator
+        "description: >",
+        "  folded_text: >",
+        "    note: >",
+        "\tmessage: >",
+
+        // Folded with strip modifier (-)
+        "warning: >-",
+        "  alert: >-",
+        "    info: >-",
+
+        // Folded with keep modifier (+)
+        "log: >+",
+        "  output: >+",
+        "    data: >+",
+
+        // Folded with explicit indent (2)
+        "text: >-2",
+        "content: >2",
+        "  field: >-2",
+        "    value: >2",
+
+        // Folded with explicit indent (4)
+        "doc: >-4",
+        "info: >4",
+        "  body: >-4",
+        "    detail: >4",
+
+        // Tab-indented folded scalars
+        "\tfolded: >",
+        "\t  note: >",
+        "\t    text: >",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Folded scalar indicator should be classified as MappingKey: '{}'",
+            line
+        );
+    }
+}
+```
+
+#### Function: `test_folded_scalar_indicator_lines()` (line 10524)
+```rust
+// Section 12B.2: Basic indicator line tests (line 10524)
+// Indicator line tests at lines 10528-10535
+fn test_folded_scalar_indicator_lines() {
+    let test_cases = vec![
+        // Basic folded scalar indicators (>)
+        "description: >",
+        "content: >",
+        "message: >",
+        "text: >",
+        "note: >",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Basic folded scalar indicator (>) should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+```
+
 **Assertion Pattern:**
 - Single `assert_eq!` comparing result to `LineType::MappingKey`
 - Descriptive error message includes the failing line
 - Tests the indicator line itself (key followed by `>` or `|`)
 
-**Used in Section 12B:**
-- Line 7892: Folded scalar indicators with exclamation marks
-- Line 7937: Literal scalar indicators with basic modifiers
-- Line 10451: Indicator line classification tests (Section 12B.2)
-
 **When to use this pattern:**
 - Testing YAML block scalar indicator lines
 - Verifying basic line classification for block scalars
 - Simple validation without key extraction checks
+
+**Cross-reference:** See Pattern 2 (below) for key extraction assertions that often follow indicator classification
 
 ---
 
@@ -256,17 +474,26 @@ fn test_folded_block_scalar_with_exclamation_marks() {
 
 **Purpose:** Test continuation lines of block scalars where multiple line types may be valid
 
-**Structure:** `vec!` of tuples `(line, vec![allowed_types])` with `assert!(expected_types.contains(&result))`
+**Structure:** Two variants:
+1. **Basic pattern:** `vec!` of lines with `assert!(result == Type1 || result == Type2)`
+2. **Tuple pattern:** `vec!` of tuples `(line, vec![allowed_types])` with `assert!(expected_types.contains(&result))`
 
-**Example from Section 12B:**
+**Concrete Implementations in Section 12B:**
+
+#### Function: `test_folded_block_scalar_with_exclamation_marks()` - Basic Pattern (line 7901)
 ```rust
-// Section 12B: Continuation lines with exclamation marks (line 7916)
+// Section 12B: Folded scalar continuation lines (line 7901)
+// Continuation line tests at lines 7941-7959
 fn test_folded_block_scalar_with_exclamation_marks() {
+    // ... indicator line tests ...
+
+    // Continuation lines - Basic pattern without tuple structure
     let continuation_lines = vec![
         "  This is folded text with! exclamation marks",
         "    Multiple! exclamations! in! folded! style",
         "\tMore! content! with! bangs!",
         "  Important! message! continues!",
+        "    Another! line! with! emphasis!",
     ];
 
     for line in continuation_lines {
@@ -280,14 +507,22 @@ fn test_folded_block_scalar_with_exclamation_marks() {
 }
 ```
 
-**Advanced Example with Multiple Allowed Types:**
+#### Function: `test_literal_block_scalar_with_exclamation_marks()` - Tuple Pattern (line 7962)
 ```rust
-// Section 12B: Literal scalar continuation with Tag types allowed (line 7952)
+// Section 12B: Literal scalar continuation with Tag support (line 7962)
+// Continuation line tests at lines 7988-8008
 fn test_literal_block_scalar_with_exclamation_marks() {
+    // ... indicator line tests ...
+
+    // Continuation lines - Tuple pattern with multiple allowed types
     let continuation_lines = vec![
         ("  This is literal text with! exclamation marks", vec![LineType::MappingKey, LineType::Unknown]),
         ("    Multiple! exclamations! in! literal! style", vec![LineType::MappingKey, LineType::Unknown]),
         ("\tMore! content! with! bangs!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("  Important! message! continues!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("    Another! line! with! emphasis!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("  Lines with! at! various! positions!", vec![LineType::MappingKey, LineType::Unknown]),
+        // Lines starting with '!' can also be Tag type
         ("    !Start! Middle! End!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
         ("  !important!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
     ];
@@ -303,11 +538,40 @@ fn test_literal_block_scalar_with_exclamation_marks() {
 }
 ```
 
-**Assertion Pattern:**
-- Tuple structure: `(test_line, vec![allowed_types])`
-- `assert!(expected_types.contains(&result))` for flexible matching
-- Detailed error message shows all allowed types and actual result
-- Handles cases where line starting with `!` could be `Tag`, `MappingKey`, or `Unknown`
+#### Function: `test_folded_scalar_basic_modifiers()` (line 10549)
+```rust
+// Section 12B.2: Basic modifier continuation tests (line 10549)
+// Demonstrates continuation lines for strip (>-) and keep (>+) modifiers
+fn test_folded_scalar_basic_modifiers() {
+    // ... indicator line tests for >-, >+ ...
+
+    // Continuation lines for modified scalars
+    let continuation_lines = vec![
+        ("  Some content after >", vec![LineType::MappingKey, LineType::Unknown]),
+        ("    More indented content", vec![LineType::MappingKey, LineType::Unknown]),
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        let result = classify_line_type(line);
+        assert!(
+            expected_types.contains(&result),
+            "Continuation line should be one of {:?}: '{}'",
+            expected_types, line
+        );
+    }
+}
+```
+
+**Assertion Pattern Comparison:**
+
+| Pattern | Pros | Cons | When to Use |
+|---------|------|------|-------------|
+| **Basic** (`assert!(A \|\| B)`) | Simpler, less code | Fixed to 2 types, harder to extend | When you only need 2 allowed types |
+| **Tuple** (`vec![A, B, C]`) | Flexible, any number of types | More verbose | When you need 3+ types or Tag support |
+
+**Allowed Types:**
+- `vec![LineType::MappingKey, LineType::Unknown]` - Most continuation lines (lines with `!` not at start)
+- `vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]` - Lines starting with `!` (could be a Tag)
 
 **When to use this pattern:**
 - Continuation lines of block scalars (indented content following indicator)
@@ -315,15 +579,7 @@ fn test_literal_block_scalar_with_exclamation_marks() {
 - Testing exclamation marks at various positions in continuation lines
 - When `Tag` type is possible for lines starting with `!`
 
-**Allowed Types:**
-- `vec![LineType::MappingKey, LineType::Unknown]` - Most continuation lines
-- `vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]` - Lines starting with `!`
-
-**Used in Section 12B:**
-- Line 7916: Folded scalar continuation lines (basic pattern)
-- Line 7948: Literal scalar continuation lines (with Tag type support)
-- Line 7965: Tuple-based tests with comprehensive allowed types
-- Line 10708: Folded scalar continuation with exclamation (Section 12B.1)
+**Cross-reference:** This pattern complements Pattern 4 (Indicator Line Assertions) - first test the indicator line, then test its continuation lines
 
 ---
 
