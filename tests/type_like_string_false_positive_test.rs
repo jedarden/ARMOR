@@ -2892,6 +2892,121 @@ fn test_simple_message_patterns_with_exclamation() {
 }
 
 #[test]
+fn test_basic_config_patterns_exclamation_variations() {
+    // Basic real-world config pattern tests for Section 12
+    // Covers: exclamation at end, multiple exclamation marks, exclamation in middle
+
+    // Test configs with exclamation marks at end of strings (extended variations)
+    let end_exclamation = vec![
+        "message: Hello!",
+        "greeting: Hi there!",
+        "note: Important!",
+        "status: Done!",
+        "alert: Critical!",
+        "warning: Caution!",
+        "error: Failed!",
+        "success: Complete!",
+        "info: Notice!",
+        "debug: Check!",
+        "priority: High!",
+        "level: Info!",
+        "state: Active!",
+        "mode: Enabled!",
+        "flag: True!",
+    ];
+
+    for line in end_exclamation {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Config with ! at end should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Test configs with multiple exclamation marks
+    let multiple_exclamations = vec![
+        "message: Hello!!!",
+        "greeting: Hi there!!",
+        "note: Important!!!",
+        "status: Done!!",
+        "alert: Critical!!!",
+        "warning: Caution!!",
+        "error: Failed!!!!",
+        "success: Complete!!!",
+        "info: Notice!!",
+        "debug: Check!!!",
+        "priority: High!!!",
+        "level: Info!!",
+        "state: Active!!!",
+        "mode: Enabled!!",
+        "flag: True!!!",
+        "urgent: Critical NOW!!!",
+        "emphasis: Really Important!!",
+    ];
+
+    for line in multiple_exclamations {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Config with multiple ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Test configs with exclamation marks in middle of strings
+    let middle_exclamation = vec![
+        "note: Important! Read this",
+        "message: Hello! World",
+        "status: Done! Success",
+        "alert: Critical! Action needed",
+        "warning: Caution! Be careful",
+        "error: Failed! Try again",
+        "success: Complete! Well done",
+        "info: Notice! Pay attention",
+        "debug: Check! Verify this",
+        "priority: High! Urgent",
+        "message: Hey! You there",
+        "note: TODO! Fix this soon",
+        "status: OK! All good",
+        "alert: Wow! Check this out",
+        "text: Yes! That is correct",
+    ];
+
+    for line in middle_exclamation {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Config with ! in middle should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Test configs with exclamation at various positions
+    let various_positions = vec![
+        "message: !",                    // Only exclamation
+        "note: ! important",             // Exclamation at start
+        "text: mid!dle",                // Exclamation in middle
+        "status: end!",                 // Exclamation at end
+        "flag: !start and end!",        // Exclamation at both ends
+        "data: value! value",           // Exclamation separating words
+        "text: a!b!c",                  // Multiple exclamations in middle
+        "message: Hello! How are you!", // Multiple exclamations throughout
+        "note: Check! This! Now!",      // Multiple exclamations separating phrases
+        "text: !",                      // Just exclamation mark
+    ];
+
+    for line in various_positions {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Config with ! at various positions should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
 fn test_css_and_ui_config() {
     // CSS and UI configuration with !important patterns
     let test_cases = vec![
