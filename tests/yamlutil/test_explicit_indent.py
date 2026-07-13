@@ -1455,6 +1455,314 @@ class TestFoldedScalarExplicitIndent10Space:
             "Keep >+5 with 10-space base should preserve all quint-indented lines"
 
 
+class TestFoldedScalarContinuationLineVerification:
+    """Test cases for continuation line verification in folded scalars.
+
+    This test class verifies that continuation lines in folded scalars:
+    1. Maintain proper indentation alignment for each level (1-5)
+    2. Are NOT misidentified as mapping keys (critical for correctness)
+    3. Preserve folded scalar semantics
+
+    The key issue being tested is that folded scalar continuation lines
+    that contain patterns like "key: value" should NOT be interpreted
+    as nested mapping keys, but should be preserved as content within
+    the folded scalar.
+    """
+
+    def test_continuation_lines_not_mapping_keys(self):
+        """Test that continuation lines are NOT detected as mapping keys.
+
+        This test verifies the critical behavior: folded scalar continuation
+        lines that look like "key: value" patterns must be preserved as
+        content, NOT interpreted as nested mapping keys.
+
+        This is a multi-line YAML validation test following the pattern
+        from test_mixed_comment_scenarios.py.
+        """
+        parser = YAMLCoreParser()
+
+        # Level 1: Folded scalar with continuation lines that look like mappings
+        yaml_content_level1 = """# Folded scalar with key-like continuation lines at level 1
+description_1: >1
+ This is a continuation line
+ another_key: another_value  # This looks like a mapping but is content
+ more continuation text
+"""
+        result = parser.safe_load(yaml_content_level1)
+        assert result.is_success(), "Folded scalar with key-like continuation lines should succeed"
+
+        # Verify the entire content is preserved as a single string
+        assert 'another_key: another_value' in result.data['description_1'], \
+            "Continuation line with 'key: value' pattern should be preserved as content"
+        assert 'This is a continuation line' in result.data['description_1'], \
+            "First continuation line should be preserved"
+        assert 'more continuation text' in result.data['description_1'], \
+            "Last continuation line should be preserved"
+
+        # Verify it's NOT interpreted as a nested mapping
+        assert isinstance(result.data['description_1'], str), \
+            "Folded scalar should remain a string, not become a mapping"
+        assert not isinstance(result.data['description_1'], dict), \
+            "Continuation lines should NOT create nested mapping structure"
+
+    def test_continuation_lines_level2_not_mapping_keys(self):
+        """Test that continuation lines at level 2 are NOT detected as mapping keys."""
+        parser = YAMLCoreParser()
+
+        yaml_content_level2 = """# Folded scalar with key-like continuation lines at level 2
+  description_2: >2
+   This is level 2 content
+   nested_key: nested_value  # Looks like mapping but is content
+   more level 2 text
+"""
+        result = parser.safe_load(yaml_content_level2)
+        assert result.is_success(), "Level 2 folded scalar with key-like continuation lines should succeed"
+
+        assert 'nested_key: nested_value' in result.data['description_2'], \
+            "Level 2 continuation line with 'key: value' should be preserved as content"
+        assert isinstance(result.data['description_2'], str), \
+            "Level 2 folded scalar should remain a string"
+
+    def test_continuation_lines_level3_not_mapping_keys(self):
+        """Test that continuation lines at level 3 are NOT detected as mapping keys."""
+        parser = YAMLCoreParser()
+
+        yaml_content_level3 = """# Folded scalar with key-like continuation lines at level 3
+    description_3: >3
+     This is level 3 content
+     deep_key: deep_value  # Looks like mapping but is content
+     more level 3 text
+"""
+        result = parser.safe_load(yaml_content_level3)
+        assert result.is_success(), "Level 3 folded scalar with key-like continuation lines should succeed"
+
+        assert 'deep_key: deep_value' in result.data['description_3'], \
+            "Level 3 continuation line with 'key: value' should be preserved as content"
+        assert isinstance(result.data['description_3'], str), \
+            "Level 3 folded scalar should remain a string"
+
+    def test_continuation_lines_level4_not_mapping_keys(self):
+        """Test that continuation lines at level 4 are NOT detected as mapping keys."""
+        parser = YAMLCoreParser()
+
+        yaml_content_level4 = """# Folded scalar with key-like continuation lines at level 4
+      description_4: >4
+       This is level 4 content
+       deeper_key: deeper_value  # Looks like mapping but is content
+       more level 4 text
+"""
+        result = parser.safe_load(yaml_content_level4)
+        assert result.is_success(), "Level 4 folded scalar with key-like continuation lines should succeed"
+
+        assert 'deeper_key: deeper_value' in result.data['description_4'], \
+            "Level 4 continuation line with 'key: value' should be preserved as content"
+        assert isinstance(result.data['description_4'], str), \
+            "Level 4 folded scalar should remain a string"
+
+    def test_continuation_lines_level5_not_mapping_keys(self):
+        """Test that continuation lines at level 5 are NOT detected as mapping keys."""
+        parser = YAMLCoreParser()
+
+        yaml_content_level5 = """# Folded scalar with key-like continuation lines at level 5
+        description_5: >5
+         This is level 5 content
+         deepest_key: deepest_value  # Looks like mapping but is content
+         more level 5 text
+"""
+        result = parser.safe_load(yaml_content_level5)
+        assert result.is_success(), "Level 5 folded scalar with key-like continuation lines should succeed"
+
+        assert 'deepest_key: deepest_value' in result.data['description_5'], \
+            "Level 5 continuation line with 'key: value' should be preserved as content"
+        assert isinstance(result.data['description_5'], str), \
+            "Level 5 folded scalar should remain a string"
+
+    def test_continuation_lines_indentation_alignment(self):
+        """Test that continuation lines maintain proper indentation alignment.
+
+        This test verifies that continuation lines at each level (1-5)
+        maintain proper indentation alignment as per YAML folded scalar
+        explicit indentation specification.
+        """
+        parser = YAMLCoreParser()
+
+        yaml_content = """# Test continuation line indentation alignment at all levels
+level_1: >1
+ Level 1 continuation
+ another: value1  # Key-like content at level 1
+
+level_2: >2
+  Level 2 continuation
+  another: value2  # Key-like content at level 2
+
+level_3: >3
+   Level 3 continuation
+   another: value3  # Key-like content at level 3
+
+level_4: >4
+    Level 4 continuation
+    another: value4  # Key-like content at level 4
+
+level_5: >5
+     Level 5 continuation
+     another: value5  # Key-like content at level 5
+"""
+        result = parser.safe_load(yaml_content)
+        assert result.is_success(), "All levels with continuation lines should succeed"
+
+        # Verify each level preserves content correctly
+        assert 'another: value1' in result.data['level_1'], \
+            "Level 1 continuation should preserve key-like content"
+        assert 'another: value2' in result.data['level_2'], \
+            "Level 2 continuation should preserve key-like content"
+        assert 'another: value3' in result.data['level_3'], \
+            "Level 3 continuation should preserve key-like content"
+        assert 'another: value4' in result.data['level_4'], \
+            "Level 4 continuation should preserve key-like content"
+        assert 'another: value5' in result.data['level_5'], \
+            "Level 5 continuation should preserve key-like content"
+
+        # Verify all are strings, not mappings
+        for level_key in ['level_1', 'level_2', 'level_3', 'level_4', 'level_5']:
+            assert isinstance(result.data[level_key], str), \
+                f"{level_key} should remain a string, not become a mapping"
+
+    def test_continuation_lines_folded_scalar_semantics(self):
+        """Test that continuation lines preserve folded scalar semantics.
+
+        This test verifies that folded scalar continuation lines:
+        1. Fold newlines to spaces (plain > modifier)
+        2. Preserve content including key-like patterns
+        3. Maintain proper indentation semantics
+        """
+        parser = YAMLCoreParser()
+
+        yaml_content_plain = """# Plain folded scalar continuation semantics
+plain_folded: >1
+ First line
+ config: value  # Key-like pattern
+ Third line
+"""
+        result = parser.safe_load(yaml_content_plain)
+        assert result.is_success(), "Plain folded scalar should succeed"
+
+        # Verify newlines are folded to spaces
+        content = result.data['plain_folded']
+        assert 'First line' in content, "First line should be preserved"
+        assert 'config: value' in content, "Key-like pattern should be preserved"
+        assert 'Third line' in content, "Third line should be preserved"
+
+        # Verify folded semantics (newlines become spaces)
+        assert '\n' not in content or content.count('\n') <= 1, \
+            "Plain folded scalar should fold newlines to spaces"
+
+    def test_continuation_lines_strip_modifier(self):
+        """Test continuation lines with strip modifier (>-)."""
+        parser = YAMLCoreParser()
+
+        yaml_content_strip = """# Strip modifier continuation lines
+strip_folded: >-1
+ Line 1
+ setting: value  # Key-like content with strip
+ Line 3
+"""
+        result = parser.safe_load(yaml_content_strip)
+        assert result.is_success(), "Strip folded scalar should succeed"
+
+        assert 'setting: value' in result.data['strip_folded'], \
+            "Strip modifier should preserve key-like content"
+        assert result.data['strip_folded'] == result.data['strip_folded'].rstrip(), \
+            "Strip modifier should remove trailing whitespace"
+
+    def test_continuation_lines_keep_modifier(self):
+        """Test continuation lines with keep modifier (>+)."""
+        parser = YAMLCoreParser()
+
+        yaml_content_keep = """# Keep modifier continuation lines
+keep_folded: >+1
+ Line 1
+ option: value  # Key-like content with keep
+ Line 3
+"""
+        result = parser.safe_load(yaml_content_keep)
+        assert result.is_success(), "Keep folded scalar should succeed"
+
+        assert 'option: value' in result.data['keep_folded'], \
+            "Keep modifier should preserve key-like content"
+        # Keep modifier preserves trailing newlines
+        assert result.data['keep_folded'].endswith('\n') or \
+               result.data['keep_folded'] != result.data['keep_folded'].rstrip(), \
+            "Keep modifier should preserve trailing newlines/whitespace"
+
+    def test_continuation_lines_complex_key_patterns(self):
+        """Test continuation lines with complex key-like patterns.
+
+        This test verifies that various key-like patterns in continuation
+        lines are all preserved as content, not interpreted as mappings.
+        """
+        parser = YAMLCoreParser()
+
+        yaml_content = """# Complex key-like patterns in continuation lines
+complex_test: >1
+ simple_key: simple_value
+ key-with-dash: value-with-dash
+ key_with_underscore: value_with_underscore
+ key.with.dots: value.with.dots
+ nested:
+   deeply: value
+ key: value with colon in text
+"""
+        result = parser.safe_load(yaml_content)
+        assert result.is_success(), "Complex key patterns should succeed"
+
+        content = result.data['complex_test']
+        assert 'simple_key: simple_value' in content, \
+            "Simple key pattern should be preserved"
+        assert 'key-with-dash: value-with-dash' in content, \
+            "Dash key pattern should be preserved"
+        assert 'key_with_underscore: value_with_underscore' in content, \
+            "Underscore key pattern should be preserved"
+        assert 'key.with.dots: value.with.dots' in content, \
+            "Dotted key pattern should be preserved"
+        assert 'nested:' in content and 'deeply: value' in content, \
+            "Nested-looking pattern should be preserved"
+
+        # Critical: must remain a string, not become a mapping
+        assert isinstance(content, str), \
+            "Complex key-like patterns must NOT create nested mapping"
+
+    def test_continuation_lines_multiple_colons(self):
+        """Test continuation lines with multiple colon patterns.
+
+        This verifies that lines with multiple colons (e.g., URLs, time values)
+        are preserved as content, not misinterpreted as mappings.
+        """
+        parser = YAMLCoreParser()
+
+        yaml_content = """# Multiple colon patterns in continuation lines
+colon_test: >1
+ https://example.com/path
+ time_value: 12:30:45
+ url: http://user:pass@host:port/path
+ ratio: 3:2:1
+"""
+        result = parser.safe_load(yaml_content)
+        assert result.is_success(), "Multiple colon patterns should succeed"
+
+        content = result.data['colon_test']
+        assert 'https://example.com/path' in content, \
+            "URL with protocol should be preserved"
+        assert 'time_value: 12:30:45' in content, \
+            "Time value pattern should be preserved"
+        assert 'url: http://user:pass@host:port/path' in content, \
+            "URL with credentials should be preserved"
+        assert 'ratio: 3:2:1' in content, \
+            "Ratio pattern should be preserved"
+
+        assert isinstance(content, str), \
+            "Multiple colon patterns must NOT create nested mapping"
+
+
 if __name__ == '__main__':
     # Run the tests when executed directly
     pytest.main([__file__, '-v'])
