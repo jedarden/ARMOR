@@ -419,26 +419,44 @@ impl ScopeStack {
             log_debug!("[SCOPE EXIT] Removed {} scopes deeper than indent={}", before_depth - self.depth(), target_indent);
         }
 
-        // Ensure we have a scope at the target level
-        // In normal YAML parsing, when exiting to target_indent, there should already be a scope
-        // at that level (created when we entered that scope via enter_scope).
-        // However, in edge cases (e.g., manually creating weird state, certain invalid YAML),
-        // we might not have a scope at the target level.
-        //
-        // We handle this by:
-        // 1. If a scope exists at target_indent, we're done
-        // 2. If no scope at target_indent, we create a fallback scope there
-        //    (this handles edge cases gracefully and maintains correct indent tracking)
+        // Search for target scope in hierarchy
+        // This handles cases where the exact target indent doesn't exist in the stack
+        // by finding the closest parent scope or creating a fallback if needed
         if !self.scopes.iter().any(|s| s.indent_level == target_indent) {
-            // No scope at target level - create a fallback
-            // This is unusual but we handle it gracefully
+            // No exact match at target indent - search for closest parent
             #[cfg(debug_assertions)]
             {
-                log_warn!("[SCOPE EXIT] WARNING: No scope found at target_indent={}, creating fallback scope",
+                log_warn!("[SCOPE EXIT] WARNING: No scope found at target_indent={}, searching for closest parent scope",
                          target_indent);
             }
-            let fallback_scope = Scope::new(target_indent, 0, None);
-            self.scopes.push(fallback_scope);
+
+            // Find the closest scope with indent <= target_indent
+            let closest_scope = self.scopes.iter()
+                .filter(|s| s.indent_level <= target_indent)
+                .max_by_key(|s| s.indent_level);
+
+            match closest_scope {
+                Some(scope) => {
+                    // Found a parent scope - use that instead
+                    #[cfg(debug_assertions)]
+                    {
+                        log_debug!("[SCOPE EXIT] Found closest parent scope at indent={}, path='{}', using existing scope",
+                                 scope.indent_level, self.get_scope_path());
+                    }
+                    // We've already retained scopes <= target_indent, so we're at the closest scope
+                }
+                None => {
+                    // No suitable parent scope found - this shouldn't happen in normal YAML
+                    // but we handle it gracefully by creating a fallback scope
+                    #[cfg(debug_assertions)]
+                    {
+                        log_warn!("[SCOPE EXIT] WARNING: No suitable parent scope found, creating fallback scope at indent={}",
+                                 target_indent);
+                    }
+                    let fallback_scope = Scope::new(target_indent, 0, None);
+                    self.scopes.push(fallback_scope);
+                }
+            }
         }
 
         #[cfg(debug_assertions)]
@@ -640,7 +658,8 @@ impl ScopeStack {
         }
 
         // Only retain scopes shallower than indent_level
-        // This clears any existing scope at this level (including parent mappings) and all deeper scopes
+        // Sequence scopes completely replace any mapping at the same level
+        // (unlike sibling mappings which preserve the parent)
         self.scopes.retain(|s| s.indent_level < indent_level);
 
         #[cfg(debug_assertions)]
@@ -652,39 +671,20 @@ impl ScopeStack {
                          before_path,
                          self.get_scope_path());
             }
-            log_debug!("[SCOPE ENTRY] type=Sequence, indent={}, cleared scopes deeper than this level, preserved parent mappings", indent_level);
+            log_debug!("[SCOPE ENTRY] type=Sequence, indent={}, cleared scopes at or deeper than this level (replaces any parent mapping)", indent_level);
         }
 
-        // Check if there's already a scope at this level that's in a sequence context
-        let needs_new_scope = self.scopes.last()
-            .map(|scope| scope.indent_level != indent_level || !scope.in_sequence_context)
-            .unwrap_or(true);
+        // Always create a new scope for each sequence item
+        // Each sequence item needs a fresh scope - we don't reuse existing sequence scopes
+        let mut new_scope = Scope::new(indent_level, line, None);
+        new_scope.in_sequence_context = true;
+        self.sequence_item_counter += 1;
+        new_scope.sequence_item_id = Some(self.sequence_item_counter);
+        self.scopes.push(new_scope);
 
-        if needs_new_scope {
-            // Create a new scope for this sequence item
-            let mut new_scope = Scope::new(indent_level, line, None);
-            new_scope.in_sequence_context = true;
-            self.sequence_item_counter += 1;
-            new_scope.sequence_item_id = Some(self.sequence_item_counter);
-            self.scopes.push(new_scope);
-
-            #[cfg(debug_assertions)]
-            {
-                log_debug!("[SCOPE ENTRY] type=Sequence (new), item_id={}, created new sequence scope", self.sequence_item_counter);
-            }
-        } else {
-            // Reset the existing scope for a new sequence item
-            if let Some(scope) = self.scopes.last_mut() {
-                scope.keys.clear();
-                scope.start_line = line;
-                self.sequence_item_counter += 1;
-                scope.sequence_item_id = Some(self.sequence_item_counter);
-
-                #[cfg(debug_assertions)]
-                {
-                    log_debug!("[SCOPE ENTRY] type=Sequence (reset), item_id={}, reset existing sequence scope", self.sequence_item_counter);
-                }
-            }
+        #[cfg(debug_assertions)]
+        {
+            log_debug!("[SCOPE ENTRY] type=Sequence (new), item_id={}, created new sequence scope", self.sequence_item_counter);
         }
 
         #[cfg(debug_assertions)]
@@ -823,6 +823,74 @@ impl ScopeStack {
     /// * `indent` - The indent level to set
     pub fn set_last_indent(&mut self, indent: usize) {
         self.last_indent = indent;
+    }
+
+    /// Process an indent transition without a key token
+    ///
+    /// This method handles indentation changes that occur on lines without key tokens,
+    /// such as blank lines or comments. It determines if the indent change represents
+    /// a valid scope transition and triggers the appropriate scope entry/exit.
+    ///
+    /// # Arguments
+    ///
+    /// * `line_number` - The line number where this transition occurred (1-indexed)
+    /// * `new_indent` - The new indentation level
+    ///
+    /// # Returns
+    ///
+    /// `true` if a scope transition occurred, `false` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use armor::parsers::yaml::scope::ScopeStack;
+    ///
+    /// let mut stack = ScopeStack::new(2);
+    /// stack.enter_scope(2, 1, Some("parent".to_string()));
+    /// // Process indent decrease on blank line
+    /// let transitioned = stack.process_indent_transition_without_key(5, 0);
+    /// assert!(transitioned); // Should exit to root scope
+    /// ```
+    pub fn process_indent_transition_without_key(&mut self, line_number: usize, new_indent: usize) -> bool {
+        use std::cmp::Ordering;
+
+        // Compare new indent with current scope indent
+        let current_indent = self.current_indent();
+
+        match new_indent.cmp(&current_indent) {
+            Ordering::Greater => {
+                // Indent increased - but without a key, this is unusual
+                // We don't enter a new scope without a parent key
+                // Just record the transition for tracking purposes
+                #[cfg(debug_assertions)]
+                {
+                    log_debug!(
+                        "[INDENT WITHOUT KEY] line={}, indent={}→{} (increase), NO SCOPE ENTRY (no parent key)",
+                        line_number, current_indent, new_indent
+                    );
+                }
+                false
+            }
+            Ordering::Less => {
+                // Indent decreased - exit to parent scope
+                // This is valid even without a key (e.g., blank line at end of nested block)
+                #[cfg(debug_assertions)]
+                {
+                    let before_path = self.get_scope_path();
+                    log_debug!(
+                        "[INDENT WITHOUT KEY] line={}, indent={}→{} (decrease), exiting scope: '{}'",
+                        line_number, current_indent, new_indent, before_path
+                    );
+                }
+
+                self.exit_to_scope(new_indent);
+                true
+            }
+            Ordering::Equal => {
+                // Same indent - no scope change needed
+                false
+            }
+        }
     }
 }
 
@@ -1019,12 +1087,29 @@ pub fn extract_key_context(line: &str) -> Option<KeyContext> {
         return None;
     }
 
+    // Strip sequence dash from key if present
+    // Handles: "- name: value" -> key should be "name", not "- name"
+    let actual_key = if key.starts_with("- ") {
+        // Remove the "- " prefix (dash and space)
+        key[2..].trim()
+    } else if key.starts_with('-') && key.len() > 1 {
+        // Dash followed by non-space (invalid, but handle gracefully)
+        &key[1..]
+    } else {
+        key
+    };
+
+    // Skip if actual key is empty after stripping dash
+    if actual_key.is_empty() {
+        return None;
+    }
+
     // Classify based on what comes after the colon
     let context = if after_colon.trim().is_empty() {
-        KeyContext::ParentMapping { key: key.to_string() }
+        KeyContext::ParentMapping { key: actual_key.to_string() }
     } else {
         KeyContext::InlineScalar {
-            key: key.to_string(),
+            key: actual_key.to_string(),
             value: after_colon.trim().to_string(),
         }
     };
