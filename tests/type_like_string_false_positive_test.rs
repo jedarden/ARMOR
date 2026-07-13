@@ -8043,3 +8043,196 @@ fn test_folded_scalar_with_continuation_content() {
         );
     }
 }
+
+#[test]
+fn test_folded_scalar_continuation_lines_with_exclamation_marks() {
+    // Test folded scalar continuation lines containing exclamation marks
+    // Continuation lines are indented lines that follow a folded scalar indicator (>)
+    // This verifies that continuation lines with ! are properly classified
+
+    let test_cases = vec![
+        // Exclamation in the middle of continuation lines (NOT at start)
+        ("note: >", "  check! this value"),
+        ("message: >", "    hello! world"),
+        ("comment: >", "\tdata! point"),
+
+        // Exclamation at the end of continuation lines
+        ("warning: >", "  important!"),
+        ("alert: >", "    critical!"),
+        ("info: >", "\turgent!"),
+
+        // Multiple exclamation marks in continuation lines
+        ("log: >", "  very! important! message!"),
+        ("status: >", "    multiple!!! here!!!"),
+        ("output:>", "\tvarious! positions! test!"),
+
+        // Exclamation with different indentation levels (2 spaces)
+        ("key: >", "  content! here"),
+        ("field: >", "  value! with bang"),
+
+        // Exclamation with 4-space indentation
+        ("data: >", "    deeper! content"),
+        ("value: >", "    nested! value"),
+
+        // Exclamation with tab indentation
+        ("text: >", "\ttab! indented"),
+        ("note: >", "\tvalue! with tab"),
+
+        // Mixed indentation (spaces then content with !)
+        ("info: >", "  mixed! content! here"),
+        ("debug: >", "    more! complex! data!"),
+
+        // Exclamation in continuation after different folded indicators
+        ("description: >-", "  content! with strip"),
+        ("content: >+", "    data! with keep"),
+        ("message: >2", "  text! with indent-2"),
+        ("note: >-3", "    value! with strip-3"),
+        ("log: >+4", "  info! with keep-4"),
+    ];
+
+    for (indicator_line, continuation_line) in test_cases {
+        // Test the indicator line is classified as MappingKey
+        let indicator_result = classify_line_type(indicator_line);
+        assert_eq!(
+            indicator_result,
+            LineType::MappingKey,
+            "Folded scalar indicator should be MappingKey: '{}'",
+            indicator_line
+        );
+
+        // Test the continuation line with exclamation mark is properly classified
+        // Continuation lines with ! in the middle/end are MappingKey or Unknown
+        let continuation_result = classify_line_type(continuation_line);
+        assert!(
+            continuation_result == LineType::MappingKey || continuation_result == LineType::Unknown,
+            "Folded scalar continuation line with ! should be MappingKey or Unknown, not Tag: '{}' (got {:?})",
+            continuation_line, continuation_result
+        );
+    }
+}
+
+#[test]
+fn test_folded_scalar_continuation_lines_starting_with_exclamation() {
+    // Test continuation lines that START with exclamation marks
+    // These are edge cases where the continuation looks like a YAML tag
+    // but in the context of a folded scalar, it's actually content
+
+    let test_cases = vec![
+        // Continuation lines starting with ! (would be Tag if not in context)
+        ("description: >", "  !important note"),
+        ("text: >", "    !warning message"),
+        ("content: >", "\t!critical alert"),
+
+        // With different folded indicators
+        ("note: >-", "  !value with strip"),
+        ("message: >+", "    !data with keep"),
+        ("log: >2", "  !text indent-2"),
+    ];
+
+    for (indicator_line, continuation_line) in test_cases {
+        // Test the indicator line is classified as MappingKey
+        let indicator_result = classify_line_type(indicator_line);
+        assert_eq!(
+            indicator_result,
+            LineType::MappingKey,
+            "Folded scalar indicator should be MappingKey: '{}'",
+            indicator_line
+        );
+
+        // Lines starting with ! are classified as Tag by the syntax classifier
+        // This is technically correct YAML syntax, even if in a folded scalar context
+        let continuation_result = classify_line_type(continuation_line);
+        assert_eq!(
+            continuation_result,
+            LineType::Tag,
+            "Continuation starting with ! is classified as Tag (syntactically correct): '{}'",
+            continuation_line
+        );
+    }
+}
+
+#[test]
+fn test_folded_scalar_continuation_exclamation_various_contexts() {
+    // Test continuation lines with exclamation marks in various contextual scenarios
+    // This ensures folded scalar parsing handles ! correctly in continuations
+
+    let test_cases = vec![
+        // Continuation with ! as CSS-like important flag
+        ("styles: >", "  .button!important"),
+
+        // Continuation with ! in URL-like values
+        ("url: >", "  https://example.com/path!query"),
+
+        // Continuation with ! in natural language sentences
+        ("note: >", "  This is important! Check it."),
+        ("message: >", "    Warning! Something happened!"),
+
+        // Continuation with ! in regex-like patterns (avoiding FlowSequence syntax)
+        ("pattern: >", "  .*!.*"),
+        ("regex: >", "    match! pattern!"),
+
+        // Continuation with ! in code-like snippets
+        ("code: >", "  if (value!) { return; }"),
+        ("snippet: >", "    flag = true!"),
+
+        // Continuation with ! in error messages
+        ("error: >", "  Failed! Check logs!"),
+        ("exception: >", "    Error! Timeout!"),
+
+        // Continuation with ! in configuration values
+        ("config: >", "  enabled: true!"),
+        ("settings: >", "    priority: high!"),
+
+        // Continuation with ! in pseudo-data structures (avoiding FlowSequence syntax)
+        ("data: >", "  key: value!"),
+        ("structure: >", "    item1! item2!"),
+
+        // Continuation with ! at various positions relative to words
+        ("text: >", "  word!middle!end"),
+        ("value: >", "  multiple! spaces! around!"),
+    ];
+
+    for (indicator_line, continuation_line) in test_cases {
+        // Test the indicator line is classified as MappingKey
+        let indicator_result = classify_line_type(indicator_line);
+        assert_eq!(
+            indicator_result,
+            LineType::MappingKey,
+            "Folded scalar indicator should be MappingKey: '{}'",
+            indicator_line
+        );
+
+        // Test the continuation line with ! in various contexts
+        // Should NOT be classified as Tag (unless it starts with !)
+        let continuation_result = classify_line_type(continuation_line);
+
+        // Lines starting with ! would be Tag, others should be MappingKey, Unknown, or Flow types
+        if continuation_line.trim().starts_with('!') {
+            assert_eq!(
+                continuation_result,
+                LineType::Tag,
+                "Continuation starting with ! should be Tag: '{}'",
+                continuation_line
+            );
+        } else {
+            // Accept MappingKey, Unknown, or Flow types for continuation lines
+            // (Flow types occur when line contains { or [ characters)
+            assert!(
+                continuation_result == LineType::MappingKey
+                    || continuation_result == LineType::Unknown
+                    || continuation_result == LineType::FlowMapping
+                    || continuation_result == LineType::FlowSequence,
+                "Folded scalar continuation with ! in context should be MappingKey, Unknown, or Flow type: '{}' (got {:?})",
+                continuation_line, continuation_result
+            );
+
+            // Explicitly verify it's NOT classified as Tag (unless it starts with !)
+            assert_ne!(
+                continuation_result,
+                LineType::Tag,
+                "Folded scalar continuation line with ! should NOT be classified as Tag: '{}'",
+                continuation_line
+            );
+        }
+    }
+}
