@@ -230,3 +230,168 @@ fn test_exit_to_scope_when_target_has_no_scope_but_parent_exists() {
     assert_eq!(stack.current_indent(), 4);
     assert!(stack.get_scope_at_level(4).is_some());
 }
+
+/// Scenario: Attempting to exit to root when already at root
+/// Expected: Operation is idempotent (no-op), stack state unchanged
+#[test]
+fn test_exit_to_scope_from_root_to_root_is_idempotent() {
+    let mut stack = ScopeStack::new(2);
+
+    // Start at root (initial state)
+    let depth_before = stack.depth();
+    let indent_before = stack.current_indent();
+
+    // Try to exit to root (already at root)
+    stack.exit_to_scope(0);
+
+    // Should remain unchanged
+    assert_eq!(stack.depth(), depth_before);
+    assert_eq!(stack.current_indent(), indent_before);
+    assert_eq!(stack.get_scope_path(), "");
+}
+
+/// Scenario: Stack only has root scope, attempt to exit to root
+/// Expected: Should remain in root state (no-op)
+#[test]
+fn test_exit_to_scope_from_stack_with_only_root() {
+    let mut stack = ScopeStack::new(2);
+
+    // Stack only has root scope
+    assert_eq!(stack.depth(), 1);
+    assert_eq!(stack.current_indent(), 0);
+
+    // Try to exit to root (should be idempotent)
+    stack.exit_to_scope(0);
+
+    // Should still have only root scope
+    assert_eq!(stack.depth(), 1);
+    assert_eq!(stack.current_indent(), 0);
+}
+
+/// Scenario: Exit to an indent level that doesn't exist but falls between two existing scopes
+/// Expected: Should create a fallback scope at the target level, preserve shallower scopes
+#[test]
+fn test_exit_to_scope_to_nonexistent_level_between_existing_scopes() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create: root (0) -> level2 (2) -> level6 (6)
+    stack.enter_scope(2, 1, Some("level2".to_string()));
+    stack.enter_scope(6, 2, Some("level6".to_string()));
+
+    // Exit to level 4 (doesn't exist, between 2 and 6)
+    stack.exit_to_scope(4);
+
+    // Should create fallback at 4 and keep scope at 2
+    assert_eq!(stack.depth(), 3); // root (0) + level2 (2) + fallback (4)
+    assert_eq!(stack.current_indent(), 4);
+    assert!(stack.get_scope_at_level(2).is_some());
+    assert!(stack.get_scope_at_level(4).is_some());
+    assert!(stack.get_scope_at_level(6).is_none());
+}
+
+/// Scenario: Perform multiple scope exits in rapid succession without intermediate operations
+/// Expected: Should correctly unwind the stack to each target level
+#[test]
+fn test_exit_to_scope_rapid_successive_exits() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create deep nesting
+    stack.enter_scope(2, 1, Some("a".to_string()));
+    stack.enter_scope(4, 2, Some("b".to_string()));
+    stack.enter_scope(6, 3, Some("c".to_string()));
+    stack.enter_scope(8, 4, Some("d".to_string()));
+
+    // Rapid successive exits without intermediate operations
+    stack.exit_to_scope(6);  // 8 -> 6
+    stack.exit_to_scope(2);  // 6 -> 2
+    stack.exit_to_scope(0);  // 2 -> 0
+
+    // Should end at root
+    assert_eq!(stack.depth(), 1);
+    assert_eq!(stack.current_indent(), 0);
+    assert_eq!(stack.get_scope_path(), "");
+}
+
+/// Scenario: Verify that root scope is never removed even during aggressive scope exits
+/// Expected: Root scope (indent 0) should always be preserved in the stack
+#[test]
+fn test_exit_to_scope_preserves_root_scope_even_in_edge_cases() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create deep nesting
+    stack.enter_scope(10, 1, Some("deep".to_string()));
+
+    // Exit to various levels, root should always be preserved
+    stack.exit_to_scope(5);
+    assert!(stack.get_scope_at_level(0).is_some()); // Root still exists
+
+    stack.exit_to_scope(2);
+    assert!(stack.get_scope_at_level(0).is_some()); // Root still exists
+
+    stack.exit_to_scope(0);
+    assert!(stack.get_scope_at_level(0).is_some()); // Root still exists
+    assert_eq!(stack.depth(), 1); // Only root remains
+}
+
+/// Scenario: Exit from a sequence scope back to parent mapping scope
+/// Expected: Parent scope should not inherit sequence item ID from child
+#[test]
+fn test_exit_to_scope_sequence_item_id_preservation_in_parent() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create parent mapping
+    stack.enter_scope(2, 1, Some("items".to_string()));
+
+    // Enter sequence scope
+    stack.enter_sequence_scope(4, 2);
+    let item_id = stack.current_scope_ref().sequence_item_id;
+
+    // Exit back to parent
+    stack.exit_to_scope(2);
+
+    // Parent scope should not have sequence item ID
+    assert!(stack.current_scope_ref().sequence_item_id.is_none());
+    assert_eq!(stack.current_scope_ref().parent_key, Some("items".to_string()));
+}
+
+/// Scenario: Exit from child scope back to parent that was marked as flow-style
+/// Expected: Parent scope's flow_style flag should be preserved
+#[test]
+fn test_exit_to_scope_with_flow_style_preservation() {
+    let mut stack = ScopeStack::new(2);
+
+    // Create scope and mark as flow style
+    stack.enter_scope(2, 1, Some("flow_style_scope".to_string()));
+    stack.current_scope().is_flow_style = true;
+
+    // Enter child scope
+    stack.enter_scope(4, 2, Some("child".to_string()));
+
+    // Exit back to parent
+    stack.exit_to_scope(2);
+
+    // Flow style should be preserved on parent scope
+    assert!(stack.current_scope_ref().is_flow_style);
+    assert_eq!(stack.current_scope_ref().parent_key, Some("flow_style_scope".to_string()));
+}
+
+/// Scenario: Attempt to exit to the same indent level we're currently at
+/// Expected: Should be a no-op (already at target)
+#[test]
+fn test_exit_to_scope_when_target_is_same_as_current_indent() {
+    let mut stack = ScopeStack::new(2);
+
+    stack.enter_scope(2, 1, Some("level1".to_string()));
+    stack.enter_scope(4, 2, Some("level2".to_string()));
+
+    let depth_before = stack.depth();
+    let indent_before = stack.current_indent();
+
+    // Exit to current indent (4)
+    stack.exit_to_scope(4);
+
+    // Should remain unchanged (already at target)
+    assert_eq!(stack.depth(), depth_before);
+    assert_eq!(stack.current_indent(), indent_before);
+    assert_eq!(stack.get_scope_path(), "level1.level2");
+}
