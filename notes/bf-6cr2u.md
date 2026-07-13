@@ -1,52 +1,59 @@
-# Bead bf-6cr2u: Compilation and Test Verification
+# Test Compilation and Execution Verification
 
-## Task
-Verify compilation and run tests for yamlutil package after parameter fixes.
+## Date: 2026-07-13
+
+## Task: Verify compilation and run tests for internal/yamlutil
 
 ## Results
 
-### Compilation Status: ✓ SUCCESS
-- Ran `cd internal/yamlutil && go test -c`
-- All test files compiled successfully with no errors
-- Generated `yamlutil.test` binary
+### ✅ Compilation Verification
+Command: `cd internal/yamlutil && go test -c`
+**Status:** PASSED
+All test files compiled successfully without errors.
 
-### Test Execution Status: ✗ FAILURES
-- Ran `go test ./internal/yamlutil/...`
-- Total test run time: 0.173s
-- Multiple test failures detected
+### ❌ Test Execution
+Command: `go test ./internal/yamlutil/...`
+**Status:** FAILED - Multiple test failures
 
-## Test Failure Categories
+## Test Failures Summary
 
-### 1. Error Message Format Mismatches
-Several tests expect specific error message formats that don't match current implementation:
-- `TestReadFile/file_not_found` - Expected "not found" in message
-- `TestReadFileSymlinks/broken_symlink` - Expected "not found" in message
-- `TestParseYAML/file_not_found_returns_FileError` - Expected specific file read error
+### Type Name Extraction Test Failures (Primary Concern)
+The following type name extraction tests failed after recent regex parameter fixes in `type_name_extraction.go`:
 
-### 2. Type Name Extraction Issues
-Multiple failures in type name extraction logic:
-- `TestTypeNameExtractionInMiddle` - "into pattern" extractions failing
-- `TestTypeNameExtractionEdgeCases` - Malformed error handling
-- `TestNormalizeYAMLTypeSpecialInputs` - Trailing punctuation not handled
-- `TestExtractTypeName/into_pattern_fallback` - Fallback pattern not working
+1. **Pattern matching failures:**
+   - `TestTypeNameExtractionInMiddle/into_pattern_in_middle` - "into" pattern in middle of string not matching
+   - `TestTypeNameExtractionInMiddle/into_pattern_with_complex_type` - Complex map types not matching
+   - `TestTypeNameExtractionAtEnd/type_keyword_at_end_-_map_-_not_supported` - Map types at end matching incorrectly
+   - `TestExtractTypeName/into_pattern_fallback` - Fallback pattern not working
 
-### 3. Syntax Validation Issues
-- `TestStructureErrorWithFlowStyle` - Flow-style YAML incorrectly triggers structure errors
-- `TestBracketBalanceDetection` - Brackets in block scalars not detected (known limitation)
-- `TestMissingColonEdgeCases` - Multi-line value continuations trigger false positives
-- `TestMissingColonInRealWorldYaml` - Expected vs actual missing colon count mismatch
+2. **Normalization failures:**
+   - `TestNormalizeYAMLTypeSpecialInputs/type_with_trailing_punctuation` - Trailing punctuation not being normalized
+   - `TestNormalizeYAMLTypeSpecialInputs/type_with_trailing_period` - Trailing period not normalized
+   - `TestNormalizeYAMLTypeSpecialInputs/type_with_trailing_comma_and_period` - Combined punctuation not normalized
 
-### 4. Line Type Detection
-- `TestLineTypeString/unknown_content` - Expected "unknown content", got "invalid line type"
+### Other Test Failures (Unrelated to type extraction)
+- File read error message format tests
+- Syntax validator edge case tests  
+- Missing colon detection tests
 
-### 5. Type Parsing
-- `TestParseTypeErrorStringWithRealYAMLErrors/sequence_into_array_of_string` - Expected error, got nil
+## Analysis
 
-## Summary
-The code compiles successfully, but there are pre-existing test failures that appear to be related to:
-1. Error message format expectations not matching implementation
-2. Edge cases in type name extraction
-3. Syntax validation limitations
-4. Specific pattern matching issues
+The recent changes to `type_name_extraction.go` modified regex patterns (Pattern 7 and Pattern 12) to be more restrictive by requiring preceding keywords (unmarshal, marshal, convert, expected, want, got) before matching "into <type>" patterns. This was intended to avoid matching common English phrases but has caused some test cases to fail.
 
-These failures do not appear to be related to the parameter fixes mentioned in the task context, but rather represent existing test suite issues that need separate addressing.
+The changes made the patterns more strict:
+- Pattern 7: Added optional whitespace quantifier
+- Pattern 12: Added required keyword context before "into"
+
+## Recommendations
+
+1. The type name extraction regex changes may need to be reviewed to balance between:
+   - Avoiding false positives (English phrases)
+   - Maintaining true positives (actual type errors)
+
+2. Consider whether test expectations need updating or if regex patterns should be relaxed
+
+3. The other test failures (file errors, syntax validation) appear to be pre-existing issues unrelated to the type extraction changes
+
+## Git Context
+Modified file: `internal/yamlutil/type_name_extraction.go`
+Recent commit: `00dd7faa fix(extractTypeName): add Pattern 12 fallback and improve Pattern 11`
