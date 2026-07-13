@@ -39,6 +39,146 @@ let cases = generate_folded_scalar_tests_multi_level(
 );
 ```
 
+## Explicit Indent Coverage Gap Analysis
+
+**Bead:** bf-6bai9
+**Status:** Coverage gaps identified in Section 12B explicit indent test infrastructure
+**Last Updated:** 2026-07-13
+
+### Current Coverage Status
+
+Section 12B includes the following explicit indent test functions:
+
+| Test Function | Line | Modifier Type | Indentation Level | Coverage |
+|---------------|------|---------------|-------------------|----------|
+| `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` | 8342 | All (>, >-, >+) | All levels | ✅ Comprehensive |
+| `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()` | 8561 | Plain (>) | 2-space only | ⚠️ Single level |
+| `test_folded_scalar_strip_explicit_indent_modifiers_at_2_space()` | 8670 | Strip (>-) | 2-space only | ⚠️ Single level |
+| `test_folded_scalar_keep_explicit_indent_modifiers_at_2_space()` | 13040 | Keep (>+) | 2-space only | ⚠️ Single level |
+| `test_literal_scalar_explicit_indent_modifiers_at_various_levels()` | 8779 | All (|, |-, |+) | All levels | ✅ Comprehensive |
+
+### Missing Level-Specific Test Functions
+
+The following dedicated test functions are **missing** for folded scalars:
+
+#### Plain Modifier (>) - Missing 4 Functions
+- ❌ `test_folded_scalar_plain_explicit_indent_modifiers_at_4_space()`
+- ❌ `test_folded_scalar_plain_explicit_indent_modifiers_at_6_space()`
+- ❌ `test_folded_scalar_plain_explicit_indent_modifiers_at_8_space()`
+- ❌ `test_folded_scalar_plain_explicit_indent_modifiers_at_tab()`
+
+#### Strip Modifier (>-) - Missing 4 Functions
+- ❌ `test_folded_scalar_strip_explicit_indent_modifiers_at_4_space()`
+- ❌ `test_folded_scalar_strip_explicit_indent_modifiers_at_6_space()`
+- ❌ `test_folded_scalar_strip_explicit_indent_modifiers_at_8_space()`
+- ❌ `test_folded_scalar_strip_explicit_indent_modifiers_at_tab()`
+
+#### Keep Modifier (>+) - Missing 4 Functions
+- ❌ `test_folded_scalar_keep_explicit_indent_modifiers_at_4_space()`
+- ❌ `test_folded_scalar_keep_explicit_indent_modifiers_at_6_space()`
+- ❌ `test_folded_scalar_keep_explicit_indent_modifiers_at_8_space()`
+- ❌ `test_folded_scalar_keep_explicit_indent_modifiers_at_tab()`
+
+**Total Missing Functions:** 12 dedicated level-specific test functions
+
+### Skeleton Template Reference
+
+The skeleton template for adding missing test functions is located at:
+
+**File:** `tests/type_like_string_false_positive_test.rs`  
+**Function:** `test_folded_scalar_explicit_indent_template_example()`  
+**Line:** 12788
+
+### Recommended Additions (Section 12B.3 Pattern)
+
+To add missing test coverage following the Section 12B.3 pattern:
+
+#### Pattern Template
+```rust
+#[test]
+fn test_folded_scalar_<modifier>_explicit_indent_modifiers_at_<level>() {
+    // Test folded scalars with <modifier> explicit indent modifiers: <modifier>n for n=1-9
+    // At <indentation> indentation level only
+    // This provides focused coverage of <modifier> explicit indent specification for folded scalars
+    // Follows the pattern established in test_folded_scalar_plain_explicit_indent_modifiers_at_2_space
+
+    let test_cases = vec![
+        // ===== Level X: <indentation> indentation with <modifier> explicit indent =====
+        // <Modifier> <modifier>n (n=1-9) - main test cases
+        ("  <key>1: >1", "<key>1", LineType::MappingKey),
+        ("  <key>2: >2", "<key>2", LineType::MappingKey),
+        // ... continue for n=1-9
+
+        // Keys with exclamation marks at <indentation> indentation
+        ("  key!1: >1", "key!1", LineType::MappingKey),
+        // ... exclamation mark variants
+
+        // Additional edge cases
+        // ... specific edge cases for this level
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(result, expected_type, "...");
+
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(info.is_some(), "...");
+            let detected = info.unwrap();
+            assert_eq!(detected.key, expected_key, "...");
+        }
+    }
+
+    // Test continuation lines
+    let continuation_lines = vec![
+        // Continuation line test cases
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        let result = classify_line_type(line);
+        assert!(expected_types.contains(&result), "...");
+    }
+}
+```
+
+#### Implementation Priority
+
+**High Priority** (Core indentation levels):
+1. `test_folded_scalar_plain_explicit_indent_modifiers_at_4_space()` - Most common after 2-space
+2. `test_folded_scalar_strip_explicit_indent_modifiers_at_4_space()`
+3. `test_folded_scalar_keep_explicit_indent_modifiers_at_4_space()`
+
+**Medium Priority** (Deeper indentation):
+4. `test_folded_scalar_plain_explicit_indent_modifiers_at_6_space()`
+5. `test_folded_scalar_strip_explicit_indent_modifiers_at_6_space()`
+6. `test_folded_scalar_keep_explicit_indent_modifiers_at_6_space()`
+
+**Low Priority** (Less common):
+7. `test_folded_scalar_plain_explicit_indent_modifiers_at_8_space()`
+8. `test_folded_scalar_strip_explicit_indent_modifiers_at_8_space()`
+9. `test_folded_scalar_keep_explicit_indent_modifiers_at_8_space()`
+10. Tab indentation variants (3 functions)
+
+### Coverage Notes
+
+- **Comprehensive function exists:** `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` provides coverage for all levels in a single test
+- **Gap is in dedicated level-specific functions:** The missing functions are isolated tests for each level-modifier combination, which provides better failure isolation and targeted debugging
+- **Literal scalars:** Fully covered with dedicated functions for all levels in `test_literal_scalar_explicit_indent_modifiers_at_various_levels()`
+
+### Verification Command
+
+To verify current explicit indent test coverage:
+```bash
+# List all explicit indent test functions
+grep -n "^fn test_.*explicit_indent" tests/type_like_string_false_positive_test.rs | grep -E "(plain|strip|keep|level|space|tab)"
+
+# Run explicit indent tests
+cargo test test_folded_scalar_explicit_indent
+
+# Check coverage in Section 12B
+cargo test -- section-12b
+```
+
 ## Pattern Documentation
 
 ### Test Case Structure
