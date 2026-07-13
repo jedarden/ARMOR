@@ -10348,3 +10348,124 @@ fn test_basic_indentation_levels_with_exclamation() {
         );
     }
 }
+
+#[test]
+fn test_literal_scalar_basic_modifiers_at_indentation_levels() {
+    // Test literal scalar (|) with basic modifiers: |- (strip) and |+ (keep)
+    // At various indentation levels: 2-space, 4-space, 6-space, 8-space, tab
+    // This covers Section 12B literal scalar basic modifier scenarios
+
+    let test_cases = vec![
+        // ===== Level 1: 2-space indentation =====
+        ("  text: |", "text", LineType::MappingKey),
+        ("  warning: |-", "warning", LineType::MappingKey),
+        ("  info: |+", "info", LineType::MappingKey),
+        ("  message!here: |", "message!here", LineType::MappingKey),
+        ("  alert!now: |-", "alert!now", LineType::MappingKey),
+        ("  note!important: |+", "note!important", LineType::MappingKey),
+
+        // ===== Level 2: 4-space indentation =====
+        ("    content: |", "content", LineType::MappingKey),
+        ("    error: |-", "error", LineType::MappingKey),
+        ("    debug: |+", "debug", LineType::MappingKey),
+        ("    level2!key: |", "level2!key", LineType::MappingKey),
+        ("    nested!item: |-", "nested!item", LineType::MappingKey),
+        ("    deep!value: |+", "deep!value", LineType::MappingKey),
+
+        // ===== Level 3: 6-space indentation =====
+        ("      data: |", "data", LineType::MappingKey),
+        ("      output: |-", "output", LineType::MappingKey),
+        ("      input: |+", "input", LineType::MappingKey),
+        ("      level3!test: |", "level3!test", LineType::MappingKey),
+        ("      deeply!nested: |-", "deeply!nested", LineType::MappingKey),
+        ("      further!down: |+", "further!down", LineType::MappingKey),
+
+        // ===== Level 4: 8-space indentation =====
+        ("        record: |", "record", LineType::MappingKey),
+        ("        field: |-", "field", LineType::MappingKey),
+        ("        property: |+", "property", LineType::MappingKey),
+        ("        level4!item: |", "level4!item", LineType::MappingKey),
+        ("        very!deep!key: |-", "very!deep!key", LineType::MappingKey),
+        ("        extremely!nested: |+", "extremely!nested", LineType::MappingKey),
+
+        // ===== Level 5: Tab indentation =====
+        ("\tentry: |", "entry", LineType::MappingKey),
+        ("\tlog: |-", "log", LineType::MappingKey),
+        ("\tstatus: |+", "status", LineType::MappingKey),
+        ("\ttab!key: |", "tab!key", LineType::MappingKey),
+        ("\ttab!nested: |-", "tab!nested", LineType::MappingKey),
+        ("\ttab!indented: |+", "tab!indented", LineType::MappingKey),
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Literal scalar basic modifier test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for literal scalar basic modifier: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Key mismatch for literal scalar basic modifier: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+
+    // Test continuation lines for literal scalars with basic modifiers
+    // Continuation lines should be indented more than the parent key line
+    let continuation_lines = vec![
+        // Level 1 (2-space) continuation
+        "  First line of literal text",
+        "  Second line with continuation",
+        "    More indented continuation at level 2",
+
+        // Level 2 (4-space) continuation
+        "    Four-space literal content",
+        "    Another line at same level",
+        "      Deeper continuation at level 3",
+
+        // Level 3 (6-space) continuation
+        "      Six-space literal content",
+        "      Continues at this level",
+        "        Even deeper at level 4",
+
+        // Level 4 (8-space) continuation
+        "        Eight-space literal content",
+        "        Deeply nested continuation",
+        "          Maximum depth at level 5",
+
+        // Tab continuation
+        "\tTab-indented literal content",
+        "\tContinues with tabs",
+        "\t  Deeper tab continuation",
+    ];
+
+    for line in continuation_lines {
+        let result = classify_line_type(line);
+        // Continuation lines can be Unknown or MappingKey (they might be detected as keys)
+        assert!(
+            result == LineType::Unknown || result == LineType::MappingKey,
+            "Continuation line should be Unknown or MappingKey: '{}' (got {:?})",
+            line, result
+        );
+
+        // Continuation lines should NOT detect as mapping keys (no key: value pattern)
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_none(),
+            "Continuation line should NOT detect mapping key: '{}'",
+            line
+        );
+    }
+}
