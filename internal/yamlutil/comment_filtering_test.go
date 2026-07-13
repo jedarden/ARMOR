@@ -1766,6 +1766,384 @@ level1:
 	}
 }
 
+// TestFalsePositiveHashInValuesPreservation tests that hash characters in values are preserved
+// and not mistakenly treated as comments.
+// This test covers the acceptance criteria requirement for testing hash in values preservation.
+func TestFalsePositiveHashInValuesPreservation(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected string
+	}{
+		{
+			name:     "hex color in double quotes",
+			line:     "color: \"#FF0000\"",
+			expected: "color: \"#FF0000\"",
+		},
+		{
+			name:     "hex color in single quotes",
+			line:     "color: '#00FF00'",
+			expected: "color: '#00FF00'",
+		},
+		{
+			name:     "hex color without quotes",
+			line:     "color: #0000FF",
+			expected: "color: #0000FF",
+		},
+		{
+			name:     "short hex color",
+			line:     "background: #FFF",
+			expected: "background: #FFF",
+		},
+		{
+			name:     "hex color with inline comment after",
+			line:     "color: #FF0000 # red",
+			expected: "color: #FF0000 ",
+		},
+		{
+			name:     "multiple hex colors in value",
+			line:     "colors: #FF0000 #00FF00 #0000FF",
+			expected: "colors: #FF0000 #00FF00 #0000FF",
+		},
+		{
+			name:     "hex with alpha channel",
+			line:     "rgba: #FF000080",
+			expected: "rgba: #FF000080",
+		},
+		{
+			name:     "hash in quoted string value",
+			line:     "symbol: \"#define\"",
+			expected: "symbol: \"#define\"",
+		},
+		{
+			name:     "hash in single quoted string",
+			line:     "tag: '#hashtag'",
+			expected: "tag: '#hashtag'",
+		},
+		{
+			name:     "hash symbol in string without quotes",
+			line:     "id: #main-content",
+			expected: "id: #main-content",
+		},
+		{
+			name:     "hash at end of unquoted value",
+			line:     "reference: section#",
+			expected: "reference: section#",
+		},
+		{
+			name:     "numeric with hash prefix",
+			line:     "value: #12345",
+			expected: "value: #12345",
+		},
+		{
+			name:     "hash with underscores",
+			line:     "key: _hash_value",
+			expected: "key: _hash_value",
+		},
+		{
+			name:     "hash in value with special chars",
+			line:     "pattern: #![a-zA-Z]+",
+			expected: "pattern: ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := StripInlineComment(tt.line)
+			if result != tt.expected {
+				t.Errorf("StripInlineComment(%q) = %q, want %q", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFalsePositiveURLWithAnchorPreservation tests that URL anchors (hash fragments) are preserved
+// and not mistakenly treated as comments.
+// This test covers the acceptance criteria requirement for testing URL with anchor preservation.
+func TestFalsePositiveURLWithAnchorPreservation(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected string
+	}{
+		{
+			name:     "URL with anchor",
+			line:     "url: https://example.com#section",
+			expected: "url: https://example.com#section",
+		},
+		{
+			name:     "URL with anchor and inline comment",
+			line:     "url: https://example.com#anchor # comment",
+			expected: "url: https://example.com#anchor ",
+		},
+		{
+			name:     "HTTP URL with fragment",
+			line:     "link: http://test.com/path#fragment",
+			expected: "link: http://test.com/path#fragment",
+		},
+		{
+			name:     "URL with complex anchor",
+			line:     "docs: https://docs.example.com/api/v2#endpoint-1",
+			expected: "docs: https://docs.example.com/api/v2#endpoint-1",
+		},
+		{
+			name:     "URL with anchor in quotes",
+			line:     "url: \"https://example.com#section\"",
+			expected: "url: \"https://example.com#section\"",
+		},
+		{
+			name:     "URL with empty anchor",
+			line:     "link: https://example.com/path#",
+			expected: "link: https://example.com/path#",
+		},
+		{
+			name:     "multiple URLs with anchors",
+			line:     "urls: https://a.com#1 https://b.com#2",
+			expected: "urls: https://a.com#1 https://b.com#2",
+		},
+		{
+			name:     "URL with port and anchor",
+			line:     "api: https://api.example.com:8080/v1#method",
+			expected: "api: https://api.example.com:8080/v1#method",
+		},
+		{
+			name:     "localhost URL with anchor",
+			line:     "local: http://localhost:3000/app#page",
+			expected: "local: http://localhost:3000/app#page",
+		},
+		{
+			name:     "URL with query and anchor",
+			line:     "full: https://example.com/path?query=value#anchor",
+			expected: "full: https://example.com/path?query=value#anchor",
+		},
+		{
+			name:     "URL with underscore in anchor",
+			line:     "page: https://example.com#my_section",
+			expected: "page: https://example.com#my_section",
+		},
+		{
+			name:     "URL with hyphen in anchor",
+			line:     "link: https://example.com#section-name",
+			expected: "link: https://example.com#section-name",
+		},
+		{
+			name:     "markdown-style URL reference with anchor",
+			line:     "reference: [link](https://example.com#anchor)",
+			expected: "reference: [link](https://example.com#anchor)",
+		},
+		{
+			name:     "URL fragment only",
+			line:     "fragment: #only-fragment",
+			expected: "fragment: #only-fragment",
+		},
+		{
+			name:     "URL with multiple anchors in value",
+			line:     "compare: https://a.com#first vs https://b.com#second",
+			expected: "compare: https://a.com#first vs https://b.com#second",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := StripInlineComment(tt.line)
+			if result != tt.expected {
+				t.Errorf("StripInlineComment(%q) = %q, want %q", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFalsePositiveHashInNonCommentContexts tests that hash symbols in various non-comment
+// contexts are preserved and not mistakenly treated as comments.
+// This test covers the acceptance criteria requirement for testing hash in non-comment contexts.
+func TestFalsePositiveHashInNonCommentContexts(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		expected string
+	}{
+		{
+			name:     "hash in key name",
+			line:     "#section: value",
+			expected: "#section: value",
+		},
+		{
+			name:     "hash with underscores in key",
+			line:     "#my_key: content",
+			expected: "#my_key: content",
+		},
+		{
+			name:     "CSS selector in value",
+			line:     "selector: #main-content .sidebar",
+			expected: "selector: #main-content .sidebar",
+		},
+		{
+			name:     "CSS ID selector",
+			line:     "element: #header",
+			expected: "element: #header",
+		},
+		{
+			name:     "hashtag pattern",
+			line:     "tag: #golang",
+			expected: "tag: #golang",
+		},
+		{
+			name:     "multiple hashtags",
+			line:     "tags: #yaml #golang #testing",
+			expected: "tags: #yaml #golang #testing",
+		},
+		{
+			name:     "preprocessor directive",
+			line:     "directive: #include <stdio.h>",
+			expected: "directive: #include <stdio.h>",
+		},
+		{
+			name:     "symbol reference",
+			line:     "symbol: #define MAX_VALUE 100",
+			expected: "symbol: #define MAX_VALUE 100",
+		},
+		{
+			name:     "issue reference",
+			line:     "issue: #12345",
+			expected: "issue: #12345",
+		},
+		{
+			name:     "pull request reference",
+			line:     "pr: #67890",
+			expected: "pr: #67890",
+		},
+		{
+			name:     "markdown heading reference",
+			line:     "heading: ## Section Title",
+			expected: "heading: ",
+		},
+		{
+			name:     "shell script hashbang",
+			line:     "interpreter: #!/bin/bash",
+			expected: "interpreter: ",
+		},
+		{
+			name:     "number sign in text",
+			line:     "text: item #1 is first",
+			expected: "text: item #1 is first",
+		},
+		{
+			name:     "hash in regex pattern",
+			line:     "pattern: #[0-9]+",
+			expected: "pattern: ",
+		},
+		{
+			name:     "hash symbol mid-word",
+			line:     "value: test#fragment",
+			expected: "value: test#fragment",
+		},
+		{
+			name:     "hash with special chars in value",
+			line:     "path: /path/to#file.txt",
+			expected: "path: /path/to#file.txt",
+		},
+		{
+			name:     "version with hash",
+			line:     "version: git#1a2b3c",
+			expected: "version: git#1a2b3c",
+		},
+		{
+			name:     "data URI with hash",
+			line:     "uri: data:text/plain,#hello",
+			expected: "uri: data:text/plain,#hello",
+		},
+		{
+			name:     "hash in JSON value",
+			line:     "json: {\"color\": \"#FF0000\"}",
+			expected: "json: {\"color\": \"#FF0000\"}",
+		},
+		{
+			name:     "hash in array value",
+			line:     "list: [#item1, #item2]",
+			expected: "list: [#item1, #item2]",
+		},
+		{
+			name:     "anchor reference syntax",
+			line:     "merge: <<: *defaults",
+			expected: "merge: <<: *defaults",
+		},
+		{
+			name:     "anchor definition",
+			line:     "template: &defaults",
+			expected: "template: &defaults",
+		},
+		{
+			name:     "complex YAML with anchor and hash value",
+			line:     "config: &conf {url: https://example.com#main}",
+			expected: "config: &conf {url: https://example.com#main}",
+		},
+		{
+			name:     "hash with trailing punctuation",
+			line:     "reference: see-section#",
+			expected: "reference: see-section#",
+		},
+		{
+			name:     "multiple hash symbols in line",
+			line:     "values: #first #second #third",
+			expected: "values: #first #second #third",
+		},
+		{
+			name:     "hash in environment variable style",
+			line:     "env: VAR_#_TEST",
+			expected: "env: VAR_#_TEST",
+		},
+		{
+			name:     "hash in base64-like string",
+			line:     "token: AbCdEf#1234",
+			expected: "token: AbCdEf#1234",
+		},
+		{
+			name:     "hash with adjacent punctuation",
+			line:     "path: /api/v2#endpoint/",
+			expected: "path: /api/v2#endpoint/",
+		},
+		{
+			name:     "hash followed by colon without space",
+			line:     "mapping: key:#value",
+			expected: "mapping: key:#value",
+		},
+		{
+			name:     "hash in template value",
+			line:     "template: {{#if condition}}block{{/if}}",
+			expected: "template: {{#if condition}}block{{/if}}",
+		},
+		{
+			name:     "hash in shell command",
+			line:     "command: echo # > /dev/null",
+			expected: "command: echo ",
+		},
+		{
+			name:     "hash in file path",
+			line:     "file: /path/to/file#backup.txt",
+			expected: "file: /path/to/file#backup.txt",
+		},
+		{
+			name:     "hash in query string",
+			line:     "query: key=value#&other=data",
+			expected: "query: key=value#&other=data",
+		},
+		{
+			name:     "hash in email local part",
+			line:     "email: user#hostname@example.com",
+			expected: "email: user#hostname@example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := StripInlineComment(tt.line)
+			if result != tt.expected {
+				t.Errorf("StripInlineComment(%q) = %q, want %q", tt.line, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestPlainMultilineScalarCommentDetection tests comment detection in plain multi-line scalars.
 // This test covers the acceptance criteria requirement for testing comments in plain multi-line scalars
 // (no explicit style indicator like >, |, ", or ').
