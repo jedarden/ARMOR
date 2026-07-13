@@ -1571,6 +1571,524 @@ fn test_detect_mapping_key_rejects_actual_tag_lines() {
     }
 }
 
+#[test]
+fn test_detect_mapping_key_valid_yaml_tags_rejected() {
+    // All valid YAML tag patterns should be rejected by detect_mapping_key
+    let valid_tags = vec![
+        "!tag",
+        "!!str",
+        "!!map",
+        "!!seq",
+        "!custom_type",
+        "!ns:tag",
+        "!!type",
+        "!local-tag",
+        "!my_type",
+        "!CustomTag",
+        "!tag123",
+        "!ns:name",
+        "!com:example:tag",
+        "!yaml:org:yaml:tag",
+        "!!int",
+        "!!float",
+        "!!bool",
+        "!!null",
+        "!!timestamp",
+        "!myNamespace:myTag",
+        "!verb",
+        "!handle",
+        "!my-tag",
+        "!my_tag",
+        "!tag-name",
+        "!tag_name",
+        "!example.com:tag",
+        "!org.example.project:type",
+        // Indented tags
+        "  !tag",
+        "    !custom",
+        "  !!str",
+        "\t!local",
+        "    !!type",
+        "  !ns:tag",
+    ];
+
+    for line in valid_tags {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_none(),
+            "Valid YAML tag should be rejected by detect_mapping_key: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_tag_like_in_values_accepted() {
+    // Tag-like patterns in values (after colon) should be accepted as mapping keys
+    let test_cases = vec![
+        ("key: !tag", "key", Some("!tag")),
+        ("field: !!str", "field", Some("!!str")),
+        ("data: !custom", "data", Some("!custom")),
+        ("config: !ns:tag", "config", Some("!ns:tag")),
+        ("setting: !!type", "setting", Some("!!type")),
+        ("value: !my-tag", "value", Some("!my-tag")),
+        ("option: !123", "option", Some("!123")),
+        ("param: !$value", "param", Some("!$value")),
+        ("data: !@tag", "data", Some("!@tag")),
+        ("text: ! important", "text", Some("! important")),
+        ("msg: !todo", "msg", Some("!todo")),
+        ("note: !!", "note", Some("!!")),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Tag-like in value should be detected as mapping key: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract correct key from: '{}'", line);
+        assert_eq!(info.value, expected_value.map(String::from), "Should extract correct value from: '{}'", line);
+        assert!(info.has_inline_value, "Should have inline value: '{}'", line);
+        assert!(!info.is_parent_key, "Should not be parent key: '{}'", line);
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_quoted_tag_patterns_accepted() {
+    // Tag-like patterns inside quoted strings should be accepted
+    let test_cases = vec![
+        ("key: \"!tag\"", "key", Some("\"!tag\"")),
+        ("field: '!!str'", "field", Some("'!!str'")),
+        ("data: \"!custom\"", "data", Some("\"!custom\"")),
+        ("text: '!ns:tag'", "text", Some("'!ns:tag'")),
+        ("value: \"!!type\"", "value", Some("\"!!type\"")),
+        ("desc: \"Use !tag here\"", "desc", Some("\"Use !tag here\"")),
+        ("note: 'Value is !!str'", "note", Some("'Value is !!str'")),
+        ("msg: \"Ref !ns:tag\"", "msg", Some("\"Ref !ns:tag\"")),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Quoted tag-like should be detected as mapping key: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract correct key from: '{}'", line);
+        assert_eq!(info.value, expected_value.map(String::from), "Should extract quoted value from: '{}'", line);
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_sequence_items_rejected() {
+    // Sequence items (start with -) should be rejected
+    let test_cases = vec![
+        "- !tag",
+        "- !!str",
+        "- !custom",
+        "- \"!tag\"",
+        "- !!str",
+        "- !ns:tag",
+        "- value!",
+        "-  value!",
+        "-\tvalue!",
+        "- value !",
+        "- value! ",
+    ];
+
+    for line in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_none(),
+            "Sequence item should be rejected by detect_mapping_key: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_indentation() {
+    // Test that detect_mapping_key correctly handles indentation
+    let test_cases = vec![
+        // (line, parent_indent, expected_key, expected_value, should_detect)
+        ("  key: value!", 0, Some("key"), Some("value!"), true),
+        ("    field: !important", 0, Some("field"), Some("!important"), true),
+        ("\tnested: check!", 0, Some("nested"), Some("check!"), true),
+        ("  deep: value!", 2, Some("deep"), Some("value!"), true),
+        ("    deeper: !important", 2, Some("deeper"), Some("!important"), true),
+        ("key: value", 0, Some("key"), Some("value"), true),
+        ("  sibling: value", 2, Some("sibling"), Some("value"), true),
+        // Invalid indentation (less than parent)
+        ("  key: value", 4, None, None, false),
+    ];
+
+    for (line, parent_indent, expected_key, expected_value, should_detect) in test_cases {
+        let info = detect_mapping_key(line, parent_indent);
+        if should_detect {
+            assert!(
+                info.is_some(),
+                "Should detect mapping key with indent {}: '{}'",
+                parent_indent, line
+            );
+            let info = info.unwrap();
+            assert_eq!(
+                info.key, expected_key.unwrap(),
+                "Should extract correct key with indent {}: '{}'",
+                parent_indent, line
+            );
+            assert_eq!(
+                info.value, expected_value.map(String::from),
+                "Should extract correct value with indent {}: '{}'",
+                parent_indent, line
+            );
+        } else {
+            assert!(
+                info.is_none(),
+                "Should reject mapping key with invalid indent {}: '{}'",
+                parent_indent, line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_inline_comments() {
+    // Test that detect_mapping_key correctly handles inline comments
+    let test_cases = vec![
+        ("key: value # ! important comment", "key", Some("value")),
+        ("field: something # !note", "field", Some("something")),
+        ("data: !important # TODO: check this", "data", Some("!important")),
+        ("text: Hello! # inline note", "text", Some("Hello!")),
+        ("note: Check this! # ! warning", "note", Some("Check this!")),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key with inline comment: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract correct key from: '{}'", line);
+        assert_eq!(info.value, expected_value.map(String::from), "Should extract value without comment from: '{}'", line);
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_type_like_strings() {
+    // Test that detect_mapping_key handles type-like strings correctly
+    let test_cases = vec![
+        ("error: \"Expected type string\"", "error", Some("\"Expected type string\"")),
+        ("message: 'type mismatch error'", "message", Some("'type mismatch error'")),
+        ("description: \"integer type required\"", "description", Some("\"integer type required\"")),
+        ("note: 'boolean type expected'", "note", Some("'boolean type expected'")),
+        ("datatype: string", "datatype", Some("string")),
+        ("value_type: integer", "value_type", Some("integer")),
+        ("field_type: boolean", "field_type", Some("boolean")),
+        ("format: array", "format", Some("array")),
+        ("structure: object", "structure", Some("object")),
+        ("type: String", "type", Some("String")),
+        ("type: INTEGER", "type", Some("INTEGER")),
+        ("dtype: Boolean", "dtype", Some("Boolean")),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key with type-like string: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract correct key from: '{}'", line);
+        assert_eq!(info.value, expected_value.map(String::from), "Should extract correct value from: '{}'", line);
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_error_codes() {
+    // Test that detect_mapping_key handles error codes correctly
+    let test_cases = vec![
+        ("error_code: E001", "error_code", Some("E001")),
+        ("delimiter_error: D123", "delimiter_error", Some("D123")),
+        ("message: Error E456 occurred", "message", Some("Error E456 occurred")),
+        ("status: E789 active", "status", Some("E789 active")),
+        ("code: D012", "code", Some("D012")),
+        ("error: E001 - Invalid input parameter", "error", Some("E001 - Invalid input parameter")),
+        ("message: D123 delimiter not found", "message", Some("D123 delimiter not found")),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key with error code: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract correct key from: '{}'", line);
+        assert_eq!(info.value, expected_value.map(String::from), "Should extract correct value from: '{}'", line);
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_whitespace_variations() {
+    // Test various whitespace patterns with detect_mapping_key
+    let test_cases = vec![
+        ("key: value!", "key", Some("value!")),
+        ("key: value !", "key", Some("value !")),
+        ("key: value! ", "key", Some("value! ")),
+        ("key:  value!", "key", Some("value!")),
+        ("key:\tvalue!", "key", Some("value!")),
+        ("key :value!", "key", Some("value!")),
+        ("key : value!", "key", Some("value!")),
+        ("key  :  value!", "key", Some("value!")),
+        ("key\t:\tvalue!", "key", Some("value!")),
+    ];
+
+    for (line, expected_key, _expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key with whitespace variation: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract correct key from: '{}'", line);
+        assert!(info.value.is_some(), "Should have value: '{}'", line);
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_parent_keys() {
+    // Test that parent keys (no value on same line) are detected correctly
+    let test_cases: Vec<(&str, &str, Option<&str>)> = vec![
+        ("config:", "config", None),
+        ("settings:", "settings", None),
+        ("nested:", "nested", None),
+        ("  indented:", "indented", None),
+        ("data:", "data", None),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect parent key: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract correct parent key from: '{}'", line);
+        assert_eq!(info.value, expected_value.map(String::from), "Should have no value for parent key: '{}'", line);
+        assert!(!info.has_inline_value, "Should not have inline value: '{}'", line);
+        assert!(info.is_parent_key, "Should be parent key: '{}'", line);
+    }
+
+    // Verify the is_valid method works correctly
+    let info = detect_mapping_key("valid_key: value", 0).unwrap();
+    assert!(info.is_valid(), "Valid key should pass is_valid check");
+
+    let info = detect_mapping_key("  key: value", 0).unwrap();
+    assert!(info.is_valid(), "Trimmed key should pass is_valid check");
+}
+
+#[test]
+fn test_detect_mapping_key_rejects_special_constructs() {
+    // Test that special YAML constructs are rejected
+    let test_cases = vec![
+        // Tags (already tested but included for completeness)
+        "!tag",
+        "!!str",
+        "  !custom",
+        // Anchors
+        "&anchor",
+        "  &label",
+        // Aliases
+        "*ref",
+        "  *alias",
+        // Directives
+        "%YAML 1.2",
+        "  %TAG",
+        // Sequence items
+        "- item",
+        "  - value",
+        // Block scalars
+        "|",
+        ">",
+        "  |",
+        "    >",
+        // Document markers
+        "---",
+        "...",
+        // Explicit key indicators
+        "? key",
+        "  ? explicit",
+        // Comments
+        "# comment",
+        "  # indented comment",
+    ];
+
+    for line in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_none(),
+            "Should reject special construct: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_complex_values() {
+    // Test mapping keys with complex values containing various patterns
+    let test_cases = vec![
+        ("css: .button!important", "css", Some(".button!important")),
+        ("note: TODO: fix this! urgent", "note", Some("TODO: fix this! urgent")),
+        ("message: Error: check logs!", "message", Some("Error: check logs!")),
+        ("priority: high!important", "priority", Some("high!important")),
+        ("url: https://example.com/path!query", "url", Some("https://example.com/path!query")),
+        ("pattern: !important", "pattern", Some("!important")),
+        ("selector: .class!important", "selector", Some(".class!important")),
+        ("regex: .*!.*", "regex", Some(".*!.*")),
+        ("text: Use string! not integer", "text", Some("Use string! not integer")),
+        ("warning: Check array! size", "warning", Some("Check array! size")),
+    ];
+
+    for (line, expected_key, expected_value) in test_cases {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key with complex value: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, expected_key, "Should extract correct key from: '{}'", line);
+        assert_eq!(info.value, expected_value.map(String::from), "Should extract complex value from: '{}'", line);
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_end_to_end_integration() {
+    // End-to-end integration test with realistic YAML scenarios
+    let _yaml_lines = vec![
+        "# Configuration file - note: important! check settings",
+        "version: 1.0",
+        "settings:",
+        "  enabled: true",
+        "  message: \"Hello World!\"",
+        "  priority: high!",
+        "  types: [string, integer, boolean]",
+        "  tags: [!tag, !!str, !custom]",
+        "  nested:",
+        "    deep: value!",
+        "    deeper: !important",
+        "errors:",
+        "  E001: Invalid input",
+        "  D123: Delimiter not found",
+    ];
+
+    // Lines that should be detected as mapping keys
+    let mapping_keys: Vec<(&str, &str, Option<&str>)> = vec![
+        ("version: 1.0", "version", Some("1.0")),
+        ("settings:", "settings", None),
+        ("  enabled: true", "enabled", Some("true")),
+        ("  message: \"Hello World!\"", "message", Some("\"Hello World!\"")),
+        ("  priority: high!", "priority", Some("high!")),
+        // Note: Flow sequences like "types: [...]" are rejected by detect_mapping_key
+        // This is correct behavior - the function is designed to skip flow style
+        ("  nested:", "nested", None),
+        ("    deep: value!", "deep", Some("value!")),
+        ("    deeper: !important", "deeper", Some("!important")),
+        ("errors:", "errors", None),
+        ("  E001: Invalid input", "E001", Some("Invalid input")),
+        ("  D123: Delimiter not found", "D123", Some("Delimiter not found")),
+    ];
+
+    // Lines that should NOT be detected as mapping keys
+    let rejected = vec![
+        "# Configuration file - note: important! check settings",
+        "  types: [string, integer, boolean]",  // Flow sequence - rejected
+        "  tags: [!tag, !!str, !custom]",        // Flow sequence - rejected
+    ];
+
+    // Test mapping keys detection
+    for (line, expected_key, expected_value) in &mapping_keys {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Should detect mapping key in end-to-end test: '{}'",
+            line
+        );
+        let info = info.unwrap();
+        assert_eq!(info.key, *expected_key, "Should extract correct key from: '{}'", line);
+        assert_eq!(info.value, expected_value.map(|v| v.to_string()), "Should extract correct value from: '{}'", line);
+    }
+
+    // Test rejected lines
+    for line in &rejected {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_none(),
+            "Should reject line in end-to-end test: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_detect_mapping_key_with_all_tag_patterns_from_section_10() {
+    // Comprehensive test covering all tag patterns from Section 10
+    // Valid tags should be rejected, tag-like in values should be accepted
+
+    // Valid YAML tags (should be rejected)
+    let valid_tags = vec![
+        "!tag", "!!str", "!!map", "!!seq", "!custom_type", "!ns:tag", "!!type",
+        "!local-tag", "!my_type", "!CustomTag", "!tag123", "!ns:name",
+        "!com:example:tag", "!yaml:org:yaml:tag", "!!int", "!!float",
+        "!!bool", "!!null", "!!timestamp", "!myNamespace:myTag",
+        "!verb", "!handle", "!my-tag", "!my_tag", "!tag-name", "!tag_name",
+        "!example.com:tag", "!org.example.project:type",
+    ];
+
+    for tag in &valid_tags {
+        let info = detect_mapping_key(tag, 0);
+        assert!(
+            info.is_none(),
+            "Valid tag '{}' should be rejected by detect_mapping_key",
+            tag
+        );
+    }
+
+    // Tag-like patterns in values (should be accepted)
+    let tag_like_values = vec![
+        "key: !tag",
+        "field: !!str",
+        "data: !custom",
+        "config: !ns:tag",
+        "setting: !!type",
+        "value: !my-tag",
+        "option: !123",
+        "param: !$value",
+        "data: !@tag",
+        "text: ! important",
+        "msg: !todo",
+        "note: !!",
+    ];
+
+    for line in &tag_like_values {
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_some(),
+            "Tag-like in value '{}' should be accepted by detect_mapping_key",
+            line
+        );
+    }
+}
+
 // ============================================================================
 // Section 12: Complex Real-World Scenarios
 // ============================================================================
