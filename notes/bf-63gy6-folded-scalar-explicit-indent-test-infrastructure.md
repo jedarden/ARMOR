@@ -32,6 +32,115 @@ This document establishes the **test infrastructure and pattern** for folded sca
 
 ---
 
+## Explicit Indent Coverage Gap Analysis
+
+### Current Level-Specific Test Coverage
+
+#### ✅ Folded Scalar - 2-Space Level (COMPLETE)
+- `test_folded_scalar_plain_explicit_indent_modifiers_at_2_space()` (line 8561)
+- `test_folded_scalar_strip_explicit_indent_modifiers_at_2_space()` (line 8670)
+- `test_folded_scalar_keep_explicit_indent_modifiers_at_2_space()` (line 13040)
+
+#### ❌ Folded Scalar - Missing Level-Specific Tests
+**4-Space Level:**
+- `test_folded_scalar_plain_explicit_indent_modifiers_at_4_space()` - NOT IMPLEMENTED
+- `test_folded_scalar_strip_explicit_indent_modifiers_at_4_space()` - NOT IMPLEMENTED
+- `test_folded_scalar_keep_explicit_indent_modifiers_at_4_space()` - NOT IMPLEMENTED
+
+**6-Space Level:**
+- `test_folded_scalar_plain_explicit_indent_modifiers_at_6_space()` - NOT IMPLEMENTED
+- `test_folded_scalar_strip_explicit_indent_modifiers_at_6_space()` - NOT IMPLEMENTED
+- `test_folded_scalar_keep_explicit_indent_modifiers_at_6_space()` - NOT IMPLEMENTED
+
+**8-Space Level:**
+- `test_folded_scalar_plain_explicit_indent_modifiers_at_8_space()` - NOT IMPLEMENTED
+- `test_folded_scalar_strip_explicit_indent_modifiers_at_8_space()` - NOT IMPLEMENTED
+- `test_folded_scalar_keep_explicit_indent_modifiers_at_8_space()` - NOT IMPLEMENTED
+
+**Tab Level:**
+- `test_folded_scalar_plain_explicit_indent_modifiers_tab()` - NOT IMPLEMENTED
+- `test_folded_scalar_strip_explicit_indent_modifiers_tab()` - NOT IMPLEMENTED
+- `test_folded_scalar_keep_explicit_indent_modifiers_tab()` - NOT IMPLEMENTED
+
+#### ❌ Literal Scalar - All Levels Missing (NO LEVEL-SPECIFIC TESTS)
+**2-Space Level:**
+- `test_literal_scalar_plain_explicit_indent_modifiers_at_2_space()` - NOT IMPLEMENTED
+- `test_literal_scalar_strip_explicit_indent_modifiers_at_2_space()` - NOT IMPLEMENTED
+- `test_literal_scalar_keep_explicit_indent_modifiers_at_2_space()` - NOT IMPLEMENTED
+
+**4-Space, 6-Space, 8-Space, Tab Levels:** - ALL NOT IMPLEMENTED
+(Repeat above patterns for each level)
+
+---
+
+### Bulk vs Level-Specific Testing
+
+#### ✅ Bulk Tests (EXISTING)
+- `test_folded_scalar_explicit_indent_modifiers_at_various_levels()` (line 8342)
+- `test_literal_scalar_explicit_indent_modifiers_at_various_levels()` (line 8700)
+- These tests provide comprehensive coverage across all levels in a single function
+
+#### ❌ Level-Specific Tests (MISSING)
+- Dedicated test functions for each indentation level
+- Enables easier debugging of level-specific issues
+- Follows Section 12B.3 pattern for granular testing
+- Provides better test isolation and clearer failure messages
+
+---
+
+### Skeleton Template Reference
+
+**Location:** `tests/type_like_string_false_positive_test.rs` (line 13153)
+
+**Function:** `test_folded_scalar_explicit_indent_skeleton()`
+
+**Usage:**
+1. Copy the skeleton function at line 13153
+2. Rename following pattern: `test_<scalar_type>_<modifier>_explicit_indent_<level>()`
+3. Replace placeholder test cases with actual data
+4. Update indentation level (e.g., `"    "` for 4-space, `"\t"` for tab)
+
+**Example:**
+```rust
+#[test]
+fn test_folded_scalar_plain_explicit_indent_modifiers_at_4_space() {
+    let test_cases = vec![
+        ("    text1: >1", "text1", LineType::MappingKey),
+        ("    text2: >2", "text2", LineType::MappingKey),
+        // ... more cases for n=1-9
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(result, expected_type, "...");
+        // ... key validation
+    }
+}
+```
+
+---
+
+### Recommended Test Additions (Section 12B.3 Pattern)
+
+Following the Section 12B.3 infrastructure pattern (lines 12685-12700), add tests in this order:
+
+**Priority 1 - Folded Scalar Level-Specific Tests:**
+1. `test_folded_scalar_plain_explicit_indent_modifiers_at_4_space()`
+2. `test_folded_scalar_strip_explicit_indent_modifiers_at_4_space()`
+3. `test_folded_scalar_keep_explicit_indent_modifiers_at_4_space()`
+4. Repeat for 6-space, 8-space, tab levels
+
+**Priority 2 - Literal Scalar Level-Specific Tests:**
+1. `test_literal_scalar_plain_explicit_indent_modifiers_at_2_space()`
+2. `test_literal_scalar_strip_explicit_indent_modifiers_at_2_space()`
+3. `test_literal_scalar_keep_explicit_indent_modifiers_at_2_space()`
+4. Repeat for 4-space, 6-space, 8-space, tab levels
+
+**Priority 3 - Continuation Line Validation:**
+Add continuation line validation for each new level-specific test (following pattern at lines 13005-13029)
+
+---
+
 ## Test Pattern Structure
 
 ### 1. Function Signature and Documentation
