@@ -1,0 +1,424 @@
+
+running 73 tests
+test test_add_key_to_nested_scope ... ok
+test test_add_key_to_root_scope ... ok
+test test_current_indent_returns_correct_level ... ok
+test test_contains_key_in_any_scope ... ok
+test test_depth_tracking ... FAILED
+test test_duplicate_key_error_creation ... ok
+test test_duplicate_key_error_display ... ok
+test test_duplicate_key_error_message ... ok
+test test_duplicate_key_in_same_scope_fails ... ok
+test test_duplicate_within_sequence_item_fails ... ok
+test test_empty_scope_path_at_root ... ok
+test test_enter_multiple_scopes ... FAILED
+test test_enter_scope_creates_new_level ... FAILED
+test test_enter_scope_with_no_parent_key ... FAILED
+test test_enter_sequence_scope ... ok
+test test_exit_multiple_levels ... FAILED
+test test_exit_to_parent_scope ... FAILED
+test test_extract_inline_scalar_context ... ok
+test test_extract_key_context_empty_after_colon ... ok
+test test_extract_key_context_empty_key ... ok
+test test_extract_key_context_flow_style_braces ... ok
+test test_extract_key_context_flow_style_brackets ... ok
+test test_extract_key_context_no_colon ... ok
+test test_extract_key_context_with_extra_spaces_after_colon ... ok
+test test_extract_key_context_with_spaces ... ok
+test test_extract_parent_mapping_context ... ok
+test test_get_scope_at_level ... FAILED
+test test_key_context_is_parent_key ... ok
+test test_key_context_key_name ... ok
+test test_keys_isolated_between_siblings ... ok
+test test_leading_whitespace_empty_line ... ok
+test test_leading_whitespace_four_spaces ... ok
+test test_leading_whitespace_many_spaces ... ok
+test test_leading_whitespace_mixed_spaces_and_tabs ... ok
+test test_leading_whitespace_no_indent ... ok
+test test_leading_whitespace_only_whitespace ... ok
+test test_leading_whitespace_single_space ... ok
+test test_leading_whitespace_two_spaces ... ok
+test test_leading_whitespace_with_tabs ... ok
+test test_mixed_regular_and_sequence_scopes ... ok
+test test_nested_yaml_structure ... ok
+test test_many_keys_in_single_scope ... ok
+test test_re_enter_sibling_scope ... ok
+test test_same_key_in_different_scopes_succeeds ... ok
+test test_same_key_in_different_sequence_items ... ok
+test test_scope_add_multiple_keys ... ok
+test test_scope_add_single_key ... ok
+test test_scope_clear_keys ... ok
+test test_scope_default_values ... ok
+test test_scope_display_format ... ok
+test test_scope_display_without_parent ... ok
+test test_scope_duplicate_detection ... ok
+test test_scope_flow_style_flag ... ok
+test test_scope_path_after_reset ... ok
+test test_scope_path_at_root ... ok
+test test_scope_path_multiple_levels ... ok
+test test_scope_path_single_level ... ok
+test test_scope_path_updates_on_sibling_entry ... ok
+test test_scope_sequence_context ... ok
+test test_scope_stack_change_base_indent ... ok
+test test_scope_stack_display_format ... ok
+test test_scope_stack_initial_state ... FAILED
+test test_scope_stack_reset ... FAILED
+test test_scope_stack_with_different_base_indents ... ok
+test test_scope_with_numeric_keys ... ok
+test test_scope_with_parent_key ... ok
+test test_scope_with_special_characters_in_parent_key ... ok
+test test_scope_with_unicode_keys ... ok
+test test_sequence_scope_clears_previous_keys ... ok
+test test_sequence_scope_unique_ids ... ok
+test test_sequence_yaml_structure ... ok
+test test_simple_yaml_structure ... ok
+test test_very_deep_nesting ... FAILED
+
+failures:
+
+---- test_depth_tracking stdout ----
+
+thread 'test_depth_tracking' (1161371) panicked at tests/scope_tracking_comprehensive_test.rs:810:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_enter_multiple_scopes stdout ----
+
+thread 'test_enter_multiple_scopes' (1161378) panicked at tests/scope_tracking_comprehensive_test.rs:178:5:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+---- test_enter_scope_creates_new_level stdout ----
+
+thread 'test_enter_scope_creates_new_level' (1161379) panicked at tests/scope_tracking_comprehensive_test.rs:163:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_enter_scope_with_no_parent_key stdout ----
+
+thread 'test_enter_scope_with_no_parent_key' (1161380) panicked at tests/scope_tracking_comprehensive_test.rs:230:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_multiple_levels stdout ----
+
+thread 'test_exit_multiple_levels' (1161382) panicked at tests/scope_tracking_comprehensive_test.rs:203:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_parent_scope stdout ----
+
+thread 'test_exit_to_parent_scope' (1161383) panicked at tests/scope_tracking_comprehensive_test.rs:187:5:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+---- test_get_scope_at_level stdout ----
+
+thread 'test_get_scope_at_level' (1161393) panicked at tests/scope_tracking_comprehensive_test.rs:783:5:
+assertion failed: stack.get_scope_at_level(0).is_some()
+
+---- test_scope_stack_initial_state stdout ----
+
+thread 'test_scope_stack_initial_state' (1161428) panicked at tests/scope_tracking_comprehensive_test.rs:139:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_scope_stack_reset stdout ----
+
+thread 'test_scope_stack_reset' (1161429) panicked at tests/scope_tracking_comprehensive_test.rs:149:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_very_deep_nesting stdout ----
+
+thread 'test_very_deep_nesting' (1161439) panicked at tests/scope_tracking_comprehensive_test.rs:715:5:
+assertion `left == right` failed
+  left: 20
+ right: 21
+
+
+failures:
+    test_depth_tracking
+    test_enter_multiple_scopes
+    test_enter_scope_creates_new_level
+    test_enter_scope_with_no_parent_key
+    test_exit_multiple_levels
+    test_exit_to_parent_scope
+    test_get_scope_at_level
+    test_scope_stack_initial_state
+    test_scope_stack_reset
+    test_very_deep_nesting
+
+test result: FAILED. 63 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running tests/scope_tracking_comprehensive_test.rs (target/debug/deps/scope_tracking_comprehensive_test-4e0a46d4b26e67df)
+
+running 73 tests
+test test_add_key_to_root_scope ... ok
+test test_add_key_to_nested_scope ... ok
+test test_contains_key_in_any_scope ... ok
+test test_current_indent_returns_correct_level ... ok
+test test_duplicate_key_error_creation ... ok
+test test_depth_tracking ... FAILED
+test test_duplicate_key_error_display ... ok
+test test_duplicate_key_error_message ... ok
+test test_duplicate_key_in_same_scope_fails ... ok
+test test_duplicate_within_sequence_item_fails ... ok
+test test_empty_scope_path_at_root ... ok
+test test_enter_multiple_scopes ... FAILED
+test test_enter_scope_creates_new_level ... FAILED
+test test_enter_scope_with_no_parent_key ... FAILED
+test test_enter_sequence_scope ... ok
+test test_exit_multiple_levels ... FAILED
+test test_exit_to_parent_scope ... FAILED
+test test_extract_inline_scalar_context ... ok
+test test_extract_key_context_empty_after_colon ... ok
+test test_extract_key_context_empty_key ... ok
+test test_extract_key_context_flow_style_braces ... ok
+test test_extract_key_context_flow_style_brackets ... ok
+test test_extract_key_context_no_colon ... ok
+test test_extract_key_context_with_extra_spaces_after_colon ... ok
+test test_extract_key_context_with_spaces ... ok
+test test_extract_parent_mapping_context ... ok
+test test_get_scope_at_level ... FAILED
+test test_key_context_is_parent_key ... ok
+test test_key_context_key_name ... ok
+test test_keys_isolated_between_siblings ... ok
+test test_leading_whitespace_empty_line ... ok
+test test_leading_whitespace_four_spaces ... ok
+test test_leading_whitespace_many_spaces ... ok
+test test_leading_whitespace_mixed_spaces_and_tabs ... ok
+test test_leading_whitespace_no_indent ... ok
+test test_leading_whitespace_only_whitespace ... ok
+test test_leading_whitespace_single_space ... ok
+test test_leading_whitespace_two_spaces ... ok
+test test_leading_whitespace_with_tabs ... ok
+test test_mixed_regular_and_sequence_scopes ... ok
+test test_nested_yaml_structure ... ok
+test test_many_keys_in_single_scope ... ok
+test test_re_enter_sibling_scope ... ok
+test test_same_key_in_different_scopes_succeeds ... ok
+test test_same_key_in_different_sequence_items ... ok
+test test_scope_add_multiple_keys ... ok
+test test_scope_add_single_key ... ok
+test test_scope_clear_keys ... ok
+test test_scope_default_values ... ok
+test test_scope_display_format ... ok
+test test_scope_display_without_parent ... ok
+test test_scope_duplicate_detection ... ok
+test test_scope_flow_style_flag ... ok
+test test_scope_path_after_reset ... ok
+test test_scope_path_at_root ... ok
+test test_scope_path_multiple_levels ... ok
+test test_scope_path_single_level ... ok
+test test_scope_path_updates_on_sibling_entry ... ok
+test test_scope_sequence_context ... ok
+test test_scope_stack_change_base_indent ... ok
+test test_scope_stack_display_format ... ok
+test test_scope_stack_initial_state ... FAILED
+test test_scope_stack_reset ... FAILED
+test test_scope_stack_with_different_base_indents ... ok
+test test_scope_with_numeric_keys ... ok
+test test_scope_with_parent_key ... ok
+test test_scope_with_special_characters_in_parent_key ... ok
+test test_scope_with_unicode_keys ... ok
+test test_sequence_scope_clears_previous_keys ... ok
+test test_sequence_scope_unique_ids ... ok
+test test_sequence_yaml_structure ... ok
+test test_simple_yaml_structure ... ok
+test test_very_deep_nesting ... FAILED
+
+failures:
+
+---- test_depth_tracking stdout ----
+
+thread 'test_depth_tracking' (1161454) panicked at tests/scope_tracking_comprehensive_test.rs:810:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_enter_multiple_scopes stdout ----
+
+thread 'test_enter_multiple_scopes' (1161461) panicked at tests/scope_tracking_comprehensive_test.rs:178:5:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+---- test_enter_scope_creates_new_level stdout ----
+
+thread 'test_enter_scope_creates_new_level' (1161462) panicked at tests/scope_tracking_comprehensive_test.rs:163:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_enter_scope_with_no_parent_key stdout ----
+
+thread 'test_enter_scope_with_no_parent_key' (1161463) panicked at tests/scope_tracking_comprehensive_test.rs:230:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_exit_multiple_levels stdout ----
+
+thread 'test_exit_multiple_levels' (1161465) panicked at tests/scope_tracking_comprehensive_test.rs:203:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_exit_to_parent_scope stdout ----
+
+thread 'test_exit_to_parent_scope' (1161466) panicked at tests/scope_tracking_comprehensive_test.rs:187:5:
+assertion `left == right` failed
+  left: 2
+ right: 3
+
+---- test_get_scope_at_level stdout ----
+
+thread 'test_get_scope_at_level' (1161476) panicked at tests/scope_tracking_comprehensive_test.rs:783:5:
+assertion failed: stack.get_scope_at_level(0).is_some()
+
+---- test_scope_stack_initial_state stdout ----
+
+thread 'test_scope_stack_initial_state' (1161511) panicked at tests/scope_tracking_comprehensive_test.rs:139:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- test_scope_stack_reset stdout ----
+
+thread 'test_scope_stack_reset' (1161512) panicked at tests/scope_tracking_comprehensive_test.rs:149:5:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+---- test_very_deep_nesting stdout ----
+
+thread 'test_very_deep_nesting' (1161522) panicked at tests/scope_tracking_comprehensive_test.rs:715:5:
+assertion `left == right` failed
+  left: 20
+ right: 21
+
+
+failures:
+    test_depth_tracking
+    test_enter_multiple_scopes
+    test_enter_scope_creates_new_level
+    test_enter_scope_with_no_parent_key
+    test_exit_multiple_levels
+    test_exit_to_parent_scope
+    test_get_scope_at_level
+    test_scope_stack_initial_state
+    test_scope_stack_reset
+    test_very_deep_nesting
+
+test result: FAILED. 63 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test scope_tracking_comprehensive_test`
