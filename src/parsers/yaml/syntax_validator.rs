@@ -277,6 +277,14 @@ impl SyntaxValidator {
             }
         }
 
+        // Check for colon at start of line (invalid YAML syntax)
+        if trimmed.starts_with(':') {
+            errors.push(ValidationError::new(
+                format!("line {}", line_num),
+                "colon at start of line without preceding key"
+            ).with_line(line_num));
+        }
+
         // Check for block scalar indicators
         if self.validate_block_scalars {
             if trimmed.starts_with('|') || trimmed.starts_with('>') {
