@@ -48,7 +48,24 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 //     * Comprehensive level coverage (spaces, tabs, mixed)
 //     * Helper functions for bulk test generation
 //
+//   - Section 12B Type-Like String Pattern Tests (line 6885)
+//     * test_type_like_in_multiline_values() - demonstrates vec! of strings pattern
+//     * test_type_like_in_documentation() - shows basic assertion pattern
+//     * test_type_like_in_error_descriptions() - demonstrates iteration pattern
+//     * test_type_like_in_config_descriptions() - shows assertion with context message
+//     * test_type_like_in_validation_messages() - demonstrates type classification tests
+//     * test_type_like_in_api_responses() - shows MappingKey assertion pattern
+//     * test_type_like_in_schema_definitions() - demonstrates key extraction pattern
+//     * test_type_like_in_log_messages() - shows continuation line pattern
+//     * test_type_like_in_comments_inline() - demonstrates detect_mapping_key pattern
+//     * test_type_like_with_exclamation_complex() - shows ! handling in values
+//     * test_type_like_in_enum_values() - demonstrates enum pattern tests
+//     * test_type_like_in_regex_patterns() - shows regex description pattern
+//     * test_type_like_in_conversion_contexts() - demonstrates conversion context pattern
+//     * test_type_like_in_function_descriptions() - shows function parameter pattern
+//
 // NOTE: Section 12B line numbers verified 2026-07-13 (Bead: bf-1am6b)
+// NOTE: Section 12B type-like string tests analyzed 2026-07-13 (Bead: bf-68ime)
 //
 // ============================================================================
 // Pattern 1: Test Case Data Structure
@@ -413,6 +430,217 @@ use armor::parsers::yaml::{classify_line_type, detect_mapping_key, LineType};
 // - Added note about Section 12B analysis date and bead reference
 //
 // Section 12B now serves as a concrete reference for all folded scalar test patterns.
+
+// ============================================================================
+// Section 12B Type-Like String Test Patterns (Bead: bf-68ime)
+// ============================================================================
+// This section documents the concrete test structure and assertion patterns used
+// in Section 12B for type-like string false positive testing (lines 6885-7200).
+//
+// These patterns demonstrate how to structure tests for YAML lines that contain
+// type-like words but should NOT be classified as actual types or tags.
+//
+// **Test Structure Pattern 1: Simple vec! of strings**
+// ---------------------------------------------------
+// Use this pattern for basic classification tests where you only need to verify
+// the LineType result, not key extraction.
+//
+// Example from test_type_like_in_multiline_values() (line 6885):
+// ```rust
+// let test_cases = vec![
+//     "description: This is a",
+//     "note: string value that",
+//     "text: continues on next",
+//     "comment: line with integer",
+// ];
+//
+// for line in test_cases {
+//     assert_eq!(
+//         classify_line_type(line),
+//         LineType::MappingKey,
+//         "Type-like word in multiline value should be MappingKey: '{}'",
+//         line
+//     );
+// }
+// ```
+//
+// This pattern is ideal when:
+// - Testing simple classification rules
+// - All test cases have the same expected LineType
+// - No key extraction validation needed
+// - Test cases are homogeneous (same category of inputs)
+//
+// **Test Structure Pattern 2: Iteration with context messages**
+// ------------------------------------------------------------
+// Use this pattern when you need descriptive assertion messages that explain
+// WHY a particular classification is expected.
+//
+// Example from test_type_like_in_documentation() (line 6905):
+// ```rust
+// let test_cases = vec![
+//     "doc: Returns string value",
+//     "description: Expects integer input",
+//     "help: Boolean flag for feature",
+//     "note: Array of objects",
+//     "summary: Object with string keys",
+// ];
+//
+// for line in test_cases {
+//     assert_eq!(
+//         classify_line_type(line),
+//         LineType::MappingKey,
+//         "Type name in documentation should be MappingKey: '{}'",
+//         line
+//     );
+// }
+// ```
+//
+// Key differences from Pattern 1:
+// - More descriptive assertion message explaining the context
+// - Test cases grouped by semantic category (documentation, error messages, etc.)
+// - Helps identify WHICH rule is being tested when assertion fails
+//
+// **Test Structure Pattern 3: Key extraction validation**
+// -------------------------------------------------------
+// Use this pattern when you need to verify both classification AND key extraction.
+//
+// Example from test_type_like_in_comments_inline() (line 7052):
+// ```rust
+// let test_cases = vec![
+//     "value: 42 # integer value",
+//     "flag: true # boolean setting",
+//     "name: test # string identifier",
+//     "count: 100 # integer amount",
+//     "enabled: false # boolean flag",
+// ];
+//
+// for line in test_cases {
+//     let info = detect_mapping_key(line, 0);
+//     assert!(
+//         info.is_some(),
+//         "Should detect mapping key with type comment: '{}'",
+//         line
+//     );
+// }
+// ```
+//
+// This pattern demonstrates:
+// - Using detect_mapping_key() instead of classify_line_type()
+// - Validating that a mapping key WAS detected (not just classification)
+// - No validation of the specific key name (just detection)
+//
+// **Assertion Pattern 1: Basic classification assertion**
+// -----------------------------------------------------
+// The most common assertion pattern in Section 12B type-like tests:
+// ```rust
+// assert_eq!(
+//     classify_line_type(line),
+//     LineType::MappingKey,
+//     "Descriptive message explaining why: '{}'",
+//     line
+// );
+// ```
+//
+// Used in: test_type_like_in_multiline_values(), test_type_like_in_documentation(),
+// test_type_like_in_error_descriptions(), test_type_like_in_config_descriptions(),
+// test_type_like_in_validation_messages(), test_type_like_in_api_responses(),
+// test_type_like_in_schema_definitions(), test_type_like_in_log_messages(),
+// test_type_like_with_exclamation_complex(), test_type_like_in_enum_values(),
+// test_type_like_in_regex_patterns(), test_type_like_in_conversion_contexts(),
+// test_type_like_in_function_descriptions()
+//
+// **Assertion Pattern 2: Detection validation**
+// -------------------------------------------
+// For validating key extraction (not just classification):
+// ```rust
+// let info = detect_mapping_key(line, 0);
+// assert!(
+//     info.is_some(),
+//     "Should detect mapping key: '{}'",
+//     line
+// );
+// ```
+//
+// Used in: test_type_like_in_comments_inline()
+//
+// **Test Case Construction Pattern 1: Thematic grouping**
+// -------------------------------------------------------
+// Section 12B groups test cases by semantic category to make tests more readable
+// and failure messages more informative:
+//
+// - test_type_like_in_multiline_values(): Continuation lines with type words
+// - test_type_like_in_documentation(): Documentation strings with type names
+// - test_type_like_in_error_descriptions(): Error messages with type references
+// - test_type_like_in_config_descriptions(): Configuration help text
+// - test_type_like_in_validation_messages(): Validation error text
+// - test_type_like_in_api_responses(): API response documentation
+// - test_type_like_in_schema_definitions(): Schema/contract definitions
+// - test_type_like_in_log_messages(): Log statement patterns
+// - test_type_like_in_comments_inline(): Inline type comments
+// - test_type_like_with_exclamation_complex(): Complex ! patterns in values
+// - test_type_like_in_enum_values(): Enum-like value patterns
+// - test_type_like_in_regex_patterns(): Regex description patterns
+// - test_type_like_in_conversion_contexts(): Type conversion messages
+// - test_type_like_in_function_descriptions(): Function parameter documentation
+//
+// **Test Case Construction Pattern 2: String format**
+// ---------------------------------------------------
+// Section 12B type-like tests use consistent string format: "<key>: <value>"
+//
+// Common patterns:
+// - "description: <text with type word>" - Documentation contexts
+// - "error: <text with type reference>" - Error message contexts
+// - "validation: <text with type name>" - Validation contexts
+// - "<key>: <value> # <type comment>" - Inline type comments
+//
+// Key observations:
+// - The COLON after the key is critical - creates YAML mapping structure
+// - Type-like words appear AFTER the colon in the value portion
+// - This distinguishes them from actual type declarations or tags
+//
+// **Gap Analysis: Section 12B Type-Like String Coverage**
+// -------------------------------------------------------
+// Current coverage (lines 6885-7200):
+// - ✓ Documentation strings with type names
+// - ✓ Error descriptions with type references
+// - ✓ Configuration descriptions
+// - ✓ Validation messages
+// - ✓ API response descriptions
+// - ✓ Schema definitions
+// - ✓ Log messages
+// - ✓ Inline comments with types
+// - ✓ Complex exclamation mark patterns in values
+// - ✓ Enum-like values
+// - ✓ Regex pattern descriptions
+// - ✓ Conversion contexts
+// - ✓ Function descriptions
+//
+// Potential gaps for future enhancement:
+// - Type names in database query strings (e.g., "query: SELECT string FROM...")
+// - Type references in JSON/YAML path expressions (e.g., "path: $.users[0].string")
+// - Type-like words in URL patterns (e.g., "url: /api/string/{integer}")
+// - Type names in template strings (e.g., "template: Hello {string}!")
+// - Type references in format strings (e.g., "format: %s for string, %d for integer")
+//
+// These patterns would follow the same test structure:
+// ```rust
+// #[test]
+// fn test_type_like_in_<context>() {
+//     let test_cases = vec![
+//         // Add test cases following the "<key>: <value with type word>" pattern
+//         "key: value with type reference",
+//     ];
+//
+//     for line in test_cases {
+//         assert_eq!(
+//             classify_line_type(line),
+//             LineType::MappingKey,
+//             "Context-specific message: '{}'",
+//             line
+//         );
+//     }
+// }
+// ```
 
 /// Macro to generate folded scalar explicit indent test cases
 ///
