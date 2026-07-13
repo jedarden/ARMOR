@@ -8236,3 +8236,309 @@ fn test_folded_scalar_continuation_exclamation_various_contexts() {
         }
     }
 }
+
+#[test]
+fn test_comprehensive_tab_indented_folded_scalars_with_exclamation() {
+    // Comprehensive test for tab-indented folded scalars with exclamation marks
+    // Verifies classification behavior across all tab indentation scenarios
+
+    let test_cases: Vec<(&str, LineType, &str)> = vec![
+        // Single tab with folded scalar indicator
+        ("\tmessage: >", LineType::MappingKey, "Single tab with > indicator"),
+        ("\ttext: >-", LineType::MappingKey, "Single tab with >- modifier"),
+        ("\tnote: >+", LineType::MappingKey, "Single tab with >+ modifier"),
+        ("\tcontent: >2", LineType::MappingKey, "Single tab with >2 explicit indent"),
+        ("\tdata: >-2", LineType::MappingKey, "Single tab with >-2 explicit indent"),
+
+        // Double tab with folded scalar indicator
+        ("\t\tdeep: >", LineType::MappingKey, "Double tab with > indicator"),
+        ("\t\tvalue: >", LineType::MappingKey, "Double tab with > indicator"),
+
+        // Triple tab with folded scalar indicator
+        ("\t\t\tnested: >", LineType::MappingKey, "Triple tab with > indicator"),
+        ("\t\t\titem: >", LineType::MappingKey, "Triple tab with > indicator"),
+
+        // Tab-indented continuation lines with exclamation marks
+        // These can be MappingKey or Unknown (both are valid)
+        ("\tContent! with! exclamations!", LineType::Unknown, "Single tab continuation with !"),
+        ("\t  More! text! here!", LineType::Unknown, "Single tab + 2 spaces continuation with !"),
+        ("\t\tDeep! folded! content!", LineType::Unknown, "Double tab continuation with !"),
+        ("\t\t\tTriple! tab! indentation!", LineType::Unknown, "Triple tab continuation with !"),
+
+        // Tab-indented lines starting with ! (should be Tag)
+        ("\t!important", LineType::Tag, "Single tab starting with !"),
+        ("\t!custom_type", LineType::Tag, "Single tab with custom type"),
+        ("\t\t!nested_type", LineType::Tag, "Double tab starting with !"),
+    ];
+
+    for (line, expected_type, description) in test_cases {
+        let result = classify_line_type(line);
+        // For continuation lines without colons, both MappingKey and Unknown are acceptable
+        if line.contains(':') {
+            assert_eq!(
+                result, expected_type,
+                "{}: '{}' (expected {:?}, got {:?})",
+                description, line, expected_type, result
+            );
+        } else if expected_type == LineType::Tag {
+            assert_eq!(
+                result, expected_type,
+                "{}: '{}' (expected {:?}, got {:?})",
+                description, line, expected_type, result
+            );
+        } else {
+            // Continuation lines can be either MappingKey or Unknown
+            assert!(
+                result == LineType::MappingKey || result == LineType::Unknown,
+                "{}: '{}' (expected MappingKey or Unknown, got {:?})",
+                description, line, result
+            );
+        }
+    }
+
+    // Verify detect_mapping_key behavior for tab-indented lines
+    let detection_tests: Vec<(&str, bool, Option<&str>)> = vec![
+        // Should detect as mapping keys
+        ("\tkey: >", true, Some("key")),
+        ("\t  name: >", true, Some("name")),
+        ("\t\tvalue: >", true, Some("value")),
+        ("\ttext: >-", true, Some("text")),
+        ("\t\tnote: >+", true, Some("note")),
+
+        // Should NOT detect as mapping keys (continuation lines)
+        ("\tcontent! here!", false, None),
+        ("\t  more! text!", false, None),
+        ("\t\tdeep! indented!", false, None),
+        ("\t\t\tvery! deep!", false, None),
+    ];
+
+    for (line, should_detect, expected_key) in detection_tests {
+        let info = detect_mapping_key(line, 0);
+        if should_detect {
+            assert!(
+                info.is_some(),
+                "Should detect tab-indented mapping key: '{}'",
+                line
+            );
+            if let Some(key) = expected_key {
+                assert_eq!(
+                    info.unwrap().key, key,
+                    "Should extract correct key from tab-indented line: '{}'",
+                    line
+                );
+            }
+        } else {
+            assert!(
+                info.is_none(),
+                "Should NOT detect tab-indented continuation as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_comprehensive_various_indentation_levels_with_exclamation() {
+    // Comprehensive test for various indentation levels with folded scalars and exclamation marks
+    // Covers deeper and more diverse indentation scenarios
+
+    let test_cases: Vec<(&str, LineType, bool, Option<&str>)> = vec![
+        // 0 spaces (root level)
+        ("root: >", LineType::MappingKey, true, Some("root")),
+        ("  Root! level! content!", LineType::MappingKey, false, None),
+
+        // 2 spaces
+        ("  level2: >", LineType::MappingKey, true, Some("level2")),
+        ("    Two! spaces! indent!", LineType::MappingKey, false, None),
+
+        // 4 spaces
+        ("    level3: >", LineType::MappingKey, true, Some("level3")),
+        ("      Four! spaces! indent!", LineType::MappingKey, false, None),
+
+        // 6 spaces
+        ("      level4: >", LineType::MappingKey, true, Some("level4")),
+        ("        Six! spaces! indent!", LineType::MappingKey, false, None),
+
+        // 8 spaces
+        ("        level5: >", LineType::MappingKey, true, Some("level5")),
+        ("          Eight! spaces! indent!", LineType::MappingKey, false, None),
+
+        // 10 spaces (unusual but valid)
+        ("          level6: >", LineType::MappingKey, true, Some("level6")),
+        ("            Ten! spaces! indent!", LineType::MappingKey, false, None),
+
+        // 12 spaces (deep nesting)
+        ("            level7: >", LineType::MappingKey, true, Some("level7")),
+        ("              Twelve! spaces! indent!", LineType::MappingKey, false, None),
+
+        // Single tab
+        ("\ttab1: >", LineType::MappingKey, true, Some("tab1")),
+        ("\t\tTab! content!", LineType::MappingKey, false, None),
+
+        // Double tab
+        ("\t\ttab2: >", LineType::MappingKey, true, Some("tab2")),
+        ("\t\t\tDouble! tab! content!", LineType::MappingKey, false, None),
+
+        // Triple tab
+        ("\t\t\ttab3: >", LineType::MappingKey, true, Some("tab3")),
+        ("\t\t\t\tTriple! tab! deep!", LineType::MappingKey, false, None),
+    ];
+
+    for (line, expected_type, should_detect_key, expected_key) in test_cases {
+        let result = classify_line_type(line);
+
+        // For lines without colons (continuation lines), both MappingKey and Unknown are acceptable
+        if line.contains(':') {
+            assert_eq!(
+                result, expected_type,
+                "Line type classification failed for: '{}' (expected {:?}, got {:?})",
+                line, expected_type, result
+            );
+        } else {
+            assert!(
+                result == LineType::MappingKey || result == LineType::Unknown,
+                "Continuation line should be MappingKey or Unknown: '{}' (expected {:?}, got {:?})",
+                line, expected_type, result
+            );
+        }
+
+        // Test detect_mapping_key behavior
+        let info = detect_mapping_key(line, 0);
+        if should_detect_key {
+            assert!(
+                info.is_some(),
+                "Should detect mapping key at indentation level: '{}'",
+                line
+            );
+            if let Some(key) = expected_key {
+                assert_eq!(
+                    info.unwrap().key, key,
+                    "Should extract correct key at indentation: '{}'",
+                    line
+                );
+            }
+        } else {
+            assert!(
+                info.is_none(),
+                "Should NOT detect continuation line as mapping key: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_mixed_indentation_scenarios_with_folded_scalars() {
+    // Test mixed indentation scenarios (tabs and spaces combined)
+    // These are unusual but syntactically valid YAML that should be handled correctly
+
+    let test_cases: Vec<(&str, LineType, bool, Option<&str>, &str)> = vec![
+        // Tab followed by spaces
+        ("\t mixed1: >", LineType::MappingKey, true, Some("mixed1"), "Tab + 1 space with >"),
+        ("\t  mixed2: >", LineType::MappingKey, true, Some("mixed2"), "Tab + 2 spaces with >"),
+        ("\t    mixed3: >", LineType::MappingKey, true, Some("mixed3"), "Tab + 4 spaces with >"),
+
+        // Spaces followed by tab
+        (" \tmixed4: >", LineType::MappingKey, true, Some("mixed4"), "1 space + tab with >"),
+        ("  \tmixed5: >", LineType::MappingKey, true, Some("mixed5"), "2 spaces + tab with >"),
+        ("    \tmixed6: >", LineType::MappingKey, true, Some("mixed6"), "4 spaces + tab with >"),
+
+        // Continuation lines with mixed indentation and exclamation marks
+        // These should be Unknown or MappingKey (both valid for continuations)
+        ("\t Mixed! content! here!", LineType::Unknown, false, None, "Tab + space continuation with !"),
+        ("\t  More! mixed! indentation!", LineType::Unknown, false, None, "Tab + 2 spaces continuation with !"),
+        (" \tSpaces! then! tab! indent!", LineType::Unknown, false, None, "Space + tab continuation with !"),
+        ("  \tTwo! spaces! then! tab!", LineType::Unknown, false, None, "2 spaces + tab continuation with !"),
+
+        // Mixed indentation with modifiers
+        ("\t mixed: >-", LineType::MappingKey, true, Some("mixed"), "Tab + space with >-"),
+        ("  \tmixed: >+", LineType::MappingKey, true, Some("mixed"), "2 spaces + tab with >+"),
+        ("\t  mixed: >2", LineType::MappingKey, true, Some("mixed"), "Tab + 2 spaces with >2"),
+        ("    \tmixed: >-2", LineType::MappingKey, true, Some("mixed"), "4 spaces + tab with >-2"),
+
+        // Lines starting with ! in mixed indentation (should be Tag)
+        ("\t !important", LineType::Tag, false, None, "Tab + space starting with !"),
+        ("  \t!value", LineType::Tag, false, None, "2 spaces + tab starting with !"),
+        ("\t  !custom", LineType::Tag, false, None, "Tab + 2 spaces starting with !"),
+    ];
+
+    for (line, expected_type, should_detect_key, expected_key, description) in test_cases {
+        let result = classify_line_type(line);
+
+        // For lines without colons (continuation lines), both MappingKey and Unknown are acceptable
+        // For lines with colons or Tags, check exact match
+        if line.contains(':') || expected_type == LineType::Tag {
+            assert_eq!(
+                result, expected_type,
+                "{}: '{}' (expected {:?}, got {:?})",
+                description, line, expected_type, result
+            );
+        } else {
+            assert!(
+                result == LineType::MappingKey || result == LineType::Unknown,
+                "{}: Continuation should be MappingKey or Unknown: '{}' (got {:?})",
+                description, line, result
+            );
+        }
+
+        // Test detect_mapping_key behavior
+        let info = detect_mapping_key(line, 0);
+        if should_detect_key {
+            assert!(
+                info.is_some(),
+                "{}: Should detect mapping key",
+                description
+            );
+            if let Some(key) = expected_key {
+                assert_eq!(
+                    info.unwrap().key, key,
+                    "{}: Should extract correct key",
+                    description
+                );
+            }
+        } else {
+            // For continuation lines or Tag lines, should NOT detect as mapping key
+            if expected_type != LineType::Tag {
+                assert!(
+                    info.is_none(),
+                    "{}: Should NOT detect continuation as mapping key: '{}' (got key: {:?})",
+                    description, line, info.map(|i| i.key)
+                );
+            }
+        }
+    }
+
+    // Test classification behavior verification across indentation variations
+    let classification_tests: Vec<(&str, LineType, &str)> = vec![
+        // Verify that deeply indented folded scalars with ! are correctly classified
+        ("          deeply: >", LineType::MappingKey, "Deeply indented folded scalar indicator"),
+        ("            Deep! content! with! exclamations!", LineType::Unknown, "Deeply indented continuation with !"),
+
+        // Verify tab + space combinations with exclamation marks in continuation
+        ("\t deeply! mixed! indented!", LineType::Unknown, "Tab + space continuation with multiple !"),
+        ("  \t  Mixed! at! various! levels!", LineType::Unknown, "Spaces + tab + spaces continuation with !"),
+
+        // Verify that mixed indentation doesn't break folded scalar recognition
+        ("\t    very: >", LineType::MappingKey, "Tab + multiple spaces with >"),
+        ("      \t  mixed: >", LineType::MappingKey, "Multiple spaces + tab + spaces with >"),
+    ];
+
+    for (line, expected_type, description) in classification_tests {
+        let result = classify_line_type(line);
+        // For lines with colons, check exact match
+        if line.contains(':') {
+            assert_eq!(
+                result, expected_type,
+                "{}: '{}' (expected {:?}, got {:?})",
+                description, line, expected_type, result
+            );
+        } else {
+            // For continuation lines without colons, both MappingKey and Unknown are acceptable
+            assert!(
+                result == LineType::MappingKey || result == LineType::Unknown,
+                "{}: Continuation should be MappingKey or Unknown: '{}' (got {:?})",
+                description, line, result
+            );
+        }
+    }
+}
