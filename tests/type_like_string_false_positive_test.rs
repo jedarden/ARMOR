@@ -11884,3 +11884,112 @@ fn test_folded_scalar_strip_indent_explicit_indent_modifiers_at_2_space() {
         );
     }
 }
+
+#[test]
+fn test_folded_scalar_keep_explicit_indent_modifiers_at_2_space() {
+    // Test folded scalars with keep explicit indent modifiers: >+n for n=1-9
+    // At 2-space indentation level only
+    // This provides focused coverage of keep explicit indent (>+n) specification for folded scalars
+    // Follows the pattern established in test_folded_scalar_strip_explicit_indent_modifiers_at_2_space
+
+    let test_cases = vec![
+        // ===== Level 1: 2-space indentation with keep explicit indent >+n =====
+        // Keep >+n (n=1-9) - main test cases
+        ("  text1: >+1", "text1", LineType::MappingKey),
+        ("  text2: >+2", "text2", LineType::MappingKey),
+        ("  text3: >+3", "text3", LineType::MappingKey),
+        ("  text4: >+4", "text4", LineType::MappingKey),
+        ("  text5: >+5", "text5", LineType::MappingKey),
+        ("  text6: >+6", "text6", LineType::MappingKey),
+        ("  text7: >+7", "text7", LineType::MappingKey),
+        ("  text8: >+8", "text8", LineType::MappingKey),
+        ("  text9: >+9", "text9", LineType::MappingKey),
+
+        // Keys with exclamation marks at 2-space indentation
+        ("  key!1: >+1", "key!1", LineType::MappingKey),
+        ("  warn!2: >+2", "warn!2", LineType::MappingKey),
+        ("  error!3: >+3", "error!3", LineType::MappingKey),
+        ("  test!4: >+4", "test!4", LineType::MappingKey),
+        ("  data!5: >+5", "data!5", LineType::MappingKey),
+        ("  info!6: >+6", "info!6", LineType::MappingKey),
+        ("  msg!7: >+7", "msg!7", LineType::MappingKey),
+        ("  log!8: >+8", "log!8", LineType::MappingKey),
+        ("  val!9: >+9", "val!9", LineType::MappingKey),
+
+        // Keys with multiple exclamation marks
+        ("  key!!1: >+1", "key!!1", LineType::MappingKey),
+        ("  deep!!key2: >+2", "deep!!key2", LineType::MappingKey),
+        ("  very!!deep!!key3: >+3", "very!!deep!!key3", LineType::MappingKey),
+        ("  super!!!deep!!!key4: >+4", "super!!!deep!!!key4", LineType::MappingKey),
+
+        // Edge case: Single character keys with !
+        ("  a!: >+1", "a!", LineType::MappingKey),
+        ("  b!: >+2", "b!", LineType::MappingKey),
+        ("  c!: >+3", "c!", LineType::MappingKey),
+        ("  d!: >+4", "d!", LineType::MappingKey),
+        ("  e!: >+5", "e!", LineType::MappingKey),
+
+        // Edge case: Keys ending with !
+        ("  end!with!bang!: >+1", "end!with!bang!", LineType::MappingKey),
+        ("  another!end!bang!: >+2", "another!end!bang!", LineType::MappingKey),
+        ("  final!end!with!bang!: >+3", "final!end!with!bang!", LineType::MappingKey),
+    ];
+
+    for (line, expected_key, expected_type) in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, expected_type,
+            "Folded scalar keep explicit indent test failed: '{}' - expected {:?}, got {:?}",
+            line, expected_type, result
+        );
+
+        // Verify that the key is correctly detected for MappingKey types
+        if result == LineType::MappingKey {
+            let info = detect_mapping_key(line, 0);
+            assert!(
+                info.is_some(),
+                "Should detect mapping key for folded scalar with keep explicit indent: '{}'",
+                line
+            );
+            let detected = info.unwrap();
+            assert_eq!(
+                detected.key, expected_key,
+                "Key mismatch for folded scalar with keep explicit indent: '{}' - expected '{}', got '{}'",
+                line, expected_key, detected.key
+            );
+        }
+    }
+
+    // Test continuation lines for folded scalars with keep explicit indent modifiers
+    let continuation_lines = vec![
+        // Level 1 continuation lines with ! characters
+        ("  This is content with! exclamation", vec![LineType::MappingKey, LineType::Unknown]),
+        ("  More! text! here! for! testing!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("  Folded! content! continues! with! keep! indent!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("  Lines! with! various! exclamation! marks! here!", vec![LineType::MappingKey, LineType::Unknown]),
+        ("  Testing! continuation! behavior! for! >+n! modifiers!", vec![LineType::MappingKey, LineType::Unknown]),
+
+        // Lines starting with ! (may be classified as Tag)
+        ("  !Starting! with! emphasis!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("  !Tag! like! content! with! exclamation!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+        ("  !Another! tag! pattern! here!", vec![LineType::Tag, LineType::MappingKey, LineType::Unknown]),
+    ];
+
+    for (line, expected_types) in continuation_lines {
+        let result = classify_line_type(line);
+        // Continuation lines should be one of the expected types
+        assert!(
+            expected_types.contains(&result),
+            "Continuation line for folded scalar keep explicit indent should be one of {:?}: '{}' (got {:?})",
+            expected_types, line, result
+        );
+
+        // Continuation lines should NOT detect as mapping keys
+        let info = detect_mapping_key(line, 0);
+        assert!(
+            info.is_none(),
+            "Continuation line should NOT detect mapping key: '{}'",
+            line
+        );
+    }
+}
