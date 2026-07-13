@@ -297,11 +297,34 @@ impl ScopeStack {
             fresh_scope.is_flow_style = existing.is_flow_style;
 
             // Remove all scopes deeper than this level
+            let before_depth = self.depth();
+            let before_path = self.get_scope_path();
+
+            #[cfg(debug_assertions)]
+            {
+                let scopes_to_remove: Vec<_> = self.scopes.iter()
+                    .filter(|s| s.indent_level > indent_level)
+                    .map(|s| format!("(indent={}, parent={:?})", s.indent_level, s.parent_key))
+                    .collect();
+                if !scopes_to_remove.is_empty() {
+                    log_debug!("[SCOPE EXIT] type=Mapping reuse cleanup, removing {} scopes: {:?}",
+                             scopes_to_remove.len(),
+                             scopes_to_remove);
+                }
+            }
+
             self.scopes.retain(|s| s.indent_level <= indent_level);
             self.scopes.push(fresh_scope);
 
             #[cfg(debug_assertions)]
             {
+                let removed_count = before_depth - self.depth() + 1; // +1 because we replaced the scope at this level too
+                if removed_count > 0 {
+                    log_debug!("[SCOPE EXIT] type=Mapping reuse cleanup, removed {} scopes: '{}' -> '{}'",
+                             removed_count,
+                             before_path,
+                             self.get_scope_path());
+                }
                 log_debug!("[SCOPE ENTRY] type=Mapping (reuse), indent={}, cleared scopes deeper than this level", indent_level);
             }
         } else {
@@ -586,10 +609,33 @@ impl ScopeStack {
         // Remove all scopes deeper than this level, but preserve parent mapping scopes
         // When entering a sequence scope, we need to keep the parent mapping scope intact
         // while clearing any nested scopes from previous content
+        let before_depth = self.depth();
+        let before_path = self.get_scope_path();
+
+        #[cfg(debug_assertions)]
+        {
+            let scopes_to_remove: Vec<_> = self.scopes.iter()
+                .filter(|s| s.indent_level >= indent_level && s.parent_key.is_none())
+                .map(|s| format!("(indent={}, parent={:?})", s.indent_level, s.parent_key))
+                .collect();
+            if !scopes_to_remove.is_empty() {
+                log_debug!("[SCOPE EXIT] type=Sequence entry cleanup, removing {} non-parent scopes: {:?}",
+                         scopes_to_remove.len(),
+                         scopes_to_remove);
+            }
+        }
+
         self.scopes.retain(|s| s.indent_level < indent_level || s.parent_key.is_some());
 
         #[cfg(debug_assertions)]
         {
+            let removed_count = before_depth - self.depth();
+            if removed_count > 0 {
+                log_debug!("[SCOPE EXIT] type=Sequence entry cleanup, removed {} scopes: '{}' -> '{}'",
+                         removed_count,
+                         before_path,
+                         self.get_scope_path());
+            }
             log_debug!("[SCOPE ENTRY] type=Sequence, indent={}, cleared scopes deeper than this level, preserved parent mappings", indent_level);
         }
 
