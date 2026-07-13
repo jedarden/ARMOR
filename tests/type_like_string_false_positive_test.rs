@@ -3577,6 +3577,394 @@ fn test_performance_tuning_config() {
     }
 }
 
+#[test]
+fn test_mobile_app_configuration() {
+    // Mobile application configuration patterns
+    let test_cases = vec![
+        "mobile_app:",
+        "  platform: ios!",
+        "  version: 2.5.0!",
+        "  min_version: 12.0!",
+        "  orientation: portrait!",
+        "  fullscreen: true!",
+        "  biometric_auth: enabled!",
+        "  offline_mode: true!",
+        "  push_notifications: enabled!",
+        "  deep_linking: supported!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Mobile app config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_cloud_infrastructure_config() {
+    // Cloud infrastructure configuration
+    let test_cases = vec![
+        "cloud:",
+        "  provider: aws!",
+        "  region: us-east-1!",
+        "  availability_zones:",
+        "  instance_type: t3.medium!",
+        "  auto_scaling: enabled!",
+        "  load_balancer: application!",
+        "  cdn: cloudfront!",
+        "  monitoring: cloudwatch!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Cloud infrastructure config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Sequence items for availability zones
+    let az_items = vec![
+        "    - us-east-1a!",
+        "    - us-east-1b!",
+        "    - us-east-1c!",
+    ];
+
+    for line in az_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Availability zone with ! should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_content_management_config() {
+    // Content management system configuration
+    let test_cases = vec![
+        "cms:",
+        "  engine: wordpress!",
+        "  theme: custom_theme!",
+        "  plugins: [seo, cache, security]!",
+        "  editor: gutenberg!",
+        "  revision_history: enabled!",
+        "  auto_save: true!",
+        "  media_library:",
+        "  seo_plugin: yoast!",
+        "  cache_plugin: w3_total_cache!",
+    ];
+
+    for line in test_cases {
+        if line.starts_with("  plugins:") {
+            let result = classify_line_type(line);
+            assert!(
+                result == LineType::MappingKey || result == LineType::FlowSequence,
+                "CMS config with flow sequence should be valid type: '{}'",
+                line
+            );
+        } else {
+            assert_eq!(
+                classify_line_type(line),
+                LineType::MappingKey,
+                "CMS config with ! should be MappingKey: '{}'",
+                line
+            );
+        }
+    }
+}
+
+#[test]
+fn test_email_notification_templates() {
+    // Email notification templates with exclamation marks
+    let test_cases = vec![
+        "email_templates:",
+        "  welcome:",
+        "    subject: Welcome to our service!",
+        "    body: \"Thank you for signing up!\"",
+        "    greeting: Hello!",
+        "  password_reset:",
+        "    subject: Reset your password!",
+        "    body: \"Click here to reset!\"",
+        "  alert:",
+        "    subject: \"Important: Action required!\"",
+        "    priority: urgent!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Email template with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_load_balancer_config() {
+    // Load balancer configuration patterns
+    let test_cases = vec![
+        "load_balancer:",
+        "  type: round_robin!",
+        "  health_check:",
+        "    interval: 30s!",
+        "    timeout: 5s!",
+        "    path: /health!",
+        "  backend_servers:",
+        "  ssl_offloading: true!",
+        "  session_persistence: enabled!",
+        "  max_connections: 10000!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Load balancer config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Backend server sequence items
+    let backend_items = vec![
+        "    - 10.0.1.10!",
+        "    - 10.0.1.11!",
+        "    - 10.0.1.12!",
+    ];
+
+    for line in backend_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Backend server with ! should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_cdn_configuration() {
+    // Content Delivery Network configuration
+    let test_cases = vec![
+        "cdn:",
+        "  provider: cloudflare!",
+        "  zone: example.com!",
+        "  caching: aggressive!",
+        "  compression: enabled!",
+        "  https: full!",
+        "  http2: enabled!",
+        "  http3: enabled!",
+        "  image_optimization: on!",
+        "  minification: true!",
+        "  edge_cache_ttl: 86400!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "CDN config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_message_queue_configuration() {
+    // Message queue system configuration
+    let test_cases = vec![
+        "message_queue:",
+        "  broker: rabbitmq!",
+        "  host: mq.example.com!",
+        "  port: 5672!",
+        "  vhost: /production!",
+        "  queues:",
+        "  exchanges:",
+        "  durable: true!",
+        "  auto_delete: false!",
+        "  message_ttl: 86400!",
+        "  max_priority: 10!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Message queue config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Queue sequence items
+    let queue_items = vec![
+        "    - tasks!",
+        "    - notifications!",
+        "    - events!",
+    ];
+
+    for line in queue_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Queue name with ! should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_analytics_tracking_config() {
+    // Analytics and tracking configuration
+    let test_cases = vec![
+        "analytics:",
+        "  google_analytics:",
+        "    tracking_id: UA-123456-1!",
+        "    anonymize_ip: true!",
+        "  mixpanel:",
+        "    token: abc123!",
+        "    track_pages: true!",
+        "  custom_events:",
+        "  error_tracking: enabled!",
+        "  performance_monitoring: on!",
+        "  user_behavior: tracked!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Analytics config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Custom event sequence items
+    let event_items = vec![
+        "    - button_click!",
+        "    - page_view!",
+        "    - form_submit!",
+    ];
+
+    for line in event_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Event name with ! should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_developer_portal_config() {
+    // Developer portal and API documentation configuration
+    let test_cases = vec![
+        "developer_portal:",
+        "  enabled: true!",
+        "  documentation: /docs!",
+        "  api_reference: /api!",
+        "  auth_method: oauth2!",
+        "  rate_limiting: per_key!",
+        "  sandbox: available!",
+        "  support_chat: enabled!",
+        "  forums: /community!",
+        "  examples:",
+        "  webhook_testing: true!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Developer portal config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Example sequence items
+    let example_items = vec![
+        "    - curl!",
+        "    - python!",
+        "    - javascript!",
+    ];
+
+    for line in example_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Example language with ! should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_internationalization_config() {
+    // Internationalization and localization configuration
+    let test_cases = vec![
+        "i18n:",
+        "  default_locale: en_US!",
+        "  supported_locales:",
+        "  fallback_locale: en!",
+        "  currency_format: symbol!",
+        "  date_format: locale!",
+        "  time_format: 24h!",
+        "  timezone: UTC!",
+        "  rtl_languages:",
+        "  translation_files: /locales!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "I18n config with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+
+    // Supported locale sequence items
+    let locale_items = vec![
+        "    - en_US!",
+        "    - es_ES!",
+        "    - fr_FR!",
+        "    - de_DE!",
+        "    - ja_JP!",
+        "    - zh_CN!",
+    ];
+
+    for line in locale_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "Locale with ! should be SequenceItem: '{}'",
+            line
+        );
+    }
+
+    // RTL language sequence items
+    let rtl_items = vec![
+        "    - ar!",
+        "    - he!",
+        "    - fa!",
+    ];
+
+    for line in rtl_items {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::SequenceItem,
+            "RTL language with ! should be SequenceItem: '{}'",
+            line
+        );
+    }
+}
+
 // ============================================================================
 // Section 13: Error Code-like Strings in Values
 // ============================================================================
