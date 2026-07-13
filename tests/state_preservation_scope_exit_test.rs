@@ -52,19 +52,19 @@ mod parent_scope_exit_tests {
 
         // Create parent scope and set metadata
         stack.enter_scope(2, 1, Some("config".to_string()));
-        stack.current_scope().is_flow_style = true;
+        stack.current_scope().unwrap().is_flow_style = true;
 
         // Create child scope
         stack.enter_scope(4, 2, Some("nested".to_string()));
-        stack.current_scope().is_flow_style = false; // Different from parent
+        stack.current_scope().unwrap().is_flow_style = false; // Different from parent
 
         // Exit to parent scope
         stack.exit_to_scope(2);
 
         // Verify parent metadata is preserved
-        assert!(stack.current_scope_ref().is_flow_style,
+        assert!(stack.current_scope_ref().unwrap().is_flow_style,
                 "Parent flow_style flag should be preserved");
-        assert_eq!(stack.current_scope_ref().parent_key, Some("config".to_string()));
+        assert_eq!(stack.current_scope_ref().unwrap().parent_key, Some("config".to_string()));
     }
 
     /// Test that parent scope line numbers are preserved
@@ -74,7 +74,7 @@ mod parent_scope_exit_tests {
 
         // Create parent scope at specific line
         stack.enter_scope(2, 5, Some("parent".to_string()));
-        let parent_start_line = stack.current_scope_ref().start_line;
+        let parent_start_line = stack.current_scope_ref().unwrap().start_line;
 
         // Create child scope
         stack.enter_scope(4, 10, Some("child".to_string()));
@@ -83,7 +83,7 @@ mod parent_scope_exit_tests {
         stack.exit_to_scope(2);
 
         // Verify parent's start line is preserved
-        assert_eq!(stack.current_scope_ref().start_line, parent_start_line,
+        assert_eq!(stack.current_scope_ref().unwrap().start_line, parent_start_line,
                    "Parent scope start_line should be preserved");
     }
 
@@ -97,7 +97,7 @@ mod parent_scope_exit_tests {
         for i in 0..10 {
             stack.add_key(&format!("key_{}", i), 1 + i).unwrap();
         }
-        let parent_key_count = stack.current_scope_ref().key_count();
+        let parent_key_count = stack.current_scope_ref().unwrap().key_count();
 
         // Create child scope with more keys
         stack.enter_scope(4, 20, Some("child".to_string()));
@@ -109,9 +109,9 @@ mod parent_scope_exit_tests {
         stack.exit_to_scope(2);
 
         // Verify parent key count is unchanged
-        assert_eq!(stack.current_scope_ref().key_count(), parent_key_count,
+        assert_eq!(stack.current_scope_ref().unwrap().key_count(), parent_key_count,
                    "Parent scope key count should be preserved");
-        assert_eq!(stack.current_scope_ref().key_count(), 10);
+        assert_eq!(stack.current_scope_ref().unwrap().key_count(), 10);
     }
 
     /// Test that parent scope sequence context is preserved
@@ -121,7 +121,7 @@ mod parent_scope_exit_tests {
 
         // Create parent sequence scope
         stack.enter_sequence_scope(2, 1);
-        let parent_item_id = stack.current_scope_ref().sequence_item_id;
+        let parent_item_id = stack.current_scope_ref().unwrap().sequence_item_id;
 
         // Create child mapping scope
         stack.enter_scope(4, 2, Some("nested".to_string()));
@@ -413,10 +413,10 @@ mod edge_case_tests {
         stack.exit_to_scope(2);
 
         // Verify empty parent state is preserved (still empty)
-        assert_eq!(stack.current_scope_ref().key_count(), 0,
+        assert_eq!(stack.current_scope_ref().unwrap().key_count(), 0,
                    "Empty parent should remain empty");
         assert!(!stack.contains_key("child_key"), "Child key should be removed");
-        assert_eq!(stack.current_scope_ref().parent_key, Some("empty_parent".to_string()));
+        assert_eq!(stack.current_scope_ref().unwrap().parent_key, Some("empty_parent".to_string()));
     }
 
     /// Test scope exit when target scope doesn't exist (closest parent used)
@@ -475,7 +475,7 @@ mod edge_case_tests {
 
         // Create sequence scope
         stack.enter_sequence_scope(4, 3);
-        let seq_item_id = stack.current_scope_ref().sequence_item_id;
+        let seq_item_id = stack.current_scope_ref().unwrap().sequence_item_id;
 
         // Create nested mapping in sequence
         stack.enter_scope(6, 4, Some("nested".to_string()));
@@ -485,16 +485,16 @@ mod edge_case_tests {
         stack.exit_to_scope(4);
 
         // Verify sequence scope state is preserved
-        assert!(stack.current_scope_ref().in_sequence_context);
-        assert_eq!(stack.current_scope_ref().sequence_item_id, seq_item_id);
+        assert!(stack.current_scope_ref().unwrap().in_sequence_context);
+        assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, seq_item_id);
         assert!(!stack.contains_key("nested_key"), "Nested key should be removed");
 
         // Exit from sequence back to mapping
         stack.exit_to_scope(2);
 
         // Verify mapping scope state is preserved
-        assert!(!stack.current_scope_ref().in_sequence_context);
-        assert!(stack.current_scope_ref().sequence_item_id.is_none());
+        assert!(!stack.current_scope_ref().unwrap().in_sequence_context);
+        assert!(stack.current_scope_ref().unwrap().sequence_item_id.is_none());
         assert!(stack.contains_key("item1"), "Mapping key should be preserved");
     }
 
@@ -505,19 +505,19 @@ mod edge_case_tests {
 
         // Create flow-style parent
         stack.enter_scope(2, 1, Some("flow_parent".to_string()));
-        stack.current_scope().is_flow_style = true;
+        stack.current_scope().unwrap().is_flow_style = true;
 
         // Create non-flow-style child
         stack.enter_scope(4, 2, Some("block_child".to_string()));
-        stack.current_scope().is_flow_style = false;
+        stack.current_scope().unwrap().is_flow_style = false;
 
         // Exit to parent
         stack.exit_to_scope(2);
 
         // Verify parent's flow-style flag is preserved
-        assert!(stack.current_scope_ref().is_flow_style,
+        assert!(stack.current_scope_ref().unwrap().is_flow_style,
                 "Parent flow_style flag should be preserved");
-        assert_eq!(stack.current_scope_ref().parent_key, Some("flow_parent".to_string()));
+        assert_eq!(stack.current_scope_ref().unwrap().parent_key, Some("flow_parent".to_string()));
     }
 
     /// Test scope exit with multiple keys at each level
@@ -530,19 +530,19 @@ mod edge_case_tests {
         stack.add_key("key1a", 2).unwrap();
         stack.add_key("key1b", 3).unwrap();
         stack.add_key("key1c", 4).unwrap();
-        let level1_count = stack.current_scope_ref().key_count();
+        let level1_count = stack.current_scope_ref().unwrap().key_count();
 
         // Create level 2 with multiple keys
         stack.enter_scope(4, 5, Some("level2".to_string()));
         stack.add_key("key2a", 6).unwrap();
         stack.add_key("key2b", 7).unwrap();
-        let level2_count = stack.current_scope_ref().key_count();
+        let level2_count = stack.current_scope_ref().unwrap().key_count();
 
         // Exit to level 1
         stack.exit_to_scope(2);
 
         // Verify level 1 state is preserved
-        assert_eq!(stack.current_scope_ref().key_count(), level1_count,
+        assert_eq!(stack.current_scope_ref().unwrap().key_count(), level1_count,
                    "Level 1 key count should be preserved");
         assert!(stack.contains_key("key1a"));
         assert!(stack.contains_key("key1b"));
@@ -561,7 +561,7 @@ mod edge_case_tests {
 
         let before_depth = stack.depth();
         let before_indent = stack.current_indent();
-        let before_key_count = stack.current_scope_ref().key_count();
+        let before_key_count = stack.current_scope_ref().unwrap().key_count();
 
         // Exit to same indent we're already at
         stack.exit_to_scope(2);
@@ -569,7 +569,7 @@ mod edge_case_tests {
         // Verify nothing changed
         assert_eq!(stack.depth(), before_depth);
         assert_eq!(stack.current_indent(), before_indent);
-        assert_eq!(stack.current_scope_ref().key_count(), before_key_count);
+        assert_eq!(stack.current_scope_ref().unwrap().key_count(), before_key_count);
         assert!(stack.contains_key("key"));
     }
 
@@ -659,14 +659,14 @@ mod integration_tests {
         stack.add_key("port", 7).unwrap();
 
         // Verify final state
-        assert_eq!(stack.current_scope_ref().parent_key, Some("database".to_string()));
+        assert_eq!(stack.current_scope_ref().unwrap().parent_key, Some("database".to_string()));
         assert!(stack.contains_key("host"));
         assert!(stack.contains_key("port"));
 
         // Verify web keys are not visible (they were in a different scope)
         assert!(stack.get_scope_at_level(4).is_some() ||
                 !stack.contains_key("port") ||
-                stack.current_scope_ref().parent_key == Some("database".to_string()));
+                stack.current_scope_ref().unwrap().parent_key == Some("database".to_string()));
     }
 
     /// Test nested configuration scenario with partial exits
