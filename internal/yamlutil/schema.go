@@ -289,7 +289,15 @@ func (sv *SchemaValidator) ValidateFile(filePath string) SchemaValidationResult 
 		result.Valid = false
 
 		// YAMLError type assertions with structured error codes
-		if parseErr, ok := err.(*ParseError); ok {
+		// Type assertion: *yaml.TypeError captures type mismatch errors from yaml.v3
+		// The Errors field contains a slice of error strings detailing each type mismatch
+		if typeErr, ok := err.(*yaml.TypeError); ok {
+			// Handle yaml.v3 TypeError - provide detailed type error information
+			result.Errors = append(result.Errors, SchemaValidationError{
+				Message:   fmt.Sprintf("YAML type error: %v", typeErr.Errors),
+				ErrorCode: ErrCodeTypeMismatch,
+			})
+		} else if parseErr, ok := err.(*ParseError); ok {
 			// Handle ParseError type
 			result.Errors = append(result.Errors, SchemaValidationError{
 				Message:   fmt.Sprintf("Failed to parse YAML: %s", parseErr.Error()),
@@ -701,6 +709,17 @@ func LoadSchema(schemaPath string) (*SchemaDefinition, error) {
 		}
 	case ".yaml", ".yml":
 		if err := yaml.Unmarshal(content, &data); err != nil {
+			// Type assertion: *yaml.TypeError captures type mismatch errors from yaml.v3
+			// The Errors field contains a slice of error strings detailing each type mismatch
+			// This preserves error information through the type assertion
+			if typeErr, ok := err.(*yaml.TypeError); ok {
+				// Provide detailed type error information
+				return nil, &SchemaError{
+					Message:  fmt.Sprintf("Failed to parse YAML schema: %v", typeErr.Errors),
+					FilePath: schemaPath,
+				}
+			}
+			// Generic error fallback
 			return nil, &SchemaError{
 				Message:  fmt.Sprintf("Failed to parse YAML schema: %v", err),
 				FilePath: schemaPath,
