@@ -65,6 +65,13 @@
 use std::collections::HashSet;
 use std::fmt;
 
+#[cfg(debug_assertions)]
+use log::debug as log_debug;
+#[cfg(debug_assertions)]
+use log::warn as log_warn;
+#[cfg(debug_assertions)]
+use log::trace as log_trace;
+
 /// A scope representing a mapping context at a specific nesting level
 ///
 /// Scopes are created when the parser encounters a parent mapping (a key whose value
@@ -266,6 +273,20 @@ impl ScopeStack {
     /// stack.enter_scope(2, 5, Some("services".to_string()));
     /// ```
     pub fn enter_scope(&mut self, indent_level: usize, line: usize, parent_key: Option<String>) {
+        // Debug logging for scope entry
+        #[cfg(debug_assertions)]
+        {
+            let parent_info = parent_key.as_ref().map(|k| k.as_str()).unwrap_or("<anonymous>");
+            log_debug!(
+                "[SCOPE ENTRY] line={}, indent={}, parent='{}', current_depth={}, path='{}'",
+                line,
+                indent_level,
+                parent_info,
+                self.depth(),
+                self.get_scope_path()
+            );
+        }
+
         // Check if we already have a scope at this level
         if let Some(existing) = self.get_scope_at_level(indent_level) {
             // We're re-entering a scope level - clear and reuse
@@ -276,10 +297,25 @@ impl ScopeStack {
             // Remove all scopes deeper than this level
             self.scopes.retain(|s| s.indent_level <= indent_level);
             self.scopes.push(fresh_scope);
+
+            #[cfg(debug_assertions)]
+            {
+                log_debug!("[SCOPE ENTRY] Reusing existing scope level, cleared scopes deeper than indent={}", indent_level);
+            }
         } else {
             // Create new scope
             let new_scope = Scope::new(indent_level, line, parent_key);
             self.scopes.push(new_scope);
+
+            #[cfg(debug_assertions)]
+            {
+                log_debug!("[SCOPE ENTRY] Created new scope at indent={}", indent_level);
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            log_debug!("[SCOPE ENTRY] After entry: depth={}, current_indent={}", self.depth(), self.current_indent());
         }
     }
 
@@ -302,14 +338,75 @@ impl ScopeStack {
     /// stack.exit_to_scope(0); // Exit back to root
     /// ```
     pub fn exit_to_scope(&mut self, target_indent: usize) {
+        #[cfg(debug_assertions)]
+        {
+            log_debug!(
+                "[SCOPE EXIT] target_indent={}, current_depth={}, current_indent={}, path='{}'",
+                target_indent,
+                self.depth(),
+                self.current_indent(),
+                self.get_scope_path()
+            );
+        }
+
+        // Edge case: can't exit to a deeper level than current
+        if target_indent > self.current_indent() {
+            #[cfg(debug_assertions)]
+            {
+                log_warn!("[SCOPE EXIT] WARNING: target_indent={} > current_indent={}, ignoring exit request", target_indent, self.current_indent());
+            }
+            return;
+        }
+
+        // Edge case: can't exit if stack would become empty
+        let would_be_empty = self.scopes.iter()
+            .filter(|s| s.indent_level <= target_indent)
+            .count() == 0;
+
+        if would_be_empty {
+            #[cfg(debug_assertions)]
+            {
+                log_warn!("[SCOPE EXIT] WARNING: exit would empty scope stack, keeping at least root scope");
+            }
+            // Keep at least the root scope
+            self.scopes.retain(|s| s.indent_level == 0);
+            return;
+        }
+
         // Remove all scopes deeper than target
+        let before_depth = self.depth();
         self.scopes.retain(|s| s.indent_level <= target_indent);
 
+        #[cfg(debug_assertions)]
+        {
+            log_debug!("[SCOPE EXIT] Removed {} scopes deeper than indent={}", before_depth - self.depth(), target_indent);
+        }
+
         // Ensure we have a scope at the target level
+        // Check if there's a scope at target_indent + base_indent (for parent key scopes)
+        let adjusted_target = target_indent + self.base_indent;
         if !self.scopes.iter().any(|s| s.indent_level == target_indent) {
-            // This shouldn't happen in valid YAML, but handle gracefully
-            let fallback_scope = Scope::new(target_indent, 0, None);
-            self.scopes.push(fallback_scope);
+            // Check if there's a scope at the adjusted level (parent key scope)
+            if self.scopes.iter().any(|s| s.indent_level == adjusted_target) {
+                #[cfg(debug_assertions)]
+                {
+                    log_debug!("[SCOPE EXIT] Found scope at adjusted indent={}, no fallback needed", adjusted_target);
+                }
+                // Scope exists at adjusted level, no need for fallback
+            } else {
+                // This shouldn't happen in valid YAML, but handle gracefully
+                #[cfg(debug_assertions)]
+                {
+                    log_warn!("[SCOPE EXIT] WARNING: No scope found at indent={} or adjusted_indent={}, creating fallback scope at target_indent", target_indent, adjusted_target);
+                }
+                let fallback_scope = Scope::new(target_indent, 0, None);
+                self.scopes.push(fallback_scope);
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            log_debug!("[SCOPE EXIT] After exit: depth={}, current_indent={}, path='{}'", self.depth(), self.current_indent(), self.get_scope_path());
         }
     }
 
@@ -473,8 +570,26 @@ impl ScopeStack {
     /// stack.enter_sequence_scope(2, 5); // Enter sequence item at indent 2
     /// ```
     pub fn enter_sequence_scope(&mut self, indent_level: usize, line: usize) {
-        // Remove all scopes deeper than this level
-        self.scopes.retain(|s| s.indent_level < indent_level);
+        #[cfg(debug_assertions)]
+        {
+            log_debug!(
+                "[SEQ SCOPE ENTRY] line={}, indent={}, current_depth={}, path='{}'",
+                line,
+                indent_level,
+                self.depth(),
+                self.get_scope_path()
+            );
+        }
+
+        // Remove all scopes deeper than this level, but preserve parent mapping scopes
+        // When entering a sequence scope, we need to keep the parent mapping scope intact
+        // while clearing any nested scopes from previous content
+        self.scopes.retain(|s| s.indent_level < indent_level || s.parent_key.is_some());
+
+        #[cfg(debug_assertions)]
+        {
+            log_debug!("[SEQ SCOPE ENTRY] Cleared scopes deeper than indent={}, preserved parent mappings", indent_level);
+        }
 
         // Check if there's already a scope at this level that's in a sequence context
         let needs_new_scope = self.scopes.last()
@@ -488,6 +603,11 @@ impl ScopeStack {
             self.sequence_item_counter += 1;
             new_scope.sequence_item_id = Some(self.sequence_item_counter);
             self.scopes.push(new_scope);
+
+            #[cfg(debug_assertions)]
+            {
+                log_debug!("[SEQ SCOPE ENTRY] Created new sequence scope with item_id={}", self.sequence_item_counter);
+            }
         } else {
             // Reset the existing scope for a new sequence item
             if let Some(scope) = self.scopes.last_mut() {
@@ -495,7 +615,17 @@ impl ScopeStack {
                 scope.start_line = line;
                 self.sequence_item_counter += 1;
                 scope.sequence_item_id = Some(self.sequence_item_counter);
+
+                #[cfg(debug_assertions)]
+                {
+                    log_debug!("[SEQ SCOPE ENTRY] Reset existing sequence scope with new item_id={}", self.sequence_item_counter);
+                }
             }
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            log_debug!("[SEQ SCOPE ENTRY] After entry: depth={}, in_sequence={}", self.depth(), self.in_sequence_context());
         }
     }
 
