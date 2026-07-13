@@ -7651,6 +7651,9 @@ fn test_tab_indented_folded_scalars_with_exclamation() {
         ("\tlog: >+", Some("log")),
         ("\tcontent: >-2", Some("content")),
         ("\tdata: >2", Some("data")),
+        ("\t'alert!': >", Some("'alert!'")),
+        ("\t'warning!': >-", Some("'warning!'")),
+        ("\t'info!': >+", Some("'info!'")),
 
         // Tab-indented continuation lines with exclamation marks
         ("\t!Tab! folded! content!", None),
