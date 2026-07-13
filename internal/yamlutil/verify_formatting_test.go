@@ -8,7 +8,7 @@ import (
 // TestErrorFormattingExamples verifies the exact output format of error messages
 func TestErrorFormattingExamples(t *testing.T) {
 	t.Run("ParseError with line:column context", func(t *testing.T) {
-		pe := NewParseError("config.yaml", "invalid syntax", 10, 5, "", "identifier", "123", "")
+		pe := NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "identifier", "123", "")
 		
 		errMsg := pe.Error()
 		t.Logf("ParseError output:\n%s", errMsg)
