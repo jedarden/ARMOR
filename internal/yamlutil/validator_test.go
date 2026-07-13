@@ -605,8 +605,8 @@ func TestValidator_WarningSummary(t *testing.T) {
 			FilePath: "/test/file.yaml",
 			Valid:    true,
 			Warnings: []ValidationError{
-				*NewValidationError("", "Duplicate key detected", "", "", "", 5, 0, ErrorTypeStructure, ""),
-				*NewValidationError("", "Deprecated YAML feature", "", "", "", 10, 0, ErrorTypeValidation, ""),
+				*NewValidationError("", "Duplicate key detected", "", "", ErrCodeDuplicateKey, 5, 0, ErrorTypeStructure, "", "", ""),
+				*NewValidationError("", "Deprecated YAML feature", "", "", ErrCodeValidationFailed, 10, 0, ErrorTypeValidation, "", "", ""),
 			},
 		}
 
@@ -830,7 +830,7 @@ key2: value2
 	result := validator.ValidateString(yamlContent)
 
 	// Manually add a warning to test WarningSummary
-	result.Warnings = append(result.Warnings, *NewValidationError("test.yaml", "Test warning", "", "", "", 1, 0, ErrorTypeStructure, ""))
+	result.Warnings = append(result.Warnings, *NewValidationError("test.yaml", "Test warning", "", "", ErrCodeValidationFailed, 1, 0, ErrorTypeStructure, "", "", ""))
 
 	summary := result.WarningSummary()
 
@@ -853,8 +853,8 @@ func TestWarningSummary_MultipleWarnings(t *testing.T) {
 
 	// Add multiple warnings
 	result.Warnings = append(result.Warnings,
-		*NewValidationError("test.yaml", "Warning 1", "", "", "", 0, 0, ErrorTypeStructure, ""),
-		*NewValidationError("test.yaml", "Warning 2", "", "", "", 0, 0, ErrorTypeStructure, ""),
+		*NewValidationError("test.yaml", "Warning 1", "", "", ErrCodeValidationFailed, 0, 0, ErrorTypeStructure, "", "", ""),
+		*NewValidationError("test.yaml", "Warning 2", "", "", ErrCodeValidationFailed, 0, 0, ErrorTypeStructure, "", "", ""),
 	)
 
 	summary := result.WarningSummary()

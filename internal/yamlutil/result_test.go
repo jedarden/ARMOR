@@ -24,7 +24,7 @@ func TestResult_Ok(t *testing.T) {
 
 // TestResult_Err creates an error Result and verifies its state
 func TestResult_Err(t *testing.T) {
-	err := NewParseError("", "test error", 0, 0, "", "", "")
+	err := NewParseError("", "test error", 0, 0, ErrCodeParseError, "", "", "")
 	result := Err[int, *ParseError](err)
 
 	if result.IsOk() {
@@ -46,7 +46,7 @@ func TestResult_Unwrap_panics_on_Err(t *testing.T) {
 		}
 	}()
 
-	result := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	result := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	result.Unwrap()
 }
 
@@ -71,7 +71,7 @@ func TestResult_UnwrapOrDefault(t *testing.T) {
 	}
 
 	// Err case
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	if got := errResult.UnwrapOrDefault(); got != 0 {
 		t.Errorf("UnwrapOrDefault() on Err = %d, want 0", got)
 	}
@@ -86,7 +86,7 @@ func TestResult_UnwrapOr(t *testing.T) {
 	}
 
 	// Err case
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	if got := errResult.UnwrapOr(99); got != 99 {
 		t.Errorf("UnwrapOr() on Err = %d, want 99", got)
 	}
@@ -102,7 +102,7 @@ func TestResult_UnwrapOrElse(t *testing.T) {
 
 	// Err case
 	called := false
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	if got := errResult.UnwrapOrElse(func() int { called = true; return 99 }); got != 99 {
 		t.Errorf("UnwrapOrElse() on Err = %d, want 99", got)
 	}
@@ -124,7 +124,7 @@ func TestResult_Map(t *testing.T) {
 	}
 
 	// Map on Err
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	mappedErr := errResult.Map(func(n int) int { return n * 2 })
 	if mappedErr.IsOk() {
 		t.Error("Map() on Err should return Err")
@@ -147,7 +147,7 @@ func TestResult_MapErr(t *testing.T) {
 	}
 
 	// MapErr on Err
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	mappedErr := errResult.MapErr(func(e *ParseError) *ParseError {
 		e.Message = "modified: " + e.Message
 		return e
@@ -168,7 +168,7 @@ func TestResult_AndThen(t *testing.T) {
 		if n > 0 {
 			return Ok[int, *ParseError](n * 2)
 		}
-		return Err[int, *ParseError](NewParseError("", "non-positive", 0, 0, "", "", ""))
+		return Err[int, *ParseError](NewParseError("", "non-positive", 0, 0, ErrCodeParseError, "", "", ""))
 	})
 	if !chained.IsOk() {
 		t.Error("AndThen() should return Ok")
@@ -178,7 +178,7 @@ func TestResult_AndThen(t *testing.T) {
 	}
 
 	// AndThen on Err
-	errResult := Err[int, *ParseError](NewParseError("", "initial error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "initial error", 0, 0, ErrCodeParseError, "", "", ""))
 	chainedErr := errResult.AndThen(func(n int) Result[int, *ParseError] {
 		return Ok[int, *ParseError](999)
 	})
@@ -205,7 +205,7 @@ func TestResult_OrElse(t *testing.T) {
 	}
 
 	// OrElse on Err
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	fallbackResult := errResult.OrElse(func(e *ParseError) Result[int, *ParseError] {
 		return Ok[int, *ParseError](99)
 	})
@@ -237,7 +237,7 @@ func TestResult_Match(t *testing.T) {
 	// Match on Err
 	okCalled = false
 	errCalled = false
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	errResult.Match(
 		func(v int) { okCalled = true },
 		func(e *ParseError) { errCalled = true },
@@ -257,7 +257,7 @@ func TestResult_String(t *testing.T) {
 		t.Error("String() on Ok returned empty string")
 	}
 
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	if got := errResult.String(); got == "" {
 		t.Error("String() on Err returned empty string")
 	}
@@ -283,7 +283,7 @@ func TestCollectResults(t *testing.T) {
 	// With Err
 	resultsWithErr := []Result[int, *ParseError]{
 		Ok[int, *ParseError](1),
-		Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", "")),
+		Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", "")),
 		Ok[int, *ParseError](3),
 	}
 	collectedErr := CollectResults(resultsWithErr)
@@ -296,9 +296,9 @@ func TestCollectResults(t *testing.T) {
 func TestPartitionResults(t *testing.T) {
 	results := []Result[int, *ParseError]{
 		Ok[int, *ParseError](1),
-		Err[int, *ParseError](NewParseError("", "error1", 0, 0, "", "", "")),
+		Err[int, *ParseError](NewParseError("", "error1", 0, 0, ErrCodeParseError, "", "", "")),
 		Ok[int, *ParseError](2),
-		Err[int, *ParseError](NewParseError("", "error2", 0, 0, "", "", "")),
+		Err[int, *ParseError](NewParseError("", "error2", 0, 0, ErrCodeParseError, "", "", "")),
 	}
 
 	oks, errs := PartitionResults(results)
@@ -373,7 +373,7 @@ func TestResult_ToOption(t *testing.T) {
 	}
 
 	// Err to None
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	noneOpt := errResult.ToOption()
 	if !noneOpt.IsNone() {
 		t.Error("ToOption() on Err should return None")
@@ -383,7 +383,7 @@ func TestResult_ToOption(t *testing.T) {
 // TestAsParseError converts errors to ParseError
 func TestAsParseError(t *testing.T) {
 	// Already ParseError
-	pe := NewParseError("", "test", 0, 0, "", "", "")
+	pe := NewParseError("", "test", 0, 0, ErrCodeParseError, "", "", "")
 	if got := AsParseError(pe); got != pe {
 		t.Error("AsParseError() should return same ParseError")
 	}
@@ -455,7 +455,7 @@ func TestWithLineNumber(t *testing.T) {
 	}
 
 	// Err result
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	withLineErr := WithLineNumber(errResult, 10)
 	if withLineErr.IsOk() {
 		t.Error("WithLineNumber() on Err should return Err")
@@ -475,7 +475,7 @@ func TestWithContext(t *testing.T) {
 	}
 
 	// Err result without existing context
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	withCtxErr := WithContext(errResult, "while parsing")
 	if withCtxErr.IsOk() {
 		t.Error("WithContext() on Err should return Err")
@@ -486,7 +486,7 @@ func TestWithContext(t *testing.T) {
 
 	// Err result with existing context
 	errWithContext := Err[int, *ParseError](func() *ParseError {
-		return NewParseError("", "error", 0, 0, "", "", "", "initial")
+		return NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", "initial")
 	}())
 	withMoreCtx := WithContext(errWithContext, "while parsing")
 	if got := withMoreCtx.UnwrapErr().ContextStr; got != "while parsing: initial" {
@@ -503,7 +503,7 @@ func TestResult_Error(t *testing.T) {
 	}
 
 	// Err result with ParseError
-	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, "", "", ""))
+	errResult := Err[int, *ParseError](NewParseError("", "error", 0, 0, ErrCodeParseError, "", "", ""))
 	if got := errResult.Error(); got == nil {
 		t.Error("Error() on Err should return error")
 	}
@@ -514,12 +514,12 @@ func ExampleResult() {
 	// Simulate parsing that can fail
 	parseNumber := func(s string) Result[int, *ParseError] {
 		if s == "" {
-			return Err[int, *ParseError](NewParseError("", "empty string", 0, 0, "", "", ""))
+			return Err[int, *ParseError](NewParseError("", "empty string", 0, 0, ErrCodeParseError, "", "", ""))
 		}
 		var n int
 		_, err := fmt.Sscanf(s, "%d", &n)
 		if err != nil {
-			parseErr := NewParseError("", fmt.Sprintf("invalid number: %s", s), 0, 0, "", "", "")
+			parseErr := NewParseError("", fmt.Sprintf("invalid number: %s", s), 0, 0, ErrCodeParseError, "", "", "")
 			parseErr.Err = err
 			return Err[int, *ParseError](parseErr)
 		}
@@ -540,7 +540,7 @@ func ExampleResult_AndThen() {
 	// Chain multiple operations
 	divide := func(a, b int) Result[int, *ParseError] {
 		if b == 0 {
-			return Err[int, *ParseError](NewParseError("", "division by zero", 0, 0, "", "", ""))
+			return Err[int, *ParseError](NewParseError("", "division by zero", 0, 0, ErrCodeParseError, "", "", ""))
 		}
 		return Ok[int, *ParseError](a / b)
 	}
@@ -561,7 +561,7 @@ func ExampleResult_OrElse() {
 		if key == "valid" {
 			return Ok[int, *ParseError](42)
 		}
-		return Err[int, *ParseError](NewParseError("", "key not found", 0, 0, "", "", ""))
+		return Err[int, *ParseError](NewParseError("", "key not found", 0, 0, ErrCodeParseError, "", "", ""))
 	}
 
 	result := getValue("invalid").OrElse(func(err *ParseError) Result[int, *ParseError] {
