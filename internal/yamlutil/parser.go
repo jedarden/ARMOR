@@ -66,7 +66,44 @@ func (p *Parser) ParseFile(filePath string, data interface{}) ParseResult {
 	// Parse YAML content
 	if err := yaml.Unmarshal(content, data); err != nil {
 		result.Success = false
-		// Check if this is a YAML type error for better error reporting
+
+		// Standard pattern: sentinel checks → YAMLError interface → specific types → generic fallback
+
+		// Check for SyntaxError type with structured information
+		if syntaxErr, ok := err.(*SyntaxError); ok {
+			result.Error = &YAMLParseError{
+				FilePath: filePath,
+				Message:  syntaxErr.Message,
+				Line:     syntaxErr.Line,
+				Column:   syntaxErr.Column,
+				RawError: err,
+			}
+			return result
+		}
+
+		// Check for StructureError type with structured information
+		if structErr, ok := err.(*StructureError); ok {
+			result.Error = &YAMLParseError{
+				FilePath: filePath,
+				Message:  structErr.Message,
+				Line:     structErr.Line,
+				RawError: err,
+			}
+			return result
+		}
+
+		// Check for YAMLError interface (base interface for all YAML errors)
+		if yamlErr, ok := err.(YAMLError); ok {
+			result.Error = &YAMLParseError{
+				FilePath: filePath,
+				Message:  yamlErr.Error(),
+				Line:     extractErrorLine(err),
+				RawError: err,
+			}
+			return result
+		}
+
+		// Check for specific YAML error types using type assertions
 		if typeErr, ok := err.(*yaml.TypeError); ok {
 			// Provide detailed type error information
 			result.Error = &YAMLParseError{
@@ -74,8 +111,15 @@ func (p *Parser) ParseFile(filePath string, data interface{}) ParseResult {
 				Message:  fmt.Sprintf("YAML type error: %v", typeErr.Errors),
 				RawError: err,
 			}
-		} else {
-			result.Error = fmt.Errorf("YAML parse error: %w", err)
+			return result
+		}
+
+		// Generic error fallback
+		result.Error = &YAMLParseError{
+			FilePath: filePath,
+			Message:  err.Error(),
+			Line:     extractErrorLine(err),
+			RawError: err,
 		}
 		return result
 	}
@@ -299,6 +343,10 @@ func ParseYAML(filePath string) (map[string]interface{}, error) {
 	var data map[string]interface{}
 	if err := yaml.Unmarshal(content, &data); err != nil {
 		// Check for specific error types using type assertions
+
+		// Standard pattern: sentinel checks → YAMLError interface → specific types → generic fallback
+
+		// Check for io.EOF sentinel
 		if errors.Is(err, io.EOF) {
 			// io.EOF indicates incomplete YAML content
 			return nil, &YAMLParseError{
@@ -307,6 +355,39 @@ func ParseYAML(filePath string) (map[string]interface{}, error) {
 				RawError: err,
 			}
 		}
+
+		// Check for SyntaxError type with structured information
+		if syntaxErr, ok := err.(*SyntaxError); ok {
+			return nil, &YAMLParseError{
+				FilePath: filePath,
+				Message:  syntaxErr.Message,
+				Line:     syntaxErr.Line,
+				Column:   syntaxErr.Column,
+				RawError: err,
+			}
+		}
+
+		// Check for StructureError type with structured information
+		if structErr, ok := err.(*StructureError); ok {
+			return nil, &YAMLParseError{
+				FilePath: filePath,
+				Message:  structErr.Message,
+				Line:     structErr.Line,
+				RawError: err,
+			}
+		}
+
+		// Check for YAMLError interface (base interface for all YAML errors)
+		if yamlErr, ok := err.(YAMLError); ok {
+			return nil, &YAMLParseError{
+				FilePath: filePath,
+				Message:  yamlErr.Error(),
+				Line:     extractErrorLine(err),
+				RawError: err,
+			}
+		}
+
+		// Check for specific YAML error types using type assertions
 		if typeErr, ok := err.(*yaml.TypeError); ok {
 			// Provide detailed type error information
 			return nil, &YAMLParseError{
@@ -316,7 +397,8 @@ func ParseYAML(filePath string) (map[string]interface{}, error) {
 				Line:     extractErrorLine(err),
 			}
 		}
-		// Create detailed YAMLParseError with line information
+
+		// Generic error fallback with line information
 		return nil, &YAMLParseError{
 			FilePath: filePath,
 			Message:  err.Error(),
