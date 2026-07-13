@@ -488,18 +488,19 @@ mod scope_stack_tests {
     }
 
     #[test]
-    fn test_exit_to_scope_creates_fallback_if_missing() {
+    fn test_exit_to_scope_finds_closest_parent_when_target_missing() {
         let mut stack = ScopeStack::new(2);
 
-        // Manually manipulate to test edge case
+        // Create scope at indent 4 (skipping indent 2)
         stack.enter_scope(4, 1, Some("level4".to_string()));
 
-        // Exit to level 2 (which doesn't exist)
+        // Exit to indent 2 (which doesn't exist)
+        // Should find closest parent: root at indent 0
         stack.exit_to_scope(2);
 
-        // Should create a fallback scope
-        assert_eq!(stack.current_indent(), 2);
-        verify_scope_state(&stack, 2, "");
+        // Should exit to root (closest parent scope)
+        assert_eq!(stack.current_indent(), 0);
+        verify_scope_state(&stack, 1, ""); // depth=1 (root only), path="" (empty)
     }
 
     #[test]
@@ -846,5 +847,309 @@ mod integration_tests {
         assert_eq!(error.scope_path, "config.server");
         assert_eq!(error.first_line, 2); // Scope started at line 2
         assert_eq!(error.duplicate_line, 4);
+    }
+}
+
+#[cfg(test)]
+mod sequence_scope_comprehensive_tests {
+    use super::*;
+
+    /// Test sequence scope entry is tracked correctly
+    #[test]
+    fn test_sequence_scope_entry_tracking() {
+        let mut stack = ScopeStack::new(2);
+
+        // Enter sequence scope
+        stack.enter_sequence_scope(4, 1);
+
+        // Verify scope state after entry
+        assert!(stack.in_sequence_context(), "Should be in sequence context");
+        assert_eq!(stack.current_indent(), 4, "Current indent should be 4");
+        assert_eq!(stack.depth(), 2, "Should have root + sequence scope");
+
+        let scope = stack.current_scope_ref();
+        assert!(scope.in_sequence_context, "Scope should be marked as sequence context");
+        assert_eq!(scope.sequence_item_id, Some(1), "First sequence item should have ID 1");
+    }
+
+    /// Test sequence scope exit maintains proper scope state
+    #[test]
+    fn test_sequence_scope_exit_maintains_state() {
+        let mut stack = ScopeStack::new(2);
+
+        // Create a mapping scope
+        stack.enter_scope(2, 1, Some("services".to_string()));
+
+        // Enter sequence scope within mapping
+        stack.enter_sequence_scope(4, 2);
+        stack.add_key("item1", 3).unwrap();
+        assert!(stack.in_sequence_context());
+
+        // Exit sequence scope back to mapping
+        stack.exit_to_scope(2);
+
+        // Verify we're back in mapping context, not sequence
+        assert!(!stack.in_sequence_context(), "Should not be in sequence context after exit");
+        assert_eq!(stack.current_indent(), 2, "Should be back at mapping indent");
+        assert_eq!(stack.depth(), 2, "Should have root + mapping scope");
+    }
+
+    /// Test sequences nested in mappings
+    #[test]
+    fn test_sequences_nested_in_mappings() {
+        let mut stack = ScopeStack::new(2);
+
+        // Create parent mapping
+        stack.enter_scope(2, 1, Some("items".to_string()));
+
+        // First sequence item
+        stack.enter_sequence_scope(4, 2);
+        stack.add_key("name", 3).unwrap();
+        assert_eq!(stack.current_scope_ref().key_count(), 1);
+
+        // Second sequence item (should clear keys from first)
+        stack.enter_sequence_scope(4, 4);
+        stack.add_key("name", 5).unwrap();
+        assert_eq!(stack.current_scope_ref().key_count(), 1);
+
+        // Verify both items had "name" key without conflict
+        assert!(stack.in_sequence_context());
+        assert_eq!(stack.current_scope_ref().sequence_item_id, Some(2));
+    }
+
+    /// Test mappings nested in sequences
+    #[test]
+    fn test_mappings_nested_in_sequences() {
+        let mut stack = ScopeStack::new(2);
+
+        // Enter sequence scope
+        stack.enter_sequence_scope(4, 1);
+
+        // Add key to sequence item
+        stack.add_key("id", 2).unwrap();
+
+        // Enter nested mapping scope within sequence
+        stack.enter_scope(6, 3, Some("config".to_string()));
+        stack.add_key("enabled", 4).unwrap();
+        stack.add_key("timeout", 5).unwrap();
+
+        // Verify we're in mapping scope nested in sequence
+        assert_eq!(stack.depth(), 3); // Root + sequence + mapping
+        assert_eq!(stack.current_scope_ref().key_count(), 2);
+        assert!(!stack.current_scope_ref().in_sequence_context); // Mapping scope, not sequence
+
+        // Parent scope should be sequence
+        stack.exit_to_scope(4);
+        assert!(stack.in_sequence_context());
+    }
+
+    /// Test complex nested structure with sequences and mappings
+    #[test]
+    fn test_complex_nested_sequences_mappings() {
+        let mut stack = ScopeStack::new(2);
+
+        // Simulate:
+        // services:
+        //   web:
+        //     instances:
+        //       - host: localhost
+        //         port: 8080
+        //       - host: localhost2
+        //         port: 8081
+
+        stack.enter_scope(2, 1, Some("services".to_string()));
+        stack.enter_scope(4, 2, Some("web".to_string()));
+        stack.enter_scope(6, 3, Some("instances".to_string()));
+
+        // First sequence item with nested mapping
+        stack.enter_sequence_scope(8, 4);
+        stack.add_key("host", 5).unwrap();
+        stack.enter_scope(10, 6, Some("config".to_string()));
+        stack.add_key("port", 7).unwrap();
+
+        // Exit back to sequence level for second item
+        stack.exit_to_scope(6);
+        stack.enter_sequence_scope(8, 8);
+        stack.add_key("host", 9).unwrap();
+
+        // Verify we're in second sequence item
+        assert!(stack.in_sequence_context());
+        assert_eq!(stack.current_scope_ref().sequence_item_id, Some(2));
+        assert!(stack.contains_key("host"));
+    }
+
+    /// Test sequence scope with multiple levels of nesting
+    #[test]
+    fn test_sequence_deep_nesting() {
+        let mut stack = ScopeStack::new(2);
+
+        // Root mapping (depth 1)
+        stack.enter_scope(2, 1, Some("root".to_string()));
+        assert_eq!(stack.depth(), 2); // Root + mapping
+
+        // Sequence at indent 4 (depth 2)
+        stack.enter_sequence_scope(4, 2);
+        assert_eq!(stack.depth(), 3); // Root + mapping + sequence
+
+        // Nested mapping at indent 6 (depth 3)
+        stack.enter_scope(6, 3, Some("level1".to_string()));
+        assert_eq!(stack.depth(), 4); // Root + mapping + sequence + mapping
+
+        // Another sequence at indent 8 (depth 4)
+        stack.enter_sequence_scope(8, 4);
+        assert_eq!(stack.depth(), 5); // Root + mapping + sequence + mapping + sequence
+
+        // Verify deep nesting structure
+        assert!(stack.in_sequence_context());
+        assert_eq!(stack.current_indent(), 8);
+        assert_eq!(stack.current_scope_ref().sequence_item_id, Some(2)); // Second sequence overall
+    }
+
+    /// Test sequence scope clears parent mapping keys at same level
+    #[test]
+    fn test_sequence_clears_parent_keys_at_level() {
+        let mut stack = ScopeStack::new(2);
+
+        // Parent mapping with keys
+        stack.enter_scope(2, 1, Some("parent".to_string()));
+        stack.enter_scope(4, 2, Some("child".to_string()));
+        stack.add_key("key1", 3).unwrap();
+        stack.add_key("key2", 4).unwrap();
+        assert_eq!(stack.current_scope_ref().key_count(), 2);
+
+        // Enter sequence scope at same indent - should clear
+        stack.enter_sequence_scope(4, 5);
+
+        // Keys should be cleared for new sequence scope
+        assert_eq!(stack.current_scope_ref().key_count(), 0);
+        assert!(!stack.contains_key("key1"));
+        assert!(!stack.contains_key("key2"));
+        assert!(stack.in_sequence_context());
+    }
+
+    /// Test sequence item IDs increment correctly
+    #[test]
+    fn test_sequence_item_id_increment() {
+        let mut stack = ScopeStack::new(2);
+
+        // Create multiple sequence items
+        for i in 1..=10 {
+            stack.enter_sequence_scope(4, i * 2);
+            assert_eq!(stack.current_scope_ref().sequence_item_id, Some(i));
+            stack.add_key("id", i * 2 + 1).unwrap();
+        }
+
+        // Last item should have ID 10
+        assert_eq!(stack.current_scope_ref().sequence_item_id, Some(10));
+    }
+
+    /// Test sequence scope after exiting deep nesting
+    #[test]
+    fn test_sequence_after_deep_nesting_exit() {
+        let mut stack = ScopeStack::new(2);
+
+        // Deep nesting
+        stack.enter_scope(2, 1, Some("level1".to_string()));
+        stack.enter_scope(4, 2, Some("level2".to_string()));
+        stack.enter_scope(6, 3, Some("level3".to_string()));
+        assert_eq!(stack.depth(), 4);
+
+        // Exit to root and enter sequence
+        stack.exit_to_scope(0);
+        stack.enter_sequence_scope(2, 4);
+
+        // Verify sequence scope is clean
+        assert!(stack.in_sequence_context());
+        assert_eq!(stack.depth(), 2); // Root + sequence
+        assert_eq!(stack.current_scope_ref().key_count(), 0);
+    }
+
+    /// Test sequence with parent key followed by nested content
+    #[test]
+    fn test_sequence_with_parent_key_nested_content() {
+        let mut stack = ScopeStack::new(2);
+
+        // Simulate:
+        // items:
+        //   - name: item1
+        //     config:
+        //       enabled: true
+
+        stack.enter_scope(2, 1, Some("items".to_string()));
+        assert_eq!(stack.depth(), 2); // Root + items mapping
+
+        // First sequence item
+        stack.enter_sequence_scope(4, 2);
+        assert_eq!(stack.depth(), 3); // Root + items + sequence
+        stack.add_key("name", 3).unwrap();
+
+        // Nested mapping within sequence item
+        stack.enter_scope(6, 4, Some("config".to_string()));
+        assert_eq!(stack.depth(), 4); // Root + items + sequence + config
+        stack.add_key("enabled", 5).unwrap();
+
+        // Verify structure
+        assert_eq!(stack.current_scope_ref().key_count(), 1);
+        assert!(!stack.in_sequence_context()); // In mapping, not sequence
+    }
+
+    /// Test sequence scope handles indent transitions correctly
+    #[test]
+    fn test_sequence_indent_transitions() {
+        let mut stack = ScopeStack::new(2);
+
+        // Start with sequence at indent 4
+        stack.enter_sequence_scope(4, 1);
+        assert_eq!(stack.current_indent(), 4);
+
+        // Decrease indent (exit sequence)
+        stack.exit_to_scope(0);
+        assert_eq!(stack.current_indent(), 0);
+
+        // Re-enter sequence at same level
+        stack.enter_sequence_scope(4, 2);
+        assert_eq!(stack.current_indent(), 4);
+        assert!(stack.in_sequence_context());
+    }
+
+    /// Test multiple sequences at different levels
+    #[test]
+    fn test_multiple_sequences_different_levels() {
+        let mut stack = ScopeStack::new(2);
+
+        // Outer sequence at indent 2
+        stack.enter_sequence_scope(2, 1);
+        let outer_id = stack.current_scope_ref().sequence_item_id;
+        assert_eq!(outer_id, Some(1));
+
+        // Inner sequence at indent 4 (nested sequence)
+        stack.enter_sequence_scope(4, 2);
+        let inner_id = stack.current_scope_ref().sequence_item_id;
+        // Sequence item ID is global, continues incrementing
+        assert_eq!(inner_id, Some(2)); // Continues from previous sequence
+
+        // Verify they're at different depths (both sequences are kept)
+        assert_eq!(stack.depth(), 3); // Root + outer sequence + inner sequence
+    }
+
+    /// Test sequence scope preserves parent context correctly
+    #[test]
+    fn test_sequence_preserves_parent_context() {
+        let mut stack = ScopeStack::new(2);
+
+        // Create parent mapping
+        stack.enter_scope(2, 1, Some("services".to_string()));
+        let parent_path = stack.get_scope_path();
+        assert_eq!(parent_path, "services");
+
+        // Enter sequence scope
+        stack.enter_sequence_scope(4, 2);
+
+        // Exit sequence scope
+        stack.exit_to_scope(2);
+
+        // Verify parent mapping context is preserved
+        assert_eq!(stack.get_scope_path(), "services");
+        assert!(!stack.in_sequence_context());
     }
 }
