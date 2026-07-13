@@ -25,7 +25,7 @@ key2: value2
 key3: value3
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should parse successfully with blank lines: {:#?}", result);
@@ -47,7 +47,7 @@ key1: value1
 key2: value2
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should parse successfully: {:#?}", result);
@@ -69,7 +69,7 @@ parent:
   child3: value3
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should parse nested structure with blank lines: {:#?}", result);
@@ -95,7 +95,7 @@ level1:
         level3: value3
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should parse deeply nested structure: {:#?}", result);
@@ -118,7 +118,7 @@ parent:
   sibling3: value3
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should parse siblings with blank lines: {:#?}", result);
@@ -141,7 +141,7 @@ key1: |
 key2: value2
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should parse multiline scalars: {:#?}", result);
@@ -167,7 +167,7 @@ root:
   level1b: value3
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should maintain scope consistency: {:#?}", result);
@@ -191,7 +191,7 @@ config:
   # This is a REAL duplicate and should be detected
 "#;
 
-    let parser = BasicParser::strict(); // Use strict parser to detect duplicates
+    let mut parser = BasicParser::strict(); // Use strict parser to detect duplicates
     let result = parser.validate_str(yaml);
 
     // Should detect the duplicate 'host' key
@@ -219,7 +219,7 @@ key2: value2
 key3: value3
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should parse with indented comments: {:#?}", result);
@@ -246,7 +246,7 @@ items:
     value: 3
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should parse sequences with blank lines: {:#?}", result);
@@ -271,7 +271,7 @@ parent:
   child2: value2
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should handle indent changes on blank lines: {:#?}", result);
@@ -312,7 +312,7 @@ app:
       cert_path: /path/to/cert.pem
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should parse complex real-world YAML: {:#?}", result);
@@ -343,7 +343,7 @@ key2: value2
 
 "#;
 
-    let parser = BasicParser::new();
+    let mut parser = BasicParser::new();
     let result = parser.parse_str(yaml);
 
     assert!(result.is_success(), "Should handle blank lines at root: {:#?}", result);

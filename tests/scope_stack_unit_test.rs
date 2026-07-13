@@ -37,7 +37,7 @@ fn test_scope_stack_new_with_different_base_indents() {
 #[test]
 fn test_scope_stack_new_creates_empty_root_scope() {
     let stack = ScopeStack::new(2);
-    assert_eq!(stack.current_scope_ref().key_count(), 0);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 0);
     assert!(!stack.contains_key("any_key"));
 }
 
@@ -58,7 +58,7 @@ fn test_add_key_to_root_scope() {
     let mut stack = ScopeStack::new(2);
     stack.add_key("root_key", 1).unwrap();
     assert!(stack.contains_key("root_key"));
-    assert_eq!(stack.current_scope_ref().key_count(), 1);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 1);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn test_add_multiple_keys_to_same_scope() {
     stack.add_key("key2", 2).unwrap();
     stack.add_key("key3", 3).unwrap();
 
-    assert_eq!(stack.current_scope_ref().key_count(), 3);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 3);
     assert!(stack.contains_key("key1"));
     assert!(stack.contains_key("key2"));
     assert!(stack.contains_key("key3"));
@@ -122,7 +122,7 @@ fn test_add_key_does_not_affect_parent_scope() {
 
     // Exit to root and verify it still only has root_key
     stack.exit_to_scope(0);
-    assert_eq!(stack.current_scope_ref().key_count(), 1);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 1);
     assert!(stack.contains_key("root_key"));
     assert!(!stack.contains_key("child_key"));
 }
@@ -365,7 +365,7 @@ fn test_enter_sequence_scope_sets_sequence_flags() {
     let mut stack = ScopeStack::new(2);
 
     stack.enter_sequence_scope(2, 1);
-    let scope = stack.current_scope_ref();
+    let scope = stack.current_scope_ref().unwrap();
 
     assert!(scope.in_sequence_context);
     assert!(scope.sequence_item_id.is_some());
@@ -376,13 +376,13 @@ fn test_enter_sequence_scope_generates_unique_ids() {
     let mut stack = ScopeStack::new(2);
 
     stack.enter_sequence_scope(2, 1);
-    let id1 = stack.current_scope_ref().sequence_item_id;
+    let id1 = stack.current_scope_ref().unwrap().sequence_item_id;
 
     stack.enter_sequence_scope(2, 3);
-    let id2 = stack.current_scope_ref().sequence_item_id;
+    let id2 = stack.current_scope_ref().unwrap().sequence_item_id;
 
     stack.enter_sequence_scope(2, 5);
-    let id3 = stack.current_scope_ref().sequence_item_id;
+    let id3 = stack.current_scope_ref().unwrap().sequence_item_id;
 
     assert_eq!(id1, Some(1));
     assert_eq!(id2, Some(2));
@@ -396,11 +396,11 @@ fn test_enter_sequence_scope_clears_previous_keys() {
     stack.enter_sequence_scope(2, 1);
     stack.add_key("name", 2).unwrap();
     stack.add_key("value", 3).unwrap();
-    assert_eq!(stack.current_scope_ref().key_count(), 2);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 2);
 
     // New sequence item should clear keys
     stack.enter_sequence_scope(2, 5);
-    assert_eq!(stack.current_scope_ref().key_count(), 0);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 0);
 }
 
 #[test]
@@ -416,7 +416,7 @@ fn test_enter_sequence_scope_allows_same_key_in_different_items() {
     stack.add_key("name", 6).unwrap();
     stack.add_key("value", 7).unwrap();
 
-    assert_eq!(stack.current_scope_ref().key_count(), 2);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 2);
 }
 
 #[test]
@@ -495,7 +495,7 @@ fn test_scope_isolation_with_deeply_nested_scopes() {
     stack.add_key("port", 7).unwrap();
 
     // Verify each scope has correct keys
-    assert_eq!(stack.current_scope_ref().key_count(), 2); // host, port at level 2
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 2); // host, port at level 2
 }
 
 #[test]
@@ -866,7 +866,7 @@ fn test_many_keys_at_single_level() {
         stack.add_key(&format!("key{}", i), i + 1).unwrap();
     }
 
-    assert_eq!(stack.current_scope_ref().key_count(), 50);
+    assert_eq!(stack.current_scope_ref().unwrap().key_count(), 50);
 }
 
 #[test]
