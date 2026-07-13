@@ -477,7 +477,7 @@ func TestTypeMismatchExtraction(t *testing.T) {
 			name:             "complex_type_mismatch",
 			errorStr:         "field data type mismatch: expected map[string]int, got string",
 			wantFieldPath:    "data",
-			wantExpectedType: "map[integer]int",
+			wantExpectedType: "map[string]integer",
 			wantActualType:   "string",
 		},
 		{
@@ -524,7 +524,7 @@ func TestComplexGoTypeHandling(t *testing.T) {
 		{"[]int", "array of integer"},
 		{"[]*string", "array of pointer to string"},
 		{"[10]int", "array of integer"},
-		{"[]map[string]int", "array of map[integer]int"},
+		{"[]map[string]int", "array of map[string]integer"},
 
 		// Pointer types
 		{"*string", "pointer to string"},
@@ -533,7 +533,7 @@ func TestComplexGoTypeHandling(t *testing.T) {
 		{"**string", "pointer to string"}, // Double pointer
 
 		// Map types
-		{"map[string]int", "map[integer]int"},
+		{"map[string]int", "map[string]integer"},
 		{"map[string]string", "map[string]string"},
 		{"map[string]interface{}", "map[string]interface"},
 		{"map[int]string", "map[integer]string"},
