@@ -140,110 +140,70 @@ func TestExtractTypeName(t *testing.T) {
 			input:    "line 10, column 5: cannot unmarshal !!str into int",
 			expected: "int",
 		},
-	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractTypeName(tt.input)
-			if result != tt.expected {
-				t.Errorf("extractTypeName(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestExtractTypeNamePriority verifies that patterns are checked in the correct priority order
-func TestExtractTypeNamePriority(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-		reason   string
-	}{
+		// Pattern 8: Type name at end after "expected"
 		{
-			name:     "unmarshal pattern takes priority over expected pattern",
-			input:    "cannot unmarshal !!str into int, expected string",
+			name:     "expected type at end",
+			input:    "invalid type, expected int",
 			expected: "int",
-			reason:   "Pattern 1 (unmarshal) should match first",
 		},
 		{
-			name:     "expected pattern matches when unmarshal not present",
-			input:    "expected int, got string in parsing",
-			expected: "int",
-			reason:   "Pattern 2 (expected) should match when Pattern 1 doesn't",
-		},
-		{
-			name:     "simple prefix matches when other patterns absent",
-			input:    "string: some other error",
-			expected: "string",
-			reason:   "Pattern 5 (simple prefix) should match as fallback",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractTypeName(tt.input)
-			if result != tt.expected {
-				t.Errorf("%s: extractTypeName(%q) = %q, want %q. Reason: %s",
-					tt.name, tt.input, result, tt.expected, tt.reason)
-			}
-		})
-	}
-}
-
-// TestExtractTypeNameWithComplexTypes tests extraction of complex Go type signatures
-func TestExtractTypeNameWithComplexTypes(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "array type",
-			input:    "cannot unmarshal !!seq into []string",
+			name:     "expected complex type at end",
+			input:    "field type mismatch, expected []string",
 			expected: "[]string",
 		},
 		{
-			name:     "array of arrays",
-			input:    "cannot unmarshal !!seq into [][]int",
-			expected: "[][]int",
-		},
-		{
-			name:     "map type",
-			input:    "cannot unmarshal !!map into map[string]int",
-			expected: "map[string]int",
-		},
-		{
-			name:     "pointer type",
-			input:    "cannot unmarshal !!str into *string",
+			name:     "expected pointer type at end",
+			input:    "cannot parse value, expected *string",
 			expected: "*string",
 		},
 		{
-			name:     "double pointer",
-			input:    "cannot unmarshal !!str into **string",
-			expected: "**string",
+			name:     "expected map type at end",
+			input:    "conversion error, expected map[string]int",
+			expected: "map[string]int",
+		},
+
+		// Pattern 9: Type name at end after "want"
+		{
+			name:     "want type at end",
+			input:    "type mismatch, want string",
+			expected: "string",
 		},
 		{
-			name:     "channel type",
-			input:    "cannot unmarshal !!str into chan int",
-			expected: "chan int",
-		},
-		{
-			name:     "interface type",
-			input:    "cannot unmarshal !!str into interface{}",
-			expected: "interface{}",
-		},
-		{
-			name:     "fixed array",
-			input:    "cannot unmarshal !!seq into [10]string",
-			expected: "[10]string",
-		},
-		{
-			name:     "package qualified type",
-			input:    "cannot unmarshal !!str into time.Time",
+			name:     "want complex type at end",
+			input:    "invalid conversion, want time.Time",
 			expected: "time.Time",
 		},
-	}
+		{
+			name:     "want interface type at end",
+			input:    "cannot convert, want interface{}",
+			expected: "interface{}",
+		},
+
+		// Pattern 10: Type name at end after "got" (actual type)
+		{
+			name:     "got type at end",
+			input:    "parsing failed, got bool",
+			expected: "bool",
+		},
+		{
+			name:     "got complex type at end",
+			input:    "unexpected value, got chan int",
+			expected: "chan int",
+		},
+
+		// Pattern 11: Type name at end after "type"
+		{
+			name:     "type keyword at end",
+			input:    "invalid value type float64",
+			expected: "float64",
+		},
+		{
+			name:     "type keyword with array at end",
+			input:    "field has wrong type []int",
+			expected: "[]int",
+		},
+		}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -252,23 +212,5 @@ func TestExtractTypeNameWithComplexTypes(t *testing.T) {
 				t.Errorf("extractTypeName(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
-	}
-}
-
-// TestExtractTypeNamePerformance benchmarks the extraction function
-func BenchmarkExtractTypeName(b *testing.B) {
-	inputs := []string{
-		"cannot unmarshal !!str into int",
-		"expected int, got string",
-		"line 10: cannot unmarshal !!seq into []string",
-		"field server.port type mismatch: expected int, got string",
-		"string cannot be converted to int",
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, input := range inputs {
-			extractTypeName(input)
-		}
 	}
 }

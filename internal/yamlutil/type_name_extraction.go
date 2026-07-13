@@ -63,13 +63,13 @@ func extractTypeName(errorStr string) string {
 	}
 
 	// Pattern 2: "expected <type>, got <type>"
-	re2 := regexp.MustCompile(`expected\s+([^,\s]+(?:\s+[\w\-*]+)*(?:\.[\w\-*]+)*),\s*got\s+\S+`)
+	re2 := regexp.MustCompile(`\bexpected\s+([^,\s]+(?:\s+[\w\-*]+)*(?:\.[\w\-*]+)*),\s*got\s+\S+`)
 	if matches := re2.FindStringSubmatch(errorStr); matches != nil {
 		return strings.TrimSpace(matches[1])
 	}
 
 	// Pattern 3: "want <type>, got <type>"
-	re3 := regexp.MustCompile(`want\s+([^,\s]+(?:\s+[\w\-*]+)*(?:\.[\w\-*]+)*),\s*got\s+\S+`)
+	re3 := regexp.MustCompile(`\bwant\s+([^,\s]+(?:\s+[\w\-*]+)*(?:\.[\w\-*]+)*),\s*got\s+\S+`)
 	if matches := re3.FindStringSubmatch(errorStr); matches != nil {
 		return strings.TrimSpace(matches[1])
 	}
@@ -96,6 +96,40 @@ func extractTypeName(errorStr string) string {
 	// Pattern 7: Type name after "into": "...into <type>" (handles complex types)
 	re7 := regexp.MustCompile(`into\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*\w{}]+(?:\.[\w\-*]+)*)`)
 	if matches := re7.FindStringSubmatch(errorStr); matches != nil {
+		typeName := strings.TrimRight(matches[1], ".,")
+		return typeName
+	}
+
+	// Pattern 8: Type name at end after "expected": "...invalid type, expected <type>"
+	// This pattern only matches known Go types to avoid matching regular words
+	// Must start with special char ([, ], *, {, }) or be a known basic type
+	re8 := regexp.MustCompile(`\bexpected\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*{}]+[\w\-*]*(?:\.[\w\-*]+)*|(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|rune|byte|interface|struct)(?:\s*[,\.\s]*|$))`)
+	if matches := re8.FindStringSubmatch(errorStr); matches != nil {
+		typeName := strings.TrimRight(matches[1], ".,")
+		return typeName
+	}
+
+	// Pattern 9: Type name at end after "want": "...error, want <type>"
+	// Must start with special char ([, ], *, {, }) or be a known basic type
+	re9 := regexp.MustCompile(`\bwant\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*{}]+[\w\-*]*(?:\.[\w\-*]+)*|(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|rune|byte|interface|struct)(?:\s*[,\.\s]*|$))`)
+	if matches := re9.FindStringSubmatch(errorStr); matches != nil {
+		typeName := strings.TrimRight(matches[1], ".,")
+		return typeName
+	}
+
+	// Pattern 10: Type name at end after "got" (extract actual type): "...error, got <type>"
+	// Must start with special char ([, ], *, {, }) or be a known basic type
+	re10 := regexp.MustCompile(`\bgot\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*{}]+[\w\-*]*(?:\.[\w\-*]+)*|(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|rune|byte|interface|struct)(?:\s*[,\.\s]*|$))`)
+	if matches := re10.FindStringSubmatch(errorStr); matches != nil {
+		typeName := strings.TrimRight(matches[1], ".,")
+		return typeName
+	}
+
+	// Pattern 11: Type name at end in "type <type>": "...error type <type>"
+	// This pattern is very restrictive to avoid matching regular words
+	// Must start with special char ([, ], *, {, }) or be a known basic type
+	re11 := regexp.MustCompile(`\btype\s+((?:chan|chan<-|<-chan)\s+[\w\-*]+|interface\{\}|[\[\]\*{}]+[\w\-*]*(?:\.[\w\-*]+)*|(?:string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|rune|byte|interface|struct)(?:\s*[,\.\s]*|$))`)
+	if matches := re11.FindStringSubmatch(errorStr); matches != nil {
 		typeName := strings.TrimRight(matches[1], ".,")
 		return typeName
 	}
