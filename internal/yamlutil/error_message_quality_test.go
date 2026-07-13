@@ -486,13 +486,7 @@ func TestErrorTypeInMessages(t *testing.T) {
 		{
 			name: "ConstraintError mentions constraint violation",
 			createError: func() error {
-				return &ConstraintError{
-					FilePath:       "service.yaml",
-					FieldPath:      "server.port",
-					Constraint:     "must be 1-65535",
-					Value:          "70000",
-					Line:           10,
-				}
+				return NewConstraintError("service.yaml", "server.port", "", "must be 1-65535", "", "70000", 10, "")
 			},
 			expectedInMessage: []string{"constraint violation"},
 		},
@@ -543,13 +537,7 @@ func TestErrorMessagesProvideContext(t *testing.T) {
 		{
 			name: "ConstraintError provides constraint details",
 			createError: func() error {
-				return &ConstraintError{
-					FilePath:       "config.yaml",
-					FieldPath:      "server.port",
-					Constraint:     "must be between 1-65535",
-					Value:          "70000",
-					Line:           10,
-				}
+				return NewConstraintError("config.yaml", "server.port", "", "must be between 1-65535", "", "70000", 10, "")
 			},
 			expectedContext: []string{"constraint", "1-65535", "70000"},
 			description:     "Constraint error should show constraint and actual value",
@@ -619,13 +607,7 @@ func TestErrorMessagesAreActionable(t *testing.T) {
 		{
 			name: "Constraint violation shows valid range",
 			createError: func() error {
-				return &ConstraintError{
-					FilePath:       "config.yaml",
-					FieldPath:      "server.port",
-					Constraint:     "must be between 1-65535",
-					Value:          "70000",
-					Line:           10,
-				}
+				return NewConstraintError("config.yaml", "server.port", "", "must be between 1-65535", "", "70000", 10, "")
 			},
 			actionable:    true,
 			expectedHints: []string{"1-65535", "70000"},
@@ -803,13 +785,7 @@ func TestErrorMessagesAcrossAllCategories(t *testing.T) {
 					return NewValidationError("app.yaml", "invalid", "server.port", "constraint", ErrCodeInvalidValue, 0, 0, "", "server.port")
 				},
 				func() error {
-					return &ConstraintError{
-						FilePath:   "service.yaml",
-						FieldPath:  "server.port",
-						Constraint: "must be 1-65535",
-						Value:      "70000",
-						Line:       10,
-					}
+					return NewConstraintError("service.yaml", "server.port", "", "must be 1-65535", "", "70000", 10, "")
 				},
 			},
 			qualityChecks: func(err error) []string {
@@ -903,13 +879,7 @@ func TestErrorFormatConsistencyAcrossErrors(t *testing.T) {
 		},
 		{
 			name: "ConstraintError format",
-			err: &ConstraintError{
-				FilePath:   "service.yaml",
-				FieldPath:  "server.port",
-				Constraint: "must be 1-65535",
-				Value:      "70000",
-				Line:       10,
-			},
+			err: NewConstraintError("service.yaml", "server.port", "", "must be 1-65535", "", "70000", 10, ""),
 			check: func(msg string) bool {
 				return strings.Contains(msg, "constraint violation in") &&
 					strings.Contains(msg, "constraint")
@@ -937,7 +907,7 @@ func TestErrorMessagesNonEmpty(t *testing.T) {
 		func() error { return NewParseError("f.yaml", "m", 1, 1, "", "", "") },
 		func() error { return NewValidationError("f.yaml", "m", "f", "c", "", 0, 0, "", "f") },
 		func() error { return NewTypeMismatchError("f.yaml", "", "", "", "", 0, "") },
-		func() error { return &ConstraintError{FilePath: "f.yaml"} },
+		func() error { return NewConstraintError("f.yaml", "", "", "", "", "", 0, "") },
 		func() error { return NewFieldNotFoundError("f.yaml", "f", 1, "") },
 		func() error { return &SyntaxError{FilePath: "f.yaml", Message: "m"} },
 		func() error { return &StructureError{FilePath: "f.yaml", Message: "m"} },
