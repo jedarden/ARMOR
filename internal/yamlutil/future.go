@@ -48,11 +48,25 @@ func (sp *StreamParser) ParseStream(reader io.Reader, data interface{}) error {
 	// Stub implementation: read all content and parse normally
 	content, err := io.ReadAll(reader)
 	if err != nil {
+		// Standard pattern: sentinel checks → FileError type → YAMLError interface → generic fallback
+
 		// Check for io.EOF - this is actually expected behavior for streams
 		if errors.Is(err, io.EOF) {
 			// EOF indicates the stream ended normally but no content was read
 			return fmt.Errorf("empty YAML stream: %w", err)
 		}
+
+		// Check for FileError type with structured information
+		if fileErr, ok := err.(*FileError); ok {
+			return fmt.Errorf("stream read error: %s: %w", fileErr.Context(), err)
+		}
+
+		// Check for YAMLError interface (base interface for all YAML errors)
+		if yamlErr, ok := err.(YAMLError); ok {
+			return fmt.Errorf("stream read error [%s]: %w", yamlErr.YAMLErrorType(), err)
+		}
+
+		// Generic fallback for other errors
 		return fmt.Errorf("stream read error: %w", err)
 	}
 
@@ -77,11 +91,21 @@ func (sp *StreamParser) ParseStreamToMap(reader io.Reader) (map[string]interface
 
 	var data map[string]interface{}
 	if err := yaml.Unmarshal(content, &data); err != nil {
-		// Check for specific YAML error types
+		// Standard pattern: sentinel checks → YAMLError interface → specific types → generic fallback
+
+		// Check for YAMLError interface (base interface for all YAML errors)
+		if yamlErr, ok := err.(YAMLError); ok {
+			// Provide detailed YAML error information
+			return nil, fmt.Errorf("YAML parse error [%s: %s]: %w", yamlErr.Code(), yamlErr.YAMLErrorType(), err)
+		}
+
+		// Check for specific YAML error types using type assertions
 		if typeErr, ok := err.(*yaml.TypeError); ok {
 			// Provide detailed type error information
 			return nil, fmt.Errorf("YAML type error: %v", typeErr.Errors)
 		}
+
+		// Generic fallback for other errors
 		return nil, fmt.Errorf("YAML parse error: %w", err)
 	}
 
