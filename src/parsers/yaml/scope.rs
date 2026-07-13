@@ -314,17 +314,23 @@ impl ScopeStack {
             }
 
             self.scopes.retain(|s| s.indent_level <= indent_level);
-            self.scopes.push(fresh_scope);
 
             #[cfg(debug_assertions)]
             {
-                let removed_count = before_depth - self.depth() + 1; // +1 because we replaced the scope at this level too
+                let after_retain_depth = self.depth();
+                let removed_count = before_depth - after_retain_depth;
                 if removed_count > 0 {
                     log_debug!("[SCOPE EXIT] type=Mapping reuse cleanup, removed {} scopes: '{}' -> '{}'",
                              removed_count,
                              before_path,
                              self.get_scope_path());
                 }
+            }
+
+            self.scopes.push(fresh_scope);
+
+            #[cfg(debug_assertions)]
+            {
                 log_debug!("[SCOPE ENTRY] type=Mapping (reuse), indent={}, cleared scopes deeper than this level", indent_level);
             }
         } else {
