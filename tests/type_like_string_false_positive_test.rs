@@ -4080,6 +4080,270 @@ fn test_internationalization_config() {
     }
 }
 
+#[test]
+fn test_multiline_yaml_strings_with_exclamation() {
+    // Test multiline YAML string values with exclamation marks
+    // These should all be classified as MappingKey with proper values
+    let test_cases = vec![
+        // Simple multiline strings with ! at various positions
+        "message: This is important!",
+        "alert: Warning! Check now!",
+        "error: Failed! Try again!",
+        "note: Read this! It matters!",
+        "status: Done! Complete!",
+        // Single-line configs with embedded multiline contexts
+        "summary: All systems operational!",
+        "description: Configuration loaded! Ready to use!",
+        "prompt: Enter your username! Press submit when done!",
+        // Messages with multiple exclamation marks
+        "greeting: Hello!!! Welcome aboard!",
+        "warning: Critical error!!! Action required!",
+        "success: Deployment complete!!! All systems green!",
+        // Mixed single-line with various exclamation patterns
+        "title: Welcome! Get Started!",
+        "subtitle: Quick Start Guide! Learn More!",
+        "caption: Figure 1! Architecture Diagram!",
+        "footer: © 2024 MyApp! All rights reserved!",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Multiline YAML string with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_folded_style_scalars_with_exclamation() {
+    // Test folded style scalars (>) with exclamation marks
+    // Folded scalars preserve newlines as spaces but strip final newline
+    let test_cases = vec![
+        // Folded scalar markers with keys containing ! in values
+        "description: >",  // Folded scalar marker line
+        "instructions: >", // Another folded scalar marker
+        "note: >",         // Folded scalar for notes
+        // Simulating content lines after folded marker (with !)
+        "  This is important! Read carefully.",  // Indented continuation
+        "  Check this! And verify!",             // Multiple sentences with !
+        "  Warning! Critical system!",           // Warning text with !
+        "  Done! Complete! Success!",            // Multiple exclamations
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        // Folded scalar marker lines and content should be properly classified
+        assert!(
+            result == LineType::MappingKey || result == LineType::Comment,
+            "Folded scalar with ! should be MappingKey or Comment: '{}'",
+            line
+        );
+    }
+
+    // Test folded scalars in more complex scenarios
+    let complex_folded = vec![
+        "help_text: >",
+        "error_message: >",
+        "  An error occurred! Please try!",
+        "  Contact support! Email us!",
+    ];
+
+    for line in complex_folded {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::Comment,
+            "Complex folded scalar with ! should be valid: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_literal_style_scalars_with_exclamation() {
+    // Test literal style scalars (|) with exclamation marks
+    // Literal scalars preserve all newlines and formatting exactly
+    let test_cases = vec![
+        // Literal scalar marker lines
+        "script: |",        // Literal scalar marker
+        "config: |",        // Another literal marker
+        "template: |",      // Template literal
+        "code_block: |",    // Code block literal
+        // Simulating content lines after literal marker (with !)
+        "  #!/bin/bash! echo 'hello'",     // Script with !
+        "  value: important!",             // Config-like line in literal
+        "  message: Check this!",          // Message line in literal
+        "  alert: Critical! Action!",      // Alert in literal block
+        "  echo 'Done! Complete!'",         // Command with ! in literal
+        "  print('Warning! Error!')",       // Code with ! in literal
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        // Literal scalar markers and content should be properly classified
+        assert!(
+            result == LineType::MappingKey || result == LineType::Comment,
+            "Literal scalar with ! should be MappingKey or Comment: '{}'",
+            line
+        );
+    }
+
+    // Test literal scalars with various exclamation patterns
+    let literal_with_patterns = vec![
+        "code: |",
+        "text: |",
+        "  String with! exclamation",
+        "  Line ending in!",
+        "  Multiple! marks! here!",
+        "  !start and end!",
+    ];
+
+    for line in literal_with_patterns {
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::Comment,
+            "Literal scalar patterns with ! should be valid: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_mixed_multiline_with_singleline_exclamation_patterns() {
+    // Test mixed multiline blocks containing single-line configs with exclamation marks
+    let test_cases = vec![
+        // Mix of nested keys and exclamation values
+        "app_config:",
+        "  name: MyApp!",
+        "  version: 1.0.0!",
+        "  settings:",
+        "  debug: false!",
+        "  production: true!",
+        " Multiline-like values that are actually single-line",
+        "message: Welcome! Get started now!",
+        "description: This is a long message! Read carefully!",
+        " Mixed nested structures with exclamation marks",
+        "server:",
+        "  host: localhost!",
+        "  port: 8080!",
+        "  ssl: enabled!",
+        " Flow sequences with exclamation marks in multiline-like context",
+        "items: [one!, two!, three!]",
+        "tags: [production!, critical!]",
+        " Nested sequences with exclamation marks",
+        "servers:",
+        "    - server1!",
+        "    - server2!",
+        "    - backup!",
+    ];
+
+    for line in test_cases {
+        let result = classify_line_type(line);
+        // All should be valid types, never Tag when ! is after colon
+        match result {
+            LineType::MappingKey | LineType::SequenceItem | LineType::Comment |
+            LineType::FlowSequence => {
+                // Valid classifications
+            }
+            LineType::Tag => {
+                panic!("Mixed multiline with ! should NOT be Tag: '{}'", line);
+            }
+            _ => {
+                // Other types might be valid depending on context
+            }
+        }
+    }
+
+    // Specific test for multiline-looking blocks that are single lines
+    let multiline_lookalikes = vec![
+        "text: \"Line 1! Line 2! Line 3!\"",
+        "note: 'Paragraph 1! Paragraph 2!'",
+        "description: \"Section A! Section B! Section C!\"",
+        "message: 'Warning! Error! Critical!'",
+    ];
+
+    for line in multiline_lookalikes {
+        let result = classify_line_type(line);
+        assert_eq!(
+            result,
+            LineType::MappingKey,
+            "Multiline-lookalike string with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_folded_and_literal_mixed_contexts() {
+    // Test folded (>) and literal (|) scalars in mixed contexts with exclamation
+    let mixed_contexts = vec![
+        // Folded scalar followed by regular keys with !
+        "help_text: >",
+        "  Click here! Get started!",
+        "quick_guide: >",
+        "  Read this! Follow steps!",
+        " Literal scalar with embedded exclamation patterns",
+        "script: |",
+        "  #!/bin/bash",
+        "  echo 'Starting!'",
+        "  echo 'Done!'",
+        " Mixed: folded with regular configs",
+        "description: >",
+        "  First line! Second line!",
+        "status: active!",
+        "priority: high!",
+    ];
+
+    for line in mixed_contexts {
+        let result = classify_line_type(line);
+        // In mixed contexts, ! should never create a Tag classification
+        if result == LineType::Tag {
+            panic!("Mixed context with ! should NOT be Tag: '{}'", line);
+        }
+        // Other classifications are acceptable
+    }
+}
+
+#[test]
+fn test_multiline_edge_cases_with_exclamation() {
+    // Test edge cases for multiline scenarios with exclamation marks
+    let edge_cases = vec![
+        // Empty or minimal folded/literal markers
+        "empty: >",
+        "blank: |",
+        // Single character values with !
+        "char: !",
+        "value: a!",
+        // Exclamation at start, middle, and end of what looks like multiline
+        "text: !start middle! end!",
+        "note: !!!!!!",
+        // Mixed quotes with exclamation in multiline context
+        "quoted1: \"Line 1! Line 2!\"",
+        "quoted2: 'Line 1! Line 2!'",
+        // Combining folded/literal indicators with ! in values
+        "warning: >",
+        "  Warning! Attention! Notice!",
+        "error: |",
+        "  Error! Failed! Broken!",
+        // Edge case: exclamation right after folded/literal marker
+        "marker1: >!",
+        "marker2: |!",
+    ];
+
+    for line in edge_cases {
+        let result = classify_line_type(line);
+        // Edge cases should still not be classified as Tag when ! is after colon
+        if result == LineType::Tag {
+            // Only actual YAML tags should be Tag
+            if line.contains(':') && line.find('!').unwrap_or(usize::MAX) > line.find(':').unwrap_or(0) {
+                panic!("Edge case with ! after colon should NOT be Tag: '{}'", line);
+            }
+        }
+    }
+}
+
 // ============================================================================
 // Section 13: Error Code-like Strings in Values
 // ============================================================================
