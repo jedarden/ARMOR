@@ -333,7 +333,7 @@ func TestAllErrorCategoriesHaveQualityMessages(t *testing.T) {
 			{
 				name: "syntax error",
 				createErr: func() error {
-					return NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "")
+					return NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 				},
 				checks: []string{"parse error", "config.yaml", "line 10", "column 5"},
 			},
@@ -470,8 +470,8 @@ func TestErrorQualityAcceptanceCriteria(t *testing.T) {
 
 	t.Run("AC2_FilePathInclusionInErrorMessages", func(t *testing.T) {
 		testErrors := []error{
-			NewParseError("config.yaml", "test", 1, 1, "", "", ""),
-			NewValidationError("app.yaml", "test", "field", "constraint", "", 0, 0, "", "field"),
+			NewParseError("config.yaml", "test", 1, 1, "", "", "", ""),
+			NewValidationError("app.yaml", "test", "field", "constraint", "", 0, 0, ErrorTypeValidation, "field", "", ""),
 			NewTypeMismatchError("values.yaml", "", "", "", "", 0, ""),
 			NewConstraintError("service.yaml", "", "", "", "", "", 0, ""),
 			NewFieldNotFoundError("deploy.yaml", "field", 1, ""),
@@ -492,7 +492,7 @@ func TestErrorQualityAcceptanceCriteria(t *testing.T) {
 	})
 
 	t.Run("AC3_LineColumnAccuracyInErrors", func(t *testing.T) {
-		err := NewParseError("config.yaml", "test error", 15, 25, ErrCodeInvalidSyntax, "", "")
+		err := NewParseError("config.yaml", "test error", 15, 25, ErrCodeInvalidSyntax, "", "", "")
 		errMsg := err.Error()
 
 		if !strings.Contains(errMsg, "line 15") {
@@ -510,8 +510,8 @@ func TestErrorQualityAcceptanceCriteria(t *testing.T) {
 			err     error
 			wantErr ErrorType
 		}{
-			{NewParseError("f.yaml", "m", 1, 1, "", "", ""), ErrorTypeParse},
-			{NewValidationError("f.yaml", "m", "f", "c", "", 0, 0, "", "f"), ErrorTypeValidation},
+			{NewParseError("f.yaml", "m", 1, 1, "", "", "", ""), ErrorTypeParse},
+			{NewValidationError("f.yaml", "m", "f", "c", "", 0, 0, ErrorTypeValidation, "f", "", ""), ErrorTypeValidation},
 			{NewTypeMismatchError("f.yaml", "", "", "", "", 0, ""), ErrorTypeTypeMismatch},
 			{NewConstraintError("f.yaml", "", "", "", "", "", 0, ""), ErrorTypeConstraint},
 			{NewFieldNotFoundError("f.yaml", "f", 1, ""), ErrorTypeFieldNotFound},

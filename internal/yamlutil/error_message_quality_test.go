@@ -29,7 +29,7 @@ func TestErrorMessagesIncludeFilePath(t *testing.T) {
 		{
 			name: "ParseError includes file path",
 			createError: func() error {
-				return NewParseError("config.yaml", "test error", 10, 5, ErrCodeInvalidSyntax, "", "")
+				return NewParseError("config.yaml", "test error", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 			},
 			expectPath:   true,
 			expectedPath: "config.yaml",
@@ -37,7 +37,7 @@ func TestErrorMessagesIncludeFilePath(t *testing.T) {
 		{
 			name: "ValidationError includes file path",
 			createError: func() error {
-				return NewValidationError("deployment.yaml", "invalid port", "server.port", "must be 1-65535", ErrCodeInvalidValue, 15, 12, "", "server.port")
+				return NewValidationError("deployment.yaml", "invalid port", "server.port", "must be 1-65535", ErrCodeInvalidValue, 15, 12, ErrorTypeValidation, "server.port", "", "")
 			},
 			expectPath:   true,
 			expectedPath: "deployment.yaml",
@@ -141,7 +141,7 @@ func TestErrorMessagesWithRelativePaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := NewParseError(tt.filePath, "test error", 10, 5, ErrCodeInvalidSyntax, "", "")
+			err := NewParseError(tt.filePath, "test error", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 			errMsg := err.Error()
 
 			if !strings.Contains(errMsg, tt.filePath) {
@@ -201,7 +201,7 @@ func TestErrorMessagesIncludeLineColumn(t *testing.T) {
 		{
 			name: "ParseError with line and column",
 			createError: func() error {
-				return NewParseError("config.yaml", "test error", 10, 5, ErrCodeInvalidSyntax, "", "")
+				return NewParseError("config.yaml", "test error", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 			},
 			expectLine:     true,
 			expectColumn:   true,
@@ -211,7 +211,7 @@ func TestErrorMessagesIncludeLineColumn(t *testing.T) {
 		{
 			name: "ParseError with line only",
 			createError: func() error {
-				return NewParseError("config.yaml", "test error", 15, 0, ErrCodeInvalidSyntax, "", "")
+				return NewParseError("config.yaml", "test error", 15, 0, ErrCodeInvalidSyntax, "", "", "")
 			},
 			expectLine:     true,
 			expectColumn:   false,
@@ -220,7 +220,7 @@ func TestErrorMessagesIncludeLineColumn(t *testing.T) {
 		{
 			name: "ValidationError with line and column",
 			createError: func() error {
-				return NewValidationError("app.yaml", "invalid value", "server.port", "constraint", ErrCodeInvalidValue, 20, 8, "", "server.port")
+				return NewValidationError("app.yaml", "invalid value", "server.port", "constraint", ErrCodeInvalidValue, 20, 8, ErrorTypeValidation, "server.port", "", "")
 			},
 			expectLine:     true,
 			expectColumn:   true,
@@ -300,21 +300,21 @@ func TestErrorMessagesLineColumnFormat(t *testing.T) {
 		{
 			name: "ParseError line:column format",
 			createError: func() error {
-				return NewParseError("config.yaml", "test error", 10, 5, ErrCodeInvalidSyntax, "", "")
+				return NewParseError("config.yaml", "test error", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 			},
 			expectedFormat: []string{"at line 10", "column 5"},
 		},
 		{
 			name: "ValidationError line:column format",
 			createError: func() error {
-				return NewValidationError("app.yaml", "invalid", "field", "constraint", ErrCodeInvalidValue, 15, 12, "", "field")
+				return NewValidationError("app.yaml", "invalid", "field", "constraint", ErrCodeInvalidValue, 15, 12, ErrorTypeValidation, "field", "", "")
 			},
 			expectedFormat: []string{"at line 15", "column 12"},
 		},
 		{
 			name: "line only format",
 			createError: func() error {
-				return NewParseError("config.yaml", "test error", 20, 0, ErrCodeInvalidSyntax, "", "")
+				return NewParseError("config.yaml", "test error", 20, 0, ErrCodeInvalidSyntax, "", "", "")
 			},
 			expectedFormat: []string{"at line 20"},
 		},
@@ -350,7 +350,7 @@ func TestErrorTypeCategorization(t *testing.T) {
 		{
 			name: "ParseError categorization",
 			createError: func() error {
-				return NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "")
+				return NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 			},
 			expectedType: ErrorTypeParse,
 			expectedCode: ErrCodeInvalidSyntax,
@@ -358,7 +358,7 @@ func TestErrorTypeCategorization(t *testing.T) {
 		{
 			name: "ValidationError categorization",
 			createError: func() error {
-				return NewValidationError("app.yaml", "invalid", "field", "constraint", ErrCodeInvalidValue, 0, 0, "", "field")
+				return NewValidationError("app.yaml", "invalid", "field", "constraint", ErrCodeInvalidValue, 0, 0, ErrorTypeValidation, "field", "", "")
 			},
 			expectedType: ErrorTypeValidation,
 			expectedCode: ErrCodeInvalidValue,
@@ -457,14 +457,14 @@ func TestErrorTypeInMessages(t *testing.T) {
 		{
 			name: "ParseError mentions parse error",
 			createError: func() error {
-				return NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "")
+				return NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 			},
 			expectedInMessage: []string{"parse error"},
 		},
 		{
 			name: "ValidationError mentions validation error",
 			createError: func() error {
-				return NewValidationError("app.yaml", "invalid", "field", "constraint", ErrCodeInvalidValue, 0, 0, "", "field")
+				return NewValidationError("app.yaml", "invalid", "field", "constraint", ErrCodeInvalidValue, 0, 0, ErrorTypeValidation, "field", "", "")
 			},
 			expectedInMessage: []string{"validation error"},
 		},
@@ -537,7 +537,7 @@ func TestErrorMessagesProvideContext(t *testing.T) {
 		{
 			name: "ValidationError with field path",
 			createError: func() error {
-				return NewValidationError("config.yaml", "port out of range", "server.port", "must be 1-65535", ErrCodeInvalidValue, 0, 0, "", "server.port")
+				return NewValidationError("config.yaml", "port out of range", "server.port", "must be 1-65535", ErrCodeInvalidValue, 0, 0, ErrorTypeValidation, "server.port", "", "")
 			},
 			expectedContext: []string{"field", "server.port", "constraint"},
 			description:     "Validation error should include field path and constraint",
@@ -744,7 +744,7 @@ func TestErrorMessagesAcrossAllCategories(t *testing.T) {
 			category: "parse errors",
 			testErrors: []func() error{
 				func() error {
-					return NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "")
+					return NewParseError("config.yaml", "invalid syntax", 10, 5, ErrCodeInvalidSyntax, "", "", "")
 				},
 				func() error {
 					return NewSyntaxError("test.yaml", "malformed YAML", 5, 10, "", "", "")
@@ -769,7 +769,7 @@ func TestErrorMessagesAcrossAllCategories(t *testing.T) {
 			category: "validation errors",
 			testErrors: []func() error{
 				func() error {
-					return NewValidationError("app.yaml", "invalid", "server.port", "constraint", ErrCodeInvalidValue, 0, 0, "", "server.port")
+					return NewValidationError("app.yaml", "invalid", "server.port", "constraint", ErrCodeInvalidValue, 0, 0, ErrorTypeValidation, "server.port", "", "")
 				},
 				func() error {
 					return NewConstraintError("service.yaml", "server.port", "", "must be 1-65535", "", "70000", 10, "")
@@ -841,7 +841,7 @@ func TestErrorFormatConsistencyAcrossErrors(t *testing.T) {
 	}{
 		{
 			name: "ParseError format",
-			err: NewParseError("config.yaml", "test error", 10, 5, ErrCodeInvalidSyntax, "", ""),
+			err: NewParseError("config.yaml", "test error", 10, 5, ErrCodeInvalidSyntax, "", "", ""),
 			check: func(msg string) bool {
 				return strings.Contains(msg, "parse error in") &&
 					strings.Contains(msg, "config.yaml")
@@ -849,7 +849,7 @@ func TestErrorFormatConsistencyAcrossErrors(t *testing.T) {
 		},
 		{
 			name: "ValidationError format",
-			err: NewValidationError("app.yaml", "test", "field", "constraint", ErrCodeInvalidValue, 0, 0, "", "field"),
+			err: NewValidationError("app.yaml", "test", "field", "constraint", ErrCodeInvalidValue, 0, 0, ErrorTypeValidation, "field", "", ""),
 			check: func(msg string) bool {
 				return strings.Contains(msg, "validation error in") &&
 					strings.Contains(msg, "app.yaml")
@@ -891,8 +891,8 @@ func TestErrorFormatConsistencyAcrossErrors(t *testing.T) {
 // TestErrorMessagesNonEmpty verifies all error messages are non-empty
 func TestErrorMessagesNonEmpty(t *testing.T) {
 	testErrors := []func() error{
-		func() error { return NewParseError("f.yaml", "m", 1, 1, "", "", "") },
-		func() error { return NewValidationError("f.yaml", "m", "f", "c", "", 0, 0, "", "f") },
+		func() error { return NewParseError("f.yaml", "m", 1, 1, ErrCodeInvalidSyntax, "", "", "") },
+		func() error { return NewValidationError("f.yaml", "m", "f", "c", ErrCodeInvalidValue, 0, 0, ErrorTypeValidation, "", "", "") },
 		func() error { return NewTypeMismatchError("f.yaml", "", "", "", "", 0, "") },
 		func() error { return NewConstraintError("f.yaml", "", "", "", "", "", 0, "") },
 		func() error { return NewFieldNotFoundError("f.yaml", "f", 1, "") },
