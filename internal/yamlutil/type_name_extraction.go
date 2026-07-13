@@ -32,6 +32,77 @@ type EnhancedTypeErrorDetail struct {
 // - "yaml: line 15: cannot unmarshal !!seq into []string"
 //
 // Returns an EnhancedTypeErrorDetail with all extracted information.
+// extractTypeName extracts the first type name from a yaml.TypeError message string.
+//
+// This function uses basic regex patterns to extract type names from error messages,
+// handling simple cases where type names appear in common positions.
+//
+// Patterns matched:
+// - "cannot unmarshal !!<tag> into <type>" → extracts "<type>"
+// - "expected <type>, got <type>" → extracts first "<type>"
+// - "want <type>, got <type>" → extracts first "<type>"
+// - "<type> cannot be converted to <type>" → extracts first "<type>"
+// - Simple type names at start: "<type>: error" → extracts "<type>"
+//
+// Parameters:
+//   errorStr - The error message string to parse
+//
+// Returns:
+//   The first matched type name, or empty string if no match found
+func extractTypeName(errorStr string) string {
+	errorStr = strings.TrimSpace(errorStr)
+
+	// Pattern 1: "cannot unmarshal !!<tag> into <type>" (handles complex types)
+	// Matches: basic types (int), dotted types (time.Time), spaced types (chan int),
+	//          arrays ([]string), maps (map[string]int), fixed arrays ([10]string)
+	re1 := regexp.MustCompile(`cannot\s+unmarshal\s+!!\w+\s+into\s+(\S+)`)
+	if matches := re1.FindStringSubmatch(errorStr); matches != nil {
+		// Trim any trailing punctuation
+		typeName := strings.TrimRight(matches[1], ".,")
+		return typeName
+	}
+
+	// Pattern 2: "expected <type>, got <type>"
+	re2 := regexp.MustCompile(`expected\s+([^,\s]+(?:\s+[\w\-*]+)*(?:\.[\w\-*]+)*),\s*got\s+\S+`)
+	if matches := re2.FindStringSubmatch(errorStr); matches != nil {
+		return strings.TrimSpace(matches[1])
+	}
+
+	// Pattern 3: "want <type>, got <type>"
+	re3 := regexp.MustCompile(`want\s+([^,\s]+(?:\s+[\w\-*]+)*(?:\.[\w\-*]+)*),\s*got\s+\S+`)
+	if matches := re3.FindStringSubmatch(errorStr); matches != nil {
+		return strings.TrimSpace(matches[1])
+	}
+
+	// Pattern 4: "<type> cannot be converted to <type>"
+	re4 := regexp.MustCompile(`^(\S+)\s+cannot\s+be\s+converted\s+to\s+\S+`)
+	if matches := re4.FindStringSubmatch(errorStr); matches != nil {
+		return matches[1]
+	}
+
+	// Pattern 5: Simple type name at start of error: "<type>: error message"
+	// Make sure it doesn't match prefixes like "yaml:" or "line 10:"
+	re5 := regexp.MustCompile(`^([a-z][A-Za-z0-9]*):`)
+	if matches := re5.FindStringSubmatch(errorStr); matches != nil {
+		return matches[1]
+	}
+
+	// Pattern 6: Quoted type name "cannot unmarshal "<type>" into "<type>""
+	re6 := regexp.MustCompile(`cannot\s+unmarshal\s+"([^"]+)"\s+into\s+"[^"]+"`)
+	if matches := re6.FindStringSubmatch(errorStr); matches != nil {
+		return matches[1]
+	}
+
+	// Pattern 7: Type name after "into": "...into <type>" (handles complex types)
+	re7 := regexp.MustCompile(`into\s+(\S+)`)
+	if matches := re7.FindStringSubmatch(errorStr); matches != nil {
+		typeName := strings.TrimRight(matches[1], ".,")
+		return typeName
+	}
+
+	return ""
+}
+
 func parseTypeErrorString(errorStr string) EnhancedTypeErrorDetail {
 	detail := EnhancedTypeErrorDetail{
 		RawError:    errorStr,
@@ -478,4 +549,69 @@ func parseIntSafe(s string) int {
 		}
 	}
 	return result
+}
+
+// ExtractTypeNameBasic extracts the first type name from a yaml.TypeError message string.
+//
+// This is a basic implementation that handles simple type name formats at the beginning
+// of error messages. It serves as the foundation for type name extraction.
+//
+// Supported patterns:
+// - YAML type tags: !!str, !!int, !!seq, !!map, !!bool, !!float, !!null
+// - Go basic types: string, int, int8, int16, int32, int64, uint, float32, float64, bool
+// - Go slice types: []string, []int, etc.
+// - Go pointer types: *string, *int, etc.
+// - Go map types: map[string]int, etc.
+//
+// The function searches the error message and returns the first matched type name,
+// or an empty string if no match is found.
+//
+// Examples:
+// - "line 10: cannot unmarshal !!str into int" → returns "str"
+// - "cannot unmarshal !!int into string" → returns "int"
+// - "expected []string, got int" → returns "[]string"
+// - "field type: *bool expected" → returns "*bool"
+// - "map cannot unmarshal" → returns ""
+//
+// Returns empty string when no match is found.
+func ExtractTypeNameBasic(errorMsg string) string {
+	errorMsg = strings.TrimSpace(errorMsg)
+	if errorMsg == "" {
+		return ""
+	}
+
+	// Pattern 1: YAML type tags (e.g., !!str, !!int, !!seq)
+	// These are the most common and should be checked first
+	yamlTypeTagRegex := regexp.MustCompile(`!!(\w+)`)
+	if matches := yamlTypeTagRegex.FindStringSubmatch(errorMsg); matches != nil {
+		return matches[1]
+	}
+
+	// Pattern 2: Go slice types (e.g., []string, []int, []map[string]int)
+	sliceTypeRegex := regexp.MustCompile(`\[\](\w+(?:\.\w+)*)`)
+	if matches := sliceTypeRegex.FindStringSubmatch(errorMsg); matches != nil {
+		return "[]" + matches[1]
+	}
+
+	// Pattern 3: Go pointer types (e.g., *string, *int, *bool)
+	pointerTypeRegex := regexp.MustCompile(`\*(\w+(?:\.\w+)*)`)
+	if matches := pointerTypeRegex.FindStringSubmatch(errorMsg); matches != nil {
+		return "*" + matches[1]
+	}
+
+	// Pattern 4: Go map types (e.g., map[string]int, map[int]string)
+	mapTypeRegex := regexp.MustCompile(`map\[([^\]]+)\](\w+(?:\.\w+)*)`)
+	if matches := mapTypeRegex.FindStringSubmatch(errorMsg); matches != nil {
+		return "map[" + matches[1] + "]" + matches[2]
+	}
+
+	// Pattern 5: Go basic types (e.g., string, int, bool, float64)
+	// This pattern matches common Go type names at word boundaries
+	basicTypeRegex := regexp.MustCompile(`\b(string|int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|interface|interface\{\}|rune|byte)\b`)
+	if matches := basicTypeRegex.FindStringSubmatch(errorMsg); matches != nil {
+		return matches[1]
+	}
+
+	// Return empty string when no match is found
+	return ""
 }
