@@ -330,6 +330,108 @@ fn test_exclamation_in_indentation_context() {
     }
 }
 
+#[test]
+fn test_exclamation_at_deep_indentation_as_value() {
+    // Deep indentation with ! in value (should not be confused with tag)
+    let test_cases = vec![
+        "      deep: value!",
+        "        deeper: !important",
+        "\t\t\ttabs: check!",
+        "    mixed: data!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Deep indentation with ! in value should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_mid_line_in_value() {
+    // ! appearing in the middle of a value (not at line start)
+    let test_cases = vec![
+        "key: some!value",
+        "field: data!here",
+        "text: hello!world",
+        "note: test!case",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Bang mid-line in value should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_adjacent_to_punctuation() {
+    // ! next to other punctuation in values
+    let test_cases = vec![
+        "key: value,!",
+        "field: text.",
+        "note: word;",
+        "item: data-",
+    ];
+
+    for line in test_cases {
+        // These should be classified as MappingKey regardless of punctuation
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Value with punctuation should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_indented_tag_like_pattern() {
+    // Indented lines starting with ! - should still be Tag
+    let test_cases = vec![
+        "  !tag",
+        "    !custom",
+        "\t!seq",
+        "  !!global",
+    ];
+
+    for line in test_cases {
+        // Indented tags should still be classified as Tag
+        assert_eq!(
+            classify_line_type(line),
+            LineType::Tag,
+            "Indented tag should still be Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_in_continuation_lines() {
+    // ! in what looks like a continuation of a value
+    let test_cases = vec![
+        "  value continuation!",
+        "    more text here!",
+        "\tstill part of value!",
+    ];
+
+    for line in test_cases {
+        // Deeply indented lines might be continuations
+        let result = classify_line_type(line);
+        assert!(
+            result == LineType::MappingKey || result == LineType::Unknown,
+            "Indented continuation with ! should be MappingKey or Unknown: '{}'",
+            line
+        );
+    }
+}
+
 // ============================================================================
 // Section 7: Type-Like Strings in Error Messages
 // ============================================================================
@@ -370,6 +472,131 @@ fn test_type_keywords_as_values() {
             classify_line_type(line),
             LineType::MappingKey,
             "Type keyword as value should be MappingKey, not Tag: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_error_messages_with_multiple_type_references() {
+    // Error messages mentioning multiple types
+    let test_cases = vec![
+        "error: \"Expected string or integer type\"",
+        "message: 'boolean, array, or object type'",
+        "description: \"string, integer, boolean types\"",
+        "note: 'Expected array or map type'",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Error message with multiple type references should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_strings_with_punctuation() {
+    // Type-like strings followed by punctuation
+    let test_cases = vec![
+        "error: \"Type: string.\"",
+        "message: 'Expected integer,'",
+        "description: \"Type (boolean) required\"",
+        "note: 'Type: array?'",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type-like with punctuation should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_mentions_at_different_positions() {
+    // Type words appearing at different positions in error messages
+    let test_cases = vec![
+        "error: \"string type is expected\"",
+        "message: 'integer type not found'",
+        "description: \"Type boolean is invalid\"",
+        "note: 'expected array type here'",
+        "warning: \"object type missing\"",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type word at any position in error should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_lowercase_type_variations_in_values() {
+    // Various case variations of type names in values
+    let test_cases = vec![
+        "format: String",
+        "type: INTEGER",
+        "dtype: Boolean",
+        "kind: Array",
+        "category: Object",
+        "class: STRing",
+        "datatype: intEGer",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type variation in any case should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_strings_in_unquoted_error_contexts() {
+    // Type-like strings in unquoted error descriptions
+    let test_cases = vec![
+        "error: type mismatch in field",
+        "message: integer type required",
+        "warning: boolean type expected",
+        "note: string type not allowed",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type-like in unquoted error message should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_prefix_suffix_patterns() {
+    // Type-like strings with prefixes or suffixes
+    let test_cases = vec![
+        "error: invalid_string_type",
+        "message: myIntegerType",
+        "description: custom_boolean_type",
+        "note: arrayTypeHere",
+        "warning: object_type_def",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type-like with prefix/suffix should be MappingKey: '{}'",
             line
         );
     }
@@ -419,8 +646,343 @@ fn test_bang_in_block_scalar() {
     }
 }
 
+#[test]
+fn test_bang_after_quoted_value() {
+    // ! appearing right after a quoted value (not part of the value)
+    let test_cases = vec![
+        "key: \"value\"!",
+        "field: 'text'!",
+        "data: \"123\"!",
+        "item: 'abc'!",
+    ];
+
+    for line in test_cases {
+        // The ! is after the quoted value, so line should still be MappingKey
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Bang after quoted value should still be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_bang_in_key_name() {
+    // ! appearing as part of a key name (rare but possible)
+    let test_cases = vec![
+        "key!name: value",
+        "field!: data",
+        "item!!: text",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Bang in key name should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_bang_with_colon_variations() {
+    // Various spacing patterns with colon and !
+    let test_cases = vec![
+        "key:!value",         // No space after colon, ! in value
+        "key: !value",        // Space after colon
+        "key:! value",        // No space, then space
+        "key: ! value",       // Space on both sides
+        "key!:value",         // ! in key, no space after colon
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Bang with colon variations should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_bang_at_end_of_quoted_string() {
+    // ! inside quotes at the very end
+    let test_cases = vec![
+        "key: \"value!\"",
+        "field: 'data!'",
+        "text: \"end!\"",
+        "note: 'last!'",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Bang at end of quoted string should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_multiple_consecutive_bangs_in_values() {
+    // Multiple consecutive ! characters in values
+    let test_cases = vec![
+        "priority: high!!!",
+        "note: urgent!!",
+        "flag: true!!!!",
+        "value: test!!!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Multiple consecutive ! in value should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_bang_in_numeric_contexts() {
+    // ! appearing near numeric values
+    let test_cases = vec![
+        "value: 42!",
+        "count: 100! items",
+        "index: 0!",
+        "factor: 3.14!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Bang after numeric value should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_bang_with_boolean_like_values() {
+    // ! with boolean-like values
+    let test_cases = vec![
+        "flag: true!",
+        "enabled: false!",
+        "active: yes!",
+        "valid: no!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Bang with boolean-like value should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
 // ============================================================================
-// Section 9: Special YAML Tag Patterns vs False Positives
+// Section 9: Ambiguous Scenarios - Correct Classification Verification
+// ============================================================================
+
+#[test]
+fn test_tag_vs_mapping_key_ambiguity() {
+    // Lines that could be either tags or mapping keys
+    // Should be correctly classified based on context
+    let test_cases = vec![
+        // These ARE tags (line starts with !)
+        ("!tag", LineType::Tag),
+        ("!custom", LineType::Tag),
+        ("!!type", LineType::Tag),
+        // These are NOT tags (colon present)
+        ("key: !value", LineType::MappingKey),
+        ("field: !important", LineType::MappingKey),
+        ("data: custom!", LineType::MappingKey),
+    ];
+
+    for (line, expected) in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            expected,
+            "Correct classification for ambiguous case: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_tag_like_string_end_of_line() {
+    // Tag-like patterns at the end of values
+    let test_cases = vec![
+        "key: some value !tag",
+        "field: text ending in !custom",
+        "note: description !seq",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Tag-like at end of value should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_with_special_yaml_chars() {
+    // ! combined with other YAML special characters
+    let test_cases = vec![
+        "key: value!&anchor",
+        "field: data!*alias",
+        "note: text!|literal",
+        "item: content!>folded",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "! with YAML special chars should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_ambiguous_tag_with_trailing_content() {
+    // Lines that start like tags but have trailing content
+    let test_cases = vec![
+        "!tag with extra text",
+        "!custom followed by words",
+        "!!type and more",
+    ];
+
+    for line in test_cases {
+        // These start with ! so should be Tag
+        // (even if they have extra content after)
+        let result = classify_line_type(line);
+        assert_eq!(
+            result, LineType::Tag,
+            "Line starting with ! is Tag even with trailing content: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_type_like_string_with_numbers() {
+    // Type-like strings combined with numbers
+    let test_cases = vec![
+        "type: string123",
+        "value: integer456",
+        "field: bool789",
+        "data: array0",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Type-like with numbers should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_mixed_case_exclamation_patterns() {
+    // Various casing patterns with !
+    let test_cases = vec![
+        "key: Value!",
+        "field: DATA!",
+        "note: Text!",
+        "item: CONTENT!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "Mixed case value with ! should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_tag_detection_with_context_clues() {
+    // Scenarios where context helps determine if ! is a tag
+    let test_cases = vec![
+        // Colon on line means it's a mapping, not a tag line
+        ("key: value", LineType::MappingKey),
+        ("key: !tag", LineType::MappingKey),
+        // No colon with ! means it's a tag
+        ("!tag", LineType::Tag),
+        ("!custom", LineType::Tag),
+        // Sequence items with !
+        ("- item!", LineType::SequenceItem),
+        ("- !value", LineType::SequenceItem),
+    ];
+
+    for (line, expected) in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            expected,
+            "Context-based classification for: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_exclamation_in_anchor_and_alias_contexts() {
+    // ! in YAML anchor/alias syntax (these should preserve mapping type)
+    let test_cases = vec![
+        "key: &anchor value!",
+        "field: *alias!",
+        "data: &!anchor text",
+    ];
+
+    for line in test_cases {
+        // Lines with anchors/aliases should still be classified by their structure
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "! with anchor/alias should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_empty_and_whitespace_variations_with_bang() {
+    // Edge cases with empty/whitespace and !
+    let test_cases = vec![
+        "key: !",
+        "field: ! ",
+        "data:  !",
+        "item:\t!",
+    ];
+
+    for line in test_cases {
+        assert_eq!(
+            classify_line_type(line),
+            LineType::MappingKey,
+            "! as value with whitespace should be MappingKey: '{}'",
+            line
+        );
+    }
+}
+
+// ============================================================================
+// Section 10: Special YAML Tag Patterns vs False Positives
 // ============================================================================
 
 #[test]
@@ -471,7 +1033,7 @@ fn test_invalid_tag_patterns() {
 }
 
 // ============================================================================
-// Section 10: Whitespace and Exclamation Combinations
+// Section 11: Whitespace and Exclamation Combinations
 // ============================================================================
 
 #[test]
@@ -518,7 +1080,7 @@ fn test_exclamation_with_special_whitespace() {
 }
 
 // ============================================================================
-// Section 11: Integration - Detect Mapping Key with False Positives
+// Section 12: Integration - Detect Mapping Key with False Positives
 // ============================================================================
 
 #[test]
@@ -584,7 +1146,7 @@ fn test_detect_mapping_key_rejects_actual_tag_lines() {
 }
 
 // ============================================================================
-// Section 12: Complex Real-World Scenarios
+// Section 13: Complex Real-World Scenarios
 // ============================================================================
 
 #[test]
@@ -640,7 +1202,7 @@ fn test_multiline_scenario_with_exclamation() {
 }
 
 // ============================================================================
-// Section 13: Error Code-like Strings in Values
+// Section 14: Error Code-like Strings in Values
 // ============================================================================
 
 #[test]
