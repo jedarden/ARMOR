@@ -30,7 +30,7 @@ func TestIsYAMLError(t *testing.T) {
 		},
 		{
 			name:     "ValidationError returns true",
-			err:      NewValidationError("test.yaml", "", "", "", "", 0, 0, "", "", "", ""),
+			err:      NewValidationError("test.yaml", "", "", "", "", 0, 0, "", "", "string", "integer"),
 			expected: true,
 		},
 		{
@@ -78,7 +78,7 @@ func TestGetYAMLErrorType(t *testing.T) {
 		},
 		{
 			name:     "ValidationError returns ErrorTypeValidation",
-			err:      NewValidationError("test.yaml", "", "", "", "", 0, 0, "", "", "", ""),
+			err:      NewValidationError("test.yaml", "", "", "", "", 0, 0, "", "", "string", "integer"),
 			expected: ErrorTypeValidation,
 		},
 		{
@@ -160,7 +160,7 @@ func TestIsParseError(t *testing.T) {
 		},
 		{
 			name:     "ValidationError returns false",
-			err:      NewValidationError("test.yaml", "", "", "", "", 0, 0, "", "", "", ""),
+			err:      NewValidationError("test.yaml", "", "", "", "", 0, 0, "", "", "string", "integer"),
 			expected: false,
 		},
 	}
@@ -509,7 +509,7 @@ func TestValidationErrorString(t *testing.T) {
 	}{
 		{
 			name: "validation error with constraint",
-			err: NewValidationError("config.yaml", "invalid port", "server.port", "must be 1-65535", ErrCodeInvalidValue, 0, 0, "", "server.port", "", ""),
+			err: NewValidationError("config.yaml", "invalid port", "server.port", "must be 1-65535", ErrCodeInvalidValue, 0, 0, "", "server.port", "string", "integer"),
 			wantFields: []string{
 				"Error: invalid port",
 				"Type: validation",
@@ -519,7 +519,7 @@ func TestValidationErrorString(t *testing.T) {
 		},
 		{
 			name: "validation error without constraint",
-			err: NewValidationError("test.yaml", "validation failed", "", "", ErrCodeValidationFailed, 0, 0, "", "", "", ""),
+			err: NewValidationError("test.yaml", "validation failed", "", "", ErrCodeValidationFailed, 0, 0, "", "", "string", "integer"),
 			wantFields: []string{
 				"Error: validation failed",
 				"Type: validation",
@@ -527,7 +527,7 @@ func TestValidationErrorString(t *testing.T) {
 		},
 		{
 			name: "validation error with line and column",
-			err: NewValidationError("data.yaml", "syntax error", "", "must be string", ErrCodeInvalidValue, 10, 5, ErrorTypeValidation, "", "", ""),
+			err: NewValidationError("data.yaml", "syntax error", "", "must be string", ErrCodeInvalidValue, 10, 5, ErrorTypeValidation, "", "string", "integer"),
 			wantFields: []string{
 				"Error: syntax error",
 				"Type: validation",
@@ -536,7 +536,7 @@ func TestValidationErrorString(t *testing.T) {
 		},
 		{
 			name: "validation error with line, field path, and constraint",
-			err: NewValidationError("app.yaml", "value out of range", "database.connectionTimeout", "must be between 1-300", ErrCodeConstraintViolation, 25, 15, ErrorTypeConstraint, "database.connectionTimeout", "", ""),
+			err: NewValidationError("app.yaml", "value out of range", "database.connectionTimeout", "must be between 1-300", ErrCodeConstraintViolation, 25, 15, ErrorTypeConstraint, "database.connectionTimeout", "string", "integer"),
 			wantFields: []string{
 				"Error: value out of range",
 				"Type: constraint",
