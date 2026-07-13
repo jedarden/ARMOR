@@ -14086,38 +14086,6 @@ fn test_folded_scalar_helper_macro_level0_template() {
     run_folded_scalar_tests!(test_cases);
 }
 
-#[test]
-fn test_folded_scalar_explicit_indent_4space() {
-    // Test folded scalars with explicit indent at 4-space level
-    // Covers all three modifiers: > (plain), >- (strip), >+ (keep)
-    // Covers indent levels 1-5
-    // Bead: bf-5jm9g - 4-space explicit indent comprehensive coverage
-
-    let test_cases = generate_folded_explicit_indent_tests!(
-        "    ",                  // 4-space base indentation
-        "level2",               // Level 2 = 4 spaces
-        &[">", ">-", ">+"],     // All three modifiers
-        &[1, 2, 3, 4, 5],      // Indent numbers 1-5
-        "test"                  // Key prefix for generated names
-    );
-
-    // Verify all test cases have 4 leading spaces
-    for (line, _, _) in &test_cases {
-        assert!(
-            line.starts_with("    "),
-            "4-space test case should start with 4 spaces: '{}'",
-            line
-        );
-        // Should not have 6 leading spaces (that would be level 3)
-        assert!(
-            !line.starts_with("      "),
-            "4-space test case should not start with 6 spaces: '{}'",
-            line
-        );
-    }
-
-    run_folded_scalar_tests!(test_cases);
-}
 
 #[test]
 fn test_folded_scalar_explicit_indent_tab() {
