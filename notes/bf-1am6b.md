@@ -5,7 +5,7 @@
 
 ## Verification Results
 
-All Section 12B line number references in `type_like_string_false_positive_test.rs` have been verified as accurate:
+All Section 12B line number references in `type_like_string_false_positive_test.rs` (lines 35-51) have been verified as accurate:
 
 | Reference | Documented Line | Actual Line | Status |
 |-----------|----------------|-------------|--------|
@@ -27,6 +27,26 @@ All lines contained the expected section headers:
 - Line 10520: `// Section 12B.2: Folded Scalar Indicator Line Tests`
 - Line 12654: `// Section 12B.3: Folded Scalar Explicit Indent Infrastructure Pattern`
 
+## Section 12B Structure
+
+The Section 12B line number references in the test infrastructure documentation (lines 35-47) are:
+
+**Line 35:** Section 12B: Multiline String Scenarios with Exclamation Marks (line 7897)
+- Core test: `test_folded_block_scalar_with_exclamation_marks()`
+- Demonstrates basic folded scalar syntax with ! in content
+
+**Line 39:** Section 12B.1: Comprehensive Folded Block Scalar Tests (line 10726)
+- All modifier variants (>, >-, >+, |, |-, |+) with various indents
+- Tests for content lines, continuation lines, and edge cases
+
+**Line 43:** Section 12B.2: Folded Scalar Indicator Line Tests (line 10520)
+- Focus on indicator line recognition (e.g., "description: >")
+- Continuation line patterns and ! handling
+
+**Line 47:** Section 12B.3: Explicit Indent Infrastructure Pattern (line 12654)
+- Comprehensive level coverage (spaces, tabs, mixed)
+- Helper functions for bulk test generation
+
 ## Note
 
 The verification note was already present in the test file at line 51:
@@ -36,4 +56,4 @@ The verification note was already present in the test file at line 51:
 
 ## Status
 
-**COMPLETE** - All line numbers verified accurate. No updates needed.
+**COMPLETE** - All line numbers verified accurate. No updates needed. The line number references in the test infrastructure documentation (lines 35-47) are correct and the verification note is already in place at line 51.
