@@ -77,8 +77,8 @@ class PytestOutputParser:
     DIFF_PLUS_PATTERN = r'^\s*\+\s*(.+)'
     DIFF_POSITION_PATTERN = r'^\s*\?\s+(.+)'
     INDEX_DIFF_PATTERN = r'^\s*(?:E\s+)?At\s+index\s+(\d+)\s+diff:\s+(.+?)\s+!=\s+(.+)'
-    DICT_DIFF_HEADER = r'^\s+Differing items:'
-    DICT_DIFF_LINE = r'^\s+\{(.+?)\}\s+!=\s+\{(.+?)\}'
+    DICT_DIFF_HEADER = r'^E?\s+Differing items:'
+    DICT_DIFF_LINE = r'^E?\s+\{(.+?)\}\s+!=\s+\{(.+?)\}'
     SET_DIFF_LEFT = r'^\s+Extra items in the left set:'
     SET_DIFF_RIGHT = r'^\s+Extra items in the right set:'
     RANGE_DIFF_PATTERN = r'^\s*(?:E\s+)?(Right|Left) contains (?:one more item|\d+ more items?)\s*:\s*(.+)'
@@ -260,29 +260,42 @@ class PytestOutputParser:
                                 })
                     except:
                         pass
-                # End of differing items
-                if not line.strip().startswith('E') and '!=' not in line:
+                    continue  # Skip dict diff lines
+                # Exit differing items section when we see Full diff, blank line, or diff markers
+                if 'Full diff:' in line or not line.strip() or line.strip() == 'E':
                     in_differing_items = False
-                continue
+                # Exit differing items section when we see diff markers (- or +)
+                line_content = re.sub(r'^E\s+', '', line) if line.startswith('E') else line
+                if line_content.strip().startswith(('-', '+', '?')):
+                    in_differing_items = False
 
             # Detect full diff section
             if 'Full diff:' in line or (in_diff_section and line.strip() and not line.startswith('E')):
                 in_diff_section = True
                 in_differing_items = False
 
-                # Parse diff lines
-                if line.strip().startswith('-'):
-                    content = re.sub(r'^\s*-\s*', '', line).strip()
-                    if content and not content.startswith('?'):
-                        if not current_failure.expected:
-                            current_failure.expected = content
-                        current_failure.diff_lines.append(f"- {content}")
-                elif line.strip().startswith('+'):
-                    content = re.sub(r'^\s*\+\s*', '', line).strip()
-                    if content and not content.startswith('?'):
-                        if not current_failure.actual:
-                            current_failure.actual = content
-                        current_failure.diff_lines.append(f"+ {content}")
+            # Parse diff lines (both inside and outside of "Full diff:" sections)
+            # Strip 'E' prefix if present (Format 1 uses 'E     -', Format 2 uses '    -')
+            line_content = re.sub(r'^E\s+', '', line) if line.startswith('E') else line
+
+            # Check if this is a diff line
+            if line_content.strip().startswith('-'):
+                content = re.sub(r'^\s*-\s*', '', line_content).strip()
+                if content and not content.startswith('?'):
+                    if not current_failure.expected:
+                        current_failure.expected = content
+                    current_failure.diff_lines.append(f"- {content}")
+                continue
+            elif line_content.strip().startswith('+'):
+                content = re.sub(r'^\s*\+\s*', '', line_content).strip()
+                if content and not content.startswith('?'):
+                    if not current_failure.actual:
+                        current_failure.actual = content
+                    current_failure.diff_lines.append(f"+ {content}")
+                continue
+
+            # Skip position indicator lines
+            if line.strip().startswith('?'):
                 continue
 
             # Parse where clause
