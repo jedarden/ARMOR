@@ -109,7 +109,7 @@ func (vf *ValidationFormatter) Format() ValidationError {
 
 	// Construct ValidationError directly to support custom suggestions
 	return ValidationError{
-		ValidationType:    vf.validationType,
+		ErrorType:         vf.validationType,
 		Expected:          vf.expected,
 		Actual:            vf.actual,
 		Context:           vf.context,
