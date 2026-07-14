@@ -837,3 +837,671 @@ func ExampleFindErrorCodesInResponse() {
 		println("Found error code:", match.CodeValue, "in field:", match.FieldName)
 	}
 }
+
+// =============================================================================
+// ValidateErrorMessage TESTS
+// =============================================================================
+
+// TestValidateErrorMessage_SubstringMatching tests simple substring matching (no regex metacharacters)
+func TestValidateErrorMessage_SubstringMatching(t *testing.T) {
+	tests := []struct {
+		name           string
+		response       string
+		expectedPattern string
+		wantErr        bool
+		errContains    string
+	}{
+		{
+			name:           "substring match in error field",
+			response:       `{"error": "not found"}`,
+			expectedPattern: "not found",
+			wantErr:        false,
+		},
+		{
+			name:           "substring match in message field",
+			response:       `{"message": "Resource not found in database"}`,
+			expectedPattern: "not found",
+			wantErr:        false,
+		},
+		{
+			name:           "substring match in detail field",
+			response:       `{"detail": "Invalid credentials provided"}`,
+			expectedPattern: "credentials",
+			wantErr:        false,
+		},
+		{
+			name:           "substring match in description field",
+			response:       `{"description": "Rate limit exceeded"}`,
+			expectedPattern: "Rate limit",
+			wantErr:        false,
+		},
+		{
+			name:           "substring match in error_description field",
+			response:       `{"error_description": "The access token has expired"}`,
+			expectedPattern: "expired",
+			wantErr:        false,
+		},
+		{
+			name:           "substring match with nested error object",
+			response:       `{"error": {"message": "Validation failed"}}`,
+			expectedPattern: "Validation",
+			wantErr:        false,
+		},
+		{
+			name:           "substring not found returns error",
+			response:       `{"error": "Access denied"}`,
+			expectedPattern: "not found",
+			wantErr:        true,
+			errContains:    "pattern 'not found' not found",
+		},
+		{
+			name:           "case-sensitive substring mismatch",
+			response:       `{"error": "Not Found"}`,
+			expectedPattern: "not found",
+			wantErr:        true,
+			errContains:    "pattern 'not found' not found",
+		},
+		{
+			name:           "empty response body returns error",
+			response:       "",
+			expectedPattern: "test",
+			wantErr:        true,
+			errContains:    "response body is empty",
+		},
+		{
+			name:           "empty pattern returns error",
+			response:       `{"error": "test"}`,
+			expectedPattern: "",
+			wantErr:        true,
+			errContains:    "expected pattern cannot be empty",
+		},
+		{
+			name:           "no error field returns error",
+			response:       `{"status": "ok"}`,
+			expectedPattern: "test",
+			wantErr:        true,
+			errContains:    "no error message found",
+		},
+		{
+			name:           "invalid JSON returns error",
+			response:       `{invalid json}`,
+			expectedPattern: "test",
+			wantErr:        true,
+			errContains:    "failed to parse response body",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateErrorMessage([]byte(tt.response), tt.expectedPattern)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateErrorMessage() expected error containing '%s', but got nil", tt.errContains)
+					return
+				}
+				if tt.errContains != "" && !containsSubstring(err.Error(), tt.errContains) {
+					t.Errorf("ValidateErrorMessage() error = '%v', expected to contain '%s'", err, tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateErrorMessage() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateErrorMessage_RegexMatching tests regex pattern matching (with metacharacters)
+func TestValidateErrorMessage_RegexMatching(t *testing.T) {
+	tests := []struct {
+		name           string
+		response       string
+		expectedPattern string
+		wantErr        bool
+		errContains    string
+	}{
+		{
+			name:           "regex pattern with wildcards",
+			response:       `{"error": "invalid_token"}`,
+			expectedPattern: "invalid.*token",
+			wantErr:        false,
+		},
+		{
+			name:           "regex pattern with alternatives",
+			response:       `{"error": "access_denied"}`,
+			expectedPattern: "access_denied|invalid_token",
+			wantErr:        false,
+		},
+		{
+			name:           "regex pattern with character class",
+			response:       `{"error": "Error 404"}`,
+			expectedPattern: "Error [0-9]{3}",
+			wantErr:        false,
+		},
+		{
+			name:           "regex pattern with anchors",
+			response:       `{"error": "not found"}`,
+			expectedPattern: "^not found$",
+			wantErr:        false,
+		},
+		{
+			name:           "regex pattern with optional quantifier",
+			response:       `{"error": "invalid token"}`,
+			expectedPattern: "invalid ?token",
+			wantErr:        false,
+		},
+		{
+			name:           "complex regex pattern",
+			response:       `{"message": "Validation failed: field 'email' is required"}`,
+			expectedPattern: "Validation.*required",
+			wantErr:        false,
+		},
+		{
+			name:           "regex pattern not matched",
+			response:       `{"error": "success"}`,
+			expectedPattern: "invalid.*token",
+			wantErr:        true,
+			errContains:    "pattern 'invalid.*token' not found",
+		},
+		{
+			name:           "invalid regex pattern returns error",
+			response:       `{"error": "test"}`,
+			expectedPattern: "[invalid(",
+			wantErr:        true,
+			errContains:    "invalid regex pattern",
+		},
+		{
+			name:           "regex with escaped special chars",
+			response:       `{"error": "Error: $variable not found"}`,
+			expectedPattern: `Error: \$variable`,
+			wantErr:        false,
+		},
+		{
+			name:           "regex with word boundaries",
+			response:       `{"error": "token expired"}`,
+			expectedPattern: `\btoken\b`,
+			wantErr:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateErrorMessage([]byte(tt.response), tt.expectedPattern)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateErrorMessage() expected error containing '%s', but got nil", tt.errContains)
+					return
+				}
+				if tt.errContains != "" && !containsSubstring(err.Error(), tt.errContains) {
+					t.Errorf("ValidateErrorMessage() error = '%v', expected to contain '%s'", err, tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateErrorMessage() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateErrorMessage_CommonErrorPatterns tests common real-world error patterns
+func TestValidateErrorMessage_CommonErrorPatterns(t *testing.T) {
+	tests := []struct {
+		name           string
+		response       string
+		expectedPattern string
+		wantErr        bool
+		description    string
+	}{
+		// OAuth errors
+		{
+			name:           "OAuth invalid_token error",
+			response:       `{"error": "invalid_token", "error_description": "The access token expired"}`,
+			expectedPattern: "invalid_token",
+			wantErr:        false,
+			description:    "Common OAuth 2.0 token error",
+		},
+		{
+			name:           "OAuth access_denied error",
+			response:       `{"error": "access_denied"}`,
+			expectedPattern: "access_denied",
+			wantErr:        false,
+			description:    "OAuth authorization denied error",
+		},
+		{
+			name:           "OAuth invalid_grant error",
+			response:       `{"error": "invalid_grant"}`,
+			expectedPattern: "invalid_grant",
+			wantErr:        false,
+			description:    "OAuth grant type error",
+		},
+		{
+			name:           "OAuth unauthorized_client error",
+			response:       `{"error": "unauthorized_client"}`,
+			expectedPattern: "unauthorized_client",
+			wantErr:        false,
+			description:    "OAuth client not authorized error",
+		},
+		// Authentication errors
+		{
+			name:           "Authentication failed pattern",
+			response:       `{"message": "Authentication failed: invalid credentials"}`,
+			expectedPattern: "Authentication.*failed",
+			wantErr:        false,
+			description:    "General authentication error",
+		},
+		{
+			name:           "Invalid credentials pattern",
+			response:       `{"error": "Invalid username or password"}`,
+			expectedPattern: "Invalid.*password",
+			wantErr:        false,
+			description:    "Credential validation error",
+		},
+		{
+			name:           "Session expired pattern",
+			response:       `{"detail": "Your session has expired"}`,
+			expectedPattern: "session.*expired",
+			wantErr:        false,
+			description:    "Session timeout error",
+		},
+		{
+			name:           "Token expired pattern",
+			response:       `{"error": "Token has expired"}`,
+			expectedPattern: "Token.*expired",
+			wantErr:        false,
+			description:    "Token expiration error",
+		},
+		// Authorization errors
+		{
+			name:           "Permission denied pattern",
+			response:       `{"error": "Permission denied"}`,
+			expectedPattern: "Permission.*denied",
+			wantErr:        false,
+			description:    "Access control error",
+		},
+		{
+			name:           "Not authorized pattern",
+			response:       `{"message": "User is not authorized to access this resource"}`,
+			expectedPattern: "not.*authorized",
+			wantErr:        false,
+			description:    "Authorization error",
+		},
+		{
+			name:           "Forbidden pattern",
+			response:       `{"error": "Access forbidden"}`,
+			expectedPattern: "forbidden",
+			wantErr:        false,
+			description:    "Forbidden access error",
+		},
+		// Validation errors
+		{
+			name:           "Validation failed pattern",
+			response:       `{"error": "Validation failed: required field missing"}`,
+			expectedPattern: "Validation.*failed",
+			wantErr:        false,
+			description:    "Input validation error",
+		},
+		{
+			name:           "Invalid input pattern",
+			response:       `{"detail": "Invalid input: email format is incorrect"}`,
+			expectedPattern: "Invalid.*input",
+			wantErr:        false,
+			description:    "Input format error",
+		},
+		{
+			name:           "Required field pattern",
+			response:       `{"message": "Field 'name' is required"}`,
+			expectedPattern: "required",
+			wantErr:        false,
+			description:    "Required field error",
+		},
+		// Resource errors
+		{
+			name:           "Resource not found pattern",
+			response:       `{"error": "Resource not found"}`,
+			expectedPattern: "not found",
+			wantErr:        false,
+			description:    "404-style error pattern",
+		},
+		{
+			name:           "Does not exist pattern",
+			response:       `{"detail": "User does not exist"}`,
+			expectedPattern: "does not exist",
+			wantErr:        false,
+			description:    "Resource absence error",
+		},
+		{
+			name:           "Already exists pattern",
+			response:       `{"error": "Resource already exists"}`,
+			expectedPattern: "already exists",
+			wantErr:        false,
+			description:    "Duplicate resource error",
+		},
+		{
+			name:           "Conflict pattern",
+			response:       `{"message": "Conflict: resource locked by another user"}`,
+			expectedPattern: "Conflict",
+			wantErr:        false,
+			description:    "Resource conflict error",
+		},
+		// Rate limiting errors
+		{
+			name:           "Rate limit exceeded pattern",
+			response:       `{"error": "Rate limit exceeded"}`,
+			expectedPattern: "Rate.*limit",
+			wantErr:        false,
+			description:    "API rate limiting error",
+		},
+		{
+			name:           "Too many requests pattern",
+			response:       `{"detail": "Too many requests, please try again later"}`,
+			expectedPattern: "Too.*requests",
+			wantErr:        false,
+			description:    "Rate limiting error message",
+		},
+		{
+			name:           "Quota exceeded pattern",
+			response:       `{"error": "API quota exceeded"}`,
+			expectedPattern: "quota.*exceeded",
+			wantErr:        false,
+			description:    "Quota limit error",
+		},
+		// Timeout errors
+		{
+			name:           "Request timeout pattern",
+			response:       `{"message": "Request timeout"}`,
+			expectedPattern: "timeout",
+			wantErr:        false,
+			description:    "Timeout error",
+		},
+		{
+			name:           "Connection timeout pattern",
+			response:       `{"error": "Connection timeout after 30 seconds"}`,
+			expectedPattern: "timeout",
+			wantErr:        false,
+			description:    "Connection timeout error",
+		},
+		// Server errors
+		{
+			name:           "Internal server error pattern",
+			response:       `{"error": "Internal server error"}`,
+			expectedPattern: "Internal.*error",
+			wantErr:        false,
+			description:    "500-style server error",
+		},
+		{
+			name:           "Service unavailable pattern",
+			response:       `{"message": "Service temporarily unavailable"}`,
+			expectedPattern: "unavailable",
+			wantErr:        false,
+			description:    "503-style service error",
+		},
+		{
+			name:           "Bad gateway pattern",
+			response:       `{"error": "Bad gateway"}`,
+			expectedPattern: "Bad.*gateway",
+			wantErr:        false,
+			description:    "502-style gateway error",
+		},
+		// Network errors
+		{
+			name:           "Connection refused pattern",
+			response:       `{"detail": "Connection refused"}`,
+			expectedPattern: "Connection.*refused",
+			wantErr:        false,
+			description:    "Network connection error",
+		},
+		{
+			name:           "Network unreachable pattern",
+			response:       `{"error": "Network unreachable"}`,
+			expectedPattern: "unreachable",
+			wantErr:        false,
+			description:    "Network connectivity error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateErrorMessage([]byte(tt.response), tt.expectedPattern)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("%s: ValidateErrorMessage() expected error, but got nil", tt.description)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("%s: ValidateErrorMessage() unexpected error = %v", tt.description, err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateErrorMessage_ResponseSnippet tests that error messages include response snippet
+func TestValidateErrorMessage_ResponseSnippet(t *testing.T) {
+	tests := []struct {
+		name           string
+		response       string
+		expectedPattern string
+		snippetContains string
+	}{
+		{
+			name:           "error includes response snippet",
+			response:       `{"error": "Access denied", "code": 403}`,
+			expectedPattern: "not found",
+			snippetContains: `{"error": "Access denied"`,
+		},
+		{
+			name:           "long response is truncated in snippet",
+			response:       `{"error": "` + strings.Repeat("a", 300) + `"}`,
+			expectedPattern: "not found",
+			snippetContains: "...", // Should be truncated
+		},
+		{
+			name:           "response with newlines is sanitized",
+			response:       "{\n  \"error\": \"test\"\n}\n",
+			expectedPattern: "not found",
+			snippetContains: "{", // Should have sanitized newlines
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateErrorMessage([]byte(tt.response), tt.expectedPattern)
+
+			if err == nil {
+				t.Errorf("ValidateErrorMessage() expected error, but got nil")
+				return
+			}
+
+			if !containsSubstring(err.Error(), tt.snippetContains) {
+				t.Errorf("ValidateErrorMessage() error = '%v', expected snippet to contain '%s'", err, tt.snippetContains)
+			}
+		})
+	}
+}
+
+// TestValidateErrorMessage_MultipleErrorFields tests handling of multiple error message fields
+func TestValidateErrorMessage_MultipleErrorFields(t *testing.T) {
+	tests := []struct {
+		name           string
+		response       string
+		expectedPattern string
+		wantErr        bool
+		matchesInField string
+	}{
+		{
+			name:           "pattern matches first found error field",
+			response:       `{"error": "not found", "message": "success"}`,
+			expectedPattern: "not found",
+			wantErr:        false,
+			matchesInField: "error",
+		},
+		{
+			name:           "pattern matches in message field",
+			response:       `{"error": "success", "message": "validation failed"}`,
+			expectedPattern: "validation",
+			wantErr:        false,
+			matchesInField: "message",
+		},
+		{
+			name:           "pattern matches in detail field",
+			response:       `{"detail": "permission denied"}`,
+			expectedPattern: "denied",
+			wantErr:        false,
+			matchesInField: "detail",
+		},
+		{
+			name:           "pattern matches in nested error message",
+			response:       `{"error": {"message": "token expired"}}`,
+			expectedPattern: "expired",
+			wantErr:        false,
+			matchesInField: "error.message",
+		},
+		{
+			name:           "no match in any field",
+			response:       `{"error": "success", "message": "ok"}`,
+			expectedPattern: "error",
+			wantErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateErrorMessage([]byte(tt.response), tt.expectedPattern)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateErrorMessage() expected error, but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateErrorMessage() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateErrorMessage_RegexDetection tests automatic regex vs substring detection
+func TestValidateErrorMessage_RegexDetection(t *testing.T) {
+	tests := []struct {
+		name            string
+		pattern         string
+		expectedIsRegex bool
+		description     string
+	}{
+		{
+			name:            "dot wildcard is regex",
+			pattern:         "invalid.token",
+			expectedIsRegex: true,
+			description:     "Pattern with . should be regex",
+		},
+		{
+			name:            "asterisk wildcard is regex",
+			pattern:         "test*",
+			expectedIsRegex: true,
+			description:     "Pattern with * should be regex",
+		},
+		{
+			name:            "plus quantifier is regex",
+			pattern:         "test+",
+			expectedIsRegex: true,
+			description:     "Pattern with + should be regex",
+		},
+		{
+			name:            "question mark is regex",
+			pattern:         "test?",
+			expectedIsRegex: true,
+			description:     "Pattern with ? should be regex",
+		},
+		{
+			name:            "caret anchor is regex",
+			pattern:         "^test",
+			expectedIsRegex: true,
+			description:     "Pattern with ^ should be regex",
+		},
+		{
+			name:            "dollar anchor is regex",
+			pattern:         "test$",
+			expectedIsRegex: true,
+			description:     "Pattern with $ should be regex",
+		},
+		{
+			name:            "bracket is regex",
+			pattern:         "test[0-9]",
+			expectedIsRegex: true,
+			description:     "Pattern with [] should be regex",
+		},
+		{
+			name:            "parentheses is regex",
+			pattern:         "test()",
+			expectedIsRegex: true,
+			description:     "Pattern with () should be regex",
+		},
+		{
+		 name:            "pipe alternation is regex",
+			pattern:         "test|other",
+			expectedIsRegex: true,
+			description:     "Pattern with | should be regex",
+		},
+		{
+			name:            "backslash escape is regex",
+			pattern:         "test\\d",
+			expectedIsRegex: true,
+			description:     "Pattern with \\ should be regex",
+		},
+		{
+			name:            "brace quantifier is regex",
+			pattern:         "test{3}",
+			expectedIsRegex: true,
+			description:     "Pattern with {} should be regex",
+		},
+		{
+			name:            "plain text is not regex",
+			pattern:         "not found",
+			expectedIsRegex: false,
+			description:     "Plain text should be substring match",
+		},
+		{
+			name:            "text with spaces is not regex",
+			pattern:         "access denied",
+			expectedIsRegex: false,
+			description:     "Text with spaces should be substring match",
+		},
+		{
+			name:            "alphanumeric underscore is not regex",
+			pattern:         "invalid_token",
+			expectedIsRegex: false,
+			description:     "Alphanumeric with underscore should be substring match",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isRegex := containsRegexMetacharacters(tt.pattern)
+			if isRegex != tt.expectedIsRegex {
+				t.Errorf("%s: containsRegexMetacharacters(%q) = %v, want %v",
+					tt.description, tt.pattern, isRegex, tt.expectedIsRegex)
+			}
+		})
+	}
+}
+
+// containsSubstring is a helper to check if a string contains a substring
+func containsSubstring(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > len(substr) && findSubstr(s, substr)))
+}
+
+// findSubstr checks if substr exists in s
+func findSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
