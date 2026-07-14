@@ -310,6 +310,181 @@ func TestMultipartUploadNonAlignedFinalPart(t *testing.T) {
 	mb.Delete(ctx, bucket, key)
 }
 
+// TestMultipartUploadIrregularFinalPart tests a multipart upload where the final
+// part is NOT a multiple of the standard part size (e.g., 5MB, 5MB, and 3MB).
+// This is a common real-world scenario and tests an important edge case.
+func TestMultipartUploadIrregularFinalPart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bucket := "test-armour-multipart"
+	key := "test-multipart-irregular-final.dat"
+	mb := newMockBackendForMultipart()
+
+	// Test with 2 full 5MB parts plus a 3MB final part (13MB total)
+	const partSize = 5 * 1024 * 1024 // 5MB per part
+	totalSize := 13 * 1024 * 1024    // 13MB total (not a multiple of part size)
+	numParts := 3
+
+	// Create distinguishable content for each part using the same sophisticated
+	// patterns as TestMultipartUpload for better content verification
+	uploadContent := make([]byte, totalSize)
+	for partNum := 0; partNum < numParts; partNum++ {
+		start := partNum * partSize
+		end := start + partSize
+		if end > totalSize {
+			end = totalSize
+		}
+
+		// Fill each part with a distinguishable pattern
+		// Part 0: 0x00, 0x01, 0x02, ...
+		// Part 1: 0xFF, 0xFE, 0xFD, ...
+		// Part 2 (final irregular part): 0xAA, 0x55, 0xAA, 0x55, ...
+		for i := start; i < end; i++ {
+			switch partNum {
+			case 0:
+				uploadContent[i] = byte(i & 0xFF)
+			case 1:
+				uploadContent[i] = 0xFF - byte(i&0xFF)
+			case 2:
+				if (i-start)%2 == 0 {
+					uploadContent[i] = 0xAA
+				} else {
+					uploadContent[i] = 0x55
+				}
+			}
+		}
+	}
+
+	t.Logf("Created test content: %d bytes, %d parts (final part irregular)", totalSize, numParts)
+
+	// Step 1: Create multipart upload
+	uploadID, err := mb.CreateMultipartUpload(ctx, bucket, key, map[string]string{
+		"Content-Type": "application/octet-stream",
+		"test-name":    "TestMultipartUploadIrregularFinalPart",
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload failed: %v", err)
+	}
+	t.Logf("Created multipart upload: %s", uploadID)
+
+	// Step 2: Upload each part with distinguishable content
+	var parts []CompletedPart
+	for partNum := 0; partNum < numParts; partNum++ {
+		start := partNum * partSize
+		end := start + partSize
+		if end > totalSize {
+			end = totalSize
+		}
+
+		partContent := uploadContent[start:end]
+		partNum32 := int32(partNum + 1) // S3 part numbers are 1-indexed
+
+		t.Logf("Uploading part %d: %d bytes (offset %d)", partNum32, len(partContent), start)
+
+		etag, err := mb.UploadPart(ctx, bucket, key, uploadID, partNum32, bytes.NewReader(partContent), int64(len(partContent)))
+		if err != nil {
+			t.Fatalf("UploadPart %d failed: %v", partNum32, err)
+		}
+
+		parts = append(parts, CompletedPart{
+			PartNumber: partNum32,
+			ETag:        etag,
+		})
+		t.Logf("Uploaded part %d: ETag=%s", partNum32, etag)
+	}
+
+	// Verify final part is smaller than standard part size
+	finalPartSize := len(uploadContent[2*partSize:])
+	if finalPartSize >= partSize {
+		t.Errorf("Final part should be smaller than part size, got %d bytes", finalPartSize)
+	}
+	t.Logf("✓ Final part is irregular: %d bytes (< %d byte part size)", finalPartSize, partSize)
+
+	// Step 3: Complete multipart upload
+	finalETag, err := mb.CompleteMultipartUpload(ctx, bucket, key, uploadID, parts)
+	if err != nil {
+		t.Fatalf("CompleteMultipartUpload failed: %v", err)
+	}
+	t.Logf("Completed multipart upload: final ETag=%s", finalETag)
+
+	// Step 4: Download the object and verify content
+	body, info, err := mb.Get(ctx, bucket, key)
+	if err != nil {
+		t.Fatalf("Get object failed: %v", err)
+	}
+	defer body.Close()
+
+	t.Logf("Downloaded object: ContentLength=%d, ETag=%s", info.Size, info.ETag)
+
+	// Verify ContentLength matches expected
+	if info.Size != int64(totalSize) {
+		t.Errorf("ContentLength mismatch: got %d, want %d", info.Size, totalSize)
+	}
+
+	// Read the full content
+	downloadedContent, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("Failed to read downloaded content: %v", err)
+	}
+
+	// Verify the downloaded content matches uploaded content byte-for-byte
+	if len(downloadedContent) != totalSize {
+		t.Errorf("Downloaded content size mismatch: got %d bytes, want %d bytes", len(downloadedContent), totalSize)
+	}
+
+	if !bytes.Equal(downloadedContent, uploadContent) {
+		// Find where the mismatch occurs
+		mismatchOffset := -1
+		for i := 0; i < len(downloadedContent) && i < len(uploadContent); i++ {
+			if downloadedContent[i] != uploadContent[i] {
+				mismatchOffset = i
+				break
+			}
+		}
+		t.Errorf("Downloaded content mismatch at offset %d", mismatchOffset)
+		t.Errorf("Expected byte: 0x%02X, got: 0x%02X", uploadContent[mismatchOffset], downloadedContent[mismatchOffset])
+
+		// Print some context around the mismatch
+		contextStart := mismatchOffset - 10
+		if contextStart < 0 {
+			contextStart = 0
+		}
+		contextEnd := mismatchOffset + 10
+		if contextEnd > len(downloadedContent) {
+			contextEnd = len(downloadedContent)
+		}
+		t.Errorf("Expected context: %v", uploadContent[contextStart:contextEnd])
+		t.Errorf("Got context:      %v", downloadedContent[contextStart:contextEnd])
+		return
+	}
+
+	t.Logf("✓ Content verification passed: %d bytes match uploaded content", len(downloadedContent))
+
+	// Verify each part's distinguishable pattern
+	for partNum := 0; partNum < numParts; partNum++ {
+		start := partNum * partSize
+		end := start + partSize
+		if end > totalSize {
+			end = totalSize
+		}
+
+		partData := downloadedContent[start:end]
+		if !verifyPartPattern(partData, partNum, start) {
+			t.Errorf("Part %d pattern verification failed", partNum+1)
+			return
+		}
+		t.Logf("✓ Part %d pattern verified (part %d: %d bytes)", partNum+1, partNum+1, end-start)
+	}
+
+	// Cleanup
+	if err := mb.Delete(ctx, bucket, key); err != nil {
+		t.Logf("Warning: failed to cleanup test object: %v", err)
+	}
+}
+
 // TestMultipartUploadSinglePart tests a "multipart upload" with only one part.
 // This is technically a valid multipart upload and should work correctly.
 func TestMultipartUploadSinglePart(t *testing.T) {
