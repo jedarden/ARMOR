@@ -1,5 +1,97 @@
 package validate
 
+/*
+Package validate provides a standardized, extensible validation error format for HTTP API testing.
+
+This package defines the ValidationError data structure, which offers a comprehensive, machine-readable
+format for representing validation failures across different types of API validations (HTTP status codes,
+error message patterns, content types, response structures, CORS headers, and more).
+
+# Validation Error Format
+
+The ValidationError struct is the core of this package's error reporting system. It follows these design
+principles:
+
+  - Serializable: Full JSON marshaling/unmarshaling support via struct tags
+  - Machine-readable: Clear field names suitable for automated processing and log aggregation
+  - Human-readable: Descriptive messages with helpful suggestions for debugging
+  - Extensible: Optional fields provide additional context without breaking existing code
+
+# Required vs Optional Fields
+
+Required fields that must be set for every ValidationError:
+  - ErrorType: The validation category (e.g., "status_code", "error_message", "content_type")
+  - Message: A concise, human-readable description of the validation failure
+
+Optional fields that provide additional context:
+  - Expected/Actual: The values that were expected and actually received
+  - Context: Where/when the validation occurred (e.g., endpoint, operation type)
+  - FieldName: Specific field where the error was found (e.g., in response body JSON)
+  - Location: Position information (e.g., "line 5", "field 'user.email'")
+  - RelatedFields: Other fields related to this error for additional context
+  - PatternDetails: Information about regex pattern matching failures
+  - RangeInfo: Range boundaries for range-based validations (e.g., "4xx", "5xx")
+  - ValidationDetails: Additional validation-specific information as a list
+  - ResponseSnippet: Truncated excerpt from the response for debugging
+  - Suggestions: Actionable recommendations for resolving the error
+
+# Creating Validation Errors
+
+This package provides several ways to create ValidationError instances:
+
+  1. Direct struct initialization: Create ValidationError directly for full control
+  2. ValidationFormatter builder: Use the builder pattern for ergonomic, fluent construction
+  3. Convenience functions: Use pre-built functions like FormatStatusCodeError for common cases
+  4. Custom validation: Use FormatCustomValidationError with FormatOption for advanced scenarios
+
+Example usage:
+
+	// Using the ValidationFormatter builder
+	err := NewValidationFormatter("status_code").
+		WithExpected(200).
+		WithActual(404).
+		WithContext("GET /api/users/123").
+		Format()
+	// Output:
+	// status_code validation failed
+	//   Expected: 200 (OK)
+	//   Actual:   404 (Not Found)
+	//   Context:  GET /api/users/123
+	//   Suggestions:
+	//     - Verify the endpoint URL is correct
+	//     - Check if the resource ID or identifier exists
+
+	// Using a convenience function
+	err := FormatStatusCodeError(200, 404, "GET /api/users/123")
+
+# Error Interface
+
+ValidationError implements the error interface, producing detailed, multi-line error messages
+that include all relevant validation information. The Error() method formats the output
+with expected/actual values, context, field information, and suggestions for resolution.
+
+# Serialization
+
+ValidationError includes JSON struct tags for all fields, enabling easy serialization:
+
+	err := ValidationError{ErrorType: "status_code", Message: "test"}
+	jsonBytes, _ := json.Marshal(err)
+	// Output: {"error_type":"status_code","message":"test"}
+
+The ToMap() method provides flexible map[string]interface{} conversion for dynamic
+manipulation before serialization.
+
+# Validation
+
+The Validate() method checks that a ValidationError is properly structured with
+required fields populated. Use this to catch programming errors early:
+
+	err := ValidationError{ErrorType: "status_code", Message: "test"}
+	if err := err.Validate(); err != nil {
+		log.Printf("Invalid error structure: %v", err)
+	}
+*/
+
 import (
 	"fmt"
 	"strings"
