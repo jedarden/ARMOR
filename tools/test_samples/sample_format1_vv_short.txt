@@ -1,0 +1,53 @@
+_____________________________ test_simple_equality _____________________________
+tools/test_pytest_flags_minimal.py:17: in test_simple_equality
+    assert greeting == "world", f"Expected 'world', got '{greeting}'"
+E   AssertionError: Expected 'world', got 'hello'
+E   assert 'hello' == 'world'
+E
+E     - world
+E     + hello
+______________________________ test_dict_equality ______________________________
+tools/test_pytest_flags_minimal.py:24: in test_dict_equality
+    assert actual == expected, f"Dictionaries don't match"
+E   AssertionError: Dictionaries don't match
+E   assert {'name': 'Bob', 'age': 25, 'city': 'LA'} == {'name': 'Alice', 'age': 30, 'city': 'NYC'}
+E
+E     Differing items:
+E     {'city': 'LA'} != {'city': 'NYC'}
+E     {'age': 25} != {'age': 30}
+E     {'name': 'Bob'} != {'name': 'Alice'}
+E
+E     Full diff:
+E       {
+E     -     'age': 30,
+E     ?            ^^
+E     +     'age': 25,
+E     ?            ^^
+E     -     'city': 'NYC',
+E     ?              ^^^
+E     +     'city': 'LA',
+E     ?              ^^
+E     -     'name': 'Alice',
+E     ?              ^^^^^
+E     +     'name': 'Bob',
+E     ?              ^^^
+E       }
+_____________________________ test_list_comparison _____________________________
+tools/test_pytest_flags_minimal.py:31: in test_list_comparison
+    assert list1 == list2, "Lists should be equal"
+E   AssertionError: Lists should be equal
+E   assert [1, 2, 3, 4, 5] == [1, 2, 10, 4, 5]
+E
+E     At index 2 diff: 3 != 10
+E
+E     Full diff:
+E       [
+E           1,
+E           2,
+E     -     10,
+E     ?     ^^
+E     +     3,
+E     ?     ^
+E           4,
+E           5,
+E       ]

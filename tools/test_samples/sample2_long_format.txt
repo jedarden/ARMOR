@@ -1,0 +1,33 @@
+_____________________________ test_simple_equality _____________________________
+
+    def test_simple_equality():
+        """Simple equality assertion failure."""
+        greeting = "hello"
+>       assert greeting == "world", f"Expected 'world', got '{greeting}'"
+E       AssertionError: Expected 'world', got 'hello'
+E       assert 'hello' == 'world'
+E
+E         - world
+E         + hello
+
+tools/test_pytest_flags_minimal.py:17: AssertionError
+______________________________ test_dict_equality ______________________________
+
+    def test_dict_equality():
+        """Dictionary equality assertion failure."""
+        expected = {"name": "Alice", "age": 30, "city": "NYC"}
+        actual = {"name": "Bob", "age": 25, "city": "LA"}
+>       assert actual == expected, f"Dictionaries don't match"
+E       AssertionError: Dictionaries don't match
+E       assert {'name': 'Bob', 'age': 25, 'city': 'LA'} == {'name': 'Alice', 'age': 30, 'city': 'NYC'}
+E
+E         Differing items:
+E         {'city': 'LA'} != {'city': 'NYC'}
+E         {'age': 25} != {'age': 30}
+E         {'name': 'Bob'} != {'name': 'Alice'}
+E
+E         Full diff:...
+E
+E         ...Full output truncated (14 lines hidden), use '-vv' to show
+
+tools/test_pytest_flags_minimal.py:24: AssertionError
