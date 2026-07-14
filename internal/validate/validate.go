@@ -90,3 +90,72 @@ func HTTPStatusCodeIsServerError(resp *http.Response) bool {
 
 	return resp.StatusCode >= 500 && resp.StatusCode < 600
 }
+
+// ContentTypeIsValid checks if a response's Content-Type header matches the expected pattern.
+// It supports pattern matching where the base content-type matches regardless of parameters.
+// For example, "application/json" will match "application/json; charset=utf-8".
+//
+// Parameters:
+//   - resp: The HTTP response to validate
+//   - expected: The expected content-type pattern (e.g., "application/json")
+//
+// Returns true if the response Content-Type matches the expected pattern, false otherwise.
+// Returns false if the response is nil or has no Content-Type header.
+//
+// Example usage:
+//
+//	if ContentTypeIsValid(response, "application/json") {
+//	    // Handle JSON response
+//	}
+func ContentTypeIsValid(resp *http.Response, expected string) bool {
+	if resp == nil {
+		return false
+	}
+
+	actual := resp.Header.Get("Content-Type")
+	if actual == "" {
+		return false
+	}
+
+	// Parse both content-type strings to extract base media types
+	actualMediaType := parseContentType(actual)
+	expectedMediaType := parseContentType(expected)
+
+	return actualMediaType == expectedMediaType
+}
+
+// parseContentType extracts the base media type from a content-type string.
+// It strips parameters like charset, boundary, etc.
+// For example, "application/json; charset=utf-8" becomes "application/json".
+func parseContentType(contentType string) string {
+	if contentType == "" {
+		return ""
+	}
+
+	// Split by semicolon to separate media type from parameters
+	// The first part before any semicolon is the base media type
+	for i, c := range contentType {
+		if c == ';' {
+			return trimSpace(contentType[:i])
+		}
+	}
+
+	// No parameters found, return the whole string trimmed
+	return trimSpace(contentType)
+}
+
+// trimSpace removes leading and trailing whitespace from a string.
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+
+	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
+		start++
+	}
+
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
+		end--
+	}
+
+	return s[start:end]
+}
