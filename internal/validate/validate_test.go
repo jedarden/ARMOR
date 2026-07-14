@@ -824,3 +824,337 @@ func ExampleContentTypeIsValid() {
 		// Handle JSON response regardless of charset
 	}
 }
+
+// TestErrorResponseStructureIsValid_DefaultFields tests validation with default field names
+func TestErrorResponseStructureIsValid_DefaultFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		response interface{}
+		want     bool
+	}{
+		{
+			name:     "response with error field is valid",
+			response: map[string]interface{}{"error": "Invalid input"},
+			want:     true,
+		},
+		{
+			name:     "response with message field is valid",
+			response: map[string]interface{}{"message": "Resource not found"},
+			want:     true,
+		},
+		{
+			name:     "response with both error and message fields is valid",
+			response: map[string]interface{}{"error": "Invalid input", "message": "Validation failed"},
+			want:     true,
+		},
+		{
+			name:     "response without error or message fields is invalid",
+			response: map[string]interface{}{"status": "ok", "data": "value"},
+			want:     false,
+		},
+		{
+			name:     "response with empty error field is invalid",
+			response: map[string]interface{}{"error": ""},
+			want:     false,
+		},
+		{
+			name:     "response with empty message field is invalid",
+			response: map[string]interface{}{"message": ""},
+			want:     false,
+		},
+		{
+			name:     "empty response map is invalid",
+			response: map[string]interface{}{},
+			want:     false,
+		},
+		{
+			name:     "nil response is invalid",
+			response: nil,
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ErrorResponseStructureIsValid(tt.response, nil)
+			if got != tt.want {
+				t.Errorf("ErrorResponseStructureIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestErrorResponseStructureIsValid_CustomFields tests validation with custom field names
+func TestErrorResponseStructureIsValid_CustomFields(t *testing.T) {
+	tests := []struct {
+		name       string
+		response   interface{}
+		fieldNames *ErrorResponseFieldNames
+		want       bool
+	}{
+		{
+			name:       "custom primary field exists",
+			response:   map[string]interface{}{"detail": "Invalid input"},
+			fieldNames: &ErrorResponseFieldNames{PrimaryFieldName: "detail", SecondaryFieldName: ""},
+			want:       true,
+		},
+		{
+			name:       "custom secondary field exists",
+			response:   map[string]interface{}{"description": "Resource not found"},
+			fieldNames: &ErrorResponseFieldNames{PrimaryFieldName: "", SecondaryFieldName: "description"},
+			want:       true,
+		},
+		{
+			name:       "both custom fields exist",
+			response:   map[string]interface{}{"detail": "Invalid input", "description": "Validation failed"},
+			fieldNames: &ErrorResponseFieldNames{PrimaryFieldName: "detail", SecondaryFieldName: "description"},
+			want:       true,
+		},
+		{
+			name:       "custom fields don't exist",
+			response:   map[string]interface{}{"error": "Invalid input"},
+			fieldNames: &ErrorResponseFieldNames{PrimaryFieldName: "detail", SecondaryFieldName: "description"},
+			want:       false,
+		},
+		{
+			name:       "custom primary field exists with empty secondary",
+			response:   map[string]interface{}{"detail": "Error occurred"},
+			fieldNames: &ErrorResponseFieldNames{PrimaryFieldName: "detail", SecondaryFieldName: ""},
+			want:       true,
+		},
+		{
+			name:       "custom secondary field exists with empty primary",
+			response:   map[string]interface{}{"description": "Error occurred"},
+			fieldNames: &ErrorResponseFieldNames{PrimaryFieldName: "", SecondaryFieldName: "description"},
+			want:       true,
+		},
+		{
+			name:       "custom field with empty value is invalid",
+			response:   map[string]interface{}{"detail": ""},
+			fieldNames: &ErrorResponseFieldNames{PrimaryFieldName: "detail", SecondaryFieldName: ""},
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ErrorResponseStructureIsValid(tt.response, tt.fieldNames)
+			if got != tt.want {
+				t.Errorf("ErrorResponseStructureIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestErrorResponseStructureIsValid_CommonAPIShapes tests various API error response formats
+func TestErrorResponseStructureIsValid_CommonAPIShapes(t *testing.T) {
+	tests := []struct {
+		name     string
+		response interface{}
+		want     bool
+	}{
+		{
+			name:     "RFC 7807 Problem Details format",
+			response: map[string]interface{}{"type": "https://example.com/probs/validation", "title": "Validation Error", "detail": "Invalid input"},
+			want:     false,
+		},
+		{
+			name:     "API with error_description field",
+			response: map[string]interface{}{"error": "invalid_token", "error_description": "The access token expired"},
+			want:     true,
+		},
+		{
+			name:     "GraphQL error response",
+			response: map[string]interface{}{"errors": []interface{}{map[string]interface{}{"message": "Field 'user' doesn't exist"}}},
+			want:     false,
+		},
+		{
+			name:     "JSON API error format",
+			response: map[string]interface{}{"errors": []interface{}{map[string]interface{}{"detail": "Invalid attribute"}}},
+			want:     false,
+		},
+		{
+			name:     "Simple error string in error field",
+			response: map[string]interface{}{"error": "Something went wrong"},
+			want:     true,
+		},
+		{
+			name:     "Complex error object in error field",
+			response: map[string]interface{}{"error": map[string]interface{}{"code": "VALIDATION_ERROR", "message": "Invalid input"}},
+			want:     true,
+		},
+		{
+			name:     "Error array in error field",
+			response: map[string]interface{}{"error": []interface{}{"Error 1", "Error 2"}},
+			want:     true,
+		},
+		{
+			name:     "Numeric error code",
+			response: map[string]interface{}{"error": 404},
+			want:     true,
+		},
+		{
+			name:     "Boolean error flag",
+			response: map[string]interface{}{"error": true},
+			want:     true,
+		},
+		{
+			name:     "Zero error code is invalid",
+			response: map[string]interface{}{"error": 0},
+			want:     false,
+		},
+		{
+			name:     "False error flag is invalid",
+			response: map[string]interface{}{"error": false},
+			want:     false,
+		},
+		{
+			name:     "Empty error array is invalid",
+			response: map[string]interface{}{"error": []interface{}{}},
+			want:     false,
+		},
+		{
+			name:     "Empty error object is invalid",
+			response: map[string]interface{}{"error": map[string]interface{}{}},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ErrorResponseStructureIsValid(tt.response, nil)
+			if got != tt.want {
+				t.Errorf("ErrorResponseStructureIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestErrorResponseStructureIsValid_NonMapResponses tests handling of non-map response types
+func TestErrorResponseStructureIsValid_NonMapResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		response interface{}
+		want     bool
+	}{
+		{
+			name:     "string response is invalid",
+			response: "error message",
+			want:     false,
+		},
+		{
+			name:     "int response is invalid",
+			response: 404,
+			want:     false,
+		},
+		{
+			name:     "slice response is invalid",
+			response: []interface{}{"error"},
+			want:     false,
+		},
+		{
+			name:     "nil response is invalid",
+			response: nil,
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ErrorResponseStructureIsValid(tt.response, nil)
+			if got != tt.want {
+				t.Errorf("ErrorResponseStructureIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDefaultErrorResponseFieldNames tests the default field names helper
+func TestDefaultErrorResponseFieldNames(t *testing.T) {
+	fieldNames := DefaultErrorResponseFieldNames()
+
+	if fieldNames.PrimaryFieldName != "error" {
+		t.Errorf("DefaultErrorResponseFieldNames().PrimaryFieldName = %v, want 'error'", fieldNames.PrimaryFieldName)
+	}
+
+	if fieldNames.SecondaryFieldName != "message" {
+		t.Errorf("DefaultErrorResponseFieldNames().SecondaryFieldName = %v, want 'message'", fieldNames.SecondaryFieldName)
+	}
+}
+
+// TestErrorResponseStructureIsValid_Integration tests integration scenarios
+func TestErrorResponseStructureIsValid_Integration(t *testing.T) {
+	tests := []struct {
+		name       string
+		response   interface{}
+		fieldNames *ErrorResponseFieldNames
+		want       bool
+	}{
+		{
+			name:     "OAuth2 error response",
+			response: map[string]interface{}{"error": "invalid_grant", "error_description": "The provided authorization grant is invalid"},
+			want:     true,
+		},
+		{
+			name:     "REST API error with developer info",
+			response: map[string]interface{}{"error": "invalid_request", "error_description": "Missing required parameter", "error_uri": "https://api.example.com/docs/errors"},
+			want:     true,
+		},
+		{
+			name:       "Custom API with detail field",
+			response:   map[string]interface{}{"detail": "Invalid request body"},
+			fieldNames: &ErrorResponseFieldNames{PrimaryFieldName: "detail", SecondaryFieldName: ""},
+			want:       true,
+		},
+		{
+			name:     "Success response should be invalid as error",
+			response: map[string]interface{}{"status": "success", "data": map[string]interface{}{"id": 123}},
+			want:     false,
+		},
+		{
+			name:     "Partial error - empty error but valid message",
+			response: map[string]interface{}{"error": "", "message": "Validation failed"},
+			want:     true,
+		},
+		{
+			name:     "Partial error - empty message but valid error",
+			response: map[string]interface{}{"error": "Invalid input", "message": ""},
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got bool
+			if tt.fieldNames != nil {
+				got = ErrorResponseStructureIsValid(tt.response, tt.fieldNames)
+			} else {
+				got = ErrorResponseStructureIsValid(tt.response, nil)
+			}
+
+			if got != tt.want {
+				t.Errorf("ErrorResponseStructureIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Example usage test demonstrating error response structure validation
+func ExampleErrorResponseStructureIsValid() {
+	// Parse API response body
+	var responseBody map[string]interface{}
+
+	// Check if it's a valid error response using default field names
+	if ErrorResponseStructureIsValid(responseBody, nil) {
+		// Handle error response
+	}
+
+	// Check with custom field names for specific APIs
+	customFields := &ErrorResponseFieldNames{
+		PrimaryFieldName:   "detail",
+		SecondaryFieldName: "description",
+	}
+	if ErrorResponseStructureIsValid(responseBody, customFields) {
+		// Handle error response with custom field names
+	}
+}
