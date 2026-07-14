@@ -13,10 +13,11 @@ import (
 // =============================================================================
 // This module provides comprehensive HTTP status code validation utilities
 // for error response testing. It supports single status codes, multiple allowed
-// status codes, and flexible validation patterns.
+// status codes, pattern-based range validation, and flexible validation patterns.
 //
 // Functions:
 // - ValidateStatusCodeInt: Basic status code validation with expected/actual ints
+// - ValidateStatusCodePattern: Validate status code matches pattern (e.g., '4xx', '5xx')
 // - ValidateStatusCode: Validate single expected status code (test helper)
 // - ValidateStatusCodeAny: Validate against multiple allowed status codes
 // - ValidateStatusCodeRange: Validate status code is within range
@@ -25,6 +26,7 @@ import (
 // - AssertStatusCodeAny: Flexible multi-code validation with assertion mode
 // - StatusCodeMatchResult: Detailed validation result with error context
 // - GetStatusCodeDescription: Get human-readable status code description
+// - parseStatusCodePattern: Parse pattern string to extract century digit
 // =============================================================================
 
 // ValidateStatusCodeInt validates expected vs actual HTTP status codes.
@@ -346,6 +348,92 @@ func ValidateStatusCodeAny(t *testing.T, response interface{}, allowedCodes []in
 		t.Errorf("Status code validation failed:\n  Expected: one of [%s]\n  Actual:   %d (%s)\n  Context:  %s",
 			result.ExpectedDescription, result.Actual, result.ActualDescription, result.ResponseContext)
 	}
+}
+
+// ValidateStatusCodePattern validates that an HTTP status code matches a pattern.
+//
+// This function validates status codes using pattern strings like '4xx', '5xx', etc.
+// It extracts the century digit from the pattern and validates that the actual code
+// falls within the corresponding range (e.g., '4xx' validates codes 400-499).
+//
+// Parameters:
+//   - pattern: The status code pattern (e.g., '4xx', '5xx', '3xx', '2xx', '1xx')
+//   - actual: The actual HTTP status code received
+//
+// Returns:
+//   - nil if the status code matches the pattern
+//   - error with descriptive message if pattern is invalid or code doesn't match
+//
+// Example (matching pattern):
+//   err := ValidateStatusCodePattern('4xx', 404)
+//   // err == nil
+//
+// Example (non-matching pattern):
+//   err := ValidateStatusCodePattern('4xx', 200)
+//   // err.Error() == "status code 200 (OK) does not match pattern '4xx' (expected 400-499)"
+//
+// Example (invalid pattern):
+//   err := ValidateStatusCodePattern('invalid', 200)
+//   // err.Error() == "invalid status code pattern 'invalid': must be in format 'Nxx' where N is 1-5"
+func ValidateStatusCodePattern(pattern string, actual int) error {
+	// Parse the pattern to extract the century digit
+	century, err := parseStatusCodePattern(pattern)
+	if err != nil {
+		return err
+	}
+
+	// Calculate the expected range for this century
+	minCode := century * 100
+	maxCode := minCode + 99
+
+	// Validate the actual code falls within the range
+	if actual >= minCode && actual <= maxCode {
+		return nil
+	}
+
+	// Build descriptive error message
+	return fmt.Errorf("status code %d (%s) does not match pattern '%s' (expected %d-%d)",
+		actual, GetStatusCodeDescription(actual), pattern, minCode, maxCode)
+}
+
+// parseStatusCodePattern parses a status code pattern like '4xx' and returns the century digit.
+//
+// This helper extracts the century digit from patterns in the format 'Nxx' where N is 1-5.
+// It validates the pattern format and returns an error for invalid patterns.
+//
+// Parameters:
+//   - pattern: The status code pattern to parse (e.g., '4xx', '5xx')
+//
+// Returns:
+//   - The century digit (1-5) if the pattern is valid
+//   - error if the pattern is invalid
+//
+// Example:
+//   century, err := parseStatusCodePattern('4xx')
+//   // century == 4, err == nil
+//
+// Example (invalid pattern):
+//   century, err := parseStatusCodePattern('invalid')
+//   // century == 0, err != nil
+func parseStatusCodePattern(pattern string) (int, error) {
+	if len(pattern) != 3 {
+		return 0, fmt.Errorf("invalid status code pattern '%s': must be in format 'Nxx' where N is 1-5", pattern)
+	}
+
+	// Check if pattern ends with 'xx'
+	if pattern[1] != 'x' || pattern[2] != 'x' {
+		return 0, fmt.Errorf("invalid status code pattern '%s': must be in format 'Nxx' where N is 1-5", pattern)
+	}
+
+	// Extract the century digit
+	century := int(pattern[0] - '0')
+
+	// Validate century is in valid HTTP range (1-5)
+	if century < 1 || century > 5 {
+		return 0, fmt.Errorf("invalid status code pattern '%s': century digit must be 1-5", pattern)
+	}
+
+	return century, nil
 }
 
 // ValidateStatusCodeRange validates that the HTTP response status code falls within a range.

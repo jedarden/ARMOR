@@ -1493,3 +1493,147 @@ func parseIntFromString(s string) (int, error) {
 	_, err := fmt.Sscanf(s, "%d", &result)
 	return result, err
 }
+
+// =============================================================================
+// STATUS CODE RANGE VALIDATION (PATTERN-BASED)
+// =============================================================================
+
+// ValidateStatusCodeRangeInt validates a status code against a pattern string.
+// It supports patterns like '4xx', '5xx', '3xx', '2xx', '1xx' to check if a status code
+// falls within a specified range.
+//
+// Parameters:
+//   - pattern: The pattern string (e.g., '4xx', '5xx', '2xx')
+//   - actual: The actual status code to validate
+//
+// Returns error if the pattern is invalid or if the actual code doesn't match the range.
+// Returns nil if the actual code falls within the specified range.
+//
+// Example usage:
+//
+//	// Validate 404 is in 4xx range
+//	err := ValidateStatusCodeRangeInt("4xx", 404)
+//	if err != nil {
+//	    log.Printf("Status validation failed: %v", err)
+//	}
+//
+//	// Validate 500 is in 5xx range
+//	err = ValidateStatusCodeRangeInt("5xx", 500)
+//
+//	// This returns an error because 200 is not in 4xx range
+//	err = ValidateStatusCodeRangeInt("4xx", 200)
+func ValidateStatusCodeRangeInt(pattern string, actual int) error {
+	// Validate pattern format
+	if len(pattern) != 3 {
+		return fmt.Errorf("invalid pattern format: %s (expected format: '4xx', '5xx', etc.)", pattern)
+	}
+
+	// Extract the century digit (first character)
+	centuryChar := pattern[0]
+	if centuryChar < '1' || centuryChar > '5' {
+		return fmt.Errorf("invalid pattern century: %c (must be 1-5)", centuryChar)
+	}
+
+	// Validate 'xx' suffix
+	if pattern[1] != 'x' || pattern[2] != 'x' {
+		return fmt.Errorf("invalid pattern suffix: %s (expected 'xx')", pattern)
+	}
+
+	// Calculate the range from the pattern
+	century := int(centuryChar - '0')
+	minRange := century * 100
+	maxRange := minRange + 99
+
+	// Check if actual code is within the range
+	if actual < minRange || actual > maxRange {
+		return fmt.Errorf("status code %d is not in range %s (expected %d-%d)", actual, pattern, minRange, maxRange)
+	}
+
+	return nil
+}
+
+// ParseStatusCodeRange extracts the century digit and range from a pattern string.
+// This is a helper function for advanced use cases where you need the range bounds.
+//
+// Parameters:
+//   - pattern: The pattern string (e.g., '4xx', '5xx', '2xx')
+//
+// Returns the min and max values of the range, or an error if the pattern is invalid.
+//
+// Example usage:
+//
+//	min, max, err := ParseStatusCodeRange("4xx")
+//	if err != nil {
+//	    log.Printf("Invalid pattern: %v", err)
+//	} else {
+//	    fmt.Printf("Range: %d-%d\n", min, max)
+//	}
+func ParseStatusCodeRange(pattern string) (min int, max int, err error) {
+	// Validate pattern format
+	if len(pattern) != 3 {
+		return 0, 0, fmt.Errorf("invalid pattern format: %s (expected format: '4xx', '5xx', etc.)", pattern)
+	}
+
+	// Extract the century digit (first character)
+	centuryChar := pattern[0]
+	if centuryChar < '1' || centuryChar > '5' {
+		return 0, 0, fmt.Errorf("invalid pattern century: %c (must be 1-5)", centuryChar)
+	}
+
+	// Validate 'xx' suffix
+	if pattern[1] != 'x' || pattern[2] != 'x' {
+		return 0, 0, fmt.Errorf("invalid pattern suffix: %s (expected 'xx')", pattern)
+	}
+
+	// Calculate the range from the pattern
+	century := int(centuryChar - '0')
+	minRange := century * 100
+	maxRange := minRange + 99
+
+	return minRange, maxRange, nil
+}
+
+// GetStatusCodeRangeDescription returns a human-readable description for a status code range pattern.
+//
+// Parameters:
+//   - pattern: The pattern string (e.g., '4xx', '5xx', '2xx')
+//
+// Returns a description string or an error if the pattern is invalid.
+//
+// Example usage:
+//
+//	desc, err := GetStatusCodeRangeDescription("4xx")
+//	if err != nil {
+//	    log.Printf("Invalid pattern: %v", err)
+//	} else {
+//	    fmt.Printf("Description: %s\n", desc)
+//	}
+func GetStatusCodeRangeDescription(pattern string) (string, error) {
+	if len(pattern) != 3 {
+		return "", fmt.Errorf("invalid pattern format: %s", pattern)
+	}
+
+	centuryChar := pattern[0]
+	if centuryChar < '1' || centuryChar > '5' {
+		return "", fmt.Errorf("invalid pattern century: %c", centuryChar)
+	}
+
+	if pattern[1] != 'x' || pattern[2] != 'x' {
+		return "", fmt.Errorf("invalid pattern suffix: %s", pattern)
+	}
+
+	descriptions := map[byte]string{
+		'1': "Informational (1xx)",
+		'2': "Success (2xx)",
+		'3': "Redirection (3xx)",
+		'4': "Client Error (4xx)",
+		'5': "Server Error (5xx)",
+	}
+
+	desc, ok := descriptions[centuryChar]
+	if !ok {
+		return "", fmt.Errorf("unknown century: %c", centuryChar)
+	}
+
+	return desc, nil
+}
