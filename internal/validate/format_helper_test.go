@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -1481,6 +1482,579 @@ func TestFormatFieldPath_Consistency(t *testing.T) {
 			result := FormatFieldPath(path)
 			if result != firstResult {
 				t.Errorf("FormatFieldPath(%q) = %q, but FormatFieldPath(%q) = %q (expected same result)",
+					paths[0], firstResult, path, result)
+			}
+		}
+	}
+}
+
+// =============================================================================
+// FormatFieldRef FUNCTION TESTS
+// =============================================================================
+
+// TestFormatFieldRef_BasicFormatting verifies that FormatFieldRef produces
+// correctly formatted field references with default options.
+func TestFormatFieldReference_BasicFormatting(t *testing.T) {
+	tests := []struct {
+		name     string
+		fieldPath string
+		expected string
+	}{
+		{
+			name:     "simple field",
+			fieldPath: "email",
+			expected: "field 'email'",
+		},
+		{
+			name:     "nested field",
+			fieldPath: "user.email",
+			expected: "field 'user.email'",
+		},
+		{
+			name:     "deeply nested field",
+			fieldPath: "data.user.profile.email",
+			expected: "field 'data.user.profile.email'",
+		},
+		{
+			name:     "field with array index (dot notation)",
+			fieldPath: "users.0.email",
+			expected: "field 'users[0].email'",
+		},
+		{
+			name:     "field with array index (bracket notation)",
+			fieldPath: "users[0].email",
+			expected: "field 'users[0].email'",
+		},
+		{
+			name:     "multiple array indices",
+			fieldPath: "data.0.items.1.name",
+			expected: "field 'data[0].items[1].name'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_EmptyAndInvalidPaths verifies that FormatFieldRef handles
+// empty and invalid field paths gracefully.
+func TestFormatFieldReference_EmptyAndInvalidPaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		fieldPath string
+		expected string
+	}{
+		{
+			name:     "empty string",
+			fieldPath: "",
+			expected: "(unknown field)",
+		},
+		{
+			name:     "whitespace only",
+			fieldPath: "   ",
+			expected: "(unknown field)",
+		},
+		{
+			name:     "tabs and whitespace",
+			fieldPath: "\t  \t",
+			expected: "(unknown field)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_QuoteStyles verifies that FormatFieldRef handles
+// different quote styles correctly.
+func TestFormatFieldReference_QuoteStyles(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		option    FieldRefOption
+		expected  string
+	}{
+		{
+			name:      "single quote (default)",
+			fieldPath: "user.email",
+			option:    nil,
+			expected:  "field 'user.email'",
+		},
+		{
+			name:      "no quote",
+			fieldPath: "user.email",
+			option:    WithQuoteStyle(NoQuote),
+			expected:  "field user.email",
+		},
+		{
+			name:      "double quote",
+			fieldPath: "user.email",
+			option:    WithQuoteStyle(DoubleQuote),
+			expected:  `field "user.email"`,
+		},
+		{
+			name:      "backtick",
+			fieldPath: "user.email",
+			option:    WithQuoteStyle(Backtick),
+			expected:  "field `user.email`",
+		},
+		{
+			name:      "no quote with array",
+			fieldPath: "users.0.email",
+			option:    WithQuoteStyle(NoQuote),
+			expected:  "field users[0].email",
+		},
+		{
+			name:      "backtick with array",
+			fieldPath: "users.0.email",
+			option:    WithQuoteStyle(Backtick),
+			expected:  "field `users[0].email`",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result string
+			if tt.option == nil {
+				result = FormatFieldReference(tt.fieldPath)
+			} else {
+				result = FormatFieldReference(tt.fieldPath, tt.option)
+			}
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, WithQuoteStyle(...)) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_CustomPrefix verifies that FormatFieldRef handles
+// custom prefixes correctly.
+func TestFormatFieldReference_CustomPrefix(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		prefix    string
+		expected  string
+	}{
+		{
+			name:      "parameter prefix",
+			fieldPath: "page",
+			prefix:    "parameter",
+			expected:  "parameter 'page'",
+		},
+		{
+			name:      "property prefix",
+			fieldPath: "user.email",
+			prefix:    "property",
+			expected:  "property 'user.email'",
+		},
+		{
+			name:      "attribute prefix",
+			fieldPath: "class.method",
+			prefix:    "attribute",
+			expected:  "attribute 'class.method'",
+		},
+		{
+			name:      "empty prefix (no prefix)",
+			fieldPath: "email",
+			prefix:    "",
+			expected:  "'email'",
+		},
+		{
+			name:      "key prefix",
+			fieldPath: "request.query.page",
+			prefix:    "key",
+			expected:  "key 'request.query.page'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, WithPrefix(tt.prefix))
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, WithPrefix(%q)) = %q, want %q", tt.fieldPath, tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_NoNormalization verifies that FormatFieldRef can
+// skip path normalization when requested.
+func TestFormatFieldReference_NoNormalization(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		normalize bool
+		expected  string
+	}{
+		{
+			name:      "normalize array index (default)",
+			fieldPath: "users.0.email",
+			normalize: true,
+			expected:  "field 'users[0].email'",
+		},
+		{
+			name:      "no normalization - keep dot notation",
+			fieldPath: "users.0.email",
+			normalize: false,
+			expected:  "field 'users.0.email'",
+		},
+		{
+			name:      "no normalization - keep bracket notation",
+			fieldPath: "users[0].email",
+			normalize: false,
+			expected:  "field 'users[0].email'",
+		},
+		{
+			name:      "normalize mixed notation",
+			fieldPath: "users[0].emails.1.address",
+			normalize: true,
+			expected:  "field 'users[0].emails[1].address'",
+		},
+		{
+			name:      "no normalization - keep mixed notation",
+			fieldPath: "users[0].emails.1.address",
+			normalize: false,
+			expected:  "field 'users[0].emails.1.address'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, WithNormalizePath(tt.normalize))
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, WithNormalizePath(%v)) = %q, want %q", tt.fieldPath, tt.normalize, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_CombinedOptions verifies that FormatFieldRef handles
+// multiple options combined correctly.
+func TestFormatFieldReference_CombinedOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		options   []FieldRefOption
+		expected  string
+	}{
+		{
+			name:      "custom prefix with double quote",
+			fieldPath: "user.email",
+			options:   []FieldRefOption{WithPrefix("parameter"), WithQuoteStyle(DoubleQuote)},
+			expected:  `parameter "user.email"`,
+		},
+		{
+			name:      "no prefix with backtick",
+			fieldPath: "data.value",
+			options:   []FieldRefOption{WithPrefix(""), WithQuoteStyle(Backtick)},
+			expected:  "`data.value`",
+		},
+		{
+			name:      "custom prefix with no quote and normalize",
+			fieldPath: "users.0.email",
+			options:   []FieldRefOption{WithPrefix("element"), WithQuoteStyle(NoQuote), WithNormalizePath(true)},
+			expected:  "element users[0].email",
+		},
+		{
+			name:      "empty prefix with single quote and no normalize",
+			fieldPath: "users.0.email",
+			options:   []FieldRefOption{WithPrefix(""), WithQuoteStyle(SingleQuote), WithNormalizePath(false)},
+			expected:  "'users.0.email'",
+		},
+		{
+			name:      "all options combined",
+			fieldPath: "request.data.items.5.name",
+			options:   []FieldRefOption{WithPrefix("field"), WithQuoteStyle(DoubleQuote), WithNormalizePath(true)},
+			expected:  `field "request.data.items[5].name"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, tt.options...)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, options...) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_RealWorldExamples tests realistic field references
+// that would be used in actual error messages.
+func TestFormatFieldReference_RealWorldExamples(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		options   []FieldRefOption
+		expected  string
+	}{
+		{
+			name:      "API validation error",
+			fieldPath: "response.data.users.0.email",
+			expected:  "field 'response.data.users[0].email'",
+		},
+		{
+			name:      "form field error",
+			fieldPath: "form.email",
+			expected:  "field 'form.email'",
+		},
+		{
+			name:      "request parameter error",
+			fieldPath: "request.query.page",
+			options:   []FieldRefOption{WithPrefix("parameter")},
+			expected:  "parameter 'request.query.page'",
+		},
+		{
+			name:      "JSON path error",
+			fieldPath: "order.items.5.price",
+			expected:  "field 'order.items[5].price'",
+		},
+		{
+			name:      "config field error with backticks",
+			fieldPath: "server.port",
+			options:   []FieldRefOption{WithQuoteStyle(Backtick)},
+			expected:  "field `server.port`",
+		},
+		{
+			name:      "database field error",
+			fieldPath: "users.0.profile.settings.notification_email",
+			expected:  "field 'users[0].profile.settings.notification_email'",
+		},
+		{
+			name:      "header field error",
+			fieldPath: "headers.Authorization",
+			options:   []FieldRefOption{WithPrefix("header")},
+			expected:  "header 'headers.Authorization'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result string
+			if tt.options == nil {
+				result = FormatFieldReference(tt.fieldPath)
+			} else {
+				result = FormatFieldReference(tt.fieldPath, tt.options...)
+			}
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_WhitespaceHandling verifies that FormatFieldRef handles
+// whitespace in field paths correctly.
+func TestFormatFieldReference_WhitespaceHandling(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		expected  string
+	}{
+		{
+			name:      "leading and trailing whitespace",
+			fieldPath: "  user.email  ",
+			expected:  "field 'user.email'",
+		},
+		{
+			name:      "tabs around path",
+			fieldPath: "\tuser.email\t",
+			expected:  "field 'user.email'",
+		},
+		{
+			name:      "mixed whitespace",
+			fieldPath: " \t user.email \t ",
+			expected:  "field 'user.email'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_SpecialCharacters verifies that FormatFieldRef handles
+// field names with special characters correctly.
+func TestFormatFieldReference_SpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		expected  string
+	}{
+		{
+			name:      "field with hyphen",
+			fieldPath: "user-email",
+			expected:  "field 'user-email'",
+		},
+		{
+			name:      "field with underscore",
+			fieldPath: "user_email",
+			expected:  "field 'user_email'",
+		},
+		{
+			name:      "field with numbers",
+			fieldPath: "user2email",
+			expected:  "field 'user2email'",
+		},
+		{
+			name:      "complex field names",
+			fieldPath: "user_first_name.email_address.work",
+			expected:  "field 'user_first_name.email_address.work'",
+		},
+		{
+			name:      "camelCase field",
+			fieldPath: "userEmail",
+			expected:  "field 'userEmail'",
+		},
+		{
+			name:      "PascalCase field",
+			fieldPath: "UserProfile",
+			expected:  "field 'UserProfile'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_NegativeIndices verifies that FormatFieldRef handles
+// negative array indices correctly.
+func TestFormatFieldReference_NegativeIndices(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		expected  string
+	}{
+		{
+			name:      "negative index",
+			fieldPath: "users.-1.email",
+			expected:  "field 'users[-1].email'",
+		},
+		{
+			name:      "negative zero",
+			fieldPath: "users.-0.name",
+			expected:  "field 'users[-0].name'",
+		},
+		{
+			name:      "multiple negative indices",
+			fieldPath: "data.-1.items.-2.value",
+			expected:  "field 'data[-1].items[-2].value'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_ErrorMessageIntegration verifies that FormatFieldRef
+// integrates well with error message construction.
+func TestFormatFieldReference_ErrorMessageIntegration(t *testing.T) {
+	tests := []struct {
+		name          string
+		fieldPath     string
+		errorTemplate string
+		options       []FieldRefOption
+		expectedParts []string
+	}{
+		{
+			name:          "required field error",
+			fieldPath:     "user.email",
+			errorTemplate: "%s is required",
+			expectedParts: []string{"field 'user.email'", "is required"},
+		},
+		{
+			name:          "invalid type error",
+			fieldPath:     "user.age",
+			errorTemplate: "%s must be a number",
+			expectedParts: []string{"field 'user.age'", "must be a number"},
+		},
+		{
+			name:          "parameter error",
+			fieldPath:     "page",
+			errorTemplate: "%s must be positive",
+			options:       []FieldRefOption{WithPrefix("parameter")},
+			expectedParts: []string{"parameter 'page'", "must be positive"},
+		},
+		{
+			name:          "array field error",
+			fieldPath:     "users.0.email",
+			errorTemplate: "%s contains invalid email",
+			expectedParts: []string{"field 'users[0].email'", "contains invalid email"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var fieldRef string
+			if tt.options == nil {
+				fieldRef = FormatFieldReference(tt.fieldPath)
+			} else {
+				fieldRef = FormatFieldReference(tt.fieldPath, tt.options...)
+			}
+			errorMsg := fmt.Sprintf(tt.errorTemplate, fieldRef)
+
+			for _, expectedPart := range tt.expectedParts {
+				if !strings.Contains(errorMsg, expectedPart) {
+					t.Errorf("Error message %q does not contain expected part %q", errorMsg, expectedPart)
+				}
+			}
+		})
+	}
+}
+
+// TestFormatFieldRef_Consistency verifies that FormatFieldRef produces
+// consistent output across equivalent inputs.
+func TestFormatFieldReference_Consistency(t *testing.T) {
+	// Different ways to represent the same field path should normalize to the same output
+	equivalentPaths := [][]string{
+		// Array access with dot notation vs bracket notation
+		{"users.0.email", "users[0].email"},
+		// Multiple array indices
+		{"data.0.items.1.name", "data[0].items[1].name"},
+		// Mixed notation
+		{"users[0].emails.1.address", "users.0.emails.1.address"},
+	}
+
+	for _, paths := range equivalentPaths {
+		if len(paths) < 2 {
+			continue
+		}
+
+		firstResult := FormatFieldReference(paths[0])
+		for _, path := range paths[1:] {
+			result := FormatFieldReference(path)
+			if result != firstResult {
+				t.Errorf("FormatFieldReference(%q) = %q, but FormatFieldReference(%q) = %q (expected same result)",
 					paths[0], firstResult, path, result)
 			}
 		}
