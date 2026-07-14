@@ -772,11 +772,13 @@ func containsArrayNotation(s string) bool {
 
 // FormatFieldReference creates a standardized field reference string with an optional prefix.
 // This function formats field paths for consistent display in error messages, normalizing
-// array notation and handling edge cases gracefully.
+// array notation and handling edge cases gracefully. It supports optional quote styles
+// for field names through variadic options.
 //
 // Parameters:
 //   - fieldPath: The field path to format (e.g., "user.email", "users.0.email", "data.items[5]")
 //   - prefix: Optional field prefix to add (e.g., "request", "response", "" for no prefix)
+//   - options: Optional functions to configure formatting (e.g., WithQuoteStyle(DoubleQuote))
 //
 // Returns a formatted field reference string with array indices in bracket notation.
 // Empty or invalid paths return "(unknown field)" (or "prefix.(unknown field)" if prefix provided).
@@ -795,14 +797,29 @@ func containsArrayNotation(s string) bool {
 //	ref := FormatFieldReference("users.0.email", "response")
 //	// Returns: "response.users[0].email"
 //
+//	ref := FormatFieldReference("user.email", "response", WithQuoteStyle(DoubleQuote))
+//	// Returns: response."user"."email"
+//
+//	ref := FormatFieldReference("users.0.email", "", WithQuoteStyle(SingleQuote))
+//	// Returns: 'users'[0].'email'
+//
+//	ref := FormatFieldReference("data.items", "", WithQuoteStyle(Backtick))
+//	// Returns: `data`.`items`
+//
 //	ref := FormatFieldReference("", "")
 //	// Returns: "(unknown field)"
 //
 //	ref := FormatFieldReference("", "request")
 //	// Returns: "request"
-func FormatFieldReference(fieldPath string, prefix string) string {
+func FormatFieldReference(fieldPath string, prefix string, options ...FieldRefOption) string {
 	fieldPath = strings.TrimSpace(fieldPath)
 	prefix = strings.TrimSpace(prefix)
+
+	// Apply options
+	config := &FieldRefConfig{quoteStyle: NoQuote}
+	for _, opt := range options {
+		opt(config)
+	}
 
 	// Handle empty field path
 	if fieldPath == "" {
@@ -828,6 +845,11 @@ func FormatFieldReference(fieldPath string, prefix string) string {
 		return "(unknown field)"
 	}
 
+	// Apply quote style if specified
+	if config.quoteStyle != NoQuote {
+		normalizedPath = applyQuoteStyle(normalizedPath, config.quoteStyle)
+	}
+
 	// Add prefix if provided
 	if prefix != "" {
 		// Normalize prefix as well in case it contains array indices
@@ -842,5 +864,66 @@ func FormatFieldReference(fieldPath string, prefix string) string {
 	}
 
 	return normalizedPath
+}
+
+// applyQuoteStyle applies quotes to field names in a normalized path.
+// Array indices are NOT quoted (e.g., "users[0].email" becomes "'users'[0].'email'").
+func applyQuoteStyle(path string, style QuoteStyle) string {
+	if path == "(unknown field)" || path == "" {
+		return path
+	}
+
+	var result strings.Builder
+	var fieldName strings.Builder
+	inBrackets := false
+
+	for i := 0; i < len(path); i++ {
+		r := rune(path[i])
+
+		switch {
+		case r == '.':
+			// End of field name, add quoted version
+			if fieldName.Len() > 0 {
+				result.WriteString(string(style))
+				result.WriteString(fieldName.String())
+				result.WriteString(string(style))
+				fieldName.Reset()
+			}
+			result.WriteRune('.')
+
+		case r == '[':
+			// Start of array index, flush field name first
+			if fieldName.Len() > 0 {
+				result.WriteString(string(style))
+				result.WriteString(fieldName.String())
+				result.WriteString(string(style))
+				fieldName.Reset()
+			}
+			result.WriteRune('[')
+			inBrackets = true
+
+		case r == ']':
+			// End of array index, don't quote
+			result.WriteRune(']')
+			inBrackets = false
+
+		default:
+			// Only accumulate field name characters when NOT inside brackets
+			if !inBrackets {
+				fieldName.WriteRune(r)
+			} else {
+				result.WriteRune(r)
+			}
+		}
+	}
+
+	// Don't forget the last field name
+	if fieldName.Len() > 0 {
+		result.WriteString(string(style))
+		result.WriteString(fieldName.String())
+		result.WriteString(string(style))
+	}
+
+	return result.String()
 }
 
