@@ -1822,3 +1822,154 @@ func ExampleCORSHeadersIsValid() {
 		// Full CORS configuration is valid
 	}
 }
+
+	// =============================================================================
+	// ERROR MESSAGE PATTERN VALIDATION TESTS
+	// =============================================================================
+
+	// TestValidateErrorMessagePattern_BasicPatterns tests basic regex pattern matching
+	func TestValidateErrorMessagePattern_BasicPatterns(t *testing.T) {
+		tests := []struct {
+			name           string
+			body           string
+			pattern        string
+			caseInsensitive bool
+			want           bool
+			wantErr        bool
+		}{
+			{
+				name:           "exact match on error field",
+				body:           `{"error": "not found"}`,
+				pattern:        "not found",
+				caseInsensitive: false,
+				want:           true,
+			},
+			{
+				name:           "case insensitive match",
+				body:           `{"error": "Not Found"}`,
+				pattern:        "not found",
+				caseInsensitive: true,
+				want:           true,
+			},
+			{
+				name:           "pattern match on message field",
+				body:           `{"message": "invalid token"}`,
+				pattern:        "invalid.*token",
+				caseInsensitive: false,
+				want:           true,
+			},
+			{
+				name:           "no match",
+				body:           `{"error": "success"}`,
+				pattern:        "not found",
+				caseInsensitive: false,
+				want:           false,
+			},
+			{
+				name:           "empty body",
+				body:           "",
+				pattern:        "not found",
+				caseInsensitive: false,
+				want:           false,
+				wantErr:        true,
+			},
+			{
+				name:           "empty pattern",
+				body:           `{"error": "not found"}`,
+				pattern:        "",
+				caseInsensitive: false,
+				want:           false,
+				wantErr:        true,
+			},
+			{
+				name:           "invalid regex pattern",
+				body:           `{"error": "not found"}`,
+				pattern:        "[invalid(",
+				caseInsensitive: false,
+				want:           false,
+				wantErr:        true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, err := ValidateErrorMessagePattern([]byte(tt.body), tt.pattern, tt.caseInsensitive)
+				if (err != nil) != tt.wantErr {
+					t.Errorf("ValidateErrorMessagePattern() error = %v, wantErr %v", err, tt.wantErr)
+					return
+				}
+				if got != tt.want {
+					t.Errorf("ValidateErrorMessagePattern() = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	}
+
+	// TestValidateErrorMessagePattern_CommonErrorPatterns tests common error message patterns
+	func TestValidateErrorMessagePattern_CommonErrorPatterns(t *testing.T) {
+		tests := []struct {
+			name    string
+			body    string
+			pattern string
+			want    bool
+		}{
+			{
+				name:    "authentication error pattern",
+				body:    `{"error": "Authentication failed"}`,
+				pattern: "authentication.*failed",
+				want:    true,
+			},
+			{
+				name:    "authorization error pattern",
+				body:    `{"error": "User not authorized"}`,
+				pattern: "authorized",
+				want:    true,
+			},
+			{
+				name:    "validation error pattern",
+				body:    `{"message": "Validation failed: invalid email"}`,
+				pattern: "validation.*failed",
+				want:    true,
+			},
+			{
+				name:    "rate limit error pattern",
+				body:    `{"error": "Rate limit exceeded"}`,
+				pattern: "rate.*limit",
+				want:    true,
+			},
+			{
+				name:    "resource not found pattern",
+				body:    `{"detail": "Resource not found in database"}`,
+				pattern: "not found",
+				want:    true,
+			},
+			{
+				name:    "permission denied pattern",
+				body:    `{"error": "Permission denied"}`,
+				pattern: "denied",
+				want:    true,
+			},
+			{
+				name:    "timeout error pattern",
+				body:    `{"message": "Request timeout"}`,
+				pattern: "timeout",
+				want:    true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, err := ValidateErrorMessagePattern([]byte(tt.body), tt.pattern, true)
+				if err != nil {
+					t.Errorf("ValidateErrorMessagePattern() unexpected error = %v", err)
+					return
+				}
+				if got != tt.want {
+					t.Errorf("ValidateErrorMessagePattern() = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	}
+
+	// TestErrorCodeInResponse, TestGetErrorMessage, and TestGetErrorCode
+	// are defined in error_message_test.go to avoid duplication
