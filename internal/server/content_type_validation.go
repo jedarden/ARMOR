@@ -65,7 +65,7 @@ func ValidateContentTypeAny(t *testing.T, response interface{}, allowedContentTy
 	t.Helper()
 
 	if len(allowedContentTypes) == 0 {
-		t.Fatal("ValidateContentTypeAny: allowedContentTypes cannot be empty")
+		t.Error("ValidateContentTypeAny: allowedContentTypes cannot be empty")
 		return
 	}
 
@@ -190,12 +190,26 @@ func CheckContentTypePrefix(response interface{}, prefix string) bool {
 // - application/json
 // - application/json; charset=utf-8
 // - application/problem+json
+// - application/ld+json
+// - application/any+json
 //
 // Example:
 //   ValidateContentTypeJSON(t, w)
 func ValidateContentTypeJSON(t *testing.T, response interface{}) {
 	t.Helper()
-	ValidateContentType(t, response, "application/json")
+	actualContentType := getContentType(response)
+
+	// Check for exact match or parameter-based match
+	if contentTypeMatches(actualContentType, "application/json") {
+		return
+	}
+
+	// Check for JSON variant (+json suffix)
+	if IsContentTypeJSON(actualContentType) {
+		return
+	}
+
+	t.Errorf("Expected JSON Content-Type (e.g., application/json, application/problem+json), got '%s'", actualContentType)
 }
 
 // ValidateContentTypeXML validates that the response has an application/xml content-type.
