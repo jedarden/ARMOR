@@ -1094,8 +1094,8 @@ func TestFormatErrorBackwardCompatibility(t *testing.T) {
 		message := "Invalid format"
 		fieldName := "email"
 
-		stringResult := FormatError("format", message, fieldName)
-		typeResult := FormatErrorWithType(ErrTypeFormat, message, fieldName)
+		stringResult := FormatErrorString("format", message, fieldName)
+		typeResult := FormatError(ErrTypeFormat, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -1106,8 +1106,8 @@ func TestFormatErrorBackwardCompatibility(t *testing.T) {
 		message := "Value out of range"
 		fieldName := "age"
 
-		stringResult := FormatError("range", message, fieldName)
-		typeResult := FormatErrorWithType(ErrTypeRange, message, fieldName)
+		stringResult := FormatErrorString("range", message, fieldName)
+		typeResult := FormatError(ErrTypeRange, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
