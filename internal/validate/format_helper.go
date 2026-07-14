@@ -475,3 +475,114 @@ func FormatError(errorType string, message string, fieldName ...string) string {
 
 	return builder.String()
 }
+
+// =============================================================================
+// FIELD PATH FORMATTING
+// =============================================================================
+
+// FormatFieldPath formats a field path for consistent display in error messages.
+// This function handles nested field paths, array indices, and provides graceful
+// handling of edge cases like empty paths or invalid formats.
+//
+// Parameters:
+//   - fieldPath: The field path to format (e.g., "user.email", "users.0.email", "data.items[5]")
+//
+// Returns a formatted field reference string ready for use in error messages.
+// Empty or invalid paths return "(unknown field)" for consistent error display.
+//
+// Example usage:
+//
+//	ref := FormatFieldPath("user.email")
+//	// Returns: "user.email"
+//
+//	ref := FormatFieldPath("users.0.email")
+//	// Returns: "users[0].email"
+//
+//	ref := FormatFieldPath("data.items[5]")
+//	// Returns: "data.items[5]"
+//
+//	ref := FormatFieldPath("")
+//	// Returns: "(unknown field)"
+func FormatFieldPath(fieldPath string) string {
+	fieldPath = strings.TrimSpace(fieldPath)
+
+	// Handle empty path
+	if fieldPath == "" {
+		return "(unknown field)"
+	}
+
+	// Parse and normalize the field path
+	return normalizeFieldPath(fieldPath)
+}
+
+// normalizeFieldPath processes a field path and normalizes array notation.
+// It converts "users.0.email" to "users[0].email" format for consistency.
+func normalizeFieldPath(path string) string {
+	if path == "" {
+		return ""
+	}
+
+	parts := strings.Split(path, ".")
+	var result []string
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// Check if this part is a numeric index (array accessor)
+		if isNumericIndex(part) {
+			// Convert ".0" to "[0]" format
+			if len(result) > 0 {
+				// Append to previous part as array index
+				lastIdx := len(result) - 1
+				result[lastIdx] = fmt.Sprintf("%s[%s]", result[lastIdx], part)
+			} else {
+				// Standalone index at start - keep as is
+				result = append(result, part)
+			}
+		} else if containsArrayNotation(part) {
+			// Already has array notation like "items[5]" - keep as is
+			result = append(result, part)
+		} else {
+			// Regular field name
+			result = append(result, part)
+		}
+	}
+
+	if len(result) == 0 {
+		return "(unknown field)"
+	}
+
+	return strings.Join(result, ".")
+}
+
+// isNumericIndex checks if a string represents a numeric array index.
+func isNumericIndex(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	// Handle negative numbers (though unusual for indices)
+	if s[0] == '-' {
+		if len(s) == 1 {
+			return false
+		}
+		s = s[1:]
+	}
+
+	// Check if all characters are digits
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// containsArrayNotation checks if a string already contains array notation like "[5]".
+func containsArrayNotation(s string) bool {
+	return strings.Contains(s, "[")
+}
