@@ -728,3 +728,77 @@ func containsArrayNotation(s string) bool {
 	return strings.Contains(s, "[")
 }
 
+// FormatFieldReference creates a standardized field reference string with an optional prefix.
+// This function formats field paths for consistent display in error messages, normalizing
+// array notation and handling edge cases gracefully.
+//
+// Parameters:
+//   - fieldPath: The field path to format (e.g., "user.email", "users.0.email", "data.items[5]")
+//   - prefix: Optional field prefix to add (e.g., "request", "response", "" for no prefix)
+//
+// Returns a formatted field reference string with array indices in bracket notation.
+// Empty or invalid paths return "(unknown field)" (or "prefix.(unknown field)" if prefix provided).
+//
+// Example usage:
+//
+//	ref := FormatFieldReference("email", "")
+//	// Returns: "email"
+//
+//	ref := FormatFieldReference("users.0.email", "")
+//	// Returns: "users[0].email"
+//
+//	ref := FormatFieldReference("email", "request")
+//	// Returns: "request.email"
+//
+//	ref := FormatFieldReference("users.0.email", "response")
+//	// Returns: "response.users[0].email"
+//
+//	ref := FormatFieldReference("", "")
+//	// Returns: "(unknown field)"
+//
+//	ref := FormatFieldReference("", "request")
+//	// Returns: "request"
+func FormatFieldReference(fieldPath string, prefix string) string {
+	fieldPath = strings.TrimSpace(fieldPath)
+	prefix = strings.TrimSpace(prefix)
+
+	// Handle empty field path
+	if fieldPath == "" {
+		if prefix != "" {
+			// Normalize prefix even when field is empty
+			normalizedPrefix := FormatFieldPath(prefix)
+			if normalizedPrefix != "(unknown field)" {
+				return normalizedPrefix
+			}
+			return prefix
+		}
+		return "(unknown field)"
+	}
+
+	// Normalize field path to handle array indices
+	normalizedPath := FormatFieldPath(fieldPath)
+
+	// Check if normalization resulted in unknown field indicator
+	if normalizedPath == "(unknown field)" {
+		if prefix != "" {
+			return prefix
+		}
+		return "(unknown field)"
+	}
+
+	// Add prefix if provided
+	if prefix != "" {
+		// Normalize prefix as well in case it contains array indices
+		normalizedPrefix := FormatFieldPath(prefix)
+
+		// If prefix normalizes to unknown field, just return the field path
+		if normalizedPrefix == "(unknown field)" {
+			return normalizedPath
+		}
+
+		return fmt.Sprintf("%s.%s", normalizedPrefix, normalizedPath)
+	}
+
+	return normalizedPath
+}
+
