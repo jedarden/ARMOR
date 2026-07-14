@@ -1,0 +1,143 @@
+================================================================================
+INTEGRATION TEST EXECUTION RAW OUTPUT
+Bead ID: bf-5lcyt9
+Date: 2026-07-13
+================================================================================
+
+================================================================================
+1. GO INTEGRATION TESTS
+================================================================================
+
+Command: go test -tags=integration ./tests/integration/... -v
+
+Output:
+------------------------------------------------------------------------
+Skipping integration tests: ARMOR_INTEGRATION_TEST not set
+ok  	github.com/jedarden/armor/tests/integration	0.002s
+------------------------------------------------------------------------
+
+Status: Tests compile successfully but skip due to missing environment variables
+Result: 0 tests executed (blocked by design)
+
+================================================================================
+2. RUST TESTS  
+================================================================================
+
+Command: cargo test --all
+
+Output (compilation errors section):
+------------------------------------------------------------------------
+error[E0596]: cannot borrow `parser` as mutable, as it is not declared as mutable
+   --> tests/scope_stack_structure_test.rs:166:18
+    |
+166 |     let result = parser.parse_str(yaml);
+    |                  ^^^^^^ cannot borrow as mutable
+    |
+help: consider changing this to be mutable
+    |
+154 |     let mut parser = BasicParser::new();
+    |         +++
+
+error[E0599]: no method named `key_count` found for enum `Option<T>` in the current scope
+   --> tests/comprehensive_scope_tracking_test.rs:255:42
+    |
+255 |     assert_eq!(stack.current_scope_ref().key_count(), 0);
+    |                                          ^^^^^^^^^ method not found in `Option<&armor::parsers::yaml::Scope>`
+    |
+note: the method `key_count` exists on the type `&armor::parsers::yaml::Scope`
+   --> src/parsers/yaml/scope.rs:634:5
+    |
+634 |     pub fn key_count(&self) -> usize {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `&armor::parsers::yaml::Scope` value, panicking if the value is an `Option::None`
+    |
+255 |     assert_eq!(stack.current_scope_ref().expect("REASON").key_count(), 0);
+    |                                         +++++++++++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:291:42
+    |
+291 |     assert_eq!(stack.current_scope_ref().sequence_item_id, Some(1));
+    |                                          ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+291 |     assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(1));
+    |                                          +++++++++
+
+[... 8 more similar Option unwrapping errors ...]
+
+error: could not compile `armor` (test "scope_stack_structure_test") due to 1 previous error
+error: could not compile `armor` (test "comprehensive_scope_tracking_test") due to 11 previous errors
+------------------------------------------------------------------------
+
+Status: Compilation failures prevent any Rust tests from executing
+Result: 0 tests executed (2 test files blocked by compilation errors)
+
+================================================================================
+3. PYTHON TESTS
+================================================================================
+
+Command: python3 -m unittest test_result_helpers -v
+
+Output:
+------------------------------------------------------------------------
+test_result_helpers (unittest.loader._FailedTest.test_result_helpers) ... ERROR
+
+======================================================================
+ERROR: test_result_helpers (unittest.loader._FailedTest.test_result_helpers)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_result_helpers
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File ".../python3.12/unittest/__main__.py", line 18, in <module>
+    main(module=None)
+  File ".../python3.12/unittest/main.py", line 104, in __init__
+    self.parseArgs(argv)
+  File ".../python3.12/unittest/main.py", line 130, in parseArgs
+    self._do_discovery(argv[2:])
+  File ".../python3.12/unittest/main.py", line 253, in _do_discovery
+    self.createTests(from_from_discovery=True, Loader=Loader)
+  [...]
+  File ".../python3.12/unittest/loader.py", line 137, in loadTestsFromName
+    module = __import__(module_name)
+  File "/home/coding/ARMOR/tests/yamlutil/test_result_helpers.py", line 9, in <module>
+    from internal.yamlutil import Result, Status
+ModuleNotFoundError: No module named 'internal'
+----------------------------------------------------------------------
+
+Ran 1 test in 0.000s
+
+FAILED (errors=1)
+------------------------------------------------------------------------
+
+Status: Import errors prevent Python tests from executing
+Result: 0 tests executed (18 test files blocked by module import failures)
+
+================================================================================
+SUMMARY
+================================================================================
+
+Total Test Files Identified:
+  - 51 Rust test files (.rs in /tests/)
+  - 18 Python test files (.py in /tests/yamlutil/)  
+  - 2 Go integration test files (.go in /tests/integration/)
+
+Tests Successfully Executed: 0
+Tests Failed: 0
+Tests Blocked (cannot execute): 71 test files
+
+Blockers:
+  - 2 Rust test files: compilation errors (code issues)
+  - 18 Python test files: module import failures (dependency issues)
+  - Go tests: properly blocked by missing external dependencies (by design)
+
+Raw output logs saved to:
+  - /home/coding/ARMOR/notes/bf-5lcyt9-integration-test-output.log (Go tests)
+  - /home/coding/ARMOR/notes/bf-5lcyt9-rust-test-output.log (Rust tests)  
+  - /home/coding/ARMOR/notes/bf-5lcyt9-python-unittest.log (Python tests)
+
+================================================================================
+END OF RAW OUTPUT
+================================================================================

@@ -1,0 +1,1726 @@
+       Fresh unicode-ident v1.0.24
+       Fresh proc-macro2 v1.0.106
+       Fresh quote v1.0.46
+       Fresh syn v2.0.118
+       Fresh serde_derive v1.0.228
+       Fresh serde_core v1.0.228
+       Fresh equivalent v1.0.2
+       Fresh hashbrown v0.17.1
+       Fresh serde v1.0.228
+       Fresh indexmap v2.14.0
+       Fresh unsafe-libyaml v0.2.11
+       Fresh ryu v1.0.23
+       Fresh itoa v1.0.18
+       Fresh serde_yaml v0.9.34+deprecated
+       Fresh log v0.4.33
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::parsers::yaml::types::ValidationError`
+  --> src/parsers/yaml/syntax_detector_tests.rs:10:5
+   |
+10 | use crate::parsers::yaml::types::ValidationError;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `same`
+    --> src/parsers/yaml/parser.rs:1961:27
+     |
+1961 |         let (enter, exit, same) = parser.get_transition_counts(yaml);
+     |                           ^^^^ help: if this is intentional, prefix it with an underscore: `_same`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `same`
+    --> src/parsers/yaml/parser.rs:2113:27
+     |
+2113 |         let (enter, exit, same) = parser.get_transition_counts(yaml);
+     |                           ^^^^ help: if this is intentional, prefix it with an underscore: `_same`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2157:13
+     |
+2157 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2168:13
+     |
+2168 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2178:13
+     |
+2178 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2189:13
+     |
+2189 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2203:13
+     |
+2203 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2329:13
+     |
+2329 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2340:13
+     |
+2340 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: comparison is useless due to type limits
+   --> src/schema.rs:490:20
+    |
+490 |                 if config.port > 65535 {
+    |                    ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+warning: `armor` (lib test) generated 23 warnings (9 duplicates) (run `cargo fix --lib -p armor --tests` to apply 13 suggestions)
+warning: unused doc comment
+  --> tests/int32_to_uint32_boundary_test.rs:25:5
+   |
+25 | /     /// Test: int32::MIN (-2147483648) cannot convert to uint32
+26 | |     ///
+27 | |     /// This is the absolute minimum value for a signed 32-bit integer.
+28 | |     /// In two's complement representation, this is 0x80000000.
+...  |
+33 | |     /// - It has a special binary representation (only the sign bit set)
+34 | |     /// - Converting to uint32 would be an overflow/underflow condition
+   | |_______________________________________________________________________^
+35 |       let yaml = r#"value: -2147483648"#;
+   |       ----------------------------------- rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+   = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:77:5
+    |
+ 77 | /     /// Test: Values near int32::MIN
+ 78 | |     ///
+ 79 | |     /// Test values just above int32::MIN to ensure boundary detection works.
+ 80 | |     ///
+...   |
+ 90 | |     /// | -2147483000 | int32::MIN + 648 |
+ 91 | |     /// | -2147480000 | int32::MIN + 3648 |
+    | |___________________________________________^
+ 92 | /     let test_cases = vec![
+ 93 | |         (-2147483648i64, "int32::MIN exact"),
+ 94 | |         (-2147483647i64, "int32::MIN + 1"),
+ 95 | |         (-2147483640i64, "int32::MIN + 8"),
+...   |
+ 99 | |         (-2147480000i64, "int32::MIN + 3648"),
+100 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:157:5
+    |
+157 | /     /// Test: Maximum negative values (closest to zero)
+158 | |     ///
+159 | |     /// These are the "largest" negative integers in the mathematical sense
+160 | |     /// (closest to zero, but still negative).
+...   |
+172 | |     /// | -255 | Byte boundary - 1 | 255 |
+173 | |     /// | -256 | Byte boundary | 256 |
+    | |______________________________________^
+174 | /     let test_cases = vec![
+175 | |         (-1i64, "negative one (closest to zero)"),
+176 | |         (-2i64, "negative two"),
+177 | |         (-3i64, "negative three"),
+...   |
+193 | |         (-1024i64, "negative 1024 (2^10)"),
+194 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:254:5
+    |
+254 | /     /// Test: -1 as a special boundary case
+255 | |     ///
+256 | |     /// -1 is particularly important because:
+257 | |     /// 1. It's the closest negative integer to zero
+258 | |     /// 2. In two's complement, it's all 1s (0xFFFFFFFF for 32-bit)
+259 | |     /// 3. When incorrectly cast to unsigned, it becomes UINT32_MAX
+260 | |     /// 4. This is a very common bug in C/C++ code
+    | |__________________________________________________^
+261 |       let yaml = r#"value: -1"#;
+    |       -------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:309:5
+    |
+309 | /     /// Test: Zero boundary and transition from negative to non-negative
+310 | |     ///
+311 | |     /// This test verifies the behavior at the exact boundary between
+312 | |     /// negative and non-negative values.
+...   |
+319 | |     /// | 0 | Zero | YES | First non-negative value |
+320 | |     /// | 1 | Positive | YES | First positive value |
+    | |_____________________________________________________^
+321 | /     let test_cases = vec![
+322 | |         (-1i64, "negative", false, "last negative before zero"),
+323 | |         (0i64, "zero", true, "exact zero (boundary)"),
+324 | |         (1i64, "positive", true, "first positive after zero"),
+325 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:384:5
+    |
+384 | /     /// Test: Zero in context where negative was expected
+385 | |     ///
+386 | |     /// This tests the edge case where a field might conceptually be
+387 | |     /// related to negative values, but zero is technically valid.
+    | |__________________________________________________________________^
+388 |       let yaml = r#"value: 0"#;
+    |       ------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:420:5
+    |
+420 | /     /// Test: Negative values across different magnitude ranges
+421 | |     ///
+422 | |     /// This tests negative values across orders of magnitude to ensure
+423 | |     /// consistent behavior across the entire negative range.
+...   |
+430 | |     /// 4. **Very large magnitude** (1M-100M): -5M, -10M, -50M, -100M
+431 | |     /// 5. **Extreme magnitude** (100M-int32::MAX): -500M, -1B, -int32::MAX
+    | |___________________________________________________________________________^
+432 | /     let test_cases = vec![
+433 | |         // Small magnitude (1-100)
+434 | |         (-1i64, "magnitude 1"),
+435 | |         (-5i64, "magnitude 5"),
+...   |
+473 | |         (-2147483648i64, "magnitude 2,147,483,648 (int32::MIN)"),
+474 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:530:5
+    |
+530 | /     /// Test: Negative values at power of 2 boundaries
+531 | |     ///
+532 | |     /// These test values at powers of 2 and adjacent values to test
+533 | |     /// boundary detection around bit-width transitions.
+...   |
+544 | |     /// - 2^30 = 1073741824, test -1073741824
+545 | |     /// - 2^31 = 2147483648, test -2147483648 (int32::MIN)
+    | |__________________________________________________________^
+546 | /     let test_cases = vec![
+547 | |         (-1i64, "-2^0", "negative 1 (2^0)"),
+548 | |         (-2i64, "-2^1", "negative 2 (2^1)"),
+549 | |         (-4i64, "-2^2", "negative 4 (2^2)"),
+...   |
+578 | |         (-2147483648i64, "-2^31", "negative 2147483648 (2^31, int32::MIN)"),
+579 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:631:5
+    |
+631 | /     /// Test: Common negative constants that might appear in configurations
+632 | |     ///
+633 | |     /// These are negative values that commonly appear in real-world
+634 | |     /// configuration files and should be properly rejected for uint32.
+...   |
+644 | |     /// | -3600 | One hour in seconds |
+645 | |     /// | -86400 | One day in seconds |
+    | |_______________________________________^
+646 | /     let test_cases = vec![
+647 | |         (-1i64, "error_code_or_not_set"),
+648 | |         (-10i64, "small_error_code_or_penalty"),
+649 | |         (-100i64, "default_timeout_or_penalty"),
+...   |
+652 | |         (-86400i64, "one_day_seconds_negative"),
+653 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:705:5
+    |
+705 | /     /// Test: Negative values that would overflow uint32 boundaries
+706 | |     ///
+707 | |     /// These tests verify that negative values are properly rejected
+708 | |     /// even when their absolute value might be within uint32 range.
+...   |
+720 | |     /// | -1000000 | 1000000 | Yes | YES (it's negative!) |
+721 | |     /// | -1000000000 | 1000000000 | Yes | YES (it's negative!) |
+    | |_________________________________________________________________^
+722 | /     let test_cases = vec![
+723 | |         (-1i64, 1u64, "absolute value 1"),
+724 | |         (-100i64, 100u64, "absolute value 100"),
+725 | |         (-1000i64, 1000u64, "absolute value 1000"),
+...   |
+731 | |         (-1000000000i64, 1000000000u64, "absolute value 1000000000"),
+732 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/int32_to_uint32_boundary_test.rs:794:5
+    |
+794 | /     /// Test: Verify comprehensive coverage of all boundary conditions
+795 | |     ///
+796 | |     /// This test verifies that we have covered all the critical boundary
+797 | |     /// conditions for int32 to uint32 negative conversion.
+...   |
+809 | |     /// This test documents the coverage and serves as a checklist for
+810 | |     /// future maintenance.
+    | |___________________________^
+...
+813 | /     let critical_values = vec![
+814 | |         ("int32::MIN", -2147483648i64),
+815 | |         ("int32::MIN + 1", -2147483647i64),
+816 | |         ("near int32::MIN", -2000000000i64),
+...   |
+824 | |         ("positive one", 1i64),
+825 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+  --> tests/validation_error_format_test.rs:17:5
+   |
+17 | /     /// Demonstrates ValidationError format with field path
+18 | |     ///
+19 | |     /// Format: `validation error at '<field-path>': <message>`
+20 | |     ///
+...  |
+23 | |     /// validation error at 'server.port': port must be between 1 and 65535
+24 | |     /// ```
+   | |___________^
+25 |       let error = ValidationError::new("server.port", "port must be between 1 and 65535");
+   |       ------------------------------------------------------------------------------------ rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+   = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+  --> tests/validation_error_format_test.rs:34:5
+   |
+34 | /     /// Demonstrates ValidationError format with line number context
+35 | |     ///
+36 | |     /// Format: `<line>: validation error at '<field-path>': <message>`
+37 | |     ///
+...  |
+40 | |     /// 15: validation error at 'server.port': port must be between 1 and 65535
+41 | |     /// ```
+   | |___________^
+42 | /     let error = ValidationError::new("server.port", "port must be between 1 and 65535")
+43 | |         .with_line(15);
+   | |_______________________- rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+
+warning: unused doc comment
+  --> tests/validation_error_format_test.rs:53:5
+   |
+53 | /     /// Documents ValidationError with various field path formats
+54 | |     ///
+55 | |     /// Field paths can be:
+56 | |     /// - Simple: "server.port"
+57 | |     /// - Nested: "database.connectionPool.maxConnections"
+58 | |     /// - Array access: "servers.api.responses[0].statusCode"
+   | |_____________________________________________________________^
+59 |
+60 | /     let test_cases = vec![
+61 | |         ("server.port", "Simple dot-notation path"),
+62 | |         ("database.connectionPool.maxConnections", "Nested dot-notation path"),
+63 | |         ("servers.api.responses[0].statusCode", "Array access path"),
+64 | |         ("spec.template.spec.containers[0].image", "Deep Kubernetes-style path"),
+65 | |     ];
+   | |______- rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+
+warning: unused doc comment
+  --> tests/validation_error_format_test.rs:80:5
+   |
+80 | /     /// Documents complete ValidationError with all components
+81 | |     ///
+82 | |     /// Format breakdown:
+83 | |     /// - Line number (if present): `<line>: `
+...  |
+90 | |     /// 42: validation error at 'spec.template.spec.containers[0].image': invalid image tag
+91 | |     /// ```
+   | |___________^
+92 | /     let error = ValidationError::new("spec.template.spec.containers[0].image", "invalid image tag")
+93 | |         .with_line(42);
+   | |_______________________- rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/validation_error_format_test.rs:109:5
+    |
+109 | /     /// Documents ValidationError for type mismatch scenarios
+110 | |     ///
+111 | |     /// Example output:
+112 | |     /// ```text
+113 | |     /// validation error at 'database.port': expected integer, got string
+114 | |     /// ```
+    | |___________^
+115 |       let error = ValidationError::new("database.port", "expected integer, got string");
+    |       ---------------------------------------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/validation_error_format_test.rs:124:5
+    |
+124 | /     /// Documents ValidationError for constraint violations
+125 | |     ///
+126 | |     /// Example output:
+127 | |     /// ```text
+128 | |     /// 25: validation error at 'server.timeout': value must be positive
+129 | |     /// ```
+    | |___________^
+130 | /     let error = ValidationError::new("server.timeout", "value must be positive")
+131 | |         .with_line(25);
+    | |_______________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/validation_error_format_test.rs:141:5
+    |
+141 | /     /// Documents ValidationError for missing required fields
+142 | |     ///
+143 | |     /// Example output:
+144 | |     /// ```text
+145 | |     /// validation error at 'service.name': required field is missing
+146 | |     /// ```
+    | |___________^
+147 |       let error = ValidationError::new("service.name", "required field is missing");
+    |       ------------------------------------------------------------------------------ rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/validation_error_format_test.rs:160:5
+    |
+160 | /     /// Verifies that ValidationError formats follow consistent patterns
+161 | |     ///
+162 | |     /// Consistency rules:
+163 | |     /// 1. Line number (if present) comes first: `<line>: `
+164 | |     /// 2. Error type follows: "validation error at"
+165 | |     /// 3. Field path is quoted: `'<field-path>'`
+166 | |     /// 4. Message follows with colon separator: `': <message>'`
+    | |________________________________________________________________^
+167 |
+168 | /     let errors = vec![
+169 | |         ValidationError::new("field1", "error1").with_line(1),
+170 | |         ValidationError::new("field2", "error2").with_line(2),
+171 | |         ValidationError::new("field3", "error3"),
+172 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/validation_error_format_test.rs:191:5
+    |
+191 |     /// Tests the builder pattern for ValidationError
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+192 |     let error = ValidationError::new("test.field", "test message");
+    |     --------------------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/validation_error_format_test.rs:209:5
+    |
+209 | /     /// Verifies that ValidationError messages are human-readable
+210 | |     ///
+211 | |     /// Human-readable messages should:
+212 | |     /// 1. Use clear, non-technical language when possible
+213 | |     /// 2. Provide actionable information
+214 | |     /// 3. Include field context for location
+    | |_____________________________________________^
+215 |
+216 | /     let errors = vec![
+217 | |         ValidationError::new("port", "must be between 1 and 65535"),
+218 | |         ValidationError::new("timeout", "cannot be negative"),
+219 | |         ValidationError::new("email", "must be a valid email address"),
+220 | |         ValidationError::new("url", "must start with http:// or https://"),
+221 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/validation_error_format_test.rs:240:5
+    |
+240 | /     /// Documents a realistic validation error scenario
+241 | |     ///
+242 | |     /// Scenario: Port number validation in service configuration
+243 | |     ///
+...   |
+253 | |     /// 10: validation error at 'services[0].port': port must be between 1 and 65535
+254 | |     /// ```
+    | |___________^
+255 | /     let error = ValidationError::new("services[0].port", "port must be between 1 and 65535")
+256 | |         .with_line(10);
+    | |_______________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: `armor` (test "int32_to_uint32_boundary_test") generated 11 warnings
+warning: `armor` (test "validation_error_format_test") generated 11 warnings
+warning: unused import: `HashMap`
+ --> examples/scope_key_tracking_demo.rs:7:24
+  |
+7 | use std::collections::{HashMap, HashSet};
+  |                        ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `scope_level`
+  --> examples/scope_key_tracking_demo.rs:79:13
+   |
+79 |         let scope_level = indent_level / self.base_indent;
+   |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_scope_level`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `ParentSequence` is never constructed
+   --> examples/scope_key_tracking_demo.rs:184:5
+    |
+178 | enum KeyContext {
+    |      ---------- variant in this enum
+...
+184 |     ParentSequence { key: String },
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `KeyContext` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (example "scope_key_tracking_demo") generated 3 warnings (run `cargo fix --example "scope_key_tracking_demo" -p armor` to apply 2 suggestions)
+warning: unused doc comment
+  --> tests/invalid_type_conversion_test.rs:30:5
+   |
+30 | /     /// Test: Strings that cannot be converted to integers
+31 | |     ///
+32 | |     /// These test cases verify that non-numeric strings are properly rejected
+33 | |     /// when attempting to convert them to integer types.
+...  |
+45 | |     /// | "inf" | Infinity string |
+46 | |     /// | "-inf" | Negative infinity |
+   | |______________________________________^
+47 | /     let test_cases = vec![
+48 | |         ("abc", "pure alphabetic"),
+49 | |         ("12.34", "float-formatted"),
+50 | |         ("true", "boolean string"),
+...  |
+58 | |         ("0o777", "octal"),
+59 | |     ];
+   | |______- rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+   = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:120:5
+    |
+120 | /     /// Test: Strings that cannot be converted to booleans
+121 | |     ///
+122 | |     /// Only "true" and "false" (case-insensitive in some contexts) should
+123 | |     /// convert to booleans. All other strings should fail.
+...   |
+135 | |     /// | "TRUE" | Uppercase (may vary by parser) |
+136 | |     /// | "tRuE" | Mixed case |
+    | |_______________________________^
+137 | /     let test_cases = vec![
+138 | |         ("yes", "affirmative"),
+139 | |         ("no", "negative"),
+140 | |         ("1", "numeric one"),
+...   |
+147 | |         ("n", "single letter no"),
+148 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:183:5
+    |
+183 | /     /// Test: Strings that cannot be converted to floats
+184 | |     ///
+185 | |     /// These test cases verify that non-numeric strings fail float conversion.
+186 | |     ///
+...   |
+192 | |     /// | "true" | Boolean string |
+193 | |     /// | "null" | Null string |
+    | |________________________________^
+194 | /     let test_cases = vec![
+195 | |         ("abc", "alphabetic"),
+196 | |         ("true", "boolean string"),
+197 | |         ("null", "null string"),
+...   |
+201 | |         ("1.2.3", "multiple dots"),
+202 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:248:5
+    |
+248 | /     /// Test: Mapping (object) to scalar conversions should fail
+249 | |     ///
+250 | |     /// These test cases verify that mappings/objects cannot be converted to
+251 | |     /// scalar primitive types (integer, boolean, float, string).
+...   |
+260 | |     /// | string | Mapping cannot become string (directly) |
+261 | |     /// | null | Mapping cannot become null |
+    | |_____________________________________________^
+262 | /     let test_cases = vec![
+263 | |         ("integer", "i64", "number"),
+264 | |         ("boolean", "bool", "true/false"),
+265 | |         ("float", "f64", "decimal"),
+266 | |         ("string", "string", "text"),
+267 | |         ("number", "number", "numeric"),
+268 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:318:5
+    |
+318 | /     /// Test: Sequence (array) to scalar conversions should fail
+319 | |     ///
+320 | |     /// These test cases verify that sequences/arrays cannot be converted to
+321 | |     /// scalar primitive types.
+...   |
+330 | |     /// | string | Array cannot become string (directly) |
+331 | |     /// | number | Array cannot become number |
+    | |_______________________________________________^
+332 | /     let test_cases = vec![
+333 | |         ("integer", "i64"),
+334 | |         ("boolean", "bool"),
+335 | |         ("float", "f64"),
+336 | |         ("string", "str"),
+337 | |         ("number", "number"),
+338 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:389:5
+    |
+389 | /     /// Test: Array to scalar conversions that should always fail
+390 | |     ///
+391 | |     /// Comprehensive testing of array-to-scalar conversion failures.
+392 | |     ///
+...   |
+397 | |     /// - Multi-element array to scalar
+398 | |     /// - Nested array to scalar
+    | |________________________________^
+399 | /     let test_cases = vec![
+400 | |         (r#"items: []"#, "empty array", "integer"),
+401 | |         (r#"count: [42]"#, "single-element array", "integer"),
+...   |
+409 | |         (r#"rates: [1.5, 2.5, 3.5]"#, "float array", "float"),
+410 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:465:5
+    |
+465 | /     /// Test: Map (object) to scalar conversions that should always fail
+466 | |     ///
+467 | |     /// Comprehensive testing of map-to-scalar conversion failures.
+468 | |     ///
+...   |
+473 | |     /// - Multi-key map to scalar
+474 | |     /// - Nested map to scalar
+    | |______________________________^
+475 | /     let test_cases = vec![
+476 | |         (r#"config: {}"#, "empty map", "integer"),
+477 | |         (r#"port: {number: 8080}"#, "single-key map", "integer"),
+...   |
+488 | |         (r#"nested: {outer: {inner: 42}}"#, "nested map", "integer"),
+489 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:543:5
+    |
+543 | /     /// Test: Array to map conversion should fail
+544 | |     ///
+545 | |     /// Arrays cannot be treated as maps/objects - this is a structural mismatch.
+    | |_________________________________________________________________________________^
+546 | /     let yaml_array = r#"
+547 | | servers:
+548 | |   - name: server1
+549 | |     port: 8000
+550 | |   - name: server2
+551 | |     port: 8001
+552 | | "#;
+    | |___- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:581:5
+    |
+581 | /     /// Test: Map to array conversion should fail
+582 | |     ///
+583 | |     /// Maps/objects cannot be treated as arrays - this is a structural mismatch.
+    | |_________________________________________________________________________________^
+584 | /     let yaml_map = r#"
+585 | | server:
+586 | |   name: web
+587 | |   port: 8080
+588 | |   enabled: true
+589 | | "#;
+    | |___- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:622:5
+    |
+622 | /     /// Test: Null to typed scalar conversions should fail
+623 | |     ///
+624 | |     /// Null values cannot be converted to non-nullable scalar types.
+625 | |     ///
+...   |
+632 | |     /// | float | Null is not a float |
+633 | |     /// | string | Null is not a string |
+    | |_________________________________________^
+634 | /     let yaml = r#"
+635 | | port: ~
+636 | | enabled: null
+637 | | rate: null
+638 | | name: null
+639 | | "#;
+    | |___- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:686:5
+    |
+686 | /     /// Test: Type mismatches in deeply nested fields
+687 | |     ///
+688 | |     /// These test cases verify type conversion errors in nested structures.
+689 | |     ///
+...   |
+695 | |     /// | server.enabled | boolean | integer | Enabled is number, not boolean |
+696 | |     /// | config.rate | float | boolean | Rate is boolean, not float |
+    | |______________________________________________________________________^
+697 | /     let yaml = r#"
+698 | | database:
+699 | |   host: localhost
+700 | |   port: "5432"
+...   |
+708 | |   timeout: 30
+709 | | "#;
+    | |___- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:780:5
+    |
+780 | /     /// Test: Type mismatch error formatting consistency
+781 | |     ///
+782 | |     /// Verify that all type mismatch errors produce consistent, well-formatted messages.
+    | |_________________________________________________________________________________________^
+783 | /     let test_cases = vec![
+784 | |         ("field1", "integer", "string", "Integer field got string"),
+785 | |         (
+786 | |             "timeout",
+...   |
+810 | |         ),
+811 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:859:5
+    |
+859 | /     /// Test: Invalid conversions must not panic
+860 | |     ///
+861 | |     /// This is a critical safety test - no invalid type conversion should ever panic.
+862 | |     /// All conversions must return None or Result::Err.
+    | |________________________________________________________^
+863 | /     let yaml = r#"
+864 | | string_field: "not a number"
+865 | | bool_field: "not a boolean"
+866 | | array_field: [1, 2, 3]
+867 | | map_field: {key: value}
+868 | | null_field: null
+869 | | "#;
+    | |___- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/invalid_type_conversion_test.rs:958:5
+    |
+958 | /     /// Test: Integer fields receiving boolean values
+959 | |     ///
+960 | |     /// These test cases verify that boolean values are properly rejected when
+961 | |     /// integers are expected. This is a common error in YAML configurations.
+...   |
+970 | |     /// | timeout | false | Boolean false as timeout |
+971 | |     /// | size | true | Boolean true as size |
+    | |______________________________________________^
+972 | /     let test_cases = vec![
+973 | |         (r#"port: true"#, "port", "true"),
+974 | |         (r#"port: false"#, "port", "false"),
+975 | |         (r#"count: true"#, "count", "true"),
+...   |
+978 | |         (r#"limit: false"#, "limit", "false"),
+979 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1038:5
+     |
+1038 | /     /// Test: String fields receiving numeric values
+1039 | |     ///
+1040 | |     /// These test cases verify that numeric values (integers and floats) are
+1041 | |     /// properly rejected when strings are expected.
+...    |
+1050 | |     /// | description | 42 | Integer as description |
+1051 | |     /// | path | 999 | Integer where path string needed |
+     | |_________________________________________________________^
+1052 | /     let test_cases = vec![
+1053 | |         (r#"name: 123"#, "name", "123", "integer"),
+1054 | |         (r#"hostname: 8080"#, "hostname", "8080", "integer"),
+1055 | |         (r#"label: 3.14"#, "label", "3.14", "float"),
+...    |
+1060 | |         (r#"title: 100"#, "title", "100", "integer"),
+1061 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1128:5
+     |
+1128 | /     /// Test: Array fields receiving scalar values
+1129 | |     ///
+1130 | |     /// These test cases verify that scalar values (integers, strings, booleans)
+1131 | |     /// are properly rejected when arrays/slices are expected.
+...    |
+1140 | |     /// | array | 3.14 | Float where array needed |
+1141 | |     /// | array | null | Null where array needed |
+     | |__________________________________________________^
+1142 | /     let test_cases = vec![
+1143 | |         (r#"servers: 42"#, "servers", "integer", "42"),
+1144 | |         (r#"hosts: "single""#, "hosts", "string", "single"),
+1145 | |         (r#"ports: true"#, "ports", "boolean", "true"),
+...    |
+1150 | |         (r#"values: false"#, "values", "boolean", "false"),
+1151 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1224:5
+     |
+1224 | /     /// Test: Map fields receiving scalar values
+1225 | |     ///
+1226 | |     /// These test cases verify that scalar values are properly rejected when
+1227 | |     /// maps/objects are expected.
+...    |
+1235 | |     /// | map | true | Boolean where map needed |
+1236 | |     /// | map | null | Null where map needed |
+     | |______________________________________________^
+1237 | /     let test_cases = vec![
+1238 | |         (r#"config: 42"#, "config", "integer"),
+1239 | |         (r#"settings: "simple""#, "settings", "string"),
+1240 | |         (r#"options: true"#, "options", "boolean"),
+1241 | |         (r#"metadata: null"#, "metadata", "null"),
+1242 | |         (r#"properties: 0"#, "properties", "integer"),
+1243 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1297:5
+     |
+1297 | /     /// Test: Integer vs Float cross-conversion issues
+1298 | |     ///
+1299 | |     /// These test cases verify that integers and floats are distinguished
+1300 | |     /// even when they may appear compatible.
+...    |
+1308 | |     /// | integer | float | 1.0 | Whole number as float |
+1309 | |     /// | float | integer | 0 | Zero as integer |
+     | |_________________________________________________^
+1310 | /     let test_cases = vec![
+1311 | |         (r#"port: 3.14"#, "port", "integer", "float"),
+1312 | |         (r#"rate: 42"#, "rate", "float", "integer"),
+1313 | |         (r#"count: 1.0"#, "count", "integer", "float"),
+...    |
+1316 | |         (r#"ratio: 100"#, "ratio", "float", "integer"),
+1317 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1374:5
+     |
+1374 | /     /// Test: Truthy numeric values mistaken for booleans
+1375 | |     ///
+1376 | |     /// These test cases verify that truthy values (1, 0, -1) are not
+1377 | |     /// automatically treated as booleans.
+...    |
+1385 | |     /// | -1 | Negative one (truthy) |
+1386 | |     /// | 2 | Non-zero integer |
+     | |________________________________^
+1387 | /     let test_cases = vec![
+1388 | |         (r#"enabled: 1"#, "enabled", "1"),
+1389 | |         (r#"active: 0"#, "active", "0"),
+1390 | |         (r#"flag: -1"#, "flag", "-1"),
+1391 | |         (r#"set: 2"#, "set", "2"),
+1392 | |         (r#"ready: 10"#, "ready", "10"),
+1393 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1442:5
+     |
+1442 | /     /// Test: Boolean values where integers are expected
+1443 | |     ///
+1444 | |     /// These test cases verify that boolean values (true/false) are not
+1445 | |     /// automatically treated as 1/0 integers.
+...    |
+1451 | |     /// | true | Boolean true (not 1) |
+1452 | |     /// | false | Boolean false (not 0) |
+     | |_________________________________________^
+1453 | /     let test_cases = vec![
+1454 | |         (r#"count: true"#, "count", "true"),
+1455 | |         (r#"size: false"#, "size", "false"),
+1456 | |         (r#"length: true"#, "length", "true"),
+1457 | |         (r#"width: false"#, "width", "false"),
+1458 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1507:5
+     |
+1507 | /     /// Test: Numeric strings where actual numbers are expected
+1508 | |     ///
+1509 | |     /// These test cases verify that strings containing numeric values are not
+1510 | |     /// automatically converted to numbers.
+...    |
+1518 | |     /// | "0" | integer | String with zero |
+1519 | |     /// | "1000" | integer | String with large integer |
+     | |________________________________________________________^
+1520 | /     let test_cases = vec![
+1521 | |         (r#"port: "123""#, "port", "integer", "123"),
+1522 | |         (r#"rate: "3.14""#, "rate", "float", "3.14"),
+1523 | |         (r#"count: "0""#, "count", "integer", "0"),
+...    |
+1526 | |         (r#"ratio: "2.5""#, "ratio", "float", "2.5"),
+1527 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1588:5
+     |
+1588 | /     /// Test: Incompatible scalar-to-scalar conversions
+1589 | |     ///
+1590 | |     /// These test cases verify various scalar type mismatches.
+1591 | |     ///
+...    |
+1598 | |     /// | float | boolean | Boolean to float |
+1599 | |     /// | string | boolean | Boolean to string |
+     | |________________________________________________^
+1600 | /     let test_cases = vec![
+1601 | |         (r#"port: true"#, "port", "integer", "boolean"),
+1602 | |         (r#"enabled: "yes""#, "enabled", "boolean", "string"),
+1603 | |         (r#"rate: false"#, "rate", "float", "boolean"),
+...    |
+1608 | |         (r#"ratio: true"#, "ratio", "float", "boolean"),
+1609 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1670:5
+     |
+1670 | /     /// Test: Integer overflow scenarios
+1671 | |     ///
+1672 | |     /// These test cases verify that values exceeding the maximum representable
+1673 | |     /// integer values are properly handled and produce appropriate errors.
+...    |
+1682 | |     /// | 100000000000000000000 | Extremely large value |
+1683 | |     /// | 92233720368547758070 | 10x i64::MAX |
+     | |_______________________________________________^
+1684 | /     let test_cases = vec![
+1685 | |         ("9223372036854775808", "i64_MAX + 1"),
+1686 | |         ("9999999999999999999", "arbitrary large number"),
+1687 | |         ("18446744073709551615", "u64_MAX"),
+1688 | |         ("100000000000000000000", "extremely large value"),
+1689 | |         ("92233720368547758070", "10x i64_MAX"),
+1690 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1749:5
+     |
+1749 | /     /// Test: Integer underflow scenarios
+1750 | |     ///
+1751 | |     /// These test cases verify that values below the minimum representable
+1752 | |     /// integer values are properly handled.
+...    |
+1760 | |     /// | -92233720368547758080 | 10x i64::MIN |
+1761 | |     /// | -18446744073709551615 | Extremely negative |
+     | |______________________________________________________^
+1762 | /     let test_cases = vec![
+1763 | |         ("-9223372036854775809", "i64_MIN - 1"),
+1764 | |         ("-9999999999999999999", "arbitrary very negative number"),
+1765 | |         ("-92233720368547758080", "10x i64_MIN"),
+1766 | |         ("-18446744073709551615", "extremely negative value"),
+1767 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1817:5
+     |
+1817 | /     /// Test: Signed integers in unsigned context causing overflow
+1818 | |     ///
+1819 | |     /// These test cases verify that negative integers properly fail when
+1820 | |     /// converted to unsigned types (u8, u16, u32, u64).
+...    |
+1828 | |     /// | -2147483648 | unsigned | i32::MIN in unsigned context |
+1829 | |     /// | -9223372036854775808 | unsigned | i64::MIN in unsigned context |
+     | |__________________________________________________________________________^
+1830 | /     let test_cases = vec![
+1831 | |         (r#"port: -1"#, "port", "-1", "unsigned"),
+1832 | |         (r#"count: -100"#, "count", "-100", "unsigned"),
+1833 | |         (r#"size: -2147483648"#, "size", "-2147483648", "unsigned"),
+...    |
+1839 | |         ),
+1840 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1894:5
+     |
+1894 | /     /// Test: Negative int16 values cannot convert to uint16
+1895 | |     ///
+1896 | |     /// These test cases verify that negative int16 values are properly rejected
+1897 | |     /// when attempting to convert them to uint16.
+...    |
+1907 | |     /// | -65535 | Large negative value |
+1908 | |     /// | -65536 | Large negative value -1 |
+     | |____________________________________________^
+1909 | /     let test_cases = vec![
+1910 | |         (r#"value: -1"#, "-1", "basic negative"),
+1911 | |         (r#"value: -128"#, "-128", "int8 min"),
+1912 | |         (r#"value: -32768"#, "-32768", "int16 min"),
+...    |
+1915 | |         (r#"value: -65536"#, "-65536", "large negative -65536"),
+1916 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:1981:5
+     |
+1981 | /     /// Test: Negative int8 values cannot convert to uint8
+1982 | |     ///
+1983 | |     /// These test cases verify that negative int8 values are properly rejected
+1984 | |     /// when attempting to convert them to uint8.
+...    |
+1993 | |     /// | -255 | Large negative value |
+1994 | |     /// | -256 | Large negative value -1 |
+     | |__________________________________________^
+1995 | /     let test_cases = vec![
+1996 | |         (r#"value: -1"#, "-1", "basic negative"),
+1997 | |         (r#"value: -128"#, "-128", "int8 min"),
+1998 | |         (r#"value: -129"#, "-129", "int8 min - 1"),
+1999 | |         (r#"value: -255"#, "-255", "large negative -255"),
+2000 | |         (r#"value: -256"#, "-256", "large negative -256"),
+2001 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2066:5
+     |
+2066 | /     /// Test: Negative int32 values cannot convert to uint32
+2067 | |     ///
+2068 | |     /// These test cases verify that negative int32 values are properly rejected
+2069 | |     /// when attempting to convert them to uint32.
+...    |
+2077 | |     /// | -2147483648 | int32::MIN (minimum int32) |
+2078 | |     /// | -2147483649 | int32::MIN - 1 |
+     | |________________________________________^
+2079 | /     let test_cases = vec![
+2080 | |         (r#"value: -1"#, "-1", "basic negative"),
+2081 | |         (r#"value: -10"#, "-10", "basic negative -10"),
+2082 | |         (r#"value: -100"#, "-100", "basic negative -100"),
+...    |
+2099 | |         ),
+2100 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2165:5
+     |
+2165 | /     /// Test: Boundary conditions for int32 to uint32 conversion
+2166 | |     ///
+2167 | |     /// These test cases verify edge cases and boundary conditions for int32 to uint32
+2168 | |     /// conversion, including zero boundary and maximum negative values.
+...    |
+2178 | |     /// | -2 | Small negative | INVALID |
+2179 | |     /// | -3 | Small negative | INVALID |
+     | |_________________________________________^
+2180 |
+2181 | /     let negative_test_cases = vec![
+2182 | |         // Maximum negative values (near int32::MIN)
+2183 | |         (r#"value: -2147483647"#, "-2147483647", "int32 min + 1"),
+2184 | |         (r#"value: -2147483646"#, "-2147483646", "int32 min + 2"),
+...    |
+2197 | |         (r#"value: -1610612736"#, "-1610612736", "negative 3*2^29"),
+2198 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2276:5
+     |
+2276 | /     /// Test: Negative int64 values cannot convert to uint64
+2277 | |     ///
+2278 | |     /// These test cases verify that negative int64 values are properly rejected
+2279 | |     /// when attempting to convert them to uint64.
+...    |
+2290 | |     /// | -9223372036854775809 | int64::MIN - 1 |
+2291 | |     /// | -18446744073709551615 | Large negative value |
+     | |________________________________________________________^
+2292 | /     let test_cases = vec![
+2293 | |         (r#"value: -1"#, "-1", "basic negative"),
+2294 | |         (r#"value: -128"#, "-128", "int8 min"),
+2295 | |         (r#"value: -256"#, "-256", "int8 min - 128"),
+...    |
+2314 | |         ),
+2315 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2425:5
+     |
+2425 | /     /// Test: Floating point overflow scenarios
+2426 | |     ///
+2427 | |     /// These test cases verify that values exceeding f64::MAX are properly handled.
+2428 | |     ///
+...    |
+2435 | |     /// | 1.7976931348623157e+309 | f64::MAX + 1 |
+2436 | |     /// | inf | Positive infinity |
+     | |___________________________________^
+2437 | /     let test_cases = vec![
+2438 | |         ("1e400", "exponential 400"),
+2439 | |         ("1e1000", "exponential 1000"),
+2440 | |         ("1.7976931348623157e+309", "f64_MAX + 1"),
+2441 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2490:5
+     |
+2490 | /     /// Test: Floating point underflow scenarios
+2491 | |     ///
+2492 | |     /// These test cases verify that values below f64::MIN (most negative) are
+2493 | |     /// properly handled, as well as subnormal numbers.
+...    |
+2501 | |     /// | -1.7976931348623157e+309 | f64::MIN - 1 |
+2502 | |     /// | 1e-400 | Extremely small subnormal |
+     | |______________________________________________^
+2503 | /     let test_cases = vec![
+2504 | |         ("-1e400", "negative exponential 400"),
+2505 | |         ("-1e1000", "negative exponential 1000"),
+2506 | |         ("-1.7976931348623157e+309", "f64_MIN - 1"),
+2507 | |         ("1e-400", "extremely small subnormal"),
+2508 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2554:5
+     |
+2554 | /     /// Test: Floating point precision boundary cases
+2555 | |     ///
+2556 | |     /// These test cases verify behavior at precision limits and rounding boundaries.
+2557 | |     ///
+...    |
+2564 | |     /// | 2.2250738585072014e-308 | f64::MIN_SUBNORMAL |
+2565 | |     /// | 4.940656458412465e-324 | f64::MIN_POSITIVE |
+     | |______________________________________________________^
+2566 | /     let test_cases = vec![
+2567 | |         ("1.7976931348623157e+308", "f64_MAX"),
+2568 | |         ("-1.7976931348623157e+308", "f64_MIN"),
+2569 | |         ("2.2250738585072014e-308", "min_subnormal"),
+2570 | |         ("4.940656458412465e-324", "min_positive"),
+2571 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2621:5
+     |
+2621 | /     /// Test: Special floating point values
+2622 | |     ///
+2623 | |     /// These test cases verify handling of NaN, infinity, and denormal numbers.
+2624 | |     ///
+...    |
+2631 | |     /// | -.inf | Negative infinity |
+2632 | |     /// | 0.0 | Zero (can be positive or negative) |
+     | |____________________________________________________^
+2633 | /     let test_cases = vec![
+2634 | |         (r#"rate: .nan"#, "rate", "nan"),
+2635 | |         (r#"timeout: .inf"#, "timeout", "positive_infinity"),
+2636 | |         (r#"ratio: -.inf"#, "ratio", "negative_infinity"),
+2637 | |         (r#"value: 0.0"#, "value", "zero"),
+2638 | |         (r#"limit: -0.0"#, "limit", "negative_zero"),
+2639 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2704:5
+     |
+2704 | /     /// Test: Values exceeding u16 range (0 to 65535)
+2705 | |     ///
+2706 | |     /// These test cases verify that values exceeding the u16 range are properly
+2707 | |     /// rejected when a u16 is expected (common for port numbers, etc.).
+...    |
+2715 | |     /// | 100000 | Large value above u16 |
+2716 | |     /// | -1 | Negative value (below 0) |
+     | |_________________________________________^
+2717 | /     let test_cases = vec![
+2718 | |         ("65536", "u16_MAX + 1"),
+2719 | |         ("70000", "70000"),
+2720 | |         ("100000", "100000"),
+...    |
+2723 | |         ("-100", "negative_100"),
+2724 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2769:5
+     |
+2769 | /     /// Test: Values exceeding u8 range (0 to 255)
+2770 | |     ///
+2771 | |     /// These test cases verify that values exceeding the u8 range are properly
+2772 | |     /// rejected when a u8 is expected.
+...    |
+2780 | |     /// | 500 | Value above u8::MAX |
+2781 | |     /// | -1 | Negative value |
+     | |_______________________________^
+2782 | /     let test_cases = vec![
+2783 | |         ("256", "u8_MAX + 1"),
+2784 | |         ("1000", "1000"),
+2785 | |         ("500", "500"),
+...    |
+2788 | |         ("-10", "negative_10"),
+2789 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2834:5
+     |
+2834 | /     /// Test: Values exceeding i32 range
+2835 | |     ///
+2836 | |     /// These test cases verify that values exceeding the i32 range are properly
+2837 | |     /// rejected when an i32 is expected.
+...    |
+2845 | |     /// | 5000000000 | Large positive value |
+2846 | |     /// | -5000000000 | Large negative value |
+     | |______________________________________________^
+2847 | /     let test_cases = vec![
+2848 | |         ("2147483648", "i32_MAX + 1"),
+2849 | |         ("-2147483649", "i32_MIN - 1"),
+2850 | |         ("5000000000", "large_positive"),
+...    |
+2853 | |         ("-10000000000", "very_large_negative"),
+2854 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> tests/invalid_type_conversion_test.rs:2902:5
+     |
+2902 | /     /// Test: Boundary values at type limits
+2903 | |     ///
+2904 | |     /// These test cases verify exact boundary values and values just beyond boundaries.
+2905 | |     ///
+...    |
+2918 | |     /// | i16 | 32767 | i16::MAX (valid) | true |
+2919 | |     /// | i16 | 32768 | i16::MAX + 1 (invalid) | false |
+     | |________________________________________________________^
+2920 | /     let test_cases = vec![
+2921 | |         ("255", "u8", "u8_MAX", true),
+2922 | |         ("256", "u8", "u8_MAX + 1", false),
+2923 | |         ("127", "i8", "i8_MAX", true),
+...    |
+2932 | |         ("-32769", "i16", "i16_MIN - 1", false),
+2933 | |     ];
+     | |______- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused variable: `field`
+   --> tests/invalid_type_conversion_test.rs:282:10
+    |
+282 |     for (field, expected_type, description) in test_cases {
+    |          ^^^^^ help: if this is intentional, prefix it with an underscore: `_field`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `field`
+   --> tests/invalid_type_conversion_test.rs:353:10
+    |
+353 |     for (field, expected_type) in test_cases {
+    |          ^^^^^ help: if this is intentional, prefix it with an underscore: `_field`
+
+       Dirty armor v0.1.0 (/home/coding/ARMOR): the dependency `armor` was rebuilt (1783988312.061502133s, 6m 17s after last build at 1783987935.967049841s)
+   Compiling armor v0.1.0 (/home/coding/ARMOR)
+warning: `armor` (test "invalid_type_conversion_test") generated 40 warnings (run `cargo fix --test "invalid_type_conversion_test" -p armor` to apply 2 suggestions)
+warning: unused variable: `item_id`
+   --> tests/exit_to_scope_edge_cases_test.rs:374:9
+    |
+374 |     let item_id = stack.current_scope_ref().unwrap().sequence_item_id;
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_item_id`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (test "exit_to_scope_edge_cases_test") generated 1 warning (run `cargo fix --test "exit_to_scope_edge_cases_test" -p armor` to apply 1 suggestion)
+warning: unused variable: `yaml_lines`
+   --> tests/inline_comment_detection_test.rs:520:9
+    |
+520 |     let yaml_lines = vec![
+    |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_yaml_lines`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (test "inline_comment_detection_test") generated 1 warning (run `cargo fix --test "inline_comment_detection_test" -p armor` to apply 1 suggestion)
+     Running `/home/coding/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name scope_stack_structure_test --edition=2021 tests/scope_stack_structure_test.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=212f6a2520bfa579 -C extra-filename=-06110c1a8cb8c37c --out-dir /home/coding/ARMOR/target/debug/deps -L dependency=/home/coding/ARMOR/target/debug/deps --extern armor=/home/coding/ARMOR/target/debug/deps/libarmor-9880a5384f31d147.rlib --extern log=/home/coding/ARMOR/target/debug/deps/liblog-a72ace951da53da9.rlib --extern serde=/home/coding/ARMOR/target/debug/deps/libserde-a0d351a69e7579f6.rlib --extern serde_yaml=/home/coding/ARMOR/target/debug/deps/libserde_yaml-476b68bb3d3f654d.rlib -C codegen-units=1`
+warning: unused variable: `level2_count`
+   --> tests/state_preservation_scope_exit_test.rs:539:13
+    |
+539 |         let level2_count = stack.current_scope_ref().unwrap().key_count();
+    |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_level2_count`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (test "state_preservation_scope_exit_test") generated 1 warning (run `cargo fix --test "state_preservation_scope_exit_test" -p armor` to apply 1 suggestion)
+warning: unused variable: `i`
+    --> tests/yaml_indentation_and_mixed_scenarios_test.rs:1218:14
+     |
+1218 |         for (i, line) in yaml.iter().enumerate().skip(header_idx + 1) {
+     |              ^ help: if this is intentional, prefix it with an underscore: `_i`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `i`
+    --> tests/yaml_indentation_and_mixed_scenarios_test.rs:1275:10
+     |
+1275 |     for (i, line) in yaml.iter().enumerate().skip(1) {
+     |          ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: unused variable: `i`
+    --> tests/yaml_indentation_and_mixed_scenarios_test.rs:1356:14
+     |
+1356 |         for (i, line) in yaml.iter().enumerate().skip(header_idx + 1) {
+     |              ^ help: if this is intentional, prefix it with an underscore: `_i`
+
+warning: `armor` (test "yaml_indentation_and_mixed_scenarios_test") generated 3 warnings (run `cargo fix --test "yaml_indentation_and_mixed_scenarios_test" -p armor` to apply 3 suggestions)
+warning: function `generate_folded_scalar_tests_multi_level` is never used
+    --> tests/type_like_string_false_positive_test.rs:1048:4
+     |
+1048 | fn generate_folded_scalar_tests_multi_level(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (test "type_like_string_false_positive_test") generated 1 warning
+warning: unused variable: `stripped`
+   --> tests/yaml_folded_multiline_comment_test.rs:736:13
+    |
+736 |         let stripped = strip_inline_comment(line);
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_stripped`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (test "yaml_folded_multiline_comment_test") generated 1 warning (run `cargo fix --test "yaml_folded_multiline_comment_test" -p armor` to apply 1 suggestion)
+warning: unused import: `parser::BasicParser`
+ --> tests/line_classification_test.rs:7:5
+  |
+7 |     parser::BasicParser,
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (test "line_classification_test") generated 1 warning (run `cargo fix --test "line_classification_test" -p armor` to apply 1 suggestion)
+     Running `/home/coding/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name comprehensive_scope_tracking_test --edition=2021 tests/comprehensive_scope_tracking_test.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=770ed01b9d84426f -C extra-filename=-06f97d5bc1cae712 --out-dir /home/coding/ARMOR/target/debug/deps -L dependency=/home/coding/ARMOR/target/debug/deps --extern armor=/home/coding/ARMOR/target/debug/deps/libarmor-9880a5384f31d147.rlib --extern log=/home/coding/ARMOR/target/debug/deps/liblog-a72ace951da53da9.rlib --extern serde=/home/coding/ARMOR/target/debug/deps/libserde-a0d351a69e7579f6.rlib --extern serde_yaml=/home/coding/ARMOR/target/debug/deps/libserde_yaml-476b68bb3d3f654d.rlib -C codegen-units=1`
+error[E0596]: cannot borrow `parser` as mutable, as it is not declared as mutable
+   --> tests/scope_stack_structure_test.rs:166:18
+    |
+166 |     let result = parser.parse_str(yaml);
+    |                  ^^^^^^ cannot borrow as mutable
+    |
+help: consider changing this to be mutable
+    |
+154 |     let mut parser = BasicParser::new();
+    |         +++
+
+For more information about this error, try `rustc --explain E0596`.
+error: could not compile `armor` (test "scope_stack_structure_test") due to 1 previous error
+
+Caused by:
+  process didn't exit successfully: `/home/coding/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name scope_stack_structure_test --edition=2021 tests/scope_stack_structure_test.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=212f6a2520bfa579 -C extra-filename=-06110c1a8cb8c37c --out-dir /home/coding/ARMOR/target/debug/deps -L dependency=/home/coding/ARMOR/target/debug/deps --extern armor=/home/coding/ARMOR/target/debug/deps/libarmor-9880a5384f31d147.rlib --extern log=/home/coding/ARMOR/target/debug/deps/liblog-a72ace951da53da9.rlib --extern serde=/home/coding/ARMOR/target/debug/deps/libserde-a0d351a69e7579f6.rlib --extern serde_yaml=/home/coding/ARMOR/target/debug/deps/libserde_yaml-476b68bb3d3f654d.rlib -C codegen-units=1` (exit status: 1)
+warning: build failed, waiting for other jobs to finish...
+error[E0599]: no method named `key_count` found for enum `Option<T>` in the current scope
+   --> tests/comprehensive_scope_tracking_test.rs:255:42
+    |
+255 |     assert_eq!(stack.current_scope_ref().key_count(), 0);
+    |                                          ^^^^^^^^^ method not found in `Option<&armor::parsers::yaml::Scope>`
+    |
+note: the method `key_count` exists on the type `&armor::parsers::yaml::Scope`
+   --> src/parsers/yaml/scope.rs:634:5
+    |
+634 |     pub fn key_count(&self) -> usize {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `&armor::parsers::yaml::Scope` value, panicking if the value is an `Option::None`
+    |
+255 |     assert_eq!(stack.current_scope_ref().expect("REASON").key_count(), 0);
+    |                                         +++++++++++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:291:42
+    |
+291 |     assert_eq!(stack.current_scope_ref().sequence_item_id, Some(1));
+    |                                          ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+291 |     assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(1));
+    |                                          +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:299:41
+    |
+299 |     let id1 = stack.current_scope_ref().sequence_item_id;
+    |                                         ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+299 |     let id1 = stack.current_scope_ref().unwrap().sequence_item_id;
+    |                                         +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:302:41
+    |
+302 |     let id2 = stack.current_scope_ref().sequence_item_id;
+    |                                         ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+302 |     let id2 = stack.current_scope_ref().unwrap().sequence_item_id;
+    |                                         +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:305:41
+    |
+305 |     let id3 = stack.current_scope_ref().sequence_item_id;
+    |                                         ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+305 |     let id3 = stack.current_scope_ref().unwrap().sequence_item_id;
+    |                                         +++++++++
+
+error[E0599]: no method named `key_count` found for enum `Option<T>` in the current scope
+   --> tests/comprehensive_scope_tracking_test.rs:320:42
+    |
+320 |     assert_eq!(stack.current_scope_ref().key_count(), 2);
+    |                                          ^^^^^^^^^ method not found in `Option<&armor::parsers::yaml::Scope>`
+    |
+note: the method `key_count` exists on the type `&armor::parsers::yaml::Scope`
+   --> src/parsers/yaml/scope.rs:634:5
+    |
+634 |     pub fn key_count(&self) -> usize {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `&armor::parsers::yaml::Scope` value, panicking if the value is an `Option::None`
+    |
+320 |     assert_eq!(stack.current_scope_ref().expect("REASON").key_count(), 2);
+    |                                         +++++++++++++++++
+
+error[E0599]: no method named `key_count` found for enum `Option<T>` in the current scope
+   --> tests/comprehensive_scope_tracking_test.rs:324:42
+    |
+324 |     assert_eq!(stack.current_scope_ref().key_count(), 0);
+    |                                          ^^^^^^^^^ method not found in `Option<&armor::parsers::yaml::Scope>`
+    |
+note: the method `key_count` exists on the type `&armor::parsers::yaml::Scope`
+   --> src/parsers/yaml/scope.rs:634:5
+    |
+634 |     pub fn key_count(&self) -> usize {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `&armor::parsers::yaml::Scope` value, panicking if the value is an `Option::None`
+    |
+324 |     assert_eq!(stack.current_scope_ref().expect("REASON").key_count(), 0);
+    |                                         +++++++++++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:352:42
+    |
+352 |     assert_eq!(stack.current_scope_ref().sequence_item_id, Some(1));
+    |                                          ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+352 |     assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(1));
+    |                                          +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:361:42
+    |
+361 |     assert_eq!(stack.current_scope_ref().sequence_item_id, Some(2));
+    |                                          ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+361 |     assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(2));
+    |                                          +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:736:46
+    |
+736 |         assert_eq!(stack.current_scope_ref().sequence_item_id, Some(i));
+    |                                              ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+736 |         assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(i));
+    |                                              +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:742:42
+    |
+742 |     assert_eq!(stack.current_scope_ref().sequence_item_id, Some(100));
+    |                                          ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+742 |     assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(100));
+    |                                          +++++++++
+
+Some errors have detailed explanations: E0599, E0609.
+For more information about an error, try `rustc --explain E0599`.
+error: could not compile `armor` (test "comprehensive_scope_tracking_test") due to 11 previous errors
+
+Caused by:
+  process didn't exit successfully: `/home/coding/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name comprehensive_scope_tracking_test --edition=2021 tests/comprehensive_scope_tracking_test.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=770ed01b9d84426f -C extra-filename=-06f97d5bc1cae712 --out-dir /home/coding/ARMOR/target/debug/deps -L dependency=/home/coding/ARMOR/target/debug/deps --extern armor=/home/coding/ARMOR/target/debug/deps/libarmor-9880a5384f31d147.rlib --extern log=/home/coding/ARMOR/target/debug/deps/liblog-a72ace951da53da9.rlib --extern serde=/home/coding/ARMOR/target/debug/deps/libserde-a0d351a69e7579f6.rlib --extern serde_yaml=/home/coding/ARMOR/target/debug/deps/libserde_yaml-476b68bb3d3f654d.rlib -C codegen-units=1` (exit status: 1)

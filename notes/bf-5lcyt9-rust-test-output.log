@@ -1,0 +1,686 @@
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::parsers::yaml::types::ValidationError`
+  --> src/parsers/yaml/syntax_detector_tests.rs:10:5
+   |
+10 | use crate::parsers::yaml::types::ValidationError;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `same`
+    --> src/parsers/yaml/parser.rs:1961:27
+     |
+1961 |         let (enter, exit, same) = parser.get_transition_counts(yaml);
+     |                           ^^^^ help: if this is intentional, prefix it with an underscore: `_same`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `same`
+    --> src/parsers/yaml/parser.rs:2113:27
+     |
+2113 |         let (enter, exit, same) = parser.get_transition_counts(yaml);
+     |                           ^^^^ help: if this is intentional, prefix it with an underscore: `_same`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2157:13
+     |
+2157 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2168:13
+     |
+2168 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2178:13
+     |
+2178 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2189:13
+     |
+2189 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2203:13
+     |
+2203 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2329:13
+     |
+2329 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src/parsers/yaml/parser.rs:2340:13
+     |
+2340 |         let mut parser = BasicParser::new();
+     |             ----^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: comparison is useless due to type limits
+   --> src/schema.rs:490:20
+    |
+490 |                 if config.port > 65535 {
+    |                    ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: `armor` (lib) generated 13 warnings (run `cargo fix --lib -p armor` to apply 11 suggestions)
+warning: `armor` (lib test) generated 23 warnings (9 duplicates) (run `cargo fix --lib -p armor --tests` to apply 13 suggestions)
+warning: unused variable: `item_id`
+   --> tests/exit_to_scope_edge_cases_test.rs:374:9
+    |
+374 |     let item_id = stack.current_scope_ref().unwrap().sequence_item_id;
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_item_id`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `level2_count`
+   --> tests/state_preservation_scope_exit_test.rs:539:13
+    |
+539 |         let level2_count = stack.current_scope_ref().unwrap().key_count();
+    |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_level2_count`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `armor` (test "exit_to_scope_edge_cases_test") generated 1 warning (run `cargo fix --test "exit_to_scope_edge_cases_test" -p armor` to apply 1 suggestion)
+warning: `armor` (test "state_preservation_scope_exit_test") generated 1 warning (run `cargo fix --test "state_preservation_scope_exit_test" -p armor` to apply 1 suggestion)
+warning: unused import: `parser::BasicParser`
+ --> tests/line_classification_test.rs:7:5
+  |
+7 |     parser::BasicParser,
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+  --> tests/error_code_validation_test.rs:17:5
+   |
+17 |     /// Verify that each ErrorCode maps to the correct ErrorType category
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+   |
+   = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+   = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+  --> tests/error_code_validation_test.rs:51:5
+   |
+51 |     /// Verify that error codes provide human-readable descriptions
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+   |
+   = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+  --> tests/error_code_validation_test.rs:81:5
+   |
+81 |     /// Verify that ErrorType provides user-friendly display strings
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+   |
+   = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:98:5
+    |
+ 98 |     /// Verify that ErrorCode provides programmatic display strings
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 99 |
+100 |     let display = format!("{}", ErrorCode::VALIDATION_REQUIRED_FIELD_MISSING);
+    |     -------------------------------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:113:5
+    |
+113 |       /// Verify that ValidationError integrates with error codes from bf-68hqo
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+114 |
+115 | /     let error = ValidationError::new("port", "port must be between 1 and 65535")
+116 | |         .with_code(ErrorCode::VALIDATION_VALUE_OUT_OF_RANGE)
+117 | |         .with_line(10);
+    | |_______________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:126:5
+    |
+126 |     /// Verify that ValidationError has a sensible default error code
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+127 |
+128 |     let error = ValidationError::new("field", "invalid value");
+    |     ----------------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:134:5
+    |
+134 |       /// Verify the builder pattern works with error codes
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+135 |
+136 | /     let error = ValidationError::new("server.port", "out of range")
+137 | |         .with_code(ErrorCode::VALIDATION_VALUE_OUT_OF_RANGE)
+138 | |         .with_line(42)
+139 | |         .with_column(15);
+    | |_________________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:154:5
+    |
+154 |       /// Verify all validation error codes are present and categorized correctly
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+155 |
+156 | /     let validation_codes = vec![
+157 | |         ErrorCode::VALIDATION_REQUIRED_FIELD_MISSING,
+158 | |         ErrorCode::VALIDATION_VALUE_OUT_OF_RANGE,
+159 | |         ErrorCode::VALIDATION_STRING_TOO_SHORT,
+...   |
+167 | |         ErrorCode::VALIDATION_OBJECT_TOO_MANY_PROPERTIES,
+168 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:177:5
+    |
+177 |       /// Verify all type mismatch error codes are present and categorized correctly
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+178 |
+179 | /     let type_codes = vec![
+180 | |         ErrorCode::TYPE_EXPECTED_INTEGER,
+181 | |         ErrorCode::TYPE_EXPECTED_STRING,
+182 | |         ErrorCode::TYPE_EXPECTED_BOOLEAN,
+...   |
+186 | |         ErrorCode::TYPE_UNEXPECTED_NULL,
+187 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:196:5
+    |
+196 |       /// Verify all syntax error codes are present and categorized correctly
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+197 |
+198 | /     let syntax_codes = vec![
+199 | |         ErrorCode::YAML_INVALID_SYNTAX,
+200 | |         ErrorCode::YAML_INVALID_INDENTATION,
+201 | |         ErrorCode::YAML_INVALID_DELIMITER,
+202 | |         ErrorCode::YAML_INVALID_ESCAPE_SEQUENCE,
+203 | |         ErrorCode::YAML_INVALID_SCALAR,
+204 | |     ];
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:217:5
+    |
+217 | /     /// Documents a realistic validation error with error codes
+218 | |     ///
+219 | |     /// Scenario: Port number validation in service configuration
+220 | |     ///
+...   |
+230 | |     /// 10: validation error at 'services[0].port': port must be between 1 and 65535
+231 | |     /// ```
+    | |___________^
+232 |
+233 | /     let error = ValidationError::new("services[0].port", "port must be between 1 and 65535")
+234 | |         .with_code(ErrorCode::VALIDATION_VALUE_OUT_OF_RANGE)
+235 | |         .with_line(10);
+    | |_______________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:249:5
+    |
+249 | /     /// Documents a realistic type mismatch error with error codes
+250 | |     ///
+251 | |     /// Scenario: String provided where integer expected
+252 | |     ///
+...   |
+256 | |     ///   port: "5432"  # ERROR: should be integer, not string
+257 | |     /// ```
+    | |___________^
+258 |
+259 | /     let error = ValidationError::new("database.port", "expected integer, got string")
+260 | |         .with_code(ErrorCode::TYPE_EXPECTED_INTEGER)
+261 | |         .with_line(5);
+    | |______________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:270:5
+    |
+270 | /     /// Documents a realistic required field error with error codes
+271 | |     ///
+272 | |     /// Scenario: Missing required field in configuration
+273 | |     ///
+...   |
+278 | |     ///   # ERROR: missing required 'name' field
+279 | |     /// ```
+    | |___________^
+280 |
+281 | /     let error = ValidationError::new("service.name", "required field is missing")
+282 | |         .with_code(ErrorCode::VALIDATION_REQUIRED_FIELD_MISSING)
+283 | |         .with_line(3);
+    | |______________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:295:5
+    |
+295 |     /// Verify that error codes support equality checks
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> tests/error_code_validation_test.rs:303:5
+    |
+303 |     /// Verify that error types support equality checks
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: `armor` (test "line_classification_test") generated 1 warning (run `cargo fix --test "line_classification_test" -p armor` to apply 1 suggestion)
+warning: `armor` (test "error_code_validation_test") generated 15 warnings
+   Compiling armor v0.1.0 (/home/coding/ARMOR)
+error[E0596]: cannot borrow `parser` as mutable, as it is not declared as mutable
+   --> tests/scope_stack_structure_test.rs:166:18
+    |
+166 |     let result = parser.parse_str(yaml);
+    |                  ^^^^^^ cannot borrow as mutable
+    |
+help: consider changing this to be mutable
+    |
+154 |     let mut parser = BasicParser::new();
+    |         +++
+
+For more information about this error, try `rustc --explain E0596`.
+error: could not compile `armor` (test "scope_stack_structure_test") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error[E0599]: no method named `key_count` found for enum `Option<T>` in the current scope
+   --> tests/comprehensive_scope_tracking_test.rs:255:42
+    |
+255 |     assert_eq!(stack.current_scope_ref().key_count(), 0);
+    |                                          ^^^^^^^^^ method not found in `Option<&armor::parsers::yaml::Scope>`
+    |
+note: the method `key_count` exists on the type `&armor::parsers::yaml::Scope`
+   --> src/parsers/yaml/scope.rs:634:5
+    |
+634 |     pub fn key_count(&self) -> usize {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `&armor::parsers::yaml::Scope` value, panicking if the value is an `Option::None`
+    |
+255 |     assert_eq!(stack.current_scope_ref().expect("REASON").key_count(), 0);
+    |                                         +++++++++++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:291:42
+    |
+291 |     assert_eq!(stack.current_scope_ref().sequence_item_id, Some(1));
+    |                                          ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+291 |     assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(1));
+    |                                          +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:299:41
+    |
+299 |     let id1 = stack.current_scope_ref().sequence_item_id;
+    |                                         ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+299 |     let id1 = stack.current_scope_ref().unwrap().sequence_item_id;
+    |                                         +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:302:41
+    |
+302 |     let id2 = stack.current_scope_ref().sequence_item_id;
+    |                                         ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+302 |     let id2 = stack.current_scope_ref().unwrap().sequence_item_id;
+    |                                         +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:305:41
+    |
+305 |     let id3 = stack.current_scope_ref().sequence_item_id;
+    |                                         ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+305 |     let id3 = stack.current_scope_ref().unwrap().sequence_item_id;
+    |                                         +++++++++
+
+error[E0599]: no method named `key_count` found for enum `Option<T>` in the current scope
+   --> tests/comprehensive_scope_tracking_test.rs:320:42
+    |
+320 |     assert_eq!(stack.current_scope_ref().key_count(), 2);
+    |                                          ^^^^^^^^^ method not found in `Option<&armor::parsers::yaml::Scope>`
+    |
+note: the method `key_count` exists on the type `&armor::parsers::yaml::Scope`
+   --> src/parsers/yaml/scope.rs:634:5
+    |
+634 |     pub fn key_count(&self) -> usize {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `&armor::parsers::yaml::Scope` value, panicking if the value is an `Option::None`
+    |
+320 |     assert_eq!(stack.current_scope_ref().expect("REASON").key_count(), 2);
+    |                                         +++++++++++++++++
+
+error[E0599]: no method named `key_count` found for enum `Option<T>` in the current scope
+   --> tests/comprehensive_scope_tracking_test.rs:324:42
+    |
+324 |     assert_eq!(stack.current_scope_ref().key_count(), 0);
+    |                                          ^^^^^^^^^ method not found in `Option<&armor::parsers::yaml::Scope>`
+    |
+note: the method `key_count` exists on the type `&armor::parsers::yaml::Scope`
+   --> src/parsers/yaml/scope.rs:634:5
+    |
+634 |     pub fn key_count(&self) -> usize {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Option::expect` to unwrap the `&armor::parsers::yaml::Scope` value, panicking if the value is an `Option::None`
+    |
+324 |     assert_eq!(stack.current_scope_ref().expect("REASON").key_count(), 0);
+    |                                         +++++++++++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:352:42
+    |
+352 |     assert_eq!(stack.current_scope_ref().sequence_item_id, Some(1));
+    |                                          ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+352 |     assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(1));
+    |                                          +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:361:42
+    |
+361 |     assert_eq!(stack.current_scope_ref().sequence_item_id, Some(2));
+    |                                          ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+361 |     assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(2));
+    |                                          +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:736:46
+    |
+736 |         assert_eq!(stack.current_scope_ref().sequence_item_id, Some(i));
+    |                                              ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+736 |         assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(i));
+    |                                              +++++++++
+
+error[E0609]: no field `sequence_item_id` on type `Option<&armor::parsers::yaml::Scope>`
+   --> tests/comprehensive_scope_tracking_test.rs:742:42
+    |
+742 |     assert_eq!(stack.current_scope_ref().sequence_item_id, Some(100));
+    |                                          ^^^^^^^^^^^^^^^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+742 |     assert_eq!(stack.current_scope_ref().unwrap().sequence_item_id, Some(100));
+    |                                          +++++++++
+
+Some errors have detailed explanations: E0599, E0609.
+For more information about an error, try `rustc --explain E0599`.
+error: could not compile `armor` (test "comprehensive_scope_tracking_test") due to 11 previous errors
+warning: unused import: `IndentTransitionType`
+  --> src/parsers/yaml/parser.rs:12:95
+   |
+12 |     scope::{ScopeStack, Scope, classify_line_type, LineClassification, IndentTransitionState, IndentTransitionType, ScopeInfo, Scope...
+   |                                                                                               ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src/parsers/yaml/syntax_validator.rs:67:13
+   |
+67 |         let mut warnings = Vec::new();
+   |             ----^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:228:14
+    |
+228 |         for (delimiter, col) in brace_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delimiter`
+   --> src/parsers/yaml/syntax_validator.rs:235:14
+    |
+235 |         for (delimiter, col) in bracket_stack {
+    |              ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_delimiter`
+
+warning: unused variable: `context`
+   --> src/parsers/yaml/syntax_validator.rs:254:9
+    |
+254 |         context: &ValidationContext,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `line_num`
+   --> src/parsers/yaml/syntax_validator.rs:400:48
+    |
+400 |     fn update_from_line(&mut self, line: &str, line_num: usize) {
+    |                                                ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_line_num`
+
+warning: unused variable: `char_pos`
+   --> src/parsers/yaml/syntax_detector.rs:529:14
+    |
+529 |         for (char_pos, ch) in line.chars().enumerate() {
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_pos`
+
+warning: unused variable: `quote_char`
+   --> src/parsers/yaml/syntax_detector.rs:783:30
+    |
+783 |             let (error_type, quote_char) = match self.delimiter_state.quote_state {
+    |                              ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_quote_char`
+
+warning: unused variable: `direction`
+    --> src/parsers/yaml/scope.rs:1307:21
+     |
+1307 |                 let direction = if new_indent > old_indent {
+     |                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_direction`
+
+warning: unused variable: `parallelism`
+   --> src/parsers/traits.rs:431:9
+    |
+431 |         parallelism: usize,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_parallelism`
+
+warning: method `update_scope_depth` is never used
+   --> src/parsers/yaml/parser.rs:337:8
+    |
+ 84 | impl BasicParser {
+    | ---------------- method in this implementation
+...
+337 |     fn update_scope_depth(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `check_duplicate_keys` is never read
+  --> src/parsers/yaml/syntax_validator.rs:19:5
+   |
+15 | pub struct SyntaxValidator {
+   |            --------------- field in this struct
+...
+19 |     check_duplicate_keys: bool,
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SyntaxValidator` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: unused import: `log::trace as log_trace`
+  --> src/parsers/yaml/scope.rs:73:5
+   |
+73 | use log::trace as log_trace;
