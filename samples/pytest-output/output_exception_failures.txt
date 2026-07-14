@@ -1,0 +1,49 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest-output
+collecting ... collected 6 items
+
+test_exception_failures.py::test_unexpected_exception FAILED             [ 16%]
+test_exception_failures.py::test_wrong_exception_type FAILED             [ 33%]
+test_exception_failures.py::test_exception_message_mismatch FAILED       [ 50%]
+test_exception_failures.py::test_exception_not_raised FAILED             [ 66%]
+test_exception_failures.py::test_exception_in_fixture PASSED             [ 83%]
+test_exception_failures.py::test_assert_raises_context PASSED            [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_unexpected_exception ___________________________
+test_exception_failures.py:9: in test_unexpected_exception
+    divide()
+test_exception_failures.py:8: in divide
+    return 10 / 0  # ZeroDivisionError
+E   ZeroDivisionError: division by zero
+__________________________ test_wrong_exception_type ___________________________
+test_exception_failures.py:21: in test_wrong_exception_type
+    raise_value_error()
+test_exception_failures.py:17: in raise_value_error
+    raise ValueError("Wrong error type")
+E   ValueError: Wrong error type
+_______________________ test_exception_message_mismatch ________________________
+test_exception_failures.py:33: in test_exception_message_mismatch
+    raise_error()
+test_exception_failures.py:29: in raise_error
+    raise ValueError("Actual error message")
+E   ValueError: Actual error message
+
+During handling of the above exception, another exception occurred:
+test_exception_failures.py:32: in test_exception_message_mismatch
+    with pytest.raises(ValueError, match="Expected pattern"):
+E   AssertionError: Regex pattern did not match.
+E    Regex: 'Expected pattern'
+E    Input: 'Actual error message'
+__________________________ test_exception_not_raised ___________________________
+test_exception_failures.py:43: in test_exception_not_raised
+    with pytest.raises(ValueError):
+E   Failed: DID NOT RAISE <class 'ValueError'>
+=========================== short test summary info ============================
+FAILED test_exception_failures.py::test_unexpected_exception - ZeroDivisionEr...
+FAILED test_exception_failures.py::test_wrong_exception_type - ValueError: Wr...
+FAILED test_exception_failures.py::test_exception_message_mismatch - Assertio...
+FAILED test_exception_failures.py::test_exception_not_raised - Failed: DID NO...
+========================= 4 failed, 2 passed in 0.04s ==========================

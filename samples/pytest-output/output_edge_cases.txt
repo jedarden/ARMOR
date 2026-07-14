@@ -1,0 +1,78 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest-output
+collecting ... collected 8 items
+
+test_edge_cases.py::test_none_vs_false FAILED                            [ 12%]
+test_edge_cases.py::test_empty_vs_none FAILED                            [ 25%]
+test_edge_cases.py::test_falsy_values FAILED                             [ 37%]
+test_edge_cases.py::test_object_equality_vs_identity FAILED              [ 50%]
+test_edge_cases.py::test_custom_repr_failure FAILED                      [ 62%]
+test_edge_cases.py::test_recursion_limit FAILED                          [ 75%]
+test_edge_cases.py::test_unicode_string FAILED                           [ 87%]
+test_edge_cases.py::test_bytes_vs_str FAILED                             [100%]
+
+=================================== FAILURES ===================================
+______________________________ test_none_vs_false ______________________________
+test_edge_cases.py:8: in test_none_vs_false
+    assert value is False, "None is not False"
+E   AssertionError: None is not False
+E   assert None is False
+______________________________ test_empty_vs_none ______________________________
+test_edge_cases.py:14: in test_empty_vs_none
+    assert name is None, "Empty string is not None"
+E   AssertionError: Empty string is not None
+E   assert '' is None
+______________________________ test_falsy_values _______________________________
+test_edge_cases.py:20: in test_falsy_values
+    assert [] == None, "Empty list is not None"
+E   AssertionError: Empty list is not None
+E   assert [] == None
+_______________________ test_object_equality_vs_identity _______________________
+test_edge_cases.py:33: in test_object_equality_vs_identity
+    assert a is b, "Objects are equal in value but not identical"
+E   AssertionError: Objects are equal in value but not identical
+E   assert <test_edge_cases.test_object_equality_vs_identity.<locals>.Counter object at 0x7f60abcad640> is <test_edge_cases.test_object_equality_vs_identity.<locals>.Counter object at 0x7f60abcad250>
+___________________________ test_custom_repr_failure ___________________________
+test_edge_cases.py:45: in test_custom_repr_failure
+    assert obj.x == 100, f"WeirdObject value mismatch"
+E   AssertionError: WeirdObject value mismatch
+E   assert 42 == 100
+E    +  where 42 = <WeirdObject: 42>.x
+_____________________________ test_recursion_limit _____________________________
+test_edge_cases.py:57: in test_recursion_limit
+    assert shallow == deep, "Nested structures differ"
+E   AssertionError: Nested structures differ
+E   assert {'nested': {'nested': 'end'}} == {'nested': {'...d': 'end'}}}}}
+E     
+E     Differing items:
+E     {'nested': {'nested': 'end'}} != {'nested': {'nested': {'nested': {'nested': {'nested': 'end'}}}}}
+E     
+E     Full diff:
+E       {
+E           'nested': {...
+E     
+E     ...Full output truncated (12 lines hidden), use '-vv' to show
+_____________________________ test_unicode_string ______________________________
+test_edge_cases.py:64: in test_unicode_string
+    assert expected == actual
+E   AssertionError: assert 'caf\xe9' == 'cafe\u0301'
+E     
+E     - café
+E     + café
+______________________________ test_bytes_vs_str _______________________________
+test_edge_cases.py:70: in test_bytes_vs_str
+    assert data == "hello", "Bytes not equal to string"
+E   AssertionError: Bytes not equal to string
+E   assert b'hello' == 'hello'
+=========================== short test summary info ============================
+FAILED test_edge_cases.py::test_none_vs_false - AssertionError: None is not F...
+FAILED test_edge_cases.py::test_empty_vs_none - AssertionError: Empty string ...
+FAILED test_edge_cases.py::test_falsy_values - AssertionError: Empty list is ...
+FAILED test_edge_cases.py::test_object_equality_vs_identity - AssertionError:...
+FAILED test_edge_cases.py::test_custom_repr_failure - AssertionError: WeirdOb...
+FAILED test_edge_cases.py::test_recursion_limit - AssertionError: Nested stru...
+FAILED test_edge_cases.py::test_unicode_string - AssertionError: assert 'caf\...
+FAILED test_edge_cases.py::test_bytes_vs_str - AssertionError: Bytes not equa...
+============================== 8 failed in 0.08s ===============================
