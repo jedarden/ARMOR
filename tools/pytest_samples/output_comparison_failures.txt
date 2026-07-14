@@ -1,0 +1,112 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/tools/pytest_samples
+collecting ... collected 4 items
+
+test_comparison_failures.py::test_list_comparison FAILED                 [ 25%]
+test_comparison_failures.py::test_dict_comparison FAILED                 [ 50%]
+test_comparison_failures.py::test_string_comparison FAILED               [ 75%]
+test_comparison_failures.py::test_nested_structure_comparison FAILED     [100%]
+
+=================================== FAILURES ===================================
+_____________________________ test_list_comparison _____________________________
+
+    def test_list_comparison():
+        """Demonstrates list comparison failure"""
+        expected = [1, 2, 3, 4, 5]
+        actual = [1, 2, 3, 0, 5]
+>       assert actual == expected, f"Lists don't match"
+E       AssertionError: Lists don't match
+E       assert [1, 2, 3, 0, 5] == [1, 2, 3, 4, 5]
+E         
+E         At index 3 diff: 0 != 4
+E         
+E         Full diff:
+E           [
+E               1,
+E               2,...
+E         
+E         ...Full output truncated (7 lines hidden), use '-vv' to show
+
+test_comparison_failures.py:11: AssertionError
+_____________________________ test_dict_comparison _____________________________
+
+    def test_dict_comparison():
+        """Demonstrates dict comparison failure"""
+        expected = {
+            "name": "test",
+            "value": 42,
+            "active": True
+        }
+        actual = {
+            "name": "test",
+            "value": 43,
+            "active": True
+        }
+>       assert actual == expected, "Dictionaries don't match"
+E       AssertionError: Dictionaries don't match
+E       assert {'active': Tr..., 'value': 43} == {'active': Tr..., 'value': 42}
+E         
+E         Omitting 2 identical items, use -vv to show
+E         Differing items:
+E         {'value': 43} != {'value': 42}
+E         
+E         Full diff:
+E           {...
+E         
+E         ...Full output truncated (7 lines hidden), use '-vv' to show
+
+test_comparison_failures.py:26: AssertionError
+____________________________ test_string_comparison ____________________________
+
+    def test_string_comparison():
+        """Demonstrates string comparison failure"""
+        expected = "The quick brown fox"
+        actual = "The quick brown cat"
+>       assert actual == expected, "Strings don't match"
+E       AssertionError: Strings don't match
+E       assert 'The quick brown cat' == 'The quick brown fox'
+E         
+E         - The quick brown fox
+E         ?                 ^^^
+E         + The quick brown cat
+E         ?                 ^^^
+
+test_comparison_failures.py:33: AssertionError
+_______________________ test_nested_structure_comparison _______________________
+
+    def test_nested_structure_comparison():
+        """Demonstrates nested structure comparison failure"""
+        expected = {
+            "users": [
+                {"id": 1, "name": "Alice"},
+                {"id": 2, "name": "Bob"}
+            ]
+        }
+        actual = {
+            "users": [
+                {"id": 1, "name": "Alice"},
+                {"id": 2, "name": "Robert"}
+            ]
+        }
+>       assert actual == expected, "Nested structures don't match"
+E       AssertionError: Nested structures don't match
+E       assert {'users': [{'...': 'Robert'}]} == {'users': [{'...ame': 'Bob'}]}
+E         
+E         Differing items:
+E         {'users': [{'id': 1, 'name': 'Alice'}, {'id': 2, 'name': 'Robert'}]} != {'users': [{'id': 1, 'name': 'Alice'}, {'id': 2, 'name': 'Bob'}]}
+E         
+E         Full diff:
+E           {
+E               'users': [...
+E         
+E         ...Full output truncated (13 lines hidden), use '-vv' to show
+
+test_comparison_failures.py:50: AssertionError
+=========================== short test summary info ============================
+FAILED test_comparison_failures.py::test_list_comparison - AssertionError: Li...
+FAILED test_comparison_failures.py::test_dict_comparison - AssertionError: Di...
+FAILED test_comparison_failures.py::test_string_comparison - AssertionError: ...
+FAILED test_comparison_failures.py::test_nested_structure_comparison - Assert...
+============================== 4 failed in 0.02s ===============================
