@@ -131,6 +131,179 @@ type ContentTypeErrorTestCase struct {
 }
 
 // =============================================================================
+// CORE ERROR TEST DATA STRUCTURES
+// =============================================================================
+// These structures provide the fundamental data models for error testing.
+// They are designed to be reusable across different test scenarios and types.
+// =============================================================================
+
+// ErrorTestCase represents a single error test case with all necessary validation parameters.
+// This is the core structure that defines what to test and how to validate the response.
+type ErrorTestCase struct {
+	// Name is the test case name for reporting
+	Name string `json:"name" validate:"required"`
+
+	// Description explains what this test case validates
+	Description string `json:"description" validate:"required"`
+
+	// SetupRequest creates the request that triggers the error
+	SetupRequest func(*testing.T) *http.Request `json:"-"`
+
+	// ExpectedStatus is the expected HTTP status code
+	ExpectedStatus int `json:"expected_status" validate:"required,min=100,max=599"`
+
+	// ExpectedCode is the expected S3 error code
+	ExpectedCode string `json:"expected_code" validate:"required"`
+
+	// ExpectedMessageSubstring is text that should appear in the error message
+	ExpectedMessageSubstring string `json:"expected_message_substring,omitempty"`
+
+	// ExpectedMessageKeywords are alternative keywords (any match is acceptable)
+	ExpectedMessageKeywords []string `json:"expected_message_keywords,omitempty"`
+
+	// MinMessageLength is the minimum acceptable message length
+	MinMessageLength int `json:"min_message_length,omitempty"`
+
+	// MaxResponseTime is the maximum acceptable response duration
+	MaxResponseTime time.Duration `json:"max_response_time,omitempty"`
+
+	// RequiresAuth indicates whether the request needs valid authentication
+	RequiresAuth bool `json:"requires_auth,omitempty"`
+
+	// ErrorCategory categorizes the error type
+	ErrorCategory string `json:"error_category,omitempty"`
+
+	// SkipCORSValidation disables CORS header checks
+	SkipCORSValidation bool `json:"skip_cors_validation,omitempty"`
+
+	// ValidateResponse provides custom validation beyond standard checks
+	ValidateResponse func(*testing.T, *httptest.ResponseRecorder) `json:"-"`
+}
+
+// ErrorTestPatternDefinition defines a pattern of error tests for a specific category.
+// This allows grouping related test cases and applying common validation rules.
+type ErrorTestPatternDefinition struct {
+	// Name is the pattern name for identification
+	Name string `json:"name" validate:"required"`
+
+	// Description explains what this pattern tests
+	Description string `json:"description" validate:"required"`
+
+	// ErrorCategory categorizes the errors in this pattern
+	ErrorCategory string `json:"error_category" validate:"required"`
+
+	// TestCases contains the individual test cases for this pattern
+	TestCases []ErrorTestCase `json:"test_cases" validate:"required,min=1"`
+
+	// DefaultValidation provides pattern-level validation rules
+	DefaultValidation ErrorValidationRules `json:"default_validation,omitempty"`
+
+	// PatternType indicates the type of error pattern (auth, non-auth, CORS, etc.)
+	PatternType string `json:"pattern_type" validate:"required,oneof=auth nonauth cors contenttype general"`
+}
+
+// ErrorValidationRules defines common validation rules for error responses.
+// These rules can be applied at pattern level or overridden per test case.
+type ErrorValidationRules struct {
+	// RequireXMLValidation ensures response is valid XML
+	RequireXMLValidation bool `json:"require_xml_validation,omitempty"`
+
+	// DefaultMinMessageLength sets default minimum message length
+	DefaultMinMessageLength int `json:"default_min_message_length,omitempty"`
+
+	// RequireCORSHeaders ensures CORS headers are present
+	RequireCORSHeaders bool `json:"require_cors_headers,omitempty"`
+
+	// ExpectedContentType sets expected content type
+	ExpectedContentType string `json:"expected_content_type,omitempty"`
+
+	// MaxResponseTime sets maximum acceptable response time
+	MaxResponseTime time.Duration `json:"max_response_time,omitempty"`
+}
+
+// ErrorTestSuiteConfig represents configuration for an error test suite.
+// This provides the top-level structure for organizing comprehensive error testing.
+type ErrorTestSuiteConfig struct {
+	// Name is the suite name for identification
+	Name string `json:"name" validate:"required"`
+
+	// Description explains what this suite tests
+	Description string `json:"description" validate:"required"`
+
+	// Patterns contains the test patterns in this suite
+	Patterns []ErrorTestPatternDefinition `json:"patterns" validate:"required,min=1"`
+
+	// GlobalValidation provides suite-level validation rules
+	GlobalValidation ErrorValidationRules `json:"global_validation,omitempty"`
+
+	// Metadata contains additional suite information
+	Metadata ErrorTestSuiteMetadata `json:"metadata,omitempty"`
+}
+
+// ErrorTestSuiteMetadata contains metadata about the error test suite.
+type ErrorTestSuiteMetadata struct {
+	// Version tracks the suite version
+	Version string `json:"version,omitempty"`
+
+	// Author identifies who created the suite
+	Author string `json:"author,omitempty"`
+
+	// Created indicates when the suite was created
+	Created time.Time `json:"created,omitempty"`
+
+	// Updated indicates when the suite was last updated
+	Updated time.Time `json:"updated,omitempty"`
+
+	// Tags provide searchable keywords
+	Tags []string `json:"tags,omitempty"`
+}
+
+// ErrorResponse represents a parsed error response for validation.
+type ErrorResponse struct {
+	// StatusCode is the HTTP status code received
+	StatusCode int `json:"status_code"`
+
+	// ErrorCode is the S3 error code from the response
+	ErrorCode string `json:"error_code"`
+
+	// ErrorMessage is the error message from the response
+	ErrorMessage string `json:"error_message"`
+
+	// ResponseTime is how long the request took
+	ResponseTime time.Duration `json:"response_time"`
+
+	// Headers contains the response headers
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// Body contains the raw response body
+	Body string `json:"body,omitempty"`
+}
+
+// ErrorTestResult represents the result of running a single error test.
+type ErrorTestResult struct {
+	// TestCaseName is the name of the test case that was run
+	TestCaseName string `json:"test_case_name"`
+
+	// PatternName is the name of the pattern this test belongs to
+	PatternName string `json:"pattern_name,omitempty"`
+
+	// Passed indicates whether the test passed
+	Passed bool `json:"passed"`
+
+	// Response contains the actual error response received
+	Response ErrorResponse `json:"response"`
+
+	// FailureReason explains why the test failed (if applicable)
+	FailureReason string `json:"failure_reason,omitempty"`
+
+	// Duration is how long the test took to run
+	Duration time.Duration `json:"duration"`
+
+	// Timestamp indicates when the test was run
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// =============================================================================
 // PREDEFINED ERROR TEST TABLES
 // =============================================================================
 // These tables provide common test scenarios that can be used directly
