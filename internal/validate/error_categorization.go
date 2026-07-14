@@ -106,7 +106,13 @@ func (es ErrorSeverity) Compare(other ErrorSeverity) int {
 		SeverityHigh:     3,
 		SeverityCritical: 4,
 	}
-	return severityOrder[es] - severityOrder[other]
+	diff := severityOrder[es] - severityOrder[other]
+	if diff > 0 {
+		return 1
+	} else if diff < 0 {
+		return -1
+	}
+	return 0
 }
 
 // ErrorSeverityFromString creates an ErrorSeverity from a string.
@@ -179,6 +185,97 @@ func GetDefaultSeverityForErrorType(errorType string) ErrorSeverity {
 		return severity
 	}
 	return SeverityLow
+}
+
+// =============================================================================
+// ERRORTYPE ENUM SEVERITY MAPPINGS
+// =============================================================================
+
+// defaultSeverityForErrorTypeEnum defines the default severity for ErrorType enum values.
+// This mapping is for the ErrorType enum from error_type.go (e.g., ErrTypeRequired, ErrTypeFormat).
+var defaultSeverityForErrorTypeEnum = map[ErrorType]ErrorSeverity{
+	// Structural errors (missing fields, wrong types)
+	ErrTypeRequired: SeverityHigh,      // Required field is missing
+	ErrTypeType:     SeverityHigh,      // Wrong type (e.g., string instead of int)
+	ErrTypeLength:   SeverityMedium,    // String/collection length issue
+
+	// Semantic errors (format, range, value)
+	ErrTypeFormat: SeverityMedium,      // Format doesn't match pattern (e.g., email)
+	ErrTypeRange:  SeverityMedium,      // Value outside numeric range
+	ErrTypeValue:  SeverityLow,         // Value invalid for domain-specific reasons
+
+	// Constraint errors
+	ErrTypeDuplicate: SeverityHigh,     // Duplicate value (uniqueness constraint)
+	ErrTypeConflict:  SeverityMedium,   // Conflict with other values/constraints
+
+	// Fallback
+	ErrTypeUnknown: SeverityLow,        // Unknown error type
+}
+
+// GetSeverityForErrorTypeEnum returns the default severity for a given ErrorType enum value.
+// Returns SeverityLow if the error type is not recognized.
+//
+// Example usage:
+//
+//	severity := GetSeverityForErrorTypeEnum(ErrTypeRequired)
+//	// Returns: SeverityHigh
+func GetSeverityForErrorTypeEnum(errorType ErrorType) ErrorSeverity {
+	if severity, ok := defaultSeverityForErrorTypeEnum[errorType]; ok {
+		return severity
+	}
+	return SeverityLow
+}
+
+// =============================================================================
+// ERRORTYPE ENUM CATEGORY MAPPINGS
+// =============================================================================
+
+// categoryForErrorTypeEnum defines the category for ErrorType enum values.
+// This mapping is for the ErrorType enum from error_type.go (e.g., ErrTypeRequired, ErrTypeFormat).
+var categoryForErrorTypeEnum = map[ErrorType]ErrorCategory{
+	// Structural errors - data structure validation
+	ErrTypeRequired: CategoryValidation, // Required field is missing
+	ErrTypeType:     CategoryValidation, // Value type is incorrect
+	ErrTypeLength:   CategoryValidation, // String length or collection size is invalid
+
+	// Semantic errors - data meaning validation
+	ErrTypeFormat: CategoryValidation, // Value format is invalid
+	ErrTypeRange:  CategoryValidation, // Value is outside acceptable range
+	ErrTypeValue:  CategoryValidation, // Value is invalid
+
+	// Constraint errors
+	ErrTypeDuplicate: CategoryValidation, // Duplicate value detected
+	ErrTypeConflict:  CategoryValidation, // Conflict with existing values
+
+	// Fallback
+	ErrTypeUnknown: CategoryCustom, // Unknown error type
+}
+
+// GetCategoryForErrorTypeEnum returns the category for a given ErrorType enum value.
+// Returns CategoryCustom if the error type is not recognized.
+//
+// Example usage:
+//
+//	category := GetCategoryForErrorTypeEnum(ErrTypeRequired)
+//	// Returns: CategoryValidation
+func GetCategoryForErrorTypeEnum(errorType ErrorType) ErrorCategory {
+	if category, ok := categoryForErrorTypeEnum[errorType]; ok {
+		return category
+	}
+	return CategoryCustom
+}
+
+// GetCategoryForErrorTypeEnumString returns the category for a given ErrorType enum string value.
+// This is a convenience function that converts a string to ErrorType and then looks up the category.
+// Returns CategoryCustom if the error type is not recognized.
+//
+// Example usage:
+//
+//	category := GetCategoryForErrorTypeEnumString("required")
+//	// Returns: CategoryValidation
+func GetCategoryForErrorTypeEnumString(errorTypeStr string) ErrorCategory {
+	et := ErrorTypeFromString(errorTypeStr)
+	return GetCategoryForErrorTypeEnum(et)
 }
 
 // =============================================================================
