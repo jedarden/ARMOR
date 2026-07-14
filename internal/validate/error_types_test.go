@@ -337,3 +337,239 @@ func TestValidationErrorData_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestValidationError_JSONSerialization verifies that ValidationError
+// can be serialized to JSON with proper field names.
+func TestValidationError_JSONSerialization(t *testing.T) {
+	vErr := ValidationError{
+		ErrorType:    "status_code",
+		Message:      "Expected status code 200 but got 404",
+		Context:      "GET /api/users",
+		Expected:     200,
+		Actual:       404,
+		Suggestions:  []string{"Check the endpoint URL", "Verify resource exists"},
+	}
+
+	// Marshal to JSON
+	jsonBytes, mErr := json.Marshal(vErr)
+	if mErr != nil {
+		t.Fatalf("Failed to marshal ValidationError: %v", mErr)
+	}
+
+	// Verify JSON string contains required fields
+	jsonStr := string(jsonBytes)
+
+	requiredFields := []string{
+		"error_type",
+		"message",
+		"context",
+		"expected",
+		"actual",
+		"suggestions",
+	}
+
+	for _, field := range requiredFields {
+		if !strings.Contains(jsonStr, field) {
+			t.Errorf("JSON output should contain field '%s', got: %s", field, jsonStr)
+		}
+	}
+
+	// Verify the values are correct
+	if !strings.Contains(jsonStr, "status_code") {
+		t.Error("JSON should contain 'status_code' error_type")
+	}
+
+	if !strings.Contains(jsonStr, "GET /api/users") {
+		t.Error("JSON should contain context")
+	}
+}
+
+// TestValidationError_JSONDeserialization verifies that ValidationError
+// can be deserialized from JSON.
+func TestValidationError_JSONDeserialization(t *testing.T) {
+	jsonStr := `{
+		"error_type": "status_code",
+		"message": "Expected status code 200 but got 404",
+		"context": "GET /api/users",
+		"expected": 200,
+		"actual": 404,
+		"suggestions": ["Check endpoint", "Verify resource"]
+	}`
+
+	var vErr ValidationError
+	uErr := json.Unmarshal([]byte(jsonStr), &vErr)
+	if uErr != nil {
+		t.Fatalf("Failed to unmarshal ValidationError: %v", uErr)
+	}
+
+	// Verify fields are correctly populated
+	if vErr.ErrorType != "status_code" {
+		t.Errorf("Expected ErrorType 'status_code', got '%s'", vErr.ErrorType)
+	}
+
+	if vErr.Message != "Expected status code 200 but got 404" {
+		t.Errorf("Expected Message 'Expected status code 200 but got 404', got '%s'", vErr.Message)
+	}
+
+	if vErr.Context != "GET /api/users" {
+		t.Errorf("Expected Context 'GET /api/users', got '%s'", vErr.Context)
+	}
+
+	if len(vErr.Suggestions) != 2 {
+		t.Errorf("Expected 2 suggestions, got %d", len(vErr.Suggestions))
+	}
+}
+
+// TestValidationError_OptionalFields verifies that optional fields
+// serialize correctly with omitempty tags.
+func TestValidationError_OptionalFields(t *testing.T) {
+	// Create error with only required fields
+	vErr := ValidationError{
+		ErrorType: "error_message",
+		Message:   "Pattern not found",
+	}
+
+	jsonBytes, mErr := json.Marshal(vErr)
+	if mErr != nil {
+		t.Fatalf("Failed to marshal ValidationError: %v", mErr)
+	}
+
+	jsonStr := string(jsonBytes)
+
+	// Verify optional fields are not present when empty
+	if strings.Contains(jsonStr, "context") {
+		t.Error("Empty context field should be omitted from JSON")
+	}
+
+	if strings.Contains(jsonStr, "expected") {
+		t.Error("Empty expected field should be omitted from JSON")
+	}
+
+	if strings.Contains(jsonStr, "actual") {
+		t.Error("Empty actual field should be omitted from JSON")
+	}
+}
+
+// TestValidationError_RoundTrip verifies that ValidationError can
+// be marshaled and unmarshaled without data loss.
+func TestValidationError_RoundTrip(t *testing.T) {
+	original := ValidationError{
+		ErrorType:    "content_type",
+		Message:      "Expected JSON but got HTML",
+		Context:      "POST /api/data",
+		Expected:     "application/json",
+		Actual:       "text/html",
+		Suggestions:  []string{"Set Content-Type header", "Verify body format"},
+	}
+
+	// Marshal
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Failed to marshal: %v", err)
+	}
+
+	// Unmarshal
+	var restored ValidationError
+	err = json.Unmarshal(jsonBytes, &restored)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	// Verify all fields match
+	if restored.ErrorType != original.ErrorType {
+		t.Errorf("ErrorType mismatch: got '%s', want '%s'", restored.ErrorType, original.ErrorType)
+	}
+
+	if restored.Message != original.Message {
+		t.Errorf("Message mismatch: got '%s', want '%s'", restored.Message, original.Message)
+	}
+
+	if restored.Context != original.Context {
+		t.Errorf("Context mismatch: got '%s', want '%s'", restored.Context, original.Context)
+	}
+
+	if restored.Expected != original.Expected {
+		t.Errorf("Expected mismatch: got %v, want %v", restored.Expected, original.Expected)
+	}
+
+	if restored.Actual != original.Actual {
+		t.Errorf("Actual mismatch: got %v, want %v", restored.Actual, original.Actual)
+	}
+
+	if len(restored.Suggestions) != len(original.Suggestions) {
+		t.Errorf("Suggestions length mismatch: got %d, want %d", len(restored.Suggestions), len(original.Suggestions))
+	}
+}
+
+// TestValidationError_AllFields verifies that all fields can be
+// marshaled and unmarshaled correctly.
+func TestValidationError_AllFields(t *testing.T) {
+	original := ValidationError{
+		ErrorType:         "response_structure",
+		Message:           "Missing required field 'user_id'",
+		Context:           "POST /api/orders",
+		Expected:          "user_id field present",
+		Actual:            "user_id field missing",
+		FieldName:         "user_id",
+		Location:          "response body",
+		RelatedFields:     []string{"order_id", "product_id"},
+		PatternDetails:    "field 'user_id' not found in JSON response",
+		RangeInfo:         "",
+		ValidationDetails: []string{"Response structure validation", "Required field check"},
+		ResponseSnippet:   `{"order_id": 123, "product_id": 456}`,
+		Suggestions:       []string{"Add user_id to response", "Check API documentation"},
+	}
+
+	// Marshal
+	jsonBytes, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Failed to marshal: %v", err)
+	}
+
+	// Verify JSON contains all expected fields
+	jsonStr := string(jsonBytes)
+	expectedJSONFields := []string{
+		"error_type",
+		"message",
+		"context",
+		"expected",
+		"actual",
+		"field_name",
+		"location",
+		"related_fields",
+		"pattern_details",
+		"validation_details",
+		"response_snippet",
+		"suggestions",
+	}
+
+	for _, field := range expectedJSONFields {
+		if !strings.Contains(jsonStr, field) {
+			t.Errorf("JSON should contain field '%s'", field)
+		}
+	}
+
+	// Unmarshal
+	var restored ValidationError
+	err = json.Unmarshal(jsonBytes, &restored)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+
+	// Verify all fields match
+	if restored.ErrorType != original.ErrorType {
+		t.Errorf("ErrorType mismatch")
+	}
+	if restored.FieldName != original.FieldName {
+		t.Errorf("FieldName mismatch: got '%s', want '%s'", restored.FieldName, original.FieldName)
+	}
+	if restored.Location != original.Location {
+		t.Errorf("Location mismatch")
+	}
+	if len(restored.RelatedFields) != len(original.RelatedFields) {
+		t.Errorf("RelatedFields length mismatch")
+	}
+	if len(restored.ValidationDetails) != len(original.ValidationDetails) {
+		t.Errorf("ValidationDetails length mismatch")
+	}
+}
+
