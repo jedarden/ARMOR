@@ -276,5 +276,37 @@ python3 tests/test_pytest_patterns_unit.py
 
 **Verification Status:** ✅ **COMPLETE AND VERIFIED**
 
-**Bead:** bf-jk4fln  
+**Bead:** bf-jk4fln
+**Verification Date:** 2026-07-13
 **Next Steps:** Parser is ready for production use in automated failure analysis workflows.
+
+## Format-Aware Verification Results (2026-07-13)
+
+**Method:** Format-aware verification using `verify_parser_by_format.py`
+
+**Overall Assessment:**
+- Total samples tested: 6
+- Samples passing (≥95% required completeness): 6
+- Pass rate: **100%** ✅
+
+**Results by Format:**
+
+| Format | Samples | Failures Extracted | Avg Required Completeness | Avg Core Coverage |
+|--------|---------|-------------------|---------------------------|-------------------|
+| `--tb=short` | 2 | 6 | 100.0% | 100.0% |
+| `--tb=long` | 2 | 5 | 100.0% | 85.7% |
+| `--tb=line` | 2 | 30 | 100.0% | 100.0% |
+
+**Field Extraction Rates:**
+
+| Field | Overall Rate | Status |
+|-------|--------------|--------|
+| test_file | 100% | ✅ |
+| line_number | 100% | ✅ |
+| error_type | 100% | ✅ |
+| error_message | 87.8% | ✅ |
+| test_name | 26.8%* | ⚠️ |
+| assertion_line | 26.8%* | ⚠️ |
+| assertion_type | 26.8%* | ⚠️ |
+
+*Note: Low rates for test_name, assertion_line, and assertion_type are expected for `--tb=line` format which doesn't include these fields by design.
