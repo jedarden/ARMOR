@@ -2230,6 +2230,252 @@ func TestFormatFieldReference_RealWorldUsage(t *testing.T) {
 		}
 	})
 }
+// TestFormatFieldReference_QuoteStyles verifies that FormatFieldReference
+// applies different quote styles correctly to field names.
+func TestFormatFieldReference_QuoteStyles(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		prefix    string
+		style     QuoteStyle
+		expected  string
+	}{
+		{
+			name:      "no quote style - default",
+			fieldPath: "email",
+			prefix:    "",
+			style:     NoQuote,
+			expected:  "email",
+		},
+		{
+			name:      "single quote on simple field",
+			fieldPath: "email",
+			prefix:    "",
+			style:     SingleQuote,
+			expected:  "'email'",
+		},
+		{
+			name:      "double quote on simple field",
+			fieldPath: "email",
+			prefix:    "",
+			style:     DoubleQuote,
+			expected:  `"email"`,
+		},
+		{
+			name:      "backtick on simple field",
+			fieldPath: "email",
+			prefix:    "",
+			style:     Backtick,
+			expected:  "`email`",
+		},
+		{
+			name:      "single quote on nested path",
+			fieldPath: "user.email",
+			prefix:    "",
+			style:     SingleQuote,
+			expected:  "'user'.'email'",
+		},
+		{
+			name:      "double quote on nested path",
+			fieldPath: "user.email",
+			prefix:    "",
+			style:     DoubleQuote,
+			expected:  `"user"."email"`,
+		},
+		{
+			name:      "backtick on nested path",
+			fieldPath: "user.email",
+			prefix:    "",
+			style:     Backtick,
+			expected:  "`user`.`email`",
+		},
+		{
+			name:      "single quote with array index",
+			fieldPath: "users.0.email",
+			prefix:    "",
+			style:     SingleQuote,
+			expected:  "'users'[0].'email'",
+		},
+		{
+			name:      "double quote with array index",
+			fieldPath: "users.0.email",
+			prefix:    "",
+			style:     DoubleQuote,
+			expected:  `"users"[0]."email"`,
+		},
+		{
+			name:      "backtick with array index",
+			fieldPath: "users.0.email",
+			prefix:    "",
+			style:     Backtick,
+			expected:  "`users`[0].`email`",
+		},
+		{
+			name:      "single quote with prefix",
+			fieldPath: "user.email",
+			prefix:    "response",
+			style:     SingleQuote,
+			expected:  "response.'user'.'email'",
+		},
+		{
+			name:      "double quote with prefix",
+			fieldPath: "user.email",
+			prefix:    "data",
+			style:     DoubleQuote,
+			expected:  `data."user"."email"`,
+		},
+		{
+			name:      "backtick with prefix",
+			fieldPath: "user.email",
+			prefix:    "request",
+			style:     Backtick,
+			expected:  "request.`user`.`email`",
+		},
+		{
+			name:      "single quote with complex path",
+			fieldPath: "items.0.data.values.1.field",
+			prefix:    "response",
+			style:     SingleQuote,
+			expected:  "response.'items'[0].'data'.'values'[1].'field'",
+		},
+		{
+			name:      "double quote with multiple array indices",
+			fieldPath: "matrix.0.1.value",
+			prefix:    "",
+			style:     DoubleQuote,
+			expected:  `"matrix"[0][1]."value"`,
+		},
+		{
+			name:      "backtick with prefix and array",
+			fieldPath: "users.0.email",
+			prefix:    "response",
+			style:     Backtick,
+			expected:  "response.`users`[0].`email`",
+		},
+		{
+			name:      "single quote with bracket notation already present",
+			fieldPath: "users[0].email",
+			prefix:    "",
+			style:     SingleQuote,
+			expected:  "'users'[0].'email'",
+		},
+		{
+			name:      "empty path with quote style returns unknown",
+			fieldPath: "",
+			prefix:    "",
+			style:     SingleQuote,
+			expected:  "(unknown field)",
+		},
+		{
+			name:      "empty path with prefix and quote style",
+			fieldPath: "",
+			prefix:    "request",
+			style:     DoubleQuote,
+			expected:  "request",
+		},
+		{
+			name:      "no quote with array indices only",
+			fieldPath: "users.0.email",
+			prefix:    "",
+			style:     NoQuote,
+			expected:  "users[0].email",
+		},
+		{
+			name:      "single quote with deeply nested path",
+			fieldPath: "data.user.profile.settings.notification_email",
+			prefix:    "",
+			style:     SingleQuote,
+			expected:  "'data'.'user'.'profile'.'settings'.'notification_email'",
+		},
+		{
+			name:      "double quote with hyphenated field",
+			fieldPath: "user-email.address.work",
+			prefix:    "",
+			style:     DoubleQuote,
+			expected:  `"user-email"."address"."work"`,
+		},
+		{
+			name:      "backtick with underscore field",
+			fieldPath: "user_first_name.email_address",
+			prefix:    "record",
+			style:     Backtick,
+			expected:  "record.`user_first_name`.`email_address`",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, tt.prefix, WithQuoteStyle(tt.style))
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, %q, WithQuoteStyle(%v)) = %q, want %q",
+					tt.fieldPath, tt.prefix, tt.style, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldReference_NoOptions verifies backward compatibility
+// when no options are provided to FormatFieldReference.
+func TestFormatFieldReference_NoOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		prefix    string
+		expected  string
+	}{
+		{
+			name:      "simple field",
+			fieldPath: "email",
+			prefix:    "",
+			expected:  "email",
+		},
+		{
+			name:      "nested field",
+			fieldPath: "user.email",
+			prefix:    "data",
+			expected:  "data.user.email",
+		},
+		{
+			name:      "array indices",
+			fieldPath: "users.0.email",
+			prefix:    "response",
+			expected:  "response.users[0].email",
+		},
+		{
+			name:      "empty path",
+			fieldPath: "",
+			prefix:    "request",
+			expected:  "request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Call without any options
+			result := FormatFieldReference(tt.fieldPath, tt.prefix)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, %q) = %q, want %q",
+					tt.fieldPath, tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldReference_MultipleOptions verifies that multiple options
+// can be passed (currently only WithQuoteStyle is available).
+func TestFormatFieldReference_MultipleOptions(t *testing.T) {
+	// Test that multiple WithQuoteStyle calls - the last one wins
+	result := FormatFieldReference("user.email", "",
+		WithQuoteStyle(SingleQuote),
+		WithQuoteStyle(DoubleQuote), // This should override
+	)
+
+	expected := `"user"."email"`
+	if result != expected {
+		t.Errorf("Multiple options test: got %q, want %q", result, expected)
+	}
+}
+
 // =============================================================================
 // FormatFieldRef FUNCTION TESTS
 // =============================================================================
