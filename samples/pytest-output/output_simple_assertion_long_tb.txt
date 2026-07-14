@@ -1,0 +1,23 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest-output
+collecting ... collected 1 item
+
+test_simple_assertions.py::test_simple_assertion_equal FAILED            [100%]
+
+=================================== FAILURES ===================================
+_________________________ test_simple_assertion_equal __________________________
+
+    def test_simple_assertion_equal():
+        """Simple == assertion failure"""
+        a = 1
+        b = 2
+>       assert a == b, f"Expected {a} to equal {b}"
+E       AssertionError: Expected 1 to equal 2
+E       assert 1 == 2
+
+test_simple_assertions.py:10: AssertionError
+=========================== short test summary info ============================
+FAILED test_simple_assertions.py::test_simple_assertion_equal - AssertionErro...
+============================== 1 failed in 0.02s ===============================

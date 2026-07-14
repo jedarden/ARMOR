@@ -1,0 +1,56 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest-output
+collecting ... collected 6 items
+
+test_comparison_failures.py::test_numeric_comparison FAILED              [ 16%]
+test_comparison_failures.py::test_numeric_range FAILED                   [ 33%]
+test_comparison_failures.py::test_string_comparison FAILED               [ 50%]
+test_comparison_failures.py::test_float_comparison FAILED                [ 66%]
+test_comparison_failures.py::test_length_comparison FAILED               [ 83%]
+test_comparison_failures.py::test_dictionary_key_comparison FAILED       [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_numeric_comparison ____________________________
+test_comparison_failures.py:8: in test_numeric_comparison
+    assert score >= 90, f"Score {score} is below threshold 90"
+E   AssertionError: Score 85 is below threshold 90
+E   assert 85 >= 90
+______________________________ test_numeric_range ______________________________
+test_comparison_failures.py:14: in test_numeric_range
+    assert 0 <= value <= 100, f"Value {value} out of range [0, 100]"
+E   AssertionError: Value 150 out of range [0, 100]
+E   assert 150 <= 100
+____________________________ test_string_comparison ____________________________
+test_comparison_failures.py:20: in test_string_comparison
+    assert result == "success", f"Got '{result}' instead of 'success'"
+E   AssertionError: Got 'failure' instead of 'success'
+E   assert 'failure' == 'success'
+E     
+E     - success
+E     + failure
+____________________________ test_float_comparison _____________________________
+test_comparison_failures.py:27: in test_float_comparison
+    assert result == expected, f"{result} != {expected}"
+E   AssertionError: 0.30000000000000004 != 0.3
+E   assert 0.30000000000000004 == 0.3
+____________________________ test_length_comparison ____________________________
+test_comparison_failures.py:33: in test_length_comparison
+    assert len(items) >= 5, f"Collection has only {len(items)} items"
+E   AssertionError: Collection has only 3 items
+E   assert 3 >= 5
+E    +  where 3 = len([1, 2, 3])
+________________________ test_dictionary_key_comparison ________________________
+test_comparison_failures.py:39: in test_dictionary_key_comparison
+    assert "email" in data, "Email field missing from data"
+E   AssertionError: Email field missing from data
+E   assert 'email' in {'age': 30, 'name': 'Alice'}
+=========================== short test summary info ============================
+FAILED test_comparison_failures.py::test_numeric_comparison - AssertionError:...
+FAILED test_comparison_failures.py::test_numeric_range - AssertionError: Valu...
+FAILED test_comparison_failures.py::test_string_comparison - AssertionError: ...
+FAILED test_comparison_failures.py::test_float_comparison - AssertionError: 0...
+FAILED test_comparison_failures.py::test_length_comparison - AssertionError: ...
+FAILED test_comparison_failures.py::test_dictionary_key_comparison - Assertio...
+============================== 6 failed in 0.04s ===============================

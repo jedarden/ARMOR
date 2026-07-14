@@ -1,6 +1,7 @@
 """
 Simple assertion failures - basic pytest output examples
 """
+import pytest
 
 def test_simple_assertion_equal():
     """Simple == assertion failure"""
