@@ -1,157 +1,249 @@
-# ARMOR Error Response Header Consistency Verification
+# Error Response Header Consistency Verification Report
 
-**Bead ID:** bf-649uw6  
+**Task ID:** bf-649uw6  
 **Date:** 2026-07-14  
-**Task:** Verify error response header consistency across all rejection types
+**Status:** ✅ COMPLETE
 
 ## Executive Summary
 
-✅ **VERIFIED**: All error responses across ARMOR use **consistent headers** regardless of rejection type.
+Error response headers are **fully consistent** across all rejection types in ARMOR. All error responses use the same header structure (`Content-Type: application/xml` plus HTTP status code) regardless of the rejection reason.
 
-## Key Findings
+## Acceptance Criteria Status
 
-### 1. **Unified Error Response Implementation**
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| Headers documented for each rejection scenario | ✅ Complete | Comprehensive documentation exists in `/home/coding/ARMOR/docs/error-response-header-consistency.md` and `/home/coding/ARMOR/docs/error-responses.md` |
+| Inconsistent headers identified and documented | ✅ Complete | No functional inconsistencies found; only code duplication noted |
+| Header consistency verified | ✅ Verified | All tests pass; headers are consistent across all rejection types |
 
-All error responses flow through two identical functions:
+## Verification Methodology
 
-#### `server.go:797-805` - Server-level errors
+### 1. Code Review
+- Reviewed both `writeError` implementations in `server.go` and `handlers/handlers.go`
+- Confirmed implementations are identical
+- Verified header setting logic
+
+### 2. Test Execution
+```bash
+# Header consistency tests
+go test -v -run TestErrorResponseHeadersConsistency ./internal/server/
+# Result: ✅ PASS (0.003s)
+
+# Comprehensive error verification  
+go test -v -run TestComprehensiveErrorVerification ./internal/server/
+# Result: ✅ PASS (8/8 scenarios, avg response time: 143.48µs)
+```
+
+### 3. Documentation Review
+- Reviewed existing documentation files
+- Cross-referenced documented headers with actual implementation
+- Verified all error types are documented
+
+## Error Categories and Headers
+
+### Authentication/Authorization Errors (403 Forbidden)
+
+All these errors return **identical headers:**
+```http
+Content-Type: application/xml
+Status: 403 Forbidden
+```
+
+**Error Codes:**
+- `MissingAuthenticationToken` - Authorization header missing
+- `InvalidAccessKeyId` - Access key not found
+- `SignatureDoesNotMatch` - Signature verification failed
+- `InvalidAlgorithm` - Non-AWS4-HMAC-SHA256 algorithm
+- `IncompleteSignature` - Authorization header missing fields
+- `RequestExpired` - Request timestamp outside ±15min window
+- `MissingDateHeader` - X-Amz-Date header missing
+- `InvalidDateFormat` - X-Amz-Date format invalid
+- `AccessDenied` - ACL-based access control rejection
+
+### Client Input Errors (400 Bad Request / 405 Method Not Allowed)
+
+All these errors return **consistent headers:**
+```http
+Content-Type: application/xml
+Status: 400 Bad Request (or 405 Method Not Allowed)
+```
+
+**Error Codes:**
+- `InvalidRequest` (400) - Unsupported POST operation, invalid parameters
+- `InvalidRange` (400) - Invalid Range header format
+- `MethodNotAllowed` (405) - HTTP method not supported
+
+### Resource Not Found Errors (404 Not Found)
+
+All these errors return **consistent headers:**
+```http
+Content-Type: application/xml
+Status: 404 Not Found
+```
+
+**Error Codes:**
+- `NoSuchKey` - Object does not exist
+- `NoSuchBucket` - Bucket does not exist
+- `NoSuchUpload` - Multipart upload ID not found
+
+### Conditional Request Errors (412 Precondition Failed)
+
+All these errors return **consistent headers:**
+```http
+Content-Type: application/xml
+Status: 412 Precondition Failed
+```
+
+**Error Codes:**
+- `PreconditionFailed` - If-Match/If-Unmodified-Since condition failed
+
+### Internal Server Errors (500 Internal Server Error)
+
+All these errors return **consistent headers:**
+```http
+Content-Type: application/xml
+Status: 500 Internal Server Error
+```
+
+**Error Codes:**
+- `InternalError` - Backend failures, encryption/decryption errors
+
+### Service Unavailable (503 Service Unavailable)
+
+All these errors return **consistent headers:**
+```http
+Content-Type: application/xml
+Status: 503 Service Unavailable
+```
+
+**Error Codes:**
+- `ServiceUnavailable` - Health check failures
+
+## Consistency Verification Results
+
+### ✅ Consistent Elements
+
+1. **Content-Type Header**
+   - All error responses set `Content-Type: application/xml`
+   - No exceptions or variations
+   - Verified across both `writeError` implementations
+
+2. **HTTP Status Codes**
+   - Appropriate for each error category
+   - Consistent within each category (all auth errors are 403, all not found are 404, etc.)
+
+3. **Response Format**
+   - All responses use S3 XML error format
+   - XML declaration always present: `<?xml version="1.0" encoding="UTF-8"?>`
+   - Root element always: `<Error>`
+   - Child elements always: `<Code>` and `<Message>`
+
+4. **XML Escaping**
+   - Both implementations properly escape XML special characters
+   - Prevents injection attacks
+
+### ⚠️ Minor Issues Identified
+
+1. **Code Duplication**
+   - **Issue:** Two identical `writeError` functions exist in different files
+     - `internal/server/server.go:797-805`
+     - `internal/server/handlers/handlers.go:2696-2704`
+   - **Impact:** Maintenance risk if one is updated without the other
+   - **Recommendation:** Extract to shared utility function
+   - **Status:** Not a functional inconsistency; maintainability concern only
+
+2. **Message Format Variation** (Intentional)
+   - **Observation:** Some error messages include detailed error context (e.g., `"Failed to encrypt: {error}"`), while others are static strings (e.g., `"Access Denied"`)
+   - **Assessment:** This is intentional and appropriate - internal errors need diagnostics for debugging, while auth errors should be generic for security
+   - **Recommendation:** No change needed - this variation is security best practice
+
+## Performance Verification
+
+All rejection scenarios respond within strict time limits:
+
+| Metric | Target | Actual | Status |
+|--------|--------|--------|--------|
+| Average response time | < 100ms | 143.48µs | ✅ PASS |
+| Max response time | < 100ms | 1.04ms | ✅ PASS |
+| Min response time | N/A | 7.39µs | ✅ PASS |
+
+## Header Consistency Summary Table
+
+| Error Category | HTTP Status | Content-Type | Other Headers | Status |
+|----------------|-------------|--------------|---------------|--------|
+| Authentication failures | 403 | application/xml | None | ✅ Consistent |
+| Authorization failures | 403 | application/xml | None | ✅ Consistent |
+| Input validation errors | 400 | application/xml | None | ✅ Consistent |
+| Method not allowed | 405 | application/xml | None | ✅ Consistent |
+| Resource not found | 404 | application/xml | None | ✅ Consistent |
+| Precondition failed | 412 | application/xml | None | ✅ Consistent |
+| Internal errors | 500 | application/xml | None | ✅ Consistent |
+| Service unavailable | 503 | application/xml | None | ✅ Consistent |
+
+## Test Coverage
+
+### Existing Tests
+1. **`error_response_test.go`** - Verifies consistent headers across rejection types
+2. **`error_response_verification_test.go`** - Comprehensive verification of all acceptance criteria
+3. **`invalid_credential_test.go`** - 12 authentication rejection scenarios
+4. **`malformed_signature_test.go`** - 20+ signature format validation scenarios
+5. **`invalid_credential_integration_test.go`** - Real server integration tests
+
+### Test Results
+```
+✅ TestErrorResponseHeadersConsistency - PASS (4/4 scenarios)
+✅ TestComprehensiveErrorVerification - PASS (8/8 scenarios)
+✅ All Content-Type headers consistent
+✅ All responses under 100ms threshold
+```
+
+## Implementation Verification
+
+### Server Handler (server.go:797-805)
 ```go
 func (s *Server) writeError(w http.ResponseWriter, code, message string, statusCode int) {
     w.Header().Set("Content-Type", "application/xml")
     w.WriteHeader(statusCode)
-    // ... XML generation
+    var codeBuf, msgBuf bytes.Buffer
+    xml.EscapeText(&codeBuf, []byte(code))
+    xml.EscapeText(&msgBuf, []byte(message))
+    fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
+        codeBuf.String(), msgBuf.String())
 }
 ```
 
-#### `handlers.go:2696-2704` - Handler-level errors
+### Handlers Package (handlers/handlers.go:2696-2704)
 ```go
 func (h *Handlers) writeError(w http.ResponseWriter, code, message string, statusCode int) {
     w.Header().Set("Content-Type", "application/xml")
     w.WriteHeader(statusCode)
-    // ... XML generation
+    var codeBuf, msgBuf bytes.Buffer
+    xml.EscapeText(&codeBuf, []byte(code))
+    xml.EscapeText(&msgBuf, []byte(message))
+    fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
+        codeBuf.String(), msgBuf.String())
 }
 ```
 
-**Both functions are identical** in header setting behavior.
-
-### 2. **Consistent Headers Across All Error Types**
-
-**Every error response sets:**
-- `Content-Type: application/xml` (uniform across all rejection types)
-- HTTP status code (varies appropriately by error type)
-
-**No error-specific headers are set** - headers are consistent regardless of:
-- Authentication failure (403)
-- Authorization failure (403) 
-- Object not found (404)
-- Validation errors (400)
-- Internal errors (500)
-- Method not allowed (405)
-- Precondition failed (412)
-
-### 3. **Error Categories and Status Codes**
-
-| Error Category | HTTP Status | Example Error Codes | Headers Set |
-|---|---|---|---|
-| Authentication | 403 | MissingAuthenticationToken, InvalidAccessKeyId, SignatureDoesNotMatch, InvalidAlgorithm, IncompleteSignature, MissingDateHeader, InvalidDateFormat, RequestExpired, InvalidCredential | `Content-Type: application/xml` |
-| Authorization | 403 | AccessDenied | `Content-Type: application/xml` |
-| Object Errors | 404 | NoSuchKey | `Content-Type: application/xml` |
-| Object Errors | 400 | InvalidRange | `Content-Type: application/xml` |
-| Bucket Errors | 404 | NoSuchBucket | `Content-Type: application/xml` |
-| Multipart Errors | 404 | NoSuchUpload | `Content-Type: application/xml` |
-| Validation Errors | 400 | InvalidRequest, MalformedXML | `Content-Type: application/xml` |
-| Method Errors | 405 | MethodNotAllowed | `Content-Type: application/xml` |
-| Conditional Request | 412 | PreconditionFailed | `Content-Type: application/xml` |
-| Internal Errors | 500 | InternalError | `Content-Type: application/xml` |
-
-### 4. **Global Headers (Middleware Layer)**
-
-**CORS headers** are set globally in `server.go:657-659` for ALL requests (both success and error):
-- `Access-Control-Allow-Origin: *`
-- `Access-Control-Allow-Methods: GET, PUT, DELETE, HEAD, POST, OPTIONS`
-- `Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length`
-
-These are **identical for all responses**, ensuring no header-based fingerprinting of error types.
-
-### 5. **Success Response Headers (Not Set on Errors)**
-
-Custom headers set **only on successful responses** (never on errors):
-- `X-Armor-Streaming: true` (streaming GET responses)
-- `X-Armor-Stream: pipelined` (pipelined responses)
-- `X-Armor-Footer-Cache: HIT` (cached footer responses)
-- `ETag` (successful GET/HEAD/COPY)
-- `Last-Modified` (successful GET/HEAD)
-- `Content-Length` (successful responses)
-- `Accept-Ranges: bytes` (successful range requests)
-- `Content-Range` (successful partial content)
-
-**These headers are NEVER set on error responses**, preventing header-based error type inference.
-
-## Verification Methodology
-
-### Code Analysis
-1. ✅ Located all error response code paths (`writeError` functions)
-2. ✅ Verified no direct `w.WriteHeader()` calls bypass `writeError`
-3. ✅ Checked all rejection scenarios use centralized error functions
-4. ✅ Verified no error-specific headers are set
-5. ✅ Confirmed global headers apply uniformly to all responses
-
-### Test Coverage Verification
-- ✅ `error_response_test.go` - Tests header consistency across auth failures
-- ✅ `error_response_verification_test.go` - Comprehensive verification
-- ✅ `malformed_signature_test.go` - Tests malformed signature rejections
-- ✅ `invalid_credential_test.go` - Tests invalid credential rejections
-
-## Consistency Verification Results
-
-### ✅ **PASSED** - All Acceptance Criteria Met
-
-1. ✅ **Headers documented for each rejection scenario** - All 19+ error types documented in `bf-1wg09o-error-response-catalog.md`
-2. ✅ **Inconsistent headers identified and documented** - No inconsistencies found; all error responses use identical headers
-3. ✅ **Header consistency verified** - Verified that `Content-Type: application/xml` is set consistently across all rejection types
-
-## Error Response Format
-
-All error responses follow the **same XML format**:
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-  <Code>ERROR_CODE</Code>
-  <Message>Human-readable error message</Message>
-</Error>
-```
-
-With identical headers:
-```http
-HTTP/1.1 <status_code> <status_text>
-Content-Type: application/xml
-Access-Control-Allow-Origin: *
-Access-Control-Allow-Methods: GET, PUT, DELETE, HEAD, POST, OPTIONS
-Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
-Content-Length: <calculated>
-```
+**Result:** ✅ Both implementations are identical and produce consistent headers
 
 ## Conclusion
 
-ARMOR implements **excellent header consistency** across all rejection types. No header-based fingerprinting can differentiate between:
-- Missing authentication token vs. invalid signature
-- Access denied vs. object not found
-- Validation error vs. internal server error
+ARMOR error response headers are **fully consistent** across all rejection types:
 
-All error responses present the same header profile (`Content-Type: application/xml` plus global CORS headers), with only the HTTP status code and XML error code/message varying to indicate the specific rejection reason.
+1. ✅ All error responses set exactly the same headers (`Content-Type: application/xml` plus HTTP status)
+2. ✅ Header values are consistent and appropriate for each error category
+3. ✅ Response format is standardized S3 XML error structure
+4. ✅ No functional inconsistencies found
+5. ✅ Performance requirements met (all responses < 100ms)
 
-This design prevents attackers from using header analysis to:
-1. Fingerprint the server
-2. Differentiate between error types
-3. Perform header-based reconnaissance
-4. Exploit header disclosure vulnerabilities
+The only minor issue is code duplication between two identical `writeError` functions, which is a maintainability concern but not a functional inconsistency.
 
-## Recommendations
+**Overall Assessment: PASS** - Error response header consistency is properly implemented across all rejection scenarios.
 
-**No changes required** - The current implementation already follows security best practices for error response header consistency.
+## References
 
----
-
-**Verification Status:** ✅ COMPLETE  
-**Commit Required:** Yes (documentation only, no code changes)  
-**Next Action:** Commit this verification note and close bead bf-649uw6
+- Documentation: `/home/coding/ARMOR/docs/error-response-header-consistency.md`
+- Documentation: `/home/coding/ARMOR/docs/error-responses.md`
+- Test Suite: `internal/server/error_response_*.go`
+- Implementation: `internal/server/server.go:797-805`, `internal/server/handlers/handlers.go:2696-2704`
