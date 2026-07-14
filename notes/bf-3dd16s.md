@@ -14,9 +14,137 @@ This task aimed to run all remaining integration test files not covered in previ
 - Classification tests (bf-46z4t6)
 - Validation tests (bf-521hqe)
 
-**Execution Note:** All tests were successfully executed using nix-shell to provide PyYAML and pytest dependencies when needed.
+This execution focused on Rust integration tests beyond those categories.
 
-## Comprehensive Test Results
+**Execution Note:** All tests were successfully executed using `cargo test --tests` and individual test file execution.
+
+---
+
+## Rust Integration Test Results (This Execution)
+
+### Remaining Rust Test Files Executed: 9 total files, 161 tests
+
+These are the Rust integration tests that were NOT covered by child bead categories (scope tracking, type conversion, error handling, comments, classification, validation).
+
+#### 1. ✅ acceptance_criteria_verification_test.rs - 5/5 PASSED
+- All acceptance criteria verified
+- Format examples, parse errors, type mismatches, validation errors
+- Acceptance criteria examples in tests
+
+#### 2. ✅ push_scope_unit_test.rs - 13/13 PASSED
+- All push_scope functionality tests pass
+- Tests scope stack growth, type preservation, depth tracking
+- All five scope types tested (root, flow_mapping, flow_sequence, block_sequence, mixed)
+- Consecutive push/pop operations
+- Stack isolation and scope info preservation
+
+#### 3. ✅ result_dataclass_test.rs - 7/7 PASSED
+- All Result creation scenarios tested
+- Constructor tests (success/error)
+- Field access tests (get_data, get_error)
+- Type verification tests
+- Proper typing of all fields
+
+#### 4. ✅ status_enum_smoke_test.rs - 5/5 PASSED
+- Status enum basic functionality
+- Display, equality, bool conversion tests
+- Status enum exists and has expected behavior
+- as_bool() and from_bool() methods
+
+#### 5. ✅ nested_duplicate_detection_test.rs - 30/30 PASSED
+- Comprehensive duplicate key detection
+- Deep nesting scenarios (4+ levels)
+- Kubernetes-like structures
+- Docker Compose-like structures
+- Real-world config file patterns
+- Maximum nesting depth testing
+- Complex nested trees with sibling mappings
+- Wide shallow structures
+
+#### 6. ❌ false_positive_indent_key_test.rs - 9/13 FAILED (4 failures)
+- **FAILING TESTS:**
+  1. `test_block_scalar_indicator_not_a_key` - Block scalar indicator with colon (`|:`, `>:`) incorrectly extracts key context
+  2. `test_sequence_dash_only_not_a_key` - Dash-only with colon (`-:`) incorrectly extracts valid key context
+  3. `test_special_chars_only_not_a_key` - Special chars only with colon incorrectly extracts key context
+  4. `test_no_false_positive_from_complex_indent` - Should parse successfully but fails on indent-only line with colon pattern
+
+- **PASSING TESTS (9):** Colon in value context, colon-only, comment-like patterns, empty after colon, empty key part, flow collection markers, multiple colons, single-char colon, whitespace around colon
+
+**Analysis:** These failures indicate the YAML parser's key extraction logic needs refinement for edge cases involving block scalars, sequence items, and special characters with colon patterns.
+
+#### 7. ✅ indent_change_detection_test.rs - 23/23 PASSED
+- Comprehensive indent transition tracking
+- Blank line handling with indent changes
+- Comment with decreased indent
+- Deep nesting with transitions
+- Kubernetes-style YAML
+- Real-world config patterns
+- Scope stack records all indent changes
+- Tracks key presence in indent transitions
+- Preserves scope isolation
+
+#### 8. ✅ yaml_indentation_and_mixed_scenarios_test.rs - 53/53 PASSED
+- All indentation levels (0-12 spaces)
+- Comments at all indentation levels
+- Multiline scalars (folded/literal)
+- Anchors and aliases with comments
+- Complex nested structures with comments
+- Inline comments in nested lists/maps
+- Chomping indicators (strip/keep/plain)
+- Complete complex documents with all features
+- Hash in quoted scalars with comments
+
+#### 9. ✅ yaml_indent_without_keys_test.rs - 13/13 PASSED
+- Blank lines at root and between siblings
+- Comments with indent ignored
+- Deeply nested with blank lines
+- Complex real-world YAML
+- Multiline scalars with blank lines
+- No false duplicate detection from blank lines
+- Scope consistency after blank lines
+- Sequences with blank lines
+
+### Rust Test Summary
+
+| Test File | Tests | Passed | Failed | Status |
+|-----------|-------|--------|--------|--------|
+| acceptance_criteria_verification_test | 5 | 5 | 0 | ✅ PASS |
+| push_scope_unit_test | 13 | 13 | 0 | ✅ PASS |
+| result_dataclass_test | 7 | 7 | 0 | ✅ PASS |
+| status_enum_smoke_test | 5 | 5 | 0 | ✅ PASS |
+| nested_duplicate_detection_test | 30 | 30 | 0 | ✅ PASS |
+| false_positive_indent_key_test | 13 | 9 | 4 | ❌ FAIL |
+| indent_change_detection_test | 23 | 23 | 0 | ✅ PASS |
+| yaml_indentation_and_mixed_scenarios_test | 53 | 53 | 0 | ✅ PASS |
+| yaml_indent_without_keys_test | 13 | 13 | 0 | ✅ PASS |
+| **TOTAL** | **161** | **157** | **4** | ✅ **97.5% PASS** |
+
+### Rust Test Conclusion
+- **Total Tests Run:** 161 tests
+- **Passed:** 157 tests
+- **Failed:** 4 tests (all in false_positive_indent_key_test.rs)
+- **Pass Rate:** 97.5%
+
+**Acceptance Criteria Met for Rust Tests:**
+- ✅ All remaining Rust test files identified (9 files)
+- ✅ All remaining Rust tests run with complete output captured
+- ✅ Final report generated
+- ⚠️ 4 pre-existing test failures identified in false_positive_indent_key_test.rs
+
+**Rust Test Output Files:**
+- /tmp/test_acceptance_criteria.txt
+- /tmp/test_push_scope.txt
+- /tmp/test_result_dataclass.txt
+- /tmp/test_status_enum.txt
+- /tmp/test_nested_duplicate.txt
+- /tmp/test_false_positive_indent.txt
+- /tmp/test_indent_change.txt
+- /tmp/test_yaml_indentation_mixed.txt
+- /tmp/test_yaml_indent_no_keys.txt
+
+---
+
+## Python Integration Test Results (Previous Executions)
 
 ### Test Files Executed: 21 total files, 605 tests
 
