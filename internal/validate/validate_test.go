@@ -1158,3 +1158,667 @@ func ExampleErrorResponseStructureIsValid() {
 		// Handle error response with custom field names
 	}
 }
+
+// TestCORSHeadersIsValid_BasicValidation tests basic CORS header presence validation
+func TestCORSHeadersIsValid_BasicValidation(t *testing.T) {
+	tests := []struct {
+		name           string
+		allowOrigin   string
+		want          bool
+	}{
+		{
+			name:           "origin header exists",
+			allowOrigin:   "https://example.com",
+			want:          true,
+		},
+		{
+			name:           "wildcard origin exists",
+			allowOrigin:   "*",
+			want:          true,
+		},
+		{
+			name:           "no origin header",
+			allowOrigin:   "",
+			want:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			if tt.allowOrigin != "" {
+				resp.Header().Set("Access-Control-Allow-Origin", tt.allowOrigin)
+			}
+			httpResp := resp.Result()
+
+			got := CORSHeadersIsValid(httpResp, nil)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCORSHeadersIsValid_WildcardOrigin tests wildcard CORS validation
+func TestCORSHeadersIsValid_WildcardOrigin(t *testing.T) {
+	tests := []struct {
+		name           string
+		responseOrigin string
+		configOrigin   string
+		want           bool
+	}{
+		{
+			name:           "wildcard matches wildcard",
+			responseOrigin: "*",
+			configOrigin:   "*",
+			want:           true,
+		},
+		{
+			name:           "specific origin does not match wildcard config",
+			responseOrigin: "https://example.com",
+			configOrigin:   "*",
+			want:           false,
+		},
+		{
+			name:           "wildcard response does not match specific origin config",
+			responseOrigin: "*",
+			configOrigin:   "https://example.com",
+			want:           false,
+		},
+		{
+			name:           "specific origin matches specific config",
+			responseOrigin: "https://example.com",
+			configOrigin:   "https://example.com",
+			want:           true,
+		},
+		{
+			name:           "origin case sensitivity",
+			responseOrigin: "https://example.com",
+			configOrigin:   "https://Example.com",
+			want:           false,
+		},
+		{
+			name:           "empty response origin with non-empty config",
+			responseOrigin: "",
+			configOrigin:   "https://example.com",
+			want:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			if tt.responseOrigin != "" {
+				resp.Header().Set("Access-Control-Allow-Origin", tt.responseOrigin)
+			}
+			httpResp := resp.Result()
+
+			config := &CORSConfig{AllowOrigin: tt.configOrigin}
+			got := CORSHeadersIsValid(httpResp, config)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCORSHeadersIsValid_AllowMethods tests methods header validation
+func TestCORSHeadersIsValid_AllowMethods(t *testing.T) {
+	tests := []struct {
+		name             string
+		responseMethods  string
+		configMethods    string
+		want             bool
+	}{
+		{
+			name:            "methods match exactly",
+			responseMethods: "GET, POST, OPTIONS",
+			configMethods:   "GET, POST, OPTIONS",
+			want:            true,
+		},
+		{
+			name:            "methods do not match",
+			responseMethods: "GET, POST",
+			configMethods:   "GET, POST, OPTIONS",
+			want:            false,
+		},
+		{
+			name:            "case sensitive methods",
+			responseMethods: "GET, POST",
+			configMethods:   "get, post",
+			want:            false,
+		},
+		{
+			name:            "empty methods when config not specified",
+			responseMethods: "",
+			configMethods:   "",
+			want:            true,
+		},
+		{
+			name:            "empty response methods with non-empty config",
+			responseMethods: "",
+			configMethods:   "GET, POST",
+			want:            false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			resp.Header().Set("Access-Control-Allow-Origin", "*")
+			if tt.responseMethods != "" {
+				resp.Header().Set("Access-Control-Allow-Methods", tt.responseMethods)
+			}
+			httpResp := resp.Result()
+
+			config := &CORSConfig{AllowOrigin: "*", AllowMethods: tt.configMethods}
+			got := CORSHeadersIsValid(httpResp, config)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCORSHeadersIsValid_AllowHeaders tests allowed headers validation
+func TestCORSHeadersIsValid_AllowHeaders(t *testing.T) {
+	tests := []struct {
+		name            string
+		responseHeaders string
+		configHeaders   string
+		want            bool
+	}{
+		{
+			name:            "headers match exactly",
+			responseHeaders: "Content-Type, Authorization",
+			configHeaders:   "Content-Type, Authorization",
+			want:            true,
+		},
+		{
+			name:            "headers do not match",
+			responseHeaders: "Content-Type",
+			configHeaders:   "Content-Type, Authorization",
+			want:            false,
+		},
+		{
+			name:            "different header order should not match",
+			responseHeaders: "Authorization, Content-Type",
+			configHeaders:   "Content-Type, Authorization",
+			want:            false,
+		},
+		{
+			name:            "empty headers when config not specified",
+			responseHeaders: "",
+			configHeaders:   "",
+			want:            true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			resp.Header().Set("Access-Control-Allow-Origin", "*")
+			if tt.responseHeaders != "" {
+				resp.Header().Set("Access-Control-Allow-Headers", tt.responseHeaders)
+			}
+			httpResp := resp.Result()
+
+			config := &CORSConfig{AllowOrigin: "*", AllowHeaders: tt.configHeaders}
+			got := CORSHeadersIsValid(httpResp, config)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCORSHeadersIsValid_AllowCredentials tests credentials header validation
+func TestCORSHeadersIsValid_AllowCredentials(t *testing.T) {
+	tests := []struct {
+		name              string
+		responseCredentials string
+		configCredentials  bool
+		want               bool
+	}{
+		{
+			name:               "credentials true matches when expected",
+			responseCredentials: "true",
+			configCredentials:   true,
+			want:               true,
+		},
+		{
+			name:               "credentials false when not expected",
+			responseCredentials: "false",
+			configCredentials:   true,
+			want:               false,
+		},
+		{
+			name:               "credentials missing when expected",
+			responseCredentials: "",
+			configCredentials:   true,
+			want:               false,
+		},
+		{
+			name:               "credentials not validated when config false",
+			responseCredentials: "",
+			configCredentials:   false,
+			want:               true,
+		},
+		{
+			name:               "credentials present when config false",
+			responseCredentials: "true",
+			configCredentials:   false,
+			want:               true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			resp.Header().Set("Access-Control-Allow-Origin", "https://example.com")
+			if tt.responseCredentials != "" {
+				resp.Header().Set("Access-Control-Allow-Credentials", tt.responseCredentials)
+			}
+			httpResp := resp.Result()
+
+			config := &CORSConfig{AllowOrigin: "https://example.com", AllowCredentials: tt.configCredentials}
+			got := CORSHeadersIsValid(httpResp, config)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCORSHeadersIsValid_ExposeHeaders tests exposed headers validation
+func TestCORSHeadersIsValid_ExposeHeaders(t *testing.T) {
+	tests := []struct {
+		name               string
+		responseExpose     string
+		configExpose       string
+		want               bool
+	}{
+		{
+			name:           "expose headers match exactly",
+			responseExpose: "Content-Length, ETag",
+			configExpose:   "Content-Length, ETag",
+			want:           true,
+		},
+		{
+			name:           "expose headers do not match",
+			responseExpose: "Content-Length",
+			configExpose:   "Content-Length, ETag",
+			want:           false,
+		},
+		{
+			name:           "empty expose headers when config not specified",
+			responseExpose: "",
+			configExpose:   "",
+			want:           true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			resp.Header().Set("Access-Control-Allow-Origin", "*")
+			if tt.responseExpose != "" {
+				resp.Header().Set("Access-Control-Expose-Headers", tt.responseExpose)
+			}
+			httpResp := resp.Result()
+
+			config := &CORSConfig{AllowOrigin: "*", ExposeHeaders: tt.configExpose}
+			got := CORSHeadersIsValid(httpResp, config)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCORSHeadersIsValid_MaxAge tests max-age header validation
+func TestCORSHeadersIsValid_MaxAge(t *testing.T) {
+	tests := []struct {
+		name           string
+		responseMaxAge string
+		configMaxAge   string
+		want           bool
+	}{
+		{
+			name:           "max-age matches exactly",
+			responseMaxAge: "3600",
+			configMaxAge:   "3600",
+			want:           true,
+		},
+		{
+			name:           "max-age does not match",
+			responseMaxAge: "1800",
+			configMaxAge:   "3600",
+			want:           false,
+		},
+		{
+			name:           "empty max-age when config not specified",
+			responseMaxAge: "",
+			configMaxAge:   "",
+			want:           true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			resp.Header().Set("Access-Control-Allow-Origin", "*")
+			if tt.responseMaxAge != "" {
+				resp.Header().Set("Access-Control-Max-Age", tt.responseMaxAge)
+			}
+			httpResp := resp.Result()
+
+			config := &CORSConfig{AllowOrigin: "*", MaxAge: tt.configMaxAge}
+			got := CORSHeadersIsValid(httpResp, config)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCORSHeadersIsValid_CompleteConfig tests complete CORS configuration validation
+func TestCORSHeadersIsValid_CompleteConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		setup  func(*httptest.ResponseRecorder)
+		config *CORSConfig
+		want   bool
+	}{
+		{
+			name: "full valid CORS configuration",
+			setup: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "https://example.com")
+				resp.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				resp.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				resp.Header().Set("Access-Control-Allow-Credentials", "true")
+				resp.Header().Set("Access-Control-Expose-Headers", "Content-Length, ETag")
+				resp.Header().Set("Access-Control-Max-Age", "3600")
+			},
+			config: &CORSConfig{
+				AllowOrigin:      "https://example.com",
+				AllowMethods:     "GET, POST, OPTIONS",
+				AllowHeaders:     "Content-Type, Authorization",
+				AllowCredentials: true,
+				ExposeHeaders:    "Content-Length, ETag",
+				MaxAge:           "3600",
+			},
+			want: true,
+		},
+		{
+			name: "full CORS config with one mismatch",
+			setup: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "https://example.com")
+				resp.Header().Set("Access-Control-Allow-Methods", "GET, POST")
+				resp.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				resp.Header().Set("Access-Control-Allow-Credentials", "true")
+			},
+			config: &CORSConfig{
+				AllowOrigin:      "https://example.com",
+				AllowMethods:     "GET, POST, OPTIONS",
+				AllowHeaders:     "Content-Type, Authorization",
+				AllowCredentials: true,
+			},
+			want: false,
+		},
+		{
+			name: "minimal valid CORS config",
+			setup: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "*")
+			},
+			config: &CORSConfig{
+				AllowOrigin: "*",
+			},
+			want: true,
+		},
+		{
+			name: "partial CORS config - only origin and methods",
+			setup: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "https://api.example.com")
+				resp.Header().Set("Access-Control-Allow-Methods", "GET, POST")
+			},
+			config: &CORSConfig{
+				AllowOrigin:  "https://api.example.com",
+				AllowMethods: "GET, POST",
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			tt.setup(resp)
+			httpResp := resp.Result()
+
+			got := CORSHeadersIsValid(httpResp, tt.config)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCORSHeadersIsValid_ErrorResponses tests CORS validation on error responses
+func TestCORSHeadersIsValid_ErrorResponses(t *testing.T) {
+	tests := []struct {
+		name           string
+		statusCode     int
+		setupCORS      func(*httptest.ResponseRecorder)
+		config         *CORSConfig
+		want           bool
+	}{
+		{
+			name:       "400 Bad Request with valid CORS",
+			statusCode: 400,
+			setupCORS: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "https://example.com")
+			},
+			config: &CORSConfig{AllowOrigin: "https://example.com"},
+			want:   true,
+		},
+		{
+			name:       "401 Unauthorized with valid CORS",
+			statusCode: 401,
+			setupCORS: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "*")
+				resp.Header().Set("Access-Control-Allow-Headers", "Authorization")
+			},
+			config: &CORSConfig{AllowOrigin: "*", AllowHeaders: "Authorization"},
+			want:   true,
+		},
+		{
+			name:       "403 Forbidden with valid CORS",
+			statusCode: 403,
+			setupCORS: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "https://app.example.com")
+				resp.Header().Set("Access-Control-Allow-Credentials", "true")
+			},
+			config: &CORSConfig{AllowOrigin: "https://app.example.com", AllowCredentials: true},
+			want:   true,
+		},
+		{
+			name:       "404 Not Found with valid CORS",
+			statusCode: 404,
+			setupCORS: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "*")
+			},
+			config: &CORSConfig{AllowOrigin: "*"},
+			want:   true,
+		},
+		{
+			name:       "500 Internal Server Error with valid CORS",
+			statusCode: 500,
+			setupCORS: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "https://example.com")
+				resp.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE")
+			},
+			config: &CORSConfig{AllowOrigin: "https://example.com", AllowMethods: "GET, POST, DELETE"},
+			want:   true,
+		},
+		{
+			name:       "502 Bad Gateway with wildcard CORS",
+			statusCode: 502,
+			setupCORS: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "*")
+			},
+			config: &CORSConfig{AllowOrigin: "*"},
+			want:   true,
+		},
+		{
+			name:       "403 without CORS headers",
+			statusCode: 403,
+			setupCORS:  func(resp *httptest.ResponseRecorder) {},
+			config:     &CORSConfig{AllowOrigin: "https://example.com"},
+			want:       false,
+		},
+		{
+			name:       "422 Unprocessable Entity with invalid CORS origin",
+			statusCode: 422,
+			setupCORS: func(resp *httptest.ResponseRecorder) {
+				resp.Header().Set("Access-Control-Allow-Origin", "https://wrong.com")
+			},
+			config: &CORSConfig{AllowOrigin: "https://example.com"},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			resp.Code = tt.statusCode
+			tt.setupCORS(resp)
+			httpResp := resp.Result()
+
+			got := CORSHeadersIsValid(httpResp, tt.config)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCORSHeadersIsValid_NilResponse tests nil response handling
+func TestCORSHeadersIsValid_NilResponse(t *testing.T) {
+	got := CORSHeadersIsValid(nil, nil)
+	if got != false {
+		t.Errorf("CORSHeadersIsValid(nil, nil) = %v, want false", got)
+	}
+
+	got = CORSHeadersIsValid(nil, &CORSConfig{AllowOrigin: "*"})
+	if got != false {
+		t.Errorf("CORSHeadersIsValid(nil, config) = %v, want false", got)
+	}
+}
+
+// TestCORSHeadersIsValid_CommonOrigins tests validation of common origin patterns
+func TestCORSHeadersIsValid_CommonOrigins(t *testing.T) {
+	tests := []struct {
+		name           string
+		responseOrigin string
+		configOrigin   string
+		want           bool
+	}{
+		{
+			name:           "localhost origin",
+			responseOrigin: "http://localhost:3000",
+			configOrigin:   "http://localhost:3000",
+			want:           true,
+		},
+		{
+			name:           "localhost with different port",
+			responseOrigin: "http://localhost:3000",
+			configOrigin:   "http://localhost:8080",
+			want:           false,
+		},
+		{
+			name:           "HTTPS origin",
+			responseOrigin: "https://api.example.com",
+			configOrigin:   "https://api.example.com",
+			want:           true,
+		},
+		{
+			name:           "HTTP vs HTTPS mismatch",
+			responseOrigin: "http://example.com",
+			configOrigin:   "https://example.com",
+			want:           false,
+		},
+		{
+			name:           "subdomain origin",
+			responseOrigin: "https://api.example.com",
+			configOrigin:   "https://example.com",
+			want:           false,
+		},
+		{
+			name:           "origin with path",
+			responseOrigin: "https://example.com/api",
+			configOrigin:   "https://example.com",
+			want:           false,
+		},
+		{
+			name:           "origin with port",
+			responseOrigin: "https://example.com:443",
+			configOrigin:   "https://example.com",
+			want:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			if tt.responseOrigin != "" {
+				resp.Header().Set("Access-Control-Allow-Origin", tt.responseOrigin)
+			}
+			httpResp := resp.Result()
+
+			config := &CORSConfig{AllowOrigin: tt.configOrigin}
+			got := CORSHeadersIsValid(httpResp, config)
+
+			if got != tt.want {
+				t.Errorf("CORSHeadersIsValid() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Example usage test demonstrating CORS validation
+func ExampleCORSHeadersIsValid() {
+	// Basic validation - check if CORS headers exist on error response
+	errorResp, _ := http.Get("https://api.example.com/resource")
+	if HTTPStatusCodeIsError(errorResp) {
+		if CORSHeadersIsValid(errorResp, nil) {
+			// Error response has proper CORS headers
+		}
+	}
+
+	// Validate specific origin configuration
+	config := &CORSConfig{AllowOrigin: "https://example.com"}
+	if CORSHeadersIsValid(errorResp, config) {
+		// CORS headers match expected origin
+	}
+
+	// Validate complete CORS configuration
+	fullConfig := &CORSConfig{
+		AllowOrigin:      "https://example.com",
+		AllowMethods:     "GET, POST, OPTIONS",
+		AllowHeaders:     "Content-Type, Authorization",
+		AllowCredentials: true,
+	}
+	if CORSHeadersIsValid(errorResp, fullConfig) {
+		// Full CORS configuration is valid
+	}
+}

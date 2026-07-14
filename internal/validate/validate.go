@@ -284,3 +284,152 @@ func isNonEmptyValue(value interface{}) bool {
 		return true
 	}
 }
+
+// CORSConfig specifies expected CORS header values for validation.
+type CORSConfig struct {
+	// AllowOrigin is the expected value for Access-Control-Allow-Origin.
+	// Use "*" for wildcard CORS, or specify an exact origin like "https://example.com".
+	// If empty, the origin header is not validated.
+	AllowOrigin string
+
+	// AllowMethods is the expected value for Access-Control-Allow-Methods.
+	// If empty, the methods header is not validated.
+	AllowMethods string
+
+	// AllowHeaders is the expected value for Access-Control-Allow-Headers.
+	// If empty, the headers header is not validated.
+	AllowHeaders string
+
+	// AllowCredentials is the expected value for Access-Control-Allow-Credentials.
+	// If true, expects "true"; if false, expects "true" or header not present.
+	// This is typically used with specific origins (not wildcard).
+	AllowCredentials bool
+
+	// ExposeHeaders is the expected value for Access-Control-Expose-Headers.
+	// If empty, the expose headers header is not validated.
+	ExposeHeaders string
+
+	// MaxAge is the expected value for Access-Control-Max-Age.
+	// If empty, the max-age header is not validated.
+	MaxAge string
+}
+
+// CORSHeadersIsValid validates CORS headers on an HTTP response, particularly for error responses.
+// It checks the presence and values of common CORS headers and returns whether they match the expected configuration.
+//
+// This function is particularly useful for validating that error responses (4xx/5xx) include proper CORS headers,
+// which is required for browsers to receive and process error responses from cross-origin requests.
+//
+// Parameters:
+//   - resp: The HTTP response to validate
+//   - config: Expected CORS configuration (use nil for basic validation that only checks header presence)
+//
+// Returns true if all specified CORS headers are present and match expected values, false otherwise.
+// Returns false if the response is nil.
+//
+// When config is nil, only validates that Access-Control-Allow-Origin header exists (non-empty).
+// When config is provided, validates only the fields that are non-empty in the config.
+//
+// Example usage:
+//
+//	// Basic validation - check if CORS headers exist
+//	if CORSHeadersIsValid(errorResponse, nil) {
+//	    // CORS headers are present
+//	}
+//
+//	// Validate specific origin
+//	config := &CORSConfig{AllowOrigin: "https://example.com"}
+//	if CORSHeadersIsValid(errorResponse, config) {
+//	    // CORS headers match expected origin
+//	}
+//
+//	// Validate wildcard CORS
+//	config := &CORSConfig{AllowOrigin: "*", AllowCredentials: false}
+//	if CORSHeadersIsValid(errorResponse, config) {
+//	    // Wildcard CORS is properly configured
+//	}
+//
+//	// Validate full CORS configuration
+//	config := &CORSConfig{
+//	    AllowOrigin: "https://example.com",
+//	    AllowMethods: "GET, POST, OPTIONS",
+//	    AllowHeaders: "Content-Type, Authorization",
+//	    AllowCredentials: true,
+//	}
+//	if CORSHeadersIsValid(errorResponse, config) {
+//	    // Full CORS configuration is valid
+//	}
+func CORSHeadersIsValid(resp *http.Response, config *CORSConfig) bool {
+	if resp == nil {
+		return false
+	}
+
+	// If no config provided, do basic validation: check if Access-Control-Allow-Origin exists
+	if config == nil {
+		origin := resp.Header.Get("Access-Control-Allow-Origin")
+		return origin != ""
+	}
+
+	// Validate Access-Control-Allow-Origin if specified
+	if config.AllowOrigin != "" {
+		origin := resp.Header.Get("Access-Control-Allow-Origin")
+		if origin == "" {
+			return false
+		}
+
+		// Check for wildcard or exact match
+		if config.AllowOrigin == "*" {
+			// Wildcard is valid
+			if origin != "*" {
+				return false
+			}
+		} else {
+			// Exact origin match (case-sensitive for origins)
+			if origin != config.AllowOrigin {
+				return false
+			}
+		}
+	}
+
+	// Validate Access-Control-Allow-Methods if specified
+	if config.AllowMethods != "" {
+		methods := resp.Header.Get("Access-Control-Allow-Methods")
+		if methods != config.AllowMethods {
+			return false
+		}
+	}
+
+	// Validate Access-Control-Allow-Headers if specified
+	if config.AllowHeaders != "" {
+		headers := resp.Header.Get("Access-Control-Allow-Headers")
+		if headers != config.AllowHeaders {
+			return false
+		}
+	}
+
+	// Validate Access-Control-Allow-Credentials if specified
+	if config.AllowCredentials {
+		credentials := resp.Header.Get("Access-Control-Allow-Credentials")
+		if credentials != "true" {
+			return false
+		}
+	}
+
+	// Validate Access-Control-Expose-Headers if specified
+	if config.ExposeHeaders != "" {
+		exposeHeaders := resp.Header.Get("Access-Control-Expose-Headers")
+		if exposeHeaders != config.ExposeHeaders {
+			return false
+		}
+	}
+
+	// Validate Access-Control-Max-Age if specified
+	if config.MaxAge != "" {
+		maxAge := resp.Header.Get("Access-Control-Max-Age")
+		if maxAge != config.MaxAge {
+			return false
+		}
+	}
+
+	return true
+}
