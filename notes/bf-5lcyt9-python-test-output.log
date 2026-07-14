@@ -1,0 +1,23 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/nix/store/jd20rkmqmkfkcvk2wl2lmzz7acq4svlr-python3-3.12.12/lib/python3.12/unittest/__main__.py", line 18, in <module>
+    main(module=None)
+  File "/nix/store/jd20rkmqmkfkcvk2wl2lmzz7acq4svlr-python3-3.12.12/lib/python3.12/unittest/main.py", line 104, in __init__
+    self.parseArgs(argv)
+  File "/nix/store/jd20rkmqmkfkcvk2wl2lmzz7acq4svlr-python3-3.12.12/lib/python3.12/unittest/main.py", line 130, in parseArgs
+    self._do_discovery(argv[2:])
+  File "/nix/store/jd20rkmqmkfkcvk2wl2lmzz7acq4svlr-python3-3.12.12/lib/python3.12/unittest/main.py", line 253, in _do_discovery
+    self.createTests(from_discovery=True, Loader=Loader)
+  File "/nix/store/jd20rkmqmkfkcvk2wl2lmzz7acq4svlr-python3-3.12.12/lib/python3.12/unittest/main.py", line 160, in createTests
+    self.test = loader.discover(self.start, self.pattern, self.top)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/jd20rkmqmkfkcvk2wl2lmzz7acq4svlr-python3-3.12.12/lib/python3.12/unittest/loader.py", line 310, in discover
+    tests = list(self._find_tests(start_dir, pattern))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/jd20rkmqmkfkcvk2wl2lmzz7acq4svlr-python3-3.12.12/lib/python3.12/unittest/loader.py", line 366, in _find_tests
+    tests, should_recurse = self._find_test_path(full_path, pattern)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/jd20rkmqmkfkcvk2wl2lmzz7acq4svlr-python3-3.12.12/lib/python3.12/unittest/loader.py", line 418, in _find_test_path
+    raise ImportError(
+ImportError: 'test_result_helpers' module incorrectly imported from '/home/coding/ARMOR'. Expected '/home/coding/ARMOR/tests/yamlutil'. Is this module globally installed?
