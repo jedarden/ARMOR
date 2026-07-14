@@ -1,0 +1,46 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest_outputs
+collecting ... collected 5 items
+
+test_simple_assertions.py::test_simple_equality_fail FAILED              [ 20%]
+test_simple_assertions.py::test_simple_truthy_fail FAILED                [ 40%]
+test_simple_assertions.py::test_simple_in_fail FAILED                    [ 60%]
+test_simple_assertions.py::test_greater_than_fail FAILED                 [ 80%]
+test_simple_assertions.py::test_type_fail FAILED                         [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_simple_equality_fail ___________________________
+test_simple_assertions.py:11: in test_simple_equality_fail
+    assert a == b, f"Expected {a} to equal {b}"
+E   AssertionError: Expected 1 to equal 2
+E   assert 1 == 2
+___________________________ test_simple_truthy_fail ____________________________
+test_simple_assertions.py:17: in test_simple_truthy_fail
+    assert value, "Expected value to be truthy"
+E   AssertionError: Expected value to be truthy
+E   assert False
+_____________________________ test_simple_in_fail ______________________________
+test_simple_assertions.py:24: in test_simple_in_fail
+    assert item in collection, f"{item} not found in {collection}"
+E   AssertionError: orange not found in ['apple', 'banana', 'grape']
+E   assert 'orange' in ['apple', 'banana', 'grape']
+____________________________ test_greater_than_fail ____________________________
+test_simple_assertions.py:31: in test_greater_than_fail
+    assert score >= threshold, f"Score {score} below threshold {threshold}"
+E   AssertionError: Score 85 below threshold 90
+E   assert 85 >= 90
+________________________________ test_type_fail ________________________________
+test_simple_assertions.py:37: in test_type_fail
+    assert isinstance(value, int), f"Expected int, got {type(value).__name__}"
+E   AssertionError: Expected int, got str
+E   assert False
+E    +  where False = isinstance('123', int)
+=========================== short test summary info ============================
+FAILED test_simple_assertions.py::test_simple_equality_fail - AssertionError:...
+FAILED test_simple_assertions.py::test_simple_truthy_fail - AssertionError: E...
+FAILED test_simple_assertions.py::test_simple_in_fail - AssertionError: orang...
+FAILED test_simple_assertions.py::test_greater_than_fail - AssertionError: Sc...
+FAILED test_simple_assertions.py::test_type_fail - AssertionError: Expected i...
+============================== 5 failed in 0.04s ===============================

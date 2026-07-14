@@ -1,0 +1,103 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest_outputs
+collecting ... collected 6 items
+
+test_collection_comparisons.py::test_list_equality_fail FAILED           [ 16%]
+test_collection_comparisons.py::test_dict_equality_fail FAILED           [ 33%]
+test_collection_comparisons.py::test_dict_missing_key_fail FAILED        [ 50%]
+test_collection_comparisons.py::test_nested_dict_fail FAILED             [ 66%]
+test_collection_comparisons.py::test_set_comparison_fail FAILED          [ 83%]
+test_collection_comparisons.py::test_tuple_order_fail FAILED             [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_list_equality_fail ____________________________
+test_collection_comparisons.py:11: in test_list_equality_fail
+    assert actual == expected, f"Lists don't match"
+E   AssertionError: Lists don't match
+E   assert [1, 2, 3, 4, 6] == [1, 2, 3, 4, 5]
+E     
+E     At index 4 diff: 6 != 5
+E     
+E     Full diff:
+E       [
+E           1,
+E           2,...
+E     
+E     ...Full output truncated (7 lines hidden), use '-vv' to show
+___________________________ test_dict_equality_fail ____________________________
+test_collection_comparisons.py:18: in test_dict_equality_fail
+    assert actual == expected, "Dictionaries don't match"
+E   AssertionError: Dictionaries don't match
+E   assert {'age': 31, '...ame': 'Alice'} == {'age': 30, '...ame': 'Alice'}
+E     
+E     Omitting 2 identical items, use -vv to show
+E     Differing items:
+E     {'age': 31} != {'age': 30}
+E     
+E     Full diff:
+E       {...
+E     
+E     ...Full output truncated (7 lines hidden), use '-vv' to show
+__________________________ test_dict_missing_key_fail __________________________
+test_collection_comparisons.py:25: in test_dict_missing_key_fail
+    assert actual == expected, "Dictionaries don't match"
+E   AssertionError: Dictionaries don't match
+E   assert {'email': 'bo...'name': 'Bob'} == {'email': 'bo...ole': 'admin'}
+E     
+E     Omitting 2 identical items, use -vv to show
+E     Right contains 1 more item:
+E     {'role': 'admin'}
+E     
+E     Full diff:
+E       {...
+E     
+E     ...Full output truncated (4 lines hidden), use '-vv' to show
+____________________________ test_nested_dict_fail _____________________________
+test_collection_comparisons.py:38: in test_nested_dict_fail
+    assert actual == expected
+E   AssertionError: assert {'settings': ...': 'Charles'}} == {'settings': ...': 'Charlie'}}
+E     
+E     Omitting 1 identical items, use -vv to show
+E     Differing items:
+E     {'user': {'id': 1, 'name': 'Charles'}} != {'user': {'id': 1, 'name': 'Charlie'}}
+E     
+E     Full diff:
+E       {...
+E     
+E     ...Full output truncated (12 lines hidden), use '-vv' to show
+___________________________ test_set_comparison_fail ___________________________
+test_collection_comparisons.py:45: in test_set_comparison_fail
+    assert actual == expected
+E   AssertionError: assert {'apple', 'ba... 'elderberry'} == {'apple', 'ba...erry', 'date'}
+E     
+E     Extra items in the left set:
+E     'elderberry'
+E     Extra items in the right set:
+E     'date'
+E     
+E     Full diff:...
+E     
+E     ...Full output truncated (7 lines hidden), use '-vv' to show
+____________________________ test_tuple_order_fail _____________________________
+test_collection_comparisons.py:52: in test_tuple_order_fail
+    assert actual == expected
+E   AssertionError: assert (1, 3, 2, 4) == (1, 2, 3, 4)
+E     
+E     At index 1 diff: 3 != 2
+E     
+E     Full diff:
+E       (
+E           1,
+E     +     3,...
+E     
+E     ...Full output truncated (4 lines hidden), use '-vv' to show
+=========================== short test summary info ============================
+FAILED test_collection_comparisons.py::test_list_equality_fail - AssertionErr...
+FAILED test_collection_comparisons.py::test_dict_equality_fail - AssertionErr...
+FAILED test_collection_comparisons.py::test_dict_missing_key_fail - Assertion...
+FAILED test_collection_comparisons.py::test_nested_dict_fail - AssertionError...
+FAILED test_collection_comparisons.py::test_set_comparison_fail - AssertionEr...
+FAILED test_collection_comparisons.py::test_tuple_order_fail - AssertionError...
+============================== 6 failed in 0.05s ===============================

@@ -1,0 +1,69 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest_outputs
+collecting ... collected 4 items
+
+test_multiline_strings.py::test_multiline_string_fail FAILED             [ 25%]
+test_multiline_strings.py::test_code_block_diff_fail FAILED              [ 50%]
+test_multiline_strings.py::test_long_text_diff_fail FAILED               [ 75%]
+test_multiline_strings.py::test_json_like_diff_fail FAILED               [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_multiline_string_fail __________________________
+test_multiline_strings.py:21: in test_multiline_string_fail
+    assert actual == expected
+E   AssertionError: assert 'Line 1: Firs...5: Fifth line' == 'Line 1: Firs...5: Fifth line'
+E     
+E       Line 1: First line
+E     - Line 2: Second line
+E     + Line 2: Second line changed
+E     ?                    ++++++++
+E       Line 3: Third line
+E       Line 4: Fourth line
+E       Line 5: Fifth line
+__________________________ test_code_block_diff_fail ___________________________
+test_multiline_strings.py:46: in test_code_block_diff_fail
+    assert actual == expected
+E   assert '\ndef hello_...eturn False\n' == '\ndef hello_...eturn False\n'
+E     
+E       
+E       def hello_world():
+E           print("Hello, World!")
+E           return True
+E       
+E       def goodbye():...
+E     
+E     ...Full output truncated (4 lines hidden), use '-vv' to show
+___________________________ test_long_text_diff_fail ___________________________
+test_multiline_strings.py:69: in test_long_text_diff_fail
+    assert actual == expected
+E   AssertionError: assert '\nLorem ipsu...t in culpa.\n' == '\nLorem ipsu...n proident.\n'
+E     
+E       
+E       Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor
+E       incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud
+E       exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+E       
+E       Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show
+___________________________ test_json_like_diff_fail ___________________________
+test_multiline_strings.py:90: in test_json_like_diff_fail
+    assert actual == expected
+E   assert '{\n    "stat...d"]\n    }\n}' == '{\n    "stat...c"]\n    }\n}'
+E     
+E       {
+E           "status": "success",
+E           "data": {
+E               "id": 123,
+E     -         "items": ["a", "b", "c"]
+E     +         "items": ["a", "b", "c", "d"]...
+E     
+E     ...Full output truncated (3 lines hidden), use '-vv' to show
+=========================== short test summary info ============================
+FAILED test_multiline_strings.py::test_multiline_string_fail - AssertionError...
+FAILED test_multiline_strings.py::test_code_block_diff_fail - assert '\ndef h...
+FAILED test_multiline_strings.py::test_long_text_diff_fail - AssertionError: ...
+FAILED test_multiline_strings.py::test_json_like_diff_fail - assert '{\n    "...
+============================== 4 failed in 0.03s ===============================

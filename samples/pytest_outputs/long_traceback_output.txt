@@ -1,0 +1,21 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0
+rootdir: /home/coding/ARMOR/samples/pytest_outputs
+collected 1 item
+
+test_exceptions_and_edge_cases.py F                                      [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_attribute_error_fail ___________________________
+
+    def test_attribute_error_fail():
+        """Attribute error in test"""
+        obj = {"key": "value"}
+        # This will raise AttributeError: 'dict' object has no attribute 'missing_attr'
+>       assert obj.missing_attr == "expected"
+E       AttributeError: 'dict' object has no attribute 'missing_attr'
+
+test_exceptions_and_edge_cases.py:52: AttributeError
+=========================== short test summary info ============================
+FAILED test_exceptions_and_edge_cases.py::test_attribute_error_fail - Attribu...
+============================== 1 failed in 0.03s ===============================
