@@ -126,6 +126,28 @@ These sample outputs are useful for:
 4. **Tool Development**: Building tools that analyze test results
 5. **Learning**: Understanding how pytest reports different failure scenarios
 
+## Additional Pytest Output Format Examples
+
+These examples demonstrate different pytest output formatting options beyond the standard verbose mode:
+
+### 6. Auto Traceback Mode (`auto_traceback_output.txt`)
+**Demonstrates:** Pytest's default `--tb=auto` traceback mode
+- Shows automated traceback formatting with condensed diffs
+- Single test failure with dictionary comparison
+- Useful for understanding pytest's intelligent diff display
+
+### 7. Long Traceback Mode (`long_traceback_output.txt`)
+**Demonstrates:** Pytest's `--tb=long` traceback mode
+- Shows full, detailed traceback information
+- Single test failure with AttributeError
+- Useful for debugging complex failures
+
+### 8. Verbose Output Mode (`verbose_output_example.txt`)
+**Demonstrates:** Pytest's `-v` (verbose) flag
+- Shows complete test paths with module names
+- Full assertion display in summary
+- Useful for CI/CD pipelines needing detailed output
+
 ## Failure Scenario Categories
 
 | Category | Test File | Output File |
@@ -135,13 +157,17 @@ These sample outputs are useful for:
 | Text/Code Diffs | `test_multiline_strings.py` | `multiline_strings_output.txt` |
 | Exception Handling | `test_exceptions_and_edge_cases.py` | `exceptions_edge_cases_output.txt` |
 | Advanced pytest Features | `test_parameterized_and_fixtures.py` | `parameterized_fixtures_output.txt` |
+| Auto Traceback Mode | `test_collection_comparisons.py` | `auto_traceback_output.txt` |
+| Long Traceback Mode | `test_exceptions_and_edge_cases.py` | `long_traceback_output.txt` |
+| Verbose Output Mode | `test_simple_assertions.py` | `verbose_output_example.txt` |
 
 ## Summary Statistics
 
 - **Total Test Files**: 5
+- **Total Output Examples**: 8 (including different pytest formatting options)
 - **Total Test Cases**: 36
-- **Failure Scenarios Covered**: 15+ distinct types
-- **Output Format**: pytest 8.3.3 with verbose output
+- **Failure Scenarios Covered**: 20+ distinct types
+- **Output Format**: pytest 8.3.3 with Python 3.12.8
 
 ## Notes
 
