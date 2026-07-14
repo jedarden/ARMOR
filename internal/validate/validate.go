@@ -1897,10 +1897,18 @@ type ValidationError struct {
 	Actual interface{}
 	// Context provides additional context about the validation
 	Context string
-	// Suggestions provides actionable suggestions for fixing the issue
-	Suggestions []string
+	// FieldName specifies the field where the error was found (e.g., "error", "message", "detail")
+	FieldName string
+	// PatternDetails contains information about pattern matching failures
+	PatternDetails string
+	// RangeInfo specifies range boundaries for range validation failures (e.g., "400-499 (Client Error)")
+	RangeInfo string
+	// ValidationDetails contains additional validation-specific information
+	ValidationDetails []string
 	// ResponseSnippet is a truncated excerpt from the response for debugging
 	ResponseSnippet string
+	// Suggestions provides actionable suggestions for fixing the issue
+	Suggestions []string
 }
 
 // Error formats the ValidationError as a detailed, multi-line error message.
@@ -1908,6 +1916,10 @@ type ValidationError struct {
 // - The validation type
 // - Expected vs actual values
 // - Context (if provided)
+// - Field name (if provided)
+// - Pattern details (if provided)
+// - Range info (if provided)
+// - Validation details (if provided)
 // - Response snippet (if provided)
 // - Suggestions for fixing the issue
 func (ve ValidationError) Error() string {
@@ -1950,6 +1962,29 @@ func (ve ValidationError) Error() string {
 	// Context
 	if ve.Context != "" {
 		b.WriteString(fmt.Sprintf("  Context:  %s\n", ve.Context))
+	}
+
+	// Field name
+	if ve.FieldName != "" {
+		b.WriteString(fmt.Sprintf("  Field:    %s\n", ve.FieldName))
+	}
+
+	// Pattern details
+	if ve.PatternDetails != "" {
+		b.WriteString(fmt.Sprintf("  Pattern:  %s\n", ve.PatternDetails))
+	}
+
+	// Range info
+	if ve.RangeInfo != "" {
+		b.WriteString(fmt.Sprintf("  Range:    %s\n", ve.RangeInfo))
+	}
+
+	// Validation details
+	if len(ve.ValidationDetails) > 0 {
+		b.WriteString("  Details:\n")
+		for _, detail := range ve.ValidationDetails {
+			b.WriteString(fmt.Sprintf("    - %s\n", detail))
+		}
 	}
 
 	// Response snippet
@@ -1997,6 +2032,61 @@ func FormatValidationError(validationType string, expected, actual interface{}, 
 		Context:         context,
 		ResponseSnippet: responseSnippet,
 		Suggestions:     generateSuggestions(validationType, expected, actual),
+	}
+
+	return ve
+}
+
+// FormatValidationErrorWithDetails creates a ValidationError with extended field support.
+//
+// This function provides full customization over all ValidationError fields, including
+// optional fields like FieldName, PatternDetails, RangeInfo, and ValidationDetails.
+// Use this when you need more detailed error information than FormatValidationError provides.
+//
+// Parameters:
+//   - validationType: The type of validation (e.g., "status_code", "error_message", "content_type")
+//   - expected: The expected value
+//   - actual: The actual value received
+//   - context: Additional context about the validation operation
+//   - responseSnippet: Excerpt from the response for debugging
+//   - fieldName: The specific field name where the error was found (e.g., "error", "message")
+//   - patternDetails: Information about pattern matching failures
+//   - rangeInfo: Range boundaries for range validation failures (e.g., "400-499 (Client Error)")
+//   - validationDetails: Additional validation-specific details as a list of strings
+//
+// Returns a ValidationError with all specified fields populated.
+//
+// Example usage:
+//
+//	ve := FormatValidationErrorWithDetails(
+//	    "error_message",
+//	    "invalid.*token",
+//	    "access_denied",
+//	    "OAuth validation",
+//	    `{"error": "access_denied"}`,
+//	    "error",
+//	    "regex pattern 'invalid.*token' did not match",
+//	    "",
+//	    []string{"No matching error field found", "Checked 3 error message fields"},
+//	)
+func FormatValidationErrorWithDetails(
+	validationType string,
+	expected, actual interface{},
+	context, responseSnippet string,
+	fieldName, patternDetails, rangeInfo string,
+	validationDetails []string,
+) ValidationError {
+	ve := ValidationError{
+		ValidationType:    validationType,
+		Expected:          expected,
+		Actual:            actual,
+		Context:           context,
+		ResponseSnippet:   responseSnippet,
+		FieldName:         fieldName,
+		PatternDetails:    patternDetails,
+		RangeInfo:         rangeInfo,
+		ValidationDetails: validationDetails,
+		Suggestions:       generateSuggestions(validationType, expected, actual),
 	}
 
 	return ve
