@@ -1,3 +1,91 @@
+// Package server provides comprehensive error testing infrastructure for ARMOR's S3-compatible API.
+//
+// # Error Testing Framework Overview
+//
+// This package implements a complete framework for testing HTTP error responses, including:
+//
+// 1. Error Pattern Definitions (error_test_patterns.go):
+//   - Predefined error scenarios for common S3 errors (404, 403, 500, etc.)
+//   - Type-safe error structures (S3Error, ErrorScenarioConfig)
+//   - Error categorization by type (Auth, NotFound, Internal, etc.)
+//   - Mapping functions for error codes to patterns
+//
+// 2. HTTP Error Fixtures (http_error_fixtures.go):
+//   - Reusable HTTP error response fixtures
+//   - Configurable factory functions for common error codes
+//   - XML serialization for S3-compatible error responses
+//
+// 3. Test Infrastructure (error_test_infrastructure_test.go):
+//   - Test server and credential fixtures
+//   - Reusable test helpers for error validation
+//   - Setup/teardown utilities
+//
+// 4. Status Code Validation (error_status_validation.go):
+//   - Comprehensive status code validation helpers
+//   - Flexible assertion modes (boolean vs detailed error)
+//   - Multi-code validation support
+//
+// 5. Test Pattern Tables (error_test_patterns_base_test.go):
+//   - Table-driven test structures for consistency
+//   - Organized test cases by error category
+//   - Extensible patterns for custom scenarios
+//
+// # Quick Start
+//
+// Use a predefined pattern:
+//
+//	pattern := CommonErrorPatterns.ResourceNotFound
+//	fmt.Printf("Expected status: %d\n", pattern.ExpectedStatus) // 404
+//
+// Get a pattern by error code:
+//
+//	pattern := PatternForCode("NoSuchKey")
+//	fmt.Printf("Pattern: %s\n", pattern.Name)
+//
+// Get all patterns for a category:
+//
+//	authPatterns := PatternsForCategory(CategoryAuth)
+//	for _, p := range authPatterns {
+//	    fmt.Printf("- %s\n", p.Name)
+//	}
+//
+// Create a test fixture:
+//
+//	fixture := NotFoundFixture("/api/blobs/missing-file.txt")
+//	response := fixture.ToXMLResponse()
+//
+// # Error Pattern Categories
+//
+//   - CommonErrorPatterns: 8 patterns covering the most common S3 error scenarios
+//   - AuthErrorPatterns: 6 patterns specifically for authentication failures
+//   - ClientErrorPatterns: 4 patterns for 4xx client errors
+//   - ServerErrorPatterns: 2 patterns for 5xx server errors
+//   - ErrorPatternByCategory: Map-based access to patterns by category
+//
+// # Type Safety
+//
+// All error structures use consistent, well-documented types:
+//   - S3Error: Core S3 error response structure
+//   - ErrorScenarioConfig: Test scenario configuration
+//   - ErrorResponseFixture: Complete response fixture with metadata
+//   - HTTPErrorFixture: HTTP-specific error fixture
+//   - ErrorResponseMetadata: Response metadata for logging/debugging
+//
+// # Testing Best Practices
+//
+// 1. Use predefined patterns when possible for consistency
+// 2. Extend patterns with custom configurations rather than creating from scratch
+// 3. Use category-based pattern access for organized testing
+// 4. Leverage table-driven tests for comprehensive coverage
+// 5. Document custom patterns with clear descriptions
+//
+// # Related Files
+//
+//   - error_pattern_usage_example.go: Comprehensive usage examples
+//   - error_test_patterns_test.go: Tests for the pattern infrastructure
+//   - error_structure_validation_test.go: Error structure validation tests
+//   - error_status_validation_test.go: Status code validation tests
+//   - error_response_verification_test.go: Response verification tests
 package server
 
 import (
@@ -31,8 +119,37 @@ import (
 // =============================================================================
 
 // S3Error represents an S3 XML error response.
-// This type is used across error testing, fixtures, and validation.
+//
+// This is the core type used across error testing, fixtures, and validation.
 // It matches the standard S3 error response format with Code and Message fields.
+//
+// Use this type when:
+//   - Parsing S3 XML error responses
+//   - Creating test fixtures that simulate S3 errors
+//   - Validating error response structure
+//   - Serializing errors to XML format
+//
+// Example (parsing):
+//
+//	var s3Err S3Error
+//	err := xml.Unmarshal(responseBody, &s3Err)
+//	if err != nil {
+//	    return err
+//	}
+//	fmt.Printf("Error code: %s, message: %s\n", s3Err.Code, s3Err.Message)
+//
+// Example (creating):
+//
+//	s3Err := S3Error{
+//	    Code: "NoSuchKey",
+//	    Message: "The specified key does not exist",
+//	}
+//	xmlBytes, _ := xml.Marshal(s3Err)
+//
+// Fields:
+//   - XMLName: XML element name (set to "Error" automatically)
+//   - Code: S3 error code (e.g., "NoSuchKey", "AccessDenied")
+//   - Message: Human-readable error message
 type S3Error struct {
 	XMLName xml.Name `xml:"Error"`
 	Code    string   `xml:"Code"`
@@ -44,8 +161,59 @@ type S3Error struct {
 // =============================================================================
 
 // ErrorScenarioConfig represents configuration for an error test scenario.
-// This type is used in both test fixtures and non-test code to define
-// expected error behaviors.
+//
+// This type is the primary configuration structure for defining expected error
+// behaviors in tests. It is used across test fixtures, validation helpers, and
+// predefined error patterns.
+//
+// Use this type when:
+//   - Defining expected error behaviors for test scenarios
+//   - Configuring validation rules for error responses
+//   - Creating custom error patterns based on predefined ones
+//   - Extending existing patterns with custom expectations
+//
+// Example (using a predefined pattern):
+//
+//	pattern := CommonErrorPatterns.ResourceNotFound
+//	fmt.Printf("Expected status: %d\n", pattern.ExpectedStatus) // 404
+//	fmt.Printf("Expected code: %s\n", pattern.ExpectedCode) // "NoSuchKey"
+//
+// Example (creating a custom pattern):
+//
+//	customPattern := ErrorScenarioConfig{
+//	    Name: "Custom Not Found",
+//	    ExpectedCode: "CustomNotFound",
+//	    ExpectedStatus: 404,
+//	    ExpectedMessage: "Custom not found message",
+//	    ExpectedKeywords: []string{"custom", "not", "found"},
+//	    MinMessageLength: 15,
+//	    MaxResponseTime: 500 * time.Millisecond,
+//	    Description: "Custom not found scenario",
+//	    Category: string(CategoryNotFound),
+//	}
+//
+// Example (extending a predefined pattern):
+//
+//	basePattern := CommonErrorPatterns.ResourceNotFound
+//	customPattern := basePattern
+//	customPattern.ExpectedMessage = "Custom message"
+//	customPattern.MaxResponseTime = 1000 * time.Millisecond
+//
+// Fields:
+//   - Name: Scenario name for identification and test reporting
+//   - ExpectedCode: S3 error code (e.g., "NoSuchKey", "AccessDenied")
+//   - ExpectedStatus: HTTP status code (e.g., 404, 403, 500)
+//   - ExpectedMessage: Text that should appear in the error message
+//   - ExpectedKeywords: Alternative keywords (any match is acceptable)
+//   - MinMessageLength: Minimum acceptable message length
+//   - MaxResponseTime: Maximum acceptable response duration
+//   - Description: Explains what this scenario tests
+//   - Category: Error type category (e.g., "NotFound", "Auth", "CORS")
+//
+// Default values:
+//   - MinMessageLength: 15 (via DefaultErrorScenarioConfig())
+//   - Category: "General" (via DefaultErrorScenarioConfig())
+//   - MaxResponseTime: Varies by pattern (typically 200-1000ms)
 type ErrorScenarioConfig struct {
 	// Name is the scenario name for identification
 	Name string
@@ -88,7 +256,33 @@ func DefaultErrorScenarioConfig() ErrorScenarioConfig {
 // =============================================================================
 
 // ErrorResponseMetadata contains metadata about an error response.
-// This type is used for logging, debugging, and performance monitoring.
+//
+// This type is used for logging, debugging, and performance monitoring. It captures
+// all relevant information about an error response without storing the full body.
+//
+// Use this type when:
+//   - Logging error responses for debugging
+//   - Monitoring response times and performance
+//   - Tracking error patterns over time
+//   - Collecting metrics for error analysis
+//
+// Example (using ExtractMetadata):
+//
+//	start := time.Now()
+//	resp, err := http.Get("http://example.com/api/resource")
+//	duration := time.Since(start)
+//
+//	metadata := ExtractMetadata(resp, duration)
+//	log.Printf("Error: %s (%d) in %v\n", metadata.ErrorCode, metadata.StatusCode, metadata.ResponseTime)
+//
+// Fields:
+//   - StatusCode: HTTP status code received
+//   - ErrorCode: S3 error code parsed from the response
+//   - Message: Error message text
+//   - ResponseTime: How long the request took
+//   - ContentLength: Size of the response body
+//   - ContentType: Response content type header
+//   - Timestamp: When the response was received
 type ErrorResponseMetadata struct {
 	// StatusCode is the HTTP status code received
 	StatusCode int
@@ -113,7 +307,24 @@ type ErrorResponseMetadata struct {
 }
 
 // ExtractMetadata extracts metadata from an HTTP response.
-// This helper is useful for logging and debugging error responses.
+//
+// This helper is useful for logging and debugging error responses. It parses
+// the S3 error from the response body and returns comprehensive metadata.
+//
+// Parameters:
+//   - resp: HTTP response to extract metadata from
+//   - duration: Time taken for the request
+//
+// Returns:
+//   - ErrorResponseMetadata containing all extracted information
+//
+// Use this helper when:
+//   - Logging error responses for later analysis
+//   - Debugging unexpected error responses
+//   - Collecting performance metrics
+//   - Tracking error patterns in production
+//
+// Note: This function consumes the response body.
 func ExtractMetadata(resp *http.Response, duration time.Duration) ErrorResponseMetadata {
 	body, _ := io.ReadAll(resp.Body)
 	defer resp.Body.Close()
@@ -137,8 +348,45 @@ func ExtractMetadata(resp *http.Response, duration time.Duration) ErrorResponseM
 // =============================================================================
 
 // ErrorResponseFixture represents a complete error response fixture.
-// This type combines the S3 error with HTTP response metadata for
-// comprehensive testing scenarios.
+//
+// This type combines the S3 error with HTTP response metadata for comprehensive
+// testing scenarios. It is a complete representation of an error response that
+// can be used for validation, comparison, and re-creation in tests.
+//
+// Use this type when:
+//   - Creating complete error response fixtures for testing
+//   - Comparing actual responses against expected fixtures
+//   - Serializing and re-creating error responses in tests
+//   - Capturing full response state for debugging
+//
+// Example (using ToFixture):
+//
+//	start := time.Now()
+//	resp, err := http.Get("http://example.com/api/resource")
+//	duration := time.Since(start)
+//
+//	fixture, err := ToFixture(resp, duration)
+//	if err != nil {
+//	    return err
+//	}
+//	fmt.Printf("Fixture: %s (%d)\n", fixture.S3Error.Code, fixture.HTTPStatus)
+//
+// Example (manual creation):
+//
+//	fixture := &ErrorResponseFixture{
+//	    S3Error: S3Error{Code: "NoSuchKey", Message: "Not found"},
+//	    HTTPStatus: 404,
+//	    Headers: http.Header{"Content-Type": []string{"application/xml"}},
+//	    Body: []byte("<?xml version=\"1.0\"?><Error><Code>NoSuchKey</Code></Error>"),
+//	    Duration: 150 * time.Millisecond,
+//	}
+//
+// Fields:
+//   - S3Error: Parsed S3 error structure
+//   - HTTPStatus: HTTP status code
+//   - Headers: HTTP response headers
+//   - Body: Raw response body bytes
+//   - Duration: Response time
 type ErrorResponseFixture struct {
 	// S3Error is the parsed S3 error structure
 	S3Error S3Error
@@ -157,6 +405,26 @@ type ErrorResponseFixture struct {
 }
 
 // ToFixture converts an HTTP response to a fixture.
+//
+// This helper parses an HTTP response and creates a complete fixture that can
+// be used for testing, validation, and debugging. It reads and parses the
+// response body, extracts headers, and captures timing information.
+//
+// Parameters:
+//   - resp: HTTP response to convert
+//   - duration: Time taken for the request
+//
+// Returns:
+//   - *ErrorResponseFixture containing all response information
+//   - error if response body parsing fails
+//
+// Use this helper when:
+//   - Capturing actual responses for fixture creation
+//   - Creating test fixtures from real server responses
+//   - Debugging unexpected error responses
+//   - Recording responses for regression testing
+//
+// Note: This function consumes the response body.
 func ToFixture(resp *http.Response, duration time.Duration) (*ErrorResponseFixture, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -183,28 +451,80 @@ func ToFixture(resp *http.Response, duration time.Duration) (*ErrorResponseFixtu
 // =============================================================================
 
 // ErrorCategory represents different categories of errors.
+//
+// Error categories are used to organize and group error patterns by type.
+// They enable efficient testing and validation of specific error classes.
+//
+// Use error categories when:
+//   - Getting all patterns for a specific error type via PatternsForCategory()
+//   - Organizing tests by error category
+//   - Filtering errors in monitoring and logging
+//   - Understanding error patterns at a high level
+//
+// Example (using a category):
+//
+//	authPatterns := PatternsForCategory(CategoryAuth)
+//	for _, pattern := range authPatterns {
+//	    fmt.Printf("Auth pattern: %s\n", pattern.Name)
+//	}
+//
+// Example (checking a category):
+//
+//	category := CategoryForCode("NoSuchKey")
+//	fmt.Printf("Category: %s\n", category) // "NotFound"
 type ErrorCategory string
 
 const (
 	// CategoryAuth authentication errors (401, 403)
+	//
+	// Covers:
+	//   - Missing authentication tokens
+	//   - Invalid access keys
+	//   - Signature mismatches
+	//   - Expired requests
 	CategoryAuth ErrorCategory = "Auth"
 
 	// CategoryNotFound resource not found errors (404)
+	//
+	// Covers:
+	//   - Missing objects (NoSuchKey)
+	//   - Missing buckets
+	//   - Missing resources
 	CategoryNotFound ErrorCategory = "NotFound"
 
 	// CategoryInvalidRequest invalid request errors (400, 415)
+	//
+	// Covers:
+	//   - Malformed requests
+	//   - Invalid parameters
+	//   - Unsupported media types
 	CategoryInvalidRequest ErrorCategory = "InvalidRequest"
 
 	// CategoryMethodNotAllowed method not allowed errors (405)
+	//
+	// Covers:
+	//   - Unsupported HTTP methods
+	//   - Method restrictions
 	CategoryMethodNotAllowed ErrorCategory = "MethodNotAllowed"
 
 	// CategoryInternal server errors (500)
+	//
+	// Covers:
+	//   - Internal server errors
+	//   - Service unavailable
+	//   - Infrastructure failures
 	CategoryInternal ErrorCategory = "Internal"
 
 	// CategoryCORS CORS-related errors
+	//
+	// Covers:
+	//   - CORS validation failures
+	//   - Origin restrictions
 	CategoryCORS ErrorCategory = "CORS"
 
 	// CategoryGeneral general uncategorized errors
+	//
+	// Default category for errors that don't fit other categories
 	CategoryGeneral ErrorCategory = "General"
 )
 
@@ -218,35 +538,108 @@ func (e ErrorCategory) String() string {
 // =============================================================================
 
 // Common S3 error codes used across testing.
+//
+// These constants represent standard S3 error codes. Using constants instead of
+// string literals prevents typos and enables compile-time checking.
+//
+// Use these constants when:
+//   - Creating custom error patterns
+//   - Parsing error responses
+//   - Writing validation logic
+//   - Referencing S3 error codes in tests
+//
+// Example:
+//
+//	pattern := ErrorScenarioConfig{
+//	    ExpectedCode: ErrorCodeNoSuchKey, // Use constant instead of "NoSuchKey"
+//	    ExpectedStatus: 404,
+//	}
+//
+// S3 Error Code Reference:
+// https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
 const (
 	// ErrorCodeAccessDenied - Access denied (403)
+	//
+	// Client does not have access to the requested resource.
+	// Common causes:
+	//   - Invalid or expired credentials
+	//   - Insufficient permissions
+	//   - ACL restrictions
 	ErrorCodeAccessDenied = "AccessDenied"
 
 	// ErrorCodeInvalidAccessKeyId - Invalid access key (403)
+	//
+	// The AWS access key ID provided does not exist in our records.
+	// Common causes:
+	//   - Mistyped access key
+	//   - Access key that doesn't belong to any account
 	ErrorCodeInvalidAccessKeyId = "InvalidAccessKeyId"
 
 	// ErrorCodeSignatureDoesNotMatch - Signature mismatch (403)
+	//
+	// The request signature calculated by the server does not match the signature provided.
+	// Common causes:
+	//   - Incorrect secret key
+	//   - Tampered request
+	//   - Signing algorithm mismatch
 	ErrorCodeSignatureDoesNotMatch = "SignatureDoesNotMatch"
 
 	// ErrorCodeMissingAuthenticationToken - Missing auth header (403)
+	//
+	// Authorization header is missing or required date header is missing.
+	// Common causes:
+	//   - No Authorization header
+	//   - Missing X-Amz-Date header
 	ErrorCodeMissingAuthenticationToken = "MissingAuthenticationToken"
 
 	// ErrorCodeNoSuchKey - Resource not found (404)
+	//
+	// The specified key does not exist.
+	// Common causes:
+	//   - Object was deleted
+	//   - Wrong bucket/key name
 	ErrorCodeNoSuchKey = "NoSuchKey"
 
 	// ErrorCodeMethodNotAllowed - Method not allowed (405)
+	//
+	// The specified method is not allowed against this resource.
+	// Common causes:
+	//   - Wrong HTTP method for endpoint
+	//   - Method restrictions
 	ErrorCodeMethodNotAllowed = "MethodNotAllowed"
 
 	// ErrorCodeUnsupportedMediaType - Unsupported media type (415)
+	//
+	// The content type is not supported.
+	// Common causes:
+	//   - Wrong Content-Type header
+	//   - Unsupported format
 	ErrorCodeUnsupportedMediaType = "UnsupportedMediaType"
 
 	// ErrorCodeInvalidRequest - Invalid request (400)
+	//
+	// The request is invalid or malformed.
+	// Common causes:
+	//   - Missing required parameters
+	//   - Invalid query string
+	//   - Malformed request body
 	ErrorCodeInvalidRequest = "InvalidRequest"
 
 	// ErrorCodeInternalError - Internal server error (500)
+	//
+	// Internal server error occurred.
+	// Common causes:
+	//   - Server-side bug
+	//   - Infrastructure failure
+	//   - Unexpected error condition
 	ErrorCodeInternalError = "InternalError"
 
 	// ErrorCodeRequestExpired - Request timestamp expired (403)
+	//
+	// Request has expired (typically >15 minutes old).
+	// Common causes:
+	//   - Stale request
+	//   - Clock skew
 	ErrorCodeRequestExpired = "RequestExpired"
 )
 
@@ -255,6 +648,37 @@ const (
 // =============================================================================
 
 // CategoryForCode returns the error category for a given error code.
+//
+// This helper maps S3 error codes to their corresponding error categories,
+// enabling organized testing and analysis by error type.
+//
+// Parameters:
+//   - code: S3 error code (e.g., "NoSuchKey", "AccessDenied")
+//
+// Returns:
+//   - ErrorCategory for the given error code
+//
+// Use this helper when:
+//   - Categorizing errors for logging/monitoring
+//   - Organizing tests by error category
+//   - Understanding error types at runtime
+//   - Filtering errors by category
+//
+// Example:
+//
+//	category := CategoryForCode("NoSuchKey")
+//	if category == CategoryNotFound {
+//	    fmt.Println("This is a not-found error")
+//	}
+//
+// Category mappings:
+//   - Auth: AccessDenied, InvalidAccessKeyId, SignatureDoesNotMatch,
+//     MissingAuthenticationToken, RequestExpired
+//   - NotFound: NoSuchKey
+//   - MethodNotAllowed: MethodNotAllowed
+//   - InvalidRequest: UnsupportedMediaType, InvalidRequest
+//   - Internal: InternalError
+//   - General: Any other error code
 func CategoryForCode(code string) ErrorCategory {
 	switch code {
 	case ErrorCodeAccessDenied, ErrorCodeInvalidAccessKeyId,
@@ -279,6 +703,38 @@ func CategoryForCode(code string) ErrorCategory {
 // =============================================================================
 
 // ExpectedStatusCodeForCode returns the expected HTTP status code for an S3 error code.
+//
+// This helper maps S3 error codes to their corresponding HTTP status codes,
+// enabling validation of error responses without hardcoding status values.
+//
+// Parameters:
+//   - code: S3 error code (e.g., "NoSuchKey", "AccessDenied")
+//
+// Returns:
+//   - Expected HTTP status code for the given error code
+//
+// Use this helper when:
+//   - Validating error responses
+//   - Creating test expectations
+//   - Understanding error code to status code mappings
+//   - Writing generic error validation logic
+//
+// Example:
+//
+//	expectedStatus := ExpectedStatusCodeForCode("NoSuchKey")
+//	if resp.StatusCode == expectedStatus {
+//	    fmt.Println("Status code is correct")
+//	}
+//
+// Status code mappings:
+//   - 403: AccessDenied, InvalidAccessKeyId, SignatureDoesNotMatch,
+//     MissingAuthenticationToken, RequestExpired
+//   - 404: NoSuchKey
+//   - 405: MethodNotAllowed
+//   - 415: UnsupportedMediaType
+//   - 400: InvalidRequest
+//   - 500: InternalError
+//   - 500 (default): Any other error code
 func ExpectedStatusCodeForCode(code string) int {
 	switch code {
 	case ErrorCodeAccessDenied, ErrorCodeInvalidAccessKeyId,
