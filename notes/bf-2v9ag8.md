@@ -63,12 +63,13 @@ ARMOR includes `error_response_verification_test.go` which automatically verifie
 3. **Consistency**: All responses use Content-Type: application/xml
 4. **Format**: XML structure with <Code> and <Message> elements
 
-Test results:
+Test results (2026-07-14):
 ```
-Average response time: 16.488µs
-Min response time: 6.035µs
-Max response time: 35.217µs
+Average response time: 18.786µs
+Min response time: 7.723µs
+Max response time: 32.22µs
 All responses under 100ms: true
+Total scenarios: 8
 ```
 
 ## Documentation
