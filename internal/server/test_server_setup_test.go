@@ -691,22 +691,8 @@ func ValidateErrorServerResponse(t *testing.T, resp *http.Response, expectedStat
 //	if s3Err.Code != "NoSuchKey" {
 //	    t.Errorf("Expected NoSuchKey, got %s", s3Err.Code)
 //	}
-func GetErrorServerS3Error(t *testing.T, resp *http.Response) *S3Error {
-	t.Helper()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("Failed to read response body: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var s3Err S3Error
-	if err := xml.Unmarshal(body, &s3Err); err != nil {
-		t.Fatalf("Failed to parse S3 error response: %v", err)
-	}
-
-	return &s3Err
-}
+//
+// Note: GetErrorServerS3Error is defined in test_request_validation_helpers.go
 
 // =============================================================================
 // DOCUMENTATION
