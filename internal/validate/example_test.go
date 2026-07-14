@@ -238,7 +238,7 @@ func ExampleValidateErrorMessagePattern_auth() {
 		{`{"message": "Resource not found"}`, false},
 	}
 
-	pattern := "(authentication|authorization|access|permission).*failed|denied"
+	pattern := "(authentication|authorized?|access|permission).*(failed|denied)"
 	for _, tc := range testCases {
 		matches, _ := validate.ValidateErrorMessagePattern([]byte(tc.body), pattern, true)
 		fmt.Printf("Body: %s - Matches: %v\n", tc.body, matches)

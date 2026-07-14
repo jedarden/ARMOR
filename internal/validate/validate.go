@@ -571,6 +571,74 @@ func ValidateErrorMessagePattern(bodyBytes []byte, pattern string, caseInsensiti
 //	err = ValidateErrorMessage(body, "invalid.*credentials") // Auth errors
 //	err = ValidateErrorMessage(body, "rate.*limit")          // Rate limiting
 //	err = ValidateErrorMessage(body, "timeout")               // Timeout errors
+//
+// # Common Error Pattern Examples
+//
+// The function auto-detects regex vs substring matching:
+//
+// # OAuth 2.0 Errors
+//
+//	response := []byte(`{"error": "invalid_token", "error_description": "The access token expired"}`)
+//	err := ValidateErrorMessage(response, "invalid_token")  // substring match
+//
+//	response := []byte(`{"error": "access_denied"}`)
+//	err = ValidateErrorMessage(response, "access_denied|invalid_grant")  // regex match
+//
+// # Authentication Errors
+//
+//	response := []byte(`{"message": "Authentication failed: invalid credentials"}`)
+//	err := ValidateErrorMessage(response, "authentication.*failed")  // regex match
+//
+//	response := []byte(`{"error": "Invalid username or password"}`)
+//	err = ValidateErrorMessage(response, "invalid.*credentials")  // regex match
+//
+// # Authorization Errors
+//
+//	response := []byte(`{"error": "Permission denied"}`)
+//	err := ValidateErrorMessage(response, "permission.*denied")  // regex match
+//
+//	response := []byte(`{"detail": "User is not authorized to access this resource"}`)
+//	err = ValidateErrorMessage(response, "not.*authorized")  // regex match
+//
+// # Validation Errors
+//
+//	response := []byte(`{"error": "Validation failed: required field missing"}`)
+//	err = ValidateErrorMessage(response, "validation.*failed")  // regex match
+//
+//	response := []byte(`{"detail": "Invalid input: email format is incorrect"}`)
+//	err = ValidateErrorMessage(response, "invalid.*input")  // regex match
+//
+// # Resource Errors
+//
+//	response := []byte(`{"error": "Resource not found"}`)
+//	err = ValidateErrorMessage(response, "not found")  // substring match
+//
+//	response := []byte(`{"message": "User does not exist"}`)
+//	err = ValidateErrorMessage(response, "does not exist")  // substring match
+//
+// # Rate Limiting Errors
+//
+//	response := []byte(`{"error": "Rate limit exceeded"}`)
+//	err = ValidateErrorMessage(response, "rate.*limit")  // regex match
+//
+//	response := []byte(`{"detail": "Too many requests, please try again later"}`)
+//	err = ValidateErrorMessage(response, "too many requests")  // substring match
+//
+// # Timeout Errors
+//
+//	response := []byte(`{"message": "Request timeout"}`)
+//	err = ValidateErrorMessage(response, "timeout")  // substring match
+//
+//	response := []byte(`{"error": "Connection timeout after 30 seconds"}`)
+//	err = ValidateErrorMessage(response, "timeout")  // substring match
+//
+// # Server Errors
+//
+//	response := []byte(`{"error": "Internal server error"}`)
+//	err = ValidateErrorMessage(response, "internal.*error")  // regex match
+//
+//	response := []byte(`{"message": "Service temporarily unavailable"}`)
+//	err = ValidateErrorMessage(response, "unavailable")  // substring match
 func ValidateErrorMessage(response []byte, expectedPattern string) error {
 	// Validate inputs
 	if len(response) == 0 {
