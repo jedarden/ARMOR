@@ -1884,124 +1884,8 @@ func GetStatusCodeRangeDescription(pattern string) (string, error) {
 }
 
 // =============================================================================
-// ENHANCED VALIDATION ERROR FORMATTING
+// HELPER FUNCTIONS FOR CREATING VALIDATION ERRORS
 // =============================================================================
-
-// ValidationError represents a structured validation error with detailed context.
-type ValidationError struct {
-	// ValidationType is the category of validation (e.g., "status_code", "error_message", "content_type")
-	ValidationType string
-	// Expected is what was expected
-	Expected interface{}
-	// Actual is what was actually received
-	Actual interface{}
-	// Context provides additional context about the validation
-	Context string
-	// FieldName specifies the field where the error was found (e.g., "error", "message", "detail")
-	FieldName string
-	// PatternDetails contains information about pattern matching failures
-	PatternDetails string
-	// RangeInfo specifies range boundaries for range validation failures (e.g., "400-499 (Client Error)")
-	RangeInfo string
-	// ValidationDetails contains additional validation-specific information
-	ValidationDetails []string
-	// ResponseSnippet is a truncated excerpt from the response for debugging
-	ResponseSnippet string
-	// Suggestions provides actionable suggestions for fixing the issue
-	Suggestions []string
-}
-
-// Error formats the ValidationError as a detailed, multi-line error message.
-// The output includes:
-// - The validation type
-// - Expected vs actual values
-// - Context (if provided)
-// - Field name (if provided)
-// - Pattern details (if provided)
-// - Range info (if provided)
-// - Validation details (if provided)
-// - Response snippet (if provided)
-// - Suggestions for fixing the issue
-func (ve ValidationError) Error() string {
-	var b strings.Builder
-
-	b.WriteString(fmt.Sprintf("%s validation failed\n", ve.ValidationType))
-
-	// Expected vs Actual
-	switch exp := ve.Expected.(type) {
-	case int:
-		b.WriteString(fmt.Sprintf("  Expected: %d (%s)\n", exp, getStatusCodeDescription(exp)))
-	case []int:
-		b.WriteString("  Expected: one of [")
-		for i, code := range exp {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(fmt.Sprintf("%d (%s)", code, getStatusCodeDescription(code)))
-		}
-		b.WriteString("]\n")
-	case string:
-		b.WriteString(fmt.Sprintf("  Expected: %s\n", exp))
-	default:
-		b.WriteString(fmt.Sprintf("  Expected: %v\n", exp))
-	}
-
-	// Actual value
-	switch act := ve.Actual.(type) {
-	case int:
-		b.WriteString(fmt.Sprintf("  Actual:   %d (%s)\n", act, getStatusCodeDescription(act)))
-	case string:
-		if len(act) > 100 {
-			act = act[:100] + "..."
-		}
-		b.WriteString(fmt.Sprintf("  Actual:   %s\n", act))
-	default:
-		b.WriteString(fmt.Sprintf("  Actual:   %v\n", act))
-	}
-
-	// Context
-	if ve.Context != "" {
-		b.WriteString(fmt.Sprintf("  Context:  %s\n", ve.Context))
-	}
-
-	// Field name
-	if ve.FieldName != "" {
-		b.WriteString(fmt.Sprintf("  Field:    %s\n", ve.FieldName))
-	}
-
-	// Pattern details
-	if ve.PatternDetails != "" {
-		b.WriteString(fmt.Sprintf("  Pattern:  %s\n", ve.PatternDetails))
-	}
-
-	// Range info
-	if ve.RangeInfo != "" {
-		b.WriteString(fmt.Sprintf("  Range:    %s\n", ve.RangeInfo))
-	}
-
-	// Validation details
-	if len(ve.ValidationDetails) > 0 {
-		b.WriteString("  Details:\n")
-		for _, detail := range ve.ValidationDetails {
-			b.WriteString(fmt.Sprintf("    - %s\n", detail))
-		}
-	}
-
-	// Response snippet
-	if ve.ResponseSnippet != "" {
-		b.WriteString(fmt.Sprintf("  Response: %s\n", ve.ResponseSnippet))
-	}
-
-	// Suggestions
-	if len(ve.Suggestions) > 0 {
-		b.WriteString("  Suggestions:\n")
-		for _, suggestion := range ve.Suggestions {
-			b.WriteString(fmt.Sprintf("    - %s\n", suggestion))
-		}
-	}
-
-	return b.String()
-}
 
 // FormatValidationError creates a standardized ValidationError with appropriate suggestions.
 //
@@ -2014,24 +1898,32 @@ func (ve ValidationError) Error() string {
 //   - actual: The actual value received
 //   - context: Additional context (optional)
 //   - responseSnippet: Excerpt from response (optional)
+//   - customSuggestions: Optional custom suggestions (if provided, these override auto-generated suggestions)
 //
-// Returns a ValidationError with appropriate suggestions populated.
+// Returns a ValidationError with appropriate suggestions.
 //
-// Example usage:
+// Example usage with auto-generated suggestions:
 //
 //	err := FormatValidationError("status_code", 200, 404, "GET /api/users", "")
-//	// Output includes suggestions like:
-//	// - Verify the endpoint URL is correct
-//	// - Check if the resource exists
-//	// - Review authentication credentials
-func FormatValidationError(validationType string, expected, actual interface{}, context, responseSnippet string) ValidationError {
+//
+// Example usage with custom suggestions:
+//
+//	err := FormatValidationError("status_code", 200, 404, "GET /api/users", "",
+//	    "Check the endpoint documentation", "Verify the API version")
+func FormatValidationError(validationType string, expected, actual interface{}, context, responseSnippet string, customSuggestions ...string) ValidationError {
+	suggestions := customSuggestions
+	if len(customSuggestions) == 0 {
+		suggestions = generateSuggestions(validationType, expected, actual)
+	}
+
 	ve := ValidationError{
-		ValidationType:  validationType,
-		Expected:        expected,
-		Actual:          actual,
-		Context:         context,
-		ResponseSnippet: responseSnippet,
-		Suggestions:     generateSuggestions(validationType, expected, actual),
+		ErrorType:        validationType,
+		Message:          generateMessageFromParts(validationType, expected, actual),
+		Expected:         expected,
+		Actual:           actual,
+		Context:          context,
+		ResponseSnippet:  responseSnippet,
+		Suggestions:      suggestions,
 	}
 
 	return ve
@@ -2040,7 +1932,7 @@ func FormatValidationError(validationType string, expected, actual interface{}, 
 // FormatValidationErrorWithDetails creates a ValidationError with extended field support.
 //
 // This function provides full customization over all ValidationError fields, including
-// optional fields like FieldName, PatternDetails, RangeInfo, and ValidationDetails.
+// optional fields like FieldName, Location, RelatedFields, PatternDetails, RangeInfo, ValidationDetails, and custom Suggestions.
 // Use this when you need more detailed error information than FormatValidationError provides.
 //
 // Parameters:
@@ -2050,13 +1942,16 @@ func FormatValidationError(validationType string, expected, actual interface{}, 
 //   - context: Additional context about the validation operation
 //   - responseSnippet: Excerpt from the response for debugging
 //   - fieldName: The specific field name where the error was found (e.g., "error", "message")
+//   - location: Where in the input the error occurred (e.g., "line 5", "field 'user.email'", "position 123")
+//   - relatedFields: List of fields related to this error (e.g., ["email", "email_confirmation"])
 //   - patternDetails: Information about pattern matching failures
 //   - rangeInfo: Range boundaries for range validation failures (e.g., "400-499 (Client Error)")
 //   - validationDetails: Additional validation-specific details as a list of strings
+//   - customSuggestions: Optional custom suggestions (if provided, these override auto-generated suggestions)
 //
 // Returns a ValidationError with all specified fields populated.
 //
-// Example usage:
+// Example usage with auto-generated suggestions:
 //
 //	ve := FormatValidationErrorWithDetails(
 //	    "error_message",
@@ -2065,31 +1960,104 @@ func FormatValidationError(validationType string, expected, actual interface{}, 
 //	    "OAuth validation",
 //	    `{"error": "access_denied"}`,
 //	    "error",
+//	    "field 'user.access_token'",
+//	    []string{"user.access_token", "user.refresh_token"},
 //	    "regex pattern 'invalid.*token' did not match",
 //	    "",
 //	    []string{"No matching error field found", "Checked 3 error message fields"},
+//	)
+//
+// Example usage with custom suggestions:
+//
+//	ve := FormatValidationErrorWithDetails(
+//	    "error_message",
+//	    "invalid.*token",
+//	    "access_denied",
+//	    "OAuth validation",
+//	    `{"error": "access_denied"}`,
+//	    "error",
+//	    "line 42 in user configuration",
+//	    []string{"token_type", "access_token"},
+//	    "regex pattern 'invalid.*token' did not match",
+//	    "",
+//	    []string{"No matching error field found"},
+//	    "Check token format", "Verify OAuth scopes",
 //	)
 func FormatValidationErrorWithDetails(
 	validationType string,
 	expected, actual interface{},
 	context, responseSnippet string,
-	fieldName, patternDetails, rangeInfo string,
+	fieldName, location string,
+	relatedFields []string,
+	patternDetails, rangeInfo string,
 	validationDetails []string,
+	customSuggestions ...string,
 ) ValidationError {
+	suggestions := customSuggestions
+	if len(customSuggestions) == 0 {
+		suggestions = generateSuggestions(validationType, expected, actual)
+	}
+
 	ve := ValidationError{
-		ValidationType:    validationType,
+		ErrorType:         validationType,
+		Message:           generateMessageFromParts(validationType, expected, actual),
 		Expected:          expected,
 		Actual:            actual,
 		Context:           context,
 		ResponseSnippet:   responseSnippet,
 		FieldName:         fieldName,
+		Location:          location,
+		RelatedFields:     relatedFields,
 		PatternDetails:    patternDetails,
 		RangeInfo:         rangeInfo,
 		ValidationDetails: validationDetails,
-		Suggestions:       generateSuggestions(validationType, expected, actual),
+		Suggestions:       suggestions,
 	}
 
 	return ve
+}
+
+// generateMessageFromParts creates a concise human-readable message from validation details.
+func generateMessageFromParts(validationType string, expected, actual interface{}) string {
+	// Start with the basic validation failure message
+	msg := fmt.Sprintf("%s validation failed", validationType)
+
+	// Add expected vs actual information if available
+	if expected != nil || actual != nil {
+		msg += ": expected "
+		switch exp := expected.(type) {
+		case int:
+			msg += fmt.Sprintf("%d", exp)
+		case string:
+			msg += fmt.Sprintf("'%s'", exp)
+		case []int:
+			msg += "one of ["
+			for i, code := range exp {
+				if i > 0 {
+					msg += ", "
+				}
+				msg += fmt.Sprintf("%d", code)
+			}
+			msg += "]"
+		default:
+			msg += fmt.Sprintf("%v", exp)
+		}
+
+		msg += ", got "
+		switch act := actual.(type) {
+		case int:
+			msg += fmt.Sprintf("%d", act)
+		case string:
+			if len(act) > 50 {
+				act = act[:50] + "..."
+			}
+			msg += fmt.Sprintf("'%s'", act)
+		default:
+			msg += fmt.Sprintf("%v", act)
+		}
+	}
+
+	return msg
 }
 
 // generateSuggestions generates relevant suggestions based on validation type and values.
@@ -2269,40 +2237,4 @@ func generateStatusCodeRangeSuggestions(expected, actual interface{}) []string {
 	}
 
 	return suggestions
-}
-
-// getStatusCodeDescription returns a human-readable description for a status code.
-// This is a lightweight version for error formatting.
-func getStatusCodeDescription(code int) string {
-	descriptions := map[int]string{
-		100: "Continue", 101: "Switching Protocols", 102: "Processing",
-		200: "OK", 201: "Created", 202: "Accepted", 203: "Non-Authoritative Information",
-		204: "No Content", 205: "Reset Content", 206: "Partial Content",
-		300: "Multiple Choices", 301: "Moved Permanently", 302: "Found",
-		303: "See Other", 304: "Not Modified", 307: "Temporary Redirect",
-		308: "Permanent Redirect",
-		400: "Bad Request", 401: "Unauthorized", 402: "Payment Required",
-		403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed",
-		406: "Not Acceptable", 407: "Proxy Authentication Required",
-		408: "Request Timeout", 409: "Conflict", 410: "Gone",
-		411: "Length Required", 412: "Precondition Failed",
-		413: "Payload Too Large", 414: "URI Too Long",
-		415: "Unsupported Media Type", 416: "Range Not Satisfiable",
-		417: "Expectation Failed", 418: "I'm a teapot",
-		422: "Unprocessable Entity", 423: "Locked", 424: "Failed Dependency",
-		426: "Upgrade Required", 428: "Precondition Required",
-		429: "Too Many Requests", 431: "Request Header Fields Too Large",
-		451: "Unavailable For Legal Reasons",
-		500: "Internal Server Error", 501: "Not Implemented",
-		502: "Bad Gateway", 503: "Service Unavailable",
-		504: "Gateway Timeout", 505: "HTTP Version Not Supported",
-		506: "Variant Also Negotiates", 507: "Insufficient Storage",
-		508: "Loop Detected", 510: "Not Extended",
-		511: "Network Authentication Required",
-	}
-
-	if desc, ok := descriptions[code]; ok {
-		return desc
-	}
-	return "Unknown"
 }

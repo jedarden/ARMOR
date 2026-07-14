@@ -258,7 +258,7 @@ func ExampleValidationError_programmaticAccess() {
 
 	// Access fields for programmatic handling
 	validationErr := err
-	if validationErr.ValidationType == "status_code" {
+	if validationErr.ErrorType == "status_code" {
 		if actualCode, ok := validationErr.Actual.(int); ok {
 			if actualCode == 404 {
 				fmt.Println("Resource not found - check endpoint and ID")
@@ -266,7 +266,7 @@ func ExampleValidationError_programmaticAccess() {
 		}
 	}
 
-	fmt.Printf("Type: %s\n", validationErr.ValidationType)
+	fmt.Printf("Type: %s\n", validationErr.ErrorType)
 	fmt.Printf("Expected: %v\n", validationErr.Expected)
 	fmt.Printf("Actual: %v\n", validationErr.Actual)
 	fmt.Printf("Has %d suggestions\n", len(validationErr.Suggestions))
@@ -291,7 +291,7 @@ func ExampleValidationError_asError() {
 
 	// Type assertion to access ValidationError
 	if validationErr, ok := err.(ValidationError); ok {
-		fmt.Printf("Validation type: %s\n", validationErr.ValidationType)
+		fmt.Printf("Validation type: %s\n", validationErr.ErrorType)
 		fmt.Printf("Context: %s\n", validationErr.Context)
 	}
 
