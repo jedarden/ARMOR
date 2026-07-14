@@ -23,7 +23,198 @@ import (
 // - ValidateContentTypeJSON: Validates application/json content-type
 // - ValidateContentTypeXML: Validates application/xml content-type
 // - ValidateContentTypeText: Validates text/* content-type
+// - AssertContentType: Flexible validation supporting both assertion and boolean modes
+// - ContentTypeMatchResult: Detailed validation result with error context
 // =============================================================================
+
+// ContentTypeMatchResult contains detailed information about a content-type validation.
+//
+// This type provides comprehensive error context for debugging validation failures,
+// including the expected and actual values, the response object context, and a
+// formatted error message.
+type ContentTypeMatchResult struct {
+	// Match indicates whether the content-type matched successfully
+	Match bool
+
+	// Expected is the content-type that was expected
+	Expected string
+
+	// Actual is the content-type that was received
+	Actual string
+
+	// ResponseContext contains information about the response object
+	ResponseContext string
+
+	// Error is a formatted error message describing the mismatch
+	Error string
+}
+
+// String returns a human-readable representation of the validation result.
+func (r ContentTypeMatchResult) String() string {
+	if r.Match {
+		return fmt.Sprintf("Content-Type match: %s", r.Actual)
+	}
+	return r.Error
+}
+
+// AssertContentType validates content-type with flexible assertion mode.
+//
+// This function supports both boolean-only mode (for conditional logic) and
+// assertion mode (with descriptive error messages). When assertMode is true
+// and validation fails, it returns a detailed error message showing expected
+// vs actual values along with response context.
+//
+// Parameters:
+//   - response: The HTTP response to validate (*httptest.ResponseRecorder or *http.Response)
+//   - expectedContentType: The expected content-type
+//   - assertMode: If true, return detailed error message on failure; if false, return bool only
+//
+// Returns:
+//   - ContentTypeMatchResult with detailed validation information
+//
+// Example (boolean mode):
+//   result := AssertContentType(w, "application/json", false)
+//   if !result.Match {
+//       // Handle non-JSON case
+//   }
+//
+// Example (assertion mode):
+//   result := AssertContentType(w, "application/json", true)
+//   if !result.Match {
+//       t.Error(result.Error)  // Full error with expected vs actual
+//   }
+func AssertContentType(response interface{}, expectedContentType string, assertMode bool) ContentTypeMatchResult {
+	actualContentType := getContentType(response)
+
+	// Build response context for error messages
+	responseContext := getResponseContext(response)
+
+	// Check if content-types match
+	matches := contentTypeMatches(actualContentType, expectedContentType)
+
+	if matches {
+		return ContentTypeMatchResult{
+			Match:           true,
+			Expected:        expectedContentType,
+			Actual:          actualContentType,
+			ResponseContext: responseContext,
+			Error:           "",
+		}
+	}
+
+	// Build detailed error message
+	errorMsg := buildContentTypeMismatchError(
+		expectedContentType,
+		actualContentType,
+		responseContext,
+	)
+
+	return ContentTypeMatchResult{
+		Match:           false,
+		Expected:        expectedContentType,
+		Actual:          actualContentType,
+		ResponseContext: responseContext,
+		Error:           errorMsg,
+	}
+}
+
+// AssertContentTypeAny validates content-type against multiple allowed types.
+//
+// This function is similar to AssertContentType but accepts multiple allowed
+// content-types. Returns detailed error information when validation fails,
+// including the full list of allowed content-types.
+//
+// Parameters:
+//   - response: The HTTP response to validate
+//   - allowedContentTypes: Slice of acceptable content-types
+//   - assertMode: If true, return detailed error message on failure
+//
+// Returns:
+//   - ContentTypeMatchResult with detailed validation information
+//
+// Example:
+//   result := AssertContentTypeAny(w, []string{"application/json", "application/xml"}, true)
+//   if !result.Match {
+//       t.Error(result.Error)
+//   }
+func AssertContentTypeAny(response interface{}, allowedContentTypes []string, assertMode bool) ContentTypeMatchResult {
+	if len(allowedContentTypes) == 0 {
+		return ContentTypeMatchResult{
+			Match:           false,
+			Expected:        "",
+			Actual:          "",
+			ResponseContext: getResponseContext(response),
+			Error:           "AssertContentTypeAny: allowedContentTypes cannot be empty",
+		}
+	}
+
+	actualContentType := getContentType(response)
+	responseContext := getResponseContext(response)
+
+	// Check if actual content-type matches any in the allowed list
+	for _, allowedType := range allowedContentTypes {
+		if contentTypeMatches(actualContentType, allowedType) {
+			return ContentTypeMatchResult{
+				Match:           true,
+				Expected:        strings.Join(allowedContentTypes, ", "),
+				Actual:          actualContentType,
+				ResponseContext: responseContext,
+				Error:           "",
+			}
+		}
+	}
+
+	// Build helpful error message showing what was allowed vs. what was received
+	allowedList := strings.Join(allowedContentTypes, ", ")
+	errorMsg := buildContentTypeMismatchError(
+		fmt.Sprintf("one of [%s]", allowedList),
+		actualContentType,
+		responseContext,
+	)
+
+	return ContentTypeMatchResult{
+		Match:           false,
+		Expected:        allowedList,
+		Actual:          actualContentType,
+		ResponseContext: responseContext,
+		Error:           errorMsg,
+	}
+}
+
+// buildContentTypeMismatchError creates a detailed error message for content-type mismatches.
+//
+// This helper builds a comprehensive error message that includes:
+// - The expected content-type(s)
+// - The actual content-type received
+// - Response object context (type and status if available)
+func buildContentTypeMismatchError(expected, actual, responseContext string) string {
+	var b strings.Builder
+
+	b.WriteString("Content-Type mismatch:\n")
+	b.WriteString(fmt.Sprintf("  Expected: %s\n", expected))
+	b.WriteString(fmt.Sprintf("  Actual:   %s\n", actual))
+
+	if responseContext != "" {
+		b.WriteString(fmt.Sprintf("  Context:  %s\n", responseContext))
+	}
+
+	return b.String()
+}
+
+// getResponseContext extracts contextual information about the response object.
+//
+// This helper builds a string description of the response object for error messages,
+// including the response type and status code if available.
+func getResponseContext(response interface{}) string {
+	switch r := response.(type) {
+	case *httptest.ResponseRecorder:
+		return fmt.Sprintf("httptest.ResponseRecorder (status: %d)", r.Code)
+	case *http.Response:
+		return fmt.Sprintf("http.Response (status: %d)", r.StatusCode)
+	default:
+		return fmt.Sprintf("unknown type: %T", response)
+	}
+}
 
 // ValidateContentType validates that the HTTP response has the expected content-type.
 //
@@ -42,10 +233,11 @@ import (
 func ValidateContentType(t *testing.T, response interface{}, expectedContentType string) {
 	t.Helper()
 
-	actualContentType := getContentType(response)
+	result := AssertContentType(response, expectedContentType, true)
 
-	if !contentTypeMatches(actualContentType, expectedContentType) {
-		t.Errorf("Expected Content-Type '%s', got '%s'", expectedContentType, actualContentType)
+	if !result.Match {
+		t.Errorf("Content-Type validation failed:\n  Expected: %s\n  Actual:   %s\n  Context:  %s",
+			result.Expected, result.Actual, result.ResponseContext)
 	}
 }
 
@@ -69,18 +261,12 @@ func ValidateContentTypeAny(t *testing.T, response interface{}, allowedContentTy
 		return
 	}
 
-	actualContentType := getContentType(response)
+	result := AssertContentTypeAny(response, allowedContentTypes, true)
 
-	// Check if actual content-type matches any in the allowed list
-	for _, allowedType := range allowedContentTypes {
-		if contentTypeMatches(actualContentType, allowedType) {
-			return // Success - content-type is allowed
-		}
+	if !result.Match {
+		t.Errorf("Content-Type validation failed:\n  Expected: one of [%s]\n  Actual:   %s\n  Context:  %s",
+			result.Expected, result.Actual, result.ResponseContext)
 	}
-
-	// Build helpful error message showing what was allowed vs. what was received
-	allowedList := strings.Join(allowedContentTypes, ", ")
-	t.Errorf("Expected Content-Type to be one of [%s], got '%s'", allowedList, actualContentType)
 }
 
 // ValidateContentTypePrefix validates that the response content-type starts with the given prefix.
@@ -105,7 +291,9 @@ func ValidateContentTypePrefix(t *testing.T, response interface{}, prefix string
 	actualContentType := getContentType(response)
 
 	if !strings.HasPrefix(actualContentType, prefix) {
-		t.Errorf("Expected Content-Type to start with '%s', got '%s'", prefix, actualContentType)
+		responseContext := getResponseContext(response)
+		t.Errorf("Content-Type prefix validation failed:\n  Expected prefix: %s\n  Actual:         %s\n  Context:        %s",
+			prefix, actualContentType, responseContext)
 	}
 }
 
@@ -198,6 +386,7 @@ func CheckContentTypePrefix(response interface{}, prefix string) bool {
 func ValidateContentTypeJSON(t *testing.T, response interface{}) {
 	t.Helper()
 	actualContentType := getContentType(response)
+	responseContext := getResponseContext(response)
 
 	// Check for exact match or parameter-based match
 	if contentTypeMatches(actualContentType, "application/json") {
@@ -209,7 +398,8 @@ func ValidateContentTypeJSON(t *testing.T, response interface{}) {
 		return
 	}
 
-	t.Errorf("Expected JSON Content-Type (e.g., application/json, application/problem+json), got '%s'", actualContentType)
+	t.Errorf("Content-Type validation failed:\n  Expected: JSON content-type (e.g., application/json, application/problem+json, application/ld+json)\n  Actual:   %s\n  Context:  %s",
+		actualContentType, responseContext)
 }
 
 // ValidateContentTypeXML validates that the response has an application/xml content-type.
@@ -256,6 +446,7 @@ func ValidateContentTypeBinary(t *testing.T, response interface{}) {
 	t.Helper()
 
 	actualContentType := getContentType(response)
+	responseContext := getResponseContext(response)
 
 	// Check for common binary content-types
 	binaryTypes := []string{
@@ -275,7 +466,8 @@ func ValidateContentTypeBinary(t *testing.T, response interface{}) {
 	}
 
 	if !isBinary {
-		t.Errorf("Expected binary Content-Type (e.g., application/octet-stream, image/*), got '%s'", actualContentType)
+		t.Errorf("Content-Type validation failed:\n  Expected: binary content-type (e.g., application/octet-stream, image/*, video/*, audio/*)\n  Actual:   %s\n  Context:  %s",
+			actualContentType, responseContext)
 	}
 }
 
