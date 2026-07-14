@@ -121,6 +121,13 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Protect the .armor/ reserved namespace
+	// Client operations targeting keys with this prefix return 403 AccessDenied
+	if strings.HasPrefix(key, ".armor/") {
+		h.writeError(w, "AccessDenied", "Access to .armor/ reserved namespace is denied", 403)
+		return
+	}
+
 	// Route based on method and path
 	switch r.Method {
 	case http.MethodGet:
