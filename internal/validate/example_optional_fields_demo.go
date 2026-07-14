@@ -28,7 +28,7 @@ func ExampleOptionalFields_Demo() {
 	fmt.Println()
 
 	// Minimal error - backward compatible
-	minimalError := FormatValidationError("test", "expected", "actual", "", "")
+	minimalError := FormatValidationError(ErrorTypeCustom, "expected", "actual", "", "")
 	fmt.Println("=== Minimal Error (Backward Compatible) ===")
 	fmt.Println(minimalError.Error())
 
@@ -50,7 +50,7 @@ func ExampleOptionalFields_Demo() {
 	//     - Custom suggestion 2
 	//
 	// === Minimal Error (Backward Compatible) ===
-	// test validation failed
+	// custom validation failed
 	//   Expected: expected
 	//   Actual:   actual
 	//   Suggestions:
