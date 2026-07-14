@@ -1,41 +1,37 @@
-# Bead bf-16yc7k: Distinguishable Content Seeding in Multipart Test
+# Bead bf-16yc7k: Work Already Completed
 
-## Status: Already Complete
+## Summary
+This bead requested adding distinguishable content seeding to the multipart integration test. However, this work was already completed in bead **bf-28rb** (commit 5183cdb7).
 
-This bead requested adding distinguishable content seeding to the multipart integration test with the following acceptance criteria:
+## Background
+The bead was based on an old test file at `tests/integration/integration_test.go` which only checked ContentLength. That old test has been superseded by a comprehensive implementation.
 
-### All Criteria Already Met ✅
+## Current Implementation
+The file `internal/backend/multipart_integration_test.go` already implements all acceptance criteria:
 
-1. **Distinguishable content for each part** - Already implemented (lines 40-68)
-   - Part 0: Incrementing pattern `0x00, 0x01, 0x02, ...`
-   - Part 1: Decrementing pattern `0xFF, 0xFE, 0xFD, ...`
-   - Part 2: Alternating pattern `0xAA, 0x55, 0xAA, 0x55, ...`
+### 1. Distinguishable Content per Part
+- **Part 0**: Sequential pattern `0x00, 0x01, 0x02, ...` (line 57)
+- **Part 1**: Inverse sequential `0xFF, 0xFE, 0xFD, ...` (line 59)
+- **Part 2**: Alternating `0xAA, 0x55, 0xAA, 0x55, ...` (lines 61-64)
 
-2. **Full byte comparison** - Already implemented (line 140)
-   - Uses `bytes.Equal(downloadedContent, uploadContent)`
-   - Not just ContentLength check
+### 2. Full Byte Read
+Line 130: `downloadedContent, err := io.ReadAll(body)`
 
-3. **Reads back full downloaded bytes** - Already implemented (lines 130-133)
-   - Uses `io.ReadAll(body)` to capture all downloaded content
+### 3. Byte-Level Comparison
+Lines 140-164: `bytes.Equal(downloadedContent, uploadContent)` with detailed mismatch reporting
 
-4. **Byte-level content verification** - Already implemented (lines 136-164)
-   - Detailed mismatch reporting with context
-   - Per-part pattern verification (lines 169-182, 190-213)
+### 4. Content Verification
+Lines 168-182: Per-part pattern verification via `verifyPartPattern()` helper
 
-### Test Results
+## Related Beads
+- **bf-28rb**: "Strengthen multipart integration test to verify actual content" - CLOSED
+  - Created the comprehensive test implementation
+  - Commit: 5183cdb7
 
-All multipart tests pass successfully:
+## Test Coverage
+The file includes three test cases, all with full content verification:
+1. `TestMultipartUpload` - 3 parts, 15MB total
+2. `TestMultipartUploadNonAlignedFinalPart` - Non-aligned final part
+3. `TestMultipartUploadSinglePart` - Single-part multipart upload
 
-```
-✓ Content verification passed: 15728640 bytes match uploaded content
-✓ Part 1 pattern verified
-✓ Part 2 pattern verified
-✓ Part 3 pattern verified
-```
-
-### File Location
-
-Bead description referenced `tests/integration/integration_test.go`, but the actual implementation is at:
-`internal/backend/multipart_integration_test.go`
-
-The implementation was already complete when this bead was processed.
+All tests pass with the race detector enabled and gate the CI pipeline via the armor-build workflow.
