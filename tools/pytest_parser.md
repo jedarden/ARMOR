@@ -88,17 +88,17 @@ FILE_LOCATION_PATTERN = r'^\s*(.+?):(\d+):'
 ### Common Assertion Patterns
 
 ```python
-# Equality assertion
-ASSERT_PATTERN = r'^E?\s+assert\s+(.+)'
+# Equality assertion (handles both 'E   assert' and plain 'assert' formats)
+ASSERT_PATTERN = r'^E?\s*assert\s+(.+)'
 
-# Pattern: assert X == Y
-EQUALITY_PATTERN = r'^E?\s+assert\s+(.+?)\s+==\s+(.+)'
+# Pattern: assert X == Y (handles both 'E   assert' and plain 'assert' formats)
+EQUALITY_PATTERN = r'^E?\s*assert\s+(.+?)\s+==\s+(.+)'
 
-# Pattern: assert X in Y
-CONTAINS_PATTERN = r'^E?\s+assert\s+(.+?)\s+in\s+(.+)'
+# Pattern: assert X in Y (handles both 'E   assert' and plain 'assert' formats)
+CONTAINS_PATTERN = r'^E?\s*assert\s+(.+?)\s+in\s+(.+)'
 
-# Pattern: assert isinstance(X, Y)
-TYPE_CHECK_PATTERN = r'^E?\s+assert\s+isinstance\((.+?),\s*(.+?)\)'
+# Pattern: assert isinstance(X, Y) (handles both 'E   assert' and plain 'assert' formats)
+TYPE_CHECK_PATTERN = r'^E?\s*assert\s+isinstance\((.+?),\s*(.+?)\)'
 ```
 
 ### Assertion Type Classification
@@ -123,30 +123,30 @@ DIFF_MINUS_PATTERN = r'^\s*-\s*(.+)'
 DIFF_PLUS_PATTERN = r'^\s*\+\s*(.+)'
 
 # Character position markers (for multiline strings)
-DIFF_POSITION_PATTERN = r'^\s*\?\s+(.+)'
+DIFF_POSITION_PATTERN = r'^\s*\?\s*(.+)'
 ```
 
 ### Index-based Diffs (Lists, Tuples)
 
 ```python
 # Pattern: At index N diff: X != Y
-INDEX_DIFF_PATTERN = r'^\s+At\s+index\s+(\d+)\s+diff:\s+(.+?)\s+!=\s+(.+)'
+INDEX_DIFF_PATTERN = r'^\s*At\s+index\s+(\d+)\s+diff:\s+(.+?)\s+!=\s+(.+)'
 ```
 
 ### Dictionary Diffs
 
 ```python
 # Pattern: Differing items
-DICT_DIFF_HEADER = r'^\s+Differing items:'
-DICT_DIFF_LINE = r'^\s+\{(.+?)\}\s+!=\s+\{(.+?)\}'
+DICT_DIFF_HEADER = r'^\s*Differing items:'
+DICT_DIFF_LINE = r'^\s*\{(.+?)\}\s+!=\s+\{(.+?)\}'
 ```
 
 ### Set Diffs
 
 ```python
 # Pattern: Extra items in left/right set
-SET_DIFF_LEFT = r'^\s+Extra items in the left set:'
-SET_DIFF_RIGHT = r'^\s+Extra items in the right set:'
+SET_DIFF_LEFT = r'^\s*Extra items in the left set:'
+SET_DIFF_RIGHT = r'^\s*Extra items in the right set:'
 ```
 
 ### Range Diffs
@@ -393,10 +393,10 @@ COUNT_PATTERN = r'=\s+(\d+)\s+(failed|passed|error|skipped)\s+in\s+([\d.]+)s\s+=
 ### Assertion Patterns
 
 ```python
-ASSERT_PATTERN = r'^E?\s+assert\s+(.+)'
-EQUALITY_PATTERN = r'^E?\s+assert\s+(.+?)\s+==\s+(.+)'
-CONTAINS_PATTERN = r'^E?\s+assert\s+(.+?)\s+in\s+(.+)'
-TYPE_CHECK_PATTERN = r'^E?\s+assert\s+isinstance\((.+?),\s*(.+?)\)'
+ASSERT_PATTERN = r'^E?\s*assert\s+(.+)'
+EQUALITY_PATTERN = r'^E?\s*assert\s+(.+?)\s+==\s+(.+)'
+CONTAINS_PATTERN = r'^E?\s*assert\s+(.+?)\s+in\s+(.+)'
+TYPE_CHECK_PATTERN = r'^E?\s*assert\s+isinstance\((.+?),\s*(.+?)\)'
 ```
 
 ### Diff Patterns
