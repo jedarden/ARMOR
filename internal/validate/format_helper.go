@@ -553,6 +553,9 @@ func FormatError(errorType string, message string, fieldName ...string) string {
 		fieldNameStr = fieldName[0]
 	}
 
+	// Trim whitespace from message before checking
+	message = strings.TrimSpace(message)
+
 	// Handle empty message - use fallback
 	if message == "" {
 		// Check if field name was provided
@@ -602,6 +605,9 @@ func FormatError(errorType string, message string, fieldName ...string) string {
 func FormatErrorWithType(errorType ErrorType, message string, fieldName string) string {
 	// Convert ErrorType enum to string for formatting
 	errorTypeStr := errorType.String()
+
+	// Trim whitespace from message before checking
+	message = strings.TrimSpace(message)
 
 	// Handle empty message - use fallback
 	if message == "" {
