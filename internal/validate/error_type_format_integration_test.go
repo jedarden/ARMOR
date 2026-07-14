@@ -417,17 +417,17 @@ func TestFormatErrorWithType_AllErrorTypes(t *testing.T) {
 // =============================================================================
 
 func TestFormatError_BackwardCompatibility(t *testing.T) {
-	// Test that string-based FormatError produces consistent results
-	// with ErrorType-based FormatErrorWithType
+	// Test that string-based FormatErrorString produces consistent results
+	// with ErrorType-based FormatError
 	t.Run("string and ErrorType functions produce consistent results", func(t *testing.T) {
 		message := "Field is required"
 		fieldName := "email"
 
 		// String-based function
-		stringResult := FormatError("required", message, fieldName)
+		stringResult := FormatErrorString("required", message, fieldName)
 
 		// ErrorType-based function
-		typeResult := FormatErrorWithType(ErrTypeRequired, message, fieldName)
+		typeResult := FormatError(ErrTypeRequired, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("String and ErrorType functions should produce same result:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -438,8 +438,8 @@ func TestFormatError_BackwardCompatibility(t *testing.T) {
 		message := "Invalid format"
 		fieldName := "email"
 
-		stringResult := FormatError("format", message, fieldName)
-		typeResult := FormatErrorWithType(ErrTypeFormat, message, fieldName)
+		stringResult := FormatErrorString("format", message, fieldName)
+		typeResult := FormatError(ErrTypeFormat, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -450,8 +450,8 @@ func TestFormatError_BackwardCompatibility(t *testing.T) {
 		message := "Value out of range"
 		fieldName := "age"
 
-		stringResult := FormatError("range", message, fieldName)
-		typeResult := FormatErrorWithType(ErrTypeRange, message, fieldName)
+		stringResult := FormatErrorString("range", message, fieldName)
+		typeResult := FormatError(ErrTypeRange, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -462,8 +462,8 @@ func TestFormatError_BackwardCompatibility(t *testing.T) {
 		message := "Wrong type"
 		fieldName := "count"
 
-		stringResult := FormatError("type", message, fieldName)
-		typeResult := FormatErrorWithType(ErrTypeType, message, fieldName)
+		stringResult := FormatErrorString("type", message, fieldName)
+		typeResult := FormatError(ErrTypeType, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -474,8 +474,8 @@ func TestFormatError_BackwardCompatibility(t *testing.T) {
 		message := "Too short"
 		fieldName := "password"
 
-		stringResult := FormatError("length", message, fieldName)
-		typeResult := FormatErrorWithType(ErrTypeLength, message, fieldName)
+		stringResult := FormatErrorString("length", message, fieldName)
+		typeResult := FormatError(ErrTypeLength, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -486,8 +486,8 @@ func TestFormatError_BackwardCompatibility(t *testing.T) {
 		message := "Invalid value"
 		fieldName := "option"
 
-		stringResult := FormatError("value", message, fieldName)
-		typeResult := FormatErrorWithType(ErrTypeValue, message, fieldName)
+		stringResult := FormatErrorString("value", message, fieldName)
+		typeResult := FormatError(ErrTypeValue, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -498,8 +498,8 @@ func TestFormatError_BackwardCompatibility(t *testing.T) {
 		message := "Already exists"
 		fieldName := "email"
 
-		stringResult := FormatError("duplicate", message, fieldName)
-		typeResult := FormatErrorWithType(ErrTypeDuplicate, message, fieldName)
+		stringResult := FormatErrorString("duplicate", message, fieldName)
+		typeResult := FormatError(ErrTypeDuplicate, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -510,8 +510,8 @@ func TestFormatError_BackwardCompatibility(t *testing.T) {
 		message := "Conflicting values"
 		fieldName := "dates"
 
-		stringResult := FormatError("conflict", message, fieldName)
-		typeResult := FormatErrorWithType(ErrTypeConflict, message, fieldName)
+		stringResult := FormatErrorString("conflict", message, fieldName)
+		typeResult := FormatError(ErrTypeConflict, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -558,7 +558,7 @@ func TestFormatError_ConsistentClassification(t *testing.T) {
 		errorTypes := []string{"required", "format", "range", "type", "unknown"}
 
 		for _, etStr := range errorTypes {
-			result := FormatError(etStr, "Test message", "field")
+			result := FormatErrorString(etStr, "Test message", "field")
 
 			// Check that result contains error type
 			if !strings.Contains(result, etStr) {
@@ -611,9 +611,9 @@ func TestFormatError_ExistingCallsCompatibility(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 			if result != tt.want {
 				t.Errorf("FormatError() = %q, want %q", result, tt.want)
@@ -691,7 +691,7 @@ func TestFormatError_InvalidErrorType(t *testing.T) {
 				t.Logf("Warning: %d invalid error types already tracked", initialCount)
 			}
 
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			if result != tt.want {
 				t.Errorf("FormatError() = %q, want %q", result, tt.want)
@@ -797,7 +797,7 @@ func TestFormatError_EmptyAndWhitespaceHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			if result != tt.want {
 				t.Errorf("FormatError() = %q, want %q", result, tt.want)
 			}
@@ -874,9 +874,9 @@ func TestFormatError_InvalidErrorTypeTracking(t *testing.T) {
 	ResetInvalidErrorTypeTracking()
 
 	// Use some invalid error types
-	FormatError("invalid_type_1", "message", "field1")
-	FormatError("invalid_type_2", "message", "field2")
-	FormatError("invalid_type_1", "message", "field3") // duplicate
+	FormatErrorString("invalid_type_1", "message", "field1")
+	FormatErrorString("invalid_type_2", "message", "field2")
+	FormatErrorString("invalid_type_1", "message", "field3") // duplicate
 
 	invalidTypes := GetInvalidErrorTypes()
 
@@ -910,7 +910,7 @@ func TestFormatError_ValidErrorTypesNotTracked(t *testing.T) {
 	}
 
 	for _, errorType := range validTypes {
-		FormatError(errorType, "test message", "field")
+		FormatErrorString(errorType, "test message", "field")
 	}
 
 	invalidTypes := GetInvalidErrorTypes()
@@ -944,7 +944,7 @@ func TestFormatError_CaseInsensitiveErrorTypeMatching(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ResetInvalidErrorTypeTracking()
 
-			result := FormatError(tt.errorType, "test message", "field")
+			result := FormatErrorString(tt.errorType, "test message", "field")
 
 			// Check if it was tracked as invalid
 			invalidTypes := GetInvalidErrorTypes()
@@ -1115,7 +1115,7 @@ func TestFormatError_ConsistencyWithTypeVariants(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.errorTypeString, func(t *testing.T) {
 			// Test with all parameters
-			stringResult := FormatError(tc.errorTypeString, tc.message, tc.fieldName)
+			stringResult := FormatErrorString(tc.errorTypeString, tc.message, tc.fieldName)
 			enumResult := FormatErrorWithType(tc.errorTypeEnum, tc.message, tc.fieldName)
 
 			if stringResult != enumResult {
@@ -1123,7 +1123,7 @@ func TestFormatError_ConsistencyWithTypeVariants(t *testing.T) {
 			}
 
 			// Test without field name
-			stringResultNoField := FormatError(tc.errorTypeString, tc.message)
+			stringResultNoField := FormatErrorString(tc.errorTypeString, tc.message)
 			enumResultNoField := FormatErrorWithType(tc.errorTypeEnum, tc.message, "")
 
 			if stringResultNoField != enumResultNoField {
@@ -1242,7 +1242,7 @@ func TestFormatError_StringValidation_ValidErrorTypes(t *testing.T) {
 			// Reset tracking before each test to ensure clean state
 			ResetInvalidErrorTypeTracking()
 
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			if result != tt.want {
 				t.Errorf("FormatError() = %q, want %q", result, tt.want)
@@ -1350,7 +1350,7 @@ func TestFormatError_StringValidation_InvalidErrorTypes(t *testing.T) {
 			// Reset tracking before each test
 			ResetInvalidErrorTypeTracking()
 
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			if result != tt.want {
 				t.Errorf("FormatError() = %q, want %q", result, tt.want)
@@ -1442,7 +1442,7 @@ func TestFormatError_StringValidation_FallbackBehavior(t *testing.T) {
 			// Reset tracking to ensure clean state
 			ResetInvalidErrorTypeTracking()
 
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			if result != tt.want {
 				t.Errorf("FormatError() = %q, want %q", result, tt.want)
@@ -1572,7 +1572,7 @@ func TestFormatError_StringValidation_CaseSensitivity(t *testing.T) {
 			// Reset tracking before each test
 			ResetInvalidErrorTypeTracking()
 
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			if result != tt.want {
 				t.Errorf("FormatError() = %q, want %q", result, tt.want)
@@ -1617,11 +1617,11 @@ func TestFormatError_StringValidation_ErrorTypeTrackingMechanism(t *testing.T) {
 		// Reset tracking
 		ResetInvalidErrorTypeTracking()
 
-		// Call FormatError with multiple invalid types
-		FormatError("invalid_type_1", "message", "field1")
-		FormatError("invalid_type_2", "message", "field2")
-		FormatError("invalid_type_1", "message", "field3") // Duplicate
-		FormatError("custom_error", "message", "field4")
+		// Call FormatErrorString with multiple invalid types
+		FormatErrorString("invalid_type_1", "message", "field1")
+		FormatErrorString("invalid_type_2", "message", "field2")
+		FormatErrorString("invalid_type_1", "message", "field3") // Duplicate
+		FormatErrorString("custom_error", "message", "field4")
 
 		invalidTypes := GetInvalidErrorTypes()
 
@@ -1655,7 +1655,7 @@ func TestFormatError_StringValidation_ErrorTypeTrackingMechanism(t *testing.T) {
 		}
 
 		for _, errorType := range validTypes {
-			FormatError(errorType, "test message", "field")
+			FormatErrorString(errorType, "test message", "field")
 		}
 
 		invalidTypes := GetInvalidErrorTypes()
@@ -1670,8 +1670,8 @@ func TestFormatError_StringValidation_ErrorTypeTrackingMechanism(t *testing.T) {
 		ResetInvalidErrorTypeTracking()
 
 		// Add some invalid types
-		FormatError("type1", "msg", "field")
-		FormatError("type2", "msg", "field")
+		FormatErrorString("type1", "msg", "field")
+		FormatErrorString("type2", "msg", "field")
 
 		if count := InvalidErrorTypeCount(); count != 2 {
 			t.Errorf("Before reset: InvalidErrorTypeCount() = %d, want 2", count)
@@ -1710,7 +1710,7 @@ func TestFormatError_StringValidation_ErrorTypeTrackingMechanism(t *testing.T) {
 		}
 
 		for _, tt := range types {
-			FormatError(tt.errorType, "message", "field")
+			FormatErrorString(tt.errorType, "message", "field")
 		}
 
 		invalidTypes := GetInvalidErrorTypes()
@@ -1770,7 +1770,7 @@ func TestFormatError_StringValidation_AllErrorTypesWork(t *testing.T) {
 			fieldName := "test_field"
 
 			// Test with string error type
-			result := FormatError(tt.stringValue, message, fieldName)
+			result := FormatErrorString(tt.stringValue, message, fieldName)
 
 			// Verify result contains the error type
 			if !strings.Contains(result, tt.stringValue) {

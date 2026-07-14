@@ -97,7 +97,7 @@ func TestFormatError_ConsistencyBetweenFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Call both functions with the same logical inputs
-			stringResult := FormatError(tt.errorTypeStr, tt.message, tt.fieldName)
+			stringResult := FormatErrorString(tt.errorTypeStr, tt.message, tt.fieldName)
 			enumResult := FormatErrorWithType(tt.errorTypeEnum, tt.message, tt.fieldName)
 
 			// They should produce identical results
@@ -240,7 +240,7 @@ func TestFormatError_BackwardCompatibilityWithExistingFormatting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			if result != tt.expectedOutput {
 				t.Errorf("FormatError() = %q, want %q", result, tt.expectedOutput)
@@ -399,7 +399,7 @@ func TestFormatError_MixedParameterScenarios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			tt.checkOutput(t, result)
 		})
 	}
@@ -554,7 +554,7 @@ func TestFormatError_ComprehensiveErrorTypeCoverage(t *testing.T) {
 		for _, scenario := range testScenarios {
 			t.Run(mapping.stringType+"_"+scenario.name, func(t *testing.T) {
 				// Test string-based FormatError
-				stringResult := FormatError(mapping.stringType, scenario.message, scenario.fieldName)
+				stringResult := FormatErrorString(mapping.stringType, scenario.message, scenario.fieldName)
 
 				// Test ErrorType-based FormatErrorWithType
 				enumResult := FormatErrorWithType(mapping.enumType, scenario.message, scenario.fieldName)
@@ -655,7 +655,7 @@ func TestFormatError_BackwardCompatibilityEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// This should never panic
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			if tt.shouldWork && result == "" {
 				t.Errorf("%s: FormatError should produce output, got empty string", tt.description)

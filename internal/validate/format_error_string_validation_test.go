@@ -114,9 +114,9 @@ func TestFormatError_ValidStringErrorTypes(t *testing.T) {
 
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 
 			// Verify output matches expected format
@@ -207,9 +207,9 @@ func TestFormatError_InvalidStringErrorTypes(t *testing.T) {
 
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 
 			// Verify output maintains backward compatibility (original string is used)
@@ -292,9 +292,9 @@ func TestFormatError_FallbackToDefaultErrorType(t *testing.T) {
 
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 
 			// Verify the expected error type appears in the output
@@ -353,9 +353,9 @@ func TestFormatError_EmptyMessageTypeFallback(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 
 			// Verify all required strings are present
@@ -471,7 +471,7 @@ func TestFormatError_CaseSensitivity(t *testing.T) {
 			ResetInvalidErrorTypeTracking()
 
 			// Call FormatError with the test error type
-			result := FormatError(tt.errorType, "Test message", "field")
+			result := FormatErrorString(tt.errorType, "Test message", "field")
 
 			// Verify result contains the original error type string (backward compatibility)
 			if !strings.Contains(result, tt.errorType) {
@@ -571,9 +571,9 @@ func TestFormatError_ComprehensiveStringValidation(t *testing.T) {
 
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 
 			// Verify output format
@@ -679,9 +679,9 @@ func TestFormatError_EdgeCases(t *testing.T) {
 
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 
 			tt.validate(t, result)
