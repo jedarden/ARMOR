@@ -3,6 +3,7 @@ package validate
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // ValidationFormatter provides a simplified API for formatting validation errors consistently.
@@ -417,6 +418,72 @@ func getRangeInfo(pattern string) (min, max int, desc string, err error) {
 }
 
 // =============================================================================
+// ERROR TYPE VALIDATION TRACKING
+// =============================================================================
+
+// errorTypeTracker tracks invalid error types encountered during validation.
+// This helps identify typos, deprecated error types, or configuration issues.
+type errorTypeTracker struct {
+	mu       sync.RWMutex
+	invalidTypes map[string]int // error type -> count
+}
+
+// global tracker instance
+var globalErrorTypeTracker = &errorTypeTracker{
+	invalidTypes: make(map[string]int),
+}
+
+// TrackInvalidErrorType records an invalid error type for later analysis.
+// This is called automatically by FormatError when an error type doesn't
+// match any known ErrorType enum value.
+//
+// Parameters:
+//   - errorType: The invalid error type string that was encountered
+//
+// Returns the current count for this error type (how many times it's been seen).
+func TrackInvalidErrorType(errorType string) int {
+	globalErrorTypeTracker.mu.Lock()
+	defer globalErrorTypeTracker.mu.Unlock()
+
+	globalErrorTypeTracker.invalidTypes[errorType]++
+	return globalErrorTypeTracker.invalidTypes[errorType]
+}
+
+// GetInvalidErrorTypes returns a snapshot of all invalid error types encountered
+// and their occurrence counts. This is useful for debugging and identifying
+// configuration issues.
+//
+// Returns a copy of the invalid types map to avoid concurrent modification issues.
+func GetInvalidErrorTypes() map[string]int {
+	globalErrorTypeTracker.mu.RLock()
+	defer globalErrorTypeTracker.mu.RUnlock()
+
+	result := make(map[string]int, len(globalErrorTypeTracker.invalidTypes))
+	for k, v := range globalErrorTypeTracker.invalidTypes {
+		result[k] = v
+	}
+	return result
+}
+
+// ResetInvalidErrorTypeTracking clears all tracked invalid error types.
+// This is primarily useful for testing to ensure a clean state between tests.
+func ResetInvalidErrorTypeTracking() {
+	globalErrorTypeTracker.mu.Lock()
+	defer globalErrorTypeTracker.mu.Unlock()
+
+	globalErrorTypeTracker.invalidTypes = make(map[string]int)
+}
+
+// InvalidErrorTypeCount returns the total number of invalid error types tracked
+// (not the total occurrences, but the number of unique invalid types).
+func InvalidErrorTypeCount() int {
+	globalErrorTypeTracker.mu.RLock()
+	defer globalErrorTypeTracker.mu.RUnlock()
+
+	return len(globalErrorTypeTracker.invalidTypes)
+}
+
+// =============================================================================
 // BASIC ERROR MESSAGE FORMATTING
 // =============================================================================
 
@@ -426,11 +493,18 @@ func getRangeInfo(pattern string) (min, max int, desc string, err error) {
 // this function returns a simple formatted string for quick error display.
 //
 // This function supports both string-based error types (for backward compatibility)
-// and ErrorType enum for type-safe error classification. The ErrorType enum
-// provides consistent error classification across all validation contexts.
+// and validates them against the ErrorType enum for type-safe error classification.
+// The ErrorType enum provides consistent error classification across all validation contexts.
+//
+// Error Type Validation:
+//   - String error types are validated against the ErrorType enum (e.g., "required", "format", "range")
+//   - If the error type is not a recognized ErrorType, it is tracked for debugging purposes
+//   - Invalid error types do NOT cause errors - the original string is still used for backward compatibility
+//   - To check what invalid error types have been encountered, use GetInvalidErrorTypes()
+//   - To reset tracking between tests, use ResetInvalidErrorTypeTracking()
 //
 // Parameters:
-//   - errorType: The type/category of error (e.g., "status_code", "error_message")
+//   - errorType: The type/category of error (e.g., "required", "format", "status_code")
 //   - message: The error message content
 //   - fieldName: Optional field name where the error occurred (can be empty string)
 //
@@ -439,11 +513,21 @@ func getRangeInfo(pattern string) (min, max int, desc string, err error) {
 //
 // Example usage:
 //
-//	msg := validate.FormatError("status_code", "Expected 200 but got 404", "response")
-//	// Returns: "[status_code] response: Expected 200 but got 404"
+//	// Valid error types (recognized by ErrorType enum)
+//	msg := validate.FormatError("required", "This field is required", "email")
+//	// Returns: "[required] email: This field is required"
 //
-//	msg := validate.FormatError("required", "This field is required", "")
-//	// Returns: "[required] This field is required"
+//	msg := validate.FormatError("format", "Invalid email format", "")
+//	// Returns: "[format] Invalid email format"
+//
+//	// Custom/unknown error types (still work, but are tracked)
+//	msg := validate.FormatError("custom_validation", "Custom check failed", "field")
+//	// Returns: "[custom_validation] field: Custom check failed"
+//	// "custom_validation" is now tracked as an invalid error type
+//
+//	// Check what invalid types have been encountered
+//	invalidTypes := validate.GetInvalidErrorTypes()
+//	// Returns: map[string]int{"custom_validation": 1, ...}
 //
 //	msg := validate.FormatError("", "Something went wrong", "")
 //	// Returns: "[error] Something went wrong"
@@ -451,8 +535,17 @@ func getRangeInfo(pattern string) (min, max int, desc string, err error) {
 //	msg := validate.FormatError("validation", "", "email")
 //	// Returns: "[validation] email: email validation failed"
 func FormatError(errorType string, message string, fieldName ...string) string {
-	// Convert string errorType to ErrorType enum for consistent classification
-	_ = ErrorTypeFromString(errorType) // Verify error type is valid
+	// Validate string errorType against ErrorType enum
+	// This ensures that string-based error types are checked for validity
+	// while maintaining backward compatibility with any string value
+	validatedType := ErrorTypeFromString(errorType)
+
+	// Track invalid error types for debugging
+	// If ErrorTypeFromString returns ErrTypeUnknown but the original wasn't "unknown",
+	// it means we encountered an unrecognized error type string
+	if validatedType == ErrTypeUnknown && errorType != "" && errorType != "unknown" {
+		TrackInvalidErrorType(errorType)
+	}
 
 	// Extract field name from variadic args
 	fieldNameStr := ""
@@ -470,8 +563,14 @@ func FormatError(errorType string, message string, fieldName ...string) string {
 		}
 	}
 
-	// Use FormatErrorMessage which is already integrated with ErrorType
-	// This ensures consistent error classification across all errors
+	// Handle empty errorType - use fallback
+	if errorType == "" {
+		errorType = "error"
+	}
+
+	// Use FormatErrorMessage with the original error type string
+	// This maintains backward compatibility - we always use the original string
+	// even if it wasn't a recognized ErrorType enum value
 	return FormatErrorMessage(errorType, message, fieldNameStr)
 }
 
