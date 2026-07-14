@@ -49,7 +49,10 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -843,4 +846,236 @@ func TestExampleRealARMORIntegration(t *testing.T) {
 		ValidateS3ErrorResponse(t, resp, ErrorCodeNoSuchKey)
 		ValidateARMORErrorHeaders(t, resp, nil)
 	})
+}
+
+// =============================================================================
+// EXAMPLE 13: STATUS CODE PATTERN VALIDATION
+// =============================================================================
+
+// TestExampleStatusCodePatternValidation demonstrates pattern-based status code validation.
+//
+// This example shows how to use the ValidateStatusCodePattern function to validate
+// status codes using pattern strings like '4xx', '5xx', etc. This is useful when
+// you need to validate status codes by category rather than specific codes.
+func TestExampleStatusCodePatternValidation(t *testing.T) {
+	t.Run("Basic pattern validation", func(t *testing.T) {
+		// Test that status codes match their expected patterns
+		tests := []struct {
+			name    string
+			pattern string
+			code    int
+			matches bool
+		}{
+			{"200 matches 2xx", "2xx", 200, true},
+			{"404 matches 4xx", "4xx", 404, true},
+			{"500 matches 5xx", "5xx", 500, true},
+			{"200 does not match 4xx", "4xx", 200, false},
+			{"404 does not match 5xx", "5xx", 404, false},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				err := ValidateStatusCodePattern(tt.pattern, tt.code)
+				if tt.matches && err != nil {
+					t.Errorf("Expected %d to match %s, got error: %v", tt.code, tt.pattern, err)
+				}
+				if !tt.matches && err == nil {
+					t.Errorf("Expected %d to not match %s, but got nil error", tt.code, tt.pattern)
+				}
+			})
+		}
+	})
+
+	t.Run("Validate all codes in range", func(t *testing.T) {
+		// Validate that all codes in a range match the pattern
+		successCodes := []int{200, 201, 202, 204, 206}
+		for _, code := range successCodes {
+			if err := ValidateStatusCodePattern("2xx", code); err != nil {
+				t.Errorf("Code %d should match 2xx pattern: %v", code, err)
+			}
+		}
+
+		clientErrorCodes := []int{400, 401, 403, 404, 409, 422, 429}
+		for _, code := range clientErrorCodes {
+			if err := ValidateStatusCodePattern("4xx", code); err != nil {
+				t.Errorf("Code %d should match 4xx pattern: %v", code, err)
+			}
+		}
+
+		serverErrorCodes := []int{500, 502, 503, 504}
+		for _, code := range serverErrorCodes {
+			if err := ValidateStatusCodePattern("5xx", code); err != nil {
+				t.Errorf("Code %d should match 5xx pattern: %v", code, err)
+			}
+		}
+	})
+
+	t.Run("Error message format", func(t *testing.T) {
+		// Test that error messages are descriptive
+		err := ValidateStatusCodePattern("4xx", 200)
+		if err == nil {
+			t.Error("Expected error for non-matching pattern")
+		} else {
+			// Error message should contain helpful information
+			errMsg := err.Error()
+			if !contains(errMsg, "200") || !contains(errMsg, "4xx") || !contains(errMsg, "400-499") {
+				t.Errorf("Error message should contain '200', '4xx', and '400-499', got: %s", errMsg)
+			}
+		}
+	})
+
+	t.Run("Invalid pattern handling", func(t *testing.T) {
+		// Test that invalid patterns return descriptive errors
+		invalidPatterns := []string{"", "invalid", "0xx", "6xx", "9xx", "4X", "4XX"}
+		for _, pattern := range invalidPatterns {
+			err := ValidateStatusCodePattern(pattern, 200)
+			if err == nil {
+				t.Errorf("Pattern '%s' should be invalid, but got nil error", pattern)
+			}
+		}
+	})
+}
+
+// TestExampleStatusCodePatternInTests demonstrates using pattern validation in test scenarios.
+//
+// This example shows how to integrate ValidateStatusCodePattern into real test
+// scenarios, particularly useful when you want to validate error categories.
+func TestExampleStatusCodePatternInTests(t *testing.T) {
+	t.Run("API response validation", func(t *testing.T) {
+		// Setup: Create test server with various responses
+		scenarios := []struct {
+			name       string
+			statusCode int
+			pattern    string
+		}{
+			{"Success response", 200, "2xx"},
+			{"Redirect response", 301, "3xx"},
+			{"Client error", 404, "4xx"},
+			{"Server error", 500, "5xx"},
+		}
+
+		for _, scenario := range scenarios {
+			t.Run(scenario.name, func(t *testing.T) {
+				// Create test response
+				w := httptest.NewRecorder()
+				w.WriteHeader(scenario.statusCode)
+
+				// Validate using pattern
+				err := ValidateStatusCodePattern(scenario.pattern, w.Code)
+				if err != nil {
+					t.Errorf("Status code %d should match pattern %s: %v",
+						scenario.statusCode, scenario.pattern, err)
+				}
+			})
+		}
+	})
+
+	t.Run("Conditional logic based on pattern", func(t *testing.T) {
+		// Test conditional logic using pattern validation
+		testCodes := []int{200, 301, 404, 500}
+
+		for _, code := range testCodes {
+			t.Run(fmt.Sprintf("Code_%d", code), func(t *testing.T) {
+				// Check if it's a success code (2xx)
+				if ValidateStatusCodePattern("2xx", code) == nil {
+					t.Logf("%d is a success code (2xx)", code)
+				}
+
+				// Check if it's a redirect (3xx)
+				if ValidateStatusCodePattern("3xx", code) == nil {
+					t.Logf("%d is a redirect (3xx)", code)
+				}
+
+				// Check if it's a client error (4xx)
+				if ValidateStatusCodePattern("4xx", code) == nil {
+					t.Logf("%d is a client error (4xx)", code)
+				}
+
+				// Check if it's a server error (5xx)
+				if ValidateStatusCodePattern("5xx", code) == nil {
+					t.Logf("%d is a server error (5xx)", code)
+				}
+			})
+		}
+	})
+
+	t.Run("Flexible error category validation", func(t *testing.T) {
+		// Validate that error responses are in expected categories
+		t.Run("Client error responses", func(t *testing.T) {
+			clientErrors := []int{400, 401, 403, 404, 409, 422, 429}
+			for _, code := range clientErrors {
+				if err := ValidateStatusCodePattern("4xx", code); err != nil {
+					t.Errorf("Code %d should be in client error range (4xx): %v", code, err)
+				}
+			}
+		})
+
+		t.Run("Server error responses", func(t *testing.T) {
+			serverErrors := []int{500, 502, 503, 504}
+			for _, code := range serverErrors {
+				if err := ValidateStatusCodePattern("5xx", code); err != nil {
+					t.Errorf("Code %d should be in server error range (5xx): %v", code, err)
+				}
+			}
+		})
+	})
+}
+
+// TestExampleStatusCodePatternWithRealResponse demonstrates pattern validation with real HTTP responses.
+//
+// This example shows how to use ValidateStatusCodePattern with actual HTTP responses
+// from test servers or real endpoints.
+func TestExampleStatusCodePatternWithRealResponse(t *testing.T) {
+	t.Run("Test server with pattern validation", func(t *testing.T) {
+		// Setup: Create test server that returns different status codes
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Return different status codes based on path
+			switch r.URL.Path {
+			case "/ok":
+				w.WriteHeader(200)
+			case "/notfound":
+				w.WriteHeader(404)
+			case "/error":
+				w.WriteHeader(500)
+			default:
+				w.WriteHeader(400)
+			}
+		}))
+		defer server.Close()
+
+		// Test success endpoint
+		resp, err := http.Get(server.URL + "/ok")
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if err := ValidateStatusCodePattern("2xx", resp.StatusCode); err != nil {
+			t.Errorf("Success endpoint should return 2xx: %v", err)
+		}
+
+		// Test not found endpoint
+		resp, err = http.Get(server.URL + "/notfound")
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if err := ValidateStatusCodePattern("4xx", resp.StatusCode); err != nil {
+			t.Errorf("Not found endpoint should return 4xx: %v", err)
+		}
+
+		// Test error endpoint
+		resp, err = http.Get(server.URL + "/error")
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if err := ValidateStatusCodePattern("5xx", resp.StatusCode); err != nil {
+			t.Errorf("Error endpoint should return 5xx: %v", err)
+		}
+	})
+}
+
+// Helper function to check if string contains substring
+func contains(s, substr string) bool {
+	return strings.Index(s, substr) >= 0
 }
