@@ -1973,3 +1973,672 @@ func ExampleCORSHeadersIsValid() {
 
 	// TestErrorCodeInResponse, TestGetErrorMessage, and TestGetErrorCode
 	// are defined in error_message_test.go to avoid duplication
+
+
+// =============================================================================
+// STATUS CODE RANGE INT VALIDATION TESTS
+// =============================================================================
+
+// TestValidateStatusCodeRangeInt tests the ValidateStatusCodeRangeInt function with various patterns and status codes
+func TestValidateStatusCodeRangeInt(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		actual  int
+		wantErr bool
+		errMsg  string // empty if no error expected, or substring of expected error message
+	}{
+		// 1xx Informational tests
+		{
+			name:    "100 Continue is in 1xx range",
+			pattern: "1xx",
+			actual:  100,
+			wantErr: false,
+		},
+		{
+			name:    "101 Switching Protocols is in 1xx range",
+			pattern: "1xx",
+			actual:  101,
+			wantErr: false,
+		},
+		{
+			name:    "102 Processing is in 1xx range",
+			pattern: "1xx",
+			actual:  102,
+			wantErr: false,
+		},
+		{
+			name:    "199 is maximum of 1xx range",
+			pattern: "1xx",
+			actual:  199,
+			wantErr: false,
+		},
+		{
+			name:    "200 is not in 1xx range",
+			pattern: "1xx",
+			actual:  200,
+			wantErr: true,
+			errMsg:  "status code 200 is not in range 1xx",
+		},
+		// 2xx Success tests
+		{
+			name:    "200 OK is in 2xx range",
+			pattern: "2xx",
+			actual:  200,
+			wantErr: false,
+		},
+		{
+			name:    "201 Created is in 2xx range",
+			pattern: "2xx",
+			actual:  201,
+			wantErr: false,
+		},
+		{
+			name:    "202 Accepted is in 2xx range",
+			pattern: "2xx",
+			actual:  202,
+			wantErr: false,
+		},
+		{
+			name:    "204 No Content is in 2xx range",
+			pattern: "2xx",
+			actual:  204,
+			wantErr: false,
+		},
+		{
+			name:    "299 is maximum of 2xx range",
+			pattern: "2xx",
+			actual:  299,
+			wantErr: false,
+		},
+		{
+			name:    "300 is not in 2xx range",
+			pattern: "2xx",
+			actual:  300,
+			wantErr: true,
+			errMsg:  "status code 300 is not in range 2xx",
+		},
+		// 3xx Redirection tests
+		{
+			name:    "300 Multiple Choices is in 3xx range",
+			pattern: "3xx",
+			actual:  300,
+			wantErr: false,
+		},
+		{
+			name:    "301 Moved Permanently is in 3xx range",
+			pattern: "3xx",
+			actual:  301,
+			wantErr: false,
+		},
+		{
+			name:    "302 Found is in 3xx range",
+			pattern: "3xx",
+			actual:  302,
+			wantErr: false,
+		},
+		{
+			name:    "304 Not Modified is in 3xx range",
+			pattern: "3xx",
+			actual:  304,
+			wantErr: false,
+		},
+		{
+			name:    "399 is maximum of 3xx range",
+			pattern: "3xx",
+			actual:  399,
+			wantErr: false,
+		},
+		{
+			name:    "400 is not in 3xx range",
+			pattern: "3xx",
+			actual:  400,
+			wantErr: true,
+			errMsg:  "status code 400 is not in range 3xx",
+		},
+		// 4xx Client Error tests
+		{
+			name:    "400 Bad Request is in 4xx range",
+			pattern: "4xx",
+			actual:  400,
+			wantErr: false,
+		},
+		{
+			name:    "401 Unauthorized is in 4xx range",
+			pattern: "4xx",
+			actual:  401,
+			wantErr: false,
+		},
+		{
+			name:    "403 Forbidden is in 4xx range",
+			pattern: "4xx",
+			actual:  403,
+			wantErr: false,
+		},
+		{
+			name:    "404 Not Found is in 4xx range",
+			pattern: "4xx",
+			actual:  404,
+			wantErr: false,
+		},
+		{
+			name:    "429 Too Many Requests is in 4xx range",
+			pattern: "4xx",
+			actual:  429,
+			wantErr: false,
+		},
+		{
+			name:    "499 is maximum of 4xx range",
+			pattern: "4xx",
+			actual:  499,
+			wantErr: false,
+		},
+		{
+			name:    "500 is not in 4xx range",
+			pattern: "4xx",
+			actual:  500,
+			wantErr: true,
+			errMsg:  "status code 500 is not in range 4xx",
+		},
+		// 5xx Server Error tests
+		{
+			name:    "500 Internal Server Error is in 5xx range",
+			pattern: "5xx",
+			actual:  500,
+			wantErr: false,
+		},
+		{
+			name:    "502 Bad Gateway is in 5xx range",
+			pattern: "5xx",
+			actual:  502,
+			wantErr: false,
+		},
+		{
+			name:    "503 Service Unavailable is in 5xx range",
+			pattern: "5xx",
+			actual:  503,
+			wantErr: false,
+		},
+		{
+			name:    "504 Gateway Timeout is in 5xx range",
+			pattern: "5xx",
+			actual:  504,
+			wantErr: false,
+		},
+		{
+			name:    "599 is maximum of 5xx range",
+			pattern: "5xx",
+			actual:  599,
+			wantErr: false,
+		},
+		{
+			name:    "600 is not in 5xx range",
+			pattern: "5xx",
+			actual:  600,
+			wantErr: true,
+			errMsg:  "status code 600 is not in range 5xx",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStatusCodeRangeInt(tt.pattern, tt.actual)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateStatusCodeRangeInt() expected error containing '%s', but got nil", tt.errMsg)
+					return
+				}
+				if tt.errMsg != "" && !containsString(err.Error(), tt.errMsg) {
+					t.Errorf("ValidateStatusCodeRangeInt() error = '%v', expected to contain '%s'", err, tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateStatusCodeRangeInt() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateStatusCodeRangeInt_InvalidPatterns tests invalid pattern strings
+func TestValidateStatusCodeRangeInt_InvalidPatterns(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		actual  int
+		errMsg  string
+	}{
+		{
+			name:    "pattern too short",
+			pattern: "4x",
+			actual:  404,
+			errMsg:  "invalid pattern format",
+		},
+		{
+			name:    "pattern too long",
+			pattern: "4xxxx",
+			actual:  404,
+			errMsg:  "invalid pattern format",
+		},
+		{
+			name:    "pattern with no x suffix",
+			pattern: "400",
+			actual:  404,
+			errMsg:  "invalid pattern suffix",
+		},
+		{
+			name:    "pattern with partial x suffix",
+			pattern: "4x0",
+			actual:  404,
+			errMsg:  "invalid pattern suffix",
+		},
+		{
+			name:    "pattern with invalid century 0",
+			pattern: "0xx",
+			actual:  4,
+			errMsg:  "invalid pattern century",
+		},
+		{
+			name:    "pattern with invalid century 6",
+			pattern: "6xx",
+			actual:  600,
+			errMsg:  "invalid pattern century",
+		},
+		{
+			name:    "pattern with invalid century 9",
+			pattern: "9xx",
+			actual:  900,
+			errMsg:  "invalid pattern century",
+		},
+		{
+			name:    "pattern with special characters",
+			pattern: "xxx",
+			actual:  404,
+			errMsg:  "invalid pattern century",
+		},
+		{
+			name:    "pattern with letters",
+			pattern: "axx",
+			actual:  404,
+			errMsg:  "invalid pattern century",
+		},
+		{
+			name:    "empty pattern",
+			pattern: "",
+			actual:  404,
+			errMsg:  "invalid pattern format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStatusCodeRangeInt(tt.pattern, tt.actual)
+			if err == nil {
+				t.Errorf("ValidateStatusCodeRangeInt() expected error containing '%s', but got nil", tt.errMsg)
+				return
+			}
+			if !containsString(err.Error(), tt.errMsg) {
+				t.Errorf("ValidateStatusCodeRangeInt() error = '%v', expected to contain '%s'", err, tt.errMsg)
+			}
+		})
+	}
+}
+
+// TestParseStatusCodeRange tests the ParseStatusCodeRange helper function
+func TestParseStatusCodeRange(t *testing.T) {
+	tests := []struct {
+		name       string
+		pattern    string
+		wantMin    int
+		wantMax    int
+		wantErrMsg string
+	}{
+		{
+			name:    "parse 1xx pattern",
+			pattern: "1xx",
+			wantMin: 100,
+			wantMax: 199,
+		},
+		{
+			name:    "parse 2xx pattern",
+			pattern: "2xx",
+			wantMin: 200,
+			wantMax: 299,
+		},
+		{
+			name:    "parse 3xx pattern",
+			pattern: "3xx",
+			wantMin: 300,
+			wantMax: 399,
+		},
+		{
+			name:    "parse 4xx pattern",
+			pattern: "4xx",
+			wantMin: 400,
+			wantMax: 499,
+		},
+		{
+			name:    "parse 5xx pattern",
+			pattern: "5xx",
+			wantMin: 500,
+			wantMax: 599,
+		},
+		{
+			name:       "invalid pattern too short",
+			pattern:    "4x",
+			wantErrMsg: "invalid pattern format",
+		},
+		{
+			name:       "invalid pattern too long",
+			pattern:    "4xxx",
+			wantErrMsg: "invalid pattern format",
+		},
+		{
+			name:       "invalid pattern century 0",
+			pattern:    "0xx",
+			wantErrMsg: "invalid pattern century",
+		},
+		{
+			name:       "invalid pattern century 9",
+			pattern:    "9xx",
+			wantErrMsg: "invalid pattern century",
+		},
+		{
+			name:       "invalid suffix",
+			pattern:    "400",
+			wantErrMsg: "invalid pattern suffix",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			min, max, err := ParseStatusCodeRange(tt.pattern)
+			if tt.wantErrMsg != "" {
+				if err == nil {
+					t.Errorf("ParseStatusCodeRange() expected error containing '%s', but got nil", tt.wantErrMsg)
+					return
+				}
+				if !containsString(err.Error(), tt.wantErrMsg) {
+					t.Errorf("ParseStatusCodeRange() error = '%v', expected to contain '%s'", err, tt.wantErrMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ParseStatusCodeRange() unexpected error = %v", err)
+					return
+				}
+				if min != tt.wantMin || max != tt.wantMax {
+					t.Errorf("ParseStatusCodeRange() = (%d, %d), want (%d, %d)", min, max, tt.wantMin, tt.wantMax)
+				}
+			}
+		})
+	}
+}
+
+// TestGetStatusCodeRangeDescription tests the GetStatusCodeRangeDescription helper function
+func TestGetStatusCodeRangeDescription(t *testing.T) {
+	tests := []struct {
+		name       string
+		pattern    string
+		wantDesc   string
+		wantErrMsg string
+	}{
+		{
+			name:     "1xx description",
+			pattern: "1xx",
+			wantDesc: "Informational (1xx)",
+		},
+		{
+			name:     "2xx description",
+			pattern: "2xx",
+			wantDesc: "Success (2xx)",
+		},
+		{
+			name:     "3xx description",
+			pattern: "3xx",
+			wantDesc: "Redirection (3xx)",
+		},
+		{
+			name:     "4xx description",
+			pattern: "4xx",
+			wantDesc: "Client Error (4xx)",
+		},
+		{
+			name:     "5xx description",
+			pattern: "5xx",
+			wantDesc: "Server Error (5xx)",
+		},
+		{
+			name:       "invalid pattern too short",
+			pattern:    "4x",
+			wantErrMsg: "invalid pattern format",
+		},
+		{
+			name:       "invalid pattern century 0",
+			pattern:    "0xx",
+			wantErrMsg: "invalid pattern century",
+		},
+		{
+			name:       "invalid pattern century 9",
+			pattern:    "9xx",
+			wantErrMsg: "invalid pattern century",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desc, err := GetStatusCodeRangeDescription(tt.pattern)
+			if tt.wantErrMsg != "" {
+				if err == nil {
+					t.Errorf("GetStatusCodeRangeDescription() expected error containing '%s', but got nil", tt.wantErrMsg)
+					return
+				}
+				if !containsString(err.Error(), tt.wantErrMsg) {
+					t.Errorf("GetStatusCodeRangeDescription() error = '%v', expected to contain '%s'", err, tt.wantErrMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("GetStatusCodeRangeDescription() unexpected error = %v", err)
+					return
+				}
+				if desc != tt.wantDesc {
+					t.Errorf("GetStatusCodeRangeDescription() = '%s', want '%s'", desc, tt.wantDesc)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateStatusCodeRangeInt_EdgeCases tests edge cases like boundary conditions
+func TestValidateStatusCodeRangeInt_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		actual  int
+		wantErr bool
+	}{
+		{
+			name:    "minimum valid status code 100 in 1xx",
+			pattern: "1xx",
+			actual:  100,
+			wantErr: false,
+		},
+		{
+			name:    "invalid status code 99 in 1xx",
+			pattern: "1xx",
+			actual:  99,
+			wantErr: true,
+		},
+		{
+			name:    "status code 0 in any range fails",
+			pattern: "1xx",
+			actual:  0,
+			wantErr: true,
+		},
+		{
+			name:    "negative status code fails",
+			pattern: "2xx",
+			actual:  -1,
+			wantErr: true,
+		},
+		{
+			name:    "very large status code fails",
+			pattern: "5xx",
+			actual:  1000,
+			wantErr: true,
+		},
+		{
+			name:    "lower boundary of 2xx",
+			pattern: "2xx",
+			actual:  200,
+			wantErr: false,
+		},
+		{
+			name:    "upper boundary of 2xx",
+			pattern: "2xx",
+			actual:  299,
+			wantErr: false,
+		},
+		{
+			name:    "one below lower boundary of 2xx",
+			pattern: "2xx",
+			actual:  199,
+			wantErr: true,
+		},
+		{
+			name:    "one above upper boundary of 2xx",
+			pattern: "2xx",
+			actual:  300,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStatusCodeRangeInt(tt.pattern, tt.actual)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateStatusCodeRangeInt() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateStatusCodeRangeInt_RealWorldExamples tests real-world status code scenarios
+func TestValidateStatusCodeRangeInt_RealWorldExamples(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		actual  int
+		wantErr bool
+		desc    string
+	}{
+		{
+			name:    "REST API success (200-204)",
+			pattern: "2xx",
+			actual:  201,
+			wantErr: false,
+			desc:    "Created response in success range",
+		},
+		{
+			name:    "authentication error",
+			pattern: "4xx",
+			actual:  401,
+			wantErr: false,
+			desc:    "Unauthorized in client error range",
+		},
+		{
+			name:    "authorization error",
+			pattern: "4xx",
+			actual:  403,
+			wantErr: false,
+			desc:    "Forbidden in client error range",
+		},
+		{
+			name:    "not found error",
+			pattern: "4xx",
+			actual:  404,
+			wantErr: false,
+			desc:    "Not Found in client error range",
+		},
+		{
+			name:    "rate limit error",
+			pattern: "4xx",
+			actual:  429,
+			wantErr: false,
+			desc:    "Too Many Requests in client error range",
+		},
+		{
+			name:    "server internal error",
+			pattern: "5xx",
+			actual:  500,
+			wantErr: false,
+			desc:    "Internal Server Error in server error range",
+		},
+		{
+			name:    "bad gateway error",
+			pattern: "5xx",
+			actual:  502,
+			wantErr: false,
+			desc:    "Bad Gateway in server error range",
+		},
+		{
+			name:    "service unavailable",
+			pattern: "5xx",
+			actual:  503,
+			wantErr: false,
+			desc:    "Service Unavailable in server error range",
+		},
+		{
+			name:    "redirect response",
+			pattern: "3xx",
+			actual:  301,
+			wantErr: false,
+			desc:    "Moved Permanently in redirect range",
+		},
+		{
+			name:    "not modified response",
+			pattern: "3xx",
+			actual:  304,
+			wantErr: false,
+			desc:    "Not Modified in redirect range",
+		},
+		{
+			name:    "switching protocols",
+			pattern: "1xx",
+			actual:  101,
+			wantErr: false,
+			desc:    "Switching Protocols in informational range",
+		},
+		{
+			name:    "early hints",
+			pattern: "1xx",
+			actual:  103,
+			wantErr: false,
+			desc:    "Early Hints in informational range",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStatusCodeRangeInt(tt.pattern, tt.actual)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("%s: ValidateStatusCodeRangeInt() error = %v, wantErr %v", tt.desc, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// containsString is a helper function to check if a string contains a substring
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > len(substr) && findSubstring(s, substr)))
+}
+
+// findSubstring checks if substr exists in s
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
