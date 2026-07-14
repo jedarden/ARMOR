@@ -1,0 +1,86 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/tools/pytest_samples
+collecting ... collected 6 items
+
+test_exception_failures.py::test_raises_wrong_exception FAILED           [ 16%]
+test_exception_failures.py::test_no_exception_raised FAILED              [ 33%]
+test_exception_failures.py::test_unexpected_exception FAILED             [ 50%]
+test_exception_failures.py::test_exception_message_mismatch FAILED       [ 66%]
+test_exception_failures.py::test_exception_in_setup FAILED               [ 83%]
+test_exception_failures.py::test_index_error FAILED                      [100%]
+
+=================================== FAILURES ===================================
+_________________________ test_raises_wrong_exception __________________________
+
+    def test_raises_wrong_exception():
+        """Expected to raise ValueError, but raises TypeError instead"""
+        with pytest.raises(ValueError):
+>           raise TypeError("Wrong exception type")
+E           TypeError: Wrong exception type
+
+test_exception_failures.py:10: TypeError
+___________________________ test_no_exception_raised ___________________________
+
+    def test_no_exception_raised():
+        """Expected an exception but none was raised"""
+>       with pytest.raises(ValueError):
+E       Failed: DID NOT RAISE <class 'ValueError'>
+
+test_exception_failures.py:15: Failed
+__________________________ test_unexpected_exception ___________________________
+
+    def test_unexpected_exception():
+        """Exception was not expected at all"""
+>       result = 10 / 0  # ZeroDivisionError
+E       ZeroDivisionError: division by zero
+
+test_exception_failures.py:21: ZeroDivisionError
+_______________________ test_exception_message_mismatch ________________________
+
+    def test_exception_message_mismatch():
+        """Exception type matches but message doesn't"""
+        with pytest.raises(ValueError, match="expected message"):
+>           raise ValueError("different message")
+E           ValueError: different message
+
+test_exception_failures.py:27: ValueError
+
+During handling of the above exception, another exception occurred:
+
+    def test_exception_message_mismatch():
+        """Exception type matches but message doesn't"""
+>       with pytest.raises(ValueError, match="expected message"):
+E       AssertionError: Regex pattern did not match.
+E        Regex: 'expected message'
+E        Input: 'different message'
+
+test_exception_failures.py:26: AssertionError
+___________________________ test_exception_in_setup ____________________________
+
+    def test_exception_in_setup():
+        """Demonstrates failure during test setup"""
+        data = None
+        if data is None:
+>           raise RuntimeError("Failed to setup test data")
+E           RuntimeError: Failed to setup test data
+
+test_exception_failures.py:34: RuntimeError
+_______________________________ test_index_error _______________________________
+
+    def test_index_error():
+        """Demonstrates index error failure"""
+        items = [1, 2, 3]
+>       return items[10]  # IndexError
+E       IndexError: list index out of range
+
+test_exception_failures.py:41: IndexError
+=========================== short test summary info ============================
+FAILED test_exception_failures.py::test_raises_wrong_exception - TypeError: W...
+FAILED test_exception_failures.py::test_no_exception_raised - Failed: DID NOT...
+FAILED test_exception_failures.py::test_unexpected_exception - ZeroDivisionEr...
+FAILED test_exception_failures.py::test_exception_message_mismatch - Assertio...
+FAILED test_exception_failures.py::test_exception_in_setup - RuntimeError: Fa...
+FAILED test_exception_failures.py::test_index_error - IndexError: list index ...
+============================== 6 failed in 0.02s ===============================

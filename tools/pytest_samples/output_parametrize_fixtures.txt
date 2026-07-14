@@ -1,0 +1,81 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/tools/pytest_samples
+collecting ... collected 9 items
+
+test_parametrize_fixtures.py::test_parametrized_multiply[1-2] PASSED     [ 11%]
+test_parametrize_fixtures.py::test_parametrized_multiply[2-4] PASSED     [ 22%]
+test_parametrize_fixtures.py::test_parametrized_multiply[3-7] FAILED     [ 33%]
+test_parametrize_fixtures.py::test_parametrized_multiply[4-8] PASSED     [ 44%]
+test_parametrize_fixtures.py::test_using_fixture ERROR                   [ 55%]
+test_parametrize_fixtures.py::test_with_cleanup_error PASSED             [ 66%]
+test_parametrize_fixtures.py::test_with_cleanup_error ERROR              [ 66%]
+test_parametrize_fixtures.py::test_parametrized_strings[a-b-ab] PASSED   [ 77%]
+test_parametrize_fixtures.py::test_parametrized_strings[hello-world-helloworld] PASSED [ 88%]
+test_parametrize_fixtures.py::test_parametrized_strings[test-ing-wrong] FAILED [100%]
+
+==================================== ERRORS ====================================
+_____________________ ERROR at setup of test_using_fixture _____________________
+
+    @pytest.fixture
+    def fragile_fixture():
+        """A fixture that fails during setup"""
+>       raise RuntimeError("Fixture setup failed")
+E       RuntimeError: Fixture setup failed
+
+test_parametrize_fixtures.py:21: RuntimeError
+_________________ ERROR at teardown of test_with_cleanup_error _________________
+
+    @pytest.fixture
+    def fixture_with_cleanup_error():
+        """Fixture that fails during teardown"""
+        data = {"value": 100}
+        yield data
+>       raise RuntimeError("Cleanup failed!")
+E       RuntimeError: Cleanup failed!
+
+test_parametrize_fixtures.py:35: RuntimeError
+=================================== FAILURES ===================================
+_______________________ test_parametrized_multiply[3-7] ________________________
+
+input = 3, expected = 7
+
+    @pytest.mark.parametrize("input,expected", [
+        (1, 2),
+        (2, 4),
+        (3, 7),  # This will fail - expected 6
+        (4, 8),
+    ])
+    def test_parametrized_multiply(input, expected):
+        """Demonstrates parametrized test failure"""
+>       assert input * 2 == expected, f"Failed for input={input}"
+E       AssertionError: Failed for input=3
+E       assert (3 * 2) == 7
+
+test_parametrize_fixtures.py:15: AssertionError
+__________________ test_parametrized_strings[test-ing-wrong] ___________________
+
+x = 'test', y = 'ing', expected = 'wrong'
+
+    @pytest.mark.parametrize("x,y,expected", [
+        ("a", "b", "ab"),
+        ("hello", "world", "helloworld"),
+        ("test", "ing", "wrong"),  # This will fail
+    ])
+    def test_parametrized_strings(x, y, expected):
+        """Demonstrates string concatenation failures"""
+        result = x + y
+>       assert result == expected
+E       AssertionError: assert 'testing' == 'wrong'
+E         
+E         - wrong
+E         + testing
+
+test_parametrize_fixtures.py:51: AssertionError
+=========================== short test summary info ============================
+FAILED test_parametrize_fixtures.py::test_parametrized_multiply[3-7] - Assert...
+FAILED test_parametrize_fixtures.py::test_parametrized_strings[test-ing-wrong]
+ERROR test_parametrize_fixtures.py::test_using_fixture - RuntimeError: Fixtur...
+ERROR test_parametrize_fixtures.py::test_with_cleanup_error - RuntimeError: C...
+==================== 2 failed, 6 passed, 2 errors in 0.03s =====================
