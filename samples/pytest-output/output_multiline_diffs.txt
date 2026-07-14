@@ -1,0 +1,83 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest-output
+collecting ... collected 5 items
+
+test_multiline_diffs.py::test_multiline_string_diff FAILED               [ 20%]
+test_multiline_diffs.py::test_list_comparison FAILED                     [ 40%]
+test_multiline_diffs.py::test_dict_comparison FAILED                     [ 60%]
+test_multiline_diffs.py::test_nested_structure_diff FAILED               [ 80%]
+test_multiline_diffs.py::test_long_list_diff FAILED                      [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_multiline_string_diff __________________________
+test_multiline_diffs.py:17: in test_multiline_string_diff
+    assert actual == expected
+E   AssertionError: assert 'line one\nli...ee\nline five' == 'line one\nli...ee\nline four'
+E     
+E       line one
+E     - line two
+E     + line TWO
+E       line three
+E     - line four
+E     + line five
+_____________________________ test_list_comparison _____________________________
+test_multiline_diffs.py:24: in test_list_comparison
+    assert actual == expected
+E   AssertionError: assert [1, 2, 99, 4, 5] == [1, 2, 3, 4, 5]
+E     
+E     At index 2 diff: 99 != 3
+E     
+E     Full diff:
+E       [
+E           1,
+E           2,...
+E     
+E     ...Full output truncated (7 lines hidden), use '-vv' to show
+_____________________________ test_dict_comparison _____________________________
+test_multiline_diffs.py:42: in test_dict_comparison
+    assert actual == expected
+E   AssertionError: assert {'active': Tr...ple.com', ...} == {'active': Tr...ame': 'Alice'}
+E     
+E     Omitting 2 identical items, use -vv to show
+E     Differing items:
+E     {'city': 'New York'} != {'city': 'Boston'}
+E     {'age': 31} != {'age': 30}
+E     Left contains 1 more item:
+E     {'email': 'alice@example.com'}...
+E     
+E     ...Full output truncated (13 lines hidden), use '-vv' to show
+__________________________ test_nested_structure_diff __________________________
+test_multiline_diffs.py:61: in test_nested_structure_diff
+    assert actual == expected
+E   AssertionError: assert {'count': 2, ...': 'Robert'}]} == {'count': 2, ...ame': 'Bob'}]}
+E     
+E     Omitting 1 identical items, use -vv to show
+E     Differing items:
+E     {'users': [{'id': 1, 'name': 'Alice'}, {'id': 2, 'name': 'Robert'}]} != {'users': [{'id': 1, 'name': 'Alice'}, {'id': 2, 'name': 'Bob'}]}
+E     
+E     Full diff:
+E       {...
+E     
+E     ...Full output truncated (15 lines hidden), use '-vv' to show
+_____________________________ test_long_list_diff ______________________________
+test_multiline_diffs.py:68: in test_long_list_diff
+    assert actual == expected
+E   AssertionError: assert [0, 10, 25, 30, 40, 55, ...] == [0, 10, 20, 30, 40, 50, ...]
+E     
+E     At index 2 diff: 25 != 20
+E     
+E     Full diff:
+E       [
+E           0,
+E           10,...
+E     
+E     ...Full output truncated (18 lines hidden), use '-vv' to show
+=========================== short test summary info ============================
+FAILED test_multiline_diffs.py::test_multiline_string_diff - AssertionError: ...
+FAILED test_multiline_diffs.py::test_list_comparison - AssertionError: assert...
+FAILED test_multiline_diffs.py::test_dict_comparison - AssertionError: assert...
+FAILED test_multiline_diffs.py::test_nested_structure_diff - AssertionError: ...
+FAILED test_multiline_diffs.py::test_long_list_diff - AssertionError: assert ...
+============================== 5 failed in 0.05s ===============================

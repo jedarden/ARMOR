@@ -1,0 +1,27 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0
+rootdir: /home/coding/ARMOR/samples/pytest-output
+collected 1 item
+
+test_exception_failures.py F                                             [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_unexpected_exception ___________________________
+
+    def test_unexpected_exception():
+        """Test that raises an unexpected exception"""
+        def divide():
+            return 10 / 0  # ZeroDivisionError
+>       divide()
+
+test_exception_failures.py:9: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def divide():
+>       return 10 / 0  # ZeroDivisionError
+E       ZeroDivisionError: division by zero
+
+test_exception_failures.py:8: ZeroDivisionError
+=========================== short test summary info ============================
+FAILED test_exception_failures.py::test_unexpected_exception - ZeroDivisionEr...
+============================== 1 failed in 0.03s ===============================

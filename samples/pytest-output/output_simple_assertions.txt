@@ -1,0 +1,51 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest-output
+collecting ... collected 6 items
+
+test_simple_assertions.py::test_simple_assertion_equal FAILED            [ 16%]
+test_simple_assertions.py::test_simple_assertion_true FAILED             [ 33%]
+test_simple_assertions.py::test_simple_assertion_in FAILED               [ 50%]
+test_simple_assertions.py::test_simple_assertion_is FAILED               [ 66%]
+test_simple_assertions.py::test_simple_assertion_type FAILED             [ 83%]
+test_simple_assertions.py::test_simple_assertion_raises FAILED           [100%]
+
+=================================== FAILURES ===================================
+_________________________ test_simple_assertion_equal __________________________
+test_simple_assertions.py:10: in test_simple_assertion_equal
+    assert a == b, f"Expected {a} to equal {b}"
+E   AssertionError: Expected 1 to equal 2
+E   assert 1 == 2
+__________________________ test_simple_assertion_true __________________________
+test_simple_assertions.py:16: in test_simple_assertion_true
+    assert value, "Expected value to be True"
+E   AssertionError: Expected value to be True
+E   assert False
+___________________________ test_simple_assertion_in ___________________________
+test_simple_assertions.py:21: in test_simple_assertion_in
+    assert "orange" in ["apple", "banana", "cherry"]
+E   AssertionError: assert 'orange' in ['apple', 'banana', 'cherry']
+___________________________ test_simple_assertion_is ___________________________
+test_simple_assertions.py:28: in test_simple_assertion_is
+    assert a is b, "Lists are not the same object"
+E   AssertionError: Lists are not the same object
+E   assert [1, 2, 3] is [1, 2, 3]
+__________________________ test_simple_assertion_type __________________________
+test_simple_assertions.py:34: in test_simple_assertion_type
+    assert isinstance(value, int), f"Expected int, got {type(value)}"
+E   AssertionError: Expected int, got <class 'str'>
+E   assert False
+E    +  where False = isinstance('42', int)
+_________________________ test_simple_assertion_raises _________________________
+test_simple_assertions.py:42: in test_simple_assertion_raises
+    with pytest.raises(ValueError):
+E   Failed: DID NOT RAISE <class 'ValueError'>
+=========================== short test summary info ============================
+FAILED test_simple_assertions.py::test_simple_assertion_equal - AssertionErro...
+FAILED test_simple_assertions.py::test_simple_assertion_true - AssertionError...
+FAILED test_simple_assertions.py::test_simple_assertion_in - AssertionError: ...
+FAILED test_simple_assertions.py::test_simple_assertion_is - AssertionError: ...
+FAILED test_simple_assertions.py::test_simple_assertion_type - AssertionError...
+FAILED test_simple_assertions.py::test_simple_assertion_raises - Failed: DID ...
+============================== 6 failed in 0.04s ===============================
