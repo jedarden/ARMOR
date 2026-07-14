@@ -618,6 +618,48 @@ func FormatErrorWithType(errorType ErrorType, message string, fieldName string) 
 }
 
 // =============================================================================
+// FIELD REFERENCE QUOTE STYLES
+// =============================================================================
+
+// QuoteStyle defines the quoting style for field names in field references.
+type QuoteStyle string
+
+const (
+	// NoQuote applies no quotes to field names
+	NoQuote QuoteStyle = ""
+	// SingleQuote applies single quotes around field names
+	SingleQuote QuoteStyle = "'"
+	// DoubleQuote applies double quotes around field names
+	DoubleQuote QuoteStyle = "\""
+	// Backtick applies backtick quotes around field names
+	Backtick QuoteStyle = "`"
+)
+
+// FieldRefConfig holds configuration options for field reference formatting.
+type FieldRefConfig struct {
+	quoteStyle QuoteStyle
+}
+
+// FieldRefOption is a function that configures a FieldRefConfig.
+type FieldRefOption func(*FieldRefConfig)
+
+// WithQuoteStyle creates a FieldRefOption that sets the quote style for field names.
+// The quote style is applied to each field name component (not to array indices or prefixes).
+//
+// Example usage:
+//
+//	ref := FormatFieldReference("user.email", "response", WithQuoteStyle(DoubleQuote))
+//	// Returns: response."user"."email"
+//
+//	ref := FormatFieldReference("users.0.email", "", WithQuoteStyle(SingleQuote))
+//	// Returns: 'users'[0].'email'
+func WithQuoteStyle(style QuoteStyle) FieldRefOption {
+	return func(c *FieldRefConfig) {
+		c.quoteStyle = style
+	}
+}
+
+// =============================================================================
 // FIELD PATH FORMATTING
 // =============================================================================
 
