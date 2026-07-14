@@ -97,6 +97,216 @@ import (
 	"strings"
 )
 
+// =============================================================================
+// HELPER TYPES
+// =============================================================================
+
+// ValidationErrorData is a simplified, serialization-friendly version of ValidationError.
+// It provides a consistent format for external communication and API responses.
+// This type is designed to be easily marshaled to JSON and consumed by external systems.
+//
+// Relationship to ValidationError:
+// - ValidationError is the internal, comprehensive error structure used by the validate package
+// - ValidationErrorData is the external, simplified format returned to API clients
+// - Use ToValidationErrorData() to convert ValidationError to ValidationErrorData
+//
+// # Required Fields
+//
+// The MessageType, ErrorType, and Message fields are required for all ValidationErrorData.
+//
+// # Optional Fields
+//
+// All other fields are optional and should be populated based on the specific validation scenario.
+//
+// Example usage:
+//
+//	data := ValidationErrorData{
+//	    MessageType:  "validation_failed",
+//	    ErrorType:    "status_code",
+//	    Message:      "Expected status code 200 but got 404",
+//	    Context:      "GET /api/users/123",
+//	    Expected:     200,
+//	    Actual:       404,
+//	    Suggestions:  []string{"Check the endpoint URL", "Verify resource exists"},
+//	}
+//	jsonBytes, _ := json.Marshal(data)
+type ValidationErrorData struct {
+	// MessageType is a fixed identifier for this type of error message.
+	// Always "validation_failed" for ValidationErrorData instances.
+	// This field allows clients to quickly identify the error category.
+	MessageType string `json:"message_type"`
+
+	// ErrorType is the specific validation category that failed.
+	// Common values include: "status_code", "error_message", "content_type",
+	// "status_code_range", "cors_headers", "response_structure".
+	// Use the ErrorType* constants for type-safe error type specification.
+	ErrorType string `json:"error_type"`
+
+	// Message is a human-readable description of what went wrong.
+	// This should be a clear, actionable message that explains the validation failure.
+	Message string `json:"message"`
+
+	// Context provides additional information about where or when the validation occurred.
+	// Examples: "GET /api/users/123", "OAuth token validation", "POST /api/orders"
+	Context string `json:"context,omitempty"`
+
+	// Expected contains the value that was expected during validation.
+	// Can be of any type: int, string, []int, etc.
+	Expected interface{} `json:"expected,omitempty"`
+
+	// Actual contains the value that was actually received during validation.
+	// Can be of any type: int, string, []int, etc.
+	Actual interface{} `json:"actual,omitempty"`
+
+	// FieldName specifies the field where the error was found (e.g., "error", "message", "detail").
+	// This is particularly useful for error message validation in response bodies.
+	FieldName string `json:"field_name,omitempty"`
+
+	// Location specifies where in the input the error occurred.
+	// Examples: "line 5", "field 'user.email'", "position 123", "header 'Authorization'"
+	Location string `json:"location,omitempty"`
+
+	// RelatedFields lists fields related to this error for additional context.
+	// Examples: ["email", "email_confirmation"], ["access_token", "refresh_token"]
+	RelatedFields []string `json:"related_fields,omitempty"`
+
+	// PatternDetails contains information about pattern matching failures.
+	// Example: "regex pattern 'invalid.*token' did not match"
+	PatternDetails string `json:"pattern_details,omitempty"`
+
+	// RangeInfo specifies range boundaries for range validation failures.
+	// Example: "400-499 (Client Error)", "200-299 (Success)"
+	RangeInfo string `json:"range_info,omitempty"`
+
+	// ValidationDetails contains additional validation-specific information.
+	// This can include multiple details as a list of strings for comprehensive error reporting.
+	ValidationDetails []string `json:"validation_details,omitempty"`
+
+	// ResponseSnippet is a truncated excerpt from the response for debugging.
+	// This should be limited to a reasonable length (e.g., 200 characters) to keep
+	// error messages readable while providing useful context.
+	ResponseSnippet string `json:"response_snippet,omitempty"`
+
+	// Suggestions provides actionable recommendations for resolving the validation error.
+	// When provided, suggestions should be specific and actionable.
+	Suggestions []string `json:"suggestions,omitempty"`
+}
+
+// Error implements the error interface for ValidationErrorData.
+// It returns the Message field for compatibility with error handling patterns.
+//
+// Example usage:
+//
+//	data := ValidationErrorData{Message: "Validation failed"}
+//	log.Printf("Error: %v", data)
+func (ve ValidationErrorData) Error() string {
+	return ve.Message
+}
+
+// ToValidationErrorData converts a ValidationError to ValidationErrorData format.
+// This function creates a simplified, serialization-friendly version of the validation error
+// suitable for external communication and API responses.
+//
+// The conversion maps ValidationError fields to ValidationErrorData fields,
+// with the following special handling:
+// - ErrorType is directly copied
+// - Message is generated if empty
+// - MessageType is always set to "validation_failed"
+// - All other fields are preserved if present
+//
+// Parameters:
+//   - ve: The ValidationError to convert
+//
+// Returns a ValidationErrorData instance with populated fields.
+//
+// Example usage:
+//
+//	ve := ValidationError{
+//	    ErrorType: "status_code",
+//	    Expected:  200,
+//	    Actual:    404,
+//	    Context:   "GET /api/users",
+//	}
+//	data := ToValidationErrorData(ve)
+//	// data.MessageType = "validation_failed"
+//	// data.ErrorType = "status_code"
+//	// data.Context = "GET /api/users"
+func ToValidationErrorData(ve ValidationError) ValidationErrorData {
+	// Generate message if not provided
+	message := ve.Message
+	if message == "" {
+		// Generate detailed message with expected/actual values
+		message = generateValidationMessage(ve.ErrorType, ve.Expected, ve.Actual)
+	}
+
+	data := ValidationErrorData{
+		MessageType:  "validation_failed",
+		ErrorType:    ve.ErrorType,
+		Message:      message,
+		Context:      ve.Context,
+		Expected:     ve.Expected,
+		Actual:       ve.Actual,
+		FieldName:    ve.FieldName,
+		Location:     ve.Location,
+		RelatedFields:     ve.RelatedFields,
+		PatternDetails:    ve.PatternDetails,
+		RangeInfo:         ve.RangeInfo,
+		ValidationDetails: ve.ValidationDetails,
+		ResponseSnippet:   ve.ResponseSnippet,
+		Suggestions:       ve.Suggestions,
+	}
+
+	return data
+}
+
+// generateValidationMessage creates a detailed validation message with expected/actual values.
+func generateValidationMessage(errorType string, expected, actual interface{}) string {
+	var parts []string
+
+	// Add expected value details
+	if expected != nil {
+		switch exp := expected.(type) {
+		case int:
+			parts = append(parts, fmt.Sprintf("Expected %d (%s)", exp, getStatusCodeDescription(exp)))
+		case []int:
+			expectedStr := "one of ["
+			for i, code := range exp {
+				if i > 0 {
+					expectedStr += ", "
+				}
+				expectedStr += fmt.Sprintf("%d (%s)", code, getStatusCodeDescription(code))
+			}
+			expectedStr += "]"
+			parts = append(parts, expectedStr)
+		case string:
+			parts = append(parts, fmt.Sprintf("Expected '%s'", exp))
+		default:
+			parts = append(parts, fmt.Sprintf("Expected %v", exp))
+		}
+	}
+
+	// Add actual value details
+	if actual != nil {
+		switch act := actual.(type) {
+		case int:
+			parts = append(parts, fmt.Sprintf("but got %d (%s)", act, getStatusCodeDescription(act)))
+		case string:
+			if len(act) > 50 {
+				act = act[:50] + "..."
+			}
+			parts = append(parts, fmt.Sprintf("but got '%s'", act))
+		default:
+			parts = append(parts, fmt.Sprintf("but got %v", act))
+		}
+	}
+
+	// Combine parts
+	if len(parts) > 0 {
+		return fmt.Sprintf("%s validation failed: %s", errorType, strings.Join(parts, " "))
+	}
+	return fmt.Sprintf("%s validation failed", errorType)
+}
+
 // ValidationError is the core data structure for validation error representation.
 // It provides a standardized format for validation errors across different
 // validation types (status codes, error messages, content types, etc.).
