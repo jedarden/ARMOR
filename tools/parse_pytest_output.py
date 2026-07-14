@@ -227,13 +227,13 @@ class PytestOutputParser:
                     current_failure.error_message = error_msg
                 continue
 
-            # Detect index diff
+            # Detect index diff (overwrite with specific element values)
             match = re.match(self.INDEX_DIFF_PATTERN, line)
             if match:
                 current_failure.index_diff = int(match.group(1))
-                # Store the diff values
-                current_failure.expected = match.group(2).strip()
-                current_failure.actual = match.group(3).strip()
+                # Store the specific differing elements (group 2 is actual, group 3 is expected)
+                current_failure.actual = match.group(2).strip()
+                current_failure.expected = match.group(3).strip()
                 continue
 
             # Detect differing items section
