@@ -1,0 +1,294 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR
+collecting ... collected 15 items
+
+tools/test_pytest_flags_minimal.py::test_simple_equality FAILED          [  6%]
+tools/test_pytest_flags_minimal.py::test_dict_equality FAILED            [ 13%]
+tools/test_pytest_flags_minimal.py::test_list_comparison FAILED          [ 20%]
+tools/test_pytest_flags_minimal.py::test_multiline_string FAILED         [ 26%]
+tools/test_pytest_flags_minimal.py::test_numeric_comparison FAILED       [ 33%]
+tools/test_pytest_flags_minimal.py::test_in_operator FAILED              [ 40%]
+tools/test_pytest_flags_minimal.py::test_long_sequence FAILED            [ 46%]
+tools/test_pytest_flags_minimal.py::test_nested_structure FAILED         [ 53%]
+tools/test_pytest_flags_minimal.py::test_approximate_numbers FAILED      [ 60%]
+tools/test_pytest_flags_minimal.py::test_boolean_logic FAILED            [ 66%]
+tools/test_pytest_flags_minimal.py::test_string_operations FAILED        [ 73%]
+tools/test_pytest_flags_minimal.py::test_type_checking FAILED            [ 80%]
+tools/test_pytest_flags_minimal.py::test_set_operations FAILED           [ 86%]
+tools/test_pytest_flags_minimal.py::test_range_comparison FAILED         [ 93%]
+tools/test_pytest_flags_minimal.py::test_tuple_comparison FAILED         [100%]
+
+=================================== FAILURES ===================================
+_____________________________ test_simple_equality _____________________________
+
+    def test_simple_equality():
+        """Simple equality assertion failure."""
+        greeting = "hello"
+>       assert greeting == "world", f"Expected 'world', got '{greeting}'"
+E       AssertionError: Expected 'world', got 'hello'
+E       assert 'hello' == 'world'
+E         
+E         - world
+E         + hello
+
+tools/test_pytest_flags_minimal.py:17: AssertionError
+______________________________ test_dict_equality ______________________________
+
+    def test_dict_equality():
+        """Dictionary equality assertion failure."""
+        expected = {"name": "Alice", "age": 30, "city": "NYC"}
+        actual = {"name": "Bob", "age": 25, "city": "LA"}
+>       assert actual == expected, f"Dictionaries don't match"
+E       AssertionError: Dictionaries don't match
+E       assert {'age': 25, '...'name': 'Bob'} == {'age': 30, '...ame': 'Alice'}
+E         
+E         Differing items:
+E         {'city': 'LA'} != {'city': 'NYC'}
+E         {'age': 25} != {'age': 30}
+E         {'name': 'Bob'} != {'name': 'Alice'}
+E         
+E         Full diff:...
+E         
+E         ...Full output truncated (14 lines hidden), use '-vv' to show
+
+tools/test_pytest_flags_minimal.py:24: AssertionError
+_____________________________ test_list_comparison _____________________________
+
+    def test_list_comparison():
+        """List comparison with index diff."""
+        list1 = [1, 2, 3, 4, 5]
+        list2 = [1, 2, 10, 4, 5]
+>       assert list1 == list2, "Lists should be equal"
+E       AssertionError: Lists should be equal
+E       assert [1, 2, 3, 4, 5] == [1, 2, 10, 4, 5]
+E         
+E         At index 2 diff: 3 != 10
+E         
+E         Full diff:
+E           [
+E               1,
+E               2,...
+E         
+E         ...Full output truncated (7 lines hidden), use '-vv' to show
+
+tools/test_pytest_flags_minimal.py:31: AssertionError
+____________________________ test_multiline_string _____________________________
+
+    def test_multiline_string():
+        """Multiline string comparison."""
+        expected_text = """
+        This is the expected text.
+        It has multiple lines.
+        """
+        actual_text = """
+        This is the actual text.
+        It has different content.
+        """
+>       assert actual_text == expected_text
+E       AssertionError: assert '\n    This i...ontent.\n    ' == '\n    This i... lines.\n    '
+E         
+E           
+E         -     This is the expected text.
+E         ?                 ^^^^  ^^
+E         +     This is the actual text.
+E         ?                 ^  ^^^
+E         -     It has multiple lines.
+E         +     It has different content.
+
+tools/test_pytest_flags_minimal.py:44: AssertionError
+___________________________ test_numeric_comparison ____________________________
+
+    def test_numeric_comparison():
+        """Numeric comparison failure."""
+        x = 5
+        y = 10
+>       assert x == y, f"Numbers don't match: {x} != {y}"
+E       AssertionError: Numbers don't match: 5 != 10
+E       assert 5 == 10
+
+tools/test_pytest_flags_minimal.py:51: AssertionError
+_______________________________ test_in_operator _______________________________
+
+    def test_in_operator():
+        """Test 'in' operator failure."""
+        items = ["apple", "banana", "cherry"]
+>       assert "orange" in items, "orange should be in the list"
+E       AssertionError: orange should be in the list
+E       assert 'orange' in ['apple', 'banana', 'cherry']
+
+tools/test_pytest_flags_minimal.py:57: AssertionError
+______________________________ test_long_sequence ______________________________
+
+    def test_long_sequence():
+        """Long sequence comparison with index diff."""
+        seq1 = [0, 1, 2, 3, 4, 10, 6, 7, 8, 9]
+        seq2 = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+>       assert seq1 == seq2, "Sequences should match"
+E       AssertionError: Sequences should match
+E       assert [0, 1, 2, 3, 4, 10, ...] == [0, 1, 2, 3, 4, 5, ...]
+E         
+E         At index 5 diff: 10 != 5
+E         
+E         Full diff:
+E           [
+E               0,
+E               1,...
+E         
+E         ...Full output truncated (12 lines hidden), use '-vv' to show
+
+tools/test_pytest_flags_minimal.py:64: AssertionError
+____________________________ test_nested_structure _____________________________
+
+    def test_nested_structure():
+        """Nested data structure comparison."""
+        data1 = {
+            "users": [
+                {"name": "Alice", "scores": [100, 95, 88]},
+                {"name": "Bob", "scores": [92, 87, 91]}
+            ]
+        }
+        data2 = {
+            "users": [
+                {"name": "Alice", "scores": [100, 95, 88]},
+                {"name": "Bob", "scores": [92, 99, 91]}  # Different score
+            ]
+        }
+>       assert data1 == data2, "Nested structures should match"
+E       AssertionError: Nested structures should match
+E       assert {'users': [{'...92, 87, 91]}]} == {'users': [{'...92, 99, 91]}]}
+E         
+E         Differing items:
+E         {'users': [{'name': 'Alice', 'scores': [100, 95, 88]}, {'name': 'Bob', 'scores': [92, 87, 91]}]} != {'users': [{'name': 'Alice', 'scores': [100, 95, 88]}, {'name': 'Bob', 'scores': [92, 99, 91]}]}
+E         
+E         Full diff:
+E           {
+E               'users': [...
+E         
+E         ...Full output truncated (21 lines hidden), use '-vv' to show
+
+tools/test_pytest_flags_minimal.py:81: AssertionError
+___________________________ test_approximate_numbers ___________________________
+
+    def test_approximate_numbers():
+        """Approximate number comparison."""
+        import math
+        result = 0.1 + 0.2  # Floating point imprecision
+        expected = 0.3
+>       assert result == expected, f"Floats don't match: {result} != {expected}"
+E       AssertionError: Floats don't match: 0.30000000000000004 != 0.3
+E       assert 0.30000000000000004 == 0.3
+
+tools/test_pytest_flags_minimal.py:89: AssertionError
+______________________________ test_boolean_logic ______________________________
+
+    def test_boolean_logic():
+        """Boolean logic assertion."""
+        x = True
+        y = False
+>       assert x and y, "Both x and y should be True"
+E       AssertionError: Both x and y should be True
+E       assert (True and False)
+
+tools/test_pytest_flags_minimal.py:96: AssertionError
+____________________________ test_string_operations ____________________________
+
+    def test_string_operations():
+        """String operation failure."""
+        text = "Hello, World!"
+>       assert text.upper() == "HELLO", "Uppercase conversion failed"
+E       AssertionError: Uppercase conversion failed
+E       assert 'HELLO, WORLD!' == 'HELLO'
+E         
+E         - HELLO
+E         + HELLO, WORLD!
+
+tools/test_pytest_flags_minimal.py:102: AssertionError
+______________________________ test_type_checking ______________________________
+
+    def test_type_checking():
+        """Type checking assertion."""
+        value = "123"
+>       assert isinstance(value, int), f"Value should be int, got {type(value).__name__}"
+E       AssertionError: Value should be int, got str
+E       assert False
+E        +  where False = isinstance('123', int)
+
+tools/test_pytest_flags_minimal.py:108: AssertionError
+_____________________________ test_set_operations ______________________________
+
+    def test_set_operations():
+        """Set comparison failure."""
+        set1 = {1, 2, 3, 4}
+        set2 = {1, 2, 3, 5}
+>       assert set1 == set2, "Sets should be equal"
+E       AssertionError: Sets should be equal
+E       assert {1, 2, 3, 4} == {1, 2, 3, 5}
+E         
+E         Extra items in the left set:
+E         4
+E         Extra items in the right set:
+E         5
+E         
+E         Full diff:...
+E         
+E         ...Full output truncated (9 lines hidden), use '-vv' to show
+
+tools/test_pytest_flags_minimal.py:115: AssertionError
+____________________________ test_range_comparison _____________________________
+
+    def test_range_comparison():
+        """Range comparison failure."""
+        r1 = range(0, 10)
+        r2 = range(0, 11)
+>       assert r1 == r2, "Ranges should be equal"
+E       AssertionError: Ranges should be equal
+E       assert range(0, 10) == range(0, 11)
+E         
+E         Right contains one more item: 10
+E         
+E         Full diff:
+E         - range(0, 11)
+E         ?           ^
+E         + range(0, 10)
+E         ?           ^
+
+tools/test_pytest_flags_minimal.py:122: AssertionError
+____________________________ test_tuple_comparison _____________________________
+
+    def test_tuple_comparison():
+        """Tuple comparison failure."""
+        t1 = (1, 2, 3)
+        t2 = (1, 2, 4)
+>       assert t1 == t2, "Tuples should be equal"
+E       AssertionError: Tuples should be equal
+E       assert (1, 2, 3) == (1, 2, 4)
+E         
+E         At index 2 diff: 3 != 4
+E         
+E         Full diff:
+E           (
+E               1,
+E               2,...
+E         
+E         ...Full output truncated (5 lines hidden), use '-vv' to show
+
+tools/test_pytest_flags_minimal.py:129: AssertionError
+=========================== short test summary info ============================
+FAILED tools/test_pytest_flags_minimal.py::test_simple_equality - AssertionEr...
+FAILED tools/test_pytest_flags_minimal.py::test_dict_equality - AssertionErro...
+FAILED tools/test_pytest_flags_minimal.py::test_list_comparison - AssertionEr...
+FAILED tools/test_pytest_flags_minimal.py::test_multiline_string - AssertionE...
+FAILED tools/test_pytest_flags_minimal.py::test_numeric_comparison - Assertio...
+FAILED tools/test_pytest_flags_minimal.py::test_in_operator - AssertionError:...
+FAILED tools/test_pytest_flags_minimal.py::test_long_sequence - AssertionErro...
+FAILED tools/test_pytest_flags_minimal.py::test_nested_structure - AssertionE...
+FAILED tools/test_pytest_flags_minimal.py::test_approximate_numbers - Asserti...
+FAILED tools/test_pytest_flags_minimal.py::test_boolean_logic - AssertionErro...
+FAILED tools/test_pytest_flags_minimal.py::test_string_operations - Assertion...
+FAILED tools/test_pytest_flags_minimal.py::test_type_checking - AssertionErro...
+FAILED tools/test_pytest_flags_minimal.py::test_set_operations - AssertionErr...
+FAILED tools/test_pytest_flags_minimal.py::test_range_comparison - AssertionE...
+FAILED tools/test_pytest_flags_minimal.py::test_tuple_comparison - AssertionE...
+============================== 15 failed in 0.05s ==============================
