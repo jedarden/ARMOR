@@ -820,3 +820,286 @@ func TestValidationFormatter_EmptyValues(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// BASIC FormatError FUNCTION TESTS
+// =============================================================================
+
+// TestFormatError_BasicFormatting verifies that FormatError produces
+// correctly formatted error messages with consistent structure.
+func TestFormatError_BasicFormatting(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		expected  string
+	}{
+		{
+			name:      "status code error without field",
+			errorType: "status_code",
+			message:   "Expected 200 but got 404",
+			fieldName: "",
+			expected:  "[status_code] Expected 200 but got 404",
+		},
+		{
+			name:      "error message with field name",
+			errorType: "error_message",
+			message:   "Pattern not found in response",
+			fieldName: "response",
+			expected:  "[error_message] response: Pattern not found in response",
+		},
+		{
+			name:      "content type error without field",
+			errorType: "content_type",
+			message:   "Expected application/json but got text/html",
+			fieldName: "",
+			expected:  "[content_type] Expected application/json but got text/html",
+		},
+		{
+			name:      "validation error with field",
+			errorType: "validation",
+			message:   "Field 'email' is required",
+			fieldName: "email",
+			expected:  "[validation] email: Field 'email' is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result string
+			if tt.fieldName != "" {
+				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+			} else {
+				result = FormatError(tt.errorType, tt.message)
+			}
+			if result != tt.expected {
+				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatError_EmptyErrorType verifies that FormatError handles
+// empty error type gracefully by using the default "error" type.
+func TestFormatError_EmptyErrorType(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		expected  string
+	}{
+		{
+			name:      "empty error type with message",
+			errorType: "",
+			message:   "Something went wrong",
+			fieldName: "",
+			expected:  "[error] Something went wrong",
+		},
+		{
+			name:      "empty error type with message and field",
+			errorType: "",
+			message:   "Field is required",
+			fieldName: "email",
+			expected:  "[error] email: Field is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result string
+			if tt.fieldName != "" {
+				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+			} else {
+				result = FormatError(tt.errorType, tt.message)
+			}
+			if result != tt.expected {
+				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatError_EmptyMessage verifies that FormatError handles
+// empty message gracefully by using a default message or field-based fallback.
+func TestFormatError_EmptyMessage(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		expected  string
+	}{
+		{
+			name:      "empty message without field",
+			errorType: "status_code",
+			message:   "",
+			fieldName: "",
+			expected:  "[status_code] (no message provided)",
+		},
+		{
+			name:      "empty message with field name",
+			errorType: "validation",
+			message:   "",
+			fieldName: "email",
+			expected:  "[validation] email: email validation failed",
+		},
+		{
+			name:      "whitespace message without field",
+			errorType: "validation",
+			message:   "   ",
+			fieldName: "",
+			expected:  "[validation]     ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result string
+			if tt.fieldName != "" {
+				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+			} else {
+				result = FormatError(tt.errorType, tt.message)
+			}
+			if result != tt.expected {
+				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatError_BothEmpty verifies that FormatError handles
+// both error type and message being empty gracefully.
+func TestFormatError_BothEmpty(t *testing.T) {
+	result := FormatError("", "")
+	expected := "[error] (no message provided)"
+
+	if result != expected {
+		t.Errorf("FormatError() = %q, want %q", result, expected)
+	}
+
+	// Test with both empty and field name provided
+	resultWithField := FormatError("", "", "email")
+	expectedWithField := "[error] email: email validation failed"
+
+	if resultWithField != expectedWithField {
+		t.Errorf("FormatError() = %q, want %q", resultWithField, expectedWithField)
+	}
+}
+
+// TestFormatError_ConsistentStructure verifies that FormatError
+// produces consistent structure across different error types.
+func TestFormatError_ConsistentStructure(t *testing.T) {
+	errorTypes := []string{
+		"status_code",
+		"error_message",
+		"content_type",
+		"validation",
+		"authentication",
+		"authorization",
+		"network",
+		"timeout",
+	}
+
+	for _, errType := range errorTypes {
+		t.Run(errType, func(t *testing.T) {
+			result := FormatError(errType, "Test error message")
+
+			// Verify structure starts with [error_type]
+			if !strings.HasPrefix(result, "["+errType+"] ") {
+				t.Errorf("FormatError(%q, ...) should start with [%q], got: %q",
+					errType, errType, result)
+			}
+
+			// Verify message is included
+			if !strings.Contains(result, "Test error message") {
+				t.Errorf("FormatError(%q, ...) should contain message, got: %q",
+					errType, result)
+			}
+		})
+	}
+
+	// Test with field name as well
+	t.Run("with field names", func(t *testing.T) {
+		result := FormatError("validation", "Test error", "email")
+
+		// Should include field name
+		if !strings.Contains(result, "email:") {
+			t.Errorf("FormatError with field should include field name, got: %q", result)
+		}
+
+		// Should still have consistent structure
+		if !strings.HasPrefix(result, "[validation]") {
+			t.Errorf("FormatError with field should start with [validation], got: %q", result)
+		}
+	})
+}
+
+// TestFormatError_SpecialCharacters verifies that FormatError
+// handles special characters in messages correctly.
+func TestFormatError_SpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+	}{
+		{
+			name:      "newlines in message",
+			errorType: "validation",
+			message:   "Line 1\nLine 2",
+		},
+		{
+			name:      "tabs in message",
+			errorType: "status_code",
+			message:   "Error:\t404",
+		},
+		{
+			name:      "unicode characters",
+			errorType: "error",
+			message:   "Error: ✓ ✗ →",
+		},
+		{
+			name:      "quotes in message",
+			errorType: "message",
+			message:   `"quoted" and 'single'`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatError(tt.errorType, tt.message)
+
+			// Should not panic and should contain the message
+			if !strings.Contains(result, tt.message) {
+				t.Errorf("FormatError() should contain special characters, got: %q", result)
+			}
+
+			// Should have consistent structure
+			if !strings.HasPrefix(result, "["+tt.errorType+"] ") {
+				t.Errorf("FormatError() should start with [%q], got: %q",
+					tt.errorType, result)
+			}
+		})
+	}
+}
+
+// TestFormatError_NoNilPanic verifies that FormatError does not panic
+// with nil or empty inputs and handles them gracefully.
+func TestFormatError_NoNilPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("FormatError should not panic, got: %v", r)
+		}
+	}()
+
+	// Test with empty strings
+	FormatError("", "")
+
+	// Test with one empty
+	FormatError("status_code", "")
+	FormatError("", "message only")
+
+	// Test with normal values
+	FormatError("validation", "test message")
+}
