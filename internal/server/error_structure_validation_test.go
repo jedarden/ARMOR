@@ -505,10 +505,10 @@ func TestValidateErrorResponseStructureMessageContainsTests(t *testing.T) {
 			expectValid:     false,
 		},
 		{
-			name:            "Case sensitive substring match (should fail)",
+			name:            "Case insensitive substring match (should pass)",
 			body:            []byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>TestCode</Code><Message>AUTHENTICATION failed</Message></Error>`),
 			messageContains: "authentication",
-			expectValid:     false, // Current implementation is case-sensitive
+			expectValid:     true, // Implementation is case-insensitive
 		},
 		{
 			name:            "Empty message contains - should validate",
