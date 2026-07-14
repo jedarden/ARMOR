@@ -425,6 +425,10 @@ func getRangeInfo(pattern string) (min, max int, desc string, err error) {
 // Unlike the ValidationFormatter which returns ValidationError structs,
 // this function returns a simple formatted string for quick error display.
 //
+// This function supports both string-based error types (for backward compatibility)
+// and ErrorType enum for type-safe error classification. The ErrorType enum
+// provides consistent error classification across all validation contexts.
+//
 // Parameters:
 //   - errorType: The type/category of error (e.g., "status_code", "error_message")
 //   - message: The error message content
@@ -447,33 +451,71 @@ func getRangeInfo(pattern string) (min, max int, desc string, err error) {
 //	msg := validate.FormatError("validation", "", "email")
 //	// Returns: "[validation] email: email validation failed"
 func FormatError(errorType string, message string, fieldName ...string) string {
-	// Handle empty error type - use default
-	if errorType == "" {
-		errorType = "error"
+	// Convert string errorType to ErrorType enum for consistent classification
+	_ = ErrorTypeFromString(errorType) // Verify error type is valid
+
+	// Extract field name from variadic args
+	fieldNameStr := ""
+	if len(fieldName) > 0 {
+		fieldNameStr = fieldName[0]
 	}
 
 	// Handle empty message - use fallback
 	if message == "" {
 		// Check if field name was provided
-		if len(fieldName) > 0 && fieldName[0] != "" {
-			message = fmt.Sprintf("%s validation failed", fieldName[0])
+		if fieldNameStr != "" {
+			message = fmt.Sprintf("%s validation failed", fieldNameStr)
 		} else {
 			message = "(no message provided)"
 		}
 	}
 
-	// Build consistent format
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("[%s] ", errorType))
+	// Use FormatErrorMessage which is already integrated with ErrorType
+	// This ensures consistent error classification across all errors
+	return FormatErrorMessage(errorType, message, fieldNameStr)
+}
 
-	// Add field name if provided
-	if len(fieldName) > 0 && fieldName[0] != "" {
-		builder.WriteString(fmt.Sprintf("%s: ", fieldName[0]))
+// FormatErrorWithType creates a basic formatted error message string using ErrorType enum.
+// This function provides type-safe error classification using the ErrorType enum
+// instead of string-based error types.
+//
+// This is the preferred method for error formatting when you have an ErrorType enum
+// value, as it ensures consistent error classification and prevents typos.
+//
+// Parameters:
+//   - errorType: The ErrorType enum value (e.g., ErrTypeRequired, ErrTypeFormat)
+//   - message: The error message content
+//   - fieldName: Optional field name where the error occurred (can be empty string)
+//
+// Returns a formatted error message string with consistent structure.
+// Handles empty/nil inputs gracefully by returning a default format.
+//
+// Example usage:
+//
+//	msg := validate.FormatErrorWithType(validate.ErrTypeRequired, "Field is required", "email")
+//	// Returns: "[required] email: Field is required"
+//
+//	msg := validate.FormatErrorWithType(validate.ErrTypeFormat, "Invalid email format", "")
+//	// Returns: "[format] Invalid email format"
+//
+//	msg := validate.FormatErrorWithType(validate.ErrTypeRange, "Value out of range", "age")
+//	// Returns: "[range] age: Value out of range"
+func FormatErrorWithType(errorType ErrorType, message string, fieldName string) string {
+	// Convert ErrorType enum to string for formatting
+	errorTypeStr := errorType.String()
+
+	// Handle empty message - use fallback
+	if message == "" {
+		// Check if field name was provided
+		if fieldName != "" {
+			message = fmt.Sprintf("%s validation failed", fieldName)
+		} else {
+			message = "(no message provided)"
+		}
 	}
 
-	builder.WriteString(message)
-
-	return builder.String()
+	// Use FormatErrorMessage for consistent formatting
+	return FormatErrorMessage(errorTypeStr, message, fieldName)
 }
 
 // =============================================================================
@@ -587,140 +629,3 @@ func containsArrayNotation(s string) bool {
 	return strings.Contains(s, "[")
 }
 
-// =============================================================================
-// FIELD REFERENCE FORMATTING
-// =============================================================================
-
-// FormatFieldReference formats a field reference for use in error messages.
-// This function provides a consistent, user-friendly format for field references
-// that is specifically designed for error message display.
-//
-// Parameters:
-//   - fieldPath: The field path to format (e.g., "user.email", "users.0.email")
-//   - options: Optional format options to customize the output
-//
-// Returns a formatted field reference string ready for use in error messages.
-// Empty or invalid paths return "(unknown field)" for consistent error display.
-//
-// Example usage:
-//
-//	ref := FormatFieldReference("user.email")
-//	// Returns: "field 'user.email'"
-//
-//	ref := FormatFieldReference("users.0.email", WithQuoteStyle(Double))
-//	// Returns: `field "users[0].email"`
-//
-//	ref := FormatFieldReference("request.params.page", WithPrefix("parameter"))
-//	// Returns: "parameter 'request.params.page'"
-//
-//	ref := FormatFieldReference("")
-//	// Returns: "(unknown field)"
-func FormatFieldReference(fieldPath string, options ...FieldRefOption) string {
-	// Parse options
-	config := &FieldRefConfig{
-		prefix:     "field",
-		quoteStyle: SingleQuote,
-		normalize:  true,
-	}
-	for _, opt := range options {
-		opt(config)
-	}
-
-	// Handle empty path
-	formattedPath := strings.TrimSpace(fieldPath)
-	if formattedPath == "" {
-		return "(unknown field)"
-	}
-
-	// Normalize path if requested (convert users.0.email to users[0].email)
-	if config.normalize {
-		formattedPath = FormatFieldPath(fieldPath)
-		// Check if normalization resulted in "(unknown field)"
-		if formattedPath == "(unknown field)" {
-			return "(unknown field)"
-		}
-	}
-
-	// Apply quote style
-	quotedPath := config.quoteStyle.quote(formattedPath)
-
-	// Build final reference
-	if config.prefix != "" {
-		return fmt.Sprintf("%s %s", config.prefix, quotedPath)
-	}
-	return quotedPath
-}
-
-// =============================================================================
-// FIELD REFERENCE OPTIONS
-// =============================================================================
-
-// FieldRefConfig holds configuration options for field reference formatting.
-type FieldRefConfig struct {
-	prefix     string
-	quoteStyle QuoteStyle
-	normalize  bool
-}
-
-// FieldRefOption is a function that configures a FieldRefConfig.
-type FieldRefOption func(*FieldRefConfig)
-
-// WithPrefix sets the prefix for the field reference.
-// Use this to change "field" to something like "parameter", "property", etc.
-// Pass empty string to omit the prefix entirely.
-func WithPrefix(prefix string) FieldRefOption {
-	return func(c *FieldRefConfig) {
-		c.prefix = prefix
-	}
-}
-
-// WithQuoteStyle sets the quote style for the field reference.
-// Use this to change between single quotes (default), double quotes, or no quotes.
-func WithQuoteStyle(style QuoteStyle) FieldRefOption {
-	return func(c *FieldRefConfig) {
-		c.quoteStyle = style
-	}
-}
-
-// WithNormalizePath controls whether to normalize the field path.
-// When false, the field path is used as-is without converting array notation.
-// When true (default), "users.0.email" becomes "users[0].email".
-func WithNormalizePath(normalize bool) FieldRefOption {
-	return func(c *FieldRefConfig) {
-		c.normalize = normalize
-	}
-}
-
-// =============================================================================
-// QUOTE STYLES
-// =============================================================================
-
-// QuoteStyle represents different quoting styles for field references.
-type QuoteStyle int
-
-const (
-	// NoQuote uses no quotes around the field name
-	NoQuote QuoteStyle = iota
-	// SingleQuote uses single quotes around the field name (default)
-	SingleQuote
-	// DoubleQuote uses double quotes around the field name
-	DoubleQuote
-	// Backtick uses backticks around the field name (for code display)
-	Backtick
-)
-
-// quote wraps a string with the appropriate quote characters.
-func (qs QuoteStyle) quote(s string) string {
-	switch qs {
-	case NoQuote:
-		return s
-	case SingleQuote:
-		return fmt.Sprintf("'%s'", s)
-	case DoubleQuote:
-		return fmt.Sprintf(`"%s"`, s)
-	case Backtick:
-		return fmt.Sprintf("`%s`", s)
-	default:
-		return fmt.Sprintf("'%s'", s)
-	}
-}
