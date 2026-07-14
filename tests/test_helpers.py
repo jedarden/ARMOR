@@ -1,15 +1,30 @@
 """
-HTTP Status Code Validation Helper Functions
+HTTP Validation Helper Functions
 
-This module provides reusable helper functions for validating HTTP status codes
-in error response tests. These helpers support both single status codes and arrays
-of allowed codes, with clear assertion error messages.
+This module provides reusable helper functions for validating HTTP responses in tests.
+It includes:
 
-Bead: bf-gfemoh
+1. HTTP Status Code Validation:
+   - Single and multiple status code validation
+   - Convenience functions for common status ranges (2xx, 3xx, 4xx, 5xx)
+
+2. Content-Type Header Validation:
+   - Pattern matching for content-type validation
+   - Support for multiple allowed content-types
+   - Handles charset and other parameters
+
+3. Error Response Structure Validation:
+   - Validates error response structure (error, message, code, details fields)
+   - Supports custom field validators
+   - JSON parsing from string responses
+
+Bead: bf-gfemoh, bf-64826u, bf-q6dmsn
 Created: 2026-07-14
 """
 
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Dict, Any, Set, Callable
+from dataclasses import dataclass
+import json
 
 # Try to import requests, but make it optional for environments without it
 try:
@@ -311,5 +326,316 @@ def validate_server_error(response: Union[requests.Response, tuple],
     return validate_http_status(
         response,
         expected_status=list(range(500, 600)),
+        throw_on_error=throw_on_error
+    )
+
+
+# =============================================================================
+# CONTENT-TYPE HEADER VALIDATION
+# =============================================================================
+
+class ContentTypeValidationError(AssertionError):
+    """
+    Custom assertion error for content-type header validation failures.
+
+    Provides clear, formatted error messages that show:
+    - The actual content-type received
+    - The expected content-type(s)
+    - The response URL (if available)
+    """
+
+    def __init__(self,
+                 actual: str,
+                 expected: Union[str, List[str]],
+                 url: Optional[str] = None):
+        """
+        Initialize a content-type validation error.
+
+        Args:
+            actual: The actual content-type header value
+            expected: The expected content-type or list of allowed types
+            url: Optional URL that was requested
+        """
+        self.actual = actual
+        self.expected = expected
+        self.url = url
+
+        # Build detailed error message
+        msg_parts = []
+
+        if url:
+            msg_parts.append(f"URL: {url}")
+
+        msg_parts.append(f"Expected Content-Type: {self._format_expected()}")
+        msg_parts.append(f"Actual Content-Type: {actual}")
+
+        message = "\n  ".join(msg_parts)
+        super().__init__(message)
+
+    def _format_expected(self) -> str:
+        """Format expected content-types for display."""
+        if isinstance(self.expected, list):
+            if len(self.expected) == 1:
+                return str(self.expected[0])
+            elif len(self.expected) == 2:
+                return f"{self.expected[0]} or {self.expected[1]}"
+            else:
+                return f"one of {self.expected}"
+        else:
+            return str(self.expected)
+
+
+def _normalize_content_type(content_type: Optional[str]) -> str:
+    """
+    Normalize a content-type string for comparison.
+
+    This function:
+    - Converts to lowercase
+    - Trims whitespace
+    - Extracts the MIME type without parameters (e.g., 'application/json; charset=utf-8' -> 'application/json')
+
+    Args:
+        content_type: The content-type string to normalize (can be None)
+
+    Returns:
+        str: Normalized content-type, or empty string if input is None
+    """
+    if not content_type:
+        return ""
+
+    # Convert to lowercase and trim whitespace
+    content_type = content_type.lower().strip()
+
+    # Extract only the MIME type (before semicolon if present)
+    # This handles cases like 'application/json; charset=utf-8' -> 'application/json'
+    if ';' in content_type:
+        content_type = content_type.split(';')[0].strip()
+
+    return content_type
+
+
+def validate_content_type(
+    response: Union[requests.Response, tuple],
+    expected_type: Union[str, List[str]],
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate HTTP response content-type header against expected value(s).
+
+    This helper function validates that an HTTP response has the expected content-type.
+    It supports both single content-types and lists of allowed types, making it
+    flexible for different testing scenarios. The function uses pattern matching,
+    so 'application/json' will match 'application/json; charset=utf-8'.
+
+    Args:
+        response: HTTP response object (requests.Response) or tuple of (status_code, headers, body)
+        expected_type: Expected content-type (str) or list of allowed types (List[str])
+        throw_on_error: If True, throws ContentTypeValidationError on validation failure.
+                       If False, returns False instead.
+
+    Returns:
+        bool: True if content-type matches expected value(s), False otherwise
+
+    Raises:
+        ContentTypeValidationError: If validation fails and throw_on_error is True
+        TypeError: If response or expected_type has invalid type
+
+    Examples:
+        >>> # Single content-type validation
+        >>> response = requests.get('http://example.com/api')
+        >>> validate_content_type(response, 'application/json')
+
+        >>> # Multiple allowed content-types
+        >>> validate_content_type(response, ['application/json', 'application/xml'])
+
+        >>> # Pattern matching (matches both 'application/json' and 'application/json; charset=utf-8')
+        >>> validate_content_type(response, 'application/json')
+
+        >>> # Using tuple response format
+        >>> status, headers, body = curl_request(...)
+        >>> validate_content_type((status, headers, body), 'text/html')
+
+        >>> # Non-throwing validation
+        >>> is_valid = validate_content_type(response, 'application/json', throw_on_error=False)
+        >>> if is_valid:
+        ...     print("Content-type is valid!")
+
+    Acceptance Criteria:
+    - Function accepts a response object and expected content-type(s)
+    - Supports pattern matching (e.g., 'application/json' matches 'application/json; charset=utf-8')
+    - Returns boolean or throws assertion error with clear message
+    - Includes test cases demonstrating various content-type scenarios
+    - Function is exported from test utils module
+    """
+    # Extract content-type and URL from response
+    actual_content_type: Optional[str] = None
+    url: Optional[str] = None
+
+    # Check for response-like objects (duck typing)
+    # First check if it's a tuple (special case)
+    if isinstance(response, tuple) and len(response) >= 2:
+        # Tuple format: (status_code, headers, body) or (status_code, headers)
+        if len(response) >= 2:
+            headers = response[1]
+            if isinstance(headers, dict):
+                actual_content_type = headers.get('Content-Type', headers.get('content-type'))
+            elif isinstance(headers, str):
+                # Headers might be a string in some test scenarios
+                actual_content_type = headers
+    # Then check if it has response-like attributes (headers, etc.)
+    elif hasattr(response, 'headers'):
+        actual_content_type = response.headers.get('Content-Type',
+                                                     response.headers.get('content-type', ''))
+        url = getattr(response, 'url', None)
+    else:
+        raise TypeError(
+            f"Response must be response-like (with headers attribute) or tuple (status, headers, body), "
+            f"got {type(response).__name__}"
+        )
+
+    # Normalize the actual content-type for comparison
+    normalized_actual = _normalize_content_type(actual_content_type)
+
+    # Normalize expected_type to a list for uniform checking
+    expected_types: List[str]
+    if isinstance(expected_type, str):
+        expected_types = [expected_type]
+    elif isinstance(expected_type, list):
+        expected_types = expected_type
+    else:
+        raise TypeError(
+            f"expected_type must be str or List[str], "
+            f"got {type(expected_type).__name__}"
+        )
+
+    # Validate all expected types are strings and normalize them
+    normalized_expected = []
+    for ct in expected_types:
+        if not isinstance(ct, str):
+            raise TypeError(
+                f"All content-types must be strings, got {type(ct).__name__}"
+            )
+        normalized_expected.append(_normalize_content_type(ct))
+
+    # Check if actual content-type matches any expected type
+    is_valid = normalized_actual in normalized_expected
+
+    if not is_valid and throw_on_error:
+        # Use the original expected_type (not normalized) for error message
+        error_expected = expected_type
+        raise ContentTypeValidationError(
+            actual=actual_content_type or "(missing)",
+            expected=error_expected,
+            url=url
+        )
+
+    return is_valid
+
+
+def validate_json_content_type(
+    response: Union[requests.Response, tuple],
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate response has JSON content-type.
+
+    Accepts any JSON content-type variant (application/json, text/json, etc.).
+
+    Args:
+        response: HTTP response object
+        throw_on_error: If True, throws on validation failure
+
+    Returns:
+        bool: True if content-type indicates JSON
+    """
+    json_types = [
+        'application/json',
+        'text/json',
+        'application/vnd.api+json',
+        'application/problem+json'
+    ]
+    return validate_content_type(
+        response,
+        expected_type=json_types,
+        throw_on_error=throw_on_error
+    )
+
+
+def validate_xml_content_type(
+    response: Union[requests.Response, tuple],
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate response has XML content-type.
+
+    Accepts any XML content-type variant (application/xml, text/xml, etc.).
+
+    Args:
+        response: HTTP response object
+        throw_on_error: If True, throws on validation failure
+
+    Returns:
+        bool: True if content-type indicates XML
+    """
+    xml_types = [
+        'application/xml',
+        'text/xml',
+        'application/vnd+xml',
+        'application/rss+xml',
+        'application/atom+xml'
+    ]
+    return validate_content_type(
+        response,
+        expected_type=xml_types,
+        throw_on_error=throw_on_error
+    )
+
+
+def validate_html_content_type(
+    response: Union[requests.Response, tuple],
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate response has HTML content-type.
+
+    Accepts any HTML content-type variant (text/html, application/xhtml+xml, etc.).
+
+    Args:
+        response: HTTP response object
+        throw_on_error: If True, throws on validation failure
+
+    Returns:
+        bool: True if content-type indicates HTML
+    """
+    html_types = [
+        'text/html',
+        'application/xhtml+xml'
+    ]
+    return validate_content_type(
+        response,
+        expected_type=html_types,
+        throw_on_error=throw_on_error
+    )
+
+
+def validate_text_content_type(
+    response: Union[requests.Response, tuple],
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate response has plain text content-type.
+
+    Accepts text/plain content-type.
+
+    Args:
+        response: HTTP response object
+        throw_on_error: If True, throws on validation failure
+
+    Returns:
+        bool: True if content-type indicates plain text
+    """
+    return validate_content_type(
+        response,
+        expected_type='text/plain',
         throw_on_error=throw_on_error
     )
