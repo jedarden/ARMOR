@@ -487,14 +487,56 @@ func InvalidErrorTypeCount() int {
 // BASIC ERROR MESSAGE FORMATTING
 // =============================================================================
 
-// FormatError creates a basic formatted error message string.
-// This is a simplified formatting function for basic error message display.
-// Unlike the ValidationFormatter which returns ValidationError structs,
-// this function returns a simple formatted string for quick error display.
+// FormatError creates a formatted error message using ErrorType enum.
+// This is the primary error formatting function that provides type-safe error classification.
 //
-// This function supports both string-based error types (for backward compatibility)
-// and validates them against the ErrorType enum for type-safe error classification.
-// The ErrorType enum provides consistent error classification across all validation contexts.
+// This function now uses ErrorType enum for consistent error classification across all validation contexts.
+// For backward compatibility with string-based error types, use FormatErrorString.
+//
+// Parameters:
+//   - errorType: The ErrorType enum value (e.g., ErrTypeRequired, ErrTypeFormat)
+//   - message: The error message content
+//   - fieldName: Optional field name where the error occurred (can be empty string)
+//
+// Returns a formatted error message string with consistent structure.
+// Handles empty/nil inputs gracefully by returning a default format.
+//
+// Example usage:
+//
+//	msg := validate.FormatError(validate.ErrTypeRequired, "This field is required", "email")
+//	// Returns: "[required] email: This field is required"
+//
+//	msg := validate.FormatError(validate.ErrTypeFormat, "Invalid email format", "")
+//	// Returns: "[format] Invalid email format"
+//
+//	msg := validate.FormatError(validate.ErrTypeRange, "Value out of range", "age")
+//	// Returns: "[range] age: Value out of range"
+func FormatError(errorType ErrorType, message string, fieldName string) string {
+	// Convert ErrorType enum to string for formatting
+	errorTypeStr := errorType.String()
+
+	// Trim whitespace from message before checking
+	message = strings.TrimSpace(message)
+
+	// Handle empty message - use fallback
+	if message == "" {
+		// Check if field name was provided
+		if fieldName != "" {
+			message = fmt.Sprintf("%s validation failed", fieldName)
+		} else {
+			message = "(no message provided)"
+		}
+	}
+
+	// Use FormatErrorMessage for consistent formatting
+	return FormatErrorMessage(errorTypeStr, message, fieldName)
+}
+
+// FormatErrorString creates a formatted error message using string error type.
+// This function provides backward compatibility for code that uses string-based error types.
+//
+// This function validates string error types against the ErrorType enum for type-safe
+// error classification while maintaining backward compatibility with any string value.
 //
 // Error Type Validation:
 //   - String error types are validated against the ErrorType enum (e.g., "required", "format", "range")
@@ -504,9 +546,9 @@ func InvalidErrorTypeCount() int {
 //   - To reset tracking between tests, use ResetInvalidErrorTypeTracking()
 //
 // Parameters:
-//   - errorType: The type/category of error (e.g., "required", "format", "status_code")
+//   - errorType: The type/category of error as a string (e.g., "required", "format", "status_code")
 //   - message: The error message content
-//   - fieldName: Optional field name where the error occurred (can be empty string)
+//   - fieldName: Optional field name where the error occurred (variadic parameter)
 //
 // Returns a formatted error message string with consistent structure.
 // Handles empty/nil inputs gracefully by returning a default format.
@@ -514,27 +556,21 @@ func InvalidErrorTypeCount() int {
 // Example usage:
 //
 //	// Valid error types (recognized by ErrorType enum)
-//	msg := validate.FormatError("required", "This field is required", "email")
+//	msg := validate.FormatErrorString("required", "This field is required", "email")
 //	// Returns: "[required] email: This field is required"
 //
-//	msg := validate.FormatError("format", "Invalid email format", "")
+//	msg := validate.FormatErrorString("format", "Invalid email format")
 //	// Returns: "[format] Invalid email format"
 //
 //	// Custom/unknown error types (still work, but are tracked)
-//	msg := validate.FormatError("custom_validation", "Custom check failed", "field")
+//	msg := validate.FormatErrorString("custom_validation", "Custom check failed", "field")
 //	// Returns: "[custom_validation] field: Custom check failed"
 //	// "custom_validation" is now tracked as an invalid error type
 //
 //	// Check what invalid types have been encountered
 //	invalidTypes := validate.GetInvalidErrorTypes()
 //	// Returns: map[string]int{"custom_validation": 1, ...}
-//
-//	msg := validate.FormatError("", "Something went wrong", "")
-//	// Returns: "[error] Something went wrong"
-//
-//	msg := validate.FormatError("validation", "", "email")
-//	// Returns: "[validation] email: email validation failed"
-func FormatError(errorType string, message string, fieldName ...string) string {
+func FormatErrorString(errorType string, message string, fieldName ...string) string {
 	// Extract field name from variadic args first
 	fieldNameStr := ""
 	if len(fieldName) > 0 {
@@ -591,50 +627,13 @@ func FormatError(errorType string, message string, fieldName ...string) string {
 	return FormatErrorMessage(errorType, message, fieldNameStr)
 }
 
-// FormatErrorWithType creates a basic formatted error message string using ErrorType enum.
-// This function provides type-safe error classification using the ErrorType enum
-// instead of string-based error types.
+// FormatErrorWithType is an alias for FormatError for backward compatibility.
+// This function calls FormatError with the same parameters.
 //
-// This is the preferred method for error formatting when you have an ErrorType enum
-// value, as it ensures consistent error classification and prevents typos.
-//
-// Parameters:
-//   - errorType: The ErrorType enum value (e.g., ErrTypeRequired, ErrTypeFormat)
-//   - message: The error message content
-//   - fieldName: Optional field name where the error occurred (can be empty string)
-//
-// Returns a formatted error message string with consistent structure.
-// Handles empty/nil inputs gracefully by returning a default format.
-//
-// Example usage:
-//
-//	msg := validate.FormatErrorWithType(validate.ErrTypeRequired, "Field is required", "email")
-//	// Returns: "[required] email: Field is required"
-//
-//	msg := validate.FormatErrorWithType(validate.ErrTypeFormat, "Invalid email format", "")
-//	// Returns: "[format] Invalid email format"
-//
-//	msg := validate.FormatErrorWithType(validate.ErrTypeRange, "Value out of range", "age")
-//	// Returns: "[range] age: Value out of range"
+// Deprecated: Use FormatError directly with ErrorType enum parameter instead.
+// This function is maintained for backward compatibility with existing code.
 func FormatErrorWithType(errorType ErrorType, message string, fieldName string) string {
-	// Convert ErrorType enum to string for formatting
-	errorTypeStr := errorType.String()
-
-	// Trim whitespace from message before checking
-	message = strings.TrimSpace(message)
-
-	// Handle empty message - use fallback
-	if message == "" {
-		// Check if field name was provided
-		if fieldName != "" {
-			message = fmt.Sprintf("%s validation failed", fieldName)
-		} else {
-			message = "(no message provided)"
-		}
-	}
-
-	// Use FormatErrorMessage for consistent formatting
-	return FormatErrorMessage(errorTypeStr, message, fieldName)
+	return FormatError(errorType, message, fieldName)
 }
 
 // =============================================================================

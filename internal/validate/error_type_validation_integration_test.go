@@ -118,7 +118,7 @@ func TestFormatError_InvalidErrorTypeFallback(t *testing.T) {
 			// Clear tracked types before each test
 			ResetInvalidErrorTypeTracking()
 
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			// Verify the output contains the error type string
 			if result != tt.expectedInMsg {
@@ -203,7 +203,7 @@ func TestFormatError_WhitespaceOnlyMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FormatError(tt.errorType, tt.message, tt.fieldName)
+			got := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			if got != tt.want {
 				t.Errorf("FormatError() = %v, want %v", got, tt.want)
 			}
@@ -320,7 +320,7 @@ func TestFormatError_WhitespaceOnlyFieldName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FormatError(tt.errorType, tt.message, tt.fieldName)
+			got := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			if got != tt.want {
 				t.Errorf("FormatError() = %v, want %v", got, tt.want)
 			}
@@ -416,7 +416,7 @@ func TestFormatError_EmptyErrorTypeEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FormatError(tt.errorType, tt.message, tt.fieldName)
+			got := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			if got != tt.want {
 				t.Errorf("FormatError() = %v, want %v", got, tt.want)
 			}
@@ -438,7 +438,7 @@ func TestFormatError_MultipleInvalidTypesTracking(t *testing.T) {
 	}
 
 	for _, errType := range invalidTypes {
-		FormatError(errType, "Test message", "field")
+		FormatErrorString(errType, "Test message", "field")
 	}
 
 	// Verify all invalid types were tracked
@@ -468,7 +468,7 @@ func TestFormatError_DuplicateInvalidTypeTracking(t *testing.T) {
 
 	// Use the same invalid type multiple times
 	for i := 0; i < occurrences; i++ {
-		FormatError(invalidType, "Test message", "field")
+		FormatErrorString(invalidType, "Test message", "field")
 	}
 
 	// Verify the type was tracked with correct count
@@ -502,7 +502,7 @@ func TestFormatError_ValidAndInvalidMixed(t *testing.T) {
 	}
 
 	for _, call := range errorCalls {
-		FormatError(call.errorType, "Test message", "field")
+		FormatErrorString(call.errorType, "Test message", "field")
 	}
 
 	// Verify only invalid types were tracked
@@ -584,7 +584,7 @@ func TestFormatError_SpecialCharactersInAllComponents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FormatError(tt.errorType, tt.message, tt.fieldName)
+			got := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			if got != tt.want {
 				t.Errorf("FormatError() = %v, want %v", got, tt.want)
 			}
@@ -664,7 +664,7 @@ func TestFormatError_ConsistencyBetweenAllErrorTypes(t *testing.T) {
 	for _, tt := range allTypes {
 		t.Run(tt.stringType, func(t *testing.T) {
 			// Test with message and field
-			resultStr := FormatError(tt.stringType, message, fieldName)
+			resultStr := FormatErrorString(tt.stringType, message, fieldName)
 			resultEnum := FormatErrorWithType(tt.enumType, message, fieldName)
 
 			if resultStr != resultEnum {
@@ -673,7 +673,7 @@ func TestFormatError_ConsistencyBetweenAllErrorTypes(t *testing.T) {
 			}
 
 			// Test without field
-			resultStrNoField := FormatError(tt.stringType, message, "")
+			resultStrNoField := FormatErrorString(tt.stringType, message, "")
 			resultEnumNoField := FormatErrorWithType(tt.enumType, message, "")
 
 			if resultStrNoField != resultEnumNoField {
@@ -785,7 +785,7 @@ func TestFormatError_LongStrings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Should not panic and should produce valid output
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			if result == "" {
 				t.Error("FormatError should not return empty string for long inputs")
@@ -855,7 +855,7 @@ func TestFormatError_UnicodeNormalizations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 
 			if result == "" {
 				t.Error("FormatError should handle unicode correctly")
@@ -918,9 +918,9 @@ func TestFormatError_VariadicFieldNameParameter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var got string
 			if len(tt.fieldNameArgs) == 0 {
-				got = FormatError(tt.errorType, tt.message)
+				got = FormatErrorString(tt.errorType, tt.message)
 			} else {
-				got = FormatError(tt.errorType, tt.message, tt.fieldNameArgs[0])
+				got = FormatErrorString(tt.errorType, tt.message, tt.fieldNameArgs[0])
 			}
 
 			if got != tt.want {

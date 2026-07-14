@@ -1064,7 +1064,7 @@ func TestFormatError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FormatError(tt.errorType, tt.message, tt.fieldName)
+			got := FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			if got != tt.want {
 				t.Errorf("FormatError() = %v, want %v", got, tt.want)
 			}
@@ -1080,10 +1080,10 @@ func TestFormatErrorBackwardCompatibility(t *testing.T) {
 		fieldName := "email"
 
 		// String-based function
-		stringResult := FormatError("required", message, fieldName)
+		stringResult := FormatErrorString("required", message, fieldName)
 
 		// ErrorType-based function
-		typeResult := FormatErrorWithType(ErrTypeRequired, message, fieldName)
+		typeResult := FormatError(ErrTypeRequired, message, fieldName)
 
 		if stringResult != typeResult {
 			t.Errorf("String and ErrorType functions should produce same result:\n  String: %v\n  Type:   %v", stringResult, typeResult)
@@ -1154,7 +1154,7 @@ func TestFormatErrorConsistentClassification(t *testing.T) {
 		errorTypes := []string{"required", "format", "range", "type", "unknown"}
 
 		for _, etStr := range errorTypes {
-			result := FormatError(etStr, "Test message", "field")
+			result := FormatErrorString(etStr, "Test message", "field")
 
 			// Check that result contains error type
 			if !strings.Contains(result, etStr) {
