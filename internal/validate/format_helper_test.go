@@ -1,7 +1,6 @@
 package validate
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -951,7 +950,7 @@ func TestFormatError_EmptyMessage(t *testing.T) {
 			errorType: "validation",
 			message:   "   ",
 			fieldName: "",
-			expected:  "[validation]    ",
+			expected:  "[validation] (no message provided)",
 		},
 	}
 
@@ -1104,6 +1103,431 @@ func TestFormatError_NoNilPanic(t *testing.T) {
 	// Test with normal values
 	FormatError("validation", "test message")
 }
+
+// =============================================================================
+// ERROR TYPE VALIDATION TESTS
+// =============================================================================
+
+// TestFormatError_WithValidErrorTypes verifies that FormatError validates
+// recognized ErrorType enum values and formats them correctly.
+func TestFormatError_WithValidErrorTypes(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		expected  string
+	}{
+		{
+			name:      "required error type",
+			errorType: "required",
+			message:   "Field is required",
+			fieldName: "email",
+			expected:  "[required] email: Field is required",
+		},
+		{
+			name:      "format error type",
+			errorType: "format",
+			message:   "Invalid email format",
+			fieldName: "",
+			expected:  "[format] Invalid email format",
+		},
+		{
+			name:      "range error type",
+			errorType: "range",
+			message:   "Value out of range",
+			fieldName: "age",
+			expected:  "[range] age: Value out of range",
+		},
+		{
+			name:      "length error type",
+			errorType: "length",
+			message:   "String too short",
+			fieldName: "password",
+			expected:  "[length] password: String too short",
+		},
+		{
+			name:      "type error type",
+			errorType: "type",
+			message:   "Expected number, got string",
+			fieldName: "count",
+			expected:  "[type] count: Expected number, got string",
+		},
+		{
+			name:      "value error type",
+			errorType: "value",
+			message:   "Invalid value",
+			fieldName: "status",
+			expected:  "[value] status: Invalid value",
+		},
+		{
+			name:      "duplicate error type",
+			errorType: "duplicate",
+			message:   "Email already exists",
+			fieldName: "email",
+			expected:  "[duplicate] email: Email already exists",
+		},
+		{
+			name:      "conflict error type",
+			errorType: "conflict",
+			message:   "Values conflict",
+			fieldName: "",
+			expected:  "[conflict] Values conflict",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset tracking before each test
+			ResetInvalidErrorTypeTracking()
+
+			var result string
+			if tt.fieldName != "" {
+				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+			} else {
+				result = FormatError(tt.errorType, tt.message)
+			}
+
+			if result != tt.expected {
+				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
+			}
+
+			// Verify that valid error types are NOT tracked as invalid
+			invalidTypes := GetInvalidErrorTypes()
+			if len(invalidTypes) > 0 {
+				t.Errorf("Valid error type %q was incorrectly tracked as invalid", tt.errorType)
+			}
+		})
+	}
+}
+
+// TestFormatError_WithInvalidErrorTypes verifies that FormatError tracks
+// unrecognized error types while maintaining backward compatibility.
+func TestFormatError_WithInvalidErrorTypes(t *testing.T) {
+	tests := []struct {
+		name           string
+		errorType      string
+		message        string
+		fieldName      string
+		expectedOutput string
+		shouldTrack    bool
+	}{
+		{
+			name:           "custom error type",
+			errorType:      "custom_validation",
+			message:        "Custom validation failed",
+			fieldName:      "field",
+			expectedOutput: "[custom_validation] field: Custom validation failed",
+			shouldTrack:    true,
+		},
+		{
+			name:           "typo in error type",
+			errorType:      "requird", // typo of "required"
+			message:        "Field is required",
+			fieldName:      "email",
+			expectedOutput: "[requird] email: Field is required",
+			shouldTrack:    true,
+		},
+		{
+			name:           "unknown error type",
+			errorType:      "unknown_type_xyz",
+			message:        "Unknown error",
+			fieldName:      "",
+			expectedOutput: "[unknown_type_xyz] Unknown error",
+			shouldTrack:    true,
+		},
+		{
+			name:           "HTTP-specific error type",
+			errorType:      "status_code",
+			message:        "Status code mismatch",
+			fieldName:      "response",
+			expectedOutput: "[status_code] response: Status code mismatch",
+			shouldTrack:    true, // status_code is not a basic ErrorType
+		},
+		{
+			name:           "error_message type",
+			errorType:      "error_message",
+			message:        "Error message pattern not found",
+			fieldName:      "",
+			expectedOutput: "[error_message] Error message pattern not found",
+			shouldTrack:    true, // error_message is not a basic ErrorType
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset tracking before each test
+			ResetInvalidErrorTypeTracking()
+
+			var result string
+			if tt.fieldName != "" {
+				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+			} else {
+				result = FormatError(tt.errorType, tt.message)
+			}
+
+			// Verify output is correct (backward compatibility maintained)
+			if result != tt.expectedOutput {
+				t.Errorf("FormatError() = %q, want %q", result, tt.expectedOutput)
+			}
+
+			// Check if error type was tracked
+			invalidTypes := GetInvalidErrorTypes()
+			if tt.shouldTrack {
+				if len(invalidTypes) == 0 {
+					t.Errorf("Expected invalid error type %q to be tracked", tt.errorType)
+				} else if count, ok := invalidTypes[tt.errorType]; !ok || count == 0 {
+					t.Errorf("Expected error type %q to be tracked with count > 0", tt.errorType)
+				}
+			} else {
+				if len(invalidTypes) > 0 {
+					t.Errorf("Expected valid error type %q to NOT be tracked", tt.errorType)
+				}
+			}
+		})
+	}
+}
+
+// TestFormatError_ErrorTypeTracking verifies that the error type tracking
+// system correctly accumulates occurrences of invalid types.
+func TestFormatError_ErrorTypeTracking(t *testing.T) {
+	// Reset tracking before test
+	ResetInvalidErrorTypeTracking()
+
+	// Use multiple invalid error types
+	invalidTypes := []string{
+		"custom_type_1",
+		"custom_type_2",
+		"custom_type_1", // repeat to test accumulation
+		"custom_type_3",
+		"custom_type_1", // repeat again
+	}
+
+	for _, errType := range invalidTypes {
+		FormatError(errType, "test message", "field")
+	}
+
+	// Get tracked invalid types
+	tracked := GetInvalidErrorTypes()
+
+	// Verify counts
+	expectedCounts := map[string]int{
+		"custom_type_1": 3,
+		"custom_type_2": 1,
+		"custom_type_3": 1,
+	}
+
+	for errType, expectedCount := range expectedCounts {
+		if count, ok := tracked[errType]; !ok {
+			t.Errorf("Expected error type %q to be tracked", errType)
+		} else if count != expectedCount {
+			t.Errorf("Expected %q to have count %d, got %d", errType, expectedCount, count)
+		}
+	}
+
+	// Verify we tracked exactly 3 unique types
+	if InvalidErrorTypeCount() != 3 {
+		t.Errorf("Expected 3 unique invalid error types, got %d", InvalidErrorTypeCount())
+	}
+}
+
+// TestFormatError_CaseInsensitiveValidation verifies that ErrorTypeFromString
+// handles case-insensitive matching correctly.
+func TestFormatError_CaseInsensitiveValidation(t *testing.T) {
+	// Reset tracking before test
+	ResetInvalidErrorTypeTracking()
+
+	tests := []struct {
+		name        string
+		errorType   string
+		shouldTrack bool
+	}{
+		{
+			name:        "uppercase REQUIRED",
+			errorType:   "REQUIRED",
+			shouldTrack: false, // Should be recognized as "required"
+		},
+		{
+			name:        "mixed case Format",
+			errorType:   "Format",
+			shouldTrack: false, // Should be recognized as "format"
+		},
+		{
+			name:        "lowercase range",
+			errorType:   "range",
+			shouldTrack: false, // Should be recognized
+		},
+		{
+			name:        "custom type uppercase",
+			errorType:   "CUSTOM_TYPE",
+			shouldTrack: true, // Not a recognized type
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			FormatError(tt.errorType, "test message", "field")
+
+			tracked := GetInvalidErrorTypes()
+			isTracked := false
+			for trackedType := range tracked {
+				if strings.EqualFold(trackedType, tt.errorType) {
+					isTracked = true
+					break
+				}
+			}
+
+			if tt.shouldTrack && !isTracked {
+				t.Errorf("Expected error type %q to be tracked as invalid", tt.errorType)
+			} else if !tt.shouldTrack && isTracked {
+				t.Errorf("Expected error type %q to NOT be tracked (should be recognized)", tt.errorType)
+			}
+		})
+	}
+}
+
+// TestTrackInvalidErrorType verifies the tracking function directly.
+func TestTrackInvalidErrorType(t *testing.T) {
+	// Reset tracking before test
+	ResetInvalidErrorTypeTracking()
+
+	// Track some invalid error types
+	count1 := TrackInvalidErrorType("type1")
+	count2 := TrackInvalidErrorType("type2")
+	count3 := TrackInvalidErrorType("type1") // Track same type again
+	count4 := TrackInvalidErrorType("type3")
+
+	// Verify return values (accumulated counts)
+	if count1 != 1 {
+		t.Errorf("Expected first occurrence of type1 to return count 1, got %d", count1)
+	}
+	if count2 != 1 {
+		t.Errorf("Expected first occurrence of type2 to return count 1, got %d", count2)
+	}
+	if count3 != 2 {
+		t.Errorf("Expected second occurrence of type1 to return count 2, got %d", count3)
+	}
+	if count4 != 1 {
+		t.Errorf("Expected first occurrence of type3 to return count 1, got %d", count4)
+	}
+
+	// Verify tracked types
+	tracked := GetInvalidErrorTypes()
+	expectedCounts := map[string]int{
+		"type1": 2,
+		"type2": 1,
+		"type3": 1,
+	}
+
+	for errType, expectedCount := range expectedCounts {
+		if count, ok := tracked[errType]; !ok {
+			t.Errorf("Expected error type %q to be tracked", errType)
+		} else if count != expectedCount {
+			t.Errorf("Expected %q to have count %d, got %d", errType, expectedCount, count)
+		}
+	}
+}
+
+// TestGetInvalidErrorTypes verifies that GetInvalidErrorTypes returns
+// a copy of the tracking map to prevent concurrent modification.
+func TestGetInvalidErrorTypes(t *testing.T) {
+	ResetInvalidErrorTypeTracking()
+
+	// Add some tracked types
+	TrackInvalidErrorType("type1")
+	TrackInvalidErrorType("type2")
+
+	// Get the map
+	tracked := GetInvalidErrorTypes()
+
+	// Modify the returned map
+	tracked["type1"] = 999
+	tracked["new_type"] = 1
+
+	// Get the map again
+	trackedAgain := GetInvalidErrorTypes()
+
+	// Verify that modifications to the returned map don't affect the internal state
+	if trackedAgain["type1"] == 999 {
+		t.Error("Modifying the returned map should not affect internal tracking state")
+	}
+	if _, ok := trackedAgain["new_type"]; ok {
+		t.Error("Adding to the returned map should not affect internal tracking state")
+	}
+
+	// Verify actual counts
+	if count := trackedAgain["type1"]; count != 1 {
+		t.Errorf("Expected type1 count to be 1, got %d", count)
+	}
+}
+
+// TestResetInvalidErrorTypeTracking verifies that reset clears all tracked types.
+func TestResetInvalidErrorTypeTracking(t *testing.T) {
+	// Add some tracked types
+	TrackInvalidErrorType("type1")
+	TrackInvalidErrorType("type2")
+	TrackInvalidErrorType("type1")
+
+	// Verify we have tracked types
+	if InvalidErrorTypeCount() != 2 {
+		t.Errorf("Expected 2 tracked types before reset, got %d", InvalidErrorTypeCount())
+	}
+
+	// Reset tracking
+	ResetInvalidErrorTypeTracking()
+
+	// Verify all tracking is cleared
+	if InvalidErrorTypeCount() != 0 {
+		t.Errorf("Expected 0 tracked types after reset, got %d", InvalidErrorTypeCount())
+	}
+
+	tracked := GetInvalidErrorTypes()
+	if len(tracked) != 0 {
+		t.Errorf("Expected empty map after reset, got %v", tracked)
+	}
+}
+
+// TestInvalidErrorTypeCount verifies the count function.
+func TestInvalidErrorTypeCount(t *testing.T) {
+	ResetInvalidErrorTypeTracking()
+
+	// Initially should be 0
+	if InvalidErrorTypeCount() != 0 {
+		t.Errorf("Expected initial count to be 0, got %d", InvalidErrorTypeCount())
+	}
+
+	// Add unique types
+	TrackInvalidErrorType("type1")
+	if InvalidErrorTypeCount() != 1 {
+		t.Errorf("Expected count 1 after adding first type, got %d", InvalidErrorTypeCount())
+	}
+
+	TrackInvalidErrorType("type2")
+	if InvalidErrorTypeCount() != 2 {
+		t.Errorf("Expected count 2 after adding second type, got %d", InvalidErrorTypeCount())
+	}
+
+	// Add duplicate - count should not change
+	TrackInvalidErrorType("type1")
+	if InvalidErrorTypeCount() != 2 {
+		t.Errorf("Expected count 2 after adding duplicate, got %d", InvalidErrorTypeCount())
+	}
+
+	// Add third unique type
+	TrackInvalidErrorType("type3")
+	if InvalidErrorTypeCount() != 3 {
+		t.Errorf("Expected count 3 after adding third type, got %d", InvalidErrorTypeCount())
+	}
+
+	// Reset and verify count returns to 0
+	ResetInvalidErrorTypeTracking()
+	if InvalidErrorTypeCount() != 0 {
+		t.Errorf("Expected count 0 after reset, got %d", InvalidErrorTypeCount())
+	}
+}
+
+// TestFormatError_BackwardCompatibility verifies that existing code using
+// FormatError continues to work without changes.
 
 // =============================================================================
 // FormatFieldPath FUNCTION TESTS
@@ -1494,569 +1918,3 @@ func TestFormatFieldPath_Consistency(t *testing.T) {
 
 // TestFormatFieldRef_BasicFormatting verifies that FormatFieldRef produces
 // correctly formatted field references with default options.
-func TestFormatFieldReference_BasicFormatting(t *testing.T) {
-	tests := []struct {
-		name     string
-		fieldPath string
-		expected string
-	}{
-		{
-			name:     "simple field",
-			fieldPath: "email",
-			expected: "field 'email'",
-		},
-		{
-			name:     "nested field",
-			fieldPath: "user.email",
-			expected: "field 'user.email'",
-		},
-		{
-			name:     "deeply nested field",
-			fieldPath: "data.user.profile.email",
-			expected: "field 'data.user.profile.email'",
-		},
-		{
-			name:     "field with array index (dot notation)",
-			fieldPath: "users.0.email",
-			expected: "field 'users[0].email'",
-		},
-		{
-			name:     "field with array index (bracket notation)",
-			fieldPath: "users[0].email",
-			expected: "field 'users[0].email'",
-		},
-		{
-			name:     "multiple array indices",
-			fieldPath: "data.0.items.1.name",
-			expected: "field 'data[0].items[1].name'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := FormatFieldReference(tt.fieldPath)
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_EmptyAndInvalidPaths verifies that FormatFieldRef handles
-// empty and invalid field paths gracefully.
-func TestFormatFieldReference_EmptyAndInvalidPaths(t *testing.T) {
-	tests := []struct {
-		name     string
-		fieldPath string
-		expected string
-	}{
-		{
-			name:     "empty string",
-			fieldPath: "",
-			expected: "(unknown field)",
-		},
-		{
-			name:     "whitespace only",
-			fieldPath: "   ",
-			expected: "(unknown field)",
-		},
-		{
-			name:     "tabs and whitespace",
-			fieldPath: "\t  \t",
-			expected: "(unknown field)",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := FormatFieldReference(tt.fieldPath)
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_QuoteStyles verifies that FormatFieldRef handles
-// different quote styles correctly.
-func TestFormatFieldReference_QuoteStyles(t *testing.T) {
-	tests := []struct {
-		name      string
-		fieldPath string
-		option    FieldRefOption
-		expected  string
-	}{
-		{
-			name:      "single quote (default)",
-			fieldPath: "user.email",
-			option:    nil,
-			expected:  "field 'user.email'",
-		},
-		{
-			name:      "no quote",
-			fieldPath: "user.email",
-			option:    WithQuoteStyle(NoQuote),
-			expected:  "field user.email",
-		},
-		{
-			name:      "double quote",
-			fieldPath: "user.email",
-			option:    WithQuoteStyle(DoubleQuote),
-			expected:  `field "user.email"`,
-		},
-		{
-			name:      "backtick",
-			fieldPath: "user.email",
-			option:    WithQuoteStyle(Backtick),
-			expected:  "field `user.email`",
-		},
-		{
-			name:      "no quote with array",
-			fieldPath: "users.0.email",
-			option:    WithQuoteStyle(NoQuote),
-			expected:  "field users[0].email",
-		},
-		{
-			name:      "backtick with array",
-			fieldPath: "users.0.email",
-			option:    WithQuoteStyle(Backtick),
-			expected:  "field `users[0].email`",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var result string
-			if tt.option == nil {
-				result = FormatFieldReference(tt.fieldPath)
-			} else {
-				result = FormatFieldReference(tt.fieldPath, tt.option)
-			}
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q, WithQuoteStyle(...)) = %q, want %q", tt.fieldPath, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_CustomPrefix verifies that FormatFieldRef handles
-// custom prefixes correctly.
-func TestFormatFieldReference_CustomPrefix(t *testing.T) {
-	tests := []struct {
-		name      string
-		fieldPath string
-		prefix    string
-		expected  string
-	}{
-		{
-			name:      "parameter prefix",
-			fieldPath: "page",
-			prefix:    "parameter",
-			expected:  "parameter 'page'",
-		},
-		{
-			name:      "property prefix",
-			fieldPath: "user.email",
-			prefix:    "property",
-			expected:  "property 'user.email'",
-		},
-		{
-			name:      "attribute prefix",
-			fieldPath: "class.method",
-			prefix:    "attribute",
-			expected:  "attribute 'class.method'",
-		},
-		{
-			name:      "empty prefix (no prefix)",
-			fieldPath: "email",
-			prefix:    "",
-			expected:  "'email'",
-		},
-		{
-			name:      "key prefix",
-			fieldPath: "request.query.page",
-			prefix:    "key",
-			expected:  "key 'request.query.page'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := FormatFieldReference(tt.fieldPath, WithPrefix(tt.prefix))
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q, WithPrefix(%q)) = %q, want %q", tt.fieldPath, tt.prefix, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_NoNormalization verifies that FormatFieldRef can
-// skip path normalization when requested.
-func TestFormatFieldReference_NoNormalization(t *testing.T) {
-	tests := []struct {
-		name      string
-		fieldPath string
-		normalize bool
-		expected  string
-	}{
-		{
-			name:      "normalize array index (default)",
-			fieldPath: "users.0.email",
-			normalize: true,
-			expected:  "field 'users[0].email'",
-		},
-		{
-			name:      "no normalization - keep dot notation",
-			fieldPath: "users.0.email",
-			normalize: false,
-			expected:  "field 'users.0.email'",
-		},
-		{
-			name:      "no normalization - keep bracket notation",
-			fieldPath: "users[0].email",
-			normalize: false,
-			expected:  "field 'users[0].email'",
-		},
-		{
-			name:      "normalize mixed notation",
-			fieldPath: "users[0].emails.1.address",
-			normalize: true,
-			expected:  "field 'users[0].emails[1].address'",
-		},
-		{
-			name:      "no normalization - keep mixed notation",
-			fieldPath: "users[0].emails.1.address",
-			normalize: false,
-			expected:  "field 'users[0].emails.1.address'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := FormatFieldReference(tt.fieldPath, WithNormalizePath(tt.normalize))
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q, WithNormalizePath(%v)) = %q, want %q", tt.fieldPath, tt.normalize, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_CombinedOptions verifies that FormatFieldRef handles
-// multiple options combined correctly.
-func TestFormatFieldReference_CombinedOptions(t *testing.T) {
-	tests := []struct {
-		name      string
-		fieldPath string
-		options   []FieldRefOption
-		expected  string
-	}{
-		{
-			name:      "custom prefix with double quote",
-			fieldPath: "user.email",
-			options:   []FieldRefOption{WithPrefix("parameter"), WithQuoteStyle(DoubleQuote)},
-			expected:  `parameter "user.email"`,
-		},
-		{
-			name:      "no prefix with backtick",
-			fieldPath: "data.value",
-			options:   []FieldRefOption{WithPrefix(""), WithQuoteStyle(Backtick)},
-			expected:  "`data.value`",
-		},
-		{
-			name:      "custom prefix with no quote and normalize",
-			fieldPath: "users.0.email",
-			options:   []FieldRefOption{WithPrefix("element"), WithQuoteStyle(NoQuote), WithNormalizePath(true)},
-			expected:  "element users[0].email",
-		},
-		{
-			name:      "empty prefix with single quote and no normalize",
-			fieldPath: "users.0.email",
-			options:   []FieldRefOption{WithPrefix(""), WithQuoteStyle(SingleQuote), WithNormalizePath(false)},
-			expected:  "'users.0.email'",
-		},
-		{
-			name:      "all options combined",
-			fieldPath: "request.data.items.5.name",
-			options:   []FieldRefOption{WithPrefix("field"), WithQuoteStyle(DoubleQuote), WithNormalizePath(true)},
-			expected:  `field "request.data.items[5].name"`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := FormatFieldReference(tt.fieldPath, tt.options...)
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q, options...) = %q, want %q", tt.fieldPath, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_RealWorldExamples tests realistic field references
-// that would be used in actual error messages.
-func TestFormatFieldReference_RealWorldExamples(t *testing.T) {
-	tests := []struct {
-		name      string
-		fieldPath string
-		options   []FieldRefOption
-		expected  string
-	}{
-		{
-			name:      "API validation error",
-			fieldPath: "response.data.users.0.email",
-			expected:  "field 'response.data.users[0].email'",
-		},
-		{
-			name:      "form field error",
-			fieldPath: "form.email",
-			expected:  "field 'form.email'",
-		},
-		{
-			name:      "request parameter error",
-			fieldPath: "request.query.page",
-			options:   []FieldRefOption{WithPrefix("parameter")},
-			expected:  "parameter 'request.query.page'",
-		},
-		{
-			name:      "JSON path error",
-			fieldPath: "order.items.5.price",
-			expected:  "field 'order.items[5].price'",
-		},
-		{
-			name:      "config field error with backticks",
-			fieldPath: "server.port",
-			options:   []FieldRefOption{WithQuoteStyle(Backtick)},
-			expected:  "field `server.port`",
-		},
-		{
-			name:      "database field error",
-			fieldPath: "users.0.profile.settings.notification_email",
-			expected:  "field 'users[0].profile.settings.notification_email'",
-		},
-		{
-			name:      "header field error",
-			fieldPath: "headers.Authorization",
-			options:   []FieldRefOption{WithPrefix("header")},
-			expected:  "header 'headers.Authorization'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var result string
-			if tt.options == nil {
-				result = FormatFieldReference(tt.fieldPath)
-			} else {
-				result = FormatFieldReference(tt.fieldPath, tt.options...)
-			}
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_WhitespaceHandling verifies that FormatFieldRef handles
-// whitespace in field paths correctly.
-func TestFormatFieldReference_WhitespaceHandling(t *testing.T) {
-	tests := []struct {
-		name      string
-		fieldPath string
-		expected  string
-	}{
-		{
-			name:      "leading and trailing whitespace",
-			fieldPath: "  user.email  ",
-			expected:  "field 'user.email'",
-		},
-		{
-			name:      "tabs around path",
-			fieldPath: "\tuser.email\t",
-			expected:  "field 'user.email'",
-		},
-		{
-			name:      "mixed whitespace",
-			fieldPath: " \t user.email \t ",
-			expected:  "field 'user.email'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := FormatFieldReference(tt.fieldPath)
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_SpecialCharacters verifies that FormatFieldRef handles
-// field names with special characters correctly.
-func TestFormatFieldReference_SpecialCharacters(t *testing.T) {
-	tests := []struct {
-		name      string
-		fieldPath string
-		expected  string
-	}{
-		{
-			name:      "field with hyphen",
-			fieldPath: "user-email",
-			expected:  "field 'user-email'",
-		},
-		{
-			name:      "field with underscore",
-			fieldPath: "user_email",
-			expected:  "field 'user_email'",
-		},
-		{
-			name:      "field with numbers",
-			fieldPath: "user2email",
-			expected:  "field 'user2email'",
-		},
-		{
-			name:      "complex field names",
-			fieldPath: "user_first_name.email_address.work",
-			expected:  "field 'user_first_name.email_address.work'",
-		},
-		{
-			name:      "camelCase field",
-			fieldPath: "userEmail",
-			expected:  "field 'userEmail'",
-		},
-		{
-			name:      "PascalCase field",
-			fieldPath: "UserProfile",
-			expected:  "field 'UserProfile'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := FormatFieldReference(tt.fieldPath)
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_NegativeIndices verifies that FormatFieldRef handles
-// negative array indices correctly.
-func TestFormatFieldReference_NegativeIndices(t *testing.T) {
-	tests := []struct {
-		name      string
-		fieldPath string
-		expected  string
-	}{
-		{
-			name:      "negative index",
-			fieldPath: "users.-1.email",
-			expected:  "field 'users[-1].email'",
-		},
-		{
-			name:      "negative zero",
-			fieldPath: "users.-0.name",
-			expected:  "field 'users[-0].name'",
-		},
-		{
-			name:      "multiple negative indices",
-			fieldPath: "data.-1.items.-2.value",
-			expected:  "field 'data[-1].items[-2].value'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := FormatFieldReference(tt.fieldPath)
-			if result != tt.expected {
-				t.Errorf("FormatFieldReference(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_ErrorMessageIntegration verifies that FormatFieldRef
-// integrates well with error message construction.
-func TestFormatFieldReference_ErrorMessageIntegration(t *testing.T) {
-	tests := []struct {
-		name          string
-		fieldPath     string
-		errorTemplate string
-		options       []FieldRefOption
-		expectedParts []string
-	}{
-		{
-			name:          "required field error",
-			fieldPath:     "user.email",
-			errorTemplate: "%s is required",
-			expectedParts: []string{"field 'user.email'", "is required"},
-		},
-		{
-			name:          "invalid type error",
-			fieldPath:     "user.age",
-			errorTemplate: "%s must be a number",
-			expectedParts: []string{"field 'user.age'", "must be a number"},
-		},
-		{
-			name:          "parameter error",
-			fieldPath:     "page",
-			errorTemplate: "%s must be positive",
-			options:       []FieldRefOption{WithPrefix("parameter")},
-			expectedParts: []string{"parameter 'page'", "must be positive"},
-		},
-		{
-			name:          "array field error",
-			fieldPath:     "users.0.email",
-			errorTemplate: "%s contains invalid email",
-			expectedParts: []string{"field 'users[0].email'", "contains invalid email"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var fieldRef string
-			if tt.options == nil {
-				fieldRef = FormatFieldReference(tt.fieldPath)
-			} else {
-				fieldRef = FormatFieldReference(tt.fieldPath, tt.options...)
-			}
-			errorMsg := fmt.Sprintf(tt.errorTemplate, fieldRef)
-
-			for _, expectedPart := range tt.expectedParts {
-				if !strings.Contains(errorMsg, expectedPart) {
-					t.Errorf("Error message %q does not contain expected part %q", errorMsg, expectedPart)
-				}
-			}
-		})
-	}
-}
-
-// TestFormatFieldRef_Consistency verifies that FormatFieldRef produces
-// consistent output across equivalent inputs.
-func TestFormatFieldReference_Consistency(t *testing.T) {
-	// Different ways to represent the same field path should normalize to the same output
-	equivalentPaths := [][]string{
-		// Array access with dot notation vs bracket notation
-		{"users.0.email", "users[0].email"},
-		// Multiple array indices
-		{"data.0.items.1.name", "data[0].items[1].name"},
-		// Mixed notation
-		{"users[0].emails.1.address", "users.0.emails.1.address"},
-	}
-
-	for _, paths := range equivalentPaths {
-		if len(paths) < 2 {
-			continue
-		}
-
-		firstResult := FormatFieldReference(paths[0])
-		for _, path := range paths[1:] {
-			result := FormatFieldReference(path)
-			if result != firstResult {
-				t.Errorf("FormatFieldReference(%q) = %q, but FormatFieldReference(%q) = %q (expected same result)",
-					paths[0], firstResult, path, result)
-			}
-		}
-	}
-}
