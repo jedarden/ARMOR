@@ -9,6 +9,7 @@ Author: ARMOR Project (bf-1rd15q)
 Created: 2026-07-13
 """
 
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -235,42 +236,82 @@ def extract_json_compatible_data(failures: List[TestFailure]) -> List[Dict[str, 
 
 def main():
     """Main entry point for command-line usage."""
-    if len(sys.argv) > 1:
-        # Read from file
-        with open(sys.argv[1], 'r') as f:
+    import argparse
+
+    arg_parser = argparse.ArgumentParser(
+        description='Parse pytest output and extract structured failure data'
+    )
+    arg_parser.add_argument(
+        'input_file',
+        nargs='?',
+        help='Input file containing pytest output (reads from stdin if not provided)'
+    )
+    arg_parser.add_argument(
+        '--json',
+        action='store_true',
+        help='Output results as JSON instead of human-readable text'
+    )
+    arg_parser.add_argument(
+        '--output',
+        '-o',
+        help='Write output to file instead of stdout'
+    )
+
+    args = arg_parser.parse_args()
+
+    # Read input
+    if args.input_file:
+        with open(args.input_file, 'r') as f:
             output = f.read()
     else:
-        # Read from stdin
         output = sys.stdin.read()
 
+    # Parse
     parser = PytestOutputParser()
     failures = parser.parse(output)
     summary = parser.parse_test_summary(output)
 
-    print(f"=== Parsed {len(failures)} Failures ===\n")
+    # Prepare output
+    if args.json:
+        result = {
+            'failures': extract_json_compatible_data(failures),
+            'summary': summary
+        }
+        output_text = json.dumps(result, indent=2)
+    else:
+        lines = []
+        lines.append(f"=== Parsed {len(failures)} Failures ===\n")
 
-    for i, failure in enumerate(failures, 1):
-        print(f"Failure #{i}:")
-        print(f"  Test: {failure.test_file}::{failure.test_name}")
-        print(f"  Line: {failure.line_number}")
-        print(f"  Type: {failure.error_type}")
-        print(f"  Message: {failure.error_message}")
-        if failure.expected:
-            print(f"  Expected: {failure.expected}")
-        if failure.actual:
-            print(f"  Actual: {failure.actual}")
-        if failure.index_diff is not None:
-            print(f"  Index Diff: {failure.index_diff}")
-        if failure.differing_items:
-            print(f"  Differing Items: {len(failure.differing_items)}")
-            for item in failure.differing_items:
-                print(f"    - {item['key']}: {item['actual']} != {item['expected_value']}")
-        print()
+        for i, failure in enumerate(failures, 1):
+            lines.append(f"Failure #{i}:")
+            lines.append(f"  Test: {failure.test_file}::{failure.test_name}")
+            lines.append(f"  Line: {failure.line_number}")
+            lines.append(f"  Type: {failure.error_type}")
+            lines.append(f"  Message: {failure.error_message}")
+            if failure.expected:
+                lines.append(f"  Expected: {failure.expected}")
+            if failure.actual:
+                lines.append(f"  Actual: {failure.actual}")
+            if failure.index_diff is not None:
+                lines.append(f"  Index Diff: {failure.index_diff}")
+            if failure.differing_items:
+                lines.append(f"  Differing Items: {len(failure.differing_items)}")
+                for item in failure.differing_items:
+                    lines.append(f"    - {item['key']}: {item['actual']} != {item['expected_value']}")
+            lines.append("")
 
-    print(f"=== Summary ===")
-    print(f"Total Failed: {summary['total_failed']}")
-    print(f"Duration: {summary['total_duration']}s")
-    print(f"Failures Listed: {len(summary['failures'])}")
+        lines.append("=== Summary ===")
+        lines.append(f"Total Failed: {summary['total_failed']}")
+        lines.append(f"Duration: {summary['total_duration']}s")
+        lines.append(f"Failures Listed: {len(summary['failures'])}")
+        output_text = "\n".join(lines)
+
+    # Write output
+    if args.output:
+        with open(args.output, 'w') as f:
+            f.write(output_text)
+    else:
+        print(output_text)
 
 
 if __name__ == '__main__':
