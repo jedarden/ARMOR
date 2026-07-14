@@ -2623,6 +2623,764 @@ func TestFormatFieldReference_MultipleOptions(t *testing.T) {
 }
 
 // =============================================================================
+// EDGE CASE TESTS FOR ERROR FORMATTING
+// =============================================================================
+
+// TestFormatErrorWithType_EmptyMessageEdgeCases verifies that FormatErrorWithType
+// handles empty messages and whitespace-only messages gracefully by using fallback messages.
+func TestFormatErrorWithType_EmptyMessageEdgeCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType ErrorType
+		message   string
+		fieldName string
+		expected  string
+	}{
+		{
+			name:      "empty message with field name",
+			errorType: ErrTypeRequired,
+			message:   "",
+			fieldName: "email",
+			expected:  "[required] email: email validation failed",
+		},
+		{
+			name:      "empty message without field name",
+			errorType: ErrTypeFormat,
+			message:   "",
+			fieldName: "",
+			expected:  "[format] (no message provided)",
+		},
+		{
+			name:      "empty message with nested field",
+			errorType: ErrTypeLength,
+			message:   "",
+			fieldName: "user.password",
+			expected:  "[length] user.password: user.password validation failed",
+		},
+		{
+			name:      "whitespace-only message with field",
+			errorType: ErrTypeRange,
+			message:   "   ",
+			fieldName: "age",
+			expected:  "[range] age: age validation failed",
+		},
+		{
+			name:      "whitespace-only message without field",
+			errorType: ErrTypeType,
+			message: "   ",
+			fieldName: "",
+			expected:  "[type] (no message provided)",
+		},
+		{
+			name:      "tab-only message",
+			errorType: ErrTypeValue,
+			message: "\t",
+			fieldName: "status",
+			expected: "[value] status: status validation failed",
+		},
+		{
+			name:      "newline-only message",
+			errorType: ErrTypeDuplicate,
+			message: "\n",
+			fieldName: "username",
+			expected: "[duplicate] username: username validation failed",
+		},
+		{
+			name:      "mixed whitespace message",
+			errorType: ErrTypeConflict,
+			message: " \t\n ",
+			fieldName: "",
+			expected: "[conflict] (no message provided)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatErrorWithType(tt.errorType, tt.message, tt.fieldName)
+			if result != tt.expected {
+				t.Errorf("FormatErrorWithType() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatError_EmptyMessageHandling verifies that FormatError
+// handles empty messages gracefully by using fallback messages.
+func TestFormatError_EmptyMessageHandling(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		expected  string
+	}{
+		{
+			name:      "empty message with field name",
+			errorType: "required",
+			message:   "",
+			fieldName: "email",
+			expected:  "[required] email: email validation failed",
+		},
+		{
+			name:      "empty message without field name",
+			errorType: "format",
+			message:   "",
+			fieldName: "",
+			expected:  "[format] (no message provided)",
+		},
+		{
+			name:      "empty message with nested field",
+			errorType: "length",
+			message:   "",
+			fieldName: "user.password",
+			expected:  "[length] user.password: user.password validation failed",
+		},
+		{
+			name:      "whitespace-only message with field",
+			errorType: "range",
+			message:   "   ",
+			fieldName: "age",
+			expected:  "[range] age: age validation failed",
+		},
+		{
+			name:      "whitespace-only message without field",
+			errorType: "type",
+			message:   "   ",
+			fieldName: "",
+			expected:  "[type] (no message provided)",
+		},
+		{
+			name:      "tab-only message",
+			errorType: "value",
+			message:   "\t",
+			fieldName: "status",
+			expected:  "[value] status: status validation failed",
+		},
+		{
+			name:      "newline-only message",
+			errorType: "duplicate",
+			message:   "\n",
+			fieldName: "username",
+			expected:  "[duplicate] username: username validation failed",
+		},
+		{
+			name:      "mixed whitespace message",
+			errorType: "conflict",
+			message:   " \t\n ",
+			fieldName: "",
+			expected:  "[conflict] (no message provided)",
+		},
+		{
+			name:      "empty message with array field",
+			errorType: "required",
+			message:   "",
+			fieldName: "users.0.email",
+			expected:  "[required] users.0.email: users.0.email validation failed",
+		},
+		{
+			name:      "whitespace message with unicode field",
+			errorType: "format",
+			message: "  ",
+			fieldName: "user.姓名",
+			expected: "[format] user.姓名: user.姓名 validation failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result string
+			if tt.fieldName != "" {
+				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+			} else {
+				result = FormatError(tt.errorType, tt.message)
+			}
+			if result != tt.expected {
+				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatError_EmptyFieldNameHandling verifies that error formatting
+// handles empty field names correctly across various scenarios.
+func TestFormatError_EmptyFieldNameHandling(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		expected  string
+	}{
+		{
+			name:      "empty field name with message",
+			errorType: "validation",
+			message:   "Invalid input",
+			fieldName: "",
+			expected:  "[validation] Invalid input",
+		},
+		{
+			name:      "whitespace-only field name",
+			errorType: "required",
+			message:   "Field is required",
+			fieldName: "   ",
+			expected:  "[required] Field is required",
+		},
+		{
+			name:      "tab-only field name",
+			errorType: "format",
+			message:   "Invalid format",
+			fieldName: "\t",
+			expected: "[format] Invalid format",
+		},
+		{
+			name:      "newline-only field name",
+			errorType: "length",
+			message:   "Too short",
+			fieldName: "\n",
+			expected: "[length] Too short",
+		},
+		{
+			name:      "mixed whitespace field name",
+			errorType: "range",
+			message:   "Out of range",
+			fieldName: " \t\n ",
+			expected:  "[range] Out of range",
+		},
+		{
+			name:      "valid field name for comparison",
+			errorType: "required",
+			message:   "Field is required",
+			fieldName: "email",
+			expected:  "[required] email: Field is required",
+		},
+		{
+			name:      "empty field with empty message",
+			errorType: "error",
+			message:   "",
+			fieldName: "",
+			expected:  "[error] (no message provided)",
+		},
+		{
+			name:      "whitespace field with empty message",
+			errorType: "error",
+			message:   "",
+			fieldName: "  ",
+			expected:  "[error] (no message provided)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result string
+			if tt.fieldName != "" {
+				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+			} else {
+				result = FormatError(tt.errorType, tt.message)
+			}
+			if result != tt.expected {
+				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatErrorWithType_EmptyFieldNameHandling verifies that FormatErrorWithType
+// handles empty field names correctly.
+func TestFormatErrorWithType_EmptyFieldNameHandling(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType ErrorType
+		message   string
+		fieldName string
+		expected  string
+	}{
+		{
+			name:      "empty field name with message",
+			errorType: ErrTypeFormat,
+			message:   "Invalid input",
+			fieldName: "",
+			expected:  "[format] Invalid input",
+		},
+		{
+			name:      "whitespace-only field name",
+			errorType: ErrTypeRequired,
+			message:   "Field is required",
+			fieldName: "   ",
+			expected:  "[required] Field is required",
+		},
+		{
+			name:      "tab-only field name",
+			errorType: ErrTypeFormat,
+			message:   "Invalid format",
+			fieldName: "\t",
+			expected: "[format] Invalid format",
+		},
+		{
+			name:      "newline-only field name",
+			errorType: ErrTypeLength,
+			message:   "Too short",
+			fieldName: "\n",
+			expected: "[length] Too short",
+		},
+		{
+			name:      "mixed whitespace field name",
+			errorType: ErrTypeRange,
+			message:   "Out of range",
+			fieldName: " \t\n ",
+			expected:  "[range] Out of range",
+		},
+		{
+			name:      "valid field name for comparison",
+			errorType: ErrTypeRequired,
+			message:   "Field is required",
+			fieldName: "email",
+			expected:  "[required] email: Field is required",
+		},
+		{
+			name:      "empty field with empty message",
+			errorType: ErrTypeType,
+			message:   "",
+			fieldName: "",
+			expected:  "[type] (no message provided)",
+		},
+		{
+			name:      "whitespace field with empty message",
+			errorType: ErrTypeType,
+			message:   "",
+			fieldName: "  ",
+			expected: "[type] validation failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatErrorWithType(tt.errorType, tt.message, tt.fieldName)
+			if result != tt.expected {
+				t.Errorf("FormatErrorWithType() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatError_SpecialCharactersInMessages verifies that special characters
+// in messages are handled correctly without breaking formatting.
+func TestFormatError_SpecialCharactersInMessages(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		mustContain []string
+	}{
+		{
+			name:      "unicode emoji characters",
+			errorType: "validation",
+			message:   "Error: ✓ ✗ → ★ ♥",
+			fieldName: "status",
+			mustContain: []string{"✓", "✗", "→", "★", "♥"},
+		},
+		{
+			name:      "chinese characters",
+			errorType: "required",
+			message:   "字段是必填的",
+			fieldName: "姓名",
+			mustContain: []string{"字段是必填的", "姓名"},
+		},
+		{
+			name:      "arabic characters",
+			errorType: "format",
+			message:   "خطأ في التنسيق",
+			fieldName: "البريد",
+			mustContain: []string{"خطأ في التنسيق", "البريد"},
+		},
+		{
+			name:      "russian characters",
+			errorType: "length",
+			message:   "Слишком коротко",
+			fieldName: "пароль",
+			mustContain: []string{"Слишком коротко", "пароль"},
+		},
+		{
+			name:      "mixed scripts",
+			errorType: "value",
+			message:   "Error: 错误 - Value invalid ✓",
+			fieldName: "field",
+			mustContain: []string{"错误", "✓"},
+		},
+		{
+			name:      "newlines in message",
+			errorType: "validation",
+			message:   "Line 1\nLine 2\nLine 3",
+			fieldName: "data",
+			mustContain: []string{"Line 1", "Line 2", "Line 3"},
+		},
+		{
+			name:      "tabs in message",
+			errorType: "status",
+			message:   "Error:\t404\tNot\tFound",
+			fieldName: "response",
+			mustContain: []string{"404", "Not", "Found"},
+		},
+		{
+			name:      "quotes in message",
+			errorType: "format",
+			message:   `Message with "double" and 'single' quotes`,
+			fieldName: "text",
+			mustContain: []string{"double", "single", "quotes"},
+		},
+		{
+			name:      "backslashes in message",
+			errorType: "path",
+			message:   "Path: C:\\Users\\name\\file.txt",
+			fieldName: "filepath",
+			mustContain: []string{"C:\\Users\\name\\file.txt"},
+		},
+		{
+			name:      "percent signs",
+			errorType: "validation",
+			message:   "100% complete but failed",
+			fieldName: "progress",
+			mustContain: []string{"100%", "complete", "failed"},
+		},
+		{
+			name:      "at signs and special chars",
+			errorType: "email",
+			message:   "Email: user@domain.com has issue!",
+			fieldName: "contact",
+			mustContain: []string{"user@domain.com", "issue"},
+		},
+		{
+			name:      "brackets in message",
+			errorType: "format",
+			message:   "Expected [a-z] but got <tag>",
+			fieldName: "pattern",
+			mustContain: []string{"[a-z]", "<tag>"},
+		},
+		{
+			name:      "json-like content",
+			errorType: "validation",
+			message:   `{"key": "value", "nested": {"data": 123}}`,
+			fieldName: "json",
+			mustContain: []string{"key", "value", "nested", "data", "123"},
+		},
+		{
+			name:      "html-like content",
+			errorType: "format",
+			message:   `<div class="error">Invalid</div>`,
+			fieldName: "html",
+			mustContain: []string{"div", "class", "error", "Invalid"},
+		},
+		{
+			name:      "special sql chars",
+			errorType: "validation",
+			message:   "SQL: SELECT * FROM users WHERE id='1' OR '1'='1'",
+			fieldName: "query",
+			mustContain: []string{"SELECT", "users", "WHERE"},
+		},
+		{
+			name:      "null characters",
+			errorType: "binary",
+			message:   "Binary data: \x00\x01\x02",
+			fieldName: "bytes",
+			mustContain: []string{"Binary data"},
+		},
+		{
+			name:      "bell and other control chars",
+			errorType: "control",
+			message:   "Alert\x07Escape\x1b",
+			fieldName: "sequence",
+			mustContain: []string{"Alert", "Escape"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result string
+			if tt.fieldName != "" {
+				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+			} else {
+				result = FormatError(tt.errorType, tt.message)
+			}
+
+			// Verify the result contains expected substrings
+			for _, mustContain := range tt.mustContain {
+				if !strings.Contains(result, mustContain) {
+					t.Errorf("Expected result to contain %q, got: %q", mustContain, result)
+				}
+			}
+
+			// Verify error type is in brackets
+			if !strings.HasPrefix(result, "["+tt.errorType+"]") {
+				t.Errorf("Expected result to start with [%q], got: %q", tt.errorType, result)
+			}
+
+			// If field name is provided (and not whitespace), verify it appears
+			if tt.fieldName != "" && strings.TrimSpace(tt.fieldName) != "" {
+				trimmedField := strings.TrimSpace(tt.fieldName)
+				if !strings.Contains(result, trimmedField) {
+					t.Errorf("Expected result to contain field name %q, got: %q", trimmedField, result)
+				}
+			}
+		})
+	}
+}
+
+// TestFormatErrorWithType_SpecialCharactersInMessages verifies that FormatErrorWithType
+// handles special characters correctly.
+func TestFormatErrorWithType_SpecialCharactersInMessages(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType ErrorType
+		message   string
+		fieldName string
+		mustContain []string
+	}{
+		{
+			name:      "unicode emoji characters",
+			errorType: ErrTypeValue,
+			message:   "Error: ✓ ✗ → ★ ♥",
+			fieldName: "status",
+			mustContain: []string{"✓", "✗", "→", "★", "♥"},
+		},
+		{
+			name:      "newlines in message",
+			errorType: ErrTypeFormat,
+			message:   "Line 1\nLine 2\nLine 3",
+			fieldName: "data",
+			mustContain: []string{"Line 1", "Line 2", "Line 3"},
+		},
+		{
+			name:      "quotes in message",
+			errorType: ErrTypeLength,
+			message:   `Message with "double" and 'single' quotes`,
+			fieldName: "text",
+			mustContain: []string{"double", "single", "quotes"},
+		},
+		{
+			name:      "json-like content",
+			errorType: ErrTypeValue,
+			message:   `{"key": "value", "nested": {"data": 123}}`,
+			fieldName: "json",
+			mustContain: []string{"key", "value", "nested"},
+		},
+		{
+			name:      "brackets in message",
+			errorType: ErrTypeRange,
+			message:   "Expected [a-z] but got <tag>",
+			fieldName: "pattern",
+			mustContain: []string{"[a-z]", "<tag>"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatErrorWithType(tt.errorType, tt.message, tt.fieldName)
+
+			// Verify the result contains expected substrings
+			for _, mustContain := range tt.mustContain {
+				if !strings.Contains(result, mustContain) {
+					t.Errorf("Expected result to contain %q, got: %q", mustContain, result)
+				}
+			}
+
+			// Verify error type is in brackets
+			expectedType := tt.errorType.String()
+			if !strings.HasPrefix(result, "["+expectedType+"]") {
+				t.Errorf("Expected result to start with [%q], got: %q", expectedType, result)
+			}
+
+			// If field name is provided (and not whitespace), verify it appears
+			if tt.fieldName != "" && strings.TrimSpace(tt.fieldName) != "" {
+				trimmedField := strings.TrimSpace(tt.fieldName)
+				if !strings.Contains(result, trimmedField) {
+					t.Errorf("Expected result to contain field name %q, got: %q", trimmedField, result)
+				}
+			}
+		})
+	}
+}
+
+// TestValidationFormatter_NilAndEmptyContextData verifies that ValidationFormatter
+// handles nil and empty slices/arrays in context data gracefully.
+func TestValidationFormatter_NilAndEmptyContextData(t *testing.T) {
+	t.Run("nil validation details slice", func(t *testing.T) {
+		formatter := NewValidationFormatter("test_validation").
+			WithExpected("expected").
+			WithActual("actual")
+
+		// Should not panic with nil details
+		err := formatter.Format()
+
+		// Verify error is created successfully
+		if err.Error() == "" {
+			t.Error("Expected ValidationError with non-empty Error() string")
+		}
+	})
+
+	t.Run("empty validation details slice", func(t *testing.T) {
+		formatter := NewValidationFormatter("test_validation").
+			WithExpected("expected").
+			WithActual("actual").
+			WithValidationDetails() // Empty call adds no details
+
+		err := formatter.Format()
+
+		// Verify error is created successfully
+		if err.Error() == "" {
+			t.Error("Expected ValidationError with non-empty Error() string")
+		}
+	})
+
+	t.Run("nil suggestions slice handled internally", func(t *testing.T) {
+		formatter := NewValidationFormatter("test_validation").
+			WithExpected("expected").
+			WithActual("actual")
+
+		// The formatter should auto-generate suggestions when custom ones are not provided
+		err := formatter.Format()
+		errMsg := err.Error()
+
+		// Verify auto-generated suggestions are present
+		if !strings.Contains(errMsg, "Suggestions:") {
+			t.Error("Expected auto-generated suggestions section")
+		}
+	})
+
+	t.Run("empty suggestions with WithSuggestions", func(t *testing.T) {
+		formatter := NewValidationFormatter("test_validation").
+			WithExpected("expected").
+			WithActual("actual").
+			WithSuggestions() // Empty call
+
+		err := formatter.Format()
+		errMsg := err.Error()
+
+		// Should have suggestions section (even if empty auto-generated ones)
+		if !strings.Contains(errMsg, "Suggestions:") {
+			t.Error("Expected suggestions section")
+		}
+	})
+
+	t.Run("nil values in context", func(t *testing.T) {
+		err := NewValidationFormatter("test_validation").
+			WithExpected(nil).
+			WithActual(nil).
+			WithContext("").
+			WithResponseSnippet("").
+			WithFieldName("").
+			WithPatternDetails("").
+			WithRangeInfo("").
+			Format()
+
+		// Should not panic and should produce valid error
+		if err.Error() == "" {
+			t.Error("Expected ValidationError with non-empty Error() string even with nil values")
+		}
+	})
+
+	t.Run("empty strings in all optional fields", func(t *testing.T) {
+		err := NewValidationFormatter("test_validation").
+			WithExpected("expected").
+			WithActual("actual").
+			WithContext("").
+			WithResponseSnippet("").
+			WithFieldName("").
+			WithPatternDetails("").
+			WithRangeInfo("").
+			Format()
+
+		// Should not panic and should produce valid error
+		errMsg := err.Error()
+		if errMsg == "" {
+			t.Error("Expected ValidationError with non-empty Error() string")
+		}
+
+		// Verify core error content is present
+		if !strings.Contains(errMsg, "test_validation") {
+			t.Error("Expected error type to appear in error message")
+		}
+		if !strings.Contains(errMsg, "expected") {
+			t.Error("Expected 'expected' value to appear in error message")
+		}
+		if !strings.Contains(errMsg, "actual") {
+			t.Error("Expected 'actual' value to appear in error message")
+		}
+	})
+
+	t.Run("multiple empty detail calls", func(t *testing.T) {
+		err := NewValidationFormatter("test_validation").
+			WithExpected("expected").
+			WithActual("actual").
+			WithValidationDetails().
+			WithValidationDetails().
+			WithValidationDetails().
+			Format()
+
+		// Should not panic
+		if err.Error() == "" {
+			t.Error("Expected ValidationError with non-empty Error() string")
+		}
+	})
+
+	t.Run("nil slice in details then valid details", func(t *testing.T) {
+		err := NewValidationFormatter("test_validation").
+			WithExpected("expected").
+			WithActual("actual").
+			WithValidationDetails(). // No details added
+			WithValidationDetails("Detail 1", "Detail 2"). // Then add details
+			Format()
+
+		errMsg := err.Error()
+
+		// Should contain the added details
+		if !strings.Contains(errMsg, "Detail 1") {
+			t.Error("Expected 'Detail 1' to appear in error message")
+		}
+		if !strings.Contains(errMsg, "Detail 2") {
+			t.Error("Expected 'Detail 2' to appear in error message")
+		}
+	})
+
+	t.Run("auto-generated suggestions with nil context", func(t *testing.T) {
+		err := NewValidationFormatter("status_code").
+			WithExpected(200).
+			WithActual(404).
+			Format()
+
+		errMsg := err.Error()
+
+		// Should have auto-generated suggestions
+		if !strings.Contains(errMsg, "Suggestions:") {
+			t.Error("Expected auto-generated suggestions section")
+		}
+	})
+
+	t.Run("nil expected with actual provided", func(t *testing.T) {
+		err := NewValidationFormatter("validation").
+			WithExpected(nil).
+			WithActual("actual_value").
+			Format()
+
+		// Should not panic
+		if err.Error() == "" {
+			t.Error("Expected ValidationError with non-empty Error() string")
+		}
+	})
+
+	t.Run("actual nil with expected provided", func(t *testing.T) {
+		err := NewValidationFormatter("validation").
+			WithExpected("expected_value").
+			WithActual(nil).
+			Format()
+
+		// Should not panic
+		if err.Error() == "" {
+			t.Error("Expected ValidationError with non-empty Error() string")
+		}
+	})
+}
+
+// =============================================================================
 // FormatFieldRef FUNCTION TESTS
 // =============================================================================
 
