@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -14,19 +15,23 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/metrics"
 )
 
 // mockBackend implements backend.Backend for testing.
 type mockBackend struct {
-	mu     sync.Mutex
-	objects map[string][]byte
-	meta   map[string]map[string]string
+	mu            sync.Mutex
+	objects       map[string][]byte
+	meta          map[string]map[string]string
+	multipartData map[string]map[int32][]byte // uploadID -> part number -> data
+	pendingUploads map[string]string           // uploadID -> key (for tracking)
 }
 
 func newMockBackend() *mockBackend {
 	return &mockBackend{
-		objects: make(map[string][]byte),
-		meta:   make(map[string]map[string]string),
+		objects:       make(map[string][]byte),
+		meta:          make(map[string]map[string]string),
+		multipartData: make(map[string]map[int32][]byte),
 	}
 }
 
@@ -224,20 +229,90 @@ func (m *mockBackend) GetDirect(ctx context.Context, bucket, key string) (io.Rea
 	return m.Get(ctx, bucket, key)
 }
 
-// Multipart upload methods (stub implementations for testing)
+// Multipart upload methods (functional implementations for testing)
 func (m *mockBackend) CreateMultipartUpload(ctx context.Context, bucket, key string, meta map[string]string) (string, error) {
-	return fmt.Sprintf("upload-%d", time.Now().UnixNano()), nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	uploadID := fmt.Sprintf("upload-%d", time.Now().UnixNano())
+	// Initialize storage for this upload's parts
+	m.multipartData[uploadID] = make(map[int32][]byte)
+	// Store metadata for later use when completing
+	m.meta[bucket+"/"+key+"__pending__"+uploadID] = meta
+	return uploadID, nil
 }
 
 func (m *mockBackend) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int32, body io.Reader, size int64) (string, error) {
-	return fmt.Sprintf("etag-%d", partNumber), nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Read the part data
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read part data: %w", err)
+	}
+
+	// Store the part data
+	if _, exists := m.multipartData[uploadID]; !exists {
+		return "", fmt.Errorf("upload ID %s does not exist", uploadID)
+	}
+	m.multipartData[uploadID][partNumber] = data
+
+	// Return ETag (use hash of data for uniqueness)
+	return fmt.Sprintf("etag-%x-%d", sha256.Sum256(data), partNumber), nil
 }
 
 func (m *mockBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []backend.CompletedPart) (string, error) {
-	return "final-etag", nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check if upload exists
+	partsData, exists := m.multipartData[uploadID]
+	if !exists {
+		return "", fmt.Errorf("upload ID %s does not exist", uploadID)
+	}
+
+	// Combine all parts in order
+	var combined []byte
+	for _, part := range parts {
+		partData, ok := partsData[part.PartNumber]
+		if !ok {
+			// Clean up and return error
+			delete(m.multipartData, uploadID)
+			return "", fmt.Errorf("part %d not found", part.PartNumber)
+		}
+		combined = append(combined, partData...)
+	}
+
+	// Store the combined object
+	objectKey := bucket + "/" + key
+	m.objects[objectKey] = combined
+
+	// Move metadata from pending to final
+	pendingMetaKey := bucket + "/" + key + "__pending__" + uploadID
+	if meta, ok := m.meta[pendingMetaKey]; ok {
+		m.meta[objectKey] = meta
+		delete(m.meta, pendingMetaKey)
+	}
+
+	// Clean up multipart data
+	delete(m.multipartData, uploadID)
+
+	// Return final ETag
+	return fmt.Sprintf("final-etag-%x", sha256.Sum256(combined)), nil
 }
 
 func (m *mockBackend) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Clean up multipart data
+	delete(m.multipartData, uploadID)
+
+	// Clean up pending metadata
+	pendingMetaKey := bucket + "/" + key + "__pending__" + uploadID
+	delete(m.meta, pendingMetaKey)
+
 	return nil
 }
 
@@ -656,5 +731,90 @@ func TestResultJSON(t *testing.T) {
 	}
 	if result.UploadLatencyMs != 45 {
 		t.Errorf("expected upload latency 45, got %d", result.UploadLatencyMs)
+	}
+}
+
+// TestMonitorMultipartCheck tests the multipart canary check.
+func TestMonitorMultipartCheck(t *testing.T) {
+	mb := newMockBackend()
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	cfg := Config{
+		Backend:        mb,
+		Bucket:         "test-bucket",
+		MEK:            mek,
+		BlockSize:      65536,
+		InstanceID:     "test-instance",
+		MultipartSize:  100, // Small size for testing (would be 6MB in prod)
+	}
+
+	m := NewMonitor(cfg)
+	ctx := context.Background()
+
+	result, err := m.checkMultipart(ctx)
+	if err != nil {
+		t.Fatalf("multipart canary check failed: %v", err)
+	}
+
+	if result.Status != StatusHealthy {
+		t.Errorf("expected status healthy, got %s", result.Status)
+	}
+	if result.MultipartHealthy != StatusHealthy {
+		t.Errorf("expected multipart healthy, got %s", result.MultipartHealthy)
+	}
+	if !result.DecryptVerified {
+		t.Error("expected decrypt verified to be true")
+	}
+	if !result.HMACVerified {
+		t.Error("expected HMAC verified to be true")
+	}
+
+	// Verify multipart canary was cleaned up (async, so wait a bit)
+	time.Sleep(100 * time.Millisecond)
+	mb.mu.Lock()
+	count := len(mb.objects)
+	mb.mu.Unlock()
+	if count > 0 {
+		t.Errorf("expected multipart canary to be cleaned up, found %d objects", count)
+	}
+}
+
+// TestMonitorMultipartIntegration tests the full multipart check with metrics.
+func TestMonitorMultipartIntegration(t *testing.T) {
+	mb := newMockBackend()
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	cfg := Config{
+		Backend:        mb,
+		Bucket:         "test-bucket",
+		MEK:            mek,
+		BlockSize:      65536,
+		InstanceID:     "test-instance",
+		MultipartSize:  100, // Small size for testing
+	}
+
+	m := NewMonitor(cfg)
+	ctx := context.Background()
+
+	// Run multipart check (should update metrics)
+	m.runMultipartCheck(ctx)
+
+	// Verify multipart health status
+	status := m.GetStatus()
+	if status.MultipartHealthy != StatusHealthy {
+		t.Errorf("expected multipart healthy, got %s", status.MultipartHealthy)
+	}
+
+	// Verify metrics were updated
+	checks := metrics.DefaultMetrics.MultipartCanaryChecksTotal.String()
+	if checks == "0" || checks == "" {
+		t.Error("expected multipart canary checks to be incremented")
+	}
+
+	healthy := metrics.DefaultMetrics.MultipartCanaryHealthy.String()
+	if healthy != "1" {
+		t.Errorf("expected multipart canary healthy to be 1, got %s", healthy)
 	}
 }
