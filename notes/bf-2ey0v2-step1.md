@@ -6,16 +6,16 @@
 
 ## Summary
 
-- **Total Integration Test Files**: 50
-- **Languages**: Go (2), Rust (46), Python (2)
-- **Test Frameworks**: 
+- **Total Integration Test Files**: 82
+- **Languages**: Go (7), Rust (51), Python (24)
+- **Test Frameworks**:
   - Go: `go test` with build tags
   - Rust: Rust `#[test]` attribute
   - Python: `pytest`
 
 ---
 
-## Go Integration Tests (2 files)
+## Go Integration Tests (7 files)
 
 ### Framework: `go test` with build tags
 - **Test Command**: `go test -tags=integration ./tests/integration/...`
@@ -25,6 +25,18 @@
 |------|-------|---------|------------------|
 | `/home/coding/ARMOR/tests/integration/integration_test.go` | ~500 | End-to-end ARMOR server testing against real B2 and Cloudflare | Requires ARMOR server, B2 bucket, Cloudflare domain |
 | `/home/coding/ARMOR/tests/integration/awscli_test.go` | ~350 | AWS CLI compatibility testing with ARMOR | Requires ARMOR server, AWS CLI installed |
+
+### Named Integration Tests (5 files)
+Located in `internal/yamlutil/`:
+- **Test Command**: `go test ./internal/yamlutil/...`
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `/home/coding/ARMOR/internal/yamlutil/integration_test.go` | ~1,600 | End-to-end YAML parsing with actual testdata files |
+| `/home/coding/ARMOR/internal/yamlutil/valid_simple_integration_test.go` | ~300 | Valid simple YAML test cases |
+| `/home/coding/ARMOR/internal/yamlutil/valid_nested_integration_test.go` | ~350 | Valid nested YAML test cases |
+| `/home/coding/ARMOR/internal/yamlutil/valid_complex_integration_test.go` | ~320 | Valid complex YAML test cases |
+| `/home/coding/ARMOR/cmd/armor-decrypt/main_test.go` | ~150 | Command-line decryption functionality tests |
 
 **Environment Variables Required**: `ARMOR_INTEGRATION_TEST`, `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`, `ARMOR_B2_REGION`, `ARMOR_BUCKET`, `ARMOR_CF_DOMAIN`, `ARMOR_MEK`, `ARMOR_AUTH_ACCESS_KEY`, `ARMOR_AUTH_SECRET_KEY`
 
@@ -113,16 +125,72 @@
 
 ---
 
-## Python Integration Tests (2 files)
+## Python Integration Tests (24 files)
 
 ### Framework: `pytest`
-- **Test Command**: `pytest <test_file>.py`
-- **Location**: Various directories
+- **Test Command**: `pytest tests/yamlutil/ tools/parse_module/tests/`
+- **Location**: Multiple directories
 
-| File | Lines | Purpose | Module |
-|------|-------|---------|--------|
-| `/home/coding/ARMOR/tests/test_inventory_reader.py` | ~50 | Test inventory verification and catalog testing | Test infrastructure |
-| `/home/coding/ARMOR/tools/parse_module/verify_integration.py` | ~100 | Integration verification for parse module | Parse module testing |
+#### YAML Util Tests (12 files)
+Located in `tests/yamlutil/`:
+
+| File | Purpose |
+|------|---------|
+| `test_broken_samples.py` | Tests for malformed YAML samples |
+| `test_complete_mixed_yaml_documents.py` | Complete mixed YAML document handling |
+| `test_exceptions.py` | Exception handling in YAML parsing |
+| `test_explicit_indent.py` | Explicit indentation testing |
+| `test_indentation_comment_filtering.py` | Indentation and comment filtering |
+| `test_mixed_comment_scenarios.py` | Mixed comment scenario testing |
+| `test_parser.py` | Core parser functionality tests |
+| `test_reader.py` | YAML reader functionality |
+| `test_result_comprehensive.py` | Comprehensive result handling |
+| `test_result_helpers.py` | Result helper utilities |
+| `test_result_helpers_extended.py` | Extended result helper functions |
+| `test_validator.py` | YAML validation functionality |
+
+#### Parse Module Tests (2 files)
+Located in `tools/parse_module/tests/`:
+
+| File | Purpose |
+|------|---------|
+| `test_parse_result.py` | Parse result structure and handling |
+| `test_yaml_parser.py` | YAML parser integration tests |
+
+#### Root-Level Python Tests (10 files)
+Located in project root:
+
+| File | Purpose |
+|------|---------|
+| `test_scope_exit_comprehensive.py` | Comprehensive scope exit testing |
+| `test_scope_depth_tracking.py` | Scope depth tracking |
+| `test_key_token_detection.py` | Key token detection |
+| `test_comment_filtering_simple.py` | Simple comment filtering |
+| `test_parser_state_line_type.py` | Parser state and line type |
+| `test_indent_transition_state_machine.py` | Indent transition state machine |
+| `test_mixed_yaml_comments.py` | Mixed YAML comment handling |
+| `test_line_classification.py` | Line classification |
+| `test_indent_without_key_verification.py` | Indent without key verification |
+
+#### Verification Scripts (4 files)
+
+| File | Purpose |
+|------|---------|
+| `internal/yamlutil/verify_parser.py` | Parser verification script |
+| `tests/yamlutil/verify_implementation.py` | Implementation verification |
+| `tools/parse_module/verify_integration.py` | Integration verification |
+| `tools/parse_module/verify_structure.py` | Structure verification |
+
+#### Other Python Files (6 files)
+Located in `tests/yamlutil/`:
+
+| File | Purpose |
+|------|---------|
+| `broken_yaml_samples.py` | Test data/fixtures for broken YAML |
+| `examples.py` | Example YAML test cases |
+| `validate_yaml_functional.py` | Functional YAML validation |
+| `test_inventory_reader.py` | Test infrastructure inventory |
+| `__init__.py` | Package initialization |
 
 ---
 
@@ -187,12 +255,33 @@ cargo test --test '*integration*' -- --nocapture
 
 ### Python Integration Tests
 ```bash
-# Using pytest
-pytest tests/test_inventory_reader.py -v
-pytest tools/parse_module/verify_integration.py -v
+# All yamlutil tests
+pytest tests/yamlutil/ -v
+
+# Parse module tests
+pytest tools/parse_module/tests/ -v
+
+# Root-level Python tests
+pytest test_*.py -v
+
+# Specific verification scripts
+python tests/yamlutil/verify_implementation.py
+python tools/parse_module/verify_integration.py
+
+# All Python tests
+pytest tests/yamlutil/ tools/parse_module/tests/ -v
 ```
 
 ---
+
+## Test Distribution by Category
+
+| Language | Test Framework | Integration Files | Unit Test Files | Total Test Files |
+|----------|--------------|-------------------|-----------------|------------------|
+| Go | go test | 7 | 90 | 97 |
+| Rust | cargo test | 51 | Various | 51+ |
+| Python | pytest | 24 | ~8 | ~32 |
+| **Total** | - | **82** | **~98** | **~180** |
 
 ## Test File Size Distribution
 
@@ -200,6 +289,7 @@ pytest tools/parse_module/verify_integration.py -v
 - `type_like_string_false_positive_test.rs` - 14,580 lines
 - `invalid_type_conversion_test.rs` - 2,983 lines
 - `yaml_indentation_and_mixed_scenarios_test.rs` - 1,539 lines
+- `scope_tracking_comprehensive_test.rs` - 958 lines
 
 ### Large Tests (500-999 lines)
 - 29 files in this range
@@ -218,11 +308,20 @@ pytest tools/parse_module/verify_integration.py -v
 
 2. **Go Build Tags**: The Go integration tests use build tags and are only run when explicitly enabled with `-tags=integration`.
 
-3. **Test Coverage**: The 50 integration test files represent the primary test suite for ARMOR's YAML parsing, error handling, and scope tracking functionality.
+3. **Test Coverage**: The 82 integration test files represent the primary test suite for ARMOR's YAML parsing, error handling, scope tracking, and ARMOR server functionality.
 
 4. **Real Integration**: Only the Go tests in `tests/integration/` are true integration tests that require external services (B2, Cloudflare). Most Rust and Python tests are better described as "comprehensive tests" that test complete workflows but don't require external services.
 
 5. **Existing Catalog**: A more detailed catalog of the Rust tests exists at `/home/coding/ARMOR/docs/integration-test-catalog.md` (created for bead bf-4538tw).
+
+6. **Python Test Structure**: Python tests are organized into three main areas:
+   - `tests/yamlutil/` - YAML utility testing (12 files)
+   - `tools/parse_module/tests/` - Parse module testing (2 files)
+   - Root level - General integration tests (10+ files)
+
+7. **Rust Test Organization**: All Rust integration tests are located in `/tests/` directory, separate from unit tests which are typically co-located with source code.
+
+8. **Verification Scripts**: Several Python scripts (`verify_*.py`) provide standalone verification without requiring test framework execution.
 
 ---
 
