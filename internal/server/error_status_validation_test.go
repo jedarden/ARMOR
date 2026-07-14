@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -12,6 +13,7 @@ import (
 // =============================================================================
 // This test suite validates all HTTP status code validation helper functions.
 // Tests cover:
+// - Basic integer status code validation
 // - Single status code validation
 // - Multiple allowed status codes
 // - Status code range validation
@@ -22,7 +24,111 @@ import (
 // =============================================================================
 
 // =============================================================================
-// ValidateStatusCode Tests
+// ValidateStatusCodeInt Tests (Basic integer validation)
+// =============================================================================
+
+func TestValidateStatusCodeInt_MatchingCodes(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected int
+		actual   int
+	}{
+		{"200 OK matches 200", 200, 200},
+		{"404 Not Found matches 404", 404, 404},
+		{"403 Forbidden matches 403", 403, 403},
+		{"500 Internal Server Error matches 500", 500, 500},
+		{"201 Created matches 201", 201, 201},
+		{"204 No Content matches 204", 204, 204},
+		{"301 Moved Permanently matches 301", 301, 301},
+		{"302 Found matches 302", 302, 302},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStatusCodeInt(tt.expected, tt.actual)
+			if err != nil {
+				t.Errorf("ValidateStatusCodeInt(%d, %d) expected nil, got error: %v",
+					tt.expected, tt.actual, err)
+			}
+		})
+	}
+}
+
+func TestValidateStatusCodeInt_NonMatchingCodes(t *testing.T) {
+	tests := []struct {
+		name              string
+		expected          int
+		actual            int
+		errorShouldContain string
+	}{
+		{"Expected 200, got 404", 200, 404, "expected 200"},
+		{"Expected 404, got 200", 404, 200, "expected 404"},
+		{"Expected 403, got 500", 403, 500, "expected 403"},
+		{"Expected 201, got 200", 201, 200, "expected 201"},
+		{"Expected 500, got 404", 500, 404, "expected 500"},
+		{"Expected 200, got 500", 200, 500, "expected 200"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStatusCodeInt(tt.expected, tt.actual)
+			if err == nil {
+				t.Errorf("ValidateStatusCodeInt(%d, %d) expected error, got nil",
+					tt.expected, tt.actual)
+			} else {
+				// Verify error message contains both expected and actual values
+				errMsg := err.Error()
+				if !strings.Contains(errMsg, tt.errorShouldContain) {
+					t.Errorf("Error message should contain '%s', got: %s",
+						tt.errorShouldContain, errMsg)
+				}
+				if !strings.Contains(errMsg, fmt.Sprintf("got %d", tt.actual)) {
+					t.Errorf("Error message should contain 'got %d', got: %s",
+						tt.actual, errMsg)
+				}
+				// Verify status code descriptions are included
+				expectedDesc := GetStatusCodeDescription(tt.expected)
+				actualDesc := GetStatusCodeDescription(tt.actual)
+				if !strings.Contains(errMsg, expectedDesc) {
+					t.Errorf("Error message should contain expected description '%s', got: %s",
+						expectedDesc, errMsg)
+				}
+				if !strings.Contains(errMsg, actualDesc) {
+					t.Errorf("Error message should contain actual description '%s', got: %s",
+						actualDesc, errMsg)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateStatusCodeInt_ErrorMessageFormat(t *testing.T) {
+	// Test that error message follows the expected format
+	err := ValidateStatusCodeInt(200, 404)
+	if err == nil {
+		t.Fatal("Expected non-nil error for mismatched codes")
+	}
+
+	errMsg := err.Error()
+
+	// Check for key components of the error message
+	expectedParts := []string{
+		"status code mismatch",
+		"expected 200",
+		"OK", // Description for 200
+		"got 404",
+		"Not Found", // Description for 404
+	}
+
+	for _, part := range expectedParts {
+		if !strings.Contains(errMsg, part) {
+			t.Errorf("Error message should contain '%s', got: %s", part, errMsg)
+		}
+	}
+}
+
+// =============================================================================
+// ValidateStatusCode Tests (Test helper with response objects)
 // =============================================================================
 
 func TestValidateStatusCode_SingleCode_Success(t *testing.T) {

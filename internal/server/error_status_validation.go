@@ -16,7 +16,8 @@ import (
 // status codes, and flexible validation patterns.
 //
 // Functions:
-// - ValidateStatusCode: Validate single expected status code
+// - ValidateStatusCodeInt: Basic status code validation with expected/actual ints
+// - ValidateStatusCode: Validate single expected status code (test helper)
 // - ValidateStatusCodeAny: Validate against multiple allowed status codes
 // - ValidateStatusCodeRange: Validate status code is within range
 // - CheckStatusCode: Non-asserting version that returns boolean
@@ -25,6 +26,36 @@ import (
 // - StatusCodeMatchResult: Detailed validation result with error context
 // - GetStatusCodeDescription: Get human-readable status code description
 // =============================================================================
+
+// ValidateStatusCodeInt validates expected vs actual HTTP status codes.
+//
+// This is a basic status code validation function that compares two integers
+// and returns an error if they don't match. It's useful for simple validation
+// scenarios where you have direct access to status code integers.
+//
+// Parameters:
+//   - expected: The expected HTTP status code (e.g., 200, 404, 500)
+//   - actual: The actual HTTP status code received
+//
+// Returns:
+//   - nil if the status codes match
+//   - error with descriptive message if they don't match
+//
+// Example (matching codes):
+//   err := ValidateStatusCodeInt(200, 200)
+//   // err == nil
+//
+// Example (non-matching codes):
+//   err := ValidateStatusCodeInt(200, 404)
+//   // err.Error() == "status code mismatch: expected 200 (OK), got 404 (Not Found)"
+func ValidateStatusCodeInt(expected, actual int) error {
+	if expected == actual {
+		return nil
+	}
+	return fmt.Errorf("status code mismatch: expected %d (%s), got %d (%s)",
+		expected, GetStatusCodeDescription(expected),
+		actual, GetStatusCodeDescription(actual))
+}
 
 // StatusCodeMatchResult contains detailed information about a status code validation.
 //
