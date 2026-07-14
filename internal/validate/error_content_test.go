@@ -916,6 +916,8 @@ func TestValidationError_Content_ExtendedFields(t *testing.T) {
 		context           string
 		responseSnippet   string
 		fieldName         string
+		location          string
+		relatedFields     []string
 		patternDetails    string
 		rangeInfo         string
 		validationDetails []string
@@ -929,6 +931,8 @@ func TestValidationError_Content_ExtendedFields(t *testing.T) {
 			context:         "OAuth token validation",
 			responseSnippet: `{"error": "access_denied"}`,
 			fieldName:       "error",
+			location:        "response body",
+			relatedFields:   nil,
 			patternDetails:  "regex pattern 'invalid.*token' did not match",
 			rangeInfo:       "",
 			validationDetails: []string{
@@ -955,6 +959,8 @@ func TestValidationError_Content_ExtendedFields(t *testing.T) {
 			context:         "error response validation",
 			responseSnippet: "",
 			fieldName:       "",
+			location:        "",
+			relatedFields:   nil,
 			patternDetails:  "",
 			rangeInfo:       "Range: 400-499 (Client Error)",
 			validationDetails: []string{
@@ -980,6 +986,8 @@ func TestValidationError_Content_ExtendedFields(t *testing.T) {
 			context:         "resource access validation",
 			responseSnippet: `{"error": "internal server error"}`,
 			fieldName:       "error",
+			location:        "response body",
+			relatedFields:   []string{"error", "message"},
 			patternDetails:  "substring 'not found' not found in message",
 			rangeInfo:       "",
 			validationDetails: []string{
@@ -1004,19 +1012,21 @@ func TestValidationError_Content_ExtendedFields(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ve := FormatValidationErrorWithDetails(
-				tt.validationType,
-				tt.expected,
-				tt.actual,
-				tt.context,
-				tt.responseSnippet,
-				tt.fieldName,
-				tt.patternDetails,
-				tt.rangeInfo,
-				tt.validationDetails,
-			)
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				ve := FormatValidationErrorWithDetails(
+					tt.validationType,
+					tt.expected,
+					tt.actual,
+					tt.context,
+					tt.responseSnippet,
+					tt.fieldName,
+					tt.location,
+					tt.relatedFields,
+					tt.patternDetails,
+					tt.rangeInfo,
+					tt.validationDetails,
+				)
 
 			errMsg := ve.Error()
 
