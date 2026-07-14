@@ -511,3 +511,453 @@ func TestValidationError_JSONStrings(t *testing.T) {
 		t.Errorf("Expected Actual to be string 'text/html', got %v (%T)", restored.Actual, restored.Actual)
 	}
 }
+
+// TestValidationError_JSONUnmarshal_AllFields verifies that all ValidationError
+// fields can be correctly unmarshaled from JSON with snake_case field names.
+// This test creates raw JSON input (not from a struct) and verifies deserialization.
+func TestValidationError_JSONUnmarshal_AllFields(t *testing.T) {
+	// Create raw JSON input with all fields populated using snake_case
+	jsonStr := `{
+		"error_type": "response_structure",
+		"message": "Missing required field 'user_id'",
+		"context": "POST /api/orders",
+		"expected": "user_id field present",
+		"actual": "user_id field missing",
+		"field_name": "user_id",
+		"location": "response body",
+		"related_fields": ["order_id", "product_id"],
+		"pattern_details": "field 'user_id' not found in JSON response",
+		"range_info": "required field validation",
+		"validation_details": ["Response structure validation", "Required field check"],
+		"response_snippet": "{\"order_id\": 123, \"product_id\": 456}",
+		"suggestions": ["Add user_id to response", "Check API documentation"]
+	}`
+
+	var vErr ValidationError
+	err := json.Unmarshal([]byte(jsonStr), &vErr)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal ValidationError: %v", err)
+	}
+
+	// Verify required fields
+	if vErr.ErrorType != "response_structure" {
+		t.Errorf("Expected ErrorType 'response_structure', got '%s'", vErr.ErrorType)
+	}
+
+	if vErr.Message != "Missing required field 'user_id'" {
+		t.Errorf("Expected Message 'Missing required field 'user_id'', got '%s'", vErr.Message)
+	}
+
+	// Verify optional string fields
+	if vErr.Context != "POST /api/orders" {
+		t.Errorf("Expected Context 'POST /api/orders', got '%s'", vErr.Context)
+	}
+
+	if vErr.FieldName != "user_id" {
+		t.Errorf("Expected FieldName 'user_id', got '%s'", vErr.FieldName)
+	}
+
+	if vErr.Location != "response body" {
+		t.Errorf("Expected Location 'response body', got '%s'", vErr.Location)
+	}
+
+	if vErr.PatternDetails != "field 'user_id' not found in JSON response" {
+		t.Errorf("Expected PatternDetails 'field 'user_id' not found in JSON response', got '%s'", vErr.PatternDetails)
+	}
+
+	if vErr.RangeInfo != "required field validation" {
+		t.Errorf("Expected RangeInfo 'required field validation', got '%s'", vErr.RangeInfo)
+	}
+
+	if vErr.ResponseSnippet != `{"order_id": 123, "product_id": 456}` {
+		t.Errorf("Expected ResponseSnippet '{\"order_id\": 123, \"product_id\": 456}', got '%s'", vErr.ResponseSnippet)
+	}
+
+	// Verify Expected/Actual fields
+	expectedStr, ok := vErr.Expected.(string)
+	if !ok || expectedStr != "user_id field present" {
+		t.Errorf("Expected Expected to be string 'user_id field present', got %v (%T)", vErr.Expected, vErr.Expected)
+	}
+
+	actualStr, ok := vErr.Actual.(string)
+	if !ok || actualStr != "user_id field missing" {
+		t.Errorf("Expected Actual to be string 'user_id field missing', got %v (%T)", vErr.Actual, vErr.Actual)
+	}
+
+	// Verify slice fields
+	if len(vErr.RelatedFields) != 2 {
+		t.Errorf("Expected 2 RelatedFields, got %d", len(vErr.RelatedFields))
+	} else {
+		if vErr.RelatedFields[0] != "order_id" {
+			t.Errorf("Expected RelatedFields[0] 'order_id', got '%s'", vErr.RelatedFields[0])
+		}
+		if vErr.RelatedFields[1] != "product_id" {
+			t.Errorf("Expected RelatedFields[1] 'product_id', got '%s'", vErr.RelatedFields[1])
+		}
+	}
+
+	if len(vErr.ValidationDetails) != 2 {
+		t.Errorf("Expected 2 ValidationDetails, got %d", len(vErr.ValidationDetails))
+	} else {
+		if vErr.ValidationDetails[0] != "Response structure validation" {
+			t.Errorf("Expected ValidationDetails[0] 'Response structure validation', got '%s'", vErr.ValidationDetails[0])
+		}
+		if vErr.ValidationDetails[1] != "Required field check" {
+			t.Errorf("Expected ValidationDetails[1] 'Required field check', got '%s'", vErr.ValidationDetails[1])
+		}
+	}
+
+	if len(vErr.Suggestions) != 2 {
+		t.Errorf("Expected 2 Suggestions, got %d", len(vErr.Suggestions))
+	} else {
+		if vErr.Suggestions[0] != "Add user_id to response" {
+			t.Errorf("Expected Suggestions[0] 'Add user_id to response', got '%s'", vErr.Suggestions[0])
+		}
+		if vErr.Suggestions[1] != "Check API documentation" {
+			t.Errorf("Expected Suggestions[1] 'Check API documentation', got '%s'", vErr.Suggestions[1])
+		}
+	}
+}
+
+// TestValidationError_JSONUnmarshal_RequiredOnly verifies that ValidationError
+// can be unmarshaled from JSON with only required fields present.
+func TestValidationError_JSONUnmarshal_RequiredOnly(t *testing.T) {
+	jsonStr := `{
+		"error_type": "status_code",
+		"message": "Status code validation failed"
+	}`
+
+	var vErr ValidationError
+	err := json.Unmarshal([]byte(jsonStr), &vErr)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal ValidationError with only required fields: %v", err)
+	}
+
+	// Verify required fields
+	if vErr.ErrorType != "status_code" {
+		t.Errorf("Expected ErrorType 'status_code', got '%s'", vErr.ErrorType)
+	}
+
+	if vErr.Message != "Status code validation failed" {
+		t.Errorf("Expected Message 'Status code validation failed', got '%s'", vErr.Message)
+	}
+
+	// Verify optional fields are zero/nil/empty
+	if vErr.Context != "" {
+		t.Errorf("Expected empty Context, got '%s'", vErr.Context)
+	}
+
+	if vErr.FieldName != "" {
+		t.Errorf("Expected empty FieldName, got '%s'", vErr.FieldName)
+	}
+
+	if vErr.Location != "" {
+		t.Errorf("Expected empty Location, got '%s'", vErr.Location)
+	}
+
+	if vErr.PatternDetails != "" {
+		t.Errorf("Expected empty PatternDetails, got '%s'", vErr.PatternDetails)
+	}
+
+	if vErr.RangeInfo != "" {
+		t.Errorf("Expected empty RangeInfo, got '%s'", vErr.RangeInfo)
+	}
+
+	if vErr.ResponseSnippet != "" {
+		t.Errorf("Expected empty ResponseSnippet, got '%s'", vErr.ResponseSnippet)
+	}
+
+	if vErr.Expected != nil {
+		t.Errorf("Expected nil Expected, got %v", vErr.Expected)
+	}
+
+	if vErr.Actual != nil {
+		t.Errorf("Expected nil Actual, got %v", vErr.Actual)
+	}
+
+	if vErr.RelatedFields != nil {
+		t.Errorf("Expected nil RelatedFields, got %v", vErr.RelatedFields)
+	}
+
+	if vErr.ValidationDetails != nil {
+		t.Errorf("Expected nil ValidationDetails, got %v", vErr.ValidationDetails)
+	}
+
+	if vErr.Suggestions != nil {
+		t.Errorf("Expected nil Suggestions, got %v", vErr.Suggestions)
+	}
+}
+
+// TestValidationError_JSONUnmarshal_EmptyStringFields verifies that empty
+// string values in optional fields are correctly handled during deserialization.
+func TestValidationError_JSONUnmarshal_EmptyStringFields(t *testing.T) {
+	jsonStr := `{
+		"error_type": "error_message",
+		"message": "Pattern not found",
+		"context": "",
+		"field_name": "",
+		"location": "",
+		"pattern_details": "",
+		"range_info": "",
+		"response_snippet": ""
+	}`
+
+	var vErr ValidationError
+	err := json.Unmarshal([]byte(jsonStr), &vErr)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal ValidationError with empty string fields: %v", err)
+	}
+
+	// Verify required fields
+	if vErr.ErrorType != "error_message" {
+		t.Errorf("Expected ErrorType 'error_message', got '%s'", vErr.ErrorType)
+	}
+
+	if vErr.Message != "Pattern not found" {
+		t.Errorf("Expected Message 'Pattern not found', got '%s'", vErr.Message)
+	}
+
+	// Verify empty string fields are preserved as empty strings
+	if vErr.Context != "" {
+		t.Errorf("Expected empty Context, got '%s'", vErr.Context)
+	}
+
+	if vErr.FieldName != "" {
+		t.Errorf("Expected empty FieldName, got '%s'", vErr.FieldName)
+	}
+
+	if vErr.Location != "" {
+		t.Errorf("Expected empty Location, got '%s'", vErr.Location)
+	}
+
+	if vErr.PatternDetails != "" {
+		t.Errorf("Expected empty PatternDetails, got '%s'", vErr.PatternDetails)
+	}
+
+	if vErr.RangeInfo != "" {
+		t.Errorf("Expected empty RangeInfo, got '%s'", vErr.RangeInfo)
+	}
+
+	if vErr.ResponseSnippet != "" {
+		t.Errorf("Expected empty ResponseSnippet, got '%s'", vErr.ResponseSnippet)
+	}
+}
+
+// TestValidationError_JSONUnmarshal_EmptySlices verifies that empty arrays
+// in slice fields are correctly handled during deserialization.
+func TestValidationError_JSONUnmarshal_EmptySlices(t *testing.T) {
+	jsonStr := `{
+		"error_type": "cors_headers",
+		"message": "CORS headers validation",
+		"related_fields": [],
+		"validation_details": [],
+		"suggestions": []
+	}`
+
+	var vErr ValidationError
+	err := json.Unmarshal([]byte(jsonStr), &vErr)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal ValidationError with empty slices: %v", err)
+	}
+
+	// Verify required fields
+	if vErr.ErrorType != "cors_headers" {
+		t.Errorf("Expected ErrorType 'cors_headers', got '%s'", vErr.ErrorType)
+	}
+
+	// Verify empty slices are preserved
+	if vErr.RelatedFields == nil {
+		t.Error("Expected RelatedFields to be non-nil (empty slice), got nil")
+	} else if len(vErr.RelatedFields) != 0 {
+		t.Errorf("Expected empty RelatedFields, got %d items", len(vErr.RelatedFields))
+	}
+
+	if vErr.ValidationDetails == nil {
+		t.Error("Expected ValidationDetails to be non-nil (empty slice), got nil")
+	} else if len(vErr.ValidationDetails) != 0 {
+		t.Errorf("Expected empty ValidationDetails, got %d items", len(vErr.ValidationDetails))
+	}
+
+	if vErr.Suggestions == nil {
+		t.Error("Expected Suggestions to be non-nil (empty slice), got nil")
+	} else if len(vErr.Suggestions) != 0 {
+		t.Errorf("Expected empty Suggestions, got %d items", len(vErr.Suggestions))
+	}
+}
+
+// TestValidationError_JSONUnmarshal_NumericExpectedActual verifies that
+// numeric values in Expected/Actual fields are correctly unmarshaled.
+func TestValidationError_JSONUnmarshal_NumericExpectedActual(t *testing.T) {
+	jsonStr := `{
+		"error_type": "status_code",
+		"message": "Status code mismatch",
+		"expected": 200,
+		"actual": 404
+	}`
+
+	var vErr ValidationError
+	err := json.Unmarshal([]byte(jsonStr), &vErr)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal ValidationError with numeric values: %v", err)
+	}
+
+	// Verify numeric values are unmarshaled as float64 (JSON default for numbers)
+	expectedFloat, ok := vErr.Expected.(float64)
+	if !ok || expectedFloat != 200.0 {
+		t.Errorf("Expected Expected to be float64 200.0, got %v (%T)", vErr.Expected, vErr.Expected)
+	}
+
+	actualFloat, ok := vErr.Actual.(float64)
+	if !ok || actualFloat != 404.0 {
+		t.Errorf("Expected Actual to be float64 404.0, got %v (%T)", vErr.Actual, vErr.Actual)
+	}
+}
+
+// TestValidationError_JSONUnmarshal_ArrayExpectedActual verifies that
+// array values in Expected/Actual fields are correctly unmarshaled.
+func TestValidationError_JSONUnmarshal_ArrayExpectedActual(t *testing.T) {
+	jsonStr := `{
+		"error_type": "status_code_range",
+		"message": "Status code not in expected range",
+		"expected": [200, 201, 202, 204],
+		"actual": 404
+	}`
+
+	var vErr ValidationError
+	err := json.Unmarshal([]byte(jsonStr), &vErr)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal ValidationError with array values: %v", err)
+	}
+
+	// Verify Expected is unmarshaled as a slice
+	expectedSlice, ok := vErr.Expected.([]interface{})
+	if !ok {
+		t.Errorf("Expected Expected to be []interface{}, got %v (%T)", vErr.Expected, vErr.Expected)
+	} else {
+		if len(expectedSlice) != 4 {
+			t.Errorf("Expected 4 items in Expected slice, got %d", len(expectedSlice))
+		} else {
+			// Verify values in the slice
+			for i, val := range expectedSlice {
+				expectedFloat, ok := val.(float64)
+				if !ok {
+					t.Errorf("Expected Expected[%d] to be float64, got %v (%T)", i, val, val)
+				}
+				expectedValues := []float64{200.0, 201.0, 202.0, 204.0}
+				if expectedFloat != expectedValues[i] {
+					t.Errorf("Expected Expected[%d] to be %.1f, got %.1f", i, expectedValues[i], expectedFloat)
+				}
+			}
+		}
+	}
+
+	// Verify Actual is still a number
+	actualFloat, ok := vErr.Actual.(float64)
+	if !ok || actualFloat != 404.0 {
+		t.Errorf("Expected Actual to be float64 404.0, got %v (%T)", vErr.Actual, vErr.Actual)
+	}
+}
+
+// TestValidationError_JSONUnmarshal_WhitespaceValues verifies that
+// fields with only whitespace are correctly handled.
+func TestValidationError_JSONUnmarshal_WhitespaceValues(t *testing.T) {
+	jsonStr := `{
+		"error_type": "content_type",
+		"message": "   ",
+		"context": "  \t  ",
+		"pattern_details": "\n\r"
+	}`
+
+	var vErr ValidationError
+	err := json.Unmarshal([]byte(jsonStr), &vErr)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal ValidationError with whitespace values: %v", err)
+	}
+
+	// Whitespace-only values should be preserved
+	if vErr.Message != "   " {
+		t.Errorf("Expected Message '   ', got '%s'", vErr.Message)
+	}
+
+	if vErr.Context != "  \t  " {
+		t.Errorf("Expected Context '  \\t  ', got '%s'", vErr.Context)
+	}
+
+	if vErr.PatternDetails != "\n\r" {
+		t.Errorf("Expected PatternDetails with newline, got '%s'", vErr.PatternDetails)
+	}
+}
+
+// TestValidationError_JSONUnmarshal_InvalidFieldType verifies that
+// attempting to unmarshal with incorrect field types produces an error.
+func TestValidationError_JSONUnmarshal_InvalidFieldType(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonStr  string
+		wantErr  bool
+		errField string
+	}{
+		{
+			name:     "error_type as number",
+			jsonStr:  `{"error_type": 123, "message": "test"}`,
+			wantErr:  true,
+			errField: "error_type",
+		},
+		{
+			name:     "message as number",
+			jsonStr:  `{"error_type": "status_code", "message": 456}`,
+			wantErr:  true,
+			errField: "message",
+		},
+		{
+			name:     "context as array",
+			jsonStr:  `{"error_type": "status_code", "message": "test", "context": []}`,
+			wantErr:  true,
+			errField: "context",
+		},
+		{
+			name:     "suggestions as string",
+			jsonStr:  `{"error_type": "status_code", "message": "test", "suggestions": "not-an-array"}`,
+			wantErr:  true,
+			errField: "suggestions",
+		},
+		{
+			name:     "related_fields as object",
+			jsonStr:  `{"error_type": "status_code", "message": "test", "related_fields": {}}`,
+			wantErr:  true,
+			errField: "related_fields",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var vErr ValidationError
+			err := json.Unmarshal([]byte(tt.jsonStr), &vErr)
+			if err == nil && tt.wantErr {
+				t.Errorf("Expected unmarshal error for %s, got nil", tt.errField)
+			}
+		})
+	}
+}
+
+// TestValidationError_JSONUnmarshal_InvalidSyntax verifies that
+// malformed JSON produces an unmarshal error.
+func TestValidationError_JSONUnmarshal_InvalidSyntax(t *testing.T) {
+	invalidJSON := []string{
+		`{"error_type": "status_code", "message": "test"`, // Missing closing brace
+		`{error_type: "status_code", message: "test"}`,   // Unquoted keys
+		`{"error_type": "status_code", "message": test}`,  // Unquoted value
+		``,
+		`not json at all`,
+	}
+
+	for _, jsonStr := range invalidJSON {
+		t.Run(jsonStr, func(t *testing.T) {
+			var vErr ValidationError
+			err := json.Unmarshal([]byte(jsonStr), &vErr)
+			if err == nil {
+				t.Errorf("Expected unmarshal error for invalid JSON: '%s'", jsonStr)
+			}
+		})
+	}
+}
