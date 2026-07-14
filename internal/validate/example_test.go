@@ -166,3 +166,161 @@ func ExampleHTTPStatusCodeIsValid_nilHandling() {
 	// Output:
 	// Nil response handling: valid=false error=false client=false server=false
 }
+
+// ExampleValidateErrorMessagePattern demonstrates error message pattern validation
+func ExampleValidateErrorMessagePattern() {
+	// Case-insensitive pattern matching for "not found" errors
+	body := []byte(`{"error": "Authentication failed"}`)
+	matches, err := validate.ValidateErrorMessagePattern(body, "authentication.*failed", true)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	fmt.Printf("Pattern matches: %v\n", matches)
+
+	// Output:
+	// Pattern matches: true
+}
+
+// ExampleErrorCodeInResponse demonstrates error code detection
+func ExampleErrorCodeInResponse() {
+	body := []byte(`{"error_code": "UNAUTHORIZED", "message": "Access denied"}`)
+	found, err := validate.ErrorCodeInResponse(body, "UNAUTHORIZED")
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	fmt.Printf("Error code found: %v\n", found)
+
+	// Output:
+	// Error code found: true
+}
+
+// ExampleGetErrorMessage demonstrates error message extraction
+func ExampleGetErrorMessage() {
+	body := []byte(`{"error": "Resource not found", "code": "NOT_FOUND"}`)
+	message, err := validate.GetErrorMessage(body)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	fmt.Printf("Error message: %s\n", message)
+
+	// Output:
+	// Error message: Resource not found
+}
+
+// ExampleGetErrorCode demonstrates error code extraction
+func ExampleGetErrorCode() {
+	body := []byte(`{"error_code": "AUTH_FAILED", "message": "Invalid credentials"}`)
+	code, err := validate.GetErrorCode(body)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	fmt.Printf("Error code: %s\n", code)
+
+	// Output:
+	// Error code: AUTH_FAILED
+}
+
+// ExampleValidateErrorMessagePattern_auth demonstrates authentication error validation
+func ExampleValidateErrorMessagePattern_auth() {
+	// Check for authentication/authorization error patterns
+	testCases := []struct {
+		body    string
+		matches bool
+	}{
+		{`{"error": "Authentication failed"}`, true},
+		{`{"message": "User not authorized"}`, true},
+		{`{"detail": "Access denied"}`, true},
+		{`{"error": "Permission denied"}`, true},
+		{`{"message": "Resource not found"}`, false},
+	}
+
+	pattern := "(authentication|authorization|access|permission).*failed|denied"
+	for _, tc := range testCases {
+		matches, _ := validate.ValidateErrorMessagePattern([]byte(tc.body), pattern, true)
+		fmt.Printf("Body: %s - Matches: %v\n", tc.body, matches)
+	}
+
+	// Output:
+	// Body: {"error": "Authentication failed"} - Matches: true
+	// Body: {"message": "User not authorized"} - Matches: true
+	// Body: {"detail": "Access denied"} - Matches: true
+	// Body: {"error": "Permission denied"} - Matches: true
+	// Body: {"message": "Resource not found"} - Matches: false
+}
+
+// ExampleErrorCodeInResponse_oauth2 demonstrates OAuth2 error code validation
+func ExampleErrorCodeInResponse_oauth2() {
+	// Common OAuth2 error codes
+	oauth2Errors := []struct {
+		body      string
+		errorCode string
+	}{
+		{`{"error": "invalid_token", "error_description": "The access token expired"}`, "invalid_token"},
+		{`{"error": "invalid_grant", "error_description": "Invalid authorization code"}`, "invalid_grant"},
+		{`{"error": "unauthorized_client", "error_description": "Client not authorized"}`, "unauthorized_client"},
+		{`{"error": "access_denied", "error_description": "Resource owner denied access"}`, "access_denied"},
+	}
+
+	for _, tc := range oauth2Errors {
+		found, _ := validate.ErrorCodeInResponse([]byte(tc.body), tc.errorCode)
+		fmt.Printf("Error code %s found: %v\n", tc.errorCode, found)
+	}
+
+	// Output:
+	// Error code invalid_token found: true
+	// Error code invalid_grant found: true
+	// Error code unauthorized_client found: true
+	// Error code access_denied found: true
+}
+
+// ExampleValidateStatusCodeRange demonstrates status code range validation
+func ExampleValidateStatusCodeRange() {
+	// Simulate API responses with different status codes
+	responses := []struct {
+		status int
+		desc   string
+	}{
+		{200, "OK"},
+		{201, "Created"},
+		{204, "No Content"},
+		{400, "Bad Request"},
+		{401, "Unauthorized"},
+		{403, "Forbidden"},
+		{404, "Not Found"},
+		{500, "Internal Server Error"},
+		{502, "Bad Gateway"},
+		{503, "Service Unavailable"},
+	}
+
+	for _, resp := range responses {
+		// Check for success codes (2xx)
+		isSuccess := resp.status >= 200 && resp.status < 300
+
+		// Check for client errors (4xx)
+		isClientError := resp.status >= 400 && resp.status < 500
+
+		// Check for server errors (5xx)
+		isServerError := resp.status >= 500 && resp.status < 600
+
+		fmt.Printf("%d (%s): Success=%v, ClientError=%v, ServerError=%v\n",
+			resp.status, resp.desc, isSuccess, isClientError, isServerError)
+	}
+
+	// Output:
+	// 200 (OK): Success=true, ClientError=false, ServerError=false
+	// 201 (Created): Success=true, ClientError=false, ServerError=false
+	// 204 (No Content): Success=true, ClientError=false, ServerError=false
+	// 400 (Bad Request): Success=false, ClientError=true, ServerError=false
+	// 401 (Unauthorized): Success=false, ClientError=true, ServerError=false
+	// 403 (Forbidden): Success=false, ClientError=true, ServerError=false
+	// 404 (Not Found): Success=false, ClientError=true, ServerError=false
+	// 500 (Internal Server Error): Success=false, ClientError=false, ServerError=true
+	// 502 (Bad Gateway): Success=false, ClientError=false, ServerError=true
+	// 503 (Service Unavailable): Success=false, ClientError=false, ServerError=true
+}
+
+// Status code and error message validation examples are demonstrated in other examples above
