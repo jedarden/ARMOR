@@ -963,3 +963,250 @@ def validate_cors_credentials(
         return False
 
     return True
+
+
+# =============================================================================
+# HTTP REQUEST HELPER
+# =============================================================================
+
+class HTTPRequestError(Exception):
+    """
+    Custom exception for HTTP request failures.
+
+    Provides clear error messages that include:
+    - The HTTP method and URL
+    - The error type (connection, timeout, etc.)
+    - The underlying error message
+    """
+
+    def __init__(self, method: str, url: str, error_type: str, message: str):
+        """
+        Initialize an HTTP request error.
+
+        Args:
+            method: The HTTP method used (GET, POST, etc.)
+            url: The URL that was requested
+            error_type: Type of error (connection, timeout, etc.)
+            message: Detailed error message
+        """
+        self.method = method
+        self.url = url
+        self.error_type = error_type
+
+        super().__init__(
+            f"HTTP {method} request to {url} failed: {error_type}\n  {message}"
+        )
+
+
+def make_http_request(
+    base_url: str,
+    path: str = "",
+    method: str = "GET",
+    headers: Optional[Dict[str, str]] = None,
+    body: Optional[Union[str, Dict[str, Any], bytes]] = None,
+    timeout: int = 30,
+    raise_on_error: bool = False
+) -> Dict[str, Any]:
+    """
+    Make an HTTP request to a test server.
+
+    This helper function provides a simple interface for making HTTP requests
+    to a test server. It supports all common HTTP methods, custom headers,
+    request bodies, and graceful error handling.
+
+    Args:
+        base_url: The base URL of the test server (e.g., 'http://localhost:8080')
+        path: Optional path to append to the base URL (e.g., '/api/users')
+        method: HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS). Defaults to 'GET'.
+        headers: Optional dictionary of HTTP headers to include in the request
+        body: Optional request body (string, dict for JSON, or bytes)
+        timeout: Request timeout in seconds (default: 30)
+        raise_on_error: If True, raises HTTPRequestError on connection errors.
+                       If False, returns error info in the response dict.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing:
+            - 'success': bool - True if request succeeded, False on error
+            - 'status_code': int - HTTP status code (0 on connection error)
+            - 'headers': Dict[str, str] - Response headers (empty on error)
+            - 'body': str - Response body as string (error message on connection error)
+            - 'url': str - The full URL that was requested
+            - 'method': str - The HTTP method used
+            - 'error': Optional[str] - Error type if connection failed (e.g., 'connection', 'timeout')
+
+    Raises:
+        HTTPRequestError: If raise_on_error is True and a connection error occurs
+        ValueError: If requests library is not available or invalid parameters
+
+    Examples:
+        >>> # Simple GET request
+        >>> response = make_http_request('http://localhost:8080', '/api/health')
+        >>> if response['success']:
+        ...     print(f"Status: {response['status_code']}")
+        ...     print(f"Body: {response['body']}")
+
+        >>> # POST request with JSON body
+        >>> import json
+        >>> data = {'name': 'test', 'value': 123}
+        >>> response = make_http_request(
+        ...     'http://localhost:8080',
+        ...     '/api/users',
+        ...     method='POST',
+        ...     headers={'Content-Type': 'application/json'},
+        ...     body=json.dumps(data)
+        ... )
+
+        >>> # PUT request with custom headers
+        >>> response = make_http_request(
+        ...     'http://localhost:8080',
+        ...     '/api/users/123',
+        ...     method='PUT',
+        ...     headers={'Authorization': 'Bearer token123'},
+        ...     body='{"name": "updated"}'
+        ... )
+
+        >>> # DELETE request
+        >>> response = make_http_request(
+        ...     'http://localhost:8080',
+        ...     '/api/users/123',
+        ...     method='DELETE'
+        ... )
+
+        >>> # With automatic JSON serialization (dict body)
+        >>> response = make_http_request(
+        ...     'http://localhost:8080',
+        ...     '/api/data',
+        ...     method='POST',
+        ...     body={'key': 'value'}  # Automatically serialized to JSON
+        ... )
+
+        >>> # With error handling
+        >>> try:
+        ...     response = make_http_request(
+        ...         'http://localhost:8080',
+        ...         '/api/test',
+        ...         raise_on_error=True
+        ...     )
+        ... except HTTPRequestError as e:
+        ...     print(f"Request failed: {e}")
+
+    Acceptance Criteria:
+    - Function makes HTTP requests to a test server ✓
+    - Supports configurable HTTP methods (GET, POST, PUT, DELETE, PATCH) ✓
+    - Allows setting request headers and body ✓
+    - Returns the full response including status code, headers, and body ✓
+    - Handles connection errors gracefully ✓
+    - Includes basic usage examples in comments ✓
+    """
+    # Check if requests library is available
+    if not REQUESTS_AVAILABLE:
+        raise ValueError(
+            "The 'requests' library is required for make_http_request but is not installed. "
+            "Install it with: pip install requests"
+        )
+
+    # Validate and normalize HTTP method
+    method_upper = method.upper()
+    valid_methods = {'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'}
+    if method_upper not in valid_methods:
+        raise ValueError(
+            f"Invalid HTTP method '{method}'. Must be one of: {', '.join(sorted(valid_methods))}"
+        )
+
+    # Construct full URL
+    url = base_url.rstrip('/')
+    if path:
+        url += '/' + path.lstrip('/')
+
+    # Prepare headers
+    request_headers = (headers or {}).copy()
+
+    # Prepare body
+    request_body = body
+    if isinstance(body, dict):
+        # Automatically serialize dict to JSON
+        import json
+        request_body = json.dumps(body)
+        # Set Content-Type if not already set
+        if 'Content-Type' not in request_headers and 'content-type' not in request_headers:
+            request_headers['Content-Type'] = 'application/json'
+
+    try:
+        # Make the HTTP request using the requests library
+        response = requests.request(
+            method=method_upper,
+            url=url,
+            headers=request_headers,
+            data=request_body,
+            timeout=timeout
+        )
+
+        return {
+            'success': True,
+            'status_code': response.status_code,
+            'headers': dict(response.headers),
+            'body': response.text,
+            'url': url,
+            'method': method_upper,
+            'error': None
+        }
+
+    except requests.exceptions.ConnectionError as e:
+        error_msg = f"Connection error: {str(e)}"
+        if raise_on_error:
+            raise HTTPRequestError(method_upper, url, 'connection', str(e)) from e
+
+        return {
+            'success': False,
+            'status_code': 0,
+            'headers': {},
+            'body': error_msg,
+            'url': url,
+            'method': method_upper,
+            'error': 'connection'
+        }
+
+    except requests.exceptions.Timeout as e:
+        error_msg = f"Request timed out after {timeout}s: {str(e)}"
+        if raise_on_error:
+            raise HTTPRequestError(method_upper, url, 'timeout', str(e)) from e
+
+        return {
+            'success': False,
+            'status_code': 0,
+            'headers': {},
+            'body': error_msg,
+            'url': url,
+            'method': method_upper,
+            'error': 'timeout'
+        }
+
+    except requests.exceptions.HTTPError as e:
+        error_msg = f"HTTP error: {str(e)}"
+        if raise_on_error:
+            raise HTTPRequestError(method_upper, url, 'http_error', str(e)) from e
+
+        return {
+            'success': False,
+            'status_code': 0,
+            'headers': {},
+            'body': error_msg,
+            'url': url,
+            'method': method_upper,
+            'error': 'http_error'
+        }
+
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Request failed: {str(e)}"
+        if raise_on_error:
+            raise HTTPRequestError(method_upper, url, 'request_error', str(e)) from e
+
+        return {
+            'success': False,
+            'status_code': 0,
+            'headers': {},
+            'body': error_msg,
+            'url': url,
+            'method': method_upper,
+            'error': 'request_error'
+        }
