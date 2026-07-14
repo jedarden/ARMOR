@@ -586,3 +586,141 @@ func isNumericIndex(s string) bool {
 func containsArrayNotation(s string) bool {
 	return strings.Contains(s, "[")
 }
+
+// =============================================================================
+// FIELD REFERENCE FORMATTING
+// =============================================================================
+
+// FormatFieldReference formats a field reference for use in error messages.
+// This function provides a consistent, user-friendly format for field references
+// that is specifically designed for error message display.
+//
+// Parameters:
+//   - fieldPath: The field path to format (e.g., "user.email", "users.0.email")
+//   - options: Optional format options to customize the output
+//
+// Returns a formatted field reference string ready for use in error messages.
+// Empty or invalid paths return "(unknown field)" for consistent error display.
+//
+// Example usage:
+//
+//	ref := FormatFieldReference("user.email")
+//	// Returns: "field 'user.email'"
+//
+//	ref := FormatFieldReference("users.0.email", WithQuoteStyle(Double))
+//	// Returns: `field "users[0].email"`
+//
+//	ref := FormatFieldReference("request.params.page", WithPrefix("parameter"))
+//	// Returns: "parameter 'request.params.page'"
+//
+//	ref := FormatFieldReference("")
+//	// Returns: "(unknown field)"
+func FormatFieldReference(fieldPath string, options ...FieldRefOption) string {
+	// Parse options
+	config := &FieldRefConfig{
+		prefix:     "field",
+		quoteStyle: SingleQuote,
+		normalize:  true,
+	}
+	for _, opt := range options {
+		opt(config)
+	}
+
+	// Handle empty path
+	formattedPath := strings.TrimSpace(fieldPath)
+	if formattedPath == "" {
+		return "(unknown field)"
+	}
+
+	// Normalize path if requested (convert users.0.email to users[0].email)
+	if config.normalize {
+		formattedPath = FormatFieldPath(fieldPath)
+		// Check if normalization resulted in "(unknown field)"
+		if formattedPath == "(unknown field)" {
+			return "(unknown field)"
+		}
+	}
+
+	// Apply quote style
+	quotedPath := config.quoteStyle.quote(formattedPath)
+
+	// Build final reference
+	if config.prefix != "" {
+		return fmt.Sprintf("%s %s", config.prefix, quotedPath)
+	}
+	return quotedPath
+}
+
+// =============================================================================
+// FIELD REFERENCE OPTIONS
+// =============================================================================
+
+// FieldRefConfig holds configuration options for field reference formatting.
+type FieldRefConfig struct {
+	prefix     string
+	quoteStyle QuoteStyle
+	normalize  bool
+}
+
+// FieldRefOption is a function that configures a FieldRefConfig.
+type FieldRefOption func(*FieldRefConfig)
+
+// WithPrefix sets the prefix for the field reference.
+// Use this to change "field" to something like "parameter", "property", etc.
+// Pass empty string to omit the prefix entirely.
+func WithPrefix(prefix string) FieldRefOption {
+	return func(c *FieldRefConfig) {
+		c.prefix = prefix
+	}
+}
+
+// WithQuoteStyle sets the quote style for the field reference.
+// Use this to change between single quotes (default), double quotes, or no quotes.
+func WithQuoteStyle(style QuoteStyle) FieldRefOption {
+	return func(c *FieldRefConfig) {
+		c.quoteStyle = style
+	}
+}
+
+// WithNormalizePath controls whether to normalize the field path.
+// When false, the field path is used as-is without converting array notation.
+// When true (default), "users.0.email" becomes "users[0].email".
+func WithNormalizePath(normalize bool) FieldRefOption {
+	return func(c *FieldRefConfig) {
+		c.normalize = normalize
+	}
+}
+
+// =============================================================================
+// QUOTE STYLES
+// =============================================================================
+
+// QuoteStyle represents different quoting styles for field references.
+type QuoteStyle int
+
+const (
+	// NoQuote uses no quotes around the field name
+	NoQuote QuoteStyle = iota
+	// SingleQuote uses single quotes around the field name (default)
+	SingleQuote
+	// DoubleQuote uses double quotes around the field name
+	DoubleQuote
+	// Backtick uses backticks around the field name (for code display)
+	Backtick
+)
+
+// quote wraps a string with the appropriate quote characters.
+func (qs QuoteStyle) quote(s string) string {
+	switch qs {
+	case NoQuote:
+		return s
+	case SingleQuote:
+		return fmt.Sprintf("'%s'", s)
+	case DoubleQuote:
+		return fmt.Sprintf(`"%s"`, s)
+	case Backtick:
+		return fmt.Sprintf("`%s`", s)
+	default:
+		return fmt.Sprintf("'%s'", s)
+	}
+}
