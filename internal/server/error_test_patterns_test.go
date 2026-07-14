@@ -109,8 +109,8 @@ func TestRunAuthenticationErrorTable(t *testing.T) {
 		tests := []AuthenticationErrorTestCase{
 			{
 				CommonErrorTestCase: CommonErrorTestCase{
-					Name:         "Test scenario",
-					Description:  "Verify missing auth header returns 403",
+					Name:        "Test scenario",
+					Description: "Verify missing auth header returns 403",
 					SetupRequest: func(t *testing.T) *http.Request {
 						return CreateTestRequest(t, "GET", "/test-bucket/key", nil, nil)
 					},
@@ -119,8 +119,8 @@ func TestRunAuthenticationErrorTable(t *testing.T) {
 					ExpectedMessageKeywords: []string{"access", "denied"},
 					MinMessageLength:        15,
 				},
-				AccessKey:       "",
-				AuthErrorType:   "MissingAuthHeader",
+				AccessKey:         "",
+				AuthErrorType:     "MissingAuthHeader",
 				ExpectedAuthError: ErrMissingAuthHeader,
 			},
 		}
@@ -138,9 +138,9 @@ func TestRunNonAuthenticationErrorTable(t *testing.T) {
 		tests := []NonAuthenticationErrorTestCase{
 			{
 				CommonErrorTestCase: CommonErrorTestCase{
-					Name:         "Test scenario",
-					Description:  "Verify 404 for non-existent resource",
-					SetupRequest: createNotFoundRequest,
+					Name:                    "Test scenario",
+					Description:             "Verify 404 for non-existent resource",
+					SetupRequest:            createNotFoundRequest,
 					ExpectedStatus:          404,
 					ExpectedCode:            "NoSuchKey",
 					ExpectedMessageKeywords: []string{"not", "found"},
@@ -165,14 +165,14 @@ func TestRunCORSErrorTable(t *testing.T) {
 		tests := []CORSErrorTestCase{
 			{
 				CommonErrorTestCase: CommonErrorTestCase{
-					Name:         "Test scenario",
-					Description:  "Verify CORS headers on 404 error",
-					SetupRequest: createNotFoundRequest,
+					Name:             "Test scenario",
+					Description:      "Verify CORS headers on 404 error",
+					SetupRequest:     createNotFoundRequest,
 					ExpectedStatus:   404,
 					ExpectedCode:     "NoSuchKey",
 					MinMessageLength: 15,
 				},
-				Origin:             "*",
+				Origin:              "*",
 				ExpectedCORSOrigin:  "*",
 				ExpectedCORSMethods: "GET, PUT, DELETE, HEAD, POST, OPTIONS",
 				ExpectedCORSHeaders: "Authorization, Content-Type, Range, Content-Length",
@@ -301,13 +301,13 @@ func TestRunCommonErrorValidations(t *testing.T) {
 		duration, w := MeasureRequestTime(fixture.Handler, req)
 
 		tt := CommonErrorTestCase{
-			Name:                     "Valid 404 test",
-			ExpectedStatus:           404,
-			ExpectedCode:             "NoSuchKey",
-			ExpectedMessageKeywords:  []string{"not", "found"},
-			MinMessageLength:         15,
-			MaxResponseTime:          1 * time.Second,
-			SkipCORSValidation:       false,
+			Name:                    "Valid 404 test",
+			ExpectedStatus:          404,
+			ExpectedCode:            "NoSuchKey",
+			ExpectedMessageKeywords: []string{"not", "found"},
+			MinMessageLength:        15,
+			MaxResponseTime:         1 * time.Second,
+			SkipCORSValidation:      false,
 		}
 
 		// Should not panic
@@ -320,11 +320,11 @@ func TestRunCommonErrorValidations(t *testing.T) {
 
 		customValidationCalled := false
 		tt := CommonErrorTestCase{
-			Name:                     "Custom validation test",
-			ExpectedStatus:           404,
-			ExpectedCode:             "NoSuchKey",
-			ExpectedMessageKeywords:  []string{"not", "found"},
-			MinMessageLength:         15,
+			Name:                    "Custom validation test",
+			ExpectedStatus:          404,
+			ExpectedCode:            "NoSuchKey",
+			ExpectedMessageKeywords: []string{"not", "found"},
+			MinMessageLength:        15,
 			ValidateResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				customValidationCalled = true
 				// Verify we got the response recorder

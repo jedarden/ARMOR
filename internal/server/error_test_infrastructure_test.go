@@ -90,8 +90,8 @@ func NewTestServer(t *testing.T) *TestServerFixture {
 
 // TestCredentialsFixture provides test credentials for different scenarios.
 type TestCredentialsFixture struct {
-	ValidAccessKey     string
-	ValidSecretKey     string
+	ValidAccessKey      string
+	ValidSecretKey      string
 	RestrictedAccessKey string
 	RestrictedSecretKey string
 	InvalidAccessKey    string
@@ -116,17 +116,17 @@ func DefaultTestCredentials() *TestCredentialsFixture {
 
 // ErrorResponseValidator provides fluent error response validation.
 type ErrorResponseValidator struct {
-	t             *testing.T
-	response      *httptest.ResponseRecorder
-	s3Error       *S3Error
-	expectations  []expectation
+	t                *testing.T
+	response         *httptest.ResponseRecorder
+	s3Error          *S3Error
+	expectations     []expectation
 	measuredDuration time.Duration
 }
 
 type expectation struct {
-	name      string
-	validate  func(*ErrorResponseValidator) error
-	failed    bool
+	name     string
+	validate func(*ErrorResponseValidator) error
+	failed   bool
 }
 
 // VerifyErrorResponse creates a new validator for the given response.
@@ -472,7 +472,8 @@ func ParseErrorResponse(t *testing.T, body []byte) *S3Error {
 // (e.g., 404 for NotFound, 403 for Forbidden, 400 for BadRequest).
 //
 // Example:
-//   ValidateHTTPStatusCode(t, w, 404)
+//
+//	ValidateHTTPStatusCode(t, w, 404)
 func ValidateHTTPStatusCode(t *testing.T, w *httptest.ResponseRecorder, expectedCode int) {
 	t.Helper()
 
@@ -498,7 +499,8 @@ func ValidateHTTPStatusCode(t *testing.T, w *httptest.ResponseRecorder, expected
 // This ensures the error response is well-formed and contains the required fields.
 //
 // Example:
-//   ValidateErrorStructure(t, w)
+//
+//	ValidateErrorStructure(t, w)
 func ValidateErrorStructure(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Helper()
 
@@ -527,7 +529,8 @@ func ValidateErrorStructure(t *testing.T, w *httptest.ResponseRecorder) {
 // Common S3 error codes include: NoSuchKey, AccessDenied, InvalidRequest, etc.
 //
 // Example:
-//   ValidateErrorCode(t, w, "NoSuchKey")
+//
+//	ValidateErrorCode(t, w, "NoSuchKey")
 func ValidateErrorCode(t *testing.T, w *httptest.ResponseRecorder, expectedCode string) {
 	t.Helper()
 
@@ -548,7 +551,8 @@ func ValidateErrorCode(t *testing.T, w *httptest.ResponseRecorder, expectedCode 
 // This ensures that error responses properly support cross-origin requests.
 //
 // Example:
-//   ValidateCORSHeaders(t, w)
+//
+//	ValidateCORSHeaders(t, w)
 func ValidateCORSHeaders(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Helper()
 
@@ -577,7 +581,8 @@ func ValidateCORSHeaders(t *testing.T, w *httptest.ResponseRecorder) {
 // Common values are "*" (allow all origins) or a specific origin.
 //
 // Example:
-//   ValidateCORSOrigin(t, w, "*")
+//
+//	ValidateCORSOrigin(t, w, "*")
 func ValidateCORSOrigin(t *testing.T, w *httptest.ResponseRecorder, expectedOrigin string) {
 	t.Helper()
 
@@ -593,7 +598,8 @@ func ValidateCORSOrigin(t *testing.T, w *httptest.ResponseRecorder, expectedOrig
 // Common values include: "GET, PUT, DELETE, HEAD, POST, OPTIONS"
 //
 // Example:
-//   ValidateCORSMethods(t, w, "GET, PUT, DELETE, HEAD, POST, OPTIONS")
+//
+//	ValidateCORSMethods(t, w, "GET, PUT, DELETE, HEAD, POST, OPTIONS")
 func ValidateCORSMethods(t *testing.T, w *httptest.ResponseRecorder, expectedMethods string) {
 	t.Helper()
 
@@ -609,7 +615,8 @@ func ValidateCORSMethods(t *testing.T, w *httptest.ResponseRecorder, expectedMet
 // Common values include: "Authorization, Content-Type, Range, Content-Length"
 //
 // Example:
-//   ValidateCORSAllowHeaders(t, w, "Authorization, Content-Type, Range, Content-Length")
+//
+//	ValidateCORSAllowHeaders(t, w, "Authorization, Content-Type, Range, Content-Length")
 func ValidateCORSAllowHeaders(t *testing.T, w *httptest.ResponseRecorder, expectedHeaders string) {
 	t.Helper()
 
@@ -625,7 +632,8 @@ func ValidateCORSAllowHeaders(t *testing.T, w *httptest.ResponseRecorder, expect
 // This is useful for verifying that error messages are descriptive and helpful.
 //
 // Example:
-//   ValidateErrorMessageContains(t, w, "not found")
+//
+//	ValidateErrorMessageContains(t, w, "not found")
 func ValidateErrorMessageContains(t *testing.T, w *httptest.ResponseRecorder, expectedText string) {
 	t.Helper()
 
@@ -642,7 +650,8 @@ func ValidateErrorMessageContains(t *testing.T, w *httptest.ResponseRecorder, ex
 // number of characters. This ensures error messages are sufficiently descriptive.
 //
 // Example:
-//   ValidateErrorMessageMinLength(t, w, 15)
+//
+//	ValidateErrorMessageMinLength(t, w, 15)
 func ValidateErrorMessageMinLength(t *testing.T, w *httptest.ResponseRecorder, minLength int) {
 	t.Helper()
 
@@ -660,7 +669,8 @@ func ValidateErrorMessageMinLength(t *testing.T, w *httptest.ResponseRecorder, m
 // a proper XML declaration. S3 error responses should be valid XML documents.
 //
 // Example:
-//   ValidateXMLDeclaration(t, w)
+//
+//	ValidateXMLDeclaration(t, w)
 func ValidateXMLDeclaration(t *testing.T, w *httptest.ResponseRecorder) {
 	t.Helper()
 
@@ -717,16 +727,18 @@ func DefaultValidationOptions() ErrorStructureValidationOptions {
 // Use AssertValidErrorResponseStructure() for assertion behavior.
 //
 // Parameters:
-//   t: Testing instance for context
-//   body: Response body as byte array
-//   options: Validation options (use DefaultValidationOptions() for defaults)
+//
+//	t: Testing instance for context
+//	body: Response body as byte array
+//	options: Validation options (use DefaultValidationOptions() for defaults)
 //
 // Example:
-//   opts := DefaultValidationOptions()
-//   opts.RequireCode = true
-//   opts.RequireMessage = true
-//   opts.MinMessageLength = 15
-//   valid := ValidateErrorResponseStructure(t, responseBody, opts)
+//
+//	opts := DefaultValidationOptions()
+//	opts.RequireCode = true
+//	opts.RequireMessage = true
+//	opts.MinMessageLength = 15
+//	valid := ValidateErrorResponseStructure(t, responseBody, opts)
 func ValidateErrorResponseStructure(t *testing.T, body []byte, options ErrorStructureValidationOptions) bool {
 	t.Helper()
 
@@ -802,7 +814,8 @@ func ValidateErrorResponseStructure(t *testing.T, body []byte, options ErrorStru
 // Returns true if validation passes, false otherwise.
 //
 // Example:
-//   valid := ValidateErrorResponseStructureSimple(t, responseBody)
+//
+//	valid := ValidateErrorResponseStructureSimple(t, responseBody)
 func ValidateErrorResponseStructureSimple(t *testing.T, body []byte) bool {
 	t.Helper()
 	return ValidateErrorResponseStructure(t, body, DefaultValidationOptions())
@@ -815,7 +828,8 @@ func ValidateErrorResponseStructureSimple(t *testing.T, body []byte) bool {
 // Provides detailed error messages for debugging.
 //
 // Example:
-//   AssertValidErrorResponseStructure(t, responseBody)
+//
+//	AssertValidErrorResponseStructure(t, responseBody)
 func AssertValidErrorResponseStructure(t *testing.T, body []byte) {
 	t.Helper()
 
@@ -854,10 +868,11 @@ func AssertValidErrorResponseStructure(t *testing.T, body []byte) {
 // Provides detailed error messages for debugging.
 //
 // Example:
-//   opts := DefaultValidationOptions()
-//   opts.MinMessageLength = 20
-//   opts.MessageContains = "authentication"
-//   AssertValidErrorResponseStructureWithOptions(t, responseBody, opts)
+//
+//	opts := DefaultValidationOptions()
+//	opts.MinMessageLength = 20
+//	opts.MessageContains = "authentication"
+//	AssertValidErrorResponseStructureWithOptions(t, responseBody, opts)
 func AssertValidErrorResponseStructureWithOptions(t *testing.T, body []byte, options ErrorStructureValidationOptions) {
 	t.Helper()
 
@@ -926,7 +941,7 @@ func getXMLField(body []byte, field string) string {
 		return ""
 	}
 
-	return strings.TrimSpace(bodyStr[openIdx+len(openTag):openIdx+closeIdx])
+	return strings.TrimSpace(bodyStr[openIdx+len(openTag) : openIdx+closeIdx])
 }
 
 // =============================================================================
@@ -969,7 +984,6 @@ func CreateAuthenticatedTestRequest(t *testing.T, method, path string) *http.Req
 	// Use the working authentication helper from auth_integration_test.go
 	return createSignedRequestForAuthTest(t, method, path, "", "TESTACCESSKEY", "TESTSECRETKEY123456789012345678901234", nil)
 }
-
 
 // =============================================================================
 // TEST SCENARIO STRUCTURES
@@ -1091,11 +1105,11 @@ func RunErrorScenario(t *testing.T, fixture *TestServerFixture, scenario ErrorSc
 // This structure helps organize related error tests and provides
 // consistent reporting and validation across test types.
 type ErrorTestSuite struct {
-	t          *testing.T
-	name       string
-	fixture    *TestServerFixture
-	scenarios  []ErrorScenario
-	results    []*ErrorScenarioResult
+	t         *testing.T
+	name      string
+	fixture   *TestServerFixture
+	scenarios []ErrorScenario
+	results   []*ErrorScenarioResult
 }
 
 // NewErrorTestSuite creates a new error test suite.
