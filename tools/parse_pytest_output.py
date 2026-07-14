@@ -5,9 +5,32 @@ Pytest Output Parser - Machine-Parseable Test Output Extractor
 This script parses pytest failure output according to documented patterns,
 extracting file paths, line numbers, expected values, and actual values.
 
+Edge Cases Handled (from pytest_patterns.md research):
+- Format 1: Truncated output in -v mode (without -vv)
+- Ellipsis in values for long strings/structures
+- Multiline string escapes (\\n, \\t, etc.)
+- Path format variations (relative vs absolute)
+- Whitespace variations (E   prefix vs no prefix)
+- Floating-point precision issues
+- Boolean logic expressions
+- KeyError and AttributeError exceptions
+- None assertions (e.g., from failed regex matches)
+- Comparison operators (>=, >, <, <=)
+- Set operations with extra items
+- Type checks with where clauses
+- Range differences with index diffs
+- Index diffs in list comparisons
+- Dictionary differences with key-value pairs
+- Complex where clauses with function references
+- Custom detailed assertion messages
+- Empty container assertions with where clause
+- Custom messages in assertions
+- Empty containers with len() checks
+
 Author: ARMOR Project (bf-29wbke)
 Created: 2026-07-13
 Based on: pytest_patterns.md research (bf-5x5xz1)
+Updated: 2026-07-13 (bf-3dctxn) - Added comprehensive edge case handling
 """
 
 import json
