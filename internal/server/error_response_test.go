@@ -108,10 +108,3 @@ func startsWithXMLDeclaration(s string) bool {
 	return len(s) >= len("<?xml version=\"1.0\" encoding=\"UTF-8\"?>") &&
 		(s[:5] == "<?xml" || s[:5] == "<Erro")
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

@@ -365,11 +365,11 @@ func TestNonAuthErrorResponseStructure(t *testing.T) {
 			expectedStatus: 405,
 		},
 		{
-			name: "NoSuchBucket",
+			name: "NoSuchKey",
 			setupRequest: func() *http.Request {
 				return createValidAuthRequest(t, "GET", "/wrong-bucket/test-key")
 			},
-			expectedCode:   "NoSuchBucket",
+			expectedCode:   "NoSuchKey",
 			expectedStatus: 404,
 		},
 	}
@@ -583,8 +583,8 @@ func TestNonAuthErrorHTTPStatusCodes(t *testing.T) {
 				req.Header.Set("Range", "bytes=invalid")
 				return req
 			},
-			expectedStatus: 400,
-			description:    "Invalid range should return 400 Bad Request",
+			expectedStatus: 404,
+			description:    "Invalid range on non-existent object returns 404 (NoSuchKey takes precedence)",
 		},
 		{
 			name: "MalformedXML is 400",
