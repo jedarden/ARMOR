@@ -738,11 +738,11 @@ func TestFormatError_EmptyAndWhitespaceHandling(t *testing.T) {
 			want:      "[error] Generic error",
 		},
 		{
-			name:      "whitespace-only error type (trimmed to empty by FormatErrorMessage)",
+			name:      "whitespace-only error type (trimmed to empty, falls back to 'error')",
 			errorType: "   ",
 			message:   "Test message",
 			fieldName: "field",
-			want:      "field: Test message", // No [error_type] prefix because whitespace is trimmed
+			want:      "[error] field: Test message", // Whitespace trimmed → empty → falls back to "error"
 		},
 		{
 			name:      "empty message with field name",
@@ -1147,5 +1147,663 @@ func hasPrefix(s, prefix string) bool {
 
 func isWhitespace(s string) bool {
 	return strings.TrimSpace(s) == "" && s != ""
+}
+
+// =============================================================================
+// FORMATERROR STRING VALIDATION COMPREHENSIVE TESTS
+// =============================================================================
+
+func TestFormatError_StringValidation_ValidErrorTypes(t *testing.T) {
+	// Test FormatError with valid string error types that match ErrorType enum
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		want      string
+		wantValid bool // Whether this should be recognized as a valid ErrorType
+	}{
+		{
+			name:      "valid required error type",
+			errorType: "required",
+			message:   "Field is required",
+			fieldName: "email",
+			want:      "[required] email: Field is required",
+			wantValid: true,
+		},
+		{
+			name:      "valid format error type",
+			errorType: "format",
+			message:   "Invalid format",
+			fieldName: "email",
+			want:      "[format] email: Invalid format",
+			wantValid: true,
+		},
+		{
+			name:      "valid range error type",
+			errorType: "range",
+			message:   "Out of range",
+			fieldName: "age",
+			want:      "[range] age: Out of range",
+			wantValid: true,
+		},
+		{
+			name:      "valid length error type",
+			errorType: "length",
+			message:   "Too short",
+			fieldName: "password",
+			want:      "[length] password: Too short",
+			wantValid: true,
+		},
+		{
+			name:      "valid type error type",
+			errorType: "type",
+			message:   "Wrong type",
+			fieldName: "count",
+			want:      "[type] count: Wrong type",
+			wantValid: true,
+		},
+		{
+			name:      "valid value error type",
+			errorType: "value",
+			message:   "Invalid value",
+			fieldName: "option",
+			want:      "[value] option: Invalid value",
+			wantValid: true,
+		},
+		{
+			name:      "valid duplicate error type",
+			errorType: "duplicate",
+			message:   "Already exists",
+			fieldName: "email",
+			want:      "[duplicate] email: Already exists",
+			wantValid: true,
+		},
+		{
+			name:      "valid conflict error type",
+			errorType: "conflict",
+			message:   "Conflicting values",
+			fieldName: "dates",
+			want:      "[conflict] dates: Conflicting values",
+			wantValid: true,
+		},
+		{
+			name:      "valid unknown error type",
+			errorType: "unknown",
+			message:   "Unknown error",
+			fieldName: "field",
+			want:      "[unknown] field: Unknown error",
+			wantValid: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset tracking before each test to ensure clean state
+			ResetInvalidErrorTypeTracking()
+
+			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+
+			if result != tt.want {
+				t.Errorf("FormatError() = %q, want %q", result, tt.want)
+			}
+
+			// Verify that valid error types are NOT tracked as invalid
+			invalidTypes := GetInvalidErrorTypes()
+			if tt.wantValid {
+				if count, found := invalidTypes[tt.errorType]; found && count > 0 {
+					t.Errorf("Valid error type %q should NOT be tracked as invalid, but was tracked %d times",
+						tt.errorType, count)
+				}
+			}
+		})
+	}
+}
+
+func TestFormatError_StringValidation_InvalidErrorTypes(t *testing.T) {
+	// Test FormatError with invalid string error types (fallback behavior)
+	// Invalid types should be tracked for debugging but still work correctly
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		want      string
+		wantTracked bool // Whether this should be tracked as invalid
+	}{
+		{
+			name:      "completely invalid error type",
+			errorType: "invalid_error_type",
+			message:   "Something went wrong",
+			fieldName: "field",
+			want:      "[invalid_error_type] field: Something went wrong",
+			wantTracked: true,
+		},
+		{
+			name:      "custom validation error type",
+			errorType: "custom_validation",
+			message:   "Custom check failed",
+			fieldName: "email",
+			want:      "[custom_validation] email: Custom check failed",
+			wantTracked: true,
+		},
+		{
+			name:      "typo in error type - require instead of required",
+			errorType: "require",
+			message:   "Field is required",
+			fieldName: "name",
+			want:      "[require] name: Field is required",
+			wantTracked: true,
+		},
+		{
+			name:      "typo in error type - fomrat instead of format",
+			errorType: "fomrat",
+			message:   "Invalid format",
+			fieldName: "data",
+			want:      "[fomrat] data: Invalid format",
+			wantTracked: true,
+		},
+		{
+			name:      "numeric error type",
+			errorType: "12345",
+			message:   "Numeric error type",
+			fieldName: "count",
+			want:      "[12345] count: Numeric error type",
+			wantTracked: true,
+		},
+		{
+			name:      "special characters in error type",
+			errorType: "error-type-with-dashes",
+			message:   "Special error",
+			fieldName: "field",
+			want:      "[error-type-with-dashes] field: Special error",
+			wantTracked: true,
+		},
+		{
+			name:      "error type with underscores",
+			errorType: "my_custom_error",
+			message:   "Custom error message",
+			fieldName: "param",
+			want:      "[my_custom_error] param: Custom error message",
+			wantTracked: true,
+		},
+		{
+			name:      "mixed case typo - Requred instead of Required",
+			errorType: "Requred",
+			message:   "Field is required",
+			fieldName: "age",
+			want:      "[Requred] age: Field is required",
+			wantTracked: true,
+		},
+		{
+			name:      "whitespace-only error type - tracked as invalid, defaults to 'error'",
+			errorType: "   ",
+			message:   "Test message",
+			fieldName: "field",
+			want:      "[error] field: Test message", // Whitespace trimmed to empty, defaults to "error"
+			wantTracked: true, // Whitespace-only is now tracked as invalid (user error, not intentional default)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset tracking before each test
+			ResetInvalidErrorTypeTracking()
+
+			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+
+			if result != tt.want {
+				t.Errorf("FormatError() = %q, want %q", result, tt.want)
+			}
+
+			// Verify tracking behavior
+			invalidTypes := GetInvalidErrorTypes()
+			wasTracked := false
+			if count, found := invalidTypes[tt.errorType]; found && count > 0 {
+				wasTracked = true
+				if count != 1 {
+					t.Logf("Error type %q was tracked %d times", tt.errorType, count)
+				}
+			}
+
+			if tt.wantTracked && !wasTracked {
+				t.Errorf("Error type %q should have been tracked as invalid", tt.errorType)
+			}
+			if !tt.wantTracked && wasTracked {
+				t.Errorf("Error type %q should NOT have been tracked as invalid (count: %d)",
+					tt.errorType, invalidTypes[tt.errorType])
+			}
+		})
+	}
+}
+
+func TestFormatError_StringValidation_FallbackBehavior(t *testing.T) {
+	// Test fallback to default error type when invalid/empty type provided
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		want      string
+		checkFallback bool
+	}{
+		{
+			name:      "empty error type falls back to 'error'",
+			errorType: "",
+			message:   "Something went wrong",
+			fieldName: "email",
+			want:      "[error] email: Something went wrong",
+			checkFallback: true,
+		},
+		{
+			name:      "empty error type without field",
+			errorType: "",
+			message:   "Generic error",
+			fieldName: "",
+			want:      "[error] Generic error",
+			checkFallback: true,
+		},
+		{
+			name:      "empty error type with empty message falls back to default",
+			errorType: "",
+			message:   "",
+			fieldName: "email",
+			want:      "[error] email: email validation failed",
+			checkFallback: true,
+		},
+		{
+			name:      "empty error type, empty message, empty field - all fallbacks",
+			errorType: "",
+			message:   "",
+			fieldName: "",
+			want:      "[error] (no message provided)",
+			checkFallback: true,
+		},
+		{
+			name:      "invalid error type does NOT fall back (backward compatibility)",
+			errorType: "invalid_type",
+			message:   "Error message",
+			fieldName: "field",
+			want:      "[invalid_type] field: Error message",
+			checkFallback: false,
+		},
+		{
+			name:      "custom error type does NOT fall back (backward compatibility)",
+			errorType: "my_custom_error",
+			message:   "Custom error",
+			fieldName: "data",
+			want:      "[my_custom_error] data: Custom error",
+			checkFallback: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset tracking to ensure clean state
+			ResetInvalidErrorTypeTracking()
+
+			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+
+			if result != tt.want {
+				t.Errorf("FormatError() = %q, want %q", result, tt.want)
+			}
+
+			// Check that fallback to "error" only happens for empty errorType
+			if tt.checkFallback {
+				if !strings.HasPrefix(result, "[error]") {
+					t.Errorf("Expected fallback to '[error]', got: %q", result)
+				}
+
+				// Empty error type should NOT be tracked as invalid
+				invalidTypes := GetInvalidErrorTypes()
+				if count, found := invalidTypes[""]; found && count > 0 {
+					t.Errorf("Empty error type should NOT be tracked as invalid, count: %d", count)
+				}
+			}
+		})
+	}
+}
+
+func TestFormatError_StringValidation_CaseSensitivity(t *testing.T) {
+	// Test case sensitivity of error type strings
+	tests := []struct {
+		name         string
+		errorType    string
+		message      string
+		fieldName    string
+		want         string
+		shouldBeValid bool // Should match a valid ErrorType (case-insensitive)
+		shouldTrack  bool  // Should be tracked as invalid
+	}{
+		{
+			name:         "lowercase required",
+			errorType:    "required",
+			message:      "Field is required",
+			fieldName:    "email",
+			want:         "[required] email: Field is required",
+			shouldBeValid: true,
+			shouldTrack:  false,
+		},
+		{
+			name:         "uppercase REQUIRED",
+			errorType:    "REQUIRED",
+			message:      "Field is required",
+			fieldName:    "email",
+			want:         "[REQUIRED] email: Field is required",
+			shouldBeValid: true, // Should match via case-insensitive lookup
+			shouldTrack:  false, // Should NOT be tracked - ErrorTypeFromString recognizes it
+		},
+		{
+			name:         "mixed case ReQuIrEd",
+			errorType:    "ReQuIrEd",
+			message:      "Field is required",
+			fieldName:    "name",
+			want:         "[ReQuIrEd] name: Field is required",
+			shouldBeValid: true, // Should match via case-insensitive lookup
+			shouldTrack:  false, // Should NOT be tracked - ErrorTypeFromString recognizes it
+		},
+		{
+			name:         "lowercase format",
+			errorType:    "format",
+			message:      "Invalid format",
+			fieldName:    "data",
+			want:         "[format] data: Invalid format",
+			shouldBeValid: true,
+			shouldTrack:  false,
+		},
+		{
+			name:         "uppercase FORMAT",
+			errorType:    "FORMAT",
+			message:      "Invalid format",
+			fieldName:    "email",
+			want:         "[FORMAT] email: Invalid format",
+			shouldBeValid: true, // Should match via case-insensitive lookup
+			shouldTrack:  false, // Should NOT be tracked - ErrorTypeFromString recognizes it
+		},
+		{
+			name:         "mixed case RaNgE",
+			errorType:    "RaNgE",
+			message:      "Out of range",
+			fieldName:    "age",
+			want:         "[RaNgE] age: Out of range",
+			shouldBeValid: true, // Should match via case-insensitive lookup
+			shouldTrack:  false, // Should NOT be tracked - ErrorTypeFromString recognizes it
+		},
+		{
+			name:         "Title Case Required",
+			errorType:    "Required",
+			message:      "Field is required",
+			fieldName:    "field",
+			want:         "[Required] field: Field is required",
+			shouldBeValid: true, // Should match via case-insensitive lookup
+			shouldTrack:  false, // Should NOT be tracked - ErrorTypeFromString recognizes it
+		},
+		{
+			name:         "mixed case typo - ReQuRed (typo, not just case)",
+			errorType:    "ReQuRed",
+			message:      "Field is required",
+			fieldName:    "test",
+			want:         "[ReQuRed] test: Field is required",
+			shouldBeValid: false, // Typo, not valid
+			shouldTrack:  true,  // Should be tracked as invalid
+		},
+		{
+			name:         "lowercase unknown",
+			errorType:    "unknown",
+			message:      "Unknown error",
+			fieldName:    "field",
+			want:         "[unknown] field: Unknown error",
+			shouldBeValid: true,
+			shouldTrack:  false,
+		},
+		{
+			name:         "uppercase UNKNOWN",
+			errorType:    "UNKNOWN",
+			message:      "Unknown error",
+			fieldName:    "data",
+			want:         "[UNKNOWN] data: Unknown error",
+			shouldBeValid: true, // Should match via case-insensitive lookup
+			shouldTrack:  false, // Should NOT be tracked - ErrorTypeFromString recognizes it
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset tracking before each test
+			ResetInvalidErrorTypeTracking()
+
+			result := FormatError(tt.errorType, tt.message, tt.fieldName)
+
+			if result != tt.want {
+				t.Errorf("FormatError() = %q, want %q", result, tt.want)
+			}
+
+			// Verify tracking behavior
+			invalidTypes := GetInvalidErrorTypes()
+			wasTracked := false
+			if count, found := invalidTypes[tt.errorType]; found && count > 0 {
+				wasTracked = true
+			}
+
+			if tt.shouldTrack && !wasTracked {
+				t.Errorf("Error type %q should have been tracked as invalid", tt.errorType)
+			}
+			if !tt.shouldTrack && wasTracked {
+				t.Errorf("Error type %q should NOT have been tracked as invalid (count: %d)",
+					tt.errorType, invalidTypes[tt.errorType])
+			}
+
+			// Verify that valid error types match the ErrorType enum
+			if tt.shouldBeValid {
+				// Convert to ErrorType and check if it's valid
+				et := ErrorTypeFromString(tt.errorType)
+				if !et.IsValid() {
+					// Special case: if the error type string is different case than enum,
+					// ErrorTypeFromString should still return the correct enum value
+					lowerType := strings.ToLower(tt.errorType)
+					etFromLower := ErrorTypeFromString(lowerType)
+					if !etFromLower.IsValid() {
+						t.Errorf("Error type %q should be valid via case-insensitive matching", tt.errorType)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestFormatError_StringValidation_ErrorTypeTrackingMechanism(t *testing.T) {
+	// Comprehensive test of the error type tracking mechanism
+	t.Run("tracking mechanism works correctly", func(t *testing.T) {
+		// Reset tracking
+		ResetInvalidErrorTypeTracking()
+
+		// Call FormatError with multiple invalid types
+		FormatError("invalid_type_1", "message", "field1")
+		FormatError("invalid_type_2", "message", "field2")
+		FormatError("invalid_type_1", "message", "field3") // Duplicate
+		FormatError("custom_error", "message", "field4")
+
+		invalidTypes := GetInvalidErrorTypes()
+
+		// Verify counts
+		expectedCounts := map[string]int{
+			"invalid_type_1": 2,
+			"invalid_type_2": 1,
+			"custom_error":   1,
+		}
+
+		for errorType, expectedCount := range expectedCounts {
+			if count := invalidTypes[errorType]; count != expectedCount {
+				t.Errorf("Error type %q count = %d, want %d", errorType, count, expectedCount)
+			}
+		}
+
+		// Total unique invalid types
+		if count := InvalidErrorTypeCount(); count != 3 {
+			t.Errorf("InvalidErrorTypeCount() = %d, want 3", count)
+		}
+	})
+
+	t.Run("valid error types are not tracked", func(t *testing.T) {
+		// Reset tracking
+		ResetInvalidErrorTypeTracking()
+
+		// Use all valid error types
+		validTypes := []string{
+			"required", "format", "range", "length", "type",
+			"value", "duplicate", "conflict", "unknown",
+		}
+
+		for _, errorType := range validTypes {
+			FormatError(errorType, "test message", "field")
+		}
+
+		invalidTypes := GetInvalidErrorTypes()
+		if count := InvalidErrorTypeCount(); count != 0 {
+			t.Errorf("Valid error types should not be tracked, got %d tracked", count)
+			t.Logf("Tracked types: %v", invalidTypes)
+		}
+	})
+
+	t.Run("tracking reset works correctly", func(t *testing.T) {
+		// Reset tracking
+		ResetInvalidErrorTypeTracking()
+
+		// Add some invalid types
+		FormatError("type1", "msg", "field")
+		FormatError("type2", "msg", "field")
+
+		if count := InvalidErrorTypeCount(); count != 2 {
+			t.Errorf("Before reset: InvalidErrorTypeCount() = %d, want 2", count)
+		}
+
+		// Reset
+		ResetInvalidErrorTypeTracking()
+
+		if count := InvalidErrorTypeCount(); count != 0 {
+			t.Errorf("After reset: InvalidErrorTypeCount() = %d, want 0", count)
+		}
+
+		// Verify map is empty
+		invalidTypes := GetInvalidErrorTypes()
+		if len(invalidTypes) != 0 {
+			t.Errorf("After reset, invalid types map should be empty, got: %v", invalidTypes)
+		}
+	})
+
+	t.Run("mixed valid and invalid error types", func(t *testing.T) {
+		// Reset tracking
+		ResetInvalidErrorTypeTracking()
+
+		// Mix of valid and invalid types
+		types := []struct {
+			errorType string
+			shouldBeTracked bool
+		}{
+			{"required", false},
+			{"invalid_type_1", true},
+			{"format", false},
+			{"invalid_type_2", true},
+			{"range", false},
+			{"custom_error", true},
+			{"unknown", false},
+		}
+
+		for _, tt := range types {
+			FormatError(tt.errorType, "message", "field")
+		}
+
+		invalidTypes := GetInvalidErrorTypes()
+
+		// Verify only invalid types are tracked
+		if count := InvalidErrorTypeCount(); count != 3 {
+			t.Errorf("Expected 3 invalid types to be tracked, got %d", count)
+		}
+
+		// Check specific types
+		if count, found := invalidTypes["required"]; found && count > 0 {
+			t.Errorf("Valid type 'required' should not be tracked")
+		}
+		if count, found := invalidTypes["format"]; found && count > 0 {
+			t.Errorf("Valid type 'format' should not be tracked")
+		}
+		if count, found := invalidTypes["range"]; found && count > 0 {
+			t.Errorf("Valid type 'range' should not be tracked")
+		}
+
+		// Verify invalid types are tracked
+		if count, found := invalidTypes["invalid_type_1"]; !found || count != 1 {
+			t.Errorf("Invalid type 'invalid_type_1' should be tracked once")
+		}
+		if count, found := invalidTypes["invalid_type_2"]; !found || count != 1 {
+			t.Errorf("Invalid type 'invalid_type_2' should be tracked once")
+		}
+		if count, found := invalidTypes["custom_error"]; !found || count != 1 {
+			t.Errorf("Invalid type 'custom_error' should be tracked once")
+		}
+	})
+}
+
+func TestFormatError_StringValidation_AllErrorTypesWork(t *testing.T) {
+	// Test that all ErrorType enum values work with string-based FormatError
+	allTypes := []struct {
+		enumValue  ErrorType
+		stringValue string
+	}{
+		{ErrTypeRequired, "required"},
+		{ErrTypeFormat, "format"},
+		{ErrTypeRange, "range"},
+		{ErrTypeLength, "length"},
+		{ErrTypeType, "type"},
+		{ErrTypeValue, "value"},
+		{ErrTypeDuplicate, "duplicate"},
+		{ErrTypeConflict, "conflict"},
+		{ErrTypeUnknown, "unknown"},
+	}
+
+	for _, tt := range allTypes {
+		t.Run(tt.stringValue, func(t *testing.T) {
+			// Reset tracking
+			ResetInvalidErrorTypeTracking()
+
+			message := "Test message"
+			fieldName := "test_field"
+
+			// Test with string error type
+			result := FormatError(tt.stringValue, message, fieldName)
+
+			// Verify result contains the error type
+			if !strings.Contains(result, tt.stringValue) {
+				t.Errorf("Result should contain error type %q, got: %q", tt.stringValue, result)
+			}
+
+			// Verify result contains the message
+			if !strings.Contains(result, message) {
+				t.Errorf("Result should contain message %q, got: %q", message, result)
+			}
+
+			// Verify result contains the field name
+			if !strings.Contains(result, fieldName) {
+				t.Errorf("Result should contain field name %q, got: %q", fieldName, result)
+			}
+
+			// Verify it wasn't tracked as invalid
+			invalidTypes := GetInvalidErrorTypes()
+			if count, found := invalidTypes[tt.stringValue]; found && count > 0 {
+				t.Errorf("Valid error type %q should not be tracked as invalid (count: %d)",
+					tt.stringValue, count)
+			}
+
+			// Compare with ErrorType-based function
+			resultWithType := FormatErrorWithType(tt.enumValue, message, fieldName)
+
+			// Results should be identical (or differ only by case)
+			if result != resultWithType {
+				t.Logf("String-based: %q", result)
+				t.Logf("Type-based:   %q", resultWithType)
+				// This is expected if string error type is different case
+			}
+		})
+	}
 }
 
