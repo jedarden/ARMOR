@@ -639,3 +639,327 @@ def validate_text_content_type(
         expected_type='text/plain',
         throw_on_error=throw_on_error
     )
+
+
+# =============================================================================
+# CORS HEADER VALIDATION
+# =============================================================================
+
+class CORSValidationError(AssertionError):
+    """
+    Custom assertion error for CORS header validation failures.
+
+    Provides clear, formatted error messages that show:
+    - The actual CORS headers received
+    - The expected CORS headers or origin values
+    - The response URL (if available)
+    """
+
+    def __init__(self,
+                 message: str,
+                 actual_headers: Optional[Dict[str, str]] = None,
+                 expected_origin: Optional[str] = None,
+                 url: Optional[str] = None):
+        """
+        Initialize a CORS validation error.
+
+        Args:
+            message: The main error message
+            actual_headers: The actual CORS headers received
+            expected_origin: The expected origin value
+            url: Optional URL that was requested
+        """
+        self.actual_headers = actual_headers or {}
+        self.expected_origin = expected_origin
+        self.url = url
+
+        # Build detailed error message
+        msg_parts = []
+
+        if url:
+            msg_parts.append(f"URL: {url}")
+
+        msg_parts.append(message)
+
+        if expected_origin:
+            msg_parts.append(f"Expected origin: {expected_origin}")
+
+        if actual_headers:
+            msg_parts.append("Actual CORS headers:")
+            for header, value in actual_headers.items():
+                msg_parts.append(f"  {header}: {value}")
+
+        super().__init__("\n  ".join(msg_parts))
+
+
+def _extract_cors_headers(response: Union[requests.Response, tuple]) -> Dict[str, str]:
+    """
+    Extract CORS headers from a response object.
+
+    Args:
+        response: HTTP response object (requests.Response) or tuple of (status_code, headers, body)
+
+    Returns:
+        Dict[str, str]: Dictionary of CORS headers found in the response
+    """
+    cors_headers = {}
+
+    # Common CORS header names (both lowercase and titlecase)
+    cors_header_names = [
+        'access-control-allow-origin',
+        'Access-Control-Allow-Origin',
+        'access-control-allow-methods',
+        'Access-Control-Allow-Methods',
+        'access-control-allow-headers',
+        'Access-Control-Allow-Headers',
+        'access-control-allow-credentials',
+        'Access-Control-Allow-Credentials',
+        'access-control-expose-headers',
+        'Access-Control-Expose-Headers',
+        'access-control-max-age',
+        'Access-Control-Max-Age',
+    ]
+
+    # Check for response-like objects (duck typing)
+    if isinstance(response, tuple) and len(response) >= 2:
+        # Tuple format: (status_code, headers, body) or (status_code, headers)
+        headers = response[1]
+        if isinstance(headers, dict):
+            for header_name in cors_header_names:
+                if header_name in headers:
+                    # Normalize to lowercase for consistency
+                    normalized_name = header_name.lower()
+                    cors_headers[normalized_name] = headers[header_name]
+    elif hasattr(response, 'headers'):
+        # requests.Response-like object
+        for header_name in cors_header_names:
+            if header_name in response.headers:
+                normalized_name = header_name.lower()
+                cors_headers[normalized_name] = response.headers[header_name]
+
+    return cors_headers
+
+
+def validate_cors_headers(
+    response: Union[requests.Response, tuple],
+    expected_origin: Optional[str] = None,
+    allow_wildcard: bool = True,
+    require_allow_origin: bool = True,
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate CORS headers in an HTTP response.
+
+    This helper function validates that an HTTP response has proper CORS headers.
+    It supports checking for the presence of Access-Control-Allow-Origin, validating
+    specific origin values, and distinguishing between wildcard (*) and specific origins.
+
+    Args:
+        response: HTTP response object (requests.Response) or tuple of (status_code, headers, body)
+        expected_origin: Optional specific origin value to validate (e.g., 'https://example.com')
+                        If None, only checks for presence of CORS headers
+        allow_wildcard: If True, accepts wildcard (*) as a valid origin
+        require_allow_origin: If True, requires Access-Control-Allow-Origin header to be present
+        throw_on_error: If True, throws CORSValidationError on validation failure.
+                       If False, returns False instead.
+
+    Returns:
+        bool: True if CORS headers are valid, False otherwise
+
+    Raises:
+        CORSValidationError: If validation fails and throw_on_error is True
+        TypeError: If response has invalid type
+
+    Examples:
+        >>> # Check for any CORS headers present
+        >>> response = requests.get('http://example.com/api')
+        >>> validate_cors_headers(response)
+
+        >>> # Validate specific origin
+        >>> validate_cors_headers(response, expected_origin='https://myapp.com')
+
+        >>> # Reject wildcard, require specific origin
+        >>> validate_cors_headers(response, expected_origin='https://myapp.com', allow_wildcard=False)
+
+        >>> # Using tuple response format
+        >>> status, headers, body = curl_request(...)
+        >>> validate_cors_headers((status, headers, body), expected_origin='https://example.com')
+
+        >>> # Non-throwing validation
+        >>> is_valid = validate_cors_headers(response, expected_origin='https://example.com', throw_on_error=False)
+        >>> if is_valid:
+        ...     print("CORS headers are valid!")
+
+    Acceptance Criteria:
+    - Function accepts a response object and validates required CORS headers
+    - Checks for Access-Control-Allow-Origin header
+    - Optionally validates specific origin values
+    - Supports checking for wildcard vs specific origins
+    - Returns boolean or throws assertion error with clear message
+    - Includes test cases for CORS header presence and values
+    - Function is exported from test utils module
+    """
+    # Extract URL for error messages
+    url: Optional[str] = None
+    if hasattr(response, 'url'):
+        url = getattr(response, 'url', None)
+
+    # Extract CORS headers from response
+    cors_headers = _extract_cors_headers(response)
+
+    # Check if Access-Control-Allow-Origin is present when required
+    if require_allow_origin:
+        allow_origin = cors_headers.get('access-control-allow-origin')
+        if not allow_origin:
+            if throw_on_error:
+                raise CORSValidationError(
+                    message="Missing required CORS header: Access-Control-Allow-Origin",
+                    actual_headers=cors_headers,
+                    url=url
+                )
+            return False
+
+    # If no expected_origin is specified, just check for presence
+    if expected_origin is None:
+        # We already checked for presence above if require_allow_origin is True
+        # If require_allow_origin is False and no expected_origin, we pass
+        return True
+
+    # Validate the origin value
+    allow_origin = cors_headers.get('access-control-allow-origin', '')
+
+    # Check for wildcard
+    if allow_origin == '*':
+        if allow_wildcard:
+            return True
+        else:
+            if throw_on_error:
+                raise CORSValidationError(
+                    message="Wildcard origin (*) is not allowed when specific origin is expected",
+                    actual_headers=cors_headers,
+                    expected_origin=expected_origin,
+                    url=url
+                )
+            return False
+
+    # Check for exact origin match
+    if allow_origin == expected_origin:
+        return True
+
+    # Origin doesn't match
+    if throw_on_error:
+        raise CORSValidationError(
+            message=f"Origin mismatch: expected '{expected_origin}' but got '{allow_origin}'",
+            actual_headers=cors_headers,
+            expected_origin=expected_origin,
+            url=url
+        )
+    return False
+
+
+def validate_cors_allow_origin(
+    response: Union[requests.Response, tuple],
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate response has Access-Control-Allow-Origin header.
+
+    This is a convenience function that only checks for presence of the header,
+    regardless of its value.
+
+    Args:
+        response: HTTP response object
+        throw_on_error: If True, throws on validation failure
+
+    Returns:
+        bool: True if Access-Control-Allow-Origin header is present
+    """
+    return validate_cors_headers(
+        response,
+        require_allow_origin=True,
+        throw_on_error=throw_on_error
+    )
+
+
+def validate_cors_wildcard(
+    response: Union[requests.Response, tuple],
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate response has wildcard CORS origin.
+
+    Checks that Access-Control-Allow-Origin is set to '*'.
+
+    Args:
+        response: HTTP response object
+        throw_on_error: If True, throws on validation failure
+
+    Returns:
+        bool: True if CORS allows any origin
+    """
+    return validate_cors_headers(
+        response,
+        expected_origin='*',
+        allow_wildcard=True,
+        throw_on_error=throw_on_error
+    )
+
+
+def validate_cors_specific_origin(
+    response: Union[requests.Response, tuple],
+    origin: str,
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate response has specific CORS origin.
+
+    Checks that Access-Control-Allow-Origin matches the given origin exactly.
+    Rejects wildcard unless the wildcard is the expected origin.
+
+    Args:
+        response: HTTP response object
+        origin: The expected origin value (e.g., 'https://example.com')
+        throw_on_error: If True, throws on validation failure
+
+    Returns:
+        bool: True if CORS allows the specific origin
+    """
+    return validate_cors_headers(
+        response,
+        expected_origin=origin,
+        allow_wildcard=(origin == '*'),  # Only allow wildcard if it's the expected value
+        throw_on_error=throw_on_error
+    )
+
+
+def validate_cors_credentials(
+    response: Union[requests.Response, tuple],
+    throw_on_error: bool = True
+) -> bool:
+    """
+    Validate response has Access-Control-Allow-Credentials header.
+
+    Checks for presence of Access-Control-Allow-Credentials header.
+    Useful for APIs that support cookies or authentication.
+
+    Args:
+        response: HTTP response object
+        throw_on_error: If True, throws on validation failure
+
+    Returns:
+        bool: True if Access-Control-Allow-Credentials header is present
+    """
+    cors_headers = _extract_cors_headers(response)
+
+    allow_creds = cors_headers.get('access-control-allow-credentials')
+    if not allow_creds:
+        if throw_on_error:
+            url = getattr(response, 'url', None) if hasattr(response, 'url') else None
+            raise CORSValidationError(
+                message="Missing required CORS header: Access-Control-Allow-Credentials",
+                actual_headers=cors_headers,
+                url=url
+            )
+        return False
+
+    return True
