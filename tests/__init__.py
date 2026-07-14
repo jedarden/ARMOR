@@ -12,6 +12,12 @@ from .test_helpers import (
     validate_json_content_type,
     validate_xml_content_type,
     ContentTypeValidationError,
+    validate_cors_headers,
+    CORSValidationError,
+    validate_cors_allow_origin,
+    validate_cors_wildcard,
+    validate_cors_specific_origin,
+    validate_cors_credentials,
 )
 
 from .test_error_response_validation import (
@@ -40,6 +46,13 @@ __all__ = [
     'validate_json_content_type',
     'validate_xml_content_type',
     'ContentTypeValidationError',
+    # CORS header validation
+    'validate_cors_headers',
+    'CORSValidationError',
+    'validate_cors_allow_origin',
+    'validate_cors_wildcard',
+    'validate_cors_specific_origin',
+    'validate_cors_credentials',
     # Error response structure validation
     'validate_error_response',
     'validate_error_field_only',
