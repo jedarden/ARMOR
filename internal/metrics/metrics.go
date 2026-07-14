@@ -41,6 +41,13 @@ type Metrics struct {
 	CanaryLastCheckTime  *expvar.String
 	CanaryLastCheckError *expvar.String
 
+	// Multipart canary metrics
+	MultipartCanaryChecksTotal    *expvar.Int
+	MultipartCanaryCheckFailures  *expvar.Int
+	MultipartCanaryLastCheckTime  *expvar.String
+	MultipartCanaryLastCheckError *expvar.String
+	MultipartCanaryHealthy        *expvar.Int
+
 	// Multipart metrics
 	ActiveMultipartUploads *expvar.Int
 	MultipartPartsUploaded *expvar.Int
@@ -99,6 +106,13 @@ func NewMetrics() *Metrics {
 	m.CanaryCheckFailures = new(expvar.Int)
 	m.CanaryLastCheckTime = new(expvar.String)
 	m.CanaryLastCheckError = new(expvar.String)
+
+	// Multipart canary metrics
+	m.MultipartCanaryChecksTotal = new(expvar.Int)
+	m.MultipartCanaryCheckFailures = new(expvar.Int)
+	m.MultipartCanaryLastCheckTime = new(expvar.String)
+	m.MultipartCanaryLastCheckError = new(expvar.String)
+	m.MultipartCanaryHealthy = new(expvar.Int)
 
 	// Multipart metrics
 	m.ActiveMultipartUploads = new(expvar.Int)
@@ -231,6 +245,35 @@ func (m *Metrics) SetCanaryLastError(err string) {
 	m.CanaryLastCheckError.Set(err)
 }
 
+// IncMultipartCanaryChecks increments the multipart canary check counter.
+func (m *Metrics) IncMultipartCanaryChecks() {
+	m.MultipartCanaryChecksTotal.Add(1)
+}
+
+// IncMultipartCanaryFailures increments the multipart canary failure counter.
+func (m *Metrics) IncMultipartCanaryFailures() {
+	m.MultipartCanaryCheckFailures.Add(1)
+}
+
+// SetMultipartCanaryLastCheck sets the last multipart canary check time.
+func (m *Metrics) SetMultipartCanaryLastCheck(t time.Time) {
+	m.MultipartCanaryLastCheckTime.Set(t.UTC().Format(time.RFC3339))
+}
+
+// SetMultipartCanaryLastError sets the last multipart canary error.
+func (m *Metrics) SetMultipartCanaryLastError(err string) {
+	m.MultipartCanaryLastCheckError.Set(err)
+}
+
+// SetMultipartCanaryHealthy sets the multipart canary health status (1 = healthy, 0 = unhealthy).
+func (m *Metrics) SetMultipartCanaryHealthy(healthy bool) {
+	if healthy {
+		m.MultipartCanaryHealthy.Set(1)
+	} else {
+		m.MultipartCanaryHealthy.Set(0)
+	}
+}
+
 // IncActiveMultipartUploads increments the active multipart upload counter.
 func (m *Metrics) IncActiveMultipartUploads() {
 	m.ActiveMultipartUploads.Add(1)
@@ -331,6 +374,13 @@ func (m *Metrics) PrometheusFormat() string {
 	writeMetric("canary_check_failures_total", "Total number of canary check failures", "counter", m.CanaryCheckFailures)
 	writeMetric("canary_last_check_time", "Time of last canary check", "gauge", m.CanaryLastCheckTime)
 	writeMetric("canary_last_check_error", "Error from last failed canary check", "gauge", m.CanaryLastCheckError)
+
+	// Multipart canary metrics
+	writeMetric("multipart_canary_checks_total", "Total number of multipart canary checks", "counter", m.MultipartCanaryChecksTotal)
+	writeMetric("multipart_canary_check_failures_total", "Total number of multipart canary check failures", "counter", m.MultipartCanaryCheckFailures)
+	writeMetric("multipart_canary_last_check_time", "Time of last multipart canary check", "gauge", m.MultipartCanaryLastCheckTime)
+	writeMetric("multipart_canary_last_check_error", "Error from last failed multipart canary check", "gauge", m.MultipartCanaryLastCheckError)
+	writeMetric("multipart_canary_healthy", "Multipart canary health status (1=healthy, 0=unhealthy)", "gauge", m.MultipartCanaryHealthy)
 
 	// Multipart metrics
 	writeMetric("active_multipart_uploads", "Number of in-progress multipart uploads", "gauge", m.ActiveMultipartUploads)
