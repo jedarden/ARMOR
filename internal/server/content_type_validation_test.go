@@ -521,6 +521,137 @@ func TestValidateContentTypeForm(t *testing.T) {
 }
 
 // =============================================================================
+// Content-Type Pattern Matching Tests
+// =============================================================================
+
+func TestParseMediaType(t *testing.T) {
+	tests := []struct {
+		name         string
+		contentType  string
+		expectedType string
+	}{
+		// Basic cases without parameters
+		{"application/json returns application/json", "application/json", "application/json"},
+		{"application/xml returns application/xml", "application/xml", "application/xml"},
+		{"text/plain returns text/plain", "text/plain", "text/plain"},
+		{"text/html returns text/html", "text/html", "text/html"},
+
+		// Cases with charset parameter
+		{"application/json; charset=utf-8 returns application/json", "application/json; charset=utf-8", "application/json"},
+		{"application/json; charset=iso-8859-1 returns application/json", "application/json; charset=iso-8859-1", "application/json"},
+		{"text/xml; charset=utf-8 returns text/xml", "text/xml; charset=utf-8", "text/xml"},
+		{"text/html; charset=iso-8859-1 returns text/html", "text/html; charset=iso-8859-1", "text/html"},
+
+		// Cases with multiple parameters
+		{"application/json; charset=utf-8; version=1 returns application/json", "application/json; charset=utf-8; version=1", "application/json"},
+		{"text/xml; charset=iso-8859-1; version=1 returns text/xml", "text/xml; charset=iso-8859-1; version=1", "text/xml"},
+
+		// Cases with other parameters
+		{"application/json; version=1 returns application/json", "application/json; version=1", "application/json"},
+		{"multipart/form-data; boundary=example returns multipart/form-data", "multipart/form-data; boundary=example", "multipart/form-data"},
+
+		// Whitespace variations
+		{"  application/json  returns application/json", "  application/json  ", "application/json"},
+		{"application/json  ;  charset=utf-8 returns application/json", "application/json  ;  charset=utf-8", "application/json"},
+		{"  application/json  ;  charset=utf-8  ;  version=1  returns application/json", "  application/json  ;  charset=utf-8  ;  version=1  ", "application/json"},
+
+		// Edge cases
+		{"empty string returns empty", "", ""},
+		{"semicolon only returns empty", ";", ""},
+		{"whitespace only returns empty", "   ", ""},
+		{"no semicolon returns whole string trimmed", "malformed without semicolon", "malformed without semicolon"},
+		{"  malformed without semicolon  returns malformed without semicolon", "  malformed without semicolon  ", "malformed without semicolon"},
+
+		// Complex media types
+		{"application/problem+json returns application/problem+json", "application/problem+json", "application/problem+json"},
+		{"application/problem+json; charset=utf-8 returns application/problem+json", "application/problem+json; charset=utf-8", "application/problem+json"},
+		{"application/ld+json returns application/ld+json", "application/ld+json", "application/ld+json"},
+		{"application/atom+xml returns application/atom+xml", "application/atom+xml", "application/atom+xml"},
+		{"application/xhtml+xml returns application/xhtml+xml", "application/xhtml+xml", "application/xhtml+xml"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseMediaType(tt.contentType)
+			if result != tt.expectedType {
+				t.Errorf("parseMediaType(%q) = %q, want %q",
+					tt.contentType, result, tt.expectedType)
+			}
+		})
+	}
+}
+
+func TestContentTypeMatches_Comprehensive(t *testing.T) {
+	tests := []struct {
+		name           string
+		actual         string
+		expected       string
+		expectedResult bool
+	}{
+		// Exact matches
+		{"application/json == application/json", "application/json", "application/json", true},
+		{"application/xml == application/xml", "application/xml", "application/xml", true},
+		{"text/plain == text/plain", "text/plain", "text/plain", true},
+
+		// Actual has parameters, expected doesn't
+		{"application/json; charset=utf-8 matches application/json", "application/json; charset=utf-8", "application/json", true},
+		{"application/json; charset=iso-8859-1 matches application/json", "application/json; charset=iso-8859-1", "application/json", true},
+		{"text/xml; charset=utf-8 matches text/xml", "text/xml; charset=utf-8", "text/xml", true},
+		{"application/json; version=1 matches application/json", "application/json; version=1", "application/json", true},
+
+		// Expected has parameters, actual doesn't (reverse case)
+		{"application/json matches application/json; charset=utf-8", "application/json", "application/json; charset=utf-8", true},
+		{"application/json matches application/json; charset=iso-8859-1", "application/json", "application/json; charset=iso-8859-1", true},
+		{"text/xml matches text/xml; charset=utf-8", "text/xml", "text/xml; charset=utf-8", true},
+
+		// Both have different parameters
+		{"application/json; charset=utf-8 matches application/json; version=1", "application/json; charset=utf-8", "application/json; version=1", true},
+		{"application/json; charset=utf-8; version=1 matches application/json; boundary=example", "application/json; charset=utf-8; version=1", "application/json; boundary=example", true},
+
+		// Whitespace variations
+		{"  application/json  matches application/json", "  application/json  ", "application/json", true},
+		{"application/json matches   application/json   ", "application/json", "   application/json   ", true},
+		{"application/json  ;  charset=utf-8 matches application/json", "application/json  ;  charset=utf-8", "application/json", true},
+		{"application/json matches application/json  ;  charset=utf-8", "application/json", "application/json  ;  charset=utf-8", true},
+
+		// Different media types (should not match)
+		{"application/json does not match application/xml", "application/json", "application/xml", false},
+		{"text/plain does not match application/json", "text/plain", "application/json", false},
+		{"text/html does not match text/plain", "text/html", "text/plain", false},
+		{"application/xml does not match text/xml", "application/xml", "text/xml", false},
+
+		// Empty string edge cases
+		{"empty does not match application/json", "", "application/json", false},
+		{"application/json does not match empty", "application/json", "", false},
+		{"empty matches empty", "", "", true},
+
+		// Complex media types
+		{"application/problem+json matches application/problem+json", "application/problem+json", "application/problem+json", true},
+		{"application/problem+json; charset=utf-8 matches application/problem+json", "application/problem+json; charset=utf-8", "application/problem+json", true},
+		{"application/ld+json matches application/ld+json", "application/ld+json", "application/ld+json", true},
+		{"application/xhtml+xml matches application/xhtml+xml", "application/xhtml+xml", "application/xhtml+xml", true},
+
+		// Malformed content-types (no semicolon, treated as literal)
+		{"malformed without semicolon matches malformed without semicolon", "malformed without semicolon", "malformed without semicolon", true},
+		{"malformed without semicolon does not match different malformed", "malformed without semicolon", "different malformed", false},
+
+		// Case sensitivity (media types are case-insensitive per RFC, but we compare as-is)
+		{"Application/JSON matches application/json (case differs)", "Application/JSON", "application/json", false},
+		// Note: Current implementation is case-sensitive. Add ToLower() for case-insensitive matching if needed.
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := contentTypeMatches(tt.actual, tt.expected)
+			if result != tt.expectedResult {
+				t.Errorf("contentTypeMatches(%q, %q) = %v, want %v",
+					tt.actual, tt.expected, result, tt.expectedResult)
+			}
+		})
+	}
+}
+
+// =============================================================================
 // Content-Type Analysis Helper Tests
 // =============================================================================
 
