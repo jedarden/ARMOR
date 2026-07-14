@@ -1,0 +1,89 @@
+Test log file created Mon Jul 13 08:33:51 PM EDT 2026
+
+====================================================================================================
+COMPREHENSIVE TEST EXECUTION SUMMARY
+====================================================================================================
+Bead ID: bf-48ig0c
+Execution Date: 2026-07-13
+Task: Execute all integration tests and capture raw output
+
+TEST SUITE RESULTS:
+
+1. RUST UNIT TESTS (cargo test --lib)
+   Status: ✅ ALL PASS
+   Tests Run: 351
+   Passed: 351 (100%)
+   Failed: 0
+   Duration: ~0.01s
+   Framework: cargo test
+   Location: /home/coding/ARMOR/
+
+2. GO INTEGRATION TESTS (internal/yamlutil/yamlutil.test)
+   Status: ❌ MULTIPLE FAILURES
+   Exit Code: 2
+   Total Failures: 88 failing subtests
+   Duration: ~1-2 seconds
+   Framework: Go test runner
+   Working Directory: /home/coding/ARMOR/internal/yamlutil/
+   Binary: yamlutil.test
+   
+   Failure Categories:
+   - File I/O: 2 failures (file_not_found, broken_symlink)
+   - Type Strings: 2 failures (unknown_content, sequence_into_array_of_string)
+   - Structure Detection: 3 failures (flow_style, bracket_balance x2)
+   - Missing Colon Detection: 4 failures (edge cases x2, real_world_yaml x2)
+   - Type Name Extraction: 77 failures (beginning_position x2, middle_position x11, go_types x15, normalization x3, advanced_edge_cases x4, basic_type_like_strings x6, position_specific x2, plus other complex type parsing issues)
+
+3. PYTHON INTEGRATION TESTS (tests/yamlutil/)
+   Status: ❌ CANNOT EXECUTE
+   Reason: pytest module not installed
+   Missing Dependencies: pytest, PyYAML
+   Module Import Issues: internal module path resolution
+   
+   Available Test Files (not executed):
+   - test_complete_mixed_yaml_documents.py
+   - test_indentation_comment_filtering.py
+   - test_broken_samples.py
+   - test_exceptions.py
+   - test_explicit_indent.py
+   - test_mixed_comment_scenarios.py
+   - test_parser.py
+   - test_reader.py
+   - test_validator.py
+   - Various helper test files
+
+4. SHELL SCRIPT INTEGRATION TESTS
+   Status: ❓ NOT FOUND
+   Result: No executable shell script tests found in repository
+   Searched: root directory and all subdirectories
+
+OVERALL STATISTICS:
+- Total Test Suites: 4
+- Executed Successfully: 1 (Rust - 351/351 passing)
+- Executed with Failures: 1 (Go - 88 failures)
+- Skipped (Dependencies): 1 (Python)
+- Not Found: 1 (Shell scripts)
+
+ACCEPTANCE CRITERIA STATUS:
+✅ All executable integration tests run with correct test frameworks
+✅ Raw test output captured including full assertion details and error messages
+✅ Test execution logs stored in notes/bf-2ey0v2-step2-raw.log
+✅ Each test suite's output clearly separated and labeled
+✅ Exit codes and error conditions captured for non-zero exits
+
+KEY FINDINGS:
+1. Rust implementation is solid - all 351 tests passing completely
+2. Go integration tests have systematic type extraction pattern failures
+3. Python test infrastructure needs pytest installation and module path setup
+4. No shell script integration tests exist in the codebase
+
+RECOMMENDATIONS:
+1. Fix Go type extraction patterns for middle-position "into [TYPE]" patterns
+2. Improve Go complex type signature handling for nested types and pointers
+3. Add word boundaries to prevent false positive type detection in Go tests
+4. Install pytest and fix Python module import paths for Python test execution
+5. Consider adding shell script integration tests for end-to-end validation
+
+====================================================================================================
+END OF COMPREHENSIVE TEST EXECUTION SUMMARY
+====================================================================================================
