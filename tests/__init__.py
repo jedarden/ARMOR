@@ -38,6 +38,26 @@ from .test_error_response_validation import (
     MINIMAL_ERROR_SPEC,
 )
 
+from .test_tables import (
+    TestCase,
+    TestResult,
+    TestExecutionResult,
+    TestTableResult,
+    ErrorTestTable,
+    run_test_case,
+    run_test_table,
+    create_simple_test_table,
+    create_auth_test_table,
+    create_validation_test_table,
+    create_not_found_test_table,
+    create_rate_limit_test_table,
+    create_server_error_test_table,
+    get_table,
+    list_tables,
+    COMMON_ERROR_TABLES,
+    ALL_ERROR_TABLES,
+)
+
 __all__ = [
     # HTTP status validation
     'validate_http_status',
@@ -72,4 +92,22 @@ __all__ = [
     'STANDARD_ERROR_SPEC',
     'DETAILED_ERROR_SPEC',
     'MINIMAL_ERROR_SPEC',
+    # Test tables
+    'TestCase',
+    'TestResult',
+    'TestExecutionResult',
+    'TestTableResult',
+    'ErrorTestTable',
+    'run_test_case',
+    'run_test_table',
+    'create_simple_test_table',
+    'create_auth_test_table',
+    'create_validation_test_table',
+    'create_not_found_test_table',
+    'create_rate_limit_test_table',
+    'create_server_error_test_table',
+    'get_table',
+    'list_tables',
+    'COMMON_ERROR_TABLES',
+    'ALL_ERROR_TABLES',
 ]
