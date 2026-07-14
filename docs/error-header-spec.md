@@ -1,17 +1,27 @@
 # ARMOR Error Response Header Specification
 
-**Version:** 1.0  
-**Date:** 2026-07-14  
-**Status:** Active  
+**Version:** 1.1
+**Date:** 2026-07-14
+**Status:** Active
 
 ## Overview
 
 This specification defines the required HTTP response headers and their expected values for all error responses returned by ARMOR. This specification consolidates findings from comprehensive header consistency verification across multiple verification beads:
 
-- **Content-Type consistency verification** (bf-4bwxtc)
-- **HTTP status code consistency verification** (bf-o7eo21)
-- **Authentication rejection response headers** (bf-5ppsfh)
-- **Invalid AWS credentials rejection testing** (bf-58oib3)
+- **Comprehensive header specification** (bf-2n6273) - This document
+- **Header consistency verification** (bf-649uw6) - Identified admin interface inconsistencies
+- **Content-Type consistency verification** (bf-4bwxtc) - Verified `application/xml` consistency
+- **HTTP status code consistency verification** (bf-o7eo21) - Verified HTTP 403 consistency
+- **Authentication rejection response headers** (bf-5ppsfh) - Auth rejection documentation
+- **Invalid AWS credentials rejection testing** (bf-58oib3) - Invalid credential testing
+
+This specification provides:
+1. **Required headers** for all error responses
+2. **Expected values** for each header
+3. **Allowed variations** (where applicable)
+4. **Examples** of correct error responses
+5. **Discovered inconsistencies** and remediation recommendations
+6. **Performance requirements** and testing guidelines
 
 ## Scope
 
@@ -406,6 +416,75 @@ Content-Type: application/xml
 
 **Recommendation:** No change needed - maintain this pattern for security
 
+#### 4. Admin Interface Response Format Inconsistencies (Medium Severity)
+
+**Issue:** Administrative and management endpoints use mixed response formats
+
+**Current Behavior:**
+- `/admin/b2/keys/*` endpoints return plain text errors with `Content-Type: text/plain`
+- `/admin/key/*` endpoints return plain text errors with `Content-Type: text/plain`
+- `/presign` endpoint returns plain text errors with `Content-Type: text/plain`
+- `/l/{token}` public link endpoints return plain text errors
+
+**Impact:**
+- Inconsistent API experience for consumers
+- S3-facing endpoints (`/presign`) should return XML for S3 compatibility
+- Admin endpoints lack standardized error format
+
+**Recommendation:**
+- **Priority 1 (High):** Convert `/presign` endpoint to return XML errors (S3-facing)
+- **Priority 2 (Medium):** Standardize admin endpoints on JSON format:
+  ```json
+  {
+    "error": "ErrorCode",
+    "message": "Detailed error message"
+  }
+  ```
+- **Priority 3 (Low):** Public link endpoints may continue using plain text (non-S3)
+
+**Tracking:** Documented in bead bf-649uw6 header consistency verification
+
+#### 5. Method Not Allowed Errors Return Plain Text (Medium Severity)
+
+**Issue:** HTTP 405 Method Not Allowed errors return plain text instead of XML
+
+**Current Behavior:**
+```http
+HTTP/1.1 405 Method Not Allowed
+Content-Type: text/plain
+
+Method not allowed
+```
+
+**Expected Behavior (for S3 endpoints):**
+```http
+HTTP/1.1 405 Method Not Allowed
+Content-Type: application/xml
+
+<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+  <Code>MethodNotAllowed</Code>
+  <Message>Method PUT is not allowed for this resource</Message>
+</Error>
+```
+
+**Impact:**
+- S3 clients expecting XML may fail to parse 405 errors
+- Inconsistency with S3 protocol specification
+
+**Affected Endpoints:**
+- `/admin/key/verify`
+- `/admin/key/rotate`
+- `/admin/key/export`
+- `/presign`
+- `/admin/b2/keys` (all methods)
+
+**Recommendation:**
+- Convert all S3-facing endpoints to return XML for 405 errors
+- Internal admin endpoints may use JSON or plain text
+
+**Tracking:** Documented in bead bf-649uw6 header consistency verification
+
 ### Coverage Gaps
 
 The following error scenarios are **covered by code but lack explicit test cases**:
@@ -419,6 +498,39 @@ The following error scenarios are **covered by code but lack explicit test cases
 **Impact:** Low - all scenarios use verified code paths
 
 **Recommendation:** Optional - consider adding explicit test cases for completeness
+
+### Remediation Plan for Inconsistencies
+
+#### Priority 1 (S3 Protocol Compliance)
+
+| Issue | Effort | Target Release | Action |
+|-------|--------|----------------|--------|
+| Method Not Allowed XML format | Low | Q3 2026 | Convert 405 errors to XML for S3 endpoints |
+| Presigned URL XML format | Low | Q3 2026 | Convert `/presign` errors to XML |
+
+#### Priority 2 (Admin Interface Consistency)
+
+| Issue | Effort | Target Release | Action |
+|-------|--------|----------------|--------|
+| Admin API JSON format | Medium | Q4 2026 | Standardize admin endpoints on JSON |
+
+#### Implementation Notes
+
+**For Method Not Allowed (405) errors:**
+- Update all `http.Error(w, "Method not allowed", 405)` calls
+- Use centralized XML error response function instead
+- Ensure proper S3 `MethodNotAllowed` error code
+
+**For Presigned URL endpoint:**
+- Convert input validation errors to XML format
+- Maintain error messages while changing format
+- Update tests to verify XML structure
+
+**For Admin endpoints:**
+- Design JSON error schema
+- Implement centralized JSON error response function
+- Update all admin endpoint error paths
+- Add JSON error response tests
 
 ## Performance Requirements
 
@@ -518,6 +630,7 @@ When implementing a new error response or modifying existing error responses, us
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-07-14 | Added admin interface inconsistencies, remediation plan, and consolidated all verification findings |
 | 1.0 | 2026-07-14 | Initial specification - consolidates findings from bf-4bwxtc, bf-o7eo21, bf-5ppsfh, bf-58oib3 |
 
 ### Change Process
@@ -544,6 +657,8 @@ To modify this specification:
 - [Common Error Responses](https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html#CommonErrorResponses)
 
 ### Internal Documentation
+- Bead bf-2n6273: Comprehensive header specification (this document)
+- Bead bf-649uw6: Error response header consistency verification
 - Bead bf-4bwxtc: Content-Type header consistency verification
 - Bead bf-o7eo21: HTTP status code consistency verification
 - Bead bf-5ppsfh: Authentication rejection response headers documentation
