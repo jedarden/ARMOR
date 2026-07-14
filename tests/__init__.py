@@ -18,6 +18,8 @@ from .test_helpers import (
     validate_cors_wildcard,
     validate_cors_specific_origin,
     validate_cors_credentials,
+    HTTPRequestError,
+    make_http_request,
 )
 
 from .test_error_response_validation import (
@@ -53,6 +55,9 @@ __all__ = [
     'validate_cors_wildcard',
     'validate_cors_specific_origin',
     'validate_cors_credentials',
+    # HTTP request helper
+    'HTTPRequestError',
+    'make_http_request',
     # Error response structure validation
     'validate_error_response',
     'validate_error_field_only',
