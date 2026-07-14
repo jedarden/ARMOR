@@ -568,12 +568,13 @@ func FormatError(errorType string, message string, fieldName ...string) string {
 		TrackInvalidErrorType(errorType)
 	}
 
-	// Trim whitespace from message before checking
+	// Trim whitespace from message and fieldName before checking
 	message = strings.TrimSpace(message)
+	fieldNameStr = strings.TrimSpace(fieldNameStr)
 
 	// Handle empty message - use fallback
 	if message == "" {
-		// Check if field name was provided
+		// Check if field name was provided (after trimming)
 		if fieldNameStr != "" {
 			message = fmt.Sprintf("%s validation failed", fieldNameStr)
 		} else {
