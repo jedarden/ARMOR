@@ -2234,5 +2234,3 @@ func TestFormatFieldReference_RealWorldUsage(t *testing.T) {
 // FormatFieldRef FUNCTION TESTS
 // =============================================================================
 
-// TestFormatFieldRef_BasicFormatting verifies that FormatFieldRef produces
-// correctly formatted field references with default options.
