@@ -220,9 +220,10 @@ class PytestOutputParser:
                 self._extract_assertion_details(current_failure, line)
                 continue
 
-            # Parse AssertionError message
-            if line.startswith('E   AssertionError:'):
-                error_msg = line.replace('E   AssertionError:', '').strip()
+            # Parse AssertionError message (handle variable whitespace after E)
+            match = re.match(r'^E\s+AssertionError:\s*(.+)', line)
+            if match:
+                error_msg = match.group(1).strip()
                 if error_msg:
                     current_failure.error_message = error_msg
                 continue
