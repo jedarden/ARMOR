@@ -533,6 +533,149 @@ func ValidateErrorMessagePattern(bodyBytes []byte, pattern string, caseInsensiti
 	return false, nil
 }
 
+// ValidateErrorMessage validates error message content against a pattern.
+//
+// This function checks if a response body contains an error message that matches
+// the expected pattern. It supports both regex patterns and simple substring matching.
+// When the pattern is found, it returns nil. When the pattern is not found, it returns
+// a descriptive error including a snippet of the actual response.
+//
+// The function automatically detects whether the pattern is a regex or substring:
+// - If the pattern contains regex metacharacters (. * + ? ^ $ { } [ ] ( ) | \), it's treated as regex
+// - Otherwise, it's treated as a simple substring search (case-sensitive)
+//
+// Parameters:
+//   - response: Raw response body bytes
+//   - expectedPattern: Pattern to search for (regex or substring)
+//
+// Returns:
+//   - nil if the pattern is found in the response
+//   - error if the pattern is not found or if response is invalid
+//
+// Example usage:
+//
+//	// Regex pattern matching
+//	err := ValidateErrorMessage(body, "invalid.*token")
+//	if err != nil {
+//	    // Pattern not found
+//	}
+//
+//	// Simple substring matching
+//	err = ValidateErrorMessage(body, "not found")
+//	if err != nil {
+//	    // Substring not found
+//	}
+//
+//	// Common error patterns
+//	err = ValidateErrorMessage(body, "unauthorized")        // OAuth errors
+//	err = ValidateErrorMessage(body, "invalid.*credentials") // Auth errors
+//	err = ValidateErrorMessage(body, "rate.*limit")          // Rate limiting
+//	err = ValidateErrorMessage(body, "timeout")               // Timeout errors
+func ValidateErrorMessage(response []byte, expectedPattern string) error {
+	// Validate inputs
+	if len(response) == 0 {
+		return fmt.Errorf("response body is empty")
+	}
+
+	if expectedPattern == "" {
+		return fmt.Errorf("expected pattern cannot be empty")
+	}
+
+	// Parse JSON body
+	var body map[string]interface{}
+	if err := json.Unmarshal(response, &body); err != nil {
+		return fmt.Errorf("failed to parse response body: %w", err)
+	}
+
+	// Search for error messages in common fields
+	defaultFields := []string{"error", "message", "detail", "description", "error_description"}
+	var foundMessages []string
+
+	for _, field := range defaultFields {
+		if value, exists := body[field]; exists {
+			if strValue, ok := value.(string); ok && strValue != "" {
+				foundMessages = append(foundMessages, strValue)
+			}
+			// Check nested error objects
+			if nestedObj, ok := value.(map[string]interface{}); ok {
+				if nestedValue, exists := nestedObj["message"]; exists {
+					if strValue, ok := nestedValue.(string); ok && strValue != "" {
+						foundMessages = append(foundMessages, strValue)
+					}
+				}
+			}
+		}
+	}
+
+	// If no error messages found, return error with response snippet
+	if len(foundMessages) == 0 {
+		snippet := extractResponseSnippet(response)
+		return fmt.Errorf("no error message found in response body. Response snippet: %s", snippet)
+	}
+
+	// Detect if pattern is regex or substring
+	isRegex := containsRegexMetacharacters(expectedPattern)
+
+	// Check each found message for pattern match
+	for _, message := range foundMessages {
+		var matched bool
+
+		if isRegex {
+			// Try regex matching
+			re, err := regexp.Compile(expectedPattern)
+			if err != nil {
+				return fmt.Errorf("invalid regex pattern '%s': %w", expectedPattern, err)
+			}
+			matched = re.MatchString(message)
+		} else {
+			// Simple substring matching (case-sensitive)
+			matched = strings.Contains(message, expectedPattern)
+		}
+
+		if matched {
+			// Pattern found - return nil (success)
+			return nil
+		}
+	}
+
+	// Pattern not found in any messages - return descriptive error
+	snippet := extractResponseSnippet(response)
+	firstMessage := foundMessages[0]
+	if len(foundMessages) > 1 {
+		return fmt.Errorf("pattern '%s' not found in error messages. First message: \"%s\". Response snippet: %s",
+			expectedPattern, firstMessage, snippet)
+	}
+	return fmt.Errorf("pattern '%s' not found in error message: \"%s\". Response snippet: %s",
+		expectedPattern, firstMessage, snippet)
+}
+
+// containsRegexMetacharacters checks if a string contains regex metacharacters.
+// This is used to auto-detect whether a pattern should be treated as regex or substring.
+func containsRegexMetacharacters(pattern string) bool {
+	regexChars := []string{".", "*", "+", "?", "^", "$", "{", "}", "[", "]", "(", ")", "|", "\\"}
+	for _, char := range regexChars {
+		if strings.Contains(pattern, char) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractResponseSnippet creates a truncated snippet of the response body for error messages.
+// It limits the snippet to 200 characters to keep error messages readable.
+func extractResponseSnippet(response []byte) string {
+	// Convert to string and truncate
+	responseStr := string(response)
+	maxLen := 200
+	if len(responseStr) > maxLen {
+		responseStr = responseStr[:maxLen] + "..."
+	}
+	// Replace newlines with spaces for single-line error message
+	responseStr = strings.ReplaceAll(responseStr, "\n", " ")
+	responseStr = strings.ReplaceAll(responseStr, "\r", " ")
+	return responseStr
+}
+
 // ValidateErrorMessagePatternWithConfig validates error messages using advanced pattern configuration.
 //
 // This function provides flexible error message validation with support for:
