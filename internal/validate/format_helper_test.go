@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -1912,6 +1913,323 @@ func TestFormatFieldPath_Consistency(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// FormatFieldReference FUNCTION TESTS
+//=============================================================================
+
+// TestFormatFieldReference_BasicFormatting verifies that FormatFieldReference
+// produces correctly formatted field references with and without prefixes.
+func TestFormatFieldReference_BasicFormatting(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		prefix    string
+		expected  string
+	}{
+		{
+			name:      "field without prefix",
+			fieldPath: "email",
+			prefix:    "",
+			expected:  "email",
+		},
+		{
+			name:      "field with prefix",
+			fieldPath: "email",
+			prefix:    "request",
+			expected:  "request.email",
+		},
+		{
+			name:      "nested field without prefix",
+			fieldPath: "user.email",
+			prefix:    "",
+			expected:  "user.email",
+		},
+		{
+			name:      "nested field with prefix",
+			fieldPath: "user.email",
+			prefix:    "data",
+			expected:  "data.user.email",
+		},
+		{
+			name:      "empty field path with prefix",
+			fieldPath: "",
+			prefix:    "request",
+			expected:  "request",
+		},
+		{
+			name:      "empty field path without prefix",
+			fieldPath: "",
+			prefix:    "",
+			expected:  "(unknown field)",
+		},
+		{
+			name:      "whitespace handling",
+			fieldPath: "  email  ",
+			prefix:    "  request  ",
+			expected:  "request.email",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, tt.prefix)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, %q) = %q, want %q",
+					tt.fieldPath, tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldReference_ArrayIndices verifies that FormatFieldReference
+// handles array index normalization correctly.
+func TestFormatFieldReference_ArrayIndices(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		prefix    string
+		expected  string
+	}{
+		{
+			name:      "array index with dot notation",
+			fieldPath: "users.0.email",
+			prefix:    "",
+			expected:  "users[0].email",
+		},
+		{
+			name:      "array index with prefix",
+			fieldPath: "users.0.email",
+			prefix:    "response",
+			expected:  "response.users[0].email",
+		},
+		{
+			name:      "multiple array indices",
+			fieldPath: "data.0.items.1.name",
+			prefix:    "response",
+			expected:  "response.data[0].items[1].name",
+		},
+		{
+			name:      "array index already in bracket notation",
+			fieldPath: "users[0].email",
+			prefix:    "data",
+			expected:  "data.users[0].email",
+		},
+		{
+			name:      "nested arrays with dot notation",
+			fieldPath: "matrix.0.1.value",
+			prefix:    "response",
+			expected:  "response.matrix[0][1].value",
+		},
+		{
+			name:      "large array index",
+			fieldPath: "users.12345.name",
+			prefix:    "",
+			expected:  "users[12345].name",
+		},
+		{
+			name:      "negative array index",
+			fieldPath: "users.-1.email",
+			prefix:    "response",
+			expected:  "response.users[-1].email",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, tt.prefix)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, %q) = %q, want %q",
+					tt.fieldPath, tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldReference_EmptyAndInvalidPaths verifies that FormatFieldReference
+// handles empty and invalid field paths gracefully.
+func TestFormatFieldReference_EmptyAndInvalidPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		prefix    string
+		expected  string
+	}{
+		{
+			name:      "empty string without prefix",
+			fieldPath: "",
+			prefix:    "",
+			expected:  "(unknown field)",
+		},
+		{
+			name:      "empty string with prefix",
+			fieldPath: "",
+			prefix:    "request",
+			expected:  "request",
+		},
+		{
+			name:      "whitespace only without prefix",
+			fieldPath: "   ",
+			prefix:    "",
+			expected:  "(unknown field)",
+		},
+		{
+			name:      "whitespace only with prefix",
+			fieldPath: "   ",
+			prefix:    "request",
+			expected:  "request",
+		},
+		{
+			name:      "dots only without prefix",
+			fieldPath: "...",
+			prefix:    "",
+			expected:  "(unknown field)",
+		},
+		{
+			name:      "dots only with prefix",
+			fieldPath: "...",
+			prefix:    "request",
+			expected:  "request",
+		},
+		{
+			name:      "invalid path with prefix",
+			fieldPath: "...",
+			prefix:    "data.request",
+			expected:  "data.request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, tt.prefix)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, %q) = %q, want %q",
+					tt.fieldPath, tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldReference_PrefixWithArrayIndex verifies that FormatFieldReference
+// handles prefixes that contain array indices.
+func TestFormatFieldReference_PrefixWithArrayIndex(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		prefix    string
+		expected  string
+	}{
+		{
+			name:      "prefix with array index",
+			fieldPath: "email",
+			prefix:    "users.0",
+			expected:  "users[0].email",
+		},
+		{
+			name:      "both prefix and field with array indices",
+			fieldPath: "profile.email",
+			prefix:    "users.0",
+			expected:  "users[0].profile.email",
+		},
+		{
+			name:      "prefix with bracket notation",
+			fieldPath: "name",
+			prefix:    "users[0]",
+			expected:  "users[0].name",
+		},
+		{
+			name:      "empty field with array prefix",
+			fieldPath: "",
+			prefix:    "users.0",
+			expected:  "users[0]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, tt.prefix)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, %q) = %q, want %q",
+					tt.fieldPath, tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldReference_ComplexPaths verifies that FormatFieldReference
+// handles complex real-world field paths.
+func TestFormatFieldReference_ComplexPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		prefix    string
+		expected  string
+	}{
+		{
+			name:      "deeply nested with array indices",
+			fieldPath: "items.0.data.values.1.field",
+			prefix:    "response",
+			expected:  "response.items[0].data.values[1].field",
+		},
+		{
+			name:      "API response field",
+			fieldPath: "response.data.users.0.email",
+			prefix:    "body",
+			expected:  "body.response.data.users[0].email",
+		},
+		{
+			name:      "JSON path with array",
+			fieldPath: "order.items.5.price",
+			prefix:    "data",
+			expected:  "data.order.items[5].price",
+		},
+		{
+			name:      "database field path",
+			fieldPath: "users.0.profile.settings.notification_email",
+			prefix:    "record",
+			expected:  "record.users[0].profile.settings.notification_email",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, tt.prefix)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, %q) = %q, want %q",
+					tt.fieldPath, tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldReference_RealWorldUsage verifies that FormatFieldReference
+// produces consistent results in realistic error message contexts.
+func TestFormatFieldReference_RealWorldUsage(t *testing.T) {
+	// Simulate building error messages with field references
+	t.Run("building error message with field reference", func(t *testing.T) {
+		fieldRef := FormatFieldReference("users.0.email", "response")
+		expected := "response.users[0].email"
+
+		if fieldRef != expected {
+			t.Errorf("Field reference = %q, want %q", fieldRef, expected)
+		}
+
+		// Simulate using it in an error message
+		errorMsg := fmt.Sprintf("Validation failed for field: %s", fieldRef)
+		if !strings.Contains(errorMsg, "response.users[0].email") {
+			t.Error("Error message should contain normalized field reference")
+		}
+	})
+
+	t.Run("empty path with prefix returns prefix", func(t *testing.T) {
+		// When field path is empty but prefix is provided, return prefix
+		fieldRef := FormatFieldReference("", "request")
+		expected := "request"
+
+		if fieldRef != expected {
+			t.Errorf("Field reference = %q, want %q", fieldRef, expected)
+		}
+	})
+}
 // =============================================================================
 // FormatFieldRef FUNCTION TESTS
 // =============================================================================
