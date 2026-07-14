@@ -61,8 +61,8 @@ class PytestOutputParser:
     # Core patterns from pytest_parser.md
     FILE_LOCATION_PATTERN = r'^\s*(.+?):(\d+):'
     SHORT_FAILURE_PATTERN = r'^\s*(.+?):(\d+):\s+in\s+(\w+)'
-    LINE_FAILURE_PATTERN = r'^\s*(.+?):(\d+):\s+AssertionError:\s*(.+)'
-    LONG_FAILURE_END_PATTERN = r'^\s*(.+?):(\d+):\s+AssertionError\s*$'
+    LINE_FAILURE_PATTERN = r'^\s*(.+?):(\d+):\s+(AssertionError|KeyError|AttributeError):\s*(.+)'
+    LONG_FAILURE_END_PATTERN = r'^\s*(.+?):(\d+):\s+(AssertionError|KeyError|AttributeError)\s*$'
     VERBOSE_TEST_PATTERN = r'^\s*(.+?)::(\w+)\s+(FAILED|PASSED|ERROR|SKIPPED)\s+\[\s*\d+%?\]'
     CONCISE_TEST_PATTERN = r'^\s*(.+?)\s+([FPE\.]+)\s+\[\s*\d+%?\]'
 
@@ -89,6 +89,11 @@ class PytestOutputParser:
     SUMMARY_SECTION = r'^===+ short test summary info ===+'
     SESSION_START = r'^===+ test session starts ===+'
     SESSION_END = r'^===+ \d+ (?:failed|passed) in [\d.]+s ===+'
+
+    # Edge case patterns for different error types
+    KEYERROR_PATTERN = r'^E?\s+KeyError:\s+(.+)'
+    ATTRIBUTEERROR_PATTERN = r'^E?\s+AttributeError:\s+(.+)'
+    NONE_ASSERT_PATTERN = r'^E?\s+assert\s+None\s*(?:$|\s)'
 
     def __init__(self):
         self.failures: List[TestFailure] = []
@@ -133,7 +138,7 @@ class PytestOutputParser:
             match = re.match(self.LINE_FAILURE_PATTERN, line)
             if match:
                 failures_found = True
-                file_path, line_num, error_message = match.groups()
+                file_path, line_num, error_type, error_message = match.groups()
 
                 # Extract test name from the path if available
                 test_name = self._extract_test_name_from_path(file_path)
@@ -143,7 +148,7 @@ class PytestOutputParser:
                     line_number=int(line_num),
                     test_name=test_name,
                     error_message=error_message.strip(),
-                    error_type="AssertionError"
+                    error_type=error_type
                 )
 
                 # Try to extract expected/actual from error message
@@ -197,18 +202,39 @@ class PytestOutputParser:
                 current_failure.test_name = match.group(3) or current_failure.test_name
                 continue
 
-            # Parse file:line: AssertionError at end of block (Format 2)
+            # Parse file:line: ErrorType at end of block (Format 2)
+            # This handles AssertionError, KeyError, AttributeError, etc.
             match = re.match(self.LONG_FAILURE_END_PATTERN, line)
             if match:
                 current_failure.test_file = match.group(1)
                 current_failure.line_number = int(match.group(2))
-                current_failure.error_type = "AssertionError"
+                current_failure.error_type = match.group(3)  # Get the actual error type
                 # This is the end of the failure block - save it
                 if current_failure.test_name:
                     self.failures.append(current_failure)
                 current_failure = None
                 in_diff_section = False
                 in_differing_items = False
+                continue
+
+            # Parse KeyError edge case (different from AssertionError)
+            match = re.match(self.KEYERROR_PATTERN, line)
+            if match and current_failure:
+                current_failure.error_type = "KeyError"
+                current_failure.error_message = f"KeyError: {match.group(1).strip()}"
+                continue
+
+            # Parse AttributeError edge case (different from AssertionError)
+            match = re.match(self.ATTRIBUTEERROR_PATTERN, line)
+            if match and current_failure:
+                current_failure.error_type = "AttributeError"
+                current_failure.error_message = f"AttributeError: {match.group(1).strip()}"
+                continue
+
+            # Parse None assertion edge case
+            match = re.match(self.NONE_ASSERT_PATTERN, line)
+            if match and current_failure:
+                current_failure.actual = "None"
                 continue
 
             # Parse assertion line
@@ -226,6 +252,24 @@ class PytestOutputParser:
                 error_msg = match.group(1).strip()
                 if error_msg:
                     current_failure.error_message = error_msg
+                continue
+
+            # Parse KeyError edge case in Format 1/2
+            match = re.match(r'^E\s+KeyError:\s*(.+)', line)
+            if match:
+                current_failure.error_type = "KeyError"
+                error_msg = match.group(1).strip()
+                if error_msg:
+                    current_failure.error_message = f"KeyError: {error_msg}"
+                continue
+
+            # Parse AttributeError edge case in Format 1/2
+            match = re.match(r'^E\s+AttributeError:\s*(.+)', line)
+            if match:
+                current_failure.error_type = "AttributeError"
+                error_msg = match.group(1).strip()
+                if error_msg:
+                    current_failure.error_message = f"AttributeError: {error_msg}"
                 continue
 
             # Detect index diff (overwrite with specific element values)
