@@ -55,6 +55,12 @@ from test_helpers import (
     validate_xml_content_type,
     validate_html_content_type,
     validate_text_content_type,
+    validate_cors_headers,
+    CORSValidationError,
+    validate_cors_allow_origin,
+    validate_cors_wildcard,
+    validate_cors_specific_origin,
+    validate_cors_credentials,
 )
 
 
@@ -940,11 +946,428 @@ class TestContentTypeValidationErrorQuality(unittest.TestCase):
         self.assertIn('application/json', error_msg)
 
 
+# =============================================================================
+# CORS HEADER VALIDATION TESTS
+# =============================================================================
+
+class TestCORSValidationBasic(unittest.TestCase):
+    """Test basic CORS header validation functionality."""
+
+    def test_validate_cors_allow_origin_present(self):
+        """Test validation passes when Access-Control-Allow-Origin is present."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        result = validate_cors_headers(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should accept response with CORS headers")
+
+    def test_validate_cors_allow_origin_missing(self):
+        """Test validation fails when Access-Control-Allow-Origin is missing."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        # No CORS headers set
+
+        result = validate_cors_headers(response, throw_on_error=False)
+
+        self.assertFalse(result, "Should reject response without CORS headers")
+
+    def test_validate_cors_allow_origin_missing_throws(self):
+        """Test validation throws error when CORS header is missing and throw_on_error=True."""
+        response = MockResponse(status_code=200, content_type='application/json')
+
+        with self.assertRaises(CORSValidationError) as context:
+            validate_cors_headers(response, throw_on_error=True)
+
+        error_message = str(context.exception)
+        self.assertIn("Missing required CORS header", error_message)
+        self.assertIn("Access-Control-Allow-Origin", error_message)
+
+    def test_validate_cors_not_required_when_disabled(self):
+        """Test validation passes when require_allow_origin=False."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        # No CORS headers set
+
+        result = validate_cors_headers(response, require_allow_origin=False, throw_on_error=False)
+
+        self.assertTrue(result, "Should pass when CORS not required")
+
+
+class TestCORSOriginValidation(unittest.TestCase):
+    """Test CORS origin value validation."""
+
+    def test_validate_wildcard_origin(self):
+        """Test validation accepts wildcard origin."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        result = validate_cors_headers(response, expected_origin='*', throw_on_error=False)
+
+        self.assertTrue(result, "Should accept wildcard origin")
+
+    def test_validate_wildcard_when_allowed(self):
+        """Test validation accepts wildcard when allow_wildcard=True."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        result = validate_cors_headers(response, expected_origin='https://example.com',
+                                       allow_wildcard=True, throw_on_error=False)
+
+        self.assertTrue(result, "Should accept wildcard when allowed")
+
+    def test_validate_wildcard_when_not_allowed(self):
+        """Test validation rejects wildcard when allow_wildcard=False."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        result = validate_cors_headers(response, expected_origin='https://example.com',
+                                       allow_wildcard=False, throw_on_error=False)
+
+        self.assertFalse(result, "Should reject wildcard when not allowed")
+
+    def test_validate_wildcard_when_not_allowed_throws(self):
+        """Test validation throws when wildcard not allowed."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        with self.assertRaises(CORSValidationError) as context:
+            validate_cors_headers(response, expected_origin='https://example.com',
+                                   allow_wildcard=False, throw_on_error=True)
+
+        error_message = str(context.exception)
+        self.assertIn("Wildcard origin", error_message)
+        self.assertIn("not allowed", error_message)
+
+    def test_validate_specific_origin_match(self):
+        """Test validation accepts exact origin match."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = 'https://example.com'
+
+        result = validate_cors_headers(response, expected_origin='https://example.com',
+                                       throw_on_error=False)
+
+        self.assertTrue(result, "Should accept exact origin match")
+
+    def test_validate_specific_origin_mismatch(self):
+        """Test validation rejects origin mismatch."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = 'https://other.com'
+
+        result = validate_cors_headers(response, expected_origin='https://example.com',
+                                       throw_on_error=False)
+
+        self.assertFalse(result, "Should reject origin mismatch")
+
+    def test_validate_specific_origin_mismatch_throws(self):
+        """Test validation throws on origin mismatch."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = 'https://other.com'
+
+        with self.assertRaises(CORSValidationError) as context:
+            validate_cors_headers(response, expected_origin='https://example.com',
+                                   throw_on_error=True)
+
+        error_message = str(context.exception)
+        self.assertIn("Origin mismatch", error_message)
+        self.assertIn("https://example.com", error_message)
+        self.assertIn("https://other.com", error_message)
+
+
+class TestCORSValidationTupleResponse(unittest.TestCase):
+    """Test CORS validation with tuple response format."""
+
+    def test_tuple_response_with_cors_headers(self):
+        """Test validation with tuple response including CORS headers."""
+        response = (200, {'Access-Control-Allow-Origin': '*'}, '{}')
+
+        result = validate_cors_headers(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should handle tuple with CORS headers")
+
+    def test_tuple_response_lowercase_headers(self):
+        """Test validation handles lowercase header keys in tuple."""
+        response = (200, {'access-control-allow-origin': '*'}, '{}')
+
+        result = validate_cors_headers(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should handle lowercase header keys")
+
+    def test_tuple_response_with_specific_origin(self):
+        """Test validation with specific origin in tuple response."""
+        response = (200, {'Access-Control-Allow-Origin': 'https://example.com'}, '{}')
+
+        result = validate_cors_headers(response, expected_origin='https://example.com',
+                                       throw_on_error=False)
+
+        self.assertTrue(result, "Should validate specific origin in tuple")
+
+    def test_tuple_response_without_cors_headers(self):
+        """Test tuple response without CORS headers fails validation."""
+        response = (200, {}, '{}')
+
+        result = validate_cors_headers(response, throw_on_error=False)
+
+        self.assertFalse(result, "Should reject tuple without CORS headers")
+
+
+class TestCORSValidationConvenienceFunctions(unittest.TestCase):
+    """Test convenience functions for common CORS scenarios."""
+
+    def test_validate_cors_allow_origin_present(self):
+        """Test validate_cors_allow_origin accepts header present."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        result = validate_cors_allow_origin(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should accept when header is present")
+
+    def test_validate_cors_allow_origin_missing(self):
+        """Test validate_cors_allow_origin rejects missing header."""
+        response = MockResponse(status_code=200, content_type='application/json')
+
+        result = validate_cors_allow_origin(response, throw_on_error=False)
+
+        self.assertFalse(result, "Should reject when header is missing")
+
+    def test_validate_cors_wildcard_accepts_wildcard(self):
+        """Test validate_cors_wildcard accepts wildcard origin."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        result = validate_cors_wildcard(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should accept wildcard origin")
+
+    def test_validate_cors_wildcard_rejects_specific(self):
+        """Test validate_cors_wildcard rejects specific origin."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = 'https://example.com'
+
+        result = validate_cors_wildcard(response, throw_on_error=False)
+
+        self.assertFalse(result, "Should reject specific origin when expecting wildcard")
+
+    def test_validate_cors_specific_origin_match(self):
+        """Test validate_cors_specific_origin accepts matching origin."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = 'https://example.com'
+
+        result = validate_cors_specific_origin(response, 'https://example.com',
+                                                throw_on_error=False)
+
+        self.assertTrue(result, "Should accept matching specific origin")
+
+    def test_validate_cors_specific_origin_rejects_wildcard(self):
+        """Test validate_cors_specific_origin rejects wildcard."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        result = validate_cors_specific_origin(response, 'https://example.com',
+                                                throw_on_error=False)
+
+        self.assertFalse(result, "Should reject wildcard when expecting specific origin")
+
+    def test_validate_cors_credentials_present(self):
+        """Test validate_cors_credentials accepts header present."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+
+        result = validate_cors_credentials(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should accept when credentials header is present")
+
+    def test_validate_cors_credentials_missing(self):
+        """Test validate_cors_credentials rejects missing header."""
+        response = MockResponse(status_code=200, content_type='application/json')
+
+        result = validate_cors_credentials(response, throw_on_error=False)
+
+        self.assertFalse(result, "Should reject when credentials header is missing")
+
+
+class TestCORSValidationEdgeCases(unittest.TestCase):
+    """Test edge cases and error conditions."""
+
+    def test_empty_origin_value(self):
+        """Test validation handles empty origin value."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = ''
+
+        result = validate_cors_headers(response, expected_origin='https://example.com',
+                                       throw_on_error=False)
+
+        self.assertFalse(result, "Should reject empty origin value")
+
+    def test_null_origin(self):
+        """Test validation handles null origin."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = 'null'
+
+        result = validate_cors_headers(response, expected_origin='null',
+                                       throw_on_error=False)
+
+        self.assertTrue(result, "Should accept null origin when expected")
+
+    def test_multiple_cors_headers(self):
+        """Test validation with multiple CORS headers."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = 'https://example.com'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+
+        cors_headers = validate_cors_headers.__wrapped__.__globals__['_extract_cors_headers'](response) if hasattr(validate_cors_headers, '__wrapped__') else {}
+        # We'll just test the main function works
+        result = validate_cors_headers(response, expected_origin='https://example.com',
+                                       throw_on_error=False)
+
+        self.assertTrue(result, "Should handle multiple CORS headers")
+
+    def test_error_message_includes_url(self):
+        """Test error message includes URL when available."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/json',
+            url='http://api.example.com/data'
+        )
+
+        with self.assertRaises(CORSValidationError) as context:
+            validate_cors_headers(response, throw_on_error=True)
+
+        error_message = str(context.exception)
+        self.assertIn('http://api.example.com/data', error_message)
+
+    def test_error_message_includes_actual_headers(self):
+        """Test error message includes actual CORS headers."""
+        response = MockResponse(status_code=200, content_type='application/json')
+        response.headers['Access-Control-Allow-Origin'] = 'https://other.com'
+
+        with self.assertRaises(CORSValidationError) as context:
+            validate_cors_headers(response, expected_origin='https://example.com',
+                                   throw_on_error=True)
+
+        error_message = str(context.exception)
+        self.assertIn('Actual CORS headers', error_message)
+        self.assertIn('https://other.com', error_message)
+
+
+class TestCORSValidationRealWorldScenarios(unittest.TestCase):
+    """Test common real-world CORS validation scenarios."""
+
+    def test_public_api_with_wildcard(self):
+        """Test validating public API that allows all origins."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/json',
+            url='http://api.example.com/public/data'
+        )
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        validate_cors_wildcard(response)
+
+    def test_private_api_with_specific_origin(self):
+        """Test validating private API with specific origin."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/json',
+            url='http://api.example.com/protected/data'
+        )
+        response.headers['Access-Control-Allow-Origin'] = 'https://myapp.com'
+
+        validate_cors_specific_origin(response, 'https://myapp.com')
+
+    def test_authenticated_api_with_credentials(self):
+        """Test validating API that requires credentials."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/json',
+            url='http://api.example.com/user/profile'
+        )
+        response.headers['Access-Control-Allow-Origin'] = 'https://myapp.com'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+
+        validate_cors_specific_origin(response, 'https://myapp.com')
+        validate_cors_credentials(response)
+
+    def test_mixed_mode_api(self):
+        """Test validating API that accepts wildcard or specific origins."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/json',
+            url='http://api.example.com/data'
+        )
+        response.headers['Access-Control-Allow-Origin'] = '*'
+
+        # Should accept wildcard when allowed
+        validate_cors_headers(response, expected_origin='https://example.com',
+                              allow_wildcard=True)
+
+    def test_error_response_with_cors(self):
+        """Test validating error responses still have proper CORS."""
+        response = MockResponse(
+            status_code=404,
+            content_type='application/json',
+            url='http://api.example.com/users/123'
+        )
+        response.headers['Access-Control-Allow-Origin'] = 'https://myapp.com'
+
+        validate_cors_specific_origin(response, 'https://myapp.com')
+
+    def test_preflight_request_headers(self):
+        """Test validating preflight request CORS headers."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/json',
+            url='http://api.example.com/data'
+        )
+        response.headers['Access-Control-Allow-Origin'] = 'https://myapp.com'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Max-Age'] = '86400'
+
+        # Should still validate the origin correctly
+        validate_cors_specific_origin(response, 'https://myapp.com')
+
+
+class TestCORSValidationErrorQuality(unittest.TestCase):
+    """Test that error messages provide helpful debugging information."""
+
+    def test_error_message_structure(self):
+        """Test error messages have proper structure."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/json',
+            url='http://api.example.com/data'
+        )
+        response.headers['Access-Control-Allow-Origin'] = 'https://other.com'
+
+        with self.assertRaises(CORSValidationError) as context:
+            validate_cors_headers(response, expected_origin='https://example.com',
+                                   throw_on_error=True)
+
+        error_msg = str(context.exception)
+
+        # Should contain key information
+        self.assertIn('Origin mismatch', error_msg)
+        self.assertIn('https://example.com', error_msg)
+        self.assertIn('https://other.com', error_msg)
+
+    def test_error_without_url_still_useful(self):
+        """Test error message is useful even without URL."""
+        response = (200, {}, '{}')
+
+        with self.assertRaises(CORSValidationError) as context:
+            validate_cors_headers(response, throw_on_error=True)
+
+        error_msg = str(context.exception)
+        self.assertIn('Missing required CORS header', error_msg)
+        self.assertIn('Access-Control-Allow-Origin', error_msg)
+
+
 def main():
     """Run all tests and display results."""
     print("=" * 80)
     print("HTTP VALIDATION HELPER TEST SUITE")
-    print("Bead: bf-gfemoh, bf-q6dmsn")
+    print("Bead: bf-gfemoh, bf-q6dmsn, bf-2rj8cd")
     print("=" * 80)
     print()
 
@@ -979,6 +1402,17 @@ def main():
         print("    - Convenience functions (JSON, XML, HTML, text)")
         print("    - Edge cases and error handling")
         print("    - Real-world scenarios")
+        print("    - Error message quality")
+        print()
+        print("  ✓ CORS Header Validation:")
+        print("    - Access-Control-Allow-Origin presence validation")
+        print("    - Wildcard vs specific origin validation")
+        print("    - Exact origin matching")
+        print("    - Access-Control-Allow-Credentials validation")
+        print("    - Tuple and requests.Response formats")
+        print("    - Convenience functions (allow_origin, wildcard, specific_origin, credentials)")
+        print("    - Edge cases (empty origin, null origin, multiple headers)")
+        print("    - Real-world scenarios (public API, private API, authenticated API)")
         print("    - Error message quality")
         print()
         return 0
