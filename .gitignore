@@ -19,3 +19,7 @@ coverage.txt
 # Marathon directory (local only)
 .marathon/
 /target
+
+# Python build artifacts
+__pycache__/
+*.pyc

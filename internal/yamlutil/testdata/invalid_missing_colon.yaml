@@ -1,4 +1,0 @@
-# Invalid YAML - empty key (truly invalid syntax)
-: value
-name: test-config
-enabled: true
