@@ -668,7 +668,11 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 		if !s.isPublicPath(r.URL.Path) {
 			cred, err := s.verifyAuthAndGetCredential(r)
 			if err != nil {
-				s.writeError(w, "AccessDenied", "Invalid credentials", 403)
+				if authErr, ok := err.(*AuthError); ok {
+					s.writeError(w, authErr.Code, authErr.Message, 403)
+				} else {
+					s.writeError(w, "AccessDenied", "Invalid credentials", 403)
+				}
 				s.metrics.IncRequestsTotal("auth", 403)
 				return
 			}
@@ -832,7 +836,12 @@ func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
 	// Verify auth
 	cred, err := s.verifyAuthAndGetCredential(r)
 	if err != nil {
-		s.writeError(w, "AccessDenied", "Invalid credentials", 403)
+		// Return specific authentication error code and message
+		if authErr, ok := err.(*AuthError); ok {
+			s.writeError(w, authErr.Code, authErr.Message, 403)
+		} else {
+			s.writeError(w, "AccessDenied", "Invalid credentials", 403)
+		}
 		return
 	}
 
