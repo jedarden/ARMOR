@@ -343,6 +343,12 @@ type FormatConfig struct {
 	RangeInfo          string
 	ValidationDetails  []string
 	Suggestions        []string
+	// Category-aware and severity support
+	SeverityOverride   ErrorSeverity
+	CategoryHint       ErrorCategory
+	StatusCode         int
+	Timeout            int
+	SecurityContext    string
 }
 
 // FormatOption is a function that configures a FormatConfig.
@@ -396,6 +402,92 @@ func WithSuggestions(suggestions ...string) FormatOption {
 		c.Suggestions = append(c.Suggestions, suggestions...)
 	}
 }
+
+// WithSeverityOverride creates a FormatOption that overrides the default severity level.
+// Use this when you want to specify a custom severity instead of using the error type's default.
+//
+// Example usage:
+//
+//	err := validate.FormatErrorWithCategoryAndSeverity(
+//	    validate.ErrTypeRequired,
+//	    "Field is required",
+//	    "email",
+//	    validate.WithSeverityOverride(validate.SeverityCritical),
+//	)
+func WithSeverityOverride(severity ErrorSeverity) FormatOption {
+	return func(c *FormatConfig) {
+		c.SeverityOverride = severity
+	}
+}
+
+// WithCategoryHint creates a FormatOption that provides a category hint for formatting.
+// Use this when you want to specify a custom category instead of using the error type's default.
+//
+// Example usage:
+//
+//	err := validate.FormatErrorWithCategoryAndSeverity(
+//	    validate.ErrTypeRequired,
+//	    "Field is required",
+//	    "email",
+//	    validate.WithCategoryHint(validate.CategoryValidation),
+//	)
+func WithCategoryHint(category ErrorCategory) FormatOption {
+	return func(c *FormatConfig) {
+		c.CategoryHint = category
+	}
+}
+
+// WithStatusCode creates a FormatOption that sets the HTTP status code for HTTP errors.
+// Use this with HTTP-related errors to include status code information in the formatted message.
+//
+// Example usage:
+//
+//	err := validate.FormatErrorWithCategoryAndSeverity(
+//	    validate.ErrTypeRequired,
+//	    "Resource not found",
+//	    "endpoint",
+//	    validate.WithStatusCode(404),
+//	)
+func WithStatusCode(statusCode int) FormatOption {
+	return func(c *FormatConfig) {
+		c.StatusCode = statusCode
+	}
+}
+
+// WithTimeout creates a FormatOption that sets the timeout for performance errors.
+// Use this with performance-related errors to include timeout information in the formatted message.
+//
+// Example usage:
+//
+//	err := validate.FormatErrorWithCategoryAndSeverity(
+//	    validate.ErrTypeRequired,
+//	    "Request timed out",
+//	    "api_response",
+//	    validate.WithTimeout(5000),
+//	)
+func WithTimeout(timeout int) FormatOption {
+	return func(c *FormatConfig) {
+		c.Timeout = timeout
+	}
+}
+
+// WithSecurityContext creates a FormatOption that sets the security context for security errors.
+// Use this with security-related errors to include security context in the formatted message.
+//
+// Example usage:
+//
+//	err := validate.FormatErrorWithCategoryAndSeverity(
+//	    validate.ErrTypeRequired,
+//	    "Invalid credentials",
+//	    "Authorization",
+//	    validate.WithSecurityContext("authentication"),
+//	)
+func WithSecurityContext(securityContext string) FormatOption {
+	return func(c *FormatConfig) {
+		c.SecurityContext = securityContext
+	}
+}
+
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -490,15 +582,27 @@ func InvalidErrorTypeCount() int {
 // FormatError creates a formatted error message using ErrorType enum.
 // This is the primary error formatting function that provides type-safe error classification.
 //
-// This function now uses ErrorType enum for consistent error classification across all validation contexts.
+// This function uses ErrorType enum for consistent error classification across all validation contexts.
 // For backward compatibility with string-based error types, use FormatErrorString.
+//
+// ErrorType to Message Mapping:
+// The ErrorType enum provides type-safe error classification with the following mappings:
+//   - ErrTypeRequired (required): Required field is missing or empty
+//   - ErrTypeFormat (format): Value format is invalid (e.g., email, UUID pattern)
+//   - ErrTypeRange (range): Value is outside acceptable numeric range (min/max)
+//   - ErrTypeLength (length): String length or collection size is invalid
+//   - ErrTypeType (type): Value type is incorrect (e.g., string when int expected)
+//   - ErrTypeValue (value): Value is invalid for domain-specific reasons
+//   - ErrTypeDuplicate (duplicate): Duplicate value detected
+//   - ErrTypeConflict (conflict): Conflict with existing values or constraints
+//   - ErrTypeUnknown (unknown): Unknown error type (default/fallback)
 //
 // Parameters:
 //   - errorType: The ErrorType enum value (e.g., ErrTypeRequired, ErrTypeFormat)
 //   - message: The error message content
 //   - fieldName: Optional field name where the error occurred (can be empty string)
 //
-// Returns a formatted error message string with consistent structure.
+// Returns a formatted error message string with consistent structure: "[errorType] fieldName: message"
 // Handles empty/nil inputs gracefully by returning a default format.
 //
 // Example usage:
@@ -511,8 +615,13 @@ func InvalidErrorTypeCount() int {
 //
 //	msg := validate.FormatError(validate.ErrTypeRange, "Value out of range", "age")
 //	// Returns: "[range] age: Value out of range"
+//
+//	msg := validate.FormatError(validate.ErrTypeRequired, "", "email")
+//	// Returns: "[required] email: email validation failed" (empty message fallback)
 func FormatError(errorType ErrorType, message string, fieldName string) string {
 	// Convert ErrorType enum to string for formatting
+	// This converts the typed ErrorType enum to its string representation
+	// for consistent message formatting across the codebase
 	errorTypeStr := errorType.String()
 
 	// Trim whitespace from message before checking
@@ -972,5 +1081,425 @@ func applyQuoteStyle(path string, style QuoteStyle) string {
 	}
 
 	return result.String()
+}
+
+// =============================================================================
+// CATEGORY-AWARE FORMATTING WITH SEVERITY
+// =============================================================================
+
+// FormatErrorWithSeverity creates a formatted error message using ErrorType enum
+// with explicit severity support. This function provides type-safe error classification
+// with severity-based formatting.
+//
+// This function respects error severity levels and applies appropriate formatting:
+// - Critical errors: Bold styling with prominent indicators
+// - High errors: Warning indicators with emphasis
+// - Medium errors: Standard formatting with indicators
+// - Low errors: Subtle formatting
+// - Info errors: Minimal formatting
+//
+// Parameters:
+//   - errorType: The ErrorType enum value (e.g., ErrTypeRequired, ErrTypeFormat)
+//   - severity: The ErrorSeverity level (e.g., SeverityCritical, SeverityHigh)
+//   - message: The error message content
+//   - fieldName: Optional field name where the error occurred (can be empty string)
+//
+// Returns a formatted error message string with severity-based styling.
+// Handles empty/nil inputs gracefully by returning a default format.
+//
+// Example usage:
+//
+//	msg := validate.FormatErrorWithSeverity(validate.ErrTypeRequired, validate.SeverityHigh, "This field is required", "email")
+//	// Returns: "[⚠] HIGH [required] email: This field is required"
+//
+//	msg := validate.FormatErrorWithSeverity(validate.ErrTypeFormat, validate.SeverityMedium, "Invalid email format", "")
+//	// Returns: "[■] MED [format] Invalid email format"
+func FormatErrorWithSeverity(errorType ErrorType, severity ErrorSeverity, message string, fieldName string) string {
+	// Get default severity if not provided
+	if severity == "" {
+		severity = GetSeverityForErrorTypeEnum(errorType)
+	}
+
+	// Trim whitespace from inputs
+	errorTypeStr := errorType.String()
+	message = strings.TrimSpace(message)
+	fieldName = strings.TrimSpace(fieldName)
+
+	// Handle empty message - use fallback
+	if message == "" {
+		if fieldName != "" {
+			message = fmt.Sprintf("%s validation failed", fieldName)
+		} else {
+			message = "(no message provided)"
+		}
+	}
+
+	// Build severity prefix
+	severityPrefix := formatSeverityPrefix(severity)
+
+	// Build the formatted message
+	var builder strings.Builder
+
+	// Add severity indicator and tag
+	builder.WriteString(severityPrefix)
+	builder.WriteString(" ")
+
+	// Add error type in brackets
+	builder.WriteString(fmt.Sprintf("[%s] ", errorTypeStr))
+
+	// Add field name if present
+	if fieldName != "" {
+		builder.WriteString(fmt.Sprintf("%s: ", fieldName))
+	}
+
+	// Add message
+	builder.WriteString(message)
+
+	return builder.String()
+}
+
+// formatSeverityPrefix creates a severity prefix with indicator and tag.
+func formatSeverityPrefix(severity ErrorSeverity) string {
+	indicator := severityIndicator(severity)
+	tag := severityTag(severity)
+
+	if indicator != "" && tag != "" {
+		return fmt.Sprintf("[%s %s]", indicator, tag)
+	} else if indicator != "" {
+		return fmt.Sprintf("[%s]", indicator)
+	} else if tag != "" {
+		return fmt.Sprintf("[%s]", tag)
+	}
+
+	return ""
+}
+
+// severityTag returns a short tag prefix for severity levels.
+func severityTag(severity ErrorSeverity) string {
+	switch severity {
+	case SeverityCritical:
+		return "CRIT"
+	case SeverityHigh:
+		return "HIGH"
+	case SeverityMedium:
+		return "MED"
+	case SeverityLow:
+		return "LOW"
+	case SeverityInfo:
+		return "INFO"
+	default:
+		return "UNK"
+	}
+}
+
+// FormatErrorWithCategoryAndSeverity creates a formatted error message with
+// both category and severity awareness. This is the most comprehensive formatting
+// function that respects both error categorization and severity levels.
+//
+// This function applies category-specific formatting:
+// - HTTP errors: Technical focus with status code details
+// - Content errors: Response structure and body focus
+// - Validation errors: Field-level validation focus
+// - Performance errors: Timing and rate limit focus
+// - Security errors: Authentication and authorization focus
+//
+// Combined with severity-based styling for maximum clarity.
+//
+// Parameters:
+//   - errorType: The ErrorType enum value
+//   - message: The error message content
+//   - fieldName: Optional field name where the error occurred
+//   - options: Optional configuration functions for customization
+//
+// Returns a formatted error message with category and severity awareness.
+//
+// Example usage:
+//
+//	msg := validate.FormatErrorWithCategoryAndSeverity(
+//	    validate.ErrTypeRequired,
+//	    "Field is required",
+//	    "email",
+//	    validate.WithSeverityOverride(validate.SeverityCritical),
+//	    validate.WithCategoryHint(validate.CategoryValidation),
+//	)
+//	// Returns: "[🚨 CRIT] [Validation] [required] email: Field is required"
+func FormatErrorWithCategoryAndSeverity(
+	errorType ErrorType,
+	message string,
+	fieldName string,
+	options ...FormatOption,
+) string {
+	// Get default category and severity
+	category := GetCategoryForErrorTypeEnum(errorType)
+	severity := GetSeverityForErrorTypeEnum(errorType)
+
+	// Apply options to override defaults
+	config := &FormatConfig{}
+	for _, opt := range options {
+		opt(config)
+	}
+
+	// Apply overrides if specified
+	if config.SeverityOverride != "" {
+		severity = config.SeverityOverride
+	}
+	if config.CategoryHint != "" {
+		category = config.CategoryHint
+	}
+
+	// Trim whitespace from inputs
+	message = strings.TrimSpace(message)
+	fieldName = strings.TrimSpace(fieldName)
+
+	// Handle empty message - use fallback
+	if message == "" {
+		if fieldName != "" {
+			message = fmt.Sprintf("%s validation failed", fieldName)
+		} else {
+			message = "(no message provided)"
+		}
+	}
+
+	// Build severity prefix
+	severityPrefix := formatSeverityPrefix(severity)
+
+	// Build category-specific formatting
+	categoryPrefix := formatCategoryPrefix(category)
+
+	// Build the formatted message
+	var builder strings.Builder
+
+	// Add severity indicator and tag
+	builder.WriteString(severityPrefix)
+	builder.WriteString(" ")
+
+	// Add category prefix if category is not custom
+	if category != CategoryCustom && category != "" {
+		builder.WriteString(categoryPrefix)
+		builder.WriteString(" ")
+	}
+
+	// Add error type in brackets
+	builder.WriteString(fmt.Sprintf("[%s] ", errorType.String()))
+
+	// Add field name if present
+	if fieldName != "" {
+		builder.WriteString(fmt.Sprintf("%s: ", fieldName))
+	}
+
+	// Add message
+	builder.WriteString(message)
+
+	// Add category-specific suffix if applicable
+	builder.WriteString(formatCategorySuffix(category, config))
+
+	return builder.String()
+}
+
+// formatCategoryPrefix creates a category-specific prefix.
+func formatCategoryPrefix(category ErrorCategory) string {
+	switch category {
+	case CategoryHTTP:
+		return "[HTTP]"
+	case CategoryContent:
+		return "[Content]"
+	case CategoryValidation:
+		return "[Validation]"
+	case CategoryPerformance:
+		return "[Performance]"
+	case CategorySecurity:
+		return "[Security]"
+	case CategoryCustom:
+		return "[Custom]"
+	default:
+		return ""
+	}
+}
+
+// formatCategorySuffix creates a category-specific suffix with additional context.
+func formatCategorySuffix(category ErrorCategory, config *FormatConfig) string {
+	var suffix strings.Builder
+
+	switch category {
+	case CategoryHTTP:
+		// Add HTTP-specific context
+		if config.StatusCode != 0 {
+			suffix.WriteString(fmt.Sprintf(" (status: %d)", config.StatusCode))
+		}
+	case CategoryPerformance:
+		// Add performance-specific context
+		if config.Timeout > 0 {
+			suffix.WriteString(fmt.Sprintf(" (timeout: %dms)", config.Timeout))
+		}
+	case CategorySecurity:
+		// Add security-specific context
+		if config.SecurityContext != "" {
+			suffix.WriteString(fmt.Sprintf(" (security: %s)", config.SecurityContext))
+		}
+	}
+
+	return suffix.String()
+}
+
+// =============================================================================
+// CATEGORY-SPECIFIC FORMATTING FUNCTIONS
+// =============================================================================
+
+// FormatHTTPError creates a formatted error message specifically for HTTP-related errors.
+// This function applies HTTP-specific formatting with status code details.
+//
+// Parameters:
+//   - errorType: The HTTP error type (e.g., "status_code", "timeout")
+//   - statusCode: The HTTP status code (use 0 if not applicable)
+//   - message: The error message
+//   - fieldName: Optional field name
+//
+// Returns a formatted HTTP-specific error message.
+//
+// Example usage:
+//
+//	msg := validate.FormatHTTPError("status_code", 404, "Resource not found", "endpoint")
+//	// Returns: "[⚠️ HIGH] [HTTP] [status_code] endpoint: Resource not found (status: 404)"
+func FormatHTTPError(errorType string, statusCode int, message string, fieldName string) string {
+	severity := GetDefaultSeverityForErrorType(errorType)
+
+	var builder strings.Builder
+	builder.WriteString(formatSeverityPrefix(severity))
+	builder.WriteString(" [HTTP] ")
+	builder.WriteString(fmt.Sprintf("[%s] ", errorType))
+
+	if fieldName != "" {
+		builder.WriteString(fmt.Sprintf("%s: ", fieldName))
+	}
+
+	builder.WriteString(message)
+
+	if statusCode != 0 {
+		builder.WriteString(fmt.Sprintf(" (status: %d)", statusCode))
+	}
+
+	return builder.String()
+}
+
+// FormatValidationErrorWithSeverity creates a formatted error message specifically for validation errors.
+// This function applies validation-specific formatting with field-level focus and severity awareness.
+//
+// Parameters:
+//   - errorType: The validation error type (e.g., ErrTypeRequired, ErrTypeFormat)
+//   - message: The error message
+//   - fieldName: The field name where validation failed
+//   - expected: Optional expected value
+//   - actual: Optional actual value
+//
+// Returns a formatted validation-specific error message.
+//
+// Example usage:
+//
+//	msg := validate.FormatValidationErrorWithSeverity(validate.ErrTypeRequired, "Field is required", "email", nil, nil)
+//	// Returns: "[⚠️ HIGH] [Validation] [required] email: Field is required"
+//
+//	msg := validate.FormatValidationErrorWithSeverity(validate.ErrTypeRange, "Value out of range", "age", "0-120", 150)
+//	// Returns: "[⚡ MED] [Validation] [range] age: Value out of range (expected: 0-120, actual: 150)"
+func FormatValidationErrorWithSeverity(errorType ErrorType, message string, fieldName string, expected interface{}, actual interface{}) string {
+	severity := GetSeverityForErrorTypeEnum(errorType)
+
+	var builder strings.Builder
+	builder.WriteString(formatSeverityPrefix(severity))
+	builder.WriteString(" [Validation] ")
+	builder.WriteString(fmt.Sprintf("[%s] ", errorType.String()))
+
+	if fieldName != "" {
+		builder.WriteString(fmt.Sprintf("%s: ", fieldName))
+	}
+
+	builder.WriteString(message)
+
+	if expected != nil || actual != nil {
+		builder.WriteString(" (")
+		if expected != nil {
+			builder.WriteString(fmt.Sprintf("expected: %v", expected))
+		}
+		if expected != nil && actual != nil {
+			builder.WriteString(", ")
+		}
+		if actual != nil {
+			builder.WriteString(fmt.Sprintf("actual: %v", actual))
+		}
+		builder.WriteString(")")
+	}
+
+	return builder.String()
+}
+
+// FormatPerformanceError creates a formatted error message specifically for performance errors.
+// This function applies performance-specific formatting with timing details.
+//
+// Parameters:
+//   - errorType: The performance error type (e.g., "timeout", "rate_limit")
+//   - timeoutMs: The timeout in milliseconds (use 0 if not applicable)
+//   - message: The error message
+//   - fieldName: Optional field name
+//
+// Returns a formatted performance-specific error message.
+//
+// Example usage:
+//
+//	msg := validate.FormatPerformanceError("timeout", 5000, "Request timed out", "api_response")
+//	// Returns: "[⚠️ HIGH] [Performance] [timeout] api_response: Request timed out (timeout: 5000ms)"
+func FormatPerformanceError(errorType string, timeoutMs int, message string, fieldName string) string {
+	severity := GetDefaultSeverityForErrorType(errorType)
+
+	var builder strings.Builder
+	builder.WriteString(formatSeverityPrefix(severity))
+	builder.WriteString(" [Performance] ")
+	builder.WriteString(fmt.Sprintf("[%s] ", errorType))
+
+	if fieldName != "" {
+		builder.WriteString(fmt.Sprintf("%s: ", fieldName))
+	}
+
+	builder.WriteString(message)
+
+	if timeoutMs > 0 {
+		builder.WriteString(fmt.Sprintf(" (timeout: %dms)", timeoutMs))
+	}
+
+	return builder.String()
+}
+
+// FormatSecurityError creates a formatted error message specifically for security errors.
+// This function applies security-specific formatting with security context.
+//
+// Parameters:
+//   - errorType: The security error type (e.g., "auth_headers", "cors_headers")
+//   - securityContext: The security context (e.g., "authentication", "authorization")
+//   - message: The error message
+//   - fieldName: Optional field name
+//
+// Returns a formatted security-specific error message.
+//
+// Example usage:
+//
+//	msg := validate.FormatSecurityError("auth_headers", "authentication", "Invalid credentials", "Authorization")
+//	// Returns: "[🚨 CRIT] [Security] [auth_headers] Authorization: Invalid credentials (security: authentication)"
+func FormatSecurityError(errorType string, securityContext string, message string, fieldName string) string {
+	severity := GetDefaultSeverityForErrorType(errorType)
+
+	var builder strings.Builder
+	builder.WriteString(formatSeverityPrefix(severity))
+	builder.WriteString(" [Security] ")
+	builder.WriteString(fmt.Sprintf("[%s] ", errorType))
+
+	if fieldName != "" {
+		builder.WriteString(fmt.Sprintf("%s: ", fieldName))
+	}
+
+	builder.WriteString(message)
+
+	if securityContext != "" {
+		builder.WriteString(fmt.Sprintf(" (security: %s)", securityContext))
+	}
+
+	return builder.String()
 }
 

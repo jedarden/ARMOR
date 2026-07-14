@@ -449,20 +449,27 @@ func FormatSeverityWithIndicator(severity ErrorSeverity) string {
 }
 
 // severityIndicator returns a visual indicator for a severity level.
+// Uses emoji indicators for clear visual distinction:
+// - 🚨 (Critical): Alert/ sirens for critical issues
+// - ⚠️ (High): Warning sign for high severity
+// - ⚡ (Medium): Lightning bolt for medium severity
+// - ℹ️ (Low): Info for low severity issues
+// - 💡 (Info): Light bulb for informational messages
+// - ❓ (Unknown): Question mark for unknown severity
 func severityIndicator(severity ErrorSeverity) string {
 	switch severity {
 	case SeverityCritical:
-		return "!"
+		return "🚨"
 	case SeverityHigh:
-		return "⚠"
+		return "⚠️"
 	case SeverityMedium:
-		return "■"
+		return "⚡"
 	case SeverityLow:
-		return "○"
+		return "ℹ️"
 	case SeverityInfo:
-		return "i"
+		return "💡"
 	default:
-		return "?"
+		return "❓"
 	}
 }
 
