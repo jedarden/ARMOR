@@ -359,7 +359,7 @@ func (et ErrorType) OrDefault() ErrorType {
 //	}
 func IsValidBasicErrorType(s string) bool {
 	et := ErrorTypeFromString(s)
-	return et.IsValid() && (s != "unknown" || s == "unknown")
+	return et.IsValid() && (et != ErrTypeUnknown || s == "unknown")
 }
 
 // ParseBasicErrorType creates an ErrorType from a string.
