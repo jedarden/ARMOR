@@ -535,22 +535,37 @@ func InvalidErrorTypeCount() int {
 //	msg := validate.FormatError("validation", "", "email")
 //	// Returns: "[validation] email: email validation failed"
 func FormatError(errorType string, message string, fieldName ...string) string {
+	// Extract field name from variadic args first
+	fieldNameStr := ""
+	if len(fieldName) > 0 {
+		fieldNameStr = fieldName[0]
+	}
+
+	// Check if errorType is whitespace-only (not truly empty)
+	// Whitespace-only error types should be tracked as invalid
+	// because they are likely user errors, not intentional defaults
+	originalHasContent := errorType != ""
+	trimmedType := strings.TrimSpace(errorType)
+	isWhitespaceOnly := originalHasContent && trimmedType == ""
+
+	// Track whitespace-only error types as invalid
+	if isWhitespaceOnly {
+		TrackInvalidErrorType(errorType)
+	}
+
+	// Trim whitespace from errorType before validation
+	errorType = trimmedType
+
 	// Validate string errorType against ErrorType enum
 	// This ensures that string-based error types are checked for validity
 	// while maintaining backward compatibility with any string value
 	validatedType := ErrorTypeFromString(errorType)
 
 	// Track invalid error types for debugging
-	// If ErrorTypeFromString returns ErrTypeUnknown but the original wasn't "unknown",
+	// If ErrorTypeFromString returns ErrTypeUnknown but the trimmed errorType wasn't "unknown" (case-insensitive),
 	// it means we encountered an unrecognized error type string
-	if validatedType == ErrTypeUnknown && errorType != "" && errorType != "unknown" {
+	if validatedType == ErrTypeUnknown && errorType != "" && !strings.EqualFold(errorType, "unknown") {
 		TrackInvalidErrorType(errorType)
-	}
-
-	// Extract field name from variadic args
-	fieldNameStr := ""
-	if len(fieldName) > 0 {
-		fieldNameStr = fieldName[0]
 	}
 
 	// Trim whitespace from message before checking
@@ -566,14 +581,12 @@ func FormatError(errorType string, message string, fieldName ...string) string {
 		}
 	}
 
-	// Handle empty errorType - use fallback
+	// Handle empty errorType (after trimming) - use fallback
 	if errorType == "" {
 		errorType = "error"
 	}
 
-	// Use FormatErrorMessage with the original error type string
-	// This maintains backward compatibility - we always use the original string
-	// even if it wasn't a recognized ErrorType enum value
+	// Use FormatErrorMessage with the processed error type string
 	return FormatErrorMessage(errorType, message, fieldNameStr)
 }
 
