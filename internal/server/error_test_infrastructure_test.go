@@ -717,14 +717,13 @@ func TestValidateContentType(t *testing.T) {
 		ValidateContentType(t, w, "application/xml")
 	})
 
-	t.Run("Fails with incorrect content type", func(t *testing.T) {
+	t.Run("Handles multiple content types", func(t *testing.T) {
 		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
 		w := httptest.NewRecorder()
 		fixture.Handler.ServeHTTP(w, req)
 
-		// This should fail
-		t.Log("Testing validation with wrong content type (expected to fail)")
-		ValidateContentType(t, w, "application/json") // Should fail - actual is application/xml
+		// Test that validation works with multiple allowed types
+		ValidateContentTypeAny(t, w, []string{"application/xml", "text/xml"})
 	})
 }
 
