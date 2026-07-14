@@ -1,0 +1,33 @@
+=================================== FAILURES ===================================
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:17: AssertionError: Expected 'world', got 'hello'
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:24: AssertionError: Dictionaries don't match
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:31: AssertionError: Lists should be equal
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:44: AssertionError: assert '\n    This i...ontent.\n    ' == '\n    This i... lines.\n    '
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:51: AssertionError: Numbers don't match: 5 != 10
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:57: AssertionError: orange should be in the list
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:64: AssertionError: Sequences should match
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:81: AssertionError: Nested structures should match
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:89: AssertionError: Floats don't match: 0.30000000000000004 != 0.3
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:96: AssertionError: Both x and y should be True
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:102: AssertionError: Uppercase conversion failed
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:108: AssertionError: Value should be int, got str
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:115: AssertionError: Sets should be equal
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:122: AssertionError: Ranges should be equal
+/home/coding/ARMOR/tools/test_pytest_flags_minimal.py:129: AssertionError: Tuples should be equal
+================================== short test summary info =================================
+FAILED tools/test_pytest_flags_minimal.py::test_simple_equality - AssertionError: Expected 'world', got 'hello'
+FAILED tools/test_pytest_flags_minimal.py::test_dict_equality - AssertionError: Dictionaries don't match
+FAILED tools/test_pytest_flags_minimal.py::test_list_comparison - AssertionError: Lists should be equal
+FAILED tools/test_pytest_flags_minimal.py::test_multiline_string - AssertionError: assert '\n    This i...ontent.\n    ' == '\n    This i... lines.\n    '
+FAILED tools/test_pytest_flags_minimal.py::test_numeric_comparison - AssertionError: Numbers don't match: 5 != 10
+FAILED tools/test_pytest_flags_minimal.py::test_membership - AssertionError: orange should be in the list
+FAILED tools/test_pytest_flags_minimal.py::test_sequence_comparison - AssertionError: Sequences should match
+FAILED tools/test_pytest_flags_minimal.py::test_nested_structures - AssertionError: Nested structures should match
+FAILED tools/test_pytest_flags_minimal.py::test_float_comparison - AssertionError: Floats don't match: 0.30000000000000004 != 0.3
+FAILED tools/test_pytest_flags_minimal.py::test_boolean_logic - AssertionError: Both x and y should be True
+FAILED tools/test_pytest_flags_minimal.py::test_string_operations - AssertionError: Uppercase conversion failed
+FAILED tools/test_pytest_flags_minimal.py::test_type_check - AssertionError: Value should be int, got str
+FAILED tools/test_pytest_flags_minimal.py::test_set_operations - AssertionError: Sets should be equal
+FAILED tools/test_pytest_flags_minimal.py::test_range_comparison - AssertionError: Ranges should are equal
+FAILED tools/test_pytest_flags_minimal.py::test_tuple_comparison - AssertionError: Tuples should be equal
+============================== 15 failed in 0.12s ==============================

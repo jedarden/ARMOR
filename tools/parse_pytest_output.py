@@ -7,7 +7,7 @@ extracting file paths, line numbers, expected values, and actual values.
 
 Author: ARMOR Project (bf-29wbke)
 Created: 2026-07-13
-Based on: pytest_parser.md patterns
+Based on: pytest_patterns.md research (bf-5x5xz1)
 """
 
 import json
@@ -62,6 +62,7 @@ class PytestOutputParser:
     FILE_LOCATION_PATTERN = r'^\s*(.+?):(\d+):'
     SHORT_FAILURE_PATTERN = r'^\s*(.+?):(\d+):\s+in\s+(\w+)'
     LINE_FAILURE_PATTERN = r'^\s*(.+?):(\d+):\s+AssertionError:\s*(.+)'
+    LONG_FAILURE_END_PATTERN = r'^\s*(.+?):(\d+):\s+AssertionError\s*$'
     VERBOSE_TEST_PATTERN = r'^\s*(.+?)::(\w+)\s+(FAILED|PASSED|ERROR|SKIPPED)\s+\[\s*\d+%?\]'
     CONCISE_TEST_PATTERN = r'^\s*(.+?)\s+([FPE\.]+)\s+\[\s*\d+%?\]'
 
@@ -75,7 +76,7 @@ class PytestOutputParser:
     DIFF_MINUS_PATTERN = r'^\s*-\s*(.+)'
     DIFF_PLUS_PATTERN = r'^\s*\+\s*(.+)'
     DIFF_POSITION_PATTERN = r'^\s*\?\s+(.+)'
-    INDEX_DIFF_PATTERN = r'^\s+At\s+index\s+(\d+)\s+diff:\s+(.+?)\s+!=\s+(.+)'
+    INDEX_DIFF_PATTERN = r'^\s*(?:E\s+)?At\s+index\s+(\d+)\s+diff:\s+(.+?)\s+!=\s+(.+)'
     DICT_DIFF_HEADER = r'^\s+Differing items:'
     DICT_DIFF_LINE = r'^\s+\{(.+?)\}\s+!=\s+\{(.+?)\}'
     SET_DIFF_LEFT = r'^\s+Extra items in the left set:'
@@ -188,12 +189,26 @@ class PytestOutputParser:
             if not current_failure:
                 continue
 
-            # Parse file:line: in test_name
+            # Parse file:line: in test_name (Format 1)
             match = re.match(self.SHORT_FAILURE_PATTERN, line)
             if match:
                 current_failure.test_file = match.group(1)
                 current_failure.line_number = int(match.group(2))
                 current_failure.test_name = match.group(3) or current_failure.test_name
+                continue
+
+            # Parse file:line: AssertionError at end of block (Format 2)
+            match = re.match(self.LONG_FAILURE_END_PATTERN, line)
+            if match:
+                current_failure.test_file = match.group(1)
+                current_failure.line_number = int(match.group(2))
+                current_failure.error_type = "AssertionError"
+                # This is the end of the failure block - save it
+                if current_failure.test_name:
+                    self.failures.append(current_failure)
+                current_failure = None
+                in_diff_section = False
+                in_differing_items = False
                 continue
 
             # Parse assertion line
