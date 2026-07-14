@@ -1,39 +1,36 @@
 # ARMOR Endpoint Connectivity Verification - BF-488WYX
 
-**Task:** Verify ARMOR endpoint connectivity  
-**Date:** 2026-07-13  
+**Task:** Verify ARMOR endpoint connectivity
+**Date:** 2026-07-13
 **Status:** ✅ COMPLETE
 
 ## ARMOR Endpoint Summary
 
-ARMOR is deployed and operational in the `devimprint` namespace on the `ord-devimprint` cluster.
+ARMOR is deployed and operational in the `armor` namespace on the `rs-manager` cluster.
 
 ### Service Details
 
 - **Service Name:** `armor`
-- **Namespace:** `devimprint`
+- **Namespace:** `armor`
 - **Type:** ClusterIP
-- **Cluster IP:** `10.21.233.157`
+- **Cluster IP:** `10.21.118.151`
 - **S3 API Port:** 9000
 - **Admin API Port:** 9001
 
 ### Pod Status
 
-All ARMOR pods are healthy and running:
+ARMOR pod is healthy and running:
 
 ```
 NAME                     READY   STATUS    RESTARTS   AGE
-armor-869465f5c9-8stfh   1/1     Running   0          2d16h
-armor-869465f5c9-8zdqf   1/1     Running   0          2d16h
-armor-869465f5c9-gkrtn   1/1     Running   0          2d16h
+armor-596fdf4f47-w642j   1/1     Running   0          15d
 ```
 
 ### Endpoint IPs
 
-Active ARMOR endpoints (pod IPs):
-- `10.20.1.238:9001`
-- `10.20.101.66:9001`
-- `10.20.165.13:9001`
+Active ARMOR endpoint (pod IP):
+- `10.20.218.0:9000` (S3 API)
+- `10.20.218.0:9001` (Admin API)
 
 ## Connectivity Patterns
 
@@ -43,10 +40,10 @@ Within the cluster, ARMOR is accessed via the Kubernetes service DNS:
 
 ```bash
 # S3 API (port 9000)
-http://armor.devimprint.svc.cluster.local:9000
+http://armor.armor.svc.cluster.local:9000
 
 # Admin API (port 9001)
-http://armor.devimprint.svc.cluster.local:9001
+http://armor.armor.svc.cluster.local:9001
 ```
 
 For services in the same namespace:
@@ -91,7 +88,7 @@ For local testing, use kubectl port-forward:
 
 ```bash
 # Forward both ports
-kubectl port-forward -n devimprint svc/armor 9000:9000 9001:9001
+kubectl port-forward -n armor svc/armor 9000:9000 9001:9001
 
 # Then access locally:
 curl http://localhost:9000/healthz  # S3 API
@@ -154,7 +151,7 @@ SET s3_secret_access_key='your-secret-key';
 #!/bin/bash
 # armor-health-check.sh
 
-NAMESPACE="devimprint"
+NAMESPACE="armor"
 SERVICE="armor"
 
 # Check if service exists
@@ -170,17 +167,75 @@ kubectl get endpoints -n "$NAMESPACE" "$SERVICE" -o json | \
 kubectl get pods -n "$NAMESPACE" -l app=armor
 ```
 
-### Example 2: Connectivity Test from Within Cluster
+### Example 2: Connectivity Test Script
+
+Save as `scripts/test-armor-connectivity.sh`:
 
 ```bash
 #!/bin/bash
-# Test ARMOR connectivity from a test pod
+set -euo pipefail
 
-kubectl run armor-test --image=curlimages/curl:latest --rm -it --restart=Never \
-  -- curl -s http://armor:9000/healthz
+# ARMOR Connectivity Test Script
+# Tests connectivity to ARMOR endpoints via port-forward
 
-kubectl run armor-test --image=curlimages/curl:latest --rm -it --restart=Never \
-  -- curl -s http://armor:9001/healthz
+NAMESPACE="armor"
+SERVICE="armor"
+S3_PORT=9000
+ADMIN_PORT=9001
+
+echo "=== ARMOR Connectivity Test ==="
+echo ""
+
+# Start port-forward in background
+echo "Starting port-forward..."
+kubectl port-forward -n "${NAMESPACE}" svc/"${SERVICE}" "${S3_PORT}:${S3_PORT}" "${ADMIN_PORT}:${ADMIN_PORT}" >/dev/null 2>&1 &
+PF_PID=$!
+
+# Wait for port-forward to establish
+sleep 3
+
+# Cleanup function
+cleanup() {
+    echo ""
+    echo "Cleaning up port-forward..."
+    kill $PF_PID 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
+# Test S3 API health endpoint
+echo "Testing S3 API health endpoint..."
+if curl -s http://localhost:${S3_PORT}/healthz; then
+    echo "✓ S3 API health check passed"
+else
+    echo "✗ S3 API health check failed"
+    exit 1
+fi
+
+echo ""
+
+# Test Admin API health endpoint
+echo "Testing Admin API health endpoint..."
+if curl -s http://localhost:${ADMIN_PORT}/healthz; then
+    echo "✓ Admin API health check passed"
+else
+    echo "✗ Admin API health check failed"
+    exit 1
+fi
+
+echo ""
+
+# Test metrics endpoint
+echo "Testing metrics endpoint..."
+if curl -s http://localhost:${ADMIN_PORT}/metrics >/dev/null; then
+    echo "✓ Metrics endpoint accessible"
+else
+    echo "✗ Metrics endpoint failed"
+    exit 1
+fi
+
+echo ""
+echo "=== All connectivity tests passed ==="
 ```
 
 ### Example 3: Service Discovery
@@ -189,23 +244,24 @@ kubectl run armor-test --image=curlimages/curl:latest --rm -it --restart=Never \
 #!/bin/bash
 # Find and document ARMOR endpoints
 
-kubectl get svc -n devimprint armor -o json | \
+kubectl get svc -n armor armor -o json | \
   jq -r '"S3 API: \(.spec.clusterIP):\(.spec.ports[] | select(.name=="s3-api") | .port)"'
 
-kubectl get svc -n devimprint armor -o json | \
+kubectl get svc -n armor armor -o json | \
   jq -r '"Admin API: \(.spec.clusterIP):\(.spec.ports[] | select(.name=="admin-api") | .port)"'
 
 # Get healthy pod IPs
-kubectl get endpoints -n devimprint armor -o json | \
+kubectl get endpoints -n armor armor -o json | \
   jq -r '.subsets[].addresses[].ip'
 ```
 
 ## Verification Results
 
-✅ **ARMOR Service:** ClusterIP `10.21.233.157` (ports 9000, 9001)  
-✅ **Pod Health:** 3/3 pods running (0 restarts)  
-✅ **Endpoints:** 3 healthy endpoint IPs active  
-✅ **Service DNS:** `armor.devimprint.svc.cluster.local` resolvable  
+✅ **ARMOR Service:** ClusterIP `10.21.118.151` (ports 9000, 9001)
+✅ **Pod Health:** 1/1 pods running (0 restarts)
+✅ **Endpoints:** 1 healthy endpoint IP active (10.20.218.0)
+✅ **Service DNS:** `armor.armor.svc.cluster.local` resolvable
+✅ **Service Age:** 69 days (stable deployment)
 
 ## Notes
 
@@ -214,6 +270,8 @@ kubectl get endpoints -n devimprint armor -o json | \
 - Access from outside cluster requires port-forward or Ingress setup
 - All health endpoints are unauthenticated for Kubernetes probes
 - Dashboard and admin endpoints may require authentication (if configured)
+- ARMOR is deployed on the rs-manager cluster (Rackspace Spot, us-east-iad-1)
+- Service is accessed via Tailscale kubectl-proxy at http://traefik-rs-manager:8001
 
 ## Related Documentation
 
