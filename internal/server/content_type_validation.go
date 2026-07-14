@@ -309,32 +309,83 @@ func ValidateContentTypeForm(t *testing.T, response interface{}) {
 // CONTENT-TYPE PATTERN MATCHING
 // =============================================================================
 
+// parseMediaType extracts the base media type from a content-type string.
+//
+// This function parses a content-type header and returns only the media type,
+// stripping away any parameters like charset, boundary, etc. It handles
+// whitespace and malformed content-type strings gracefully.
+//
+// Parameters:
+//   - contentType: The content-type header value (may be empty or malformed)
+//
+// Returns:
+//   - The base media type (e.g., "application/json") or empty string if parsing fails
+//
+// Examples:
+//   - parseMediaType("application/json") returns "application/json"
+//   - parseMediaType("application/json; charset=utf-8") returns "application/json"
+//   - parseMediaType("text/xml; charset=iso-8859-1; version=1") returns "text/xml"
+//   - parseMediaType("  application/json  ;  charset=utf-8  ") returns "application/json"
+//   - parseMediaType("") returns ""
+//   - parseMediaType("malformed without semicolon") returns "malformed without semicolon"
+func parseMediaType(contentType string) string {
+	if contentType == "" {
+		return ""
+	}
+
+	// Split by semicolon to separate media type from parameters
+	// The first part before any semicolon is the base media type
+	idx := strings.Index(contentType, ";")
+	if idx == -1 {
+		// No parameters found, return the whole string trimmed
+		return strings.TrimSpace(contentType)
+	}
+
+	// Extract and trim the media type portion
+	return strings.TrimSpace(contentType[:idx])
+}
+
 // contentTypeMatches checks if the actual content-type matches the expected content-type.
 //
-// This function implements pattern matching where the expected content-type can match
-// even if the actual content-type includes additional parameters like charset.
+// This function implements robust pattern matching where content-types match if their
+// base media types are equal, regardless of parameters like charset.
+//
+// The function properly parses both content-type strings to extract their base media
+// types before comparison, handling:
+// - Exact matches: "application/json" == "application/json"
+// - Parameters in actual: "application/json" matches "application/json; charset=utf-8"
+// - Parameters in expected: "application/json; charset=utf-8" matches "application/json"
+// - Parameters in both: "application/json; charset=utf-8" matches "application/json; version=1"
+// - Whitespace variations: "application/json; charset=utf-8" matches "  application/json  "
+// - Empty strings: "" does not match "application/json"
+// - Malformed content-types: handled gracefully by treating them as literal strings
+//
+// Parameters:
+//   - actual: The actual content-type header value from the response
+//   - expected: The expected content-type to match against
+//
+// Returns:
+//   - true if the base media types match, false otherwise
 //
 // Examples of matches:
-// - "application/json" matches "application/json"
-// - "application/json" matches "application/json; charset=utf-8"
-// - "application/json" matches "application/json; charset=iso-8859-1"
-// - "text/xml" matches "text/xml; charset=utf-8"
+//   - contentTypeMatches("application/json", "application/json") returns true
+//   - contentTypeMatches("application/json; charset=utf-8", "application/json") returns true
+//   - contentTypeMatches("application/json", "application/json; charset=iso-8859-1") returns true
+//   - contentTypeMatches("application/json; charset=utf-8", "application/json; version=1") returns true
+//   - contentTypeMatches("  application/json  ", "application/json") returns true
 //
 // Examples of non-matches:
-// - "application/json" does not match "application/xml"
-// - "application/json" does not match "text/plain"
+//   - contentTypeMatches("application/json", "application/xml") returns false
+//   - contentTypeMatches("text/plain", "application/json") returns false
+//   - contentTypeMatches("", "application/json") returns false
+//   - contentTypeMatches("application/json", "") returns false
 func contentTypeMatches(actual, expected string) bool {
-	if actual == expected {
-		return true
-	}
+	// Parse both content-type strings to extract base media types
+	actualMediaType := parseMediaType(actual)
+	expectedMediaType := parseMediaType(expected)
 
-	// Check if actual starts with expected followed by semicolon (parameters)
-	// This handles cases like "application/json; charset=utf-8" matching "application/json"
-	if strings.HasPrefix(actual, expected+";") {
-		return true
-	}
-
-	return false
+	// Compare the parsed media types
+	return actualMediaType == expectedMediaType
 }
 
 // getContentType extracts the Content-Type header from various response types.
