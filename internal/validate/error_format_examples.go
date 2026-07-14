@@ -1,9 +1,7 @@
-package validate_test
+package validate
 
 import (
 	"fmt"
-
-	"github.com/jedarden/armor/internal/validate"
 )
 
 // This file contains examples demonstrating the validation error format data structure
@@ -12,7 +10,7 @@ import (
 // Example 1: Basic status code validation error
 func ExampleValidationError_statusCode() {
 	// Using the builder pattern
-	err := validate.NewValidationFormatter("status_code").
+	err := NewValidationFormatter("status_code").
 		WithExpected(200).
 		WithActual(404).
 		WithContext("GET /api/users/123").
@@ -32,7 +30,7 @@ func ExampleValidationError_statusCode() {
 
 // Example 2: Using convenience function for status code errors
 func ExampleValidationError_statusCodeConvenience() {
-	err := validate.FormatStatusCodeError(200, 404, "GET /api/users/123")
+	err := FormatStatusCodeError(200, 404, "GET /api/users/123")
 	fmt.Println(err.Error())
 	// Output:
 	// status_code validation failed
@@ -47,7 +45,7 @@ func ExampleValidationError_statusCodeConvenience() {
 
 // Example 3: Multiple expected status codes
 func ExampleValidationError_multipleCodes() {
-	err := validate.NewValidationFormatter("status_code").
+	err := NewValidationFormatter("status_code").
 		WithExpected([]int{200, 201, 204}).
 		WithActual(500).
 		WithContext("POST /api/orders").
@@ -67,7 +65,7 @@ func ExampleValidationError_multipleCodes() {
 
 // Example 4: Error message pattern validation
 func ExampleValidationError_errorMessage() {
-	err := validate.FormatErrorMessageError(
+	err := FormatErrorMessageError(
 		"invalid.*token",
 		"access_denied",
 		"error",
@@ -89,7 +87,7 @@ func ExampleValidationError_errorMessage() {
 
 // Example 5: Error message with response snippet
 func ExampleValidationError_errorMessageWithSnippet() {
-	err := validate.NewValidationFormatter("error_message").
+	err := NewValidationFormatter("error_message").
 		WithExpected("not found").
 		WithActual("internal server error").
 		WithFieldName("message").
@@ -113,7 +111,7 @@ func ExampleValidationError_errorMessageWithSnippet() {
 
 // Example 6: Status code range validation
 func ExampleValidationError_statusCodeRange() {
-	err := validate.FormatStatusCodeRangeError("4xx", 200, "error response check")
+	err := FormatStatusCodeRangeError("4xx", 200, "error response check")
 
 	fmt.Println(err.Error())
 	// Output:
@@ -132,7 +130,7 @@ func ExampleValidationError_statusCodeRange() {
 
 // Example 7: Content-Type validation
 func ExampleValidationError_contentType() {
-	err := validate.FormatContentTypeError(
+	err := FormatContentTypeError(
 		"application/json",
 		"text/html",
 		"API response",
@@ -152,17 +150,17 @@ func ExampleValidationError_contentType() {
 
 // Example 8: Custom validation with format options
 func ExampleValidationError_customWithOptions() {
-	err := validate.FormatCustomValidationError(
+	err := FormatCustomValidationError(
 		"header_validation",
 		"Bearer Token",
 		"",
-		validate.WithContext("Authorization header check"),
-		validate.WithResponseSnippet(`{"headers": {"Content-Type": "application/json"}}`),
-		validate.WithValidationDetails(
+		WithContext("Authorization header check"),
+		WithResponseSnippet(`{"headers": {"Content-Type": "application/json"}}`),
+		WithValidationDetails(
 			"Authorization header is missing",
 			"Expected 'Bearer' token format",
 		),
-		validate.WithSuggestions(
+		WithSuggestions(
 			"Add Authorization header with Bearer token",
 			"Verify token is properly formatted",
 			"Check if authentication is required for this endpoint",
@@ -187,7 +185,7 @@ func ExampleValidationError_customWithOptions() {
 
 // Example 9: Custom validation with pattern details
 func ExampleValidationError_withPatternDetails() {
-	err := validate.NewValidationFormatter("error_message").
+	err := NewValidationFormatter("error_message").
 		WithExpected("authentication.*failed").
 		WithActual("access denied").
 		WithFieldName("error").
@@ -218,7 +216,7 @@ func ExampleValidationError_withPatternDetails() {
 
 // Example 10: Complex validation with multiple details
 func ExampleValidationError_complexValidation() {
-	err := validate.NewValidationFormatter("response_validation").
+	err := NewValidationFormatter("response_validation").
 		WithExpected("valid JSON response with user data").
 		WithActual("malformed JSON").
 		WithContext("POST /api/users").
@@ -256,7 +254,7 @@ func ExampleValidationError_complexValidation() {
 
 // Example 11: Accessing ValidationError fields programmatically
 func ExampleValidationError_programmaticAccess() {
-	err := validate.FormatStatusCodeError(200, 404, "GET /api/users")
+	err := FormatStatusCodeError(200, 404, "GET /api/users")
 
 	// Access fields for programmatic handling
 	validationErr := err
@@ -284,7 +282,7 @@ func ExampleValidationError_programmaticAccess() {
 // Example 12: ValidationError as error interface
 func ExampleValidationError_asError() {
 	var err error
-	err = validate.FormatStatusCodeError(200, 500, "GET /api/data")
+	err = FormatStatusCodeError(200, 500, "GET /api/data")
 
 	// ValidationError implements error interface
 	if err != nil {
@@ -292,7 +290,7 @@ func ExampleValidationError_asError() {
 	}
 
 	// Type assertion to access ValidationError
-	if validationErr, ok := err.(validate.ValidationError); ok {
+	if validationErr, ok := err.(ValidationError); ok {
 		fmt.Printf("Validation type: %s\n", validationErr.ValidationType)
 		fmt.Printf("Context: %s\n", validationErr.Context)
 	}
@@ -318,7 +316,7 @@ func ExampleValidationError_inTest() {
 	context := "GET /api/protected"
 
 	if expectedStatus != actualStatus {
-		err := validate.FormatStatusCodeError(expectedStatus, actualStatus, context)
+		err := FormatStatusCodeError(expectedStatus, actualStatus, context)
 		fmt.Printf("Test failed: %v\n", err.Error())
 	}
 
@@ -335,7 +333,7 @@ func ExampleValidationError_inTest() {
 
 // Example 14: Conditional field population
 func ExampleValidationError_conditionalFields() {
-	baseError := validate.NewValidationFormatter("status_code").
+	baseError := NewValidationFormatter("status_code").
 		WithExpected(200).
 		WithActual(404)
 
@@ -371,7 +369,7 @@ func ExampleValidationError_reusableHelper() {
 	// Define a reusable helper function
 	checkStatusCode := func(expected, actual int, operation string) error {
 		if expected != actual {
-			return validate.FormatStatusCodeError(expected, actual, operation)
+			return FormatStatusCodeError(expected, actual, operation)
 		}
 		return nil
 	}
