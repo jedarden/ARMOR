@@ -1,0 +1,2 @@
+Skipping integration tests: ARMOR_INTEGRATION_TEST not set
+ok      github.com/jedarden/armor/tests/integration   0.003s
