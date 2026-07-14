@@ -158,6 +158,36 @@ func TestInvalidCredentialRejection(t *testing.T) {
 		}
 	})
 
+	t.Run("Missing authentication headers on POST return 403 Forbidden", func(t *testing.T) {
+		postBody := []byte("test content for upload")
+		req := httptest.NewRequest("POST", "/test-bucket/test-key", bytes.NewReader(postBody))
+		// No Authorization header
+
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		// Check response
+		if w.Code != 403 {
+			t.Errorf("Expected 403 Forbidden, got %d", w.Code)
+		}
+
+		// Parse error response
+		var s3Err S3Error
+		if err := xml.Unmarshal(w.Body.Bytes(), &s3Err); err != nil {
+			t.Errorf("Failed to parse error response: %v", err)
+		}
+
+		// Verify error code
+		if s3Err.Code != "MissingAuthenticationToken" {
+			t.Errorf("Expected error code 'MissingAuthenticationToken', got '%s'", s3Err.Code)
+		}
+
+		// Verify error message is meaningful
+		if s3Err.Message == "" {
+			t.Error("Expected meaningful error message, got empty string")
+		}
+	})
+
 	t.Run("Missing date header returns 403 Forbidden", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test-bucket/test-key", nil)
 		req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=example")
