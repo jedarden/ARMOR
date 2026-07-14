@@ -1,5 +1,13 @@
 # ARMOR Endpoint Authentication Verification
 
+**Bead ID:** bf-4dd8u8
+**Date:** 2026-07-14
+**Status:** ✅ VERIFIED
+
+## Summary
+
+ARMOR endpoint authentication has been comprehensively verified through unit and integration tests. All authentication mechanisms work correctly including SigV4 header authentication, query-based authentication (presigned URLs), multi-credential support, and ACL enforcement.
+
 ## Task Summary
 
 Verify ARMOR endpoint authentication implementation and verify that authentication headers work correctly.
@@ -124,6 +132,106 @@ ARMOR implements **AWS Signature V4 only**, not V2. This is the correct choice b
 
 The acceptance criteria mentioned "V2/V4" but ARMOR correctly implements only V4 for security reasons.
 
+## Comprehensive Test Results
+
+### Test Execution Summary (2026-07-14)
+
+All authentication tests executed successfully:
+
+```
+=== Authentication Integration Tests ===
+TestAuthIntegration/Valid_SigV4_authentication_is_accepted — PASS
+TestAuthIntegration/Invalid_access_key_is_rejected — PASS
+TestAuthIntegration/Invalid_signature_is_rejected — PASS
+TestAuthIntegration/Missing_auth_header_is_rejected — PASS
+TestAuthIntegration/Missing_date_header_is_rejected — PASS
+TestAuthIntegration/Expired_request_is_rejected — PASS
+TestAuthIntegration/Multiple_credentials_work — PASS
+TestAuthIntegration/ACL_enforcement_allows_valid_access — PASS
+TestAuthIntegration/ACL_enforcement_denies_invalid_access — PASS
+TestAuthIntegration/ACL_enforcement_allows_different_bucket_with_wildcard — PASS
+TestAuthIntegration/Query_authentication_(presigned_URL)_works — PASS
+TestAuthIntegration/Query_auth_with_expired_signature_is_rejected — PASS
+
+=== Authentication Headers Tests ===
+TestAuthenticationHeaders/All_signed_headers_are_included_in_verification — PASS
+TestAuthenticationHeaders/Custom_headers_can_be_signed — PASS
+
+=== Multi-Credential Tests ===
+TestMultiCredentialAuth/user1_authenticates_successfully — PASS
+TestMultiCredentialAuth/user2_authenticates_successfully — PASS
+TestMultiCredentialAuth/user1_with_wrong_signature_fails — PASS
+TestMultiCredentialAuth/unknown_access_key_fails — PASS
+
+=== Region Flexibility Tests ===
+TestVerifyRequest_AnyRegionAcceptable/client_region_us-west-002 — PASS
+TestVerifyRequest_AnyRegionAcceptable/client_region_auto — PASS
+TestVerifyRequest_AnyRegionAcceptable/client_region_us-east-1 — PASS
+TestVerifyRequest_AnyRegionAcceptable/client_region_eu-west-1 — PASS
+TestVerifyRequest_WrongSecretAnyRegion/client_region_* — PASS
+
+=== ACL Enforcement Tests ===
+TestCheckACL/no_ACLs_-_full_access — PASS
+TestCheckACL/exact_bucket_match — PASS
+TestCheckACL/bucket_with_prefix_match — PASS
+TestCheckACL/bucket_with_prefix_no_match — PASS
+TestCheckACL/wildcard_bucket — PASS
+TestCheckACL/multiple_ACLs_-_first_matches — PASS
+TestCheckACL/multiple_ACLs_-_second_matches — PASS
+TestCheckACL/multiple_ACLs_-_none_match — PASS
+TestCheckACL/empty_prefix_allows_any_key — PASS
+TestCheckACL/wrong_bucket — PASS
+
+=== Presigned URL Tests ===
+TestSigner_GenerateAndVerifyToken — PASS (7 subtests)
+TestSigner_VerifyToken_InvalidSignature — PASS
+TestSigner_VerifyToken_ExpiredToken — PASS
+TestSigner_VerifyToken_InvalidToken — PASS (4 subtests)
+TestSigner_GenerateURL — PASS
+```
+
+**Total Test Results:**
+- **Tests Run:** 40+
+- **Pass Rate:** 100%
+- **Failures:** 0
+
+## Configuration Examples
+
+### Single Credential (Default)
+```yaml
+env:
+  - name: ARMOR_AUTH_ACCESS_KEY
+    value: "AKIAIOSFODNN7EXAMPLE"
+  - name: ARMOR_AUTH_SECRET_KEY
+    value: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+```
+
+### Multiple Credentials with ACLs
+```yaml
+env:
+  # Default credential (full access)
+  - name: ARMOR_AUTH_ACCESS_KEY
+    value: "default-key"
+  - name: ARMOR_AUTH_SECRET_KEY
+    value: "default-secret"
+  
+  # Read-only credential
+  - name: ARMOR_AUTH_READONLY_ACCESS_KEY
+    value: "readonly-key"
+  - name: ARMOR_AUTH_READONLY_SECRET_KEY
+    value: "readonly-secret"
+  - name: ARMOR_AUTH_READONLY_ACL
+    value: "*:public/"  # Any bucket, public/ prefix only
+  
+  # Limited credential
+  - name: ARMOR_AUTH_LIMITED_ACCESS_KEY
+    value: "limited-key"
+  - name: ARMOR_AUTH_LIMITED_SECRET_KEY
+    value: "limited-secret"
+  - name: ARMOR_AUTH_LIMITED_ACL
+    value: "my-bucket:data/"  # Specific bucket and prefix
+```
+
 ## Files Verified
 
 - `internal/server/auth.go` - Core authentication implementation
@@ -132,3 +240,4 @@ The acceptance criteria mentioned "V2/V4" but ARMOR correctly implements only V4
 - `internal/server/auth_test.go` - Unit tests (735 lines)
 - `scripts/test_auth_v4.py` - End-to-end verification script
 - `internal/config/config.go` - Credential configuration structure
+- `internal/presign/presign_test.go` - Presigned URL tests
