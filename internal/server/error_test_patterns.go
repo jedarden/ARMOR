@@ -919,26 +919,124 @@ var CommonErrorPatterns = struct {
 // These patterns are specifically designed for authentication-related testing.
 // They cover the spectrum of authentication failures from missing credentials
 // to expired timestamps.
+//
+// Design Philosophy:
+//   - Comprehensive coverage of all auth failure scenarios
+//   - Clear distinction between different auth error types
+//   - Realistic expectations for response times
+//   - Actionable error messages
+//
+// Use these patterns when:
+//   - Testing authentication and authorization logic
+//   - Verifying AWS signature validation
+//   - Testing credential validation
+//   - Writing security-focused tests
 // =============================================================================
 
 // AuthErrorPatterns provides predefined patterns for authentication error scenarios.
+//
+// Use this collection when:
+//   - Testing authentication failures
+//   - Validating AWS signature behavior
+//   - Testing credential validation logic
+//   - Writing security test suites
+//
+// Example:
+//
+//	pattern := AuthErrorPatterns.MissingAuthHeader
+//	expectedStatus := pattern.ExpectedStatus    // 403
+//	expectedCode := pattern.ExpectedCode        // "MissingAuthenticationToken"
+//
+// Available patterns:
+//   - MissingAuthHeader: No Authorization header
+//   - InvalidAccessKeyId: Invalid access key
+//   - SignatureDoesNotMatch: Incorrect signature
+//   - MissingDateHeader: No X-Amz-Date header
+//   - RequestExpired: Expired timestamp
+//   - MalformedAuthHeader: Invalid Authorization header format
 var AuthErrorPatterns = struct {
 	// MissingAuthHeader covers requests without Authorization header
+	//
+	// Use this pattern when:
+	//   - Testing requests without any authentication
+	//   - Verifying auth header is required
+	//   - Testing basic auth enforcement
+	//
+	// Expected behavior:
+	//   - HTTP Status: 403
+	//   - S3 Code: "MissingAuthenticationToken"
+	//   - Message: "Missing Authentication Token"
+	//   - Response Time: < 250ms
 	MissingAuthHeader ErrorScenarioConfig
 
 	// InvalidAccessKeyId covers requests with invalid access key
+	//
+	// Use this pattern when:
+	//   - Testing with non-existent access keys
+	//   - Verifying key validation logic
+	//   - Testing typo scenarios
+	//
+	// Expected behavior:
+	//   - HTTP Status: 403
+	//   - S3 Code: "InvalidAccessKeyId"
+	//   - Message: "The AWS Access Key Id you provided does not exist"
+	//   - Response Time: < 300ms
 	InvalidAccessKeyId ErrorScenarioConfig
 
 	// SignatureDoesNotMatch covers requests with incorrect signature
+	//
+	// Use this pattern when:
+	//   - Testing with incorrect secret keys
+	//   - Verifying signature calculation
+	//   - Testing signature validation logic
+	//
+	// Expected behavior:
+	//   - HTTP Status: 403
+	//   - S3 Code: "SignatureDoesNotMatch"
+	//   - Message: "The request signature we calculated does not match"
+	//   - Response Time: < 350ms
 	SignatureDoesNotMatch ErrorScenarioConfig
 
 	// MissingDateHeader covers requests without X-Amz-Date header
+	//
+	// Use this pattern when:
+	//   - Testing signature requirements
+	//   - Verifying date header validation
+	//   - Testing timestamp enforcement
+	//
+	// Expected behavior:
+	//   - HTTP Status: 403
+	//   - S3 Code: "MissingAuthenticationToken"
+	//   - Message: "Missing required date header"
+	//   - Response Time: < 250ms
 	MissingDateHeader ErrorScenarioConfig
 
 	// RequestExpired covers requests with expired timestamp
+	//
+	// Use this pattern when:
+	//   - Testing stale requests
+	//   - Verifying timestamp validation
+	//   - Testing time window enforcement
+	//
+	// Expected behavior:
+	//   - HTTP Status: 403
+	//   - S3 Code: "RequestExpired"
+	//   - Message: "Request has expired"
+	//   - Response Time: < 300ms
 	RequestExpired ErrorScenarioConfig
 
 	// MalformedAuthHeader covers requests with invalid Authorization header format
+	//
+	// Use this pattern when:
+	//   - Testing malformed Authorization headers
+	//   - Verifying header format validation
+	//   - Testing parser robustness
+	//
+	// Expected behavior:
+	//   - HTTP Status: 403
+	//   - S3 Code: "MissingAuthenticationToken"
+	//   - Message: "Invalid authorization header format"
+	//   - Response Time: < 250ms
 	MalformedAuthHeader ErrorScenarioConfig
 }{
 	// MissingAuthHeader: No Authorization header present
@@ -1026,20 +1124,91 @@ var AuthErrorPatterns = struct {
 // These patterns represent client-side errors (4xx status codes). These are
 // errors where the client made an invalid request and should correct their
 // request before retrying.
+//
+// Design Philosophy:
+//   - Clear indication of client-side issues
+//   - Specific error codes for different client failures
+//   - Actionable error messages
+//   - Fast response times for client errors
+//
+// Use these patterns when:
+//   - Testing client error handling
+//   - Verifying request validation logic
+//   - Testing API contract compliance
+//   - Writing integration tests for error scenarios
 // =============================================================================
 
 // ClientErrorPatterns provides predefined patterns for client error scenarios (4xx).
+//
+// Use this collection when:
+//   - Testing 4xx client error responses
+//   - Validating request validation
+//   - Testing API behavior for malformed requests
+//   - Writing comprehensive client error tests
+//
+// Example:
+//
+//	pattern := ClientErrorPatterns.NotFound
+//	expectedStatus := pattern.ExpectedStatus    // 404
+//	expectedCode := pattern.ExpectedCode        // "NoSuchKey"
+//
+// Available patterns:
+//   - BadRequest: Generic 400 Bad Request errors
+//   - NotFound: 404 Not Found errors
+//   - MethodNotAllowed: 405 Method Not Allowed errors
+//   - UnsupportedMediaType: 415 Unsupported Media Type errors
 var ClientErrorPatterns = struct {
 	// BadRequest covers generic 400 Bad Request errors
+	//
+	// Use this pattern when:
+	//   - Testing malformed requests
+	//   - Verifying request validation
+	//   - Testing catch-all client error handling
+	//
+	// Expected behavior:
+	//   - HTTP Status: 400
+	//   - S3 Code: "InvalidRequest"
+	//   - Message: "Bad Request"
+	//   - Response Time: < 200ms
 	BadRequest ErrorScenarioConfig
 
 	// NotFound covers 404 Not Found errors
+	//
+	// Use this pattern when:
+	//   - Testing missing resource scenarios
+	//   - Verifying 404 error responses
+	//   - Testing resource existence validation
+	//
+	// Expected behavior:
+	//   - HTTP Status: 404
+	//   - S3 Code: "NoSuchKey"
+	//   - Response Time: < 500ms
 	NotFound ErrorScenarioConfig
 
 	// MethodNotAllowed covers 405 Method Not Allowed errors
+	//
+	// Use this pattern when:
+	//   - Testing HTTP method restrictions
+	//   - Verifying method validation
+	//   - Testing API endpoint contract
+	//
+	// Expected behavior:
+	//   - HTTP Status: 405
+	//   - S3 Code: "MethodNotAllowed"
+	//   - Response Time: < 200ms
 	MethodNotAllowed ErrorScenarioConfig
 
 	// UnsupportedMediaType covers 415 Unsupported Media Type errors
+	//
+	// Use this pattern when:
+	//   - Testing content-type validation
+	//   - Verifying media type restrictions
+	//   - Testing format enforcement
+	//
+	// Expected behavior:
+	//   - HTTP Status: 415
+	//   - S3 Code: "UnsupportedMediaType"
+	//   - Response Time: < 200ms
 	UnsupportedMediaType ErrorScenarioConfig
 }{
 	// BadRequest: Generic bad request error
@@ -1070,14 +1239,65 @@ var ClientErrorPatterns = struct {
 // =============================================================================
 // These patterns represent server-side errors (5xx status codes). These are
 // errors where the server failed to fulfill a valid request.
+//
+// Design Philosophy:
+//   - Identify server-side issues requiring investigation
+//   - Provide actionable error information
+//   - Set appropriate response time expectations
+//   - Distinguish between transient and permanent errors
+//
+// Use these patterns when:
+//   - Testing server error handling
+//   - Verifying error response structure for server failures
+//   - Testing circuit breaker logic
+//   - Writing resilience tests
 // =============================================================================
 
 // ServerErrorPatterns provides predefined patterns for server error scenarios (5xx).
+//
+// Use this collection when:
+//   - Testing 5xx server error responses
+//   - Validating server failure handling
+//   - Testing error recovery logic
+//   - Writing server error scenarios
+//
+// Example:
+//
+//	pattern := ServerErrorPatterns.InternalError
+//	expectedStatus := pattern.ExpectedStatus    // 500
+//	expectedCode := pattern.ExpectedCode        // "InternalError"
+//
+// Available patterns:
+//   - InternalError: 500 Internal Server Error
+//   - ServiceUnavailable: 503 Service Unavailable
 var ServerErrorPatterns = struct {
 	// InternalError covers 500 Internal Server Error
+	//
+	// Use this pattern when:
+	//   - Testing unexpected server failures
+	//   - Verifying 500 error responses
+	//   - Testing server error handling
+	//
+	// Expected behavior:
+	//   - HTTP Status: 500
+	//   - S3 Code: "InternalError"
+	//   - Message: "Internal server error"
+	//   - Response Time: < 1000ms
 	InternalError ErrorScenarioConfig
 
 	// ServiceUnavailable covers 503 Service Unavailable
+	//
+	// Use this pattern when:
+	//   - Testing service unavailability scenarios
+	//   - Verifying 503 error responses
+	//   - Testing maintenance mode
+	//   - Testing circuit breaker behavior
+	//
+	// Expected behavior:
+	//   - HTTP Status: 503
+	//   - S3 Code: "InternalError"
+	//   - Message: "Service Unavailable"
+	//   - Response Time: < 2000ms
 	ServiceUnavailable ErrorScenarioConfig
 }{
 	// InternalError: Generic internal server error
@@ -1138,10 +1358,55 @@ var ErrorPatternByCategory = map[ErrorCategory][]ErrorScenarioConfig{
 // =============================================================================
 // These builder functions help create custom error patterns based on
 // predefined patterns or from scratch.
+//
+// Use these functions when:
+//   - Getting patterns by error code dynamically
+//   - Retrieving all patterns for a specific category
+//   - Getting all common patterns for iteration
+//   - Building custom validation logic
 // =============================================================================
 
 // PatternForCode returns a predefined pattern for the given error code,
 // or a default pattern if no specific pattern exists.
+//
+// This function provides dynamic access to predefined patterns based on their
+// error code. It's useful when working with error codes from responses or
+// external sources.
+//
+// Parameters:
+//   - code: S3 error code (e.g., "NoSuchKey", "AccessDenied")
+//
+// Returns:
+//   - ErrorScenarioConfig for the given error code, or a default pattern
+//
+// Use this function when:
+//   - Looking up patterns dynamically from error codes
+//   - Handling errors from external sources
+//   - Building flexible validation logic
+//   - Converting error codes to test patterns
+//
+// Example:
+//
+//	pattern := PatternForCode("NoSuchKey")
+//	fmt.Printf("Pattern: %s, Status: %d\n", pattern.Name, pattern.ExpectedStatus)
+//
+// Example (unknown code):
+//
+//	pattern := PatternForCode("UnknownError")
+//	// Returns default pattern with ExpectedStatus: 500
+//
+// Supported error codes:
+//   - "AccessDenied" → CommonErrorPatterns.AccessDenied
+//   - "InvalidAccessKeyId" → AuthErrorPatterns.InvalidAccessKeyId
+//   - "SignatureDoesNotMatch" → AuthErrorPatterns.SignatureDoesNotMatch
+//   - "MissingAuthenticationToken" → AuthErrorPatterns.MissingAuthHeader
+//   - "NoSuchKey" → CommonErrorPatterns.ResourceNotFound
+//   - "MethodNotAllowed" → CommonErrorPatterns.MethodNotAllowed
+//   - "UnsupportedMediaType" → CommonErrorPatterns.UnsupportedMediaType
+//   - "InvalidRequest" → CommonErrorPatterns.InvalidRequest
+//   - "InternalError" → CommonErrorPatterns.InternalServerError
+//   - "RequestExpired" → CommonErrorPatterns.RequestExpired
+//   - Any other code → Default pattern (500, "Unknown Error Pattern")
 func PatternForCode(code string) ErrorScenarioConfig {
 	switch code {
 	case ErrorCodeAccessDenied:
@@ -1180,6 +1445,40 @@ func PatternForCode(code string) ErrorScenarioConfig {
 }
 
 // PatternsForCategory returns all predefined patterns for a given error category.
+//
+// This function provides access to all patterns belonging to a specific category,
+// useful for organized testing and validation by error type.
+//
+// Parameters:
+//   - category: Error category (e.g., CategoryAuth, CategoryNotFound)
+//
+// Returns:
+//   - Slice of ErrorScenarioConfig for the category, or empty slice if not found
+//
+// Use this function when:
+//   - Testing all errors of a specific type
+//   - Building category-specific test suites
+//   - Organizing tests by error category
+//   - Validating category-based error handling
+//
+// Example:
+//
+//	authPatterns := PatternsForCategory(CategoryAuth)
+//	for _, pattern := range authPatterns {
+//	    fmt.Printf("Auth pattern: %s\n", pattern.Name)
+//	}
+//
+// Example (unknown category):
+//
+//	patterns := PatternsForCategory("UnknownCategory")
+//	// Returns empty slice
+//
+// Available categories:
+//   - CategoryAuth: 7 patterns (authentication errors)
+//   - CategoryNotFound: 1 pattern (resource not found)
+//   - CategoryInvalidRequest: 3 patterns (invalid requests)
+//   - CategoryMethodNotAllowed: 1 pattern (method restrictions)
+//   - CategoryInternal: 2 patterns (server errors)
 func PatternsForCategory(category ErrorCategory) []ErrorScenarioConfig {
 	patterns, exists := ErrorPatternByCategory[category]
 	if !exists {
@@ -1191,6 +1490,39 @@ func PatternsForCategory(category ErrorCategory) []ErrorScenarioConfig {
 }
 
 // AllCommonPatterns returns all predefined common error patterns.
+//
+// This function provides access to all common error patterns in a single slice,
+// useful for comprehensive testing and iteration over all common scenarios.
+//
+// Returns:
+//   - Slice of all 8 common error patterns
+//
+// Use this function when:
+//   - Testing all common error scenarios
+//   - Building comprehensive test suites
+//   - Iterating over all common patterns
+//   - Validating common error handling
+//
+// Example:
+//
+//	allPatterns := AllCommonPatterns()
+//	for _, pattern := range allPatterns {
+//	    fmt.Printf("Pattern: %s (Status: %d)\n", pattern.Name, pattern.ExpectedStatus)
+//	}
+//
+// Example (count):
+//
+//	totalPatterns := len(AllCommonPatterns()) // 8
+//
+// Returned patterns (in order):
+//   1. ResourceNotFound (404)
+//   2. AccessDenied (403)
+//   3. InvalidRequest (400)
+//   4. UnsupportedMediaType (415)
+//   5. MethodNotAllowed (405)
+//   6. InternalServerError (500)
+//   7. SignatureMismatch (403)
+//   8. RequestExpired (403)
 func AllCommonPatterns() []ErrorScenarioConfig {
 	return []ErrorScenarioConfig{
 		CommonErrorPatterns.ResourceNotFound,
