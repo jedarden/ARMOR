@@ -4,6 +4,7 @@ package validate
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -949,11 +950,12 @@ func ValidateStatusCodeAndErrorCode(resp *http.Response, expectedStatus int, exp
 	}
 
 	// Read response body
-	bodyBytes := make([]byte, 0)
+	var bodyBytes []byte
 	if resp.Body != nil {
 		defer resp.Body.Close()
-		_, err := resp.Body.Read(bodyBytes)
-		if err != nil && err.Error() != "EOF" {
+		var err error
+		bodyBytes, err = io.ReadAll(resp.Body)
+		if err != nil {
 			return false, fmt.Errorf("failed to read response body: %w", err)
 		}
 	}
@@ -1736,18 +1738,36 @@ func parseIntFromString(s string) (int, error) {
 func ValidateStatusCodeRangeInt(pattern string, actual int) error {
 	// Validate pattern format
 	if len(pattern) != 3 {
-		return fmt.Errorf("invalid pattern format: %s (expected format: '4xx', '5xx', etc.)", pattern)
+		return FormatValidationError(
+			"status_code_range",
+			fmt.Sprintf("pattern in format 'Nxx' (3 chars)"),
+			fmt.Sprintf("'%s' (%d chars)", pattern, len(pattern)),
+			fmt.Sprintf("invalid pattern format: %s", pattern),
+			"",
+		)
 	}
 
 	// Extract the century digit (first character)
 	centuryChar := pattern[0]
 	if centuryChar < '1' || centuryChar > '5' {
-		return fmt.Errorf("invalid pattern century: %c (must be 1-5)", centuryChar)
+		return FormatValidationError(
+			"status_code_range",
+			"century digit 1-5",
+			fmt.Sprintf("'%c' (ASCII %d)", centuryChar, centuryChar),
+			fmt.Sprintf("invalid pattern century in '%s'", pattern),
+			"",
+		)
 	}
 
 	// Validate 'xx' suffix
 	if pattern[1] != 'x' || pattern[2] != 'x' {
-		return fmt.Errorf("invalid pattern suffix: %s (expected 'xx')", pattern)
+		return FormatValidationError(
+			"status_code_range",
+			"pattern ending with 'xx'",
+			fmt.Sprintf("'%s'", pattern[1:]),
+			fmt.Sprintf("invalid pattern suffix in '%s'", pattern),
+			"",
+		)
 	}
 
 	// Calculate the range from the pattern
@@ -1755,9 +1775,23 @@ func ValidateStatusCodeRangeInt(pattern string, actual int) error {
 	minRange := century * 100
 	maxRange := minRange + 99
 
+	// Get description for the range
+	desc, _ := GetStatusCodeRangeDescription(pattern)
+
 	// Check if actual code is within the range
 	if actual < minRange || actual > maxRange {
-		return fmt.Errorf("status code %d is not in range %s (expected %d-%d)", actual, pattern, minRange, maxRange)
+		expectedRange := fmt.Sprintf("%s (%d-%d)", pattern, minRange, maxRange)
+		if desc != "" {
+			expectedRange = fmt.Sprintf("%s %s (%d-%d)", pattern, desc, minRange, maxRange)
+		}
+
+		return FormatValidationError(
+			"status_code_range",
+			expectedRange,
+			actual,
+			fmt.Sprintf("status code validation failed for pattern '%s'", pattern),
+			"",
+		)
 	}
 
 	return nil
@@ -1847,4 +1881,338 @@ func GetStatusCodeRangeDescription(pattern string) (string, error) {
 	}
 
 	return desc, nil
+}
+
+// =============================================================================
+// ENHANCED VALIDATION ERROR FORMATTING
+// =============================================================================
+
+// ValidationError represents a structured validation error with detailed context.
+type ValidationError struct {
+	// ValidationType is the category of validation (e.g., "status_code", "error_message", "content_type")
+	ValidationType string
+	// Expected is what was expected
+	Expected interface{}
+	// Actual is what was actually received
+	Actual interface{}
+	// Context provides additional context about the validation
+	Context string
+	// Suggestions provides actionable suggestions for fixing the issue
+	Suggestions []string
+	// ResponseSnippet is a truncated excerpt from the response for debugging
+	ResponseSnippet string
+}
+
+// Error formats the ValidationError as a detailed, multi-line error message.
+// The output includes:
+// - The validation type
+// - Expected vs actual values
+// - Context (if provided)
+// - Response snippet (if provided)
+// - Suggestions for fixing the issue
+func (ve ValidationError) Error() string {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("%s validation failed\n", ve.ValidationType))
+
+	// Expected vs Actual
+	switch exp := ve.Expected.(type) {
+	case int:
+		b.WriteString(fmt.Sprintf("  Expected: %d (%s)\n", exp, getStatusCodeDescription(exp)))
+	case []int:
+		b.WriteString("  Expected: one of [")
+		for i, code := range exp {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(fmt.Sprintf("%d (%s)", code, getStatusCodeDescription(code)))
+		}
+		b.WriteString("]\n")
+	case string:
+		b.WriteString(fmt.Sprintf("  Expected: %s\n", exp))
+	default:
+		b.WriteString(fmt.Sprintf("  Expected: %v\n", exp))
+	}
+
+	// Actual value
+	switch act := ve.Actual.(type) {
+	case int:
+		b.WriteString(fmt.Sprintf("  Actual:   %d (%s)\n", act, getStatusCodeDescription(act)))
+	case string:
+		if len(act) > 100 {
+			act = act[:100] + "..."
+		}
+		b.WriteString(fmt.Sprintf("  Actual:   %s\n", act))
+	default:
+		b.WriteString(fmt.Sprintf("  Actual:   %v\n", act))
+	}
+
+	// Context
+	if ve.Context != "" {
+		b.WriteString(fmt.Sprintf("  Context:  %s\n", ve.Context))
+	}
+
+	// Response snippet
+	if ve.ResponseSnippet != "" {
+		b.WriteString(fmt.Sprintf("  Response: %s\n", ve.ResponseSnippet))
+	}
+
+	// Suggestions
+	if len(ve.Suggestions) > 0 {
+		b.WriteString("  Suggestions:\n")
+		for _, suggestion := range ve.Suggestions {
+			b.WriteString(fmt.Sprintf("    - %s\n", suggestion))
+		}
+	}
+
+	return b.String()
+}
+
+// FormatValidationError creates a standardized ValidationError with appropriate suggestions.
+//
+// This helper function automatically generates relevant suggestions based on the
+// validation type and the mismatch between expected and actual values.
+//
+// Parameters:
+//   - validationType: The type of validation (e.g., "status_code", "error_message")
+//   - expected: The expected value
+//   - actual: The actual value received
+//   - context: Additional context (optional)
+//   - responseSnippet: Excerpt from response (optional)
+//
+// Returns a ValidationError with appropriate suggestions populated.
+//
+// Example usage:
+//
+//	err := FormatValidationError("status_code", 200, 404, "GET /api/users", "")
+//	// Output includes suggestions like:
+//	// - Verify the endpoint URL is correct
+//	// - Check if the resource exists
+//	// - Review authentication credentials
+func FormatValidationError(validationType string, expected, actual interface{}, context, responseSnippet string) ValidationError {
+	ve := ValidationError{
+		ValidationType:  validationType,
+		Expected:        expected,
+		Actual:          actual,
+		Context:         context,
+		ResponseSnippet: responseSnippet,
+		Suggestions:     generateSuggestions(validationType, expected, actual),
+	}
+
+	return ve
+}
+
+// generateSuggestions generates relevant suggestions based on validation type and values.
+func generateSuggestions(validationType string, expected, actual interface{}) []string {
+	var suggestions []string
+
+	switch validationType {
+	case "status_code":
+		suggestions = generateStatusCodeSuggestions(expected, actual)
+	case "error_message":
+		suggestions = generateErrorMessageSuggestions(expected, actual)
+	case "content_type":
+		suggestions = generateContentTypeSuggestions(expected, actual)
+	case "status_code_range":
+		suggestions = generateStatusCodeRangeSuggestions(expected, actual)
+	default:
+		suggestions = []string{"Review the request parameters and try again"}
+	}
+
+	return suggestions
+}
+
+// generateStatusCodeSuggestions generates suggestions for status code mismatches.
+func generateStatusCodeSuggestions(expected, actual interface{}) []string {
+	var suggestions []string
+
+	actualCode, ok := actual.(int)
+	if !ok {
+		return []string{"Verify the response format is correct"}
+	}
+
+	switch {
+	case actualCode >= 400 && actualCode < 500:
+		// Client errors
+		switch actualCode {
+		case 400:
+			suggestions = append(suggestions,
+				"Check request body syntax and formatting",
+				"Verify all required fields are present",
+				"Ensure content-type header matches request body format")
+		case 401:
+			suggestions = append(suggestions,
+				"Verify authentication credentials are correct",
+				"Check if API token or session has expired",
+				"Ensure Authorization header is properly formatted")
+		case 403:
+			suggestions = append(suggestions,
+				"Verify your account has permission to access this resource",
+				"Check if additional scopes or roles are required",
+				"Review API documentation for required permissions")
+		case 404:
+			suggestions = append(suggestions,
+				"Verify the endpoint URL is correct",
+				"Check if the resource ID or identifier exists",
+				"Ensure the resource hasn't been deleted or moved")
+		case 409:
+			suggestions = append(suggestions,
+				"Check if a resource with this identifier already exists",
+				"Verify unique constraints on the resource",
+				"Consider using PUT instead of POST for updates")
+		case 429:
+			suggestions = append(suggestions,
+				"Implement rate limiting and exponential backoff",
+				"Check API quota limits",
+				"Consider caching responses to reduce request frequency")
+		default:
+			suggestions = append(suggestions,
+				"Review request parameters and body",
+				"Check API documentation for requirements",
+				"Verify all headers are correctly set")
+		}
+	case actualCode >= 500 && actualCode < 600:
+		// Server errors
+		suggestions = append(suggestions,
+			"Implement retry logic with exponential backoff",
+			"Check service status page for ongoing issues",
+			"Contact support if the issue persists")
+	}
+
+	if len(suggestions) == 0 {
+		suggestions = append(suggestions, "Review the request and response for details")
+	}
+
+	return suggestions
+}
+
+// generateErrorMessageSuggestions generates suggestions for error message mismatches.
+func generateErrorMessageSuggestions(expected, actual interface{}) []string {
+	expectedStr, _ := expected.(string)
+	actualStr, _ := actual.(string)
+
+	expectedLower := strings.ToLower(expectedStr)
+	actualLower := strings.ToLower(actualStr)
+
+	var suggestions []string
+
+	// Check for common error patterns
+	switch {
+	case strings.Contains(expectedLower, "token") && strings.Contains(actualLower, "expired"):
+		suggestions = append(suggestions,
+			"Refresh the authentication token",
+			"Check token expiration time",
+			"Implement automatic token refresh")
+	case strings.Contains(expectedLower, "token") && strings.Contains(actualLower, "invalid"):
+		suggestions = append(suggestions,
+			"Verify token is correctly formatted",
+			"Check token is for the correct resource",
+			"Ensure token hasn't been revoked")
+	case strings.Contains(expectedLower, "auth") && strings.Contains(actualLower, "denied"):
+		suggestions = append(suggestions,
+			"Verify account permissions",
+			"Check if additional authorization scopes are needed",
+			"Review API key or token permissions")
+	case strings.Contains(expectedLower, "not found") || strings.Contains(expectedLower, "does not exist"):
+		suggestions = append(suggestions,
+			"Verify the resource identifier is correct",
+			"Check if the resource exists",
+			"Ensure the resource hasn't been deleted")
+	case strings.Contains(expectedLower, "validation") || strings.Contains(expectedLower, "invalid"):
+		suggestions = append(suggestions,
+			"Review request body for missing required fields",
+			"Verify data types match expected format",
+			"Check field constraints (length, format, values)")
+	case strings.Contains(expectedLower, "rate") || strings.Contains(expectedLower, "quota"):
+		suggestions = append(suggestions,
+			"Implement rate limiting",
+			"Check API quota limits",
+			"Add exponential backoff for retries")
+	default:
+		suggestions = append(suggestions,
+			"Review the error message for specific details",
+			"Check API documentation for this error type",
+			"Verify request parameters match requirements")
+	}
+
+	return suggestions
+}
+
+// generateContentTypeSuggestions generates suggestions for content-type mismatches.
+func generateContentTypeSuggestions(expected, actual interface{}) []string {
+	return []string{
+		"Verify Content-Type header matches request body format",
+		"Check if charset or boundary parameters are needed",
+		"Ensure the body is properly formatted for the content type",
+	}
+}
+
+// generateStatusCodeRangeSuggestions generates suggestions for status code range mismatches.
+func generateStatusCodeRangeSuggestions(expected, actual interface{}) []string {
+	actualCode, ok := actual.(int)
+	if !ok {
+		return []string{"Verify the response format is correct"}
+	}
+
+	var suggestions []string
+
+	switch {
+	case actualCode >= 200 && actualCode < 300:
+		suggestions = append(suggestions,
+			"The request succeeded - update test expectations if this is expected behavior",
+			"Verify the test is checking for the correct response type")
+	case actualCode >= 400 && actualCode < 500:
+		suggestions = append(suggestions,
+			"Review request parameters for errors",
+			"Check authentication credentials",
+			"Verify the resource exists and is accessible")
+	case actualCode >= 500 && actualCode < 600:
+		suggestions = append(suggestions,
+			"Check if this is a temporary server issue",
+			"Implement retry logic with backoff",
+			"Verify service status and availability")
+	default:
+		suggestions = append(suggestions,
+			"Review the unexpected status code",
+			"Check API documentation for valid codes",
+			"Verify the request is properly formatted")
+	}
+
+	return suggestions
+}
+
+// getStatusCodeDescription returns a human-readable description for a status code.
+// This is a lightweight version for error formatting.
+func getStatusCodeDescription(code int) string {
+	descriptions := map[int]string{
+		100: "Continue", 101: "Switching Protocols", 102: "Processing",
+		200: "OK", 201: "Created", 202: "Accepted", 203: "Non-Authoritative Information",
+		204: "No Content", 205: "Reset Content", 206: "Partial Content",
+		300: "Multiple Choices", 301: "Moved Permanently", 302: "Found",
+		303: "See Other", 304: "Not Modified", 307: "Temporary Redirect",
+		308: "Permanent Redirect",
+		400: "Bad Request", 401: "Unauthorized", 402: "Payment Required",
+		403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed",
+		406: "Not Acceptable", 407: "Proxy Authentication Required",
+		408: "Request Timeout", 409: "Conflict", 410: "Gone",
+		411: "Length Required", 412: "Precondition Failed",
+		413: "Payload Too Large", 414: "URI Too Long",
+		415: "Unsupported Media Type", 416: "Range Not Satisfiable",
+		417: "Expectation Failed", 418: "I'm a teapot",
+		422: "Unprocessable Entity", 423: "Locked", 424: "Failed Dependency",
+		426: "Upgrade Required", 428: "Precondition Required",
+		429: "Too Many Requests", 431: "Request Header Fields Too Large",
+		451: "Unavailable For Legal Reasons",
+		500: "Internal Server Error", 501: "Not Implemented",
+		502: "Bad Gateway", 503: "Service Unavailable",
+		504: "Gateway Timeout", 505: "HTTP Version Not Supported",
+		506: "Variant Also Negotiates", 507: "Insufficient Storage",
+		508: "Loop Detected", 510: "Not Extended",
+		511: "Network Authentication Required",
+	}
+
+	if desc, ok := descriptions[code]; ok {
+		return desc
+	}
+	return "Unknown"
 }
