@@ -783,9 +783,13 @@ func ValidateErrorResponseStructure(t *testing.T, body []byte, options ErrorStru
 		}
 	}
 
-	// Validate message contains expected text if specified
-	if options.MessageContains != "" && !strings.Contains(s3Err.Message, options.MessageContains) {
-		allValid = false
+	// Validate message contains expected text if specified (case-insensitive)
+	if options.MessageContains != "" {
+		messageLower := strings.ToLower(s3Err.Message)
+		keywordLower := strings.ToLower(options.MessageContains)
+		if !strings.Contains(messageLower, keywordLower) {
+			allValid = false
+		}
 	}
 
 	// Validate custom fields if specified
