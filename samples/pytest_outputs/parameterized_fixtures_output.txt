@@ -1,0 +1,81 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest_outputs
+collecting ... collected 13 items
+
+test_parameterized_and_fixtures.py::test_addition_cases[case1-10-5-15] FAILED [  7%]
+test_parameterized_and_fixtures.py::test_addition_cases[case2-20-30-50] FAILED [ 15%]
+test_parameterized_and_fixtures.py::test_addition_cases[case3-5-5-12] FAILED [ 23%]
+test_parameterized_and_fixtures.py::test_addition_cases[case4--5-5-0] FAILED [ 30%]
+test_parameterized_and_fixtures.py::test_addition_cases[case5-100-200-300] FAILED [ 38%]
+test_parameterized_and_fixtures.py::test_database_query FAILED           [ 46%]
+test_parameterized_and_fixtures.py::test_with_bad_setup ERROR            [ 53%]
+test_parameterized_and_fixtures.py::test_complex_object_equality_fail FAILED [ 61%]
+test_parameterized_and_fixtures.py::test_string_length[hello-5] PASSED   [ 69%]
+test_parameterized_and_fixtures.py::test_string_length[world-5] PASSED   [ 76%]
+test_parameterized_and_fixtures.py::test_string_length[test-4] PASSED    [ 84%]
+test_parameterized_and_fixtures.py::test_string_length[longer string-13] PASSED [ 92%]
+test_parameterized_and_fixtures.py::test_string_length[emoji \U0001f60a-7] FAILED [100%]
+
+==================================== ERRORS ====================================
+____________________ ERROR at setup of test_with_bad_setup _____________________
+test_parameterized_and_fixtures.py:49: in setup_teardown_failure
+    raise RuntimeError("Setup failed!")
+E   RuntimeError: Setup failed!
+---------------------------- Captured stdout setup -----------------------------
+
+Setting up...
+=================================== FAILURES ===================================
+______________________ test_addition_cases[case1-10-5-15] ______________________
+test_parameterized_and_fixtures.py:22: in test_addition_cases
+    assert result == expected, f"{name}: {a} + {b} = {result}, expected {expected}"
+E   AssertionError: case1: 10 + 5 = 16, expected 15
+E   assert 16 == 15
+_____________________ test_addition_cases[case2-20-30-50] ______________________
+test_parameterized_and_fixtures.py:22: in test_addition_cases
+    assert result == expected, f"{name}: {a} + {b} = {result}, expected {expected}"
+E   AssertionError: case2: 20 + 30 = 51, expected 50
+E   assert 51 == 50
+______________________ test_addition_cases[case3-5-5-12] _______________________
+test_parameterized_and_fixtures.py:22: in test_addition_cases
+    assert result == expected, f"{name}: {a} + {b} = {result}, expected {expected}"
+E   AssertionError: case3: 5 + 5 = 11, expected 12
+E   assert 11 == 12
+______________________ test_addition_cases[case4--5-5-0] _______________________
+test_parameterized_and_fixtures.py:22: in test_addition_cases
+    assert result == expected, f"{name}: {a} + {b} = {result}, expected {expected}"
+E   AssertionError: case4: -5 + 5 = 1, expected 0
+E   assert 1 == 0
+____________________ test_addition_cases[case5-100-200-300] ____________________
+test_parameterized_and_fixtures.py:22: in test_addition_cases
+    assert result == expected, f"{name}: {a} + {b} = {result}, expected {expected}"
+E   AssertionError: case5: 100 + 200 = 301, expected 300
+E   assert 301 == 300
+_____________________________ test_database_query ______________________________
+test_parameterized_and_fixtures.py:40: in test_database_query
+    result = broken_database.query("SELECT * FROM users")
+test_parameterized_and_fixtures.py:33: in query
+    raise ConnectionError("Database not connected")
+E   ConnectionError: Database not connected
+______________________ test_complex_object_equality_fail _______________________
+test_parameterized_and_fixtures.py:75: in test_complex_object_equality_fail
+    assert actual == expected, f"Objects don't match: {actual!r} != {expected!r}"
+E   AssertionError: Objects don't match: Person(name='Alice', age=31, email='alice@example.com') != Person(name='Alice', age=30, email='alice@example.com')
+E   assert Person(name='Alice', age=31, email='alice@example.com') == Person(name='Alice', age=30, email='alice@example.com')
+____________________ test_string_length[emoji \U0001f60a-7] ____________________
+test_parameterized_and_fixtures.py:89: in test_string_length
+    assert result == expected, f"Length of {input!r}: got {result}, expected {expected}"
+E   AssertionError: Length of 'emoji 😊': got 10, expected 7
+E   assert 10 == 7
+=========================== short test summary info ============================
+FAILED test_parameterized_and_fixtures.py::test_addition_cases[case1-10-5-15]
+FAILED test_parameterized_and_fixtures.py::test_addition_cases[case2-20-30-50]
+FAILED test_parameterized_and_fixtures.py::test_addition_cases[case3-5-5-12]
+FAILED test_parameterized_and_fixtures.py::test_addition_cases[case4--5-5-0]
+FAILED test_parameterized_and_fixtures.py::test_addition_cases[case5-100-200-300]
+FAILED test_parameterized_and_fixtures.py::test_database_query - ConnectionEr...
+FAILED test_parameterized_and_fixtures.py::test_complex_object_equality_fail
+FAILED test_parameterized_and_fixtures.py::test_string_length[emoji \U0001f60a-7]
+ERROR test_parameterized_and_fixtures.py::test_with_bad_setup - RuntimeError:...
+===================== 8 failed, 4 passed, 1 error in 0.07s =====================

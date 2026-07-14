@@ -1,0 +1,27 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0
+rootdir: /home/coding/ARMOR/samples/pytest_outputs
+collected 1 item
+
+test_collection_comparisons.py F                                         [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_dict_equality_fail ____________________________
+
+    def test_dict_equality_fail():
+        """Dictionary comparison with different values"""
+        expected = {"name": "Alice", "age": 30, "city": "NYC"}
+        actual = {"name": "Alice", "age": 31, "city": "NYC"}
+>       assert actual == expected, "Dictionaries don't match"
+E       AssertionError: Dictionaries don't match
+E       assert {'age': 31, '...ame': 'Alice'} == {'age': 30, '...ame': 'Alice'}
+E         
+E         Omitting 2 identical items, use -vv to show
+E         Differing items:
+E         {'age': 31} != {'age': 30}
+E         Use -v to get more diff
+
+test_collection_comparisons.py:18: AssertionError
+=========================== short test summary info ============================
+FAILED test_collection_comparisons.py::test_dict_equality_fail - AssertionErr...
+============================== 1 failed in 0.03s ===============================
