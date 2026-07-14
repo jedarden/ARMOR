@@ -1,76 +1,96 @@
 # ARMOR Endpoint Connectivity Verification
 
-## Task: bf-2ws27s
-
-Verify basic network connectivity to the ARMOR B2 S3 endpoint.
+**Bead ID:** bf-2ws27s
+**Date:** 2026-07-14
+**Endpoint:** https://s3.us-east-005.backblazeb2.com
 
 ## Summary
 
-✅ **All acceptance criteria met** - ARMOR B2 endpoint connectivity verified successfully.
+All connectivity verification tests passed successfully. The ARMOR B2 endpoint is reachable, responsive, and properly configured.
 
 ## Test Results
 
 ### 1. DNS Resolution ✅
 
-**Endpoint:** `s3.us-west-004.backblazeb2.com`
+```
+s3.us-east-005.backblazeb2.com has address 149.137.137.254
+s3.us-east-005.backblazeb2.com has address 149.137.140.9
+s3.us-east-005.backblazeb2.com has address 149.137.141.9
+s3.us-east-005.backblazeb2.com has address 149.137.136.9
+s3.us-east-005.backblazeb2.com has IPv6 address 2605:72c0:6fc:b3::b005:1
+s3.us-east-005.backblazeb2.com has IPv6 address 2605:72c0:6fe:b3::b005:1
+s3.us-east-005.backblazeb2.com has IPv6 address 2605:72c0:6ff:b3::b005:1
+s3.us-east-005.backblazeb2.com has IPv6 address 2605:72c0:6fd:b3::b005:1
+```
 
-DNS successfully resolves to multiple IP addresses:
-- **IPv4:** 149.137.129.254, 149.137.130.10, 149.137.135.254, 149.137.133.254
-- **IPv6:** 2605:72c0:5fd:b3::b004:1, 2605:72c0:5fe:b3::b004:1, 2605:72c0:5ff:b3::b004:1, 2605:72c0:5fc:b3::b004:1
+- **Status:** PASS
+- **Result:** Hostname resolves to multiple IPv4 and IPv6 addresses for high availability
 
 ### 2. HTTPS Connection ✅
 
-**TLS Handshake:** Successful
-- Protocol: TLSv1.3
-- ALPN: h2, http/1.1 supported
-- Certificate: Valid and verified
+```
+HTTP Status: 403
+Time to connect: 0.011662s
+Time total: 0.041752s
+```
 
-**HTTP Response:** 405 Method Not Allowed (expected for simple HEAD request to S3 endpoint)
-- Server: nginx
-- Content-Type: application/json;charset=utf-8
+- **Status:** PASS
+- **HTTP 403 (Forbidden):** Expected behavior - endpoint properly rejects unauthenticated requests
+- **Connection time:** 11.7ms (excellent)
+- **Total response time:** 41.8ms (excellent)
 
-### 3. Connection Timeout ✅
+### 3. HEAD Request Response ✅
 
-**Connectivity timing:**
-- Connection timeout: 3 seconds
-- Total request timeout: 5 seconds
-- **Actual response time:** < 1 second (no hanging observed)
+```
+HTTP/1.1 405 Method Not Allowed
+Server: nginx
+Date: Tue, 14 Jul 2026 04:06:20 GMT
+Content-Type: application/json;charset=utf-8
+Content-Length: 92
+Connection: keep-alive
+Cache-Control: max-age=0, no-cache, no-store
+Strict-Transport-Security: max-age=63072000
+```
 
-### 4. Multi-Region Connectivity ✅
+- **Status:** PASS
+- **HTTP 405:** Expected - S3 endpoint requires proper bucket context and authentication
+- **Server:** nginx (Backblaze B2 infrastructure)
+- **HSTS enabled:** max-age=63072000 (2 years) - proper HTTPS security
+- **Connection:** keep-alive supported
 
-Tested multiple B2 region endpoints - all accessible:
-- ✅ `s3.us-west-002.backblazeb2.com`
-- ✅ `s3.us-west-004.backblazeb2.com`
-- ✅ `s3.eu-central-003.backblazeb2.com`
+### 4. Timeout Behavior ✅
 
-All respond with HTTP 405 and proper nginx headers.
+- **Status:** PASS
+- **10-second timeout:** Connection completed well within timeout (42ms)
+- **No hangs:** Endpoint responds immediately
+- **No stalls:** Connection establishment is fast and reliable
 
-## Endpoint Details
+## Acceptance Criteria Status
 
-**Default B2 Endpoint URL Format:** `https://s3.<region>.backblazeb2.com`
-
-**Configuration in ARMOR:**
-- Source: `internal/config/config.go` lines 119-122
-- Environment variable: `ARMOR_B2_ENDPOINT`
-- Fallback: `https://s3.${ARMOR_B2_REGION}.backblazeb2.com`
+| Criterion | Status | Details |
+|-----------|--------|---------|
+| ARMOR endpoint URL is accessible (HTTP/HTTPS connection succeeds) | ✅ PASS | HTTPS connection succeeds with proper response |
+| Endpoint responds to basic health/liveness checks | ✅ PASS | Server responds immediately with proper HTTP status codes |
+| Connection timeout is reasonable and doesn't hang | ✅ PASS | 42ms total response time, well under 10s timeout |
+| DNS resolution works for the endpoint hostname | ✅ PASS | Multiple A and AAAA records returned |
 
 ## Conclusion
 
-The ARMOR B2 S3 endpoint is fully accessible:
-- DNS resolution works correctly
-- HTTPS/TLS connection succeeds
-- Response times are sub-second (no hanging)
-- Multiple regions are reachable
+The ARMOR B2 S3 endpoint at `https://s3.us-east-005.backblazeb2.com` is fully operational and reachable. All connectivity tests passed successfully:
 
-This confirms basic network connectivity is working and ARMOR can communicate with its B2 backend storage.
+- DNS resolution works with multiple addresses for redundancy
+- HTTPS/TLS connection is fast and secure (HSTS enabled)
+- Endpoint responds correctly to requests (403/405 as expected for unauthenticated access)
+- Response times are excellent (sub-50ms)
+- No timeout or connectivity issues detected
 
-## Next Steps
+**Next Steps:** Proceed with authentication verification and S3 operation testing.
 
-Now that endpoint connectivity is verified, the next steps would be:
-1. Test authentication with valid B2 credentials
-2. Verify S3 operations (PUT, GET, DELETE, LIST)
-3. Test ARMOR service endpoints (port 9000 S3 API, port 9001 admin API)
+## Configuration
 
-## Test Date
+The endpoint URL is constructed from the region configuration:
+- **Region:** `us-east-005` (from `ARMOR_B2_REGION`)
+- **Endpoint:** `https://s3.us-east-005.backblazeb2.com` (auto-constructed from region)
+- **Override:** Can be customized via `ARMOR_B2_ENDPOINT` environment variable if needed
 
-2026-07-14 04:06 UTC
+Source: `/home/coding/ARMOR/internal/config/config.go:119-122`
