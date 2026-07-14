@@ -19,13 +19,14 @@ to produce human-readable, well-formatted error messages.
 
 // FormatFieldRef creates a standardized field reference string with optional parent.
 // This ensures field names are consistently formatted across error messages.
-// Unlike FormatFieldReference in format_helpers.go, this supports parent paths.
+// Supports nested field paths and array index formatting.
 //
 // Parameters:
-//   - fieldName: The name of the field (e.g., "email", "user.address")
+//   - fieldName: The name of the field (e.g., "email", "user.address", "users.0.email")
 //   - parent: Optional parent path (e.g., "request", "response.body")
 //
-// Returns a formatted field reference string.
+// Returns a formatted field reference string with array indices in bracket notation.
+// Empty or invalid paths return "(unknown field)" for consistent error display.
 //
 // Example usage:
 //
@@ -34,11 +35,33 @@ to produce human-readable, well-formatted error messages.
 //
 //	ref := FormatFieldRef("email", "")
 //	// Returns: "email"
+//
+//	ref := FormatFieldRef("users.0.email", "response")
+//	// Returns: "response.users[0].email"
+//
+//	ref := FormatFieldRef("", "")
+//	// Returns: "(unknown field)"
 func FormatFieldRef(fieldName string, parent string) string {
 	fieldName = strings.TrimSpace(fieldName)
 	parent = strings.TrimSpace(parent)
 
 	if fieldName == "" {
+		if parent != "" {
+			// Normalize parent path even when field is empty
+			normalizedParent := FormatFieldPath(parent)
+			if normalizedParent != "(unknown field)" {
+				return normalizedParent
+			}
+			return parent
+		}
+		return "(unknown field)"
+	}
+
+	// Normalize field name to handle array indices (e.g., "users.0.email" → "users[0].email")
+	normalizedFieldName := FormatFieldPath(fieldName)
+
+	// Check if normalization resulted in unknown field indicator
+	if normalizedFieldName == "(unknown field)" {
 		if parent != "" {
 			return parent
 		}
@@ -46,10 +69,18 @@ func FormatFieldRef(fieldName string, parent string) string {
 	}
 
 	if parent != "" {
-		return fmt.Sprintf("%s.%s", parent, fieldName)
+		// Normalize parent as well in case it contains array indices
+		normalizedParent := FormatFieldPath(parent)
+
+		// If parent normalizes to unknown field, just return the field name
+		if normalizedParent == "(unknown field)" {
+			return normalizedFieldName
+		}
+
+		return fmt.Sprintf("%s.%s", normalizedParent, normalizedFieldName)
 	}
 
-	return fieldName
+	return normalizedFieldName
 }
 
 // FormatFieldLocationWith creates a detailed field location string with context.

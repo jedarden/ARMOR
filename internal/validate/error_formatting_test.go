@@ -52,6 +52,72 @@ func TestFormatFieldRef(t *testing.T) {
 			parent:    "  request  ",
 			expected:  "request.email",
 		},
+		{
+			name:      "array index in field name",
+			fieldName: "users.0.email",
+			parent:    "response",
+			expected:  "response.users[0].email",
+		},
+		{
+			name:      "array index without parent",
+			fieldName: "users.0.email",
+			parent:    "",
+			expected:  "users[0].email",
+		},
+		{
+			name:      "array index with bracket notation",
+			fieldName: "users[0].email",
+			parent:    "data",
+			expected:  "data.users[0].email",
+		},
+		{
+			name:      "multiple array indices",
+			fieldName: "data.0.items.1.name",
+			parent:    "response",
+			expected:  "response.data[0].items[1].name",
+		},
+		{
+			name:      "parent with array index",
+			fieldName: "email",
+			parent:    "users.0",
+			expected:  "users[0].email",
+		},
+		{
+			name:      "both parent and field with array indices",
+			fieldName: "profile.email",
+			parent:    "users.0",
+			expected:  "users[0].profile.email",
+		},
+		{
+			name:      "array index at start of field",
+			fieldName: "0.email",
+			parent:    "users",
+			expected:  "users.0.email",
+		},
+		{
+			name:      "empty field name with array parent",
+			fieldName: "",
+			parent:    "users.0",
+			expected:  "users[0]",
+		},
+		{
+			name:      "deeply nested with array indices",
+			fieldName: "items.0.data.values.1.field",
+			parent:    "response",
+			expected:  "response.items[0].data.values[1].field",
+		},
+		{
+			name:      "negative array index",
+			fieldName: "users.-1.email",
+			parent:    "response",
+			expected:  "response.users[-1].email",
+		},
+		{
+			name:      "large array index",
+			fieldName: "users.12345.name",
+			parent:    "",
+			expected:  "users[12345].name",
+		},
 	}
 
 	for _, tt := range tests {
