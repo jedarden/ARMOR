@@ -357,6 +357,97 @@ class TestDiffPatterns(unittest.TestCase):
             assert match.group(2), f"Should extract computation from: {test}"
 
 
+class TestEdgeCasePatterns(unittest.TestCase):
+    """Test edge case patterns from pytest_patterns.md."""
+
+    def test_truncated_output_pattern(self):
+        """Test TRUNCATED_OUTPUT_PATTERN for truncated output warnings."""
+        pattern = r'\.\.\.Full output truncated\s+\((\d+) lines hidden\)'
+        test_cases = [
+            "...Full output truncated (14 lines hidden), use '-vv' to show",
+            "...Full output truncated (7 lines hidden), use '-vv' to show",
+            "...Full output truncated (1 lines hidden), use '-vv' to show",
+            "...Full output truncated (100 lines hidden), use '-vv' to show",
+        ]
+        for test in test_cases:
+            match = re.search(pattern, test)
+            assert match, f"Pattern should match: {test}"
+            assert match.group(1).isdigit(), f"Should extract line count from: {test}"
+
+    def test_truncated_output_pattern_negative(self):
+        """Test TRUNCATED_OUTPUT_PATTERN with invalid inputs."""
+        pattern = r'\.\.\.Full output truncated\s+\((\d+) lines hidden\)'
+        negative_cases = [
+            "...Full output truncated",
+            "...Full output truncated ()",
+            "Full output truncated (14 lines hidden)",
+            "...Some output truncated (14 lines hidden)",
+        ]
+        for test in negative_cases:
+            match = re.search(pattern, test)
+            assert not match, f"Pattern should NOT match: {test}"
+
+    def test_ellipsis_in_values(self):
+        """Test detection of ellipsis in truncated values."""
+        pattern = r'\.\.\.'
+        test_cases = [
+            "assert '\n    This i...ontent.\n    ' == '\n    This i... lines.\n    '",
+            "assert [0, 1, 2, 3, 4, 10, ...] == [0, 1, 2, 3, 4, 5, ...]",
+            "{'users': [{'...92, 87, 91]}]} == {'users': [{'...92, 99, 91]}]}",
+        ]
+        for test in test_cases:
+            match = re.search(pattern, test)
+            assert match, f"Should detect ellipsis in: {test}"
+
+    def test_multiline_escape_sequences(self):
+        """Test detection of escape sequences in string diffs."""
+        pattern = r'[\\n\\t\\r]'
+        test_cases = [
+            "assert '\n    This i...ontent.\n    ' == '\n    This i... lines.\n    '",
+            "Error: 'Line1\\nLine2' != 'Line1\\nLine2\\nLine3'",
+            "Expected 'col1\\tcol2' but got 'col1\\tcol2\\tcol3'",
+        ]
+        for test in test_cases:
+            match = re.search(pattern, test)
+            assert match, f"Should detect escape sequences in: {test}"
+
+    def test_floating_point_precision_pattern(self):
+        """Test detection of floating-point precision issues."""
+        pattern = r'\d+\.\d{16,}'
+        test_cases = [
+            "AssertionError: Floats don't match: 0.30000000000000004 != 0.3",
+            "assert 0.10000000000000001 == 0.1",
+            "Expected 0.9999999999999999 but got 1.0",
+        ]
+        for test in test_cases:
+            match = re.search(pattern, test)
+            assert match, f"Should detect floating-point precision in: {test}"
+
+    def test_boolean_logic_pattern(self):
+        """Test detection of boolean logic assertions."""
+        pattern = r'assert\s+.*?\b(?:and|or|not|True|False)\b'
+        test_cases = [
+            "assert (True and False)",
+            "assert True or False",
+            "assert not x",
+            "assert (x and y) or z",
+        ]
+        for test in test_cases:
+            match = re.search(pattern, test)
+            assert match, f"Should detect boolean logic in: {test}"
+
+    def test_nested_structure_truncation(self):
+        """Test detection of nested structure truncation."""
+        pattern = r'\{.*\.\.\..*\}'
+        test_cases = [
+            "assert {'users': [{'...92, 87, 91]}]} == {'users': [{'...92, 99, 91]}]}",
+            "{'data': [{'items': [1, 2, ...]}]} != {'data': [{'items': [1, 2, 3]}]}",
+        ]
+        for test in test_cases:
+            match = re.search(pattern, test)
+            assert match, f"Should detect nested truncation in: {test}"
+
+
 class TestSectionMarkers(unittest.TestCase):
     """Test patterns for detecting pytest output sections."""
 
@@ -414,6 +505,9 @@ class TestPytestOutputParser(unittest.TestCase):
             'FILE_LOCATION_PATTERN',
             'SHORT_FAILURE_PATTERN',
             'LINE_FAILURE_PATTERN',
+            'LONG_FAILURE_END_PATTERN',
+            'VERBOSE_TEST_PATTERN',
+            'CONCISE_TEST_PATTERN',
             'ASSERT_PATTERN',
             'EQUALITY_PATTERN',
             'CONTAINS_PATTERN',
@@ -526,6 +620,7 @@ def main():
         print("  - File location patterns (positive + negative cases)")
         print("  - Assertion patterns (positive + negative cases)")
         print("  - Diff patterns (positive + negative cases)")
+        print("  - Edge case patterns (truncation, ellipsis, precision)")
         print("  - Section marker patterns")
         print("  - Parser integration tests")
         print()
