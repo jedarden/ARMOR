@@ -58,10 +58,23 @@ Verified against 15 assertion types across 6 pytest output formats:
 - Range comparison
 - Tuple comparison
 
+## Pattern Consistency Fixes (2026-07-13)
+
+Fixed inconsistencies in Section 9 (Regex Pattern Reference) to match corrected patterns from earlier sections:
+
+**Patterns Fixed:**
+1. `DIFF_POSITION_PATTERN`: `^\s*\?\s+` → `^\s*\?\s*` (flexible whitespace after `?`)
+2. `INDEX_DIFF_PATTERN`: `^\s+At` → `^\s*At` (flexible leading whitespace)
+3. `DICT_DIFF_HEADER`: `^\s+Differing` → `^\s*Differing` (flexible leading whitespace)
+4. `SET_DIFF_LEFT/RIGHT`: `^\s+Extra` → `^\s*Extra` (flexible leading whitespace)
+
+**Verification:** Ran `verify_pytest_patterns.py` - ✅ 22/22 patterns verified working against 6 pytest output samples
+
 ## Commits
 
 - `09f0c342` fix: correct RANGE_DIFF_PATTERN regex and add verification
 - `67e72ebb` docs: verify and fix pytest output parsing patterns (bf-63vue2)
+- `[pending]` docs: fix pattern consistency in pytest_parser.md reference section
 
 **Generated:** 2026-07-13
 **Bead:** bf-63vue2
