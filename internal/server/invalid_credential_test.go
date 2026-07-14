@@ -13,13 +13,6 @@ import (
 	"github.com/jedarden/armor/internal/config"
 )
 
-// S3Error represents an S3 XML error response
-type S3Error struct {
-	XMLName xml.Name `xml:"Error"`
-	Code    string   `xml:"Code"`
-	Message string   `xml:"Message"`
-}
-
 // TestInvalidCredentialRejection tests that invalid credentials are properly rejected
 // with appropriate error responses at the HTTP layer.
 func TestInvalidCredentialRejection(t *testing.T) {
