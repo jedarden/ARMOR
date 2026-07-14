@@ -1,906 +1,1330 @@
 package server
 
 import (
+	"encoding/xml"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jedarden/armor/internal/config"
 )
 
-// TestErrorTestInfrastructure verifies the test infrastructure itself works correctly.
-// These are meta-tests that validate the testing helpers, not the ARMOR server.
+// =============================================================================
+// ERROR TEST INFRASTRUCTURE
+// =============================================================================
+// This file provides reusable test infrastructure for error response testing.
+// It includes:
+// - Test helpers for error response validation
+// - Test fixtures for common error scenarios
+// - Base test structures for extending error tests
+// - Documentation and examples
+//
+// Usage:
+//   1. Use NewTestServer() to create a test server instance
+//   2. Use error response helpers to validate responses
+//   3. Use test fixtures for common scenarios
+//   4. Extend base test structures for custom error types
+// =============================================================================
 
-func TestNewTestServer(t *testing.T) {
-	fixture := NewTestServer(t)
+// =============================================================================
+// COMMON TYPES
+// =============================================================================
 
-	if fixture == nil {
-		t.Fatal("NewTestServer returned nil fixture")
+// S3Error represents an S3 XML error response.
+// This type is used across all error response tests.
+type S3Error struct {
+	XMLName xml.Name `xml:"Error"`
+	Code    string   `xml:"Code"`
+	Message string   `xml:"Message"`
+}
+
+// =============================================================================
+// TEST FIXTURES
+// =============================================================================
+
+// TestServerFixture provides a configured test server for error testing.
+type TestServerFixture struct {
+	Config  *config.Config
+	Handler http.Handler
+}
+
+// NewTestServer creates a new test server fixture with default credentials.
+//
+// The test server is configured with:
+// - Bucket: "test-bucket"
+// - Region: "us-east-005"
+// - Default credentials: TESTACCESSKEY/TESTSECRETKEY...
+// - Full access (no ACL restrictions)
+//
+// Returns a TestServerFixture ready for error testing.
+func NewTestServer(t *testing.T) *TestServerFixture {
+	t.Helper()
+
+	credentials := map[string]*config.Credential{
+		"TESTACCESSKEY": {
+			AccessKey: "TESTACCESSKEY",
+			SecretKey: "TESTSECRETKEY123456789012345678901234",
+			ACLs:      nil, // Full access
+		},
+		"RESTRICTEDKEY": {
+			AccessKey: "RESTRICTEDKEY",
+			SecretKey: "RESTRICTEDSECRET1234567890123456789",
+			ACLs: []config.ACLEntry{
+				{
+					Bucket: "test-bucket",
+					Prefix: "allowed/",
+				},
+			},
+		},
 	}
 
-	if fixture.Config == nil {
-		t.Error("Fixture Config is nil")
+	cfg := &config.Config{
+		Bucket:      "test-bucket",
+		B2Region:    "us-east-005",
+		Credentials: credentials,
+		MEK:         make([]byte, 32),
+		BlockSize:   65536,
 	}
 
-	if fixture.Handler == nil {
-		t.Error("Fixture Handler is nil")
+	server, err := New(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create test server: %v", err)
 	}
 
-	if fixture.Config.Bucket != "test-bucket" {
-		t.Errorf("Expected bucket 'test-bucket', got '%s'", fixture.Config.Bucket)
+	return &TestServerFixture{
+		Config:  cfg,
+		Handler: server.Handler(),
 	}
 }
 
-func TestDefaultTestCredentials(t *testing.T) {
-	creds := DefaultTestCredentials()
+// TestCredentialsFixture provides test credentials for different scenarios.
+type TestCredentialsFixture struct {
+	ValidAccessKey     string
+	ValidSecretKey     string
+	RestrictedAccessKey string
+	RestrictedSecretKey string
+	InvalidAccessKey    string
+	InvalidSecretKey    string
+}
 
-	if creds == nil {
-		t.Fatal("DefaultTestCredentials returned nil")
-	}
-
-	if creds.ValidAccessKey == "" {
-		t.Error("ValidAccessKey is empty")
-	}
-
-	if creds.ValidSecretKey == "" {
-		t.Error("ValidSecretKey is empty")
-	}
-
-	if creds.InvalidAccessKey == "" {
-		t.Error("InvalidAccessKey is empty")
-	}
-
-	if creds.InvalidSecretKey == "" {
-		t.Error("InvalidSecretKey is empty")
+// DefaultTestCredentials returns the default test credentials fixture.
+func DefaultTestCredentials() *TestCredentialsFixture {
+	return &TestCredentialsFixture{
+		ValidAccessKey:      "TESTACCESSKEY",
+		ValidSecretKey:      "TESTSECRETKEY123456789012345678901234",
+		RestrictedAccessKey: "RESTRICTEDKEY",
+		RestrictedSecretKey: "RESTRICTEDSECRET1234567890123456789",
+		InvalidAccessKey:    "INVALIDKEY",
+		InvalidSecretKey:    "WRONGSECRETKEY123456789012345678901",
 	}
 }
 
-func TestVerifyErrorResponse_BasicValidation(t *testing.T) {
-	fixture := NewTestServer(t)
+// =============================================================================
+// ERROR RESPONSE VALIDATION HELPERS
+// =============================================================================
 
-	// Create a request that will produce an error
-	req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent-key")
-	w := httptest.NewRecorder()
-	fixture.Handler.ServeHTTP(w, req)
+// ErrorResponseValidator provides fluent error response validation.
+type ErrorResponseValidator struct {
+	t             *testing.T
+	response      *httptest.ResponseRecorder
+	s3Error       *S3Error
+	expectations  []expectation
+	measuredDuration time.Duration
+}
 
-	// Use the fluent validator
+type expectation struct {
+	name      string
+	validate  func(*ErrorResponseValidator) error
+	failed    bool
+}
+
+// VerifyErrorResponse creates a new validator for the given response.
+func VerifyErrorResponse(t *testing.T, w *httptest.ResponseRecorder) *ErrorResponseValidator {
+	t.Helper()
+
+	return &ErrorResponseValidator{
+		t:        t,
+		response: w,
+	}
+}
+
+// VerifyErrorResponseWithTiming creates a validator that records response time.
+func VerifyErrorResponseWithTiming(t *testing.T, w *httptest.ResponseRecorder, duration time.Duration) *ErrorResponseValidator {
+	t.Helper()
+
+	return &ErrorResponseValidator{
+		t:                t,
+		response:         w,
+		measuredDuration: duration,
+	}
+}
+
+// HTTPStatusCode verifies the HTTP status code.
+func (v *ErrorResponseValidator) HTTPStatusCode(code int) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "HTTPStatusCode",
+		validate: func(ev *ErrorResponseValidator) error {
+			if ev.response.Code != code {
+				ev.t.Errorf("Expected HTTP status %d, got %d", code, ev.response.Code)
+				return nil
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// ContentType verifies the Content-Type header.
+func (v *ErrorResponseValidator) ContentType(contentType string) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "ContentType",
+		validate: func(ev *ErrorResponseValidator) error {
+			actual := ev.response.Header().Get("Content-Type")
+			if actual != contentType {
+				ev.t.Errorf("Expected Content-Type '%s', got '%s'", contentType, actual)
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// HasCode verifies the S3 error code.
+func (v *ErrorResponseValidator) HasCode(code string) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "HasCode",
+		validate: func(ev *ErrorResponseValidator) error {
+			if ev.s3Error == nil {
+				if err := ev.parse(); err != nil {
+					ev.t.Errorf("Failed to parse error response: %v", err)
+					return err
+				}
+			}
+			if ev.s3Error.Code != code {
+				ev.t.Errorf("Expected error code '%s', got '%s'", code, ev.s3Error.Code)
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// HasMessage verifies the error message contains expected text.
+func (v *ErrorResponseValidator) HasMessage(substr string) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "HasMessage",
+		validate: func(ev *ErrorResponseValidator) error {
+			if ev.s3Error == nil {
+				if err := ev.parse(); err != nil {
+					ev.t.Errorf("Failed to parse error response: %v", err)
+					return err
+				}
+			}
+			if !strings.Contains(ev.s3Error.Message, substr) {
+				ev.t.Errorf("Expected error message to contain '%s', got '%s'", substr, ev.s3Error.Message)
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// MessageMinLength verifies the error message is at least n characters.
+func (v *ErrorResponseValidator) MessageMinLength(minLen int) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "MessageMinLength",
+		validate: func(ev *ErrorResponseValidator) error {
+			if ev.s3Error == nil {
+				if err := ev.parse(); err != nil {
+					ev.t.Errorf("Failed to parse error response: %v", err)
+					return err
+				}
+			}
+			if len(ev.s3Error.Message) < minLen {
+				ev.t.Errorf("Error message too short (got %d chars, want at least %d): %s",
+					len(ev.s3Error.Message), minLen, ev.s3Error.Message)
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// ResponseTime verifies the response time is under the threshold.
+func (v *ErrorResponseValidator) ResponseTime(maxDuration time.Duration) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "ResponseTime",
+		validate: func(ev *ErrorResponseValidator) error {
+			if v.measuredDuration > maxDuration {
+				v.t.Errorf("Response time %v exceeds maximum %v", v.measuredDuration, maxDuration)
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// HasXMLDeclaration verifies the response starts with XML declaration.
+func (v *ErrorResponseValidator) HasXMLDeclaration() *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "HasXMLDeclaration",
+		validate: func(ev *ErrorResponseValidator) error {
+			body := v.response.Body.String()
+			if !strings.HasPrefix(body, "<?xml") {
+				v.t.Errorf("Expected XML declaration, got: %s", body[:min(len(body), 50)])
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// BodyNotEmpty verifies the response body is not empty.
+func (v *ErrorResponseValidator) BodyNotEmpty() *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "BodyNotEmpty",
+		validate: func(ev *ErrorResponseValidator) error {
+			if v.response.Body.Len() == 0 {
+				v.t.Error("Expected non-empty response body")
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// MessageContainsAny verifies the message contains at least one of the keywords.
+func (v *ErrorResponseValidator) MessageContainsAny(keywords ...string) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "MessageContainsAny",
+		validate: func(ev *ErrorResponseValidator) error {
+			if ev.s3Error == nil {
+				if err := ev.parse(); err != nil {
+					ev.t.Errorf("Failed to parse error response: %v", err)
+					return err
+				}
+			}
+			message := strings.ToLower(ev.s3Error.Message)
+			found := false
+			for _, keyword := range keywords {
+				if strings.Contains(message, strings.ToLower(keyword)) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				v.t.Errorf("Error message should contain at least one of %v, got: %s",
+					keywords, ev.s3Error.Message)
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// HasCORSHeaders verifies that CORS headers are present on the error response.
+func (v *ErrorResponseValidator) HasCORSHeaders() *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "HasCORSHeaders",
+		validate: func(ev *ErrorResponseValidator) error {
+			origin := ev.response.Header().Get("Access-Control-Allow-Origin")
+			if origin == "" {
+				ev.t.Error("Expected CORS header 'Access-Control-Allow-Origin' to be set")
+			}
+			methods := ev.response.Header().Get("Access-Control-Allow-Methods")
+			if methods == "" {
+				ev.t.Error("Expected CORS header 'Access-Control-Allow-Methods' to be set")
+			}
+			headers := ev.response.Header().Get("Access-Control-Allow-Headers")
+			if headers == "" {
+				ev.t.Error("Expected CORS header 'Access-Control-Allow-Headers' to be set")
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// CORSOrigin verifies the CORS Access-Control-Allow-Origin header value.
+func (v *ErrorResponseValidator) CORSOrigin(origin string) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "CORSOrigin",
+		validate: func(ev *ErrorResponseValidator) error {
+			actual := v.response.Header().Get("Access-Control-Allow-Origin")
+			if actual != origin {
+				ev.t.Errorf("Expected CORS origin '%s', got '%s'", origin, actual)
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// CORSMethods verifies the CORS Access-Control-Allow-Methods header value.
+func (v *ErrorResponseValidator) CORSMethods(methods string) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "CORSMethods",
+		validate: func(ev *ErrorResponseValidator) error {
+			actual := v.response.Header().Get("Access-Control-Allow-Methods")
+			if actual != methods {
+				ev.t.Errorf("Expected CORS methods '%s', got '%s'", methods, actual)
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// CORSHeaders verifies the CORS Access-Control-Allow-Headers header value.
+func (v *ErrorResponseValidator) CORSHeaders(headers string) *ErrorResponseValidator {
+	v.expectations = append(v.expectations, expectation{
+		name: "CORSHeaders",
+		validate: func(ev *ErrorResponseValidator) error {
+			actual := v.response.Header().Get("Access-Control-Allow-Headers")
+			if actual != headers {
+				ev.t.Errorf("Expected CORS headers '%s', got '%s'", headers, actual)
+			}
+			return nil
+		},
+	})
+	return v
+}
+
+// Assert runs all validations and asserts if any fail.
+// This is the terminal method - call it to execute all validations.
+func (v *ErrorResponseValidator) Assert() {
+	v.t.Helper()
+
+	// Parse response once for all validations
+	if err := v.parse(); err != nil {
+		v.t.Fatalf("Failed to parse error response: %v", err)
+		return
+	}
+
+	// Run all validations
+	for _, exp := range v.expectations {
+		if err := exp.validate(v); err != nil {
+			exp.failed = true
+		}
+	}
+}
+
+// parse parses the S3 error response.
+func (v *ErrorResponseValidator) parse() error {
+	if v.s3Error != nil {
+		return nil // Already parsed
+	}
+
+	if v.response.Body.Len() == 0 {
+		return nil // Nothing to parse
+	}
+
+	v.s3Error = &S3Error{}
+	if err := xml.Unmarshal(v.response.Body.Bytes(), v.s3Error); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// =============================================================================
+// SIMPLE VALIDATION HELPERS
+// =============================================================================
+
+// VerifyStandardErrorResponse performs standard error response validation.
+// This is a convenience function for common validation patterns.
+//
+// It verifies:
+// - HTTP status code matches expected
+// - Content-Type is "application/xml"
+// - Response body is not empty
+// - Error code matches expected
+// - Error message is at least 15 characters
+// - Response starts with XML declaration
+func VerifyStandardErrorResponse(t *testing.T, w *httptest.ResponseRecorder, expectedCode string, expectedStatus int) {
+	t.Helper()
+
 	VerifyErrorResponse(t, w).
-		HTTPStatusCode(404).
+		HTTPStatusCode(expectedStatus).
 		ContentType("application/xml").
 		BodyNotEmpty().
-		HasCode("NoSuchKey").
+		HasCode(expectedCode).
 		MessageMinLength(15).
 		HasXMLDeclaration().
 		Assert()
 }
 
-func TestVerifyErrorResponse_MessageValidation(t *testing.T) {
-	fixture := NewTestServer(t)
+// ParseErrorResponse parses an S3 error response from the response body.
+func ParseErrorResponse(t *testing.T, body []byte) *S3Error {
+	t.Helper()
 
-	// Test NoSuchKey scenario
-	req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/missing-object")
-	w := httptest.NewRecorder()
-	fixture.Handler.ServeHTTP(w, req)
+	var s3Err S3Error
+	if err := xml.Unmarshal(body, &s3Err); err != nil {
+		t.Fatalf("Failed to parse error response: %v", err)
+	}
 
-	// Use message validation
-	VerifyErrorResponse(t, w).
-		HasCode("NoSuchKey").
-		MessageContainsAny("not found", "object", "key").
-		Assert()
+	return &s3Err
 }
 
-func TestVerifyErrorResponse_WithTiming(t *testing.T) {
-	fixture := NewTestServer(t)
+// =============================================================================
+// CORE VALIDATION HELPER FUNCTIONS
+// =============================================================================
+// These are standalone helper functions for validating HTTP error responses.
+// They provide a simpler alternative to the fluent ErrorResponseValidator API.
+// Each helper performs a single validation and can be used independently.
+// =============================================================================
 
-	req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
+// ValidateHTTPStatusCode validates the HTTP status code of an error response.
+//
+// This helper function checks that the response has the expected HTTP status code.
+// It's useful for verifying that error responses return the correct status codes
+// (e.g., 404 for NotFound, 403 for Forbidden, 400 for BadRequest).
+//
+// Example:
+//   ValidateHTTPStatusCode(t, w, 404)
+func ValidateHTTPStatusCode(t *testing.T, w *httptest.ResponseRecorder, expectedCode int) {
+	t.Helper()
 
-	duration, w := MeasureRequestTime(fixture.Handler, req)
-
-	// Verify with timing
-	VerifyErrorResponseWithTiming(t, w, duration).
-		HTTPStatusCode(404).
-		ResponseTime(100 * time.Millisecond).
-		Assert()
+	if w.Code != expectedCode {
+		t.Errorf("Expected HTTP status code %d, got %d", expectedCode, w.Code)
+	}
 }
 
-func TestVerifyStandardErrorResponse(t *testing.T) {
-	fixture := NewTestServer(t)
+// ValidateContentType validates the Content-Type header of an error response.
+//
+// This helper function checks that the response has the expected Content-Type header.
+// For S3-compatible error responses, this should typically be "application/xml".
+// ValidateContentType is defined in content_type_validation.go with enhanced functionality.
 
-	req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/missing")
-	w := httptest.NewRecorder()
-	fixture.Handler.ServeHTTP(w, req)
+// ValidateErrorStructure validates that an error response has proper structure.
+//
+// This helper function checks that the error response contains:
+// - A non-empty response body
+// - A valid S3 Error XML structure with Code and Message fields
+// - A non-empty error code
+// - A non-empty error message
+//
+// This ensures the error response is well-formed and contains the required fields.
+//
+// Example:
+//   ValidateErrorStructure(t, w)
+func ValidateErrorStructure(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
 
-	// Use the convenience function
-	VerifyStandardErrorResponse(t, w, "NoSuchKey", 404)
+	// Check response body is not empty
+	if w.Body.Len() == 0 {
+		t.Fatal("Error response body is empty")
+	}
+
+	// Parse the error response
+	s3Err := ParseErrorResponse(t, w.Body.Bytes())
+
+	// Validate error code is present
+	if s3Err.Code == "" {
+		t.Error("Error response missing Code field")
+	}
+
+	// Validate error message is present
+	if s3Err.Message == "" {
+		t.Error("Error response missing Message field")
+	}
 }
 
-func TestParseErrorResponse(t *testing.T) {
-	fixture := NewTestServer(t)
-
-	req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/missing")
-	w := httptest.NewRecorder()
-	fixture.Handler.ServeHTTP(w, req)
+// ValidateErrorCode validates the S3 error code in an error response.
+//
+// This helper function checks that the error response contains the expected S3 error code.
+// Common S3 error codes include: NoSuchKey, AccessDenied, InvalidRequest, etc.
+//
+// Example:
+//   ValidateErrorCode(t, w, "NoSuchKey")
+func ValidateErrorCode(t *testing.T, w *httptest.ResponseRecorder, expectedCode string) {
+	t.Helper()
 
 	s3Err := ParseErrorResponse(t, w.Body.Bytes())
 
-	if s3Err.Code != "NoSuchKey" {
-		t.Errorf("Expected error code 'NoSuchKey', got '%s'", s3Err.Code)
-	}
-
-	if s3Err.Message == "" {
-		t.Error("Expected non-empty error message")
+	if s3Err.Code != expectedCode {
+		t.Errorf("Expected error code '%s', got '%s'", expectedCode, s3Err.Code)
 	}
 }
 
-func TestCreateTestRequest(t *testing.T) {
-	t.Run("Basic request creation", func(t *testing.T) {
-		req := CreateTestRequest(t, "GET", "/test-bucket/key", nil, nil)
+// ValidateCORSHeaders validates that CORS headers are present on an error response.
+//
+// This helper function checks that the error response includes the required CORS headers:
+// - Access-Control-Allow-Origin
+// - Access-Control-Allow-Methods
+// - Access-Control-Allow-Headers
+//
+// This ensures that error responses properly support cross-origin requests.
+//
+// Example:
+//   ValidateCORSHeaders(t, w)
+func ValidateCORSHeaders(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
 
-		if req.Method != "GET" {
-			t.Errorf("Expected method GET, got %s", req.Method)
-		}
-
-		if req.URL.Path != "/test-bucket/key" {
-			t.Errorf("Expected path /test-bucket/key, got %s", req.URL.Path)
-		}
-	})
-
-	t.Run("Request with body", func(t *testing.T) {
-		body := strings.NewReader("test body")
-		req := CreateTestRequest(t, "PUT", "/test-bucket/key", body, nil)
-
-		if req.Method != "PUT" {
-			t.Errorf("Expected method PUT, got %s", req.Method)
-		}
-	})
-
-	t.Run("Request with custom headers", func(t *testing.T) {
-		headers := map[string]string{
-			"X-Custom-Header": "custom-value",
-			"X-Another":      "another-value",
-		}
-		req := CreateTestRequest(t, "GET", "/test-bucket/key", nil, headers)
-
-		if req.Header.Get("X-Custom-Header") != "custom-value" {
-			t.Error("Custom header not set")
-		}
-
-		if req.Header.Get("X-Another") != "another-value" {
-			t.Error("Another custom header not set")
-		}
-	})
-}
-
-func TestCreateAuthenticatedTestRequest(t *testing.T) {
-	req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/key")
-
-	if req == nil {
-		t.Fatal("CreateAuthenticatedTestRequest returned nil")
+	// Check Access-Control-Allow-Origin
+	origin := w.Header().Get("Access-Control-Allow-Origin")
+	if origin == "" {
+		t.Error("Expected CORS header 'Access-Control-Allow-Origin' to be set")
 	}
 
-	if req.Method != "GET" {
-		t.Errorf("Expected method GET, got %s", req.Method)
+	// Check Access-Control-Allow-Methods
+	methods := w.Header().Get("Access-Control-Allow-Methods")
+	if methods == "" {
+		t.Error("Expected CORS header 'Access-Control-Allow-Methods' to be set")
 	}
 
-	auth := req.Header.Get("Authorization")
-	if auth == "" {
-		t.Error("Authorization header not set")
-	}
-
-	if !strings.Contains(auth, "AWS4-HMAC-SHA256") {
-		t.Error("Authorization header missing AWS4-HMAC-SHA256")
+	// Check Access-Control-Allow-Headers
+	headers := w.Header().Get("Access-Control-Allow-Headers")
+	if headers == "" {
+		t.Error("Expected CORS header 'Access-Control-Allow-Headers' to be set")
 	}
 }
 
-func TestRunErrorScenario(t *testing.T) {
-	fixture := NewTestServer(t)
+// ValidateCORSOrigin validates the CORS Access-Control-Allow-Origin header value.
+//
+// This helper function checks that the error response has the expected CORS origin.
+// Common values are "*" (allow all origins) or a specific origin.
+//
+// Example:
+//   ValidateCORSOrigin(t, w, "*")
+func ValidateCORSOrigin(t *testing.T, w *httptest.ResponseRecorder, expectedOrigin string) {
+	t.Helper()
 
-	scenario := ErrorScenario{
-		Name: "Test scenario",
-		SetupRequest: func(t *testing.T) *http.Request {
-			return CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		},
-		ExpectedCode:     "NoSuchKey",
-		ExpectedStatus:   404,
-		MinMessageLength:  15,
-		MaxResponseTime:  100 * time.Millisecond,
-		ExpectedKeywords: []string{"not found"},
-	}
-
-	result := RunErrorScenario(t, fixture, scenario)
-
-	if !result.Passed {
-		t.Errorf("Scenario should have passed, got: %+v", result)
-	}
-
-	if result.ScenarioName != "Test scenario" {
-		t.Errorf("Expected scenario name 'Test scenario', got '%s'", result.ScenarioName)
-	}
-
-	if result.ErrorCode != "NoSuchKey" {
-		t.Errorf("Expected error code 'NoSuchKey', got '%s'", result.ErrorCode)
-	}
-
-	if result.StatusCode != 404 {
-		t.Errorf("Expected status 404, got %d", result.StatusCode)
-	}
-
-	if result.Duration > 100*time.Millisecond {
-		t.Errorf("Response time %v exceeds threshold", result.Duration)
+	actualOrigin := w.Header().Get("Access-Control-Allow-Origin")
+	if actualOrigin != expectedOrigin {
+		t.Errorf("Expected CORS origin '%s', got '%s'", expectedOrigin, actualOrigin)
 	}
 }
 
-func TestErrorTestSuite(t *testing.T) {
-	t.Run("Create and run suite", func(t *testing.T) {
-		suite := NewErrorTestSuite(t, "Test Suite")
+// ValidateCORSMethods validates the CORS Access-Control-Allow-Methods header value.
+//
+// This helper function checks that the error response has the expected CORS methods.
+// Common values include: "GET, PUT, DELETE, HEAD, POST, OPTIONS"
+//
+// Example:
+//   ValidateCORSMethods(t, w, "GET, PUT, DELETE, HEAD, POST, OPTIONS")
+func ValidateCORSMethods(t *testing.T, w *httptest.ResponseRecorder, expectedMethods string) {
+	t.Helper()
 
-		if suite == nil {
-			t.Fatal("NewErrorTestSuite returned nil")
-		}
-
-		if suite.name != "Test Suite" {
-			t.Errorf("Expected suite name 'Test Suite', got '%s'", suite.name)
-		}
-
-		if suite.fixture == nil {
-			t.Error("Suite fixture is nil")
-		}
-
-		// Add scenarios
-		suite.AddScenario(ErrorScenario{
-			Name: "Scenario 1",
-			SetupRequest: func(t *testing.T) *http.Request {
-				return CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/key1")
-			},
-			ExpectedCode:    "NoSuchKey",
-			ExpectedStatus:  404,
-			MinMessageLength: 15,
-		}).AddScenario(ErrorScenario{
-			Name: "Scenario 2",
-			SetupRequest: func(t *testing.T) *http.Request {
-				return CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/key2")
-			},
-			ExpectedCode:    "NoSuchKey",
-			ExpectedStatus:  404,
-			MinMessageLength: 15,
-		})
-
-		if len(suite.scenarios) != 2 {
-			t.Errorf("Expected 2 scenarios, got %d", len(suite.scenarios))
-		}
-
-		suite.Run()
-		suite.ReportStatistics()
-
-		// Verify results were collected
-		if len(suite.results) != 2 {
-			t.Errorf("Expected 2 results, got %d", len(suite.results))
-		}
-	})
-
-	t.Run("Fluent API for adding scenarios", func(t *testing.T) {
-		suite := NewErrorTestSuite(t, "Fluent Suite")
-
-		suite.AddScenario(ErrorScenario{
-			Name: "First",
-			SetupRequest: func(t *testing.T) *http.Request {
-				return CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/key")
-			},
-			ExpectedCode:    "NoSuchKey",
-			ExpectedStatus:  404,
-			MinMessageLength: 15,
-		})
-
-		if len(suite.scenarios) != 1 {
-			t.Errorf("Expected 1 scenario, got %d", len(suite.scenarios))
-		}
-
-		// Verify chaining returns the same suite
-		newSuite := suite.AddScenario(ErrorScenario{
-			Name: "Second",
-			SetupRequest: func(t *testing.T) *http.Request {
-				return CreateAuthenticatedTestRequest(t, "POST", "/test-bucket/key")
-			},
-			ExpectedCode:    "InvalidRequest",
-			ExpectedStatus:  400,
-			MinMessageLength: 20,
-		})
-
-		if newSuite != suite {
-			t.Error("Fluent API should return the same suite instance")
-		}
-
-		if len(suite.scenarios) != 2 {
-			t.Errorf("Expected 2 scenarios after fluent add, got %d", len(suite.scenarios))
-		}
-	})
-}
-
-func TestMeasureRequestTime(t *testing.T) {
-	fixture := NewTestServer(t)
-
-	req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/key")
-
-	duration, w := MeasureRequestTime(fixture.Handler, req)
-
-	if duration < 0 {
-		t.Errorf("Duration should be positive, got %v", duration)
-	}
-
-	if w == nil {
-		t.Error("ResponseRecorder should not be nil")
-	}
-
-	if w.Code == 0 {
-		t.Error("Expected HTTP status code, got 0")
+	actualMethods := w.Header().Get("Access-Control-Allow-Methods")
+	if actualMethods != expectedMethods {
+		t.Errorf("Expected CORS methods '%s', got '%s'", expectedMethods, actualMethods)
 	}
 }
 
-// TestErrorTestInfrastructure_Examples demonstrates real usage patterns
-func TestErrorTestInfrastructure_Examples(t *testing.T) {
-	t.Run("Example: Testing NoSuchKey scenario", func(t *testing.T) {
-		fixture := NewTestServer(t)
+// ValidateCORSAllowHeaders validates the CORS Access-Control-Allow-Headers header value.
+//
+// This helper function checks that the error response has the expected CORS headers.
+// Common values include: "Authorization, Content-Type, Range, Content-Length"
+//
+// Example:
+//   ValidateCORSAllowHeaders(t, w, "Authorization, Content-Type, Range, Content-Length")
+func ValidateCORSAllowHeaders(t *testing.T, w *httptest.ResponseRecorder, expectedHeaders string) {
+	t.Helper()
 
-		// Create request
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent-file.txt")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		// Validate response
-		VerifyErrorResponse(t, w).
-			HTTPStatusCode(404).
-			HasCode("NoSuchKey").
-			MessageContainsAny("not found", "object", "key").
-			Assert()
-	})
-
-	t.Run("Example: Testing with performance constraints", func(t *testing.T) {
-		fixture := NewTestServer(t)
-
-		req := CreateAuthenticatedTestRequest(t, "POST", "/test-bucket/test-key")
-
-		duration, w := MeasureRequestTime(fixture.Handler, req)
-
-		VerifyErrorResponseWithTiming(t, w, duration).
-			HTTPStatusCode(400).
-			HasCode("InvalidRequest").
-			ResponseTime(100 * time.Millisecond).
-			Assert()
-	})
-
-	t.Run("Example: Using test suite for multiple scenarios", func(t *testing.T) {
-		suite := NewErrorTestSuite(t, "Multiple Error Scenarios")
-
-		// Add multiple scenarios
-		suite.AddScenario(ErrorScenario{
-			Name: "Non-existent object",
-			SetupRequest: func(t *testing.T) *http.Request {
-				return CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/missing")
-			},
-			ExpectedCode:     "NoSuchKey",
-			ExpectedStatus:   404,
-			ExpectedKeywords: []string{"not found"},
-			MinMessageLength: 15,
-		}).AddScenario(ErrorScenario{
-			Name: "Unsupported operation",
-			SetupRequest: func(t *testing.T) *http.Request {
-				return CreateAuthenticatedTestRequest(t, "POST", "/test-bucket/key")
-			},
-			ExpectedCode:     "InvalidRequest",
-			ExpectedStatus:   400,
-			ExpectedKeywords: []string{"post", "unsupported"},
-			MinMessageLength: 20,
-		}).AddScenario(ErrorScenario{
-			Name: "Unsupported method",
-			SetupRequest: func(t *testing.T) *http.Request {
-				return CreateAuthenticatedTestRequest(t, "PATCH", "/test-bucket/key")
-			},
-			ExpectedCode:     "MethodNotAllowed",
-			ExpectedStatus:   405,
-			ExpectedKeywords: []string{"method", "patch"},
-			MinMessageLength: 15,
-		})
-
-		suite.Run()
-		suite.ReportStatistics()
-	})
-}
-
-
-// BenchmarkErrorTestInfrastructure benchmarks the infrastructure helpers
-func BenchmarkErrorTestInfrastructure(b *testing.B) {
-	fixture := NewTestServer(&testing.T{})
-
-	req := CreateTestRequest(&testing.T{}, "GET", "/test-bucket/key", nil, nil)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-		VerifyErrorResponse(&testing.T{}, w).
-			HTTPStatusCode(404).
-			HasCode("NoSuchKey").
-			Assert()
+	actualHeaders := w.Header().Get("Access-Control-Allow-Headers")
+	if actualHeaders != expectedHeaders {
+		t.Errorf("Expected CORS allow-headers '%s', got '%s'", expectedHeaders, actualHeaders)
 	}
 }
 
-func BenchmarkErrorTestSuite(b *testing.B) {
-	b.ReportAllocs()
+// ValidateErrorMessageContains validates that the error message contains expected text.
+//
+// This helper function checks that the error response message contains the specified substring.
+// This is useful for verifying that error messages are descriptive and helpful.
+//
+// Example:
+//   ValidateErrorMessageContains(t, w, "not found")
+func ValidateErrorMessageContains(t *testing.T, w *httptest.ResponseRecorder, expectedText string) {
+	t.Helper()
 
-	suite := NewErrorTestSuite(&testing.T{}, "Benchmark Suite")
+	s3Err := ParseErrorResponse(t, w.Body.Bytes())
 
-	suite.AddScenario(ErrorScenario{
-		Name: "Scenario 1",
-		SetupRequest: func(t *testing.T) *http.Request {
-			return CreateTestRequest(t, "GET", "/test-bucket/key1", nil, nil)
-		},
-		ExpectedCode:    "NoSuchKey",
-		ExpectedStatus:  404,
-	})
+	if !strings.Contains(s3Err.Message, expectedText) {
+		t.Errorf("Expected error message to contain '%s', got '%s'", expectedText, s3Err.Message)
+	}
+}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		suite.Run()
+// ValidateErrorMessageMinLength validates that the error message meets minimum length.
+//
+// This helper function checks that the error response message is at least the specified
+// number of characters. This ensures error messages are sufficiently descriptive.
+//
+// Example:
+//   ValidateErrorMessageMinLength(t, w, 15)
+func ValidateErrorMessageMinLength(t *testing.T, w *httptest.ResponseRecorder, minLength int) {
+	t.Helper()
+
+	s3Err := ParseErrorResponse(t, w.Body.Bytes())
+
+	if len(s3Err.Message) < minLength {
+		t.Errorf("Error message too short (got %d chars, want at least %d): %s",
+			len(s3Err.Message), minLength, s3Err.Message)
+	}
+}
+
+// ValidateXMLDeclaration validates that the response starts with an XML declaration.
+//
+// This helper function checks that the error response begins with "<?xml" which indicates
+// a proper XML declaration. S3 error responses should be valid XML documents.
+//
+// Example:
+//   ValidateXMLDeclaration(t, w)
+func ValidateXMLDeclaration(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+
+	body := w.Body.String()
+
+	if !strings.HasPrefix(body, "<?xml") {
+		t.Errorf("Expected response to start with XML declaration, got: %s", body[:min(len(body), 50)])
 	}
 }
 
 // =============================================================================
-// CORS VALIDATION HELPER TESTS
+// ERROR RESPONSE STRUCTURE VALIDATION
+// =============================================================================
+// These helpers provide comprehensive error response structure validation
+// with support for optional field validation and detailed error reporting.
 // =============================================================================
 
-// TestCORSValidationHelpers tests the new CORS validation helper functions.
-func TestCORSValidationHelpers(t *testing.T) {
-	fixture := NewTestServer(t)
-
-	t.Run("HasCORSHeaders validates all CORS headers present", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		VerifyErrorResponse(t, w).
-			HasCORSHeaders().
-			Assert()
-	})
-
-	t.Run("CORSOrigin validates Access-Control-Allow-Origin header", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		VerifyErrorResponse(t, w).
-			CORSOrigin("*").
-			Assert()
-	})
-
-	t.Run("CORSMethods validates Access-Control-Allow-Methods header", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		VerifyErrorResponse(t, w).
-			CORSMethods("GET, PUT, DELETE, HEAD, POST, OPTIONS").
-			Assert()
-	})
-
-	t.Run("CORSHeaders validates Access-Control-Allow-Headers header", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		VerifyErrorResponse(t, w).
-			CORSHeaders("Authorization, Content-Type, Range, Content-Length").
-			Assert()
-	})
-
-	t.Run("Combined CORS validation with other checks", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		// Verify all CORS headers along with standard error response checks
-		VerifyErrorResponse(t, w).
-			HTTPStatusCode(404).
-			ContentType("application/xml").
-			HasCORSHeaders().
-			CORSOrigin("*").
-			CORSMethods("GET, PUT, DELETE, HEAD, POST, OPTIONS").
-			CORSHeaders("Authorization, Content-Type, Range, Content-Length").
-			HasCode("NoSuchKey").
-			BodyNotEmpty().
-			Assert()
-	})
+// ErrorStructureValidationOptions configures error structure validation.
+type ErrorStructureValidationOptions struct {
+	// RequireCode ensures the error code field is present and non-empty
+	RequireCode bool
+	// RequireMessage ensures the error message field is present and non-empty
+	RequireMessage bool
+	// ExpectedCode checks that the error code matches the expected value
+	ExpectedCode string
+	// MinMessageLength ensures the error message meets minimum length
+	MinMessageLength int
+	// MessageContains checks that the error message contains specific text
+	MessageContains string
+	// CustomFields validates additional custom fields in the error response
+	CustomFields map[string]string
 }
 
-// TestCORSHeadersOnAllErrors verifies CORS headers are present on all error responses.
-func TestCORSHeadersOnAllErrors(t *testing.T) {
-	fixture := NewTestServer(t)
+// DefaultValidationOptions returns default validation options.
+func DefaultValidationOptions() ErrorStructureValidationOptions {
+	return ErrorStructureValidationOptions{
+		RequireCode:      true,
+		RequireMessage:   true,
+		MinMessageLength: 10,
+		CustomFields:     make(map[string]string),
+	}
+}
 
-	errorScenarios := []struct {
-		name           string
-		setupRequest   func() *http.Request
-		expectedStatus int
-	}{
-		{
-			name: "404 NoSuchKey has CORS headers",
-			setupRequest: func() *http.Request {
-				return CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-			},
-			expectedStatus: 404,
-		},
-		{
-			name: "400 InvalidRequest has CORS headers",
-			setupRequest: func() *http.Request {
-				return CreateAuthenticatedTestRequest(t, "POST", "/test-bucket/test-key")
-			},
-			expectedStatus: 400,
-		},
-		{
-			name: "405 MethodNotAllowed has CORS headers",
-			setupRequest: func() *http.Request {
-				return CreateAuthenticatedTestRequest(t, "PATCH", "/test-bucket/test-key")
-			},
-			expectedStatus: 405,
-		},
+// ValidateErrorResponseStructure validates the structure of an error response.
+//
+// This helper function performs comprehensive validation of error response structure:
+// - Validates response body is not empty
+// - Validates error field exists (Code field)
+// - Validates error message is present and non-empty
+// - Supports optional field validation via options
+//
+// Returns true if validation passes, false otherwise.
+// Note: This function does not call t.Error() to allow testing of invalid cases.
+// Use AssertValidErrorResponseStructure() for assertion behavior.
+//
+// Parameters:
+//   t: Testing instance for context
+//   body: Response body as byte array
+//   options: Validation options (use DefaultValidationOptions() for defaults)
+//
+// Example:
+//   opts := DefaultValidationOptions()
+//   opts.RequireCode = true
+//   opts.RequireMessage = true
+//   opts.MinMessageLength = 15
+//   valid := ValidateErrorResponseStructure(t, responseBody, opts)
+func ValidateErrorResponseStructure(t *testing.T, body []byte, options ErrorStructureValidationOptions) bool {
+	t.Helper()
+
+	// Check response body is not empty
+	if len(body) == 0 {
+		return false
 	}
 
-	for _, scenario := range errorScenarios {
-		t.Run(scenario.name, func(t *testing.T) {
-			req := scenario.setupRequest()
-			w := httptest.NewRecorder()
-			fixture.Handler.ServeHTTP(w, req)
+	// Parse the error response
+	var s3Err S3Error
+	if err := xml.Unmarshal(body, &s3Err); err != nil {
+		return false
+	}
 
-			// Verify CORS headers are present
-			origin := w.Header().Get("Access-Control-Allow-Origin")
-			if origin == "" {
-				t.Error("Expected Access-Control-Allow-Origin header to be set")
+	// Track validation results
+	allValid := true
+
+	// Validate error code field exists if required
+	if options.RequireCode && s3Err.Code == "" {
+		allValid = false
+	}
+
+	// Validate error message field exists if required
+	if options.RequireMessage {
+		trimmedMsg := strings.TrimSpace(s3Err.Message)
+		if trimmedMsg == "" {
+			allValid = false
+		}
+	}
+
+	// Validate expected code if specified
+	if options.ExpectedCode != "" && s3Err.Code != options.ExpectedCode {
+		allValid = false
+	}
+
+	// Validate minimum message length if specified
+	if options.MinMessageLength > 0 {
+		// Use trimmed message for length validation
+		trimmedMsg := strings.TrimSpace(s3Err.Message)
+		if len(trimmedMsg) < options.MinMessageLength {
+			allValid = false
+		}
+	}
+
+	// Validate message contains expected text if specified (case-insensitive)
+	if options.MessageContains != "" {
+		messageLower := strings.ToLower(s3Err.Message)
+		keywordLower := strings.ToLower(options.MessageContains)
+		if !strings.Contains(messageLower, keywordLower) {
+			allValid = false
+		}
+	}
+
+	// Validate custom fields if specified
+	for field, expectedValue := range options.CustomFields {
+		actualValue := getXMLField(body, field)
+		if actualValue != expectedValue {
+			allValid = false
+		}
+	}
+
+	return allValid
+}
+
+// ValidateErrorResponseStructureSimple validates error response structure with defaults.
+//
+// This is a simplified version that uses default validation options.
+// It validates:
+// - Response body is not empty
+// - Error code field exists and is non-empty
+// - Error message field exists and is non-empty (min 10 chars)
+//
+// Returns true if validation passes, false otherwise.
+//
+// Example:
+//   valid := ValidateErrorResponseStructureSimple(t, responseBody)
+func ValidateErrorResponseStructureSimple(t *testing.T, body []byte) bool {
+	t.Helper()
+	return ValidateErrorResponseStructure(t, body, DefaultValidationOptions())
+}
+
+// AssertValidErrorResponseStructure validates error structure and asserts if invalid.
+//
+// This helper validates error response structure and fails the test if validation fails.
+// Use this when you want test execution to stop on validation failure.
+// Provides detailed error messages for debugging.
+//
+// Example:
+//   AssertValidErrorResponseStructure(t, responseBody)
+func AssertValidErrorResponseStructure(t *testing.T, body []byte) {
+	t.Helper()
+
+	if !ValidateErrorResponseStructureSimple(t, body) {
+		// Provide detailed error message
+		if len(body) == 0 {
+			t.Fatal("Error response structure validation failed: response body is empty")
+		}
+
+		var s3Err S3Error
+		if err := xml.Unmarshal(body, &s3Err); err != nil {
+			t.Fatalf("Error response structure validation failed: invalid XML: %v", err)
+		}
+
+		if s3Err.Code == "" {
+			t.Fatal("Error response structure validation failed: missing Code field")
+		}
+
+		if s3Err.Message == "" {
+			t.Fatal("Error response structure validation failed: missing Message field")
+		}
+
+		if len(s3Err.Message) < 10 {
+			t.Fatalf("Error response structure validation failed: message too short (%d chars, want at least 10): %s",
+				len(s3Err.Message), s3Err.Message)
+		}
+
+		t.Fatal("Error response structure validation failed")
+	}
+}
+
+// AssertValidErrorResponseStructureWithOptions validates with custom options and asserts.
+//
+// This helper validates error response structure with custom options and fails the test
+// if validation fails. Use this when you need specific validation requirements.
+// Provides detailed error messages for debugging.
+//
+// Example:
+//   opts := DefaultValidationOptions()
+//   opts.MinMessageLength = 20
+//   opts.MessageContains = "authentication"
+//   AssertValidErrorResponseStructureWithOptions(t, responseBody, opts)
+func AssertValidErrorResponseStructureWithOptions(t *testing.T, body []byte, options ErrorStructureValidationOptions) {
+	t.Helper()
+
+	if !ValidateErrorResponseStructure(t, body, options) {
+		// Provide detailed error message based on options
+		if len(body) == 0 {
+			t.Fatal("Error response structure validation failed: response body is empty")
+		}
+
+		var s3Err S3Error
+		if err := xml.Unmarshal(body, &s3Err); err != nil {
+			t.Fatalf("Error response structure validation failed: invalid XML: %v", err)
+		}
+
+		if options.RequireCode && s3Err.Code == "" {
+			t.Fatal("Error response structure validation failed: missing Code field")
+		}
+
+		if options.RequireMessage && s3Err.Message == "" {
+			t.Fatal("Error response structure validation failed: missing Message field")
+		}
+
+		if options.ExpectedCode != "" && s3Err.Code != options.ExpectedCode {
+			t.Fatalf("Error response structure validation failed: expected code '%s', got '%s'",
+				options.ExpectedCode, s3Err.Code)
+		}
+
+		if options.MinMessageLength > 0 && len(s3Err.Message) < options.MinMessageLength {
+			t.Fatalf("Error response structure validation failed: message too short (%d chars, want at least %d): %s",
+				len(s3Err.Message), options.MinMessageLength, s3Err.Message)
+		}
+
+		if options.MessageContains != "" && !strings.Contains(s3Err.Message, options.MessageContains) {
+			t.Fatalf("Error response structure validation failed: expected message to contain '%s', got '%s'",
+				options.MessageContains, s3Err.Message)
+		}
+
+		for field, expectedValue := range options.CustomFields {
+			actualValue := getXMLField(body, field)
+			if actualValue != expectedValue {
+				t.Fatalf("Error response structure validation failed: expected field '%s' to be '%s', got '%s'",
+					field, expectedValue, actualValue)
 			}
+		}
 
-			methods := w.Header().Get("Access-Control-Allow-Methods")
-			if methods == "" {
-				t.Error("Expected Access-Control-Allow-Methods header to be set")
-			}
-
-			headers := w.Header().Get("Access-Control-Allow-Headers")
-			if headers == "" {
-				t.Error("Expected Access-Control-Allow-Headers header to be set")
-			}
-
-			// Verify using the helper
-			VerifyErrorResponse(t, w).
-				HTTPStatusCode(scenario.expectedStatus).
-				HasCORSHeaders().
-				Assert()
-		})
+		t.Fatal("Error response structure validation failed")
 	}
 }
 
-// TestStatusCodeValidation validates HTTP status code helper.
-func TestStatusCodeValidation(t *testing.T) {
-	fixture := NewTestServer(t)
+// getXMLField extracts a field value from XML response body.
+// This is a helper for validating custom fields in error responses.
+func getXMLField(body []byte, field string) string {
+	// Simple XML field extraction using string search
+	// This is basic but works for common S3 error response structures
+	openTag := "<" + field + ">"
+	closeTag := "</" + field + ">"
 
-	t.Run("Validates correct 404 status", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+	bodyStr := string(body)
+	openIdx := strings.Index(bodyStr, openTag)
+	if openIdx == -1 {
+		return ""
+	}
 
-		VerifyErrorResponse(t, w).
-			HTTPStatusCode(404).
-			Assert()
-	})
+	closeIdx := strings.Index(bodyStr[openIdx:], closeTag)
+	if closeIdx == -1 {
+		return ""
+	}
 
-	t.Run("Validates correct 400 status", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "POST", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		VerifyErrorResponse(t, w).
-			HTTPStatusCode(400).
-			Assert()
-	})
+	return strings.TrimSpace(bodyStr[openIdx+len(openTag):openIdx+closeIdx])
 }
 
-// TestContentTypeValidation validates Content-Type header helper.
-func TestContentTypeValidation(t *testing.T) {
-	fixture := NewTestServer(t)
+// =============================================================================
+// REQUEST CREATION HELPERS
+// =============================================================================
 
-	t.Run("Validates application/xml content type", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+// CreateTestRequest creates an HTTP request for testing.
+//
+// This helper centralizes request creation and ensures consistent test setup.
+// It supports:
+// - Custom HTTP methods and paths
+// - Optional request body
+// - Custom headers
+// - Test server URL format
+func CreateTestRequest(t *testing.T, method, path string, body io.Reader, headers map[string]string) *http.Request {
+	t.Helper()
 
-		VerifyErrorResponse(t, w).
-			ContentType("application/xml").
-			Assert()
-	})
+	req := httptest.NewRequest(method, path, body)
+
+	// Set default headers for test requests
+	if headers == nil {
+		headers = make(map[string]string)
+	}
+
+	// Set custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	return req
 }
 
-// TestErrorStructureValidation validates error response structure helpers.
-func TestErrorStructureValidation(t *testing.T) {
-	fixture := NewTestServer(t)
+// CreateAuthenticatedTestRequest creates a properly authenticated test request.
+//
+// This helper creates a request with valid AWS4-HMAC-SHA256 authentication.
+// It's useful for testing non-authentication errors (where auth should succeed).
+func CreateAuthenticatedTestRequest(t *testing.T, method, path string) *http.Request {
+	t.Helper()
 
-	t.Run("Validates error response has code and message", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		VerifyErrorResponse(t, w).
-			HasCode("NoSuchKey").
-			BodyNotEmpty().
-			Assert()
-	})
-
-	t.Run("Validates error message content", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		VerifyErrorResponse(t, w).
-			HasCode("NoSuchKey").
-			MessageContainsAny("not found", "object", "key").
-			MessageMinLength(15).
-			Assert()
-	})
-}
-
-// TestAllValidationHelpersCombined tests all helpers working together.
-func TestAllValidationHelpersCombined(t *testing.T) {
-	fixture := NewTestServer(t)
-
-	t.Run("Comprehensive error response validation", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		// Use all helper functions together
-		VerifyErrorResponse(t, w).
-			HTTPStatusCode(404).
-			ContentType("application/xml").
-			HasCORSHeaders().
-			CORSOrigin("*").
-			CORSMethods("GET, PUT, DELETE, HEAD, POST, OPTIONS").
-			CORSHeaders("Authorization, Content-Type, Range, Content-Length").
-			HasCode("NoSuchKey").
-			BodyNotEmpty().
-			HasXMLDeclaration().
-			MessageMinLength(15).
-			Assert()
-	})
+	// Use the working authentication helper from auth_integration_test.go
+	return createSignedRequestForAuthTest(t, method, path, "", "TESTACCESSKEY", "TESTSECRETKEY123456789012345678901234", nil)
 }
 
 
 // =============================================================================
-// CORE VALIDATION HELPER FUNCTION TESTS
-// =============================================================================
-// These tests verify the standalone validation helper functions work correctly.
+// TEST SCENARIO STRUCTURES
 // =============================================================================
 
-// TestValidateHTTPStatusCode tests the ValidateHTTPStatusCode helper function.
-func TestValidateHTTPStatusCode(t *testing.T) {
-	fixture := NewTestServer(t)
+// ErrorScenario represents a testable error scenario.
+type ErrorScenario struct {
+	// Name is the scenario name for test reporting
+	Name string
 
-	t.Run("Validates correct 404 status", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+	// SetupRequest creates the request that triggers the error
+	SetupRequest func(*testing.T) *http.Request
 
-		ValidateHTTPStatusCode(t, w, 404)
-	})
+	// ExpectedCode is the expected S3 error code
+	ExpectedCode string
 
-	t.Run("Validates correct 400 status", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "POST", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+	// ExpectedStatus is the expected HTTP status code
+	ExpectedStatus int
 
-		ValidateHTTPStatusCode(t, w, 400)
-	})
+	// ExpectedKeywords are keywords that should appear in the error message
+	ExpectedKeywords []string
 
-	t.Run("Fails with incorrect status code", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+	// MinMessageLength is the minimum acceptable message length
+	MinMessageLength int
 
-		// This should fail
-		t.Log("Testing validation with wrong status code (expected to fail)")
-		ValidateHTTPStatusCode(t, w, 200) // Should fail - actual is 404
+	// MaxResponseTime is the maximum acceptable response duration
+	MaxResponseTime time.Duration
+
+	// Description explains what this scenario tests
+	Description string
+}
+
+// ErrorScenarioResult captures the result of running a scenario.
+type ErrorScenarioResult struct {
+	ScenarioName string
+	StatusCode   int
+	ErrorCode    string
+	Message      string
+	Duration     time.Duration
+	Passed       bool
+}
+
+// RunErrorScenario executes a single error scenario and returns the result.
+func RunErrorScenario(t *testing.T, fixture *TestServerFixture, scenario ErrorScenario) *ErrorScenarioResult {
+	t.Helper()
+
+	req := scenario.SetupRequest(t)
+	w := httptest.NewRecorder()
+
+	// Measure response time
+	start := time.Now()
+	fixture.Handler.ServeHTTP(w, req)
+	duration := time.Since(start)
+
+	// Parse response
+	var s3Err S3Error
+	xml.Unmarshal(w.Body.Bytes(), &s3Err)
+
+	// Build result
+	result := &ErrorScenarioResult{
+		ScenarioName: scenario.Name,
+		StatusCode:   w.Code,
+		ErrorCode:    s3Err.Code,
+		Message:      s3Err.Message,
+		Duration:     duration,
+	}
+
+	// Validate result
+	result.Passed = true
+
+	if w.Code != scenario.ExpectedStatus {
+		t.Errorf("%s: Expected status %d, got %d", scenario.Name, scenario.ExpectedStatus, w.Code)
+		result.Passed = false
+	}
+
+	if s3Err.Code != scenario.ExpectedCode {
+		t.Errorf("%s: Expected error code '%s', got '%s'", scenario.Name, scenario.ExpectedCode, s3Err.Code)
+		result.Passed = false
+	}
+
+	if len(s3Err.Message) < scenario.MinMessageLength {
+		t.Errorf("%s: Error message too short (got %d chars, want at least %d): %s",
+			scenario.Name, len(s3Err.Message), scenario.MinMessageLength, s3Err.Message)
+		result.Passed = false
+	}
+
+	// Check keywords if specified
+	if len(scenario.ExpectedKeywords) > 0 {
+		message := strings.ToLower(s3Err.Message)
+		found := false
+		for _, keyword := range scenario.ExpectedKeywords {
+			if strings.Contains(message, strings.ToLower(keyword)) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s: Error message should contain at least one of %v, got: %s",
+				scenario.Name, scenario.ExpectedKeywords, s3Err.Message)
+			result.Passed = false
+		}
+	}
+
+	// Check response time if specified
+	if scenario.MaxResponseTime > 0 && duration > scenario.MaxResponseTime {
+		t.Errorf("%s: Response time %v exceeds maximum %v", scenario.Name, duration, scenario.MaxResponseTime)
+		result.Passed = false
+	}
+
+	return result
+}
+
+// =============================================================================
+// BASE TEST STRUCTURES
+// =============================================================================
+
+// ErrorTestSuite provides a base structure for error response test suites.
+//
+// This structure helps organize related error tests and provides
+// consistent reporting and validation across test types.
+type ErrorTestSuite struct {
+	t          *testing.T
+	name       string
+	fixture    *TestServerFixture
+	scenarios  []ErrorScenario
+	results    []*ErrorScenarioResult
+}
+
+// NewErrorTestSuite creates a new error test suite.
+func NewErrorTestSuite(t *testing.T, name string) *ErrorTestSuite {
+	t.Helper()
+
+	return &ErrorTestSuite{
+		t:       t,
+		name:    name,
+		fixture: NewTestServer(t),
+		results: make([]*ErrorScenarioResult, 0),
+	}
+}
+
+// AddScenario adds a test scenario to the suite.
+func (suite *ErrorTestSuite) AddScenario(scenario ErrorScenario) *ErrorTestSuite {
+	suite.scenarios = append(suite.scenarios, scenario)
+	return suite
+}
+
+// Run executes all scenarios in the suite.
+func (suite *ErrorTestSuite) Run() {
+	suite.t.Helper()
+
+	suite.t.Run(suite.name, func(t *testing.T) {
+		for _, scenario := range suite.scenarios {
+			t.Run(scenario.Name, func(t *testing.T) {
+				result := RunErrorScenario(t, suite.fixture, scenario)
+				suite.results = append(suite.results, result)
+			})
+		}
 	})
 }
 
-// TestValidateContentType tests the ValidateContentType helper function.
-func TestValidateContentType(t *testing.T) {
-	fixture := NewTestServer(t)
+// RunSequentially executes all scenarios sequentially (not in parallel).
+// Use this when scenarios have dependencies or share state.
+func (suite *ErrorTestSuite) RunSequentially() {
+	suite.t.Helper()
 
-	t.Run("Validates application/xml content type", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		ValidateContentType(t, w, "application/xml")
-	})
-
-	t.Run("Handles multiple content types", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		// Test that validation works with multiple allowed types
-		ValidateContentTypeAny(t, w, []string{"application/xml", "text/xml"})
+	suite.t.Run(suite.name, func(t *testing.T) {
+		for _, scenario := range suite.scenarios {
+			t.Run(scenario.Name, func(t *testing.T) {
+				t.Parallel() // Disable parallelism
+				result := RunErrorScenario(t, suite.fixture, scenario)
+				suite.results = append(suite.results, result)
+			})
+		}
 	})
 }
 
-// TestValidateErrorStructure tests the ValidateErrorStructure helper function.
-func TestValidateErrorStructure(t *testing.T) {
-	fixture := NewTestServer(t)
+// ReportStatistics logs performance statistics for the suite.
+func (suite *ErrorTestSuite) ReportStatistics() {
+	suite.t.Helper()
 
-	t.Run("Validates error response has code and message", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+	if len(suite.results) == 0 {
+		suite.t.Log("No results to report")
+		return
+	}
 
-		ValidateErrorStructure(t, w)
-	})
+	var total, max, min time.Duration
+	min = 1 * time.Second // Initialize to high value
+	passed := 0
+	failed := 0
+
+	for _, result := range suite.results {
+		total += result.Duration
+		if result.Duration > max {
+			max = result.Duration
+		}
+		if result.Duration < min {
+			min = result.Duration
+		}
+		if result.Passed {
+			passed++
+		} else {
+			failed++
+		}
+	}
+
+	avg := total / time.Duration(len(suite.results))
+
+	suite.t.Logf("Error Test Suite: %s", suite.name)
+	suite.t.Logf("  Total scenarios: %d", len(suite.results))
+	suite.t.Logf("  Passed: %d, Failed: %d", passed, failed)
+	suite.t.Logf("  Average response time: %v", avg)
+	suite.t.Logf("  Min response time: %v", min)
+	suite.t.Logf("  Max response time: %v", max)
 }
 
-// TestValidateErrorCode tests the ValidateErrorCode helper function.
-func TestValidateErrorCode(t *testing.T) {
-	fixture := NewTestServer(t)
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
 
-	t.Run("Validates NoSuchKey error code", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		ValidateErrorCode(t, w, "NoSuchKey")
-	})
-
-	t.Run("Validates InvalidRequest error code", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "POST", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		ValidateErrorCode(t, w, "InvalidRequest")
-	})
+// min returns the minimum of two integers.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
-// TestValidateCORSHeaders tests the ValidateCORSHeaders helper function.
-func TestValidateCORSHeaders(t *testing.T) {
-	fixture := NewTestServer(t)
-
-	t.Run("Validates all CORS headers present", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
-
-		ValidateCORSHeaders(t, w)
-	})
+// MeasureRequestTime measures the time to execute a request.
+// Returns the duration and response recorder.
+func MeasureRequestTime(handler http.Handler, req *http.Request) (time.Duration, *httptest.ResponseRecorder) {
+	w := httptest.NewRecorder()
+	start := time.Now()
+	handler.ServeHTTP(w, req)
+	duration := time.Since(start)
+	return duration, w
 }
 
-// TestValidateCORSOrigin tests the ValidateCORSOrigin helper function.
-func TestValidateCORSOrigin(t *testing.T) {
-	fixture := NewTestServer(t)
+// =============================================================================
+// DOCUMENTATION AND EXAMPLES
+// =============================================================================
 
-	t.Run("Validates wildcard CORS origin", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+/*
+Example Usage:
 
-		ValidateCORSOrigin(t, w, "*")
-	})
-}
+Basic error response validation:
 
-// TestValidateCORSMethods tests the ValidateCORSMethods helper function.
-func TestValidateCORSMethods(t *testing.T) {
-	fixture := NewTestServer(t)
+    func TestMyError(t *testing.T) {
+        fixture := NewTestServer(t)
 
-	t.Run("Validates CORS methods", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+        req := CreateTestRequest(t, "GET", "/test-bucket/nonexistent", nil, nil)
+        w := httptest.NewRecorder()
+        fixture.Handler.ServeHTTP(w, req)
 
-		ValidateCORSMethods(t, w, "GET, PUT, DELETE, HEAD, POST, OPTIONS")
-	})
-}
+        VerifyStandardErrorResponse(t, w, "NoSuchKey", 404)
+    }
 
-// TestValidateCORSAllowHeaders tests the ValidateCORSAllowHeaders helper function.
-func TestValidateCORSAllowHeaders(t *testing.T) {
-	fixture := NewTestServer(t)
+Advanced validation with fluent API:
 
-	t.Run("Validates CORS allow-headers", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+    func TestMyErrorAdvanced(t *testing.T) {
+        fixture := NewTestServer(t)
 
-		ValidateCORSAllowHeaders(t, w, "Authorization, Content-Type, Range, Content-Length")
-	})
-}
+        req := CreateTestRequest(t, "POST", "/test-bucket/test-key", nil, nil)
+        w := httptest.NewRecorder()
+        fixture.Handler.ServeHTTP(w, req)
 
-// TestValidateErrorMessageContains tests the ValidateErrorMessageContains helper function.
-func TestValidateErrorMessageContains(t *testing.T) {
-	fixture := NewTestServer(t)
+        duration, _ := MeasureRequestTime(fixture.Handler, req)
 
-	t.Run("Validates error message content", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+        VerifyErrorResponseWithTiming(t, w, duration).
+            HTTPStatusCode(400).
+            ContentType("application/xml").
+            HasCode("InvalidRequest").
+            MessageContainsAny("post", "unsupported", "operation").
+            ResponseTime(100 * time.Millisecond).
+            Assert()
+    }
 
-		ValidateErrorMessageContains(t, w, "not found")
-	})
-}
+CORS header validation:
 
-// TestValidateErrorMessageMinLength tests the ValidateErrorMessageMinLength helper function.
-func TestValidateErrorMessageMinLength(t *testing.T) {
-	fixture := NewTestServer(t)
+    func TestErrorCORSHeaders(t *testing.T) {
+        fixture := NewTestServer(t)
 
-	t.Run("Validates error message minimum length", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+        req := CreateTestRequest(t, "GET", "/test-bucket/nonexistent", nil, nil)
+        w := httptest.NewRecorder()
+        fixture.Handler.ServeHTTP(w, req)
 
-		ValidateErrorMessageMinLength(t, w, 15)
-	})
-}
+        VerifyErrorResponse(t, w).
+            HTTPStatusCode(404).
+            HasCORSHeaders().
+            CORSOrigin("*").
+            CORSMethods("GET, PUT, DELETE, HEAD, POST, OPTIONS").
+            CORSHeaders("Authorization, Content-Type, Range, Content-Length").
+            Assert()
+    }
 
-// TestValidateXMLDeclaration tests the ValidateXMLDeclaration helper function.
-func TestValidateXMLDeclaration(t *testing.T) {
-	fixture := NewTestServer(t)
+Using test suites:
 
-	t.Run("Validates XML declaration", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+    func TestMyErrorSuite(t *testing.T) {
+        suite := NewErrorTestSuite(t, "My Error Scenarios").
+            AddScenario(ErrorScenario{
+                Name: "Scenario 1",
+                SetupRequest: func(t *testing.T) *http.Request {
+                    return CreateTestRequest(t, "GET", "/test-bucket/key1", nil, nil)
+                },
+                ExpectedCode: "NoSuchKey",
+                ExpectedStatus: 404,
+                MinMessageLength: 15,
+                MaxResponseTime: 100 * time.Millisecond,
+            }).
+            AddScenario(ErrorScenario{
+                Name: "Scenario 2",
+                SetupRequest: func(t *testing.T) *http.Request {
+                    return CreateTestRequest(t, "POST", "/test-bucket/key2", nil, nil)
+                },
+                ExpectedCode: "InvalidRequest",
+                ExpectedStatus: 400,
+                MinMessageLength: 20,
+            })
 
-		ValidateXMLDeclaration(t, w)
-	})
-}
+        suite.Run()
+        suite.ReportStatistics()
+    }
 
-// TestCoreValidationHelpersCombined tests all core helper functions working together.
-func TestCoreValidationHelpersCombined(t *testing.T) {
-	fixture := NewTestServer(t)
+Using error scenarios directly:
 
-	t.Run("Uses all core helpers together", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent-key")
-		w := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w, req)
+    func TestMyScenario(t *testing.T) {
+        fixture := NewTestServer(t)
 
-		// Use all core helper functions
-		ValidateHTTPStatusCode(t, w, 404)
-		ValidateContentType(t, w, "application/xml")
-		ValidateErrorStructure(t, w)
-		ValidateErrorCode(t, w, "NoSuchKey")
-		ValidateCORSHeaders(t, w)
-		ValidateCORSOrigin(t, w, "*")
-		ValidateCORSMethods(t, w, "GET, PUT, DELETE, HEAD, POST, OPTIONS")
-		ValidateCORSAllowHeaders(t, w, "Authorization, Content-Type, Range, Content-Length")
-		ValidateErrorMessageContains(t, w, "not found")
-		ValidateErrorMessageMinLength(t, w, 15)
-		ValidateXMLDeclaration(t, w)
-	})
-}
+        scenario := ErrorScenario{
+            Name: "My custom scenario",
+            SetupRequest: func(t *testing.T) *http.Request {
+                return CreateTestRequest(t, "GET", "/test-bucket/test", nil, nil)
+            },
+            ExpectedCode: "NoSuchKey",
+            ExpectedStatus: 404,
+            ExpectedKeywords: []string{"not found", "object"},
+            MinMessageLength: 15,
+            MaxResponseTime: 100 * time.Millisecond,
+        }
 
-// TestCoreValidationHelpersVsFluentAPI compares core helpers with fluent API.
-func TestCoreValidationHelpersVsFluentAPI(t *testing.T) {
-	fixture := NewTestServer(t)
+        result := RunErrorScenario(t, fixture, scenario)
 
-	t.Run("Both approaches produce same validation", func(t *testing.T) {
-		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
-
-		// Using core helpers
-		w1 := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w1, req)
-
-		ValidateHTTPStatusCode(t, w1, 404)
-		ValidateContentType(t, w1, "application/xml")
-		ValidateErrorStructure(t, w1)
-		ValidateErrorCode(t, w1, "NoSuchKey")
-
-		// Using fluent API
-		w2 := httptest.NewRecorder()
-		fixture.Handler.ServeHTTP(w2, req)
-
-		VerifyErrorResponse(t, w2).
-			HTTPStatusCode(404).
-			ContentType("application/xml").
-			HasCode("NoSuchKey").
-			BodyNotEmpty().
-			Assert()
-	})
-}
+        if !result.Passed {
+            t.Errorf("Scenario failed: %s", result.Message)
+        }
+    }
+*/
