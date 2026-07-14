@@ -32,7 +32,6 @@ package server
 
 import (
 	"fmt"
-	"net/http"
 	"time"
 )
 
@@ -523,35 +522,6 @@ func ExampleAllCommonPatterns() {
 	fmt.Printf("Slowest pattern: %s (%v)\n",
 		slowestPattern.Name,
 		slowestPattern.MaxResponseTime)
-}
-
-// ExamplePatternsForCategory demonstrates using PatternsForCategory.
-func ExamplePatternsForCategory() {
-	// Get all authentication patterns
-	authPatterns := PatternsForCategory(CategoryAuth)
-	fmt.Printf("Found %d auth patterns\n", len(authPatterns))
-
-	for _, pattern := range authPatterns {
-		fmt.Printf("- %s: %s\n", pattern.ExpectedCode, pattern.Name)
-	}
-
-	// Get all not found patterns
-	notFoundPatterns := PatternsForCategory(CategoryNotFound)
-	fmt.Printf("Found %d not found patterns\n", len(notFoundPatterns))
-}
-
-// ExampleAllCommonPatterns demonstrates using AllCommonPatterns.
-func ExampleAllCommonPatterns() {
-	// Get all common patterns at once
-	allPatterns := AllCommonPatterns()
-	fmt.Printf("Total common patterns: %d\n", len(allPatterns))
-
-	for _, pattern := range allPatterns {
-		fmt.Printf("- %s (%d): %s\n",
-			pattern.ExpectedCode,
-			pattern.ExpectedStatus,
-			pattern.Name)
-	}
 }
 
 // ExampleCustomPattern demonstrates creating a custom pattern based on a predefined one.
