@@ -1,231 +1,339 @@
-# Parsed Test Results Analysis
+# Parsed and Categorized Test Results Analysis
 **Generated:** 2026-07-13  
-**Test Framework:** Rust Cargo Test  
-**Test Suite:** parsers::yaml::syntax_detector_tests
+**Source:** Integration Test Execution Log - Bead bf-48ig0c  
+**Total Test Suites:** 2 (Rust + Python)
 
 ## Executive Summary
-- **Total Tests:** 54
-- **Passed:** 51 (94.4%)
-- **Failed:** 3 (5.6%)
-- **Ignored:** 0
-- **Measured:** 0
-- **Filtered out:** 195
-
-## Test Results by Category
-
-### 1. Delimiter Tests (22 tests)
-**Pass Rate:** 21/22 (95.5%)
-
-#### Passing Tests (21):
-- ✅ test_accept_valid_delimiters
-- ✅ test_delimiter_error_classification_mismatched_quotes
-- ✅ test_delimiter_error_classification_missing_colon
-- ✅ test_delimiter_error_classification_unclosed_brace
-- ✅ test_delimiter_error_classification_unclosed_bracket
-- ✅ test_delimiter_error_classification_unclosed_double_quote
-- ✅ test_delimiter_error_classification_unclosed_single_quote
-- ✅ test_delimiter_error_classification_unmatched_closing_bracket
-- ✅ test_delimiter_error_type_codes
-- ✅ test_delimiter_error_type_display
-- ✅ test_detect_mismatched_quotes
-- ✅ test_detect_missing_colon_after_key
-- ✅ test_detect_unclosed_double_quote
-- ✅ test_detect_unmatched_closing_brace
-- ✅ test_detect_unmatched_closing_bracket
-- ✅ test_detect_unmatched_opening_brace
-- ✅ test_detect_unmatched_opening_bracket
-- ✅ test_multiple_delimiter_errors_same_line
-- ✅ test_nested_brackets_and_braces
-- ✅ test_quote_escaping_detection
-
-#### Failing Tests (1):
-- ❌ **test_complex_delimiter_balance** - False positive duplicate key detection
+- **Total Tests Executed:** 751 tests (377 Rust + 374 Python)
+- **Overall Pass Rate:** 546/751 (72.7%)
+- **Overall Fail Rate:** 205/751 (27.3%)
+- **Rust Pass Rate:** 363/377 (96.3%)
+- **Python Pass Rate:** 183/374 (48.9%)
+- **Overall Exit Code:** 1 (both suites had failures)
 
 ---
 
-### 2. Indentation Tests (14 tests)
-**Pass Rate:** 14/14 (100%)
+## SECTION 1: RUST INTEGRATION TESTS
 
-#### All Tests Passing:
-- ✅ test_accept_consistent_spaces
-- ✅ test_accept_four_space_indentation
-- ✅ test_detect_inconsistent_indentation
-- ✅ test_detect_large_indentation_increase
-- ✅ test_detect_mixed_tabs_and_spaces
-- ✅ test_detect_tab_only_indentation
-- ✅ test_indentation_error_classification_excessive_increase
-- ✅ test_indentation_error_classification_invalid_increase
-- ✅ test_indentation_error_classification_invalid_level
-- ✅ test_indentation_error_classification_mixed
-- ✅ test_indentation_error_classification_tab_character
-- ✅ test_indentation_error_type_codes
-- ✅ test_indentation_error_type_display
-- ✅ test_multiple_indentation_errors
+### Framework: Rust Test Framework (cargo test)
+### Total Rust Tests: 377 (351 unit + 26 integration)
 
----
+#### Rust Test Results Summary
+- **Passed:** 363 tests (96.3%)
+- **Failed:** 14 tests (3.7%)
+- **Ignored:** 0 tests
+- **Exit Code:** 1
 
-### 3. Integration Tests (3 tests)
-**Pass Rate:** 1/3 (33.3%)
+#### Test Suite Breakdown
 
-#### Passing Tests (1):
-- ✅ test_empty_and_comment_only_content
-- ✅ test_multiple_error_types
+##### 1. Rust Unit Tests
+**Status:** ✅ ALL PASSED
+- **Total:** 351 tests
+- **Passed:** 351 (100%)
+- **Failed:** 0
 
-#### Failing Tests (2):
-- ❌ **test_complex_nested_structure** - Assertion failure: expected empty errors
-- ❌ **test_valid_complete_yaml** - False positive duplicate key detection
+##### 2. Rust Integration Test Suites
 
----
+| Test Suite | Passed | Failed | Total | Status |
+|-------------|--------|--------|-------|--------|
+| acceptance_criteria_verification_test | 5 | 0 | 5 | ✅ PASSED |
+| comment_filtering_basic_test | 19 | 0 | 19 | ✅ PASSED |
+| error_code_validation_test | 15 | 0 | 15 | ✅ PASSED |
+| error_message_format_examples_test | 21 | 0 | 21 | ✅ PASSED |
+| error_messages_test | 5 | 0 | 5 | ✅ PASSED |
+| **exit_to_scope_edge_cases_test** | **12** | **14** | **26** | ❌ **FAILED** |
 
-### 4. Performance Tests (2 tests)
-**Pass Rate:** 2/2 (100%)
+### Rust Failure Analysis
 
-#### All Tests Passing:
-- ✅ test_deep_nesting_performance
-- ✅ test_large_file_performance
+#### exit_to_scope_edge_cases_test (14/26 failures)
 
----
+**Failed Tests (14):**
+1. ❌ test_exit_to_scope_cleanup_multiple_nested_levels
+2. ❌ test_exit_to_scope_cleanup_with_indent_gaps
+3. ❌ test_exit_to_scope_complex_nesting_with_gaps
+4. ❌ test_exit_to_scope_from_stack_with_only_root
+5. ❌ test_exit_to_scope_multiple_times_in_sequence
+6. ❌ test_exit_to_scope_partial_depth
+7. ❌ test_exit_to_scope_preserves_root_scope_even_in_edge_cases
+8. ❌ test_exit_to_scope_rapid_exits_no_stale_state
+9. ❌ test_exit_to_scope_rapid_successive_exits
+10. ❌ test_exit_to_scope_to_nonexistent_level_between_existing_scopes
+11. ❌ test_exit_to_scope_to_root
+12. ❌ test_exit_to_scope_when_target_has_no_scope_but_parent_exists
+13. ❌ test_exit_to_scope_with_parent_at_target
+14. ❌ test_exit_to_scope_without_parent_at_target
 
-### 5. Regression Tests (6 tests)
-**Pass Rate:** 6/6 (100%)
+**Passed Tests (12):**
+- ✅ test_exit_to_scope_allows_clean_reentry
+- ✅ test_exit_to_scope_does_not_exit_to_deeper_level
+- ✅ test_exit_to_scope_from_root_to_root_is_idempotent
+- ✅ test_exit_to_scope_from_sequence_context
+- ✅ test_exit_to_scope_handles_indent_not_multiple_of_base
+- ✅ test_exit_to_scope_clears_large_scope_data
+- ✅ test_exit_to_scope_resets_sequence_context_flags
+- ✅ test_exit_to_scope_sequence_item_id_preservation_in_parent
+- ✅ test_exit_to_scope_sibling_transition
+- ✅ test_exit_to_scope_state_cleanup
+- ✅ test_exit_to_scope_when_target_is_same_as_current_indent
+- ✅ test_exit_to_scope_with_flow_style_preservation
 
-#### All Tests Passing:
-- ✅ test_flow_style_with_braces
-- ✅ test_flow_style_with_brackets
-- ✅ test_no_false_positives_for_anchors_and_aliases
-- ✅ test_no_false_positives_for_quoted_keys
-- ✅ test_no_false_positives_for_time_values
-- ✅ test_no_false_positives_for_urls
+#### Common Failure Pattern: Scope Stack Management
 
----
+**Assertion Failure Types:**
+- **Scope Count Mismatch:** 10 failures (expected vs actual scope levels)
+  - Expected 1, got 0: 5 failures
+  - Expected 2, got 1: 4 failures
+  - Expected 3, got 2: 2 failures
+  
+- **Root Scope Preservation:** 1 failure
+  - `assertion failed: stack.get_scope_at_level(0).is_some()`
 
-### 6. Structure Tests (7 tests)
-**Pass Rate:** 7/7 (100%)
-
-#### All Tests Passing:
-- ✅ test_accept_valid_mappings
-- ✅ test_accept_valid_sequences
-- ✅ test_detect_duplicate_keys_same_level
-- ✅ test_detect_global_duplicate_keys
-- ✅ test_detect_invalid_colon_at_start
-- ✅ test_detect_invalid_sequence_syntax
-- ✅ test_detect_nested_duplicate_keys
-
----
-
-## Detailed Failure Analysis
-
-### Failure 1: test_complex_delimiter_balance
-**Category:** Delimiter Tests  
-**Error Type:** False positive duplicate key detection
-
-**Debug Output:**
-```
-DEBUG - Found 2 errors in complex delimiter YAML:
-  0 path=key_{name line=Some(3) msg=duplicate key '{name' at same indentation level
-  1 path=key_{name line=Some(2) msg=duplicate key '{name' appears 2 times in document
-```
-
-**Issue:** The parser incorrectly interprets complex delimiter structures (likely containing `{` or `}` characters in keys) as duplicate keys, when they are actually valid flow-style YAML syntax.
+**Root Cause:** The scope stack cleanup logic in `exit_to_scope` function is not correctly managing scope levels during complex exit scenarios, particularly:
+- Multiple nested levels
+- Indentation gaps
+- Partial depth exits
+- Rapid successive exits
 
 ---
 
-### Failure 2: test_complex_nested_structure  
-**Category:** Integration Tests  
-**Error Type:** Assertion failure
+## SECTION 2: PYTHON INTEGRATION TESTS
 
-**Debug Output:**
-```
-assertion failed: errors.is_empty()
-```
+### Framework: pytest 8.3.3
+### Total Python Tests: 374
 
-**Issue:** The test expected no errors for a valid complex nested YAML structure, but the parser produced errors. The specific error details are not visible in the output, but this suggests the parser is incorrectly flagging valid nested structures as invalid.
+#### Python Test Results Summary
+- **Passed:** 183 tests (48.9%)
+- **Failed:** 191 tests (51.1%)
+- **Exit Code:** 1
+- **Execution Time:** 2.62 seconds
+
+#### Test Suite Breakdown
+
+| Test Suite | Status | Tests | Note |
+|------------|--------|-------|------|
+| test_inventory_reader.py | ✅ PASSED | 25 | All 25 tests passed |
+| yamlutil/test_broken_samples.py | ❌ FAILED | 30 | Error handling for invalid YAML |
+| yamlutil/test_complete_mixed_yaml_documents.py | ❌ FAILED | 10 | Document boundaries |
+| yamlutil/test_exceptions.py | ⚠️ MIXED | 32 | 16 PASSED, 16 FAILED |
+| yamlutil/test_explicit_indent.py | ❌ FAILED | 20 | Folded scalar indentation |
+| yamlutil/test_indentation_comment_filtering.py | ❌ FAILED | 16 | Comment filtering |
+| yamlutil/test_mixed_comment_scenarios.py | ❌ FAILED | 33 | Complex comment scenarios |
+| yamlutil/test_parser.py | ⚠️ MIXED | 32 | 6 PASSED, 26 FAILED |
+| yamlutil/test_reader.py | ⚠️ MIXED | 31 | 1 PASSED, 30 FAILED |
+| yamlutil/test_result_comprehensive.py | ✅ PASSED | 2 | Result dataclass |
+| yamlutil/test_result_helpers.py | ✅ PASSED | 2 | Helper methods |
+| yamlutil/test_result_helpers_extended.py | ✅ PASSED | 2 | Extended helpers |
+| yamlutil/test_validator.py | ⚠️ MIXED | 24 | 2 PASSED, 22 FAILED |
+| yamlutil/validate_yaml_functional.py | ✅ PASSED | 130 | Functional validation |
+| yamlutil/verify_implementation.py | ✅ PASSED | 111 | Implementation verification |
+
+### Python Failure Categories
+
+#### Category 1: Complete Failures (All tests failed)
+1. **test_broken_samples.py** (0/30 passed)
+   - Error handling for invalid YAML samples
+
+2. **test_complete_mixed_yaml_documents.py** (0/10 passed)
+   - Document boundary handling
+
+3. **test_explicit_indent.py** (0/20 passed)
+   - Folded scalar indentation detection
+
+4. **test_indentation_comment_filtering.py** (0/16 passed)
+   - Comment filtering with indentation
+
+5. **test_mixed_comment_scenarios.py** (0/33 passed)
+   - Complex comment scenario handling
+
+#### Category 2: Majority Failures
+1. **test_parser.py** (6/32 passed, 81.3% failure rate)
+   - YAML parser functionality
+
+2. **test_reader.py** (1/31 passed, 96.8% failure rate)
+   - File reading and parsing
+
+3. **test_validator.py** (2/24 passed, 91.7% failure rate)
+   - YAML syntax validation
+
+4. **test_exceptions.py** (16/32 passed, 50% failure rate)
+   - Exception handling
+
+#### Category 3: Complete Passes
+1. **test_inventory_reader.py** (25/25 passed)
+   - Debug file inventory reading
+
+2. **test_result_comprehensive.py** (2/2 passed)
+   - Result dataclass tests
+
+3. **test_result_helpers.py** (2/2 passed)
+   - Helper method tests
+
+4. **test_result_helpers_extended.py** (2/2 passed)
+   - Extended helper tests
+
+5. **validate_yaml_functional.py** (130/130 passed)
+   - Functional validation
+
+6. **verify_implementation.py** (111/111 passed)
+   - Implementation verification
+
+### Python Failure Analysis
+
+**Major Failure Areas:**
+1. **YAML Parsing Core** (test_parser, test_reader): 93.5% failure rate
+   - Parser initialization
+   - Basic functionality
+   - File reading integration
+
+2. **Comment Handling** (test_indentation_comment_filtering, test_mixed_comment_scenarios): 100% failure rate
+   - Comment detection in various indentation contexts
+   - Complex comment scenarios
+   - Comment filtering logic
+
+3. **Error Detection** (test_broken_samples, test_validator): 95.8% failure rate
+   - Malformed YAML detection
+   - Error categorization
+   - Error reporting
+
+4. **Document Structure** (test_complete_mixed_yaml_documents, test_explicit_indent): 100% failure rate
+   - Document boundaries
+   - Folded scalar indentation
+   - Multi-document handling
+
+**Successful Areas:**
+- **Result data structures** (100% pass rate)
+- **Functional validation** (130/130 passed)
+- **Implementation verification** (111/111 passed)
+- **Inventory reading** (25/25 passed)
 
 ---
 
-### Failure 3: test_valid_complete_yaml
-**Category:** Integration Tests  
-**Error Type:** False positive duplicate key detection
+## OVERALL TEST CATEGORIZATION
 
-**Debug Output:**
-```
-DEBUG - Found 2 errors in valid YAML:
-  0 path=key_port line=Some(5) msg=duplicate key 'port' appears 2 times in document
-  1 path=key_host line=Some(4) msg=duplicate key 'host' appears 2 times in document
-```
+### By Test Framework
 
-**Issue:** The parser is incorrectly detecting 'port' and 'host' as duplicate keys in what appears to be valid YAML, likely in different scopes or contexts where duplicates are allowed (e.g., different mapping levels).
+| Framework | Total | Passed | Failed | Pass Rate |
+|-----------|-------|--------|--------|-----------|
+| Rust Cargo Test | 377 | 363 | 14 | 96.3% |
+| Python pytest | 374 | 183 | 191 | 48.9% |
+| **TOTAL** | **751** | **546** | **205** | **72.7%** |
 
----
+### By Test Suite Category
 
-## Common Failure Patterns
+| Category | Total | Passed | Failed | Pass Rate |
+|----------|-------|--------|--------|-----------|
+| Unit Tests | 351 | 351 | 0 | 100% |
+| Integration Tests | 400 | 195 | 205 | 48.8% |
+| **TOTAL** | **751** | **546** | **205** | **72.7%** |
 
-### Pattern 1: False Positive Duplicate Key Detection
-**Affected Tests:** 2/3 failures
-- `test_complex_delimiter_balance` - detects `{name` as duplicate
-- `test_valid_complete_yaml` - detects `port` and `host` as duplicates
+### By Functionality
 
-**Root Cause:** The duplicate key detection logic doesn't properly account for:
-1. Flow-style syntax with braces/brackets in keys
-2. Different mapping scopes/levels where duplicate keys are valid
-
-### Pattern 2: Complex Nested Structure Handling
-**Affected Tests:** 1/3 failures
-- `test_complex_nested_structure`
-
-**Root Cause:** The parser incorrectly validates complex nested YAML structures, producing errors for valid YAML.
-
----
-
-## Warnings Summary
-
-### Compiler Warnings (15 total):
-1. **Unused imports:** `ValidationError` (1)
-2. **Unused variables:** `content`, `delimiter`, `context`, `line_num`, `char_pos`, `quote_char`, `parallelism` (8)
-3. **Unused field:** `check_duplicate_keys` (1)
-4. **Dead code:** `detect_mapping_key_simple` function (1)
-5. **Other:** Unnecessary mut, useless comparison (2)
-
-**Notable:** `check_duplicate_keys` field is never read despite being part of duplicate key detection - this may indicate incomplete implementation.
+| Functionality | Total | Passed | Failed | Pass Rate |
+|---------------|-------|--------|--------|-----------|
+| Scope Management (Rust) | 26 | 12 | 14 | 46.2% |
+| Comment Filtering (Rust) | 19 | 19 | 0 | 100% |
+| Error Messages (Rust) | 26 | 26 | 0 | 100% |
+| YAML Parsing (Python) | 93 | 9 | 84 | 9.7% |
+| Comment Handling (Python) | 49 | 0 | 49 | 0% |
+| Error Detection (Python) | 54 | 18 | 36 | 33.3% |
+| Result Structures (Python) | 4 | 4 | 0 | 100% |
+| Validation (Python) | 241 | 241 | 0 | 100% |
 
 ---
 
-## Test Coverage Assessment
+## COMMON FAILURE PATTERNS
 
-**Strong Coverage:**
-- Indentation validation: 100% pass rate (14/14)
-- Performance testing: 100% pass rate (2/2)
-- Regression testing: 100% pass rate (6/6)
-- Structure validation: 100% pass rate (7/7)
+### Pattern 1: Scope Stack Management (Rust)
+**Affected Tests:** 14/26 failures in exit_to_scope_edge_cases_test
+**Failure Type:** Scope count mismatches during complex exit scenarios
+**Root Cause:** Incomplete cleanup logic in `exit_to_scope` function
 
-**Weak Coverage:**
-- Integration testing: 33% pass rate (1/3) - **CRITICAL ISSUE**
-- Delimiter testing: 95% pass rate (21/22)
+### Pattern 2: YAML Parser Core (Python)
+**Affected Tests:** 84/93 failures across test_parser, test_reader
+**Failure Type:** Parser initialization and basic functionality failures
+**Root Cause:** Implementation gaps in YAML parsing core
 
----
+### Pattern 3: Comment Handling (Python)
+**Affected Tests:** 49/49 failures across comment filtering tests
+**Failure Type:** Complete failure of comment detection and filtering
+**Root Cause:** Missing or broken comment handling implementation
 
-## Recommendations
+### Pattern 4: Error Detection (Python)
+**Affected Tests:** 36/54 failures across error detection tests
+**Failure Type:** Inability to detect malformed YAML
+**Root Cause:** Error detection logic not properly implemented
 
-### High Priority:
-1. **Fix duplicate key detection logic** - The parser is producing false positives for valid YAML
-2. **Investigate complex nested structure handling** - 1/3 integration tests failing
-3. **Complete `check_duplicate_keys` field implementation** - Currently unused
-
-### Medium Priority:
-1. Add unit tests for flow-style YAML with complex delimiters
-2. Improve scope/context awareness in duplicate key detection
-3. Clean up compiler warnings (15 warnings)
-
-### Low Priority:
-1. Remove dead code (`detect_mapping_key_simple`)
-2. Add more integration test cases for edge cases
+### Pattern 5: Document Structure (Python)
+**Affected Tests:** 30/30 failures in document boundary tests
+**Failure Type:** Document boundary and structure handling failures
+**Root Cause:** Multi-document and folded scalar handling issues
 
 ---
 
-## Conclusion
+## KEY FINDINGS
 
-The YAML parser has strong performance in indentation, regression, and structure validation (100% pass rates), but has **critical issues** with:
-1. False positive duplicate key detection (2 failures)
-2. Complex nested structure validation (1 failure)
+1. **Rust tests are mostly healthy** - 96.3% pass rate with only scope management edge cases failing
+2. **Python tests have critical issues** - 51.1% failure rate, with complete failure in comment handling and document structure
+3. **Scope management needs attention** - 14 failures in Rust exit_to_scope edge cases
+4. **YAML parser core needs implementation** - 90% failure rate in Python parsing tests
+5. **Comment handling is completely broken** - 100% failure rate across all Python comment tests
+6. **Validation tests are healthy** - 241/241 validation tests passed in Python
 
-These failures indicate the parser is overly aggressive in detecting errors, flagging valid YAML as invalid. This suggests the duplicate key detection and scope/context analysis logic needs refinement.
+---
+
+## RECOMMENDATIONS
+
+### High Priority (Critical)
+1. **Fix Python YAML parser implementation** - Core parsing functionality has 90% failure rate
+2. **Implement comment handling in Python** - 100% failure rate across all comment tests
+3. **Fix Rust scope stack management** - 14/26 failures in exit_to_scope edge cases
+
+### Medium Priority (Important)
+1. **Complete Python error detection logic** - 67% failure rate in error detection tests
+2. **Implement document structure handling** - 100% failure in document boundary tests
+3. **Review Rust exit_to_scope cleanup logic** - Focus on nested level and indent gap scenarios
+
+### Low Priority (Nice to have)
+1. **Add more comprehensive integration tests** - Current tests have good coverage but gaps exist
+2. **Improve test error messages** - Some failures lack detailed error context
+3. **Consider adding performance benchmarks** - No performance regression testing
+
+---
+
+## TEST SUITE HEALTH ASSESSMENT
+
+### Healthy Test Suites (100% pass rate)
+- Rust Unit Tests (351/351)
+- Rust Comment Filtering (19/19)
+- Rust Error Messages (26/26)
+- Python Inventory Reader (25/25)
+- Python Result Structures (4/4)
+- Python Validation (241/241)
+
+### At-Risk Test Suites (50-95% pass rate)
+- Rust Scope Management (12/26 - 46.2%)
+- Python Exception Handling (16/32 - 50%)
+
+### Critical Test Suites (<50% pass rate)
+- Python YAML Parsing (9/93 - 9.7%)
+- Python Comment Handling (0/49 - 0%)
+- Python Error Detection (18/54 - 33.3%)
+- Python Document Structure (0/30 - 0%)
+
+---
+
+## CONCLUSION
+
+The integration test results reveal a **significant gap** between Rust and Python test implementations:
+
+**Rust**: Healthy overall with only scope management edge cases needing attention (96.3% pass rate)
+
+**Python**: Critical issues in core functionality (48.9% pass rate) with complete failures in comment handling and document structure processing
+
+The test suite clearly indicates that **Python YAML parsing implementation needs immediate attention**, particularly in the areas of:
+1. Core parser functionality
+2. Comment detection and filtering
+3. Document boundary handling
+4. Error detection and reporting
+
+The Rust implementation is in much better shape but requires **scope stack management refinement** for complex exit scenarios.
