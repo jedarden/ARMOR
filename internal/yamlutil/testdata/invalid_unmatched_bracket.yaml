@@ -1,8 +1,0 @@
-# Invalid YAML - unmatched bracket
-items:
-  - id: 1
-    name: Test
-  - id: 2
-    name: Test2
-[
-
