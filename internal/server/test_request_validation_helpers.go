@@ -289,6 +289,42 @@ func MakeDELETERequest(serverURL string, path string) (*http.Response, error) {
 	})
 }
 
+// MakePATCHRequest makes a PATCH request to a test server.
+//
+// This helper simplifies making PATCH requests with a body. It automatically
+// sets the Content-Type header to "application/xml" if not specified.
+//
+// Parameters:
+//   - serverURL: Base URL of the test server
+//   - path: Request path
+//   - body: Request body as string
+//   - contentType: Content-Type header (default: "application/xml")
+//
+// Returns:
+//   - *http.Response: The HTTP response
+//   - error: Any error that occurred
+//
+// Example:
+//
+//	resp, err := MakePATCHRequest(server.URL, "/api/resource", "<data>patched</data>", "application/xml")
+//	if err != nil {
+//	    t.Fatalf("PATCH request failed: %v", err)
+//	}
+func MakePATCHRequest(serverURL string, path string, body string, contentType string) (*http.Response, error) {
+	if contentType == "" {
+		contentType = "application/xml"
+	}
+
+	return MakeTestRequest(serverURL, TestRequestOptions{
+		Method: "PATCH",
+		Path:   path,
+		Body:   strings.NewReader(body),
+		Headers: map[string]string{
+			"Content-Type": contentType,
+		},
+	})
+}
+
 // =============================================================================
 // RESPONSE VALIDATION HELPERS
 // =============================================================================
