@@ -984,3 +984,182 @@ func TestFormattingIntegration(t *testing.T) {
 		t.Error("Expected error type in brief error")
 	}
 }
+
+// =============================================================================
+// FORMATERROR FUNCTION TESTS (from format_helper.go)
+// =============================================================================
+
+func TestFormatError(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType string
+		message   string
+		fieldName string
+		want      string
+	}{
+		{
+			name:      "required error with field",
+			errorType: "required",
+			message:   "Field is required",
+			fieldName: "email",
+			want:      "[required] email: Field is required",
+		},
+		{
+			name:      "format error without field",
+			errorType: "format",
+			message:   "Invalid email format",
+			fieldName: "",
+			want:      "[format] Invalid email format",
+		},
+		{
+			name:      "range error with field",
+			errorType: "range",
+			message:   "Value out of range",
+			fieldName: "age",
+			want:      "[range] age: Value out of range",
+		},
+		{
+			name:      "type error",
+			errorType: "type",
+			message:   "Wrong type",
+			fieldName: "count",
+			want:      "[type] count: Wrong type",
+		},
+		{
+			name:      "empty error type uses default",
+			errorType: "",
+			message:   "Something went wrong",
+			fieldName: "",
+			want:      "[error] Something went wrong",
+		},
+		{
+			name:      "empty message uses fallback with field",
+			errorType: "validation",
+			message:   "",
+			fieldName: "email",
+			want:      "[validation] email: email validation failed",
+		},
+		{
+			name:      "empty message uses fallback without field",
+			errorType: "",
+			message:   "",
+			fieldName: "",
+			want:      "[error] (no message provided)",
+		},
+		{
+			name:      "status_code error",
+			errorType: "status_code",
+			message:   "Expected 200 but got 404",
+			fieldName: "response",
+			want:      "[status_code] response: Expected 200 but got 404",
+		},
+		{
+			name:      "unknown error type",
+			errorType: "custom_type",
+			message:   "Custom error message",
+			fieldName: "field",
+			want:      "[custom_type] field: Custom error message",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatError(tt.errorType, tt.message, tt.fieldName)
+			if got != tt.want {
+				t.Errorf("FormatError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatErrorBackwardCompatibility(t *testing.T) {
+	// Test that string-based FormatError produces consistent results
+	// with ErrorType-based FormatErrorWithType
+	t.Run("string and ErrorType functions produce consistent results", func(t *testing.T) {
+		message := "Field is required"
+		fieldName := "email"
+
+		// String-based function
+		stringResult := FormatError("required", message, fieldName)
+
+		// ErrorType-based function
+		typeResult := FormatErrorWithType(ErrTypeRequired, message, fieldName)
+
+		if stringResult != typeResult {
+			t.Errorf("String and ErrorType functions should produce same result:\n  String: %v\n  Type:   %v", stringResult, typeResult)
+		}
+	})
+
+	t.Run("format error consistency", func(t *testing.T) {
+		message := "Invalid format"
+		fieldName := "email"
+
+		stringResult := FormatError("format", message, fieldName)
+		typeResult := FormatErrorWithType(ErrTypeFormat, message, fieldName)
+
+		if stringResult != typeResult {
+			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
+		}
+	})
+
+	t.Run("range error consistency", func(t *testing.T) {
+		message := "Value out of range"
+		fieldName := "age"
+
+		stringResult := FormatError("range", message, fieldName)
+		typeResult := FormatErrorWithType(ErrTypeRange, message, fieldName)
+
+		if stringResult != typeResult {
+			t.Errorf("Format inconsistency:\n  String: %v\n  Type:   %v", stringResult, typeResult)
+		}
+	})
+}
+
+func TestFormatErrorConsistentClassification(t *testing.T) {
+	// Test that all ErrorType enum values are properly classified
+	t.Run("all ErrorType values produce valid output", func(t *testing.T) {
+		allTypes := []ErrorType{
+			ErrTypeRequired,
+			ErrTypeFormat,
+			ErrTypeRange,
+			ErrTypeLength,
+			ErrTypeType,
+			ErrTypeValue,
+			ErrTypeDuplicate,
+			ErrTypeConflict,
+			ErrTypeUnknown,
+		}
+
+		for _, et := range allTypes {
+			result := FormatErrorWithType(et, "Test message", "field")
+
+			// Check that result contains error type
+			if !strings.Contains(result, et.String()) {
+				t.Errorf("ErrorType %v should produce output containing %v, got %v", et, et.String(), result)
+			}
+
+			// Check that result contains field name
+			if !strings.Contains(result, "field") {
+				t.Errorf("ErrorType %v should produce output containing field name, got %v", et, result)
+			}
+
+			// Check that result contains message
+			if !strings.Contains(result, "Test message") {
+				t.Errorf("ErrorType %v should produce output containing message, got %v", et, result)
+			}
+		}
+	})
+
+	t.Run("string-based error types are properly handled", func(t *testing.T) {
+		errorTypes := []string{"required", "format", "range", "type", "unknown"}
+
+		for _, etStr := range errorTypes {
+			result := FormatError(etStr, "Test message", "field")
+
+			// Check that result contains error type
+			if !strings.Contains(result, etStr) {
+				t.Errorf("Error type %v should produce output containing error type, got %v", etStr, result)
+			}
+		}
+	})
+}
