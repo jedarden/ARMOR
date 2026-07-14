@@ -19,7 +19,342 @@ import (
 // - Convenience functions for common content-types
 // - Content-type analysis helpers
 // - Pattern matching with charset and other parameters
+// - Flexible assertion mode with detailed error messages
 // =============================================================================
+
+// =============================================================================
+// ContentTypeMatchResult Tests
+// =============================================================================
+
+func TestContentTypeMatchResult_String(t *testing.T) {
+	t.Run("String representation for successful match", func(t *testing.T) {
+		result := ContentTypeMatchResult{
+			Match:    true,
+			Expected: "application/json",
+			Actual:   "application/json; charset=utf-8",
+		}
+		expected := "Content-Type match: application/json; charset=utf-8"
+		if result.String() != expected {
+			t.Errorf("Expected %q, got %q", expected, result.String())
+		}
+	})
+
+	t.Run("String representation for failed match", func(t *testing.T) {
+		result := ContentTypeMatchResult{
+			Match:           false,
+			Expected:        "application/json",
+			Actual:          "text/plain",
+			ResponseContext: "httptest.ResponseRecorder (status: 200)",
+			Error:           "Content-Type mismatch:\n  Expected: application/json\n  Actual:   text/plain\n  Context:  httptest.ResponseRecorder (status: 200)\n",
+		}
+		expected := result.Error
+		if result.String() != expected {
+			t.Errorf("Expected error message, got %q", result.String())
+		}
+	})
+}
+
+// =============================================================================
+// AssertContentType Tests
+// =============================================================================
+
+func TestAssertContentType_BooleanMode_Success(t *testing.T) {
+	tests := []struct {
+		name             string
+		contentType      string
+		expectedType     string
+	}{
+		{"application/json matches application/json", "application/json", "application/json"},
+		{"application/json; charset=utf-8 matches application/json", "application/json; charset=utf-8", "application/json"},
+		{"application/xml matches application/xml", "application/xml", "application/xml"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			w.Header().Set("Content-Type", tt.contentType)
+
+			result := AssertContentType(w, tt.expectedType, false)
+
+			if !result.Match {
+				t.Errorf("Expected Match=true, got Match=false")
+			}
+			if result.Expected != tt.expectedType {
+				t.Errorf("Expected Expected=%q, got %q", tt.expectedType, result.Expected)
+			}
+			if result.Actual != tt.contentType {
+				t.Errorf("Expected Actual=%q, got %q", tt.contentType, result.Actual)
+			}
+		})
+	}
+}
+
+func TestAssertContentType_BooleanMode_Failure(t *testing.T) {
+	tests := []struct {
+		name             string
+		contentType      string
+		expectedType     string
+	}{
+		{"application/json does not match application/xml", "application/json", "application/xml"},
+		{"text/plain does not match application/json", "text/plain", "application/json"},
+		{"empty does not match application/json", "", "application/json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			w.Header().Set("Content-Type", tt.contentType)
+
+			result := AssertContentType(w, tt.expectedType, false)
+
+			if result.Match {
+				t.Errorf("Expected Match=false, got Match=true")
+			}
+			if result.Error == "" {
+				t.Errorf("Expected error message to be set")
+			}
+			if result.ResponseContext == "" {
+				t.Errorf("Expected ResponseContext to be set")
+			}
+		})
+	}
+}
+
+func TestAssertContentType_AssertionMode_DetailedErrors(t *testing.T) {
+	t.Run("Detailed error message on mismatch", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "text/plain")
+
+		result := AssertContentType(w, "application/json", true)
+
+		if result.Match {
+			t.Errorf("Expected Match=false, got Match=true")
+		}
+
+		// Verify error message contains expected elements
+		if !strings.Contains(result.Error, "Expected:") {
+			t.Errorf("Error message missing 'Expected:' label: %s", result.Error)
+		}
+		if !strings.Contains(result.Error, "Actual:") {
+			t.Errorf("Error message missing 'Actual:' label: %s", result.Error)
+		}
+		if !strings.Contains(result.Error, "Context:") {
+			t.Errorf("Error message missing 'Context:' label: %s", result.Error)
+		}
+		if !strings.Contains(result.Error, "application/json") {
+			t.Errorf("Error message missing expected content-type: %s", result.Error)
+		}
+		if !strings.Contains(result.Error, "text/plain") {
+			t.Errorf("Error message missing actual content-type: %s", result.Error)
+		}
+	})
+
+	t.Run("Error message includes response context", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "text/plain")
+
+		result := AssertContentType(w, "application/json", true)
+
+		if !strings.Contains(result.ResponseContext, "httptest.ResponseRecorder") {
+			t.Errorf("ResponseContext missing response type: %s", result.ResponseContext)
+		}
+		if !strings.Contains(result.ResponseContext, "status:") {
+			t.Errorf("ResponseContext missing status: %s", result.ResponseContext)
+		}
+	})
+}
+
+func TestAssertContentType_WithHTTPResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml; charset=iso-8859-1")
+		w.WriteHeader(404)
+		w.Write([]byte(`<error>not found</error>`))
+	}))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	result := AssertContentType(resp, "application/xml", false)
+
+	if !result.Match {
+		t.Errorf("Expected Match=true, got Match=false")
+	}
+
+	if !strings.Contains(result.ResponseContext, "http.Response") {
+		t.Errorf("ResponseContext should contain http.Response: %s", result.ResponseContext)
+	}
+	if !strings.Contains(result.ResponseContext, "404") {
+		t.Errorf("ResponseContext should contain status 404: %s", result.ResponseContext)
+	}
+}
+
+// =============================================================================
+// AssertContentTypeAny Tests
+// =============================================================================
+
+func TestAssertContentTypeAny_BooleanMode_Success(t *testing.T) {
+	tests := []struct {
+		name                string
+		contentType         string
+		allowedTypes        []string
+	}{
+		{"application/json in allowed list", "application/json", []string{"application/json", "text/plain"}},
+		{"text/plain in allowed list", "text/plain", []string{"application/json", "text/plain"}},
+		{"application/json; charset=utf-8 matches application/json", "application/json; charset=utf-8", []string{"application/json", "application/xml"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			w.Header().Set("Content-Type", tt.contentType)
+
+			result := AssertContentTypeAny(w, tt.allowedTypes, false)
+
+			if !result.Match {
+				t.Errorf("Expected Match=true, got Match=false")
+			}
+		})
+	}
+}
+
+func TestAssertContentTypeAny_BooleanMode_Failure(t *testing.T) {
+	tests := []struct {
+		name                string
+		contentType         string
+		allowedTypes        []string
+	}{
+		{"text/html not in allowed list", "text/html", []string{"application/json", "text/plain"}},
+		{"application/xml not in allowed list", "application/xml", []string{"application/json", "text/plain"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			w.Header().Set("Content-Type", tt.contentType)
+
+			result := AssertContentTypeAny(w, tt.allowedTypes, false)
+
+			if result.Match {
+				t.Errorf("Expected Match=false, got Match=true")
+			}
+			if result.Error == "" {
+				t.Errorf("Expected error message to be set")
+			}
+		})
+	}
+}
+
+func TestAssertContentTypeAny_EmptyAllowedTypes(t *testing.T) {
+	w := httptest.NewRecorder()
+	w.Header().Set("Content-Type", "application/json")
+
+	result := AssertContentTypeAny(w, []string{}, false)
+
+	if result.Match {
+		t.Errorf("Expected Match=false for empty allowed types")
+	}
+	if !strings.Contains(result.Error, "cannot be empty") {
+		t.Errorf("Expected error about empty allowed types: %s", result.Error)
+	}
+}
+
+func TestAssertContentTypeAny_AssertionMode_DetailedErrors(t *testing.T) {
+	t.Run("Detailed error message shows all allowed types", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "text/html")
+
+		allowedTypes := []string{"application/json", "application/xml", "text/plain"}
+		result := AssertContentTypeAny(w, allowedTypes, true)
+
+		if result.Match {
+			t.Errorf("Expected Match=false, got Match=true")
+		}
+
+		// Verify error message contains all allowed types
+		for _, allowedType := range allowedTypes {
+			if !strings.Contains(result.Error, allowedType) {
+				t.Errorf("Error message missing allowed type %s: %s", allowedType, result.Error)
+			}
+		}
+		if !strings.Contains(result.Error, "text/html") {
+			t.Errorf("Error message missing actual content-type: %s", result.Error)
+		}
+	})
+}
+
+// =============================================================================
+// Integration Tests with Enhanced Error Messages
+// =============================================================================
+
+func TestEnhancedErrorMessages_AssertContentType(t *testing.T) {
+	t.Run("AssertContentType includes response context on failure", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "text/plain")
+
+		result := AssertContentType(w, "application/json", true)
+
+		if result.Match {
+			t.Errorf("Expected Match=false, got Match=true")
+		}
+
+		// Verify error message contains expected elements
+		if !strings.Contains(result.Error, "Expected:") {
+			t.Errorf("Error message missing 'Expected:' label: %s", result.Error)
+		}
+		if !strings.Contains(result.Error, "Actual:") {
+			t.Errorf("Error message missing 'Actual:' label: %s", result.Error)
+		}
+		if !strings.Contains(result.Error, "Context:") {
+			t.Errorf("Error message missing 'Context:' label: %s", result.Error)
+		}
+		if !strings.Contains(result.Error, "application/json") {
+			t.Errorf("Error message missing expected content-type: %s", result.Error)
+		}
+		if !strings.Contains(result.Error, "text/plain") {
+			t.Errorf("Error message missing actual content-type: %s", result.Error)
+		}
+	})
+
+	t.Run("AssertContentType includes response type in context", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "text/html")
+
+		result := AssertContentType(w, "application/json", true)
+
+		if !strings.Contains(result.ResponseContext, "httptest.ResponseRecorder") {
+			t.Errorf("ResponseContext missing response type: %s", result.ResponseContext)
+		}
+		if !strings.Contains(result.ResponseContext, "status:") {
+			t.Errorf("ResponseContext missing status: %s", result.ResponseContext)
+		}
+	})
+
+	t.Run("AssertContentTypeAny includes all allowed types in error", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "text/html")
+
+		allowedTypes := []string{"application/json", "application/xml", "text/plain"}
+		result := AssertContentTypeAny(w, allowedTypes, true)
+
+		if result.Match {
+			t.Errorf("Expected Match=false, got Match=true")
+		}
+
+		// Verify error message contains all allowed types
+		for _, allowedType := range allowedTypes {
+			if !strings.Contains(result.Error, allowedType) {
+				t.Errorf("Error message missing allowed type %s: %s", allowedType, result.Error)
+			}
+		}
+		if !strings.Contains(result.Error, "text/html") {
+			t.Errorf("Error message missing actual content-type: %s", result.Error)
+		}
+	})
+}
 
 // =============================================================================
 // ValidateContentType Tests

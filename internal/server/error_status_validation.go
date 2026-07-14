@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -19,8 +20,247 @@ import (
 // - ValidateStatusCodeAny: Validate against multiple allowed status codes
 // - ValidateStatusCodeRange: Validate status code is within range
 // - CheckStatusCode: Non-asserting version that returns boolean
+// - AssertStatusCode: Flexible validation supporting both assertion and boolean modes
+// - AssertStatusCodeAny: Flexible multi-code validation with assertion mode
+// - StatusCodeMatchResult: Detailed validation result with error context
 // - GetStatusCodeDescription: Get human-readable status code description
 // =============================================================================
+
+// StatusCodeMatchResult contains detailed information about a status code validation.
+//
+// This type provides comprehensive error context for debugging validation failures,
+// including the expected and actual status codes with their descriptions, the
+// response object context, and a formatted error message.
+type StatusCodeMatchResult struct {
+	// Match indicates whether the status code matched successfully
+	Match bool
+
+	// Expected is the status code that was expected
+	Expected int
+
+	// Actual is the status code that was received
+	Actual int
+
+	// ExpectedDescription is the human-readable description of the expected status code
+	ExpectedDescription string
+
+	// ActualDescription is the human-readable description of the actual status code
+	ActualDescription string
+
+	// ResponseContext contains information about the response object
+	ResponseContext string
+
+	// Error is a formatted error message describing the mismatch
+	Error string
+}
+
+// String returns a human-readable representation of the validation result.
+func (r StatusCodeMatchResult) String() string {
+	if r.Match {
+		return fmt.Sprintf("Status code match: %d (%s)", r.Actual, r.ActualDescription)
+	}
+	return r.Error
+}
+
+// AssertStatusCode validates status code with flexible assertion mode.
+//
+// This function supports both boolean-only mode (for conditional logic) and
+// assertion mode (with descriptive error messages). When assertMode is true
+// and validation fails, it returns a detailed error message showing expected
+// vs actual values along with response context.
+//
+// Parameters:
+//   - response: The HTTP response to validate (*httptest.ResponseRecorder or *http.Response)
+//   - expectedCode: The expected HTTP status code
+//   - assertMode: If true, return detailed error message on failure; if false, return bool only
+//
+// Returns:
+//   - StatusCodeMatchResult with detailed validation information
+//
+// Example (boolean mode):
+//   result := AssertStatusCode(w, 200, false)
+//   if !result.Match {
+//       // Handle non-200 case
+//   }
+//
+// Example (assertion mode):
+//   result := AssertStatusCode(w, 404, true)
+//   if !result.Match {
+//       t.Error(result.Error)  // Full error with expected vs actual
+//   }
+func AssertStatusCode(response interface{}, expectedCode int, assertMode bool) StatusCodeMatchResult {
+	actualCode := getStatusCode(response)
+
+	// Build response context for error messages
+	responseContext := getStatusCodeResponseContext(response)
+
+	// Check if status codes match
+	matches := actualCode == expectedCode
+
+	if matches {
+		return StatusCodeMatchResult{
+			Match:              true,
+			Expected:           expectedCode,
+			Actual:             actualCode,
+			ExpectedDescription: GetStatusCodeDescription(expectedCode),
+			ActualDescription:   GetStatusCodeDescription(actualCode),
+			ResponseContext:     responseContext,
+			Error:              "",
+		}
+	}
+
+	// Build detailed error message
+	errorMsg := buildStatusCodeMismatchError(
+		expectedCode,
+		actualCode,
+		responseContext,
+	)
+
+	return StatusCodeMatchResult{
+		Match:              false,
+		Expected:           expectedCode,
+		Actual:             actualCode,
+		ExpectedDescription: GetStatusCodeDescription(expectedCode),
+		ActualDescription:   GetStatusCodeDescription(actualCode),
+		ResponseContext:     responseContext,
+		Error:              errorMsg,
+	}
+}
+
+// AssertStatusCodeAny validates status code against multiple allowed codes.
+//
+// This function is similar to AssertStatusCode but accepts multiple allowed
+// status codes. Returns detailed error information when validation fails,
+// including the full list of allowed status codes.
+//
+// Parameters:
+//   - response: The HTTP response to validate
+//   - allowedCodes: Slice of acceptable status codes
+//   - assertMode: If true, return detailed error message on failure
+//
+// Returns:
+//   - StatusCodeMatchResult with detailed validation information
+//
+// Example:
+//   result := AssertStatusCodeAny(w, []int{200, 201, 204}, true)
+//   if !result.Match {
+//       t.Error(result.Error)
+//   }
+func AssertStatusCodeAny(response interface{}, allowedCodes []int, assertMode bool) StatusCodeMatchResult {
+	if len(allowedCodes) == 0 {
+		return StatusCodeMatchResult{
+			Match:              false,
+			Expected:           0,
+			Actual:             0,
+			ExpectedDescription: "",
+			ActualDescription:   "",
+			ResponseContext:     getStatusCodeResponseContext(response),
+			Error:              "AssertStatusCodeAny: allowedCodes cannot be empty",
+		}
+	}
+
+	actualCode := getStatusCode(response)
+	responseContext := getStatusCodeResponseContext(response)
+
+	// Check if actual code matches any in the allowed list
+	for _, allowedCode := range allowedCodes {
+		if actualCode == allowedCode {
+			allowedDesc := formatCodeList(allowedCodes)
+			return StatusCodeMatchResult{
+				Match:              true,
+				Expected:           actualCode,
+				Actual:             actualCode,
+				ExpectedDescription: allowedDesc,
+				ActualDescription:   GetStatusCodeDescription(actualCode),
+				ResponseContext:     responseContext,
+				Error:              "",
+			}
+		}
+	}
+
+	// Build helpful error message showing what was allowed vs. what was received
+	allowedDesc := formatCodeList(allowedCodes)
+	errorMsg := buildStatusCodeMismatchErrorAny(
+		allowedDesc,
+		actualCode,
+		responseContext,
+	)
+
+	return StatusCodeMatchResult{
+		Match:              false,
+		Expected:           0,
+		Actual:             actualCode,
+		ExpectedDescription: allowedDesc,
+		ActualDescription:   GetStatusCodeDescription(actualCode),
+		ResponseContext:     responseContext,
+		Error:              errorMsg,
+	}
+}
+
+// buildStatusCodeMismatchError creates a detailed error message for status code mismatches.
+//
+// This helper builds a comprehensive error message that includes:
+// - The expected status code with description
+// - The actual status code with description
+// - Response object context (type and status if available)
+func buildStatusCodeMismatchError(expected, actual int, responseContext string) string {
+	var b strings.Builder
+
+	b.WriteString("Status code mismatch:\n")
+	b.WriteString(fmt.Sprintf("  Expected: %d (%s)\n", expected, GetStatusCodeDescription(expected)))
+	b.WriteString(fmt.Sprintf("  Actual:   %d (%s)\n", actual, GetStatusCodeDescription(actual)))
+
+	if responseContext != "" {
+		b.WriteString(fmt.Sprintf("  Context:  %s\n", responseContext))
+	}
+
+	return b.String()
+}
+
+// buildStatusCodeMismatchErrorAny creates a detailed error message for multi-code mismatches.
+//
+// This helper builds a comprehensive error message when validating against multiple
+// allowed status codes, showing all allowed codes vs the actual received code.
+func buildStatusCodeMismatchErrorAny(allowedList string, actual int, responseContext string) string {
+	var b strings.Builder
+
+	b.WriteString("Status code mismatch:\n")
+	b.WriteString(fmt.Sprintf("  Expected: one of [%s]\n", allowedList))
+	b.WriteString(fmt.Sprintf("  Actual:   %d (%s)\n", actual, GetStatusCodeDescription(actual)))
+
+	if responseContext != "" {
+		b.WriteString(fmt.Sprintf("  Context:  %s\n", responseContext))
+	}
+
+	return b.String()
+}
+
+// getStatusCodeResponseContext extracts contextual information about the response object.
+//
+// This helper builds a string description of the response object for error messages.
+// For status code validation, the context includes the response type.
+func getStatusCodeResponseContext(response interface{}) string {
+	switch response.(type) {
+	case *httptest.ResponseRecorder:
+		return fmt.Sprintf("httptest.ResponseRecorder")
+	case *http.Response:
+		return fmt.Sprintf("http.Response")
+	default:
+		return fmt.Sprintf("unknown type: %T", response)
+	}
+}
+
+// formatCodeList formats a list of status codes with descriptions for error messages.
+//
+// This helper creates a readable string representation of multiple allowed codes,
+// including their descriptions for better debugging.
+func formatCodeList(codes []int) string {
+	var parts []string
+	for _, code := range codes {
+		parts = append(parts, fmt.Sprintf("%d (%s)", code, GetStatusCodeDescription(code)))
+	}
+	return strings.Join(parts, ", ")
+}
 
 // ValidateStatusCode validates that the HTTP response has the expected status code.
 //
@@ -38,11 +278,13 @@ import (
 func ValidateStatusCode(t *testing.T, response interface{}, expectedCode int) {
 	t.Helper()
 
-	actualCode := getStatusCode(response)
-	if actualCode != expectedCode {
-		t.Errorf("Expected HTTP status code %d (%s), got %d (%s)",
-			expectedCode, GetStatusCodeDescription(expectedCode),
-			actualCode, GetStatusCodeDescription(actualCode))
+	result := AssertStatusCode(response, expectedCode, true)
+
+	if !result.Match {
+		t.Errorf("Status code validation failed:\n  Expected: %d (%s)\n  Actual:   %d (%s)\n  Context:  %s",
+			result.Expected, result.ExpectedDescription,
+			result.Actual, result.ActualDescription,
+			result.ResponseContext)
 	}
 }
 
@@ -67,23 +309,12 @@ func ValidateStatusCodeAny(t *testing.T, response interface{}, allowedCodes []in
 		return
 	}
 
-	actualCode := getStatusCode(response)
+	result := AssertStatusCodeAny(response, allowedCodes, true)
 
-	// Check if actual code is in the allowed list
-	for _, allowedCode := range allowedCodes {
-		if actualCode == allowedCode {
-			return // Success - code is allowed
-		}
+	if !result.Match {
+		t.Errorf("Status code validation failed:\n  Expected: one of [%s]\n  Actual:   %d (%s)\n  Context:  %s",
+			result.ExpectedDescription, result.Actual, result.ActualDescription, result.ResponseContext)
 	}
-
-	// Build helpful error message showing what was allowed vs. what was received
-	allowedDesc := make([]string, len(allowedCodes))
-	for i, code := range allowedCodes {
-		allowedDesc[i] = fmt.Sprintf("%d (%s)", code, GetStatusCodeDescription(code))
-	}
-
-	t.Errorf("Expected HTTP status code to be one of [%v], got %d (%s)",
-		allowedDesc, actualCode, GetStatusCodeDescription(actualCode))
 }
 
 // ValidateStatusCodeRange validates that the HTTP response status code falls within a range.
