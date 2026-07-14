@@ -1,0 +1,60 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/tools/pytest_samples
+collecting ... collected 4 items
+
+test_simple_assertion.py::test_simple_assertion_failure FAILED           [ 25%]
+test_simple_assertion.py::test_boolean_assertion FAILED                  [ 50%]
+test_simple_assertion.py::test_none_assertion FAILED                     [ 75%]
+test_simple_assertion.py::test_type_assertion FAILED                     [100%]
+
+=================================== FAILURES ===================================
+________________________ test_simple_assertion_failure _________________________
+
+    def test_simple_assertion_failure():
+        """Demonstrates a basic assertion failure"""
+        x = 5
+        y = 10
+>       assert x == y, f"Expected {x} to equal {y}"
+E       AssertionError: Expected 5 to equal 10
+E       assert 5 == 10
+
+test_simple_assertion.py:11: AssertionError
+____________________________ test_boolean_assertion ____________________________
+
+    def test_boolean_assertion():
+        """Demonstrates boolean assertion failure"""
+        result = False
+>       assert result, "Expected result to be True"
+E       AssertionError: Expected result to be True
+E       assert False
+
+test_simple_assertion.py:17: AssertionError
+_____________________________ test_none_assertion ______________________________
+
+    def test_none_assertion():
+        """Demonstrates None assertion failure"""
+        value = None
+>       assert value is not None, "Value should not be None"
+E       AssertionError: Value should not be None
+E       assert None is not None
+
+test_simple_assertion.py:23: AssertionError
+_____________________________ test_type_assertion ______________________________
+
+    def test_type_assertion():
+        """Demonstrates isinstance assertion failure"""
+        value = "123"
+>       assert isinstance(value, int), f"Expected int, got {type(value).__name__}"
+E       AssertionError: Expected int, got str
+E       assert False
+E        +  where False = isinstance('123', int)
+
+test_simple_assertion.py:29: AssertionError
+=========================== short test summary info ============================
+FAILED test_simple_assertion.py::test_simple_assertion_failure - AssertionErr...
+FAILED test_simple_assertion.py::test_boolean_assertion - AssertionError: Exp...
+FAILED test_simple_assertion.py::test_none_assertion - AssertionError: Value ...
+FAILED test_simple_assertion.py::test_type_assertion - AssertionError: Expect...
+============================== 4 failed in 0.02s ===============================

@@ -1,0 +1,120 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/tools/pytest_samples
+collecting ... collected 4 items
+
+test_multiline_diffs.py::test_multiline_string_diff FAILED               [ 25%]
+test_multiline_diffs.py::test_code_diff FAILED                           [ 50%]
+test_multiline_diffs.py::test_long_list_diff FAILED                      [ 75%]
+test_multiline_diffs.py::test_json_like_diff FAILED                      [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_multiline_string_diff __________________________
+
+    def test_multiline_string_diff():
+        """Demonstrates multiline string diff"""
+        expected = """Line one
+    Line two
+    Line three
+    Line four
+    Line five"""
+        actual = """Line one
+    Line two
+    Line THREE
+    Line four
+    Line five"""
+>       assert actual == expected
+E       AssertionError: assert 'Line one\nLi...ur\nLine five' == 'Line one\nLi...ur\nLine five'
+E         
+E           Line one
+E           Line two
+E         - Line three
+E         + Line THREE
+E           Line four
+E           Line five
+
+test_multiline_diffs.py:19: AssertionError
+________________________________ test_code_diff ________________________________
+
+    def test_code_diff():
+        """Demonstrates code/programming text diff"""
+        expected_code = """
+    def calculate(x, y):
+        result = x + y
+        return result * 2
+    """
+        actual_code = """
+    def calculate(x, y):
+        result = x + y
+        return result * 3
+    """
+>       assert actual_code == expected_code
+E       AssertionError: assert '\ndef calcul... result * 3\n' == '\ndef calcul... result * 2\n'
+E         
+E           
+E           def calculate(x, y):
+E               result = x + y
+E         -     return result * 2
+E         ?                     ^
+E         +     return result * 3
+E         ?                     ^
+
+test_multiline_diffs.py:34: AssertionError
+_____________________________ test_long_list_diff ______________________________
+
+    def test_long_list_diff():
+        """Demonstrates diff in a long list"""
+        expected = list(range(20))
+        actual = list(range(20))
+        actual[10] = 999  # Change one element
+>       assert actual == expected
+E       AssertionError: assert [0, 1, 2, 3, 4, 5, ...] == [0, 1, 2, 3, 4, 5, ...]
+E         
+E         At index 10 diff: 999 != 10
+E         
+E         Full diff:
+E           [
+E               0,
+E               1,...
+E         
+E         ...Full output truncated (20 lines hidden), use '-vv' to show
+
+test_multiline_diffs.py:42: AssertionError
+_____________________________ test_json_like_diff ______________________________
+
+    def test_json_like_diff():
+        """Demonstrates JSON-like structure diff"""
+        expected = """{
+        "status": "success",
+        "data": {
+            "items": [1, 2, 3],
+            "count": 3
+        }
+    }"""
+        actual = """{
+        "status": "success",
+        "data": {
+            "items": [1, 2, 4],
+            "count": 3
+        }
+    }"""
+>       assert actual == expected
+E       assert '{\n    "stat...: 3\n    }\n}' == '{\n    "stat...: 3\n    }\n}'
+E         
+E           {
+E               "status": "success",
+E               "data": {
+E         -         "items": [1, 2, 3],
+E         ?                         ^
+E         +         "items": [1, 2, 4],...
+E         
+E         ...Full output truncated (4 lines hidden), use '-vv' to show
+
+test_multiline_diffs.py:61: AssertionError
+=========================== short test summary info ============================
+FAILED test_multiline_diffs.py::test_multiline_string_diff - AssertionError: ...
+FAILED test_multiline_diffs.py::test_code_diff - AssertionError: assert '\nde...
+FAILED test_multiline_diffs.py::test_long_list_diff - AssertionError: assert ...
+FAILED test_multiline_diffs.py::test_json_like_diff - assert '{\n    "stat......
+============================== 4 failed in 0.02s ===============================
