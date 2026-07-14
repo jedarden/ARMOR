@@ -497,17 +497,7 @@ func ValidateHTTPStatusCode(t *testing.T, w *httptest.ResponseRecorder, expected
 //
 // This helper function checks that the response has the expected Content-Type header.
 // For S3-compatible error responses, this should typically be "application/xml".
-//
-// Example:
-//   ValidateContentType(t, w, "application/xml")
-func ValidateContentType(t *testing.T, w *httptest.ResponseRecorder, expectedContentType string) {
-	t.Helper()
-
-	actualContentType := w.Header().Get("Content-Type")
-	if actualContentType != expectedContentType {
-		t.Errorf("Expected Content-Type '%s', got '%s'", expectedContentType, actualContentType)
-	}
-}
+// ValidateContentType is defined in content_type_validation.go with enhanced functionality.
 
 // ValidateErrorStructure validates that an error response has proper structure.
 //
