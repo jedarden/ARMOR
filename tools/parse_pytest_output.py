@@ -279,30 +279,39 @@ class PytestOutputParser:
             # Strip 'E' prefix if present (Format 1 uses 'E     -', Format 2 uses '    -')
             line_content = re.sub(r'^E\s+', '', line) if line.startswith('E') else line
 
-            # Check if this is a diff line
+            # Edge Case: Parse where clause BEFORE regular diff lines
+            # A where clause looks like: "+  where False = isinstance(...)"
+            # and must be distinguished from regular diff "+ value" lines
+            # This check must come after stripping 'E' prefix and before diff line checks
+            match = re.match(self.WHERE_CLAUSE_PATTERN, line_content)
+            if match:
+                current_failure.where_clause = f"{match.group(1).strip()} = {match.group(2).strip()}"
+                continue
+
+            # Check if this is a diff line (but not a where clause)
+            # Edge Case: Handle different diff scenarios with appropriate precedence:
+            # 1. Index diffs and dict diffs: already set accurate values, preserve them
+            # 2. Multiline string diffs: use diff lines (variable names in assertion aren't useful)
+            # 3. Simple equality: diff lines provide more specific values than assertion
             if line_content.strip().startswith('-'):
                 content = re.sub(r'^\s*-\s*', '', line_content).strip()
                 if content and not content.startswith('?'):
-                    if not current_failure.expected:
+                    # Only overwrite if we don't have more specific values from index/dict diffs
+                    if not current_failure.index_diff and not current_failure.differing_items:
                         current_failure.expected = content
                     current_failure.diff_lines.append(f"- {content}")
                 continue
             elif line_content.strip().startswith('+'):
                 content = re.sub(r'^\s*\+\s*', '', line_content).strip()
                 if content and not content.startswith('?'):
-                    if not current_failure.actual:
+                    # Only overwrite if we don't have more specific values from index/dict diffs
+                    if not current_failure.index_diff and not current_failure.differing_items:
                         current_failure.actual = content
                     current_failure.diff_lines.append(f"+ {content}")
                 continue
 
             # Skip position indicator lines
             if line.strip().startswith('?'):
-                continue
-
-            # Parse where clause
-            match = re.match(self.WHERE_CLAUSE_PATTERN, line)
-            if match:
-                current_failure.where_clause = f"{match.group(1).strip()} = {match.group(2).strip()}"
                 continue
 
         # Don't forget the last failure
