@@ -2,6 +2,7 @@ package validate
 
 import (
 	"fmt"
+	"strings"
 )
 
 // ValidationFormatter provides a simplified API for formatting validation errors consistently.
@@ -413,4 +414,64 @@ func getRangeInfo(pattern string) (min, max int, desc string, err error) {
 	}
 
 	return min, max, desc, nil
+}
+
+// =============================================================================
+// BASIC ERROR MESSAGE FORMATTING
+// =============================================================================
+
+// FormatError creates a basic formatted error message string.
+// This is a simplified formatting function for basic error message display.
+// Unlike the ValidationFormatter which returns ValidationError structs,
+// this function returns a simple formatted string for quick error display.
+//
+// Parameters:
+//   - errorType: The type/category of error (e.g., "status_code", "error_message")
+//   - message: The error message content
+//   - fieldName: Optional field name where the error occurred (can be empty string)
+//
+// Returns a formatted error message string with consistent structure.
+// Handles empty/nil inputs gracefully by returning a default format.
+//
+// Example usage:
+//
+//	msg := validate.FormatError("status_code", "Expected 200 but got 404", "response")
+//	// Returns: "[status_code] response: Expected 200 but got 404"
+//
+//	msg := validate.FormatError("required", "This field is required", "")
+//	// Returns: "[required] This field is required"
+//
+//	msg := validate.FormatError("", "Something went wrong", "")
+//	// Returns: "[error] Something went wrong"
+//
+//	msg := validate.FormatError("validation", "", "email")
+//	// Returns: "[validation] email: email validation failed"
+func FormatError(errorType string, message string, fieldName ...string) string {
+	// Handle empty error type - use default
+	if errorType == "" {
+		errorType = "error"
+	}
+
+	// Handle empty message - use fallback
+	if message == "" {
+		// Check if field name was provided
+		if len(fieldName) > 0 && fieldName[0] != "" {
+			message = fmt.Sprintf("%s validation failed", fieldName[0])
+		} else {
+			message = "(no message provided)"
+		}
+	}
+
+	// Build consistent format
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("[%s] ", errorType))
+
+	// Add field name if provided
+	if len(fieldName) > 0 && fieldName[0] != "" {
+		builder.WriteString(fmt.Sprintf("%s: ", fieldName[0]))
+	}
+
+	builder.WriteString(message)
+
+	return builder.String()
 }
