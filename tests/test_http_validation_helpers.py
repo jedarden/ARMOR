@@ -1,24 +1,34 @@
 #!/usr/bin/env python3
 """
-Test Cases for HTTP Status Code Validation Helper Functions
+Test Cases for HTTP Status Code and Content-Type Validation Helper Functions
 
-Comprehensive test suite for the HTTP status code validation helpers.
+Comprehensive test suite for the HTTP validation helpers.
 Tests cover:
-- Single status code validation
-- Multiple allowed status codes
-- Both requests.Response and tuple response formats
-- Valid and invalid status codes
-- Throw and no-throw modes
-- Edge cases and error conditions
+
+1. HTTP Status Code Validation:
+   - Single status code validation
+   - Multiple allowed status codes
+   - Both requests.Response and tuple response formats
+   - Valid and invalid status codes
+   - Throw and no-throw modes
+   - Edge cases and error conditions
+
+2. Content-Type Header Validation:
+   - Pattern matching for content-types
+   - Multiple allowed content-types
+   - Various content-type formats and parameters
+   - JSON, XML, HTML, text content-types
+   - Both requests.Response and tuple response formats
+   - Throw and no-throw modes
 
 Acceptance Criteria:
-- Function accepts a response object and expected status code(s) ✓
-- Supports both single status codes and arrays of allowed codes ✓
+- Function accepts a response object and expected status/content-type(s) ✓
+- Supports both single values and arrays of allowed values ✓
 - Returns boolean or throws assertion error with clear message ✓
-- Includes test cases demonstrating valid/invalid status codes ✓
+- Includes test cases demonstrating various scenarios ✓
 - Function is exported from test utils module ✓
 
-Bead: bf-gfemoh
+Bead: bf-gfemoh, bf-q6dmsn
 Created: 2026-07-14
 """
 
@@ -38,7 +48,13 @@ from test_helpers import (
     validate_success,
     validate_redirect,
     validate_client_error,
-    validate_server_error
+    validate_server_error,
+    validate_content_type,
+    ContentTypeValidationError,
+    validate_json_content_type,
+    validate_xml_content_type,
+    validate_html_content_type,
+    validate_text_content_type,
 )
 
 
@@ -49,10 +65,14 @@ class MockResponse:
     Simulates requests.Response behavior without making actual HTTP calls.
     """
 
-    def __init__(self, status_code: int, text: str = "", url: str = "http://example.com"):
+    def __init__(self, status_code: int, text: str = "", url: str = "http://example.com",
+                 content_type: str = None):
         self.status_code = status_code
         self.text = text
         self.url = url
+        self.headers = {}
+        if content_type:
+            self.headers['Content-Type'] = content_type
 
 
 class TestSingleStatusCodeValidation(unittest.TestCase):
@@ -483,11 +503,448 @@ class TestErrorResponseQuality(unittest.TestCase):
         self.assertIn("Server Error", error_msg)
 
 
+# =============================================================================
+# CONTENT-TYPE VALIDATION TESTS
+# =============================================================================
+
+class TestContentTypeValidationBasic(unittest.TestCase):
+    """Test basic content-type validation functionality."""
+
+    def test_valid_content_type_exact_match(self):
+        """Test validation passes with exact content-type match."""
+        response = MockResponse(status_code=200, content_type='application/json')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertTrue(result, "Should accept exact content-type match")
+
+    def test_valid_content_type_pattern_match(self):
+        """Test validation passes with pattern matching (ignoring charset)."""
+        response = MockResponse(status_code=200,
+                                content_type='application/json; charset=utf-8')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertTrue(result, "Should match content-type pattern ignoring parameters")
+
+    def test_valid_content_type_with_charset(self):
+        """Test validation handles charset parameter correctly."""
+        response = MockResponse(status_code=200,
+                                content_type='text/html; charset=utf-8')
+
+        result = validate_content_type(response, 'text/html', throw_on_error=False)
+
+        self.assertTrue(result, "Should handle charset parameter")
+
+    def test_valid_content_type_case_insensitive(self):
+        """Test validation is case-insensitive."""
+        response = MockResponse(status_code=200,
+                                content_type='Application/JSON; Charset=UTF-8')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertTrue(result, "Should handle case-insensitive matching")
+
+    def test_invalid_content_type_returns_false(self):
+        """Test validation failure returns False when not throwing."""
+        response = MockResponse(status_code=200, content_type='text/html')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertFalse(result, "Should reject non-matching content-type")
+
+    def test_invalid_content_type_throws_error(self):
+        """Test validation failure throws ContentTypeValidationError by default."""
+        response = MockResponse(status_code=200, content_type='text/html')
+
+        with self.assertRaises(ContentTypeValidationError) as context:
+            validate_content_type(response, 'application/json')
+
+        error = context.exception
+        self.assertIn('text/html', str(error))
+        self.assertIn('application/json', str(error))
+
+    def test_missing_content_type(self):
+        """Test validation handles missing Content-Type header."""
+        response = MockResponse(status_code=200)  # No content-type set
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertFalse(result, "Should reject missing content-type")
+
+
+class TestContentTypeValidationMultipleTypes(unittest.TestCase):
+    """Test validation with multiple allowed content-types."""
+
+    def test_valid_type_in_list(self):
+        """Test validation passes when content-type is in allowed list."""
+        response = MockResponse(status_code=200, content_type='application/xml')
+
+        result = validate_content_type(response,
+                                       ['application/json', 'application/xml'],
+                                       throw_on_error=False)
+
+        self.assertTrue(result, "Should accept content-type in allowed list")
+
+    def test_invalid_type_not_in_list(self):
+        """Test validation fails when content-type is not in allowed list."""
+        response = MockResponse(status_code=200, content_type='text/html')
+
+        result = validate_content_type(response,
+                                       ['application/json', 'application/xml'],
+                                       throw_on_error=False)
+
+        self.assertFalse(result, "Should reject content-type not in allowed list")
+
+    def test_multiple_types_error_message(self):
+        """Test error message properly formats multiple allowed types."""
+        response = MockResponse(status_code=200, content_type='text/html')
+
+        with self.assertRaises(ContentTypeValidationError) as context:
+            validate_content_type(response, ['application/json', 'application/xml'])
+
+        error_message = str(context.exception)
+        self.assertIn('application/json', error_message)
+        self.assertIn('application/xml', error_message)
+
+    def test_pattern_match_with_multiple_types(self):
+        """Test pattern matching works with multiple allowed types."""
+        response = MockResponse(status_code=200,
+                                content_type='application/json; charset=utf-8')
+
+        result = validate_content_type(response,
+                                       ['application/json', 'application/xml'],
+                                       throw_on_error=False)
+
+        self.assertTrue(result, "Should pattern match against multiple types")
+
+
+class TestContentTypeValidationTupleResponse(unittest.TestCase):
+    """Test content-type validation with tuple response format."""
+
+    def test_tuple_response_with_headers_dict(self):
+        """Test validation with tuple response (status, headers dict)."""
+        response = (200, {'Content-Type': 'application/json'}, '{}')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertTrue(result, "Should handle tuple with headers dict")
+
+    def test_tuple_response_with_headers_dict_lowercase(self):
+        """Test validation with lowercase header key in tuple."""
+        response = (200, {'content-type': 'application/json'}, '{}')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertTrue(result, "Should handle lowercase content-type in headers")
+
+    def test_tuple_response_pattern_match(self):
+        """Test pattern matching works with tuple response."""
+        response = (200,
+                   {'Content-Type': 'application/json; charset=utf-8'},
+                   '{}')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertTrue(result, "Should pattern match with tuple response")
+
+    def test_tuple_response_missing_content_type(self):
+        """Test tuple response without content-type."""
+        response = (200, {}, '{}')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertFalse(result, "Should reject tuple without content-type")
+
+
+class TestContentTypeValidationConvenienceFunctions(unittest.TestCase):
+    """Test convenience functions for common content-types."""
+
+    def test_validate_json_content_type_standard(self):
+        """Test validate_json_content_type accepts standard JSON."""
+        response = MockResponse(status_code=200, content_type='application/json')
+
+        result = validate_json_content_type(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should accept application/json")
+
+    def test_validate_json_content_type_with_charset(self):
+        """Test validate_json_content_type accepts JSON with charset."""
+        response = MockResponse(status_code=200,
+                                content_type='application/json; charset=utf-8')
+
+        result = validate_json_content_type(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should accept application/json with charset")
+
+    def test_validate_json_content_type_variants(self):
+        """Test validate_json_content_type accepts JSON variants."""
+        json_variants = [
+            'application/json',
+            'text/json',
+            'application/vnd.api+json',
+            'application/problem+json'
+        ]
+
+        for ct in json_variants:
+            response = MockResponse(status_code=200, content_type=ct)
+            result = validate_json_content_type(response, throw_on_error=False)
+            self.assertTrue(result, f"Should accept JSON variant: {ct}")
+
+    def test_validate_json_content_type_rejects_non_json(self):
+        """Test validate_json_content_type rejects non-JSON types."""
+        response = MockResponse(status_code=200, content_type='text/html')
+
+        result = validate_json_content_type(response, throw_on_error=False)
+
+        self.assertFalse(result, "Should reject non-JSON content-type")
+
+    def test_validate_xml_content_type(self):
+        """Test validate_xml_content_type accepts XML variants."""
+        xml_variants = [
+            'application/xml',
+            'text/xml',
+            'application/rss+xml',
+            'application/atom+xml'
+        ]
+
+        for ct in xml_variants:
+            response = MockResponse(status_code=200, content_type=ct)
+            result = validate_xml_content_type(response, throw_on_error=False)
+            self.assertTrue(result, f"Should accept XML variant: {ct}")
+
+    def test_validate_xml_content_type_rejects_non_xml(self):
+        """Test validate_xml_content_type rejects non-XML types."""
+        response = MockResponse(status_code=200, content_type='application/json')
+
+        result = validate_xml_content_type(response, throw_on_error=False)
+
+        self.assertFalse(result, "Should reject non-XML content-type")
+
+    def test_validate_html_content_type(self):
+        """Test validate_html_content_type accepts HTML variants."""
+        html_variants = [
+            'text/html',
+            'application/xhtml+xml'
+        ]
+
+        for ct in html_variants:
+            response = MockResponse(status_code=200, content_type=ct)
+            result = validate_html_content_type(response, throw_on_error=False)
+            self.assertTrue(result, f"Should accept HTML variant: {ct}")
+
+    def test_validate_html_content_type_rejects_non_html(self):
+        """Test validate_html_content_type rejects non-HTML types."""
+        response = MockResponse(status_code=200, content_type='application/json')
+
+        result = validate_html_content_type(response, throw_on_error=False)
+
+        self.assertFalse(result, "Should reject non-HTML content-type")
+
+    def test_validate_text_content_type(self):
+        """Test validate_text_content_type accepts text/plain."""
+        response = MockResponse(status_code=200, content_type='text/plain')
+
+        result = validate_text_content_type(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should accept text/plain")
+
+    def test_validate_text_content_type_with_charset(self):
+        """Test validate_text_content_type accepts text/plain with charset."""
+        response = MockResponse(status_code=200,
+                                content_type='text/plain; charset=utf-8')
+
+        result = validate_text_content_type(response, throw_on_error=False)
+
+        self.assertTrue(result, "Should accept text/plain with charset")
+
+
+class TestContentTypeValidationEdgeCases(unittest.TestCase):
+    """Test edge cases and error conditions."""
+
+    def test_empty_content_type(self):
+        """Test validation handles empty content-type string."""
+        response = MockResponse(status_code=200, content_type='')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertFalse(result, "Should reject empty content-type")
+
+    def test_whitespace_handling(self):
+        """Test validation handles whitespace correctly."""
+        response = MockResponse(status_code=200,
+                                content_type='  application/json; charset=utf-8  ')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertTrue(result, "Should handle whitespace in content-type")
+
+    def test_multiple_parameters(self):
+        """Test validation handles multiple parameters."""
+        response = MockResponse(status_code=200,
+                                content_type='application/json; charset=utf-8; version=1')
+
+        result = validate_content_type(response, 'application/json', throw_on_error=False)
+
+        self.assertTrue(result, "Should handle multiple parameters")
+
+    def test_invalid_response_type(self):
+        """Test validation raises TypeError for invalid response type."""
+        invalid_response = "not a response"
+
+        with self.assertRaises(TypeError) as context:
+            validate_content_type(invalid_response, 'application/json')
+
+        self.assertIn("Response must be", str(context.exception))
+
+    def test_invalid_expected_type_type(self):
+        """Test validation raises TypeError for invalid expected_type type."""
+        response = MockResponse(status_code=200, content_type='application/json')
+
+        with self.assertRaises(TypeError) as context:
+            validate_content_type(response, 123)  # Number instead of string
+
+        self.assertIn("must be str or List[str]", str(context.exception))
+
+    def test_invalid_type_in_list(self):
+        """Test validation raises TypeError when list contains non-string."""
+        response = MockResponse(status_code=200, content_type='application/json')
+
+        with self.assertRaises(TypeError) as context:
+            validate_content_type(response, ['application/json', 123])
+
+        self.assertIn("must be strings", str(context.exception))
+
+    def test_error_message_includes_url(self):
+        """Test error message includes URL when available."""
+        response = MockResponse(
+            status_code=200,
+            content_type='text/html',
+            url='http://api.example.com/data'
+        )
+
+        with self.assertRaises(ContentTypeValidationError) as context:
+            validate_content_type(response, 'application/json')
+
+        error_message = str(context.exception)
+        self.assertIn('http://api.example.com/data', error_message)
+
+
+class TestContentTypeValidationRealWorldScenarios(unittest.TestCase):
+    """Test common real-world content-type validation scenarios."""
+
+    def test_api_returns_json(self):
+        """Test validating JSON API response."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/json; charset=utf-8',
+            url='http://api.example.com/users'
+        )
+
+        validate_json_content_type(response)
+
+    def test_api_error_response(self):
+        """Test validating error response has correct content-type."""
+        response = MockResponse(
+            status_code=404,
+            content_type='application/problem+json',
+            url='http://api.example.com/users/123'
+        )
+
+        validate_json_content_type(response)
+
+    def test_web_page_returns_html(self):
+        """Test validating HTML page response."""
+        response = MockResponse(
+            status_code=200,
+            content_type='text/html; charset=utf-8',
+            url='http://example.com/page'
+        )
+
+        validate_html_content_type(response)
+
+    def test_xml_feed(self):
+        """Test validating XML feed response."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/rss+xml',
+            url='http://example.com/feed'
+        )
+
+        validate_xml_content_type(response)
+
+    def test_flexible_json_acceptance(self):
+        """Test accepting multiple JSON content-type variants."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/vnd.api+json'
+        )
+
+        # Should accept any JSON variant
+        validate_json_content_type(response)
+
+    def test_api_content_negotiation(self):
+        """Test handling multiple acceptable content-types."""
+        response = MockResponse(
+            status_code=200,
+            content_type='application/xml'
+        )
+
+        # API might return either JSON or XML
+        validate_content_type(response, ['application/json', 'application/xml'])
+
+    def test_missing_content_type_error_message(self):
+        """Test error message for missing content-type is helpful."""
+        response = MockResponse(
+            status_code=200,
+            url='http://api.example.com/data'
+        )
+
+        with self.assertRaises(ContentTypeValidationError) as context:
+            validate_json_content_type(response)
+
+        error_message = str(context.exception)
+        self.assertIn('(missing)', error_message)
+
+
+class TestContentTypeValidationErrorQuality(unittest.TestCase):
+    """Test that error messages provide helpful debugging information."""
+
+    def test_error_message_structure(self):
+        """Test error messages have proper structure."""
+        response = MockResponse(
+            status_code=200,
+            content_type='text/html',
+            url='http://api.example.com/data'
+        )
+
+        with self.assertRaises(ContentTypeValidationError) as context:
+            validate_content_type(response, 'application/json')
+
+        error_msg = str(context.exception)
+
+        # Should contain key information
+        self.assertIn('URL:', error_msg)
+        self.assertIn('Expected Content-Type:', error_msg)
+        self.assertIn('Actual Content-Type:', error_msg)
+
+    def test_error_without_url_still_useful(self):
+        """Test error message is useful even without URL."""
+        response = (200, {}, '{}')
+
+        with self.assertRaises(ContentTypeValidationError) as context:
+            validate_content_type(response, 'application/json')
+
+        error_msg = str(context.exception)
+        self.assertIn('(missing)', error_msg)
+        self.assertIn('application/json', error_msg)
+
+
 def main():
     """Run all tests and display results."""
     print("=" * 80)
-    print("HTTP STATUS CODE VALIDATION HELPER TEST SUITE")
-    print("Bead: bf-gfemoh")
+    print("HTTP VALIDATION HELPER TEST SUITE")
+    print("Bead: bf-gfemoh, bf-q6dmsn")
     print("=" * 80)
     print()
 
@@ -504,14 +961,25 @@ def main():
         print("=" * 80)
         print()
         print("Coverage Summary:")
-        print("  ✓ Single status code validation (requests.Response and tuple)")
-        print("  ✓ Multiple allowed status codes")
-        print("  ✓ Throw and no-throw modes")
-        print("  ✓ Convenience functions (2xx, 3xx, 4xx, 5xx)")
-        print("  ✓ Multiple response validation")
-        print("  ✓ Edge cases and type validation")
-        print("  ✓ Real-world scenarios")
-        print("  ✓ Error message quality")
+        print("  ✓ HTTP Status Code Validation:")
+        print("    - Single status code validation (requests.Response and tuple)")
+        print("    - Multiple allowed status codes")
+        print("    - Throw and no-throw modes")
+        print("    - Convenience functions (2xx, 3xx, 4xx, 5xx)")
+        print("    - Multiple response validation")
+        print("    - Edge cases and type validation")
+        print("    - Real-world scenarios")
+        print("    - Error message quality")
+        print()
+        print("  ✓ Content-Type Header Validation:")
+        print("    - Pattern matching (ignores charset and parameters)")
+        print("    - Multiple allowed content-types")
+        print("    - Case-insensitive matching")
+        print("    - Tuple and requests.Response formats")
+        print("    - Convenience functions (JSON, XML, HTML, text)")
+        print("    - Edge cases and error handling")
+        print("    - Real-world scenarios")
+        print("    - Error message quality")
         print()
         return 0
     else:
