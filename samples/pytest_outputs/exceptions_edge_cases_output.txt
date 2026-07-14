@@ -1,0 +1,73 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.8, pytest-8.3.3, pluggy-1.5.0 -- /nix/store/dksjvr69ckglyw1k2ss1qgshhcix73p8-python3-3.12.8/bin/python3.12
+cachedir: .pytest_cache
+rootdir: /home/coding/ARMOR/samples/pytest_outputs
+collecting ... collected 8 items
+
+test_exceptions_and_edge_cases.py::test_exception_not_raised FAILED      [ 12%]
+test_exceptions_and_edge_cases.py::test_wrong_exception_type FAILED      [ 25%]
+test_exceptions_and_edge_cases.py::test_exception_message_mismatch FAILED [ 37%]
+test_exceptions_and_edge_cases.py::test_float_comparison_fail FAILED     [ 50%]
+test_exceptions_and_edge_cases.py::test_near_equal_float_fail FAILED     [ 62%]
+test_exceptions_and_edge_cases.py::test_none_comparison_fail FAILED      [ 75%]
+test_exceptions_and_edge_cases.py::test_attribute_error_fail FAILED      [ 87%]
+test_exceptions_and_edge_cases.py::test_unbound_variable_fail FAILED     [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_exception_not_raised ___________________________
+test_exceptions_and_edge_cases.py:9: in test_exception_not_raised
+    with pytest.raises(ValueError):
+E   Failed: DID NOT RAISE <class 'ValueError'>
+__________________________ test_wrong_exception_type ___________________________
+test_exceptions_and_edge_cases.py:18: in test_wrong_exception_type
+    result = 10 / 0
+E   ZeroDivisionError: division by zero
+_______________________ test_exception_message_mismatch ________________________
+test_exceptions_and_edge_cases.py:24: in test_exception_message_mismatch
+    raise ValueError("different error message")
+E   ValueError: different error message
+
+During handling of the above exception, another exception occurred:
+test_exceptions_and_edge_cases.py:23: in test_exception_message_mismatch
+    with pytest.raises(ValueError, match="specific error message"):
+E   AssertionError: Regex pattern did not match.
+E    Regex: 'specific error message'
+E    Input: 'different error message'
+__________________________ test_float_comparison_fail __________________________
+test_exceptions_and_edge_cases.py:31: in test_float_comparison_fail
+    assert actual == expected
+E   assert 0.3 == 0.30000000000000004
+__________________________ test_near_equal_float_fail __________________________
+test_exceptions_and_edge_cases.py:39: in test_near_equal_float_fail
+    assert actual == expected, "Pi values don't match"
+E   AssertionError: Pi values don't match
+E   assert 3.14159 == 3.141592653589793
+__________________________ test_none_comparison_fail ___________________________
+test_exceptions_and_edge_cases.py:45: in test_none_comparison_fail
+    assert value is None, "Expected None"
+E   AssertionError: Expected None
+E   assert 0 is None
+__________________________ test_attribute_error_fail ___________________________
+test_exceptions_and_edge_cases.py:52: in test_attribute_error_fail
+    assert obj.missing_attr == "expected"
+E   AttributeError: 'dict' object has no attribute 'missing_attr'
+__________________________ test_unbound_variable_fail __________________________
+test_exceptions_and_edge_cases.py:58: in test_unbound_variable_fail
+    x = undefined_variable
+E   NameError: name 'undefined_variable' is not defined
+
+During handling of the above exception, another exception occurred:
+test_exceptions_and_edge_cases.py:60: in test_unbound_variable_fail
+    assert False, "Variable not defined"
+E   AssertionError: Variable not defined
+E   assert False
+=========================== short test summary info ============================
+FAILED test_exceptions_and_edge_cases.py::test_exception_not_raised - Failed:...
+FAILED test_exceptions_and_edge_cases.py::test_wrong_exception_type - ZeroDiv...
+FAILED test_exceptions_and_edge_cases.py::test_exception_message_mismatch - A...
+FAILED test_exceptions_and_edge_cases.py::test_float_comparison_fail - assert...
+FAILED test_exceptions_and_edge_cases.py::test_near_equal_float_fail - Assert...
+FAILED test_exceptions_and_edge_cases.py::test_none_comparison_fail - Asserti...
+FAILED test_exceptions_and_edge_cases.py::test_attribute_error_fail - Attribu...
+FAILED test_exceptions_and_edge_cases.py::test_unbound_variable_fail - Assert...
+============================== 8 failed in 0.07s ===============================
