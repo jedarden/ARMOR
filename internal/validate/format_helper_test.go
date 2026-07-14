@@ -870,9 +870,9 @@ func TestFormatError_BasicFormatting(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 			if result != tt.expected {
 				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
@@ -911,9 +911,9 @@ func TestFormatError_EmptyErrorType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 			if result != tt.expected {
 				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
@@ -959,9 +959,9 @@ func TestFormatError_EmptyMessage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 			if result != tt.expected {
 				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
@@ -973,7 +973,7 @@ func TestFormatError_EmptyMessage(t *testing.T) {
 // TestFormatError_BothEmpty verifies that FormatError handles
 // both error type and message being empty gracefully.
 func TestFormatError_BothEmpty(t *testing.T) {
-	result := FormatError("", "")
+	result := FormatErrorString("", "")
 	expected := "[error] (no message provided)"
 
 	if result != expected {
@@ -981,7 +981,7 @@ func TestFormatError_BothEmpty(t *testing.T) {
 	}
 
 	// Test with both empty and field name provided
-	resultWithField := FormatError("", "", "email")
+	resultWithField := FormatErrorString("", "", "email")
 	expectedWithField := "[error] email: email validation failed"
 
 	if resultWithField != expectedWithField {
@@ -1005,7 +1005,7 @@ func TestFormatError_ConsistentStructure(t *testing.T) {
 
 	for _, errType := range errorTypes {
 		t.Run(errType, func(t *testing.T) {
-			result := FormatError(errType, "Test error message")
+			result := FormatErrorString(errType, "Test error message")
 
 			// Verify structure starts with [error_type]
 			if !strings.HasPrefix(result, "["+errType+"] ") {
@@ -1023,7 +1023,7 @@ func TestFormatError_ConsistentStructure(t *testing.T) {
 
 	// Test with field name as well
 	t.Run("with field names", func(t *testing.T) {
-		result := FormatError("validation", "Test error", "email")
+		result := FormatErrorString("validation", "Test error", "email")
 
 		// Should include field name
 		if !strings.Contains(result, "email:") {
@@ -1069,7 +1069,7 @@ func TestFormatError_SpecialCharacters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatError(tt.errorType, tt.message)
+			result := FormatErrorString(tt.errorType, tt.message)
 
 			// Should not panic and should contain the message
 			if !strings.Contains(result, tt.message) {
@@ -1095,14 +1095,14 @@ func TestFormatError_NoNilPanic(t *testing.T) {
 	}()
 
 	// Test with empty strings
-	FormatError("", "")
+	FormatErrorString("", "")
 
 	// Test with one empty
-	FormatError("status_code", "")
-	FormatError("", "message only")
+	FormatErrorString("status_code", "")
+	FormatErrorString("", "message only")
 
 	// Test with normal values
-	FormatError("validation", "test message")
+	FormatErrorString("validation", "test message")
 }
 
 // =============================================================================
@@ -1184,9 +1184,9 @@ func TestFormatError_WithValidErrorTypes(t *testing.T) {
 
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 
 			if result != tt.expected {
@@ -1262,9 +1262,9 @@ func TestFormatError_WithInvalidErrorTypes(t *testing.T) {
 
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 
 			// Verify output is correct (backward compatibility maintained)
@@ -1305,7 +1305,7 @@ func TestFormatError_ErrorTypeTracking(t *testing.T) {
 	}
 
 	for _, errType := range invalidTypes {
-		FormatError(errType, "test message", "field")
+		FormatErrorString(errType, "test message", "field")
 	}
 
 	// Get tracked invalid types
@@ -1367,7 +1367,7 @@ func TestFormatError_CaseInsensitiveValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			FormatError(tt.errorType, "test message", "field")
+			FormatErrorString(tt.errorType, "test message", "field")
 
 			tracked := GetInvalidErrorTypes()
 			isTracked := false
@@ -2790,9 +2790,9 @@ func TestFormatError_EmptyMessageHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 			if result != tt.expected {
 				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
@@ -2873,9 +2873,9 @@ func TestFormatError_EmptyFieldNameHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 			if result != tt.expected {
 				t.Errorf("FormatError() = %q, want %q", result, tt.expected)
@@ -3097,9 +3097,9 @@ func TestFormatError_SpecialCharactersInMessages(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var result string
 			if tt.fieldName != "" {
-				result = FormatError(tt.errorType, tt.message, tt.fieldName)
+				result = FormatErrorString(tt.errorType, tt.message, tt.fieldName)
 			} else {
-				result = FormatError(tt.errorType, tt.message)
+				result = FormatErrorString(tt.errorType, tt.message)
 			}
 
 			// Verify the result contains expected substrings
