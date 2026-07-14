@@ -667,3 +667,241 @@ func TestAllValidationHelpersCombined(t *testing.T) {
 	})
 }
 
+
+// =============================================================================
+// CORE VALIDATION HELPER FUNCTION TESTS
+// =============================================================================
+// These tests verify the standalone validation helper functions work correctly.
+// =============================================================================
+
+// TestValidateHTTPStatusCode tests the ValidateHTTPStatusCode helper function.
+func TestValidateHTTPStatusCode(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates correct 404 status", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateHTTPStatusCode(t, w, 404)
+	})
+
+	t.Run("Validates correct 400 status", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "POST", "/test-bucket/test-key")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateHTTPStatusCode(t, w, 400)
+	})
+
+	t.Run("Fails with incorrect status code", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		// This should fail
+		t.Log("Testing validation with wrong status code (expected to fail)")
+		ValidateHTTPStatusCode(t, w, 200) // Should fail - actual is 404
+	})
+}
+
+// TestValidateContentType tests the ValidateContentType helper function.
+func TestValidateContentType(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates application/xml content type", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateContentType(t, w, "application/xml")
+	})
+
+	t.Run("Fails with incorrect content type", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		// This should fail
+		t.Log("Testing validation with wrong content type (expected to fail)")
+		ValidateContentType(t, w, "application/json") // Should fail - actual is application/xml
+	})
+}
+
+// TestValidateErrorStructure tests the ValidateErrorStructure helper function.
+func TestValidateErrorStructure(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates error response has code and message", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateErrorStructure(t, w)
+	})
+}
+
+// TestValidateErrorCode tests the ValidateErrorCode helper function.
+func TestValidateErrorCode(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates NoSuchKey error code", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateErrorCode(t, w, "NoSuchKey")
+	})
+
+	t.Run("Validates InvalidRequest error code", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "POST", "/test-bucket/test-key")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateErrorCode(t, w, "InvalidRequest")
+	})
+}
+
+// TestValidateCORSHeaders tests the ValidateCORSHeaders helper function.
+func TestValidateCORSHeaders(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates all CORS headers present", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateCORSHeaders(t, w)
+	})
+}
+
+// TestValidateCORSOrigin tests the ValidateCORSOrigin helper function.
+func TestValidateCORSOrigin(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates wildcard CORS origin", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateCORSOrigin(t, w, "*")
+	})
+}
+
+// TestValidateCORSMethods tests the ValidateCORSMethods helper function.
+func TestValidateCORSMethods(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates CORS methods", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateCORSMethods(t, w, "GET, PUT, DELETE, HEAD, POST, OPTIONS")
+	})
+}
+
+// TestValidateCORSAllowHeaders tests the ValidateCORSAllowHeaders helper function.
+func TestValidateCORSAllowHeaders(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates CORS allow-headers", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/test-key")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateCORSAllowHeaders(t, w, "Authorization, Content-Type, Range, Content-Length")
+	})
+}
+
+// TestValidateErrorMessageContains tests the ValidateErrorMessageContains helper function.
+func TestValidateErrorMessageContains(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates error message content", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateErrorMessageContains(t, w, "not found")
+	})
+}
+
+// TestValidateErrorMessageMinLength tests the ValidateErrorMessageMinLength helper function.
+func TestValidateErrorMessageMinLength(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates error message minimum length", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateErrorMessageMinLength(t, w, 15)
+	})
+}
+
+// TestValidateXMLDeclaration tests the ValidateXMLDeclaration helper function.
+func TestValidateXMLDeclaration(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Validates XML declaration", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		ValidateXMLDeclaration(t, w)
+	})
+}
+
+// TestCoreValidationHelpersCombined tests all core helper functions working together.
+func TestCoreValidationHelpersCombined(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Uses all core helpers together", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent-key")
+		w := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w, req)
+
+		// Use all core helper functions
+		ValidateHTTPStatusCode(t, w, 404)
+		ValidateContentType(t, w, "application/xml")
+		ValidateErrorStructure(t, w)
+		ValidateErrorCode(t, w, "NoSuchKey")
+		ValidateCORSHeaders(t, w)
+		ValidateCORSOrigin(t, w, "*")
+		ValidateCORSMethods(t, w, "GET, PUT, DELETE, HEAD, POST, OPTIONS")
+		ValidateCORSAllowHeaders(t, w, "Authorization, Content-Type, Range, Content-Length")
+		ValidateErrorMessageContains(t, w, "not found")
+		ValidateErrorMessageMinLength(t, w, 15)
+		ValidateXMLDeclaration(t, w)
+	})
+}
+
+// TestCoreValidationHelpersVsFluentAPI compares core helpers with fluent API.
+func TestCoreValidationHelpersVsFluentAPI(t *testing.T) {
+	fixture := NewTestServer(t)
+
+	t.Run("Both approaches produce same validation", func(t *testing.T) {
+		req := CreateAuthenticatedTestRequest(t, "GET", "/test-bucket/nonexistent")
+
+		// Using core helpers
+		w1 := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w1, req)
+
+		ValidateHTTPStatusCode(t, w1, 404)
+		ValidateContentType(t, w1, "application/xml")
+		ValidateErrorStructure(t, w1)
+		ValidateErrorCode(t, w1, "NoSuchKey")
+
+		// Using fluent API
+		w2 := httptest.NewRecorder()
+		fixture.Handler.ServeHTTP(w2, req)
+
+		VerifyErrorResponse(t, w2).
+			HTTPStatusCode(404).
+			ContentType("application/xml").
+			HasCode("NoSuchKey").
+			BodyNotEmpty().
+			Assert()
+	})
+}
