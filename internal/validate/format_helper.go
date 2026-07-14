@@ -638,6 +638,7 @@ const (
 // FieldRefConfig holds configuration options for field reference formatting.
 type FieldRefConfig struct {
 	quoteStyle QuoteStyle
+	prefix     string
 }
 
 // FieldRefOption is a function that configures a FieldRefConfig.
@@ -656,6 +657,28 @@ type FieldRefOption func(*FieldRefConfig)
 func WithQuoteStyle(style QuoteStyle) FieldRefOption {
 	return func(c *FieldRefConfig) {
 		c.quoteStyle = style
+	}
+}
+
+// WithPrefix creates a FieldRefOption that sets the prefix for field references.
+// The prefix is added before the field path (e.g., "response", "request", "data").
+// The prefix is not affected by quote styles and is added as-is.
+//
+// If both the prefix parameter and WithPrefix option are provided, the option takes precedence.
+//
+// Example usage:
+//
+//	ref := FormatFieldReference("user.email", "", WithPrefix("response"))
+//	// Returns: response.user.email
+//
+//	ref := FormatFieldReference("email", "", WithPrefix("request"))
+//	// Returns: request.email
+//
+//	ref := FormatFieldReference("users.0.email", "", WithPrefix("data"), WithQuoteStyle(DoubleQuote))
+//	// Returns: data."users"[0]."email"
+func WithPrefix(prefix string) FieldRefOption {
+	return func(c *FieldRefConfig) {
+		c.prefix = prefix
 	}
 }
 
@@ -816,9 +839,14 @@ func FormatFieldReference(fieldPath string, prefix string, options ...FieldRefOp
 	prefix = strings.TrimSpace(prefix)
 
 	// Apply options
-	config := &FieldRefConfig{quoteStyle: NoQuote}
+	config := &FieldRefConfig{quoteStyle: NoQuote, prefix: ""}
 	for _, opt := range options {
 		opt(config)
+	}
+
+	// If prefix was set via option, use it (overrides the direct parameter)
+	if config.prefix != "" {
+		prefix = config.prefix
 	}
 
 	// Handle empty field path

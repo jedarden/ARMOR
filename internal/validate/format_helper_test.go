@@ -2414,6 +2414,152 @@ func TestFormatFieldReference_QuoteStyles(t *testing.T) {
 	}
 }
 
+// TestFormatFieldReference_CustomPrefix verifies that FormatFieldReference
+// supports custom prefixes through the WithPrefix option.
+func TestFormatFieldReference_CustomPrefix(t *testing.T) {
+	tests := []struct {
+		name      string
+		fieldPath string
+		prefix    string
+		options   []FieldRefOption
+		expected  string
+	}{
+		{
+			name:      "WithPrefix overrides empty prefix parameter",
+			fieldPath: "email",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("response")},
+			expected:  "response.email",
+		},
+		{
+			name:      "WithPrefix overrides existing prefix parameter",
+			fieldPath: "email",
+			prefix:    "request",
+			options:   []FieldRefOption{WithPrefix("response")},
+			expected:  "response.email",
+		},
+		{
+			name:      "WithPrefix with nested field",
+			fieldPath: "user.email",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("data")},
+			expected:  "data.user.email",
+		},
+		{
+			name:      "WithPrefix with array indices",
+			fieldPath: "users.0.email",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("response")},
+			expected:  "response.users[0].email",
+		},
+		{
+			name:      "WithPrefix with quote style - single quote",
+			fieldPath: "user.email",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("data"), WithQuoteStyle(SingleQuote)},
+			expected:  "data.'user'.'email'",
+		},
+		{
+			name:      "WithPrefix with quote style - double quote",
+			fieldPath: "items.0.name",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("response"), WithQuoteStyle(DoubleQuote)},
+			expected:  `response."items"[0]."name"`,
+		},
+		{
+			name:      "WithPrefix with quote style - backtick",
+			fieldPath: "user.profile.email",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("request"), WithQuoteStyle(Backtick)},
+			expected:  "request.`user`.`profile`.`email`",
+		},
+		{
+			name:      "WithPrefix with multiple array indices",
+			fieldPath: "data.0.items.1.value",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("response")},
+			expected:  "response.data[0].items[1].value",
+		},
+		{
+			name:      "prefix parameter ignored when WithPrefix used",
+			fieldPath: "email",
+			prefix:    "request",
+			options:   []FieldRefOption{WithPrefix("data")},
+			expected:  "data.email",
+		},
+		{
+			name:      "empty prefix parameter with WithPrefix",
+			fieldPath: "user.settings.notifications",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("profile")},
+			expected:  "profile.user.settings.notifications",
+		},
+		{
+			name:      "WithPrefix overrides prefix parameter - complex",
+			fieldPath: "matrix.0.1.value",
+			prefix:    "original",
+			options:   []FieldRefOption{WithPrefix("response"), WithQuoteStyle(SingleQuote)},
+			expected:  "response.'matrix'[0][1].'value'",
+		},
+		{
+			name:      "WithPrefix with bracket notation already present",
+			fieldPath: "users[0].email",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("data")},
+			expected:  "data.users[0].email",
+		},
+		{
+			name:      "WithPrefix with empty field path",
+			fieldPath: "",
+			prefix:    "ignored",
+			options:   []FieldRefOption{WithPrefix("response")},
+			expected:  "response",
+		},
+		{
+			name:      "WithPrefix with quote style and empty field",
+			fieldPath: "",
+			prefix:    "ignored",
+			options:   []FieldRefOption{WithPrefix("request"), WithQuoteStyle(DoubleQuote)},
+			expected:  "request",
+		},
+		{
+			name:      "multiple WithPrefix calls - last one wins",
+			fieldPath: "email",
+			prefix:    "parameter",
+			options:   []FieldRefOption{
+				WithPrefix("first"),
+				WithPrefix("second"),
+				WithPrefix("third"),
+			},
+			expected:  "third.email",
+		},
+		{
+			name:      "WithPrefix with deeply nested path",
+			fieldPath: "data.user.profile.settings.notification_email",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("record")},
+			expected:  "record.data.user.profile.settings.notification_email",
+		},
+		{
+			name:      "WithPrefix with hyphenated field",
+			fieldPath: "user-email.address",
+			prefix:    "",
+			options:   []FieldRefOption{WithPrefix("form"), WithQuoteStyle(DoubleQuote)},
+			expected:  `form."user-email"."address"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldReference(tt.fieldPath, tt.prefix, tt.options...)
+			if result != tt.expected {
+				t.Errorf("FormatFieldReference(%q, %q, options...) = %q, want %q",
+					tt.fieldPath, tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestFormatFieldReference_NoOptions verifies backward compatibility
 // when no options are provided to FormatFieldReference.
 func TestFormatFieldReference_NoOptions(t *testing.T) {
