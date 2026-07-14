@@ -725,10 +725,11 @@ func DefaultValidationOptions() ErrorStructureValidationOptions {
 // - Supports optional field validation via options
 //
 // Returns true if validation passes, false otherwise.
-// Throws assertion error with clear message if validation fails.
+// Note: This function does not call t.Error() to allow testing of invalid cases.
+// Use AssertValidErrorResponseStructure() for assertion behavior.
 //
 // Parameters:
-//   t: Testing instance for assertions
+//   t: Testing instance for context
 //   body: Response body as byte array
 //   options: Validation options (use DefaultValidationOptions() for defaults)
 //
@@ -743,14 +744,12 @@ func ValidateErrorResponseStructure(t *testing.T, body []byte, options ErrorStru
 
 	// Check response body is not empty
 	if len(body) == 0 {
-		t.Error("Error response body is empty")
 		return false
 	}
 
 	// Parse the error response
 	var s3Err S3Error
 	if err := xml.Unmarshal(body, &s3Err); err != nil {
-		t.Errorf("Failed to parse error response XML: %v\nResponse body: %s", err, string(body))
 		return false
 	}
 
@@ -759,33 +758,33 @@ func ValidateErrorResponseStructure(t *testing.T, body []byte, options ErrorStru
 
 	// Validate error code field exists if required
 	if options.RequireCode && s3Err.Code == "" {
-		t.Error("Error response missing Code field")
 		allValid = false
 	}
 
 	// Validate error message field exists if required
-	if options.RequireMessage && s3Err.Message == "" {
-		t.Error("Error response missing Message field")
-		allValid = false
+	if options.RequireMessage {
+		trimmedMsg := strings.TrimSpace(s3Err.Message)
+		if trimmedMsg == "" {
+			allValid = false
+		}
 	}
 
 	// Validate expected code if specified
 	if options.ExpectedCode != "" && s3Err.Code != options.ExpectedCode {
-		t.Errorf("Expected error code '%s', got '%s'", options.ExpectedCode, s3Err.Code)
 		allValid = false
 	}
 
 	// Validate minimum message length if specified
-	if options.MinMessageLength > 0 && len(s3Err.Message) < options.MinMessageLength {
-		t.Errorf("Error message too short (got %d chars, want at least %d): %s",
-			len(s3Err.Message), options.MinMessageLength, s3Err.Message)
-		allValid = false
+	if options.MinMessageLength > 0 {
+		// Use trimmed message for length validation
+		trimmedMsg := strings.TrimSpace(s3Err.Message)
+		if len(trimmedMsg) < options.MinMessageLength {
+			allValid = false
+		}
 	}
 
 	// Validate message contains expected text if specified
 	if options.MessageContains != "" && !strings.Contains(s3Err.Message, options.MessageContains) {
-		t.Errorf("Expected error message to contain '%s', got '%s'",
-			options.MessageContains, s3Err.Message)
 		allValid = false
 	}
 
@@ -793,8 +792,6 @@ func ValidateErrorResponseStructure(t *testing.T, body []byte, options ErrorStru
 	for field, expectedValue := range options.CustomFields {
 		actualValue := getXMLField(body, field)
 		if actualValue != expectedValue {
-			t.Errorf("Expected custom field '%s' to be '%s', got '%s'",
-				field, expectedValue, actualValue)
 			allValid = false
 		}
 	}
@@ -823,6 +820,7 @@ func ValidateErrorResponseStructureSimple(t *testing.T, body []byte) bool {
 //
 // This helper validates error response structure and fails the test if validation fails.
 // Use this when you want test execution to stop on validation failure.
+// Provides detailed error messages for debugging.
 //
 // Example:
 //   AssertValidErrorResponseStructure(t, responseBody)
@@ -830,6 +828,29 @@ func AssertValidErrorResponseStructure(t *testing.T, body []byte) {
 	t.Helper()
 
 	if !ValidateErrorResponseStructureSimple(t, body) {
+		// Provide detailed error message
+		if len(body) == 0 {
+			t.Fatal("Error response structure validation failed: response body is empty")
+		}
+
+		var s3Err S3Error
+		if err := xml.Unmarshal(body, &s3Err); err != nil {
+			t.Fatalf("Error response structure validation failed: invalid XML: %v", err)
+		}
+
+		if s3Err.Code == "" {
+			t.Fatal("Error response structure validation failed: missing Code field")
+		}
+
+		if s3Err.Message == "" {
+			t.Fatal("Error response structure validation failed: missing Message field")
+		}
+
+		if len(s3Err.Message) < 10 {
+			t.Fatalf("Error response structure validation failed: message too short (%d chars, want at least 10): %s",
+				len(s3Err.Message), s3Err.Message)
+		}
+
 		t.Fatal("Error response structure validation failed")
 	}
 }
@@ -838,6 +859,7 @@ func AssertValidErrorResponseStructure(t *testing.T, body []byte) {
 //
 // This helper validates error response structure with custom options and fails the test
 // if validation fails. Use this when you need specific validation requirements.
+// Provides detailed error messages for debugging.
 //
 // Example:
 //   opts := DefaultValidationOptions()
@@ -848,6 +870,47 @@ func AssertValidErrorResponseStructureWithOptions(t *testing.T, body []byte, opt
 	t.Helper()
 
 	if !ValidateErrorResponseStructure(t, body, options) {
+		// Provide detailed error message based on options
+		if len(body) == 0 {
+			t.Fatal("Error response structure validation failed: response body is empty")
+		}
+
+		var s3Err S3Error
+		if err := xml.Unmarshal(body, &s3Err); err != nil {
+			t.Fatalf("Error response structure validation failed: invalid XML: %v", err)
+		}
+
+		if options.RequireCode && s3Err.Code == "" {
+			t.Fatal("Error response structure validation failed: missing Code field")
+		}
+
+		if options.RequireMessage && s3Err.Message == "" {
+			t.Fatal("Error response structure validation failed: missing Message field")
+		}
+
+		if options.ExpectedCode != "" && s3Err.Code != options.ExpectedCode {
+			t.Fatalf("Error response structure validation failed: expected code '%s', got '%s'",
+				options.ExpectedCode, s3Err.Code)
+		}
+
+		if options.MinMessageLength > 0 && len(s3Err.Message) < options.MinMessageLength {
+			t.Fatalf("Error response structure validation failed: message too short (%d chars, want at least %d): %s",
+				len(s3Err.Message), options.MinMessageLength, s3Err.Message)
+		}
+
+		if options.MessageContains != "" && !strings.Contains(s3Err.Message, options.MessageContains) {
+			t.Fatalf("Error response structure validation failed: expected message to contain '%s', got '%s'",
+				options.MessageContains, s3Err.Message)
+		}
+
+		for field, expectedValue := range options.CustomFields {
+			actualValue := getXMLField(body, field)
+			if actualValue != expectedValue {
+				t.Fatalf("Error response structure validation failed: expected field '%s' to be '%s', got '%s'",
+					field, expectedValue, actualValue)
+			}
+		}
+
 		t.Fatal("Error response structure validation failed")
 	}
 }
