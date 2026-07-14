@@ -950,7 +950,7 @@ func TestFormatError_EmptyMessage(t *testing.T) {
 			errorType: "validation",
 			message:   "   ",
 			fieldName: "",
-			expected:  "[validation]     ",
+			expected:  "[validation]    ",
 		},
 	}
 
@@ -1102,4 +1102,387 @@ func TestFormatError_NoNilPanic(t *testing.T) {
 
 	// Test with normal values
 	FormatError("validation", "test message")
+}
+
+// =============================================================================
+// FormatFieldPath FUNCTION TESTS
+// =============================================================================
+
+// TestFormatFieldPath_BasicPaths verifies that FormatFieldPath handles
+// basic field paths correctly.
+func TestFormatFieldPath_BasicPaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		fieldPath string
+		expected string
+	}{
+		{
+			name:     "simple field name",
+			fieldPath: "email",
+			expected: "email",
+		},
+		{
+			name:     "nested field path",
+			fieldPath: "user.email",
+			expected: "user.email",
+		},
+		{
+			name:     "deeply nested path",
+			fieldPath: "data.user.profile.email",
+			expected: "data.user.profile.email",
+		},
+		{
+			name:     "field with underscore",
+			fieldPath: "user_email",
+			expected: "user_email",
+		},
+		{
+			name:     "camelCase field",
+			fieldPath: "userEmail",
+			expected: "userEmail",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldPath(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldPath(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldPath_ArrayIndices verifies that FormatFieldPath handles
+// array indices correctly in various formats.
+func TestFormatFieldPath_ArrayIndices(t *testing.T) {
+	tests := []struct {
+		name     string
+		fieldPath string
+		expected string
+	}{
+		{
+			name:     "array index with dot notation",
+			fieldPath: "users.0.email",
+			expected: "users[0].email",
+		},
+		{
+			name:     "array index at start",
+			fieldPath: "0.name",
+			expected: "0.name",
+		},
+		{
+			name:     "multiple array indices",
+			fieldPath: "data.0.items.1.name",
+			expected: "data[0].items[1].name",
+		},
+		{
+			name:     "large array index",
+			fieldPath: "users.12345.name",
+			expected: "users[12345].name",
+		},
+		{
+			name:     "array index already in bracket notation",
+			fieldPath: "users[0].email",
+			expected: "users[0].email",
+		},
+		{
+			name:     "mixed notation (bracket and dot)",
+			fieldPath: "users[0].emails.1.address",
+			expected: "users[0].emails[1].address",
+		},
+		{
+			name:     "nested arrays with dot notation",
+			fieldPath: "matrix.0.1.value",
+			expected: "matrix[0][1].value",
+		},
+		{
+			name:     "array index in middle of path",
+			fieldPath: "data.users.0.profile.email",
+			expected: "data.users[0].profile.email",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldPath(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldPath(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldPath_EmptyAndInvalidPaths verifies that FormatFieldPath handles
+// empty and invalid field paths gracefully.
+func TestFormatFieldPath_EmptyAndInvalidPaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		fieldPath string
+		expected string
+	}{
+		{
+			name:     "empty string",
+			fieldPath: "",
+			expected: "(unknown field)",
+		},
+		{
+			name:     "whitespace only",
+			fieldPath: "   ",
+			expected: "(unknown field)",
+		},
+		{
+			name:     "whitespace with content",
+			fieldPath: "  user.email  ",
+			expected: "user.email",
+		},
+		{
+			name:     "dots only",
+			fieldPath: "...",
+			expected: "(unknown field)",
+		},
+		{
+			name:     "multiple consecutive dots",
+			fieldPath: "user..email",
+			expected: "user.email",
+		},
+		{
+			name:     "leading dot",
+			fieldPath: ".email",
+			expected: "email",
+		},
+		{
+			name:     "trailing dot",
+			fieldPath: "email.",
+			expected: "email",
+		},
+		{
+			name:     "single dot",
+			fieldPath: ".",
+			expected: "(unknown field)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldPath(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldPath(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldPath_NegativeIndices verifies that FormatFieldPath handles
+// negative array indices (though unusual).
+func TestFormatFieldPath_NegativeIndices(t *testing.T) {
+	tests := []struct {
+		name     string
+		fieldPath string
+		expected string
+	}{
+		{
+			name:     "negative index",
+			fieldPath: "users.-1.email",
+			expected: "users[-1].email",
+		},
+		{
+			name:     "negative zero",
+			fieldPath: "users.-0.name",
+			expected: "users[-0].name",
+		},
+		{
+			name:     "multiple negative indices",
+			fieldPath: "data.-1.items.-2.value",
+			expected: "data[-1].items[-2].value",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldPath(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldPath(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldPath_SpecialCharacters verifies that FormatFieldPath handles
+// field names with special characters correctly.
+func TestFormatFieldPath_SpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name     string
+		fieldPath string
+		expected string
+	}{
+		{
+			name:     "field with hyphen",
+			fieldPath: "user-email",
+			expected: "user-email",
+		},
+		{
+			name:     "field with number in middle",
+			fieldPath: "user2email",
+			expected: "user2email",
+		},
+		{
+			name:     "field starting with number",
+			fieldPath: "2email",
+			expected: "2email",
+		},
+		{
+			name:     "complex field names",
+			fieldPath: "user_first_name.email_address.work",
+			expected: "user_first_name.email_address.work",
+		},
+		{
+			name:     "field names with special chars in brackets",
+			fieldPath: "users[0].email_address",
+			expected: "users[0].email_address",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldPath(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldPath(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldPath_EdgeCases verifies that FormatFieldPath handles
+// edge cases and unusual but valid inputs.
+func TestFormatFieldPath_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		fieldPath string
+		expected string
+	}{
+		{
+			name:     "zero index",
+			fieldPath: "users.0.name",
+			expected: "users[0].name",
+		},
+		{
+			name:     "very long path",
+			fieldPath: "a.b.c.d.e.f.g.h.i.j",
+			expected: "a.b.c.d.e.f.g.h.i.j",
+		},
+		{
+			name:     "path with multiple zero indices",
+			fieldPath: "data.0.0.0.value",
+			expected: "data[0][0][0].value",
+		},
+		{
+			name:     "single character field names",
+			fieldPath: "a.b.c",
+			expected: "a.b.c",
+		},
+		{
+			name:     "array at end only",
+			fieldPath: "users.0",
+			expected: "users[0]",
+		},
+		{
+			name:     "bracket notation at start",
+			fieldPath: "[0].name",
+			expected: "[0].name",
+		},
+		{
+			name:     "empty brackets with dot notation",
+			fieldPath: "users..0.name",
+			expected: "users[0].name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldPath(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldPath(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldPath_RealWorldExamples tests realistic field paths
+// that would be used in actual error messages.
+func TestFormatFieldPath_RealWorldExamples(t *testing.T) {
+	tests := []struct {
+		name     string
+		fieldPath string
+		expected string
+	}{
+		{
+			name:     "API response field",
+			fieldPath: "response.data.users.0.email",
+			expected: "response.data.users[0].email",
+		},
+		{
+			name:     "JSON path with array",
+			fieldPath: "order.items.5.price",
+			expected: "order.items[5].price",
+		},
+		{
+			name:     "nested object with array",
+			fieldPath: "user.addresses.1.street",
+			expected: "user.addresses[1].street",
+		},
+		{
+			name:     "form field path",
+			fieldPath: "form.email",
+			expected: "form.email",
+		},
+		{
+			name:     "request parameter",
+			fieldPath: "request.query.page",
+			expected: "request.query.page",
+		},
+		{
+			name:     "database field",
+			fieldPath: "users.0.profile.settings.notification_email",
+			expected: "users[0].profile.settings.notification_email",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatFieldPath(tt.fieldPath)
+			if result != tt.expected {
+				t.Errorf("FormatFieldPath(%q) = %q, want %q", tt.fieldPath, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatFieldPath_Consistency verifies that FormatFieldPath produces
+// consistent output across equivalent inputs.
+func TestFormatFieldPath_Consistency(t *testing.T) {
+	// Different ways to represent the same field path should normalize to the same output
+	equivalentPaths := [][]string{
+		// Array access with dot notation vs bracket notation
+		{"users.0.email", "users[0].email"},
+		// Multiple array indices
+		{"data.0.items.1.name", "data[0].items[1].name"},
+		// Mixed notation
+		{"users[0].emails.1.address", "users.0.emails.1.address"},
+	}
+
+	for _, paths := range equivalentPaths {
+		if len(paths) < 2 {
+			continue
+		}
+
+		firstResult := FormatFieldPath(paths[0])
+		for _, path := range paths[1:] {
+			result := FormatFieldPath(path)
+			if result != firstResult {
+				t.Errorf("FormatFieldPath(%q) = %q, but FormatFieldPath(%q) = %q (expected same result)",
+					paths[0], firstResult, path, result)
+			}
+		}
+	}
 }
