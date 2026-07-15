@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 
@@ -247,7 +246,12 @@ func TestMultipartFullCycleByteVerification(t *testing.T) {
 	const block = 65536
 
 	// Three parts with distinguishable patterns; final part non-aligned.
-	sizes := []int{2 * block, 2 * block, block + 1234}
+	// Scaled to 44MB+ total to match the actual failing scale from bf-1v6skf
+	// (production litestream snapshot was 44,908,497 bytes and failed at block 256).
+	const targetTotal = 45 * 1024 * 1024 // 45MB target (slightly above production failure)
+	partSize := 5 * 1024 * 1024          // 5MB per part (S3 minimum, matches production)
+	finalPartSize := targetTotal - (2 * partSize)
+	sizes := []int{partSize, partSize, finalPartSize}
 	var plaintext []byte
 	var parts [][]byte
 	for p, size := range sizes {
@@ -281,12 +285,6 @@ func TestMultipartFullCycleByteVerification(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
 	w := httptest.NewRecorder()
 	h.HandleRoot(w, req)
-	if w.Code == http.StatusInternalServerError && strings.Contains(w.Body.String(), "Failed to prefetch HMAC table") {
-		// The read path assumes the single-PUT layout (header + data +
-		// embedded HMAC table) and never checks the armor-multipart flag,
-		// so multipart objects are currently unreadable through ARMOR.
-		t.Skipf("KNOWN BUG bf-24sxh7: multipart GET ignores sidecar layout (matrix U4/R4/R7) — unskip when fixed")
-	}
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET after complete failed: status %d: %s", w.Code, w.Body.String())
 	}
@@ -363,4 +361,63 @@ func firstDivergence(a, b []byte) int {
 		}
 	}
 	return n
+}
+
+// TestMultipartPartBoundaryDebug tests decryption at the exact part boundary.
+func TestMultipartPartBoundaryDebug(t *testing.T) {
+	_, rb, h := recordingTestSetup(t)
+	bucket, key := "test-bucket", "boundary-debug.parquet"
+	const block = 65536
+	const partSize = 5 * 1024 * 1024
+
+	// Two simple parts
+	part1 := make([]byte, partSize)
+	part2 := make([]byte, partSize)
+	for i := range part1 {
+		part1[i] = 0xAA
+		part2[i] = 0xBB
+	}
+
+	uploadID := initiateMultipart(t, h, bucket, key)
+	etag1 := uploadPart(t, h, bucket, key, uploadID, 1, part1)
+	etag2 := uploadPart(t, h, bucket, key, uploadID, 2, part2)
+	completeMultipart(t, h, bucket, key, uploadID, []string{etag1, etag2})
+
+	// Check last 10 bytes of part 1
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+	req.Header.Set("Range", "bytes=5242870-5242879")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("range GET failed: status %d: %s", w.Code, w.Body.String())
+	}
+	part1End := w.Body.Bytes()
+	t.Logf("Part 1 end (bytes 5242870-5242879): %v", part1End)
+
+	// Check first 10 bytes of part 2
+	req = httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+	req.Header.Set("Range", "bytes=5242880-5242889")
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("range GET failed: status %d: %s", w.Code, w.Body.String())
+	}
+	part2Start := w.Body.Bytes()
+	t.Logf("Part 2 start (bytes 5242880-5242889): %v", part2Start)
+
+	// Verify part 1 end is all 0xAA
+	for _, b := range part1End {
+		if b != 0xAA {
+			t.Errorf("Part 1 end has wrong byte: got 0x%02x, want 0xAA", b)
+		}
+	}
+
+	// Verify part 2 start is all 0xBB
+	for i, b := range part2Start {
+		if b != 0xBB {
+			t.Errorf("Part 2 start byte %d is wrong: got 0x%02x, want 0xBB", i, b)
+		}
+	}
+
+	_ = rb
 }
