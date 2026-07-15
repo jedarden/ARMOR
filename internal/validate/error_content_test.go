@@ -24,8 +24,8 @@ func TestValidationError_Content_SingleStatusCodeMismatch(t *testing.T) {
 			mustContain: []string{
 				"200",
 				"404",
-				"expected",
-				"got",
+				"Expected:",
+				"Received:",
 			},
 		},
 		{
@@ -881,28 +881,112 @@ func ExampleValidateStatusCodeWithDetails_errorContent() {
 	resp.Code = 404
 	httpResp := resp.Result()
 
-	// Validate with expected status 200
+	// Validate with expected status 200 (no context)
 	result := ValidateStatusCodeWithDetails(httpResp, 200)
 
 	// Use detailed error information
 	if !result.Valid {
-		fmt.Printf("Validation failed: %s\n", result.MismatchDetails)
-		fmt.Printf("Actual: %d (%s)\n", result.ActualCode, result.Category)
-		fmt.Printf("Expected: %d\n", result.ExpectedCodes[0])
-
-		if result.IsClientError {
-			fmt.Println("This is a client error - check the request")
-		}
-		if result.IsServerError {
-			fmt.Println("This is a server error - retry later")
-		}
+		fmt.Printf("Validation failed:\n%s\n", result.MismatchDetails)
+		fmt.Printf("Category: %s\n", result.Category)
 	}
 
 	// Output:
-	// Validation failed: expected status code 200 but got 404
-	// Actual: 404 (client_error)
-	// Expected: 200
-	// This is a client error - check the request
+	// Validation failed:
+	// Status code category: 4xx - Client error responses
+	// Expected: 200 (OK)
+	// Received: 404 (Not Found)
+	// Common causes:
+	//   1. Verify the endpoint URL is correct
+	//   2. Check if the resource ID or identifier exists
+	//   3. Ensure the resource hasn't been deleted or moved
+	//   4. Review API versioning (URL path may have changed)
+	// Category: client_error
+}
+
+// ExampleValidateStatusCodeWithDetails_withContext demonstrates validation with request context
+func ExampleValidateStatusCodeWithDetails_withContext() {
+	// Create a response with status 401
+	resp := httptest.NewRecorder()
+	resp.Code = 401
+	httpResp := resp.Result()
+
+	// Validate with expected status 200 and provide request context
+	result := ValidateStatusCodeWithDetails(httpResp, 200, "POST /api/users")
+
+	// Use detailed error information
+	if !result.Valid {
+		fmt.Printf("Validation failed:\n%s\n", result.MismatchDetails)
+	}
+
+	// Output:
+	// Validation failed:
+	// Request: POST /api/users
+	// Status code category: 4xx - Client error responses
+	// Expected: 200 (OK)
+	// Received: 401 (Unauthorized)
+	// Common causes:
+	//   1. Verify authentication credentials are correct
+	//   2. Check if API token or session has expired
+	//   3. Ensure Authorization header is properly formatted (e.g., 'Bearer <token>')
+	//   4. Confirm authentication method is supported
+}
+
+// ExampleValidateStatusCodeWithDetails_rateLimit demonstrates 429 rate limit error with suggestions
+func ExampleValidateStatusCodeWithDetails_rateLimit() {
+	// Create a response with status 429
+	resp := httptest.NewRecorder()
+	resp.Code = 429
+	httpResp := resp.Result()
+
+	// Validate with expected status 200
+	result := ValidateStatusCodeWithDetails(httpResp, 200, "GET /api/data")
+
+	// Use detailed error information
+	if !result.Valid {
+		fmt.Printf("Validation failed:\n%s\n", result.MismatchDetails)
+	}
+
+	// Output:
+	// Validation failed:
+	// Request: GET /api/data
+	// Status code category: 4xx - Client error responses
+	// Expected: 200 (OK)
+	// Received: 429 (Too Many Requests)
+	// Common causes:
+	//   1. Implement rate limiting and exponential backoff
+	//   2. Check API quota limits and current usage
+	//   3. Consider caching responses to reduce request frequency
+	//   4. Review rate limit headers (Retry-After, X-RateLimit-Remaining)
+}
+
+// ExampleValidateStatusCodeWithDetails_serverError demonstrates 500 server error with suggestions
+func ExampleValidateStatusCodeWithDetails_serverError() {
+	// Create a response with status 500
+	resp := httptest.NewRecorder()
+	resp.Code = 500
+	httpResp := resp.Result()
+
+	// Validate with expected status 200
+	result := ValidateStatusCodeWithDetails(httpResp, 200, "DELETE /api/resource/123")
+
+	// Use detailed error information
+	if !result.Valid {
+		fmt.Printf("Validation failed:\n%s\n", result.MismatchDetails)
+		fmt.Printf("Is server error: %v\n", result.IsServerError)
+	}
+
+	// Output:
+	// Validation failed:
+	// Request: DELETE /api/resource/123
+	// Status code category: 5xx - Server error responses
+	// Expected: 200 (OK)
+	// Received: 500 (Internal Server Error)
+	// Common causes:
+	//   1. Implement retry logic with exponential backoff
+	//   2. Check service status page for ongoing issues
+	//   3. Contact support if the issue persists
+	//   4. Verify request doesn't trigger server-side bugs
+	// Is server error: true
 }
 
 // TestValidationError_Content_ExtendedFields verifies that extended ValidationError
@@ -1393,6 +1477,517 @@ func TestValidationError_Content_DetailedSuggestions(t *testing.T) {
 					t.Errorf("Expected suggestions to contain '%s' for %s=%v, actual=%v\nGot: %s",
 						suggestion, tt.validationType, tt.expected, tt.actual, errMsg)
 				}
+			}
+		})
+	}
+}
+
+// TestValidateStatusCodeWithDetails_EnhancedMismatchReporting verifies that enhanced
+// mismatch reporting includes comprehensive information as required by the acceptance criteria.
+func TestValidateStatusCodeWithDetails_EnhancedMismatchReporting(t *testing.T) {
+	tests := []struct {
+		name                string
+		expected            interface{}
+		actual              int
+		requestContext      string
+		mustContain         []string
+		mustNotContain      []string
+		verifyCategory      string
+		verifyClientError   bool
+		verifyServerError   bool
+		minSuggestions      int
+	}{
+		{
+			name:           "404 with context - shows all details",
+			expected:       200,
+			actual:         404,
+			requestContext: "GET /api/users/123",
+			mustContain: []string{
+				"Request: GET /api/users/123",
+				"Status code category: 4xx - Client error responses",
+				"Expected: 200 (OK)",
+				"Received: 404 (Not Found)",
+				"Common causes:",
+				"endpoint URL",
+				"resource",
+				"exists",
+			},
+			verifyCategory:    "client_error",
+			verifyClientError: true,
+			verifyServerError: false,
+			minSuggestions:   4,
+		},
+		{
+			name:           "401 without context - shows suggestions",
+			expected:       200,
+			actual:         401,
+			requestContext: "",
+			mustContain: []string{
+				"Status code category: 4xx - Client error responses",
+				"Expected: 200 (OK)",
+				"Received: 401 (Unauthorized)",
+				"Common causes:",
+				"authentication",
+				"credentials",
+				"token",
+				"Authorization header",
+			},
+			mustNotContain:   []string{"Request:"},
+			verifyCategory:   "client_error",
+			verifyClientError: true,
+			verifyServerError: false,
+			minSuggestions:   4,
+		},
+		{
+			name:           "403 - permission suggestions",
+			expected:       200,
+			actual:         403,
+			requestContext: "DELETE /api/admin/settings",
+			mustContain: []string{
+				"Request: DELETE /api/admin/settings",
+				"Status code category: 4xx - Client error responses",
+				"Received: 403 (Forbidden)",
+				"Common causes:",
+				"permission",
+				"scopes",
+				"OAuth",
+			},
+			verifyCategory:    "client_error",
+			verifyClientError: true,
+			verifyServerError: false,
+			minSuggestions:   4,
+		},
+		{
+			name:           "429 - rate limit suggestions",
+			expected:       200,
+			actual:         429,
+			requestContext: "GET /api/data",
+			mustContain: []string{
+				"Received: 429 (Too Many Requests)",
+				"Common causes:",
+				"rate limiting",
+				"quota",
+				"backoff",
+				"Retry-After",
+				"X-RateLimit",
+			},
+			verifyCategory:    "client_error",
+			verifyClientError: true,
+			verifyServerError: false,
+			minSuggestions:   4,
+		},
+		{
+			name:           "500 - server error suggestions",
+			expected:       200,
+			actual:         500,
+			requestContext: "POST /api/complex-operation",
+			mustContain: []string{
+				"Request: POST /api/complex-operation",
+				"Status code category: 5xx - Server error responses",
+				"Received: 500 (Internal Server Error)",
+				"Common causes:",
+				"retry",
+				"backoff",
+				"service status",
+				"support",
+			},
+			verifyCategory:    "server_error",
+			verifyClientError: false,
+			verifyServerError: true,
+			minSuggestions:   4,
+		},
+		{
+			name:           "502 - bad gateway suggestions",
+			expected:       200,
+			actual:         502,
+			requestContext: "",
+			mustContain: []string{
+				"Status code category: 5xx - Server error responses",
+				"Received: 502 (Bad Gateway)",
+				"Common causes:",
+				"upstream",
+				"retry",
+				"load balancer",
+			},
+			verifyCategory:    "server_error",
+			verifyClientError: false,
+			verifyServerError: true,
+			minSuggestions:   4,
+		},
+		{
+			name:           "503 - service unavailable suggestions",
+			expected:       200,
+			actual:         503,
+			requestContext: "GET /api/service",
+			mustContain: []string{
+				"Received: 503 (Service Unavailable)",
+				"Common causes:",
+				"retry",
+				"maintenance",
+				"capacity",
+				"circuit breaker",
+			},
+			verifyCategory:    "server_error",
+			verifyClientError: false,
+			verifyServerError: true,
+			minSuggestions:   4,
+		},
+		{
+			name:           "504 - gateway timeout suggestions",
+			expected:       200,
+			actual:         504,
+			requestContext: "",
+			mustContain: []string{
+				"Received: 504 (Gateway Timeout)",
+				"Common causes:",
+				"timeout",
+				"upstream",
+				"latency",
+			},
+			verifyCategory:    "server_error",
+			verifyClientError: false,
+			verifyServerError: true,
+			minSuggestions:   4,
+		},
+		{
+			name:           "400 - bad request suggestions",
+			expected:       201,
+			actual:         400,
+			requestContext: "POST /api/users",
+			mustContain: []string{
+				"Received: 400 (Bad Request)",
+				"Common causes:",
+				"syntax",
+				"formatting",
+				"required fields",
+				"Content-Type",
+			},
+			verifyCategory:    "client_error",
+			verifyClientError: true,
+			verifyServerError: false,
+			minSuggestions:   4,
+		},
+		{
+			name:           "Multiple expected codes - shows all options",
+			expected:       []int{200, 201, 204},
+			actual:         404,
+			requestContext: "GET /api/items",
+			mustContain: []string{
+				"Status code category: 4xx - Client error responses",
+				"Expected: one of [",
+				"200 (OK)",
+				"201 (Created)",
+				"204 (No Content)",
+				"]",
+				"Received: 404 (Not Found)",
+				"Common causes:",
+			},
+			verifyCategory:    "client_error",
+			verifyClientError: true,
+			verifyServerError: false,
+			minSuggestions:   4,
+		},
+		{
+			name:           "Unknown 4xx code - generic suggestions",
+			expected:       200,
+			actual:         418, // I'm a teapot
+			requestContext: "",
+			mustContain: []string{
+				"Status code category: 4xx - Client error responses",
+				"Common causes:",
+				"request parameters",
+				"headers",
+				"API contracts",
+			},
+			verifyCategory:    "client_error",
+			verifyClientError: true,
+			verifyServerError: false,
+			minSuggestions:   4,
+		},
+		{
+			name:           "Unknown 5xx code - generic suggestions",
+			expected:       200,
+			actual:         599, // Non-standard
+			requestContext: "",
+			mustContain: []string{
+				"Status code category: 5xx - Server error responses",
+				"Common causes:",
+				"retry",
+				"service status",
+				"support",
+				"server logs",
+			},
+			verifyCategory:    "server_error",
+			verifyClientError: false,
+			verifyServerError: true,
+			minSuggestions:   4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a response with the actual status code
+			resp := httptest.NewRecorder()
+			resp.Code = tt.actual
+			httpResp := resp.Result()
+
+			// Validate with details
+			var result StatusCodeValidationResult
+			if tt.requestContext != "" {
+				result = ValidateStatusCodeWithDetails(httpResp, tt.expected, tt.requestContext)
+			} else {
+				result = ValidateStatusCodeWithDetails(httpResp, tt.expected)
+			}
+
+			// Verify the result is invalid
+			if result.Valid {
+				t.Errorf("Expected validation to fail for status %d vs expected %v", tt.actual, tt.expected)
+			}
+
+			// Verify mismatch details are populated
+			mismatchMsg := result.MismatchDetails
+			if mismatchMsg == "" {
+				t.Errorf("Expected mismatch details to be populated, got empty string")
+			}
+
+			// Check for required content
+			for _, required := range tt.mustContain {
+				if !strings.Contains(mismatchMsg, required) {
+					t.Errorf("Expected mismatch details to contain '%s'\nGot: %s", required, mismatchMsg)
+				}
+			}
+
+			// Check that forbidden content is not present
+			for _, forbidden := range tt.mustNotContain {
+				if strings.Contains(mismatchMsg, forbidden) {
+					t.Errorf("Expected mismatch details to NOT contain '%s'\nGot: %s", forbidden, mismatchMsg)
+				}
+			}
+
+			// Verify category
+			if result.Category != tt.verifyCategory {
+				t.Errorf("Expected Category to be '%s', got '%s'", tt.verifyCategory, result.Category)
+			}
+
+			// Verify error type flags
+			if result.IsClientError != tt.verifyClientError {
+				t.Errorf("Expected IsClientError to be %v, got %v", tt.verifyClientError, result.IsClientError)
+			}
+
+			if result.IsServerError != tt.verifyServerError {
+				t.Errorf("Expected IsServerError to be %v, got %v", tt.verifyServerError, result.IsServerError)
+			}
+
+			// Verify minimum number of suggestions (expect "Common causes:" + numbered items)
+			commonCausesCount := strings.Count(mismatchMsg, "Common causes:")
+			if commonCausesCount != 1 {
+				t.Errorf("Expected 'Common causes:' to appear exactly once, appeared %d times", commonCausesCount)
+			}
+
+			// Count numbered suggestion items (e.g., "  1. ", "  2. ", etc.)
+			suggestionCount := 0
+			for i := 1; i <= 10; i++ {
+				if strings.Contains(mismatchMsg, fmt.Sprintf("  %d. ", i)) {
+					suggestionCount++
+				}
+			}
+			if suggestionCount < tt.minSuggestions {
+				t.Errorf("Expected at least %d numbered suggestions, found %d\nGot: %s", tt.minSuggestions, suggestionCount, mismatchMsg)
+			}
+		})
+	}
+}
+
+// TestValidateStatusCodeWithDetails_SpecificCodeSuggestions verifies that specific
+// status codes get the correct suggestions as per acceptance criteria.
+func TestValidateStatusCodeWithDetails_SpecificCodeSuggestions(t *testing.T) {
+	tests := []struct {
+		name              string
+		actualCode        int
+		expectedKeywords  []string
+		notExpectedKeywords []string
+	}{
+		{
+			name:       "400 - bad request",
+			actualCode: 400,
+			expectedKeywords: []string{
+				"syntax",
+				"formatting",
+				"required fields",
+				"Content-Type",
+				"JSON schema",
+			},
+		},
+		{
+			name:       "401 - unauthorized",
+			actualCode: 401,
+			expectedKeywords: []string{
+				"authentication",
+				"credentials",
+				"expired",
+				"Authorization header",
+				"Bearer",
+			},
+		},
+		{
+			name:       "403 - forbidden",
+			actualCode: 403,
+			expectedKeywords: []string{
+				"permission",
+				"scopes",
+				"roles",
+				"OAuth",
+			},
+		},
+		{
+			name:       "404 - not found",
+			actualCode: 404,
+			expectedKeywords: []string{
+				"endpoint URL",
+				"resource",
+				"exists",
+				"deleted or moved",
+				"API versioning",
+			},
+		},
+		{
+			name:       "429 - too many requests",
+			actualCode: 429,
+			expectedKeywords: []string{
+				"rate limiting",
+				"backoff",
+				"quota",
+				"Retry-After",
+				"X-RateLimit-Remaining",
+			},
+		},
+		{
+			name:       "500 - internal server error",
+			actualCode: 500,
+			expectedKeywords: []string{
+				"retry",
+				"backoff",
+				"service status",
+				"support",
+				"server-side bugs",
+			},
+		},
+		{
+			name:       "502 - bad gateway",
+			actualCode: 502,
+			expectedKeywords: []string{
+				"upstream",
+				"retry",
+				"load balancer",
+				"network connectivity",
+			},
+		},
+		{
+			name:       "503 - service unavailable",
+			actualCode: 503,
+			expectedKeywords: []string{
+				"retry",
+				"maintenance",
+				"capacity",
+				"scaling",
+				"circuit breaker",
+			},
+		},
+		{
+			name:       "504 - gateway timeout",
+			actualCode: 504,
+			expectedKeywords: []string{
+				"timeout",
+				"retry",
+				"upstream",
+				"request complexity",
+				"network latency",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a response with the actual status code
+			resp := httptest.NewRecorder()
+			resp.Code = tt.actualCode
+			httpResp := resp.Result()
+
+			// Validate with expected 200
+			result := ValidateStatusCodeWithDetails(httpResp, 200, "TEST REQUEST")
+
+			// Verify result is invalid
+			if result.Valid {
+				t.Errorf("Expected validation to fail for status %d", tt.actualCode)
+			}
+
+			mismatchMsg := result.MismatchDetails
+
+			// Check for expected keywords
+			for _, keyword := range tt.expectedKeywords {
+				if !strings.Contains(mismatchMsg, keyword) {
+					t.Errorf("Expected suggestions for status %d to contain '%s'\nGot: %s", tt.actualCode, keyword, mismatchMsg)
+				}
+			}
+
+			// Check that unexpected keywords are NOT present
+			for _, keyword := range tt.notExpectedKeywords {
+				if strings.Contains(mismatchMsg, keyword) {
+					t.Errorf("Expected suggestions for status %d to NOT contain '%s'\nGot: %s", tt.actualCode, keyword, mismatchMsg)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateStatusCodeWithDetails_CategoryDescriptions verifies that all status
+// code categories have proper descriptions as per acceptance criteria.
+func TestValidateStatusCodeWithDetails_CategoryDescriptions(t *testing.T) {
+	tests := []struct {
+		name         string
+		actualCode   int
+		expectedDesc string
+	}{
+		{
+			name:         "200 - success",
+			actualCode:   200,
+			expectedDesc: "2xx - Successful responses",
+		},
+		{
+			name:         "301 - redirection",
+			actualCode:   301,
+			expectedDesc: "3xx - Redirection messages",
+		},
+		{
+			name:         "404 - client error",
+			actualCode:   404,
+			expectedDesc: "4xx - Client error responses",
+		},
+		{
+			name:         "500 - server error",
+			actualCode:   500,
+			expectedDesc: "5xx - Server error responses",
+		},
+		{
+			name:         "100 - other",
+			actualCode:   100,
+			expectedDesc: "Non-standard status codes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a response
+			resp := httptest.NewRecorder()
+			resp.Code = tt.actualCode
+			httpResp := resp.Result()
+
+			// Validate
+			result := ValidateStatusCodeWithDetails(httpResp, 999)
+
+			// Check mismatch details for category description
+			if !strings.Contains(result.MismatchDetails, tt.expectedDesc) {
+				t.Errorf("Expected mismatch details to contain category '%s'\nGot: %s", tt.expectedDesc, result.MismatchDetails)
 			}
 		})
 	}

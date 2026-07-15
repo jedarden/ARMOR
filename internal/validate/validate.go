@@ -1103,23 +1103,24 @@ type StatusCodeValidationResult struct {
 // Parameters:
 //   - resp: The HTTP response to validate
 //   - expected: Expected status code(s) - can be a single int or []int
+//   - requestContext: Optional context about the request (e.g., "POST /api/users", "GET /api/resource/123")
 //
 // Returns a StatusCodeValidationResult with detailed validation information.
 //
 // Example usage:
 //
-//	result := ValidateStatusCodeWithDetails(response, []int{200, 201, 204})
+//	result := ValidateStatusCodeWithDetails(response, []int{200, 201, 204}, "POST /api/users")
 //	if !result.Valid {
 //	    log.Printf("Status validation failed: %s", result.MismatchDetails)
 //	    log.Printf("Got: %d, expected one of: %v", result.ActualCode, result.ExpectedCodes)
 //	}
 //
-//	// Single code validation
-//	result := ValidateStatusCodeWithDetails(response, 200)
+//	// Single code validation without context
+//	result := ValidateStatusCodeWithDetails(response, 200, "")
 //	if result.Valid {
 //	    log.Printf("Status code is valid: %d", result.ActualCode)
 //	}
-func ValidateStatusCodeWithDetails(resp *http.Response, expected interface{}) StatusCodeValidationResult {
+func ValidateStatusCodeWithDetails(resp *http.Response, expected interface{}, requestContext ...string) StatusCodeValidationResult {
 	result := StatusCodeValidationResult{
 		Valid:             false,
 		ActualCode:        0,
@@ -1178,14 +1179,169 @@ func ValidateStatusCodeWithDetails(resp *http.Response, expected interface{}) St
 		}
 	}
 
-	// Build detailed mismatch information
-	if len(expectedCodes) == 1 {
-		result.MismatchDetails = fmt.Sprintf("expected status code %d but got %d", expectedCodes[0], resp.StatusCode)
-	} else {
-		result.MismatchDetails = fmt.Sprintf("expected one of status codes %v but got %d", expectedCodes, resp.StatusCode)
+	// Extract optional context
+	context := ""
+	if len(requestContext) > 0 && requestContext[0] != "" {
+		context = requestContext[0]
 	}
 
+	// Build comprehensive mismatch information with suggestions
+	result.MismatchDetails = buildComprehensiveMismatchDetails(
+		expectedCodes, resp.StatusCode, result.Category, result.IsClientError, result.IsServerError, context)
+
 	return result
+}
+
+// buildComprehensiveMismatchDetails creates detailed mismatch information including
+// status code category, context, and specific suggestions based on the actual code.
+func buildComprehensiveMismatchDetails(expectedCodes []int, actualCode int, category string, isClientError, isServerError bool, context string) string {
+	var details []string
+
+	// Add context if provided
+	if context != "" {
+		details = append(details, fmt.Sprintf("Request: %s", context))
+	}
+
+	// Add status code category information
+	categoryDesc := getCategoryDescription(category)
+	if categoryDesc != "" {
+		details = append(details, fmt.Sprintf("Status code category: %s", categoryDesc))
+	}
+
+	// Add expected vs actual
+	if len(expectedCodes) == 1 {
+		details = append(details, fmt.Sprintf("Expected: %d (%s)", expectedCodes[0], getStatusCodeDescription(expectedCodes[0])))
+	} else {
+		expectedStr := "one of ["
+		for i, code := range expectedCodes {
+			if i > 0 {
+				expectedStr += ", "
+			}
+			expectedStr += fmt.Sprintf("%d (%s)", code, getStatusCodeDescription(code))
+		}
+		expectedStr += "]"
+		details = append(details, fmt.Sprintf("Expected: %s", expectedStr))
+	}
+
+	details = append(details, fmt.Sprintf("Received: %d (%s)", actualCode, getStatusCodeDescription(actualCode)))
+
+	// Add specific suggestions based on the actual status code
+	suggestions := getStatusCodeSpecificSuggestions(actualCode)
+	if len(suggestions) > 0 {
+		details = append(details, "Common causes:")
+		for i, suggestion := range suggestions {
+			details = append(details, fmt.Sprintf("  %d. %s", i+1, suggestion))
+		}
+	}
+
+	return strings.Join(details, "\n")
+}
+
+// getCategoryDescription returns a human-readable description for a status code category.
+func getCategoryDescription(category string) string {
+	descriptions := map[string]string{
+		"success":       "2xx - Successful responses",
+		"redirection":   "3xx - Redirection messages",
+		"client_error":  "4xx - Client error responses",
+		"server_error":  "5xx - Server error responses",
+		"other":         "Non-standard status codes",
+	}
+	return descriptions[category]
+}
+
+// getStatusCodeSpecificSuggestions returns relevant suggestions based on the specific status code received.
+func getStatusCodeSpecificSuggestions(code int) []string {
+	switch code {
+	case 400:
+		return []string{
+			"Check request body syntax and formatting",
+			"Verify all required fields are present",
+			"Ensure Content-Type header matches request body format",
+			"Validate JSON schema if applicable",
+		}
+	case 401:
+		return []string{
+			"Verify authentication credentials are correct",
+			"Check if API token or session has expired",
+			"Ensure Authorization header is properly formatted (e.g., 'Bearer <token>')",
+			"Confirm authentication method is supported",
+		}
+	case 403:
+		return []string{
+			"Verify your account has permission to access this resource",
+			"Check if additional scopes or roles are required",
+			"Review API documentation for required permissions",
+			"Ensure proper OAuth scopes are granted",
+		}
+	case 404:
+		return []string{
+			"Verify the endpoint URL is correct",
+			"Check if the resource ID or identifier exists",
+			"Ensure the resource hasn't been deleted or moved",
+			"Review API versioning (URL path may have changed)",
+		}
+	case 409:
+		return []string{
+			"Check if a resource with this identifier already exists",
+			"Verify unique constraints on the resource",
+			"Consider using PUT instead of POST for updates",
+			"Review state transition rules for the resource",
+		}
+	case 429:
+		return []string{
+			"Implement rate limiting and exponential backoff",
+			"Check API quota limits and current usage",
+			"Consider caching responses to reduce request frequency",
+			"Review rate limit headers (Retry-After, X-RateLimit-Remaining)",
+		}
+	case 500:
+		return []string{
+			"Implement retry logic with exponential backoff",
+			"Check service status page for ongoing issues",
+			"Contact support if the issue persists",
+			"Verify request doesn't trigger server-side bugs",
+		}
+	case 502:
+		return []string{
+			"Check if upstream services are operational",
+			"Implement retry logic for transient failures",
+			"Verify network connectivity to upstream services",
+			"Review load balancer configuration",
+		}
+	case 503:
+		return []string{
+			"Implement retry with exponential backoff",
+			"Check service maintenance schedules",
+			"Verify service capacity and scaling",
+			"Review circuit breaker patterns",
+		}
+	case 504:
+		return []string{
+			"Implement timeout and retry logic",
+			"Check if upstream services are responding slowly",
+			"Review request complexity and data size",
+			"Verify network latency and connectivity",
+		}
+	default:
+		// Generic suggestions for other codes
+		if code >= 400 && code < 500 {
+			return []string{
+				"Review request parameters and body",
+				"Check API documentation for requirements",
+				"Verify all headers are correctly set",
+				"Ensure request complies with API contracts",
+			}
+		}
+		if code >= 500 && code < 600 {
+			return []string{
+				"Implement retry logic with exponential backoff",
+				"Check service status page for ongoing issues",
+				"Contact support if the issue persists",
+				"Review server logs if accessible",
+			}
+		}
+	}
+	return []string{}
 }
 
 // StatusCodeRange defines a range of status codes for flexible validation.
