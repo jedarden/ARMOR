@@ -711,7 +711,7 @@ func TestFormatValidationErrorFull(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatValidationErrorFull(tt.err, tt.includeSeverity)
+			result := FormatValidationErrorFull(tt.err, tt.includeSeverity, nil)
 			if result != tt.expected {
 				t.Errorf("FormatValidationErrorFull() = %v, want %v", result, tt.expected)
 			}
@@ -964,7 +964,7 @@ func TestFormattingIntegration(t *testing.T) {
 	}
 
 	// Format with severity
-	fullMsg := FormatValidationErrorFull(err, true)
+	fullMsg := FormatValidationErrorFull(err, true, nil)
 	if !strings.Contains(fullMsg, "High") {
 		t.Error("Expected severity in formatted error")
 	}
@@ -1160,6 +1160,464 @@ func TestFormatErrorConsistentClassification(t *testing.T) {
 			if !strings.Contains(result, etStr) {
 				t.Errorf("Error type %v should produce output containing error type, got %v", etStr, result)
 			}
+		}
+	})
+}
+
+
+// =============================================================================
+// ERROR CONTEXT FORMATTING TESTS
+// =============================================================================
+
+func TestFormatValidationErrorFullWithContext(t *testing.T) {
+	tests := []struct {
+		name            string
+		err             ValidationError
+		includeSeverity bool
+		context         *ValidationErrorContext
+		expected        string
+	}{
+		{
+			name: "with full context (location and related fields)",
+			err: ValidationError{
+				ErrorType: string(ErrTypeRequired),
+				Message:   "Field is required",
+				FieldName: "email",
+			},
+			includeSeverity: true,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{Location: "line 5"}
+				ctx.RelatedFields = []string{"email_confirmation", "user.email"}
+				return &ctx
+			}(),
+			expected: "[⚠️] High [required] email: Field is required (location: line 5, related fields: email_confirmation and user.email)",
+		},
+		{
+			name: "with location only",
+			err: ValidationError{
+				ErrorType: string(ErrTypeFormat),
+				Message:   "Invalid format",
+				FieldName: "email",
+			},
+			includeSeverity: true,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{Location: "field 'user.email' in line 42"}
+				return &ctx
+			}(),
+			expected: "[⚡] Medium [format] email: Invalid format (location: field 'user.email' in line 42)",
+		},
+		{
+			name: "with related fields only",
+			err: ValidationError{
+				ErrorType: string(ErrTypeRequired),
+				Message:   "Field is required",
+				FieldName: "access_token",
+			},
+			includeSeverity: true,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{RelatedFields: []string{"refresh_token", "client_id"}}
+				return &ctx
+			}(),
+			expected: "[⚠️] High [required] access_token: Field is required (related fields: refresh_token and client_id)",
+		},
+		{
+			name: "with nil context",
+			err: ValidationError{
+				ErrorType: string(ErrTypeRequired),
+				Message:   "Field is required",
+				FieldName: "email",
+			},
+			includeSeverity: true,
+			context:         nil,
+			expected:        "[⚠️] High [required] email: Field is required",
+		},
+		{
+			name: "with empty context",
+			err: ValidationError{
+				ErrorType: string(ErrTypeFormat),
+				Message:   "Invalid format",
+				FieldName: "password",
+			},
+			includeSeverity: false,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{}
+				return &ctx
+			}(),
+			expected: "[format] password: Invalid format",
+		},
+		{
+			name: "with expected/actual values and context",
+			err: ValidationError{
+				ErrorType: string(ErrTypeRange),
+				Message:   "Value out of range",
+				FieldName: "age",
+				Expected:  0,
+				Actual:    150,
+			},
+			includeSeverity: true,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{Location: "position 123"}
+				return &ctx
+			}(),
+			expected: "[⚡] Medium [range] age: Value out of range (expected: 0, actual: 150) (location: position 123)",
+		},
+		{
+			name: "with error location and context location",
+			err: ValidationError{
+				ErrorType: string(ErrTypeRequired),
+				Message:   "Field is required",
+				FieldName: "email",
+				Location:  "header 'Authorization'",
+			},
+			includeSeverity: true,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{Location: "line 5"}
+				return &ctx
+			}(),
+			expected: "[⚠️] High [required] email: Field is required [header 'Authorization'] (location: line 5)",
+		},
+		{
+			name: "with multiple related fields",
+			err: ValidationError{
+				ErrorType: string(ErrTypeValue),
+				Message:   "Invalid value",
+				FieldName: "status",
+			},
+			includeSeverity: false,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{RelatedFields: []string{"status_code", "http_status", "response.status"}}
+				return &ctx
+			}(),
+			expected: "[value] status: Invalid value (related fields: status_code, http_status, and response.status)",
+		},
+		{
+			name: "with single related field",
+			err: ValidationError{
+				ErrorType: string(ErrTypeDuplicate),
+				Message:   "Duplicate value",
+				FieldName: "email",
+			},
+			includeSeverity: false,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{RelatedFields: []string{"email"}}
+				return &ctx
+			}(),
+			expected: "[duplicate] email: Duplicate value (related fields: email)",
+		},
+		{
+			name: "without severity and with context",
+			err: ValidationError{
+				ErrorType: string(ErrTypeFormat),
+				Message:   "Invalid format",
+				FieldName: "url",
+			},
+			includeSeverity: false,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{Location: "line 10"}
+				ctx.RelatedFields = []string{"endpoint", "api_url"}
+				return &ctx
+			}(),
+			expected: "[format] url: Invalid format (location: line 10, related fields: endpoint and api_url)",
+		},
+		{
+			name: "with no field name but with context",
+			err: ValidationError{
+				ErrorType: string(ErrTypeRequired),
+				Message:   "Required field missing",
+			},
+			includeSeverity: false,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{Location: "request body"}
+				return &ctx
+			}(),
+			expected: "[required] Required field missing (location: request body)",
+		},
+		{
+			name:            "complex error with all fields and full context",
+			err: ValidationError{
+				ErrorType:  string(ErrTypeRange),
+				Message:    "Age validation failed",
+				FieldName:  "user.age",
+				Expected:   0,
+				Actual:     150,
+				Location:   "JSON path: $.user.age",
+			},
+			includeSeverity: true,
+			context: func() *ValidationErrorContext {
+				ctx := ValidationErrorContext{Location: "line 15, column 8"}
+				ctx.RelatedFields = []string{"user.min_age", "user.max_age"}
+				return &ctx
+			}(),
+			expected: "[⚡] Medium [range] user.age: Age validation failed (expected: 0, actual: 150) [JSON path: $.user.age] (location: line 15, column 8, related fields: user.min_age and user.max_age)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatValidationErrorFull(tt.err, tt.includeSeverity, tt.context)
+			if result != tt.expected {
+				t.Errorf("FormatValidationErrorFull() =\n  got: %v\n  want: %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatValidationErrorToStringBackwardCompatibility(t *testing.T) {
+	// Test that the alias function works correctly
+	err := ValidationError{
+		ErrorType: string(ErrTypeRequired),
+		Message:   "Field is required",
+		FieldName: "email",
+	}
+
+	result := FormatValidationErrorToString(err, true)
+	expected := "[⚠️] High [required] email: Field is required"
+
+	if result != expected {
+		t.Errorf("FormatValidationErrorToString() = %v, want %v", result, expected)
+	}
+}
+
+func TestFormatValidationErrorWithContext(t *testing.T) {
+	// Test the convenience function
+	err := ValidationError{
+		ErrorType: string(ErrTypeFormat),
+		Message:   "Invalid format",
+		FieldName: "email",
+	}
+
+	ctx := ValidationErrorContext{Location: "line 5"}
+	result := FormatValidationErrorWithContext(err, true, &ctx)
+	expected := "[⚡] Medium [format] email: Invalid format (location: line 5)"
+
+	if result != expected {
+		t.Errorf("FormatValidationErrorWithContext() = %v, want %v", result, expected)
+	}
+}
+
+func TestFormatErrorListWithContext(t *testing.T) {
+	tests := []struct {
+		name            string
+		errors          []ValidationError
+		contexts        []*ValidationErrorContext
+		includeSeverity bool
+		expected        string
+	}{
+		{
+			name: "with contexts for all errors",
+			errors: []ValidationError{
+				{
+					ErrorType: string(ErrTypeRequired),
+					Message:   "Field is required",
+					FieldName: "email",
+				},
+				{
+					ErrorType: string(ErrTypeFormat),
+					Message:   "Invalid format",
+					FieldName: "password",
+				},
+			},
+			contexts: func() []*ValidationErrorContext {
+				ctx1 := ValidationErrorContext{Location: "line 5"}
+				ctx1.RelatedFields = []string{"email_confirmation"}
+				ctx2 := ValidationErrorContext{Location: "line 10"}
+				return []*ValidationErrorContext{&ctx1, &ctx2}
+			}(),
+			includeSeverity: true,
+			expected: "1. [⚠️] High [required] email: Field is required (location: line 5, related fields: email_confirmation)\n2. [⚠️] High [format] password: Invalid format (location: line 10)",
+		},
+		{
+			name: "with mixed nil and non-nil contexts",
+			errors: []ValidationError{
+				{
+					ErrorType: string(ErrTypeRequired),
+					Message:   "Field is required",
+					FieldName: "email",
+				},
+				{
+					ErrorType: string(ErrTypeFormat),
+					Message:   "Invalid format",
+					FieldName: "password",
+				},
+				{
+					ErrorType: string(ErrTypeRange),
+					Message:   "Out of range",
+					FieldName: "age",
+				},
+			},
+			contexts: func() []*ValidationErrorContext {
+				ctx1 := ValidationErrorContext{Location: "line 5"}
+				ctx3 := ValidationErrorContext{Location: "line 15"}
+				return []*ValidationErrorContext{&ctx1, nil, &ctx3}
+			}(),
+			includeSeverity: false,
+			expected: "1. [required] email: Field is required (location: line 5)\n2. [format] password: Invalid format\n3. [range] age: Out of range (location: line 15)",
+		},
+		{
+			name: "with nil contexts slice",
+			errors: []ValidationError{
+				{
+					ErrorType: string(ErrTypeRequired),
+					Message:   "Field is required",
+					FieldName: "email",
+				},
+				{
+					ErrorType: string(ErrTypeFormat),
+					Message:   "Invalid format",
+					FieldName: "password",
+				},
+			},
+			contexts:        nil,
+			includeSeverity: true,
+			expected:        "1. [⚠️] High [required] email: Field is required\n2. [⚠️] High [format] password: Invalid format",
+		},
+		{
+			name: "with fewer contexts than errors",
+			errors: []ValidationError{
+				{
+					ErrorType: string(ErrTypeRequired),
+					Message:   "Field is required",
+					FieldName: "email",
+				},
+				{
+					ErrorType: string(ErrTypeFormat),
+					Message:   "Invalid format",
+					FieldName: "password",
+				},
+				{
+					ErrorType: string(ErrTypeRange),
+					Message:   "Out of range",
+					FieldName: "age",
+				},
+			},
+			contexts: func() []*ValidationErrorContext {
+				ctx1 := ValidationErrorContext{Location: "line 5"}
+				return []*ValidationErrorContext{&ctx1}
+			}(),
+			includeSeverity: false,
+			expected:        "1. [required] email: Field is required (location: line 5)\n2. [format] password: Invalid format\n3. [range] age: Out of range",
+		},
+		{
+			name:            "with empty errors slice",
+			errors:          []ValidationError{},
+			contexts:        []*ValidationErrorContext{},
+			includeSeverity: true,
+			expected:        "No errors",
+		},
+		{
+			name: "with empty contexts",
+			errors: []ValidationError{
+				{
+					ErrorType: string(ErrTypeRequired),
+					Message:   "Field is required",
+					FieldName: "email",
+				},
+			},
+			contexts: func() []*ValidationErrorContext {
+				ctx := ValidationErrorContext{}
+				return []*ValidationErrorContext{&ctx}
+			}(),
+			includeSeverity: true,
+			expected:        "1. [⚠️] High [required] email: Field is required",
+		},
+		{
+			name: "complex scenario with all context types",
+			errors: []ValidationError{
+				{
+					ErrorType: string(ErrTypeRequired),
+					Message:   "Field is required",
+					FieldName: "email",
+				},
+				{
+					ErrorType: string(ErrTypeFormat),
+					Message:   "Invalid format",
+					FieldName: "password",
+					Expected:  "min 8 chars",
+					Actual:    "abc",
+				},
+				{
+					ErrorType: string(ErrTypeRange),
+					Message:   "Out of range",
+					FieldName: "age",
+					Expected:  0,
+					Actual:    150,
+				},
+			},
+			contexts: func() []*ValidationErrorContext {
+				ctx1 := ValidationErrorContext{Location: "line 5"}
+				ctx1.RelatedFields = []string{"email_confirmation", "user.email"}
+				ctx2 := ValidationErrorContext{Location: "line 10"}
+				ctx3 := ValidationErrorContext{RelatedFields: []string{"min_age", "max_age"}}
+				return []*ValidationErrorContext{&ctx1, &ctx2, &ctx3}
+			}(),
+			includeSeverity: true,
+			expected: "1. [⚠️] High [required] email: Field is required (location: line 5, related fields: email_confirmation and user.email)\n2. [⚡] Medium [format] password: Invalid format (expected: min 8 chars, actual: abc) (location: line 10)\n3. [⚡] Medium [range] age: Out of range (expected: 0, actual: 150) (related fields: min_age and max_age)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatErrorListWithContext(tt.errors, tt.contexts, tt.includeSeverity)
+			if result != tt.expected {
+				t.Errorf("FormatErrorListWithContext() =\n  got: %v\n  want: %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidationErrorContextInFormatting(t *testing.T) {
+	// Test that ValidationErrorContext methods work correctly with formatting
+	t.Run("HasLocation", func(t *testing.T) {
+		ctx := ValidationErrorContext{Location: "line 5"}
+		if !ctx.HasLocation() {
+			t.Error("Expected HasLocation to return true")
+		}
+
+		emptyCtx := ValidationErrorContext{}
+		if emptyCtx.HasLocation() {
+			t.Error("Expected HasLocation to return false for empty context")
+		}
+	})
+
+	t.Run("HasRelatedFields", func(t *testing.T) {
+		ctx := ValidationErrorContext{RelatedFields: []string{"field1", "field2"}}
+		if !ctx.HasRelatedFields() {
+			t.Error("Expected HasRelatedFields to return true")
+		}
+
+		emptyCtx := ValidationErrorContext{}
+		if emptyCtx.HasRelatedFields() {
+			t.Error("Expected HasRelatedFields to return false for empty context")
+		}
+	})
+
+	t.Run("IsEmpty", func(t *testing.T) {
+		ctx1 := ValidationErrorContext{Location: "line 5"}
+		if ctx1.IsEmpty() {
+			t.Error("Expected IsEmpty to return false for context with location")
+		}
+
+		ctx2 := ValidationErrorContext{RelatedFields: []string{"field1"}}
+		if ctx2.IsEmpty() {
+			t.Error("Expected IsEmpty to return false for context with related fields")
+		}
+
+		emptyCtx := ValidationErrorContext{}
+		if !emptyCtx.IsEmpty() {
+			t.Error("Expected IsEmpty to return true for empty context")
+		}
+	})
+
+	t.Run("String representation", func(t *testing.T) {
+		ctx := ValidationErrorContext{Location: "line 5"}
+		ctx.RelatedFields = []string{"field1", "field2"}
+		str := ctx.String()
+
+		if !strings.Contains(str, "location: line 5") {
+			t.Error("String representation should contain location")
+		}
+		if !strings.Contains(str, "related_fields:") {
+			t.Error("String representation should contain related_fields")
 		}
 	})
 }
