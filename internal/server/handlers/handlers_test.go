@@ -1483,8 +1483,12 @@ func TestListParts(t *testing.T) {
 	}
 	uploadID := result.UploadID
 
-	// Upload a part
-	partContent := []byte("Part 1 content")
+	// Upload a part (must be block-aligned - multiple of 65536 bytes)
+	// Use 5MiB which is a common part size and is block-aligned (5,242,880 % 65536 = 0)
+	partContent := make([]byte, 5*1024*1024)
+	for i := range partContent {
+		partContent[i] = byte('A' + i%26)
+	}
 	req = httptest.NewRequest(http.MethodPut, fmt.Sprintf("/test-bucket/test-list-parts.txt?partNumber=1&uploadId=%s", uploadID), bytes.NewReader(partContent))
 	w = httptest.NewRecorder()
 	h.HandleRoot(w, req)
