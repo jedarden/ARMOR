@@ -622,7 +622,7 @@ func TestFormatSeverityWithIndicator(t *testing.T) {
 		{
 			name:     "high",
 			severity: SeverityHigh,
-			expected: "[⚠] High",
+			expected: "[⚠️] High",
 		},
 		{
 			name:     "medium",
@@ -673,7 +673,7 @@ func TestFormatValidationErrorFull(t *testing.T) {
 				Location:  "line 5",
 			},
 			includeSeverity: true,
-			expected:        "[⚠] High [required] email: Field is required (expected: value) [line 5]",
+			expected:        "[⚠️] High [required] email: Field is required (expected: value) [line 5]",
 		},
 		{
 			name: "with severity",
@@ -683,7 +683,7 @@ func TestFormatValidationErrorFull(t *testing.T) {
 				FieldName: "email",
 			},
 			includeSeverity: true,
-			expected:        "[⚠] High [required] email: Field is required",
+			expected:        "[⚠️] High [required] email: Field is required",
 		},
 		{
 			name: "without severity",
@@ -705,7 +705,7 @@ func TestFormatValidationErrorFull(t *testing.T) {
 				Actual:    404,
 			},
 			includeSeverity: true,
-			expected:        "[⚠] High [status_code] response: Wrong status code (expected: 200, actual: 404)",
+			expected:        "[⚠️] High [status_code] response: Wrong status code (expected: 200, actual: 404)",
 		},
 	}
 
