@@ -332,22 +332,151 @@ func TestMultipartFullCycleByteVerification(t *testing.T) {
 	_ = rb
 }
 
-// TestMultipartSuspectPatterns documents the three multipart upload patterns
-// real SDKs use by default that ARMOR's per-part CTR-offset scheme does not
-// support (docs/upload-retrieval-test-matrix.md U6/U7/U8):
+// TestMultipartSuspectPatterns documents and enforces rejection of the three
+// multipart upload patterns that real SDKs use by default but ARMOR's
+// per-part CTR-offset scheme does not support (docs/upload-retrieval-test-matrix.md U6/U7/U8):
 //
 //	U6 out-of-order / parallel part upload  (boto3 uploads parts concurrently)
 //	U7 part retry after network failure     (every SDK retries parts)
 //	U8 non-block-aligned intermediate parts (any part size % 65536 != 0)
 //
 // UploadPart derives each part's CTR counter from arrival-order cumulative
-// EncryptedBytes (handlers.go:1992), so all three silently corrupt rather
-// than erroring. Until the design is fixed (per-part counters derived from
-// partNumber × known part size, or a hard 400 on unsupported patterns),
-// this test stays skipped as an executable TODO. Unskipping it without a
-// design fix will (correctly) fail.
+// EncryptedBytes (handlers.go:2085), so all three would corrupt silently.
+// The fix implemented in bf-59unr3 rejects these patterns with explicit 400
+// errors rather than allowing silent corruption.
 func TestMultipartSuspectPatterns(t *testing.T) {
-	t.Skip("KNOWN DESIGN GAP bf-59unr3 (matrix U6/U7/U8): out-of-order, retried, and non-aligned parts corrupt silently; clients must be pinned to sequential aligned no-retry behavior until fixed")
+	t.Run("U6_out_of_order_parts", func(t *testing.T) {
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "out-of-order.dat"
+		const block = 65536
+
+		uploadID := initiateMultipart(t, h, bucket, key)
+
+		// Upload part 1 first (succeeds)
+		part1 := make([]byte, 5*1024*1024) // 5MiB, block-aligned
+		for i := range part1 {
+			part1[i] = 0xAA
+		}
+		uploadPart(t, h, bucket, key, uploadID, 1, part1)
+
+		// Try to upload part 3 without uploading part 2 first (should fail)
+		part3 := make([]byte, 5*1024*1024)
+		for i := range part3 {
+			part3[i] = 0xCC
+		}
+		url := fmt.Sprintf("/%s/%s?partNumber=3&uploadId=%s", bucket, key, uploadID)
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(part3))
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400 BadRequest for out-of-order part, got %d: %s", w.Code, w.Body.String())
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("Parts must be uploaded in sequential order")) {
+			t.Errorf("Expected error message about sequential order, got: %s", w.Body.String())
+		}
+	})
+
+	t.Run("U6_parallel_parts_simulation", func(t *testing.T) {
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "parallel-sim.dat"
+
+		uploadID := initiateMultipart(t, h, bucket, key)
+
+		// Try to upload part 2 before part 1 (simulates parallel upload where part 2 arrives first)
+		part2 := make([]byte, 5*1024*1024) // 5MiB, block-aligned
+		for i := range part2 {
+			part2[i] = 0xBB
+		}
+		url := fmt.Sprintf("/%s/%s?partNumber=2&uploadId=%s", bucket, key, uploadID)
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(part2))
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400 BadRequest for part 2 before part 1, got %d: %s", w.Code, w.Body.String())
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("Expected part 1, got part 2")) {
+			t.Errorf("Expected error message about expecting part 1, got: %s", w.Body.String())
+		}
+	})
+
+	t.Run("U7_part_retry", func(t *testing.T) {
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "retry-test.dat"
+
+		uploadID := initiateMultipart(t, h, bucket, key)
+
+		// Upload part 1 successfully
+		part1 := make([]byte, 5*1024*1024) // 5MiB, block-aligned
+		for i := range part1 {
+			part1[i] = 0xAA
+		}
+		uploadPart(t, h, bucket, key, uploadID, 1, part1)
+
+		// Try to upload part 1 again (simulating retry after network failure)
+		part1Retry := make([]byte, 5*1024*1024)
+		for i := range part1Retry {
+			part1Retry[i] = 0xAA
+		}
+		url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", bucket, key, uploadID)
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(part1Retry))
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400 BadRequest for part retry, got %d: %s", w.Code, w.Body.String())
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("has already been uploaded")) {
+			t.Errorf("Expected error message about already uploaded, got: %s", w.Body.String())
+		}
+	})
+
+	t.Run("U8_non_block_aligned_part", func(t *testing.T) {
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "unaligned-test.dat"
+
+		uploadID := initiateMultipart(t, h, bucket, key)
+
+		// Try to upload a part with non-block-aligned size (10,000,000 bytes)
+		// 10,000,000 % 65536 = 16976 (not aligned)
+		part := make([]byte, 10_000_000)
+		for i := range part {
+			part[i] = 0xAA
+		}
+		url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", bucket, key, uploadID)
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(part))
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400 BadRequest for non-block-aligned part, got %d: %s", w.Code, w.Body.String())
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("not a multiple of the block size")) {
+			t.Errorf("Expected error message about block alignment, got: %s", w.Body.String())
+		}
+	})
+
+	t.Run("U8_zero_byte_part_allowed", func(t *testing.T) {
+		// Edge case: zero-byte parts should be allowed (can happen with empty files)
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "zero-byte.dat"
+
+		uploadID := initiateMultipart(t, h, bucket, key)
+
+		// Zero-byte part should not trigger the alignment check
+		part := make([]byte, 0)
+		url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", bucket, key, uploadID)
+		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(part))
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+
+		// Zero-byte parts should fail for a different reason (not alignment)
+		// The actual error might be about empty body or size, but not the alignment check
+		if w.Code == http.StatusBadRequest && bytes.Contains(w.Body.Bytes(), []byte("not a multiple of the block size")) {
+			t.Errorf("Zero-byte part should not trigger block alignment error: %s", w.Body.String())
+		}
+	})
 }
 
 func firstDivergence(a, b []byte) int {

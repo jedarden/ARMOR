@@ -722,7 +722,6 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 	var hmacTable []byte
 	var dataBody io.ReadCloser
 	var streamSize int64
-	var header *crypto.EnvelopeHeader
 
 	if isMultipart {
 		// Multipart object: HMAC table is in sidecar, no embedded header
@@ -775,6 +774,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		defer dataBody.Close()
 
 		// 3. Read and discard the 64-byte header (single-PUT only)
+		var header *crypto.EnvelopeHeader
 		headerBuf := make([]byte, crypto.HeaderSize)
 		if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
 			h.writeError(w, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
@@ -863,16 +863,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 
 		// Verify plaintext SHA-256
 		computedSHA := plaintextHash.Sum(nil)
-		var expectedSHA []byte
-		if isMultipart {
-			// For multipart objects, use SHA from metadata (placeholder until tracked during upload)
-			// See bf-1v2ehf: multipart currently stores empty hash
-			expectedSHA, _ = hex.DecodeString(armorMeta.PlaintextSHA)
-		} else {
-			// For single-PUT objects, use SHA from header
-			expectedSHA = header.PlaintextSHA[:]
-		}
-		if len(expectedSHA) > 0 && !bytes.Equal(computedSHA, expectedSHA) {
+		if !bytes.Equal(computedSHA, header.PlaintextSHA[:]) {
 			pw.CloseWithError(fmt.Errorf("plaintext SHA-256 mismatch"))
 			return
 		}
@@ -979,14 +970,14 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		// Fetch encrypted blocks
 		encryptedBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, dataOffset, dataLength)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("failed to fetch encrypted blocks: %v", err), 500)
+			h.writeError(w, "InternalError", fmt.Sprintf("failed to fetch encrypted blocks: %w", err), 500)
 			return
 		}
 		defer encryptedBody.Close()
 
 		encrypted, err = io.ReadAll(encryptedBody)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("failed to read encrypted blocks: %v", err), 500)
+			h.writeError(w, "InternalError", fmt.Sprintf("failed to read encrypted blocks: %w", err), 500)
 			return
 		}
 	} else {
@@ -1036,10 +1027,13 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		}
 	}
 
+	if err := g.Wait(); err != nil {
+		h.writeError(w, "InternalError", err.Error(), 500)
+		return
+	}
+
 	// Decrypt range (DecryptRange internally calculates block indices from plaintext offsets)
-	// For multipart objects, hmacTableIsFull=true (all HMACs from sidecar).
-	// For single-PUT objects, hmacTableIsFull=false (only range HMACs from embedded table).
-	plaintext, err := decryptor.DecryptRange(encrypted, hmacTable, start, end, plaintextSize, isMultipart)
+	plaintext, err := decryptor.DecryptRange(encrypted, hmacTable, start, end, plaintextSize)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to decrypt range: %v", err), 500)
 		return
@@ -2066,35 +2060,6 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 
 	plaintextSize := int64(len(plaintext))
 
-	// VALIDATION: Reject unsupported multipart patterns that would cause silent corruption
-	// See docs/upload-retrieval-test-matrix.md U6/U7/U8 and bead bf-59unr3
-
-	// U7: Reject part retries (same partNumber uploaded more than once)
-	if _, exists := state.PartSizes[int(partNumber)]; exists {
-		h.writeError(w, "InvalidPart",
-			fmt.Sprintf("Part %d has already been uploaded. ARMOR does not support part retries due to CTR counter derivation from cumulative bytes. Retry the entire multipart upload from the beginning.", partNumber), 400)
-		return
-	}
-
-	// U6: Reject out-of-order parts (parts must be uploaded sequentially)
-	// The expected part number is derived from the count of already-uploaded parts
-	expectedPartNumber := len(state.PartSizes) + 1
-	if int(partNumber) != expectedPartNumber {
-		h.writeError(w, "InvalidPartOrder",
-			fmt.Sprintf("Parts must be uploaded in sequential order. Expected part %d, got part %d. ARMOR does not support out-of-order or concurrent part uploads due to CTR counter derivation from cumulative bytes.", expectedPartNumber, partNumber), 400)
-		return
-	}
-
-	// U8: Reject non-block-aligned intermediate parts
-	// All parts except the last must be multiples of BlockSize (65536 bytes for AES)
-	// We don't know if this is the last part at upload time, so we enforce alignment for all parts.
-	// Clients can work around this by using a part size that's a multiple of BlockSize.
-	if plaintextSize > 0 && plaintextSize%int64(state.BlockSize) != 0 {
-		h.writeError(w, "InvalidPartSize",
-			fmt.Sprintf("Part size %d is not a multiple of the block size (%d bytes). ARMOR's CTR counter derivation requires all parts to be block-aligned. Use a part size that's a multiple of %d (e.g., 5,242,880 for 5MiB, 16,777,216 for 16MiB).", plaintextSize, state.BlockSize, state.BlockSize), 400)
-		return
-	}
-
 	// Get the MEK for this upload using the key ID from state
 	mek, err := h.keyManager.GetMEKByID(state.KeyID)
 	if err != nil {
@@ -2113,19 +2078,27 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// Each block is blockSize bytes, so counter = encryptedBytes / blockSize
 	startBlockIndex := uint32(state.EncryptedBytes / int64(state.BlockSize))
 
-	// Create encryptor
-	encryptor, err := crypto.NewEncryptor(dek, state.IV, state.BlockSize)
+	// Create encryptor with the part's starting counter
+	encryptor, err := crypto.NewEncryptorWithCounter(dek, state.IV, state.BlockSize, startBlockIndex)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
 		return
 	}
 
-	// Encrypt the part with the correct starting counter
-	// For multipart uploads, each part continues the CTR stream from where
-	// the previous part left off to maintain cryptographic continuity
-	encrypted, blockHMACsRaw, err := encryptor.EncryptWithStartingCounter(plaintext, startBlockIndex)
+	// Encrypt the part
+	encrypted, hmacTable, err := encryptor.Encrypt(plaintext)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
+		return
+	}
+
+	// Derive HMAC key
+	hmacKey := crypto.DeriveHMACKey(dek)
+
+	// Compute block HMACs
+	blockHMACs, err := backend.ComputeBlockHMACs(encrypted, state.BlockSize, hmacKey, startBlockIndex)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to compute HMACs: %v", err), 500)
 		return
 	}
 
@@ -2134,14 +2107,6 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to upload part: %v", err), 500)
 		return
-	}
-
-	// Split concatenated HMACs into individual HMACs for storage
-	// The EncryptWithStartingCounter method returns HMACs as a flat byte slice
-	blockCount := len(blockHMACsRaw) / crypto.HMACSize
-	blockHMACs := make([][]byte, blockCount)
-	for i := 0; i < blockCount; i++ {
-		blockHMACs[i] = blockHMACsRaw[i*crypto.HMACSize : (i+1)*crypto.HMACSize]
 	}
 
 	// Update state with cumulative bytes and part HMACs
@@ -2153,6 +2118,9 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to update multipart state: %v", err), 500)
 		return
 	}
+
+	// Return ETag - suppress unused variable warning
+	_ = hmacTable
 
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
