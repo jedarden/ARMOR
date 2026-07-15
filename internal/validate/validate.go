@@ -643,7 +643,7 @@ func ValidateErrorMessagePattern(bodyBytes []byte, pattern string, caseInsensiti
 func ValidateErrorMessage(response []byte, expectedPattern string) error {
 	// Validate inputs
 	if len(response) == 0 {
-		ve := FormatValidationErrorWithDetails(
+		return FormatValidationErrorWithDetails(
 			"error_message",
 			"non-empty response",
 			"",
@@ -656,11 +656,10 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 			"",
 			[]string{"Response body is empty", "Cannot validate error message pattern against empty response"},
 		)
-		return ve
 	}
 
 	if expectedPattern == "" {
-		ve := FormatValidationErrorWithDetails(
+		return FormatValidationErrorWithDetails(
 			"error_message",
 			"non-empty pattern",
 			"",
@@ -673,13 +672,12 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 			"",
 			[]string{"Expected pattern cannot be empty", "Provide a pattern to match against error messages"},
 		)
-		return ve
 	}
 
 	// Parse JSON body
 	var body map[string]interface{}
 	if err := json.Unmarshal(response, &body); err != nil {
-		ve := FormatValidationErrorWithDetails(
+		return FormatValidationErrorWithDetails(
 			"error_message",
 			"valid JSON",
 			"",
@@ -692,23 +690,32 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 			"",
 			[]string{"Failed to parse response body", fmt.Sprintf("Parse error: %v", err), "Ensure response contains valid JSON"},
 		)
-		return ve
 	}
 
 	// Search for error messages in common fields
 	defaultFields := []string{"error", "message", "detail", "description", "error_description"}
-	var foundMessages []string
+	type foundMessage struct {
+		message   string
+		fieldName string
+	}
+	var foundMessages []foundMessage
 
 	for _, field := range defaultFields {
 		if value, exists := body[field]; exists {
 			if strValue, ok := value.(string); ok && strValue != "" {
-				foundMessages = append(foundMessages, strValue)
+				foundMessages = append(foundMessages, foundMessage{
+					message:   strValue,
+					fieldName: field,
+				})
 			}
 			// Check nested error objects
 			if nestedObj, ok := value.(map[string]interface{}); ok {
 				if nestedValue, exists := nestedObj["message"]; exists {
 					if strValue, ok := nestedValue.(string); ok && strValue != "" {
-						foundMessages = append(foundMessages, strValue)
+						foundMessages = append(foundMessages, foundMessage{
+							message:   strValue,
+							fieldName: field + ".message",
+						})
 					}
 				}
 			}
@@ -718,7 +725,7 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 	// If no error messages found, return detailed error with response snippet
 	if len(foundMessages) == 0 {
 		snippet := extractResponseSnippet(response)
-		ve := FormatValidationErrorWithDetails(
+		return FormatValidationErrorWithDetails(
 			"error_message",
 			"error message field",
 			"",
@@ -735,26 +742,45 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 				"Response may not contain standard error fields",
 			},
 		)
-		return ve
 	}
 
 	// Detect if pattern is regex or substring
 	isRegex := containsRegexMetacharacters(expectedPattern)
+	patternType := "substring"
+	if isRegex {
+		patternType = "regex"
+	}
 
 	// Check each found message for pattern match
-	for _, message := range foundMessages {
+	for _, foundMsg := range foundMessages {
 		var matched bool
 
 		if isRegex {
 			// Try regex matching
 			re, err := regexp.Compile(expectedPattern)
 			if err != nil {
-				return fmt.Errorf("invalid regex pattern '%s': %w", expectedPattern, err)
+				return FormatValidationErrorWithDetails(
+					"error_message",
+					fmt.Sprintf("valid regex pattern '%s'", expectedPattern),
+					fmt.Sprintf("invalid regex '%s'", expectedPattern),
+					"",
+					"",
+					foundMsg.fieldName,
+					"",
+					nil,
+					fmt.Sprintf("Pattern type: regex (contains metacharacters), Parse error: %v", err),
+					"",
+					[]string{
+						fmt.Sprintf("Invalid regex pattern: %s", expectedPattern),
+						fmt.Sprintf("Regex compilation error: %v", err),
+						"Check regex syntax and escape special characters",
+					},
+				)
 			}
-			matched = re.MatchString(message)
+			matched = re.MatchString(foundMsg.message)
 		} else {
 			// Simple substring matching (case-sensitive)
-			matched = strings.Contains(message, expectedPattern)
+			matched = strings.Contains(foundMsg.message, expectedPattern)
 		}
 
 		if matched {
@@ -763,15 +789,39 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 		}
 	}
 
-	// Pattern not found in any messages - return descriptive error
+	// Pattern not found in any messages - return descriptive error with full details
 	snippet := extractResponseSnippet(response)
 	firstMessage := foundMessages[0]
+
+	// Build validation details
+	var validationDetails []string
+	validationDetails = append(validationDetails, fmt.Sprintf("Pattern type: %s", patternType))
+	validationDetails = append(validationDetails, fmt.Sprintf("Expected pattern: %s", expectedPattern))
+	validationDetails = append(validationDetails, fmt.Sprintf("Actual error message: \"%s\"", firstMessage.message))
+	validationDetails = append(validationDetails, fmt.Sprintf("Field name: %s", firstMessage.fieldName))
+	validationDetails = append(validationDetails, fmt.Sprintf("Checked fields: %s", strings.Join(defaultFields, ", ")))
+
 	if len(foundMessages) > 1 {
-		return fmt.Errorf("pattern '%s' not found in error messages. First message: \"%s\". Response snippet: %s",
-			expectedPattern, firstMessage, snippet)
+		validationDetails = append(validationDetails, fmt.Sprintf("Found %d error message fields in response", len(foundMessages)))
 	}
-	return fmt.Errorf("pattern '%s' not found in error message: \"%s\". Response snippet: %s",
-		expectedPattern, firstMessage, snippet)
+
+	// Generate pattern-specific suggestions
+	suggestions := generatePatternMismatchSuggestions(expectedPattern, firstMessage.message, isRegex)
+
+	return FormatValidationErrorWithDetails(
+		"error_message",
+		expectedPattern,
+		firstMessage.message,
+		"",
+		snippet,
+		firstMessage.fieldName,
+		"",
+		nil,
+		fmt.Sprintf("Pattern type: %s", patternType),
+		"",
+		validationDetails,
+		suggestions...,
+	)
 }
 
 // containsRegexMetacharacters checks if a string contains regex metacharacters.
@@ -784,6 +834,121 @@ func containsRegexMetacharacters(pattern string) bool {
 		}
 	}
 	return false
+}
+
+// generatePatternMismatchSuggestions provides relevant suggestions based on pattern and actual message.
+// This function analyzes the expected pattern and actual message to generate specific suggestions.
+func generatePatternMismatchSuggestions(expectedPattern, actualMessage string, isRegex bool) []string {
+	var suggestions []string
+
+	expectedLower := strings.ToLower(expectedPattern)
+	actualLower := strings.ToLower(actualMessage)
+
+	// Common pattern mismatch checks
+	if strings.Contains(expectedLower, "token") && !strings.Contains(actualLower, "token") {
+		suggestions = append(suggestions,
+			"Pattern looks for 'token' but actual message doesn't contain it",
+			"Check if the error is about authentication/authorization rather than tokens",
+			"Consider expanding pattern to include 'auth' or 'access' related terms",
+		)
+	}
+
+	if strings.Contains(expectedLower, "invalid") && !strings.Contains(actualLower, "invalid") {
+		if strings.Contains(actualLower, "expired") {
+			suggestions = append(suggestions,
+				"Pattern expects 'invalid' but message contains 'expired'",
+				"Consider using pattern: 'invalid.*expired|expired.*invalid' to match both cases",
+				"Or use separate patterns for different token states",
+			)
+		}
+	}
+
+	if strings.Contains(expectedLower, "not found") && strings.Contains(actualLower, "does not exist") {
+		suggestions = append(suggestions,
+			"Pattern uses 'not found' but message uses 'does not exist'",
+			"Consider using pattern: 'not found|does not exist' to match both phrasings",
+			"Or use simpler pattern: 'not.*found|does.*not.*exist'",
+		)
+	}
+
+	if isRegex {
+		// Regex-specific suggestions
+		if strings.Contains(expectedPattern, ".") && !strings.Contains(expectedPattern, "\\") {
+			suggestions = append(suggestions,
+				"Regex contains '.' which matches any character (except newline)",
+				"If you meant literal dot, escape it: '\\.'",
+				"If substring search is intended, consider using plain text without metacharacters",
+			)
+		}
+
+		if strings.Contains(expectedPattern, "*") && !strings.Contains(expectedPattern, ".*") {
+			suggestions = append(suggestions,
+				"Regex contains bare '*' which is a quantifier, not a wildcard",
+				"For 'any characters' pattern, use: '.*' instead of '*'",
+				"For 'zero or more' of previous character, ensure '*' is preceded by pattern to repeat",
+			)
+		}
+
+		if strings.Contains(expectedPattern, "^") || strings.Contains(expectedPattern, "$") {
+			suggestions = append(suggestions,
+				"Pattern uses anchors (^ or $) which match start/end of string",
+				"Ensure actual message doesn't have extra whitespace or newlines",
+				"Consider removing anchors if message may contain additional text",
+			)
+		}
+
+		// Case sensitivity check - detect if pattern and message have different casing
+		expectedHasMixedCase := expectedPattern != expectedLower
+		actualHasMixedCase := actualMessage != actualLower
+
+		// Check if there's a case mismatch between pattern and message
+		if expectedHasMixedCase && actualHasMixedCase && expectedLower != actualLower {
+			suggestions = append(suggestions,
+				"Pattern is case-sensitive but may need case-insensitive matching",
+				"Consider using '(?i)' prefix for case-insensitive regex",
+				"Or convert pattern to handle different casing patterns",
+			)
+		}
+	} else {
+		// Substring-specific suggestions
+		if expectedLower != actualLower && strings.Contains(actualLower, expectedLower) {
+			suggestions = append(suggestions,
+				"Substring match is case-sensitive",
+				"Pattern was found but with different casing",
+				"Consider using regex with '(?i)' prefix for case-insensitive matching",
+			)
+		}
+
+		// Check for word boundary issues
+		if strings.Contains(expectedPattern, " ") && strings.Contains(actualMessage, strings.ReplaceAll(expectedPattern, " ", "")) {
+			suggestions = append(suggestions,
+				"Pattern contains spaces but actual message may not",
+				"Consider using regex with '\\s*' to match optional whitespace",
+				"Or remove spaces from pattern for flexible matching",
+			)
+		}
+	}
+
+	// Pattern complexity suggestions
+	if len(expectedPattern) > 50 {
+		suggestions = append(suggestions,
+			"Pattern is quite long and complex",
+			"Consider breaking it into simpler patterns",
+			"Test pattern incrementally to identify which part fails",
+		)
+	}
+
+	// If no specific suggestions, provide generic ones
+	if len(suggestions) == 0 {
+		suggestions = append(suggestions,
+			"Review the expected pattern and actual message content",
+			"Check if pattern should be regex or substring matching",
+			"Verify the actual message format matches expectations",
+			"Consider using a more flexible pattern if multiple message formats are possible",
+		)
+	}
+
+	return suggestions
 }
 
 // extractResponseSnippet creates a truncated snippet of the response body for error messages.
@@ -2598,3 +2763,142 @@ func generateStatusCodeRangeSuggestions(expected, actual interface{}) []string {
 
 	return suggestions
 }
+
+// =============================================================================
+// ENHANCED ERROR MESSAGE OUTPUT EXAMPLES
+// =============================================================================
+
+// The following examples demonstrate the enhanced error reporting output from
+// ValidateErrorMessage, showing all the detailed information provided when
+// pattern matching fails.
+
+// Example enhanced error output for regex pattern mismatch:
+//
+//	response := []byte(`{"error": "access_denied", "error_description": "User lacks required scope"}`)
+//	err := ValidateErrorMessage(response, "invalid.*token")
+//	if err != nil {
+//	    log.Println(err.Error())
+//	}
+//
+// Output:
+//
+//	error_message validation failed: expected 'invalid.*token', got 'access_denied'
+//	  Pattern type: regex
+//	  Expected pattern: invalid.*token
+//	  Actual error message: "access_denied"
+//	  Field name: error
+//	  Checked fields: error, message, detail, description, error_description
+//	  Response: {"error": "access_denied", "error_description": "User lacks requ...
+//	  Suggestions:
+//	    - Pattern looks for 'token' but actual message doesn't contain it
+//	    - Check if the error is about authentication/authorization rather than tokens
+//	    - Consider expanding pattern to include 'auth' or 'access' related terms
+//
+// Example enhanced error output for substring pattern mismatch:
+//
+//	response := []byte(`{"message": "Resource Not Found"}`)
+//	err := ValidateErrorMessage(response, "not found")
+//	if err != nil {
+//	    log.Println(err.Error())
+//	}
+//
+// Output:
+//
+//	error_message validation failed: expected 'not found', got 'Resource Not Found'
+//	  Pattern type: substring
+//	  Expected pattern: not found
+//	  Actual error message: "Resource Not Found"
+//	  Field name: message
+//	  Checked fields: error, message, detail, description, error_description
+//	  Response: {"message": "Resource Not Found"}
+//	  Suggestions:
+//	    - Substring match is case-sensitive
+//	    - Pattern was found but with different casing
+//	    - Consider using regex with '(?i)' prefix for case-insensitive matching
+//
+// Example enhanced error output when no error message field is found:
+//
+//	response := []byte(`{"status": "ok", "data": {"id": 123}}`)
+//	err := ValidateErrorMessage(response, "error")
+//	if err != nil {
+//	    log.Println(err.Error())
+//	}
+//
+// Output:
+//
+//	error_message validation failed: expected 'error', got ''
+//	  No error message found in response body
+//	  Checked fields: error, message, detail, description, error_description
+//	  Response: {"status": "ok", "data": {"id": 123}}
+//	  Suggestions:
+//	    - Response may not contain standard error fields
+//	    - Check if the API uses different field names for error messages
+//	    - Verify the response structure matches expected format
+//
+// Example enhanced error output for regex metacharacter issues:
+//
+//	response := []byte(`{"error": "access_denied"}`)
+//	err := ValidateErrorMessage(response, "access.denied")
+//	if err != nil {
+//	    log.Println(err.Error())
+//	}
+//
+// Output:
+//
+//	error_message validation failed: expected 'access.denied', got 'access_denied'
+//	  Pattern type: regex
+//	  Expected pattern: access.denied
+//	  Actual error message: "access_denied"
+//	  Field name: error
+//	  Checked fields: error, message, detail, description, error_description
+//	  Response: {"error": "access_denied"}
+//	  Suggestions:
+//	    - Regex contains '.' which matches any character (except newline)
+//	    - If you meant literal dot, escape it: '\.'
+//	    - If substring search is intended, consider using plain text without metacharacters
+//
+// Example enhanced error output for pattern mismatch with multiple error fields:
+//
+//	response := []byte(`{"error": "Validation failed", "message": "Invalid input format", "detail": "Field required"}`)
+//	err := ValidateErrorMessage(response, "expired")
+//	if err != nil {
+//	    log.Println(err.Error())
+//	}
+//
+// Output:
+//
+//	error_message validation failed: expected 'expired', got 'Validation failed'
+//	  Pattern type: substring
+//	  Expected pattern: expired
+//	  Actual error message: "Validation failed"
+//	  Field name: error
+//	  Checked fields: error, message, detail, description, error_description
+//	  Found 3 error message fields in response
+//	  Response: {"error": "Validation failed", "message": "Invalid input format", "de...
+//	  Suggestions:
+//	    - Review the expected pattern and actual message content
+//	    - Check if pattern should be regex or substring matching
+//	    - Verify the actual message format matches expectations
+//
+// Example enhanced error output for long response truncation:
+//
+//	longError := strings.Repeat("error message ", 50) // Creates a ~600 char error message
+//	response := []byte(`{"error": "` + longError + `"}`)
+//	err := ValidateErrorMessage(response, "not found")
+//	if err != nil {
+//	    log.Println(err.Error())
+//	}
+//
+// Output:
+//
+//	error_message validation failed: expected 'not found', got 'error message error message...'
+//	  Pattern type: substring
+//	  Expected pattern: not found
+//	  Actual error message: "error message error message error message error message error..."
+//	  Field name: error
+//	  Checked fields: error, message, detail, description, error_description
+//	  Response: {"error": "error message error message error message error message error message erro...
+//	  Suggestions:
+//	    - Review the expected pattern and actual message content
+//	    - Check if pattern should be regex or substring matching
+//	    - Verify the actual message format matches expectations

@@ -818,6 +818,100 @@ func ExampleValidateErrorMessageWithDetails() {
 	}
 }
 
+// ExampleValidateErrorMessage_enhancedOutput demonstrates the enhanced error reporting output
+func ExampleValidateErrorMessage_enhancedOutput() {
+	// Example 1: Regex pattern mismatch with detailed error information
+	response1 := []byte(`{"error": "access_denied", "error_description": "User lacks required scope"}`)
+	err1 := ValidateErrorMessage(response1, "invalid.*token")
+	if err1 != nil {
+		// Output includes:
+		// error_message validation failed
+		//   Expected: invalid.*token
+		//   Actual:   access_denied
+		//   Field:    error
+		//   Pattern:  Pattern type: regex
+		//   Response snippet: {"error": "access_denied", "error_description": "User lacks required...
+		//   Details:
+		//     - Pattern type: regex
+		//     - Expected pattern: invalid.*token
+		//     - Actual error message: "access_denied"
+		//     - Field name: error
+		//     - Checked fields: error, message, detail, description, error_description
+		//   Suggestions:
+		//     - Pattern looks for 'token' but actual message doesn't contain it
+		//     - Check if the error is about authentication/authorization rather than tokens
+		//     - Consider expanding pattern to include 'auth' or 'access' related terms
+		println(err1.Error())
+	}
+
+	// Example 2: Substring pattern mismatch with case sensitivity issues
+	response2 := []byte(`{"message": "Resource Not Found"}`)
+	err2 := ValidateErrorMessage(response2, "not found")
+	if err2 != nil {
+		// Output includes:
+		// error_message validation failed
+		//   Expected: not found
+		//   Actual:   Resource Not Found
+		//   Field:    message
+		//   Pattern:  Pattern type: substring
+		//   Details:
+		//     - Pattern type: substring
+		//     - Expected pattern: not found
+		//     - Actual error message: "Resource Not Found"
+		//     - Field name: message
+		//   Suggestions:
+		//     - Substring match is case-sensitive
+		//     - Pattern was found but with different casing
+		//     - Consider using regex with '(?i)' prefix for case-insensitive matching
+		println(err2.Error())
+	}
+
+	// Example 3: Multiple error message fields in response
+	response3 := []byte(`{"error": "Validation failed", "message": "Invalid input format", "detail": "Field required"}`)
+	err3 := ValidateErrorMessage(response3, "expired")
+	if err3 != nil {
+		// Output includes:
+		// error_message validation failed
+		//   Expected: expired
+		//   Actual:   Validation failed
+		//   Field:    error
+		//   Pattern:  Pattern type: substring
+		//   Details:
+		//     - Pattern type: substring
+		//     - Expected pattern: expired
+		//     - Actual error message: "Validation failed"
+		//     - Field name: error
+		//     - Checked fields: error, message, detail, description, error_description
+		//     - Found 3 error message fields in response
+		//   Suggestions:
+		//     - Review the expected pattern and actual message content
+		//     - Check if pattern should be regex or substring matching
+		println(err3.Error())
+	}
+
+	// Example 4: Regex pattern with metacharacter suggestions
+	response4 := []byte(`{"error": "access_denied"}`)
+	err4 := ValidateErrorMessage(response4, "access.denied")
+	if err4 != nil {
+		// Output includes:
+		// error_message validation failed
+		//   Expected: access.denied
+		//   Actual:   access_denied
+		//   Field:    error
+		//   Pattern:  Pattern type: regex
+		//   Details:
+		//     - Pattern type: regex
+		//     - Expected pattern: access.denied
+		//     - Actual error message: "access_denied"
+		//     - Field name: error
+		//   Suggestions:
+		//     - Regex contains '.' which matches any character (except newline)
+		//     - If you meant literal dot, escape it: '\.'
+		//     - If substring search is intended, consider using plain text without metacharacters
+		println(err4.Error())
+	}
+}
+
 // Example usage test demonstrating error code detection
 func ExampleFindErrorCodesInResponse() {
 	// Parse response body
@@ -1379,6 +1473,239 @@ func TestValidateErrorMessage_MultipleErrorFields(t *testing.T) {
 			} else {
 				if err != nil {
 					t.Errorf("ValidateErrorMessage() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateErrorMessage_EnhancedErrorReporting tests that error messages include enhanced details
+func TestValidateErrorMessage_EnhancedErrorReporting(t *testing.T) {
+	tests := []struct {
+		name                string
+		response            string
+		expectedPattern     string
+		wantErr             bool
+		errorShouldContain  []string
+		errorShouldNotContain []string
+	}{
+		{
+			name:            "error includes pattern type for regex",
+			response:        `{"error": "access_denied"}`,
+			expectedPattern: "invalid.*token",
+			wantErr:         true,
+			errorShouldContain: []string{
+				"Pattern type: regex",
+				"Expected pattern: invalid.*token",
+				"Actual error message:",
+				"Field name: error",
+				"Checked fields:",
+			},
+		},
+		{
+			name:            "error includes pattern type for substring",
+			response:        `{"error": "Access Denied"}`,
+			expectedPattern: "not found",
+			wantErr:         true,
+			errorShouldContain: []string{
+				"Pattern type: substring",
+				"Expected pattern: not found",
+				"Actual error message:",
+				"Field name: error",
+			},
+		},
+		{
+			name:            "error includes response snippet",
+			response:        `{"error": "Access denied", "code": 403}`,
+			expectedPattern: "not found",
+			wantErr:         true,
+			errorShouldContain: []string{
+				"Response:",
+				`{"error": "Access denied"`,
+			},
+		},
+		{
+			name:            "error includes field name where message was found",
+			response:        `{"message": "Resource not found"}`,
+			expectedPattern: "invalid",
+			wantErr:         true,
+			errorShouldContain: []string{
+				"Field name: message",
+				"Actual error message: \"Resource not found\"",
+			},
+		},
+		{
+			name:            "error includes nested field name",
+			response:        `{"error": {"message": "Token expired"}}`,
+			expectedPattern: "invalid",
+			wantErr:         true,
+			errorShouldContain: []string{
+				"Field name: error.message",
+				"Actual error message: \"Token expired\"",
+			},
+		},
+		{
+			name:            "error includes suggestions for pattern mismatch",
+			response:        `{"error": "Token expired"}`,
+			expectedPattern: "invalid.*token",
+			wantErr:         true,
+			errorShouldContain: []string{
+				"Suggestions:",
+				"token",
+			},
+		},
+		{
+			name:            "error includes checked fields context",
+			response:        `{"status": "ok"}`,
+			expectedPattern: "error",
+			wantErr:         true,
+			errorShouldContain: []string{
+				"Checked fields: error, message, detail, description, error_description",
+				"No error message found in response body",
+			},
+		},
+		{
+			name:            "long response is truncated in snippet",
+			response:        `{"error": "` + strings.Repeat("a", 300) + `"}`,
+			expectedPattern: "not found",
+			wantErr:         true,
+			errorShouldContain: []string{
+				"...",
+			},
+		},
+		{
+			name:            "error includes suggestions for case sensitivity issues",
+			response:        `{"error": "TOKEN_EXPIRED"}`,
+			expectedPattern: "Token.*Expired",
+			wantErr:         true,
+			errorShouldContain: []string{
+				"case",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateErrorMessage([]byte(tt.response), tt.expectedPattern)
+
+			if !tt.wantErr {
+				if err != nil {
+					t.Errorf("ValidateErrorMessage() unexpected error = %v", err)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Errorf("ValidateErrorMessage() expected error, but got nil")
+				return
+			}
+
+			errMsg := err.Error()
+
+			// Check that error contains expected strings
+			for _, expected := range tt.errorShouldContain {
+				if !containsSubstring(errMsg, expected) {
+					t.Errorf("ValidateErrorMessage() error should contain '%s', but got: %s", expected, errMsg)
+				}
+			}
+
+			// Check that error does not contain unexpected strings
+			for _, notExpected := range tt.errorShouldNotContain {
+				if containsSubstring(errMsg, notExpected) {
+					t.Errorf("ValidateErrorMessage() error should not contain '%s', but got: %s", notExpected, errMsg)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateErrorMessage_PatternMismatchSuggestions tests specific suggestion generation
+func TestValidateErrorMessage_PatternMismatchSuggestions(t *testing.T) {
+	tests := []struct {
+		name                string
+		response            string
+		expectedPattern     string
+		expectedSuggestions []string
+	}{
+		{
+			name:            "suggests expanding pattern for not found vs does not exist",
+			response:        `{"error": "Resource does not exist"}`,
+			expectedPattern: "not found",
+			expectedSuggestions: []string{
+				"not found|does not exist",
+			},
+		},
+		{
+			name:            "suggests checking token vs auth issues",
+			response:        `{"error": "Access denied"}`,
+			expectedPattern: "invalid.*token",
+			expectedSuggestions: []string{
+				"token",
+				"authentication",
+			},
+		},
+		{
+			name:            "suggests checking invalid vs expired",
+			response:        `{"error": "Token has expired"}`,
+			expectedPattern: "invalid.*token",
+			expectedSuggestions: []string{
+				"invalid",
+				"expired",
+			},
+		},
+		{
+			name:            "suggests checking regex dot metacharacter",
+			response:        `{"error": "accessXXdenied"}`,
+			expectedPattern: "access.denied",
+			expectedSuggestions: []string{
+				"matches any character",
+				"escape",
+			},
+		},
+		{
+			name:            "suggests checking regex quantifiers",
+			response:        `{"error": "production"}`,
+			expectedPattern: "test*",
+			expectedSuggestions: []string{
+				"quantifier",
+				".*",
+			},
+		},
+		{
+			name:            "suggests checking regex anchors",
+			response:        `{"error": "not found in system"}`,
+			expectedPattern: "^not found$",
+			expectedSuggestions: []string{
+				"anchors",
+				"whitespace",
+			},
+		},
+		{
+			name:            "suggests checking case sensitivity",
+			response:        `{"error": "TOKEN_EXPIRED"}`,
+			expectedPattern: "Token.*Expired",
+			expectedSuggestions: []string{
+				"case-sensitive",
+				"case-insensitive",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateErrorMessage([]byte(tt.response), tt.expectedPattern)
+
+			if err == nil {
+				t.Errorf("ValidateErrorMessage() expected error, but got nil")
+				return
+			}
+
+			errMsg := err.Error()
+
+			// Check that error contains expected suggestions
+			for _, expectedSuggestion := range tt.expectedSuggestions {
+				if !containsSubstring(errMsg, expectedSuggestion) {
+					t.Errorf("ValidateErrorMessage() error should contain suggestion '%s', but got: %s", expectedSuggestion, errMsg)
 				}
 			}
 		})
