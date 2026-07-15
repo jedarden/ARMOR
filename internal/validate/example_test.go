@@ -1000,7 +1000,7 @@ func ExampleFormatStatusCodeError_multipleCodes() {
 // reporting with full details about range boundaries, distance from range, and context.
 func ExampleFormatStatusCodeRangeError() {
 	// Create a range validation error
-	err := validate.FormatStatusCodeRangeError("4xx", 200, "Expected error response")
+	err := validate.FormatStatusCodeRangeError("4xx", 200, "Expected error response", "status_code")
 	
 	fmt.Printf("Error Type: %s\n", err.ErrorType)
 	fmt.Printf("Expected: %v\n", err.Expected)
@@ -1049,7 +1049,7 @@ func ExampleFormatStatusCodeRangeError() {
 // with comprehensive server error context and suggestions.
 func ExampleFormatStatusCodeRangeError_serverError() {
 	// Create a 5xx range validation error
-	err := validate.FormatStatusCodeRangeError("5xx", 404, "API response validation")
+	err := validate.FormatStatusCodeRangeError("5xx", 404, "API response validation", "status_code")
 	
 	fmt.Printf("Error Type: %s\n", err.ErrorType)
 	fmt.Printf("Range Info: %s\n", err.RangeInfo)
