@@ -1621,3 +1621,282 @@ func TestValidationErrorContextInFormatting(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// SUGGESTIONS FORMATTING TESTS
+// =============================================================================
+
+func TestFormatValidationErrorFull_Suggestions(t *testing.T) {
+	tests := []struct {
+		name              string
+		err               ValidationError
+		includeSeverity   bool
+		context           *ValidationErrorContext
+		wantSuggestions   bool
+		suggestionStrings []string
+	}{
+		{
+			name: "with single suggestion",
+			err: ValidationError{
+				ErrorType:   "required",
+				Message:     "Field is required",
+				FieldName:   "email",
+				Suggestions: []string{"Provide a valid email address"},
+			},
+			includeSeverity:   true,
+			context:           nil,
+			wantSuggestions:   true,
+			suggestionStrings: []string{"Provide a valid email address"},
+		},
+		{
+			name: "with multiple suggestions",
+			err: ValidationError{
+				ErrorType:   "format",
+				Message:     "Invalid email format",
+				FieldName:   "email",
+				Actual:      "invalid-email",
+				Suggestions: []string{
+					"Check the email format",
+					"Verify the email contains @ symbol",
+					"Ensure email domain is valid",
+				},
+			},
+			includeSeverity:   true,
+			context:           nil,
+			wantSuggestions:   true,
+			suggestionStrings: []string{
+				"Check the email format",
+				"Verify the email contains @ symbol",
+				"Ensure email domain is valid",
+			},
+		},
+		{
+			name: "without suggestions",
+			err: ValidationError{
+				ErrorType: "required",
+				Message:   "Field is required",
+				FieldName: "email",
+			},
+			includeSeverity:   true,
+			context:          nil,
+			wantSuggestions:  false,
+			suggestionStrings: nil,
+		},
+		{
+			name: "with empty suggestions slice",
+			err: ValidationError{
+				ErrorType:    "required",
+				Message:      "Field is required",
+				FieldName:    "email",
+				Suggestions:  []string{},
+			},
+			includeSeverity:   true,
+			context:           nil,
+			wantSuggestions:   false,
+			suggestionStrings: nil,
+		},
+		{
+			name: "with context and suggestions",
+			err: ValidationError{
+				ErrorType:   "format",
+				Message:     "Invalid format",
+				FieldName:   "email",
+				Suggestions: []string{"Check email format"},
+			},
+			includeSeverity: true,
+			context: func() *ValidationErrorContext {
+				ctx := NewValidationErrorContext("line 5")
+				ctx.WithRelatedFields([]string{"email_confirmation"})
+				return &ctx
+			}(),
+			wantSuggestions:  true,
+			suggestionStrings: []string{"Check email format"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatValidationErrorFull(tt.err, tt.includeSeverity, tt.context)
+
+			if tt.wantSuggestions {
+				// Should contain "Suggestions:" header
+				if !strings.Contains(result, "Suggestions:") {
+					t.Errorf("Expected 'Suggestions:' in output, got:\n%s", result)
+				}
+
+				// Should contain all suggestion strings
+				for _, suggestion := range tt.suggestionStrings {
+					if !strings.Contains(result, suggestion) {
+						t.Errorf("Expected suggestion '%s' in output, got:\n%s", suggestion, result)
+					}
+				}
+
+				// Should use bullet format "- "
+				if !strings.Contains(result, "\n  - ") {
+					t.Errorf("Expected bullet format '\\n  - ' in suggestions, got:\n%s", result)
+				}
+			} else {
+				// Should NOT contain "Suggestions:" header
+				if strings.Contains(result, "Suggestions:") {
+					t.Errorf("Unexpected 'Suggestions:' in output when no suggestions provided, got:\n%s", result)
+				}
+			}
+		})
+	}
+}
+
+func TestFormatValidationErrorWithExpectedActual_Suggestions(t *testing.T) {
+	tests := []struct {
+		name              string
+		err               ValidationError
+		includeSeverity   bool
+		context           *ValidationErrorContext
+		expectedActual    ExpectedActual
+		wantSuggestions   bool
+		suggestionStrings []string
+	}{
+		{
+			name: "with suggestions and ExpectedActual",
+			err: ValidationError{
+				ErrorType:   "status_code",
+				Message:     "Status code mismatch",
+				FieldName:   "response",
+				Suggestions: []string{"Check API endpoint", "Verify authentication"},
+			},
+			includeSeverity: true,
+			context:         nil,
+			expectedActual:  NewExpectedActual(200, 404),
+			wantSuggestions: true,
+			suggestionStrings: []string{
+				"Check API endpoint",
+				"Verify authentication",
+			},
+		},
+		{
+			name: "without suggestions",
+			err: ValidationError{
+				ErrorType: "status_code",
+				Message:   "Status code mismatch",
+				FieldName: "response",
+			},
+			includeSeverity:   true,
+			context:          nil,
+			expectedActual:    NewExpectedActual(200, 404),
+			wantSuggestions:  false,
+			suggestionStrings: nil,
+		},
+		{
+			name: "with context and suggestions",
+			err: ValidationError{
+				ErrorType:   "format",
+				Message:     "Invalid format",
+				FieldName:   "email",
+				Suggestions: []string{"Verify format", "Check pattern"},
+			},
+			includeSeverity: true,
+			context: func() *ValidationErrorContext {
+				ctx := NewValidationErrorContext("line 10")
+				return &ctx
+			}(),
+			expectedActual:  ExpectedActual{},
+			wantSuggestions: true,
+			suggestionStrings: []string{
+				"Verify format",
+				"Check pattern",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatValidationErrorWithExpectedActual(tt.err, tt.includeSeverity, tt.context, tt.expectedActual)
+
+			if tt.wantSuggestions {
+				// Should contain "Suggestions:" header
+				if !strings.Contains(result, "Suggestions:") {
+					t.Errorf("Expected 'Suggestions:' in output, got:\n%s", result)
+				}
+
+				// Should contain all suggestion strings
+				for _, suggestion := range tt.suggestionStrings {
+					if !strings.Contains(result, suggestion) {
+						t.Errorf("Expected suggestion '%s' in output, got:\n%s", suggestion, result)
+					}
+				}
+
+				// Should use bullet format "- "
+				if !strings.Contains(result, "\n  - ") {
+					t.Errorf("Expected bullet format '\\n  - ' in suggestions, got:\n%s", result)
+				}
+			} else {
+				// Should NOT contain "Suggestions:" header
+				if strings.Contains(result, "Suggestions:") {
+					t.Errorf("Unexpected 'Suggestions:' in output when no suggestions provided, got:\n%s", result)
+				}
+			}
+		})
+	}
+}
+
+func TestSuggestionsFormatting_BulletList(t *testing.T) {
+	tests := []struct {
+		name              string
+		suggestions      []string
+		expectedContains []string
+	}{
+		{
+			name:         "single suggestion",
+			suggestions:  []string{"Check documentation"},
+			expectedContains: []string{
+				"Suggestions:",
+				"\n  - Check documentation",
+			},
+		},
+		{
+			name:        "multiple suggestions",
+			suggestions: []string{"First suggestion", "Second suggestion", "Third suggestion"},
+			expectedContains: []string{
+				"Suggestions:",
+				"\n  - First suggestion",
+				"\n  - Second suggestion",
+				"\n  - Third suggestion",
+			},
+		},
+		{
+			name:              "no suggestions",
+			suggestions:       nil,
+			expectedContains:  []string{},
+		},
+		{
+			name:              "empty suggestions",
+			suggestions:       []string{},
+			expectedContains:  []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidationError{
+				ErrorType:   "test",
+				Message:     "Test error",
+				Suggestions: tt.suggestions,
+			}
+
+			result := FormatValidationErrorFull(err, false, nil)
+
+			if len(tt.expectedContains) == 0 {
+				// Should not contain Suggestions: section
+				if strings.Contains(result, "Suggestions:") {
+					t.Errorf("Expected no suggestions section, got:\n%s", result)
+				}
+			} else {
+				// Should contain all expected strings
+				for _, expected := range tt.expectedContains {
+					if !strings.Contains(result, expected) {
+						t.Errorf("Expected '%s' in result, got:\n%s", expected, result)
+					}
+				}
+			}
+		})
+	}
+}

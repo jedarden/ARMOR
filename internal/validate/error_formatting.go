@@ -474,6 +474,183 @@ func severityIndicator(severity ErrorSeverity) string {
 }
 
 // =============================================================================
+// EXPECTED VS ACTUAL FORMATTING
+// =============================================================================
+
+// FormatExpectedActual formats an ExpectedActual struct into a readable string.
+// This function handles different value types and formats them side-by-side.
+// Returns empty string if the ExpectedActual is empty (both values nil).
+//
+// Parameters:
+//   - ea: The ExpectedActual struct to format
+//
+// Returns a formatted string showing expected vs actual values, or empty string if nil/empty.
+//
+// Example usage:
+//
+//	ea := NewExpectedActual(200, 404)
+//	formatted := FormatExpectedActual(ea)
+//	// Returns: "expected: 200 (OK), actual: 404 (Not Found)"
+//
+//	ea := NewExpectedActual("test@example.com", "invalid")
+//	formatted := FormatExpectedActual(ea)
+//	// Returns: "expected: 'test@example.com', actual: 'invalid'"
+func FormatExpectedActual(ea ExpectedActual) string {
+	if ea.IsEmpty() {
+		return ""
+	}
+
+	var expectedStr, actualStr string
+
+	// Format expected value
+	if ea.HasExpected() {
+		switch exp := ea.Expected.(type) {
+		case int:
+			expectedStr = fmt.Sprintf("%d (%s)", exp, getStatusCodeDescription(exp))
+		case []int:
+			parts := make([]string, len(exp))
+			for i, code := range exp {
+				parts[i] = fmt.Sprintf("%d (%s)", code, getStatusCodeDescription(code))
+			}
+			expectedStr = fmt.Sprintf("one of [%s]", strings.Join(parts, ", "))
+		case string:
+			expectedStr = fmt.Sprintf("'%s'", exp)
+		case float64:
+			expectedStr = fmt.Sprintf("%.2f", exp)
+		case []string:
+			quoted := make([]string, len(exp))
+			for i, s := range exp {
+				quoted[i] = fmt.Sprintf("'%s'", s)
+			}
+			expectedStr = fmt.Sprintf("[%s]", strings.Join(quoted, ", "))
+		case map[string]interface{}:
+			expectedStr = formatMapValue(exp)
+		case []interface{}:
+			expectedStr = formatSliceValue(exp)
+		default:
+			expectedStr = fmt.Sprintf("%v", exp)
+		}
+	}
+
+	// Format actual value
+	if ea.HasActual() {
+		switch act := ea.Actual.(type) {
+		case int:
+			actualStr = fmt.Sprintf("%d (%s)", act, getStatusCodeDescription(act))
+		case string:
+			// Truncate long strings
+			if len(act) > 100 {
+				act = act[:100] + "..."
+			}
+			actualStr = fmt.Sprintf("'%s'", act)
+		case float64:
+			actualStr = fmt.Sprintf("%.2f", act)
+		case []string:
+			quoted := make([]string, len(act))
+			for i, s := range act {
+				quoted[i] = fmt.Sprintf("'%s'", s)
+			}
+			actualStr = fmt.Sprintf("[%s]", strings.Join(quoted, ", "))
+		case map[string]interface{}:
+			actualStr = formatMapValue(act)
+		case []interface{}:
+			actualStr = formatSliceValue(act)
+		default:
+			actualStr = fmt.Sprintf("%v", act)
+		}
+	}
+
+	// Build the formatted string
+	var parts []string
+	if expectedStr != "" {
+		parts = append(parts, fmt.Sprintf("expected: %s", expectedStr))
+	}
+	if actualStr != "" {
+		parts = append(parts, fmt.Sprintf("actual: %s", actualStr))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+// formatMapValue formats a map value for display in error messages.
+func formatMapValue(m map[string]interface{}) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+
+	var pairs []string
+	for k, v := range m {
+		pairs = append(pairs, fmt.Sprintf("%s: %v", k, v))
+	}
+
+	// Limit output for large maps
+	if len(pairs) > 5 {
+		pairs = pairs[:5]
+		return fmt.Sprintf("{%s, ...}", strings.Join(pairs, ", "))
+	}
+
+	return fmt.Sprintf("{%s}", strings.Join(pairs, ", "))
+}
+
+// formatSliceValue formats a slice value for display in error messages.
+func formatSliceValue(s []interface{}) string {
+	if len(s) == 0 {
+		return "[]"
+	}
+
+	var items []string
+	for _, v := range s {
+		items = append(items, fmt.Sprintf("%v", v))
+	}
+
+	// Limit output for large slices
+	if len(items) > 5 {
+		items = items[:5]
+		return fmt.Sprintf("[%s, ...]", strings.Join(items, ", "))
+	}
+
+	return fmt.Sprintf("[%s]", strings.Join(items, ", "))
+}
+
+// FormatExpectedActualInline formats ExpectedActual values inline (compact format).
+// This is useful for embedding in error messages where space is limited.
+// Returns empty string if the ExpectedActual is empty.
+//
+// Parameters:
+//   - ea: The ExpectedActual struct to format
+//
+// Returns a compact formatted string.
+//
+// Example usage:
+//
+//	ea := NewExpectedActual(200, 404)
+//	formatted := FormatExpectedActualInline(ea)
+//	// Returns: "(expected 200, got 404)"
+func FormatExpectedActualInline(ea ExpectedActual) string {
+	if ea.IsEmpty() {
+		return ""
+	}
+
+	var parts []string
+	if ea.HasExpected() {
+		parts = append(parts, fmt.Sprintf("expected %v", ea.Expected))
+	}
+	if ea.HasActual() {
+		parts = append(parts, fmt.Sprintf("got %v", ea.Actual))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(parts, ", "))
+}
+
+// =============================================================================
 // COMPREHENSIVE ERROR FORMATTING
 // =============================================================================
 
@@ -558,6 +735,121 @@ func FormatValidationErrorFull(err ValidationError, includeSeverity bool, contex
 
 		builder.WriteString(strings.Join(contextParts, ", "))
 		builder.WriteString(")")
+	}
+
+	// Add suggestions if present
+	if len(err.Suggestions) > 0 {
+		builder.WriteString("\nSuggestions:")
+		for _, suggestion := range err.Suggestions {
+			builder.WriteString(fmt.Sprintf("\n  - %s", suggestion))
+		}
+	}
+
+	return builder.String()
+}
+
+// FormatValidationErrorWithExpectedActual creates a comprehensive, formatted error message
+// with optional ExpectedActual parameter for value comparison. This extends FormatValidationErrorFull
+// to support structured expected vs actual value display.
+//
+// Parameters:
+//   - err: The ValidationError to format
+//   - includeSeverity: Whether to include severity information
+//   - context: Optional ValidationErrorContext for additional location and field information
+//   - expectedActual: Optional ExpectedActual for structured value comparison display
+//
+// Returns a formatted error message string with optional expected/actual comparison.
+//
+// The ExpectedActual parameter takes precedence over err.Expected/err.Actual when provided.
+// If expectedActual is nil or empty, the function falls back to err.Expected/err.Actual.
+// If both are empty, no value comparison is included.
+//
+// Example usage:
+//
+//	err := ValidationError{
+//	    ErrorType: string(ErrTypeRequired),
+//	    Message: "Field is required",
+//	    FieldName: "email",
+//	}
+//
+//	// With ExpectedActual parameter
+//	ea := NewExpectedActual(200, 404)
+//	msg := FormatValidationErrorWithExpectedActual(err, true, nil, ea)
+//	// Returns: "[High] [required] email: Field is required (expected: 200 (OK), actual: 404 (Not Found))"
+//
+//	// Without ExpectedActual parameter (falls back to err.Expected/err.Actual)
+//	msg := FormatValidationErrorWithExpectedActual(err, true, nil, ExpectedActual{})
+//	// Returns: "[High] [required] email: Field is required"
+func FormatValidationErrorWithExpectedActual(err ValidationError, includeSeverity bool, context *ValidationErrorContext, expectedActual ExpectedActual) string {
+	var builder strings.Builder
+
+	// Add severity if requested
+	if includeSeverity {
+		// Try to get severity from ErrorType enum first
+		et := ErrorTypeFromString(err.ErrorType)
+		var severity ErrorSeverity
+		if et.IsValid() && et != ErrTypeUnknown {
+			severity = GetSeverityForErrorTypeEnum(et)
+		} else {
+			// Fall back to string-based error type lookup
+			severity = GetDefaultSeverityForErrorType(err.ErrorType)
+		}
+		builder.WriteString(fmt.Sprintf("%s ", FormatSeverityWithIndicator(severity)))
+	}
+
+	// Add error type and field
+	builder.WriteString(FormatErrorMessage(err.ErrorType, err.Message, err.FieldName))
+
+	// Add expected/actual values - prefer ExpectedActual parameter if provided and non-empty
+	if !expectedActual.IsEmpty() {
+		formattedEA := FormatExpectedActual(expectedActual)
+		if formattedEA != "" {
+			builder.WriteString(fmt.Sprintf(" (%s)", formattedEA))
+		}
+	} else if err.Expected != nil || err.Actual != nil {
+		// Fall back to err.Expected/err.Actual
+		builder.WriteString(" (")
+		if err.Expected != nil {
+			builder.WriteString(fmt.Sprintf("expected: %v", err.Expected))
+		}
+		if err.Expected != nil && err.Actual != nil {
+			builder.WriteString(", ")
+		}
+		if err.Actual != nil {
+			builder.WriteString(fmt.Sprintf("actual: %v", err.Actual))
+		}
+		builder.WriteString(")")
+	}
+
+	// Add location if present in the error itself
+	if err.Location != "" {
+		builder.WriteString(fmt.Sprintf(" [%s]", err.Location))
+	}
+
+	// Add context information if provided and not empty
+	if context != nil && !context.IsEmpty() {
+		builder.WriteString(" (")
+		var contextParts []string
+
+		if context.HasLocation() {
+			contextParts = append(contextParts, fmt.Sprintf("location: %s", context.Location))
+		}
+
+		if context.HasRelatedFields() {
+			fieldsList := FormatFieldList(context.RelatedFields)
+			contextParts = append(contextParts, fmt.Sprintf("related fields: %s", fieldsList))
+		}
+
+		builder.WriteString(strings.Join(contextParts, ", "))
+		builder.WriteString(")")
+	}
+
+	// Add suggestions if present
+	if len(err.Suggestions) > 0 {
+		builder.WriteString("\nSuggestions:")
+		for _, suggestion := range err.Suggestions {
+			builder.WriteString(fmt.Sprintf("\n  - %s", suggestion))
+		}
 	}
 
 	return builder.String()
