@@ -137,9 +137,9 @@ type ContentTypeErrorTestCase struct {
 // They are designed to be reusable across different test scenarios and types.
 // =============================================================================
 
-// ErrorTestCase represents a single error test case with all necessary validation parameters.
+// PatternErrorTestCase represents a single error test case with all necessary validation parameters.
 // This is the core structure that defines what to test and how to validate the response.
-type ErrorTestCase struct {
+type PatternErrorTestCase struct {
 	// Name is the test case name for reporting
 	Name string `json:"name" validate:"required"`
 
@@ -193,7 +193,7 @@ type ErrorTestPatternDefinition struct {
 	ErrorCategory string `json:"error_category" validate:"required"`
 
 	// TestCases contains the individual test cases for this pattern
-	TestCases []ErrorTestCase `json:"test_cases" validate:"required,min=1"`
+	TestCases []PatternErrorTestCase `json:"test_cases" validate:"required,min=1"`
 
 	// DefaultValidation provides pattern-level validation rules
 	DefaultValidation ErrorValidationRules `json:"default_validation,omitempty"`
