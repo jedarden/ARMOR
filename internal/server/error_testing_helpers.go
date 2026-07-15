@@ -47,6 +47,7 @@
 package server
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -697,6 +698,169 @@ func AssertARMORHeader(t *testing.T, resp *http.Response, header, expectedValue 
 
 	if expectedValue != "" && value != expectedValue {
 		t.Errorf("Expected header '%s' to be '%s', got '%s'", header, expectedValue, value)
+	}
+}
+
+// =============================================================================
+// GENERAL ERROR RESPONSE VALIDATION HELPERS
+// =============================================================================
+// These helpers provide general-purpose error response validation functions
+// that can be used across different ARMOR testing scenarios. They validate
+// HTTP error responses, check status codes, content types, and extract error details.
+// =============================================================================
+
+// assertErrorResponse validates that an HTTP response is an error response.
+//
+// This helper checks that the response has an error status code (4xx or 5xx)
+// and contains the expected content type. It provides clear error messages
+// when validation fails, making it easier to debug test failures.
+//
+// Parameters:
+//   - t: Testing instance (for proper test failure reporting)
+//   - resp: HTTP response to validate
+//   - expectedStatusCode: Expected HTTP status code (e.g., 404, 500)
+//   - expectedContentType: Expected content type (e.g., "application/xml", "application/json")
+//
+// Example usage:
+//
+//	resp, err := MakeGETRequest(server.URL, "/armor/blobs/missing.dat")
+//	if err != nil {
+//	    t.Fatalf("Request failed: %v", err)
+//	}
+//	assertErrorResponse(t, resp, 404, "application/xml")
+func assertErrorResponse(t *testing.T, resp *http.Response, expectedStatusCode int, expectedContentType string) {
+	t.Helper()
+
+	// Validate status code
+	if resp.StatusCode != expectedStatusCode {
+		t.Errorf("Expected status code %d, got %d", expectedStatusCode, resp.StatusCode)
+	}
+
+	// Validate content type
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.Contains(contentType, expectedContentType) {
+		t.Errorf("Expected content type to contain '%s', got '%s'", expectedContentType, contentType)
+	}
+
+	// Ensure status code indicates an error
+	if resp.StatusCode < 400 || resp.StatusCode >= 600 {
+		t.Errorf("Status code %d does not indicate an error response", resp.StatusCode)
+	}
+}
+
+// parseErrorResponse extracts error details from a response body.
+//
+// This helper reads the response body and attempts to parse error details
+// from either JSON or XML format. It returns the error code, message, and
+// any parsing error that occurred. This is useful for extracting structured
+// error information for further validation.
+//
+// Parameters:
+//   - t: Testing instance (for proper test failure reporting)
+//   - resp: HTTP response to extract error details from
+//
+// Returns:
+//   - errorCode: The parsed error code (e.g., "NoSuchKey", "AccessDenied")
+//   - message: The parsed error message
+//   - err: Any error that occurred during parsing
+//
+// Example usage:
+//
+//	resp, _ := MakeGETRequest(server.URL, "/armor/blobs/missing.dat")
+//	errorCode, message, err := parseErrorResponse(t, resp)
+//	if err != nil {
+//	    t.Fatalf("Failed to parse error response: %v", err)
+//	}
+//	if errorCode != "NoSuchKey" {
+//	    t.Errorf("Expected NoSuchKey, got %s", errorCode)
+//	}
+func parseErrorResponse(t *testing.T, resp *http.Response) (errorCode string, message string, err error) {
+	t.Helper()
+
+	// Read response body
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return "", "", fmt.Errorf("failed to read response body: %w", readErr)
+	}
+	defer resp.Body.Close()
+
+	// Try JSON format first
+	var jsonError struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if jsonUnmarshalErr := json.Unmarshal(body, &jsonError); jsonUnmarshalErr == nil && jsonError.Code != "" {
+		return jsonError.Code, jsonError.Message, nil
+	}
+
+	// Try XML format (S3 standard)
+	var xmlError S3Error
+	if xmlUnmarshalErr := xml.Unmarshal(body, &xmlError); xmlUnmarshalErr == nil && xmlError.Code != "" {
+		return xmlError.Code, xmlError.Message, nil
+	}
+
+	// If neither format works, return error
+	return "", "", fmt.Errorf("failed to parse error response as JSON or XML (body: %s)", string(body))
+}
+
+// hasErrorCode checks if a response contains a specific error code.
+//
+// This helper parses the error response and checks if it contains the
+// expected error code. It returns true if the error code matches, false
+// otherwise. This is useful for conditional validation and error type checking.
+//
+// Parameters:
+//   - t: Testing instance (for proper test failure reporting)
+//   - resp: HTTP response to check
+//   - expectedErrorCode: The error code to look for (e.g., "NoSuchKey", "AccessDenied")
+//
+// Returns:
+//   - bool: True if the response contains the expected error code, false otherwise
+//
+// Example usage:
+//
+//	resp, _ := MakeGETRequest(server.URL, "/armor/blobs/missing.dat")
+//	if !hasErrorCode(t, resp, "NoSuchKey") {
+//	    t.Error("Expected NoSuchKey error code")
+//	}
+func hasErrorCode(t *testing.T, resp *http.Response, expectedErrorCode string) bool {
+	t.Helper()
+
+	errorCode, _, err := parseErrorResponse(t, resp)
+	if err != nil {
+		t.Logf("Warning: Failed to parse error response: %v", err)
+		return false
+	}
+
+	return errorCode == expectedErrorCode
+}
+
+// assertErrorMessageContains validates that an error message contains expected text.
+//
+// This helper checks that the error message in the response contains the
+// expected text. It's useful for validating error message content without
+// requiring an exact match, allowing for more flexible error message validation.
+//
+// Parameters:
+//   - t: Testing instance (for proper test failure reporting)
+//   - resp: HTTP response to check
+//   - expectedText: Text that should be present in the error message
+//
+// Example usage:
+//
+//	resp, _ := MakeGETRequest(server.URL, "/armor/blobs/missing.dat")
+//	assertErrorMessageContains(t, resp, "does not exist")
+//	assertErrorMessageContains(t, resp, "blob")
+func assertErrorMessageContains(t *testing.T, resp *http.Response, expectedText string) {
+	t.Helper()
+
+	_, message, err := parseErrorResponse(t, resp)
+	if err != nil {
+		t.Fatalf("Failed to parse error response: %v", err)
+	}
+
+	if !strings.Contains(message, expectedText) {
+		t.Errorf("Expected error message to contain '%s', got '%s'", expectedText, message)
 	}
 }
 
