@@ -20,12 +20,16 @@ func ExampleValidationError_statusCode() {
 	// Output:
 	// status_code validation failed
 	//   Expected: 200 (OK)
-	//   Actual:   404 (Not Found)
-	//   Context:  GET /api/users/123
-	//   Suggestions:
-	//     - Verify the endpoint URL is correct
-	//     - Check if the resource ID or identifier exists
-	//     - Ensure the resource hasn't been deleted or moved
+	//   Received: 404 (Not Found)
+	//   Request:  GET /api/users/123
+	//   Common causes:
+	//     1. Verify the endpoint URL is correct
+	//     2. Check if the resource ID or identifier exists
+	//     3. Ensure the resource hasn't been deleted or moved
+	//     4. Review API versioning (URL path may have changed)
+	//     5. Check if the endpoint path in your context is correct
+	//     6. Review API documentation for expected status codes
+	//     7. Test with a tool like curl to verify the API behavior
 }
 
 // Example 2: Using convenience function for status code errors
@@ -35,12 +39,16 @@ func ExampleValidationError_statusCodeConvenience() {
 	// Output:
 	// status_code validation failed
 	//   Expected: 200 (OK)
-	//   Actual:   404 (Not Found)
-	//   Context:  GET /api/users/123
-	//   Suggestions:
-	//     - Verify the endpoint URL is correct
-	//     - Check if the resource ID or identifier exists
-	//     - Ensure the resource hasn't been deleted or moved
+	//   Received: 404 (Not Found)
+	//   Request:  GET /api/users/123
+	//   Common causes:
+	//     1. Verify the endpoint URL is correct
+	//     2. Check if the resource ID or identifier exists
+	//     3. Ensure the resource hasn't been deleted or moved
+	//     4. Review API versioning (URL path may have changed)
+	//     5. Check if the endpoint path in your context is correct
+	//     6. Review API documentation for expected status codes
+	//     7. Test with a tool like curl to verify the API behavior
 }
 
 // Example 3: Multiple expected status codes
@@ -55,12 +63,14 @@ func ExampleValidationError_multipleCodes() {
 	// Output:
 	// status_code validation failed
 	//   Expected: one of [200 (OK), 201 (Created), 204 (No Content)]
-	//   Actual:   500 (Internal Server Error)
-	//   Context:  POST /api/orders
-	//   Suggestions:
-	//     - Implement retry logic with exponential backoff
-	//     - Check service status page for ongoing issues
-	//     - Contact support if the issue persists
+	//   Received: 500 (Internal Server Error)
+	//   Request:  POST /api/orders
+	//   Common causes:
+	//     1. Implement retry logic with exponential backoff
+	//     2. Check service status page for ongoing issues
+	//     3. Contact support if the issue persists
+	//     4. Verify request doesn't trigger server-side bugs
+	//     5. Review server logs if accessible
 }
 
 // Example 4: Error message pattern validation
@@ -79,10 +89,12 @@ func ExampleValidationError_errorMessage() {
 	//   Actual:   access_denied
 	//   Context:  OAuth token validation
 	//   Field:    error
-	//   Suggestions:
-	//     - Review the error message for specific details
-	//     - Check API documentation for this error type
-	//     - Verify request parameters match requirements
+	//   Common causes:
+	//     1. Review the error message for specific details
+	//     2. Check API documentation for this error type
+	//     3. Verify request parameters match requirements
+	//     4. Test with different parameter values
+	//     5. OAuth-related validation - check token validity and scopes
 }
 
 // Example 5: Error message with response snippet
@@ -103,10 +115,12 @@ func ExampleValidationError_errorMessageWithSnippet() {
 	//   Context:  Resource lookup
 	//   Field:    message
 	//   Response: {"message": "internal server error", "code": "ERR_500"}
-	//   Suggestions:
-	//     - Review the error message for specific details
-	//     - Check API documentation for this error type
-	//     - Verify request parameters match requirements
+	//   Common causes:
+	//     1. Server error occurred
+	//     2. Check service status page for ongoing issues
+	//     3. Implement retry logic with exponential backoff
+	//     4. Contact support if the issue persists
+	//     5. Review server logs if accessible
 }
 
 // Example 6: Status code range validation
@@ -121,11 +135,12 @@ func ExampleValidationError_statusCodeRange() {
 	//   Context:  error response check
 	//   Range:    400-499 (Client Error)
 	//   Details:
-	//     - Status code 200 is outside range 400-499
-	//   Suggestions:
-	//     - Review request parameters for errors
-	//     - Check authentication credentials
-	//     - Verify the resource exists and is accessible
+	//     1. Status code 200 is outside range 400-499
+	//   Common causes:
+	//     1. Received success code (2xx) but expected error range
+	//     2. The request succeeded - update test expectations if this is expected
+	//     3. Verify the test is checking for the correct response type
+	//     4. Check if the API behavior has changed
 }
 
 // Example 7: Content-Type validation
@@ -142,10 +157,12 @@ func ExampleValidationError_contentType() {
 	//   Expected: application/json
 	//   Actual:   text/html
 	//   Context:  API response
-	//   Suggestions:
-	//     - Verify Content-Type header matches request body format
-	//     - Check if charset or boundary parameters are needed
-	//     - Ensure the body is properly formatted for the content type
+	//   Common causes:
+	//     1. Expected JSON but received HTML - endpoint may be returning an error page
+	//     2. Check if the API endpoint exists and is correct
+	//     3. Verify the request method (GET vs POST) is correct
+	//     4. Verify Accept header is set to 'application/json'
+	//     5. Ensure request body is valid JSON if sending data
 }
 
 // Example 8: Custom validation with format options
@@ -175,12 +192,12 @@ func ExampleValidationError_customWithOptions() {
 	//   Context:  Authorization header check
 	//   Response: {"headers": {"Content-Type": "application/json"}}
 	//   Details:
-	//     - Authorization header is missing
-	//     - Expected 'Bearer' token format
-	//   Suggestions:
-	//     - Add Authorization header with Bearer token
-	//     - Verify token is properly formatted
-	//     - Check if authentication is required for this endpoint
+	//     1. Authorization header is missing
+	//     2. Expected 'Bearer' token format
+	//   Common causes:
+	//     1. Add Authorization header with Bearer token
+	//     2. Verify token is properly formatted
+	//     3. Check if authentication is required for this endpoint
 }
 
 // Example 9: Custom validation with pattern details
@@ -206,12 +223,13 @@ func ExampleValidationError_withPatternDetails() {
 	//   Field:    error
 	//   Pattern:  regex pattern 'authentication.*failed' did not match
 	//   Details:
-	//     - Searched for regex pattern 'authentication.*failed' in field 'error'
-	//     - Actual message: "access denied"
-	//   Suggestions:
-	//     - Review the error message for specific details
-	//     - Check API documentation for this error type
-	//     - Verify request parameters match requirements
+	//     1. Searched for regex pattern 'authentication.*failed' in field 'error'
+	//     2. Actual message: "access denied"
+	//   Common causes:
+	//     1. Authentication/authorization failed
+	//     2. Verify your account has permission to access this resource
+	//     3. Check if additional authorization scopes are required
+	//     4. Review API key or token permissions
 }
 
 // Example 10: Complex validation with multiple details
@@ -242,14 +260,14 @@ func ExampleValidationError_complexValidation() {
 	//   Context:  POST /api/users
 	//   Response: {"id": 123, "name": "John", "email": "john@example
 	//   Details:
-	//     - JSON parsing failed at position 56
-	//     - Unterminated string value
-	//     - Missing closing brace }
-	//   Suggestions:
-	//     - Verify JSON is properly formatted
-	//     - Check for special characters that need escaping
-	//     - Use JSON linter to validate format
-	//     - Review request body encoding
+	//     1. JSON parsing failed at position 56
+	//     1. Unterminated string value
+	//     1. Missing closing brace }
+	//   Common causes:
+	//     Verify. JSON is properly formatted
+	//     1. Check for special characters that need escaping
+	//     Use. JSON linter to validate format
+	//     1. Review request body encoding
 }
 
 // Example 11: Accessing ValidationError fields programmatically
@@ -300,10 +318,10 @@ func ExampleValidationError_asError() {
 	//   Expected: 200 (OK)
 	//   Actual:   500 (Internal Server Error)
 	//   Context:  GET /api/data
-	//   Suggestions:
-	//     - Implement retry logic with exponential backoff
-	//     - Check service status page for ongoing issues
-	//     - Contact support if the issue persists
+	//   Common causes:
+	//     1. Implement retry logic with exponential backoff
+	//     1. Check service status page for ongoing issues
+	//     1. Contact support if the issue persists
 	// Validation type: status_code
 	// Context: GET /api/data
 }
@@ -325,10 +343,10 @@ func ExampleValidationError_inTest() {
 	//   Expected: 200 (OK)
 	//   Actual:   401 (Unauthorized)
 	//   Context:  GET /api/protected
-	//   Suggestions:
-	//     - Verify authentication credentials are correct
-	//     - Check if API token or session has expired
-	//     - Ensure Authorization header is properly formatted
+	//   Common causes:
+	//     1. Verify authentication credentials are correct
+	//     1. Check if API token or session has expired
+	//     Ensure. Authorization header is properly formatted
 }
 
 // Example 14: Conditional field population
@@ -358,10 +376,10 @@ func ExampleValidationError_conditionalFields() {
 	//   Actual:   404 (Not Found)
 	//   Context:  GET /api/users/123
 	//   Response: {"error": "User not found"}
-	//   Suggestions:
-	//     - Verify the endpoint URL is correct
-	//     - Check if the resource ID or identifier exists
-	//     - Ensure the resource hasn't been deleted or moved
+	//   Common causes:
+	//     1. Verify the endpoint URL is correct
+	//     1. Check if the resource ID or identifier exists
+	//     1. Ensure the resource hasn't been deleted or moved
 }
 
 // Example 15: Reusable validation helper
@@ -400,16 +418,16 @@ func ExampleValidationError_reusableHelper() {
 	//   Expected: 201 (Created)
 	//   Actual:   409 (Conflict)
 	//   Context:  POST /api/users
-	//   Suggestions:
-	//     - Check if a resource with this identifier already exists
-	//     - Verify unique constraints on the resource
-	//     - Consider using PUT instead of POST for updates
+	//   Common causes:
+	//     1. Check if a resource with this identifier already exists
+	//     1. Verify unique constraints on the resource
+	//     1. Consider using PUT instead of POST for updates
 	// Delete user failed: status_code validation failed
 	//   Expected: 204 (No Content)
 	//   Actual:   403 (Forbidden)
 	//   Context:  DELETE /api/users/123
-	//   Suggestions:
-	//     - Verify your account has permission to access this resource
-	//     - Check if additional scopes or roles are required
-	//     - Review API documentation for required permissions
+	//   Common causes:
+	//     1. Verify your account has permission to access this resource
+	//     1. Check if additional scopes or roles are required
+	//     Review. API documentation for required permissions
 }
