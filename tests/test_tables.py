@@ -627,59 +627,163 @@ def create_simple_test_table(
 
 def create_auth_test_table() -> ErrorTestTable:
     """
-    Create a test table for authentication error scenarios.
+    Create a comprehensive test table for authentication error scenarios.
 
     Returns:
         ErrorTestTable: Pre-configured authentication error test table
+
+    This table covers:
+    - Missing credentials (no API key, no token)
+    - Invalid credentials (wrong format, revoked)
+    - Expired credentials (token expiration)
+    - Wrong password (basic auth)
+    - Insufficient permissions (RBAC)
     """
     return ErrorTestTable(
         name="authentication_errors",
         description="Test cases for authentication and authorization error responses",
         tags=["auth", "security", "critical"],
         test_cases=[
+            # Missing credentials test cases
             TestCase(
                 id="AUTH-001",
-                description="Missing API key in request",
+                description="Missing API key in request headers",
                 input_data={"endpoint": "/api/users", "headers": {}},
                 expected_status=401,
                 expected_error="unauthorized",
                 expected_message="API key required",
-                tags=["smoke", "regression"]
+                tags=["smoke", "missing-credentials"]
             ),
             TestCase(
                 id="AUTH-002",
+                description="Missing Bearer token in Authorization header",
+                input_data={"endpoint": "/api/users", "headers": {"Authorization": ""}},
+                expected_status=401,
+                expected_error="unauthorized",
+                expected_message="Authentication required",
+                tags=["missing-credentials", "bearer"]
+            ),
+            TestCase(
+                id="AUTH-003",
+                description="Missing Basic auth credentials",
+                input_data={"endpoint": "/api/auth/login", "headers": {}},
+                expected_status=401,
+                expected_error="unauthorized",
+                expected_message="Authentication required",
+                tags=["missing-credentials", "basic-auth"]
+            ),
+            # Invalid credentials test cases
+            TestCase(
+                id="AUTH-004",
                 description="Invalid API key format",
                 input_data={"endpoint": "/api/users", "headers": {"X-API-Key": "invalid-format"}},
                 expected_status=403,
                 expected_error="forbidden",
                 expected_message="Invalid API key",
-                tags=["regression"]
-            ),
-            TestCase(
-                id="AUTH-003",
-                description="Expired API key",
-                input_data={"endpoint": "/api/users", "headers": {"X-API-Key": "expired-key-123"}},
-                expected_status=403,
-                expected_error="forbidden",
-                expected_message="API key expired",
-                tags=["regression"]
-            ),
-            TestCase(
-                id="AUTH-004",
-                description="Insufficient permissions for admin endpoint",
-                input_data={"endpoint": "/api/admin/users", "headers": {"X-API-Key": "user-key"}},
-                expected_status=403,
-                expected_error="forbidden",
-                expected_message="Insufficient permissions",
-                tags=["admin", "rbac"]
+                tags=["invalid-credentials", "api-key"]
             ),
             TestCase(
                 id="AUTH-005",
+                description="Invalid Bearer token format",
+                input_data={"endpoint": "/api/users", "headers": {"Authorization": "Bearer invalid-token-123"}},
+                expected_status=401,
+                expected_error="unauthorized",
+                expected_message="Invalid authentication token",
+                tags=["invalid-credentials", "bearer-token"]
+            ),
+            TestCase(
+                id="AUTH-006",
+                description="Revoked API key",
+                input_data={"endpoint": "/api/users", "headers": {"X-API-Key": "revoked-key-456"}},
+                expected_status=403,
+                expected_error="forbidden",
+                expected_message="API key has been revoked",
+                tags=["invalid-credentials", "api-key"]
+            ),
+            # Expired credentials test cases
+            TestCase(
+                id="AUTH-007",
+                description="Expired Bearer token",
+                input_data={"endpoint": "/api/users", "headers": {"Authorization": "Bearer expired-token-789"}, "token_expired_at": "2026-07-14T00:00:00Z"},
+                expected_status=401,
+                expected_error="unauthorized",
+                expected_message="token expired",
+                tags=["expired-credentials", "bearer-token"]
+            ),
+            TestCase(
+                id="AUTH-008",
+                description="Expired API key",
+                input_data={"endpoint": "/api/users", "headers": {"X-API-Key": "expired-key-abc"}, "key_expired_at": "2026-07-14T00:00:00Z"},
+                expected_status=403,
+                expected_error="forbidden",
+                expected_message="API key expired",
+                tags=["expired-credentials", "api-key"]
+            ),
+            # Wrong password test cases
+            TestCase(
+                id="AUTH-009",
+                description="Wrong password for basic authentication",
+                input_data={"endpoint": "/api/auth/login", "username": "user@example.com", "password": "wrongpassword"},
+                expected_status=401,
+                expected_error="unauthorized",
+                expected_message="Invalid username or password",
+                expected_fields={"attempts_remaining": 2},
+                tags=["wrong-password", "basic-auth"]
+            ),
+            TestCase(
+                id="AUTH-010",
+                description="Wrong password with account lockout warning",
+                input_data={"endpoint": "/api/auth/login", "username": "admin@example.com", "password": "wrongpass", "attempts_used": 4, "max_attempts": 5},
+                expected_status=401,
+                expected_error="unauthorized",
+                expected_message="Invalid username or password",
+                expected_fields={"attempts_remaining": 1},
+                tags=["wrong-password", "basic-auth", "lockout"]
+            ),
+            # Insufficient permissions test cases
+            TestCase(
+                id="AUTH-011",
+                description="Valid user credentials but insufficient permissions for admin endpoint",
+                input_data={"endpoint": "/api/admin/users", "headers": {"X-API-Key": "user-key-123"}},
+                expected_status=403,
+                expected_error="forbidden",
+                expected_message="Insufficient permissions",
+                expected_fields={"required_permission": "admin:write"},
+                tags=["rbac", "permissions"]
+            ),
+            TestCase(
+                id="AUTH-012",
+                description="Read-only user attempting write operation",
+                input_data={"endpoint": "/api/users", "method": "POST", "headers": {"X-API-Key": "readonly-key-456"}},
+                expected_status=403,
+                expected_error="forbidden",
+                expected_message="Read-only access",
+                tags=["rbac", "permissions"]
+            ),
+            # Happy path test cases
+            TestCase(
+                id="AUTH-013",
                 description="Valid API key accepted",
                 input_data={"endpoint": "/api/users", "headers": {"X-API-Key": "valid-key-123"}},
                 expected_status=200,
                 expected_error=None,
-                tags=["smoke", "happy-path"]
+                tags=["happy-path", "smoke"]
+            ),
+            TestCase(
+                id="AUTH-014",
+                description="Valid Bearer token accepted",
+                input_data={"endpoint": "/api/users", "headers": {"Authorization": "Bearer valid-token-abc"}},
+                expected_status=200,
+                expected_error=None,
+                tags=["happy-path", "bearer-token"]
+            ),
+            TestCase(
+                id="AUTH-015",
+                description="Valid basic auth credentials accepted",
+                input_data={"endpoint": "/api/auth/login", "username": "user@example.com", "password": "correctpassword"},
+                expected_status=200,
+                expected_error=None,
+                tags=["happy-path", "basic-auth"]
             )
         ]
     )
