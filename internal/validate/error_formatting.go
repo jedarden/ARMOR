@@ -484,6 +484,7 @@ func severityIndicator(severity ErrorSeverity) string {
 // Parameters:
 //   - err: The ValidationError to format
 //   - includeSeverity: Whether to include severity information
+//   - context: Optional ValidationErrorContext for additional location and field information
 //
 // Returns a formatted error message string.
 //
@@ -495,9 +496,13 @@ func severityIndicator(severity ErrorSeverity) string {
 //	    FieldName: "email",
 //	}
 //
-//	msg := FormatValidationErrorFull(err, true)
+//	msg := FormatValidationErrorFull(err, true, nil)
 //	// Returns: "[High] [required] email: Field is required"
-func FormatValidationErrorFull(err ValidationError, includeSeverity bool) string {
+//
+//	ctx := NewValidationErrorContext("line 5").WithRelatedFields([]string{"email_confirmation"})
+//	msg := FormatValidationErrorFull(err, true, ctx)
+//	// Returns: "[High] [required] email: Field is required (location: line 5, related fields: email_confirmation)"
+func FormatValidationErrorFull(err ValidationError, includeSeverity bool, context *ValidationErrorContext) string {
 	var builder strings.Builder
 
 	// Add severity if requested
@@ -532,9 +537,27 @@ func FormatValidationErrorFull(err ValidationError, includeSeverity bool) string
 		builder.WriteString(")")
 	}
 
-	// Add location if present
+	// Add location if present in the error itself
 	if err.Location != "" {
 		builder.WriteString(fmt.Sprintf(" [%s]", err.Location))
+	}
+
+	// Add context information if provided and not empty
+	if context != nil && !context.IsEmpty() {
+		builder.WriteString(" (")
+		var contextParts []string
+
+		if context.HasLocation() {
+			contextParts = append(contextParts, fmt.Sprintf("location: %s", context.Location))
+		}
+
+		if context.HasRelatedFields() {
+			fieldsList := FormatFieldList(context.RelatedFields)
+			contextParts = append(contextParts, fmt.Sprintf("related fields: %s", fieldsList))
+		}
+
+		builder.WriteString(strings.Join(contextParts, ", "))
+		builder.WriteString(")")
 	}
 
 	return builder.String()
@@ -603,7 +626,61 @@ func FormatErrorList(errors []ValidationError, includeSeverity bool) string {
 	var lines []string
 	for i, err := range errors {
 		prefix := fmt.Sprintf("%d. ", i+1)
-		formatted := FormatValidationErrorFull(err, includeSeverity)
+		formatted := FormatValidationErrorFull(err, includeSeverity, nil)
+		lines = append(lines, prefix+formatted)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// FormatErrorListWithContext formats multiple errors into a readable list with context information.
+// This is useful for displaying multiple validation failures with additional context for each error.
+//
+// Parameters:
+//   - errors: Slice of ValidationErrors to format
+//   - contexts: Slice of ValidationErrorContext structs, one per error (can contain nil values)
+//   - includeSeverity: Whether to include severity information
+//
+// Returns a formatted error list string.
+//
+// If contexts is nil or shorter than errors, missing contexts are treated as nil (no context).
+//
+// Example usage:
+//
+//	errors := []ValidationError{{
+//	    ErrorType: string(ErrTypeRequired),
+//	    Message: "Field is required",
+//	    FieldName: "email",
+//	}, {
+//	    ErrorType: string(ErrTypeFormat),
+//	    Message: "Invalid format",
+//	    FieldName: "password",
+//	}}
+//
+//	contexts := []*ValidationErrorContext{
+//	    NewValidationErrorContext("line 5").WithRelatedFields([]string{"email_confirmation"}),
+//	    NewValidationErrorContext("line 10"),
+//	}
+//
+//	msg := FormatErrorListWithContext(errors, contexts, true)
+//	// Returns:
+//	// 1. [High] [required] email: Field is required (location: line 5, related fields: email_confirmation)
+//	// 2. [High] [format] password: Invalid format (location: line 10)
+func FormatErrorListWithContext(errors []ValidationError, contexts []*ValidationErrorContext, includeSeverity bool) string {
+	if len(errors) == 0 {
+		return "No errors"
+	}
+
+	var lines []string
+	for i, err := range errors {
+		prefix := fmt.Sprintf("%d. ", i+1)
+
+		var context *ValidationErrorContext
+		if contexts != nil && i < len(contexts) {
+			context = contexts[i]
+		}
+
+		formatted := FormatValidationErrorFull(err, includeSeverity, context)
 		lines = append(lines, prefix+formatted)
 	}
 
@@ -687,7 +764,7 @@ func FormatFieldList(fields []string) string {
 	return FormatFieldListWith(fields, "and")
 }
 
-// FormatValidationErrorToString is an alias for FormatValidationErrorFull.
+// FormatValidationErrorToString is an alias for FormatValidationErrorFull without context.
 // This provides a more explicit name for converting a ValidationError to a string.
 //
 // Parameters:
@@ -696,7 +773,27 @@ func FormatFieldList(fields []string) string {
 //
 // Returns a formatted error message string.
 func FormatValidationErrorToString(err ValidationError, includeSeverity bool) string {
-	return FormatValidationErrorFull(err, includeSeverity)
+	return FormatValidationErrorFull(err, includeSeverity, nil)
+}
+
+// FormatValidationErrorWithContext creates a comprehensive, formatted error message from a ValidationError
+// with optional context information. This is a convenience function that simplifies the common case
+// of formatting an error with context.
+//
+// Parameters:
+//   - err: The ValidationError to format
+//   - includeSeverity: Whether to include severity information
+//   - context: Optional ValidationErrorContext for additional location and field information
+//
+// Returns a formatted error message string.
+//
+// Example usage:
+//
+//	ctx := NewValidationErrorContext("line 5").WithRelatedFields([]string{"email_confirmation"})
+//	msg := FormatValidationErrorWithContext(err, true, ctx)
+//	// Returns: "[High] [required] email: Field is required (location: line 5, related fields: email_confirmation)"
+func FormatValidationErrorWithContext(err ValidationError, includeSeverity bool, context *ValidationErrorContext) string {
+	return FormatValidationErrorFull(err, includeSeverity, context)
 }
 
 // TruncateValue is an alias for TruncateString for compatibility.
