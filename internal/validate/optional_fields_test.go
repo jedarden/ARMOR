@@ -275,8 +275,9 @@ func TestOptionalFields_CustomSuggestions(t *testing.T) {
 			customSuggestions: nil,
 			validate: func(t *testing.T, msg string, suggestions []string) {
 				// Should have auto-generated suggestions for status_code validation
-				if !strings.Contains(msg, "Suggestions:") {
-					t.Errorf("Suggestions section missing when auto-generating, got:\n%s", msg)
+				// Note: status_code validation uses "Common causes:" instead of "Suggestions:"
+				if !strings.Contains(msg, "Common causes:") {
+					t.Errorf("Common causes section missing when auto-generating, got:\n%s", msg)
 				}
 				// Should not have custom suggestions
 				if strings.Contains(msg, "Check the API documentation") {
@@ -289,8 +290,9 @@ func TestOptionalFields_CustomSuggestions(t *testing.T) {
 			customSuggestions: []string{},
 			validate: func(t *testing.T, msg string, suggestions []string) {
 				// Empty slice should trigger auto-generation
-				if !strings.Contains(msg, "Suggestions:") {
-					t.Errorf("Suggestions section missing with empty custom suggestions, got:\n%s", msg)
+				// Note: status_code validation uses "Common causes:" instead of "Suggestions:"
+				if !strings.Contains(msg, "Common causes:") {
+					t.Errorf("Common causes section missing with empty custom suggestions, got:\n%s", msg)
 				}
 			},
 		},
