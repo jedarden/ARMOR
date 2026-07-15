@@ -6,8 +6,61 @@ import (
 	"sync"
 )
 
-// ValidationFormatter provides a simplified API for formatting validation errors consistently.
-// It wraps the existing FormatValidationErrorWithDetails functionality with a more ergonomic interface.
+// ValidationFormatter provides a simplified, fluent API for formatting validation errors consistently.
+//
+// This builder wraps the ValidationError functionality with an ergonomic interface that allows
+// you to construct validation errors step-by-step using method chaining.
+//
+// # Design Pattern
+//
+// ValidationFormatter uses the builder pattern to provide:
+//   - Fluent, chainable methods for readable code
+//   - Auto-generated suggestions when not manually specified
+//   - Type-safe error construction
+//   - Consistent error format across all validation types
+//
+// # Required Fields
+//
+// Only validationType is required (via NewValidationFormatter). All other fields are optional.
+// If suggestions are not provided via WithSuggestions, they will be auto-generated based on
+// the validation type and expected/actual values.
+//
+// # Common Usage Pattern
+//
+// The typical workflow is:
+//  1. Create formatter with NewValidationFormatter(type)
+//  2. Chain With* methods to set optional fields
+//  3. Call Format() to generate the ValidationError
+//
+// # Example
+//
+//	// Basic usage with auto-generated suggestions
+//	err := validate.NewValidationFormatter("status_code").
+//	    WithExpected(200).
+//	    WithActual(404).
+//	    WithContext("GET /api/users").
+//	    Format()
+//
+//	// With custom suggestions
+//	err := validate.NewValidationFormatter("custom_field").
+//	    WithExpected("required").
+//	    WithActual("").
+//	    WithFieldName("email").
+//	    WithSuggestions("Email is required", "Check user input").
+//	    Format()
+//
+// # Extending for New Validation Types
+//
+// To add support for a new validation type:
+//  1. Use NewValidationFormatter("your_type") with a descriptive type name
+//  2. Set appropriate fields using With* methods
+//  3. Optionally provide custom suggestions via WithSuggestions
+//  4. The formatter will automatically include the type in error output
+//
+// # Fields
+//
+// All fields are private to ensure the builder pattern is used correctly.
+// Access them through the public With* methods and Format().
 type ValidationFormatter struct {
 	validationType string
 	expected       interface{}
@@ -23,15 +76,52 @@ type ValidationFormatter struct {
 
 // NewValidationFormatter creates a new ValidationFormatter for the given validation type.
 //
-// Parameters:
+// This is the entry point for the builder pattern. The validationType identifies what
+// kind of validation was performed and is used to:
+//   - Categorize the error in the error message
+//   - Generate appropriate default suggestions
+//   - Provide context for error handling
+//
+// # Parameters
+//
 //   - validationType: The category of validation (e.g., "status_code", "error_message", "content_type")
 //
-// Example usage:
+//     Common validation types include:
+//     - "status_code": HTTP status code validation
+//     - "error_message": Error message pattern matching
+//     - "content_type": Content-Type header validation
+//     - "status_code_range": Status code range validation (e.g., "4xx", "5xx")
+//     - "cors_headers": CORS header validation
+//     - "response_structure": Response body structure validation
+//     - Custom types for domain-specific validation
 //
-//	formatter := validate.NewValidationFormatter("status_code").
+// # Returns
+//
+// A pointer to a new ValidationFormatter instance ready for method chaining.
+//
+// # Example Usage
+//
+//	// Basic status code validation
+//	err := validate.NewValidationFormatter("status_code").
 //	    WithExpected(200).
 //	    WithActual(404).
 //	    WithContext("GET /api/users").
+//	    Format()
+//
+//	// Content-Type validation with context
+//	err := validate.NewValidationFormatter("content_type").
+//	    WithExpected("application/json").
+//	    WithActual("text/html").
+//	    WithContext("API response").
+//	    Format()
+//
+//	// Custom validation type with all options
+//	err := validate.NewValidationFormatter("custom_field_check").
+//	    WithExpected("non_empty").
+//	    WithActual("").
+//	    WithFieldName("username").
+//	    WithContext("User creation").
+//	    WithSuggestions("Username cannot be empty", "Must be 3-20 characters").
 //	    Format()
 func NewValidationFormatter(validationType string) *ValidationFormatter {
 	return &ValidationFormatter{
@@ -40,68 +130,427 @@ func NewValidationFormatter(validationType string) *ValidationFormatter {
 }
 
 // WithExpected sets the expected value for validation.
+//
+// This method specifies what value was expected during the validation check.
+// The expected value is compared against the actual value to provide clear
+// error messages showing what went wrong.
+//
+// # Parameters
+//
+//   - expected: The expected value (can be any type: int, string, []int, etc.)
+//
+//     Common types:
+//     - int: Single expected value (e.g., expected status code 200)
+//     - []int: Multiple acceptable values (e.g., []int{200, 201, 204})
+//     - string: Expected pattern or literal value (e.g., "application/json")
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	// Single expected value
+//	formatter.WithExpected(200)
+//
+//	// Multiple acceptable values
+//	formatter.WithExpected([]int{200, 201, 204})
+//
+//	// String pattern
+//	formatter.WithExpected("application/json")
 func (vf *ValidationFormatter) WithExpected(expected interface{}) *ValidationFormatter {
 	vf.expected = expected
 	return vf
 }
 
 // WithActual sets the actual value received during validation.
+//
+// This method specifies what value was actually received during the validation check.
+// The actual value is compared against the expected value to show the discrepancy
+// that caused the validation failure.
+//
+// # Parameters
+//
+//   - actual: The actual value received (can be any type: int, string, etc.)
+//
+//     Common types:
+//     - int: Actual numeric value (e.g., actual status code 404)
+//     - string: Actual message or content received
+//     - Other types as appropriate for the validation context
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	// Status code that was received
+//	formatter.WithActual(404)
+//
+//	// Error message that was received
+//	formatter.WithActual("access denied")
+//
+//	// Content-Type that was received
+//	formatter.WithActual("text/html")
 func (vf *ValidationFormatter) WithActual(actual interface{}) *ValidationFormatter {
 	vf.actual = actual
 	return vf
 }
 
 // WithContext sets additional context about the validation operation.
-// Context can include information like the endpoint being tested, operation type, etc.
+//
+// Context provides valuable information about where or when the validation occurred,
+// making errors easier to debug and understand. This is especially useful in logs
+// and test output where multiple validations might be happening.
+//
+// # Parameters
+//
+//   - context: A descriptive string explaining the validation context
+//
+//     Common context examples:
+//     - HTTP endpoints: "GET /api/users/123", "POST /api/orders"
+//     - Operation descriptions: "OAuth token validation", "User creation"
+//     - Test scenarios: "Positive case test", "Negative case test"
+//     - Component names: "Authentication service", "Database query"
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	// HTTP endpoint context
+//	formatter.WithContext("GET /api/users/123")
+//
+//	// Operation context
+//	formatter.WithContext("OAuth token validation")
+//
+//	// Test scenario context
+//	formatter.WithContext("Testing unauthorized access")
 func (vf *ValidationFormatter) WithContext(context string) *ValidationFormatter {
 	vf.context = context
 	return vf
 }
 
 // WithResponseSnippet sets a truncated excerpt from the response for debugging.
+//
+// Response snippets provide crucial debugging information by showing the actual
+// content that caused the validation failure. This is particularly useful when
+// debugging complex response structures or unexpected error messages.
+//
+// # Parameters
+//
+//   - snippet: A truncated excerpt from the response (recommended: 100-200 characters)
+//
+//     Best practices:
+//     - Keep snippets concise (100-200 characters recommended)
+//     - Include relevant parts that show the problem
+//     - Truncate long responses with "..." to keep errors readable
+//     - Sanitize sensitive data before including in snippets
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	// Short JSON response snippet
+//	formatter.WithResponseSnippet(`{"error": "invalid_token", "code": "AUTH_001"}`)
+//
+//	// Truncated HTML snippet
+//	formatter.WithResponseSnippet(`<html><body>Error: Page not found...</body></html>`)
+//
+//	// Error message snippet
+//	formatter.WithResponseSnippet("Access denied: insufficient permissions for resource")
 func (vf *ValidationFormatter) WithResponseSnippet(snippet string) *ValidationFormatter {
 	vf.responseSnippet = snippet
 	return vf
 }
 
 // WithFieldName sets the specific field name where the error was found.
-// This is particularly useful for error message validation.
+//
+// This method identifies the exact field that failed validation, which is especially
+// useful when validating structured data like JSON responses, form fields, or
+// configuration objects.
+//
+// # Parameters
+//
+//   - fieldName: The name of the field where the error occurred
+//
+//     Common examples:
+//     - Response body fields: "error", "message", "detail", "code"
+//     - Form fields: "email", "password", "username"
+//     - Nested fields: "user.email", "data.items[0].id"
+//     - Headers: "Content-Type", "Authorization"
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	// Simple field name
+//	formatter.WithFieldName("error")
+//
+//	// Nested field notation
+//	formatter.WithFieldName("user.email")
+//
+//	// Array field notation
+//	formatter.WithFieldName("items[0].id")
 func (vf *ValidationFormatter) WithFieldName(fieldName string) *ValidationFormatter {
 	vf.fieldName = fieldName
 	return vf
 }
 
 // WithPatternDetails sets information about pattern matching failures.
-// Use this when validating error messages against regex patterns.
+//
+// This method provides additional context when validation involves pattern matching,
+// such as regex validation for error messages, format checking, or content verification.
+// It helps explain what pattern was expected and how the actual value didn't match.
+//
+// # Parameters
+//
+//   - details: Information about the pattern that failed to match
+//
+//     Common examples:
+//     - Regex patterns: "regex pattern 'invalid.*token' did not match"
+//     - Format requirements: "expected format 'user@domain.com'"
+//     - Pattern descriptions: "must contain at least one uppercase letter"
+//     - Match details: "pattern matched at position 5 but failed validation"
+//
+// # When to Use
+//
+// Use this method when:
+//   - Validating error messages against regex patterns
+//   - Checking string formats (email, phone, UUID, etc.)
+//   - Verifying content patterns in responses
+//   - Any validation involving pattern matching
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	// Regex pattern explanation
+//	formatter.WithPatternDetails("regex pattern 'invalid.*token' did not match")
+//
+//	// Format requirement
+//	formatter.WithPatternDetails("expected format: YYYY-MM-DD")
+//
+//	// Content pattern description
+//	formatter.WithPatternDetails("must contain at least 8 characters")
 func (vf *ValidationFormatter) WithPatternDetails(details string) *ValidationFormatter {
 	vf.patternDetails = details
 	return vf
 }
 
 // WithRangeInfo sets range boundaries for range validation failures.
-// Use this when validating against status code ranges (e.g., "4xx", "5xx").
+//
+// This method provides context when validating against ranges, such as HTTP status
+// code ranges (4xx, 5xx), numeric ranges, or value intervals. It helps explain the
+// expected boundaries and what range the actual value fell outside of.
+//
+// # Parameters
+//
+//   - info: Description of the range boundaries
+//
+//     Common examples:
+//     - Status code ranges: "400-499 (Client Error)", "200-299 (Success)"
+//     - Numeric ranges: "0-100", "1-1000"
+//     - Descriptive ranges: "positive numbers only", "non-negative integers"
+//
+// # When to Use
+//
+// Use this method when:
+//   - Validating HTTP status code ranges (e.g., expecting 4xx, got 2xx)
+//   - Checking numeric value ranges (e.g., age 0-120)
+//   - Verifying values within intervals (e.g., percentage 0-100)
+//   - Any validation involving range constraints
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	// Status code range
+//	formatter.WithRangeInfo("400-499 (Client Error)")
+//
+//	// Numeric range
+//	formatter.WithRangeInfo("0-120")
+//
+//	// Descriptive range
+//	formatter.WithRangeInfo("positive integers only")
 func (vf *ValidationFormatter) WithRangeInfo(info string) *ValidationFormatter {
 	vf.rangeInfo = info
 	return vf
 }
 
 // WithValidationDetails adds additional validation-specific details.
-// Use this to provide granular information about what was checked and what failed.
+//
+// This method allows you to provide granular, multi-line information about what was
+// checked during validation and specifically what failed. This is useful for complex
+// validations that check multiple conditions or have detailed requirements.
+//
+// # Parameters
+//
+//   - details: Variable number of detail strings to add to the error
+//
+//     Common uses:
+//     - List specific conditions that failed
+//     - Explain validation rules in detail
+//     - Provide step-by-step validation results
+//     - Document intermediate validation states
+//
+// # When to Use
+//
+// Use this method when:
+//   - Validation involves multiple checks or conditions
+//   - You need to explain complex validation rules
+//   - Detailed debugging information would be helpful
+//   - The validation logic is non-trivial
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	// Multiple specific failures
+//	formatter.WithValidationDetails(
+//	    "Password must be at least 8 characters",
+//	    "Password must contain uppercase letters",
+//	    "Password must contain special characters",
+//	)
+//
+//	// Detailed explanation
+//	formatter.WithValidationDetails(
+//	    "Expected 200-299 status range",
+//	    "Got 500 indicating server error",
+//	    "Server logs show database connection failure",
+//	)
+//
+//	// Step-by-step validation
+//	formatter.WithValidationDetails(
+//	    "Step 1: Check format - PASSED",
+//	    "Step 2: Check length - FAILED",
+//	    "Step 3: Check content - SKIPPED",
+//	)
 func (vf *ValidationFormatter) WithValidationDetails(details ...string) *ValidationFormatter {
 	vf.validationDetails = append(vf.validationDetails, details...)
 	return vf
 }
 
 // WithSuggestions sets custom suggestions for fixing the validation failure.
-// If not set, suggestions will be auto-generated based on validation type and values.
-// Use this to override auto-generated suggestions with domain-specific guidance.
+//
+// This method allows you to provide domain-specific, actionable recommendations for
+// resolving the validation error. Custom suggestions override the auto-generated
+// suggestions that would normally be created based on the validation type and values.
+//
+// # Parameters
+//
+//   - suggestions: Variable number of suggestion strings
+//
+//     Best practices for suggestions:
+//     - Be specific and actionable (not just "check the value")
+//     - Provide concrete steps to fix the issue
+//     - Include debugging tips when relevant
+//     - Reference documentation or resources when applicable
+//     - Keep suggestions concise but informative
+//     - Order from most to least likely solution
+//
+// # When to Use Custom Suggestions
+//
+// Use this method when:
+//   - Domain-specific knowledge is needed (not generic suggestions)
+//   - You want to guide users to specific solutions
+//   - Auto-generated suggestions would be too generic
+//   - You need to reference internal documentation or systems
+//   - The fix requires specific domain expertise
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	// Domain-specific suggestions
+//	formatter.WithSuggestions(
+//	    "Check if the OAuth token has expired",
+//	    "Verify the token has 'read:users' scope",
+//	    "Contact admin to refresh permissions",
+//	)
+//
+//	// Specific debugging steps
+//	formatter.WithSuggestions(
+//	    "Check service logs at /var/log/api/errors.log",
+//	    "Verify database connection in config.yaml",
+//	    "Test with curl: curl -v http://localhost:8080/health",
+//	)
+//
+//	// Reference documentation
+//	formatter.WithSuggestions(
+//	    "See API docs: https://docs.example.com/errors#404",
+//	    "Check troubleshooting guide: /docs/troubleshooting.md",
+//	)
 func (vf *ValidationFormatter) WithSuggestions(suggestions ...string) *ValidationFormatter {
 	vf.customSuggestions = append(vf.customSuggestions, suggestions...)
 	return vf
 }
 
 // Format creates the final ValidationError with all configured options.
-// Returns a ValidationError that implements the error interface.
+//
+// This is the final method in the builder chain that constructs the ValidationError
+// with all the options that have been set. The returned ValidationError implements
+// the error interface and can be returned directly or used in error handling.
+//
+// # Behavior
+//
+// The Format() method:
+//   - Uses custom suggestions if provided via WithSuggestions
+//   - Auto-generates suggestions if no custom ones were set
+//   - Includes all fields that were set via With* methods
+//   - Returns a ValidationError ready for use
+//   - Implements error interface for immediate use
+//
+// # Auto-generated Suggestions
+//
+// If WithSuggestions was not called, suggestions are auto-generated based on:
+//   - validationType (e.g., status_code gets endpoint-checking suggestions)
+//   - expected and actual values (e.g., 404 gets resource-not-found suggestions)
+//   - Common patterns for the validation category
+//
+// # Returns
+//
+// A ValidationError struct populated with all configured fields that implements
+// the error interface and can be used immediately in error handling, logging, or
+// test assertions.
+//
+// # Example
+//
+//	// Complete usage example
+//	err := validate.NewValidationFormatter("status_code").
+//	    WithExpected(200).
+//	    WithActual(404).
+//	    WithContext("GET /api/users/123").
+//	    Format()
+//
+//	// Error() method will produce:
+//	// status_code validation failed
+//	//   Expected: 200 (OK)
+//	//   Actual:   404 (Not Found)
+//	//   Context:  GET /api/users/123
+//	//   Suggestions:
+//	//     - Verify the endpoint URL is correct
+//	//     - Check if the resource ID or identifier exists
+//	//     - Ensure the resource hasn't been deleted or moved
+//
+//	// Can be used directly as an error
+//	return err
+//
+//	// Or formatted for logging
+//	log.Printf("Validation failed: %v", err)
 func (vf *ValidationFormatter) Format() ValidationError {
 	suggestions := vf.customSuggestions
 	if len(suggestions) == 0 {
@@ -123,6 +572,128 @@ func (vf *ValidationFormatter) Format() ValidationError {
 		Suggestions:       suggestions,
 	}
 }
+
+// =============================================================================
+// EXTENDING THE FORMATTER FOR NEW VALIDATION TYPES
+// =============================================================================
+//
+// This section explains how to extend the ValidationFormatter to support new
+// validation types beyond the built-in convenience functions.
+//
+// # Creating Custom Validation Types
+//
+// To add support for a new validation type, you have several options:
+//
+// ## Option 1: Use the Builder Pattern Directly
+//
+// The simplest approach is to use NewValidationFormatter with your custom type:
+//
+//	// Custom header validation
+//	err := validate.NewValidationFormatter("custom_header").
+//	    WithExpected("X-Custom-Header: required").
+//	    WithActual("missing").
+//	    WithContext("API request validation").
+//	    WithFieldName("X-Custom-Header").
+//	    WithSuggestions("Add X-Custom-Header to requests", "See API docs").
+//	    Format()
+//
+// ## Option 2: Create a Convenience Function
+//
+// For commonly used validation types, create a convenience function following
+// the pattern of existing functions like FormatStatusCodeError:
+//
+//	// FormatCustomHeaderError validates custom HTTP headers
+//	func FormatCustomHeaderError(headerName, expected, actual, context string) validate.ValidationError {
+//	    return validate.NewValidationFormatter("custom_header").
+//	        WithExpected(expected).
+//	        WithActual(actual).
+//	        WithFieldName(headerName).
+//	        WithContext(context).
+//	        WithSuggestions(
+//	            fmt.Sprintf("Add %s header to request", headerName),
+//	            fmt.Sprintf("Expected value: %s", expected),
+//	        ).
+//	        Format()
+//	}
+//
+// ## Option 3: Use FormatCustomValidationError
+//
+// For advanced scenarios requiring full control, use FormatCustomValidationError:
+//
+//	err := validate.FormatCustomValidationError(
+//	    "response_time",
+//	    "< 100ms",
+//	    "250ms",
+//	    validate.WithContext("API performance check"),
+//	    validate.WithValidationDetails("SLA requires < 100ms response time"),
+//	    validate.WithSuggestions("Optimize database queries", "Add caching"),
+//	)
+//
+// # Best Practices for New Validation Types
+//
+// When creating custom validation types:
+//
+// 1. **Use descriptive type names**: Choose clear, descriptive validation type names
+//    that indicate what was validated (e.g., "response_time", "header_presence").
+//
+// 2. **Provide specific suggestions**: Custom suggestions should be actionable and
+//    specific to your domain rather than generic.
+//
+// 3. **Include relevant context**: Always provide context about where/when the
+//    validation occurred to aid debugging.
+//
+// 4. **Use appropriate field types**: Match the expected/actual field types to what
+//    you're validating (int for codes, string for patterns, etc.).
+//
+// 5. **Consider validation details**: Use WithValidationDetails for complex
+//    validations with multiple steps or conditions.
+//
+// 6. **Document your validation type**: If creating a convenience function, document
+//    it thoroughly like the existing convenience functions.
+//
+// # Integration with Auto-generated Suggestions
+//
+// The ValidationFormatter automatically generates suggestions based on validation
+// type when you don't provide custom suggestions. To integrate your custom type
+// with this system, you can modify the generateSuggestions function to recognize
+// your new type and provide domain-appropriate suggestions.
+//
+// Current auto-generated suggestion patterns:
+//   - "status_code": Endpoint and resource verification suggestions
+//   - "error_message": Error analysis and debugging suggestions
+//   - "content_type": Header and format verification suggestions
+//   - "status_code_range": Range-specific debugging suggestions
+//
+// # Example: Adding a New Validation Type
+//
+// Here's a complete example of adding a "response_time" validation type:
+//
+//	// 1. Create the convenience function
+//	func FormatResponseTimeError(expectedMaxMs, actualMs int, endpoint string) validate.ValidationError {
+//	    return validate.NewValidationFormatter("response_time").
+//	        WithExpected(fmt.Sprintf("< %dms", expectedMaxMs)).
+//	        WithActual(fmt.Sprintf("%dms", actualMs)).
+//	        WithContext(endpoint).
+//	        WithValidationDetails(
+//	            fmt.Sprintf("SLA requirement: < %dms", expectedMaxMs),
+//	            fmt.Sprintf("Actual response time: %dms", actualMs),
+//	            fmt.Sprintf("SLA violation: %dms over limit", actualMs-expectedMaxMs),
+//	        ).
+//	        WithSuggestions(
+//	            "Check for slow database queries",
+//	            "Verify network latency",
+//	            "Review application performance metrics",
+//	            "Consider implementing caching",
+//	        ).
+//	        Format()
+//	}
+//
+//	// 2. Use it in your code
+//	err := FormatResponseTimeError(100, 250, "GET /api/users")
+//	log.Printf("Performance validation failed: %v", err)
+//
+// This approach ensures your custom validation types integrate seamlessly with
+// the existing error formatting system while providing domain-specific guidance.
 
 // =============================================================================
 // CONVENIENCE FUNCTIONS FOR COMMON VALIDATION SCENARIOS
@@ -1318,6 +1889,11 @@ func formatCategoryPrefix(category ErrorCategory) string {
 
 // formatCategorySuffix creates a category-specific suffix with additional context.
 func formatCategorySuffix(category ErrorCategory, config *FormatConfig) string {
+	// Handle nil config gracefully
+	if config == nil {
+		return ""
+	}
+
 	var suffix strings.Builder
 
 	switch category {
