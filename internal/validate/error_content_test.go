@@ -495,7 +495,7 @@ func TestValidationError_Content_FormatValidationError(t *testing.T) {
 				"200",
 				"404",
 				"GET /api/users",
-				"Common causes",
+				"Suggestions",
 			},
 		},
 		{
@@ -977,11 +977,15 @@ func ExampleValidateStatusCodeWithDetails_errorContent() {
 	//   Details:
 	//     - Status code category: 4xx - Client error responses
 	//   Common causes:
+	//     - Resource does not exist or has been moved
+	//     - Incorrect endpoint URL or resource identifier
+	//     - Insufficient permissions to access the resource
+	//
+	//   Suggestions:
 	//     1. Verify the endpoint URL is correct
 	//     2. Check if the resource ID or identifier exists
 	//     3. Ensure the resource hasn't been deleted or moved
 	//     4. Review API versioning (URL path may have changed)
-	//
 	// Category: client_error
 }
 
@@ -1010,6 +1014,11 @@ func ExampleValidateStatusCodeWithDetails_withContext() {
 	//   Details:
 	//     - Status code category: 4xx - Client error responses
 	//   Common causes:
+	//     - Missing or invalid authentication credentials
+	//     - Expired or revoked API token/session
+	//     - Incorrect authentication method for this endpoint
+	//
+	//   Suggestions:
 	//     1. Verify authentication credentials are correct
 	//     2. Check if API token or session has expired
 	//     3. Ensure Authorization header is properly formatted (e.g., 'Bearer <token>')
@@ -1041,6 +1050,10 @@ func ExampleValidateStatusCodeWithDetails_rateLimit() {
 	//   Details:
 	//     - Status code category: 4xx - Client error responses
 	//   Common causes:
+	//     - Request or response format mismatch
+	//     - Server-side validation or processing error
+	//
+	//   Suggestions:
 	//     1. Implement rate limiting and exponential backoff
 	//     2. Check API quota limits and current usage
 	//     3. Consider caching responses to reduce request frequency
@@ -1073,6 +1086,11 @@ func ExampleValidateStatusCodeWithDetails_serverError() {
 	//   Details:
 	//     - Status code category: 5xx - Server error responses
 	//   Common causes:
+	//     - Internal server error or service malfunction
+	//     - Temporary service unavailability or maintenance
+	//     - Upstream service or database connectivity issues
+	//
+	//   Suggestions:
 	//     1. Implement retry logic with exponential backoff
 	//     2. Check service status page for ongoing issues
 	//     3. Contact support if the issue persists
@@ -1272,7 +1290,7 @@ func TestValidationError_Content_EnhancedErrorMessageValidation(t *testing.T) {
 			mustContain: []string{
 				"error_message validation failed",
 				"valid JSON",
-				"parse error",
+				"Parse error:",
 				"Details:",
 				"Failed to parse response body",
 			},
