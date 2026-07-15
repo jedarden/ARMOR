@@ -553,15 +553,75 @@ func (ve ValidationError) Error() string {
 		b.WriteString(fmt.Sprintf("  Response: %s\n", ve.ResponseSnippet))
 	}
 
-	// Suggestions - format consistently across all error types
+	// Common causes section - provide context for common failure scenarios
+	if len(ve.Suggestions) > 0 {
+		b.WriteString("  Common causes:\n")
+		switch ve.ErrorType {
+		case "status_code":
+			if statusCode, ok := ve.Actual.(int); ok {
+				switch statusCode {
+				case 404:
+					b.WriteString("    - Resource does not exist or has been moved\n")
+					b.WriteString("    - Incorrect endpoint URL or resource identifier\n")
+					b.WriteString("    - Insufficient permissions to access the resource\n")
+				case 401:
+					b.WriteString("    - Missing or invalid authentication credentials\n")
+					b.WriteString("    - Expired or revoked API token/session\n")
+					b.WriteString("    - Incorrect authentication method for this endpoint\n")
+				case 403:
+					b.WriteString("    - Insufficient permissions or scopes for this resource\n")
+					b.WriteString("    - Account restrictions or quota limits\n")
+					b.WriteString("    - IP whitelist or geographic restrictions\n")
+				case 500:
+					b.WriteString("    - Internal server error or service malfunction\n")
+					b.WriteString("    - Temporary service unavailability or maintenance\n")
+					b.WriteString("    - Upstream service or database connectivity issues\n")
+				default:
+					b.WriteString("    - Request or response format mismatch\n")
+					b.WriteString("    - Server-side validation or processing error\n")
+				}
+			}
+		case "error_message":
+			b.WriteString("    - Pattern mismatch between expected and actual error messages\n")
+			b.WriteString("    - API behavior change or version incompatibility\n")
+			b.WriteString("    - Conditional error paths not triggered as expected\n")
+		case "content_type":
+			b.WriteString("    - API returns different content type than expected\n")
+			b.WriteString("    - Missing or incorrect Content-Type header\n")
+			b.WriteString("    - Error response returned in unexpected format\n")
+		case "timeout":
+			b.WriteString("    - Request processing time exceeded configured timeout\n")
+			b.WriteString("    - Network latency or connectivity issues\n")
+			b.WriteString("    - Server-side performance degradation\n")
+		case "json_schema":
+			b.WriteString("    - Response structure doesn't match expected schema\n")
+			b.WriteString("    - Missing or incorrectly typed fields in response\n")
+			b.WriteString("    - API contract change or version mismatch\n")
+		case "status_code_range":
+			b.WriteString("    - Response status code falls outside expected range\n")
+			b.WriteString("    - Unexpected success or error condition\n")
+			b.WriteString("    - Test expectations may need updating\n")
+		case "cors_headers":
+			b.WriteString("    - CORS headers not properly configured on server\n")
+			b.WriteString("    - Origin not allowed in CORS policy\n")
+			b.WriteString("    - Pre-flight request validation failed\n")
+		default:
+			b.WriteString("    - Validation condition not met for this check\n")
+			b.WriteString("    - Expected and actual values don't match\n")
+			b.WriteString("    - Configuration or environment issue\n")
+		}
+		b.WriteString("\n")
+	}
+
+	// Suggestions - format with numbered list for better readability
 	if len(ve.Suggestions) > 0 {
 		b.WriteString("  Suggestions:\n")
 		for i, suggestion := range ve.Suggestions {
 			// Don't add trailing newline after last suggestion
 			if i == len(ve.Suggestions)-1 {
-				b.WriteString(fmt.Sprintf("    - %s", suggestion))
+				b.WriteString(fmt.Sprintf("    %d. %s", i+1, suggestion))
 			} else {
-				b.WriteString(fmt.Sprintf("    - %s\n", suggestion))
+				b.WriteString(fmt.Sprintf("    %d. %s\n", i+1, suggestion))
 			}
 		}
 	}
