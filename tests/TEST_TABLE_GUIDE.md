@@ -1,15 +1,395 @@
-# Extensible Test Table Structure Guide
-
-This guide explains how to use and extend ARMOR's table-driven testing framework for different error types.
+# Test Table Extension Guide
 
 ## Overview
 
-Test tables provide a structured, declarative way to define test cases. Instead of writing individual test functions, you define test cases as data in a table format. This makes tests:
+This guide provides comprehensive documentation for extending ARMOR's test table structure to add new error type tests. Test tables provide a reusable, maintainable way to organize and execute data-driven tests across different error scenarios.
 
-- **DRY**: Define patterns once, reuse across test cases
-- **Maintainable**: Clear separation between test data and logic
-- **Extensible**: Easy to add new test cases by adding table rows
-- **Documented**: Test tables serve as living documentation
+**Key Benefits:**
+- **DRY Principle**: Define validation logic once, reuse across many test cases
+- **Maintainability**: Clear separation between test data and test logic
+- **Extensibility**: Easy to add new test cases by extending tables
+- **Documentation**: Test tables serve as living documentation of expected behavior
+- **Organization**: Group related test cases together with tags and metadata
+
+---
+
+## Architecture Overview
+
+### Core Components
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     ErrorTestTable                           │
+│  - name: "authentication_errors"                            │
+│  - description: "Test cases for auth error responses"        │
+│  - tags: ["auth", "security", "critical"]                    │
+│  - test_cases: [TestCase, TestCase, ...]                     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       TestCase                                │
+│  - id: "AUTH-001"                                            │
+│  - description: "Missing API key"                            │
+│  - input_data: {"endpoint": "/api/users", ...}              │
+│  - expected_status: 401                                      │
+│  - expected_error: "unauthorized"                           │
+│  - expected_message: "API key required"                     │
+│  - expected_fields: {...}                                    │
+│  - tags: ["smoke", "missing-credentials"]                   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Test Execution                            │
+│  run_test_table(table, executor) → TestTableResult          │
+│  - Runs all test cases with provided executor                │
+│  - Returns aggregated results with pass/fail statistics     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Required Fields for Test Cases
+
+Every `TestCase` must include the following fields:
+
+### Essential Fields (Required)
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `id` | `str` | Unique identifier for the test case | `"AUTH-001"`, `"VAL-001"` |
+| `description` | `str` | Human-readable description of what the test validates | `"Missing API key in request headers"` |
+| `input_data` | `Dict[str, Any]` | Input parameters for the test (endpoint, headers, body, etc.) | `{"endpoint": "/api/users", "headers": {}}` |
+
+### Expected Output Fields (At least one required)
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `expected_status` | `int` (optional) | Expected HTTP status code | `401`, `422`, `404` |
+| `expected_error` | `str` (optional) | Expected error type/identifier | `"unauthorized"`, `"validation_error"` |
+| `expected_message` | `str` (optional) | Expected error message (or substring) | `"API key required"` |
+| `expected_fields` | `Dict[str, Any]` (optional) | Additional fields to validate in response | `{"attempts_remaining": 2}` |
+
+### Optional Metadata Fields
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `tags` | `List[str]` | Tags for categorization and filtering | `[]` |
+| `enabled` | `bool` | Whether this test case is enabled | `True` |
+| `setup_callback` | `Callable` | Function to run before test execution | `None` |
+| `teardown_callback` | `Callable` | Function to run after test execution | `None` |
+| `custom_validator` | `Callable` | Custom validation function for this test case | `None` |
+| `metadata` | `Dict[str, Any]` | Additional test metadata | `{}` |
+
+---
+
+## Step-by-Step Guide: Adding New Error Type Tables
+
+### Step 1: Identify Your Error Category
+
+Before creating a new test table, identify which category of errors you're testing:
+
+**Common Error Categories:**
+- **Authentication/Authorization**: Missing credentials, invalid tokens, expired keys
+- **Validation**: Missing fields, invalid formats, out-of-range values, type mismatches
+- **Not Found**: Non-existent resources, deleted items
+- **Rate Limiting**: Request throttling, retry-after headers
+- **Server Errors**: Internal errors, upstream failures, timeouts
+- **Method Restrictions**: Unsupported methods, forbidden operations
+- **Content-Type Issues**: Unsupported media types, encoding errors
+
+**Example Decision Tree:**
+```
+Does the error relate to credentials/permissions?
+  └─ YES → Authentication/Authorization table
+  └─ NO → Does it relate to input validation?
+      └─ YES → Validation table
+      └─ NO → Does it relate to missing resources?
+          └─ YES → Not Found table
+          └─ NO → Consider creating a new category
+```
+
+### Step 2: Define Your Test Table Structure
+
+Create a function that returns an `ErrorTestTable` with your test cases:
+
+```python
+from tests.test_tables import (
+    ErrorTestTable,
+    TestCase,
+    create_simple_test_table,
+)
+
+def create_my_error_type_table() -> ErrorTestTable:
+    """
+    Create a test table for your error type.
+
+    Returns:
+        ErrorTestTable: Configured test table for your error scenarios
+    """
+    return ErrorTestTable(
+        name="my_error_type",
+        description="Test cases for my error type responses",
+        tags=["my-error-category", "4xx", "custom"],
+        test_cases=[
+            # Test cases will be added here
+        ]
+    )
+```
+
+### Step 3: Add Test Cases to Your Table
+
+Add test cases following these patterns:
+
+#### Pattern 1: Simple Error Test Case
+
+```python
+TestCase(
+    id="MYERR-001",
+    description="Clear description of what triggers the error",
+    input_data={
+        "endpoint": "/api/endpoint",
+        "method": "POST",
+        "body": {"key": "value"}
+    },
+    expected_status=422,
+    expected_error="my_error_type",
+    expected_message="Expected error message",
+    tags=["smoke"]
+)
+```
+
+#### Pattern 2: Test Case with Field Validation
+
+```python
+TestCase(
+    id="MYERR-002",
+    description="Error with specific field details",
+    input_data={
+        "endpoint": "/api/endpoint",
+        "field": "email",
+        "value": "invalid"
+    },
+    expected_status=422,
+    expected_error="validation_error",
+    expected_message="Invalid email format",
+    expected_fields={
+        "field": "email",
+        "provided_value": "invalid",
+        "constraint": "must contain @"
+    },
+    tags=["validation", "email"]
+)
+```
+
+#### Pattern 3: Happy Path Test Case
+
+```python
+TestCase(
+    id="MYERR-003",
+    description="Valid request accepted",
+    input_data={
+        "endpoint": "/api/endpoint",
+        "method": "POST",
+        "body": {"valid": "data"}
+    },
+    expected_status=201,
+    expected_error=None,  # No error expected
+    tags=["happy-path", "smoke"]
+)
+```
+
+### Step 4: Create an Executor Function
+
+The executor function simulates or makes actual HTTP requests and returns the response data:
+
+```python
+from typing import Dict, Any
+
+def my_error_type_executor(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Executor for my error type tests.
+
+    In production, this would make actual HTTP requests.
+    For testing, it can simulate responses based on input.
+
+    Args:
+        input_data: Test case input parameters
+
+    Returns:
+        Dict containing:
+            - status: HTTP status code
+            - error: Error type (or None if no error)
+            - message: Error message (or success message)
+            - fields: Additional fields from response
+    """
+    # Extract input data
+    endpoint = input_data.get("endpoint", "")
+    method = input_data.get("method", "GET")
+    body = input_data.get("body", {})
+
+    # Simulate logic based on input
+    # In production: make actual HTTP request here
+    if method == "POST" and "invalid" in body.get("email", ""):
+        return {
+            "status": 422,
+            "error": "validation_error",
+            "message": "Invalid email format",
+            "fields": {
+                "field": "email",
+                "provided_value": body.get("email"),
+                "constraint": "must contain @"
+            }
+        }
+
+    # Default: valid request
+    return {
+        "status": 201,
+        "error": None,
+        "message": "Resource created successfully"
+    }
+```
+
+### Step 5: Run Your Test Table
+
+Use the `run_test_table()` function to execute your test cases:
+
+```python
+from tests.test_tables import run_test_table
+
+# Create the test table
+table = create_my_error_type_table()
+
+# Run all test cases
+results = run_test_table(
+    table=table,
+    executor=my_error_type_executor,
+    continue_on_failure=True  # Continue running tests after failures
+)
+
+# Check results
+print(f"Total: {results.total_count}")
+print(f"Passed: {results.passed_count}")
+print(f"Failed: {results.failed_count}")
+print(f"Pass Rate: {results.pass_rate:.1f}%")
+
+assert results.all_passed, f"Some tests failed: {results.failed_count} failures"
+```
+
+---
+
+## Complete Example: Authentication Error Table
+
+Here's a complete example from the existing authentication error implementation:
+
+### 1. Table Definition
+
+```python
+def create_auth_test_table() -> ErrorTestTable:
+    """Create authentication error test table."""
+    return ErrorTestTable(
+        name="authentication_errors",
+        description="Test cases for authentication and authorization error responses",
+        tags=["auth", "security", "critical"],
+        test_cases=[
+            # Missing credentials
+            TestCase(
+                id="AUTH-001",
+                description="Missing API key in request headers",
+                input_data={"endpoint": "/api/users", "headers": {}},
+                expected_status=401,
+                expected_error="unauthorized",
+                expected_message="API key required",
+                tags=["smoke", "missing-credentials"]
+            ),
+
+            # Invalid credentials
+            TestCase(
+                id="AUTH-004",
+                description="Invalid API key format",
+                input_data={"endpoint": "/api/users", "headers": {"X-API-Key": "invalid-format"}},
+                expected_status=403,
+                expected_error="forbidden",
+                expected_message="Invalid API key",
+                tags=["invalid-credentials", "api-key"]
+            ),
+
+            # Wrong password
+            TestCase(
+                id="AUTH-009",
+                description="Wrong password for basic authentication",
+                input_data={"endpoint": "/api/auth/login", "username": "user@example.com", "password": "wrongpassword"},
+                expected_status=401,
+                expected_error="unauthorized",
+                expected_message="Invalid username or password",
+                expected_fields={"attempts_remaining": 2},
+                tags=["wrong-password", "basic-auth"]
+            ),
+
+            # Happy path
+            TestCase(
+                id="AUTH-013",
+                description="Valid API key accepted",
+                input_data={"endpoint": "/api/users", "headers": {"X-API-Key": "valid-key-123"}},
+                expected_status=200,
+                expected_error=None,
+                tags=["happy-path", "smoke"]
+            )
+        ]
+    )
+```
+
+### 2. Executor Function
+
+```python
+def auth_test_executor(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Executor for authentication tests."""
+    headers = input_data.get('headers', {})
+
+    # Missing credentials
+    if 'X-API-Key' not in headers and 'Authorization' not in headers:
+        return {
+            'status': 401,
+            'error': 'unauthorized',
+            'message': 'API key required'
+        }
+
+    # Valid credentials
+    api_key = headers.get('X-API-Key', '')
+    if 'valid' in api_key:
+        return {
+            'status': 200,
+            'error': None,
+            'message': 'Success'
+        }
+
+    # Invalid credentials
+    return {
+        'status': 403,
+        'error': 'forbidden',
+        'message': 'Invalid API key'
+    }
+```
+
+### 3. Running the Tests
+
+```python
+# Create and run the table
+auth_table = create_auth_test_table()
+results = run_test_table(auth_table, auth_test_executor)
+
+# Print results
+print(f"Passed: {results.passed_count}/{results.total_count}")
+print(f"Pass rate: {results.pass_rate:.1f}%")
+
+# Show failures
+for result in results.results:
+    if result.failed:
+        print(f"✗ {result.test_case.id}: {result.error_message}")
+```
+
+---
 
 ## Core Concepts
 
@@ -576,6 +956,552 @@ table = ErrorTestTable(
 - Add tags for easy filtering
 - Include metadata for traceability (e.g., JIRA ticket IDs)
 
+## Complete Example: Validation Error Table
+
+Here's a complete example from the validation error implementation:
+
+### 1. Table Definition
+
+```python
+def create_validation_test_table() -> ErrorTestTable:
+    """Create validation error test table."""
+    return ErrorTestTable(
+        name="validation_errors",
+        description="Test cases for input validation error responses",
+        tags=["validation", "input", "4xx"],
+        test_cases=[
+            # Missing required field
+            TestCase(
+                id="VAL-001",
+                description="Missing required field in POST body",
+                input_data={"endpoint": "/api/users", "method": "POST", "body": {"name": "John"}},
+                expected_status=422,
+                expected_error="validation_error",
+                expected_message="required field",
+                expected_fields={"missing_field": "email"},
+                tags=["smoke"]
+            ),
+
+            # Invalid format
+            TestCase(
+                id="VAL-002",
+                description="Invalid email format",
+                input_data={"endpoint": "/api/users", "method": "POST", "body": {"email": "not-an-email"}},
+                expected_status=422,
+                expected_error="validation_error",
+                expected_message="Invalid email format",
+                tags=["regression"]
+            ),
+
+            # Out of range
+            TestCase(
+                id="VAL-003",
+                description="Numeric field out of range",
+                input_data={"endpoint": "/api/users", "method": "POST", "body": {"age": 150}},
+                expected_status=422,
+                expected_error="validation_error",
+                expected_message="age must be between",
+                tags=["regression"]
+            ),
+
+            # Happy path
+            TestCase(
+                id="VAL-004",
+                description="Valid request accepted",
+                input_data={"endpoint": "/api/users", "method": "POST", "body": {"name": "Jane", "email": "jane@example.com", "age": 25}},
+                expected_status=201,
+                expected_error=None,
+                tags=["happy-path"]
+            )
+        ]
+    )
+```
+
+### 2. Running with Pytest
+
+```python
+import pytest
+
+class TestValidationErrors:
+    """Test validation error scenarios."""
+
+    def test_all_validation_errors(self):
+        """Run all validation error test cases."""
+        table = create_validation_test_table()
+        results = run_test_table(table, validation_test_executor)
+
+        # Print summary
+        print(f"\n{'='*60}")
+        print(f"Validation Error Test Results")
+        print(f"{'='*60}")
+        print(f"Total: {results.total_count}")
+        print(f"Passed: {results.passed_count}")
+        print(f"Failed: {results.failed_count}")
+        print(f"Pass Rate: {results.pass_rate:.1f}%")
+
+        assert results.all_passed, f"Some tests failed: {results.failed_count} failures"
+
+    def test_missing_required_field(self):
+        """Test specific missing field scenario."""
+        table = create_validation_test_table()
+        test_case = table.get_test_case("VAL-001")
+
+        result = run_test_case(test_case, validation_test_executor)
+
+        assert result.passed, f"Test failed: {result.error_message}"
+        print(f"✓ {test_case.id}: {test_case.description}")
+```
+
+---
+
+## Test Case Naming Conventions
+
+Use consistent naming conventions for test case IDs:
+
+### By Error Type
+- **Authentication**: `AUTH-001`, `AUTH-002`, ...
+- **Validation**: `VAL-001`, `VAL-002`, ...
+- **Not Found**: `NF-001`, `NF-002`, ...
+- **Rate Limiting**: `RL-001`, `RL-002`, ...
+- **Server Error**: `SE-001`, `SE-002`, ...
+
+### By Category (More Granular)
+- **Missing Fields**: `VAL-MISS-001`, `VAL-MISS-002`, ...
+- **Invalid Format**: `VAL-FMT-001`, `VAL-FMT-002`, ...
+- **Out of Range**: `VAL-RANGE-001`, `VAL-RANGE-002`, ...
+- **Type Mismatch**: `VAL-TYPE-001`, `VAL-TYPE-002`, ...
+- **Happy Path**: `VAL-HAPPY-001`, `VAL-HAPPY-002`, ...
+
+---
+
+## Tagging Strategy
+
+Use tags to categorize and filter test cases:
+
+### Common Tags
+
+| Tag | Usage | Examples |
+|-----|-------|----------|
+| `smoke` | Critical tests that should always pass | Missing credentials, basic validation |
+| `regression` | Tests for previously fixed bugs | Edge cases, historical issues |
+| `happy-path` | Valid requests that should succeed | Valid authentication, valid input |
+| `critical` | Security or stability critical tests | Authentication, authorization, rate limiting |
+| `integration` | Tests requiring external services | Database, upstream API calls |
+
+### Category-Specific Tags
+
+**Authentication:**
+- `missing-credentials`, `invalid-credentials`, `expired-credentials`
+- `wrong-password`, `rbac`, `permissions`
+
+**Validation:**
+- `missing-field`, `invalid-format`, `out-of-range`, `type-mismatch`
+- `email`, `date`, `url`, `phone`, `uuid`
+
+**HTTP Methods:**
+- `get`, `post`, `put`, `delete`, `patch`
+
+### Filtering by Tags
+
+```python
+# Get all smoke tests
+smoke_tests = table.get_test_cases_by_tag("smoke")
+
+# Filter table by multiple tags
+filtered_table = table.filter_by_tags("smoke", "auth")
+
+# Get only critical tests
+critical_tests = [tc for tc in table.test_cases if "critical" in tc.tags]
+```
+
+---
+
+## Best Practices
+
+### 1. Test Case Design
+
+**DO:**
+- Make test cases independent and idempotent
+- Use descriptive test case names and IDs
+- Include both error and happy path scenarios
+- Test edge cases and boundary conditions
+- Use tags for categorization
+
+**DON'T:**
+- Create test cases that depend on each other
+- Use vague descriptions like "test error"
+- Over-complicate test logic in the table
+- Skip happy path testing
+
+### 2. Input Data Structure
+
+**DO:**
+- Use consistent field names across test cases
+- Include all relevant input parameters
+- Use realistic test data values
+- Document non-standard fields
+
+**DON'T:**
+- Overload input_data with unnecessary fields
+- Use magic numbers or unclear values
+- Mix different endpoint patterns in the same table
+
+### 3. Expected Output
+
+**DO:**
+- Be specific about expected values
+- Include expected error messages
+- Validate important response fields
+- Test both success and failure paths
+
+**DON'T:**
+- Leave expected_error as None for error tests
+- Use overly broad message matching
+- Ignore important validation fields
+
+### 4. Table Organization
+
+**DO:**
+- Group related test cases together
+- Use clear table names and descriptions
+- Add comprehensive tags
+- Document non-obvious test scenarios
+
+**DON'T:**
+- Create massive tables with 100+ test cases
+- Mix unrelated error types in one table
+- Use generic table names like "errors"
+
+### 5. Executor Functions
+
+**DO:**
+- Keep executors simple and focused
+- Handle all expected error scenarios
+- Return consistent response structure
+- Include helpful error messages
+
+**DON'T:**
+- Put complex business logic in executors
+- Mix different response formats
+- Return incomplete response data
+
+---
+
+## Common Pitfalls
+
+### Pitfall 1: Duplicate Test Case IDs
+
+```python
+# WRONG: Duplicate IDs
+test_cases = [
+    TestCase(id="AUTH-001", ...),
+    TestCase(id="AUTH-001", ...),  # Duplicate!
+]
+
+# RIGHT: Unique IDs
+test_cases = [
+    TestCase(id="AUTH-001", ...),
+    TestCase(id="AUTH-002", ...),
+]
+```
+
+### Pitfall 2: Missing Required Fields
+
+```python
+# WRONG: Missing expected_status for error test
+TestCase(
+    id="AUTH-001",
+    description="Missing API key",
+    input_data={"endpoint": "/api/users"},
+    # Missing expected_status!
+)
+
+# RIGHT: Include expected_status
+TestCase(
+    id="AUTH-001",
+    description="Missing API key",
+    input_data={"endpoint": "/api/users"},
+    expected_status=401,
+    expected_error="unauthorized",
+)
+```
+
+### Pitfall 3: Vague Test Descriptions
+
+```python
+# WRONG: Vague description
+TestCase(
+    id="VAL-001",
+    description="test error",  # Too vague!
+    ...
+)
+
+# RIGHT: Clear description
+TestCase(
+    id="VAL-001",
+    description="Missing required email field in user creation",
+    ...
+)
+```
+
+### Pitfall 4: Not Testing Happy Paths
+
+```python
+# WRONG: Only error cases
+test_cases = [
+    TestCase(id="VAL-001", expected_status=422, ...),
+    TestCase(id="VAL-002", expected_status=422, ...),
+    # No happy path!
+]
+
+# RIGHT: Include happy path
+test_cases = [
+    TestCase(id="VAL-001", expected_status=422, ...),
+    TestCase(id="VAL-002", expected_status=422, ...),
+    TestCase(id="VAL-003", expected_status=201, expected_error=None, ...),  # Happy path
+]
+```
+
+### Pitfall 5: Over-Complicated Custom Validators
+
+```python
+# WRONG: Complex custom validator
+def custom_validator(actual):
+    # 50 lines of complex validation logic
+    ...
+
+# RIGHT: Keep it simple or use expected_fields
+TestCase(
+    id="AUTH-001",
+    ...
+    expected_fields={"attempts_remaining": 2},  # Use built-in field validation
+)
+```
+
+---
+
+## Advanced Usage
+
+### Custom Validators
+
+For complex validation logic, use custom validators:
+
+```python
+def validate_response_structure(actual: Dict[str, Any]) -> Tuple[bool, str]:
+    """Custom validator for response structure."""
+    if "timestamp" not in actual:
+        return False, "Response missing timestamp field"
+
+    if "request_id" not in actual:
+        return False, "Response missing request_id field"
+
+    return True, ""
+
+TestCase(
+    id="ADV-001",
+    description="Complex validation scenario",
+    input_data={"endpoint": "/api/complex"},
+    expected_status=200,
+    custom_validator=validate_response_structure,
+    tags=["advanced"]
+)
+```
+
+### Setup and Teardown Callbacks
+
+Use callbacks for test-specific setup/teardown:
+
+```python
+def setup_test_data(input_data: Dict[str, Any]):
+    """Create test data before test runs."""
+    # Create test user, database records, etc.
+    print(f"Setting up test data for {input_data['endpoint']}")
+
+def teardown_test_data(input_data: Dict[str, Any]):
+    """Clean up test data after test runs."""
+    # Delete test records, clear cache, etc.
+    print(f"Tearing down test data for {input_data['endpoint']}")
+
+TestCase(
+    id="ADV-002",
+    description="Test with setup/teardown",
+    input_data={"endpoint": "/api/users", "method": "POST"},
+    expected_status=201,
+    setup_callback=setup_test_data,
+    teardown_callback=teardown_test_data,
+    tags=["integration"]
+)
+```
+
+### Table Composition
+
+Merge multiple tables into one:
+
+```python
+# Create specialized tables
+missing_fields_table = create_missing_fields_table()
+invalid_format_table = create_invalid_format_table()
+
+# Merge into comprehensive table
+comprehensive_table = missing_fields_table.merge(invalid_format_table)
+```
+
+### Filtering and Views
+
+Create filtered views of tables:
+
+```python
+# Get only smoke tests
+smoke_table = comprehensive_table.filter_by_tags("smoke")
+
+# Get only regression tests for email validation
+email_regression_table = comprehensive_table.filter_by_tags("regression", "email")
+
+# Get only enabled test cases
+enabled_tests = table.get_enabled_test_cases()
+```
+
+---
+
+## Integration with Pytest
+
+Create pytest-compatible test classes:
+
+```python
+import pytest
+
+class TestMyErrorType:
+    """Pytest test class for my error type."""
+
+    def test_all_scenarios(self):
+        """Run all test cases in the table."""
+        table = create_my_error_type_table()
+        results = run_test_table(table, my_executor)
+
+        # Print summary
+        print(f"\n{'='*60}")
+        print(f"My Error Type Test Results")
+        print(f"{'='*60}")
+        print(f"Total: {results.total_count}")
+        print(f"Passed: {results.passed_count}")
+        print(f"Failed: {results.failed_count}")
+        print(f"Pass Rate: {results.pass_rate:.1f}%")
+
+        # Assert all passed
+        assert results.all_passed
+
+    def test_specific_scenario(self):
+        """Test a specific scenario."""
+        table = create_my_error_type_table()
+        test_case = table.get_test_case("MYERR-001")
+
+        result = run_test_case(test_case, my_executor)
+
+        assert result.passed, f"Test failed: {result.error_message}"
+
+    def test_table_structure(self):
+        """Verify the table has proper structure."""
+        table = create_my_error_type_table()
+
+        # Check metadata
+        assert table.name == "my_error_type"
+        assert len(table.test_cases) > 0
+
+        # Check test cases
+        for tc in table.test_cases:
+            assert tc.id
+            assert tc.description
+            assert tc.input_data
+            assert tc.expected_status is not None
+
+    @pytest.mark.smoke
+    def test_smoke_tests(self):
+        """Run only smoke tests."""
+        table = create_my_error_type_table()
+        smoke_table = table.filter_by_tags("smoke")
+
+        results = run_test_table(smoke_table, my_executor)
+
+        assert results.all_passed, "Smoke tests should always pass"
+```
+
+Run with pytest:
+```bash
+# Run all tests
+pytest tests/test_my_error_type.py -v
+
+# Run only smoke tests
+pytest tests/test_my_error_type.py -m smoke -v
+
+# Run with coverage
+pytest tests/test_my_error_type.py --cov=tests --cov-report=html
+```
+
+---
+
+## Running Test Tables
+
+### From Python Code
+
+```python
+from tests.test_tables import run_test_table, create_auth_test_table
+
+# Create and run table
+table = create_auth_test_table()
+results = run_test_table(table, auth_executor)
+
+# Check results
+if results.all_passed:
+    print(f"✓ All {results.total_count} tests passed")
+else:
+    print(f"✗ {results.failed_count} tests failed")
+
+    # Show failures
+    for result in results.results:
+        if result.failed:
+            print(f"  {result.test_case.id}: {result.error_message}")
+```
+
+### From Command Line (Pytest)
+
+```bash
+# Run all test tables
+pytest tests/test_*.py -v
+
+# Run specific test file
+pytest tests/test_auth_error_scenarios.py -v
+
+# Run specific test
+pytest tests/test_auth_error_scenarios.py::TestMissingCredentials::test_missing_api_key -v
+
+# Run with coverage
+pytest tests/ --cov=tests --cov-report=html
+
+# Run only smoke tests
+pytest tests/ -m smoke -v
+```
+
+---
+
+## Summary Checklist
+
+When creating a new test table, ensure you:
+
+- [ ] Identified the correct error category
+- [ ] Defined table with clear name, description, and tags
+- [ ] Created test cases with unique IDs
+- [ ] Included all required fields (id, description, input_data)
+- [ ] Set appropriate expected outputs (status, error, message)
+- [ ] Added both error and happy path test cases
+- [ ] Used descriptive test case descriptions
+- [ ] Tagged test cases for categorization
+- [ ] Created executor function
+- [ ] Tested the table with `run_test_table()`
+- [ ] Added pytest test class if needed
+- [ ] Documented non-obvious scenarios
+
+---
+
 ## Real-World Example: Complete API Test Suite
 
 ```python
@@ -724,10 +1650,21 @@ ARMOR's extensible test table structure provides:
 - **Documentation**: Test tables document expected behavior
 - **Flexibility**: Support for custom validation, setup/teardown, filtering
 
-For questions or contributions, refer to the main test_tables module documentation.
+---
+
+## Related Documentation
+
+- [README.md](README.md) - Test infrastructure overview
+- [TEST_PATTERNS.md](TEST_PATTERNS.md) - Detailed testing patterns
+- [fixtures/README.md](fixtures/README.md) - Error fixtures documentation
+- [test_tables.py](test_tables.py) - Test table implementation
+- [internal/validate/TYPES_DOCUMENTATION.md](../internal/validate/TYPES_DOCUMENTATION.md) - Error type documentation
 
 ---
 
-**Bead**: bf-1a04kj
-**Created**: 2026-07-14
-**Updated**: 2026-07-14
+## Bead Tracking
+
+This documentation is part of bead `bf-6cpnyg` - "Add documentation for extending test tables".
+
+Created: 2026-07-15
+Last Updated: 2026-07-15
