@@ -648,6 +648,10 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 			WithActual("").
 			WithPatternDetails("cannot validate against empty response").
 			WithContext("error message validation").
+			WithValidationDetails(
+				"Response body is empty",
+				"Cannot validate error message pattern against empty response",
+			).
 			WithSuggestions(
 				"Response body is empty",
 				"Cannot validate error message pattern against empty response",
@@ -661,6 +665,10 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 			WithActual("").
 			WithPatternDetails("pattern cannot be empty").
 			WithContext("error message validation").
+			WithValidationDetails(
+				"Expected pattern cannot be empty",
+				"Provide a pattern to match against error messages",
+			).
 			WithSuggestions(
 				"Expected pattern cannot be empty",
 				"Provide a pattern to match against error messages",
@@ -739,10 +747,6 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 
 	// Detect if pattern is regex or substring
 	isRegex := containsRegexMetacharacters(expectedPattern)
-	patternType := "substring"
-	if isRegex {
-		patternType = "regex"
-	}
 
 	// Check each found message for pattern match
 	for _, foundMsg := range foundMessages {
@@ -789,9 +793,13 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 	// Build validation details including response size context
 	responseSize := len(response)
 	var validationDetails []string
-	validationDetails = append(validationDetails, fmt.Sprintf("Pattern type: %s", patternType))
+	if isRegex {
+		validationDetails = append(validationDetails, "Searched for regex pattern")
+	} else {
+		validationDetails = append(validationDetails, "Searched for substring")
+	}
 	validationDetails = append(validationDetails, fmt.Sprintf("Expected pattern: %s", expectedPattern))
-	validationDetails = append(validationDetails, fmt.Sprintf("Actual error message: \"%s\"", firstMessage.message))
+	validationDetails = append(validationDetails, fmt.Sprintf("Actual message: \"%s\"", firstMessage.message))
 	validationDetails = append(validationDetails, fmt.Sprintf("Field name: %s", firstMessage.fieldName))
 	validationDetails = append(validationDetails, fmt.Sprintf("Checked fields: %s", strings.Join(defaultFields, ", ")))
 	validationDetails = append(validationDetails, fmt.Sprintf("Response size: %d bytes", responseSize))
@@ -803,11 +811,19 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 	// Generate pattern-specific suggestions
 	suggestions := generatePatternMismatchSuggestions(expectedPattern, firstMessage.message, isRegex)
 
+	// Build pattern details
+	var patternDetails string
+	if isRegex {
+		patternDetails = fmt.Sprintf("regex pattern '%s' did not match", expectedPattern)
+	} else {
+		patternDetails = fmt.Sprintf("substring '%s' did not match", expectedPattern)
+	}
+
 	// Use ValidationFormatter builder pattern for enhanced error formatting
 	return NewValidationFormatter("error_message").
 		WithExpected(expectedPattern).
 		WithActual(firstMessage.message).
-		WithPatternDetails(fmt.Sprintf("%s pattern '%s' did not match", patternType, expectedPattern)).
+		WithPatternDetails(patternDetails).
 		WithResponseSnippet(snippet).
 		WithFieldName(firstMessage.fieldName).
 		WithContext("error message validation").
