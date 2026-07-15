@@ -1,0 +1,87 @@
+flag provided but not defined: -v
+
+The restore command recovers a database from a previous snapshot and WAL.
+
+Usage:
+
+	litestream restore [arguments] DB_PATH
+
+	litestream restore [arguments] REPLICA_URL
+
+Arguments:
+
+	-config PATH
+	    Specifies the configuration file.
+	    Defaults to /etc/litestream.yml
+
+	-no-expand-env
+	    Disables environment variable expansion in configuration file.
+
+	-txid TXID
+	    Restore up to a specific hex-encoded transaction ID (inclusive).
+	    Defaults to use the highest available transaction.
+
+	-timestamp TIMESTAMP
+	    Restore to a specific point-in-time.
+	    Defaults to use the latest available backup.
+
+	-o PATH
+	    Output path of the restored database.
+	    Defaults to original DB path.
+
+	-if-db-not-exists
+	    Returns exit code of 0 if the database already exists.
+
+	-if-replica-exists
+	    Returns exit code of 0 if no backups found.
+
+	-dry-run
+	    Print the restore plan and exit without writing a database.
+
+	-force
+	    Overwrite an existing output database and SQLite sidecar files.
+
+	-json
+	    Output raw JSON summary on successful restore.
+
+	-f
+	    Follow mode. After restoring, continuously poll for and apply
+	    new changes. Similar to tail -f. The restored database should
+	    only be opened in read-only mode by consumers.
+	    Cannot be used with -txid or -timestamp.
+
+	-follow-interval DURATION
+	    Polling interval for follow mode.
+	    Defaults to 1s.
+
+	-parallelism NUM
+	    Determines the number of WAL files downloaded in parallel.
+	    Defaults to 8
+
+	-integrity-check MODE
+	    Run a post-restore integrity check on the database.
+	    MODE is one of: none, quick, full.
+	    Defaults to none.
+
+
+Examples:
+
+	# Restore latest replica for database to original location.
+	$ litestream restore /path/to/db
+
+	# Restore replica for database to a given point in time.
+	$ litestream restore -timestamp 2020-01-01T00:00:00Z /path/to/db
+
+	# Restore latest replica for database to new /tmp directory
+	$ litestream restore -o /tmp/db /path/to/db
+
+	# Restore database from S3 replica URL.
+	$ litestream restore -o /tmp/db s3://mybucket/db
+
+	# Preview restore plan without writing a database.
+	$ litestream restore -dry-run -o /tmp/db s3://mybucket/db
+
+	# Continuously restore (follow) a database from a replica.
+	$ litestream restore -f -o /tmp/read-replica.db s3://mybucket/db
+
+Error: flag provided but not defined: -v

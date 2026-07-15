@@ -1,0 +1,10 @@
+dbs:
+  - path: databases/queue.db
+    replica:
+      type: s3
+      bucket: devimprint
+      path: state/litestream/queue.db
+      endpoint: http://100.80.255.8:9000
+      force-path-style: true
+      access-key-id: lcs18qaArvWltpK/3oSfFrqiZ/oD7bcGMNYVkW2buD0=
+      secret-access-key: 
