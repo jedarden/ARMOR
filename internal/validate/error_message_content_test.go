@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -114,10 +115,10 @@ func TestValidateErrorMessage_ErrorContent_ExpectedPattern(t *testing.T) {
 // TestValidateErrorMessage_ErrorContent_ActualMessage tests that error messages show actual error message found
 func TestValidateErrorMessage_ErrorContent_ActualMessage(t *testing.T) {
 	tests := []struct {
-		name               string
-		response           string
-		expectedPattern    string
-		wantActualMessage  string
+		name              string
+		response          string
+		expectedPattern   string
+		wantActualMessage string
 	}{
 		{
 			name:              "actual message from error field",
@@ -164,39 +165,39 @@ func TestValidateErrorMessage_ErrorContent_ActualMessage(t *testing.T) {
 // TestValidateErrorMessage_ErrorContent_ResponseExcerpt tests that error messages include response body excerpt
 func TestValidateErrorMessage_ErrorContent_ResponseExcerpt(t *testing.T) {
 	tests := []struct {
-		name                string
-		response            string
-		expectedPattern     string
+		name                 string
+		response             string
+		expectedPattern      string
 		excerptShouldContain string
-		excerptMaxLength    int
+		excerptMaxLength     int
 	}{
 		{
-			name:                "short response included in excerpt",
-			response:            `{"error": "Access denied", "code": 403}`,
-			expectedPattern:     "not found",
+			name:                 "short response included in excerpt",
+			response:             `{"error": "Access denied", "code": 403}`,
+			expectedPattern:      "not found",
 			excerptShouldContain: `{"error": "Access denied"`,
-			excerptMaxLength:    200,
+			excerptMaxLength:     200,
 		},
 		{
-			name:                "long response is truncated",
-			response:            `{"error": "` + strings.Repeat("a", 300) + `"}`,
-			expectedPattern:     "not found",
+			name:                 "long response is truncated",
+			response:             `{"error": "` + strings.Repeat("a", 300) + `"}`,
+			expectedPattern:      "not found",
 			excerptShouldContain: "...",
-			excerptMaxLength:    200,
+			excerptMaxLength:     200,
 		},
 		{
-			name:                "response with newlines is sanitized",
-			response:            "{\n  \"error\": \"test\"\n}\n",
-			expectedPattern:     "not found",
+			name:                 "response with newlines is sanitized",
+			response:             "{\n  \"error\": \"test\"\n}\n",
+			expectedPattern:      "not found",
 			excerptShouldContain: "{",
-			excerptMaxLength:    200,
+			excerptMaxLength:     200,
 		},
 		{
-			name:                "response with tabs is sanitized",
-			response:            "{\t\"error\": \"test\"\t}",
-			expectedPattern:     "invalid",
+			name:                 "response with tabs is sanitized",
+			response:             "{\t\"error\": \"test\"\t}",
+			expectedPattern:      "invalid",
 			excerptShouldContain: "{",
-			excerptMaxLength:    200,
+			excerptMaxLength:     200,
 		},
 	}
 
@@ -285,21 +286,21 @@ func TestValidateErrorMessage_ErrorContent_FieldName(t *testing.T) {
 // TestValidateErrorMessage_ErrorContent_CheckedFields tests that error messages include context about which fields were searched
 func TestValidateErrorMessage_ErrorContent_CheckedFields(t *testing.T) {
 	tests := []struct {
-		name            string
-		response        string
-		expectedPattern string
+		name              string
+		response          string
+		expectedPattern   string
 		wantCheckedFields string
 	}{
 		{
-			name:            "no error field found",
-			response:        `{"status": "ok"}`,
-			expectedPattern: "error",
+			name:              "no error field found",
+			response:          `{"status": "ok"}`,
+			expectedPattern:   "error",
 			wantCheckedFields: "error, message, detail, description, error_description",
 		},
 		{
-			name:            "pattern mismatch in found field",
-			response:        `{"error": "Access denied"}`,
-			expectedPattern: "not found",
+			name:              "pattern mismatch in found field",
+			response:          `{"error": "Access denied"}`,
+			expectedPattern:   "not found",
 			wantCheckedFields: "error, message, detail, description, error_description",
 		},
 	}
@@ -323,9 +324,9 @@ func TestValidateErrorMessage_ErrorContent_CheckedFields(t *testing.T) {
 // TestValidateErrorMessage_ErrorContent_Suggestions tests that error messages include suggestions for pattern mismatches
 func TestValidateErrorMessage_ErrorContent_Suggestions(t *testing.T) {
 	tests := []struct {
-		name                  string
-		response              string
-		expectedPattern       string
+		name                     string
+		response                 string
+		expectedPattern          string
 		suggestionsShouldContain []string
 	}{
 		{
@@ -448,27 +449,27 @@ func TestValidateErrorMessage_ErrorContent_FormattingHelper(t *testing.T) {
 // TestValidateErrorMessage_ErrorContent_ResponseExcerptLength tests that response excerpts are properly truncated to 200 chars
 func TestValidateErrorMessage_ErrorContent_ResponseExcerptLength(t *testing.T) {
 	tests := []struct {
-		name            string
-		response        string
-		expectedPattern string
+		name             string
+		response         string
+		expectedPattern  string
 		maxExcerptLength int
 	}{
 		{
-			name:            "response at exactly 200 chars",
-			response:        `{"error": "` + strings.Repeat("a", 195) + `"}`,
-			expectedPattern: "not found",
+			name:             "response at exactly 200 chars",
+			response:         `{"error": "` + strings.Repeat("a", 195) + `"}`,
+			expectedPattern:  "not found",
 			maxExcerptLength: 200,
 		},
 		{
-			name:            "response over 200 chars is truncated",
-			response:        `{"error": "` + strings.Repeat("a", 300) + `"}`,
-			expectedPattern: "not found",
+			name:             "response over 200 chars is truncated",
+			response:         `{"error": "` + strings.Repeat("a", 300) + `"}`,
+			expectedPattern:  "not found",
 			maxExcerptLength: 200,
 		},
 		{
-			name:            "response under 200 chars is not truncated",
-			response:        `{"error": "test"}`,
-			expectedPattern: "not found",
+			name:             "response under 200 chars is not truncated",
+			response:         `{"error": "test"}`,
+			expectedPattern:  "not found",
 			maxExcerptLength: 200,
 		},
 	}
@@ -526,13 +527,13 @@ func TestValidateErrorMessage_ErrorContent_ComprehensiveIntegration(t *testing.T
 
 	// Check all acceptance criteria
 	requiredElements := map[string]string{
-		"Pattern type": "Pattern type: regex",
-		"Expected pattern": "Expected pattern: " + pattern,
+		"Pattern type":         "Pattern type: regex",
+		"Expected pattern":     "Expected pattern: " + pattern,
 		"Actual error message": "Actual error message: \"Token has expired\"",
-		"Field name": "Field name: error",
-		"Checked fields": "Checked fields:",
-		"Response excerpt": "Response:",
-		"Suggestions": "Suggestions:",
+		"Field name":           "Field name: error",
+		"Checked fields":       "Checked fields:",
+		"Response excerpt":     "Response:",
+		"Suggestions":          "Suggestions:",
 	}
 
 	for elementName, elementContent := range requiredElements {
@@ -565,5 +566,80 @@ func TestValidateErrorMessage_ErrorContent_ComprehensiveIntegration(t *testing.T
 	}
 	if len(validationErr.Suggestions) == 0 {
 		t.Errorf("ValidationError should have Suggestions")
+	}
+}
+
+// TestValidateErrorMessage_ErrorContent_ResponseSizeContext tests that error messages include response size context
+func TestValidateErrorMessage_ErrorContent_ResponseSizeContext(t *testing.T) {
+	tests := []struct {
+		name            string
+		response        string
+		expectedPattern string
+		wantSizeLabel   bool
+	}{
+		{
+			name:            "small response shows size in bytes",
+			response:        `{"error": "Not found"}`,
+			expectedPattern: "invalid",
+			wantSizeLabel:   true,
+		},
+		{
+			name:            "medium response shows size in bytes",
+			response:        `{"error": "Access denied", "code": 403, "message": "User does not have permission"}`,
+			expectedPattern: "not found",
+			wantSizeLabel:   true,
+		},
+		{
+			name:            "large response shows size in bytes",
+			response:        `{"error": "` + strings.Repeat("a", 1000) + `"}`,
+			expectedPattern: "not found",
+			wantSizeLabel:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateErrorMessage([]byte(tt.response), tt.expectedPattern)
+			if err == nil {
+				t.Fatalf("ValidateErrorMessage() expected error, got nil")
+			}
+
+			errMsg := err.Error()
+
+			// Check for Response size: label
+			if !containsSubstring(errMsg, "Response size:") {
+				t.Errorf("ValidateErrorMessage() error should contain 'Response size:' label, got: %s", errMsg)
+			}
+
+			// Check for "bytes" unit
+			if !containsSubstring(errMsg, "bytes") {
+				t.Errorf("ValidateErrorMessage() error should contain 'bytes' unit, got: %s", errMsg)
+			}
+
+			// Verify the actual size is included by checking it matches the response length
+			expectedSize := len(tt.response)
+			sizeLabel := fmt.Sprintf("Response size: %d bytes", expectedSize)
+			if !containsSubstring(errMsg, sizeLabel) {
+				t.Errorf("ValidateErrorMessage() error should contain '%s', got: %s", sizeLabel, errMsg)
+			}
+
+			// Verify ValidationError contains size in ValidationDetails
+			validationErr, ok := err.(ValidationError)
+			if !ok {
+				t.Fatalf("ValidateErrorMessage() should return ValidationError type, got %T", err)
+			}
+
+			// Check that ValidationDetails contains size information
+			foundSizeInDetails := false
+			for _, detail := range validationErr.ValidationDetails {
+				if containsSubstring(detail, "Response size:") && containsSubstring(detail, "bytes") {
+					foundSizeInDetails = true
+					break
+				}
+			}
+			if !foundSizeInDetails {
+				t.Errorf("ValidationError.ValidationDetails should contain response size information")
+			}
+		})
 	}
 }

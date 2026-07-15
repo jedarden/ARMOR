@@ -558,9 +558,13 @@ func (vf *ValidationFormatter) Format() ValidationError {
 		suggestions = generateSuggestions(vf.validationType, vf.expected, vf.actual)
 	}
 
+	// Generate a concise message from validation parts
+	message := generateMessageFromParts(vf.validationType, vf.expected, vf.actual)
+
 	// Construct ValidationError directly to support custom suggestions
 	return ValidationError{
 		ErrorType:         vf.validationType,
+		Message:           message,
 		Expected:          vf.expected,
 		Actual:            vf.actual,
 		Context:           vf.context,
