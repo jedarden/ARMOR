@@ -643,17 +643,56 @@ func ValidateErrorMessagePattern(bodyBytes []byte, pattern string, caseInsensiti
 func ValidateErrorMessage(response []byte, expectedPattern string) error {
 	// Validate inputs
 	if len(response) == 0 {
-		return fmt.Errorf("response body is empty")
+		ve := FormatValidationErrorWithDetails(
+			"error_message",
+			"non-empty response",
+			"",
+			"",
+			"",
+			"",
+			"",
+			nil,
+			"",
+			"",
+			[]string{"Response body is empty", "Cannot validate error message pattern against empty response"},
+		)
+		return ve
 	}
 
 	if expectedPattern == "" {
-		return fmt.Errorf("expected pattern cannot be empty")
+		ve := FormatValidationErrorWithDetails(
+			"error_message",
+			"non-empty pattern",
+			"",
+			"",
+			"",
+			"",
+			"",
+			nil,
+			"",
+			"",
+			[]string{"Expected pattern cannot be empty", "Provide a pattern to match against error messages"},
+		)
+		return ve
 	}
 
 	// Parse JSON body
 	var body map[string]interface{}
 	if err := json.Unmarshal(response, &body); err != nil {
-		return fmt.Errorf("failed to parse response body: %w", err)
+		ve := FormatValidationErrorWithDetails(
+			"error_message",
+			"valid JSON",
+			"",
+			"",
+			"",
+			"",
+			"",
+			nil,
+			"",
+			"",
+			[]string{"Failed to parse response body", fmt.Sprintf("Parse error: %v", err), "Ensure response contains valid JSON"},
+		)
+		return ve
 	}
 
 	// Search for error messages in common fields
@@ -676,10 +715,27 @@ func ValidateErrorMessage(response []byte, expectedPattern string) error {
 		}
 	}
 
-	// If no error messages found, return error with response snippet
+	// If no error messages found, return detailed error with response snippet
 	if len(foundMessages) == 0 {
 		snippet := extractResponseSnippet(response)
-		return fmt.Errorf("no error message found in response body. Response snippet: %s", snippet)
+		ve := FormatValidationErrorWithDetails(
+			"error_message",
+			"error message field",
+			"",
+			"",
+			snippet,
+			"",
+			"",
+			nil,
+			"",
+			"",
+			[]string{
+				"No error message found in response body",
+				fmt.Sprintf("Checked fields: %s", strings.Join(defaultFields, ", ")),
+				"Response may not contain standard error fields",
+			},
+		)
+		return ve
 	}
 
 	// Detect if pattern is regex or substring
@@ -1194,47 +1250,54 @@ func ValidateStatusCodeWithDetails(resp *http.Response, expected interface{}, re
 
 // buildComprehensiveMismatchDetails creates detailed mismatch information including
 // status code category, context, and specific suggestions based on the actual code.
+// It uses FormatValidationErrorWithDetails for consistent formatting across the codebase.
 func buildComprehensiveMismatchDetails(expectedCodes []int, actualCode int, category string, isClientError, isServerError bool, context string) string {
-	var details []string
+	// Build validation details that include status code category information
+	var validationDetails []string
 
-	// Add context if provided
-	if context != "" {
-		details = append(details, fmt.Sprintf("Request: %s", context))
-	}
-
-	// Add status code category information
+	// Add status code category information to validation details
 	categoryDesc := getCategoryDescription(category)
 	if categoryDesc != "" {
-		details = append(details, fmt.Sprintf("Status code category: %s", categoryDesc))
+		validationDetails = append(validationDetails, fmt.Sprintf("Status code category: %s", categoryDesc))
 	}
 
-	// Add expected vs actual
+	// Prepare range info with category details
+	var rangeInfo string
+	if isClientError {
+		rangeInfo = "400-499 (Client Error)"
+	} else if isServerError {
+		rangeInfo = "500-599 (Server Error)"
+	} else if category == "success" {
+		rangeInfo = "200-299 (Success)"
+	} else if category == "redirection" {
+		rangeInfo = "300-399 (Redirection)"
+	}
+
+	// Determine expected value for FormatValidationErrorWithDetails
+	var expected interface{}
 	if len(expectedCodes) == 1 {
-		details = append(details, fmt.Sprintf("Expected: %d (%s)", expectedCodes[0], getStatusCodeDescription(expectedCodes[0])))
+		expected = expectedCodes[0]
 	} else {
-		expectedStr := "one of ["
-		for i, code := range expectedCodes {
-			if i > 0 {
-				expectedStr += ", "
-			}
-			expectedStr += fmt.Sprintf("%d (%s)", code, getStatusCodeDescription(code))
-		}
-		expectedStr += "]"
-		details = append(details, fmt.Sprintf("Expected: %s", expectedStr))
+		expected = expectedCodes
 	}
 
-	details = append(details, fmt.Sprintf("Received: %d (%s)", actualCode, getStatusCodeDescription(actualCode)))
+	// Use FormatValidationErrorWithDetails for consistent error formatting
+	validationErr := FormatValidationErrorWithDetails(
+		"status_code",
+		expected,
+		actualCode,
+		context,
+		"", // responseSnippet - not needed for status code validation
+		"", // fieldName - not applicable for status code validation
+		"", // location - not applicable for status code validation
+		nil, // relatedFields - not applicable for status code validation
+		"", // patternDetails - not applicable for status code validation
+		rangeInfo,
+		validationDetails,
+	)
 
-	// Add specific suggestions based on the actual status code
-	suggestions := getStatusCodeSpecificSuggestions(actualCode)
-	if len(suggestions) > 0 {
-		details = append(details, "Common causes:")
-		for i, suggestion := range suggestions {
-			details = append(details, fmt.Sprintf("  %d. %s", i+1, suggestion))
-		}
-	}
-
-	return strings.Join(details, "\n")
+	// Return the formatted error string
+	return validationErr.Error()
 }
 
 // getCategoryDescription returns a human-readable description for a status code category.
@@ -2238,63 +2301,33 @@ func generateSuggestions(validationType string, expected, actual interface{}) []
 
 // generateStatusCodeSuggestions generates suggestions for status code mismatches.
 func generateStatusCodeSuggestions(expected, actual interface{}) []string {
-	var suggestions []string
-
 	actualCode, ok := actual.(int)
 	if !ok {
 		return []string{"Verify the response format is correct"}
 	}
 
-	switch {
-	case actualCode >= 400 && actualCode < 500:
-		// Client errors
-		switch actualCode {
-		case 400:
-			suggestions = append(suggestions,
-				"Check request body syntax and formatting",
-				"Verify all required fields are present",
-				"Ensure content-type header matches request body format")
-		case 401:
-			suggestions = append(suggestions,
-				"Verify authentication credentials are correct",
-				"Check if API token or session has expired",
-				"Ensure Authorization header is properly formatted")
-		case 403:
-			suggestions = append(suggestions,
-				"Verify your account has permission to access this resource",
-				"Check if additional scopes or roles are required",
-				"Review API documentation for required permissions")
-		case 404:
-			suggestions = append(suggestions,
-				"Verify the endpoint URL is correct",
-				"Check if the resource ID or identifier exists",
-				"Ensure the resource hasn't been deleted or moved")
-		case 409:
-			suggestions = append(suggestions,
-				"Check if a resource with this identifier already exists",
-				"Verify unique constraints on the resource",
-				"Consider using PUT instead of POST for updates")
-		case 429:
-			suggestions = append(suggestions,
-				"Implement rate limiting and exponential backoff",
-				"Check API quota limits",
-				"Consider caching responses to reduce request frequency")
-		default:
-			suggestions = append(suggestions,
-				"Review request parameters and body",
-				"Check API documentation for requirements",
-				"Verify all headers are correctly set")
-		}
-	case actualCode >= 500 && actualCode < 600:
-		// Server errors
-		suggestions = append(suggestions,
-			"Implement retry logic with exponential backoff",
-			"Check service status page for ongoing issues",
-			"Contact support if the issue persists")
-	}
+	// Use the specific suggestions function which provides detailed suggestions per code
+	suggestions := getStatusCodeSpecificSuggestions(actualCode)
 
 	if len(suggestions) == 0 {
-		suggestions = append(suggestions, "Review the request and response for details")
+		// Fallback to generic suggestions if no specific ones found
+		if actualCode >= 400 && actualCode < 500 {
+			return []string{
+				"Review request parameters and body",
+				"Check API documentation for requirements",
+				"Verify all headers are correctly set",
+				"Ensure request complies with API contracts",
+			}
+		}
+		if actualCode >= 500 && actualCode < 600 {
+			return []string{
+				"Implement retry logic with exponential backoff",
+				"Check service status page for ongoing issues",
+				"Contact support if the issue persists",
+				"Review server logs if accessible",
+			}
+		}
+		return []string{"Review the request and response for details"}
 	}
 
 	return suggestions
@@ -2312,16 +2345,17 @@ func generateErrorMessageSuggestions(expected, actual interface{}) []string {
 
 	// Check for common error patterns
 	switch {
-	case strings.Contains(expectedLower, "token") && strings.Contains(actualLower, "expired"):
-		suggestions = append(suggestions,
-			"Refresh the authentication token",
-			"Check token expiration time",
-			"Implement automatic token refresh")
-	case strings.Contains(expectedLower, "token") && strings.Contains(actualLower, "invalid"):
+	case strings.Contains(expectedLower, "token"):
 		suggestions = append(suggestions,
 			"Verify token is correctly formatted",
 			"Check token is for the correct resource",
-			"Ensure token hasn't been revoked")
+			"Ensure token hasn't been revoked",
+			"Refresh the authentication token if expired",
+			"Consider token refresh if the token is old",
+			"Check token expiration time")
+		if strings.Contains(actualLower, "expired") {
+			suggestions = append(suggestions, "Implement automatic token refresh")
+		}
 	case strings.Contains(expectedLower, "auth") && strings.Contains(actualLower, "denied"):
 		suggestions = append(suggestions,
 			"Verify account permissions",
