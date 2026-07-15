@@ -452,6 +452,9 @@ func (ve ValidationError) Error() string {
 
 	// Expected vs Actual
 	if ve.Expected != nil || ve.Actual != nil {
+		// For status code validation, use "Expected:" and "Received:" labels
+		isStatusCode := ve.ErrorType == "status_code"
+
 		switch exp := ve.Expected.(type) {
 		case int:
 			b.WriteString(fmt.Sprintf("  Expected: %d (%s)\n", exp, getStatusCodeDescription(exp)))
@@ -470,23 +473,39 @@ func (ve ValidationError) Error() string {
 			b.WriteString(fmt.Sprintf("  Expected: %v\n", exp))
 		}
 
-		// Actual value
+		// Actual value - use "Received:" for status code validation
 		switch act := ve.Actual.(type) {
 		case int:
-			b.WriteString(fmt.Sprintf("  Actual:   %d (%s)\n", act, getStatusCodeDescription(act)))
+			if isStatusCode {
+				b.WriteString(fmt.Sprintf("  Received: %d (%s)\n", act, getStatusCodeDescription(act)))
+			} else {
+				b.WriteString(fmt.Sprintf("  Actual:   %d (%s)\n", act, getStatusCodeDescription(act)))
+			}
 		case string:
 			if len(act) > 100 {
 				act = act[:100] + "..."
 			}
-			b.WriteString(fmt.Sprintf("  Actual:   %s\n", act))
+			if isStatusCode {
+				b.WriteString(fmt.Sprintf("  Received: %s\n", act))
+			} else {
+				b.WriteString(fmt.Sprintf("  Actual:   %s\n", act))
+			}
 		default:
-			b.WriteString(fmt.Sprintf("  Actual:   %v\n", act))
+			if isStatusCode {
+				b.WriteString(fmt.Sprintf("  Received: %v\n", act))
+			} else {
+				b.WriteString(fmt.Sprintf("  Actual:   %v\n", act))
+			}
 		}
 	}
 
-	// Context
+	// Context - use "Request:" for status code validation
 	if ve.Context != "" {
-		b.WriteString(fmt.Sprintf("  Context:  %s\n", ve.Context))
+		if ve.ErrorType == "status_code" {
+			b.WriteString(fmt.Sprintf("  Request:  %s\n", ve.Context))
+		} else {
+			b.WriteString(fmt.Sprintf("  Context:  %s\n", ve.Context))
+		}
 	}
 
 	// Field name
@@ -534,11 +553,19 @@ func (ve ValidationError) Error() string {
 		b.WriteString(fmt.Sprintf("  Response: %s\n", ve.ResponseSnippet))
 	}
 
-	// Suggestions
+	// Suggestions - format as "Common causes:" for status code validation
 	if len(ve.Suggestions) > 0 {
-		b.WriteString("  Suggestions:\n")
-		for _, suggestion := range ve.Suggestions {
-			b.WriteString(fmt.Sprintf("    - %s\n", suggestion))
+		// Use "Common causes:" for status code validation, "Suggestions:" otherwise
+		if ve.ErrorType == "status_code" {
+			b.WriteString("  Common causes:\n")
+			for i, suggestion := range ve.Suggestions {
+				b.WriteString(fmt.Sprintf("    %d. %s\n", i+1, suggestion))
+			}
+		} else {
+			b.WriteString("  Suggestions:\n")
+			for _, suggestion := range ve.Suggestions {
+				b.WriteString(fmt.Sprintf("    - %s\n", suggestion))
+			}
 		}
 	}
 
