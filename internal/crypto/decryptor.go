@@ -83,8 +83,9 @@ func (d *Decryptor) Decrypt(encrypted []byte, hmacTable []byte) ([]byte, error) 
 // DecryptRange decrypts a specific range of blocks after verifying HMACs.
 // plaintextStart and plaintextEnd are byte offsets in the plaintext.
 // The encrypted slice contains only the blocks needed for the range, starting from blockStart.
-// The hmacTable contains HMAC entries for blocks blockStart to blockEnd.
-func (d *Decryptor) DecryptRange(encrypted []byte, hmacTable []byte, plaintextStart, plaintextEnd int64, totalPlaintextSize int64) ([]byte, error) {
+// The hmacTable contains HMAC entries for blocks blockStart to blockEnd (if !hmacTableIsFull)
+// or for all blocks in the object (if hmacTableIsFull, as with multipart sidecar).
+func (d *Decryptor) DecryptRange(encrypted []byte, hmacTable []byte, plaintextStart, plaintextEnd int64, totalPlaintextSize int64, hmacTableIsFull bool) ([]byte, error) {
 	blockStart := int(plaintextStart / int64(d.blockSize))
 	blockEnd := int(plaintextEnd / int64(d.blockSize))
 
@@ -109,7 +110,14 @@ func (d *Decryptor) DecryptRange(encrypted []byte, hmacTable []byte, plaintextSt
 
 		encryptedBlock := encrypted[encStart:encEnd]
 
-		hmacOffset := relIdx * HMACSize
+		// For full HMAC table (multipart sidecar), use absolute block index.
+		// For partial HMAC table (single-PUT range), use relative index.
+		var hmacOffset int
+		if hmacTableIsFull {
+			hmacOffset = absBlockIdx * HMACSize
+		} else {
+			hmacOffset = relIdx * HMACSize
+		}
 		if hmacOffset+HMACSize > len(hmacTable) {
 			return nil, fmt.Errorf("HMAC table too short for block %d", absBlockIdx)
 		}
