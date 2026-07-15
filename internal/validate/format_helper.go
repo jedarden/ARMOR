@@ -766,14 +766,16 @@ func FormatErrorMessageError(expectedPattern, actualMessage, fieldName, context 
 //   - pattern: The range pattern (e.g., "4xx", "5xx", "2xx")
 //   - actual: The actual status code received
 //   - context: Optional context about the validation
+//   - fieldName: Optional field name being validated (e.g., "status_code", "response_code")
 //
 // Returns a ValidationError with appropriate range information and suggestions.
 //
 // Example usage:
 //
-//	err := validate.FormatStatusCodeRangeError("4xx", 200, "error response check")
+//	err := validate.FormatStatusCodeRangeError("4xx", 200, "error response check", "status_code")
 //	// Output:
 //	// status_code_range validation failed
+//	//   Field:    status_code
 //	//   Expected: 4xx (400-499)
 //	//   Actual:   200
 //	//   Context:  error response check
@@ -781,7 +783,7 @@ func FormatErrorMessageError(expectedPattern, actualMessage, fieldName, context 
 //	//     - Review request parameters for errors
 //	//     - Check authentication credentials
 //	//     - Verify the resource exists and is accessible
-func FormatStatusCodeRangeError(pattern string, actual int, context string) ValidationError {
+func FormatStatusCodeRangeError(pattern string, actual int, context string, fieldName string) ValidationError {
 	min, max, desc, err := getRangeInfo(pattern)
 
 	// Build range info string
@@ -801,6 +803,7 @@ func FormatStatusCodeRangeError(pattern string, actual int, context string) Vali
 		WithExpected(fmt.Sprintf("%s (%s)", pattern, desc)).
 		WithActual(actual).
 		WithContext(context).
+		WithFieldName(fieldName).
 		WithValidationDetails(details...)
 
 	// Only add range info if the pattern is valid
@@ -840,6 +843,80 @@ func FormatContentTypeError(expected, actual, context string) ValidationError {
 		Format()
 }
 
+// FormatStatusCodeMinRangeError creates a validation error for min/max range validation failures.
+//
+// This function is used when validating status codes (or other numeric values) against
+// explicit minimum and maximum boundaries. It provides enhanced error messages showing
+// the exact range that was expected and the actual value that was received.
+//
+// Parameters:
+//   - minValue: The minimum allowed value (inclusive)
+//   - maxValue: The maximum allowed value (inclusive)
+//   - actualValue: The actual value that was received
+//   - context: Optional context about the validation (e.g., "status code validation")
+//   - fieldName: Optional field name being validated (e.g., "status_code", "response_code")
+//
+// Returns a ValidationError with range information and appropriate suggestions.
+//
+// Example usage:
+//
+//	err := validate.FormatStatusCodeMinRangeError(200, 299, 404, "success response check", "status_code")
+//	// Output:
+//	// status_code_range validation failed
+//	//   Field:    status_code
+//	//   Expected: 200-299 (Success)
+//	//   Actual:   404 (Not Found)
+//	//   Range:    200-299 (Success)
+//	//   Context:  success response check
+//	//   Validation Details:
+//	//     - Status code 404 is outside valid range 200-299
+//	//   Suggestions:
+//	//     - Check if the endpoint URL is correct
+//	//     - Verify the resource exists and is accessible
+//	//     - Ensure authentication credentials are valid
+func FormatStatusCodeMinRangeError(minValue, maxValue, actualValue int, context string, fieldName string) ValidationError {
+	// Get range description
+	desc := getRangeDescriptionForValues(minValue, maxValue)
+
+	// Build range info string
+	rangeInfo := fmt.Sprintf("%d-%d", minValue, maxValue)
+	if desc != "" {
+		rangeInfo = fmt.Sprintf("%d-%d (%s)", minValue, maxValue, desc)
+	}
+
+	details := []string{
+		fmt.Sprintf("Status code %d is outside valid range %d-%d", actualValue, minValue, maxValue),
+	}
+
+	return NewValidationFormatter("status_code_range").
+		WithExpected(fmt.Sprintf("%d-%d", minValue, maxValue)).
+		WithActual(actualValue).
+		WithContext(context).
+		WithFieldName(fieldName).
+		WithRangeInfo(rangeInfo).
+		WithValidationDetails(details...).
+		Format()
+}
+
+// getRangeDescriptionForValues returns a human-readable description for a status code range.
+// This helper provides category descriptions for common status code ranges.
+func getRangeDescriptionForValues(minCode, maxCode int) string {
+	ranges := map[string]string{
+		"200-299": "Success",
+		"300-399": "Redirection",
+		"400-499": "Client Error",
+		"500-599": "Server Error",
+		"100-199": "Informational",
+	}
+
+	key := fmt.Sprintf("%d-%d", minCode, maxCode)
+	if desc, ok := ranges[key]; ok {
+		return desc
+	}
+
+	return ""
+
+}
 // FormatCustomValidationError creates a validation error with full customization.
 //
 // This function allows complete control over all validation error fields, including
