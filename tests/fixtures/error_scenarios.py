@@ -558,6 +558,352 @@ def internal_server_error_external_service(
 
 
 # =============================================================================
+# AUTHENTICATION ERROR FIXTURES
+# =============================================================================
+
+def unauthorized_fixture(
+    path: str = "/api/users",
+    message: Optional[str] = None,
+    auth_type: str = "Bearer",
+    realm: str = "api"
+) -> ErrorResponseFixture:
+    """
+    Create a 401 Unauthorized error response fixture for missing credentials.
+
+    Args:
+        path: The resource path that requires authentication
+        message: Optional custom error message
+        auth_type: The authentication type required (e.g., "Bearer", "Basic")
+        realm: The authentication realm
+
+    Returns:
+        ErrorResponseFixture: Configured 401 Unauthorized error response
+
+    Examples:
+        >>> fixture = unauthorized_fixture(path="/api/users")
+        >>> assert fixture.status_code == 401
+        >>> assert fixture.body['error'] == 'unauthorized'
+    """
+    if message is None:
+        message = f"Authentication required for '{path}'. Please provide valid {auth_type} credentials."
+
+    return ErrorResponseFixture(
+        status_code=401,
+        headers={
+            'Content-Type': 'application/json',
+            'WWW-Authenticate': f'{auth_type} realm="{realm}"',
+            'X-Error-Type': 'unauthorized'
+        },
+        body={
+            'error': 'unauthorized',
+            'message': message,
+            'code': 401,
+            'details': {
+                'path': path,
+                'auth_type': auth_type,
+                'realm': realm,
+                'timestamp': '2026-07-15T00:00:00Z'
+            }
+        }
+    )
+
+
+def forbidden_fixture(
+    path: str = "/api/admin/users",
+    message: Optional[str] = None,
+    permission: str = "admin:write",
+    provided_permission: str = "user:read"
+) -> ErrorResponseFixture:
+    """
+    Create a 403 Forbidden error response fixture for insufficient permissions.
+
+    Args:
+        path: The resource path
+        message: Optional custom error message
+        permission: The required permission
+        provided_permission: The permission the user has
+
+    Returns:
+        ErrorResponseFixture: Configured 403 Forbidden error response
+
+    Examples:
+        >>> fixture = forbidden_fixture(path="/api/admin/users")
+        >>> assert fixture.status_code == 403
+        >>> assert fixture.body['error'] == 'forbidden'
+    """
+    if message is None:
+        message = f"Access denied to '{path}'. Required permission: '{permission}', provided: '{provided_permission}'."
+
+    return ErrorResponseFixture(
+        status_code=403,
+        headers={
+            'Content-Type': 'application/json',
+            'X-Error-Type': 'forbidden',
+            'X-Required-Permission': permission
+        },
+        body={
+            'error': 'forbidden',
+            'message': message,
+            'code': 403,
+            'details': {
+                'path': path,
+                'required_permission': permission,
+                'provided_permission': provided_permission,
+                'timestamp': '2026-07-15T00:00:00Z'
+            }
+        }
+    )
+
+
+def invalid_token_fixture(
+    path: str = "/api/users",
+    token: Optional[str] = None,
+    message: Optional[str] = None
+) -> ErrorResponseFixture:
+    """
+    Create a 401 Unauthorized error response fixture for invalid authentication token.
+
+    Args:
+        path: The resource path
+        token: The invalid token that was provided (will be truncated in response)
+        message: Optional custom error message
+
+    Returns:
+        ErrorResponseFixture: Configured 401 error for invalid token
+
+    Examples:
+        >>> fixture = invalid_token_fixture(token="invalid-token-123")
+        >>> assert fixture.status_code == 401
+        >>> assert 'invalid' in fixture.body['message'].lower()
+    """
+    if message is None:
+        message = "Invalid authentication token. Please provide a valid token."
+
+    # Truncate token for security in response
+    token_preview = token[:8] + "..." if token and len(token) > 8 else "in***"
+
+    return ErrorResponseFixture(
+        status_code=401,
+        headers={
+            'Content-Type': 'application/json',
+            'WWW-Authenticate': 'Bearer realm="api"',
+            'X-Error-Type': 'invalid_token'
+        },
+        body={
+            'error': 'unauthorized',
+            'message': message,
+            'code': 401,
+            'details': {
+                'path': path,
+                'auth_type': 'Bearer',
+                'token_preview': token_preview,
+                'timestamp': '2026-07-15T00:00:00Z'
+            }
+        }
+    )
+
+
+def expired_token_fixture(
+    path: str = "/api/users",
+    token_expired_at: Optional[str] = None,
+    message: Optional[str] = None
+) -> ErrorResponseFixture:
+    """
+    Create a 401 Unauthorized error response fixture for expired authentication token.
+
+    Args:
+        path: The resource path
+        token_expired_at: When the token expired (ISO format or relative time)
+        message: Optional custom error message
+
+    Returns:
+        ErrorResponseFixture: Configured 401 error for expired token
+
+    Examples:
+        >>> fixture = expired_token_fixture(token_expired_at="2026-07-14T00:00:00Z")
+        >>> assert fixture.status_code == 401
+        >>> assert 'expired' in fixture.body['message'].lower()
+    """
+    if token_expired_at is None:
+        token_expired_at = "2026-07-14T00:00:00Z"
+
+    if message is None:
+        message = f"Authentication token expired at {token_expired_at}. Please refresh your token."
+
+    return ErrorResponseFixture(
+        status_code=401,
+        headers={
+            'Content-Type': 'application/json',
+            'WWW-Authenticate': 'Bearer realm="api"',
+            'X-Error-Type': 'expired_token'
+        },
+        body={
+            'error': 'unauthorized',
+            'message': message,
+            'code': 401,
+            'details': {
+                'path': path,
+                'auth_type': 'Bearer',
+                'expired_at': token_expired_at,
+                'timestamp': '2026-07-15T00:00:00Z'
+            }
+        }
+    )
+
+
+def wrong_password_fixture(
+    path: str = "/api/auth/login",
+    username: Optional[str] = None,
+    message: Optional[str] = None,
+    attempts_remaining: Optional[int] = None
+) -> ErrorResponseFixture:
+    """
+    Create a 401 Unauthorized error response fixture for wrong password.
+
+    Args:
+        path: The authentication endpoint path
+        username: The username that was used (will be masked in response)
+        message: Optional custom error message
+        attempts_remaining: Number of remaining login attempts
+
+    Returns:
+        ErrorResponseFixture: Configured 401 error for wrong password
+
+    Examples:
+        >>> fixture = wrong_password_fixture(username="user@example.com", attempts_remaining=2)
+        >>> assert fixture.status_code == 401
+        >>> assert fixture.body['details']['attempts_remaining'] == 2
+    """
+    if message is None:
+        message = "Invalid username or password."
+
+    # Mask username for security
+    username_preview = None
+    if username:
+        if '@' in username:
+            local, domain = username.split('@', 1)
+            username_preview = f"{local[:2]}***@{domain}"
+        else:
+            username_preview = f"{username[:2]}***"
+
+    body_details = {
+        'path': path,
+        'auth_type': 'Basic',
+        'timestamp': '2026-07-15T00:00:00Z'
+    }
+
+    if username_preview:
+        body_details['username_preview'] = username_preview
+
+    if attempts_remaining is not None:
+        body_details['attempts_remaining'] = attempts_remaining
+
+    return ErrorResponseFixture(
+        status_code=401,
+        headers={
+            'Content-Type': 'application/json',
+            'WWW-Authenticate': 'Basic realm="api"',
+            'X-Error-Type': 'invalid_credentials'
+        },
+        body={
+            'error': 'unauthorized',
+            'message': message,
+            'code': 401,
+            'details': body_details
+        }
+    )
+
+
+def missing_api_key_fixture(
+    path: str = "/api/users",
+    header_name: str = "X-API-Key",
+    message: Optional[str] = None
+) -> ErrorResponseFixture:
+    """
+    Create a 401 Unauthorized error response fixture for missing API key.
+
+    Args:
+        path: The resource path that requires API key
+        header_name: The header name that should contain the API key
+        message: Optional custom error message
+
+    Returns:
+        ErrorResponseFixture: Configured 401 error for missing API key
+
+    Examples:
+        >>> fixture = missing_api_key_fixture(path="/api/users")
+        >>> assert fixture.status_code == 401
+        >>> assert 'required' in fixture.body['message'].lower()
+    """
+    if message is None:
+        message = f"API key required. Please provide a valid API key via the '{header_name}' header."
+
+    return ErrorResponseFixture(
+        status_code=401,
+        headers={
+            'Content-Type': 'application/json',
+            'X-Error-Type': 'missing_api_key'
+        },
+        body={
+            'error': 'unauthorized',
+            'message': message,
+            'code': 401,
+            'details': {
+                'path': path,
+                'required_header': header_name,
+                'timestamp': '2026-07-15T00:00:00Z'
+            }
+        }
+    )
+
+
+def invalid_api_key_fixture(
+    path: str = "/api/users",
+    api_key: Optional[str] = None,
+    message: Optional[str] = None
+) -> ErrorResponseFixture:
+    """
+    Create a 403 Forbidden error response fixture for invalid API key.
+
+    Args:
+        path: The resource path
+        api_key: The invalid API key that was provided (will be truncated)
+        message: Optional custom error message
+
+    Returns:
+        ErrorResponseFixture: Configured 403 error for invalid API key
+
+    Examples:
+        >>> fixture = invalid_api_key_fixture(api_key="invalid-key-123")
+        >>> assert fixture.status_code == 403
+        >>> assert 'invalid' in fixture.body['message'].lower()
+    """
+    if message is None:
+        message = "Invalid API key. Please check your API key and try again."
+
+    # Truncate API key for security in response
+    key_preview = api_key[:8] + "..." if api_key and len(api_key) > 8 else "in***"
+
+    return ErrorResponseFixture(
+        status_code=403,
+        headers={
+            'Content-Type': 'application/json',
+            'X-Error-Type': 'invalid_api_key'
+        },
+        body={
+            'error': 'forbidden',
+            'message': message,
+            'code': 403,
+            'details': {
+                'path': path,
+                'key_preview': key_preview,
+                'timestamp': '2026-07-15T00:00:00Z'
+            }
+        }
+    )
+
+
+# =============================================================================
 # GENERIC ERROR BUILDERS
 # =============================================================================
 
@@ -694,7 +1040,14 @@ COMMON_ERROR_FIXTURES = {
 CLIENT_ERROR_FIXTURES = {
     '400_bad_request': create_error_response(400, 'bad_request', 'Invalid request'),
     '401_unauthorized': create_error_response(401, 'unauthorized', 'Authentication required'),
+    '401_missing_credentials': unauthorized_fixture(),
+    '401_invalid_token': invalid_token_fixture(),
+    '401_expired_token': expired_token_fixture(),
+    '401_wrong_password': wrong_password_fixture(),
+    '401_missing_api_key': missing_api_key_fixture(),
     '403_forbidden': create_error_response(403, 'forbidden', 'Access denied'),
+    '403_insufficient_permissions': forbidden_fixture(),
+    '403_invalid_api_key': invalid_api_key_fixture(),
     '404_not_found': not_found_fixture(),
     '405_method_not_allowed': method_not_allowed_fixture(),
     '409_conflict': create_error_response(409, 'conflict', 'Resource conflict'),
