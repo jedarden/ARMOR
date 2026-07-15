@@ -1472,13 +1472,16 @@ func ValidateStatusCodeRange(resp *http.Response, statusRange StatusCodeRange) b
 }
 
 // ValidateStatusCodeRangeWithDetails provides detailed status code range validation.
-// Like ValidateStatusCodeRange but with comprehensive result information.
+// Like ValidateStatusCodeRange but with comprehensive result information including
+// range boundaries, distance from valid range, and contextual suggestions.
 //
 // Parameters:
 //   - resp: The HTTP response to validate
 //   - range: The status code range to validate against
 //
-// Returns a StatusCodeValidationResult with detailed information about the range validation.
+// Returns a StatusCodeValidationResult with detailed information about the range validation,
+// including expected range boundaries, actual status code, distance from valid range,
+// range pattern context (e.g., '4xx', '5xx'), and suggestions for fixing the issue.
 //
 // Example usage:
 //
@@ -1486,12 +1489,18 @@ func ValidateStatusCodeRange(resp *http.Response, statusRange StatusCodeRange) b
 //	if !result.Valid {
 //	    log.Printf("Status code %d is not in range %s (%d-%d)",
 //	        result.ActualCode, result.Category, range.Min, range.Max)
+//	    // MismatchDetails now includes:
+//	    // - Expected range with description (e.g., "400-499 Client Error")
+//	    // - Actual received status code
+//	    // - Distance from valid range (e.g., "99 codes below range")
+//	    // - Range pattern context (e.g., "Validating 4xx pattern")
+//	    // - Specific suggestions based on the actual code
 //	}
 func ValidateStatusCodeRangeWithDetails(resp *http.Response, statusRange StatusCodeRange) StatusCodeValidationResult {
 	result := StatusCodeValidationResult{
 		Valid:           false,
 		ActualCode:      0,
-		ExpectedCodes:   []int{},
+		ExpectedCodes:   []int{statusRange.Min, statusRange.Max},
 		MatchedCode:     nil,
 		MismatchDetails: "",
 		IsClientError:   false,
@@ -1524,11 +1533,112 @@ func ValidateStatusCodeRangeWithDetails(resp *http.Response, statusRange StatusC
 	}
 
 	if !inRange {
-		result.MismatchDetails = fmt.Sprintf("status code %d is not in range %s (%d-%d)",
-			resp.StatusCode, statusRange.Description, statusRange.Min, statusRange.Max)
+		// Build comprehensive mismatch details with range boundaries, distance, and suggestions
+		result.MismatchDetails = buildRangeMismatchDetails(resp.StatusCode, statusRange)
 	}
 
 	return result
+}
+
+// buildRangeMismatchDetails creates comprehensive mismatch information for range validation failures.
+// This function calculates the distance from the valid range, identifies the range pattern context,
+// and generates detailed error messages with suggestions using FormatValidationErrorWithDetails.
+func buildRangeMismatchDetails(actualCode int, statusRange StatusCodeRange) string {
+	// Calculate distance from valid range
+	var distanceInfo string
+	var distanceDetails []string
+
+	if actualCode < statusRange.Min {
+		distance := statusRange.Min - actualCode
+		if distance == 1 {
+			distanceInfo = fmt.Sprintf("%d code below range", distance)
+			distanceDetails = append(distanceDetails, fmt.Sprintf("Status code %d is %d code below the minimum %d", actualCode, distance, statusRange.Min))
+		} else {
+			distanceInfo = fmt.Sprintf("%d codes below range", distance)
+			distanceDetails = append(distanceDetails, fmt.Sprintf("Status code %d is %d codes below the minimum %d", actualCode, distance, statusRange.Min))
+		}
+	} else {
+		distance := actualCode - statusRange.Max
+		if distance == 1 {
+			distanceInfo = fmt.Sprintf("%d code above range", distance)
+			distanceDetails = append(distanceDetails, fmt.Sprintf("Status code %d is %d code above the maximum %d", actualCode, distance, statusRange.Max))
+		} else {
+			distanceInfo = fmt.Sprintf("%d codes above range", distance)
+			distanceDetails = append(distanceDetails, fmt.Sprintf("Status code %d is %d codes above the maximum %d", actualCode, distance, statusRange.Max))
+		}
+	}
+
+	// Determine range pattern context (e.g., '4xx', '5xx')
+	rangePattern := getRangePattern(statusRange)
+
+	// Build expected range with description
+	expectedRange := fmt.Sprintf("%d-%d", statusRange.Min, statusRange.Max)
+	if statusRange.Description != "" {
+		expectedRange = fmt.Sprintf("%s (%s)", expectedRange, statusRange.Description)
+	}
+
+	// Add pattern context to expected range
+	if rangePattern != "" {
+		expectedRange = fmt.Sprintf("%s - %s pattern", expectedRange, rangePattern)
+	}
+
+	// Build validation details
+	validationDetails := []string{
+		fmt.Sprintf("Expected range: %d-%d %s", statusRange.Min, statusRange.Max, statusRange.Description),
+		fmt.Sprintf("Actual status code: %d", actualCode),
+		fmt.Sprintf("Distance from valid range: %s", distanceInfo),
+		fmt.Sprintf("Range pattern context: %s", rangePattern),
+	}
+	validationDetails = append(validationDetails, distanceDetails...)
+
+	// Use FormatValidationErrorWithDetails for consistent formatting
+	validationErr := FormatValidationErrorWithDetails(
+		"status_code_range",
+		expectedRange,
+		actualCode,
+		"", // context - not applicable for range validation
+		"", // responseSnippet - not needed for status code validation
+		"", // fieldName - not applicable for status code validation
+		"", // location - not applicable for status code validation
+		nil, // relatedFields - not applicable for status code validation
+		fmt.Sprintf("Range pattern: %s, Distance: %s", rangePattern, distanceInfo),
+		expectedRange,
+		validationDetails,
+	)
+
+	return validationErr.Error()
+}
+
+// getRangePattern identifies the range pattern from a StatusCodeRange.
+// Returns patterns like '4xx', '5xx', '2xx', etc. based on the range boundaries.
+func getRangePattern(statusRange StatusCodeRange) string {
+	min := statusRange.Min
+	max := statusRange.Max
+
+	// Check for standard century ranges
+	if min/100 == max/100 && min%100 == 0 && max%100 == 99 {
+		century := min / 100
+		switch century {
+		case 1:
+			return "1xx (Informational)"
+		case 2:
+			return "2xx (Success)"
+		case 3:
+			return "3xx (Redirection)"
+		case 4:
+			return "4xx (Client Error)"
+		case 5:
+			return "5xx (Server Error)"
+		}
+	}
+
+	// For custom ranges, provide the pattern context
+	if min/100 == max/100 {
+		century := min / 100
+		return fmt.Sprintf("%dxx range (custom)", century)
+	}
+
+	return fmt.Sprintf("%d-%d range (custom)", min/100, max/100)
 }
 
 // =============================================================================
@@ -1957,35 +2067,65 @@ func parseIntFromString(s string) (int, error) {
 func ValidateStatusCodeRangeInt(pattern string, actual int) error {
 	// Validate pattern format
 	if len(pattern) != 3 {
-		return FormatValidationError(
+		return FormatValidationErrorWithDetails(
 			"status_code_range",
-			fmt.Sprintf("pattern in format 'Nxx' (3 chars)"),
+			"pattern in format 'Nxx' (3 chars)",
 			fmt.Sprintf("'%s' (%d chars)", pattern, len(pattern)),
 			fmt.Sprintf("invalid pattern format: %s", pattern),
-			"",
+			"", // responseSnippet
+			"", // fieldName
+			"", // location
+			nil, // relatedFields
+			"", // patternDetails
+			"", // rangeInfo
+			[]string{
+				fmt.Sprintf("Pattern '%s' has invalid length", pattern),
+				"Pattern must be exactly 3 characters (e.g., '4xx', '5xx')",
+				fmt.Sprintf("Got %d characters, expected 3", len(pattern)),
+			},
 		)
 	}
 
 	// Extract the century digit (first character)
 	centuryChar := pattern[0]
 	if centuryChar < '1' || centuryChar > '5' {
-		return FormatValidationError(
+		return FormatValidationErrorWithDetails(
 			"status_code_range",
 			"century digit 1-5",
 			fmt.Sprintf("'%c' (ASCII %d)", centuryChar, centuryChar),
 			fmt.Sprintf("invalid pattern century in '%s'", pattern),
-			"",
+			"", // responseSnippet
+			"", // fieldName
+			"", // location
+			nil, // relatedFields
+			"", // patternDetails
+			"", // rangeInfo
+			[]string{
+				fmt.Sprintf("Pattern '%s' has invalid century digit", pattern),
+				"Valid century digits: 1 (1xx), 2 (2xx), 3 (3xx), 4 (4xx), 5 (5xx)",
+				fmt.Sprintf("Got '%c', expected digit between '1' and '5'", centuryChar),
+			},
 		)
 	}
 
 	// Validate 'xx' suffix
 	if pattern[1] != 'x' || pattern[2] != 'x' {
-		return FormatValidationError(
+		return FormatValidationErrorWithDetails(
 			"status_code_range",
 			"pattern ending with 'xx'",
 			fmt.Sprintf("'%s'", pattern[1:]),
 			fmt.Sprintf("invalid pattern suffix in '%s'", pattern),
-			"",
+			"", // responseSnippet
+			"", // fieldName
+			"", // location
+			nil, // relatedFields
+			"", // patternDetails
+			"", // rangeInfo
+			[]string{
+				fmt.Sprintf("Pattern '%s' has invalid suffix", pattern),
+				"Pattern must end with 'xx' (e.g., '4xx', '5xx')",
+				fmt.Sprintf("Got '%s', expected 'xx'", pattern[1:]),
+			},
 		)
 	}
 
@@ -2004,12 +2144,42 @@ func ValidateStatusCodeRangeInt(pattern string, actual int) error {
 			expectedRange = fmt.Sprintf("%s %s (%d-%d)", pattern, desc, minRange, maxRange)
 		}
 
-		return FormatValidationError(
+		// Calculate distance from valid range
+		var distanceInfo string
+		var validationDetails []string
+
+		if actual < minRange {
+			distance := minRange - actual
+			distanceInfo = fmt.Sprintf("%d codes below range", distance)
+			validationDetails = append(validationDetails,
+				fmt.Sprintf("Expected range: %d-%d (%s)", minRange, maxRange, desc),
+				fmt.Sprintf("Actual status code: %d", actual),
+				fmt.Sprintf("Distance from valid range: %s", distanceInfo),
+				fmt.Sprintf("Range pattern context: %s", pattern),
+				fmt.Sprintf("Status code %d is %d codes below the minimum %d", actual, distance, minRange))
+		} else {
+			distance := actual - maxRange
+			distanceInfo = fmt.Sprintf("%d codes above range", distance)
+			validationDetails = append(validationDetails,
+				fmt.Sprintf("Expected range: %d-%d (%s)", minRange, maxRange, desc),
+				fmt.Sprintf("Actual status code: %d", actual),
+				fmt.Sprintf("Distance from valid range: %s", distanceInfo),
+				fmt.Sprintf("Range pattern context: %s", pattern),
+				fmt.Sprintf("Status code %d is %d codes above the maximum %d", actual, distance, maxRange))
+		}
+
+		return FormatValidationErrorWithDetails(
 			"status_code_range",
 			expectedRange,
 			actual,
 			fmt.Sprintf("status code validation failed for pattern '%s'", pattern),
-			"",
+			"", // responseSnippet - not needed for status code validation
+			"", // fieldName - not applicable for status code validation
+			"", // location - not applicable for status code validation
+			nil, // relatedFields - not applicable for status code validation
+			fmt.Sprintf("Range pattern: %s, Distance: %s", pattern, distanceInfo),
+			expectedRange,
+			validationDetails,
 		)
 	}
 
@@ -2087,11 +2257,11 @@ func GetStatusCodeRangeDescription(pattern string) (string, error) {
 	}
 
 	descriptions := map[byte]string{
-		'1': "Informational (1xx)",
-		'2': "Success (2xx)",
-		'3': "Redirection (3xx)",
-		'4': "Client Error (4xx)",
-		'5': "Server Error (5xx)",
+		'1': "Informational",
+		'2': "Success",
+		'3': "Redirection",
+		'4': "Client Error",
+		'5': "Server Error",
 	}
 
 	desc, ok := descriptions[centuryChar]

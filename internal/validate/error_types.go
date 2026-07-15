@@ -563,8 +563,13 @@ func (ve ValidationError) Error() string {
 			}
 		} else {
 			b.WriteString("  Suggestions:\n")
-			for _, suggestion := range ve.Suggestions {
-				b.WriteString(fmt.Sprintf("    - %s\n", suggestion))
+			for i, suggestion := range ve.Suggestions {
+				// Don't add trailing newline after last suggestion
+				if i == len(ve.Suggestions)-1 {
+					b.WriteString(fmt.Sprintf("    - %s", suggestion))
+				} else {
+					b.WriteString(fmt.Sprintf("    - %s\n", suggestion))
+				}
 			}
 		}
 	}

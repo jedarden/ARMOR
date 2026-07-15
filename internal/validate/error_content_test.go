@@ -170,7 +170,8 @@ func TestValidationError_Content_MultipleStatusCodeMismatch(t *testing.T) {
 }
 
 // TestValidationError_Content_RangeValidation verifies that range validation errors
-// include the range description, bounds, and actual value.
+// include the range description, bounds, actual value, distance from range,
+// range pattern context, and helpful suggestions.
 func TestValidationError_Content_RangeValidation(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -191,6 +192,8 @@ func TestValidationError_Content_RangeValidation(t *testing.T) {
 				"400",
 				"499",
 				"Client Error",
+				"1 code above range", // Distance information
+				"4xx",                 // Range pattern context
 			},
 		},
 		{
@@ -206,6 +209,8 @@ func TestValidationError_Content_RangeValidation(t *testing.T) {
 				"500",
 				"599",
 				"Server Error",
+				"300 codes below range", // Distance information
+				"5xx",                   // Range pattern context
 			},
 		},
 		{
@@ -221,6 +226,25 @@ func TestValidationError_Content_RangeValidation(t *testing.T) {
 				"200",
 				"299",
 				"Success",
+				"100 codes above range", // Distance information
+				"2xx",                    // Range pattern context
+			},
+		},
+		{
+			name: "100 not in 4xx range",
+			statusRange: StatusCodeRange{
+				Min:         400,
+				Max:         499,
+				Description: "Client Error",
+			},
+			actual: 100,
+			mustContain: []string{
+				"100",
+				"400",
+				"499",
+				"Client Error",
+				"300 codes below range", // Distance information
+				"4xx",                  // Range pattern context
 			},
 		},
 	}
@@ -262,7 +286,8 @@ func TestValidationError_Content_RangeValidation(t *testing.T) {
 }
 
 // TestValidationError_Content_RangePatternInt verifies that range pattern validation
-// errors include the pattern, expected range, and actual value.
+// errors include the pattern, expected range, actual value, distance from range,
+// and detailed suggestions.
 func TestValidationError_Content_RangePatternInt(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -271,7 +296,7 @@ func TestValidationError_Content_RangePatternInt(t *testing.T) {
 		mustContain []string
 	}{
 		{
-			name:    "200 not in 4xx pattern",
+			name:    "200 not in 4xx pattern with distance and details",
 			pattern: "4xx",
 			actual:  200,
 			mustContain: []string{
@@ -280,10 +305,17 @@ func TestValidationError_Content_RangePatternInt(t *testing.T) {
 				"400",
 				"499",
 				"Client Error",
+				"200 codes below range", // Distance information
+				"Expected range: 400-499", // Range boundaries
+				"Actual status code: 200", // Actual value
+				"Range pattern context: 4xx", // Pattern context
+				"Status code 200 is 200 codes below the minimum 400", // Detailed distance
+				"Details:", // Validation details section
+				"Suggestions:", // Suggestions section
 			},
 		},
 		{
-			name:    "404 not in 2xx pattern",
+			name:    "404 not in 2xx pattern with distance and details",
 			pattern: "2xx",
 			actual:  404,
 			mustContain: []string{
@@ -292,10 +324,16 @@ func TestValidationError_Content_RangePatternInt(t *testing.T) {
 				"200",
 				"299",
 				"Success",
+				"105 codes above range", // Distance information
+				"Expected range: 200-299", // Range boundaries
+				"Actual status code: 404", // Actual value
+				"Range pattern context: 2xx", // Pattern context
+				"Status code 404 is 105 codes above the maximum 299", // Detailed distance
+				"Details:", // Validation details section
 			},
 		},
 		{
-			name:    "500 not in 1xx pattern",
+			name:    "500 not in 1xx pattern with distance and details",
 			pattern: "1xx",
 			actual:  500,
 			mustContain: []string{
@@ -304,6 +342,39 @@ func TestValidationError_Content_RangePatternInt(t *testing.T) {
 				"100",
 				"199",
 				"Informational",
+				"301 codes above range", // Distance information
+				"Expected range: 100-199", // Range boundaries
+				"Actual status code: 500", // Actual value
+				"Range pattern context: 1xx", // Pattern context
+				"Details:", // Validation details section
+			},
+		},
+		{
+			name:    "599 not in 4xx pattern with distance above range",
+			pattern: "4xx",
+			actual:  599,
+			mustContain: []string{
+				"599",
+				"4xx",
+				"400",
+				"499",
+				"100 codes above range", // Distance information
+				"Expected range: 400-499", // Range boundaries
+				"Status code 599 is 100 codes above the maximum 499", // Detailed distance
+			},
+		},
+		{
+			name:    "99 not in 2xx pattern with distance below range",
+			pattern: "2xx",
+			actual:  99,
+			mustContain: []string{
+				"99",
+				"2xx",
+				"200",
+				"299",
+				"101 codes below range", // Distance information
+				"Expected range: 200-299", // Range boundaries
+				"Status code 99 is 101 codes below the minimum 200", // Detailed distance
 			},
 		},
 	}
@@ -324,8 +395,13 @@ func TestValidationError_Content_RangePatternInt(t *testing.T) {
 			// Check for required content
 			for _, required := range tt.mustContain {
 				if !strings.Contains(errMsg, required) {
-					t.Errorf("Expected error message to contain '%s', got: %s", required, errMsg)
+					t.Errorf("Expected error message to contain '%s'\nGot: %s", required, errMsg)
 				}
+			}
+
+			// Verify suggestions are present
+			if !strings.Contains(errMsg, "Suggestions:") {
+				t.Errorf("Expected error message to contain suggestions section, got: %s", errMsg)
 			}
 		})
 	}
@@ -434,7 +510,7 @@ func TestValidationError_Content_FormatValidationError(t *testing.T) {
 				"invalid.*token",
 				"access denied",
 				"OAuth",
-				"Common causes",
+				"Suggestions",
 			},
 		},
 		{
@@ -448,7 +524,7 @@ func TestValidationError_Content_FormatValidationError(t *testing.T) {
 				"content_type validation failed",
 				"application/json",
 				"text/html",
-				"Common causes",
+				"Suggestions",
 			},
 		},
 	}
@@ -1313,8 +1389,10 @@ func TestValidationError_Content_EnhancedRangeValidation(t *testing.T) {
 				"400-499",
 				"200",
 				"Details:",
-				"Status code 200 is outside range 400-499",
+				"Status code 200 is 200 codes below the minimum 400",
 				"Range:",
+					"Distance:", // Distance information section
+					"Expected range: 400-499", // Range boundaries
 			},
 		},
 	}
