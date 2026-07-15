@@ -118,6 +118,43 @@ func (e *Encryptor) EncryptStream(plaintext io.Reader, ciphertext io.Writer, pla
 	return hmacTable, nil
 }
 
+// EncryptWithStartingCounter encrypts plaintext data with a starting counter offset.
+// This is used for multipart uploads where each part continues the CTR stream
+// from where the previous part left off.
+func (e *Encryptor) EncryptWithStartingCounter(plaintext []byte, startBlockIndex uint32) (encrypted []byte, hmacTable []byte, err error) {
+	blockCount := ComputeBlockCount(int64(len(plaintext)), e.blockSize)
+
+	// Allocate output buffers
+	encrypted = make([]byte, blockCount*uint32(e.blockSize))
+	hmacTable = make([]byte, blockCount*HMACSize)
+
+	// Encrypt each block with its own counter (starting from startBlockIndex)
+	for i := uint32(0); i < blockCount; i++ {
+		start := int(i) * e.blockSize
+		end := start + e.blockSize
+		if end > len(plaintext) {
+			end = len(plaintext)
+		}
+
+		blockData := plaintext[start:end]
+		encryptedBlock := encrypted[start:end]
+
+		// Create CTR stream starting at counter = startBlockIndex + i
+		ctr := e.makeCounter(startBlockIndex + i)
+		stream := cipher.NewCTR(e.block, ctr)
+		stream.XORKeyStream(encryptedBlock, blockData)
+
+		// Compute HMAC for this block
+		hmacValue := e.computeBlockHMAC(encryptedBlock, startBlockIndex+i)
+		copy(hmacTable[int(i)*HMACSize:], hmacValue)
+	}
+
+	// Trim encrypted buffer to actual size
+	encrypted = encrypted[:len(plaintext)]
+
+	return encrypted, hmacTable, nil
+}
+
 // makeCounter creates a 16-byte counter value from the IV and block index.
 // Counter = IV[0:12] || uint32(block_index) in big-endian
 func (e *Encryptor) makeCounter(blockIndex uint32) []byte {

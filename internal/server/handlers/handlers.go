@@ -693,21 +693,24 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
+	// Check if this is a multipart object (HMAC table in sidecar, no embedded header)
+	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
+
 	// Check for range request
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
-		h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified)
+		h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart)
 		return
 	}
 
 	// Full object download with pipelined stream decryption
-	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified)
+	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart)
 }
 
 // handleFullObjectStream handles full object downloads with pipelined stream decryption.
 // This uses io.Pipe to decrypt blocks as they stream from Cloudflare, reducing
 // time-to-first-byte and memory usage compared to buffering the entire envelope.
-func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
+func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool) {
 	ctx := r.Context()
 
 	// Apply prefix for backend operations
@@ -716,45 +719,74 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 	blockSize := armorMeta.BlockSize
 	blockCount := int(crypto.ComputeBlockCount(plaintextSize, blockSize))
 
-	// Calculate offsets
-	hmacTableOffset := crypto.HeaderSize + plaintextSize
-	hmacTableSize := int64(blockCount) * crypto.HMACSize
-	dataSize := plaintextSize
+	var hmacTable []byte
+	var dataBody io.ReadCloser
+	var streamSize int64
+	var header *crypto.EnvelopeHeader
 
-	// 1. Prefetch HMAC table (small range read)
-	hmacBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, hmacTableOffset, hmacTableSize)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
-		return
-	}
-	hmacTable, err := io.ReadAll(hmacBody)
-	hmacBody.Close()
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
-		return
-	}
+	if isMultipart {
+		// Multipart object: HMAC table is in sidecar, no embedded header
+		manager := backend.NewMultipartStateManager(h.backend, bucket)
+		sidecar, err := manager.LoadHMACTable(ctx, key)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to load HMAC table from sidecar: %v", err), 500)
+			return
+		}
 
-	// 2. Start streaming data from Cloudflare (header + encrypted blocks, stop before HMAC)
-	streamSize := crypto.HeaderSize + dataSize
-	dataBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
-		return
-	}
-	defer dataBody.Close()
+		// Concatenate all block HMACs from sidecar
+		for _, hmac := range sidecar.BlockHMACs {
+			hmacTable = append(hmacTable, hmac...)
+		}
 
-	// 3. Read and discard the 64-byte header
-	headerBuf := make([]byte, crypto.HeaderSize)
-	if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
-		return
-	}
+		// Data starts at offset 0 (no header), read only the encrypted data
+		streamSize = plaintextSize
+		dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+			return
+		}
+		defer dataBody.Close()
+	} else {
+		// Single-PUT object: embedded HMAC table at end of file
+		hmacTableOffset := crypto.HeaderSize + plaintextSize
+		hmacTableSize := int64(blockCount) * crypto.HMACSize
+		dataSize := plaintextSize
 
-	// Parse header to get plaintext SHA for verification
-	header, err := crypto.DecodeHeader(headerBuf)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
-		return
+		// 1. Prefetch HMAC table (small range read)
+		hmacBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, hmacTableOffset, hmacTableSize)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
+			return
+		}
+		hmacTable, err = io.ReadAll(hmacBody)
+		hmacBody.Close()
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
+			return
+		}
+
+		// 2. Start streaming data from Cloudflare (header + encrypted blocks, stop before HMAC)
+		streamSize = crypto.HeaderSize + dataSize
+		dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+			return
+		}
+		defer dataBody.Close()
+
+		// 3. Read and discard the 64-byte header (single-PUT only)
+		headerBuf := make([]byte, crypto.HeaderSize)
+		if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+			return
+		}
+
+		// Parse header to get plaintext SHA for verification
+		header, err = crypto.DecodeHeader(headerBuf)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+			return
+		}
 	}
 
 	// 4. Set response headers before streaming
@@ -831,7 +863,16 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 
 		// Verify plaintext SHA-256
 		computedSHA := plaintextHash.Sum(nil)
-		if !bytes.Equal(computedSHA, header.PlaintextSHA[:]) {
+		var expectedSHA []byte
+		if isMultipart {
+			// For multipart objects, use SHA from metadata (placeholder until tracked during upload)
+			// See bf-1v2ehf: multipart currently stores empty hash
+			expectedSHA, _ = hex.DecodeString(armorMeta.PlaintextSHA)
+		} else {
+			// For single-PUT objects, use SHA from header
+			expectedSHA = header.PlaintextSHA[:]
+		}
+		if len(expectedSHA) > 0 && !bytes.Equal(computedSHA, expectedSHA) {
 			pw.CloseWithError(fmt.Errorf("plaintext SHA-256 mismatch"))
 			return
 		}
@@ -857,7 +898,7 @@ func min64(a, b int64) int64 {
 }
 
 // handleRangeRequest handles range read requests.
-func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time) {
+func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool) {
 	ctx := r.Context()
 
 	// Apply prefix for backend operations
@@ -899,54 +940,106 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		}
 	}
 
-	// Translate range to encrypted blocks
-	translation, err := crypto.TranslateRange(start, end, plaintextSize, armorMeta.BlockSize, crypto.HeaderSize)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to translate range: %v", err), 500)
-		return
-	}
-
-	// Fetch encrypted blocks and HMAC table in parallel using errgroup.
-	// This cuts range-read latency nearly in half for cache misses.
 	var encrypted, hmacTable []byte
+	var startBlockIndex int
 
-	g, gctx := errgroup.WithContext(ctx)
-
-	g.Go(func() error {
-		encryptedBody, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.DataOffset, translation.DataLength)
+	if isMultipart {
+		// Multipart object: load HMAC table from sidecar, no embedded header
+		manager := backend.NewMultipartStateManager(h.backend, bucket)
+		sidecar, err := manager.LoadHMACTable(ctx, key)
 		if err != nil {
-			return fmt.Errorf("failed to fetch encrypted blocks: %w", err)
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to load HMAC table from sidecar: %v", err), 500)
+			return
+		}
+
+		// Concatenate all block HMACs from sidecar
+		for _, hmac := range sidecar.BlockHMACs {
+			hmacTable = append(hmacTable, hmac...)
+		}
+
+		// Calculate block range for this request
+		blockSize := armorMeta.BlockSize
+		startBlockIndex = int(start / int64(blockSize))
+		endBlockIndex := int(end / int64(blockSize))
+
+		// Clamp to valid range
+		blockCount := int(crypto.ComputeBlockCount(plaintextSize, blockSize))
+		if endBlockIndex >= blockCount {
+			endBlockIndex = blockCount - 1
+		}
+
+		// Calculate encrypted data range (no header offset for multipart)
+		dataOffset := int64(startBlockIndex * blockSize)
+		lastBlockEnd := int64((endBlockIndex + 1) * blockSize)
+		if lastBlockEnd > plaintextSize {
+			lastBlockEnd = plaintextSize
+		}
+		dataLength := lastBlockEnd - dataOffset
+
+		// Fetch encrypted blocks
+		encryptedBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, dataOffset, dataLength)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("failed to fetch encrypted blocks: %v", err), 500)
+			return
 		}
 		defer encryptedBody.Close()
 
 		encrypted, err = io.ReadAll(encryptedBody)
 		if err != nil {
-			return fmt.Errorf("failed to read encrypted blocks: %w", err)
+			h.writeError(w, "InternalError", fmt.Sprintf("failed to read encrypted blocks: %v", err), 500)
+			return
 		}
-		return nil
-	})
-
-	g.Go(func() error {
-		hmacBody, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.HMACOffset, translation.HMACLength)
+	} else {
+		// Single-PUT object: embedded HMAC table at end of file
+		// Translate range to encrypted blocks
+		translation, err := crypto.TranslateRange(start, end, plaintextSize, armorMeta.BlockSize, crypto.HeaderSize)
 		if err != nil {
-			return fmt.Errorf("failed to fetch HMAC table: %w", err)
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to translate range: %v", err), 500)
+			return
 		}
-		defer hmacBody.Close()
 
-		hmacTable, err = io.ReadAll(hmacBody)
-		if err != nil {
-			return fmt.Errorf("failed to read HMAC table: %w", err)
+		// Fetch encrypted blocks and HMAC table in parallel using errgroup.
+		// This cuts range-read latency nearly in half for cache misses.
+		g, gctx := errgroup.WithContext(ctx)
+
+		g.Go(func() error {
+			encryptedBody, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.DataOffset, translation.DataLength)
+			if err != nil {
+				return fmt.Errorf("failed to fetch encrypted blocks: %w", err)
+			}
+			defer encryptedBody.Close()
+
+			encrypted, err = io.ReadAll(encryptedBody)
+			if err != nil {
+				return fmt.Errorf("failed to read encrypted blocks: %w", err)
+			}
+			return nil
+		})
+
+		g.Go(func() error {
+			hmacBody, err := h.backend.GetRange(gctx, bucket, prefixedKey, translation.HMACOffset, translation.HMACLength)
+			if err != nil {
+				return fmt.Errorf("failed to fetch HMAC table: %w", err)
+			}
+			defer hmacBody.Close()
+
+			hmacTable, err = io.ReadAll(hmacBody)
+			if err != nil {
+				return fmt.Errorf("failed to read HMAC table: %w", err)
+			}
+			return nil
+		})
+
+		if err := g.Wait(); err != nil {
+			h.writeError(w, "InternalError", err.Error(), 500)
+			return
 		}
-		return nil
-	})
-
-	if err := g.Wait(); err != nil {
-		h.writeError(w, "InternalError", err.Error(), 500)
-		return
 	}
 
-	// Decrypt range
-	plaintext, err := decryptor.DecryptRange(encrypted, hmacTable, start, end, plaintextSize)
+	// Decrypt range (DecryptRange internally calculates block indices from plaintext offsets)
+	// For multipart objects, hmacTableIsFull=true (all HMACs from sidecar).
+	// For single-PUT objects, hmacTableIsFull=false (only range HMACs from embedded table).
+	plaintext, err := decryptor.DecryptRange(encrypted, hmacTable, start, end, plaintextSize, isMultipart)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to decrypt range: %v", err), 500)
 		return
@@ -1991,27 +2084,19 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// Each block is blockSize bytes, so counter = encryptedBytes / blockSize
 	startBlockIndex := uint32(state.EncryptedBytes / int64(state.BlockSize))
 
-	// Create encryptor with the part's starting counter
-	encryptor, err := crypto.NewEncryptorWithCounter(dek, state.IV, state.BlockSize, startBlockIndex)
+	// Create encryptor
+	encryptor, err := crypto.NewEncryptor(dek, state.IV, state.BlockSize)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
 		return
 	}
 
-	// Encrypt the part
-	encrypted, hmacTable, err := encryptor.Encrypt(plaintext)
+	// Encrypt the part with the correct starting counter
+	// For multipart uploads, each part continues the CTR stream from where
+	// the previous part left off to maintain cryptographic continuity
+	encrypted, blockHMACsRaw, err := encryptor.EncryptWithStartingCounter(plaintext, startBlockIndex)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
-		return
-	}
-
-	// Derive HMAC key
-	hmacKey := crypto.DeriveHMACKey(dek)
-
-	// Compute block HMACs
-	blockHMACs, err := backend.ComputeBlockHMACs(encrypted, state.BlockSize, hmacKey, startBlockIndex)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to compute HMACs: %v", err), 500)
 		return
 	}
 
@@ -2020,6 +2105,14 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to upload part: %v", err), 500)
 		return
+	}
+
+	// Split concatenated HMACs into individual HMACs for storage
+	// The EncryptWithStartingCounter method returns HMACs as a flat byte slice
+	blockCount := len(blockHMACsRaw) / crypto.HMACSize
+	blockHMACs := make([][]byte, blockCount)
+	for i := 0; i < blockCount; i++ {
+		blockHMACs[i] = blockHMACsRaw[i*crypto.HMACSize : (i+1)*crypto.HMACSize]
 	}
 
 	// Update state with cumulative bytes and part HMACs
@@ -2031,9 +2124,6 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to update multipart state: %v", err), 500)
 		return
 	}
-
-	// Return ETag - suppress unused variable warning
-	_ = hmacTable
 
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
