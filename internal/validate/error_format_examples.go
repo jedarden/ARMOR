@@ -111,7 +111,7 @@ func ExampleValidationError_errorMessageWithSnippet() {
 
 // Example 6: Status code range validation
 func ExampleValidationError_statusCodeRange() {
-	err := FormatStatusCodeRangeError("4xx", 200, "error response check")
+	err := FormatStatusCodeRangeError("4xx", 200, "error response check", "status_code")
 
 	fmt.Println(err.Error())
 	// Output:

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jedarden/armor/internal/validate"
 )
 
 // =============================================================================
@@ -391,9 +393,14 @@ func ValidateStatusCodePattern(pattern string, actual int) error {
 		return nil
 	}
 
-	// Build descriptive error message
-	return fmt.Errorf("status code %d (%s) does not match pattern '%s' (expected %d-%d)",
-		actual, GetStatusCodeDescription(actual), pattern, minCode, maxCode)
+	// Use the error formatting helper for enhanced range validation error messages
+	// This provides structured error information including:
+	// - Expected range (min/max)
+	// - Actual value received
+	// - Field name being validated
+	// - Contextual suggestions
+	// - Human-readable descriptions
+	return validate.FormatStatusCodeRangeError(pattern, actual, "", "status_code")
 }
 
 // parseStatusCodePattern parses a status code pattern like '4xx' and returns the century digit.
@@ -465,9 +472,19 @@ func ValidateStatusCodeRange(t *testing.T, response interface{}, minCode, maxCod
 	actualCode := getStatusCode(response)
 
 	if actualCode < minCode || actualCode > maxCode {
-		t.Errorf("Expected HTTP status code in range [%d-%d] (%s), got %d (%s)",
-			minCode, maxCode, getRangeDescription(minCode, maxCode),
-			actualCode, GetStatusCodeDescription(actualCode))
+		// Use the error formatting helper for enhanced range validation error messages
+		// This provides structured error information including:
+		// - Expected range (min/max)
+		// - Actual value received
+		// - Field name being validated
+		// - Contextual suggestions
+		// - Human-readable descriptions
+		responseContext := getStatusCodeResponseContext(response)
+		context := fmt.Sprintf("%s validation", responseContext)
+		err := validate.FormatStatusCodeMinRangeError(minCode, maxCode, actualCode, context, "status_code")
+
+		// Output the enhanced error message
+		t.Errorf("Status code validation failed:\n%s", err.Error())
 	}
 }
 
