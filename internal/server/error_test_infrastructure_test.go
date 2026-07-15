@@ -1100,11 +1100,11 @@ func RunErrorScenario(t *testing.T, fixture *TestServerFixture, scenario ErrorSc
 // BASE TEST STRUCTURES
 // =============================================================================
 
-// ErrorTestSuite provides a base structure for error response test suites.
+// ErrorScenarioSuite provides a test suite structure for running error scenarios.
 //
 // This structure helps organize related error tests and provides
 // consistent reporting and validation across test types.
-type ErrorTestSuite struct {
+type ErrorScenarioSuite struct {
 	t         *testing.T
 	name      string
 	fixture   *TestServerFixture
@@ -1112,11 +1112,11 @@ type ErrorTestSuite struct {
 	results   []*ErrorScenarioResult
 }
 
-// NewErrorTestSuite creates a new error test suite.
-func NewErrorTestSuite(t *testing.T, name string) *ErrorTestSuite {
+// NewErrorScenarioSuite creates a new error scenario suite.
+func NewErrorScenarioSuite(t *testing.T, name string) *ErrorScenarioSuite {
 	t.Helper()
 
-	return &ErrorTestSuite{
+	return &ErrorScenarioSuite{
 		t:       t,
 		name:    name,
 		fixture: NewTestServer(t),
@@ -1125,13 +1125,13 @@ func NewErrorTestSuite(t *testing.T, name string) *ErrorTestSuite {
 }
 
 // AddScenario adds a test scenario to the suite.
-func (suite *ErrorTestSuite) AddScenario(scenario ErrorScenario) *ErrorTestSuite {
+func (suite *ErrorScenarioSuite) AddScenario(scenario ErrorScenario) *ErrorScenarioSuite {
 	suite.scenarios = append(suite.scenarios, scenario)
 	return suite
 }
 
 // Run executes all scenarios in the suite.
-func (suite *ErrorTestSuite) Run() {
+func (suite *ErrorScenarioSuite) Run() {
 	suite.t.Helper()
 
 	suite.t.Run(suite.name, func(t *testing.T) {
@@ -1146,7 +1146,7 @@ func (suite *ErrorTestSuite) Run() {
 
 // RunSequentially executes all scenarios sequentially (not in parallel).
 // Use this when scenarios have dependencies or share state.
-func (suite *ErrorTestSuite) RunSequentially() {
+func (suite *ErrorScenarioSuite) RunSequentially() {
 	suite.t.Helper()
 
 	suite.t.Run(suite.name, func(t *testing.T) {
@@ -1161,7 +1161,7 @@ func (suite *ErrorTestSuite) RunSequentially() {
 }
 
 // ReportStatistics logs performance statistics for the suite.
-func (suite *ErrorTestSuite) ReportStatistics() {
+func (suite *ErrorScenarioSuite) ReportStatistics() {
 	suite.t.Helper()
 
 	if len(suite.results) == 0 {
@@ -1281,7 +1281,7 @@ CORS header validation:
 Using test suites:
 
     func TestMyErrorSuite(t *testing.T) {
-        suite := NewErrorTestSuite(t, "My Error Scenarios").
+        suite := NewErrorScenarioSuite(t, "My Error Scenarios").
             AddScenario(ErrorScenario{
                 Name: "Scenario 1",
                 SetupRequest: func(t *testing.T) *http.Request {
