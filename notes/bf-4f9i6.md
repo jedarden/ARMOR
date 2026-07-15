@@ -140,9 +140,17 @@ This bead has been attempted multiple times, with all attempts hitting the same 
 
 ### Latest Verification Attempt (2026-07-15)
 
-Date: 2026-07-15 09:30 UTC
+Date: 2026-07-15 09:33 UTC
 
 **Verification Status: BLOCKED - No Restored Database Exists**
+
+Confirmed all restore directories are empty:
+- `/home/coding/scratch/fresh-restore/restored/` - EMPTY
+- `/home/coding/ARMOR/scratch/litestream-restore/restored/` - EMPTY
+
+The restore-verifier binary exists but is designed for B2 bucket backup verification, not local restored database verification. It requires B2 credentials and bucket access, not local file paths.
+
+Date: 2026-07-15 09:30 UTC
 
 Executed verification checks:
 1. ✓ Checked `/home/coding/ARMOR/scratch/litestream-restore/restored/` - **EMPTY**
