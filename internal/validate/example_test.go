@@ -330,6 +330,7 @@ func ExampleValidateStatusCodeRange() {
 // =============================================================================
 
 // ExampleValidateStatusCodeRangeInt demonstrates basic status code range validation using pattern strings
+// with enhanced error reporting that includes range boundaries, distance from range, and suggestions.
 func ExampleValidateStatusCodeRangeInt() {
 	// Validate that a status code falls within the 4xx range
 	err := validate.ValidateStatusCodeRangeInt("4xx", 404)
@@ -356,7 +357,21 @@ func ExampleValidateStatusCodeRangeInt() {
 	// Output:
 	// 404 is valid in 4xx range
 	// 500 is valid in 5xx range
-	// Validation failed: status code 200 is not in range 4xx (expected 400-499)
+	// Validation failed: status_code_range validation failed
+	//   Expected: 4xx Client Error (400-499)
+	//   Actual:   200 (OK)
+	//   Context:  status code validation failed for pattern '4xx'
+	//   Pattern:  Range pattern: 4xx, Distance: 200 codes below range
+	//   Range:    4xx Client Error (400-499)
+	//   Details:
+	//     - Expected range: 400-499 (Client Error)
+	//     - Actual status code: 200
+	//     - Distance from valid range: 200 codes below range
+	//     - Range pattern context: 4xx
+	//     - Status code 200 is 200 codes below the minimum 400
+	//   Suggestions:
+	//     - The request succeeded - update test expectations if this is expected behavior
+	//     - Verify the test is checking for the correct response type
 }
 
 // ExampleValidateStatusCodeRangeInt_allRanges demonstrates validation across all status code ranges
@@ -383,6 +398,7 @@ func ExampleValidateStatusCodeRangeInt_allRanges() {
 }
 
 // ExampleValidateStatusCodeRangeInt_errorHandling demonstrates proper error handling
+// with detailed error information including range boundaries, distance, and suggestions.
 func ExampleValidateStatusCodeRangeInt_errorHandling() {
 	testCases := []struct {
 		pattern string
@@ -407,12 +423,54 @@ func ExampleValidateStatusCodeRangeInt_errorHandling() {
 	// Output:
 	// Pattern '2xx' vs 200: VALID
 	// Pattern '2xx' vs 201: VALID
-	// Pattern '2xx' vs 404: ERROR - status code 404 is not in range 2xx (expected 200-299)
-	// Pattern '4xx' vs 500: ERROR - status code 500 is not in range 4xx (expected 400-499)
-	// Pattern 'invalid' vs 200: ERROR - invalid pattern format: invalid (expected format: '4xx', '5xx', etc.)
+	// Pattern '2xx' vs 404: ERROR - status_code_range validation failed
+	//   Expected: 2xx Success (200-299)
+	//   Actual:   404 (Not Found)
+	//   Context:  status code validation failed for pattern '2xx'
+	//   Pattern:  Range pattern: 2xx, Distance: 105 codes above range
+	//   Range:    2xx Success (200-299)
+	//   Details:
+	//     - Expected range: 200-299 (Success)
+	//     - Actual status code: 404
+	//     - Distance from valid range: 105 codes above range
+	//     - Range pattern context: 2xx
+	//     - Status code 404 is 105 codes above the maximum 299
+	//   Suggestions:
+	//     - Review request parameters for errors
+	//     - Check authentication credentials
+	//     - Verify the resource exists and is accessible
+	//
+	// Pattern '4xx' vs 500: ERROR - status_code_range validation failed
+	//   Expected: 4xx Client Error (400-499)
+	//   Actual:   500 (Internal Server Error)
+	//   Context:  status code validation failed for pattern '4xx'
+	//   Pattern:  Range pattern: 4xx, Distance: 1 codes above range
+	//   Range:    4xx Client Error (400-499)
+	//   Details:
+	//     - Expected range: 400-499 (Client Error)
+	//     - Actual status code: 500
+	//     - Distance from valid range: 1 codes above range
+	//     - Range pattern context: 4xx
+	//     - Status code 500 is 1 codes above the maximum 499
+	//   Suggestions:
+	//     - Check if this is a temporary server issue
+	//     - Implement retry logic with backoff
+	//     - Verify service status and availability
+	//
+	// Pattern 'invalid' vs 200: ERROR - status_code_range validation failed
+	//   Expected: pattern in format 'Nxx' (3 chars)
+	//   Actual:   'invalid' (7 chars)
+	//   Context:  invalid pattern format: invalid
+	//   Details:
+	//     - Pattern 'invalid' has invalid length
+	//     - Pattern must be exactly 3 characters (e.g., '4xx', '5xx')
+	//     - Got 7 characters, expected 3
+	//   Suggestions:
+	//     - Verify the response format is correct
 }
 
 // ExampleValidateStatusCodeRangeInt_realWorld demonstrates real-world usage patterns
+// with enhanced error reporting that shows range boundaries, distance, and context.
 func ExampleValidateStatusCodeRangeInt_realWorld() {
 	// Simulate API response validation
 	validateResponse := func(statusCode int) {
@@ -555,9 +613,55 @@ func ExampleValidateStatusCodeRangeInt_errorMessages() {
 	}
 
 	// Output:
-	// Pattern '2xx' vs 404: status code 404 is not in range 2xx (expected 200-299)
-	// Pattern '4xx' vs 200: status code 200 is not in range 4xx (expected 400-499)
-	// Pattern '5xx' vs 301: status code 301 is not in range 5xx (expected 500-599)
+	// Pattern '2xx' vs 404: status_code_range validation failed
+	//   Expected: 2xx Success (200-299)
+	//   Actual:   404 (Not Found)
+	//   Context:  status code validation failed for pattern '2xx'
+	//   Pattern:  Range pattern: 2xx, Distance: 105 codes above range
+	//   Range:    2xx Success (200-299)
+	//   Details:
+	//     - Expected range: 200-299 (Success)
+	//     - Actual status code: 404
+	//     - Distance from valid range: 105 codes above range
+	//     - Range pattern context: 2xx
+	//     - Status code 404 is 105 codes above the maximum 299
+	//   Suggestions:
+	//     - Review request parameters for errors
+	//     - Check authentication credentials
+	//     - Verify the resource exists and is accessible
+	//
+	// Pattern '4xx' vs 200: status_code_range validation failed
+	//   Expected: 4xx Client Error (400-499)
+	//   Actual:   200 (OK)
+	//   Context:  status code validation failed for pattern '4xx'
+	//   Pattern:  Range pattern: 4xx, Distance: 200 codes below range
+	//   Range:    4xx Client Error (400-499)
+	//   Details:
+	//     - Expected range: 400-499 (Client Error)
+	//     - Actual status code: 200
+	//     - Distance from valid range: 200 codes below range
+	//     - Range pattern context: 4xx
+	//     - Status code 200 is 200 codes below the minimum 400
+	//   Suggestions:
+	//     - The request succeeded - update test expectations if this is expected behavior
+	//     - Verify the test is checking for the correct response type
+	//
+	// Pattern '5xx' vs 301: status_code_range validation failed
+	//   Expected: 5xx Server Error (500-599)
+	//   Actual:   301 (Moved Permanently)
+	//   Context:  status code validation failed for pattern '5xx'
+	//   Pattern:  Range pattern: 5xx, Distance: 199 codes below range
+	//   Range:    5xx Server Error (500-599)
+	//   Details:
+	//     - Expected range: 500-599 (Server Error)
+	//     - Actual status code: 301
+	//     - Distance from valid range: 199 codes below range
+	//     - Range pattern context: 5xx
+	//     - Status code 301 is 199 codes below the minimum 500
+	//   Suggestions:
+	//     - Review the unexpected status code
+	//     - Check API documentation for valid codes
+	//     - Verify the request is properly formatted
 }
 
 // ExampleValidateStatusCodeRangeInt_invalidPatterns demonstrates handling invalid patterns
@@ -584,12 +688,230 @@ func ExampleValidateStatusCodeRangeInt_invalidPatterns() {
 	}
 
 	// Output:
-	// Invalid pattern '4x': invalid pattern format: 4x (expected format: '4xx', '5xx', etc.)
-	// Invalid pattern '4xxx': invalid pattern format: 4xxx (expected format: '4xx', '5xx', etc.)
-	// Invalid pattern '400': invalid pattern suffix: 400 (expected 'xx')
-	// Invalid pattern '0xx': invalid pattern century: 0 (must be 1-5)
-	// Invalid pattern '6xx': invalid pattern century: 6 (must be 1-5)
-	// Invalid pattern '9xx': invalid pattern century: 9 (must be 1-5)
-	// Invalid pattern 'xxx': invalid pattern century: x (must be 1-5)
-	// Invalid pattern '': invalid pattern format:  (expected format: '4xx', '5xx', etc.)
+	// Invalid pattern '4x': status_code_range validation failed
+	//   Expected: pattern in format 'Nxx' (3 chars)
+	//   Actual:   '4x' (2 chars)
+	//   Context:  invalid pattern format: 4x
+	//   Details:
+	//     - Pattern '4x' has invalid length
+	//     - Pattern must be exactly 3 characters (e.g., '4xx', '5xx')
+	//     - Got 2 characters, expected 3
+	//   Suggestions:
+	//     - Verify the response format is correct
+	//
+	// Invalid pattern '4xxx': status_code_range validation failed
+	//   Expected: pattern in format 'Nxx' (3 chars)
+	//   Actual:   '4xxx' (4 chars)
+	//   Context:  invalid pattern format: 4xxx
+	//   Details:
+	//     - Pattern '4xxx' has invalid length
+	//     - Pattern must be exactly 3 characters (e.g., '4xx', '5xx')
+	//     - Got 4 characters, expected 3
+	//   Suggestions:
+	//     - Verify the response format is correct
+	//
+	// Invalid pattern '400': status_code_range validation failed
+	//   Expected: pattern ending with 'xx'
+	//   Actual:   '00'
+	//   Context:  invalid pattern suffix in '400'
+	//   Details:
+	//     - Pattern '400' has invalid suffix
+	//     - Pattern must end with 'xx' (e.g., '4xx', '5xx')
+	//     - Got '00', expected 'xx'
+	//   Suggestions:
+	//     - Verify the response format is correct
+	//
+	// Invalid pattern '0xx': status_code_range validation failed
+	//   Expected: century digit 1-5
+	//   Actual:   '0' (ASCII 48)
+	//   Context:  invalid pattern century in '0xx'
+	//   Details:
+	//     - Pattern '0xx' has invalid century digit
+	//     - Valid century digits: 1 (1xx), 2 (2xx), 3 (3xx), 4 (4xx), 5 (5xx)
+	//     - Got '0', expected digit between '1' and '5'
+	//   Suggestions:
+	//     - Verify the response format is correct
+	//
+	// Invalid pattern '6xx': status_code_range validation failed
+	//   Expected: century digit 1-5
+	//   Actual:   '6' (ASCII 54)
+	//   Context:  invalid pattern century in '6xx'
+	//   Details:
+	//     - Pattern '6xx' has invalid century digit
+	//     - Valid century digits: 1 (1xx), 2 (2xx), 3 (3xx), 4 (4xx), 5 (5xx)
+	//     - Got '6', expected digit between '1' and '5'
+	//   Suggestions:
+	//     - Verify the response format is correct
+	//
+	// Invalid pattern '9xx': status_code_range validation failed
+	//   Expected: century digit 1-5
+	//   Actual:   '9' (ASCII 57)
+	//   Context:  invalid pattern century in '9xx'
+	//   Details:
+	//     - Pattern '9xx' has invalid century digit
+	//     - Valid century digits: 1 (1xx), 2 (2xx), 3 (3xx), 4 (4xx), 5 (5xx)
+	//     - Got '9', expected digit between '1' and '5'
+	//   Suggestions:
+	//     - Verify the response format is correct
+	//
+	// Invalid pattern 'xxx': status_code_range validation failed
+	//   Expected: century digit 1-5
+	//   Actual:   'x' (ASCII 120)
+	//   Context:  invalid pattern century in 'xxx'
+	//   Details:
+	//     - Pattern 'xxx' has invalid century digit
+	//     - Valid century digits: 1 (1xx), 2 (2xx), 3 (3xx), 4 (4xx), 5 (5xx)
+	//     - Got 'x', expected digit between '1' and '5'
+	//   Suggestions:
+	//     - Verify the response format is correct
+	//
+	// Invalid pattern '': status_code_range validation failed
+	//   Expected: pattern in format 'Nxx' (3 chars)
+	//   Actual:   '' (0 chars)
+	//   Context:  invalid pattern format:
+	//   Details:
+	//     - Pattern '' has invalid length
+	//     - Pattern must be exactly 3 characters (e.g., '4xx', '5xx')
+	//     - Got 0 characters, expected 3
+	//   Suggestions:
+	//     - Verify the response format is correct
+}
+
+// ExampleValidateStatusCodeRangeWithDetails demonstrates enhanced range validation error reporting
+// with comprehensive information about range boundaries, distance from range, and pattern context.
+func ExampleValidateStatusCodeRangeWithDetails() {
+	// Create a response with status 200
+	resp := httptest.NewRecorder()
+	resp.Code = 200
+	httpResp := resp.Result()
+
+	// Validate against 4xx range with detailed error information
+	result := validate.ValidateStatusCodeRangeWithDetails(httpResp, validate.Range4xx)
+
+	// The result includes comprehensive error information
+	fmt.Printf("Valid: %v\n", result.Valid)
+	fmt.Printf("Actual code: %d\n", result.ActualCode)
+	fmt.Printf("Category: %s\n", result.Category)
+
+	// Output:
+	// Valid: false
+	// Actual code: 200
+	// Category: Client Error
+}
+
+// ExampleValidateStatusCodeRangeWithDetails_customRanges demonstrates range validation
+// with custom status code ranges and detailed error reporting.
+func ExampleValidateStatusCodeRangeWithDetails_customRanges() {
+	// Define custom ranges for specific use cases
+	customRange := validate.StatusCodeRange{
+		Min:         200,
+		Max:         204,
+		Description: "Standard success responses",
+	}
+
+	// Test responses against custom range
+	testCodes := []int{200, 201, 204, 206, 400, 500}
+
+	for _, code := range testCodes {
+		resp := httptest.NewRecorder()
+		resp.Code = code
+		httpResp := resp.Result()
+
+		result := validate.ValidateStatusCodeRangeWithDetails(httpResp, customRange)
+
+		if !result.Valid {
+			fmt.Printf("Status %d: Invalid (distance: %s)\n", code, result.MismatchDetails)
+		} else {
+			fmt.Printf("Status %d: Valid within range %d-%d\n", code, customRange.Min, customRange.Max)
+		}
+	}
+
+	// Output:
+	// Status 200: Valid within range 200-204
+	// Status 201: Valid within range 200-204
+	// Status 204: Valid within range 200-204
+	// Status 206: Invalid (distance: status_code_range validation failed
+	//   Expected: 200-204 (Standard success responses) - 2xx range (custom) pattern
+	//   Actual:   206 (Partial Content)
+	//   Pattern:  Range pattern: 2xx range (custom), Distance: 2 codes above range
+	//   Range:    200-204 (Standard success responses) - 2xx range (custom) pattern
+	//   Details:
+	//     - Expected range: 200-204 Standard success responses
+	//     - Actual status code: 206
+	//     - Distance from valid range: 2 codes above range
+	//     - Range pattern context: 2xx range (custom)
+	//     - Status code 206 is 2 codes above the maximum 204
+	//   Suggestions:
+	//     - The request succeeded - update test expectations if this is expected behavior
+	//     - Verify the test is checking for the correct response type
+	// )
+	// Status 400: Invalid (distance: status_code_range validation failed
+	//   Expected: 200-204 (Standard success responses) - 2xx range (custom) pattern
+	//   Actual:   400 (Bad Request)
+	//   Pattern:  Range pattern: 2xx range (custom), Distance: 196 codes above range
+	//   Range:    200-204 (Standard success responses) - 2xx range (custom) pattern
+	//   Details:
+	//     - Expected range: 200-204 Standard success responses
+	//     - Actual status code: 400
+	//     - Distance from valid range: 196 codes above range
+	//     - Range pattern context: 2xx range (custom)
+	//     - Status code 400 is 196 codes above the maximum 204
+	//   Suggestions:
+	//     - Review request parameters for errors
+	//     - Check authentication credentials
+	//     - Verify the resource exists and is accessible
+	// )
+	// Status 500: Invalid (distance: status_code_range validation failed
+	//   Expected: 200-204 (Standard success responses) - 2xx range (custom) pattern
+	//   Actual:   500 (Internal Server Error)
+	//   Pattern:  Range pattern: 2xx range (custom), Distance: 296 codes above range
+	//   Range:    200-204 (Standard success responses) - 2xx range (custom) pattern
+	//   Details:
+	//     - Expected range: 200-204 Standard success responses
+	//     - Actual status code: 500
+	//     - Distance from valid range: 296 codes above range
+	//     - Range pattern context: 2xx range (custom)
+	//     - Status code 500 is 296 codes above the maximum 204
+	//   Suggestions:
+	//     - Check if this is a temporary server issue
+	//     - Implement retry logic with backoff
+	//     - Verify service status and availability
+	// )
+}
+
+// ExampleValidateStatusCodeRangeWithDetails_allStandardRanges demonstrates validation
+// across all standard HTTP status code ranges with detailed error information.
+func ExampleValidateStatusCodeRangeWithDetails_allStandardRanges() {
+	standardRanges := []validate.StatusCodeRange{
+		validate.Range1xx,
+		validate.Range2xx,
+		validate.Range3xx,
+		validate.Range4xx,
+		validate.Range5xx,
+	}
+
+	testStatuses := []int{100, 200, 301, 404, 500}
+
+	for _, status := range testStatuses {
+		for _, statusRange := range standardRanges {
+			resp := httptest.NewRecorder()
+			resp.Code = status
+			httpResp := resp.Result()
+
+			result := validate.ValidateStatusCodeRangeWithDetails(httpResp, statusRange)
+
+			if result.Valid {
+				fmt.Printf("Status %d matches %s range (%d-%d)\n",
+					status, statusRange.Description, statusRange.Min, statusRange.Max)
+				break // Found the matching range
+			}
+		}
+	}
+
+	// Output:
+	// Status 100 matches Informational range (100-199)
+	// Status 200 matches Success range (200-299)
+	// Status 301 matches Redirection range (300-399)
+	// Status 404 matches Client Error range (400-499)
+	// Status 500 matches Server Error range (500-599)
 }
