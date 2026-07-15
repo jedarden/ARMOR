@@ -915,3 +915,480 @@ func ExampleValidateStatusCodeRangeWithDetails_allStandardRanges() {
 	// Status 404 matches Client Error range (400-499)
 	// Status 500 matches Server Error range (500-599)
 }
+
+// =============================================================================
+// COMPREHENSIVE EXAMPLES FOR ENHANCED VALIDATION ERRORS
+// =============================================================================
+
+// ExampleFormatStatusCodeError demonstrates enhanced status code error reporting
+// with full detailed output including expected/actual values, context, and suggestions.
+func ExampleFormatStatusCodeError() {
+	// Create a status code mismatch error
+	err := validate.FormatStatusCodeError(200, 404, "GET /api/users/123")
+	
+	fmt.Printf("Error Type: %s\n", err.ErrorType)
+	fmt.Printf("Expected: %v\n", err.Expected)
+	fmt.Printf("Actual: %v\n", err.Actual)
+	fmt.Printf("Context: %s\n", err.Context)
+	fmt.Println("\nFull Error Message:")
+	fmt.Println(err.Error())
+	fmt.Println("\nSuggestions:")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+
+	// Output:
+	// Error Type: status_code
+	// Expected: 200
+	// Actual: 404
+	// Context: GET /api/users/123
+	//
+	// Full Error Message:
+	// status_code validation failed
+	//   Expected: 200 (OK)
+	//   Actual:   404 (Not Found)
+	//   Context:  GET /api/users/123
+	//   Suggestions:
+	//     - Verify the endpoint URL is correct
+	//     - Check if the resource ID or identifier exists
+	//     - Ensure the resource hasn't been deleted or moved
+	//
+	// Suggestions:
+	//   1. Verify the endpoint URL is correct
+	//   2. Check if the resource ID or identifier exists
+	//   3. Ensure the resource hasn't been deleted or moved
+}
+
+// ExampleFormatStatusCodeError_multipleCodes demonstrates enhanced error reporting
+// when validating against multiple allowed status codes.
+func ExampleFormatStatusCodeError_multipleCodes() {
+	// Create error with multiple allowed codes
+	err := validate.FormatStatusCodeError([]int{200, 201, 204}, 404, "POST /api/users")
+	
+	fmt.Printf("Error Type: %s\n", err.ErrorType)
+	fmt.Printf("Expected: %v\n", err.Expected)
+	fmt.Printf("Actual: %v\n", err.Actual)
+	fmt.Println("\nFull Error Message:")
+	fmt.Println(err.Error())
+	fmt.Println("\nSuggestions:")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+
+	// Output:
+	// Error Type: status_code
+	// Expected: [200 201 204]
+	// Actual: 404
+	//
+	// Full Error Message:
+	// status_code validation failed
+	//   Expected: one of [200 (OK), 201 (Created), 204 (No Content)]
+	//   Actual:   404 (Not Found)
+	//   Context:  POST /api/users
+	//   Suggestions:
+	//     - Verify the endpoint URL is correct
+	//     - Check if the resource ID or identifier exists
+	//     - Ensure the resource hasn't been deleted or moved
+	//
+	// Suggestions:
+	//   1. Verify the endpoint URL is correct
+	//   2. Check if the resource ID or identifier exists
+	//   3. Ensure the resource hasn't been deleted or moved
+}
+
+// ExampleFormatStatusCodeRangeError demonstrates enhanced range validation error
+// reporting with full details about range boundaries, distance from range, and context.
+func ExampleFormatStatusCodeRangeError() {
+	// Create a range validation error
+	err := validate.FormatStatusCodeRangeError("4xx", 200, "Expected error response")
+	
+	fmt.Printf("Error Type: %s\n", err.ErrorType)
+	fmt.Printf("Expected: %v\n", err.Expected)
+	fmt.Printf("Actual: %v\n", err.Actual)
+	fmt.Printf("Range Info: %s\n", err.RangeInfo)
+	fmt.Printf("Context: %s\n", err.Context)
+	fmt.Println("\nValidation Details:")
+	for i, detail := range err.ValidationDetails {
+		fmt.Printf("  %d. %s\n", i+1, detail)
+	}
+	fmt.Println("\nFull Error Message:")
+	fmt.Println(err.Error())
+	fmt.Println("\nSuggestions:")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+
+	// Output:
+	// Error Type: status_code_range
+	// Expected: 4xx (Client Error)
+	// Actual: 200
+	// Range Info: 400-499 (Client Error)
+	// Context: Expected error response
+	//
+	// Validation Details:
+	//   1. Status code 200 is outside range 400-499
+	//
+	// Full Error Message:
+	// status_code_range validation failed
+	//   Expected: 4xx (Client Error)
+	//   Actual:   200 (OK)
+	//   Context:  Expected error response
+	//   Range:    400-499 (Client Error)
+	//   Details:
+	//     - Status code 200 is outside range 400-499
+	//   Suggestions:
+	//     - The request succeeded - update test expectations if this is expected behavior
+	//     - Verify the test is checking for the correct response type
+	//
+	// Suggestions:
+	//   1. The request succeeded - update test expectations if this is expected behavior
+	//   2. Verify the test is checking for the correct response type
+}
+
+// ExampleFormatStatusCodeRangeError_serverError demonstrates 5xx range validation errors
+// with comprehensive server error context and suggestions.
+func ExampleFormatStatusCodeRangeError_serverError() {
+	// Create a 5xx range validation error
+	err := validate.FormatStatusCodeRangeError("5xx", 404, "API response validation")
+	
+	fmt.Printf("Error Type: %s\n", err.ErrorType)
+	fmt.Printf("Range Info: %s\n", err.RangeInfo)
+	fmt.Println("\nValidation Details:")
+	for i, detail := range err.ValidationDetails {
+		fmt.Printf("  %d. %s\n", i+1, detail)
+	}
+	fmt.Println("\nFull Error Message:")
+	fmt.Println(err.Error())
+	fmt.Println("\nSuggestions:")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+
+	// Output:
+	// Error Type: status_code_range
+	// Range Info: 500-599 (Server Error)
+	//
+	// Validation Details:
+	//   1. Status code 404 is outside range 500-599
+	//
+	// Full Error Message:
+	// status_code_range validation failed
+	//   Expected: 5xx (Server Error)
+	//   Actual:   404 (Not Found)
+	//   Context:  API response validation
+	//   Range:    500-599 (Server Error)
+	//   Details:
+	//     - Status code 404 is outside range 500-599
+	//   Suggestions:
+	//     - Check if this is a temporary server issue
+	//     - Implement retry logic with backoff
+	//     - Verify service status and availability
+	//
+	// Suggestions:
+	//   1. Check if this is a temporary server issue
+	//   2. Implement retry logic with backoff
+	//   3. Verify service status and availability
+}
+
+// ExampleFormatErrorMessageError demonstrates enhanced error message pattern
+// validation with full details about expected patterns, actual messages, and field context.
+func ExampleFormatErrorMessageError() {
+	// Create an error message pattern validation error
+	err := validate.FormatErrorMessageError("invalid.*token", "access_denied", "error", "OAuth token validation")
+	
+	fmt.Printf("Error Type: %s\n", err.ErrorType)
+	fmt.Printf("Expected Pattern: %v\n", err.Expected)
+	fmt.Printf("Actual Message: %v\n", err.Actual)
+	fmt.Printf("Field Name: %s\n", err.FieldName)
+	fmt.Printf("Context: %s\n", err.Context)
+	fmt.Println("\nFull Error Message:")
+	fmt.Println(err.Error())
+	fmt.Println("\nSuggestions:")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+
+	// Output:
+	// Error Type: error_message
+	// Expected Pattern: invalid.*token
+	// Actual Message: access_denied
+	// Field Name: error
+	// Context: OAuth token validation
+	//
+	// Full Error Message:
+	// error_message validation failed
+	//   Expected: invalid.*token
+	//   Actual:   access_denied
+	//   Context:  OAuth token validation
+	//   Field:    error
+	//   Suggestions:
+	//     - Review the error message for specific details
+	//     - Check API documentation for this error type
+	//     - Verify request parameters match requirements
+	//
+	// Suggestions:
+	//   1. Review the error message for specific details
+	//   2. Check API documentation for this error type
+	//   3. Verify request parameters match requirements
+}
+
+// ExampleFormatErrorMessageError_userNotFound demonstrates user not found
+// pattern validation with comprehensive error context.
+func ExampleFormatErrorMessageError_userNotFound() {
+	// Create a user not found pattern validation error
+	err := validate.FormatErrorMessageError("User .* not found", "Invalid credentials", "message", "User lookup API")
+	
+	fmt.Printf("Error Type: %s\n", err.ErrorType)
+	fmt.Printf("Expected Pattern: %v\n", err.Expected)
+	fmt.Printf("Actual Message: %v\n", err.Actual)
+	fmt.Printf("Field Name: %s\n", err.FieldName)
+	fmt.Println("\nFull Error Message:")
+	fmt.Println(err.Error())
+	fmt.Println("\nSuggestions:")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+
+	// Output:
+	// Error Type: error_message
+	// Expected Pattern: User .* not found
+	// Actual Message: Invalid credentials
+	// Field Name: message
+	//
+	// Full Error Message:
+	// error_message validation failed
+	//   Expected: User .* not found
+	//   Actual:   Invalid credentials
+	//   Context:  User lookup API
+	//   Field:    message
+	//   Suggestions:
+	//     - Review the error message for specific details
+	//     - Check API documentation for this error type
+	//     - Verify request parameters match requirements
+	//
+	// Suggestions:
+	//   1. Review the error message for specific details
+	//   2. Check API documentation for this error type
+	//   3. Verify request parameters match requirements
+}
+
+// ExampleFormatValidationErrorWithDetails demonstrates the most comprehensive
+// validation error with all fields populated including response snippets,
+// validation details, and custom suggestions.
+func ExampleFormatValidationErrorWithDetails() {
+	// Create a comprehensive validation error with all fields
+	err := validate.FormatValidationErrorWithDetails(
+		"error_message",
+		"User .* not found",
+		"Internal server error",
+		"User profile lookup API endpoint",
+		`{"error": "Internal server error", "code": "SERVER_ERROR", "timestamp": "2026-07-15T10:30:45Z"}`,
+		"error",
+		"user_profile_service.go:142",
+		[]string{"user_id", "profile_id", "auth_token"},
+		"Expected pattern 'User .* not found' to match error message",
+		"",
+		[]string{
+			"Pattern mismatch indicates server error instead of not found",
+			"Expected user lookup error, got internal server error",
+			"This suggests a backend service failure",
+			"Check server logs and service health status",
+		},
+	)
+
+	fmt.Printf("Error Type: %s\n", err.ErrorType)
+	fmt.Printf("Expected: %v\n", err.Expected)
+	fmt.Printf("Actual: %v\n", err.Actual)
+	fmt.Printf("Context: %s\n", err.Context)
+	fmt.Printf("Field Name: %s\n", err.FieldName)
+	fmt.Printf("Location: %s\n", err.Location)
+	fmt.Printf("Pattern Details: %s\n", err.PatternDetails)
+	fmt.Printf("Response Snippet: %s\n", err.ResponseSnippet)
+	fmt.Printf("Related Fields: %v\n", err.RelatedFields)
+	fmt.Println("\nValidation Details:")
+	for i, detail := range err.ValidationDetails {
+		fmt.Printf("  %d. %s\n", i+1, detail)
+	}
+	fmt.Println("\nFull Error Message:")
+	fmt.Println(err.Error())
+	fmt.Println("\nCustom Suggestions:")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+
+	// Output:
+	// Error Type: error_message
+	// Expected: User .* not found
+	// Actual: Internal server error
+	// Context: User profile lookup API endpoint
+	// Field Name: error
+	// Location: user_profile_service.go:142
+	// Pattern Details: Expected pattern 'User .* not found' to match error message
+	// Response Snippet: {"error": "Internal server error", "code": "SERVER_ERROR", "timestamp": "2026-07-15T10:30:45Z"}
+	// Related Fields: [user_id profile_id auth_token]
+	//
+	// Validation Details:
+	//   1. Pattern mismatch indicates server error instead of not found
+	//   2. Expected user lookup error, got internal server error
+	//   3. This suggests a backend service failure
+	//   4. Check server logs and service health status
+	//
+	// Full Error Message:
+	// error_message validation failed
+	//   Expected: User .* not found
+	//   Actual:   Internal server error
+	//   Context:  User profile lookup API endpoint
+	//   Field:    error
+	//   Location: user_profile_service.go:142
+	//   Response: {"error": "Internal server error", "code": "SERVER_ERROR", "timestamp": "2026-07-15T10:30:45Z"}
+	//   Related Fields: user_id, profile_id, auth_token
+	//   Pattern: Expected pattern 'User .* not found' to match error message
+	//   Details:
+	//     - Pattern mismatch indicates server error instead of not found
+	//     - Expected user lookup error, got internal server error
+	//     - This suggests a backend service failure
+	//     - Check server logs and service health status
+	//   Suggestions:
+	//     - Pattern mismatch indicates server error instead of not found
+	//     - Expected user lookup error, got internal server error
+	//     - This suggests a backend service failure
+	//     - Check server logs and service health status
+	//
+	// Custom Suggestions:
+	//   1. Pattern mismatch indicates server error instead of not found
+	//   2. Expected user lookup error, got internal server error
+	//   3. This suggests a backend service failure
+	//   4. Check server logs and service health status
+}
+
+// ExampleFormatValidationErrorWithDetails_rangeValidation demonstrates enhanced
+// range validation with comprehensive distance calculation and context.
+func ExampleFormatValidationErrorWithDetails_rangeValidation() {
+	// Create a range validation error with full details
+	err := validate.FormatValidationErrorWithDetails(
+		"status_code_range",
+		"4xx",
+		200,
+		"Client error response validation",
+		`{"status": "ok", "data": {"user": {"id": 123, "name": "John Doe"}}}`,
+		"",
+		"",
+		nil,
+		"",
+		"400-499 (Client Error)",
+		[]string{
+			"Expected range: 400-499 (Client Error)",
+			"Actual status code: 200",
+			"Distance from valid range: 200 codes below range",
+			"Range pattern context: 4xx",
+			"Status code 200 is 200 codes below the minimum 400",
+		},
+	)
+
+	fmt.Printf("Error Type: %s\n", err.ErrorType)
+	fmt.Printf("Expected: %v\n", err.Expected)
+	fmt.Printf("Actual: %v\n", err.Actual)
+	fmt.Printf("Range Info: %s\n", err.RangeInfo)
+	fmt.Printf("Context: %s\n", err.Context)
+	fmt.Printf("Response Snippet: %s\n", err.ResponseSnippet)
+	fmt.Println("\nValidation Details:")
+	for i, detail := range err.ValidationDetails {
+		fmt.Printf("  %d. %s\n", i+1, detail)
+	}
+	fmt.Println("\nFull Error Message:")
+	fmt.Println(err.Error())
+	fmt.Println("\nAuto-Generated Suggestions:")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+
+	// Output:
+	// Error Type: status_code_range
+	// Expected: 4xx
+	// Actual: 200
+	// Range Info: 400-499 (Client Error)
+	// Context: Client error response validation
+	// Response Snippet: {"status": "ok", "data": {"user": {"id": 123, "name": "John Doe"}}}
+	//
+	// Validation Details:
+	//   1. Expected range: 400-499 (Client Error)
+	//   2. Actual status code: 200
+	//   3. Distance from valid range: 200 codes below range
+	//   4. Range pattern context: 4xx
+	//   5. Status code 200 is 200 codes below the minimum 400
+	//
+	// Full Error Message:
+	// status_code_range validation failed
+	//   Expected: 4xx (Client Error)
+	//   Actual:   200 (OK)
+	//   Context:  Client error response validation
+	//   Range:    400-499 (Client Error)
+	//   Response: {"status": "ok", "data": {"user": {"id": 123, "name": "John Doe"}}}
+	//   Details:
+	//     - Expected range: 400-499 (Client Error)
+	//     - Actual status code: 200
+	//     - Distance from valid range: 200 codes below range
+	//     - Range pattern context: 4xx
+	//     - Status code 200 is 200 codes below the minimum 400
+	//   Suggestions:
+	//     - The request succeeded - update test expectations if this is expected behavior
+	//     - Verify the test is checking for the correct response type
+	//
+	// Auto-Generated Suggestions:
+	//   1. The request succeeded - update test expectations if this is expected behavior
+	//   2. Verify the test is checking for the correct response type
+}
+
+// ExampleValidationFormatter demonstrates the builder pattern for creating
+// customized validation errors with full control over all fields.
+func ExampleValidationFormatter() {
+	// Use the builder pattern to create a custom validation error
+	err := validate.NewValidationFormatter("custom_validation").
+		WithExpected("required_field").
+		WithActual("").
+		WithContext("Form submission validation").
+		WithResponseSnippet(`{"form": {"name": "", "email": "test@example.com"}}`).
+		WithFieldName("name").
+		WithPatternDetails("Required field validation failed").
+		WithValidationDetails(
+			"Field 'name' is empty",
+			"Field 'name' is required",
+			"Minimum length: 1 character",
+		).
+		WithSuggestions(
+			"Provide a value for the 'name' field",
+			"Ensure the name field is not empty",
+			"Check form validation rules",
+		).
+		Format()
+
+	fmt.Printf("Error Type: %s\n", err.ErrorType)
+	fmt.Printf("Expected: %v\n", err.Expected)
+	fmt.Printf("Actual: %v\n", err.Actual)
+	fmt.Printf("Context: %s\n", err.Context)
+	fmt.Printf("Field Name: %s\n", err.FieldName)
+	fmt.Println("\nFull Error Message:")
+	fmt.Println(err.Error())
+
+	// Output:
+	// Error Type: custom_validation
+	// Expected: required_field
+	// Actual: 
+	// Context: Form submission validation
+	// Field Name: name
+	//
+	// Full Error Message:
+	// custom_validation validation failed
+	//   Expected: required_field
+	//   Actual:   
+	//   Context:  Form submission validation
+	//   Field:    name
+	//   Details:
+	//     - Field 'name' is empty
+	//     - Field 'name' is required
+	//     - Minimum length: 1 character
+	//   Suggestions:
+	//     - Provide a value for the 'name' field
+	//     - Ensure the name field is not empty
+	//     - Check form validation rules
+}
