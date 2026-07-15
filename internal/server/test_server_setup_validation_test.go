@@ -129,7 +129,7 @@ func TestNewSingleErrorServer(t *testing.T) {
 			t.Fatal("Expected server to be created")
 		}
 
-		if server.URL() == "" {
+		if server.URL == "" {
 			t.Error("Expected server URL to be set")
 		}
 	})
@@ -138,7 +138,7 @@ func TestNewSingleErrorServer(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Resource not found")
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -169,7 +169,7 @@ func TestNewSingleErrorServer(t *testing.T) {
 
 		// Make multiple requests
 		for i := 0; i < 3; i++ {
-			resp, err := http.Get(server.URL() + "/resource")
+			resp, err := http.Get(server.URL + "/resource")
 			if err != nil {
 				t.Fatalf("Request %d failed: %v", i, err)
 			}
@@ -189,7 +189,7 @@ func TestNewSingleErrorServer(t *testing.T) {
 		server := NewSingleErrorServer(500, "InternalError", "Internal error")
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -227,7 +227,7 @@ func TestNewMultipleErrorServer(t *testing.T) {
 		defer server.Close()
 
 		// Test 404 scenario
-		resp, err := http.Get(server.URL() + "/missing")
+		resp, err := http.Get(server.URL + "/missing")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -238,7 +238,7 @@ func TestNewMultipleErrorServer(t *testing.T) {
 		}
 
 		// Test 403 scenario
-		resp, err = http.Get(server.URL() + "/forbidden")
+		resp, err = http.Get(server.URL + "/forbidden")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -269,7 +269,7 @@ func TestNewMultipleErrorServer(t *testing.T) {
 		defer server.Close()
 
 		// POST returns 405
-		resp, err := http.Post(server.URL()+"/resource", "application/xml", nil)
+		resp, err := http.Post(server.URL+"/resource", "application/xml", nil)
 		if err != nil {
 			t.Fatalf("POST request failed: %v", err)
 		}
@@ -280,7 +280,7 @@ func TestNewMultipleErrorServer(t *testing.T) {
 		}
 
 		// GET returns 404
-		resp, err = http.Get(server.URL() + "/resource")
+		resp, err = http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("GET request failed: %v", err)
 		}
@@ -311,7 +311,7 @@ func TestNewMultipleErrorServer(t *testing.T) {
 		defer server.Close()
 
 		// Test 404 scenario
-		resp, err := http.Get(server.URL() + "/api/missing/resource")
+		resp, err := http.Get(server.URL + "/api/missing/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -322,7 +322,7 @@ func TestNewMultipleErrorServer(t *testing.T) {
 		}
 
 		// Test 403 scenario
-		resp, err = http.Get(server.URL() + "/api/forbidden/resource")
+		resp, err = http.Get(server.URL + "/api/forbidden/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -353,7 +353,7 @@ func TestNewMultipleErrorServer(t *testing.T) {
 		defer server.Close()
 
 		// All requests should return 403 (first scenario)
-		resp, err := http.Get(server.URL() + "/missing")
+		resp, err := http.Get(server.URL + "/missing")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -376,7 +376,7 @@ func TestNewDelayErrorServer(t *testing.T) {
 		defer server.Close()
 
 		start := time.Now()
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		elapsed := time.Since(start)
 
 		if err != nil {
@@ -402,7 +402,7 @@ func TestNewDelayErrorServer(t *testing.T) {
 			Timeout: 100 * time.Millisecond,
 		}
 
-		_, err := client.Get(server.URL() + "/resource")
+		_, err := client.Get(server.URL + "/resource")
 		if err == nil {
 			t.Error("Expected timeout error, got nil")
 		}
@@ -419,7 +419,7 @@ func TestPredefinedErrorScenarios(t *testing.T) {
 		server := NewConfigurableErrorServer([]ErrorServerScenario{scenario})
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -440,7 +440,7 @@ func TestPredefinedErrorScenarios(t *testing.T) {
 		server := NewConfigurableErrorServer([]ErrorServerScenario{scenario})
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -466,7 +466,7 @@ func TestPredefinedErrorScenarios(t *testing.T) {
 		server := NewConfigurableErrorServer([]ErrorServerScenario{scenario})
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -487,7 +487,7 @@ func TestPredefinedErrorScenarios(t *testing.T) {
 		server := NewConfigurableErrorServer([]ErrorServerScenario{scenario})
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -508,7 +508,7 @@ func TestPredefinedErrorScenarios(t *testing.T) {
 		server := NewConfigurableErrorServer([]ErrorServerScenario{scenario})
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -529,7 +529,7 @@ func TestPredefinedErrorScenarios(t *testing.T) {
 		server := NewConfigurableErrorServer([]ErrorServerScenario{scenario})
 		defer server.Close()
 
-		resp, err := http.Post(server.URL()+"/resource", "application/xml", nil)
+		resp, err := http.Post(server.URL+"/resource", "application/xml", nil)
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -555,7 +555,7 @@ func TestPredefinedErrorScenarios(t *testing.T) {
 		server := NewConfigurableErrorServer([]ErrorServerScenario{scenario})
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -576,7 +576,7 @@ func TestPredefinedErrorScenarios(t *testing.T) {
 		server := NewConfigurableErrorServer([]ErrorServerScenario{scenario})
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -607,8 +607,8 @@ func TestRequestLogging(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Not found")
 		defer server.Close()
 
-		http.Get(server.URL() + "/resource1")
-		http.Get(server.URL() + "/resource2")
+		http.Get(server.URL + "/resource1")
+		http.Get(server.URL + "/resource2")
 
 		if server.RequestCount != 2 {
 			t.Errorf("Expected request count 2, got %d", server.RequestCount)
@@ -631,8 +631,8 @@ func TestRequestLogging(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Not found")
 		defer server.Close()
 
-		http.Get(server.URL() + "/resource1")
-		http.Get(server.URL() + "/resource2")
+		http.Get(server.URL + "/resource1")
+		http.Get(server.URL + "/resource2")
 
 		lastReq := server.GetLastRequest()
 		if lastReq == nil {
@@ -658,7 +658,7 @@ func TestRequestLogging(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Not found")
 		defer server.Close()
 
-		http.Post(server.URL()+"/resource", "application/xml", nil)
+		http.Post(server.URL+"/resource", "application/xml", nil)
 
 		lastReq := server.GetLastRequest()
 		if lastReq.Method != "POST" {
@@ -670,7 +670,7 @@ func TestRequestLogging(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Not found")
 		defer server.Close()
 
-		req, _ := http.NewRequest("GET", server.URL()+"/resource", nil)
+		req, _ := http.NewRequest("GET", server.URL+"/resource", nil)
 		req.Header.Set("Custom-Header", "test-value")
 		client := &http.Client{}
 		client.Do(req)
@@ -705,8 +705,8 @@ func TestResponseLogging(t *testing.T) {
 		server := NewMultipleErrorServer(scenarios)
 		defer server.Close()
 
-		http.Get(server.URL() + "/resource1")
-		http.Get(server.URL() + "/resource2")
+		http.Get(server.URL + "/resource1")
+		http.Get(server.URL + "/resource2")
 
 		if len(server.ResponseLog) != 2 {
 			t.Errorf("Expected 2 logged responses, got %d", len(server.ResponseLog))
@@ -725,7 +725,7 @@ func TestResponseLogging(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Not found")
 		defer server.Close()
 
-		http.Get(server.URL() + "/resource")
+		http.Get(server.URL + "/resource")
 
 		lastResp := server.GetLastResponse()
 		if lastResp == nil {
@@ -751,7 +751,7 @@ func TestResponseLogging(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Not found")
 		defer server.Close()
 
-		http.Get(server.URL() + "/resource")
+		http.Get(server.URL + "/resource")
 
 		lastResp := server.GetLastResponse()
 		if lastResp.Body == "" {
@@ -779,7 +779,7 @@ func TestResponseLogging(t *testing.T) {
 		server := NewMultipleErrorServer(scenarios)
 		defer server.Close()
 
-		http.Get(server.URL() + "/resource")
+		http.Get(server.URL + "/resource")
 
 		lastResp := server.GetLastResponse()
 		if lastResp.ScenarioIdx != 0 {
@@ -797,8 +797,8 @@ func TestServerReset(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Not found")
 		defer server.Close()
 
-		http.Get(server.URL() + "/resource1")
-		http.Get(server.URL() + "/resource2")
+		http.Get(server.URL + "/resource1")
+		http.Get(server.URL + "/resource2")
 
 		if server.RequestCount != 2 {
 			t.Errorf("Expected request count 2, got %d", server.RequestCount)
@@ -845,7 +845,7 @@ func TestDefaultScenario(t *testing.T) {
 		defer server.Close()
 
 		// Request that doesn't match any scenario
-		resp, err := http.Get(server.URL() + "/other")
+		resp, err := http.Get(server.URL + "/other")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -881,7 +881,7 @@ func TestDefaultScenario(t *testing.T) {
 		defer server.Close()
 
 		// Request that matches specific scenario
-		resp, err := http.Get(server.URL() + "/missing")
+		resp, err := http.Get(server.URL + "/missing")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -916,7 +916,7 @@ func TestBodyOverride(t *testing.T) {
 		server := NewConfigurableErrorServer([]ErrorServerScenario{scenario})
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -944,7 +944,7 @@ func TestValidateErrorServerResponse(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Not found")
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -964,7 +964,7 @@ func TestGetErrorServerS3Error(t *testing.T) {
 		server := NewSingleErrorServer(404, "NoSuchKey", "Not found")
 		defer server.Close()
 
-		resp, err := http.Get(server.URL() + "/resource")
+		resp, err := http.Get(server.URL + "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -1128,7 +1128,7 @@ func TestBasicStatusCodes(t *testing.T) {
 			server := NewConfigurableErrorServer([]ErrorServerScenario{tt.scenario})
 			defer server.Close()
 
-			resp, err := http.Get(server.URL() + "/resource")
+			resp, err := http.Get(server.URL + "/resource")
 			if err != nil {
 				t.Fatalf("Request failed: %v", err)
 			}
