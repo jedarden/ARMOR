@@ -2434,7 +2434,7 @@ func GetStatusCodeRangeDescription(pattern string) (string, error) {
 		return "", fmt.Errorf("unknown century: %c", centuryChar)
 	}
 
-	return desc, nil
+	return fmt.Sprintf("%s (%s)", desc, pattern), nil
 }
 
 // =============================================================================

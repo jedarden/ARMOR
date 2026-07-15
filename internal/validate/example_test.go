@@ -1345,7 +1345,7 @@ func ExampleValidationFormatter() {
 	// Use the builder pattern to create a custom validation error
 	err := validate.NewValidationFormatter("custom_validation").
 		WithExpected("required_field").
-		WithActual("").
+		WithActual(nil).
 		WithContext("Form submission validation").
 		WithResponseSnippet(`{"form": {"name": "", "email": "test@example.com"}}`).
 		WithFieldName("name").
@@ -1373,22 +1373,440 @@ func ExampleValidationFormatter() {
 	// Output:
 	// Error Type: custom_validation
 	// Expected: required_field
-	// Actual: 
+	// Actual:
 	// Context: Form submission validation
 	// Field Name: name
 	//
 	// Full Error Message:
 	// custom_validation validation failed
 	//   Expected: required_field
-	//   Actual:   
+	//   Actual:
 	//   Context:  Form submission validation
 	//   Field:    name
+	//   Pattern:  Required field validation failed
 	//   Details:
 	//     - Field 'name' is empty
 	//     - Field 'name' is required
 	//     - Minimum length: 1 character
+	//   Response: {"form": {"name": "", "email": "test@example.com"}}
 	//   Suggestions:
 	//     - Provide a value for the 'name' field
 	//     - Ensure the name field is not empty
 	//     - Check form validation rules
+}
+
+// ExampleFormatValidationErrorHelper demonstrates the streamlined validation error
+// formatting helper function with various usage patterns.
+func ExampleFormatValidationErrorHelper() {
+	// Basic usage with minimal parameters
+	err := validate.FormatValidationErrorHelper("status_code", 200, 404)
+	fmt.Println("Basic error:")
+	fmt.Println(err.Error())
+	fmt.Println()
+
+	// With context for better debugging
+	err = validate.FormatValidationErrorHelper("status_code", 200, 404,
+		validate.WithValidationContext("GET /api/users/123"))
+	fmt.Println("Error with context:")
+	fmt.Println(err.Error())
+	fmt.Println()
+
+	// With custom suggestions
+	err = validate.FormatValidationErrorHelper("custom_field", "required", "",
+		validate.WithFieldName("email"),
+		validate.WithSuggestions(
+			"Email address is required",
+			"Please provide a valid email",
+		))
+	fmt.Println("Error with custom suggestions:")
+	fmt.Println(err.Error())
+	fmt.Println()
+
+	// Complete example with all options
+	err = validate.FormatValidationErrorHelper("error_message",
+		"User .* not found",
+		"Internal server error",
+		validate.WithValidationContext("User profile lookup API"),
+		validate.WithFieldName("error"),
+		validate.WithResponseSnippet(`{"error": "Internal server error", "code": "SERVER_ERROR"}`),
+		validate.WithSuggestions(
+			"Check if user exists in database",
+			"Verify user ID is correct",
+			"Review server logs for errors",
+		),
+	)
+	fmt.Println("Complete error:")
+	fmt.Println(err.Error())
+
+	// Output:
+	// Basic error:
+	// status_code validation failed
+	//   Expected: 200 (OK)
+	//   Actual:   404 (Not Found)
+	//   Suggestions:
+	//     - Verify the endpoint URL is correct
+	//     - Check if the resource ID or identifier exists
+	//     - Ensure the resource hasn't been deleted or moved
+	//
+	// Error with context:
+	// status_code validation failed
+	//   Expected: 200 (OK)
+	//   Actual:   404 (Not Found)
+	//   Context:  GET /api/users/123
+	//   Suggestions:
+	//     - Verify the endpoint URL is correct
+	//     - Check if the resource ID or identifier exists
+	//     - Ensure the resource hasn't been deleted or moved
+	//
+	// Error with custom suggestions:
+	// custom_field validation failed
+	//   Expected: required
+	//   Actual:
+	//   Field:    email
+	//   Suggestions:
+	//     - Email address is required
+	//     - Please provide a valid email
+	//
+	// Complete error:
+	// error_message validation failed
+	//   Expected: User .* not found
+	//   Actual:   Internal server error
+	//   Context:  User profile lookup API
+	//   Field:    error
+	//   Response: {"error": "Internal server error", "code": "SERVER_ERROR"}
+	//   Suggestions:
+	//     - Check if user exists in database
+	//     - Verify user ID is correct
+	//     - Review server logs for errors
+}
+
+// ExampleFormatValidationErrorHelper_realWorld demonstrates real-world usage patterns
+// for the validation error helper in common scenarios.
+func ExampleFormatValidationErrorHelper_realWorld() {
+	// Scenario 1: API endpoint validation
+	fmt.Println("=== API Endpoint Validation ===")
+	err := validate.FormatValidationErrorHelper("status_code", 200, 404,
+		validate.WithValidationContext("GET /api/users/123"),
+		validate.WithSuggestions(
+			"Verify the endpoint URL is correct",
+			"Check if the user ID exists in the database",
+			"Ensure the user hasn't been deleted",
+		),
+	)
+	fmt.Printf("API Error: %v\n", err)
+	fmt.Println()
+
+	// Scenario 2: Error message pattern validation
+	fmt.Println("=== Error Message Pattern Validation ===")
+	err = validate.FormatValidationErrorHelper("error_message",
+		"invalid.*token",
+		"access_denied",
+		validate.WithFieldName("error"),
+		validate.WithValidationContext("OAuth token validation"),
+		validate.WithPatternDetails("Expected pattern 'invalid.*token' to match error message"),
+	)
+	fmt.Printf("Pattern Error: %v\n", err)
+	fmt.Println()
+
+	// Scenario 3: Content-Type header validation
+	fmt.Println("=== Content-Type Validation ===")
+	err = validate.FormatValidationErrorHelper("content_type",
+		"application/json",
+		"text/html",
+		validate.WithValidationContext("API response validation"),
+		validate.WithFieldName("Content-Type"),
+	)
+	fmt.Printf("Content-Type Error: %v\n", err)
+	fmt.Println()
+
+	// Scenario 4: Range validation
+	fmt.Println("=== Range Validation ===")
+	err = validate.FormatValidationErrorHelper("status_code_range",
+		"4xx",
+		200,
+		validate.WithValidationContext("Expected error response"),
+		validate.WithRangeInfo("400-499 (Client Error)"),
+		validate.WithValidationDetails(
+			"Expected status code in range 400-499",
+			"Got status code 200 indicating success",
+			"Test expected error response but received success",
+		),
+	)
+	fmt.Printf("Range Error: %v\n", err)
+	fmt.Println()
+
+	// Scenario 5: Custom validation with multiple details
+	fmt.Println("=== Custom Field Validation ===")
+	err = validate.FormatValidationErrorHelper("custom_field",
+		"non_empty_string",
+		"",
+		validate.WithFieldName("username"),
+		validate.WithValidationContext("User registration form"),
+		validate.WithValidationDetails(
+			"Field 'username' is empty",
+			"Field 'username' is required",
+			"Minimum length: 3 characters",
+			"Maximum length: 20 characters",
+		),
+		validate.WithSuggestions(
+			"Provide a username between 3-20 characters",
+			"Username cannot be empty or contain only whitespace",
+			"Check form validation rules for username requirements",
+		),
+	)
+	fmt.Printf("Custom Validation Error: %v\n", err)
+
+	// Output:
+	// === API Endpoint Validation ===
+	// API Error: status_code validation failed
+	//   Expected: 200 (OK)
+	//   Actual:   404 (Not Found)
+	//   Context:  GET /api/users/123
+	//   Suggestions:
+	//     - Verify the endpoint URL is correct
+	//     - Check if the user ID exists in the database
+	//     - Ensure the user hasn't been deleted
+	//
+	// === Error Message Pattern Validation ===
+	// Pattern Error: error_message validation failed
+	//   Expected: invalid.*token
+	//   Actual:   access_denied
+	//   Context:  OAuth token validation
+	//   Field:    error
+	//   Pattern:  Expected pattern 'invalid.*token' to match error message
+	//   Suggestions:
+	//     - Review the error message for specific details
+	//     - Check API documentation for this error type
+	//     - Verify request parameters match requirements
+	//
+	// === Content-Type Validation ===
+	// Content-Type Error: content_type validation failed
+	//   Expected: application/json
+	//   Actual:   text/html
+	//   Context:  API response validation
+	//   Field:    Content-Type
+	//   Suggestions:
+	//     - Verify Content-Type header matches request body format
+	//     - Check if charset or boundary parameters are needed
+	//     - Ensure the body is properly formatted for the content type
+	//
+	// === Range Validation ===
+	// Range Error: status_code_range validation failed
+	//   Expected: 4xx
+	//   Actual:   200
+	//   Context:  Expected error response
+	//   Range:    400-499 (Client Error)
+	//   Details:
+	//     - Expected status code in range 400-499
+	//     - Got status code 200 indicating success
+	//     - Test expected error response but received success
+	//   Suggestions:
+	//     - The request succeeded - update test expectations if this is expected behavior
+	//     - Verify the test is checking for the correct response type
+	//
+	// === Custom Field Validation ===
+	// Custom Validation Error: custom_field validation failed
+	//   Expected: non_empty_string
+	//   Actual:
+	//   Context:  User registration form
+	//   Field:    username
+	//   Details:
+	//     - Field 'username' is empty
+	//     - Field 'username' is required
+	//     - Minimum length: 3 characters
+	//     - Maximum length: 20 characters
+	//   Suggestions:
+	//     - Provide a username between 3-20 characters
+	//     - Username cannot be empty or contain only whitespace
+	//     - Check form validation rules for username requirements
+}
+
+// ExampleFormatValidationErrorHelper_differentValueTypes demonstrates the helper
+// working with different value types for expected and actual parameters.
+func ExampleFormatValidationErrorHelper_differentValueTypes() {
+	// Integer values
+	err := validate.FormatValidationErrorHelper("status_code", 200, 404)
+	fmt.Printf("Integer values: %v\n", err.ErrorType)
+
+	// String values
+	err = validate.FormatValidationErrorHelper("error_message", "expected_pattern", "actual_message")
+	fmt.Printf("String values: %v\n", err.ErrorType)
+
+	// Slice of integers
+	err = validate.FormatValidationErrorHelper("status_code", []int{200, 201, 204}, 404)
+	fmt.Printf("Slice values: %v\n", err.ErrorType)
+
+	// Nil expected value
+	err = validate.FormatValidationErrorHelper("custom_validation", nil, "actual_value")
+	fmt.Printf("Nil expected: %v\n", err.ErrorType)
+
+	// Nil actual value
+	err = validate.FormatValidationErrorHelper("custom_validation", "expected_value", nil)
+	fmt.Printf("Nil actual: %v\n", err.ErrorType)
+
+	// Output:
+	// Integer values: status_code
+	// String values: error_message
+	// Slice values: status_code
+	// Nil expected: custom_validation
+	// Nil actual: custom_validation
+}
+
+// ExampleFormatValidationErrorHelper_autoGeneratedSuggestions demonstrates the
+// auto-generated suggestions feature when custom suggestions are not provided.
+func ExampleFormatValidationErrorHelper_autoGeneratedSuggestions() {
+	// Status code 404 - auto-generates resource not found suggestions
+	err := validate.FormatValidationErrorHelper("status_code", 200, 404,
+		validate.WithValidationContext("GET /api/users/123"))
+	fmt.Println("404 Error (auto suggestions):")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+	fmt.Println()
+
+	// Status code 401 - auto-generates authentication suggestions
+	err = validate.FormatValidationErrorHelper("status_code", 200, 401,
+		validate.WithValidationContext("POST /api/sensitive"))
+	fmt.Println("401 Error (auto suggestions):")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+	fmt.Println()
+
+	// Status code 500 - auto-generates server error suggestions
+	err = validate.FormatValidationErrorHelper("status_code", 200, 500,
+		validate.WithValidationContext("GET /api/data"))
+	fmt.Println("500 Error (auto suggestions):")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+	fmt.Println()
+
+	// Custom error type - auto-generates generic suggestions
+	err = validate.FormatValidationErrorHelper("custom_validation", "expected", "actual")
+	fmt.Println("Custom Error (auto suggestions):")
+	for i, suggestion := range err.Suggestions {
+		fmt.Printf("  %d. %s\n", i+1, suggestion)
+	}
+
+	// Output:
+	// 404 Error (auto suggestions):
+	//   1. Verify the endpoint URL is correct
+	//   2. Check if the resource ID or identifier exists
+	//   3. Ensure the resource hasn't been deleted or moved
+	//
+	// 401 Error (auto suggestions):
+	//   1. Verify authentication credentials are correct
+	//   2. Check if API token or session has expired
+	//   3. Ensure Authorization header is properly formatted (e.g., 'Bearer <token>')
+	//   4. Confirm authentication method is supported
+	//
+	// 500 Error (auto suggestions):
+	//   1. Implement retry logic with exponential backoff
+	//   2. Check service status page for ongoing issues
+	//   3. Contact support if the issue persists
+	//   4. Verify request doesn't trigger server-side bugs
+	//
+	// Custom Error (auto suggestions):
+	//   1. Review the request parameters and try again
+}
+
+// ExampleFormatValidationErrorHelper_vsBuilderPattern compares the streamlined
+// helper with the builder pattern for different complexity scenarios.
+func ExampleFormatValidationErrorHelper_vsBuilderPattern() {
+	fmt.Println("=== Simple Scenario (Helper is cleaner) ===")
+
+	// Using streamlined helper
+	err := validate.FormatValidationErrorHelper("status_code", 200, 404,
+		validate.WithValidationContext("GET /api/users"))
+	fmt.Printf("Helper approach:\n%v\n\n", err)
+
+	// Using builder pattern
+	err = validate.NewValidationFormatter("status_code").
+		WithExpected(200).
+		WithActual(404).
+		WithContext("GET /api/users").
+		Format()
+	fmt.Printf("Builder pattern:\n%v\n\n", err)
+
+	fmt.Println("=== Complex Scenario (Builder pattern offers more control) ===")
+
+	// Using streamlined helper with multiple options
+	err = validate.FormatValidationErrorHelper("error_message",
+		"invalid.*token",
+		"access_denied",
+		validate.WithValidationContext("OAuth validation"),
+		validate.WithFieldName("error"),
+		validate.WithResponseSnippet(`{"error": "access_denied"}`),
+		validate.WithPatternDetails("Regex pattern mismatch"),
+		validate.WithValidationDetails("Pattern did not match", "Got different error"),
+		validate.WithSuggestions("Check token format", "Verify OAuth scopes"),
+	)
+	fmt.Printf("Helper with options:\n%v\n\n", err)
+
+	// Using builder pattern with all options
+	err = validate.NewValidationFormatter("error_message").
+		WithExpected("invalid.*token").
+		WithActual("access_denied").
+		WithContext("OAuth validation").
+		WithFieldName("error").
+		WithResponseSnippet(`{"error": "access_denied"}`).
+		WithPatternDetails("Regex pattern mismatch").
+		WithValidationDetails("Pattern did not match", "Got different error").
+		WithSuggestions("Check token format", "Verify OAuth scopes").
+		Format()
+	fmt.Printf("Builder pattern:\n%v\n", err)
+
+	// Output:
+	// === Simple Scenario (Helper is cleaner) ===
+	// Helper approach:
+	// status_code validation failed
+	//   Expected: 200 (OK)
+	//   Actual:   404 (Not Found)
+	//   Context:  GET /api/users
+	//   Suggestions:
+	//     - Verify the endpoint URL is correct
+	//     - Check if the resource ID or identifier exists
+	//     - Ensure the resource hasn't been deleted or moved
+	//
+	// Builder pattern:
+	// status_code validation failed
+	//   Expected: 200 (OK)
+	//   Actual:   404 (Not Found)
+	//   Context:  GET /api/users
+	//   Suggestions:
+	//     - Verify the endpoint URL is correct
+	//     - Check if the resource ID or identifier exists
+	//     - Ensure the resource hasn't been deleted or moved
+	//
+	// === Complex Scenario (Builder pattern offers more control) ===
+	// Helper with options:
+	// error_message validation failed
+	//   Expected: invalid.*token
+	//   Actual:   access_denied
+	//   Context:  OAuth validation
+	//   Field:    error
+	//   Pattern:  Regex pattern mismatch
+	//   Details:
+	//     - Pattern did not match
+	//     - Got different error
+	//   Response: {"error": "access_denied"}
+	//   Suggestions:
+	//     - Check token format
+	//     - Verify OAuth scopes
+	//
+	// Builder pattern:
+	// error_message validation failed
+	//   Expected: invalid.*token
+	//   Actual:   access_denied
+	//   Context:  OAuth validation
+	//   Field:    error
+	//   Pattern:  Regex pattern mismatch
+	//   Details:
+	//     - Pattern did not match
+	//     - Got different error
+	//   Response: {"error": "access_denied"}
+	//   Suggestions:
+	//     - Check token format
+	//     - Verify OAuth scopes
 }
