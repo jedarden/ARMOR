@@ -66,6 +66,15 @@ type Metrics struct {
 	BackendRequestsTotal   *expvar.Map
 	BackendRequestDuration *expvar.Map
 
+	// Restore verifier metrics (Phase 6)
+	RestoreVerifierLastCheckTime   *expvar.String
+	RestoreVerifierLastCheckError  *expvar.String
+	RestoreVerifierChecksTotal     *expvar.Map
+	RestoreVerifierFailuresTotal   *expvar.Map
+	RestoreVerifierObjectsVerified *expvar.Map
+	RestoreVerifierObjectsFailed   *expvar.Map
+	RestoreVerifierLatencyMillis   *expvar.Map
+
 	// Internal state
 	startTime time.Time
 }
@@ -131,6 +140,15 @@ func NewMetrics() *Metrics {
 	// Backend metrics
 	m.BackendRequestsTotal = new(expvar.Map).Init()
 	m.BackendRequestDuration = new(expvar.Map).Init()
+
+	// Restore verifier metrics
+	m.RestoreVerifierLastCheckTime = new(expvar.String)
+	m.RestoreVerifierLastCheckError = new(expvar.String)
+	m.RestoreVerifierChecksTotal = new(expvar.Map).Init()
+	m.RestoreVerifierFailuresTotal = new(expvar.Map).Init()
+	m.RestoreVerifierObjectsVerified = new(expvar.Map).Init()
+	m.RestoreVerifierObjectsFailed = new(expvar.Map).Init()
+	m.RestoreVerifierLatencyMillis = new(expvar.Map).Init()
 
 	return m
 }
@@ -411,6 +429,35 @@ func (m *Metrics) Handler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		w.Write([]byte(m.PrometheusFormat()))
 	}
+}
+
+// RecordRestoreVerifierCheck records a restore verifier check completion.
+func (m *Metrics) RecordRestoreVerifierCheck(bucket string, duration time.Duration, success bool) {
+	var counter expvar.Int
+	counter.Add(1)
+	m.RestoreVerifierChecksTotal.Set(bucket, &counter)
+
+	if success {
+		m.RestoreVerifierObjectsVerified.Set(bucket, &counter)
+	} else {
+		m.RestoreVerifierFailuresTotal.Set(bucket, &counter)
+		m.RestoreVerifierObjectsFailed.Set(bucket, &counter)
+	}
+
+	latencyKey := fmt.Sprintf("%s_latency", bucket)
+	var latency expvar.Int
+	latency.Set(int64(duration.Milliseconds()))
+	m.RestoreVerifierLatencyMillis.Set(latencyKey, &latency)
+}
+
+// SetRestoreVerifierLastCheckTime sets the last check time for restore verifier.
+func (m *Metrics) SetRestoreVerifierLastCheckTime(t time.Time) {
+	m.RestoreVerifierLastCheckTime.Set(t.Format(time.RFC3339))
+}
+
+// SetRestoreVerifierLastError sets the last error for restore verifier.
+func (m *Metrics) SetRestoreVerifierLastError(err string) {
+	m.RestoreVerifierLastCheckError.Set(err)
 }
 
 // RequestTracker tracks in-flight requests using a WaitGroup.
