@@ -455,7 +455,7 @@ func TestFormatStatusCodeRangeError_Variations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatStatusCodeRangeError(tt.pattern, tt.actual, tt.context)
+			result := FormatStatusCodeRangeError(tt.pattern, tt.actual, tt.context, "status_code")
 
 			if result.ErrorType != tt.wantType {
 				t.Errorf("ErrorType = %v, want %v", result.ErrorType, tt.wantType)
@@ -1197,7 +1197,7 @@ func TestFormatStatusCodeRangeError_InvalidPatterns(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Should not panic, should return ValidationError with details about invalid pattern
-			result := FormatStatusCodeRangeError(tt.pattern, tt.actual, "test context")
+			result := FormatStatusCodeRangeError(tt.pattern, tt.actual, "test context", "status_code")
 
 			if result.ErrorType != "status_code_range" {
 				t.Errorf("ErrorType = %v, want 'status_code_range'", result.ErrorType)

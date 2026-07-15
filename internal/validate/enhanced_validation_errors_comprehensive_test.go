@@ -144,7 +144,7 @@ func TestFormatStatusCodeRangeError_ContentVerification(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := FormatStatusCodeRangeError(tc.pattern, tc.actual, tc.context)
+			err := FormatStatusCodeRangeError(tc.pattern, tc.actual, tc.context, "status_code")
 
 			// Verify error type
 			if err.ErrorType != "status_code_range" {
@@ -726,7 +726,7 @@ func BenchmarkFormatStatusCodeError(b *testing.B) {
 // BenchmarkFormatStatusCodeRangeError benchmarks the performance of range error formatting.
 func BenchmarkFormatStatusCodeRangeError(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_ = FormatStatusCodeRangeError("4xx", 200, "Error response validation")
+		_ = FormatStatusCodeRangeError("4xx", 200, "Error response validation", "status_code")
 	}
 }
 

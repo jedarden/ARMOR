@@ -271,7 +271,7 @@ func TestFormatErrorMessageError_WhitespaceStrings(t *testing.T) {
 }
 
 func TestFormatStatusCodeRangeError_EmptyPattern(t *testing.T) {
-	result := FormatStatusCodeRangeError("", 200, "test")
+	result := FormatStatusCodeRangeError("", 200, "test", "status_code")
 
 	// Should handle empty pattern and generate error details
 	if result.ErrorType != "status_code_range" {
@@ -284,7 +284,7 @@ func TestFormatStatusCodeRangeError_EmptyPattern(t *testing.T) {
 }
 
 func TestFormatStatusCodeRangeError_EmptyContext(t *testing.T) {
-	result := FormatStatusCodeRangeError("4xx", 200, "")
+	result := FormatStatusCodeRangeError("4xx", 200, "", "status_code")
 
 	if result.Context != "" {
 		t.Errorf("Context = %v, want empty string", result.Context)
