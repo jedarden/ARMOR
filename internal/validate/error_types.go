@@ -531,12 +531,12 @@ func (ve ValidationError) Error() string {
 	}
 
 	// Pattern details
-	if ve.PatternDetails != "" {
+	if strings.TrimSpace(ve.PatternDetails) != "" {
 		b.WriteString(fmt.Sprintf("  Pattern:  %s\n", ve.PatternDetails))
 	}
 
 	// Range info
-	if ve.RangeInfo != "" {
+	if strings.TrimSpace(ve.RangeInfo) != "" {
 		b.WriteString(fmt.Sprintf("  Range:    %s\n", ve.RangeInfo))
 	}
 
@@ -553,23 +553,15 @@ func (ve ValidationError) Error() string {
 		b.WriteString(fmt.Sprintf("  Response: %s\n", ve.ResponseSnippet))
 	}
 
-	// Suggestions - format as "Common causes:" for status code validation
+	// Suggestions - format consistently across all error types
 	if len(ve.Suggestions) > 0 {
-		// Use "Common causes:" for status code validation, "Suggestions:" otherwise
-		if ve.ErrorType == "status_code" {
-			b.WriteString("  Common causes:\n")
-			for i, suggestion := range ve.Suggestions {
-				b.WriteString(fmt.Sprintf("    %d. %s\n", i+1, suggestion))
-			}
-		} else {
-			b.WriteString("  Suggestions:\n")
-			for i, suggestion := range ve.Suggestions {
-				// Don't add trailing newline after last suggestion
-				if i == len(ve.Suggestions)-1 {
-					b.WriteString(fmt.Sprintf("    - %s", suggestion))
-				} else {
-					b.WriteString(fmt.Sprintf("    - %s\n", suggestion))
-				}
+		b.WriteString("  Suggestions:\n")
+		for i, suggestion := range ve.Suggestions {
+			// Don't add trailing newline after last suggestion
+			if i == len(ve.Suggestions)-1 {
+				b.WriteString(fmt.Sprintf("    - %s", suggestion))
+			} else {
+				b.WriteString(fmt.Sprintf("    - %s\n", suggestion))
 			}
 		}
 	}

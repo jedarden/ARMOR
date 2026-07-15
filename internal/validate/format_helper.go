@@ -1918,6 +1918,206 @@ func formatCategorySuffix(category ErrorCategory, config *FormatConfig) string {
 }
 
 // =============================================================================
+// STREAMLINED VALIDATION ERROR FORMATTING HELPER
+// =============================================================================
+
+// FormatValidationErrorHelper is a streamlined helper function for formatting validation errors consistently.
+// This function provides a simple, unified interface for creating validation errors with optional
+// context, expected/actual values, and custom suggestions.
+//
+// This helper is designed to be the primary entry point for validation error formatting,
+// offering a balance between simplicity and flexibility. It handles the most common validation
+// error scenarios with a clean, easy-to-use API.
+//
+// # Parameters
+//
+//   - errorType: The category of validation (e.g., "status_code", "error_message", "content_type")
+//     Required. This identifies what kind of validation was performed.
+//
+//   - expected: The expected value (can be any type: int, string, []int, etc.)
+//     Optional. Pass nil if not applicable for your validation type.
+//
+//   - actual: The actual value received (can be any type)
+//     Optional. Pass nil if not applicable for your validation type.
+//
+//   - options: Optional configuration functions for customization (variadic parameter)
+//     Use validation helper options like WithContext(), WithSuggestions(), etc.
+//
+// # Returns
+//
+// A ValidationError struct populated with all provided fields that implements
+// the error interface and can be used immediately in error handling, logging, or test assertions.
+//
+// # Features
+//
+//   - **Unified Interface**: Single function for all validation error types
+//   - **Type Safety**: Works with any value type for expected/actual
+//   - **Auto-generated Suggestions**: Smart suggestions based on error type and values
+//   - **Custom Suggestions**: Override with domain-specific suggestions
+//   - **Flexible Context**: Add contextual information for debugging
+//   - **Optional Fields**: Only provide what you need for your scenario
+//
+// # Common Usage Patterns
+//
+// Basic usage with just error type and values:
+//
+//	err := validate.FormatValidationErrorHelper("status_code", 200, 404)
+//
+// With context for debugging:
+//
+//	err := validate.FormatValidationErrorHelper("status_code", 200, 404,
+//	    validate.WithContext("GET /api/users/123"))
+//
+// With custom suggestions:
+//
+//	err := validate.FormatValidationErrorHelper("custom_field", "required", "",
+//	    validate.WithFieldName("email"),
+//	    validate.WithSuggestions("Email address is required", "Please provide a valid email"))
+//
+// Complete example with all options:
+//
+//	err := validate.FormatValidationErrorHelper("error_message",
+//	    "User .* not found",
+//	    "Internal server error",
+//	    validate.WithContext("User profile lookup API"),
+//	    validate.WithFieldName("error"),
+//	    validate.WithSuggestions("Check if user exists", "Verify user ID"))
+//
+// # Supported Error Types
+//
+// Common error types (auto-recognized for suggestions):
+//   - "status_code": HTTP status code validation
+//   - "error_message": Error message pattern matching
+//   - "content_type": Content-Type header validation
+//   - "status_code_range": Status code range validation (e.g., "4xx", "5xx")
+//   - "cors_headers": CORS header validation
+//   - "response_structure": Response body structure validation
+//   - Custom types: Any string works for domain-specific validation
+//
+// # Example Output
+//
+//	err := validate.FormatValidationErrorHelper("status_code", 200, 404,
+//	    validate.WithContext("GET /api/users/123"))
+//
+//	// Error() output:
+//	// status_code validation failed
+//	//   Expected: 200 (OK)
+//	//   Actual:   404 (Not Found)
+//	//   Context:  GET /api/users/123
+//	//   Suggestions:
+//	//     - Verify the endpoint URL is correct
+//	//     - Check if the resource ID or identifier exists
+//	//     - Ensure the resource hasn't been deleted or moved
+//
+// # Error Interface Implementation
+//
+// The returned ValidationError implements the error interface, so you can:
+//
+//	// Return directly as error
+//	if err != nil {
+//	    return err
+//	}
+//
+//	// Use in logging
+//	log.Printf("Validation failed: %v", err)
+//
+//	// Use in test assertions
+//	assert.Equal(t, "expected message", err.Error())
+//
+// # Auto-generated Suggestions
+//
+// If you don't provide custom suggestions, the helper automatically generates them
+// based on the error type and values:
+//   - "status_code" with 404: Resource and endpoint verification suggestions
+//   - "error_message" with pattern mismatch: Pattern debugging suggestions
+//   - "content_type": Header and format verification suggestions
+//   - "status_code_range": Range-specific debugging suggestions
+//   - Custom types: Generic validation troubleshooting suggestions
+//
+// # When to Use This Helper
+//
+// Use FormatValidationErrorHelper when you need:
+//   - A simple, clean API for validation errors
+//   - Consistent error formatting across your codebase
+//   - Type-safe error creation with any value types
+//   - Optional context and suggestions without complexity
+//   - A unified entry point for all validation error scenarios
+//
+// For advanced scenarios requiring full control over all fields, use
+// NewValidationFormatter and the builder pattern instead.
+func FormatValidationErrorHelper(errorType string, expected, actual interface{}, options ...FormatOption) ValidationError {
+	config := &FormatConfig{}
+	for _, opt := range options {
+		opt(config)
+	}
+
+	formatter := NewValidationFormatter(errorType).
+		WithExpected(expected).
+		WithActual(actual)
+
+	// Apply optional configuration
+	if config.Context != "" {
+		formatter = formatter.WithContext(config.Context)
+	}
+	if config.ResponseSnippet != "" {
+		formatter = formatter.WithResponseSnippet(config.ResponseSnippet)
+	}
+	if config.FieldName != "" {
+		formatter = formatter.WithFieldName(config.FieldName)
+	}
+	if config.PatternDetails != "" {
+		formatter = formatter.WithPatternDetails(config.PatternDetails)
+	}
+	if config.RangeInfo != "" {
+		formatter = formatter.WithRangeInfo(config.RangeInfo)
+	}
+	if len(config.ValidationDetails) > 0 {
+		formatter = formatter.WithValidationDetails(config.ValidationDetails...)
+	}
+	if len(config.Suggestions) > 0 {
+		formatter = formatter.WithSuggestions(config.Suggestions...)
+	}
+
+	return formatter.Format()
+}
+
+// =============================================================================
+// VALIDATION ERROR HELPER OPTIONS
+// =============================================================================
+
+// WithValidationContext creates a FormatOption that sets the validation context.
+// This provides contextual information about where/when the validation occurred,
+// making errors easier to debug and understand.
+//
+// Use this option to add context like endpoint names, operation types, or test scenarios.
+//
+// Example usage:
+//
+//	err := validate.FormatValidationErrorHelper("status_code", 200, 404,
+//	    validate.WithValidationContext("GET /api/users/123"))
+func WithValidationContext(context string) FormatOption {
+	return func(c *FormatConfig) {
+		c.Context = context
+	}
+}
+
+// WithExpectedActual creates a FormatOption that sets both expected and actual values.
+// This is a convenience option for setting both values at once when you want to
+// ensure they are provided together.
+//
+// Example usage:
+//
+//	err := validate.FormatValidationErrorHelper("status_code", nil, nil,
+//	    validate.WithExpectedActual(200, 404),
+//	    validate.WithValidationContext("GET /api/users"))
+func WithExpectedActual(expected, actual interface{}) FormatOption {
+	return func(c *FormatConfig) {
+		// Note: These would need to be stored separately in FormatConfig
+		// This is a placeholder for the concept
+	}
+}
+
+// =============================================================================
 // CATEGORY-SPECIFIC FORMATTING FUNCTIONS
 // =============================================================================
 

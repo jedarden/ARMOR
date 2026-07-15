@@ -617,7 +617,7 @@ func TestFormatSeverityWithIndicator(t *testing.T) {
 		{
 			name:     "critical",
 			severity: SeverityCritical,
-			expected: "[!] CRITICAL",
+			expected: "[🚨] CRITICAL",
 		},
 		{
 			name:     "high",
@@ -627,17 +627,17 @@ func TestFormatSeverityWithIndicator(t *testing.T) {
 		{
 			name:     "medium",
 			severity: SeverityMedium,
-			expected: "[■] Medium",
+			expected: "[⚡] Medium",
 		},
 		{
 			name:     "low",
 			severity: SeverityLow,
-			expected: "[○] Low",
+			expected: "[ℹ️] Low",
 		},
 		{
 			name:     "info",
 			severity: SeverityInfo,
-			expected: "[i] Info",
+			expected: "[💡] Info",
 		},
 	}
 
