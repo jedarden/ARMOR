@@ -18,10 +18,13 @@ COPY . .
 # and are automatically skipped by this gate.
 RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short
 
-# Build the binary
+# Build the main armor binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /armor ./cmd/armor
 
-# Runtime stage
+# Build the restore-verifier binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /restore-verifier ./cmd/restore-verifier
+
+# Runtime stage for armor
 FROM scratch
 
 # Copy CA certificates and timezone data
@@ -36,3 +39,19 @@ EXPOSE 9000 9001
 
 # Set entrypoint
 ENTRYPOINT ["/armor"]
+
+# Runtime stage for restore-verifier
+FROM scratch
+
+# Copy CA certificates and timezone data
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
+# Copy the binary
+COPY --from=builder /restore-verifier /restore-verifier
+
+# Expose ports
+EXPOSE 9002
+
+# Set entrypoint
+ENTRYPOINT ["/restore-verifier"]

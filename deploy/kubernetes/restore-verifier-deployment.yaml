@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restore-verifier
+  labels:
+    app: restore-verifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: restore-verifier
+  template:
+    metadata:
+      labels:
+        app: restore-verifier
+    spec:
+      containers:
+      - name: restore-verifier
+        image: ronaldraygun/restore-verifier:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 9002
+        env:
+        # Required B2 configuration
+        - name: ARMOR_B2_REGION
+          valueFrom:
+            secretKeyRef:
+              name: restore-verifier-secrets
+              key: b2-region
+        - name: ARMOR_B2_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: restore-verifier-secrets
+              key: b2-endpoint
+        - name: ARMOR_B2_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: restore-verifier-secrets
+              key: b2-access-key-id
+        - name: ARMOR_B2_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: restore-verifier-secrets
+              key: b2-secret-access-key
+        # Cloudflare domain (optional)
+        - name: ARMOR_CF_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: restore-verifier-secrets
+              key: cf-domain
+          optional: true
+        # Master encryption key (for direct decryption path)
+        - name: ARMOR_MEK
+          valueFrom:
+            secretKeyRef:
+              name: restore-verifier-secrets
+              key: master-encryption-key
+        # Block size (must match the ARMOR server's block size)
+        - name: ARMOR_BLOCK_SIZE
+          value: "65536"
+        # Verifier configuration
+        - name: VERIFIER_CHECK_INTERVAL
+          value: "6h"  # Run verification every 6 hours
+        - name: VERIFIER_SAMPLE_SIZE
+          value: "10"  # Sample 10 historical objects per bucket
+        - name: VERIFIER_HTTP_LISTEN
+          value: ":9002"
+        # Bucket configuration (can also use -bucket flags via command args)
+        # Default buckets: armor-apexalgo, ord-devimprint, iad-ci, iad-kalshi, rs-manager
+        # Add custom buckets via command args in the args section below
+        command: ["/restore-verifier"]
+        args:
+        - "-bucket=armor-apexalgo,,generic"
+        - "-bucket=ord-devimprint,,generic"
+        - "-bucket=iad-ci,,generic"
+        - "-bucket=iad-kalshi,,generic"
+        - "-bucket=rs-manager,,generic"
+        - "-check-interval=6h"
+        - "-sample-size=10"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9002
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9002
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts: []
+      volumes: []
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
