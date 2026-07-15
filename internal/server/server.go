@@ -1168,7 +1168,7 @@ func (s *Server) handleShareRangeRequest(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Decrypt range
-	plaintext, err := decryptor.DecryptRange(encrypted, hmacTable, start, end, plaintextSize)
+	plaintext, err := decryptor.DecryptRange(encrypted, hmacTable, start, end, plaintextSize, false)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to decrypt range: %v", err), http.StatusInternalServerError)
 		return

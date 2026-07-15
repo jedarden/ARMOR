@@ -429,7 +429,7 @@ func TestRequestHelpersWithConfigurableErrorServer(t *testing.T) {
 	defer server.Close()
 
 	t.Run("GET request with error validation", func(t *testing.T) {
-		s3Err := RequestAndValidateError(t, server.URL(), TestRequestOptions{
+		s3Err := RequestAndValidateError(t, server.URL, TestRequestOptions{
 			Method: "GET",
 			Path:   "/resource",
 		}, 404, "NoSuchKey")
@@ -440,7 +440,7 @@ func TestRequestHelpersWithConfigurableErrorServer(t *testing.T) {
 	})
 
 	t.Run("POST request with error validation", func(t *testing.T) {
-		s3Err := RequestAndValidateError(t, server.URL(), TestRequestOptions{
+		s3Err := RequestAndValidateError(t, server.URL, TestRequestOptions{
 			Method: "POST",
 			Path:   "/resource",
 			Body:   strings.NewReader("test"),
@@ -452,7 +452,7 @@ func TestRequestHelpersWithConfigurableErrorServer(t *testing.T) {
 	})
 
 	t.Run("detailed validation", func(t *testing.T) {
-		resp, err := MakeGETRequest(server.URL(), "/resource")
+		resp, err := MakeGETRequest(server.URL, "/resource")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -486,7 +486,7 @@ func TestRequestHelpersWithPredefinedScenarios(t *testing.T) {
 	server := NewSingleErrorServer(404, "NoSuchKey", "The specified key does not exist")
 	defer server.Close()
 
-	s3Err := RequestAndValidateError(t, server.URL(), TestRequestOptions{
+	s3Err := RequestAndValidateError(t, server.URL, TestRequestOptions{
 		Method: "GET",
 		Path:   "/api/blobs/test.txt",
 	}, 404, "NoSuchKey")
@@ -525,7 +525,7 @@ func TestBatchRequestsWithErrorServer(t *testing.T) {
 		{Method: "GET", Path: "/missing"},
 	}
 
-	results := MakeBatchRequests(server.URL(), requests)
+	results := MakeBatchRequests(server.URL, requests)
 
 	if len(results) != 3 {
 		t.Fatalf("Expected 3 results, got %d", len(results))
