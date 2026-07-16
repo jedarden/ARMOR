@@ -54,6 +54,14 @@ const (
 	ErrorTypeRateLimit           = "rate_limit"
 	ErrorTypeRetryExceeded       = "retry_exceeded"
 
+	// Success response validation
+	ErrorTypeSuccessValidation   = "success_validation"
+	ErrorTypeSuccessStructure    = "success_structure"
+	ErrorTypeSuccessDataTypes    = "success_data_types"
+	ErrorTypeSuccessRequiredFields = "success_required_fields"
+	ErrorTypeSuccessContentType  = "success_content_type"
+	ErrorTypeSuccessSchema       = "success_schema"
+
 	// Custom and miscellaneous errors
 	ErrorTypeCustom              = "custom"
 	ErrorTypeUnknown             = "unknown"
@@ -82,6 +90,9 @@ const (
 
 	// CategorySecurity represents authentication and authorization errors
 	CategorySecurity ErrorCategory = "security"
+
+	// CategorySuccess represents successful response validation
+	CategorySuccess ErrorCategory = "success"
 
 	// CategoryCustom represents custom application-specific errors
 	CategoryCustom ErrorCategory = "custom"
@@ -123,6 +134,13 @@ var errorTypeCategoryMap = map[string]ErrorCategory{
 	ErrorTypeTimeout:            CategoryPerformance,
 	ErrorTypeRateLimit:          CategoryPerformance,
 	ErrorTypeRetryExceeded:      CategoryPerformance,
+
+	ErrorTypeSuccessValidation:   CategorySuccess,
+	ErrorTypeSuccessStructure:    CategorySuccess,
+	ErrorTypeSuccessDataTypes:    CategorySuccess,
+	ErrorTypeSuccessRequiredFields: CategorySuccess,
+	ErrorTypeSuccessContentType:  CategorySuccess,
+	ErrorTypeSuccessSchema:       CategorySuccess,
 
 	ErrorTypeCustom:             CategoryCustom,
 	ErrorTypeUnknown:            CategoryCustom,
@@ -293,6 +311,11 @@ func IsCustomErrorType(errorType string) bool {
 	return GetCategoryForErrorType(errorType) == CategoryCustom
 }
 
+// IsSuccessErrorType returns true if the error type is in the Success category.
+func IsSuccessErrorType(errorType string) bool {
+	return GetCategoryForErrorType(errorType) == CategorySuccess
+}
+
 // =============================================================================
 // ERROR TYPE DESCRIPTIONS
 // =============================================================================
@@ -320,6 +343,12 @@ var errorTypeDescriptions = map[string]string{
 	ErrorTypeTimeout:             "Timeout validation",
 	ErrorTypeRateLimit:           "Rate limit validation",
 	ErrorTypeRetryExceeded:       "Retry limit validation",
+	ErrorTypeSuccessValidation:   "Success response validation",
+	ErrorTypeSuccessStructure:    "Success response structure validation",
+	ErrorTypeSuccessDataTypes:    "Success response data types validation",
+	ErrorTypeSuccessRequiredFields: "Success response required fields validation",
+	ErrorTypeSuccessContentType:  "Success response content-type validation",
+	ErrorTypeSuccessSchema:       "Success response schema validation",
 	ErrorTypeCustom:              "Custom validation",
 	ErrorTypeUnknown:             "Unknown validation type",
 }
