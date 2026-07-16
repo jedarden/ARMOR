@@ -156,7 +156,7 @@ func FormatFieldListWith(fields []string, conjunction string) string {
 // This ensures error messages are consistently formatted.
 //
 // Parameters:
-//   - errorType: The type of error (use ErrorType enum or string)
+//   - errorType: The type of error (use ErrorType enum)
 //   - message: The core error message
 //   - fieldName: Optional field name where the error occurred
 //
@@ -164,21 +164,25 @@ func FormatFieldListWith(fields []string, conjunction string) string {
 //
 // Example usage:
 //
-//	msg := FormatErrorMessage("required", "Field is required", "email")
+//	msg := FormatErrorMessage(ErrTypeRequired, "Field is required", "email")
 //	// Returns: "[required] email: Field is required"
 //
-//	msg := FormatErrorMessage("format", "Invalid email format", "")
+//	msg := FormatErrorMessage(ErrTypeFormat, "Invalid email format", "")
 //	// Returns: "[format] Invalid email format"
-func FormatErrorMessage(errorType string, message string, fieldName string) string {
-	errorType = strings.TrimSpace(errorType)
+func FormatErrorMessage(errorType ErrorType, message string, fieldName string) string {
 	message = strings.TrimSpace(message)
 	fieldName = strings.TrimSpace(fieldName)
+
+	// If both message and fieldName are empty, return empty string
+	if message == "" && fieldName == "" {
+		return ""
+	}
 
 	var builder strings.Builder
 
 	// Add error type in brackets
-	if errorType != "" {
-		builder.WriteString(fmt.Sprintf("[%s] ", errorType))
+	if errorType != "" && errorType != ErrTypeUnknown {
+		builder.WriteString(fmt.Sprintf("[%s] ", errorType.String()))
 	}
 
 	// Add field name if present
@@ -190,6 +194,29 @@ func FormatErrorMessage(errorType string, message string, fieldName string) stri
 	builder.WriteString(message)
 
 	return builder.String()
+}
+
+// FormatErrorMessageString creates a standardized error message from string components.
+// This is a backward-compatible wrapper that accepts string errorType and converts it to ErrorType enum.
+//
+// Parameters:
+//   - errorType: The type of error as a string (will be converted to ErrorType enum)
+//   - message: The core error message
+//   - fieldName: Optional field name where the error occurred
+//
+// Returns a formatted error message string.
+//
+// Example usage:
+//
+//	msg := FormatErrorMessageString("required", "Field is required", "email")
+//	// Returns: "[required] email: Field is required"
+//
+//	msg := FormatErrorMessageString("format", "Invalid email format", "")
+//	// Returns: "[format] Invalid email format"
+func FormatErrorMessageString(errorTypeStr string, message string, fieldName string) string {
+	errorTypeStr = strings.TrimSpace(errorTypeStr)
+	errorType := ErrorTypeFromString(errorTypeStr)
+	return FormatErrorMessage(errorType, message, fieldName)
 }
 
 // FormatErrorWithValues creates an error message showing expected vs actual values.
@@ -697,7 +724,8 @@ func FormatValidationErrorFull(err ValidationError, includeSeverity bool, contex
 	}
 
 	// Add error type and field
-	builder.WriteString(FormatErrorMessage(err.ErrorType, err.Message, err.FieldName))
+	errorTypeEnum := ErrorTypeFromString(err.ErrorType)
+	builder.WriteString(FormatErrorMessage(errorTypeEnum, err.Message, err.FieldName))
 
 	// Add expected/actual values if present
 	if err.Expected != nil || err.Actual != nil {
@@ -798,7 +826,8 @@ func FormatValidationErrorWithExpectedActual(err ValidationError, includeSeverit
 	}
 
 	// Add error type and field
-	builder.WriteString(FormatErrorMessage(err.ErrorType, err.Message, err.FieldName))
+	errorTypeEnum := ErrorTypeFromString(err.ErrorType)
+	builder.WriteString(FormatErrorMessage(errorTypeEnum, err.Message, err.FieldName))
 
 	// Add expected/actual values - prefer ExpectedActual parameter if provided and non-empty
 	if !expectedActual.IsEmpty() {

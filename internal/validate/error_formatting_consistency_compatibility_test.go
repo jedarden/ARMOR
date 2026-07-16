@@ -703,7 +703,7 @@ func TestFormatError_CrossFunctionConsistency(t *testing.T) {
 		t.Run(tc.errorType.String(), func(t *testing.T) {
 			// FormatErrorWithType should use FormatErrorMessage internally
 			result1 := FormatErrorWithType(tc.errorType, tc.message, tc.fieldName)
-			result2 := FormatErrorMessage(tc.errorType.String(), tc.message, tc.fieldName)
+			result2 := FormatErrorMessage(tc.errorType, tc.message, tc.fieldName)
 
 			// They should produce the same result
 			if result1 != result2 {
