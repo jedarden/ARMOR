@@ -1,0 +1,64 @@
+{
+  "scan_date": "2026-07-16",
+  "declarative_config_path": "/home/coding/declarative-config",
+  "clusters_found": [
+    "iad-acb",
+    "iad-ci",
+    "iad-kalshi",
+    "iad-native-ads",
+    "ord-devimprint",
+    "rs-manager"
+  ],
+  "deployments_by_cluster": {
+    "iad-acb": [
+      {
+        "file_path": "/home/coding/declarative-config/k8s/iad-acb/ai-code-battle/acb-armor-deployment.yml",
+        "image_tag": "fcbf6d3",
+        "full_image": "ronaldraygun/armor:fcbf6d3"
+      }
+    ],
+    "iad-ci": [
+      {
+        "file_path": "/home/coding/declarative-config/k8s/iad-ci/armor/armor-deployment.yaml",
+        "image_tag": "0.1.24",
+        "full_image": "ronaldraygun/armor:0.1.24"
+      }
+    ],
+    "iad-kalshi": [
+      {
+        "file_path": "/home/coding/declarative-config/k8s/iad-kalshi/armor/armor-deployment.yml",
+        "image_tag": "0.1.13",
+        "full_image": "ronaldraygun/armor:0.1.13"
+      }
+    ],
+    "iad-native-ads": [
+      {
+        "file_path": "/home/coding/declarative-config/k8s/iad-native-ads/armor/armor-deployment.yml",
+        "image_tag": "0.1.42",
+        "full_image": "ronaldraygun/armor:0.1.42"
+      }
+    ],
+    "ord-devimprint": [
+      {
+        "file_path": "/home/coding/declarative-config/k8s/ord-devimprint/devimprint/armor-deployment.yml",
+        "image_tag": "0.1.42",
+        "full_image": "ronaldraygun/armor:0.1.42"
+      }
+    ],
+    "rs-manager": [
+      {
+        "file_path": "/home/coding/declarative-config/k8s/rs-manager/armor/armor-deployment.yml",
+        "image_tag": "0.1.13",
+        "full_image": "ronaldraygun/armor:0.1.13"
+      }
+    ]
+  },
+  "simplified_mapping": {
+    "iad-acb": "fcbf6d3",
+    "iad-ci": "0.1.24",
+    "iad-kalshi": "0.1.13",
+    "iad-native-ads": "0.1.42",
+    "ord-devimprint": "0.1.42",
+    "rs-manager": "0.1.13"
+  }
+}
