@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -239,6 +240,8 @@ func (m *Monitor) runCheck(ctx context.Context) {
 // runMultipartCheck performs a single multipart canary check with retries.
 func (m *Monitor) runMultipartCheck(ctx context.Context) {
 	var lastErr error
+	var lastAttemptDuration time.Duration
+	var lastAttemptOp string
 
 	metrics.DefaultMetrics.IncMultipartCanaryChecks()
 	metrics.DefaultMetrics.SetMultipartCanaryLastCheck(time.Now())
@@ -252,7 +255,10 @@ func (m *Monitor) runMultipartCheck(ctx context.Context) {
 			}
 		}
 
+		checkStart := time.Now()
 		result, err := m.checkMultipart(ctx)
+		lastAttemptDuration = time.Since(checkStart)
+
 		if err == nil {
 			m.updateMultipartStateSuccess(result)
 			metrics.DefaultMetrics.SetMultipartCanaryLastError("")
@@ -260,6 +266,23 @@ func (m *Monitor) runMultipartCheck(ctx context.Context) {
 			return
 		}
 		lastErr = err
+
+		// Determine which operation failed based on error message
+		// This is best-effort since the error comes from deep in the call stack
+		errStr := err.Error()
+		if strings.Contains(errStr, "upload") || strings.Contains(errStr, "part") {
+			lastAttemptOp = "upload"
+		} else if strings.Contains(errStr, "download") || strings.Contains(errStr, "decrypt") || strings.Contains(errStr, "verify") {
+			lastAttemptOp = "verify"
+		} else {
+			// Default to upload if we can't determine
+			lastAttemptOp = "upload"
+		}
+	}
+
+	// Record failure metric for the last attempt
+	if lastAttemptOp != "" && lastAttemptDuration > 0 {
+		metrics.DefaultMetrics.RecordMultipartUpload(lastAttemptOp, "failure", lastAttemptDuration)
 	}
 
 	metrics.DefaultMetrics.IncMultipartCanaryFailures()
@@ -572,6 +595,9 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 
 	result.UploadLatencyMs = time.Since(uploadStart).Milliseconds()
 
+	// Record successful upload duration metric
+	metrics.DefaultMetrics.RecordMultipartUpload("upload", "success", time.Since(uploadStart))
+
 	// Download and verify (same verification as regular canary)
 	downloadStart := time.Now()
 	body, headers, err := m.backend.GetRangeWithHeaders(ctx, m.bucket, key, 0, int64(len(envelope)))
@@ -584,6 +610,9 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to read downloaded multipart canary: %w", err)
 	}
 	result.DownloadLatencyMs = time.Since(downloadStart).Milliseconds()
+
+	// Record successful verify duration metric
+	metrics.DefaultMetrics.RecordMultipartUpload("verify", "success", time.Since(downloadStart))
 
 	// Check Cloudflare cache status
 	if cfStatus, ok := headers["CF-Cache-Status"]; ok {

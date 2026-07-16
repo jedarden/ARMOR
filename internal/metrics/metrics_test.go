@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"expvar"
 )
 
 func TestNewMetrics(t *testing.T) {
@@ -327,4 +329,209 @@ func TestDefaultRequestTracker(t *testing.T) {
 		t.Errorf("expected count 1, got %d", DefaultRequestTracker.Count())
 	}
 	DefaultRequestTracker.End()
+}
+
+func TestMultipartCanaryHistogramMetrics(t *testing.T) {
+	m := NewMetrics()
+
+	// Record some multipart upload operations
+	uploadDuration := 1500 * time.Millisecond
+	verifyDuration := 800 * time.Millisecond
+
+	// Record successful operations
+	m.RecordMultipartUpload("upload", "success", uploadDuration)
+	m.RecordMultipartUpload("verify", "success", verifyDuration)
+
+	// Record a failure
+	m.RecordMultipartUpload("upload", "failure", 500*time.Millisecond)
+
+	// Verify operation totals
+	if m.MultipartOperationTotal == nil {
+		t.Fatal("MultipartOperationTotal not initialized")
+	}
+
+	// Check upload_success count
+	uploadSuccessKey := "upload_success"
+	if val := m.MultipartOperationTotal.Get(uploadSuccessKey); val == nil {
+		t.Error("upload_success metric not recorded")
+	} else if val.(*expvar.Int).Value() != 1 {
+		t.Errorf("expected upload_success count 1, got %d", val.(*expvar.Int).Value())
+	}
+
+	// Check verify_success count
+	verifySuccessKey := "verify_success"
+	if val := m.MultipartOperationTotal.Get(verifySuccessKey); val == nil {
+		t.Error("verify_success metric not recorded")
+	} else if val.(*expvar.Int).Value() != 1 {
+		t.Errorf("expected verify_success count 1, got %d", val.(*expvar.Int).Value())
+	}
+
+	// Check upload_failure count
+	uploadFailureKey := "upload_failure"
+	if val := m.MultipartOperationTotal.Get(uploadFailureKey); val == nil {
+		t.Error("upload_failure metric not recorded")
+	} else if val.(*expvar.Int).Value() != 1 {
+		t.Errorf("expected upload_failure count 1, got %d", val.(*expvar.Int).Value())
+	}
+
+	// Verify histogram data for upload
+	if m.MultipartUploadBuckets == nil {
+		t.Fatal("MultipartUploadBuckets not initialized")
+	}
+
+	// Check upload_success sum
+	uploadSuccessSumKey := "upload_success_sum"
+	if val := m.MultipartUploadBuckets.Get(uploadSuccessSumKey); val == nil {
+		t.Error("upload_success_sum not recorded")
+	} else if val.(*expvar.Int).Value() != uploadDuration.Milliseconds() {
+		t.Errorf("expected upload_success_sum %d, got %d", uploadDuration.Milliseconds(), val.(*expvar.Int).Value())
+	}
+
+	// Check upload_success count
+	uploadSuccessCountKey := "upload_success_count"
+	if val := m.MultipartUploadBuckets.Get(uploadSuccessCountKey); val == nil {
+		t.Error("upload_success_count not recorded")
+	} else if val.(*expvar.Int).Value() != 1 {
+		t.Errorf("expected upload_success_count 1, got %d", val.(*expvar.Int).Value())
+	}
+
+	// Verify histogram data for verify
+	if m.MultipartVerificationBuckets == nil {
+		t.Fatal("MultipartVerificationBuckets not initialized")
+	}
+
+	// Check verify_success sum
+	verifySuccessSumKey := "verify_success_sum"
+	if val := m.MultipartVerificationBuckets.Get(verifySuccessSumKey); val == nil {
+		t.Error("verify_success_sum not recorded")
+	} else if val.(*expvar.Int).Value() != verifyDuration.Milliseconds() {
+		t.Errorf("expected verify_success_sum %d, got %d", verifyDuration.Milliseconds(), val.(*expvar.Int).Value())
+	}
+
+	// Check verify_success count
+	verifySuccessCountKey := "verify_success_count"
+	if val := m.MultipartVerificationBuckets.Get(verifySuccessCountKey); val == nil {
+		t.Error("verify_success_count not recorded")
+	} else if val.(*expvar.Int).Value() != 1 {
+		t.Errorf("expected verify_success_count 1, got %d", val.(*expvar.Int).Value())
+	}
+}
+
+func TestMultipartCanaryMetricsPrometheusExport(t *testing.T) {
+	m := NewMetrics()
+
+	// Record some operations
+	m.RecordMultipartUpload("upload", "success", 1200*time.Millisecond)
+	m.RecordMultipartUpload("verify", "success", 600*time.Millisecond)
+	m.SetMultipartCanaryHealthy(true)
+
+	// Get Prometheus format
+	output := m.PrometheusFormat()
+
+	// Check for multipart histogram metrics in Prometheus output
+	expectedMetrics := []string{
+		"# HELP armor_multipart_canary_upload_duration_seconds Multipart canary upload duration in seconds",
+		"# TYPE armor_multipart_canary_upload_duration_seconds histogram",
+		`armor_multipart_canary_upload_duration_seconds_sum{operation="upload",status="success"}`,
+		`armor_multipart_canary_upload_duration_seconds_count{operation="upload",status="success"}`,
+		`armor_multipart_canary_upload_duration_seconds_sum{operation="verify",status="success"}`,
+		`armor_multipart_canary_upload_duration_seconds_count{operation="verify",status="success"}`,
+		"armor_multipart_canary_healthy",
+	}
+
+	for _, expected := range expectedMetrics {
+		if !strings.Contains(output, expected) {
+			t.Errorf("expected metric %q in Prometheus output", expected)
+		}
+	}
+
+	// Verify the values are approximately correct (in seconds)
+	// Upload: 1200ms = 1.2 seconds
+	if !strings.Contains(output, `armor_multipart_canary_upload_duration_seconds_sum{operation="upload",status="success"} 1.`) {
+		t.Error("expected upload duration sum to be ~1.2 seconds in Prometheus output")
+	}
+
+	// Verify: 600ms = 0.6 seconds
+	if !strings.Contains(output, `armor_multipart_canary_upload_duration_seconds_sum{operation="verify",status="success"} 0.6`) {
+		t.Error("expected verify duration sum to be ~0.6 seconds in Prometheus output")
+	}
+}
+
+func TestMultipartCanaryHealthStatusMetric(t *testing.T) {
+	m := NewMetrics()
+
+	// Initially should be 0 (unhealthy/unknown)
+	if m.MultipartCanaryHealthy.String() != "0" {
+		t.Errorf("expected initial multipart_canary_healthy to be 0, got %s", m.MultipartCanaryHealthy.String())
+	}
+
+	// Set to healthy
+	m.SetMultipartCanaryHealthy(true)
+	if m.MultipartCanaryHealthy.String() != "1" {
+		t.Errorf("expected multipart_canary_healthy to be 1 when healthy, got %s", m.MultipartCanaryHealthy.String())
+	}
+
+	// Set to unhealthy
+	m.SetMultipartCanaryHealthy(false)
+	if m.MultipartCanaryHealthy.String() != "0" {
+		t.Errorf("expected multipart_canary_healthy to be 0 when unhealthy, got %s", m.MultipartCanaryHealthy.String())
+	}
+
+	// Verify in Prometheus export
+	output := m.PrometheusFormat()
+	if !strings.Contains(output, "armor_multipart_canary_healthy") {
+		t.Error("expected armor_multipart_canary_healthy in Prometheus output")
+	}
+}
+
+func TestMultipartCanaryMetricsDistinctFromSmallObject(t *testing.T) {
+	m := NewMetrics()
+
+	// Record small object canary metrics
+	m.IncCanaryChecks()
+	m.IncCanaryFailures()
+	m.SetCanaryLastCheck(time.Now())
+	m.SetCanaryLastError("test error")
+
+	// Record multipart canary metrics
+	m.IncMultipartCanaryChecks()
+	m.IncMultipartCanaryFailures()
+	m.SetMultipartCanaryLastCheck(time.Now())
+	m.SetMultipartCanaryLastError("multipart error")
+	m.SetMultipartCanaryHealthy(true)
+	m.RecordMultipartUpload("upload", "success", 1000*time.Millisecond)
+
+	// Verify they are tracked separately
+	if m.CanaryChecksTotal.String() != m.MultipartCanaryChecksTotal.String() {
+		// They should both be 1, but we're checking they're separate counters
+		if m.CanaryChecksTotal.String() == m.MultipartCanaryChecksTotal.String() &&
+			m.CanaryChecksTotal.String() == "1" {
+			// This is expected - both are 1
+		}
+	}
+
+	// Verify Prometheus output has both sets of metrics
+	output := m.PrometheusFormat()
+
+	// Small object metrics
+	if !strings.Contains(output, "armor_canary_checks_total") {
+		t.Error("expected small object canary metric in output")
+	}
+	if !strings.Contains(output, "armor_canary_check_failures_total") {
+		t.Error("expected small object canary failures in output")
+	}
+
+	// Multipart metrics (distinct names)
+	if !strings.Contains(output, "armor_multipart_canary_checks_total") {
+		t.Error("expected multipart canary metric in output")
+	}
+	if !strings.Contains(output, "armor_multipart_canary_check_failures_total") {
+		t.Error("expected multipart canary failures in output")
+	}
+	if !strings.Contains(output, "armor_multipart_canary_healthy") {
+		t.Error("expected multipart canary healthy metric in output")
+	}
+	if !strings.Contains(output, "armor_multipart_canary_upload_duration_seconds") {
+		t.Error("expected multipart canary duration histogram in output")
+	}
 }

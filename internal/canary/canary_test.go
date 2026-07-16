@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"expvar"
+
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/metrics"
@@ -948,3 +950,100 @@ func TestCanaryHealthResponseJSON(t *testing.T) {
 		t.Error("expected JSON to contain multipart_healthy_status field")
 	}
 }
+
+// TestMultipartCanaryMetricsEmission tests that multipart canary metrics
+// are properly emitted during a multipart check.
+func TestMultipartCanaryMetricsEmission(t *testing.T) {
+	mb := newMockBackend()
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	cfg := Config{
+		Backend:        mb,
+		Bucket:         "test-bucket",
+		MultipartSize:  100,
+		BlockSize:      65536,
+		MEK:            mek,
+		InstanceID:     "test-instance",
+	}
+
+	m := NewMonitor(cfg)
+	ctx := context.Background()
+
+	// Record initial metric state for comparison
+	var initialUploadCount int64
+	var initialVerifyCount int64
+
+	if metrics.DefaultMetrics.MultipartUploadBuckets != nil {
+		if count := metrics.DefaultMetrics.MultipartUploadBuckets.Get("upload_success_count"); count != nil {
+			initialUploadCount = count.(*expvar.Int).Value()
+		}
+	}
+	if metrics.DefaultMetrics.MultipartVerificationBuckets != nil {
+		if count := metrics.DefaultMetrics.MultipartVerificationBuckets.Get("verify_success_count"); count != nil {
+			initialVerifyCount = count.(*expvar.Int).Value()
+		}
+	}
+
+	// Run a successful multipart check
+	m.runMultipartCheck(ctx)
+
+	// Verify metrics were updated
+	healthy := metrics.DefaultMetrics.MultipartCanaryHealthy.String()
+	if healthy != "1" {
+		t.Errorf("expected multipart canary healthy to be 1, got %s", healthy)
+	}
+
+	// Verify histogram metrics were recorded
+	if metrics.DefaultMetrics.MultipartUploadBuckets == nil {
+		t.Fatal("MultipartUploadBuckets not initialized")
+	}
+	if metrics.DefaultMetrics.MultipartVerificationBuckets == nil {
+		t.Fatal("MultipartVerificationBuckets not initialized")
+	}
+
+	// Check that upload_success was recorded and incremented
+	uploadSuccessCountKey := "upload_success_count"
+	uploadSuccessCount := metrics.DefaultMetrics.MultipartUploadBuckets.Get(uploadSuccessCountKey)
+	if uploadSuccessCount == nil {
+		t.Error("expected upload_success_count to be recorded")
+	} else if uploadSuccessCount.(*expvar.Int).Value() != initialUploadCount+1 {
+		t.Errorf("expected upload_success_count to increment by 1, got %d (was %d)", uploadSuccessCount.(*expvar.Int).Value(), initialUploadCount)
+	}
+
+	// Check that verify_success was recorded and incremented
+	verifySuccessCountKey := "verify_success_count"
+	verifySuccessCount := metrics.DefaultMetrics.MultipartVerificationBuckets.Get(verifySuccessCountKey)
+	if verifySuccessCount == nil {
+		t.Error("expected verify_success_count to be recorded")
+	} else if verifySuccessCount.(*expvar.Int).Value() != initialVerifyCount+1 {
+		t.Errorf("expected verify_success_count to increment by 1, got %d (was %d)", verifySuccessCount.(*expvar.Int).Value(), initialVerifyCount)
+	}
+
+	// Verify histogram has the correct labels in Prometheus output
+	prometheusOutput := metrics.DefaultMetrics.PrometheusFormat()
+
+	expectedMetricNames := []string{
+		"armor_multipart_canary_checks_total",
+		"armor_multipart_canary_healthy",
+		"armor_multipart_canary_upload_duration_seconds",
+	}
+
+	for _, metricName := range expectedMetricNames {
+		if !strings.Contains(prometheusOutput, metricName) {
+			t.Errorf("expected Prometheus output to contain %s", metricName)
+		}
+	}
+
+	// Verify histogram has the correct labels
+	if !strings.Contains(prometheusOutput, `operation="upload"`) {
+		t.Error("expected Prometheus output to contain operation=upload label")
+	}
+	if !strings.Contains(prometheusOutput, `operation="verify"`) {
+		t.Error("expected Prometheus output to contain operation=verify label")
+	}
+	if !strings.Contains(prometheusOutput, `status="success"`) {
+		t.Error("expected Prometheus output to contain status=success label")
+	}
+}
+
