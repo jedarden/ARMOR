@@ -48,6 +48,11 @@ type Metrics struct {
 	MultipartCanaryLastCheckError *expvar.String
 	MultipartCanaryHealthy        *expvar.Int
 
+	// Multipart histogram metrics (bucketed by operation and status)
+	MultipartUploadBuckets    *expvar.Map // Histogram buckets: upload operation, keyed by latency
+	MultipartVerificationBuckets *expvar.Map // Histogram buckets: verification operation, keyed by latency
+	MultipartOperationTotal    *expvar.Map // Counter by operation and status: operation_status
+
 	// Multipart metrics
 	ActiveMultipartUploads *expvar.Int
 	MultipartPartsUploaded *expvar.Int
@@ -122,6 +127,11 @@ func NewMetrics() *Metrics {
 	m.MultipartCanaryLastCheckTime = new(expvar.String)
 	m.MultipartCanaryLastCheckError = new(expvar.String)
 	m.MultipartCanaryHealthy = new(expvar.Int)
+
+	// Multipart histogram metrics
+	m.MultipartUploadBuckets = new(expvar.Map).Init()
+	m.MultipartVerificationBuckets = new(expvar.Map).Init()
+	m.MultipartOperationTotal = new(expvar.Map).Init()
 
 	// Multipart metrics
 	m.ActiveMultipartUploads = new(expvar.Int)
@@ -292,6 +302,57 @@ func (m *Metrics) SetMultipartCanaryHealthy(healthy bool) {
 	}
 }
 
+// RecordMultipartUpload records the completion time of a multipart upload operation.
+// operation should be "upload" or "verify"
+// status should be "success" or "failure"
+func (m *Metrics) RecordMultipartUpload(operation string, status string, duration time.Duration) {
+	millis := duration.Milliseconds()
+
+	// Create a composite key for operation+status combination
+	opStatusKey := fmt.Sprintf("%s_%s", operation, status)
+
+	// Track total count for this operation/status
+	var counter expvar.Int
+	counter.Add(1)
+	m.MultipartOperationTotal.Set(opStatusKey, &counter)
+
+	// Track sum and count in the appropriate histogram map
+	var histogramMap *expvar.Map
+	if operation == "upload" {
+		histogramMap = m.MultipartUploadBuckets
+	} else if operation == "verify" {
+		histogramMap = m.MultipartVerificationBuckets
+	} else {
+		return // Invalid operation
+	}
+
+	// Store sum: multipart_upload_sum_success, multipart_upload_sum_failure
+	sumKey := fmt.Sprintf("%s_%s", opStatusKey, "sum")
+	var currentSum expvar.Int
+	if existingSum := histogramMap.Get(sumKey); existingSum != nil {
+		currentSum.Set(existingSum.(*expvar.Int).Value() + int64(millis))
+	} else {
+		currentSum.Set(int64(millis))
+	}
+	histogramMap.Set(sumKey, &currentSum)
+
+	// Store count
+	countKey := fmt.Sprintf("%s_%s", opStatusKey, "count")
+	var currentCount expvar.Int
+	if existingCount := histogramMap.Get(countKey); existingCount != nil {
+		currentCount.Set(existingCount.(*expvar.Int).Value() + 1)
+	} else {
+		currentCount.Set(1)
+	}
+	histogramMap.Set(countKey, &currentCount)
+
+	// Store last value for monitoring
+	lastKey := fmt.Sprintf("%s_%s", opStatusKey, "last_millis")
+	var lastVal expvar.Int
+	lastVal.Set(millis)
+	histogramMap.Set(lastKey, &lastVal)
+}
+
 // IncActiveMultipartUploads increments the active multipart upload counter.
 func (m *Metrics) IncActiveMultipartUploads() {
 	m.ActiveMultipartUploads.Add(1)
@@ -413,6 +474,51 @@ func (m *Metrics) PrometheusFormat() string {
 	// Provenance metrics
 	writeMetric("provenance_entries_total", "Total number of provenance entries recorded", "counter", m.ProvenanceEntriesTotal)
 	writeMetric("provenance_chain_length", "Length of the provenance chain for this writer", "gauge", m.ProvenanceChainLength)
+
+	// Multipart canary histogram metrics
+	// Export multipart upload duration histogram
+	fmt.Fprintf(&sb, "\n# HELP armor_multipart_canary_upload_duration_seconds Multipart canary upload duration in seconds\n")
+	fmt.Fprintf(&sb, "# TYPE armor_multipart_canary_upload_duration_seconds histogram\n")
+	for _, opStatus := range []string{"upload_success", "upload_failure", "verify_success", "verify_failure"} {
+		parts := strings.Split(opStatus, "_")
+		operation := parts[0]
+		status := parts[1]
+
+		// Get the appropriate map
+		var histogramMap *expvar.Map
+		if operation == "upload" {
+			histogramMap = m.MultipartUploadBuckets
+		} else if operation == "verify" {
+			histogramMap = m.MultipartVerificationBuckets
+		} else {
+			continue
+		}
+
+		sumKey := fmt.Sprintf("%s_sum", opStatus)
+		countKey := fmt.Sprintf("%s_count", opStatus)
+		lastKey := fmt.Sprintf("%s_last_millis", opStatus)
+
+		sum := histogramMap.Get(sumKey)
+		count := histogramMap.Get(countKey)
+		last := histogramMap.Get(lastKey)
+
+		if count != nil && count.(*expvar.Int).Value() > 0 {
+			sumVal := int64(0)
+			if sum != nil {
+				sumVal = sum.(*expvar.Int).Value()
+			}
+			countVal := count.(*expvar.Int).Value()
+			lastVal := int64(0)
+			if last != nil {
+				lastVal = last.(*expvar.Int).Value()
+			}
+
+			// Export as seconds
+			fmt.Fprintf(&sb, "armor_multipart_canary_upload_duration_seconds_sum{operation=\"%s\",status=\"%s\"} %.6f\n", operation, status, float64(sumVal)/1000.0)
+			fmt.Fprintf(&sb, "armor_multipart_canary_upload_duration_seconds_count{operation=\"%s\",status=\"%s\"} %d\n", operation, status, countVal)
+			fmt.Fprintf(&sb, "armor_multipart_canary_upload_duration_seconds_last{operation=\"%s\",status=\"%s\"} %.6f\n", operation, status, float64(lastVal)/1000.0)
+		}
+	}
 
 	// Uptime
 	uptime := time.Since(m.startTime).Seconds()
