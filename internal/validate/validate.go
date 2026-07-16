@@ -2482,6 +2482,7 @@ func FormatValidationError(validationType string, expected, actual interface{}, 
 	ve := ValidationError{
 		ErrorType:        validationType,
 		Message:          generateMessageFromParts(validationType, expected, actual),
+		Category:         GetCategoryForErrorType(validationType),
 		Expected:         expected,
 		Actual:           actual,
 		Context:          context,
@@ -2564,6 +2565,7 @@ func FormatValidationErrorWithDetails(
 	ve := ValidationError{
 		ErrorType:         validationType,
 		Message:           generateMessageFromParts(validationType, expected, actual),
+		Category:          GetCategoryForErrorType(validationType),
 		Expected:          expected,
 		Actual:            actual,
 		Context:           context,

@@ -190,6 +190,10 @@ type ValidationErrorData struct {
 	// Suggestions provides actionable recommendations for resolving the validation error.
 	// When provided, suggestions should be specific and actionable.
 	Suggestions []string `json:"suggestions,omitempty"`
+
+	// Category is the high-level categorization of the validation error.
+	// Categories group related error types together for easier handling and filtering.
+	Category ErrorCategory `json:"category,omitempty"`
 }
 
 // Error implements the error interface for ValidationErrorData.
@@ -254,6 +258,7 @@ func ToValidationErrorData(ve ValidationError) ValidationErrorData {
 		ValidationDetails: ve.ValidationDetails,
 		ResponseSnippet:   ve.ResponseSnippet,
 		Suggestions:       ve.Suggestions,
+		Category:          ve.Category,
 	}
 
 	return data
@@ -351,6 +356,13 @@ type ValidationError struct {
 	//
 	// This field is required for all validation errors.
 	Message string `json:"message"`
+
+	// Category is the high-level categorization of the validation error.
+	// Categories group related error types together for easier handling and filtering.
+	// Common values include: "http", "content", "validation", "performance", "security", "success", "custom".
+	//
+	// This field is optional and will be auto-derived from ErrorType if not set.
+	Category ErrorCategory `json:"category,omitempty"`
 
 	// Context provides additional information about where or when the validation occurred.
 	// This can include endpoint names, operation types, or other contextual details.
@@ -719,6 +731,9 @@ func (ve ValidationError) ToMap() map[string]interface{} {
 	}
 	if len(ve.Suggestions) > 0 {
 		result["suggestions"] = ve.Suggestions
+	}
+	if ve.Category != "" {
+		result["category"] = ve.Category
 	}
 
 	return result
