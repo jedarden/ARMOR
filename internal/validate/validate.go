@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 )
@@ -1300,7 +1301,7 @@ func GetErrorCode(bodyBytes []byte) (string, error) {
 }
 
 // =============================================================================
-// DETAILED VALIDATION RESULTS
+// CONVENIENCE VALIDATION FUNCTIONS FOR EXAMPLES
 // =============================================================================
 
 // StatusCodeValidationResult provides detailed information about status code validation.
@@ -2770,6 +2771,432 @@ func generateStatusCodeRangeSuggestions(expected, actual interface{}) []string {
 	}
 
 	return suggestions
+}
+
+// =============================================================================
+// STATUS CODE VALIDATION HELPER FUNCTIONS
+// =============================================================================
+
+// ValidateStatusCodePattern validates a status code against a pattern string.
+// This is a convenience wrapper around ValidateStatusCodeRangeInt that provides
+// pattern-based validation for common HTTP status code patterns.
+//
+// Parameters:
+//   - pattern: The pattern string (e.g., '4xx', '5xx', '2xx', '3xx', '1xx')
+//   - actual: The actual status code to validate
+//
+// Returns error if the pattern is invalid or if the actual code doesn't match the range.
+// Returns nil if the actual code falls within the specified range.
+//
+// Example usage:
+//
+//	// Validate 404 is in 4xx range
+//	err := ValidateStatusCodePattern("4xx", 404)
+//	if err != nil {
+//	    log.Printf("Status validation failed: %v", err)
+//	}
+//
+//	// Validate 500 is in 5xx range
+//	err = ValidateStatusCodePattern("5xx", 500)
+//
+//	// This returns an error because 200 is not in 4xx range
+//	err = ValidateStatusCodePattern("4xx", 200)
+func ValidateStatusCodePattern(pattern string, actual int) error {
+	return ValidateStatusCodeRangeInt(pattern, actual)
+}
+
+// ValidateStatusCodeInt validates expected vs actual status codes with detailed error information.
+// This function provides detailed mismatch information when validation fails, including
+// status code descriptions and contextual suggestions.
+//
+// Parameters:
+//   - expected: The expected status code
+//   - actual: The actual status code received
+//
+// Returns error if the status codes don't match with detailed mismatch information.
+// Returns nil if the status codes match.
+//
+// Example usage:
+//
+//	err := ValidateStatusCodeInt(200, 404)
+//	if err != nil {
+//	    log.Printf("Status validation failed: %v", err)
+//	}
+//
+//	// This returns nil (codes match)
+//	err = ValidateStatusCodeInt(200, 200)
+func ValidateStatusCodeInt(expected, actual int) error {
+	if expected == actual {
+		return nil
+	}
+
+	// Build detailed mismatch error
+	expectedDesc := GetStatusCodeDescription(expected)
+	actualDesc := GetStatusCodeDescription(actual)
+
+	expectedStr := fmt.Sprintf("%d (%s)", expected, expectedDesc)
+	actualStr := fmt.Sprintf("%d (%s)", actual, actualDesc)
+
+	validationDetails := []string{
+		fmt.Sprintf("Expected status code: %d (%s)", expected, expectedDesc),
+		fmt.Sprintf("Actual status code: %d (%s)", actual, actualDesc),
+		fmt.Sprintf("Mismatch: %d", abs(actual-expected)),
+	}
+
+	return FormatValidationErrorWithDetails(
+		"status_code",
+		expectedStr,
+		actualStr,
+		"", // context
+		"", // responseSnippet
+		"", // fieldName
+		"", // location
+		nil, // relatedFields
+		fmt.Sprintf("Status code mismatch: expected %d (%s), got %d (%s)", expected, expectedDesc, actual, actualDesc),
+		expectedStr,
+		validationDetails,
+	)
+}
+
+// GetStatusCodeDescription returns a human-readable description for an HTTP status code.
+//
+// Parameters:
+//   - code: The HTTP status code
+//
+// Returns the standard HTTP status code description.
+//
+// Example usage:
+//
+//	desc := GetStatusCodeDescription(200)
+//	fmt.Printf("Status: %s\n", desc) // Output: "OK"
+//
+//	desc = GetStatusCodeDescription(404)
+//	fmt.Printf("Status: %s\n", desc) // Output: "Not Found"
+func GetStatusCodeDescription(code int) string {
+	descriptions := map[int]string{
+		100: "Continue",
+		101: "Switching Protocols",
+		102: "Processing",
+		103: "Early Hints",
+
+		200: "OK",
+		201: "Created",
+		202: "Accepted",
+		203: "Non-Authoritative Information",
+		204: "No Content",
+		205: "Reset Content",
+		206: "Partial Content",
+		207: "Multi-Status",
+		208: "Already Reported",
+		226: "IM Used",
+
+		300: "Multiple Choices",
+		301: "Moved Permanently",
+		302: "Found",
+		303: "See Other",
+		304: "Not Modified",
+		305: "Use Proxy",
+		306: "(Unused)",
+		307: "Temporary Redirect",
+		308: "Permanent Redirect",
+
+		400: "Bad Request",
+		401: "Unauthorized",
+		402: "Payment Required",
+		403: "Forbidden",
+		404: "Not Found",
+		405: "Method Not Allowed",
+		406: "Not Acceptable",
+		407: "Proxy Authentication Required",
+		408: "Request Timeout",
+		409: "Conflict",
+		410: "Gone",
+		411: "Length Required",
+		412: "Precondition Failed",
+		413: "Payload Too Large",
+		414: "URI Too Long",
+		415: "Unsupported Media Type",
+		416: "Range Not Satisfiable",
+		417: "Expectation Failed",
+		418: "I'm a teapot",
+		421: "Misdirected Request",
+		422: "Unprocessable Entity",
+		423: "Locked",
+		424: "Failed Dependency",
+		425: "Too Early",
+		426: "Upgrade Required",
+		428: "Precondition Required",
+		429: "Too Many Requests",
+		431: "Request Header Fields Too Large",
+		451: "Unavailable For Legal Reasons",
+
+		500: "Internal Server Error",
+		501: "Not Implemented",
+		502: "Bad Gateway",
+		503: "Service Unavailable",
+		504: "Gateway Timeout",
+		505: "HTTP Version Not Supported",
+		506: "Variant Also Negotiates",
+		507: "Insufficient Storage",
+		508: "Loop Detected",
+		510: "Not Extended",
+		511: "Network Authentication Required",
+	}
+
+	if desc, ok := descriptions[code]; ok {
+		return desc
+	}
+	return "Unknown"
+}
+
+// StatusCodeAssertionResult represents the result of a status code assertion.
+type StatusCodeAssertionResult struct {
+	// Match indicates whether the status code matched the expected value(s)
+	Match bool
+	// Expected is the expected status code (or list of codes)
+	Expected interface{}
+	// Actual is the actual status code received
+	Actual int
+	// ExpectedDescription is the human-readable description of the expected code(s)
+	ExpectedDescription string
+	// ActualDescription is the human-readable description of the actual code
+	ActualDescription string
+	// ResponseContext contains contextual information about the response
+	ResponseContext string
+	// Error contains the validation error (if any)
+	Error error
+}
+
+// AssertStatusCode validates a status code and returns a detailed assertion result.
+// This function provides comprehensive status code validation with detailed
+// mismatch information, making it suitable for testing and debugging.
+//
+// Parameters:
+//   - resp: The HTTP response to validate (or use response.Code for simple integer)
+//   - expected: Expected status code
+//   - includeDetails: Whether to include detailed error information
+//
+// Returns a StatusCodeAssertionResult with detailed validation information.
+//
+// Example usage:
+//
+//	result := AssertStatusCode(response, 200, true)
+//	if !result.Match {
+//	    log.Printf("Status code validation failed: %v", result.Error)
+//	    log.Printf("Expected: %d (%s), Actual: %d (%s)",
+//	        result.Expected, result.ExpectedDescription,
+//	        result.Actual, result.ActualDescription)
+//	}
+func AssertStatusCode(resp interface{}, expected int, includeDetails bool) StatusCodeAssertionResult {
+	result := StatusCodeAssertionResult{
+		Match:               false,
+		Expected:            expected,
+		Actual:              0,
+		ExpectedDescription: GetStatusCodeDescription(expected),
+		ActualDescription:   "",
+		ResponseContext:     "",
+		Error:               nil,
+	}
+
+	// Extract status code from different input types
+	var actualCode int
+	switch v := resp.(type) {
+	case int:
+		actualCode = v
+		result.ResponseContext = fmt.Sprintf("status code %d", v)
+	case *httptest.ResponseRecorder:
+		actualCode = v.Code
+		result.ResponseContext = "httptest.ResponseRecorder"
+	case *http.Response:
+		actualCode = v.StatusCode
+		result.ResponseContext = "http.Response"
+	default:
+		result.Error = fmt.Errorf("unsupported response type: %T", resp)
+		return result
+	}
+
+	result.Actual = actualCode
+	result.ActualDescription = GetStatusCodeDescription(actualCode)
+
+	// Check if codes match
+	if actualCode == expected {
+		result.Match = true
+		return result
+	}
+
+	// Build detailed error if requested
+	if includeDetails {
+		expectedStr := fmt.Sprintf("%d (%s)", expected, result.ExpectedDescription)
+		actualStr := fmt.Sprintf("%d (%s)", actualCode, result.ActualDescription)
+
+		validationDetails := []string{
+			fmt.Sprintf("Expected status code: %d (%s)", expected, result.ExpectedDescription),
+			fmt.Sprintf("Actual status code: %d (%s)", actualCode, result.ActualDescription),
+			fmt.Sprintf("Context: %s", result.ResponseContext),
+		}
+
+		result.Error = FormatValidationErrorWithDetails(
+			"status_code",
+			expectedStr,
+			actualStr,
+			result.ResponseContext,
+			"", // responseSnippet
+			"", // fieldName
+			"", // location
+			nil, // relatedFields
+			fmt.Sprintf("Status code mismatch: expected %d (%s), got %d (%s)",
+				expected, result.ExpectedDescription, actualCode, result.ActualDescription),
+			expectedStr,
+			validationDetails,
+		)
+	} else {
+		result.Error = fmt.Errorf("status code mismatch: expected %d, got %d", expected, actualCode)
+	}
+
+	return result
+}
+
+// AssertStatusCodeAny validates that a status code is in a list of allowed codes.
+// This function checks if the actual status code matches any of the allowed codes,
+// providing detailed mismatch information if none match.
+//
+// Parameters:
+//   - resp: The HTTP response to validate (or use response.Code for simple integer)
+//   - allowedCodes: List of allowed status codes
+//   - includeDetails: Whether to include detailed error information
+//
+// Returns a StatusCodeAssertionResult with detailed validation information.
+//
+// Example usage:
+//
+//	// Accept any success code
+//	allowedCodes := []int{200, 201, 204}
+//	result := AssertStatusCodeAny(response, allowedCodes, true)
+//	if !result.Match {
+//	    log.Printf("Status code not in allowed range: %v", result.Error)
+//	}
+func AssertStatusCodeAny(resp interface{}, allowedCodes []int, includeDetails bool) StatusCodeAssertionResult {
+	result := StatusCodeAssertionResult{
+		Match:               false,
+		Expected:            allowedCodes,
+		Actual:              0,
+		ExpectedDescription: "",
+		ActualDescription:   "",
+		ResponseContext:     "",
+		Error:               nil,
+	}
+
+	// Extract status code from different input types
+	var actualCode int
+	switch v := resp.(type) {
+	case int:
+		actualCode = v
+		result.ResponseContext = fmt.Sprintf("status code %d", v)
+	case *httptest.ResponseRecorder:
+		actualCode = v.Code
+		result.ResponseContext = "httptest.ResponseRecorder"
+	case *http.Response:
+		actualCode = v.StatusCode
+		result.ResponseContext = "http.Response"
+	default:
+		result.Error = fmt.Errorf("unsupported response type: %T", resp)
+		return result
+	}
+
+	result.Actual = actualCode
+	result.ActualDescription = GetStatusCodeDescription(actualCode)
+
+	// Build expected description
+	var expectedDescs []string
+	for _, code := range allowedCodes {
+		expectedDescs = append(expectedDescs, fmt.Sprintf("%d (%s)", code, GetStatusCodeDescription(code)))
+	}
+	result.ExpectedDescription = strings.Join(expectedDescs, ", ")
+
+	// Check if actual code matches any allowed code
+	for _, code := range allowedCodes {
+		if actualCode == code {
+			result.Match = true
+			return result
+		}
+	}
+
+	// Build detailed error if requested
+	if includeDetails {
+		expectedStr := strings.Join(expectedDescs, " or ")
+		actualStr := fmt.Sprintf("%d (%s)", actualCode, result.ActualDescription)
+
+		validationDetails := []string{
+			fmt.Sprintf("Allowed status codes: %s", result.ExpectedDescription),
+			fmt.Sprintf("Actual status code: %d (%s)", actualCode, result.ActualDescription),
+			fmt.Sprintf("Context: %s", result.ResponseContext),
+		}
+
+		result.Error = FormatValidationErrorWithDetails(
+			"status_code",
+			expectedStr,
+			actualStr,
+			result.ResponseContext,
+			"", // responseSnippet
+			"", // fieldName
+			"", // location
+			nil, // relatedFields
+			fmt.Sprintf("Status code %d (%s) not in allowed range", actualCode, result.ActualDescription),
+			expectedStr,
+			validationDetails,
+		)
+	} else {
+		result.Error = fmt.Errorf("status code %d not in allowed range %v", actualCode, allowedCodes)
+	}
+
+	return result
+}
+
+// abs returns the absolute value of an integer.
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// =============================================================================
+// CONVENIENCE VALIDATION FUNCTIONS FOR EXAMPLES
+// =============================================================================
+
+// ValidateStatusCode validates that an HTTP response has the expected status code.
+//
+// This is a convenience function for validating status codes in tests and examples.
+// It extracts the status code from various response types and validates it against
+// the expected value.
+//
+// Parameters:
+//   - response: The HTTP response to validate (*httptest.ResponseRecorder or *http.Response)
+//   - expectedCode: The expected HTTP status code
+//
+// Returns error if status codes don't match, nil otherwise.
+//
+// Example usage:
+//
+//	err := ValidateStatusCode(response, 200)
+//	if err != nil {
+//	    log.Printf("Status code validation failed: %v", err)
+//	}
+func ValidateStatusCode(response interface{}, expectedCode int) error {
+	var actualCode int
+
+	switch r := response.(type) {
+	case *httptest.ResponseRecorder:
+		actualCode = r.Code
+	case *http.Response:
+		actualCode = r.StatusCode
+	case int:
+		actualCode = r
+	default:
+		return fmt.Errorf("unsupported response type: %T", response)
+	}
+
+	return ValidateStatusCodeInt(expectedCode, actualCode)
 }
 
 // =============================================================================
