@@ -1815,22 +1815,22 @@ func TestFormatErrorMessage_AdditionalEdgeCases(t *testing.T) {
 			errorType: "validation",
 			message:   "Line 1\nLine 2\nLine 3",
 			fieldName: "field",
-			expected:  "[validation] field: Line 1\nLine 2\nLine 3",
+			expected:  "field: Line 1\nLine 2\nLine 3",
 		},
 		{
 			name:      "special regex characters",
 			errorType: "pattern",
 			message:   "Does not match [a-z]+",
 			fieldName: "test.field",
-			expected:  "[pattern] test.field: Does not match [a-z]+",
+			expected:  "test.field: Does not match [a-z]+",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatErrorMessage(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorMessageString(tt.errorType, tt.message, tt.fieldName)
 			if result != tt.expected {
-				t.Errorf("FormatErrorMessage(%q, %q, %q) = %q, want %q",
+				t.Errorf("FormatErrorMessageString(%q, %q, %q) = %q, want %q",
 					tt.errorType, tt.message, tt.fieldName, result, tt.expected)
 			}
 		})
@@ -1935,4 +1935,340 @@ func TestFormatErrorWithValues_MoreEdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+// =============================================================================
+// FormatErrorMessage Enum Handling Tests
+// =============================================================================
+
+func TestFormatErrorMessage_EnumHandling(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorType ErrorType
+		message   string
+		fieldName string
+		expected  string
+	}{
+		// Test with all standard ErrorType enum values
+		{
+			name:      "ErrTypeRequired with all parameters",
+			errorType: ErrTypeRequired,
+			message:   "Field is required",
+			fieldName: "email",
+			expected:  "[required] email: Field is required",
+		},
+		{
+			name:      "ErrTypeFormat with all parameters",
+			errorType: ErrTypeFormat,
+			message:   "Invalid email format",
+			fieldName: "email",
+			expected:  "[format] email: Invalid email format",
+		},
+		{
+			name:      "ErrTypeRange with all parameters",
+			errorType: ErrTypeRange,
+			message:   "Value out of range",
+			fieldName: "age",
+			expected:  "[range] age: Value out of range",
+		},
+		{
+			name:      "ErrTypeLength with all parameters",
+			errorType: ErrTypeLength,
+			message:   "String too long",
+			fieldName: "password",
+			expected:  "[length] password: String too long",
+		},
+		{
+			name:      "ErrTypeType with all parameters",
+			errorType: ErrTypeType,
+			message:   "Expected number, got string",
+			fieldName: "count",
+			expected:  "[type] count: Expected number, got string",
+		},
+		{
+			name:      "ErrTypeValue with all parameters",
+			errorType: ErrTypeValue,
+			message:   "Invalid value",
+			fieldName: "status",
+			expected:  "[value] status: Invalid value",
+		},
+		{
+			name:      "ErrTypeDuplicate with all parameters",
+			errorType: ErrTypeDuplicate,
+			message:   "Duplicate entry",
+			fieldName: "email",
+			expected:  "[duplicate] email: Duplicate entry",
+		},
+		{
+			name:      "ErrTypeConflict with all parameters",
+			errorType: ErrTypeConflict,
+			message:   "Conflict with existing data",
+			fieldName: "timestamp",
+			expected:  "[conflict] timestamp: Conflict with existing data",
+		},
+		// Test without field name
+		{
+			name:      "ErrTypeRequired without field name",
+			errorType: ErrTypeRequired,
+			message:   "Field is required",
+			fieldName: "",
+			expected:  "[required] Field is required",
+		},
+		{
+			name:      "ErrTypeFormat without field name",
+			errorType: ErrTypeFormat,
+			message:   "Invalid format",
+			fieldName: "",
+			expected:  "[format] Invalid format",
+		},
+		// Test ErrTypeUnknown handling
+		{
+			name:      "ErrTypeUnknown should not include brackets",
+			errorType: ErrTypeUnknown,
+			message:   "Unknown error",
+			fieldName: "field",
+			expected:  "field: Unknown error",
+		},
+		// Test empty string ErrorType
+		{
+			name:      "Empty ErrorType should not include brackets",
+			errorType: "",
+			message:   "Test message",
+			fieldName: "field",
+			expected:  "field: Test message",
+		},
+		// Test with whitespace
+		{
+			name:      "Trim whitespace from message",
+			errorType: ErrTypeRequired,
+			message:   "  Field is required  ",
+			fieldName: "email",
+			expected:  "[required] email: Field is required",
+		},
+		{
+			name:      "Trim whitespace from field name",
+			errorType: ErrTypeFormat,
+			message:   "Invalid format",
+			fieldName: "  email  ",
+			expected:  "[format] email: Invalid format",
+		},
+		// Test with empty message
+		{
+			name:      "Empty message with field name",
+			errorType: ErrTypeRequired,
+			message:   "",
+			fieldName: "email",
+			expected:  "[required] email: ",
+		},
+		// Test complex field names
+		{
+			name:      "Nested field name",
+			errorType: ErrTypeRequired,
+			message:   "Required",
+			fieldName: "user.profile.email",
+			expected:  "[required] user.profile.email: Required",
+		},
+		{
+			name:      "Array index field name",
+			errorType: ErrTypeFormat,
+			message:   "Invalid format",
+			fieldName: "items[0].email",
+			expected:  "[format] items[0].email: Invalid format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatErrorMessage(tt.errorType, tt.message, tt.fieldName)
+			if result != tt.expected {
+				t.Errorf("FormatErrorMessage(%v, %q, %q) = %q, want %q",
+					tt.errorType, tt.message, tt.fieldName, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatErrorMessage_EnumMethods(t *testing.T) {
+	// Test that ErrorType enum methods work correctly
+	t.Run("ErrorType String() method", func(t *testing.T) {
+		tests := []struct {
+			errorType ErrorType
+			expected  string
+		}{
+			{ErrTypeRequired, "required"},
+			{ErrTypeFormat, "format"},
+			{ErrTypeRange, "range"},
+			{ErrTypeLength, "length"},
+			{ErrTypeType, "type"},
+			{ErrTypeValue, "value"},
+			{ErrTypeDuplicate, "duplicate"},
+			{ErrTypeConflict, "conflict"},
+			{ErrTypeUnknown, "unknown"},
+		}
+
+		for _, tt := range tests {
+			if got := tt.errorType.String(); got != tt.expected {
+				t.Errorf("ErrorType.String() = %q, want %q", got, tt.expected)
+			}
+		}
+	})
+
+	t.Run("ErrorType IsValid() method", func(t *testing.T) {
+		validTypes := []ErrorType{
+			ErrTypeRequired, ErrTypeFormat, ErrTypeRange, ErrTypeLength,
+			ErrTypeType, ErrTypeValue, ErrTypeDuplicate, ErrTypeConflict,
+			ErrTypeUnknown,
+		}
+
+		for _, et := range validTypes {
+			if !et.IsValid() {
+				t.Errorf("ErrorType %v should be valid", et)
+			}
+		}
+
+		invalidType := ErrorType("invalid_type")
+		if invalidType.IsValid() {
+			t.Error("Custom ErrorType should not be valid")
+		}
+	})
+
+	t.Run("ErrorType Description() method", func(t *testing.T) {
+		tests := []struct {
+			errorType     ErrorType
+			shouldContain string
+		}{
+			{ErrTypeRequired, "required"},
+			{ErrTypeFormat, "format"},
+			{ErrTypeRange, "range"},
+			{ErrTypeLength, "length"},
+			{ErrTypeType, "type"},
+			{ErrTypeValue, "value"},
+			{ErrTypeDuplicate, "duplicate"},
+			{ErrTypeConflict, "conflict"},
+			{ErrTypeUnknown, "Unknown"},
+		}
+
+		for _, tt := range tests {
+			desc := tt.errorType.Description()
+			if !strings.Contains(strings.ToLower(desc), strings.ToLower(tt.shouldContain)) {
+				t.Errorf("ErrorType.Description() for %v should contain %q, got %q",
+					tt.errorType, tt.shouldContain, desc)
+			}
+		}
+	})
+}
+
+func TestFormatErrorMessage_BackwardCompatibility(t *testing.T) {
+	// Test that FormatErrorMessageString provides backward compatibility
+	t.Run("FormatErrorMessageString with valid types", func(t *testing.T) {
+		tests := []struct {
+			errorTypeStr string
+			message      string
+			fieldName    string
+			expected     string
+		}{
+			{
+				errorTypeStr: "required",
+				message:      "Field is required",
+				fieldName:    "email",
+				expected:     "[required] email: Field is required",
+			},
+			{
+				errorTypeStr: "format",
+				message:      "Invalid format",
+				fieldName:    "email",
+				expected:     "[format] email: Invalid format",
+			},
+			{
+				errorTypeStr: "range",
+				message:      "Out of range",
+				fieldName:    "age",
+				expected:     "[range] age: Out of range",
+			},
+		}
+
+		for _, tt := range tests {
+			result := FormatErrorMessageString(tt.errorTypeStr, tt.message, tt.fieldName)
+			if result != tt.expected {
+				t.Errorf("FormatErrorMessageString(%q, %q, %q) = %q, want %q",
+					tt.errorTypeStr, tt.message, tt.fieldName, result, tt.expected)
+			}
+		}
+	})
+
+	t.Run("FormatErrorMessageString with unknown types", func(t *testing.T) {
+		// Unknown types should be converted to ErrTypeUnknown
+		result := FormatErrorMessageString("unknown_type", "Test message", "field")
+		expected := "field: Test message" // ErrTypeUnknown doesn't add brackets
+		if result != expected {
+			t.Errorf("FormatErrorMessageString with unknown type = %q, want %q", result, expected)
+		}
+	})
+
+	t.Run("Enum and string versions produce same output", func(t *testing.T) {
+		message := "Test message"
+		fieldName := "email"
+
+		// Test all standard enum values
+		enumTypes := []ErrorType{
+			ErrTypeRequired, ErrTypeFormat, ErrTypeRange, ErrTypeLength,
+			ErrTypeType, ErrTypeValue, ErrTypeDuplicate, ErrTypeConflict,
+		}
+
+		for _, et := range enumTypes {
+			enumResult := FormatErrorMessage(et, message, fieldName)
+			stringResult := FormatErrorMessageString(et.String(), message, fieldName)
+
+			if enumResult != stringResult {
+				t.Errorf("Enum and string versions differ for %v: enum=%q, string=%q",
+					et, enumResult, stringResult)
+			}
+		}
+	})
+}
+
+func TestFormatErrorMessage_EnumIntegration(t *testing.T) {
+	// Test integration with ValidationError
+	t.Run("FormatErrorMessage with ValidationError", func(t *testing.T) {
+		ve := ValidationError{
+			ErrorType: string(ErrTypeRequired),
+			Message:   "Field is required",
+			FieldName: "email",
+		}
+
+		// Convert string ErrorType back to enum and format
+		et := ErrorTypeFromString(ve.ErrorType)
+		formatted := FormatErrorMessage(et, ve.Message, ve.FieldName)
+
+		expected := "[required] email: Field is required"
+		if formatted != expected {
+			t.Errorf("Integration test failed: got %q, want %q", formatted, expected)
+		}
+	})
+
+	t.Run("ErrorTypeFromString conversion", func(t *testing.T) {
+		tests := []struct {
+			input    string
+			expected ErrorType
+		}{
+			{"required", ErrTypeRequired},
+			{"format", ErrTypeFormat},
+			{"range", ErrTypeRange},
+			{"length", ErrTypeLength},
+			{"type", ErrTypeType},
+			{"value", ErrTypeValue},
+			{"duplicate", ErrTypeDuplicate},
+			{"conflict", ErrTypeConflict},
+			{"unknown", ErrTypeUnknown},
+			{"invalid_type", ErrTypeUnknown},
+		}
+
+		for _, tt := range tests {
+			result := ErrorTypeFromString(tt.input)
+			if result != tt.expected {
+				t.Errorf("ErrorTypeFromString(%q) = %v, want %v",
+					tt.input, result, tt.expected)
+			}
+		}
+	})
 }
