@@ -652,10 +652,10 @@ func TestFormatErrorMessage_NilAndEdgeCases(t *testing.T) {
 		},
 		{
 			name:      "special characters in message",
-			errorType: "pattern",
+			errorType: "format",
 			message:   "does not match [a-z]+",
 			fieldName: "test.field",
-			mustCheck: []string{"[pattern]", "test.field:", "does not match [a-z]+"},
+			mustCheck: []string{"[format]", "test.field:", "does not match [a-z]+"},
 		},
 		{
 			name:      "all empty trimmed whitespace",
@@ -668,7 +668,7 @@ func TestFormatErrorMessage_NilAndEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatErrorMessage(tt.errorType, tt.message, tt.fieldName)
+			result := FormatErrorMessageString(tt.errorType, tt.message, tt.fieldName)
 
 			// If all are empty/whitespace, result should be empty
 			if strings.TrimSpace(tt.errorType) == "" &&
