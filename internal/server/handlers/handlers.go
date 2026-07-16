@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -2110,8 +2111,16 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	}
 
 	// Calculate starting block index for CTR counter
-	// Each block is blockSize bytes, so counter = encryptedBytes / blockSize
-	startBlockIndex := uint32(state.EncryptedBytes / int64(state.BlockSize))
+	// CRITICAL: Parts may be uploaded out of order (e.g., litestream uploads in parallel).
+	// We must calculate the starting block index based on the sizes of parts with
+	// lower part numbers, not based on state.EncryptedBytes which assumes in-order upload.
+	var totalBytesBefore int64
+	for pn := int64(1); pn < partNumber; pn++ {
+		if size, ok := state.PartSizes[int(pn)]; ok {
+			totalBytesBefore += size
+		}
+	}
+	startBlockIndex := uint32(totalBytesBefore / int64(state.BlockSize))
 
 	// Create encryptor
 	encryptor, err := crypto.NewEncryptor(dek, state.IV, state.BlockSize)
@@ -2205,6 +2214,17 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// CRITICAL: Sort parts by PartNumber before assembling HMACs and computing size
+	// Clients may send CompleteMultipartUpload with parts in arbitrary order, but:
+	// 1. B2 assembles parts in PartNumber order (Part 1, then Part 2, etc.)
+	// 2. The HMAC sidecar must match: position N contains HMAC for block N
+	// Without this sort, HMAC verification fails for out-of-order part lists.
+	// See bf-2sq7gf: production litestream sends parts out of order, causing
+	// "block 256: HMAC verification failed" because HMAC table was assembled in wrong order.
+	sort.Slice(completeReq.Parts, func(i, j int) bool {
+		return completeReq.Parts[i].PartNumber < completeReq.Parts[j].PartNumber
+	})
+
 	// Convert to backend.CompletedPart
 	parts := make([]backend.CompletedPart, len(completeReq.Parts))
 	for i, p := range completeReq.Parts {
@@ -2222,7 +2242,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Assemble all block HMACs in order
+	// Assemble all block HMACs in order (now that parts are sorted)
 	var allBlockHMACs [][]byte
 	for _, p := range completeReq.Parts {
 		if hmacsBase64, ok := state.PartHMACs[p.PartNumber]; ok {
