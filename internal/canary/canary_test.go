@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -762,6 +763,9 @@ func TestMonitorMultipartCheck(t *testing.T) {
 	if result.MultipartHealthy != StatusHealthy {
 		t.Errorf("expected multipart healthy, got %s", result.MultipartHealthy)
 	}
+	if !result.MultipartHealthyBool {
+		t.Error("expected multipart_healthy bool to be true")
+	}
 	if !result.DecryptVerified {
 		t.Error("expected decrypt verified to be true")
 	}
@@ -805,6 +809,9 @@ func TestMonitorMultipartIntegration(t *testing.T) {
 	if status.MultipartHealthy != StatusHealthy {
 		t.Errorf("expected multipart healthy, got %s", status.MultipartHealthy)
 	}
+	if !status.MultipartHealthyBool {
+		t.Error("expected multipart_healthy bool to be true after successful check")
+	}
 
 	// Verify metrics were updated
 	checks := metrics.DefaultMetrics.MultipartCanaryChecksTotal.String()
@@ -815,5 +822,129 @@ func TestMonitorMultipartIntegration(t *testing.T) {
 	healthy := metrics.DefaultMetrics.MultipartCanaryHealthy.String()
 	if healthy != "1" {
 		t.Errorf("expected multipart canary healthy to be 1, got %s", healthy)
+	}
+}
+
+// TestMultipartHealthyBoolField tests the multipart_healthy boolean field
+// in the canary health response.
+func TestMultipartHealthyBoolField(t *testing.T) {
+	mb := newMockBackend()
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	cfg := Config{
+		Backend:        mb,
+		Bucket:         "test-bucket",
+		MEK:            mek,
+		BlockSize:      65536,
+		InstanceID:     "test-instance",
+		MultipartSize:  100, // Small size for testing
+	}
+
+	m := NewMonitor(cfg)
+
+	// Initial status: multipart_healthy should be false (never run)
+	status := m.GetStatus()
+	if status.MultipartHealthyBool {
+		t.Error("expected multipart_healthy to be false initially (never run)")
+	}
+	if status.MultipartHealthy != StatusUnknown {
+		t.Errorf("expected multipart_healthy_status to be unknown initially, got %s", status.MultipartHealthy)
+	}
+
+	// Run successful multipart check
+	ctx := context.Background()
+	result, err := m.checkMultipart(ctx)
+	if err != nil {
+		t.Fatalf("multipart canary check failed: %v", err)
+	}
+
+	// Result should have multipart_healthy = true
+	if !result.MultipartHealthyBool {
+		t.Error("expected multipart_healthy to be true in result after successful check")
+	}
+	if result.MultipartHealthy != StatusHealthy {
+		t.Errorf("expected multipart_healthy_status to be healthy in result, got %s", result.MultipartHealthy)
+	}
+
+	// Update the state to verify GetStatus reflects the success
+	m.updateMultipartStateSuccess(result)
+
+	// GetStatus should now show multipart_healthy = true
+	status = m.GetStatus()
+	if !status.MultipartHealthyBool {
+		t.Error("expected multipart_healthy to be true in GetStatus after successful check")
+	}
+	if status.MultipartHealthy != StatusHealthy {
+		t.Errorf("expected multipart_healthy_status to be healthy in GetStatus, got %s", status.MultipartHealthy)
+	}
+}
+
+// TestMultipartHealthyBoolFieldFailure tests that multipart_healthy is false
+// after a failed multipart check.
+func TestMultipartHealthyBoolFieldFailure(t *testing.T) {
+	mb := newMockBackend()
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	cfg := Config{
+		Backend:        mb,
+		Bucket:         "test-bucket",
+		MEK:            mek,
+		BlockSize:      65536,
+		InstanceID:     "test-instance",
+		MultipartSize:  100,
+	}
+
+	m := NewMonitor(cfg)
+
+	// Simulate a failed multipart check
+	m.updateMultipartStateFailure(fmt.Errorf("multipart upload failed"))
+
+	// GetStatus should show multipart_healthy = false
+	status := m.GetStatus()
+	if status.MultipartHealthyBool {
+		t.Error("expected multipart_healthy to be false after failed check")
+	}
+	if status.MultipartHealthy != StatusUnhealthy {
+		t.Errorf("expected multipart_healthy_status to be unhealthy after failure, got %s", status.MultipartHealthy)
+	}
+}
+
+// TestCanaryHealthResponseJSON tests that the canary health response
+// includes the multipart_healthy boolean field in JSON format.
+func TestCanaryHealthResponseJSON(t *testing.T) {
+	mb := newMockBackend()
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	cfg := Config{
+		Backend:        mb,
+		Bucket:         "test-bucket",
+		MultipartSize:  100,
+		BlockSize:      65536,
+		MEK:            mek,
+		InstanceID:     "test-instance",
+	}
+
+	m := NewMonitor(cfg)
+	ctx := context.Background()
+
+	// Run a successful multipart check
+	m.runMultipartCheck(ctx)
+
+	// Get status and verify JSON serialization
+	status := m.GetStatus()
+	data, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("failed to marshal status to JSON: %v", err)
+	}
+
+	// Verify JSON contains both fields
+	if !bytes.Contains(data, []byte(`"multipart_healthy":true`)) {
+		t.Error("expected JSON to contain multipart_healthy:true field")
+	}
+	if !bytes.Contains(data, []byte(`"multipart_healthy_status":"healthy"`)) {
+		t.Error("expected JSON to contain multipart_healthy_status field")
 	}
 }
