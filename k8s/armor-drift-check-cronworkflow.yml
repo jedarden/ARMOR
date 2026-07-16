@@ -20,7 +20,9 @@ spec:
           value: "50"
         - name: days-threshold
           value: "30"
-        - name: output-to-slack
+        - name: slack-webhook-url
+          value: ""
+        - name: dry-run
           value: "false"
     concurrencyPolicy: Forbid
     successfulJobsHistoryLimit: 3
