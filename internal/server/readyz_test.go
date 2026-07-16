@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -552,4 +553,117 @@ func TestReadyzCanaryHealthy(t *testing.T) {
 	if calls := cb.headBucketCalls.Load(); calls != 0 {
 		t.Errorf("expected 0 HeadBucket calls with healthy canary, got %d", calls)
 	}
+}
+
+// TestCanaryHandlerMultipartHealthy verifies that the /armor/canary endpoint
+// returns the multipart_healthy boolean field in the JSON response, and that
+// it correctly reflects the multipart canary check status.
+func TestCanaryHandlerMultipartHealthy(t *testing.T) {
+	cb := newCountingBackend()
+
+	mek := make([]byte, 32)
+	rand.Read(mek)
+	m := canary.NewMonitor(canary.Config{
+		Backend:           cb,
+		Bucket:            "test-bucket",
+		MEK:               mek,
+		BlockSize:         65536,
+		InstanceID:        "test-instance",
+		CanarySize:        100, // Small size for testing
+		MultipartSize:     100, // Small size for testing
+		MultipartInterval: 100 * time.Millisecond,
+		Interval:          50 * time.Millisecond, // Fast regular checks
+	})
+
+	s := &Server{
+		config:  &config.Config{Bucket: "test-bucket"},
+		backend: cb,
+		canary:  m,
+		logger:  logging.New("test"),
+		metrics: metrics.DefaultMetrics,
+	}
+
+	// Initial status: multipart_healthy should be false (never run)
+	req := httptest.NewRequest(http.MethodGet, "/armor/canary", nil)
+	rec := httptest.NewRecorder()
+	s.canaryHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var status map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatalf("failed to parse JSON response: %v", err)
+	}
+
+	// Check that multipart_healthy field exists and is false initially
+	multipartHealthy, ok := status["multipart_healthy"]
+	if !ok {
+		t.Error("expected multipart_healthy field in response")
+	}
+	if multipartHealthy != false {
+		t.Errorf("expected multipart_healthy to be false initially, got %v", multipartHealthy)
+	}
+
+	// Verify the JSON structure contains both status fields
+	body := rec.Body.String()
+	if !bytes.Contains([]byte(body), []byte(`"multipart_healthy":false`)) {
+		t.Error("expected JSON to contain multipart_healthy:false field initially")
+	}
+	if !bytes.Contains([]byte(body), []byte(`"multipart_healthy_status"`)) {
+		t.Error("expected JSON to contain multipart_healthy_status field")
+	}
+	if !bytes.Contains([]byte(body), []byte(`"status"`)) {
+		t.Error("expected JSON to contain status field for regular canary")
+	}
+
+	// Test with canary monitor that has been started (regular check should succeed)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	m.Start(ctx)
+
+	// Wait for regular canary check to succeed
+	deadline := time.Now().Add(5 * time.Second)
+	for !m.IsHealthy() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for regular canary to become healthy")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Get status after regular canary succeeded (multipart may still be unknown/false)
+	req = httptest.NewRequest(http.MethodGet, "/armor/canary", nil)
+	rec = httptest.NewRecorder()
+	s.canaryHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 after regular canary check, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatalf("failed to parse JSON response: %v", err)
+	}
+
+	// Regular status should be healthy now
+	if status["status"] != "healthy" {
+		t.Errorf("expected regular status to be healthy, got %v", status["status"])
+	}
+
+	// multipart_healthy should still be present (may be false if multipart hasn't run yet)
+	_, ok = status["multipart_healthy"]
+	if !ok {
+		t.Error("expected multipart_healthy field to persist in response")
+	}
+
+	// Verify both health fields are present in JSON
+	body = rec.Body.String()
+	if !bytes.Contains([]byte(body), []byte(`"multipart_healthy"`)) {
+		t.Error("expected multipart_healthy field to remain in JSON")
+	}
+	if !bytes.Contains([]byte(body), []byte(`"multipart_healthy_status"`)) {
+		t.Error("expected multipart_healthy_status field to remain in JSON")
+	}
+
+	m.Stop()
 }
