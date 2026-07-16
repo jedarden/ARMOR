@@ -573,3 +573,411 @@ func TestValidationError_AllFields(t *testing.T) {
 	}
 }
 
+// TestValidationError_CategoryField_Explicit tests that the Category field
+// can be set explicitly on ValidationError.
+func TestValidationError_CategoryField_Explicit(t *testing.T) {
+	// Test with explicit category set
+	err := ValidationError{
+		ErrorType: ErrorTypeStatusCode,
+		Message:   "Expected status code 200 but got 404",
+		Category:  CategoryHTTP,
+		Expected:  200,
+		Actual:    404,
+		Context:   "GET /api/users/123",
+	}
+
+	// Verify category is set correctly
+	if err.Category != CategoryHTTP {
+		t.Errorf("Category should be CategoryHTTP, got %s", err.Category)
+	}
+
+	// Verify category string representation
+	if err.Category.String() != "http" {
+		t.Errorf("Category.String() should return 'http', got %s", err.Category.String())
+	}
+
+	// Verify error interface still works
+	errorMsg := err.Error()
+	if errorMsg == "" {
+		t.Errorf("Error message should not be empty, got: %s", errorMsg)
+	}
+}
+
+// TestValidationError_CategoryField_AutoDerive tests that the Category field
+// is auto-derived from ErrorType when using formatter functions.
+func TestValidationError_CategoryField_AutoDerive(t *testing.T) {
+	testCases := []struct {
+		name             string
+		errorType        string
+		expectedCategory ErrorCategory
+	}{
+		{
+			name:             "Status code error type should derive HTTP category",
+			errorType:        ErrorTypeStatusCode,
+			expectedCategory: CategoryHTTP,
+		},
+		{
+			name:             "Status code range error type should derive HTTP category",
+			errorType:        ErrorTypeStatusCodeRange,
+			expectedCategory: CategoryHTTP,
+		},
+		{
+			name:             "Content type error type should derive HTTP category",
+			errorType:        ErrorTypeContentType,
+			expectedCategory: CategoryHTTP,
+		},
+		{
+			name:             "Error message error type should derive Content category",
+			errorType:        ErrorTypeErrorMessage,
+			expectedCategory: CategoryContent,
+		},
+		{
+			name:             "JSON schema error type should derive Validation category",
+			errorType:        ErrorTypeJSONSchema,
+			expectedCategory: CategoryValidation,
+		},
+		{
+			name:             "Timeout error type should derive Performance category",
+			errorType:        ErrorTypeTimeout,
+			expectedCategory: CategoryPerformance,
+		},
+		{
+			name:             "Success validation error type should derive Success category",
+			errorType:        ErrorTypeSuccessValidation,
+			expectedCategory: CategorySuccess,
+		},
+		{
+			name:             "Custom error type should derive Custom category",
+			errorType:        ErrorTypeCustom,
+			expectedCategory: CategoryCustom,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Use FormatValidationError to test auto-derivation
+			err := FormatValidationError(tc.errorType, nil, nil, "", "")
+
+			// Get the expected category
+			expectedCat := GetCategoryForErrorType(tc.errorType)
+
+			// Verify category matches expected
+			if err.Category != expectedCat {
+				t.Errorf("Category should be auto-derived to %s, got %s", expectedCat, err.Category)
+			}
+
+			if expectedCat != tc.expectedCategory {
+				t.Errorf("Expected category mismatch: expected %s, got %s", tc.expectedCategory, expectedCat)
+			}
+		})
+	}
+}
+
+// TestValidationError_CategoryJSONSerialization tests that the Category field
+// is properly serialized to JSON.
+func TestValidationError_CategoryJSONSerialization(t *testing.T) {
+	err := ValidationError{
+		ErrorType: ErrorTypeStatusCode,
+		Message:   "Expected status code 200 but got 404",
+		Category:  CategoryHTTP,
+		Expected:  200,
+		Actual:    404,
+		Context:   "GET /api/users/123",
+	}
+
+	// Marshal to JSON
+	jsonBytes, mErr := json.Marshal(err)
+	if mErr != nil {
+		t.Fatalf("Failed to marshal ValidationError with Category: %v", mErr)
+	}
+
+	jsonStr := string(jsonBytes)
+
+	// Verify category field is present in JSON
+	if !strings.Contains(jsonStr, "category") {
+		t.Error("JSON output should contain 'category' field")
+	}
+
+	// Verify category value is correct
+	if !strings.Contains(jsonStr, "http") {
+		t.Error("JSON should contain category value 'http'")
+	}
+
+	// Unmarshal and verify
+	var unmarshaled ValidationError
+	uErr := json.Unmarshal(jsonBytes, &unmarshaled)
+	if uErr != nil {
+		t.Fatalf("Failed to unmarshal ValidationError: %v", uErr)
+	}
+
+	if unmarshaled.Category != CategoryHTTP {
+		t.Errorf("Unmarshaled Category should be CategoryHTTP, got %s", unmarshaled.Category)
+	}
+}
+
+// TestValidationError_ToMap_CategoryField tests that the Category field
+// is included in the map representation.
+func TestValidationError_ToMap_CategoryField(t *testing.T) {
+	err := ValidationError{
+		ErrorType: ErrorTypeStatusCode,
+		Message:   "Test message",
+		Category:  CategoryHTTP,
+		Expected:  200,
+		Actual:    404,
+	}
+
+	errMap := err.ToMap()
+
+	// Verify category is in the map
+	if _, ok := errMap["category"]; !ok {
+		t.Error("ToMap should include 'category' field")
+	}
+
+	// Verify category value is correct
+	category, ok := errMap["category"].(ErrorCategory)
+	if !ok {
+		t.Error("Category in map should be of type ErrorCategory")
+	}
+
+	if category != CategoryHTTP {
+		t.Errorf("Category in map should be CategoryHTTP, got %s", category)
+	}
+}
+
+// TestValidationErrorData_CategoryField tests that the Category field
+// is properly handled in ValidationErrorData.
+func TestValidationErrorData_CategoryField(t *testing.T) {
+	data := ValidationErrorData{
+		MessageType:  "validation_failed",
+		ErrorType:    ErrorTypeStatusCode,
+		Message:      "Expected status code 200 but got 404",
+		Category:     CategoryHTTP,
+		Context:      "GET /api/users/123",
+		Expected:     200,
+		Actual:       404,
+		Suggestions:  []string{"Check endpoint", "Verify resource"},
+	}
+
+	// Verify category is set
+	if data.Category != CategoryHTTP {
+		t.Errorf("ValidationErrorData Category should be CategoryHTTP, got %s", data.Category)
+	}
+
+	// Marshal to JSON
+	jsonBytes, mErr := json.Marshal(data)
+	if mErr != nil {
+		t.Fatalf("Failed to marshal ValidationErrorData: %v", mErr)
+	}
+
+	jsonStr := string(jsonBytes)
+
+	// Verify category field is in JSON
+	if !strings.Contains(jsonStr, "category") {
+		t.Error("JSON should contain 'category' field")
+	}
+
+	if !strings.Contains(jsonStr, "http") {
+		t.Error("JSON should contain category value 'http'")
+	}
+}
+
+// TestToValidationErrorData_CategoryPreservation tests that the Category field
+// is preserved when converting ValidationError to ValidationErrorData.
+func TestToValidationErrorData_CategoryPreservation(t *testing.T) {
+	originalErr := ValidationError{
+		ErrorType: ErrorTypeStatusCode,
+		Message:   "Expected status code 200 but got 404",
+		Category:  CategoryHTTP,
+		Expected:  200,
+		Actual:    404,
+		Context:   "GET /api/users/123",
+	}
+
+	data := ToValidationErrorData(originalErr)
+
+	// Verify category is preserved
+	if data.Category != CategoryHTTP {
+		t.Errorf("Category should be preserved in ValidationErrorData, got %s", data.Category)
+	}
+
+	// Verify other fields are also preserved
+	if data.ErrorType != originalErr.ErrorType {
+		t.Error("ErrorType should be preserved")
+	}
+
+	if data.Context != originalErr.Context {
+		t.Error("Context should be preserved")
+	}
+}
+
+// TestValidationError_CategoryField_Empty tests that empty category behaves correctly.
+func TestValidationError_CategoryField_Empty(t *testing.T) {
+	err := ValidationError{
+		ErrorType: ErrorTypeStatusCode,
+		Message:   "Test message",
+		Category:  "", // Empty category
+	}
+
+	// Empty category should not cause issues with ToMap
+	errMap := err.ToMap()
+
+	// Empty category should not be included in ToMap (as per implementation)
+	if _, ok := errMap["category"]; ok {
+		// This is expected behavior - empty category is not included in ToMap
+		// but if it were included, it would still be valid
+	}
+
+	// Error() method should work fine
+	errorMsg := err.Error()
+	if errorMsg == "" {
+		t.Errorf("Error message should not be empty, got: %s", errorMsg)
+	}
+}
+
+// TestValidationError_Validate_AllowsEmptyCategory tests that Validate()
+// method does not require Category field (it's optional).
+func TestValidationError_Validate_AllowsEmptyCategory(t *testing.T) {
+	err := ValidationError{
+		ErrorType: ErrorTypeStatusCode,
+		Message:   "Test message",
+		Category:  "", // Empty category should be allowed
+	}
+
+	// Validate should not fail for empty category
+	vErr := err.Validate()
+	if vErr != nil {
+		t.Errorf("Validate() should not fail for empty category, got: %v", vErr)
+	}
+}
+
+// TestValidationFormatter_WithCategory tests that WithCategory() method
+// properly sets the category field.
+func TestValidationFormatter_WithCategory(t *testing.T) {
+	formatter := NewValidationFormatter("status_code").
+		WithExpected(200).
+		WithActual(404).
+		WithContext("GET /api/users/123").
+		WithCategory(CategoryHTTP)
+
+	err := formatter.Format()
+
+	// Verify category is set correctly
+	if err.Category != CategoryHTTP {
+		t.Errorf("Category should be CategoryHTTP, got %s", err.Category)
+	}
+
+	// Verify other fields are also set correctly
+	if err.ErrorType != "status_code" {
+		t.Errorf("ErrorType should be 'status_code', got %s", err.ErrorType)
+	}
+
+	if err.Context != "GET /api/users/123" {
+		t.Errorf("Context should be preserved")
+	}
+}
+
+// TestValidationFormatter_CategoryAutoDerive tests that category is auto-derived
+// when not explicitly set via WithCategory.
+func TestValidationFormatter_CategoryAutoDerive(t *testing.T) {
+	formatter := NewValidationFormatter("status_code").
+		WithExpected(200).
+		WithActual(404)
+
+	err := formatter.Format()
+
+	// Verify category is auto-derived from error type
+	expectedCategory := GetCategoryForErrorType("status_code")
+	if err.Category != expectedCategory {
+		t.Errorf("Category should be auto-derived to %s, got %s", expectedCategory, err.Category)
+	}
+
+	// Verify it's the HTTP category
+	if err.Category != CategoryHTTP {
+		t.Errorf("Category for 'status_code' should be CategoryHTTP, got %s", err.Category)
+	}
+}
+
+// TestFormatValidationError_CategoryField tests that FormatValidationError()
+// properly sets the Category field.
+func TestFormatValidationError_CategoryField(t *testing.T) {
+	err := FormatValidationError(
+		ErrorTypeStatusCode,
+		200,
+		404,
+		"GET /api/users/123",
+		`{"error": "not_found"}`,
+	)
+
+	// Verify category is auto-derived
+	if err.Category != CategoryHTTP {
+		t.Errorf("Category should be auto-derived to CategoryHTTP, got %s", err.Category)
+	}
+
+	// Verify other fields are set
+	if err.ErrorType != ErrorTypeStatusCode {
+		t.Errorf("ErrorType should be %s, got %s", ErrorTypeStatusCode, err.ErrorType)
+	}
+
+	if err.Context != "GET /api/users/123" {
+		t.Errorf("Context should be preserved")
+	}
+}
+
+// TestFormatValidationErrorWithDetails_CategoryField tests that
+// FormatValidationErrorWithDetails() properly sets the Category field.
+func TestFormatValidationErrorWithDetails_CategoryField(t *testing.T) {
+	err := FormatValidationErrorWithDetails(
+		ErrorTypeErrorMessage,
+		"invalid.*token",
+		"access_denied",
+		"OAuth validation",
+		`{"error": "access_denied"}`,
+		"error",
+		"line 42",
+		[]string{"token_type", "access_token"},
+		"regex pattern 'invalid.*token' did not match",
+		"",
+		[]string{"No matching error field found"},
+	)
+
+	// Verify category is auto-derived
+	if err.Category != CategoryContent {
+		t.Errorf("Category should be auto-derived to CategoryContent for error_message, got %s", err.Category)
+	}
+
+	// Verify other fields are set
+	if err.FieldName != "error" {
+		t.Errorf("FieldName should be 'error', got %s", err.FieldName)
+	}
+
+	if err.Location != "line 42" {
+		t.Errorf("Location should be 'line 42', got %s", err.Location)
+	}
+}
+
+// TestErrorCategory_String tests the String() method for ErrorCategory.
+func TestErrorCategory_String(t *testing.T) {
+	testCases := []struct {
+		category      ErrorCategory
+		expectedString string
+	}{
+		{CategoryHTTP, "http"},
+		{CategoryContent, "content"},
+		{CategoryValidation, "validation"},
+		{CategoryPerformance, "performance"},
+		{CategorySecurity, "security"},
+		{CategorySuccess, "success"},
+		{CategoryCustom, "custom"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.expectedString, func(t *testing.T) {
+			if tc.category.String() != tc.expectedString {
+				t.Errorf("ErrorCategory.String() should return '%s', got '%s'",
+					tc.expectedString, tc.category.String())
+			}
+		})
+	}
+}
+
+

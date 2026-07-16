@@ -72,6 +72,7 @@ type ValidationFormatter struct {
 	rangeInfo      string
 	validationDetails []string
 	customSuggestions []string
+	category       ErrorCategory
 }
 
 // NewValidationFormatter creates a new ValidationFormatter for the given validation type.
@@ -499,6 +500,34 @@ func (vf *ValidationFormatter) WithSuggestions(suggestions ...string) *Validatio
 	return vf
 }
 
+// WithCategory sets the category for the validation error.
+//
+// This method specifies the high-level categorization of the validation error.
+// If not set, the category will be auto-derived from the validation type.
+//
+// # Parameters
+//
+//   - category: The ErrorCategory value (e.g., CategoryHTTP, CategoryContent, etc.)
+//
+// # Returns
+//
+// The same ValidationFormatter instance for method chaining.
+//
+// # Example
+//
+//	formatter.WithCategory(validate.CategoryHTTP)
+//
+//	// With chaining
+//	err := validate.NewValidationFormatter("status_code").
+//	    WithExpected(200).
+//	    WithActual(404).
+//	    WithCategory(validate.CategoryHTTP).
+//	    Format()
+func (vf *ValidationFormatter) WithCategory(category ErrorCategory) *ValidationFormatter {
+	vf.category = category
+	return vf
+}
+
 // Format creates the final ValidationError with all configured options.
 //
 // This is the final method in the builder chain that constructs the ValidationError
@@ -561,10 +590,17 @@ func (vf *ValidationFormatter) Format() ValidationError {
 	// Generate a concise message from validation parts
 	message := generateMessageFromParts(vf.validationType, vf.expected, vf.actual)
 
+	// Determine category - use explicitly set category or auto-derive from error type
+	category := vf.category
+	if category == "" {
+		category = GetCategoryForErrorType(vf.validationType)
+	}
+
 	// Construct ValidationError directly to support custom suggestions
 	return ValidationError{
 		ErrorType:         vf.validationType,
 		Message:           message,
+		Category:          category,
 		Expected:          vf.expected,
 		Actual:            vf.actual,
 		Context:           vf.context,
