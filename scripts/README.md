@@ -72,3 +72,64 @@ The script outputs:
   - 🔴 Deployments needing update
   - 🔶 Non-version tags (git SHAs)
   - ⚠️  Missed correctness releases
+
+## GitHub Release Fetcher
+
+Fetches ARMOR releases from GitHub API and distinguishes correctness-labeled releases from routine version bumps.
+
+### Files
+
+- `github-release-fetcher.py` - Fetches and categorizes releases
+
+### Usage
+
+Run the fetcher:
+```bash
+python3 scripts/github-release-fetcher.py
+```
+
+### Output
+
+Returns structured JSON with release information:
+```json
+[
+  {
+    "tag": "v0.1.43",
+    "published_at": "2026-03-28T13:09:18Z",
+    "is_correctness": true,
+    "url": "https://github.com/jedarden/ARMOR/releases/tag/v0.1.43"
+  }
+]
+```
+
+Fields:
+- `tag` - Release tag name
+- `published_at` - ISO 8601 timestamp when published
+- `is_correctness` - Boolean indicating if release is correctness/security-labeled
+- `url` - GitHub release page URL
+
+### Correctness Detection
+
+Releases are classified as correctness-labeled if any of these keywords appear in the tag name, release title, or release notes:
+- correctness
+- fix
+- critical
+- security
+- bug
+- patch
+- hotfix
+- urgent
+- vulnerability
+- cve
+- issue
+- regression
+
+### Error Handling
+
+The script handles:
+- GitHub API rate limits (includes small delays between paginated requests)
+- Network errors and timeouts
+- JSON parsing errors
+- Empty release lists
+
+All errors are reported to stderr with non-zero exit codes.
