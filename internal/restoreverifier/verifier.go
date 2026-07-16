@@ -161,6 +161,26 @@ type BucketState struct {
 	HistoricalSampleSize int                        `json:"historical_sample_size"`
 }
 
+// snapshot returns a copy of the state's data fields, excluding the mutex.
+func (s *BucketState) snapshot() *BucketState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	c := &BucketState{
+		Bucket:               s.Bucket,
+		LastVerification:     s.LastVerification,
+		LastSuccess:          s.LastSuccess,
+		VerifiedObjectRatio:  s.VerifiedObjectRatio,
+		TotalObjects:         s.TotalObjects,
+		VerifiedObjects:      s.VerifiedObjects,
+		FailedObjects:        s.FailedObjects,
+		HistoricalSampleSize: s.HistoricalSampleSize,
+		RecentResults:        make([]VerificationResult, len(s.RecentResults)),
+	}
+	copy(c.RecentResults, s.RecentResults)
+	return c
+}
+
 // Verifier manages continuous restore verification across multiple buckets.
 type Verifier struct {
 	mu            sync.RWMutex              // protects buckets field
@@ -680,10 +700,7 @@ func (v *Verifier) GetStatus() map[string]*BucketState {
 	// Return a copy to avoid concurrent access issues
 	status := make(map[string]*BucketState)
 	for name, state := range v.buckets {
-		stateCopy := *state
-		stateCopy.RecentResults = make([]VerificationResult, len(state.RecentResults))
-		copy(stateCopy.RecentResults, state.RecentResults)
-		status[name] = &stateCopy
+		status[name] = state.snapshot()
 	}
 	return status
 }
@@ -698,8 +715,5 @@ func (v *Verifier) GetBucketStatus(bucket string) (*BucketState, error) {
 		return nil, fmt.Errorf("bucket %s not configured", bucket)
 	}
 
-	stateCopy := *state
-	stateCopy.RecentResults = make([]VerificationResult, len(state.RecentResults))
-	copy(stateCopy.RecentResults, state.RecentResults)
-	return &stateCopy, nil
+	return state.snapshot(), nil
 }
