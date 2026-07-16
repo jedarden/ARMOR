@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: armor-drift-check-daily
+  namespace: argo-workflows
+  labels:
+    app: armor-drift-check
+spec:
+  schedule: "0 9 * * *"  # Run daily at 9 AM UTC
+  workflowSpecRef:
+    name: armor-drift-check
+  workflowSpec:
+    arguments:
+      parameters:
+        - name: git-repo
+          value: jedarden/ARMOR
+        - name: branch
+          value: main
+        - name: releases-threshold
+          value: "50"
+        - name: days-threshold
+          value: "30"
+        - name: output-to-slack
+          value: "false"
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3

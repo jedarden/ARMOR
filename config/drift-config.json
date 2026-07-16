@@ -1,0 +1,19 @@
+{
+  "releases_threshold": 50,
+  "days_threshold": 30,
+  "declarative_config_path": "~/declarative-config",
+  "github_repo": "jedarden/ARMOR",
+  "sort_by": "correctness",
+  "output_file": "/tmp/armor-drift-report.json",
+  "clusters": [
+    "iad-ci",
+    "iad-kalshi",
+    "rs-manager",
+    "ord-devimprint",
+    "iad-native-ads",
+    "iad-acb",
+    "apexalgo-iad",
+    "ardenone-cluster",
+    "ardenone-manager"
+  ]
+}

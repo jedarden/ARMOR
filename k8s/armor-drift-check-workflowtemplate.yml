@@ -1,0 +1,109 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: armor-drift-check
+  namespace: argo-workflows
+  labels:
+    app: armor-drift-check
+spec:
+  entrypoint: drift-check
+  serviceAccountName: argo-workflow
+  arguments:
+    parameters:
+      - name: git-repo
+        value: jedarden/ARMOR
+      - name: branch
+        value: main
+      - name: releases-threshold
+        value: "50"
+      - name: days-threshold
+        value: "30"
+      - name: output-to-slack
+        value: "false"
+  templates:
+    - name: drift-check
+      steps:
+        - - name: run-check
+            template: version-drift-check
+        - - name: archive-results
+            template: archive-results
+            arguments:
+              parameters:
+                - name: results
+                  value: "{{steps.run-check.outputs.result}}"
+
+    - name: version-drift-check
+      activeDeadlineSeconds: 600
+      retryStrategy:
+        limit: "2"
+        retryPolicy: OnError
+        backoff:
+          duration: 30s
+          factor: "2"
+      script:
+        image: alpine/git:latest
+        command: [sh, -c]
+        source: |
+          set -e
+
+          # Install Python3 and dependencies
+          apk add --no-cache python3 py3-pip py3-requests
+
+          # Clone the ARMOR repo
+          git clone --depth 1 --branch {{workflow.parameters.branch}} \
+            "https://github.com/{{workflow.parameters.git-repo}}.git" \
+            /workspace
+
+          cd /workspace
+
+          # Run the drift check
+          python3 scripts/version-drift-check.py \
+            --json \
+            --releases-threshold {{workflow.parameters.releases-threshold}} \
+            --days-threshold {{workflow.parameters.days-threshold}} \
+            --output /tmp/drift-report.json
+
+          echo "Drift check completed. Report saved to /tmp/drift-report.json"
+          cat /tmp/drift-report.json
+
+          # Exit with error if there's correctness drift
+          CORRECTNESS_DRIFT=$(python3 -c "
+          import json, sys
+          with open('/tmp/drift-report.json', 'r') as f:
+              data = json.load(f)
+          print(data.get('summary', {}).get('with_correctness_drift', 0))
+          ")
+
+          if [ "$CORRECTNESS_DRIFT" -gt 0 ]; then
+            echo "WARNING: Correctness drift detected in $CORRECTNESS_DRIFT deployment(s)"
+            exit 1
+          fi
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+
+    - name: archive-results
+      inputs:
+        parameters:
+          - name: results
+      activeDeadlineSeconds: 300
+      container:
+        image: alpine/git:latest
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            echo "Archiving drift check results..."
+            echo "{{inputs.parameters.results}}"
+            echo "Results archived to Argo Workflow logs"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
