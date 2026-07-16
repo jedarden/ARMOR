@@ -103,12 +103,12 @@ func (r *recordingBackend) CompleteMultipartUpload(ctx context.Context, bucket, 
 
 	// Store assembled object exactly as B2 would, preserving no metadata —
 	// the handler applies ARMOR metadata afterwards via Copy.
-	r.mockBackend.mu.Lock()
-	r.mockBackend.objects[bucket+"/"+key] = assembled
-	if _, ok := r.mockBackend.meta[bucket+"/"+key]; !ok {
-		r.mockBackend.meta[bucket+"/"+key] = map[string]string{}
+	r.mu.Lock()
+	r.objects[bucket+"/"+key] = assembled
+	if _, ok := r.meta[bucket+"/"+key]; !ok {
+		r.meta[bucket+"/"+key] = map[string]string{}
 	}
-	r.mockBackend.mu.Unlock()
+	r.mu.Unlock()
 	return "etag-assembled", nil
 }
 
@@ -196,7 +196,7 @@ func completeMultipart(t *testing.T, h *handlers.Handlers, bucket, key, uploadID
 	var xmlBody bytes.Buffer
 	xmlBody.WriteString("<CompleteMultipartUpload>")
 	for i, etag := range etags {
-		xmlBody.WriteString(fmt.Sprintf("<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>", i+1, etag))
+		fmt.Fprintf(&xmlBody, "<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>", i+1, etag)
 	}
 	xmlBody.WriteString("</CompleteMultipartUpload>")
 	url := fmt.Sprintf("/%s/%s?uploadId=%s", bucket, key, uploadID)
@@ -243,12 +243,12 @@ func TestUploadPartRoutingNeverFallsThroughToPut(t *testing.T) {
 func TestMultipartFullCycleByteVerification(t *testing.T) {
 	_, rb, h := recordingTestSetup(t)
 	bucket, key := "test-bucket", "full-cycle.parquet"
-	const block = 65536
 
 	// Three parts with distinguishable patterns; final part non-aligned.
 	// Scaled to 44MB+ total to match the actual failing scale from bf-1v6skf
 	// (production litestream snapshot was 44,908,497 bytes and failed at block 256).
 	const targetTotal = 45 * 1024 * 1024 // 45MB target (slightly above production failure)
+	const block = 65536                  // encryption block size
 	partSize := 5 * 1024 * 1024          // 5MB per part (S3 minimum, matches production)
 	finalPartSize := targetTotal - (2 * partSize)
 	sizes := []int{partSize, partSize, finalPartSize}
@@ -348,7 +348,6 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 	t.Run("U6_out_of_order_parts", func(t *testing.T) {
 		_, _, h := recordingTestSetup(t)
 		bucket, key := "test-bucket", "out-of-order.dat"
-		const block = 65536
 
 		uploadID := initiateMultipart(t, h, bucket, key)
 
@@ -496,7 +495,6 @@ func firstDivergence(a, b []byte) int {
 func TestMultipartPartBoundaryDebug(t *testing.T) {
 	_, rb, h := recordingTestSetup(t)
 	bucket, key := "test-bucket", "boundary-debug.parquet"
-	const block = 65536
 	const partSize = 5 * 1024 * 1024
 
 	// Two simple parts

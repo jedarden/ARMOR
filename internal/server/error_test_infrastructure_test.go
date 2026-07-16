@@ -754,12 +754,9 @@ func ValidateErrorResponseStructure(t *testing.T, body []byte, options ErrorStru
 	}
 
 	// Track validation results
-	allValid := true
+	allValid := !options.RequireCode || s3Err.Code != ""
 
 	// Validate error code field exists if required
-	if options.RequireCode && s3Err.Code == "" {
-		allValid = false
-	}
 
 	// Validate error message field exists if required
 	if options.RequireMessage {
