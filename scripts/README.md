@@ -133,3 +133,119 @@ The script handles:
 - Empty release lists
 
 All errors are reported to stderr with non-zero exit codes.
+
+## Version Drift Comparison
+
+Compares deployed ARMOR versions against GitHub releases to detect drift.
+
+### Files
+
+- `compare-version-drift.py` - Main comparison script that integrates outputs from github-release-fetcher.py and find-armor-deployments.py
+
+### Usage
+
+Basic usage with default thresholds:
+```bash
+python3 scripts/compare-version-drift.py \
+  --deployments <path-to-deployments.json> \
+  --releases <path-to-releases.json>
+```
+
+With custom thresholds:
+```bash
+python3 scripts/compare-version-drift.py \
+  --deployments deployments.json \
+  --releases releases.json \
+  --releases-threshold 10 \
+  --days-threshold 7
+```
+
+Output machine-readable JSON:
+```bash
+python3 scripts/compare-version-drift.py \
+  --deployments deployments.json \
+  --releases releases.json \
+  --json
+```
+
+Sort by different fields:
+```bash
+# Sort by releases behind (most behind first)
+python3 scripts/compare-version-drift.py \
+  --deployments deployments.json \
+  --releases releases.json \
+  --sort-by releases
+
+# Sort by correctness drift priority
+python3 scripts/compare-version-drift.py \
+  --deployments deployments.json \
+  --releases releases.json \
+  --sort-by correctness
+```
+
+### Integration
+
+The comparison script integrates the outputs from both child scripts:
+
+```bash
+# Generate both inputs
+python3 scripts/github-release-fetcher.py > /tmp/releases.json
+python3 scripts/find-armor-deployments.py > /tmp/deployments.json
+
+# Run comparison
+python3 scripts/compare-version-drift.py \
+  --deployments /tmp/deployments.json \
+  --releases /tmp/releases.json
+```
+
+### Output Format
+
+The script produces a structured report for each cluster:
+
+**Human-readable output:**
+- Shows cluster status with emoji indicators (🔴 drift, 🟡 warning, ✅ OK)
+- Displays deployed vs latest versions
+- Shows releases behind and days behind counts
+- Highlights correctness drift with 🚨 emoji
+- Summary statistics
+
+**JSON output:**
+```json
+{
+  "thresholds": {
+    "releases": 50,
+    "days": 30
+  },
+  "summary": {
+    "total_deployments": 6,
+    "with_drift": 3,
+    "with_correctness_drift": 2
+  },
+  "deployments": [
+    {
+      "cluster": "iad-ci",
+      "deployed_tag": "0.1.24",
+      "latest_tag": "v0.1.50",
+      "releases_behind": 2,
+      "days_behind": null,
+      "is_drift": true,
+      "is_correctness_drift": true,
+      "deployed_date": null,
+      "latest_date": "2026-07-15T16:00:00Z",
+      "filepath": "/path/to/deployment.yml"
+    }
+  ]
+}
+```
+
+### Acceptance Criteria
+
+✅ **Configurable thresholds**: Customizable N releases and M days thresholds via CLI arguments
+✅ **Structured reports**: Per-cluster deployment comparison with all required metrics
+✅ **Correctness priority**: Correctness drift flagged with highest priority (🚨 emoji)
+✅ **Machine-readable JSON**: Full JSON output with deployment details and summary statistics
+
+### Exit Codes
+
+- `0` - Success (even if drift is detected)
+- `1` - Error (invalid inputs, file parsing errors, etc.)
