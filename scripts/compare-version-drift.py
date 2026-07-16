@@ -47,6 +47,7 @@ class DriftReport:
     days_behind: Optional[int]
     is_drift: bool
     is_correctness_drift: bool
+    missed_correctness_releases: List[str]
     deployed_date: Optional[str]
     latest_date: Optional[str]
     filepath: str
@@ -106,17 +107,24 @@ def calculate_days_behind(deployed_tag: str, releases: List[Release]) -> Optiona
 
 def check_correctness_drift(deployed_tag: str, releases: List[Release]) -> bool:
     """Check if deployment is behind a correctness release."""
+    missed = get_missed_correctness_releases(deployed_tag, releases)
+    return len(missed) > 0
+
+
+def get_missed_correctness_releases(deployed_tag: str, releases: List[Release]) -> List[str]:
+    """Get list of correctness release tags that are newer than the deployed version."""
     deployed_version = parse_version(deployed_tag)
     if deployed_version is None:
-        return False
+        return []
 
-    # Check if any correctness release exists with version > deployed_version
+    # Collect all correctness releases with version > deployed_version
+    missed_releases = []
     for release in releases:
         release_version = parse_version(release.tag)
         if release_version and release_version > deployed_version and release.is_correctness:
-            return True
+            missed_releases.append(release.tag)
 
-    return False
+    return missed_releases
 
 
 def compare_drift(
@@ -150,8 +158,9 @@ def compare_drift(
         # Calculate days behind
         days_behind = calculate_days_behind(deployment.image_tag, releases)
 
-        # Check for correctness drift
+        # Check for correctness drift and get missed releases
         correctness_drift = check_correctness_drift(deployment.image_tag, releases)
+        missed_correctness = get_missed_correctness_releases(deployment.image_tag, releases)
 
         # Determine if drift exceeds thresholds
         is_drift = (
@@ -180,6 +189,7 @@ def compare_drift(
             days_behind=days_behind,
             is_drift=is_drift,
             is_correctness_drift=correctness_drift,
+            missed_correctness_releases=missed_correctness,
             deployed_date=deployed_date,
             latest_date=latest_date,
             filepath=deployment.filepath
@@ -208,8 +218,8 @@ def main():
     parser.add_argument(
         '--releases-threshold',
         type=int,
-        default=50,
-        help='Flag deployments behind by N or more releases (default: 50)'
+        default=3,
+        help='Flag deployments behind by N or more releases (default: 3)'
     )
     parser.add_argument(
         '--days-threshold',
@@ -298,6 +308,7 @@ def output_json(reports: List[DriftReport], releases_threshold: int, days_thresh
             "days_behind": report.days_behind,
             "is_drift": report.is_drift,
             "is_correctness_drift": report.is_correctness_drift,
+            "missed_correctness_releases": report.missed_correctness_releases,
             "deployed_date": report.deployed_date,
             "latest_date": report.latest_date,
             "filepath": report.filepath
@@ -330,7 +341,10 @@ def output_human_readable(reports: List[DriftReport], releases_threshold: int, d
             print(f"   Days behind: {report.days_behind}")
 
         if report.is_correctness_drift:
-            print(f"   🚨 CORRECTNESS DRIFT: Missing correctness releases!")
+            if report.missed_correctness_releases:
+                print(f"   🚨 CORRECTNESS DRIFT: Missing {len(report.missed_correctness_releases)} correctness release(s): {', '.join(report.missed_correctness_releases)}")
+            else:
+                print(f"   🚨 CORRECTNESS DRIFT: Missing correctness releases!")
 
         print()
 
