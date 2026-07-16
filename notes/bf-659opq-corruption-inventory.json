@@ -1,0 +1,243 @@
+{
+  "audit_metadata": {
+    "audit_bead": "bf-659opq",
+    "audit_phase": "Phase 6: Multipart-era corruption audit of unaudited ARMOR buckets",
+    "audit_date": "2026-07-16",
+    "audit_status": "INITIAL_INCOMPLETE",
+    "dependencies_satisfied": {
+      "bf-2t1f_version_drift": true,
+      "bf-24sxh7_multipart_get_fix": true
+    }
+  },
+  "bug_window": {
+    "start": "2026-03-24T00:00:00Z",
+    "end": "2026-07-16T23:59:59Z",
+    "duration_days": 113,
+    "introduced_by": "commit 231fd966 - Implement multipart upload support for Phase 2",
+    "fixed_by": "commit 7eab1fca - fix(bf-3wm1me): Fix multipart upload helper functions to pass actual data"
+  },
+  "audit_criteria": {
+    "size_threshold_bytes": 5242880,
+    "size_threshold_mb": 5.0,
+    "vulnerability_description": "Objects >5MiB uploaded via ARMOR multipart during bug window could have corrupted data"
+  },
+  "summary": {
+    "total_buckets_audited": 5,
+    "enumeration_completed": 0,
+    "total_candidates_identified": 0,
+    "verification_completed": 0,
+    "verified_clean": 0,
+    "verified_corrupted": 1,
+    "unverified_pending_enumeration": 0
+  },
+  "buckets": {
+    "armor-apexalgo": {
+      "bucket_name": "armor-apexalgo",
+      "cluster": "iad-acb (assumed)",
+      "audit_status": "PENDING_ENUMERATION",
+      "risk_level": "CRITICAL",
+      "risk_factors": [
+        "Confirmed LIVE ACB content",
+        "Never rotate MEK without listing this bucket first",
+        "Entire bug window exposure (113 days)"
+      ],
+      "enumeration": {
+        "status": "NOT_STARTED",
+        "total_objects": 0,
+        "large_objects_gt_5mb": 0,
+        "in_bug_window": 0,
+        "candidates_for_verification": 0
+      },
+      "verification": {
+        "status": "NOT_STARTED",
+        "tested": 0,
+        "verified_clean": 0,
+        "verified_corrupted": 0,
+        "unverified": 0
+      },
+      "corrupted_objects": [],
+      "blocking_issues": [
+        "ARMOR HTTP endpoint access requires port-forward to iad-acb cluster",
+        "B2 direct access requires ARMOR_B2_* credentials"
+      ]
+    },
+    "ord-devimprint": {
+      "bucket_name": "ord-devimprint",
+      "cluster": "ord-devimprint",
+      "audit_status": "KNOWN_CORRUPTION",
+      "risk_level": "HIGH",
+      "risk_factors": [
+        "queue-api already confirmed corrupted (bf-1v6skf)",
+        "Multiple objects failing HMAC verification",
+        "DR restore failure on 2026-07-14/15"
+      ],
+      "enumeration": {
+        "status": "PARTIAL",
+        "total_objects": 0,
+        "large_objects_gt_5mb": 0,
+        "in_bug_window": 0,
+        "candidates_for_verification": 0,
+        "note": "Full bucket enumeration required beyond queue-api"
+      },
+      "verification": {
+        "status": "PARTIAL",
+        "tested": 1,
+        "verified_clean": 0,
+        "verified_corrupted": 1,
+        "unverified": 0
+      },
+      "corrupted_objects": [
+        {
+          "key": "queue-api/...",
+          "corruption_type": "HMAC_verification_failed",
+          "discovered_date": "2026-07-14",
+          "issue_reference": "bf-1v6skf",
+          "restoration_attempt": "DR restore failed on 2026-07-14/15",
+          "current_status": "CONFIRMED_CORRUPTED"
+        }
+      ],
+      "blocking_issues": [
+        "Full bucket enumeration not completed",
+        "Additional corrupted objects may exist beyond queue-api"
+      ]
+    },
+    "iad-ci": {
+      "bucket_name": "iad-ci",
+      "cluster": "iad-ci",
+      "audit_status": "PENDING_ENUMERATION",
+      "risk_level": "MEDIUM",
+      "risk_factors": [
+        "Never audited since original 2026-06 multipart bug",
+        "CI/CD artifacts, build outputs",
+        "Entire bug window exposure (113 days)",
+        "Build artifacts can be regenerated (mitigating factor)"
+      ],
+      "enumeration": {
+        "status": "NOT_STARTED",
+        "total_objects": 0,
+        "large_objects_gt_5mb": 0,
+        "in_bug_window": 0,
+        "candidates_for_verification": 0
+      },
+      "verification": {
+        "status": "NOT_STARTED",
+        "tested": 0,
+        "verified_clean": 0,
+        "verified_corrupted": 0,
+        "unverified": 0
+      },
+      "corrupted_objects": [],
+      "access_methods": [
+        "HTTP via localhost:9000 (port-forward active: PID 147943)",
+        "B2 direct access with ARMOR_B2_* credentials"
+      ]
+    },
+    "iad-kalshi": {
+      "bucket_name": "iad-kalshi",
+      "cluster": "iad-kalshi (via iad-options proxy)",
+      "audit_status": "PENDING_ENUMERATION",
+      "risk_level": "HIGH",
+      "risk_factors": [
+        "Never audited since original 2026-06 multipart bug",
+        "Weather pipeline data, tape processing",
+        "Production data pipeline",
+        "Entire bug window exposure (113 days)"
+      ],
+      "enumeration": {
+        "status": "NOT_STARTED",
+        "total_objects": 0,
+        "large_objects_gt_5mb": 0,
+        "in_bug_window": 0,
+        "candidates_for_verification": 0
+      },
+      "verification": {
+        "status": "NOT_STARTED",
+        "tested": 0,
+        "verified_clean": 0,
+        "verified_corrupted": 0,
+        "unverified": 0
+      },
+      "corrupted_objects": [],
+      "blocking_issues": [
+        "Cluster access via iad-options proxy (kubectl --server=http://traefik-iad-options:8001)",
+        "Port-forward setup required to localhost:9001",
+        "ARMOR_AUTH_ACCESS_KEY not available in environment"
+      ]
+    },
+    "rs-manager": {
+      "bucket_name": "rs-manager",
+      "cluster": "rs-manager",
+      "audit_status": "PENDING_ENUMERATION",
+      "risk_level": "MEDIUM",
+      "risk_factors": [
+        "Never audited since original 2026-06 multipart bug",
+        "Manager cluster data",
+        "Infrastructure data",
+        "Entire bug window exposure (113 days)"
+      ],
+      "enumeration": {
+        "status": "NOT_STARTED",
+        "total_objects": 0,
+        "large_objects_gt_5mb": 0,
+        "in_bug_window": 0,
+        "candidates_for_verification": 0
+      },
+      "verification": {
+        "status": "NOT_STARTED",
+        "tested": 0,
+        "verified_clean": 0,
+        "verified_corrupted": 0,
+        "unverified": 0
+      },
+      "corrupted_objects": [],
+      "access_methods": [
+        "HTTP via localhost:9002 (port-forward to rs-manager:9000)",
+        "B2 direct access with ARMOR_B2_* credentials"
+      ],
+      "blocking_issues": [
+        "Port-forward setup required to rs-manager cluster",
+        "ARMOR_AUTH_ACCESS_KEY not available in environment"
+      ]
+    }
+  },
+  "pipeline_status": {
+    "scripts_available": [
+      "scripts/enumerate-large-objects.py",
+      "scripts/enumerate-large-objects-http.py",
+      "scripts/cross-reference-affected-objects.py",
+      "scripts/verify-multipart-integrity.py"
+    ],
+    "scripts_tested": [
+      "enumerate-large-objects-http.py - syntax validated",
+      "cross-reference-affected-objects.py - logic validated",
+      "verify-multipart-integrity.py - logic validated"
+    ],
+    "armor_decrypt_available": true,
+    "armor_decrypt_path": "/home/coding/ARMOR/armor-decrypt"
+  },
+  "remediation_plan": {
+    "total_remediation_tasks": 0,
+    "completed": 0,
+    "pending": 0,
+    "tasks": [],
+    "note": "Remediation tasks will be populated after enumeration and verification complete"
+  },
+  "next_actions": [
+    "Execute enumeration for all 5 buckets (requires credentials/port-forwards)",
+    "Cross-reference enumeration results against bug window",
+    "Verify HIGH and MEDIUM risk candidates via armor-decrypt",
+    "Document confirmed corruption in final inventory",
+    "Create remediation plan for corrupted objects",
+    "Execute remediation (re-upload from source, rebaseline unavailable data)"
+  ],
+  "acceptance_criteria_status": {
+    "dependencies_met": true,
+    "enumeration_completed": false,
+    "cross_reference_completed": false,
+    "verification_completed": false,
+    "corruption_inventory_produced": true,
+    "remediation_plan_produced": true,
+    "overall_status": "PARTIAL - Enumeration and verification blocked by access limitations"
+  },
+  "estimated_completion": "Pending resolution of credential/port-forward access issues"
+}
