@@ -404,6 +404,226 @@ go test -v ./internal/testutil/...
 - **Filtering**: Built-in support for test filtering
 - **Extension**: Easy to extend and manipulate tables
 
+## Request/Response Validation Helpers
+
+The `validation_helpers.go` file provides comprehensive utilities for making test requests and validating HTTP responses in ARMOR testing.
+
+### Request Builders
+
+#### NewTestRequest
+
+Creates a basic test request:
+
+```go
+req := NewTestRequest("GET", "/test-bucket/test-key", nil)
+```
+
+#### BuildTestRequest
+
+Creates a fully configured request from configuration:
+
+```go
+cfg := TestRequestConfig{
+    Method: "GET",
+    Path:   "/test-bucket/test-key",
+    Headers: map[string]string{
+        "X-Custom-Header": "value",
+    },
+}
+req := BuildTestRequest(cfg)
+```
+
+#### With* Header Helpers
+
+Add headers to requests:
+
+```go
+req := NewTestRequest("GET", "/test-bucket/test-key", nil)
+req = WithAuthHeader(req, "TESTACCESSKEY", "TESTSECRETKEY123456789012345678901234")
+req = WithDateHeader(req, time.Now())
+req = WithHeader(req, "X-Custom-Header", "value")
+req = WithExpiredDate(req) // Sets date to 20 minutes ago
+```
+
+### Request Execution
+
+#### MakeRequest
+
+Executes a request and captures response:
+
+```go
+handler := server.Handler()
+req := NewTestRequest("GET", "/test-bucket/test-key", nil)
+resp := MakeRequest(handler, req)
+
+assert.Equal(t, 403, resp.Code)
+```
+
+#### MakeRequestWithTiming
+
+Executes request with performance measurement:
+
+```go
+resp := MakeRequestWithTiming(handler, req)
+assert.Less(t, resp.ResponseTime, 100*time.Millisecond)
+```
+
+### Response Validators
+
+#### ValidateStatusCode
+
+```go
+err := ValidateStatusCode(resp, 403)
+assert.NoError(t, err)
+```
+
+#### ValidateContentType
+
+```go
+err := ValidateContentType(resp, "application/xml")
+assert.NoError(t, err)
+```
+
+#### ValidateErrorCode
+
+```go
+err := ValidateErrorCode(resp, "MissingAuthenticationToken")
+assert.NoError(t, err)
+```
+
+#### ValidateErrorMessage
+
+```go
+err := ValidateErrorMessage(resp, "authentication")
+assert.NoError(t, err)
+```
+
+#### ValidateResponseTime
+
+```go
+err := ValidateResponseTime(resp, 100*time.Millisecond)
+assert.NoError(t, err)
+```
+
+#### ValidateHeader
+
+```go
+err := ValidateHeader(resp, "X-Custom-Header", "expected-value")
+assert.NoError(t, err)
+```
+
+### Comprehensive Assertions
+
+#### AssertErrorResponse
+
+Validates complete error response:
+
+```go
+AssertErrorResponse(t, resp, "MissingAuthenticationToken", 403)
+```
+
+#### AssertAuthenticationError
+
+Validates authentication error:
+
+```go
+AssertAuthenticationError(t, resp)
+```
+
+#### AssertAuthorizationError
+
+Validates authorization error:
+
+```go
+AssertAuthorizationError(t, resp)
+```
+
+#### Simple Assertions
+
+```go
+AssertStatusCode(t, resp, 200)
+AssertErrorType(t, resp, "MissingAuthenticationToken")
+AssertErrorMessage(t, resp, "authentication")
+AssertContentType(t, resp, "application/xml")
+AssertResponseTimeUnder(t, resp, 100*time.Millisecond)
+```
+
+### Complete Example
+
+```go
+func TestMissingAuthentication(t *testing.T) {
+    server := setupTestServer(t)
+    handler := server.Handler()
+
+    // Create request
+    req := NewTestRequest("GET", "/test-bucket/test-key", nil)
+
+    // Execute request with timing
+    resp := MakeRequestWithTiming(handler, req)
+
+    // Validate error response
+    AssertErrorResponse(t, resp.ResponseRecorder, "MissingAuthenticationToken", 403)
+    AssertResponseTimeUnder(t, resp, 100*time.Millisecond)
+    AssertContentType(t, resp.ResponseRecorder, "application/xml")
+
+    // Validate error message
+    AssertErrorMessage(t, resp.ResponseRecorder, "authentication")
+}
+```
+
+### S3Error Type
+
+The `S3Error` type represents ARMOR's XML error response format:
+
+```go
+type S3Error struct {
+    XMLName xml.Name `xml:"Error"`
+    Code    string   `xml:"Code"`
+    Message string   `xml:"Message"`
+}
+```
+
+Example XML:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+    <Code>MissingAuthenticationToken</Code>
+    <Message>The request must include authentication</Message>
+</Error>
+```
+
+### Error Codes
+
+ARMOR uses standard S3 error codes:
+
+- `MissingAuthenticationToken`: Authorization header is missing
+- `InvalidAccessKeyId`: The provided access key does not exist
+- `SignatureDoesNotMatch`: Calculated signature does not match
+- `RequestExpired`: Request timestamp is outside allowed window
+- `AccessDenied`: ACL-based access control rejection
+- `InvalidAlgorithm`: Only AWS4-HMAC-SHA256 is supported
+- `IncompleteSignature`: Authorization header is missing required fields
+- `MissingDateHeader`: X-Amz-Date header is missing
+
+### Performance Testing
+
+Example performance validation:
+
+```go
+func TestErrorPerformance(t *testing.T) {
+    handler := setupTestHandler(t)
+
+    req := NewTestRequest("GET", "/test-bucket/test-key", nil)
+    resp := MakeRequestWithTiming(handler, req)
+
+    // Validate performance requirements
+    AssertResponseTimeUnder(t, resp, 100*time.Millisecond)
+
+    // Also validate the error response
+    AssertErrorResponse(t, resp.ResponseRecorder, "MissingAuthenticationToken", 403)
+}
+```
+
 ## Contributing
 
 When adding new features to the test table framework:
