@@ -53,11 +53,11 @@ func TestComprehensiveErrorVerification(t *testing.T) {
 
 	// Define all rejection scenarios
 	scenarios := []struct {
-		name             string
-		setupRequest     func() *http.Request
-		expectedCode     string
+		name                        string
+		setupRequest                func() *http.Request
+		expectedCode                string
 		shouldHaveMeaningfulMessage bool
-		maxResponseTime  time.Duration
+		maxResponseTime             time.Duration
 	}{
 		// Authentication failures
 		{
@@ -65,9 +65,9 @@ func TestComprehensiveErrorVerification(t *testing.T) {
 			setupRequest: func() *http.Request {
 				return httptest.NewRequest("GET", "/test-bucket/test-key", nil)
 			},
-			expectedCode:                    "MissingAuthenticationToken",
-			shouldHaveMeaningfulMessage:     true,
-			maxResponseTime:                 100 * time.Millisecond,
+			expectedCode:                "MissingAuthenticationToken",
+			shouldHaveMeaningfulMessage: true,
+			maxResponseTime:             100 * time.Millisecond,
 		},
 		{
 			name: "Invalid access key",
@@ -224,7 +224,7 @@ func TestComprehensiveErrorVerification(t *testing.T) {
 	t.Run("Performance statistics", func(t *testing.T) {
 		var total time.Duration
 		var max time.Duration
-		var min time.Duration = 1 * time.Second // Initialize to high value
+		var min = 1 * time.Second // Initialize to high value
 
 		for _, elapsed := range responseTimes {
 			total += elapsed

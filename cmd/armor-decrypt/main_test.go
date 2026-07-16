@@ -4,7 +4,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/hex"
 	"flag"
 	"io"
@@ -519,19 +518,6 @@ func TestParseB2URL(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Helper: encode to base64
-func encodeBase64(data []byte) string {
-	return base64.StdEncoding.EncodeToString(data)
-}
-
-// getSidecarHMACHash returns the hash component of the sidecar path for testing
-func getSidecarHMACHash(path string) string {
-	// Simplified version of what getSidecarHMACPath computes
-	key := filepath.Base(path)
-	sum := crypto.ComputePlaintextSHA256([]byte(key))
-	return hex.EncodeToString(sum[:])
 }
 
 // TestMain sets up test flags
