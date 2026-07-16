@@ -24,7 +24,7 @@ from typing import Dict, List, Any
 
 # Default configuration
 DEFAULT_CONFIG = {
-    "releases_threshold": 50,
+    "releases_threshold": 3,
     "days_threshold": 30,
     "declarative_config_path": "~/declarative-config",
     "github_repo": "jedarden/ARMOR",
