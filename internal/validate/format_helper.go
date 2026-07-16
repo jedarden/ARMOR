@@ -622,8 +622,8 @@ func formatErrorCore(
 	// GetCategoryForErrorTypeEnum handles unknown error types by returning CategoryCustom
 	category := GetCategoryForErrorTypeEnum(errorType)
 
-	// Convert ErrorType enum to string for ValidationError
-	errorTypeStr := string(errorType)
+	// Convert ErrorType enum to string for ValidationError using .String() method
+	errorTypeStr := errorType.String()
 
 	// Create and return ValidationError with populated category
 	return ValidationError{
