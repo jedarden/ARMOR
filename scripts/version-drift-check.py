@@ -91,6 +91,53 @@ def find_deployments(config: Dict[str, Any]) -> List[Dict]:
     return deployments
 
 
+def get_current_version_from_repo() -> Dict:
+    """Get current ARMOR version from local VERSION file and git."""
+    try:
+        version_file = Path(__file__).parent.parent / 'VERSION'
+        if not version_file.exists():
+            print("Warning: VERSION file not found, using GitHub releases only", file=sys.stderr)
+            return None
+
+        version_str = version_file.read_text().strip()
+        print(f"Current version from repo: {version_str}", file=sys.stderr)
+
+        # Try to get commit date for this version
+        import re
+        match = re.match(r'0\.1\.(\d+)', version_str)
+        if match:
+            version_num = int(match.group(1))
+
+            # Try to find the commit for this version
+            result = subprocess.run(
+                ["git", "log", "--all", "--grep", f"auto-bump version to 0.1.{version_num}",
+                 "--format=%ci", "-n", "1"],
+                cwd=Path(__file__).parent.parent,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            commit_date = None
+            if result.returncode == 0 and result.stdout.strip():
+                date_str = result.stdout.strip()
+                try:
+                    commit_date = datetime.fromisoformat(date_str.replace(' +', '+')).isoformat()
+                except ValueError:
+                    pass
+
+            return {
+                'tag': version_str,
+                'published_at': commit_date or datetime.now().isoformat(),
+                'is_correctness': False,  # Will be determined later
+                'url': ''
+            }
+    except Exception as e:
+        print(f"Warning: Could not read VERSION file: {e}", file=sys.stderr)
+
+    return None
+
+
 def compare_drift(
     deployments: List[Dict],
     releases: List[Dict],
@@ -236,8 +283,17 @@ def main():
         if args.sort_by:
             config['sort_by'] = args.sort_by
 
-        # Run the pipeline
+        # Get current version from local VERSION file (more accurate for ARMOR)
+        current_version = get_current_version_from_repo()
+
+        # Fetch GitHub releases/tags
         releases = fetch_releases(config)
+
+        # If we have a current version from VERSION file, prepend it to releases
+        if current_version:
+            # Check if VERSION file version is newer than fetched releases
+            releases.insert(0, current_version)
+
         deployments = find_deployments(config)
         drift_result = compare_drift(deployments, releases, config)
 
@@ -263,8 +319,8 @@ def main():
             output_path.write_text(output)
             print(f"Report written to {args.output}", file=sys.stderr)
 
-        # Exit with error code if there's correctness drift
-        if drift_result.get('summary', {}).get('with_correctness_drift', 0) > 0:
+        # Exit with error code if there's any drift (exceeds thresholds)
+        if drift_result.get('summary', {}).get('with_drift', 0) > 0:
             sys.exit(1)
 
         sys.exit(0)

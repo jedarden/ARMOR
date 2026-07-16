@@ -8,8 +8,11 @@ Automated version drift monitoring across ARMOR deployments.
 
 ### Files
 
-- `check-armor-version-drift.py` - Main Python script for checking version drift
-- `check-version-drift.sh` - Bash alternative (requires GitHub API access)
+- `check-version-drift.sh` - **Main orchestrator script** (recommended)
+- `version-drift-check.py` - Python pipeline that wires together all components
+- `github-release-fetcher.py` - Fetches releases from GitHub API
+- `find-armor-deployments.py` - Discovers ARMOR deployments in declarative-config
+- `compare-version-drift.py` - Compares deployments against releases
 - `armor-version-drift-check.cron` - Cron job definition
 - `setup-version-drift-schedule.sh` - Setup script to install cron job
 
@@ -17,13 +20,53 @@ Automated version drift monitoring across ARMOR deployments.
 
 Run the check manually:
 ```bash
-python3 scripts/check-armor-version-drift.py
+./scripts/check-version-drift.sh
+```
+
+With custom thresholds:
+```bash
+./scripts/check-version-drift.sh --releases 5 --days 60
 ```
 
 Output JSON format:
 ```bash
-python3 scripts/check-armor-version-drift.py --json
+./scripts/check-version-drift.sh --json
 ```
+
+Write report to file:
+```bash
+./scripts/check-version-drift.sh --output report.json
+```
+
+Sort by specific field:
+```bash
+./scripts/check-version-drift.sh --sort-by cluster
+./scripts/check-version-drift.sh --sort-by correctness
+```
+
+### Options
+
+- `--releases N` - Flag deployments N or more releases behind (default: 3)
+- `--days N` - Flag deployments N or more days behind (default: 30)
+- `--json` - Output machine-readable JSON instead of human-readable format
+- `--output FILE` - Write report to file (in addition to stdout)
+- `--sort-by FIELD` - Sort output by field: cluster, releases, days, correctness (default: correctness)
+- `--config FILE` - Use configuration file (JSON)
+- `--help` - Show help message
+
+### Exit Codes
+
+- `0` - All deployments within thresholds
+- `1` - One or more deployments exceed thresholds
+- `2` - Error occurred
+
+### What It Checks
+
+The script scans ARMOR deployments across all clusters in `jedarden/declarative-config` and:
+1. **Discovery**: Finds all ARMOR deployment files using `find-armor-deployments.py`
+2. **Fetching**: Fetches latest GitHub releases using `github-release-fetcher.py`
+3. **Comparison**: Compares deployed versions against releases using `compare-version-drift.py`
+4. **Flagging**: Flags deployments needing attention based on thresholds
 
 ### What It Checks
 
