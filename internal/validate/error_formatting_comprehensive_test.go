@@ -1589,7 +1589,7 @@ func TestFormatting_NilAndEmptyValues(t *testing.T) {
 		{
 			name: "FormatErrorMessage with empty message",
 			testFunc: func(t *testing.T) {
-				result := FormatErrorMessage("required", "", "field")
+				result := FormatErrorMessage(ErrTypeRequired, "", "field")
 				if !strings.Contains(result, "required") {
 					t.Errorf("Empty message should still include error type")
 				}
