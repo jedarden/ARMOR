@@ -108,15 +108,17 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// Create canary monitor
 	canaryMonitor := canary.NewMonitor(canary.Config{
-		Backend:    b2Backend,
-		Bucket:     cfg.Bucket,
-		MEK:        cfg.MEK,
-		BlockSize:  cfg.BlockSize,
-		InstanceID: cfg.WriterID,
-		Interval:   5 * time.Minute,
-		CanarySize: 1024,
-		MaxRetries: 3,
-		RetryDelay: 10 * time.Second,
+		Backend:           b2Backend,
+		Bucket:            cfg.Bucket,
+		MEK:               cfg.MEK,
+		BlockSize:         cfg.BlockSize,
+		InstanceID:        cfg.WriterID,
+		Interval:          5 * time.Minute,
+		CanarySize:        1024,
+		MaxRetries:        3,
+		RetryDelay:        10 * time.Second,
+		MultipartInterval: 1 * time.Hour,
+		MultipartSize:     6 * 1024 * 1024, // 6MB (above 5MB multipart threshold)
 	})
 
 	// Create provenance manager

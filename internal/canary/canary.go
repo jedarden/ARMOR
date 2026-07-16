@@ -71,10 +71,11 @@ type Result struct {
 	LastError         string    `json:"last_error,omitempty"`
 
 	// Multipart canary result
-	MultipartHealthy          Status    `json:"multipart_healthy"`
-	MultipartLastCheck        time.Time `json:"multipart_last_check"`
-	MultipartConsecutiveFails int       `json:"multipart_consecutive_fails"`
-	MultipartLastError        string    `json:"multipart_last_error,omitempty"`
+	MultipartHealthy           Status    `json:"multipart_healthy_status"`
+	MultipartHealthyBool       bool      `json:"multipart_healthy"`
+	MultipartLastCheck         time.Time `json:"multipart_last_check"`
+	MultipartConsecutiveFails  int       `json:"multipart_consecutive_fails"`
+	MultipartLastError         string    `json:"multipart_last_error,omitempty"`
 }
 
 // Monitor manages the canary integrity checks.
@@ -664,6 +665,7 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 
 	result.Status = StatusHealthy
 	result.MultipartHealthy = StatusHealthy
+	result.MultipartHealthyBool = true
 
 	return result, nil
 }
@@ -727,18 +729,19 @@ func (m *Monitor) GetStatus() Result {
 	defer m.state.mu.RUnlock()
 
 	return Result{
-		Status:                    m.state.Status,
-		LastCheck:                 m.state.LastCheck,
-		UploadLatencyMs:           m.state.UploadLatencyMs,
-		DownloadLatencyMs:         m.state.DownloadLatencyMs,
-		DecryptVerified:           m.state.DecryptVerified,
-		HMACVerified:              m.state.HMACVerified,
-		CFCacheHit:                m.state.CFCacheHit,
-		LastError:                 m.state.LastError,
-		MultipartHealthy:          m.state.MultipartHealthy,
-		MultipartLastCheck:        m.state.MultipartLastCheck,
-		MultipartConsecutiveFails: m.state.MultipartConsecutiveFails,
-		MultipartLastError:        m.state.MultipartLastError,
+		Status:                     m.state.Status,
+		LastCheck:                  m.state.LastCheck,
+		UploadLatencyMs:            m.state.UploadLatencyMs,
+		DownloadLatencyMs:          m.state.DownloadLatencyMs,
+		DecryptVerified:            m.state.DecryptVerified,
+		HMACVerified:               m.state.HMACVerified,
+		CFCacheHit:                 m.state.CFCacheHit,
+		LastError:                  m.state.LastError,
+		MultipartHealthy:           m.state.MultipartHealthy,
+		MultipartHealthyBool:       m.state.MultipartHealthy == StatusHealthy,
+		MultipartLastCheck:         m.state.MultipartLastCheck,
+		MultipartConsecutiveFails:  m.state.MultipartConsecutiveFails,
+		MultipartLastError:         m.state.MultipartLastError,
 	}
 }
 
