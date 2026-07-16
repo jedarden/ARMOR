@@ -24,7 +24,6 @@ type mockBackend struct {
 	objects       map[string][]byte
 	meta          map[string]map[string]string
 	multipartData map[string]map[int32][]byte // uploadID -> part number -> data
-	pendingUploads map[string]string           // uploadID -> key (for tracking)
 }
 
 func newMockBackend() *mockBackend {

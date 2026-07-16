@@ -73,16 +73,18 @@ func (r ContentTypeMatchResult) String() string {
 //   - ContentTypeMatchResult with detailed validation information
 //
 // Example (boolean mode):
-//   result := AssertContentType(w, "application/json", false)
-//   if !result.Match {
-//       // Handle non-JSON case
-//   }
+//
+//	result := AssertContentType(w, "application/json", false)
+//	if !result.Match {
+//	    // Handle non-JSON case
+//	}
 //
 // Example (assertion mode):
-//   result := AssertContentType(w, "application/json", true)
-//   if !result.Match {
-//       t.Error(result.Error)  // Full error with expected vs actual
-//   }
+//
+//	result := AssertContentType(w, "application/json", true)
+//	if !result.Match {
+//	    t.Error(result.Error)  // Full error with expected vs actual
+//	}
 func AssertContentType(response interface{}, expectedContentType string, assertMode bool) ContentTypeMatchResult {
 	actualContentType := getContentType(response)
 
@@ -133,10 +135,11 @@ func AssertContentType(response interface{}, expectedContentType string, assertM
 //   - ContentTypeMatchResult with detailed validation information
 //
 // Example:
-//   result := AssertContentTypeAny(w, []string{"application/json", "application/xml"}, true)
-//   if !result.Match {
-//       t.Error(result.Error)
-//   }
+//
+//	result := AssertContentTypeAny(w, []string{"application/json", "application/xml"}, true)
+//	if !result.Match {
+//	    t.Error(result.Error)
+//	}
 func AssertContentTypeAny(response interface{}, allowedContentTypes []string, assertMode bool) ContentTypeMatchResult {
 	if len(allowedContentTypes) == 0 {
 		return ContentTypeMatchResult{
@@ -191,11 +194,11 @@ func buildContentTypeMismatchError(expected, actual, responseContext string) str
 	var b strings.Builder
 
 	b.WriteString("Content-Type mismatch:\n")
-	b.WriteString(fmt.Sprintf("  Expected: %s\n", expected))
-	b.WriteString(fmt.Sprintf("  Actual:   %s\n", actual))
+	fmt.Fprintf(&b, "  Expected: %s\n", expected)
+	fmt.Fprintf(&b, "  Actual:   %s\n", actual)
 
 	if responseContext != "" {
-		b.WriteString(fmt.Sprintf("  Context:  %s\n", responseContext))
+		fmt.Fprintf(&b, "  Context:  %s\n", responseContext)
 	}
 
 	return b.String()
@@ -229,7 +232,8 @@ func getResponseContext(response interface{}) string {
 //   - expectedContentType: The expected content-type (e.g., "application/json", "application/xml")
 //
 // Example:
-//   ValidateContentType(t, w, "application/json")
+//
+//	ValidateContentType(t, w, "application/json")
 func ValidateContentType(t *testing.T, response interface{}, expectedContentType string) {
 	t.Helper()
 
@@ -252,7 +256,8 @@ func ValidateContentType(t *testing.T, response interface{}, expectedContentType
 //   - allowedContentTypes: Slice of acceptable content-types
 //
 // Example:
-//   ValidateContentTypeAny(t, w, []string{"application/json", "text/plain"})
+//
+//	ValidateContentTypeAny(t, w, []string{"application/json", "text/plain"})
 func ValidateContentTypeAny(t *testing.T, response interface{}, allowedContentTypes []string) {
 	t.Helper()
 
@@ -280,11 +285,12 @@ func ValidateContentTypeAny(t *testing.T, response interface{}, allowedContentTy
 //   - prefix: The content-type prefix to match (e.g., "application/json", "text/")
 //
 // Example:
-//   // Validate any JSON content-type
-//   ValidateContentTypePrefix(t, w, "application/json")
 //
-//   // Validate any text content-type
-//   ValidateContentTypePrefix(t, w, "text/")
+//	// Validate any JSON content-type
+//	ValidateContentTypePrefix(t, w, "application/json")
+//
+//	// Validate any text content-type
+//	ValidateContentTypePrefix(t, w, "text/")
 func ValidateContentTypePrefix(t *testing.T, response interface{}, prefix string) {
 	t.Helper()
 
@@ -310,11 +316,12 @@ func ValidateContentTypePrefix(t *testing.T, response interface{}, prefix string
 //   - true if the response has the expected content-type (with pattern matching), false otherwise
 //
 // Example:
-//   if CheckContentType(w, "application/json") {
-//       // Handle JSON case
-//   } else {
-//       // Handle other cases
-//   }
+//
+//	if CheckContentType(w, "application/json") {
+//	    // Handle JSON case
+//	} else {
+//	    // Handle other cases
+//	}
 func CheckContentType(response interface{}, expectedContentType string) bool {
 	actualContentType := getContentType(response)
 	return contentTypeMatches(actualContentType, expectedContentType)
@@ -333,10 +340,11 @@ func CheckContentType(response interface{}, expectedContentType string) bool {
 //   - true if the response content-type is in the allowed list (with pattern matching), false otherwise
 //
 // Example:
-//   allowedTypes := []string{"application/json", "text/plain"}
-//   if CheckContentTypeAny(w, allowedTypes) {
-//       // Handle allowed case
-//   }
+//
+//	allowedTypes := []string{"application/json", "text/plain"}
+//	if CheckContentTypeAny(w, allowedTypes) {
+//	    // Handle allowed case
+//	}
 func CheckContentTypeAny(response interface{}, allowedContentTypes []string) bool {
 	actualContentType := getContentType(response)
 
@@ -360,9 +368,10 @@ func CheckContentTypeAny(response interface{}, allowedContentTypes []string) boo
 //   - true if the content-type starts with the prefix, false otherwise
 //
 // Example:
-//   if CheckContentTypePrefix(w, "application/json") {
-//       // Handle JSON case
-//   }
+//
+//	if CheckContentTypePrefix(w, "application/json") {
+//	    // Handle JSON case
+//	}
 func CheckContentTypePrefix(response interface{}, prefix string) bool {
 	actualContentType := getContentType(response)
 	return strings.HasPrefix(actualContentType, prefix)
@@ -382,7 +391,8 @@ func CheckContentTypePrefix(response interface{}, prefix string) bool {
 // - application/any+json
 //
 // Example:
-//   ValidateContentTypeJSON(t, w)
+//
+//	ValidateContentTypeJSON(t, w)
 func ValidateContentTypeJSON(t *testing.T, response interface{}) {
 	t.Helper()
 	actualContentType := getContentType(response)
@@ -411,7 +421,8 @@ func ValidateContentTypeJSON(t *testing.T, response interface{}) {
 // - text/xml; charset=iso-8859-1
 //
 // Example:
-//   ValidateContentTypeXML(t, w)
+//
+//	ValidateContentTypeXML(t, w)
 func ValidateContentTypeXML(t *testing.T, response interface{}) {
 	t.Helper()
 	ValidateContentTypeAny(t, response, []string{"application/xml", "text/xml"})
@@ -426,7 +437,8 @@ func ValidateContentTypeXML(t *testing.T, response interface{}) {
 // - text/xml
 //
 // Example:
-//   ValidateContentTypeText(t, w)
+//
+//	ValidateContentTypeText(t, w)
 func ValidateContentTypeText(t *testing.T, response interface{}) {
 	t.Helper()
 	ValidateContentTypePrefix(t, response, "text/")
@@ -441,7 +453,8 @@ func ValidateContentTypeText(t *testing.T, response interface{}) {
 // - video/*
 //
 // Example:
-//   ValidateContentTypeBinary(t, w)
+//
+//	ValidateContentTypeBinary(t, w)
 func ValidateContentTypeBinary(t *testing.T, response interface{}) {
 	t.Helper()
 
@@ -478,7 +491,8 @@ func ValidateContentTypeBinary(t *testing.T, response interface{}) {
 // - application/xhtml+xml
 //
 // Example:
-//   ValidateContentTypeHTML(t, w)
+//
+//	ValidateContentTypeHTML(t, w)
 func ValidateContentTypeHTML(t *testing.T, response interface{}) {
 	t.Helper()
 	ValidateContentTypeAny(t, response, []string{"text/html", "application/xhtml+xml"})
@@ -491,7 +505,8 @@ func ValidateContentTypeHTML(t *testing.T, response interface{}) {
 // - multipart/form-data
 //
 // Example:
-//   ValidateContentTypeForm(t, w)
+//
+//	ValidateContentTypeForm(t, w)
 func ValidateContentTypeForm(t *testing.T, response interface{}) {
 	t.Helper()
 	ValidateContentTypeAny(t, response, []string{"application/x-www-form-urlencoded", "multipart/form-data"})
@@ -612,8 +627,9 @@ func getContentType(response interface{}) string {
 //   - The charset value (e.g., "utf-8", "iso-8859-1") or empty string if not present
 //
 // Example:
-//   charset := GetContentTypeCharset("application/json; charset=utf-8")
-//   // charset = "utf-8"
+//
+//	charset := GetContentTypeCharset("application/json; charset=utf-8")
+//	// charset = "utf-8"
 func GetContentTypeCharset(contentType string) string {
 	// Split by semicolon to get parameters
 	parts := strings.Split(contentType, ";")
@@ -638,8 +654,9 @@ func GetContentTypeCharset(contentType string) string {
 //   - The base content-type without parameters
 //
 // Example:
-//   baseType := GetContentTypeWithoutParams("application/json; charset=utf-8")
-//   // baseType = "application/json"
+//
+//	baseType := GetContentTypeWithoutParams("application/json; charset=utf-8")
+//	// baseType = "application/json"
 func GetContentTypeWithoutParams(contentType string) string {
 	// Split by semicolon and return first part (base type)
 	parts := strings.Split(contentType, ";")
