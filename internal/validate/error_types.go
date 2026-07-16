@@ -454,6 +454,13 @@ type ValidationError struct {
 func (ve ValidationError) Error() string {
 	var b strings.Builder
 
+	// Add category prefix if category is set and not custom
+	categoryPrefix := formatBasicCategoryPrefix(ve.Category)
+	if categoryPrefix != "" {
+		b.WriteString(categoryPrefix)
+		b.WriteString(" ")
+	}
+
 	// Use the Message field as the first line if it's different from the default
 	if ve.Message != "" && !strings.HasPrefix(ve.Message, ve.ErrorType+" validation failed") {
 		b.WriteString(ve.Message)

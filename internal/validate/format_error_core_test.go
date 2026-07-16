@@ -1,8 +1,462 @@
 package validate
 
 import (
+	"strings"
 	"testing"
 )
+
+// =============================================================================
+// TESTS FOR FORMATBASICCATEGORYPREFIX
+// =============================================================================
+
+// TestFormatBasicCategoryPrefix_AllCategories tests that formatBasicCategoryPrefix
+// returns the correct prefix for all defined categories without styling indicators.
+func TestFormatBasicCategoryPrefix_AllCategories(t *testing.T) {
+	tests := []struct {
+		name          string
+		category      ErrorCategory
+		expectedPrefix string
+	}{
+		{
+			name:          "HTTP category returns [HTTP] prefix",
+			category:      CategoryHTTP,
+			expectedPrefix: "[HTTP]",
+		},
+		{
+			name:          "Content category returns [Content] prefix",
+			category:      CategoryContent,
+			expectedPrefix: "[Content]",
+		},
+		{
+			name:          "Validation category returns [Validation] prefix",
+			category:      CategoryValidation,
+			expectedPrefix: "[Validation]",
+		},
+		{
+			name:          "Performance category returns [Performance] prefix",
+			category:      CategoryPerformance,
+			expectedPrefix: "[Performance]",
+		},
+		{
+			name:          "Security category returns [Security] prefix",
+			category:      CategorySecurity,
+			expectedPrefix: "[Security]",
+		},
+		{
+			name:          "Success category returns [Success] prefix",
+			category:      CategorySuccess,
+			expectedPrefix: "[Success]",
+		},
+		{
+			name:          "Custom category returns empty prefix",
+			category:      CategoryCustom,
+			expectedPrefix: "",
+		},
+		{
+			name:          "Empty category returns empty prefix",
+			category:      ErrorCategory(""),
+			expectedPrefix: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatBasicCategoryPrefix(tt.category)
+
+			if result != tt.expectedPrefix {
+				t.Errorf("formatBasicCategoryPrefix(%v) = %v, want %v",
+					tt.category, result, tt.expectedPrefix)
+			}
+		})
+	}
+}
+
+// TestFormatBasicCategoryPrefix_NoStylingIndicators tests that formatBasicCategoryPrefix
+// does not include emojis or other styling indicators in the output.
+func TestFormatBasicCategoryPrefix_NoStylingIndicators(t *testing.T) {
+	categories := []ErrorCategory{
+		CategoryHTTP,
+		CategoryContent,
+		CategoryValidation,
+		CategoryPerformance,
+		CategorySecurity,
+		CategorySuccess,
+	}
+
+	// Common emoji ranges and styling indicators to check for
+	emojiRanges := []string{
+		"🚨", "⚠️", "⚡", "✅", "❌", "🔴", "🟢", "🔵", "⭐",
+		"💡", "📝", "🔧", "🎯", "📊", "🔍", "⚙️", "🚀",
+	}
+
+	for _, category := range categories {
+		t.Run(category.String(), func(t *testing.T) {
+			result := formatBasicCategoryPrefix(category)
+
+			// Check that no emojis are present
+			for _, emoji := range emojiRanges {
+				if strings.Contains(result, emoji) {
+					t.Errorf("formatBasicCategoryPrefix(%v) contains emoji %v: %v",
+						category, emoji, result)
+				}
+			}
+
+			// Check that result only contains valid characters (letters, brackets)
+			// Basic format should be [CategoryName]
+			if result != "" {
+				if !strings.HasPrefix(result, "[") || !strings.HasSuffix(result, "]") {
+					t.Errorf("formatBasicCategoryPrefix(%v) = %v, should be in [Category] format",
+						category, result)
+				}
+
+				// Extract content between brackets
+				content := strings.Trim(result, "[]")
+				if content == "" {
+					t.Errorf("formatBasicCategoryPrefix(%v) has empty content between brackets: %v",
+						category, result)
+				}
+
+				// Verify content contains only letters (no emojis or special chars)
+				for _, r := range content {
+					if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+						t.Errorf("formatBasicCategoryPrefix(%v) contains invalid character %v in content: %v",
+							category, r, result)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestFormatBasicCategoryPrefix_Consistency tests that formatBasicCategoryPrefix
+// returns consistent results across multiple calls.
+func TestFormatBasicCategoryPrefix_Consistency(t *testing.T) {
+	categories := []ErrorCategory{
+		CategoryHTTP,
+		CategoryContent,
+		CategoryValidation,
+		CategoryPerformance,
+		CategorySecurity,
+		CategorySuccess,
+	}
+
+	for _, category := range categories {
+		t.Run(category.String(), func(t *testing.T) {
+			// Call multiple times
+			result1 := formatBasicCategoryPrefix(category)
+			result2 := formatBasicCategoryPrefix(category)
+			result3 := formatBasicCategoryPrefix(category)
+
+			// All should be identical
+			if result1 != result2 || result2 != result3 {
+				t.Errorf("Inconsistent results for category %v: %v, %v, %v",
+					category, result1, result2, result3)
+			}
+
+			// Should not be empty for non-custom categories
+			if result1 == "" {
+				t.Errorf("formatBasicCategoryPrefix(%v) should not return empty string", category)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// TESTS FOR CATEGORY PREFIX IN VALIDATION ERROR OUTPUT
+// =============================================================================
+
+// TestValidationError_Error_WithCategoryPrefix tests that ValidationError.Error()
+// includes the category prefix in the formatted output.
+func TestValidationError_Error_WithCategoryPrefix(t *testing.T) {
+	tests := []struct {
+		name          string
+		error         ValidationError
+		expectedPrefix string
+		shouldContain bool
+	}{
+		{
+			name: "HTTP error shows [HTTP] prefix",
+			error: ValidationError{
+				ErrorType: "status_code",
+				Message:   "Expected status code 200 but got 404",
+				Category:  CategoryHTTP,
+				Expected:  200,
+				Actual:    404,
+			},
+			expectedPrefix: "[HTTP]",
+			shouldContain: true,
+		},
+		{
+			name: "Content error shows [Content] prefix",
+			error: ValidationError{
+				ErrorType: "error_message",
+				Message:   "Error message pattern mismatch",
+				Category:  CategoryContent,
+				Expected:  "invalid.*token",
+				Actual:    "access_denied",
+			},
+			expectedPrefix: "[Content]",
+			shouldContain: true,
+		},
+		{
+			name: "Validation error shows [Validation] prefix",
+			error: ValidationError{
+				ErrorType: "required",
+				Message:   "Field is required",
+				Category:  CategoryValidation,
+				FieldName: "email",
+			},
+			expectedPrefix: "[Validation]",
+			shouldContain: true,
+		},
+		{
+			name: "Performance error shows [Performance] prefix",
+			error: ValidationError{
+				ErrorType: "timeout",
+				Message:   "Request timed out",
+				Category:  CategoryPerformance,
+			},
+			expectedPrefix: "[Performance]",
+			shouldContain: true,
+		},
+		{
+			name: "Security error shows [Security] prefix",
+			error: ValidationError{
+				ErrorType: "auth_headers",
+				Message:   "Missing authentication header",
+				Category:  CategorySecurity,
+			},
+			expectedPrefix: "[Security]",
+			shouldContain: true,
+		},
+		{
+			name: "Success error shows [Success] prefix",
+			error: ValidationError{
+				ErrorType: "success_validation",
+				Message:   "Success response validation failed",
+				Category:  CategorySuccess,
+			},
+			expectedPrefix: "[Success]",
+			shouldContain: true,
+		},
+		{
+			name: "Custom error does not show prefix",
+			error: ValidationError{
+				ErrorType: "custom_type",
+				Message:   "Custom error message",
+				Category:  CategoryCustom,
+			},
+			expectedPrefix: "",
+			shouldContain: false,
+		},
+		{
+			name: "Error with no category does not show prefix",
+			error: ValidationError{
+				ErrorType: "unknown_type",
+				Message:   "Unknown error",
+				Category:  "",
+			},
+			expectedPrefix: "",
+			shouldContain: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.error.Error()
+
+			if tt.shouldContain {
+				// Should contain the category prefix
+				if !strings.Contains(result, tt.expectedPrefix) {
+					t.Errorf("ValidationError.Error() should contain prefix %v, got:\n%v",
+						tt.expectedPrefix, result)
+				}
+
+				// Prefix should appear before error type
+				prefixIndex := strings.Index(result, tt.expectedPrefix)
+				errorTypeIndex := strings.Index(result, tt.error.ErrorType)
+
+				if prefixIndex < 0 {
+					t.Errorf("Category prefix not found in output")
+				} else if errorTypeIndex >= 0 && errorTypeIndex < prefixIndex {
+					t.Errorf("Category prefix should appear before error type: prefix at %v, error type at %v",
+						prefixIndex, errorTypeIndex)
+				}
+			} else {
+				// Should not contain any category prefix
+				if tt.expectedPrefix != "" && strings.Contains(result, tt.expectedPrefix) {
+					t.Errorf("ValidationError.Error() should not contain prefix %v, got:\n%v",
+						tt.expectedPrefix, result)
+				}
+
+				// Check for any category prefixes
+				categoryPrefixes := []string{"[HTTP]", "[Content]", "[Validation]",
+					"[Performance]", "[Security]", "[Success]"}
+				for _, prefix := range categoryPrefixes {
+					if strings.Contains(result, prefix) {
+						t.Errorf("ValidationError.Error() should not contain category prefix %v, got:\n%v",
+							prefix, result)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestValidationError_Error_CategoryPrefixPosition tests that the category prefix
+// appears at the very beginning of the error output.
+func TestValidationError_Error_CategoryPrefixPosition(t *testing.T) {
+	error := ValidationError{
+		ErrorType: "status_code",
+		Message:   "Expected status code 200 but got 404",
+		Category:  CategoryHTTP,
+		Expected:  200,
+		Actual:    404,
+	}
+
+	result := error.Error()
+
+	// Category prefix should be at the very beginning
+	expectedPrefix := "[HTTP]"
+	if !strings.HasPrefix(result, expectedPrefix) {
+		t.Errorf("Category prefix should be at the beginning of error output")
+		t.Logf("Expected to start with: %v", expectedPrefix)
+		t.Logf("Got: %v", result)
+	}
+
+	// After prefix, there should be a space before error type
+	trimmedPrefix := strings.TrimPrefix(result, expectedPrefix)
+	if !strings.HasPrefix(trimmedPrefix, " ") {
+		t.Errorf("There should be a space after category prefix")
+	}
+}
+
+// TestValidationError_Error_CategoryPrefixWithComplexMessage tests that
+// category prefix works correctly with various message formats.
+func TestValidationError_Error_CategoryPrefixWithComplexMessage(t *testing.T) {
+	tests := []struct {
+		name  string
+		error ValidationError
+	}{
+		{
+			name: "Error with all fields populated",
+			error: ValidationError{
+				ErrorType:         "status_code",
+				Message:           "Expected status code 200 but got 404",
+				Category:          CategoryHTTP,
+				Expected:          200,
+				Actual:            404,
+				Context:           "GET /api/users/123",
+				FieldName:         "response_code",
+				ResponseSnippet:   `{"error": "not found"}`,
+				ValidationDetails: []string{"Resource does not exist", "Endpoint is correct"},
+				Suggestions:       []string{"Check the endpoint URL", "Verify resource exists"},
+			},
+		},
+		{
+			name: "Error with minimal fields",
+			error: ValidationError{
+				ErrorType: "format",
+				Message:   "Invalid email format",
+				Category:  CategoryValidation,
+			},
+		},
+		{
+			name: "Error with context but no expected/actual",
+			error: ValidationError{
+				ErrorType: "required",
+				Message:   "Field is required",
+				Category:  CategoryValidation,
+				FieldName: "email",
+				Context:   "user registration",
+			},
+		},
+		{
+			name: "Error with validation details",
+			error: ValidationError{
+				ErrorType: "json_schema",
+				Message:   "Response structure does not match expected schema",
+				Category:  CategoryContent,
+				ValidationDetails: []string{
+					"Missing field: user.email",
+					"Invalid type for user.age (expected number, got string)",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.error.Error()
+
+			// Should contain category prefix (unless custom or empty)
+			if tt.error.Category != "" && tt.error.Category != CategoryCustom {
+				categoryPrefix := formatBasicCategoryPrefix(tt.error.Category)
+				if categoryPrefix == "" {
+					t.Errorf("Category %v should have a prefix", tt.error.Category)
+				}
+
+				if !strings.Contains(result, categoryPrefix) {
+					t.Errorf("Error output should contain category prefix %v\nGot:\n%v",
+						categoryPrefix, result)
+				}
+
+				// Prefix should be at the start
+				if !strings.HasPrefix(result, categoryPrefix) {
+					t.Errorf("Category prefix should be at the beginning of output\nGot:\n%v", result)
+				}
+			}
+		})
+	}
+}
+
+// TestValidationError_Error_NoEmojisInBasicFormatting tests that the basic
+// error formatting does not include emojis or styling indicators.
+func TestValidationError_Error_NoEmojisInBasicFormatting(t *testing.T) {
+	categories := []ErrorCategory{
+		CategoryHTTP,
+		CategoryContent,
+		CategoryValidation,
+		CategoryPerformance,
+		CategorySecurity,
+		CategorySuccess,
+	}
+
+	// Common emojis that might appear in formatted output
+	emojis := []string{
+		"🚨", "⚠️", "⚡", "✅", "❌", "🔴", "🟢", "🔵", "⭐",
+		"💡", "📝", "🔧", "🎯", "📊", "🔍", "⚙️", "🚀", "💻",
+	}
+
+	for _, category := range categories {
+		t.Run(category.String(), func(t *testing.T) {
+			error := ValidationError{
+				ErrorType: "test_error",
+				Message:   "Test error message",
+				Category:  category,
+			}
+
+			result := error.Error()
+
+			// Check for emojis in the output
+			for _, emoji := range emojis {
+				if strings.Contains(result, emoji) {
+					t.Errorf("Basic error formatting should not contain emoji %v\nGot:\n%v",
+						emoji, result)
+				}
+			}
+
+			// The first line should not contain any emojis
+			firstLine := strings.Split(result, "\n")[0]
+			for _, emoji := range emojis {
+				if strings.Contains(firstLine, emoji) {
+					t.Errorf("First line of error should not contain emoji %v\nGot: %v",
+						emoji, firstLine)
+				}
+			}
+		})
+	}
+}
 
 // =============================================================================
 // TESTS FOR FORMATERRORCORE CATEGORY LOOKUP

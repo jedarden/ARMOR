@@ -580,6 +580,63 @@ func (vf *ValidationFormatter) WithCategory(category ErrorCategory) *ValidationF
 //
 //	// Or formatted for logging
 //	log.Printf("Validation failed: %v", err)
+// formatErrorCore is the core error formatting function with enum-based category lookup.
+// This function implements the central category lookup logic using GetCategoryForErrorTypeEnum
+// to map error types to their categories. It handles unknown error types by returning CategoryCustom
+// as the default category.
+//
+// This is a low-level function that provides type-safe error type to category mapping.
+// Most code should use ValidationFormatter.Format() or the Format*Error() convenience functions
+// instead of calling this directly.
+//
+// Parameters:
+//   - errorType: The ErrorType enum value (e.g., ErrTypeRequired, ErrTypeFormat)
+//   - message: The error message
+//   - fieldName: Optional field name where the error occurred
+//   - expected: Optional expected value
+//   - actual: Optional actual value
+//   - context: Optional context information
+//
+// Returns a ValidationError with the category automatically derived from the error type.
+//
+// Example usage:
+//
+//	err := formatErrorCore(
+//	    ErrTypeRequired,
+//	    "Field is required",
+//	    "email",
+//	    nil,
+//	    "",
+//	    "user creation",
+//	)
+//	// Returns ValidationError with Category = CategoryValidation
+func formatErrorCore(
+	errorType ErrorType,
+	message string,
+	fieldName string,
+	expected interface{},
+	actual interface{},
+	context string,
+) ValidationError {
+	// Lookup category using the error type enum
+	// GetCategoryForErrorTypeEnum handles unknown error types by returning CategoryCustom
+	category := GetCategoryForErrorTypeEnum(errorType)
+
+	// Convert ErrorType enum to string for ValidationError
+	errorTypeStr := string(errorType)
+
+	// Create and return ValidationError with populated category
+	return ValidationError{
+		ErrorType: errorTypeStr,
+		Message:   message,
+		Category:  category,
+		Expected:  expected,
+		Actual:    actual,
+		Context:   context,
+		FieldName: fieldName,
+	}
+}
+
 func (vf *ValidationFormatter) Format() ValidationError {
 	suggestions := vf.customSuggestions
 	if len(suggestions) == 0 {
@@ -2231,6 +2288,51 @@ func WithExpectedActual(expected, actual interface{}) FormatOption {
 	return func(c *FormatConfig) {
 		// Note: These would need to be stored separately in FormatConfig
 		// This is a placeholder for the concept
+	}
+}
+
+// =============================================================================
+// BASIC CATEGORY PREFIX FORMATTING
+// =============================================================================
+
+// formatBasicCategoryPrefix creates a basic category-specific prefix without styling indicators.
+// This function provides plain text category prefixes for use in basic error formatting.
+// Unlike formatCategoryPrefix, this function does not include emojis or decorative elements.
+//
+// Parameters:
+//   - category: The ErrorCategory value (e.g., CategoryHTTP, CategoryContent, etc.)
+//
+// Returns a plain text category prefix string in format "[CategoryName]".
+// Returns empty string for CategoryCustom or empty categories.
+//
+// Example usage:
+//
+//	prefix := formatBasicCategoryPrefix(CategoryHTTP)
+//	// Returns: "[HTTP]"
+//
+//	prefix := formatBasicCategoryPrefix(CategoryValidation)
+//	// Returns: "[Validation]"
+//
+//	prefix := formatBasicCategoryPrefix(CategoryCustom)
+//	// Returns: ""
+func formatBasicCategoryPrefix(category ErrorCategory) string {
+	switch category {
+	case CategoryHTTP:
+		return "[HTTP]"
+	case CategoryContent:
+		return "[Content]"
+	case CategoryValidation:
+		return "[Validation]"
+	case CategoryPerformance:
+		return "[Performance]"
+	case CategorySecurity:
+		return "[Security]"
+	case CategorySuccess:
+		return "[Success]"
+	case CategoryCustom:
+		return "" // Don't show prefix for custom errors
+	default:
+		return ""
 	}
 }
 
