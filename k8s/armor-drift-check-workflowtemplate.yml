@@ -18,7 +18,9 @@ spec:
         value: "50"
       - name: days-threshold
         value: "30"
-      - name: output-to-slack
+      - name: slack-webhook-url
+        value: ""
+      - name: dry-run
         value: "false"
   templates:
     - name: drift-check
@@ -61,7 +63,9 @@ spec:
             --json \
             --releases-threshold {{workflow.parameters.releases-threshold}} \
             --days-threshold {{workflow.parameters.days-threshold}} \
-            --output /tmp/drift-report.json
+            --output /tmp/drift-report.json \
+            --slack-webhook-url "{{workflow.parameters.slack-webhook-url}}" \
+            --dry-run="{{workflow.parameters.dry-run}}"
 
           echo "Drift check completed. Report saved to /tmp/drift-report.json"
           cat /tmp/drift-report.json
