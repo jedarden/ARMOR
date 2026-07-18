@@ -1986,7 +1986,6 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 		Created:        time.Now(),
 		ContentType:    contentType,
 		KeyID:          keyID,
-		EncryptedBytes: 0,
 		PartHMACs:      make(map[int]string),
 		PartSizes:      make(map[int]int64),
 	}
@@ -2028,7 +2027,11 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 }
 
 // UploadPart handles S3 UploadPart with encryption.
-// Each part is encrypted with a CTR counter offset based on cumulative encrypted bytes.
+// Each part's CTR counter starts at the block index implied by the cumulative
+// plaintext size of all lower-numbered parts (derived from state.PartSizes).
+// Because that derivation assumes parts arrive sequentially, block-aligned, and
+// without retries, the three patterns that violate it (U6/U7/U8) are rejected
+// with 400 below rather than encrypted to silently-corrupt ciphertext.
 func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	ctx := r.Context()
 
@@ -2110,10 +2113,13 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// Calculate starting block index for CTR counter
-	// CRITICAL: Parts may be uploaded out of order (e.g., litestream uploads in parallel).
-	// We must calculate the starting block index based on the sizes of parts with
-	// lower part numbers, not based on state.EncryptedBytes which assumes in-order upload.
+	// Calculate the CTR starting block index for this part from the cumulative
+	// plaintext size of all lower-numbered parts already recorded in state.
+	// U6 enforcement above guarantees parts arrive sequentially, so for aligned
+	// parts this equals (partNumber-1)*partSize. Deriving the offset from
+	// PartSizes (rather than a running cumulative-bytes counter) keeps the
+	// invariant explicit: a part's counter depends only on prior part sizes,
+	// never on arrival order — the property that makes the U6/U7/U8 rejections safe.
 	var totalBytesBefore int64
 	for pn := int64(1); pn < partNumber; pn++ {
 		if size, ok := state.PartSizes[int(pn)]; ok {
@@ -2153,8 +2159,10 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		blockHMACs[i] = blockHMACsRaw[i*crypto.HMACSize : (i+1)*crypto.HMACSize]
 	}
 
-	// Update state with cumulative bytes and part HMACs
-	state.EncryptedBytes += int64(len(encrypted))
+	// Record per-part HMACs and plaintext size. PartSizes drives CTR derivation
+	// for subsequent parts (see startBlockIndex above); it is the only running
+	// counter, replacing the arrival-order EncryptedBytes scheme that corrupted
+	// silently under the patterns rejected at U6/U7/U8.
 	state.PartHMACs[int(partNumber)] = backend.EncodeHMACToBase64(blockHMACs)
 	state.PartSizes[int(partNumber)] = plaintextSize
 
