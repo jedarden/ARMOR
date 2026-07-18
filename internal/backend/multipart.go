@@ -26,9 +26,6 @@ type MultipartState struct {
 	ContentType  string    `json:"content_type"`
 	KeyID        string    `json:"key_id"` // Key identifier for multi-key support
 
-	// Track cumulative encrypted bytes for CTR counter offset
-	EncryptedBytes int64 `json:"encrypted_bytes"`
-
 	// Per-part HMACs (part number -> HMACs for each block in that part)
 	// Stored as base64-encoded concatenation of all block HMACs
 	PartHMACs map[int]string `json:"part_hmacs"`
