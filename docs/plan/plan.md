@@ -1,8 +1,22 @@
 # ARMOR Implementation Plan
 
-> **Status: Implementation Complete** (as of 2026-05-30)
+> **Status: Phases 1–4 complete; Phase 5 code-complete, deployment remediation outstanding; Phase 6 in progress** (updated 2026-07-18)
 >
-> All planned features from Phases 1-4 are implemented, including the manifest-based metadata index (Phase 4), web dashboard with bucket browsing, encryption status visualization, cache statistics, and key rotation UI.
+> Phases 1–4 (core proxy, production hardening, advanced features, manifest index) are implemented and shipped. Phase 5 (integrity detection hardening, ADR-002) is complete in code — multipart canary, byte-verifying multipart tests, version-drift check, fix-propagation checklist — but the remediation deploy has NOT happened: as of 2026-07-16 every production deployment (0.1.13–0.1.42) predates the July multipart read-path and out-of-order-part fixes (repo HEAD ≈ 0.1.1861). Phase 6 (restore verification) has a working dual-path harness; artifact-class assertions are stubs and nothing is deployed. See the phase sections below for exact state.
+
+## Goal
+
+**ARMOR turns the cheapest raw object storage into the cheapest S3-compatible object storage.** Backblaze B2 has the lowest at-rest price of any major S3-compatible provider (~$6/TB-month), and its membership in the Bandwidth Alliance means egress to Cloudflare is free over PNI. Cloudflare's proxy/CDN egress to the internet is also free. Combining the two — B2 for storage, Cloudflare for delivery — yields object storage with near-zero egress cost. The catch is that the free-egress path requires a **public** B2 bucket fronted by Cloudflare.
+
+ARMOR abstracts this arbitrage away behind a standard S3 endpoint: clients speak plain S3 (boto3, DuckDB, rclone, AWS CLI) to ARMOR and never know or care about the B2+Cloudflare topology behind it. Transparent AES-256-CTR encryption is what makes the public-bucket trick safe — everything on B2 is ciphertext, so public exposure leaks nothing. The result is the cheapest possible S3 object store for systems with large object data stores:
+
+| Cost component | AWS S3 (standard) | Raw B2 | **ARMOR (B2 + Cloudflare)** |
+|---|---|---|---|
+| Storage | ~$23/TB-mo | ~$6/TB-mo | ~$6/TB-mo |
+| Egress | ~$90/TB | free up to 3× storage/mo, then ~$10/TB | **$0 (Cloudflare PNI + free CF egress)** |
+| Ingress | $0 | $0 | $0 |
+| API calls | per-request | Class B/C per-call | reduced further by manifest index (Phase 4) |
+| Privacy | private bucket | private bucket | public bucket, but ciphertext-only + proxy-side auth |
 
 ## Overview
 
@@ -326,7 +340,13 @@ Large files require multipart upload. ARMOR encrypts each part with a continuous
 
 Multipart state (DEK, IV, counter offset, per-part HMACs) is persisted to B2 as an encrypted state object at `.armor/multipart/<upload-id>.state` on each operation. Any ARMOR instance can resume an interrupted multipart upload by reading this state object.
 
-B2's multipart assembly concatenates parts byte-for-byte — there is no opportunity to append trailing data. Therefore, multipart-uploaded objects store the HMAC table as a **sidecar object** at `.armor/hmac/<sha256-of-key>` rather than inline. The envelope header for multipart objects includes a flag (`0x01` in the reserved byte) indicating the HMAC table is external. On download, ARMOR checks this flag and fetches the sidecar for HMAC verification.
+B2's multipart assembly concatenates parts byte-for-byte — there is no opportunity to prepend an envelope header or append trailing data. Therefore multipart-completed objects use a **different on-B2 layout than single-PUT objects** (see [ADR-003](../adr/003-multipart-object-layout-and-read-path.md)):
+
+- The stored object is raw concatenated part ciphertext — **no 64-byte envelope header, no embedded HMAC table**.
+- The HMAC table lives in a **sidecar object** at `.armor/hmac/<sha256-of-key>` (JSON, per-block HMACs).
+- The marker `x-amz-meta-armor-multipart: true` is set in object metadata at CompleteMultipartUpload. **The read path dispatches on this metadata marker** — not on an envelope flag — for both full GETs and range reads. (An earlier revision of this plan described a reserved-byte envelope flag; that was never what shipped, and the assumption that multipart objects have an embedded header caused every multipart GET to 500 until fixed in July 2026 — bf-24sxh7.)
+- `UploadPart` derives each part's CTR start block from the **cumulative sizes of all lower-numbered parts**, so parts may arrive in any order and be retried safely (bf-2sq7gf).
+- Part patterns ARMOR cannot encrypt correctly are **rejected with a hard failure** rather than stored corrupted: intermediate parts whose size is not a multiple of the block size get `InvalidPartSize` (400), invalid part references get `InvalidPart`/`InvalidPartOrder`. Clients must use block-aligned part sizes (e.g. 16 MiB).
 
 ### Operations Not Implemented
 
@@ -855,11 +875,11 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 
 #### Implementation tasks
 
-- [ ] Extend `internal/canary` with a second, longer-interval multipart canary check (real `CreateMultipartUpload`/`UploadPart`×N/`CompleteMultipartUpload` above the multipart size threshold), reusing existing HMAC/plaintext-SHA verification; surface a distinct `multipart_healthy` status in `/armor/canary` and Prometheus metrics
-- [ ] Strengthen `TestMultipartUpload` (and add sibling cases: non-multiple-of-part-size final part, single-part multipart) to verify actual downloaded byte content against what was uploaded per-part, not just `ContentLength`; confirm this gates the image-build pipeline
-- [ ] Add a version-drift check across known ARMOR deployments (read deployed image tags from declarative-config across clusters, compare against latest GitHub release, flag correctness-labeled releases distinctly from routine bumps)
-- [ ] Document the fix-propagation checklist (any correctness/data-integrity fix must enumerate every known deployment and confirm each is patched or explicitly tracked before considered resolved) — add to `docs/disaster-recovery.md` or a new `docs/release-process.md`
-- [ ] Immediate remediation (tracked here since it's what triggered this phase, not a new feature): bump `ord-devimprint`'s deployed ARMOR to a fixed version, then force a fresh backup baseline and verify it actually restores end-to-end
+- [x] Extend `internal/canary` with a second, longer-interval multipart canary check (real `CreateMultipartUpload`/`UploadPart`×N/`CompleteMultipartUpload` above the multipart size threshold), reusing existing HMAC/plaintext-SHA verification; surface a distinct `multipart_healthy` status in `/armor/canary` and Prometheus metrics — **done** (`internal/canary/canary.go`, `multipart_healthy` in status + metrics)
+- [x] Strengthen multipart tests to verify actual downloaded byte content, not just `ContentLength` — **done at the HTTP-handler layer**: `TestMultipartFullCycleByteVerification` + routing tripwire (`TestUploadPartRoutingNeverFallsThroughToPut`) + suspect-pattern cases in `internal/server/handlers/multipart_routing_test.go`, all gating CI. The *integration* test against real B2 (`tests/integration`) still asserts via mock backend only — tracked as bf-28rb.
+- [x] Add a version-drift check across known ARMOR deployments — **code + docs done** (`docs/drift-check.md`, `docs/version-drift-check.md`, `k8s/armor-drift-check-{workflowtemplate,cronworkflow}.yml`, deployment inventory in `armor_deployments.json`); **not yet running anywhere** — the CronWorkflow manifests live only in this repo and have not been added to declarative-config.
+- [x] Document the fix-propagation checklist — **done** (`docs/release-process.md`)
+- [ ] **Immediate remediation — still outstanding, and broader than originally scoped.** As of the 2026-07-16 inventory, *every* deployment runs a pre-fix image: `iad-kalshi` 0.1.13, `rs-manager` 0.1.13, `iad-ci` 0.1.24, `iad-native-ads` 0.1.42, `ord-devimprint` 0.1.42, `iad-acb` fcbf6d3 — while the multipart read-path fix (bf-24sxh7), out-of-order-part fix (bf-2sq7gf), and hard-fail part validation all landed at ≥0.1.18xx. Per the fix-propagation checklist: bump every deployment via declarative-config, then force a fresh backup baseline on `ord-devimprint` and verify it restores end-to-end (bf-4qq1).
 
 ---
 
@@ -869,13 +889,16 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 
 **Scope:** every ARMOR deployment and bucket — `armor-apexalgo` (live ACB content), `ord-devimprint`, and the three deployments never audited after the multipart bug (`iad-ci`, `iad-kalshi`, `rs-manager`).
 
+**Architecture decision:** [ADR-004](../adr/004-continuous-restore-verification.md) records the dual-path design and its rationale.
+
 #### Implementation tasks
 
-- [ ] **Restore-verification harness**: a long-running verifier (Deployment with an internal scheduling loop, per the no-CronJobs convention) that, per bucket, restores (a) the most recent backup object set and (b) a random sample of historical objects, through two independent paths: the ARMOR read path, and `armor-decrypt` directly against raw B2 ciphertext with the escrowed MEK. Verify plaintext SHA-256 against manifest/provenance records on both paths.
-- [ ] **Application-level validity assertions** per artifact class, not just checksums: SQLite artifacts get `PRAGMA integrity_check` plus a row-count/recency probe; tar/gzip archives get full listing + sampled extraction; Parquet gets footer parse + DuckDB row-count query through the range-read path (this also regression-tests range translation on real backup data).
-- [ ] **Multipart-era corruption audit** of the four unaudited/at-risk buckets: enumerate objects >5 MiB written while an affected ARMOR version was deployed (join object timestamps against the Phase 5 version-drift inventory), verify each, and produce a corruption inventory with a re-upload/rebaseline plan for anything unrecoverable.
-- [ ] **Restorability metrics and alerting**: per-bucket Prometheus gauges (`armor_last_verified_restore_timestamp`, `armor_verified_object_ratio`, `armor_restore_verification_failures_total`) on the existing `/metrics` endpoint; Grafana panel + PrometheusRule alert (restore-age exceeds threshold, or any failure) added via declarative-config.
-- [ ] **Failure escalation**: every verification failure files a bead (`br create`) carrying object key, bucket, deployment, writer version from provenance, and both-path evidence — never a silent retry. Staleness (no verified restore within the window) escalates the same way.
+- [x] **Restore-verification harness** — **built** (`cmd/restore-verifier`, `internal/restoreverifier`): long-running verifier with internal scheduling loop (per the no-CronJobs convention), dual independent paths — the ARMOR read path and direct-to-ciphertext decryption with the MEK — with SHA-256 comparison, per-bucket state, status/trigger HTTP handlers, and metrics wiring. **Not yet deployed anywhere** (no manifests in declarative-config).
+- [ ] **Application-level validity assertions** per artifact class — **stubbed only**: `SQLiteAssertion`/`ParquetAssertion`/`TarGzAssertion` in `internal/restoreverifier/verifier.go` currently `return nil`. Implement for real: SQLite gets `PRAGMA integrity_check` plus a row-count/recency probe; tar/gzip archives get full listing + sampled extraction; Parquet gets footer parse + DuckDB row-count query through the range-read path (this also regression-tests range translation on real backup data).
+- [ ] **Deploy the restore-verifier** against every ARMOR bucket (`armor-apexalgo`, `ord-devimprint`, `iad-ci`, `iad-kalshi`, `rs-manager`, `iad-native-ads`) via declarative-config, as a Deployment with an internal scheduler.
+- [ ] **Multipart-era corruption audit** of the four unaudited/at-risk buckets: enumerate objects >5 MiB written while an affected ARMOR version was deployed (join object timestamps against the Phase 5 version-drift inventory), verify each, and produce a corruption inventory with a re-upload/rebaseline plan for anything unrecoverable. (Audit guide + inventory template already in `docs/bf-659opq-corruption-audit-guide.md` / `docs/bf-659opq-corruption-inventory-template.md`.)
+- [ ] **Restorability metrics and alerting**: per-bucket Prometheus gauges (`armor_last_verified_restore_timestamp`, `armor_verified_object_ratio`, `armor_restore_verification_failures_total`) — gauge-setting hooks exist in `internal/restoreverifier/handlers.go`; the missing half is Grafana panel + PrometheusRule alert (restore-age exceeds threshold, or any failure) added via declarative-config.
+- [ ] **Failure escalation**: every verification failure files a bead (`bf create`) carrying object key, bucket, deployment, writer version from provenance, and both-path evidence — never a silent retry. Staleness (no verified restore within the window) escalates the same way. (Must not recreate the 2026-07 unattended retry-storm pattern: escalation creates one bead per distinct failure, never loops.)
 - [ ] **Scheduled DR drill**: automate the `armor-decrypt`-only drill from `docs/disaster-recovery.md` (MEK from escrow → raw B2 fetch → decrypt → checksum → application assertion) so the "ARMOR server is gone" recovery path is itself continuously proven.
 
 **Boundary:** ARMOR proves restorability of what ARMOR stores. Estate-wide restore verification of non-ARMOR streams (CNPG/barman WAL, Litestream SQLite, restic backup-home, Velero) belongs to DRILL (Disaster Recovery Integrity & Liveness Loop), the standalone restore-proof engine — keep metric naming and bead conventions compatible so DRILL can subsume these results into one estate-wide restorability view.
@@ -1263,3 +1286,5 @@ Kubernetes liveness and readiness probes point at `/healthz`, which incorporates
 | Backend | Pluggable interface | Future-proofs against provider changes; enables testing without cloud credentials |
 | Provenance | Per-writer chains | Tamper-evident audit trail without coordination between concurrent writers |
 | Bucket sharing | `ARMOR_PREFIX` per deployment | Multiple ARMOR instances share one public bucket for free Cloudflare egress; prefix enforced at proxy layer, not by consumers; empty prefix = zero behavior change (see ADR-001) |
+| Multipart layout | Headerless ciphertext + sidecar HMAC table + metadata marker | B2 concatenates parts byte-for-byte, so no envelope header is possible; read path dispatches on `x-amz-meta-armor-multipart`; unsupported part patterns hard-fail instead of corrupting (see ADR-003) |
+| Restore proof | Continuous dual-path restore verification | Object presence and canary health don't prove restorability (2026-06 incident); verify through both the ARMOR read path and `armor-decrypt` direct-to-ciphertext, with application-level assertions (see ADR-004) |
