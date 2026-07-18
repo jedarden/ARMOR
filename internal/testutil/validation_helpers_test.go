@@ -66,7 +66,7 @@ func TestBuildTestRequest(t *testing.T) {
 		Method: "GET",
 		Path:   "/test-bucket/test-key",
 		Headers: map[string]string{
-			"X-Custom-Header": "custom-value",
+			"X-Custom-Header":  "custom-value",
 			"X-Another-Header": "another-value",
 		},
 		QueryParams: map[string]string{
@@ -209,10 +209,10 @@ func TestMakeRequestWithTiming(t *testing.T) {
 // TestValidateStatusCode verifies status code validation.
 func TestValidateStatusCode(t *testing.T) {
 	tests := []struct {
-		name          string
-		statusCode    int
-		expectedCode  int
-		expectError   bool
+		name         string
+		statusCode   int
+		expectedCode int
+		expectError  bool
 	}{
 		{
 			name:         "matching status code",
@@ -259,10 +259,10 @@ func TestValidateStatusCode(t *testing.T) {
 // TestValidateContentType verifies content type validation.
 func TestValidateContentType(t *testing.T) {
 	tests := []struct {
-		name              string
+		name                string
 		responseContentType string
 		expectedContentType string
-		expectError        bool
+		expectError         bool
 	}{
 		{
 			name:                "matching content type",
@@ -310,25 +310,25 @@ func TestValidateContentType(t *testing.T) {
 // TestValidateErrorCode verifies error code validation.
 func TestValidateErrorCode(t *testing.T) {
 	tests := []struct {
-		name          string
-		responseBody  string
-		expectedCode  string
-		expectError   bool
+		name         string
+		responseBody string
+		expectedCode string
+		expectError  bool
 	}{
 		{
-			name: "matching error code",
+			name:         "matching error code",
 			responseBody: `<?xml version="1.0" encoding="UTF-8"?><Error><Code>MissingAuthenticationToken</Code><Message>Test message</Message></Error>`,
 			expectedCode: "MissingAuthenticationToken",
 			expectError:  false,
 		},
 		{
-			name: "non-matching error code",
+			name:         "non-matching error code",
 			responseBody: `<?xml version="1.0" encoding="UTF-8"?><Error><Code>InvalidAccessKeyId</Code><Message>Test message</Message></Error>`,
 			expectedCode: "MissingAuthenticationToken",
 			expectError:  true,
 		},
 		{
-			name: "invalid XML",
+			name:         "invalid XML",
 			responseBody: `invalid xml`,
 			expectedCode: "MissingAuthenticationToken",
 			expectError:  true,
@@ -362,28 +362,28 @@ func TestValidateErrorCode(t *testing.T) {
 // TestValidateErrorMessage verifies error message validation.
 func TestValidateErrorMessage(t *testing.T) {
 	tests := []struct {
-		name                string
-		responseBody        string
-		expectedSubstring   string
-		expectError         bool
+		name              string
+		responseBody      string
+		expectedSubstring string
+		expectError       bool
 	}{
 		{
-			name: "message contains substring",
-			responseBody: `<?xml version="1.0" encoding="UTF-8"?><Error><Code>MissingAuthenticationToken</Code><Message>The request must include authentication token</Message></Error>`,
+			name:              "message contains substring",
+			responseBody:      `<?xml version="1.0" encoding="UTF-8"?><Error><Code>MissingAuthenticationToken</Code><Message>The request must include authentication token</Message></Error>`,
 			expectedSubstring: "authentication",
-			expectError:      false,
+			expectError:       false,
 		},
 		{
-			name: "message does not contain substring",
-			responseBody: `<?xml version="1.0" encoding="UTF-8"?><Error><Code>MissingAuthenticationToken</Code><Message>The request must include authentication token</Message></Error>`,
+			name:              "message does not contain substring",
+			responseBody:      `<?xml version="1.0" encoding="UTF-8"?><Error><Code>MissingAuthenticationToken</Code><Message>The request must include authentication token</Message></Error>`,
 			expectedSubstring: "authorization",
-			expectError:      true,
+			expectError:       true,
 		},
 		{
-			name: "case-insensitive matching",
-			responseBody: `<?xml version="1.0" encoding="UTF-8"?><Error><Code>MissingAuthenticationToken</Code><Message>AUTHENTICATION REQUIRED</Message></Error>`,
+			name:              "case-insensitive matching",
+			responseBody:      `<?xml version="1.0" encoding="UTF-8"?><Error><Code>MissingAuthenticationToken</Code><Message>AUTHENTICATION REQUIRED</Message></Error>`,
 			expectedSubstring: "authentication",
-			expectError:      false,
+			expectError:       false,
 		},
 	}
 
@@ -414,10 +414,10 @@ func TestValidateErrorMessage(t *testing.T) {
 // TestValidateResponseTime verifies response time validation.
 func TestValidateResponseTime(t *testing.T) {
 	tests := []struct {
-		name         string
-		delay        time.Duration
-		maxDuration  time.Duration
-		expectError  bool
+		name        string
+		delay       time.Duration
+		maxDuration time.Duration
+		expectError bool
 	}{
 		{
 			name:        "response within limit",
@@ -588,61 +588,6 @@ func TestAssertAuthorizationError(t *testing.T) {
 			AssertAuthorizationError(t, resp)
 		})
 	}
-}
-
-// =============================================================================
-// INTEGRATION EXAMPLES
-// =============================================================================
-
-// exampleTestAuthenticationFlow demonstrates a complete authentication test.
-func exampleTestAuthenticationFlow() {
-	// This example shows how to test authentication flow using validation helpers
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>MissingAuthenticationToken</Code><Message>Authentication required</Message></Error>`))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-
-	// Test missing authentication
-	req := NewTestRequest("GET", "/test-bucket/test-key", nil)
-	resp := MakeRequest(handler, req)
-
-	// Validate the error response
-	AssertErrorResponse(&testing.T{}, resp, "MissingAuthenticationToken", http.StatusForbidden)
-
-	// Test with authentication
-	req = NewTestRequest("GET", "/test-bucket/test-key", nil)
-	req = WithAuthHeader(req, "TESTKEY", "TESTSECRET")
-	resp = MakeRequest(handler, req)
-
-	// Validate successful response
-	AssertStatusCode(&testing.T{}, resp, http.StatusOK)
-}
-
-// exampleTestPerformanceRequirements demonstrates performance testing.
-func exampleTestPerformanceRequirements() {
-	// This example shows how to test performance requirements
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>MissingAuthenticationToken</Code><Message>Authentication required</Message></Error>`))
-	})
-
-	req := NewTestRequest("GET", "/test-bucket/test-key", nil)
-	resp := MakeRequestWithTiming(handler, req)
-
-	// Validate performance requirement
-	AssertResponseTimeUnder(&testing.T{}, resp, 100*time.Millisecond)
-
-	// Also validate the error response
-	AssertErrorResponse(&testing.T{}, resp.ResponseRecorder, "MissingAuthenticationToken", http.StatusForbidden)
 }
 
 // =============================================================================

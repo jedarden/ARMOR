@@ -292,10 +292,10 @@ func TestEnhancedErrorScenario_GetDefaultStatusCode(t *testing.T) {
 
 func TestEnhancedErrorScenario_GetDefaultErrorCode(t *testing.T) {
 	tests := []struct {
-		name           string
-		errorType      ErrorType
-		expectedCode   string
-		overrideCode   string
+		name         string
+		errorType    ErrorType
+		expectedCode string
+		overrideCode string
 	}{
 		{"rate limit", ErrorTypeRateLimit, "SlowDown", ""},
 		{"service unavailable", ErrorTypeServiceUnavailable, "ServiceUnavailable", ""},
@@ -346,8 +346,8 @@ func TestEnhancedErrorScenario_GetDefaultMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scenario := EnhancedErrorScenario{
-				Type:             tt.errorType,
-				MessageOverride:  tt.overrideMsg,
+				Type:            tt.errorType,
+				MessageOverride: tt.overrideMsg,
 			}
 			got := scenario.getDefaultMessage()
 			if !contains(got, tt.expectedSubstr) {
@@ -368,11 +368,10 @@ func TestNewEnhancedErrorServer(t *testing.T) {
 		}
 
 		server := NewEnhancedErrorServer(scenarios)
-		defer server.Close()
-
 		if server == nil {
 			t.Fatal("Expected non-nil server")
 		}
+		defer server.Close()
 
 		if server.ConfigurableErrorServer == nil {
 			t.Error("Expected base server to be initialized")
@@ -391,11 +390,10 @@ func TestNewEnhancedErrorServer(t *testing.T) {
 		scenarios := []EnhancedErrorScenario{}
 
 		server := NewEnhancedErrorServer(scenarios)
-		defer server.Close()
-
 		if server == nil {
 			t.Fatal("Expected non-nil server")
 		}
+		defer server.Close()
 
 		if len(server.EnhancedScenarios) != 0 {
 			t.Errorf("Expected 0 scenarios, got %d", len(server.EnhancedScenarios))

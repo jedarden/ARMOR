@@ -30,10 +30,10 @@ type Metrics struct {
 	CacheMissesTotal *expvar.Int
 
 	// Encryption metrics
-	EncryptionOpsTotal   *expvar.Map
-	DecryptionOpsTotal   *expvar.Map
-	KeyWrapOpsTotal      *expvar.Int
-	KeyUnwrapOpsTotal    *expvar.Int
+	EncryptionOpsTotal *expvar.Map
+	DecryptionOpsTotal *expvar.Map
+	KeyWrapOpsTotal    *expvar.Int
+	KeyUnwrapOpsTotal  *expvar.Int
 
 	// Canary metrics
 	CanaryChecksTotal    *expvar.Int
@@ -49,9 +49,9 @@ type Metrics struct {
 	MultipartCanaryHealthy        *expvar.Int
 
 	// Multipart histogram metrics (bucketed by operation and status)
-	MultipartUploadBuckets    *expvar.Map // Histogram buckets: upload operation, keyed by latency
+	MultipartUploadBuckets       *expvar.Map // Histogram buckets: upload operation, keyed by latency
 	MultipartVerificationBuckets *expvar.Map // Histogram buckets: verification operation, keyed by latency
-	MultipartOperationTotal    *expvar.Map // Counter by operation and status: operation_status
+	MultipartOperationTotal      *expvar.Map // Counter by operation and status: operation_status
 
 	// Multipart metrics
 	ActiveMultipartUploads *expvar.Int
@@ -318,11 +318,12 @@ func (m *Metrics) RecordMultipartUpload(operation string, status string, duratio
 
 	// Track sum and count in the appropriate histogram map
 	var histogramMap *expvar.Map
-	if operation == "upload" {
+	switch operation {
+	case "upload":
 		histogramMap = m.MultipartUploadBuckets
-	} else if operation == "verify" {
+	case "verify":
 		histogramMap = m.MultipartVerificationBuckets
-	} else {
+	default:
 		return // Invalid operation
 	}
 
@@ -486,11 +487,12 @@ func (m *Metrics) PrometheusFormat() string {
 
 		// Get the appropriate map
 		var histogramMap *expvar.Map
-		if operation == "upload" {
+		switch operation {
+		case "upload":
 			histogramMap = m.MultipartUploadBuckets
-		} else if operation == "verify" {
+		case "verify":
 			histogramMap = m.MultipartVerificationBuckets
-		} else {
+		default:
 			continue
 		}
 
