@@ -1,52 +1,76 @@
-# Verification of Multipart Integration Test Strengthening
+# bf-28rb — Strengthen multipart integration test to verify actual content
 
-## Task
-Verify that multipart integration tests have been strengthened to verify actual content integrity.
+## Status: VERIFIED COMPLETE — code delivered in prior commits; this session re-verified and confirmed the CI gate
 
-## Status: ✓ COMPLETE
+## Why this bead was still open
 
-The multipart integration tests at `internal/backend/multipart_integration_test.go` already include all required functionality:
+The task brief described `tests/integration/integration_test.go TestMultipartUpload` as a
+3-part 15MB upload/download cycle that "only asserts ContentLength matches expected size --
+never reads back and compares actual bytes." That path does not exist in this repo. The
+actual test lives at `internal/backend/multipart_integration_test.go`, and by the time this
+bead was re-picked-up the code already implemented every acceptance criterion (delivered in
+`5183cdb7`, format-specifier fix in `03b39d29`, documented by a prior bead `bf-16yc7k` in
+`0346c956`). The original `bf-28rb` bead was simply never closed.
 
-### 1. Content Verification
-- Each part is seeded with distinguishable, verifiable content:
-  - Part 0: Incrementing bytes (0x00, 0x01, 0x02, ...)
-  - Part 1: Decrementing bytes (0xFF, 0xFE, 0xFD, ...)
-  - Part 2: Alternating pattern (0xAA, 0x55, 0xAA, 0x55, ...)
-- Full byte-by-byte comparison of downloaded vs uploaded content (lines 140-164)
-- Individual part pattern verification (lines 169-182)
+This session's contribution is **independent re-verification** that the acceptance criteria
+are met, the tests are green, and — the part prior notes only asserted — that the test
+actually gates the deployed-image pipeline.
 
-### 2. Test Coverage
-- `TestMultipartUpload`: 3-part 15MB upload with full verification
-- `TestMultipartUploadIrregularFinalPart`: Final part not a multiple of part size (13MB total: 5MB + 5MB + 3MB)
-- `TestMultipartUploadSinglePart`: Single-part multipart upload (6MB)
-- `TestMultipartUploadNonAlignedFinalPart`: Additional non-aligned final part test
+## Acceptance criteria — all met
 
-### 3. CI Gating
-- Tests run in every build via `armor-build` Argo workflow
-- Command: `go test -v -race ./...` (line 108 of armor-workflowtemplate.yml)
-- No `-short` flag used, so integration tests are not skipped
-- All tests pass successfully
+| # | Criterion | Status | Where |
+|---|-----------|--------|-------|
+| 1 | Seed each part with distinguishable, verifiable content | met | Per-part patterns: part 0 = sequential `i&0xFF`, part 1 = inverse `0xFF-(i&0xFF)`, part 2 = alternating `0xAA/0x55` (lines 40-68) |
+| 2 | Compare full downloaded bytes against what was uploaded | met | `io.ReadAll(body)` + `bytes.Equal(downloadedContent, uploadContent)` with first-mismatch offset/byte/context diagnostics (lines 129-164) |
+| 3 | Sibling: final part not a multiple of part size | met | `TestMultipartUploadNonAlignedFinalPart` and `TestMultipartUploadIrregularFinalPart` (5MB+5MB+3MB = 13MB) |
+| 4 | Sibling: single-part multipart upload | met | `TestMultipartUploadSinglePart` (one 6MB part) |
+| 5 | Test gates the image-build/CI pipeline | met | see "CI gating" below |
 
-### Verification Results
+## Test results (this session, live)
+
 ```
-=== RUN   TestMultipartUpload
-    multipart_integration_test.go:166: ✓ Content verification passed: 15728640 bytes match uploaded content
-    multipart_integration_test.go:181: ✓ Part 1 pattern verified
-    multipart_integration_test.go:181: ✓ Part 2 pattern verified
-    multipart_integration_test.go:181: ✓ Part 3 pattern verified
---- PASS: TestMultipartUpload (0.11s)
-
-=== RUN   TestMultipartUploadIrregularFinalPart
-    multipart_integration_test.go:464: ✓ Content verification passed: 13631488 bytes match uploaded content
-    multipart_integration_test.go:479: ✓ Part 1 pattern verified (part 1: 5242880 bytes)
-    multipart_integration_test.go:479: ✓ Part 2 pattern verified (part 2: 5242880 bytes)
-    multipart_integration_test.go:479: ✓ Part 3 pattern verified (part 3: 3145728 bytes)
---- PASS: TestMultipartUploadIrregularFinalPart (0.08s)
-
-=== RUN   TestMultipartUploadSinglePart
-    multipart_integration_test.go:547: ✓ Single-part multipart upload verified: 6291456 bytes
---- PASS: TestMultipartUploadSinglePart (0.01s)
+go test -run 'TestMultipartUpload' -v ./internal/backend/
+--- PASS: TestMultipartUpload (0.10s)                     # 15MB / 3 parts, byte-for-byte + per-part pattern
+--- PASS: TestMultipartUploadNonAlignedFinalPart (0.10s)  # 13MB / 5MB+5MB+3MB
+--- PASS: TestMultipartUploadIrregularFinalPart (0.08s)   # 13MB / 5MB+5MB+3MB, full diagnostics
+--- PASS: TestMultipartUploadSinglePart (0.02s)           # 6MB single part
+ok  github.com/jedarden/armor/internal/backend  0.310s
 ```
 
-## Conclusion
-The multipart integration tests are properly strengthened and gated in CI. Content-correctness regressions will be caught before deployment.
+Full package also green: `go test ./internal/backend/` -> `ok`. `go vet ./internal/backend/` clean.
+CI runs `go test -v -race ./...`, so all four tests execute under the race detector with no
+`-short` flag (the in-test `testing.Short()` skip is never triggered in CI).
+
+## CI gating — confirmed (the part prior notes only asserted)
+
+The deployed image is produced by the `armor-build` Argo WorkflowTemplate in
+`jedarden/declarative-config` (`k8s/iad-ci/argo-workflows/armor-workflowtemplate.yml`).
+Its `build` entrypoint is a **sequential** step chain — each entry is its own step-group, so
+a group does not start until the previous one succeeds:
+
+```
+resolve-version -> lint (golangci-lint) -> test (go-test) -> docker-build (kaniko push)
+```
+
+The `go-test` step runs `go test -v -race ./...` against the cloned repo. Because the groups
+run sequentially, `docker-build` — which pushes `ronaldraygun/armor:<version>` and
+`:latest` — **does not execute unless `test` passes**. A content-correctness regression caught
+by any of the four multipart tests therefore blocks the image from shipping. This is the
+mechanism that makes "a content-correctness regression should never be able to ship" hold.
+
+## Known limitation (documented honestly; out of scope for this bead)
+
+The four tests exercise a `mockBackendForMultipart` — an in-memory `map[string][]byte`
+whose `CompleteMultipartUpload` concatenates part slices in order and whose `Get` returns
+them verbatim. They verify the **multipart contract, part ordering, and content-stitching
+logic** plus the test harness, not a live B2/S3 endpoint. The real backend
+(`internal/backend/b2.go`, `internal/backend/multipart_helpers.go`) is covered separately by
+the AWS-client-fake-based tests in `internal/backend/b2_multipart_test.go`, which are also
+mock-based (no live network). The `backend` package is not tested against a live remote
+endpoint anywhere today (that would need credentials/egress in CI). So the gate is on the
+contract/concatenation path, not on remote round-trip fidelity — a real, but bounded, gap.
+
+## Prior commits delivering this work
+- `5183cdb7` — original implementation of distinguishable content + byte-for-byte comparison + sibling tests
+- `03b39d29` — fix format specifier in multipart test error message
+- `0346c956` — `docs(bf-16yc7k)`: prior bead documenting the work was already complete
