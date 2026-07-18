@@ -4,13 +4,18 @@
 package restoreverifier
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,6 +24,11 @@ import (
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/manifest"
+	"github.com/parquet-go/parquet-go"
+
+	// modernc.org/sqlite is a pure-Go SQLite driver used to run PRAGMA
+	// integrity_check against restored database artifacts without cgo.
+	_ "modernc.org/sqlite"
 )
 
 // VerificationStatus represents the status of a verification operation.
@@ -39,8 +49,8 @@ const (
 type VerificationPath string
 
 const (
-	PathARMOR     VerificationPath = "armor"     // Normal ARMOR read path
-	PathDirect    VerificationPath = "direct"    // armor-decrypt direct to ciphertext
+	PathARMOR     VerificationPath = "armor"      // Normal ARMOR read path
+	PathDirect    VerificationPath = "direct"     // armor-decrypt direct to ciphertext
 	PathDualMatch VerificationPath = "dual_match" // Both paths agree
 )
 
@@ -48,10 +58,10 @@ const (
 type ArtifactType string
 
 const (
-	ArtifactSQLite   ArtifactType = "sqlite"   // SQLite database
-	ArtifactParquet  ArtifactType = "parquet"  // Parquet file
-	ArtifactTarGz    ArtifactType = "tar-gz"   // tar.gz archive
-	ArtifactGeneric  ArtifactType = "generic"  // Generic file (basic verification only)
+	ArtifactSQLite  ArtifactType = "sqlite"  // SQLite database
+	ArtifactParquet ArtifactType = "parquet" // Parquet file
+	ArtifactTarGz   ArtifactType = "tar-gz"  // tar.gz archive
+	ArtifactGeneric ArtifactType = "generic" // Generic file (basic verification only)
 )
 
 // ArtifactAssertion represents application-level validation for an artifact.
@@ -60,34 +70,231 @@ type ArtifactAssertion interface {
 	Type() ArtifactType
 }
 
+// sqliteMagic is the 16-byte header that begins every well-formed SQLite
+// database file (see https://www.sqlite.org/fileformat2.html section 1.3).
+const sqliteMagic = "SQLite format 3\x00"
+
 // SQLiteAssertion verifies SQLite database integrity.
 type SQLiteAssertion struct{}
 
+// Verify writes the restored plaintext to a temp file and runs
+// PRAGMA integrity_check through a pure-Go SQLite driver. A healthy database
+// reports "ok"; anything else (malformed page, bad b-tree, truncated file) is
+// returned as a verification failure rather than swallowed. If metadata names a
+// table via "x-amz-meta-armor-sqlite-table", an optional row-count probe asserts
+// the table is present and non-empty.
 func (a *SQLiteAssertion) Verify(plaintext []byte, metadata map[string]string) error {
-	// For SQLite, we'd need to write to a temp file and run PRAGMA integrity_check
-	// This is a placeholder for the actual implementation
+	if len(plaintext) == 0 {
+		return errors.New("sqlite assertion: plaintext is empty")
+	}
+	// Cheap structural pre-check before touching the SQLite engine.
+	if len(plaintext) < len(sqliteMagic) || string(plaintext[:len(sqliteMagic)]) != sqliteMagic {
+		return errors.New("sqlite assertion: missing \"SQLite format 3\" magic header")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "armor-sqlite-verify-")
+	if err != nil {
+		return fmt.Errorf("sqlite assertion: create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "verify.db")
+	if err := os.WriteFile(dbPath, plaintext, 0o600); err != nil {
+		return fmt.Errorf("sqlite assertion: write temp db: %w", err)
+	}
+
+	// Open read-only so a verification never mutates the artifact under test.
+	// immutable=1 tells SQLite the file will not change out from under it, so it
+	// skips journal/recovery handling that would otherwise require write access.
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&immutable=1")
+	if err != nil {
+		return fmt.Errorf("sqlite assertion: open: %w", err)
+	}
+	defer db.Close()
+
+	// PRAGMA integrity_check returns one row per problem; a clean DB returns the
+	// single row "ok".
+	rows, err := db.Query("PRAGMA integrity_check;")
+	if err != nil {
+		return fmt.Errorf("sqlite assertion: integrity_check failed: %w", err)
+	}
+	var problems []string
+	for rows.Next() {
+		var msg string
+		if err := rows.Scan(&msg); err != nil {
+			rows.Close()
+			return fmt.Errorf("sqlite assertion: integrity_check scan: %w", err)
+		}
+		if msg != "ok" {
+			problems = append(problems, msg)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sqlite assertion: integrity_check rows: %w", err)
+	}
+	if len(problems) > 0 {
+		// Cap the reported detail so a badly damaged DB does not flood the result.
+		if len(problems) > 8 {
+			problems = append(problems[:8], fmt.Sprintf("... and %d more", len(problems)-8))
+		}
+		return fmt.Errorf("sqlite assertion: integrity_check reported corruption: %s", strings.Join(problems, "; "))
+	}
+
+	// Optional row-count probe: assert a provider-declared table exists and is
+	// non-empty. This is the ADR-004 "recency/row-count" probe.
+	if table := metadata["x-amz-meta-armor-sqlite-table"]; table != "" {
+		if err := sqliteRowCountProbe(db, table); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// sqliteRowCountProbe asserts that the named table exists and has at least one
+// row. The table name comes from object metadata; we reject embedded double
+// quotes to keep the interpolated SQL safe.
+func sqliteRowCountProbe(db *sql.DB, table string) error {
+	if strings.ContainsAny(table, "\"\x00") {
+		return fmt.Errorf("sqlite assertion: refusing unsafe table name %q", table)
+	}
+	quoted := "\"" + strings.ReplaceAll(table, "\"", "\"\"") + "\""
+
+	var name string
+	if err := db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name=" + quoted + " LIMIT 1",
+	).Scan(&name); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("sqlite assertion: declared table %q not present in database", table)
+		}
+		return fmt.Errorf("sqlite assertion: table lookup for %q failed: %w", table, err)
+	}
+
+	var n int64
+	if err := db.QueryRow("SELECT count(*) FROM " + quoted).Scan(&n); err != nil {
+		return fmt.Errorf("sqlite assertion: row count for %q failed: %w", table, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("sqlite assertion: table %q has 0 rows (expected non-empty backup)", table)
+	}
 	return nil
 }
 
 func (a *SQLiteAssertion) Type() ArtifactType { return ArtifactSQLite }
 
+// parquetMagic is the 4-byte magic that begins and ends every Parquet file.
+var parquetMagic = []byte("PAR1")
+
 // ParquetAssertion verifies Parquet file validity.
 type ParquetAssertion struct{}
 
+// Verify validates the leading/trailing "PAR1" magic and parses the file footer
+// (FileMetaData) to read the declared row count. A corrupt footer fails to parse
+// and is reported as a verification failure. If metadata declares an expected row
+// count via "x-amz-meta-armor-parquet-rows", the footer's count must match it.
 func (a *ParquetAssertion) Verify(plaintext []byte, metadata map[string]string) error {
-	// For Parquet, we'd verify the footer and optionally read row counts
-	// This is a placeholder for the actual implementation
+	if len(plaintext) < 12 { // 4 (head magic) + 4 (footer len) + 4 (tail magic) minimum
+		return fmt.Errorf("parquet assertion: file too small (%d bytes)", len(plaintext))
+	}
+	if !bytes.Equal(plaintext[:4], parquetMagic) {
+		return errors.New("parquet assertion: missing leading PAR1 magic")
+	}
+	if !bytes.Equal(plaintext[len(plaintext)-4:], parquetMagic) {
+		return errors.New("parquet assertion: missing trailing PAR1 magic")
+	}
+
+	// OpenFile parses the footer metadata (row groups, schema, num_rows) without
+	// decoding column data — exactly the "footer parse + row-count sanity" probe.
+	file, err := parquet.OpenFile(bytes.NewReader(plaintext), int64(len(plaintext)))
+	if err != nil {
+		return fmt.Errorf("parquet assertion: footer parse failed: %w", err)
+	}
+
+	numRows := file.NumRows()
+	rowGroups := len(file.RowGroups())
+
+	// Row-count sanity: when the writer declared an expected count in metadata,
+	// the restored footer must agree exactly.
+	if wantStr := metadata["x-amz-meta-armor-parquet-rows"]; wantStr != "" {
+		var want int64
+		if _, perr := fmt.Sscanf(wantStr, "%d", &want); perr == nil {
+			if numRows != want {
+				return fmt.Errorf("parquet assertion: row count mismatch (metadata=%d, footer=%d)", want, numRows)
+			}
+		}
+	}
+
+	// A backup data artifact with zero row groups almost certainly indicates a
+	// truncated or empty restore; flag it rather than passing silently.
+	if rowGroups == 0 {
+		return fmt.Errorf("parquet assertion: file declares 0 row groups (empty or truncated artifact)")
+	}
+
 	return nil
 }
 
 func (a *ParquetAssertion) Type() ArtifactType { return ArtifactParquet }
 
+// tarGzSampleEvery is the sampling period for full-entry extraction during the
+// tar.gz assertion: every Nth entry is fully decompressed and its byte count
+// checked against the tar header's declared size.
+const tarGzSampleEvery = 8
+
+// tarGzMaxEntries bounds the number of entries processed; it prevents a
+// maliciously large archive (or a decompression bomb) from running unbounded.
+const tarGzMaxEntries = 100000
+
 // TarGzAssertion verifies tar.gz archive validity.
 type TarGzAssertion struct{}
 
+// Verify walks the gzip member and lists every tar entry end-to-end (so a
+// truncated or corrupt stream fails to parse). Every Nth entry is fully
+// extracted to io.Discard and its byte count compared to the header-declared
+// size, catching mid-archive corruption that a header-only listing would miss.
 func (a *TarGzAssertion) Verify(plaintext []byte, metadata map[string]string) error {
-	// For tar.gz, we'd verify the archive can be read and list contents
-	// This is a placeholder for the actual implementation
+	gz, err := gzip.NewReader(bytes.NewReader(plaintext))
+	if err != nil {
+		return fmt.Errorf("tar.gz assertion: invalid gzip header: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	var entries, sampled int
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("tar.gz assertion: failed reading entry %d: %w", entries, err)
+		}
+		entries++
+
+		// Fully extract a sampled entry and verify its declared size. Non-sampled
+		// entries are only listed (their content is skipped by the next Next()).
+		if entries%tarGzSampleEvery == 1 {
+			n, copyErr := io.Copy(io.Discard, tr)
+			if copyErr != nil {
+				return fmt.Errorf("tar.gz assertion: failed extracting entry %q: %w", hdr.Name, copyErr)
+			}
+			if n != hdr.Size {
+				return fmt.Errorf("tar.gz assertion: size mismatch for %q (header=%d, actual=%d)", hdr.Name, hdr.Size, n)
+			}
+			sampled++
+		}
+
+		if entries > tarGzMaxEntries {
+			return fmt.Errorf("tar.gz assertion: exceeded %d entry limit", tarGzMaxEntries)
+		}
+	}
+
+	if entries == 0 {
+		return errors.New("tar.gz assertion: archive contains no entries")
+	}
+	// metadata is reserved for future per-entry expectations (e.g. a declared file
+	// count); currently unused but part of the ArtifactAssertion contract.
+	_ = metadata
 	return nil
 }
 
@@ -108,27 +315,27 @@ func (a *GenericAssertion) Type() ArtifactType { return ArtifactGeneric }
 
 // ObjectSample represents a object to be verified.
 type ObjectSample struct {
-	Key         string            `json:"key"`
-	Bucket      string            `json:"bucket"`
-	LastModified time.Time        `json:"last_modified"`
-	Size        int64             `json:"size"`
+	Key          string            `json:"key"`
+	Bucket       string            `json:"bucket"`
+	LastModified time.Time         `json:"last_modified"`
+	Size         int64             `json:"size"`
 	ArtifactType ArtifactType      `json:"artifact_type"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 // VerificationResult represents the result of verifying a single object.
 type VerificationResult struct {
-	Key              string            `json:"key"`
-	Bucket           string            `json:"bucket"`
-	Status           VerificationStatus `json:"status"`
-	Path             VerificationPath  `json:"path"`
-	Timestamp        time.Time         `json:"timestamp"`
-	ArtifactType     ArtifactType      `json:"artifact_type"`
+	Key          string             `json:"key"`
+	Bucket       string             `json:"bucket"`
+	Status       VerificationStatus `json:"status"`
+	Path         VerificationPath   `json:"path"`
+	Timestamp    time.Time          `json:"timestamp"`
+	ArtifactType ArtifactType       `json:"artifact_type"`
 
 	// Checksums
-	ExpectedSHA256   string            `json:"expected_sha256,omitempty"`
-	ARMORSHA256      string            `json:"armor_sha256,omitempty"`
-	DirectSHA256     string            `json:"direct_sha256,omitempty"`
+	ExpectedSHA256 string `json:"expected_sha256,omitempty"`
+	ARMORSHA256    string `json:"armor_sha256,omitempty"`
+	DirectSHA256   string `json:"direct_sha256,omitempty"`
 
 	// Latency
 	ARMORPathLatency  time.Duration `json:"armor_path_latency_ms"`
@@ -139,26 +346,26 @@ type VerificationResult struct {
 
 	// Assertion results
 	AssertionPassed bool   `json:"assertion_passed"`
-	AssertionError string `json:"assertion_error,omitempty"`
+	AssertionError  string `json:"assertion_error,omitempty"`
 }
 
 // BucketState holds verification state for a single bucket.
 type BucketState struct {
 	mu sync.RWMutex
 
-	Bucket              string                     `json:"bucket"`
-	LastVerification    time.Time                  `json:"last_verification"`
-	LastSuccess         time.Time                  `json:"last_success"`
-	VerifiedObjectRatio float64                    `json:"verified_object_ratio"` // ratio of verified/total
-	TotalObjects        int64                      `json:"total_objects"`
-	VerifiedObjects     int64                      `json:"verified_objects"`
-	FailedObjects       int64                      `json:"failed_objects"`
+	Bucket              string    `json:"bucket"`
+	LastVerification    time.Time `json:"last_verification"`
+	LastSuccess         time.Time `json:"last_success"`
+	VerifiedObjectRatio float64   `json:"verified_object_ratio"` // ratio of verified/total
+	TotalObjects        int64     `json:"total_objects"`
+	VerifiedObjects     int64     `json:"verified_objects"`
+	FailedObjects       int64     `json:"failed_objects"`
 
 	// Recent results (for debugging and escalation)
-	RecentResults       []VerificationResult       `json:"recent_results"`
+	RecentResults []VerificationResult `json:"recent_results"`
 
 	// Configuration sample settings
-	HistoricalSampleSize int                        `json:"historical_sample_size"`
+	HistoricalSampleSize int `json:"historical_sample_size"`
 }
 
 // snapshot returns a copy of the state's data fields, excluding the mutex.
@@ -183,42 +390,42 @@ func (s *BucketState) snapshot() *BucketState {
 
 // Verifier manages continuous restore verification across multiple buckets.
 type Verifier struct {
-	mu            sync.RWMutex              // protects buckets field
+	mu sync.RWMutex // protects buckets field
 
-	backend       backend.Backend
-	mek           []byte
-	blockSize     int
-	manifest      *manifest.Index
+	backend   backend.Backend
+	mek       []byte
+	blockSize int
+	manifest  *manifest.Index
 
-	buckets       map[string]*BucketState  // bucket name -> state
-	bucketConfigs []BucketConfig           // configured buckets
+	buckets       map[string]*BucketState // bucket name -> state
+	bucketConfigs []BucketConfig          // configured buckets
 
 	// Control
-	stopCh        chan struct{}
-	doneCh        chan struct{}
+	stopCh chan struct{}
+	doneCh chan struct{}
 
 	// Configuration
 	interval      time.Duration
-	sampleSize    int  // number of objects to verify per run per bucket
+	sampleSize    int    // number of objects to verify per run per bucket
 	escrowMekPath string // path to escrowed MEK for direct decryption
 	logOutput     io.Writer
 }
 
 // BucketConfig holds configuration for a single bucket verification.
 type BucketConfig struct {
-	Bucket              string     `json:"bucket"`
-	Prefix              string     `json:"prefix,omitempty"`
-	ArtifactType        ArtifactType `json:"artifact_type,omitempty"`
-	Enabled             bool       `json:"enabled"`
-	HistoricalSampleSize int        `json:"historical_sample_size,omitempty"`
+	Bucket               string       `json:"bucket"`
+	Prefix               string       `json:"prefix,omitempty"`
+	ArtifactType         ArtifactType `json:"artifact_type,omitempty"`
+	Enabled              bool         `json:"enabled"`
+	HistoricalSampleSize int          `json:"historical_sample_size,omitempty"`
 }
 
 // Config holds verifier configuration.
 type Config struct {
-	Buckets             []BucketConfig
-	Interval            time.Duration
-	SampleSize          int
-	EscrowMEKPath       string
+	Buckets       []BucketConfig
+	Interval      time.Duration
+	SampleSize    int
+	EscrowMEKPath string
 }
 
 // New creates a new restore verifier.
@@ -248,9 +455,9 @@ func New(
 	for _, bucketCfg := range cfg.Buckets {
 		if bucketCfg.Enabled {
 			v.buckets[bucketCfg.Bucket] = &BucketState{
-				Bucket:              bucketCfg.Bucket,
+				Bucket:               bucketCfg.Bucket,
 				HistoricalSampleSize: bucketCfg.HistoricalSampleSize,
-				RecentResults:       make([]VerificationResult, 0, 10),
+				RecentResults:        make([]VerificationResult, 0, 10),
 			}
 		}
 	}
