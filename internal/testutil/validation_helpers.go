@@ -133,7 +133,7 @@ func NewTestRequest(method, path string, body []byte) *http.Request {
 //	req := BuildTestRequest(cfg)
 func BuildTestRequest(config TestRequestConfig) *http.Request {
 	var path string
-	if config.QueryParams != nil && len(config.QueryParams) > 0 {
+	if len(config.QueryParams) > 0 {
 		path = config.Path + "?" + encodeQueryParams(config.QueryParams)
 	} else {
 		path = config.Path
@@ -571,10 +571,10 @@ func AssertAuthenticationError(t *testing.T, resp *httptest.ResponseRecorder) {
 
 	authErrorCodes := map[string]bool{
 		"MissingAuthenticationToken": true,
-		"InvalidAccessKeyId":          true,
-		"SignatureDoesNotMatch":       true,
-		"IncompleteSignature":         true,
-		"InvalidAlgorithm":            true,
+		"InvalidAccessKeyId":         true,
+		"SignatureDoesNotMatch":      true,
+		"IncompleteSignature":        true,
+		"InvalidAlgorithm":           true,
 	}
 
 	if !authErrorCodes[s3Err.Code] {

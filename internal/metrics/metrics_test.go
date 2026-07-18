@@ -501,13 +501,10 @@ func TestMultipartCanaryMetricsDistinctFromSmallObject(t *testing.T) {
 	m.SetMultipartCanaryHealthy(true)
 	m.RecordMultipartUpload("upload", "success", 1000*time.Millisecond)
 
-	// Verify they are tracked separately
-	if m.CanaryChecksTotal.String() != m.MultipartCanaryChecksTotal.String() {
-		// They should both be 1, but we're checking they're separate counters
-		if m.CanaryChecksTotal.String() == m.MultipartCanaryChecksTotal.String() &&
-			m.CanaryChecksTotal.String() == "1" {
-			// This is expected - both are 1
-		}
+	// Verify they are tracked separately: both counters were incremented once
+	if m.CanaryChecksTotal.String() != "1" || m.MultipartCanaryChecksTotal.String() != "1" {
+		t.Errorf("expected both canary counters to be 1, got small=%s multipart=%s",
+			m.CanaryChecksTotal.String(), m.MultipartCanaryChecksTotal.String())
 	}
 
 	// Verify Prometheus output has both sets of metrics
