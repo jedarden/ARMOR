@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -76,18 +77,43 @@ const (
 	ModeDRDrill Mode = "dr-drill"
 )
 
-// emptyStringSHA256Hex is the SHA-256 of the empty string. CompleteMultipartUpload
-// writes it as the placeholder plaintext digest for multipart objects (ADR-003,
-// open gap bf-1v2ehf), so it cannot be trusted as a real per-object checksum.
-// Any checksum comparison must treat it (and an empty string) as "no digest
-// declared" rather than a value to match.
+// emptyStringSHA256Hex is the SHA-256 of the empty string. Before bf-1v2ehf,
+// CompleteMultipartUpload wrote it as a placeholder plaintext digest for every
+// multipart object (ADR-003 residual gap), so it could not be trusted as a real
+// per-object checksum. New multipart uploads now store the real combined
+// per-part digest (and x-amz-meta-armor-part-size), but objects written before
+// the fix still carry this placeholder, so any checksum comparison must treat it
+// (and an empty string) as "no digest declared" rather than a value to match.
 const emptyStringSHA256Hex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 // isPlaceholderPlaintextSHA reports whether a declared plaintext SHA-256 is
-// absent or the ADR-003 multipart placeholder, and therefore must not be
-// enforced as a real checksum.
+// absent or the legacy ADR-003 multipart placeholder, and therefore must not be
+// enforced as a real checksum (legacy multipart objects written before bf-1v2ehf).
 func isPlaceholderPlaintextSHA(s string) bool {
 	return s == "" || s == emptyStringSHA256Hex
+}
+
+// plaintextDigestForMetadata returns the plaintext digest that should be
+// compared against an object's declared x-amz-meta-armor-plaintext-sha256.
+// Single-PUT objects declare the plain SHA-256 of the whole plaintext. Multipart
+// objects (ADR-005) declare the combined per-part digest that
+// CompleteMultipartUpload now stores, reproduced here by splitting the restored
+// plaintext at the uniform part-size P boundaries (backend.ComputeMultipartDigest)
+// — the order-sensitive combination that CombinePartPlaintextSHAs performs at
+// Complete. P is read from x-amz-meta-armor-part-size; when absent or unparsable
+// the plain whole-plaintext SHA-256 is used (single-PUT objects, and legacy
+// multipart objects written before bf-1v2ehf that carry only the placeholder).
+// This does not weaken the dual-path agreement check: both paths decrypt
+// identical plaintext under identical metadata, so they always produce identical
+// digests regardless of which form the object declares.
+func plaintextDigestForMetadata(plaintext []byte, metadata map[string]string) string {
+	if ps := metadata["x-amz-meta-armor-part-size"]; ps != "" {
+		if partSize, err := strconv.ParseInt(ps, 10, 64); err == nil && partSize > 0 {
+			return backend.ComputeMultipartDigest(plaintext, partSize)
+		}
+	}
+	sum := sha256.Sum256(plaintext)
+	return hex.EncodeToString(sum[:])
 }
 
 // ArtifactType represents the type of backup artifact being verified.
@@ -908,13 +934,14 @@ func (v *Verifier) verifyObjectDirectOnly(ctx context.Context, obj ObjectSample,
 		return result
 	}
 
-	directHash := sha256.Sum256(plaintext)
-	result.DirectSHA256 = hex.EncodeToString(directHash[:])
+	result.DirectSHA256 = plaintextDigestForMetadata(plaintext, obj.Metadata)
 
 	// Enforce the declared plaintext checksum only when the object actually
-	// declared a real digest: ADR-003 multipart uploads write the SHA-256 of the
-	// empty string as a placeholder digest (gap bf-1v2ehf), so treat that value
-	// (and an absent one) as "no digest declared" rather than something to match.
+	// declared a real digest: legacy ADR-003 multipart uploads written before
+	// bf-1v2ehf carry the SHA-256 of the empty string as a placeholder digest, so
+	// treat that value (and an absent one) as "no digest declared" rather than
+	// something to match. New multipart objects declare the combined per-part
+	// digest, which plaintextDigestForMetadata reproduces.
 	if !isPlaceholderPlaintextSHA(expectedSHA256) && result.DirectSHA256 != expectedSHA256 {
 		result.Status = StatusChecksumError
 		result.Path = PathDirect
@@ -958,9 +985,10 @@ func (v *Verifier) verifyObjectDual(ctx context.Context, obj ObjectSample, resul
 		return result
 	}
 
-	// Compute SHA256 of ARMOR path result
-	armorHash := sha256.Sum256(armorPlaintext)
-	result.ARMORSHA256 = hex.EncodeToString(armorHash[:])
+	// Compute the metadata-aware digest of the ARMOR path result so it is
+	// directly comparable to the declared digest (plain SHA-256 for single-PUT,
+	// combined per-part digest for multipart).
+	result.ARMORSHA256 = plaintextDigestForMetadata(armorPlaintext, obj.Metadata)
 
 	// Path 2: Direct decryption using armor-decrypt approach
 	directStart := time.Now()
@@ -974,9 +1002,10 @@ func (v *Verifier) verifyObjectDual(ctx context.Context, obj ObjectSample, resul
 		return result
 	}
 
-	// Compute SHA256 of direct path result
-	directHash := sha256.Sum256(directPlaintext)
-	result.DirectSHA256 = hex.EncodeToString(directHash[:])
+	// Compute the metadata-aware digest of the direct path result, matching the
+	// form used for the ARMOR path so the dual-path agreement check below stays a
+	// like-for-like comparison.
+	result.DirectSHA256 = plaintextDigestForMetadata(directPlaintext, obj.Metadata)
 
 	// Compare dual-path results
 	if result.ARMORSHA256 != result.DirectSHA256 {
@@ -988,8 +1017,9 @@ func (v *Verifier) verifyObjectDual(ctx context.Context, obj ObjectSample, resul
 	}
 
 	// Both paths agree; verify against the declared checksum. As on the drill
-	// path, the ADR-003 multipart placeholder (and an absent value) must not be
-	// enforced as a real per-object digest.
+	// path, the legacy ADR-003 multipart placeholder (and an absent value) must
+	// not be enforced as a real per-object digest. New multipart objects declare
+	// the combined per-part digest, which plaintextDigestForMetadata reproduces.
 	if !isPlaceholderPlaintextSHA(expectedSHA256) && result.ARMORSHA256 != expectedSHA256 {
 		result.Status = StatusChecksumError
 		result.Path = PathDualMatch
@@ -1100,10 +1130,11 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 	}
 
 	// Step 5: verify the plaintext digest. Single-PUT objects carry the true
-	// whole-object SHA in the envelope header, so check it here. Multipart
-	// objects have no header and store the empty-string placeholder digest
-	// (open gap bf-1v2ehf), so there is no header SHA to verify — verifyObject
-	// enforces the metadata digest (a no-op for the placeholder) instead.
+	// whole-object SHA in the envelope header, so check it here. Multipart objects
+	// have no envelope header — their real whole-object digest lives in metadata
+	// (the combined per-part digest since bf-1v2ehf, recorded with
+	// x-amz-meta-armor-part-size), which verifyObject enforces via
+	// plaintextDigestForMetadata rather than this header check.
 	if header != nil {
 		if err := header.VerifyPlaintextSHA(plaintext); err != nil {
 			return nil, fmt.Errorf("direct path: plaintext SHA-256 verification failed: %w", err)
