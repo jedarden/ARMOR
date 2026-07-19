@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -613,5 +614,217 @@ func TestVerifyObject_DualPathExercisesARMORReadPath(t *testing.T) {
 	}
 	if result.Status != StatusPass {
 		t.Fatalf("status = %q, want %q (error=%q)", result.Status, StatusPass, result.Error)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Historical sampling (ADR-004 Phase 6): getHistoricalSample must draw a
+// uniform random sample from the WHOLE bucket — paginating across every List
+// page — rather than always returning the last-N tail slice of one page. The
+// old implementation systematically starved everything but the tail of ever
+// being restore-verified, undermining the restorability guarantee.
+// ---------------------------------------------------------------------------
+
+// paginatingBackend serves a fixed, ordered object set through List and honors
+// continuation tokens / IsTruncated so the verifier's pagination + reservoir
+// sampling can be exercised with no real storage. It embeds backend.Backend so
+// the rest of the interface is satisfied by nil stubs that getHistoricalSample
+// never calls (same pattern as fakeBackend above). pageSize forces the result
+// into multiple pages independent of the maxKeys the caller requests.
+type paginatingBackend struct {
+	backend.Backend
+	objects   []backend.ObjectInfo
+	pageSize  int
+	listCalls int
+}
+
+func (m *paginatingBackend) List(_ context.Context, _, _, _, continuationToken string, _ int) (*backend.ListResult, error) {
+	m.listCalls++
+	start := 0
+	if continuationToken != "" {
+		if v, err := strconv.Atoi(continuationToken); err == nil {
+			start = v
+		}
+	}
+	if start > len(m.objects) {
+		start = len(m.objects)
+	}
+	end := start + m.pageSize
+	if end > len(m.objects) {
+		end = len(m.objects)
+	}
+	truncated := end < len(m.objects)
+	next := ""
+	if truncated {
+		next = strconv.Itoa(end)
+	}
+	return &backend.ListResult{
+		Objects:     m.objects[start:end],
+		IsTruncated: truncated,
+		NextToken:   next,
+	}, nil
+}
+
+// sampleKeySet collects the keys of a sample into a set for equality checks.
+func sampleKeySet(s []ObjectSample) map[string]struct{} {
+	set := make(map[string]struct{}, len(s))
+	for _, o := range s {
+		set[o.Key] = struct{}{}
+	}
+	return set
+}
+
+// TestGetHistoricalSample_RandomAcrossFullBucket is the core Phase 6 acceptance
+// test for the sampling fix. Against a synthetic bucket spanning many List pages
+// it asserts: (1) the verifier paginates through the ENTIRE bucket rather than
+// stopping at page one; (2) two independent samples differ, proving the draw is
+// random and not a deterministic tail slice; (3) over many trials every object
+// is sampled at least once (no object is starved); and (4) selection counts are
+// roughly uniform rather than concentrated on one region.
+func TestGetHistoricalSample_RandomAcrossFullBucket(t *testing.T) {
+	const (
+		n          = 2500 // > one 1000-object List page, so pagination is required
+		pageSize   = 100  // forces 25 List pages
+		sampleSize = 100
+		trials     = 300
+	)
+
+	objects := make([]backend.ObjectInfo, n)
+	for i := 0; i < n; i++ {
+		objects[i] = backend.ObjectInfo{Key: fmt.Sprintf("backup-%06d.db", i)}
+	}
+	mb := &paginatingBackend{objects: objects, pageSize: pageSize}
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+
+	// (1) Full pagination: a 2500-object bucket at 100/page must take exactly
+	// ceil(n/pageSize) List calls, proving the sample is drawn from the whole
+	// bucket instead of just the first 1000-object page.
+	callsBefore := mb.listCalls
+	s1, err := v.getHistoricalSample(context.Background(), "bucket", sampleSize)
+	if err != nil {
+		t.Fatalf("getHistoricalSample: %v", err)
+	}
+	pagesUsed := mb.listCalls - callsBefore
+	if want := (n + pageSize - 1) / pageSize; pagesUsed != want {
+		t.Fatalf("pagination: %d List calls, want %d (sample must span the whole bucket)", pagesUsed, want)
+	}
+	if len(s1) != sampleSize {
+		t.Fatalf("sample size = %d, want %d", len(s1), sampleSize)
+	}
+
+	// (2) Non-determinism: two independent uniform samples of 100-from-2500
+	// are essentially never identical. The old tail-slice code returned the
+	// same set on every call — a duplicate here means sampling is deterministic.
+	s2, err := v.getHistoricalSample(context.Background(), "bucket", sampleSize)
+	if err != nil {
+		t.Fatalf("getHistoricalSample (2nd): %v", err)
+	}
+	if same := func() bool {
+		a, b := sampleKeySet(s1), sampleKeySet(s2)
+		if len(a) != len(b) {
+			return false
+		}
+		for k := range a {
+			if _, ok := b[k]; !ok {
+				return false
+			}
+		}
+		return true
+	}(); same {
+		t.Fatalf("two independent historical samples were identical — sampling is deterministic, not random")
+	}
+
+	// (3) Coverage + (4) uniformity: aggregate selection counts across trials.
+	// Under uniform sampling each object is picked with prob sampleSize/n per
+	// trial, so over `trials` runs the expected hits per object is
+	// trials*sampleSize/n and the expected number of never-picked objects is
+	// n*(1-sampleSize/n)^trials ≈ 0. The old tail-slice bug would only ever
+	// pick the final 100 keys, so coverage would stall at 100/2500.
+	counts := make(map[string]int, n)
+	for i := 0; i < trials; i++ {
+		s, err := v.getHistoricalSample(context.Background(), "bucket", sampleSize)
+		if err != nil {
+			t.Fatalf("getHistoricalSample trial %d: %v", i, err)
+		}
+		for _, o := range s {
+			counts[o.Key]++
+		}
+	}
+	if got := len(counts); got < n-25 {
+		t.Fatalf("coverage: %d/%d objects sampled over %d trials — sampling starves part of the bucket (want all-but-a-handful)", got, n, trials)
+	}
+
+	// Uniformity: no object should dominate. The old bug would place all
+	// `trials` hits on the final 100 keys (count == trials each); uniform
+	// sampling keeps every count near the mean.
+	mean := float64(trials * sampleSize / n)
+	var maxCount int
+	for _, c := range counts {
+		if c > maxCount {
+			maxCount = c
+		}
+	}
+	if float64(maxCount) > mean*5 {
+		t.Fatalf("uniformity: max selection count %d far exceeds ~uniform mean %.1f — sampling is biased toward a region", maxCount, mean)
+	}
+
+	// Cross-region sanity: the head of the key space must be reachable. Under
+	// the old tail-slice behavior the first decile would have zero hits.
+	headHits := 0
+	for i := 0; i < n/10; i++ {
+		headHits += counts[fmt.Sprintf("backup-%06d.db", i)]
+	}
+	if headHits == 0 {
+		t.Fatalf("the first decile of objects was never sampled — sampling still favors the tail")
+	}
+}
+
+// TestGetHistoricalSample_SmallBucketReturnsAll confirms a bucket smaller than
+// the sample size is handled gracefully: every non-internal candidate is
+// returned (the reservoir never reaches the replacement phase) and no List
+// pagination is attempted beyond a single complete page.
+func TestGetHistoricalSample_SmallBucketReturnsAll(t *testing.T) {
+	const n = 5
+	objects := make([]backend.ObjectInfo, 0, n+1)
+	// An internal object must be skipped, not sampled.
+	objects = append(objects, backend.ObjectInfo{Key: ".armor/state.json"})
+	for i := 0; i < n; i++ {
+		objects = append(objects, backend.ObjectInfo{Key: fmt.Sprintf("backup-%d.db", i)})
+	}
+	mb := &paginatingBackend{objects: objects, pageSize: 100}
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+
+	s, err := v.getHistoricalSample(context.Background(), "bucket", 20)
+	if err != nil {
+		t.Fatalf("getHistoricalSample: %v", err)
+	}
+	if len(s) != n {
+		t.Fatalf("sample size = %d, want all %d non-internal objects", len(s), n)
+	}
+	for _, o := range s {
+		if strings.HasPrefix(o.Key, ".armor/") {
+			t.Fatalf("internal object %q leaked into the historical sample", o.Key)
+		}
+	}
+	if mb.listCalls != 1 {
+		t.Fatalf("List calls = %d, want 1 (small bucket must complete in a single page)", mb.listCalls)
+	}
+}
+
+// TestGetHistoricalSample_ZeroSampleSize confirms a non-positive sample size is
+// a no-op that issues no List calls, guarding the early return.
+func TestGetHistoricalSample_ZeroSampleSize(t *testing.T) {
+	mb := &paginatingBackend{objects: []backend.ObjectInfo{{Key: "a"}}, pageSize: 100}
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+
+	s, err := v.getHistoricalSample(context.Background(), "bucket", 0)
+	if err != nil {
+		t.Fatalf("getHistoricalSample(sampleSize=0): %v", err)
+	}
+	if s != nil {
+		t.Fatalf("expected nil sample for sampleSize=0, got %d objects", len(s))
+	}
+	if mb.listCalls != 0 {
+		t.Fatalf("List calls = %d, want 0 for sampleSize=0", mb.listCalls)
 	}
 }

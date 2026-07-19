@@ -8,8 +8,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -1234,44 +1236,97 @@ func (v *Verifier) getLatestObject(ctx context.Context, bucket string) (ObjectSa
 	}, nil
 }
 
-// getHistoricalSample returns a random sample of historical objects.
+// getHistoricalSample returns a cryptographically uniform random sample of
+// historical backup objects drawn from the ENTIRE bucket, not just the first
+// List page. It paginates through every object (honoring IsTruncated /
+// NextToken) and feeds the stream into a reservoir sampler (Algorithm R), so
+// memory is bounded by sampleSize regardless of how large the bucket grows and
+// every object — old, new, or oddly-prefixed — has an equal sampleSize/N chance
+// of being restore-verified each cycle. That uniformity is what makes the
+// Phase 6 / ADR-004 restorability guarantee meaningful: no subset of objects
+// can be permanently starved of verification the way a fixed tail slice would.
+//
+// Internal .armor/ bookkeeping objects are skipped (they are not user backups).
+// The latest object is fetched separately by getLatestObject and verified
+// unconditionally; it is not excluded here and may also appear in the sample.
 func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampleSize int) ([]ObjectSample, error) {
-	// List objects and randomly sample
-	listResult, err := v.backend.List(ctx, bucket, "", "", "", 1000)
-	if err != nil {
-		return nil, fmt.Errorf("list failed: %w", err)
+	if sampleSize <= 0 {
+		return nil, nil
 	}
 
-	// Filter out internal objects and the latest one (already verified)
-	var candidates []ObjectSample
-	for _, obj := range listResult.Objects {
-		if strings.HasPrefix(obj.Key, ".armor/") {
-			continue
+	// The reservoir holds at most sampleSize objects, so paginating a bucket
+	// with millions of objects never grows memory beyond the sample size.
+	reservoir := make([]ObjectSample, 0, sampleSize)
+	var seen int // candidate (non-internal) objects fed to the sampler
+
+	var continuationToken string
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("historical sample cancelled: %w", err)
 		}
-		candidates = append(candidates, ObjectSample{
-			Key:          obj.Key,
-			Bucket:       bucket,
-			LastModified: obj.LastModified,
-			Size:         obj.Size,
-			ArtifactType: v.inferArtifactType(obj.Key, obj.Metadata),
-			Metadata:     obj.Metadata,
-		})
+
+		listResult, err := v.backend.List(ctx, bucket, "", "", continuationToken, 1000)
+		if err != nil {
+			return nil, fmt.Errorf("list failed: %w", err)
+		}
+
+		for _, obj := range listResult.Objects {
+			if strings.HasPrefix(obj.Key, ".armor/") {
+				continue
+			}
+			seen++
+			sample := ObjectSample{
+				Key:          obj.Key,
+				Bucket:       bucket,
+				LastModified: obj.LastModified,
+				Size:         obj.Size,
+				ArtifactType: v.inferArtifactType(obj.Key, obj.Metadata),
+				Metadata:     obj.Metadata,
+			}
+			if seen <= sampleSize {
+				// Fill phase: the first sampleSize candidates seed the reservoir.
+				reservoir = append(reservoir, sample)
+				continue
+			}
+			// Replacement phase (Algorithm R): for the seen-th candidate, draw a
+			// uniform slot j in [0, seen) and replace reservoir[j] when j falls
+			// inside the reservoir. Each candidate ends up retained with
+			// probability sampleSize/N, giving a uniform sample of the full set.
+			if j := cryptoRandInt(seen); j < sampleSize {
+				reservoir[j] = sample
+			}
+		}
+
+		if !listResult.IsTruncated {
+			break
+		}
+		// Guard against a backend that reports truncated without advancing the
+		// continuation token — stop rather than loop forever.
+		if listResult.NextToken == continuationToken {
+			break
+		}
+		continuationToken = listResult.NextToken
 	}
 
-	// Simple random sample (in production, use proper random sampling)
-	sampleCount := sampleSize
-	if len(candidates) < sampleCount {
-		sampleCount = len(candidates)
-	}
+	return reservoir, nil
+}
 
-	// For now, just take the last N objects
-	// TODO: Implement proper random sampling
-	start := 0
-	if len(candidates) > sampleCount {
-		start = len(candidates) - sampleCount
+// cryptoRandInt returns a uniform random int in the half-open interval [0, n)
+// using crypto/rand, so the historical sample is unbiased and unpredictable —
+// backing the ADR-004 guarantee that no objects are systematically starved of
+// verification. On the essentially-impossible crypto/rand failure it returns 0
+// rather than panicking; the reservoir sampler then replaces only slot 0 for
+// that draw, a safe degradation that skews a single sample instead of crashing
+// a verification run.
+func cryptoRandInt(n int) int {
+	if n <= 0 {
+		return 0
 	}
-
-	return candidates[start:], nil
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 0
+	}
+	return int(binary.LittleEndian.Uint64(b[:]) % uint64(n))
 }
 
 // inferArtifactType infers the artifact type from key and metadata.
