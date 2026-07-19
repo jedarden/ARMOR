@@ -332,11 +332,12 @@ func (m *Metrics) RecordMultipartUpload(operation string, status string, duratio
 
 	// Track sum and count in the appropriate histogram map
 	var histogramMap *expvar.Map
-	if operation == "upload" {
+	switch operation {
+	case "upload":
 		histogramMap = m.MultipartUploadBuckets
-	} else if operation == "verify" {
+	case "verify":
 		histogramMap = m.MultipartVerificationBuckets
-	} else {
+	default:
 		return // Invalid operation
 	}
 
@@ -500,11 +501,12 @@ func (m *Metrics) PrometheusFormat() string {
 
 		// Get the appropriate map
 		var histogramMap *expvar.Map
-		if operation == "upload" {
+		switch operation {
+		case "upload":
 			histogramMap = m.MultipartUploadBuckets
-		} else if operation == "verify" {
+		case "verify":
 			histogramMap = m.MultipartVerificationBuckets
-		} else {
+		default:
 			continue
 		}
 
