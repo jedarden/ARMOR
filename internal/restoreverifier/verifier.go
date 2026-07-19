@@ -24,6 +24,7 @@ import (
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/manifest"
+	"github.com/jedarden/armor/internal/metrics"
 	"github.com/parquet-go/parquet-go"
 
 	// modernc.org/sqlite is a pure-Go SQLite driver used to run PRAGMA
@@ -396,6 +397,7 @@ type Verifier struct {
 	mek       []byte
 	blockSize int
 	manifest  *manifest.Index
+	metrics   *metrics.Metrics // optional; receives per-bucket restorability gauges
 
 	buckets       map[string]*BucketState // bucket name -> state
 	bucketConfigs []BucketConfig          // configured buckets
@@ -426,6 +428,7 @@ type Config struct {
 	Interval      time.Duration
 	SampleSize    int
 	EscrowMEKPath string
+	Metrics       *metrics.Metrics // optional; when set, per-bucket gauges are published after each run
 }
 
 // New creates a new restore verifier.
@@ -441,6 +444,7 @@ func New(
 		mek:           mek,
 		blockSize:     blockSize,
 		manifest:      manifest,
+		metrics:       cfg.Metrics,
 		buckets:       make(map[string]*BucketState),
 		bucketConfigs: cfg.Buckets,
 		stopCh:        make(chan struct{}),
@@ -525,6 +529,12 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 	latest, err := v.getLatestObject(ctx, bucket)
 	if err != nil {
 		log.Printf("Failed to get latest object for bucket %s: %v", bucket, err)
+		// Record the attempt as a failure so a bucket that cannot be enumerated
+		// still advances its restore-age gauge and trips the verification-failure
+		// alert instead of silently emitting no series.
+		state.LastVerification = time.Now()
+		state.FailedObjects++
+		v.recordBucketRun(bucket, state, 0)
 		return
 	}
 
@@ -532,11 +542,19 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 	historical, err := v.getHistoricalSample(ctx, bucket, state.HistoricalSampleSize)
 	if err != nil {
 		log.Printf("Failed to get historical sample for bucket %s: %v", bucket, err)
+		state.LastVerification = time.Now()
+		state.FailedObjects++
+		v.recordBucketRun(bucket, state, 0)
 		return
 	}
 
 	state.TotalObjects = int64(1 + len(historical))
 	objectsToVerify := append([]ObjectSample{latest}, historical...)
+
+	// Per-run tallies. The restorability gauges must reflect this run's sample,
+	// not the cumulative state counters (which grow without bound across runs
+	// because objects are re-verified every cycle).
+	var runVerified, runFailed int64
 
 	// Verify each object
 	for _, obj := range objectsToVerify {
@@ -546,8 +564,10 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 		if result.Status == StatusPass {
 			state.VerifiedObjects++
 			state.LastSuccess = result.Timestamp
+			runVerified++
 		} else {
 			state.FailedObjects++
+			runFailed++
 		}
 
 		// Keep recent results limited
@@ -564,12 +584,42 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 	}
 
 	state.LastVerification = time.Now()
+
+	// VerifiedObjectRatio reflects this run's sample so it stays in [0,1] and
+	// the restorability PrometheusRule behaves correctly. (The state keeps the
+	// cumulative Verified/Failed counters for the /status API and for the
+	// monotonic failure counter below.)
 	if state.TotalObjects > 0 {
-		state.VerifiedObjectRatio = float64(state.VerifiedObjects) / float64(state.TotalObjects)
+		state.VerifiedObjectRatio = float64(runVerified) / float64(state.TotalObjects)
 	}
 
+	// Publish the per-bucket restorability gauges that back the restore-age and
+	// verification-failure PrometheusRules. recordBucketRun computes the run
+	// ratio from runVerified and forwards the monotonic state.FailedObjects, so
+	// increase(armor_restore_verification_failures_total[window]) > 0 detects
+	// new failures and resolves once they stop.
+	v.recordBucketRun(bucket, state, runVerified)
+
 	log.Printf("Bucket %s verification complete: %d/%d verified (%.1f%%)",
-		bucket, state.VerifiedObjects, state.TotalObjects, state.VerifiedObjectRatio*100)
+		bucket, runVerified, state.TotalObjects, state.VerifiedObjectRatio*100)
+}
+
+// recordBucketRun publishes the per-bucket restorability gauges after a
+// verification run — including runs that failed before any object could be
+// verified (runVerified == 0), so an unenumerable bucket still advances its
+// restore-age gauge and trips the verification-failure alert instead of
+// silently emitting no series. state.LastVerification must already be set to
+// this attempt's timestamp; state.FailedObjects is forwarded unchanged as the
+// monotonic counter backing the failure alert.
+func (v *Verifier) recordBucketRun(bucket string, state *BucketState, runVerified int64) {
+	if v.metrics == nil {
+		return
+	}
+	var runRatio float64
+	if state.TotalObjects > 0 {
+		runRatio = float64(runVerified) / float64(state.TotalObjects)
+	}
+	v.metrics.RecordRestoreBucketState(bucket, state.LastVerification, runRatio, state.FailedObjects)
 }
 
 // verifyObject performs dual-path verification on a single object.
