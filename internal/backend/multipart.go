@@ -16,15 +16,15 @@ import (
 // MultipartState represents the state of an in-progress multipart upload.
 // This is stored in B2 at .armor/multipart/<upload-id>.state
 type MultipartState struct {
-	UploadID     string    `json:"upload_id"`
-	Bucket       string    `json:"bucket"`
-	Key          string    `json:"key"`
-	IV           []byte    `json:"iv"`
-	WrappedDEK   []byte    `json:"wrapped_dek"`
-	BlockSize    int       `json:"block_size"`
-	Created      time.Time `json:"created"`
-	ContentType  string    `json:"content_type"`
-	KeyID        string    `json:"key_id"` // Key identifier for multi-key support
+	UploadID    string    `json:"upload_id"`
+	Bucket      string    `json:"bucket"`
+	Key         string    `json:"key"`
+	IV          []byte    `json:"iv"`
+	WrappedDEK  []byte    `json:"wrapped_dek"`
+	BlockSize   int       `json:"block_size"`
+	Created     time.Time `json:"created"`
+	ContentType string    `json:"content_type"`
+	KeyID       string    `json:"key_id"` // Key identifier for multi-key support
 
 	// Per-part HMACs (part number -> HMACs for each block in that part)
 	// Stored as base64-encoded concatenation of all block HMACs
@@ -32,6 +32,21 @@ type MultipartState struct {
 
 	// Per-part encrypted sizes (for range translation on completion)
 	PartSizes map[int]int64 `json:"part_sizes"`
+
+	// PartSize is the uniform part size P pinned from the first arriving part
+	// (ADR-005). A part's CTR counter offset is a function of its part number
+	// alone: part N starts at block (N-1)*P/BlockSize — computable regardless
+	// of arrival order. 0 means P is not yet established (no part has arrived).
+	PartSize int64 `json:"part_size"`
+
+	// Poisoned marks an upload id as permanently failed (ADR-005 rule 4). When
+	// the optimistic-P contract is contradicted (a part larger than P, two
+	// presumed-final parts, or a same-part retry with a different size), the
+	// offending UploadPart is rejected AND the upload id is poisoned so that
+	// CompleteMultipartUpload fails with a clear retry-the-upload message,
+	// never storing a violating object.
+	Poisoned     bool   `json:"poisoned"`
+	PoisonReason string `json:"poison_reason"`
 }
 
 // MultipartStateManager manages multipart upload state persistence.
@@ -98,9 +113,9 @@ func (m *MultipartStateManager) DeleteState(ctx context.Context, uploadID string
 // HMACTableSidecar represents the HMAC table stored as a sidecar object.
 // For multipart uploads, the HMAC table is stored at .armor/hmac/<sha256(key)>
 type HMACTableSidecar struct {
-	Key       string   `json:"key"`        // Object key
+	Key        string   `json:"key"`         // Object key
 	BlockHMACs [][]byte `json:"block_hmacs"` // HMAC for each block
-	BlockSize int      `json:"block_size"`
+	BlockSize  int      `json:"block_size"`
 }
 
 // SaveHMACTable saves the HMAC table as a sidecar object.
