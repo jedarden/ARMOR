@@ -33,10 +33,13 @@ type MultipartState struct {
 	// Per-part encrypted sizes (for range translation on completion)
 	PartSizes map[int]int64 `json:"part_sizes"`
 
-	// PartSize is the uniform part size P pinned from the first arriving part
-	// (ADR-005). A part's CTR counter offset is a function of its part number
-	// alone: part N starts at block (N-1)*P/BlockSize — computable regardless
-	// of arrival order. 0 means P is not yet established (no part has arrived).
+	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-005,
+	// amended 2026-07-19 — originally "first arriving part", which failed under
+	// default aws-cli concurrency where the short final part arrives first). A
+	// part's CTR counter offset is a function of its part number alone: part N
+	// starts at block (N-1)*P/BlockSize — computable regardless of arrival
+	// order. 0 means part 1 has not arrived yet; any part >1 arriving while 0
+	// is deferred by the handler with a retryable 503 SlowDown (nothing stored).
 	PartSize int64 `json:"part_size"`
 
 	// Poisoned marks an upload id as permanently failed (ADR-005 rule 4). When

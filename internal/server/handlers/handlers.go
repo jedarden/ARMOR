@@ -2053,12 +2053,17 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 // loudly so any pattern ARMOR cannot encrypt correctly fails instead of
 // producing corrupt ciphertext:
 //
-//   - P is pinned from the first part and must be block-aligned (InvalidPartSize).
+//   - P is pinned from part NUMBER 1 (ADR-005, amended 2026-07-19) and must be
+//     block-aligned (InvalidPartSize). A part numbered >1 arriving before part 1
+//     has pinned P is deferred with a retryable 503 SlowDown (nothing stored);
+//     standard clients retry it after part 1 arrives.
 //   - A part equal to P is a regular part; a part smaller than P is presumed final.
 //   - A part larger than P, or a second distinct short (presumed-final) part,
 //     contradicts P: the offending UploadPart is rejected AND the upload id is
 //     poisoned so CompleteMultipartUpload fails clearly — never a stored object
-//     (ADR-005 rule 4).
+//     (ADR-005 rule 4, now defense-in-depth: with P pinned from part 1 the
+//     short-final-arrives-first case is deferred by SlowDown, so this catches
+//     only genuine contradictions and clients that never send part 1).
 //   - Retrying part N with the same size is idempotent (same N, same offset);
 //     a retry with a different size hits rule 4.
 //
@@ -2111,6 +2116,26 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
+	// ADR-005 (amended 2026-07-19): P is pinned ONLY from part number 1. A part
+	// numbered >1 that arrives before part 1 has pinned P cannot have its CTR
+	// offset computed (no P yet) and must not be allowed to pin P — under default
+	// aws-cli concurrency the short final part (fewest bytes) finishes FIRST and
+	// used to pin P too small, so the first full-size part contradicted it and
+	// every default-concurrency upload failed. Defer such a part with S3's
+	// retryable 503 SlowDown and store NOTHING: no state mutation, no backend
+	// upload, no PartSizes entry. Standard clients (aws cli, SDKs, rclone,
+	// litestream) retry SlowDown transparently with backoff; part 1 arrives and
+	// pins P, and the deferred part then succeeds at its correct
+	// (N-1)*P/BlockSize offset. The body is left unread so a deferred (potentially
+	// large) part costs no server memory.
+	if state.PartSize == 0 && partNumber != 1 {
+		w.Header().Set("Retry-After", "1")
+		h.writeError(w, "SlowDown",
+			"Part 1 for this multipart upload has not been received yet, so the uniform part size is not established. Retry this part after uploading part 1.",
+			http.StatusServiceUnavailable)
+		return
+	}
+
 	// Read plaintext part
 	plaintext, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -2145,13 +2170,17 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		// them when first uploaded. Fall through to the shared encrypt/upload path.
 	}
 
-	// P is the pinned uniform part size; 0 means no part has arrived yet.
+	// P is the pinned uniform part size. ADR-005 (amended 2026-07-19): pinned
+	// ONLY from part number 1 — the SlowDown guard above already returned any
+	// part >1 that arrived before part 1, so reaching here with P==0 implies
+	// partNumber == 1. Part 1 of a well-formed multipart upload is always a
+	// full-size part (the short final is by definition the highest-numbered
+	// part), so pinning P from part 1 makes the uniform size correct by
+	// construction. The old "short final arrives first and pins P too small"
+	// failure mode is gone. Block alignment was checked above; the 5 MiB
+	// minimum for multi-part objects is enforced at Complete.
 	P := state.PartSize
 
-	// Pin P from the first arriving part (ADR-005 rule 1). Block alignment was
-	// checked above. The 5 MiB minimum for multi-part objects is enforced at
-	// Complete; a lone short part (single-part upload, or a short final arriving
-	// first) pins P short and is caught by rule 4 if a larger part follows.
 	if P == 0 {
 		if plaintextSize == 0 {
 			h.writeError(w, "InvalidPartSize", "Cannot establish the uniform part size from an empty first part. Upload a non-empty first part.", 400)
@@ -2161,16 +2190,20 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		state.PartSize = P
 	}
 
-	// Contradiction detection against the pinned P (ADR-005 rule 4). Skip for
-	// same-size retries (isRetry path above returned or fell through with P set
-	// and the part already validated on first upload).
+	// Contradiction detection against the pinned P (ADR-005 rule 4, defense-in-
+	// depth). With P now pinned from part 1, the short-final-arrives-first case
+	// is deferred by SlowDown above and never reaches here; this now catches
+	// only genuine contradictions (a part larger than P, two short parts, or a
+	// same-part retry with a different size). Skip for same-size retries (the
+	// isRetry path above returned or fell through with P set and the part
+	// already validated on first upload).
 	if _, exists := state.PartSizes[int(partNumber)]; !exists {
 		switch {
 		case plaintextSize > P:
-			reason := fmt.Sprintf("part %d size %d exceeds the uniform part size %d pinned by the first arriving part", partNumber, plaintextSize, P)
+			reason := fmt.Sprintf("part %d size %d exceeds the uniform part size %d pinned by part 1", partNumber, plaintextSize, P)
 			h.poisonUpload(ctx, manager, state, reason)
 			h.writeError(w, "InvalidPartSize",
-				fmt.Sprintf("Part %d size %d is larger than the uniform part size %d established for this upload. This happens when the short final part is uploaded before the regular parts. %s", partNumber, plaintextSize, P, multipartRetryMessage), 400)
+				fmt.Sprintf("Part %d size %d is larger than the uniform part size %d established for this upload by part 1. %s", partNumber, plaintextSize, P, multipartRetryMessage), 400)
 			return
 		case plaintextSize < P:
 			// Presumed final part. At most one part may differ from P (and it must
@@ -2343,16 +2376,16 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// ADR-005 rule 3 (Complete-time contract validation): every part except the
 	// highest-numbered one must have size exactly P, the uniform part size pinned
-	// from the first arriving part. The highest-numbered part is allowed to be the
-	// short final part (< P). This is the authoritative gate — UploadPart already
-	// rejects contradictions as they arrive (and poisons the upload), but this
-	// backstop catches a violating state that reached Complete anyway (e.g. a
-	// best-effort poison save that dropped). It runs before any assembly/storage
-	// so a violating object is never stored.
+	// from part 1 (ADR-005, amended 2026-07-19). The highest-numbered part is
+	// allowed to be the short final part (< P). This is the authoritative gate —
+	// UploadPart already rejects contradictions as they arrive (and poisons the
+	// upload), but this backstop catches a violating state that reached Complete
+	// anyway (e.g. a best-effort poison save that dropped). It runs before any
+	// assembly/storage so a violating object is never stored.
 	P := state.PartSize
 	if P == 0 {
 		h.writeError(w, "InvalidPart",
-			fmt.Sprintf("No part has been uploaded for this multipart upload, so the uniform part size is unknown. %s", multipartRetryMessage), 400)
+			fmt.Sprintf("Part 1 was never uploaded for this multipart upload, so the uniform part size is unknown (every other part would have been deferred with SlowDown until part 1 arrived). Upload part 1 and retry. %s", multipartRetryMessage), 400)
 		return
 	}
 	highestPartNumber := completeReq.Parts[len(completeReq.Parts)-1].PartNumber
