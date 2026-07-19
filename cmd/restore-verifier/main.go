@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -51,6 +52,19 @@ var (
 	checkInterval = flag.Duration("check-interval", parseDuration(os.Getenv("VERIFIER_CHECK_INTERVAL"), 6*time.Hour), "Verification check interval")
 	sampleSize    = flag.Int("sample-size", parseInt(os.Getenv("VERIFIER_SAMPLE_SIZE"), 10), "Number of historical objects to sample")
 	httpListen    = flag.String("http-listen", os.Getenv("VERIFIER_HTTP_LISTEN"), "HTTP listen address (default :9002)")
+
+	// Escalation configuration (ADR-004 §5: one bead per distinct failure +
+	// one staleness bead per freshness window; storm-proof). Defaults to
+	// disabled so the running fleet is unchanged until a deployment can host
+	// the bf CLI; enable once `br` is available in the image.
+	escalationEnabled = flag.Bool("escalation", parseBool(os.Getenv("VERIFIER_ESCALATION"), false), "File one bead per distinct verification failure + staleness (requires bf/br CLI)")
+	escalDeployment   = flag.String("escalation-deployment", os.Getenv("ARMOR_DEPLOYMENT"), "Deployment name recorded in escalation bead bodies")
+	escalFreshness    = flag.Duration("escalation-freshness-window", parseDuration(os.Getenv("VERIFIER_FRESHNESS_WINDOW"), 24*time.Hour), "Staleness window: escalate once per window when no verified restore occurs")
+	escalStatePath    = flag.String("escalation-state", getenvDefault("VERIFIER_ESCALATION_STATE", "/var/lib/restore-verifier/escalation-state.json"), "Path to the persisted dedupe-state file (mount a volume here for restart-survival)")
+	escalWorkspace    = flag.String("escalation-workspace", os.Getenv("VERIFIER_ESCALATION_WORKSPACE"), "bf workspace (-w) for filed beads (empty = cwd .beads/)")
+	escalLabel        = flag.String("escalation-label", os.Getenv("VERIFIER_ESCALATION_LABEL"), "Label applied to every escalation bead (optional)")
+	escalBinary       = flag.String("escalation-bf-binary", getenvDefault("VERIFIER_ESCALATION_BF_BINARY", "br"), "Path to the bf/br CLI used to file escalation beads")
+	escalExecTimeout  = flag.Duration("escalation-exec-timeout", parseDuration(os.Getenv("VERIFIER_ESCALATION_EXEC_TIMEOUT"), 10*time.Second), "Per-call timeout for a single bf create")
 
 	// Bucket configuration (can be specified multiple times)
 	bucketFlag bucketFlags
@@ -178,6 +192,30 @@ func main() {
 		SampleSize:    *sampleSize,
 		EscrowMEKPath: "", // MEK passed directly, not from file
 		Metrics:       metricsCollector,
+	}
+
+	// Escalation (ADR-004 §5). Disabled by default — the running fleet has no
+	// bf/br CLI in-image, so filing is inert (noop filer) until a deployment
+	// opts in. When enabled, the BFCLIFiler shells out to `br create`; the
+	// Escalator itself is storm-proof regardless (persisted dedupe set, one bead
+	// per distinct failure, one staleness bead per window, no retry loops).
+	if *escalationEnabled {
+		filer := &restoreverifier.BFCLIFiler{
+			Binary:      *escalBinary,
+			Workspace:   *escalWorkspace,
+			Label:       *escalLabel,
+			ExecTimeout: *escalExecTimeout,
+		}
+		cfg.Escalator = restoreverifier.NewEscalator(restoreverifier.EscalatorConfig{
+			Filer:           filer,
+			Deployment:      *escalDeployment,
+			FreshnessWindow: *escalFreshness,
+			StatePath:       *escalStatePath,
+		})
+		log.Printf("Escalation enabled: deployment=%q freshness=%s state=%s (storm-proof: one bead per distinct failure)",
+			orDefault(*escalDeployment, "(unset)"), *escalFreshness, *escalStatePath)
+	} else {
+		log.Printf("Escalation disabled (VERIFIER_ESCALATION=false); failures surface via metrics only")
 	}
 
 	verifier := restoreverifier.New(
@@ -327,6 +365,39 @@ func parseInt(s string, defaultVal int) int {
 		return defaultVal
 	}
 	return i
+}
+
+// parseBool parses a bool string with a default fallback. Accepts the usual
+// strconv.ParseBool set (1, t, true, TRUE, etc.); anything malformed falls back
+// to the default rather than failing startup.
+func parseBool(s string, defaultVal bool) bool {
+	if s == "" {
+		return defaultVal
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "t", "true", "yes", "on":
+		return true
+	case "0", "f", "false", "no", "off":
+		return false
+	}
+	log.Printf("Invalid bool %q, using default %v", s, defaultVal)
+	return defaultVal
+}
+
+// getenvDefault returns the named env var, or defaultVal when unset/empty.
+func getenvDefault(name, defaultVal string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+// orDefault returns s, or defaultVal when s is empty.
+func orDefault(s, defaultVal string) string {
+	if s == "" {
+		return defaultVal
+	}
+	return s
 }
 
 // splitCSV splits a CSV string.
