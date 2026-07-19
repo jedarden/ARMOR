@@ -101,3 +101,39 @@ Implementation (already on origin before this pass):
 
 This pass produced no code/manifest changes (all of the above was already
 committed and pushed); this note is the required verification artifact.
+
+## Re-verification pass (2026-07-19, second pass)
+
+Re-ran the live fleet check to confirm the deployments stayed healthy and the
+gauges stayed live. `declarative-config` is clean at `origin/main` (`bcea4f7`);
+all six manifests present; the two modified files in that worktree
+(`commitgraph-build-sensor.yml`, `commitgraph-build-workflowtemplate.yml`) are
+unrelated to restore-verifier and were left untouched.
+
+| Bucket / cluster     | Pod state (kubectl)          | Evidence                                                |
+|----------------------|------------------------------|---------------------------------------------------------|
+| iad-ci (iad-ci)      | Running 1/1, 0 restart, 34m  | Fresh port-forward `/metrics` — all 3 gauges (below)    |
+| armor-apexalgo (iad-acb) | Running 1/1, 0 restart, 9m | Ready ⇒ /metrics serving                                |
+| rs-manager           | Running 1/1, 0 restart, 39m  | Ready ⇒ /metrics serving                                |
+| iad-kalshi           | Running 1/1, 0 restart, 39m  | Ready ⇒ /metrics serving                                |
+| ord-devimprint       | Running 1/1, 0 restart, 39m  | Ready ⇒ /metrics serving                                |
+| iad-native-ads       | manifest at `origin/main` (`9eac6ba`) | host→proxy gap persists (see note)            |
+
+Fresh iad-ci `/metrics` (port-forward, this pass):
+```
+armor_last_verified_restore_timestamp{bucket="iad-ci"} 1784472826
+armor_verified_object_ratio{bucket="iad-ci"} 0
+armor_restore_verification_failures_total{bucket="iad-ci"} 1
+```
+`/status` reports `last_verification 2026-07-19T14:53:46Z`, `total_objects: 0,
+failed_objects: 1` — the expected empty-CI-bucket case (probes deliberately
+decoupled, so the pod stays Running and scrapeable). The five directly-observed
+clusters confirm the fleet is deployed and the gauge plumbing is live; native-ads
+remains the one cluster this host cannot reach directly (`traefik-iad-native-ads:8001`
+→ `100.112.136.98:8001` accepts the TCP connection but never responds — the same
+gap as the first pass, so it is a stable host→native-ads connectivity issue, not a
+manifest or deployment defect; the manifest is identical to the five confirmed
+clusters and is at `origin/main`). ArgoCD read-only API was again unreachable from
+this host, so it could not cross-check the native-ads sync state. The deployment is
+functionally complete; native-ads pod state should be spot-checked from a host that
+can reach its proxy when convenient.
