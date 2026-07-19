@@ -1,7 +1,7 @@
 # ADR-003: Multipart object layout, read-path dispatch, and hard-fail part validation
 
-**Status:** Accepted (documents the design as implemented July 2026)
-**Date:** 2026-07-18
+**Status:** Accepted (documents the design as implemented July 2026); **§4's sequential-only enforcement is superseded by [ADR-005](005-out-of-order-multipart-uniform-part-size.md)** (uniform-part-size contract — out-of-order supported once implemented)
+**Date:** 2026-07-18 (amended 2026-07-19)
 
 ## Context
 
