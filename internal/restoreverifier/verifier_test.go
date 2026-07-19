@@ -278,10 +278,15 @@ func armorEncrypt(t *testing.T, mek []byte, blockSize int, plaintext []byte) (ci
 // part ciphertext with NO envelope header and the per-block HMAC table stored as
 // a JSON sidecar (the HMACTableSidecar wire format the server writes), plus the
 // metadata both restore paths read. It mirrors what CompleteMultipartUpload
-// produces: x-amz-meta-armor-multipart=true, IV/wrapped-DEK/sizes in metadata,
-// and the empty-string placeholder plaintext digest (open gap bf-1v2ehf). The
-// returned ciphertext is what a B2-like backend stores for the object body; the
-// returned sidecar bytes are what lives at .armor/hmac/<sha256(key)>.
+// produces since bf-1v2ehf: x-amz-meta-armor-multipart=true, IV/wrapped-DEK/
+// sizes in metadata, the real combined per-part plaintext digest (not the old
+// empty-string placeholder), and x-amz-meta-armor-part-size so a verifier can
+// reproduce the digest. The stored digest is built with CombinePartPlaintextSHAs
+// (the function Complete actually calls); the verifier recomputes it with
+// ComputeMultipartDigest, so a successful verify cross-checks the two functions
+// agree — the core bf-1v2ehf invariant. The returned ciphertext is what a
+// B2-like backend stores for the object body; the returned sidecar bytes are
+// what lives at .armor/hmac/<sha256(key)>.
 func armorEncryptMultipart(t *testing.T, mek []byte, blockSize int, key string, plaintext []byte) (ciphertext []byte, sidecar []byte, meta map[string]string) {
 	t.Helper()
 	dek, err := crypto.GenerateDEK()
@@ -322,17 +327,42 @@ func armorEncryptMultipart(t *testing.T, mek []byte, blockSize int, key string, 
 		t.Fatalf("marshal sidecar: %v", err)
 	}
 
+	// Uniform part size P (ADR-005), block-aligned. With a 4 KiB block size and
+	// the 8 KiB valid.sqlite fixture this yields exactly two parts — a genuine
+	// multipart object whose combined digest differs from the plain SHA-256 of
+	// the whole plaintext (the whole reason bf-1v2ehf matters). Build the
+	// declared digest with CombinePartPlaintextSHAs over the per-part digests,
+	// the same function CompleteMultipartUpload uses at completion.
+	partSize := int64(blockSize)
+	partDigests := make(map[int]string)
+	var partNumbers []int
+	for off := int64(0); off < int64(len(plaintext)); off += partSize {
+		partNum := len(partNumbers) + 1
+		end := off + partSize
+		if end > int64(len(plaintext)) {
+			end = int64(len(plaintext))
+		}
+		ph := sha256.Sum256(plaintext[off:end])
+		partDigests[partNum] = hex.EncodeToString(ph[:])
+		partNumbers = append(partNumbers, partNum)
+	}
+	combinedSHA, err := backend.CombinePartPlaintextSHAs(partDigests, partNumbers)
+	if err != nil {
+		t.Fatalf("CombinePartPlaintextSHAs: %v", err)
+	}
+
 	m := (&backend.ARMORMetadata{
 		Version:       1,
 		BlockSize:     blockSize,
 		PlaintextSize: int64(len(plaintext)),
 		IV:            iv,
 		WrappedDEK:    wrapped,
-		// Multipart completion stores the empty-string placeholder, not the true
-		// whole-object SHA (bf-1v2ehf); mirror that so the test reflects reality.
-		PlaintextSHA: emptyStringSHA256Hex,
+		// Real combined per-part digest (bf-1v2ehf); the verifier recomputes it
+		// via ComputeMultipartDigest and the two must agree.
+		PlaintextSHA: combinedSHA,
 	}).ToMetadata()
 	m["x-amz-meta-armor-multipart"] = "true"
+	m["x-amz-meta-armor-part-size"] = strconv.FormatInt(partSize, 10)
 	return encrypted, sidecar, m
 }
 
@@ -583,6 +613,96 @@ func TestVerifyObject_DRDrill_ChecksumMismatch(t *testing.T) {
 	if !strings.Contains(result.Error, "SHA256 mismatch") {
 		t.Fatalf("error %q does not mention the checksum mismatch", result.Error)
 	}
+}
+
+// TestVerifyObject_DRDrill_MultipartDigestEnforced locks in the bf-1v2ehf fix:
+// a multipart object now declares the real combined per-part digest, and the
+// verifier recomputes it via ComputeMultipartDigest (splitting the restored
+// plaintext at the uniform part-size P) — not the plain whole-plaintext SHA-256,
+// and not skipped as it was for the old empty-string placeholder. Three sub-cases
+// pin the behavior: the correct combined digest passes; a wrong digest fails;
+// and declaring the plain whole-object SHA-256 (which differs from the combined
+// digest for a multi-part object) also fails, proving the verifier compares
+// against the combined form and would catch a corrupted audit hash.
+func TestVerifyObject_DRDrill_MultipartDigestEnforced(t *testing.T) {
+	const blockSize = 4096
+	mek := bytes.Repeat([]byte{0xA5}, 32)
+	plaintext := fixture(t, "valid.sqlite")
+	key := "litestream/db.snap"
+	ct, sidecar, meta := armorEncryptMultipart(t, mek, blockSize, key, plaintext)
+
+	// Sanity: the helper produced a multi-part object whose declared digest is
+	// neither the placeholder nor the plain whole-object SHA-256 — otherwise the
+	// comparison below is not meaningfully exercised.
+	correctDigest := meta["x-amz-meta-armor-plaintext-sha256"]
+	if isPlaceholderPlaintextSHA(correctDigest) {
+		t.Fatalf("helper did not declare a real combined digest: %q", correctDigest)
+	}
+	plainSum := sha256.Sum256(plaintext)
+	plainDigest := hex.EncodeToString(plainSum[:])
+	if correctDigest == plainDigest {
+		t.Fatalf("test fixture degenerate: combined digest equals plain SHA-256")
+	}
+
+	newBackend := func() *fakeBackend {
+		return &fakeBackend{
+			ciphertext: ct, plaintext: plaintext,
+			info:     &backend.ObjectInfo{Key: key, Size: int64(len(ct)), Metadata: meta},
+			sidecars: map[string][]byte{sidecarKeyFor(key): sidecar},
+		}
+	}
+
+	t.Run("correct_combined_digest_passes", func(t *testing.T) {
+		fb := newBackend()
+		v := New(fb, mek, blockSize, nil, Config{})
+		result := v.verifyObject(context.Background(), ObjectSample{
+			Key: key, Bucket: "b", ArtifactType: ArtifactSQLite, Metadata: meta,
+		}, ModeDRDrill)
+		if result.Status != StatusPass {
+			t.Fatalf("status = %q, want %q (error=%q)", result.Status, StatusPass, result.Error)
+		}
+		// The reported direct-path SHA is the combined digest and matches the
+		// declared value — the audit trail is now self-consistent end to end.
+		if result.DirectSHA256 != correctDigest {
+			t.Fatalf("DirectSHA256 = %q, want combined digest %q", result.DirectSHA256, correctDigest)
+		}
+	})
+
+	t.Run("wrong_declared_digest_fails", func(t *testing.T) {
+		objMeta := make(map[string]string, len(meta))
+		for k, v := range meta {
+			objMeta[k] = v
+		}
+		objMeta["x-amz-meta-armor-plaintext-sha256"] = strings.Repeat("a", 64)
+		fb := newBackend()
+		v := New(fb, mek, blockSize, nil, Config{})
+		result := v.verifyObject(context.Background(), ObjectSample{
+			Key: key, Bucket: "b", ArtifactType: ArtifactSQLite, Metadata: objMeta,
+		}, ModeDRDrill)
+		if result.Status != StatusChecksumError {
+			t.Fatalf("status = %q, want %q (error=%q)", result.Status, StatusChecksumError, result.Error)
+		}
+	})
+
+	t.Run("plain_whole_object_sha_fails", func(t *testing.T) {
+		// Declaring the plain SHA-256 of the whole plaintext must FAIL for a
+		// multipart object: the verifier must recompute the combined digest, not
+		// the plain SHA. A regression to plain-SHA comparison would let this pass.
+		objMeta := make(map[string]string, len(meta))
+		for k, v := range meta {
+			objMeta[k] = v
+		}
+		objMeta["x-amz-meta-armor-plaintext-sha256"] = plainDigest
+		fb := newBackend()
+		v := New(fb, mek, blockSize, nil, Config{})
+		result := v.verifyObject(context.Background(), ObjectSample{
+			Key: key, Bucket: "b", ArtifactType: ArtifactSQLite, Metadata: objMeta,
+		}, ModeDRDrill)
+		if result.Status != StatusChecksumError {
+			t.Fatalf("status = %q, want %q — verifier must recompute the combined multipart digest, not the plain SHA-256 (error=%q)",
+				result.Status, StatusChecksumError, result.Error)
+		}
+	})
 }
 
 // TestVerifyObject_DualPathExercisesARMORReadPath is the contrast to the drill
