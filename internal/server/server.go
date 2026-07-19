@@ -118,7 +118,7 @@ func New(cfg *config.Config) (*Server, error) {
 		MaxRetries:        3,
 		RetryDelay:        10 * time.Second,
 		MultipartInterval: 1 * time.Hour,
-		MultipartSize:     6 * 1024 * 1024, // 6MB (above 5MB multipart threshold)
+		MultipartSize:     10*1024*1024 + 512*1024, // 10.5 MiB — two 5.25 MiB parts (B2 requires non-final parts >= 5 MiB)
 	})
 
 	// Create provenance manager

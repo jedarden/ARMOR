@@ -748,7 +748,7 @@ func TestMonitorMultipartCheck(t *testing.T) {
 		MEK:            mek,
 		BlockSize:      65536,
 		InstanceID:     "test-instance",
-		MultipartSize:  100, // Small size for testing (would be 6MB in prod)
+		MultipartSize:  100, // Small size for testing (would be 10.5 MiB in prod)
 	}
 
 	m := NewMonitor(cfg)
@@ -1044,6 +1044,89 @@ func TestMultipartCanaryMetricsEmission(t *testing.T) {
 	}
 	if !strings.Contains(prometheusOutput, `status="success"`) {
 		t.Error("expected Prometheus output to contain status=success label")
+	}
+}
+
+// TestCanaryMultipartPartSize verifies canaryMultipartPartSize picks a part size
+// that satisfies both hard constraints for the multipart canary: at least B2's
+// 5 MiB minimum for non-final parts, and an exact multiple of the encryption
+// block size. Regression coverage for the EntityTooSmall failures observed on
+// every 0.1.1871 deployment (bf-2z1mma), which were caused by 2 MiB parts.
+func TestCanaryMultipartPartSize(t *testing.T) {
+	for _, blockSize := range []int{4096, 65536, 1024 * 1024} {
+		partSize := canaryMultipartPartSize(blockSize)
+		if partSize < b2MinPartSize {
+			t.Errorf("blockSize=%d: part size %d is below B2's %d minimum", blockSize, partSize, b2MinPartSize)
+		}
+		if partSize%blockSize != 0 {
+			t.Errorf("blockSize=%d: part size %d is not a multiple of the block size", blockSize, partSize)
+		}
+	}
+
+	// The default 64 KiB block must yield exactly 5.25 MiB (84 blocks).
+	if got := canaryMultipartPartSize(65536); got != 5505024 {
+		t.Errorf("expected 5.25 MiB (5505024) part size for 64 KiB blocks, got %d", got)
+	}
+}
+
+// TestCanaryMultipartPartSizing asserts the multipart canary, run with its
+// production default size, splits into parts where every non-final part is at
+// least 5 MiB and block-aligned — i.e. B2 will accept the CompleteMultipartUpload.
+// The final part is exempt from the 5 MiB minimum.
+func TestCanaryMultipartPartSizing(t *testing.T) {
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	// Production-default monitor: no explicit MultipartSize, so it gets the
+	// package default (two parts at the default block size).
+	m := NewMonitor(Config{
+		Backend:    newMockBackend(),
+		Bucket:     "test-bucket",
+		MEK:        mek,
+		BlockSize:  crypto.DefaultBlockSize,
+		InstanceID: "test-instance",
+	})
+
+	blockSize := m.blockSize
+	partSize := canaryMultipartPartSize(blockSize)
+	if m.multipartSize != 2*partSize {
+		t.Fatalf("expected default multipart size %d (2 parts), got %d", 2*partSize, m.multipartSize)
+	}
+
+	// Reconstruct the on-wire envelope size the canary actually uploads:
+	// header + block-aligned ciphertext + one HMAC per block.
+	blockCount := m.multipartSize / blockSize
+	envelopeSize := crypto.HeaderSize + blockCount*blockSize + blockCount*crypto.HMACSize
+
+	// Simulate the sequential part split performed in checkMultipart.
+	nonFinal := 0
+	for offset := 0; offset < envelopeSize; offset += partSize {
+		end := offset + partSize
+		if end > envelopeSize {
+			end = envelopeSize
+		}
+		size := end - offset
+
+		// The final part (the one that reaches the end of the envelope) is exempt
+		// from B2's 5 MiB non-final-part minimum.
+		if end >= envelopeSize {
+			if size <= 0 {
+				t.Errorf("final part at offset %d has non-positive size %d", offset, size)
+			}
+			continue
+		}
+
+		nonFinal++
+		if size < b2MinPartSize {
+			t.Errorf("non-final part at offset %d is %d bytes, below B2's %d minimum", offset, size, b2MinPartSize)
+		}
+		if size%blockSize != 0 {
+			t.Errorf("non-final part at offset %d is %d bytes, not a multiple of block size %d", offset, size, blockSize)
+		}
+	}
+
+	if nonFinal < 1 {
+		t.Fatalf("expected at least one non-final part; got %d (envelope=%d partSize=%d)", nonFinal, envelopeSize, partSize)
 	}
 }
 
