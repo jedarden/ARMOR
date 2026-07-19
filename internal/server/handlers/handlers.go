@@ -713,6 +713,18 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Check if this is a multipart object (HMAC table in sidecar, no embedded header)
 	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
 
+	// Uniform part size P for multipart objects written since bf-1v2ehf
+	// (x-amz-meta-armor-part-size). The full-object stream path needs it to
+	// reproduce the stored combined per-part digest; 0 means the object is either
+	// single-PUT or a legacy multipart upload that carries only the empty-string
+	// placeholder digest (unverifiable on read — left to the restore verifier).
+	multipartPartSize := int64(0)
+	if isMultipart {
+		if ps, err := strconv.ParseInt(info.Metadata["x-amz-meta-armor-part-size"], 10, 64); err == nil {
+			multipartPartSize = ps
+		}
+	}
+
 	// Check for range request
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
@@ -721,13 +733,13 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	// Full object download with pipelined stream decryption
-	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart)
+	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize)
 }
 
 // handleFullObjectStream handles full object downloads with pipelined stream decryption.
 // This uses io.Pipe to decrypt blocks as they stream from Cloudflare, reducing
 // time-to-first-byte and memory usage compared to buffering the entire envelope.
-func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool) {
+func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool, multipartPartSize int64) {
 	ctx := r.Context()
 
 	// Apply prefix for backend operations
@@ -818,11 +830,25 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 	// 5. Stream decrypt using io.Pipe
 	pr, pw := io.Pipe()
 
+	// Determine the digest form this object declares so the streaming integrity
+	// check below compares like-for-like. Single-PUT objects declare the plain
+	// SHA-256 of the whole plaintext (in the envelope header). Multipart objects
+	// written since bf-1v2ehf declare the combined per-part digest and carry a
+	// block-aligned uniform part size P (x-amz-meta-armor-part-size); reproduce
+	// it incrementally with MultipartDigestAccumulator. Legacy multipart objects
+	// (no P) carry the empty-string placeholder, which is not a real digest and
+	// is skipped below rather than enforced.
+	useCombinedDigest := isMultipart && multipartPartSize > 0 && multipartPartSize%int64(blockSize) == 0
+	var accumulator *backend.MultipartDigestAccumulator
+	if useCombinedDigest {
+		accumulator = backend.NewMultipartDigestAccumulator(multipartPartSize, blockSize)
+	}
+
 	// Start decryption goroutine
 	go func() {
 		defer pw.Close()
 
-		plaintextHash := sha256.New()
+		wholeHash := sha256.New() // plain whole-object digest (single-PUT / legacy multipart)
 		encryptedBuf := make([]byte, blockSize)
 
 		for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
@@ -868,8 +894,15 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			stream := cipher.NewCTR(decryptor.CipherBlock(), ctr)
 			stream.XORKeyStream(decrypted, encryptedBuf)
 
-			// Update plaintext hash for verification
-			plaintextHash.Write(decrypted)
+			// Update the plaintext digest for end-of-stream verification. For
+			// multipart objects with a known part size, fold the block into the
+			// per-part accumulator; otherwise hash the whole plaintext.
+			isLastBlock := blockIndex == blockCount-1
+			if accumulator != nil {
+				accumulator.WriteBlock(decrypted, isLastBlock)
+			} else {
+				wholeHash.Write(decrypted)
+			}
 
 			// Write plaintext to pipe
 			if _, err := pw.Write(decrypted); err != nil {
@@ -878,18 +911,28 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		// Verify plaintext SHA-256
-		computedSHA := plaintextHash.Sum(nil)
+		// Verify the plaintext digest declared for this object.
+		var computedSHA []byte
+		if accumulator != nil {
+			computedSHA, _ = hex.DecodeString(accumulator.Sum())
+		} else {
+			computedSHA = wholeHash.Sum(nil)
+		}
 		var expectedSHA []byte
+		enforce := true
 		if isMultipart {
-			// For multipart objects, use SHA from metadata (placeholder until tracked during upload)
-			// See bf-1v2ehf: multipart currently stores empty hash
+			// Multipart objects carry the digest in metadata. Legacy uploads
+			// (pre bf-1v2ehf) carry the empty-string placeholder, which is not a
+			// real checksum — never enforce it.
+			if backend.IsPlaceholderPlaintextSHA(armorMeta.PlaintextSHA) {
+				enforce = false
+			}
 			expectedSHA, _ = hex.DecodeString(armorMeta.PlaintextSHA)
 		} else {
-			// For single-PUT objects, use SHA from header
+			// For single-PUT objects, use the digest from the envelope header.
 			expectedSHA = header.PlaintextSHA[:]
 		}
-		if len(expectedSHA) > 0 && !bytes.Equal(computedSHA, expectedSHA) {
+		if enforce && len(expectedSHA) > 0 && !bytes.Equal(computedSHA, expectedSHA) {
 			pw.CloseWithError(fmt.Errorf("plaintext SHA-256 mismatch"))
 			return
 		}
@@ -2275,8 +2318,17 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 
 	// Record per-part HMACs and plaintext size. PartSizes is retained for the
 	// Complete-time uniformity check; it no longer drives CTR derivation — P does.
+	// PartPlaintextSHAs accumulates each part's plaintext SHA-256 so Complete can
+	// assemble a real whole-object digest instead of the empty-string placeholder
+	// (bf-1v2ehf). An idempotent same-size retry re-uploads identical plaintext,
+	// so this overwrite is a no-op on the digest.
+	partSHA := sha256.Sum256(plaintext)
 	state.PartHMACs[int(partNumber)] = backend.EncodeHMACToBase64(blockHMACs)
 	state.PartSizes[int(partNumber)] = plaintextSize
+	if state.PartPlaintextSHAs == nil {
+		state.PartPlaintextSHAs = make(map[int]string)
+	}
+	state.PartPlaintextSHAs[int(partNumber)] = hex.EncodeToString(partSHA[:])
 
 	if err := manager.SaveState(ctx, state); err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to update multipart state: %v", err), 500)
@@ -2458,9 +2510,23 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Compute plaintext SHA-256 (we don't have the full plaintext, so use a placeholder)
-	// In a full implementation, we'd track SHA during upload
-	plaintextSHA := sha256.Sum256([]byte{})
+	// Compute the real whole-object plaintext SHA-256 by combining the per-part
+	// digests accumulated during UploadPart, in ascending part-number order.
+	// Parts arrive out of order (ADR-005), so the per-part digests cannot be
+	// streamed into one hash during upload; this combination is the
+	// order-sensitive step and is exactly what a verifier reproduces from the
+	// decrypted plaintext split at the uniform part-size P boundaries
+	// (backend.ComputeMultipartDigest). Replaces the empty-string placeholder
+	// (bf-1v2ehf / ADR-003 residual gap).
+	partNumbers := make([]int, len(completeReq.Parts))
+	for i, p := range completeReq.Parts {
+		partNumbers[i] = p.PartNumber
+	}
+	plaintextSHAHex, err := backend.CombinePartPlaintextSHAs(state.PartPlaintextSHAs, partNumbers)
+	if err != nil {
+		h.writeError(w, "InternalError", fmt.Sprintf("Failed to assemble plaintext SHA-256: %v", err), 500)
+		return
+	}
 
 	// Build ARMOR metadata and update via CopyObject
 	meta := (&backend.ARMORMetadata{
@@ -2470,13 +2536,18 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		ContentType:   state.ContentType,
 		IV:            state.IV,
 		WrappedDEK:    state.WrappedDEK,
-		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
+		PlaintextSHA:  plaintextSHAHex,
 		ETag:          etag,
 		KeyID:         state.KeyID,
 	}).ToMetadata()
 
 	// Add multipart flag to indicate HMAC table is external
 	meta["x-amz-meta-armor-multipart"] = "true"
+	// Record the uniform part size P so a verifier (or any future audit) can
+	// recompute the whole-object digest from the decrypted plaintext by splitting
+	// at P boundaries (backend.ComputeMultipartDigest). Without it the digest is
+	// not independently reproducible.
+	meta["x-amz-meta-armor-part-size"] = strconv.FormatInt(P, 10)
 
 	// Update metadata via CopyObject
 	if err := h.backend.Copy(ctx, bucket, key, bucket, key, meta, true); err != nil {
@@ -2489,12 +2560,12 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Record in manifest for fast metadata lookup (async B2 persistence)
 	if h.manifest != nil {
-		h.manifest.RecordPut(bucket, key, totalPlaintextSize, hex.EncodeToString(plaintextSHA[:]), state.IV, state.WrappedDEK, state.BlockSize, state.ContentType, etag)
+		h.manifest.RecordPut(bucket, key, totalPlaintextSize, plaintextSHAHex, state.IV, state.WrappedDEK, state.BlockSize, state.ContentType, etag)
 	}
 
 	// Record provenance for the multipart upload
 	if h.provenance != nil && h.provenance.ShouldRecord(key) {
-		_ = h.provenance.RecordUpload(ctx, key, hex.EncodeToString(plaintextSHA[:]), "multipart")
+		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "multipart")
 	}
 
 	// Build XML response

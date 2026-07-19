@@ -7,11 +7,32 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"time"
 )
+
+// EmptyPlaintextSHA256Hex is the SHA-256 of the empty byte sequence. Before
+// bf-1v2ehf, CompleteMultipartUpload wrote it as the plaintext digest for every
+// multipart object — a meaningless placeholder that could not be trusted as a
+// real checksum. New multipart uploads now store the real combined per-part
+// digest, but objects written before the fix still carry this value, so any
+// content-vs-stored comparison must treat it (and an empty string) as "no
+// digest declared" rather than a value to match.
+const EmptyPlaintextSHA256Hex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// IsPlaceholderPlaintextSHA reports whether a declared plaintext SHA-256 is
+// absent or the legacy ADR-003 multipart placeholder, and therefore must not be
+// enforced as a real per-object checksum (multipart objects written before
+// bf-1v2ehf). Centralized here so every content-vs-stored comparison — the
+// restore verifier, the streaming GET path, and any future audit — agrees on
+// what "no real digest" means.
+func IsPlaceholderPlaintextSHA(s string) bool {
+	return s == "" || s == EmptyPlaintextSHA256Hex
+}
 
 // MultipartState represents the state of an in-progress multipart upload.
 // This is stored in B2 at .armor/multipart/<upload-id>.state
@@ -32,6 +53,15 @@ type MultipartState struct {
 
 	// Per-part encrypted sizes (for range translation on completion)
 	PartSizes map[int]int64 `json:"part_sizes"`
+
+	// Per-part plaintext SHA-256 digests (hex), keyed by part number. Each
+	// UploadPart records the SHA-256 of the plaintext it received so that
+	// CompleteMultipartUpload can assemble a real, reproducible whole-object
+	// plaintext digest (CombinePartPlaintextSHAs) instead of the empty-string
+	// placeholder (bf-1v2ehf / ADR-003 residual gap). Parts arrive out of order
+	// (ADR-005), so the digests must be combined in ascending part-number order
+	// at Complete — hence the interaction with the part-ordering contract.
+	PartPlaintextSHAs map[int]string `json:"part_plaintext_shas"`
 
 	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-005,
 	// amended 2026-07-19 — originally "first arriving part", which failed under
@@ -233,4 +263,115 @@ func DecodeHMACFromBase64(encoded string) ([][]byte, error) {
 	}
 
 	return hmacs, nil
+}
+
+// CombinePartPlaintextSHAs assembles the per-part plaintext SHA-256 digests
+// (hex) into a single whole-object digest. Because parts arrive out of order
+// (ADR-005), the per-part digests cannot be streamed into one SHA-256 during
+// upload; instead each part's plaintext is hashed at UploadPart time and the
+// digests are combined here, in ascending part-number order, by feeding the
+// raw 32-byte digests through a single SHA-256 hasher. The result is
+// deterministic and reproducible: a reader that splits the decrypted plaintext
+// at the uniform part-size P boundaries, hashes each chunk, and hashes the
+// concatenated digests arrives at the same value (see ComputeMultipartDigest).
+// partNumbers is the authoritative, already-sorted set of part numbers to
+// include; any number missing from partSHAs yields an error so a gap can never
+// silently produce a wrong digest.
+func CombinePartPlaintextSHAs(partSHAs map[int]string, partNumbers []int) (string, error) {
+	h := sha256.New()
+	for _, n := range partNumbers {
+		hexDigest, ok := partSHAs[n]
+		if !ok {
+			return "", fmt.Errorf("missing plaintext SHA-256 for part %d", n)
+		}
+		digest, err := hex.DecodeString(hexDigest)
+		if err != nil || len(digest) != sha256.Size {
+			return "", fmt.Errorf("invalid plaintext SHA-256 for part %d: %q", n, hexDigest)
+		}
+		h.Write(digest)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ComputeMultipartDigest recomputes the multipart whole-object plaintext
+// digest from the full decrypted plaintext by splitting it at uniform
+// part-size P boundaries (the last chunk may be short) and hashing the
+// concatenated per-chunk SHA-256 digests. This mirrors CombinePartPlaintextSHAs
+// and lets a verifier (which only sees the assembled plaintext, not the upload
+// parts) recompute the exact digest CompleteMultipartUpload stored. P must be
+// the same uniform part size the upload pinned (ADR-005); P <= 0 yields the
+// plain SHA-256 of the whole plaintext (single-part / unknown-part-size case).
+func ComputeMultipartDigest(plaintext []byte, partSize int64) string {
+	if partSize <= 0 {
+		sum := sha256.Sum256(plaintext)
+		return hex.EncodeToString(sum[:])
+	}
+	h := sha256.New()
+	for off := int64(0); off < int64(len(plaintext)); {
+		end := off + partSize
+		if end > int64(len(plaintext)) {
+			end = int64(len(plaintext))
+		}
+		partHash := sha256.Sum256(plaintext[off:end])
+		h.Write(partHash[:])
+		off = end
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// MultipartDigestAccumulator incrementally reproduces the combined per-part
+// plaintext digest — the value CompleteMultipartUpload stores via
+// CombinePartPlaintextSHAs and that ComputeMultipartDigest recomputes from full
+// plaintext — from a stream of decrypted, block-aligned chunks. It exists so
+// the streaming GET path (handleFullObjectStream) can verify multipart objects
+// without buffering their (potentially many-gigabyte) plaintext.
+//
+// The uniform part size P is block-aligned (ADR-005 — non-block-aligned parts
+// are rejected at upload), so each part spans exactly P/blockSize blocks (the
+// final part may be shorter). As each block's plaintext arrives it is folded
+// into the current part's hash; when a part boundary is reached, or the final
+// block lands, the part digest is fed into the combined hasher — exactly what
+// CombinePartPlaintextSHAs does at Complete in ascending part order. The result
+// therefore equals both ComputeMultipartDigest(fullPlaintext, P) and the stored
+// metadata digest, giving the read path a like-for-like integrity check.
+//
+// Callers MUST pass isLastBlock=true on the final block so the (possibly short)
+// final part is finalized; otherwise its digest is dropped and Sum() is wrong.
+type MultipartDigestAccumulator struct {
+	combined      hash.Hash
+	part          hash.Hash
+	blocksPerPart int64
+	blocksInPart  int64
+}
+
+// NewMultipartDigestAccumulator builds an accumulator for a uniform part size P
+// (bytes) and the given encryption block size. P must be a positive multiple of
+// blockSize; the caller (handleFullObjectStream) guards that and falls back to
+// the plain whole-object digest otherwise, so this constructor assumes valid
+// inputs.
+func NewMultipartDigestAccumulator(partSize int64, blockSize int) *MultipartDigestAccumulator {
+	return &MultipartDigestAccumulator{
+		combined:      sha256.New(),
+		part:          sha256.New(),
+		blocksPerPart: partSize / int64(blockSize),
+	}
+}
+
+// WriteBlock folds one decrypted block's plaintext into the accumulator. Pass
+// isLastBlock=true only for the final block of the object so the trailing
+// (possibly short) part is finalized. A block that both completes a part and is
+// the last block finalizes exactly one part (the conditions share one branch).
+func (a *MultipartDigestAccumulator) WriteBlock(plaintext []byte, isLastBlock bool) {
+	a.part.Write(plaintext)
+	a.blocksInPart++
+	if a.blocksInPart == a.blocksPerPart || isLastBlock {
+		a.combined.Write(a.part.Sum(nil))
+		a.part.Reset()
+		a.blocksInPart = 0
+	}
+}
+
+// Sum returns the hex-encoded combined per-part digest.
+func (a *MultipartDigestAccumulator) Sum() string {
+	return hex.EncodeToString(a.combined.Sum(nil))
 }
