@@ -399,6 +399,12 @@ type Verifier struct {
 	manifest  *manifest.Index
 	metrics   *metrics.Metrics // optional; receives per-bucket restorability gauges
 
+	// escalator files one bead per distinct active failure and one staleness
+	// bead per freshness window (ADR-004 §5). Nil = escalation disabled; every
+	// call site is nil-guarded so a Config with no Escalator behaves exactly as
+	// before. See escalation.go.
+	escalator *Escalator
+
 	buckets       map[string]*BucketState // bucket name -> state
 	bucketConfigs []BucketConfig          // configured buckets
 
@@ -429,6 +435,11 @@ type Config struct {
 	SampleSize    int
 	EscrowMEKPath string
 	Metrics       *metrics.Metrics // optional; when set, per-bucket gauges are published after each run
+
+	// Escalator files verification-failure and staleness beads (ADR-004 §5).
+	// Optional: nil disables escalation entirely, leaving verifier behavior
+	// unchanged. Construct with NewEscalator (escalation.go).
+	Escalator *Escalator
 }
 
 // New creates a new restore verifier.
@@ -445,6 +456,7 @@ func New(
 		blockSize:     blockSize,
 		manifest:      manifest,
 		metrics:       cfg.Metrics,
+		escalator:     cfg.Escalator,
 		buckets:       make(map[string]*BucketState),
 		bucketConfigs: cfg.Buckets,
 		stopCh:        make(chan struct{}),
@@ -521,7 +533,26 @@ func (v *Verifier) runVerification(ctx context.Context) {
 // verifyBucket verifies a single bucket.
 func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *BucketState) {
 	state.mu.Lock()
-	defer state.mu.Unlock()
+	// Single deferred tail: capture the run's final LastSuccess under the lock,
+	// release the lock, then run staleness escalation *outside* the critical
+	// section so the bf shell-out (up to ExecTimeout) never blocks concurrent
+	// /status readers of this bucket during an outage. Staleness is one bead per
+	// freshness window (never per tick), deduped by the Escalator itself, so
+	// calling it every tick cannot storm. One defer covers every exit path,
+	// including the enumeration-failure early returns below. Nil escalator =
+	// escalation disabled.
+	defer func() {
+		lastSuccess := state.LastSuccess // read while the lock is still held
+		state.mu.Unlock()
+		if v.escalator == nil {
+			return
+		}
+		if id, err := v.escalator.EscalateStaleness(ctx, bucket, lastSuccess); err != nil {
+			log.Printf("Staleness escalation failed for bucket %s: %v", bucket, err)
+		} else if id != "" {
+			log.Printf("Escalated staleness for bucket %s to bead %s", bucket, id)
+		}
+	}()
 
 	log.Printf("Verifying bucket: %s", bucket)
 
@@ -581,6 +612,15 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 			log.Printf("Verification failed for %s/%s: %s (path: %s, error: %s)",
 				bucket, result.Key, result.Status, result.Path, result.Error)
 		}
+
+		// Escalation (ADR-004 §5): one bead per distinct active failure
+		// (dedupe key = bucket + object key + path + failure class). A passing
+		// object clears its keys so a genuine regression after recovery files a
+		// fresh bead. The Escalator is storm-proof across ticks — it persists the
+		// dedupe set, so a failing object never files more than one bead, and it
+		// never retries (a failed filing leaves the key unrecorded; the next tick
+		// may make one further bounded attempt, never a loop). Nil when disabled.
+		v.escalateResult(ctx, obj, result)
 	}
 
 	state.LastVerification = time.Now()
@@ -602,6 +642,39 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 
 	log.Printf("Bucket %s verification complete: %d/%d verified (%.1f%%)",
 		bucket, runVerified, state.TotalObjects, state.VerifiedObjectRatio*100)
+}
+
+// escalateResult files (or clears) escalation state for a single object's
+// result. It is the sole caller of Escalator.EscalateFailure / ClearObject, so
+// the dedupe invariant holds: each distinct active failure gets exactly one
+// bead, and a recovered object is re-armed so a future regression files fresh.
+// Provenance is the object's ARMOR envelope version from its metadata, captured
+// "where available" (ADR-004 §5); WriterID stays empty until the provenance
+// chain is wired into the verifier. No-op when escalation is disabled (nil).
+//
+// This never loops or retries: a failed filing returns an error and leaves the
+// dedupe key unrecorded, so the next scheduler tick may make one further
+// bounded attempt — bounded by the schedule cadence, never an unbounded retry.
+func (v *Verifier) escalateResult(ctx context.Context, obj ObjectSample, result VerificationResult) {
+	if v.escalator == nil {
+		return
+	}
+	if result.Status == StatusPass {
+		// Object recovered: drop its active-failure keys so a later regression
+		// files a fresh bead instead of being deduped away.
+		v.escalator.ClearObject(obj.Bucket, obj.Key)
+		return
+	}
+	prov := Provenance{EnvelopeVersion: obj.Metadata["x-amz-meta-armor-version"]}
+	id, err := v.escalator.EscalateFailure(ctx, result, prov)
+	if err != nil {
+		log.Printf("Escalation failed for %s/%s (%s): %v", obj.Bucket, obj.Key, result.Status, err)
+		return
+	}
+	if id != "" {
+		log.Printf("Escalated %s/%s (%s via %s path) to bead %s",
+			obj.Bucket, obj.Key, result.Status, result.Path, id)
+	}
 }
 
 // recordBucketRun publishes the per-bucket restorability gauges after a
