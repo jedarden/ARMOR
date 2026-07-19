@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
@@ -189,6 +190,18 @@ func uploadPart(t *testing.T, h *handlers.Handlers, bucket, key, uploadID string
 		t.Fatalf("UploadPart %d returned no ETag", partNumber)
 	}
 	return etag
+}
+
+// uploadPartResponse issues an UploadPart and returns the raw status code, ETag
+// (if any), and response body — used where the test must assert a non-200 path
+// (e.g. the ADR-005-amendment 503 SlowDown defer) rather than fataling on it.
+func uploadPartResponse(t *testing.T, h *handlers.Handlers, bucket, key, uploadID string, partNumber int, body []byte) (int, string, string) {
+	t.Helper()
+	url := fmt.Sprintf("/%s/%s?partNumber=%d&uploadId=%s", bucket, key, partNumber, uploadID)
+	req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	return w.Code, w.Header().Get("ETag"), w.Body.String()
 }
 
 func completeMultipart(t *testing.T, h *handlers.Handlers, bucket, key, uploadID string, etags []string) {
@@ -388,19 +401,36 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 		}
 	})
 
-	t.Run("U6_part_2_before_part_1_supported", func(t *testing.T) {
+	t.Run("U6_part_2_before_part_1_slowdown_then_succeeds", func(t *testing.T) {
 		_, _, h := recordingTestSetup(t)
 		bucket, key := "test-bucket", "parallel-sim.dat"
 
 		uploadID := initiateMultipart(t, h, bucket, key)
 
 		// Part 2 arrives before part 1 (a concurrent uploader whose part 2
-		// finished first). Must be accepted under ADR-005.
+		// finished first). ADR-005 (amended 2026-07-19): P is pinned ONLY from
+		// part 1, so part 2 arriving first cannot have its CTR offset computed
+		// and is deferred with a retryable 503 SlowDown — nothing stored.
 		part2 := make([]byte, 5*1024*1024)
 		for i := range part2 {
 			part2[i] = 0xBB
 		}
-		uploadPart(t, h, bucket, key, uploadID, 2, part2) // pins P from part 2
+		code, _, body := uploadPartResponse(t, h, bucket, key, uploadID, 2, part2)
+		if code != http.StatusServiceUnavailable {
+			t.Fatalf("part 2 before part 1 should be deferred with 503 SlowDown, got %d: %s", code, body)
+		}
+		if !bytes.Contains([]byte(body), []byte("SlowDown")) {
+			t.Errorf("deferred part should return SlowDown, got: %s", body)
+		}
+
+		// Part 1 arrives and pins P. A retrying client then re-sends part 2,
+		// which now succeeds at its correct (2-1)*P/BlockSize offset.
+		part1 := make([]byte, 5*1024*1024)
+		for i := range part1 {
+			part1[i] = 0xAA
+		}
+		uploadPart(t, h, bucket, key, uploadID, 1, part1) // pins P
+		uploadPart(t, h, bucket, key, uploadID, 2, part2) // now succeeds
 	})
 
 	t.Run("U7_part_retry_idempotent", func(t *testing.T) {
@@ -593,7 +623,12 @@ func TestMultipartADR005Acceptance(t *testing.T) {
 		uploadID := initiateMultipart(t, h, bucket, key)
 
 		// Shuffled arrival order: parts 5,1,7,3,9,2,8,4,6 (the short final, part
-		// 9, lands in the middle of the stream, not last).
+		// 9, lands in the middle of the stream, not last). Part 1 is deliberately
+		// NOT first: under the amended ADR-005 every part arriving before part 1
+		// pins P is deferred with 503 SlowDown, so the goroutines below must retry
+		// on 503 — exactly what aws cli / SDK transfer managers do at default
+		// concurrency. This reproduces the bf-5tol4d default-concurrency failure
+		// mode and proves the SlowDown-retry path round-trips byte-identical.
 		order := []int{5, 1, 7, 3, 9, 2, 8, 4, 6}
 		type result struct {
 			part int
@@ -607,11 +642,27 @@ func TestMultipartADR005Acceptance(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				url := fmt.Sprintf("/%s/%s?partNumber=%d&uploadId=%s", bucket, key, partNum, uploadID)
-				req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(parts[partNum-1]))
-				w := httptest.NewRecorder()
-				h.HandleRoot(w, req)
-				results[i] = result{part: partNum, code: w.Code, body: w.Body.String()}
+				// Standard clients retry 503 SlowDown transparently with
+				// backoff. Loop until a terminal status; cap attempts so a
+				// broken implementation fails the test rather than hanging.
+				for attempt := 0; ; attempt++ {
+					if attempt > 100 {
+						results[i] = result{part: partNum, code: -1, body: "exhausted SlowDown retries"}
+						return
+					}
+					url := fmt.Sprintf("/%s/%s?partNumber=%d&uploadId=%s", bucket, key, partNum, uploadID)
+					req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(parts[partNum-1]))
+					w := httptest.NewRecorder()
+					h.HandleRoot(w, req)
+					if w.Code == http.StatusServiceUnavailable {
+						// Yield to whichever goroutine is uploading part 1
+						// (pinning P), then retry — a real client's backoff.
+						time.Sleep(time.Millisecond)
+						continue
+					}
+					results[i] = result{part: partNum, code: w.Code, body: w.Body.String()}
+					return
+				}
 			}()
 		}
 		wg.Wait()
@@ -710,41 +761,46 @@ func TestMultipartADR005Acceptance(t *testing.T) {
 		}
 	})
 
-	// AC: "short-final-part-arriving-FIRST hard-fails poisoned with no stored
-	// object". The short final part (part 3) arrives first and pins P too small;
-	// the next regular part (5MiB > P) contradicts the contract. ADR-005 rule 4:
-	// the offending UploadPart is rejected AND the upload id is poisoned, so
-	// Complete fails and no violating object is ever stored (GET -> 404).
-	t.Run("short_final_first_poisons_no_object", func(t *testing.T) {
+	// AC: "a genuine contract contradiction hard-fails poisoned with no stored
+	// object". ADR-005 rule 4 stays as defense-in-depth after the 2026-07-19
+	// amendment: with P pinned from part 1, the short-final-arrives-first case is
+	// deferred by SlowDown (covered in TestMultipartSuspectPatterns) and never
+	// reaches the poison path. What still poisons is a *genuine* contradiction —
+	// here a second distinct short part. Part 1 pins P, part 3 is accepted as the
+	// single short final, then part 2 is a SECOND short part: only one short final
+	// is allowed, so part 2 contradicts the contract. The offending UploadPart is
+	// rejected AND the upload id is poisoned, so Complete fails and no violating
+	// object is ever stored (GET -> 404).
+	t.Run("second_short_part_poisons_no_object", func(t *testing.T) {
 		_, rb, h := recordingTestSetup(t)
-		bucket, key := "test-bucket", "short-final-first-poison.dat"
+		bucket, key := "test-bucket", "second-short-poison.dat"
 		const regular = 5 * 1024 * 1024
-		const short = 4 * 1024 * 1024 // < regular, block-aligned
+		const shortA = 4 * 1024 * 1024 // first short part (< P), block-aligned
+		const shortB = 3 * 1024 * 1024 // second short part (< P), block-aligned
 
 		uploadID := initiateMultipart(t, h, bucket, key)
 
-		// Part 3 (the short final) arrives FIRST and pins P = short.
-		shortReq := httptest.NewRequest(http.MethodPut,
-			fmt.Sprintf("/%s/%s?partNumber=3&uploadId=%s", bucket, key, uploadID),
-			bytes.NewReader(mkPart(2*regular, short)))
-		shortW := httptest.NewRecorder()
-		h.HandleRoot(shortW, shortReq)
-		if shortW.Code != http.StatusOK {
-			t.Fatalf("short final part (first arrival) should be accepted (200), got %d: %s", shortW.Code, shortW.Body.String())
-		}
+		// Part 1 (regular) arrives first and pins P = 5MiB. (A part >1 arriving
+		// before part 1 would be SlowDown'd; here part 1 is first by design, so the
+		// genuine-contradiction path below is what's under test.)
+		uploadPart(t, h, bucket, key, uploadID, 1, mkPart(0, regular))
 
-		// Part 1 (regular, 5MiB) now contradicts P (5MiB > 4MiB) -> 400 + poison.
+		// Part 3 (shortA) is accepted as the single short final (< P).
+		uploadPart(t, h, bucket, key, uploadID, 3, mkPart(2*regular, shortA))
+
+		// Part 2 (shortB) is a SECOND short part — only one short final is allowed,
+		// so this contradicts the contract -> 400 + poison.
 		contradictReq := httptest.NewRequest(http.MethodPut,
-			fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", bucket, key, uploadID),
-			bytes.NewReader(mkPart(0, regular)))
+			fmt.Sprintf("/%s/%s?partNumber=2&uploadId=%s", bucket, key, uploadID),
+			bytes.NewReader(mkPart(regular, shortB)))
 		contradictW := httptest.NewRecorder()
 		h.HandleRoot(contradictW, contradictReq)
 		if contradictW.Code != http.StatusBadRequest {
 			t.Fatalf("contradicting part should be rejected with 400, got %d: %s", contradictW.Code, contradictW.Body.String())
 		}
-		if !bytes.Contains(contradictW.Body.Bytes(), []byte("invalidated")) &&
-			!bytes.Contains(contradictW.Body.Bytes(), []byte("larger than")) {
-			t.Errorf("contradiction error should explain the invalidation, got: %s", contradictW.Body.String())
+		if !bytes.Contains(contradictW.Body.Bytes(), []byte("second short part")) &&
+			!bytes.Contains(contradictW.Body.Bytes(), []byte("invalidated")) {
+			t.Errorf("contradiction error should explain the second-short-part invalidation, got: %s", contradictW.Body.String())
 		}
 
 		// Poison propagates: any further UploadPart on this id also fails.
