@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -72,6 +73,21 @@ type Handlers struct {
 	keyManager  *keymanager.KeyManager
 	provenance  ProvenanceRecorder
 	manifest    ManifestRecorder
+
+	// multipartLocks serializes per-upload state updates. ADR-005 removes the
+	// sequential-only rejection, so parts of one upload may now arrive
+	// concurrently. The multipart state object (.armor/multipart/<id>.state)
+	// is updated by a read-modify-write in every UploadPart/Complete; without
+	// per-upload serialization a later writer would drop earlier parts'
+	// HMAC/size entries. Cross-upload parallelism is unaffected — one mutex
+	// per uploadID. The zero value is a usable sync.Map.
+	multipartLocks sync.Map // uploadID -> *sync.Mutex
+}
+
+// multipartLock returns the mutex serializing state updates for one upload id.
+func (h *Handlers) multipartLock(uploadID string) *sync.Mutex {
+	v, _ := h.multipartLocks.LoadOrStore(uploadID, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 // New creates a new Handlers instance.
@@ -1629,14 +1645,14 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 	}
 
 	type ListBucketResult struct {
-		XMLName               xml.Name       `xml:"ListBucketResult"`
-		Xmlns                 string         `xml:"xmlns,attr"`
-		Name                  string         `xml:"Name"`
-		Prefix                string         `xml:"Prefix"`
-		Delimiter             string         `xml:"Delimiter,omitempty"`
-		MaxKeys               int            `xml:"MaxKeys"`
-		IsTruncated           bool           `xml:"IsTruncated"`
-		NextContinuationToken string         `xml:"NextContinuationToken,omitempty"`
+		XMLName               xml.Name `xml:"ListBucketResult"`
+		Xmlns                 string   `xml:"xmlns,attr"`
+		Name                  string   `xml:"Name"`
+		Prefix                string   `xml:"Prefix"`
+		Delimiter             string   `xml:"Delimiter,omitempty"`
+		MaxKeys               int      `xml:"MaxKeys"`
+		IsTruncated           bool     `xml:"IsTruncated"`
+		NextContinuationToken string   `xml:"NextContinuationToken,omitempty"`
 		Contents              []Contents
 		CommonPrefixes        []CommonPrefix `xml:"CommonPrefixes,omitempty"`
 	}
@@ -1977,17 +1993,17 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 
 	// Save multipart state to B2
 	state := &backend.MultipartState{
-		UploadID:       uploadID,
-		Bucket:         bucket,
-		Key:            key,
-		IV:             iv,
-		WrappedDEK:     wrappedDEK,
-		BlockSize:      h.config.BlockSize,
-		Created:        time.Now(),
-		ContentType:    contentType,
-		KeyID:          keyID,
-		PartHMACs:      make(map[int]string),
-		PartSizes:      make(map[int]int64),
+		UploadID:    uploadID,
+		Bucket:      bucket,
+		Key:         key,
+		IV:          iv,
+		WrappedDEK:  wrappedDEK,
+		BlockSize:   h.config.BlockSize,
+		Created:     time.Now(),
+		ContentType: contentType,
+		KeyID:       keyID,
+		PartHMACs:   make(map[int]string),
+		PartSizes:   make(map[int]int64),
 	}
 
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
@@ -2026,14 +2042,40 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 	w.Write(output)
 }
 
-// UploadPart handles S3 UploadPart with encryption.
-// Each part's CTR counter starts at the block index implied by the cumulative
-// plaintext size of all lower-numbered parts (derived from state.PartSizes).
-// Because that derivation assumes parts arrive sequentially, block-aligned, and
-// without retries, the three patterns that violate it (U6/U7/U8) are rejected
-// with 400 below rather than encrypted to silently-corrupt ciphertext.
+// UploadPart handles S3 UploadPart with encryption under the ADR-005
+// uniform-part-size contract.
+//
+// A part's CTR counter offset is a function of its part NUMBER alone: part N
+// starts at block (N-1)*P/BlockSize, where P is the uniform part size pinned
+// from the first arriving part. Because the offset no longer depends on arrival
+// history, out-of-order and concurrent part uploads are supported — the
+// sequential-only rejection (ADR-003 §4) is removed. The contract is enforced
+// loudly so any pattern ARMOR cannot encrypt correctly fails instead of
+// producing corrupt ciphertext:
+//
+//   - P is pinned from the first part and must be block-aligned (InvalidPartSize).
+//   - A part equal to P is a regular part; a part smaller than P is presumed final.
+//   - A part larger than P, or a second distinct short (presumed-final) part,
+//     contradicts P: the offending UploadPart is rejected AND the upload id is
+//     poisoned so CompleteMultipartUpload fails clearly — never a stored object
+//     (ADR-005 rule 4).
+//   - Retrying part N with the same size is idempotent (same N, same offset);
+//     a retry with a different size hits rule 4.
+//
+// Per-upload state updates are serialized by multipartLock: the state object is
+// read-modify-written here, so without per-upload serialization a concurrent
+// writer would drop an earlier part's HMAC/size entry. The lock is held across
+// the backend upload too — this keeps contradiction detection atomic. It
+// serializes the parts of ONE upload (different uploads still proceed in
+// parallel), which is no worse than the prior sequential-only behavior; lifting
+// the upload out of the lock is a possible future throughput optimization.
 func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	ctx := r.Context()
+
+	// Serialize state updates for this one upload id.
+	mu := h.multipartLock(uploadID)
+	mu.Lock()
+	defer mu.Unlock()
 
 	// Parse part number
 	partNumberStr := r.URL.Query().Get("partNumber")
@@ -2061,42 +2103,89 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
+	// If a prior contradiction poisoned this upload (ADR-005 rule 4), every
+	// further part fails the same way — the client must abort and retry.
+	if state.Poisoned {
+		h.writeError(w, "InvalidPart",
+			fmt.Sprintf("This multipart upload has been invalidated and cannot be completed: %s. Abort and retry the upload from the beginning.", state.PoisonReason), 400)
+		return
+	}
+
 	// Read plaintext part
 	plaintext, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
-
 	plaintextSize := int64(len(plaintext))
 
-	// VALIDATION: Reject unsupported multipart patterns that would cause silent corruption
-	// See docs/upload-retrieval-test-matrix.md U6/U7/U8 and bead bf-59unr3
-
-	// U7: Reject part retries (same partNumber uploaded more than once)
-	if _, exists := state.PartSizes[int(partNumber)]; exists {
-		h.writeError(w, "InvalidPart",
-			fmt.Sprintf("Part %d has already been uploaded. ARMOR does not support part retries due to CTR counter derivation from cumulative bytes. Retry the entire multipart upload from the beginning.", partNumber), 400)
-		return
-	}
-
-	// U6: Reject out-of-order parts (parts must be uploaded sequentially)
-	// The expected part number is derived from the count of already-uploaded parts
-	expectedPartNumber := len(state.PartSizes) + 1
-	if int(partNumber) != expectedPartNumber {
-		h.writeError(w, "InvalidPartOrder",
-			fmt.Sprintf("Parts must be uploaded in sequential order. Expected part %d, got part %d. ARMOR does not support out-of-order or concurrent part uploads due to CTR counter derivation from cumulative bytes.", expectedPartNumber, partNumber), 400)
-		return
-	}
-
-	// U8: Reject non-block-aligned intermediate parts
-	// All parts except the last must be multiples of BlockSize (65536 bytes for AES)
-	// We don't know if this is the last part at upload time, so we enforce alignment for all parts.
-	// Clients can work around this by using a part size that's a multiple of BlockSize.
+	// ADR-005 rule 1 / U8: every part must be block-aligned. The offset formula
+	// (N-1)*P/BlockSize requires P on a block boundary, and a non-aligned part
+	// would misalign every subsequent part's HMAC index. (0 bytes is trivially
+	// aligned but is rejected below — it cannot pin P and is not a useful part.)
 	if plaintextSize > 0 && plaintextSize%int64(state.BlockSize) != 0 {
 		h.writeError(w, "InvalidPartSize",
-			fmt.Sprintf("Part size %d is not a multiple of the block size (%d bytes). ARMOR's CTR counter derivation requires all parts to be block-aligned. Use a part size that's a multiple of %d (e.g., 5,242,880 for 5MiB, 16,777,216 for 16MiB).", plaintextSize, state.BlockSize, state.BlockSize), 400)
+			fmt.Sprintf("Part size %d is not a multiple of the block size (%d bytes). ARMOR's uniform-part-size contract (ADR-005) requires block-aligned parts. Use a part size that's a multiple of %d (e.g., 5,242,880 for 5MiB, 16,777,216 for 16MiB).", plaintextSize, state.BlockSize, state.BlockSize), 400)
 		return
+	}
+
+	// Idempotent retry of an already-uploaded part number (ADR-005 rule 5).
+	if existingSize, exists := state.PartSizes[int(partNumber)]; exists {
+		if existingSize != plaintextSize {
+			// A retry with a different size contradicts the contract — poison.
+			reason := fmt.Sprintf("part %d was already uploaded with size %d but re-uploaded with size %d", partNumber, existingSize, plaintextSize)
+			h.poisonUpload(ctx, manager, state, reason)
+			h.writeError(w, "InvalidPart",
+				fmt.Sprintf("Part %d was already uploaded with size %d but re-uploaded with size %d. %s", partNumber, existingSize, plaintextSize, multipartRetryMessage), 400)
+			return
+		}
+		// Same-size retry: idempotent. Re-encrypt at the same (N-1)*P offset —
+		// CTR is deterministic, so the ciphertext is identical — and re-upload
+		// (overwrite). Skip the contract checks below; this part already passed
+		// them when first uploaded. Fall through to the shared encrypt/upload path.
+	}
+
+	// P is the pinned uniform part size; 0 means no part has arrived yet.
+	P := state.PartSize
+
+	// Pin P from the first arriving part (ADR-005 rule 1). Block alignment was
+	// checked above. The 5 MiB minimum for multi-part objects is enforced at
+	// Complete; a lone short part (single-part upload, or a short final arriving
+	// first) pins P short and is caught by rule 4 if a larger part follows.
+	if P == 0 {
+		if plaintextSize == 0 {
+			h.writeError(w, "InvalidPartSize", "Cannot establish the uniform part size from an empty first part. Upload a non-empty first part.", 400)
+			return
+		}
+		P = plaintextSize
+		state.PartSize = P
+	}
+
+	// Contradiction detection against the pinned P (ADR-005 rule 4). Skip for
+	// same-size retries (isRetry path above returned or fell through with P set
+	// and the part already validated on first upload).
+	if _, exists := state.PartSizes[int(partNumber)]; !exists {
+		switch {
+		case plaintextSize > P:
+			reason := fmt.Sprintf("part %d size %d exceeds the uniform part size %d pinned by the first arriving part", partNumber, plaintextSize, P)
+			h.poisonUpload(ctx, manager, state, reason)
+			h.writeError(w, "InvalidPartSize",
+				fmt.Sprintf("Part %d size %d is larger than the uniform part size %d established for this upload. This happens when the short final part is uploaded before the regular parts. %s", partNumber, plaintextSize, P, multipartRetryMessage), 400)
+			return
+		case plaintextSize < P:
+			// Presumed final part. At most one part may differ from P (and it must
+			// be the highest-numbered); a second short part — same size or not —
+			// is a contradiction. Any prior short part already in state triggers it.
+			for _, sz := range state.PartSizes {
+				if sz < P {
+					reason := fmt.Sprintf("multiple short (presumed-final) parts seen (sizes %d and %d); the uniform-part-size contract allows at most one short final part of size %d", sz, plaintextSize, P)
+					h.poisonUpload(ctx, manager, state, reason)
+					h.writeError(w, "InvalidPartSize",
+						fmt.Sprintf("Part %d (size %d) is a second short part; only one short final part is allowed (uniform part size is %d). %s", partNumber, plaintextSize, P, multipartRetryMessage), 400)
+					return
+				}
+			}
+		}
 	}
 
 	// Get the MEK for this upload using the key ID from state
@@ -2113,20 +2202,13 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// Calculate the CTR starting block index for this part from the cumulative
-	// plaintext size of all lower-numbered parts already recorded in state.
-	// U6 enforcement above guarantees parts arrive sequentially, so for aligned
-	// parts this equals (partNumber-1)*partSize. Deriving the offset from
-	// PartSizes (rather than a running cumulative-bytes counter) keeps the
-	// invariant explicit: a part's counter depends only on prior part sizes,
-	// never on arrival order — the property that makes the U6/U7/U8 rejections safe.
-	var totalBytesBefore int64
-	for pn := int64(1); pn < partNumber; pn++ {
-		if size, ok := state.PartSizes[int(pn)]; ok {
-			totalBytesBefore += size
-		}
-	}
-	startBlockIndex := uint32(totalBytesBefore / int64(state.BlockSize))
+	// CTR starting block is a function of part NUMBER and the uniform part size
+	// P alone (ADR-005 rule 2): part N starts at block (N-1)*P/BlockSize. Because
+	// P is block-aligned, this is an exact block boundary regardless of arrival
+	// order. (partNumber and P are both int64 to avoid uint32 overflow in the
+	// product; the result is well within uint32 block-index range for any valid
+	// object — 10000 parts × 5 GiB ≈ 50 TiB ≈ 8×10⁸ blocks.)
+	startBlockIndex := uint32(((partNumber - 1) * P) / int64(state.BlockSize))
 
 	// Create encryptor
 	encryptor, err := crypto.NewEncryptor(dek, state.IV, state.BlockSize)
@@ -2135,9 +2217,8 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// Encrypt the part with the correct starting counter
-	// For multipart uploads, each part continues the CTR stream from where
-	// the previous part left off to maintain cryptographic continuity
+	// Encrypt the part with the correct starting counter. CTR is deterministic,
+	// so an idempotent retry (same N, same size) produces byte-identical ciphertext.
 	encrypted, blockHMACsRaw, err := encryptor.EncryptWithStartingCounter(plaintext, startBlockIndex)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
@@ -2151,18 +2232,16 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// Split concatenated HMACs into individual HMACs for storage
-	// The EncryptWithStartingCounter method returns HMACs as a flat byte slice
+	// Split concatenated HMACs into individual HMACs for storage.
+	// EncryptWithStartingCounter returns HMACs as a flat byte slice.
 	blockCount := len(blockHMACsRaw) / crypto.HMACSize
 	blockHMACs := make([][]byte, blockCount)
 	for i := 0; i < blockCount; i++ {
 		blockHMACs[i] = blockHMACsRaw[i*crypto.HMACSize : (i+1)*crypto.HMACSize]
 	}
 
-	// Record per-part HMACs and plaintext size. PartSizes drives CTR derivation
-	// for subsequent parts (see startBlockIndex above); it is the only running
-	// counter, replacing the arrival-order EncryptedBytes scheme that corrupted
-	// silently under the patterns rejected at U6/U7/U8.
+	// Record per-part HMACs and plaintext size. PartSizes is retained for the
+	// Complete-time uniformity check; it no longer drives CTR derivation — P does.
 	state.PartHMACs[int(partNumber)] = backend.EncodeHMACToBase64(blockHMACs)
 	state.PartSizes[int(partNumber)] = plaintextSize
 
@@ -2173,6 +2252,26 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
+}
+
+// multipartRetryMessage is the user-facing instruction appended to every
+// ADR-005 rule-4 contradiction error. It tells the client the upload is dead
+// and must be retried — the invariant that no corrupt object is ever stored.
+const multipartRetryMessage = "This upload has been invalidated; abort it and retry the multipart upload from the beginning."
+
+// multipartMinPartSize is B2's minimum part size for multi-part objects
+// (ADR-005 rule 1). Enforced at Complete for any upload with more than one
+// part.
+const multipartMinPartSize = int64(5 * 1024 * 1024)
+
+// poisonUpload marks the multipart state as permanently failed (ADR-005 rule 4)
+// and persists that state so the failure survives to CompleteMultipartUpload.
+// A best-effort save: if it fails we still return the 400 to the client, and
+// the contradiction is re-caught at Complete by the uniformity validation.
+func (h *Handlers) poisonUpload(ctx context.Context, manager *backend.MultipartStateManager, state *backend.MultipartState, reason string) {
+	state.Poisoned = true
+	state.PoisonReason = reason
+	_ = manager.SaveState(ctx, state)
 }
 
 // CompleteMultipartUpload handles S3 CompleteMultipartUpload.
@@ -2191,6 +2290,15 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// Verify bucket and key match
 	if state.Bucket != bucket || state.Key != key {
 		h.writeError(w, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
+		return
+	}
+
+	// ADR-005 rule 4: if a prior UploadPart contradicted the uniform-part-size
+	// contract, the upload id was poisoned and persisted. Fail clearly here,
+	// before assembling or storing anything — the client must abort and retry.
+	if state.Poisoned {
+		h.writeError(w, "InvalidPart",
+			fmt.Sprintf("This multipart upload has been invalidated and cannot be completed: %s. %s", state.PoisonReason, multipartRetryMessage), 400)
 		return
 	}
 
@@ -2232,6 +2340,47 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	sort.Slice(completeReq.Parts, func(i, j int) bool {
 		return completeReq.Parts[i].PartNumber < completeReq.Parts[j].PartNumber
 	})
+
+	// ADR-005 rule 3 (Complete-time contract validation): every part except the
+	// highest-numbered one must have size exactly P, the uniform part size pinned
+	// from the first arriving part. The highest-numbered part is allowed to be the
+	// short final part (< P). This is the authoritative gate — UploadPart already
+	// rejects contradictions as they arrive (and poisons the upload), but this
+	// backstop catches a violating state that reached Complete anyway (e.g. a
+	// best-effort poison save that dropped). It runs before any assembly/storage
+	// so a violating object is never stored.
+	P := state.PartSize
+	if P == 0 {
+		h.writeError(w, "InvalidPart",
+			fmt.Sprintf("No part has been uploaded for this multipart upload, so the uniform part size is unknown. %s", multipartRetryMessage), 400)
+		return
+	}
+	highestPartNumber := completeReq.Parts[len(completeReq.Parts)-1].PartNumber
+	for _, p := range completeReq.Parts {
+		size, ok := state.PartSizes[p.PartNumber]
+		if !ok {
+			h.writeError(w, "InvalidPart",
+				fmt.Sprintf("Part %d was not uploaded and cannot be completed. %s", p.PartNumber, multipartRetryMessage), 400)
+			return
+		}
+		// The highest-numbered part may be the short final part (< P); every other
+		// part must match P exactly.
+		if p.PartNumber != highestPartNumber && size != P {
+			h.writeError(w, "InvalidPartSize",
+				fmt.Sprintf("Part %d has size %d but the uniform part size for this upload is %d (only the final part may differ). The uniform-part-size contract (ADR-005) was violated. %s", p.PartNumber, size, P, multipartRetryMessage), 400)
+			return
+		}
+	}
+	// ADR-005 rule 1: a multi-part object's regular part size P must meet B2's
+	// 5 MiB minimum. (A single-part upload — only the highest part — is the last
+	// part and is exempt, matching B2.) Not enforced at UploadPart pin time so
+	// the short-final-part-arriving-first case can still be detected and poisoned
+	// by rule 4 instead of being rejected outright at the first part.
+	if len(completeReq.Parts) > 1 && P < multipartMinPartSize {
+		h.writeError(w, "InvalidPartSize",
+			fmt.Sprintf("Uniform part size %d is smaller than the 5 MiB minimum for a multipart object (ADR-005). Use a part size of at least %d bytes. %s", P, multipartMinPartSize, multipartRetryMessage), 400)
+		return
+	}
 
 	// Convert to backend.CompletedPart
 	parts := make([]backend.CompletedPart, len(completeReq.Parts))
@@ -2554,30 +2703,30 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 
 	// Build XML response
 	type Version struct {
-		Key          string `xml:"Key"`
-		VersionID    string `xml:"VersionId"`
-		IsLatest     bool   `xml:"IsLatest"`
-		IsDeleteMarker bool `xml:"IsDeleteMarker,omitempty"`
-		LastModified string `xml:"LastModified"`
-		ETag         string `xml:"ETag,omitempty"`
-		Size         int64  `xml:"Size,omitempty"`
-		StorageClass string `xml:"StorageClass,omitempty"`
+		Key            string `xml:"Key"`
+		VersionID      string `xml:"VersionId"`
+		IsLatest       bool   `xml:"IsLatest"`
+		IsDeleteMarker bool   `xml:"IsDeleteMarker,omitempty"`
+		LastModified   string `xml:"LastModified"`
+		ETag           string `xml:"ETag,omitempty"`
+		Size           int64  `xml:"Size,omitempty"`
+		StorageClass   string `xml:"StorageClass,omitempty"`
 	}
 
 	type ListVersionsResult struct {
-		XMLName               xml.Name `xml:"ListVersionsResult"`
-		Xmlns                 string   `xml:"xmlns,attr"`
-		Name                  string   `xml:"Name"`
-		Prefix                string   `xml:"Prefix"`
-		Delimiter             string   `xml:"Delimiter,omitempty"`
-		MaxKeys               int      `xml:"MaxKeys"`
-		IsTruncated           bool     `xml:"IsTruncated"`
-		KeyMarker             string   `xml:"KeyMarker"`
-		VersionIDMarker       string   `xml:"VersionIdMarker"`
-		NextKeyMarker         string   `xml:"NextKeyMarker"`
-		NextVersionIDMarker   string   `xml:"NextVersionIdMarker"`
-		Versions              []Version `xml:"Version"`
-		CommonPrefixes       []string `xml:"CommonPrefixes>Prefix"`
+		XMLName             xml.Name  `xml:"ListVersionsResult"`
+		Xmlns               string    `xml:"xmlns,attr"`
+		Name                string    `xml:"Name"`
+		Prefix              string    `xml:"Prefix"`
+		Delimiter           string    `xml:"Delimiter,omitempty"`
+		MaxKeys             int       `xml:"MaxKeys"`
+		IsTruncated         bool      `xml:"IsTruncated"`
+		KeyMarker           string    `xml:"KeyMarker"`
+		VersionIDMarker     string    `xml:"VersionIdMarker"`
+		NextKeyMarker       string    `xml:"NextKeyMarker"`
+		NextVersionIDMarker string    `xml:"NextVersionIdMarker"`
+		Versions            []Version `xml:"Version"`
+		CommonPrefixes      []string  `xml:"CommonPrefixes>Prefix"`
 	}
 
 	resp := ListVersionsResult{
