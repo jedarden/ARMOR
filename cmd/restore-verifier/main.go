@@ -16,6 +16,11 @@
 //   VERIFIER_CHECK_INTERVAL      How often to run verification (default: 6h)
 //   VERIFIER_SAMPLE_SIZE         Number of historical objects to sample (default: 10)
 //   VERIFIER_HTTP_LISTEN         HTTP listen address (default: :9002)
+//   VERIFIER_DR_DRILL_INTERVAL   Cadence of the periodic direct-only DR drill (default: disabled)
+//
+// HTTP:
+//   POST /trigger            Trigger an immediate dual-path verification run
+//   POST /trigger?mode=dr-drill  Trigger a direct-only DR drill (excludes the ARMOR read path)
 package main
 
 import (
@@ -52,6 +57,13 @@ var (
 	checkInterval = flag.Duration("check-interval", parseDuration(os.Getenv("VERIFIER_CHECK_INTERVAL"), 6*time.Hour), "Verification check interval")
 	sampleSize    = flag.Int("sample-size", parseInt(os.Getenv("VERIFIER_SAMPLE_SIZE"), 10), "Number of historical objects to sample")
 	httpListen    = flag.String("http-listen", os.Getenv("VERIFIER_HTTP_LISTEN"), "HTTP listen address (default :9002)")
+
+	// DR-drill cadence (ModeDRDrill). Independent of -check-interval so a
+	// deployment can run the frequent dual-path verification yet exercise the
+	// direct-only "server-is-gone" recovery on its own (typically longer)
+	// schedule. Zero disables the periodic drill; the drill is still available
+	// on demand via POST /trigger?mode=dr-drill.
+	drillInterval = flag.Duration("dr-drill-interval", parseDuration(os.Getenv("VERIFIER_DR_DRILL_INTERVAL"), 0), "Cadence of the periodic direct-only DR drill (0 = disabled; on-demand via /trigger?mode=dr-drill)")
 
 	// Escalation configuration (ADR-004 §5: one bead per distinct failure +
 	// one staleness bead per freshness window; storm-proof). Defaults to
@@ -187,11 +199,12 @@ func main() {
 
 	// Create verifier
 	cfg := restoreverifier.Config{
-		Buckets:       bucketFlag,
-		Interval:      *checkInterval,
-		SampleSize:    *sampleSize,
-		EscrowMEKPath: "", // MEK passed directly, not from file
-		Metrics:       metricsCollector,
+		Buckets:         bucketFlag,
+		Interval:        *checkInterval,
+		SampleSize:      *sampleSize,
+		EscrowMEKPath:   "", // MEK passed directly, not from file
+		Metrics:         metricsCollector,
+		DRDrillInterval: *drillInterval,
 	}
 
 	// Escalation (ADR-004 §5). Disabled by default — the running fleet has no
@@ -296,6 +309,7 @@ Environment Variables:
   VERIFIER_CHECK_INTERVAL      Verification check interval (default: 6h)
   VERIFIER_SAMPLE_SIZE         Historical sample size (default: 10)
   VERIFIER_HTTP_LISTEN         HTTP listen address (default: :9002)
+  VERIFIER_DR_DRILL_INTERVAL   Direct-only DR drill interval (default: disabled)
 
 Flags:
 `)
@@ -319,7 +333,8 @@ Artifact Types:
 HTTP Endpoints:
   GET  /status           - Verification status for all buckets
   GET  /bucket?bucket=X  - Status for specific bucket
-  POST /trigger          - Trigger immediate verification run
+  POST /trigger          - Trigger immediate verification run (dual path)
+  POST /trigger?mode=dr-drill - Trigger a direct-only DR drill (excludes ARMOR read path)
   GET  /healthz          - Liveness check
   GET  /readyz           - Readiness check
   GET  /metrics          - Prometheus metrics
