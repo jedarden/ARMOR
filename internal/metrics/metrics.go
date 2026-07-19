@@ -30,10 +30,10 @@ type Metrics struct {
 	CacheMissesTotal *expvar.Int
 
 	// Encryption metrics
-	EncryptionOpsTotal *expvar.Map
-	DecryptionOpsTotal *expvar.Map
-	KeyWrapOpsTotal    *expvar.Int
-	KeyUnwrapOpsTotal  *expvar.Int
+	EncryptionOpsTotal   *expvar.Map
+	DecryptionOpsTotal   *expvar.Map
+	KeyWrapOpsTotal      *expvar.Int
+	KeyUnwrapOpsTotal    *expvar.Int
 
 	// Canary metrics
 	CanaryChecksTotal    *expvar.Int
@@ -49,9 +49,9 @@ type Metrics struct {
 	MultipartCanaryHealthy        *expvar.Int
 
 	// Multipart histogram metrics (bucketed by operation and status)
-	MultipartUploadBuckets       *expvar.Map // Histogram buckets: upload operation, keyed by latency
+	MultipartUploadBuckets    *expvar.Map // Histogram buckets: upload operation, keyed by latency
 	MultipartVerificationBuckets *expvar.Map // Histogram buckets: verification operation, keyed by latency
-	MultipartOperationTotal      *expvar.Map // Counter by operation and status: operation_status
+	MultipartOperationTotal    *expvar.Map // Counter by operation and status: operation_status
 
 	// Multipart metrics
 	ActiveMultipartUploads *expvar.Int
@@ -79,6 +79,15 @@ type Metrics struct {
 	RestoreVerifierObjectsVerified *expvar.Map
 	RestoreVerifierObjectsFailed   *expvar.Map
 	RestoreVerifierLatencyMillis   *expvar.Map
+
+	// Restore verifier per-bucket gauges (Phase 6a — restorability alerting).
+	// Each map is keyed by bucket name so PrometheusFormat can emit one labeled
+	// series per bucket. These back the restorability PrometheusRule:
+	// armor_last_verified_restore_timestamp, armor_verified_object_ratio, and
+	// armor_restore_verification_failures_total.
+	RestoreVerifierLastVerifiedTs *expvar.Map // bucket -> last verification time (unix seconds)
+	RestoreVerifierObjectRatio    *expvar.Map // bucket -> verified/total ratio (0..1)
+	RestoreVerifierFailureCount   *expvar.Map // bucket -> failed object count
 
 	// Internal state
 	startTime time.Time
@@ -159,6 +168,11 @@ func NewMetrics() *Metrics {
 	m.RestoreVerifierObjectsVerified = new(expvar.Map).Init()
 	m.RestoreVerifierObjectsFailed = new(expvar.Map).Init()
 	m.RestoreVerifierLatencyMillis = new(expvar.Map).Init()
+
+	// Restore verifier per-bucket gauges (Phase 6a)
+	m.RestoreVerifierLastVerifiedTs = new(expvar.Map).Init()
+	m.RestoreVerifierObjectRatio = new(expvar.Map).Init()
+	m.RestoreVerifierFailureCount = new(expvar.Map).Init()
 
 	return m
 }
@@ -318,12 +332,11 @@ func (m *Metrics) RecordMultipartUpload(operation string, status string, duratio
 
 	// Track sum and count in the appropriate histogram map
 	var histogramMap *expvar.Map
-	switch operation {
-	case "upload":
+	if operation == "upload" {
 		histogramMap = m.MultipartUploadBuckets
-	case "verify":
+	} else if operation == "verify" {
 		histogramMap = m.MultipartVerificationBuckets
-	default:
+	} else {
 		return // Invalid operation
 	}
 
@@ -487,12 +500,11 @@ func (m *Metrics) PrometheusFormat() string {
 
 		// Get the appropriate map
 		var histogramMap *expvar.Map
-		switch operation {
-		case "upload":
+		if operation == "upload" {
 			histogramMap = m.MultipartUploadBuckets
-		case "verify":
+		} else if operation == "verify" {
 			histogramMap = m.MultipartVerificationBuckets
-		default:
+		} else {
 			continue
 		}
 
@@ -521,6 +533,29 @@ func (m *Metrics) PrometheusFormat() string {
 			fmt.Fprintf(&sb, "armor_multipart_canary_upload_duration_seconds_last{operation=\"%s\",status=\"%s\"} %.6f\n", operation, status, float64(lastVal)/1000.0)
 		}
 	}
+
+	// Restore verifier per-bucket gauges (Phase 6a — restorability alerting).
+	// One labeled series per bucket drives the restore-age and verification-failure
+	// PrometheusRules. Emitted manually (like the multipart histogram above)
+	// because the writeMetric helper only handles scalar Int/String vars, not the
+	// bucket-labeled maps.
+	sb.WriteString("\n# HELP armor_last_verified_restore_timestamp Unix timestamp of the most recent verification attempt per bucket\n")
+	sb.WriteString("# TYPE armor_last_verified_restore_timestamp gauge\n")
+	m.RestoreVerifierLastVerifiedTs.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_last_verified_restore_timestamp{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	sb.WriteString("# HELP armor_verified_object_ratio Ratio of verified objects to total objects sampled per bucket (0..1)\n")
+	sb.WriteString("# TYPE armor_verified_object_ratio gauge\n")
+	m.RestoreVerifierObjectRatio.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_verified_object_ratio{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	sb.WriteString("# HELP armor_restore_verification_failures_total Number of objects that failed verification per bucket\n")
+	sb.WriteString("# TYPE armor_restore_verification_failures_total counter\n")
+	m.RestoreVerifierFailureCount.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_restore_verification_failures_total{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
 
 	// Uptime
 	uptime := time.Since(m.startTime).Seconds()
@@ -566,6 +601,30 @@ func (m *Metrics) SetRestoreVerifierLastCheckTime(t time.Time) {
 // SetRestoreVerifierLastError sets the last error for restore verifier.
 func (m *Metrics) SetRestoreVerifierLastError(err string) {
 	m.RestoreVerifierLastCheckError.Set(err)
+}
+
+// RecordRestoreBucketState publishes the per-bucket restorability gauges that
+// back the restore-age and verification-failure PrometheusRules. lastVerified is
+// the time of this verification attempt (success or failure) so the
+// restore-age alert advances on every run; ratio is verified/total in [0,1];
+// failures is the count of objects that failed verification this run (and is
+// exported as a counter so any non-zero value trips the failure alert).
+func (m *Metrics) RecordRestoreBucketState(bucket string, lastVerified time.Time, ratio float64, failures int64) {
+	if bucket == "" {
+		return
+	}
+
+	var ts expvar.Int
+	ts.Set(lastVerified.Unix())
+	m.RestoreVerifierLastVerifiedTs.Set(bucket, &ts)
+
+	var r expvar.Float
+	r.Set(ratio)
+	m.RestoreVerifierObjectRatio.Set(bucket, &r)
+
+	var fc expvar.Int
+	fc.Set(failures)
+	m.RestoreVerifierFailureCount.Set(bucket, &fc)
 }
 
 // RequestTracker tracks in-flight requests using a WaitGroup.

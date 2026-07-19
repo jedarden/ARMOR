@@ -101,6 +101,14 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
+	// Derive the B2 S3 endpoint from the region when not supplied, mirroring the
+	// ARMOR server (internal/config/config.go). This lets each per-cluster
+	// restore-verifier Deployment reuse the cluster's existing ARMOR_B2_REGION
+	// (ConfigMap or ExternalSecret) without hardcoding an endpoint per cluster.
+	if *b2Endpoint == "" && *b2Region != "" {
+		*b2Endpoint = fmt.Sprintf("https://s3.%s.backblazeb2.com", *b2Region)
+	}
+
 	// Validate required flags
 	if *b2Region == "" || *b2Endpoint == "" || *b2AccessKey == "" || *b2SecretKey == "" {
 		log.Fatal("Missing required B2 credentials. Set ARMOR_B2_REGION, ARMOR_B2_ENDPOINT, ARMOR_B2_ACCESS_KEY_ID, ARMOR_B2_SECRET_ACCESS_KEY")
@@ -135,30 +143,25 @@ func main() {
 		log.Fatalf("Failed to initialize B2 backend: %v", err)
 	}
 
-	// If no buckets specified via flags, try to discover them from environment or use defaults
+	// If no buckets specified via -bucket flags, fall back to the ARMOR_BUCKET
+	// environment variable (single bucket). Every ARMOR cluster already sets
+	// ARMOR_BUCKET for its server (via ConfigMap or ExternalSecret), so each
+	// per-cluster restore-verifier Deployment can stay uniform — the bucket name
+	// is sourced from the cluster's existing config rather than hardcoded here.
+	// (A prior revision listed all six logical buckets as a default; that was
+	// wrong, since a single instance holds one MEK and one B2 credential set
+	// and can only verify the bucket it has keys for.)
 	if len(bucketFlag) == 0 {
-		log.Println("No buckets specified via -bucket flag, using default bucket list")
-		// Default buckets from the task: armor-apexalgo, ord-devimprint, iad-ci, iad-kalshi, rs-manager
-		defaultBuckets := []struct {
-			name    string
-			prefix  string
-			atype   restoreverifier.ArtifactType
-		}{
-			{"armor-apexalgo", "", restoreverifier.ArtifactGeneric},
-			{"ord-devimprint", "", restoreverifier.ArtifactGeneric},
-			{"iad-ci", "", restoreverifier.ArtifactGeneric},
-			{"iad-kalshi", "", restoreverifier.ArtifactGeneric},
-			{"rs-manager", "", restoreverifier.ArtifactGeneric},
-		}
-
-		for _, db := range defaultBuckets {
+		if envBucket := os.Getenv("ARMOR_BUCKET"); envBucket != "" {
+			log.Printf("No -bucket flags; verifying ARMOR_BUCKET=%q from environment", envBucket)
 			bucketFlag = append(bucketFlag, restoreverifier.BucketConfig{
-				Bucket:              db.name,
-				Prefix:              db.prefix,
-				ArtifactType:        db.atype,
-				Enabled:             true,
+				Bucket:               envBucket,
+				ArtifactType:         restoreverifier.ArtifactGeneric,
+				Enabled:              true,
 				HistoricalSampleSize: *sampleSize,
 			})
+		} else {
+			log.Fatal("No buckets configured: pass -bucket flags or set ARMOR_BUCKET")
 		}
 	}
 
@@ -170,10 +173,11 @@ func main() {
 
 	// Create verifier
 	cfg := restoreverifier.Config{
-		Buckets:      bucketFlag,
-		Interval:     *checkInterval,
-		SampleSize:   *sampleSize,
+		Buckets:       bucketFlag,
+		Interval:      *checkInterval,
+		SampleSize:    *sampleSize,
 		EscrowMEKPath: "", // MEK passed directly, not from file
+		Metrics:       metricsCollector,
 	}
 
 	verifier := restoreverifier.New(

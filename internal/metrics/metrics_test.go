@@ -226,6 +226,56 @@ func TestMetricsPrometheusFormat(t *testing.T) {
 	}
 }
 
+// TestMetricsRestoreBucketGauges verifies the Phase 6a per-bucket restorability
+// gauges that back the restore-age and verification-failure PrometheusRules are
+// emitted with a bucket label. If these series go missing, the restorability
+// alerts silently stop firing.
+func TestMetricsRestoreBucketGauges(t *testing.T) {
+	m := NewMetrics()
+
+	// Empty bucket is a no-op (defensive: never emit a series with bucket="").
+	m.RecordRestoreBucketState("", time.Now(), 1.0, 0)
+
+	// Two buckets with distinct state — one healthy, one with failures.
+	m.RecordRestoreBucketState("armor-apexalgo", time.Unix(1_750_000_000, 0), 1.0, 0)
+	m.RecordRestoreBucketState("iad-kalshi", time.Unix(1_750_003_600, 0), 0.5, 3)
+
+	output := m.PrometheusFormat()
+
+	cases := []struct {
+		name     string
+		metric   string
+		bucket   string
+		contains string
+	}{
+		{"last_verified_ts healthy", "armor_last_verified_restore_timestamp", "armor-apexalgo", `armor_last_verified_restore_timestamp{bucket="armor-apexalgo"} 1750000000`},
+		{"last_verified_ts failing", "armor_last_verified_restore_timestamp", "iad-kalshi", `armor_last_verified_restore_timestamp{bucket="iad-kalshi"} 1750003600`},
+		{"object_ratio healthy", "armor_verified_object_ratio", "armor-apexalgo", `armor_verified_object_ratio{bucket="armor-apexalgo"} 1`},
+		{"object_ratio failing", "armor_verified_object_ratio", "iad-kalshi", `armor_verified_object_ratio{bucket="iad-kalshi"} 0.5`},
+		{"failure_count healthy", "armor_restore_verification_failures_total", "armor-apexalgo", `armor_restore_verification_failures_total{bucket="armor-apexalgo"} 0`},
+		{"failure_count failing", "armor_restore_verification_failures_total", "iad-kalshi", `armor_restore_verification_failures_total{bucket="iad-kalshi"} 3`},
+	}
+	for _, c := range cases {
+		if !strings.Contains(output, c.contains) {
+			t.Errorf("%s: expected %q in Prometheus output", c.name, c.contains)
+		}
+	}
+
+	// Each metric must declare HELP and TYPE so Prometheus accepts the scrape.
+	for _, metric := range []string{
+		"armor_last_verified_restore_timestamp",
+		"armor_verified_object_ratio",
+		"armor_restore_verification_failures_total",
+	} {
+		if !strings.Contains(output, "# HELP "+metric) {
+			t.Errorf("metric %q missing HELP comment", metric)
+		}
+		if !strings.Contains(output, "# TYPE "+metric) {
+			t.Errorf("metric %q missing TYPE comment", metric)
+		}
+	}
+}
+
 func TestMetricsHandler(t *testing.T) {
 	m := NewMetrics()
 	m.IncRequestsTotal("GET", 200)
