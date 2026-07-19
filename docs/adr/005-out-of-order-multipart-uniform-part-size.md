@@ -1,6 +1,6 @@
 # ADR-005: Out-of-order multipart parts via a uniform-part-size contract
 
-**Status:** Accepted (design decided 2026-07-19; implementation pending — amends ADR-003 §4)
+**Status:** Implemented (design decided 2026-07-19; shipped on main 2026-07-19 — bf-5tol4d core uniform-part-size contract, bf-4oi87m part-1 pinning + `503 SlowDown` deferral of earlier arrivals; amends ADR-003 §4)
 **Date:** 2026-07-19
 
 ## Context
@@ -41,8 +41,8 @@ Acceptance for the amendment: a 50 MB `aws s3 cp` with **default** concurrency m
 
 ## Consequences
 
-- Standard concurrent clients (aws cli defaults, SDK uploaders, litestream, rclone) work against ARMOR unmodified — the serial-configuration caveat in plan.md and the litestream deployment note in bf-4qq1 disappear once this ships.
-- The multipart canary and integration tests can (and must) exercise genuinely concurrent uploads.
+- Standard concurrent clients (aws cli defaults, SDK uploaders, litestream, rclone) work against ARMOR unmodified — the serial-configuration caveat in plan.md has been removed and the litestream deployment note in bf-4qq1 is void.
+- The multipart canary uploads its parts concurrently and the integration tests exercise genuinely concurrent (aws-cli-default-style) uploads.
 - `InvalidPartOrder` disappears from the error surface for well-formed uploads; `InvalidPartSize` semantics narrow to the uniformity/alignment contract.
 - A pathological client that uploads *only* its short final part first gets a loud failed upload and must retry — accepted trade-off, documented in the error message.
 - ADR-003 §4 (sequential-only) is superseded by this ADR; §5's hard-fail principle is unchanged and inherited.

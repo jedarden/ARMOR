@@ -20,6 +20,7 @@ import (
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/metrics"
+	"golang.org/x/sync/errgroup"
 )
 
 // Status represents the health status of the canary.
@@ -592,35 +593,73 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to create multipart upload: %w", err)
 	}
 
-	// Step 2: Upload parts in sequential order. B2 rejects CompleteMultipartUpload
-	// with EntityTooSmall when any non-final part is smaller than 5 MiB, so each
-	// part except the last must be at least that large; we also keep each part a
-	// multiple of the encryption block size so a part boundary never splits a
-	// block. For the default 64 KiB block this is 5.25 MiB (84 blocks).
+	// Step 2: Upload parts CONCURRENTLY (ADR-005 + its 2026-07-19 amendment make
+	// out-of-order / concurrent part uploads a supported, first-class path). The
+	// canary must exercise that path continuously — not only the sequential one —
+	// so a regression that re-introduces ordering assumptions fails the canary
+	// loudly. Each part is a stateless per-part S3 call addressed by part number,
+	// so uploads are independent; goroutines complete in nondeterministic
+	// ("shuffled") order and the ETags are reassembled in ascending part-number
+	// order below, as CompleteMultipartUpload requires.
+	//
+	// B2 still rejects CompleteMultipartUpload with EntityTooSmall when any
+	// non-final part is smaller than 5 MiB, so each part except the last is at
+	// least b2MinPartSize and a multiple of the block size so a part boundary
+	// never splits an encryption block. For the default 64 KiB block this is
+	// 5.25 MiB (84 blocks).
 	partSize := canaryMultipartPartSize(m.blockSize)
-	var parts []backend.CompletedPart
-	partNum := int32(1)
 
+	// Pre-compute the disjoint part slices so each goroutine reads its own range
+	// of the envelope with no shared cursor. (partData aliases envelope, which is
+	// never mutated after this point, so concurrent reads are safe.)
+	type canaryPart struct {
+		num  int32
+		data []byte
+	}
+	var canaryParts []canaryPart
+	partNum := int32(1)
 	for offset := 0; offset < len(envelope); offset += partSize {
 		end := offset + partSize
 		if end > len(envelope) {
 			end = len(envelope)
 		}
-
-		partData := envelope[offset:end]
-		partETag, err := m.backend.UploadPart(ctx, m.bucket, key, uploadID, partNum, bytes.NewReader(partData), int64(len(partData)))
-		if err != nil {
-			// Abort on failure
-			m.backend.AbortMultipartUpload(ctx, m.bucket, key, uploadID)
-			return nil, fmt.Errorf("failed to upload part %d: %w", partNum, err)
-		}
-
-		parts = append(parts, backend.CompletedPart{
-			PartNumber: partNum,
-			ETag:       partETag,
+		canaryParts = append(canaryParts, canaryPart{
+			num:  partNum,
+			data: envelope[offset:end],
 		})
-
 		partNum++
+	}
+
+	// ETags indexed by part number (position num-1); each goroutine writes a
+	// distinct slot, so no synchronization is needed on the slice itself.
+	partETags := make([]string, len(canaryParts))
+	g, gctx := errgroup.WithContext(ctx)
+	for _, cp := range canaryParts {
+		cp := cp // captured per-goroutine
+		g.Go(func() error {
+			etag, err := m.backend.UploadPart(gctx, m.bucket, key, uploadID, cp.num, bytes.NewReader(cp.data), int64(len(cp.data)))
+			if err != nil {
+				return fmt.Errorf("failed to upload part %d: %w", cp.num, err)
+			}
+			partETags[cp.num-1] = etag
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		// Abort on failure (first error wins; errgroup cancels the rest)
+		m.backend.AbortMultipartUpload(ctx, m.bucket, key, uploadID)
+		return nil, err
+	}
+
+	// Reassemble in ascending part-number order: the uploads above completed in
+	// shuffled order, but S3/B2 require CompleteMultipartUpload parts sorted by
+	// part number.
+	parts := make([]backend.CompletedPart, len(canaryParts))
+	for i := range canaryParts {
+		parts[i] = backend.CompletedPart{
+			PartNumber: int32(i + 1),
+			ETag:       partETags[i],
+		}
 	}
 
 	// Step 3: Complete multipart upload
