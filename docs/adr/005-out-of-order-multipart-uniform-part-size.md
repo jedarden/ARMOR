@@ -27,6 +27,18 @@ Support out-of-order and concurrent part uploads by fixing the CTR geometry up f
 - **Per-part IVs/envelopes.** Would make each part independently encryptable in any order, but changes the on-B2 format (a third layout), adds per-part overhead, and complicates range-read translation across part boundaries. Rejected — the uniform-size contract achieves order-independence with zero format change.
 - **Explicit part-size negotiation (custom header on CreateMultipartUpload).** Removes the optimistic-`P` edge case but standard clients would never send it; it could be added later as an optional optimization without conflicting with this design.
 
+## Amendment (2026-07-19): pin P from part number 1, defer earlier arrivals with SlowDown
+
+Live testing of the initial implementation falsified rule 1's rarity assumption. With aws cli **defaults** on a 50 MB file, all 7 parts start concurrently and the *smallest* part — the short final one — reliably completes **first** (least bytes to transfer). P gets pinned to the final part's size and the upload is invalidated on the first full-size part. This is not a rare pathology: it is the *common case* whenever the part count is within the client's concurrency window (any file ≲ concurrency × part size, i.e. most files under ~80 MB for aws cli defaults).
+
+Amended rules:
+
+1. **P is pinned only from part number 1** — which by construction is never the short final part.
+2. **A part arriving before part 1 has pinned P is answered with `503 SlowDown`** (no body consumed beyond need, nothing stored). SlowDown is retryable per the S3 contract; every standard client (aws cli, SDK transfer managers, litestream) retries the part transparently, and part 1 — started in the client's first batch — lands within the retry window. No buffering, no state, no corruption window.
+3. The contradiction detection from rule 4 stays as defense-in-depth (e.g., a client that never sends part 1).
+
+Acceptance for the amendment: a 50 MB `aws s3 cp` with **default** concurrency must round-trip byte-identically.
+
 ## Consequences
 
 - Standard concurrent clients (aws cli defaults, SDK uploaders, litestream, rclone) work against ARMOR unmodified — the serial-configuration caveat in plan.md and the litestream deployment note in bf-4qq1 disappear once this ships.
