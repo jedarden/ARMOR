@@ -6,12 +6,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -25,10 +25,14 @@ var (
 	mekEnvFallback bool
 
 	// Input sources
-	inputFlag    string
-	b2BucketFlag string
-	b2KeyID      string
+	inputFlag      string
+	b2BucketFlag   string
+	b2KeyID        string
 	wrappedDEKFlag string
+
+	// Multipart local-file inputs (ADR-003 headerless layout)
+	sidecarFlag string // path to a JSON HMAC sidecar file (HMACTableSidecar wire format)
+	ivFlag      string // object IV (hex), required for local multipart — no header to read it from
 
 	// Output
 	outputFlag string
@@ -45,6 +49,8 @@ func init() {
 	flag.StringVar(&b2BucketFlag, "b2-bucket", "", "B2 bucket (alternative to B2 URL)")
 	flag.StringVar(&b2KeyID, "key-id", "", "Key ID for multi-key MEK (from x-amz-meta-armor-key-id)")
 	flag.StringVar(&wrappedDEKFlag, "wrapped-dek", "", "Wrapped DEK (base64, for local files)")
+	flag.StringVar(&sidecarFlag, "sidecar", "", "Path to a JSON HMAC sidecar file for a local multipart object (ADR-003 headerless layout)")
+	flag.StringVar(&ivFlag, "iv", "", "Object IV (hex, 16 bytes) for a local multipart object (required with -sidecar)")
 	flag.StringVar(&outputFlag, "output", "", "Output file path (default: stdout)")
 	flag.BoolVar(&verboseFlag, "v", false, "Verbose output")
 }
@@ -111,7 +117,18 @@ Input Source (required):
 
 Decryption Parameters:
   -key-id ID         Key ID for multi-key MEK (from x-amz-meta-armor-key-id)
-  -wrapped-dek B64  Wrapped DEK base64 (required for local files)
+  -wrapped-dek B64   Wrapped DEK base64 (required for local files)
+
+Multipart local-file mode (ADR-003 headerless layout):
+  -sidecar FILE      Path to the JSON HMAC sidecar file that sits alongside a
+                     local multipart object. When set, -input is treated as
+                     headerless raw ciphertext (no envelope header) and the HMAC
+                     table is read from this JSON file.
+  -iv HEX            Object IV (hex, 16 bytes). Required with -sidecar because a
+                     multipart object has no envelope header to read the IV from.
+
+B2 objects are dispatched automatically on the x-amz-meta-armor-multipart
+metadata marker, so no special flags are needed for multipart B2 objects.
 
 Output:
   -output FILE        Write to file instead of stdout
@@ -124,7 +141,7 @@ Examples:
   armor-decrypt -mek 0123456789abcdef... -input b2://my-bucket/path/to/file
 
   # Decrypt local file (requires wrapped DEK)
-  armor-decrypt -mek 0123... -input encrypted.bin \\
+  armor-decrypt -mek 0123... -input encrypted.bin \
     -wrapped-dek WWF... -output plaintext.bin
 
   # Decrypt to stdout
@@ -132,6 +149,11 @@ Examples:
 
   # Decrypt using specific key ID (multi-key setup)
   armor-decrypt -mek 0123... -input b2://bucket/file -key-id backup-key
+
+  # Decrypt a local multipart object (headerless ciphertext + JSON sidecar)
+  armor-decrypt -mek 0123... -input object.bin \
+    -wrapped-dek WWF... -iv aabbccdd... -sidecar object.hmac.json \
+    -output plaintext.bin
 
 `)
 }
@@ -268,6 +290,15 @@ func decrypt(ctx context.Context, src *inputSource, mek []byte, keyID string) ([
 }
 
 // decryptLocal decrypts from a local file.
+//
+// It supports both on-disk layouts ARMOR writes (ADR-003):
+//
+//   - Single-PUT envelope: [64-byte header][encrypted blocks][inline HMAC table].
+//   - Multipart: headerless raw ciphertext with the per-block HMAC table in a
+//     JSON sidecar file alongside (-sidecar). The IV is supplied via -iv because
+//     a multipart object has no header byte stream to read it from.
+//
+// The layout is selected by the -sidecar flag: its presence means multipart.
 func decryptLocal(ctx context.Context, src *inputSource, mek []byte) ([]byte, error) {
 	if verboseFlag {
 		fmt.Fprintf(os.Stderr, "Reading from local file: %s\n", src.Path)
@@ -281,6 +312,22 @@ func decryptLocal(ctx context.Context, src *inputSource, mek []byte) ([]byte, er
 
 	if verboseFlag {
 		fmt.Fprintln(os.Stderr, "Successfully unwrapped DEK")
+	}
+
+	// A sidecar JSON signals an ADR-003 multipart object (headerless ciphertext +
+	// external HMAC table). Without it, the file is a single-PUT envelope.
+	if sidecarFlag != "" {
+		return decryptLocalMultipart(src, dek)
+	}
+	return decryptLocalEnvelope(src, dek)
+}
+
+// decryptLocalEnvelope decrypts a single-PUT envelope file: a 64-byte envelope
+// header, the encrypted blocks, and the inline HMAC table trailing them. The IV
+// and plaintext SHA are read from the header.
+func decryptLocalEnvelope(src *inputSource, dek []byte) ([]byte, error) {
+	if verboseFlag {
+		fmt.Fprintf(os.Stderr, "Reading single-PUT envelope: %s\n", src.Path)
 	}
 
 	// Open file
@@ -301,13 +348,6 @@ func decryptLocal(ctx context.Context, src *inputSource, mek []byte) ([]byte, er
 			header.Version, header.BlockSize(), header.PlaintextSize)
 	}
 
-	// Check if HMAC is sidecar (reserved byte flag)
-	useSidecarHMAC := header.Reserved[1] == 0x01
-
-	if verboseFlag && useSidecarHMAC {
-		fmt.Fprintln(os.Stderr, "Detected sidecar HMAC (multipart upload)")
-	}
-
 	// Calculate sizes
 	plaintextSize := int64(header.PlaintextSize)
 	blockSize := header.BlockSize()
@@ -319,31 +359,10 @@ func decryptLocal(ctx context.Context, src *inputSource, mek []byte) ([]byte, er
 		return nil, fmt.Errorf("read encrypted data: %w", err)
 	}
 
-	var hmacTable []byte
-
-	if useSidecarHMAC {
-		// Fetch HMAC from sidecar file
-		sidecarPath := getSidecarHMACPath(src.Path)
-		if verboseFlag {
-			fmt.Fprintf(os.Stderr, "Reading sidecar HMAC from: %s\n", sidecarPath)
-		}
-
-		hmacTable, err = os.ReadFile(sidecarPath)
-		if err != nil {
-			return nil, fmt.Errorf("read sidecar HMAC from %s: %w (file may not exist or be corrupted)", sidecarPath, err)
-		}
-	} else {
-		// Read inline HMAC table
-		hmacTable = make([]byte, int64(blockCount)*crypto.HMACSize)
-		if _, err := io.ReadFull(f, hmacTable); err != nil {
-			return nil, fmt.Errorf("read HMAC table: %w", err)
-		}
-	}
-
-	// Verify sizes
-	if len(hmacTable) < int(blockCount)*crypto.HMACSize {
-		return nil, fmt.Errorf("HMAC table too short: got %d bytes, need %d",
-			len(hmacTable), blockCount*crypto.HMACSize)
+	// Read inline HMAC table
+	hmacTable := make([]byte, int64(blockCount)*crypto.HMACSize)
+	if _, err := io.ReadFull(f, hmacTable); err != nil {
+		return nil, fmt.Errorf("read HMAC table: %w", err)
 	}
 
 	// Create decryptor
@@ -370,14 +389,99 @@ func decryptLocal(ctx context.Context, src *inputSource, mek []byte) ([]byte, er
 	return plaintext, nil
 }
 
+// decryptLocalMultipart decrypts an ADR-003 multipart object from local files:
+// headerless raw ciphertext (-input) plus a JSON HMAC sidecar (-sidecar). The IV
+// comes from -iv. CTR mode preserves length, so the ciphertext file size is the
+// plaintext size. There is no envelope header, so there is no header plaintext
+// SHA to verify (multipart objects store the empty-string placeholder — ADR-003
+// gap bf-1v2ehf).
+func decryptLocalMultipart(src *inputSource, dek []byte) ([]byte, error) {
+	if verboseFlag {
+		fmt.Fprintf(os.Stderr, "Reading multipart object (headerless + sidecar): %s\n", src.Path)
+	}
+
+	// A multipart object has no envelope header, so the IV has nowhere to live in
+	// the byte stream — it must be supplied (it is the x-amz-meta-armor-iv value).
+	if ivFlag == "" {
+		return nil, errors.New("multipart local file requires -iv (the object's IV, hex); a multipart object has no envelope header to read it from")
+	}
+	iv, err := hex.DecodeString(ivFlag)
+	if err != nil {
+		return nil, fmt.Errorf("decode -iv hex: %w", err)
+	}
+	if len(iv) != 16 {
+		return nil, fmt.Errorf("invalid IV length: got %d bytes, expected 16", len(iv))
+	}
+
+	// Read the entire headerless ciphertext (no 64-byte header at offset 0).
+	encryptedData, err := os.ReadFile(src.Path)
+	if err != nil {
+		return nil, fmt.Errorf("read ciphertext file: %w", err)
+	}
+
+	// Load and parse the JSON sidecar — the HMACTableSidecar wire format the
+	// server writes at .armor/hmac/<sha256(key)> on CompleteMultipartUpload.
+	sidecarBytes, err := os.ReadFile(sidecarFlag)
+	if err != nil {
+		return nil, fmt.Errorf("read sidecar HMAC from %s: %w", sidecarFlag, err)
+	}
+	var sidecar backend.HMACTableSidecar
+	if err := json.Unmarshal(sidecarBytes, &sidecar); err != nil {
+		return nil, fmt.Errorf("parse sidecar JSON: %w (expected HMACTableSidecar wire format)", err)
+	}
+	if sidecar.BlockSize <= 0 {
+		return nil, errors.New("sidecar JSON missing block_size")
+	}
+
+	// Flatten the per-block HMACs into the contiguous table the Decryptor wants.
+	hmacTable := make([]byte, 0, len(sidecar.BlockHMACs)*crypto.HMACSize)
+	for _, h := range sidecar.BlockHMACs {
+		hmacTable = append(hmacTable, h...)
+	}
+
+	if verboseFlag {
+		fmt.Fprintf(os.Stderr, "Sidecar: block_size=%d, %d block HMACs\n", sidecar.BlockSize, len(sidecar.BlockHMACs))
+	}
+
+	// Create decryptor. Absolute block indices: the full-object Decrypt walks
+	// block 0..N, which for a headerless multipart object are the absolute
+	// indices the HMACs were keyed on during upload.
+	decryptor, err := crypto.NewDecryptor(dek, iv, sidecar.BlockSize)
+	if err != nil {
+		return nil, fmt.Errorf("create decryptor: %w", err)
+	}
+
+	plaintext, err := decryptor.Decrypt(encryptedData, hmacTable)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt blocks: %w (possible data corruption)", err)
+	}
+
+	if verboseFlag {
+		fmt.Fprintf(os.Stderr, "Decrypted %d bytes across %d blocks (multipart; no header SHA to verify)\n",
+			len(plaintext), len(sidecar.BlockHMACs))
+	}
+
+	return plaintext, nil
+}
+
 // decryptB2 decrypts from a B2 bucket.
+//
+// It dispatches on the ADR-003 multipart metadata marker, exactly as the
+// server's read path (internal/server/handlers) and the restore-verifier's
+// direct path (internal/restoreverifier) do. Single-PUT objects carry a 64-byte
+// envelope header and an inline HMAC table; multipart-completed objects are
+// headerless raw ciphertext with the HMAC table in a JSON sidecar object. A
+// reader that assumes every object has the envelope layout fails on every
+// multipart object (bf-24sxh7): it decodes a header from raw ciphertext and dies
+// on "invalid ARMOR magic".
 func decryptB2(ctx context.Context, src *inputSource, mek []byte, keyID string) ([]byte, error) {
 	if verboseFlag {
 		fmt.Fprintf(os.Stderr, "Reading from B2: %s/%s\n", src.Bucket, src.Path)
 	}
 
-	// Initialize B2 backend from environment
-	b2Backend, err := initB2Backend()
+	// Initialize B2 backend (env-driven in production; tests override
+	// b2BackendFactory to inject a fake).
+	b2Backend, err := b2BackendFactory(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -417,105 +521,153 @@ func decryptB2(ctx context.Context, src *inputSource, mek []byte, keyID string) 
 		fmt.Fprintln(os.Stderr, "Successfully unwrapped DEK")
 	}
 
-	// Calculate sizes
-	plaintextSize := armorMeta.PlaintextSize
-	blockSize := armorMeta.BlockSize
-	blockCount := crypto.ComputeBlockCount(plaintextSize, blockSize)
+	// Dispatch on the ADR-003 multipart marker.
+	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
 
-	// Read envelope header (64 bytes) from B2
-	headerReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, 0, crypto.HeaderSize)
-	if err != nil {
-		return nil, fmt.Errorf("read envelope header from B2: %w", err)
-	}
-	defer headerReader.Close()
-
-	headerBuf := make([]byte, crypto.HeaderSize)
-	if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
-		return nil, fmt.Errorf("read header bytes: %w", err)
-	}
-
-	header, err := crypto.DecodeHeader(headerBuf)
-	if err != nil {
-		return nil, fmt.Errorf("decode envelope header: %w", err)
-	}
-
-	// Read encrypted data
-	encryptedData := make([]byte, plaintextSize)
-	encryptedReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, crypto.HeaderSize, plaintextSize)
-	if err != nil {
-		return nil, fmt.Errorf("read encrypted data from B2: %w", err)
-	}
-	defer encryptedReader.Close()
-
-	if _, err := io.ReadFull(encryptedReader, encryptedData); err != nil {
-		return nil, fmt.Errorf("read encrypted bytes: %w", err)
-	}
-
-	// Check if HMAC is sidecar (reserved byte flag)
-	useSidecarHMAC := header.Reserved[1] == 0x01
-
-	var hmacTable []byte
-	var hmacSize = int64(blockCount) * crypto.HMACSize
-
-	if useSidecarHMAC {
-		// Fetch HMAC from sidecar object
-		sidecarKey := getSidecarHMACKey(src.Path)
+	var (
+		encryptedData []byte
+		hmacTable     []byte
+		iv            []byte
+		header        *crypto.EnvelopeHeader // single-PUT only; nil for multipart
+	)
+	if isMultipart {
 		if verboseFlag {
-			fmt.Fprintf(os.Stderr, "Fetching sidecar HMAC from: %s\n", sidecarKey)
+			fmt.Fprintln(os.Stderr, "Multipart object: headerless ciphertext + JSON HMAC sidecar")
 		}
-
-		hmacReader, _, err := b2Backend.GetDirect(ctx, src.Bucket, sidecarKey)
-		if err != nil {
-			return nil, fmt.Errorf("fetch sidecar HMAC from %s: %w", sidecarKey, err)
-		}
-		defer hmacReader.Close()
-
-		hmacTable = make([]byte, hmacSize)
-		if _, err := io.ReadFull(hmacReader, hmacTable); err != nil {
-			return nil, fmt.Errorf("read sidecar HMAC: %w", err)
-		}
+		encryptedData, hmacTable, iv, err = readB2MultipartCiphertext(ctx, b2Backend, src, armorMeta)
 	} else {
-		// Read inline HMAC table
-		hmacOffset := crypto.HeaderSize + plaintextSize
-
-		hmacReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, hmacOffset, hmacSize)
-		if err != nil {
-			return nil, fmt.Errorf("read HMAC table from B2: %w", err)
-		}
-		defer hmacReader.Close()
-
-		hmacTable = make([]byte, hmacSize)
-		if _, err := io.ReadFull(hmacReader, hmacTable); err != nil {
-			return nil, fmt.Errorf("read HMAC bytes: %w", err)
-		}
+		encryptedData, hmacTable, iv, header, err = readB2EnvelopeCiphertext(ctx, b2Backend, src, armorMeta)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	if verboseFlag {
-		fmt.Fprintf(os.Stderr, "Read %d encrypted bytes and %d HMAC entries\n", len(encryptedData), blockCount)
+		fmt.Fprintf(os.Stderr, "Read %d encrypted bytes and %d HMAC entries\n", len(encryptedData), len(hmacTable)/crypto.HMACSize)
 	}
 
 	// Create decryptor
-	decryptor, err := crypto.NewDecryptor(dek, header.IV[:], blockSize)
+	decryptor, err := crypto.NewDecryptor(dek, iv, armorMeta.BlockSize)
 	if err != nil {
 		return nil, fmt.Errorf("create decryptor: %w", err)
 	}
 
-	// Decrypt
+	// Decrypt. For the full object the Decryptor walks block 0..N, which are the
+	// absolute block indices both layouts key their HMACs on.
 	plaintext, err := decryptor.Decrypt(encryptedData, hmacTable)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt blocks: %w (possible data corruption)", err)
 	}
 
-	// Verify plaintext SHA-256
-	if err := header.VerifyPlaintextSHA(plaintext); err != nil {
-		return nil, fmt.Errorf("plaintext SHA-256 verification failed: %w", err)
-	}
-
-	if verboseFlag {
-		fmt.Fprintf(os.Stderr, "Verified plaintext SHA-256: %s\n", header.PlaintextSHA256Hex())
+	// Verify the plaintext digest. Single-PUT objects carry the true whole-object
+	// SHA in the envelope header. Multipart objects store the empty-string
+	// placeholder digest (ADR-003 gap bf-1v2ehf), so there is no header SHA to
+	// verify against — per-block HMAC verification is the integrity guarantee.
+	if header != nil {
+		if err := header.VerifyPlaintextSHA(plaintext); err != nil {
+			return nil, fmt.Errorf("plaintext SHA-256 verification failed: %w", err)
+		}
+		if verboseFlag {
+			fmt.Fprintf(os.Stderr, "Verified plaintext SHA-256: %s\n", header.PlaintextSHA256Hex())
+		}
+	} else if verboseFlag {
+		fmt.Fprintln(os.Stderr, "Multipart object: no envelope header SHA to verify (placeholder digest)")
 	}
 
 	return plaintext, nil
+}
+
+// readB2EnvelopeCiphertext reads a single-PUT object: a 64-byte envelope header
+// (decoded for the IV), the encrypted blocks immediately after it, and the
+// inline HMAC table trailing the ciphertext. Returns the decoded header so the
+// caller can run header.VerifyPlaintextSHA on the decrypted plaintext.
+func readB2EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, src *inputSource, armorMeta *backend.ARMORMetadata) (encryptedData, hmacTable, iv []byte, header *crypto.EnvelopeHeader, err error) {
+	// Envelope header (64 bytes) at offset 0.
+	headerReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, 0, crypto.HeaderSize)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("read envelope header from B2: %w", err)
+	}
+	defer headerReader.Close()
+	headerBuf := make([]byte, crypto.HeaderSize)
+	if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("read header bytes: %w", err)
+	}
+	header, err = crypto.DecodeHeader(headerBuf)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("decode envelope header: %w", err)
+	}
+
+	// Encrypted data at offset HeaderSize; CTR mode keeps ciphertext == plaintext size.
+	encryptedData = make([]byte, armorMeta.PlaintextSize)
+	dataReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, crypto.HeaderSize, armorMeta.PlaintextSize)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("read encrypted data from B2: %w", err)
+	}
+	defer dataReader.Close()
+	if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("read encrypted bytes: %w", err)
+	}
+
+	// Inline HMAC table trailing the ciphertext: one HMACSize entry per block.
+	blockCount := crypto.ComputeBlockCount(armorMeta.PlaintextSize, armorMeta.BlockSize)
+	hmacSize := int64(blockCount) * crypto.HMACSize
+	hmacOffset := crypto.HeaderSize + armorMeta.PlaintextSize
+	hmacReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, hmacOffset, hmacSize)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("read HMAC table from B2: %w", err)
+	}
+	defer hmacReader.Close()
+	hmacTable = make([]byte, hmacSize)
+	if _, err := io.ReadFull(hmacReader, hmacTable); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("read HMAC bytes: %w", err)
+	}
+
+	return encryptedData, hmacTable, header.IV[:], header, nil
+}
+
+// readB2MultipartCiphertext reads an ADR-003 multipart-completed object: raw
+// concatenated part ciphertext at offset 0 (no envelope header; plaintext offset
+// N == ciphertext offset N) and the per-block HMAC table loaded from the JSON
+// sidecar at .armor/hmac/<sha256(key)>. The IV is carried by object metadata
+// (there is no header byte stream to read it from). The sidecar is loaded through
+// the same MultipartStateManager the server uses, so the JSON wire format is
+// shared exactly; its per-block HMACs are flattened into the contiguous table the
+// Decryptor consumes.
+func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, src *inputSource, armorMeta *backend.ARMORMetadata) (encryptedData, hmacTable, iv []byte, err error) {
+	if len(armorMeta.IV) == 0 {
+		return nil, nil, nil, errors.New("multipart object missing IV metadata (x-amz-meta-armor-iv)")
+	}
+
+	// Raw ciphertext at offset 0; CTR mode keeps ciphertext == plaintext size.
+	encryptedData = make([]byte, armorMeta.PlaintextSize)
+	dataReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, 0, armorMeta.PlaintextSize)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("read multipart ciphertext from B2: %w", err)
+	}
+	defer dataReader.Close()
+	if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
+		return nil, nil, nil, fmt.Errorf("read multipart ciphertext bytes: %w", err)
+	}
+
+	// HMAC table from the JSON sidecar, flattened to one HMACSize entry per block.
+	sidecar, err := backend.NewMultipartStateManager(b2Backend, src.Bucket).LoadHMACTable(ctx, src.Path)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("fetch multipart HMAC sidecar from .armor/hmac/<sha256(key)>: %w", err)
+	}
+	hmacTable = make([]byte, 0, len(sidecar.BlockHMACs)*crypto.HMACSize)
+	for _, h := range sidecar.BlockHMACs {
+		hmacTable = append(hmacTable, h...)
+	}
+
+	return encryptedData, hmacTable, armorMeta.IV, nil
+}
+
+// b2BackendFactory returns the B2 backend decryptB2 reads through. Production
+// uses the env-driven real backend; tests override this to inject a fake backend
+// that serves fixture objects and HMAC sidecars, exercising the full decryptB2
+// dispatch without B2 credentials.
+var b2BackendFactory = func(ctx context.Context) (backend.Backend, error) {
+	return initB2Backend()
 }
 
 // initB2Backend initializes a B2 backend from environment variables.
@@ -557,30 +709,4 @@ func writeOutput(data []byte) error {
 	}
 
 	return nil
-}
-
-// getSidecarHMACPath returns the local file path to the sidecar HMAC.
-// For local file: /path/to/object.armor → /path/to/.armor/hmac/<sha256-of-key>
-func getSidecarHMACPath(objectPath string) string {
-	dir := filepath.Dir(objectPath)
-	base := filepath.Base(objectPath)
-
-	// SHA256 of the key (object path without leading slash)
-	key := base
-	if dir != "." && dir != "" {
-		key = filepath.Join(dir, base)
-	}
-	// Normalize to forward slashes for hash consistency
-	key = strings.ReplaceAll(key, "\\", "/")
-	keyHash := fmt.Sprintf("%x", crypto.ComputePlaintextSHA256([]byte(key)))
-
-	return filepath.Join(dir, ".armor", "hmac", keyHash)
-}
-
-// getSidecarHMACKey returns the B2 key for the sidecar HMAC object.
-// For B2: bucket/path/to/object → bucket/.armor/hmac/<sha256-of-path>
-func getSidecarHMACKey(objectKey string) string {
-	// SHA256 of the object key
-	keyHash := fmt.Sprintf("%x", crypto.ComputePlaintextSHA256([]byte(objectKey)))
-	return fmt.Sprintf(".armor/hmac/%s", keyHash)
 }
