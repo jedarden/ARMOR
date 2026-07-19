@@ -135,7 +135,10 @@ func NewMonitor(cfg Config) *Monitor {
 		cfg.MultipartInterval = 1 * time.Hour
 	}
 	if cfg.MultipartSize == 0 {
-		cfg.MultipartSize = 6 * 1024 * 1024 // 6MB (above 5MB threshold)
+		// Two canary parts so the multipart path is exercised with at least one
+		// non-final part subject to B2's 5 MiB minimum. For the default 64 KiB
+		// block this is 2 * 5.25 MiB = 10.5 MiB.
+		cfg.MultipartSize = 2 * canaryMultipartPartSize(crypto.DefaultBlockSize)
 	}
 
 	instanceID := cfg.InstanceID
@@ -467,6 +470,37 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 	return result, nil
 }
 
+// b2MinPartSize is the minimum size B2 (via its S3-compatible API) accepts for
+// any non-final multipart part. Uploading a smaller non-final part makes
+// CompleteMultipartUpload fail with HTTP 400 EntityTooSmall ("Your proposed
+// upload is smaller than the minimum allowed size"). The final part has no
+// minimum.
+const b2MinPartSize = 5 * 1024 * 1024 // 5 MiB
+
+// canaryMultipartPartSize returns the size to use for each non-final part of the
+// multipart canary, chosen to satisfy two constraints:
+//   - at least b2MinPartSize (5 MiB), so B2 does not reject the non-final parts,
+//     and
+//   - a multiple of the encryption block size, so a part boundary never splits
+//     an encryption block (ARMOR's CTR counter derivation requires block-aligned
+//     parts).
+//
+// We target 5.25 MiB and round up to a block multiple; for the default 64 KiB
+// block this is exactly 84 * 64 KiB = 5.25 MiB, comfortably above the 5 MiB
+// floor.
+func canaryMultipartPartSize(blockSize int) int {
+	if blockSize <= 0 {
+		blockSize = crypto.DefaultBlockSize
+	}
+	const targetPartSize = 5505024 // 5.25 MiB
+	partSize := ((targetPartSize + blockSize - 1) / blockSize) * blockSize
+	if partSize < b2MinPartSize {
+		// Defensive: never round below the B2 minimum.
+		partSize = ((b2MinPartSize + blockSize - 1) / blockSize) * blockSize
+	}
+	return partSize
+}
+
 // checkMultipart performs a multipart canary check to exercise the multipart upload path.
 func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	result := &Result{
@@ -558,8 +592,12 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to create multipart upload: %w", err)
 	}
 
-	// Step 2: Upload parts (split into 2MB parts for reasonable part count)
-	const partSize = 2 * 1024 * 1024 // 2MB parts
+	// Step 2: Upload parts in sequential order. B2 rejects CompleteMultipartUpload
+	// with EntityTooSmall when any non-final part is smaller than 5 MiB, so each
+	// part except the last must be at least that large; we also keep each part a
+	// multiple of the encryption block size so a part boundary never splits a
+	// block. For the default 64 KiB block this is 5.25 MiB (84 blocks).
+	partSize := canaryMultipartPartSize(m.blockSize)
 	var parts []backend.CompletedPart
 	partNum := int32(1)
 
