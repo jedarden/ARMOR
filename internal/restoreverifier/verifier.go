@@ -55,6 +55,39 @@ const (
 	PathDualMatch VerificationPath = "dual_match" // Both paths agree
 )
 
+// Mode selects which restore paths a verification run exercises.
+type Mode string
+
+const (
+	// ModeDual runs both the ARMOR read path and the armor-decrypt direct path
+	// and asserts they agree on every object. This is the default
+	// continuous-verification mode (ADR-004).
+	ModeDual Mode = "dual"
+
+	// ModeDRDrill runs ONLY the direct-to-ciphertext path (MEK unwrap, raw B2
+	// fetch, ADR-003-aware decrypt, checksum + artifact assertion) with the
+	// ARMOR read path deliberately excluded. It automates the
+	// "ARMOR-server-is-gone" restore drill from docs/disaster-recovery.md:
+	// proving a fresh instance armed with only the escrowed MEK and B2
+	// credentials can still recover ciphertext that no ARMOR server ever
+	// touches during the run.
+	ModeDRDrill Mode = "dr-drill"
+)
+
+// emptyStringSHA256Hex is the SHA-256 of the empty string. CompleteMultipartUpload
+// writes it as the placeholder plaintext digest for multipart objects (ADR-003,
+// open gap bf-1v2ehf), so it cannot be trusted as a real per-object checksum.
+// Any checksum comparison must treat it (and an empty string) as "no digest
+// declared" rather than a value to match.
+const emptyStringSHA256Hex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// isPlaceholderPlaintextSHA reports whether a declared plaintext SHA-256 is
+// absent or the ADR-003 multipart placeholder, and therefore must not be
+// enforced as a real checksum.
+func isPlaceholderPlaintextSHA(s string) bool {
+	return s == "" || s == emptyStringSHA256Hex
+}
+
 // ArtifactType represents the type of backup artifact being verified.
 type ArtifactType string
 
@@ -367,6 +400,18 @@ type BucketState struct {
 
 	// Configuration sample settings
 	HistoricalSampleSize int `json:"historical_sample_size"`
+
+	// DR-drill state (ModeDRDrill). These are deliberately distinct from the
+	// dual-path fields above: a direct-only drill run must never bump the
+	// continuous-verification gauges, and the drill's own last-success
+	// timestamp is queryable separately (drill_last_success). A drill that
+	// succeeds while the ARMOR read path is down still records progress here
+	// without claiming the dual path is healthy.
+	DrillLastVerification time.Time `json:"drill_last_verification"`
+	DrillLastSuccess      time.Time `json:"drill_last_success"`
+	DrillTotalObjects     int64     `json:"drill_total_objects"`
+	DrillVerifiedObjects  int64     `json:"drill_verified_objects"`
+	DrillFailedObjects    int64     `json:"drill_failed_objects"`
 }
 
 // snapshot returns a copy of the state's data fields, excluding the mutex.
@@ -384,6 +429,12 @@ func (s *BucketState) snapshot() *BucketState {
 		FailedObjects:        s.FailedObjects,
 		HistoricalSampleSize: s.HistoricalSampleSize,
 		RecentResults:        make([]VerificationResult, len(s.RecentResults)),
+
+		DrillLastVerification: s.DrillLastVerification,
+		DrillLastSuccess:      s.DrillLastSuccess,
+		DrillTotalObjects:     s.DrillTotalObjects,
+		DrillVerifiedObjects:  s.DrillVerifiedObjects,
+		DrillFailedObjects:    s.DrillFailedObjects,
 	}
 	copy(c.RecentResults, s.RecentResults)
 	return c
@@ -414,8 +465,9 @@ type Verifier struct {
 
 	// Configuration
 	interval      time.Duration
-	sampleSize    int    // number of objects to verify per run per bucket
-	escrowMekPath string // path to escrowed MEK for direct decryption
+	drillInterval time.Duration // cadence of the periodic direct-only DR drill; 0 = disabled
+	sampleSize    int           // number of objects to verify per run per bucket
+	escrowMekPath string        // path to escrowed MEK for direct decryption
 	logOutput     io.Writer
 }
 
@@ -435,6 +487,14 @@ type Config struct {
 	SampleSize    int
 	EscrowMEKPath string
 	Metrics       *metrics.Metrics // optional; when set, per-bucket gauges are published after each run
+
+	// DRDrillInterval is the cadence of the periodic direct-only restore drill
+	// (ModeDRDrill), independent of the dual-path Interval. Zero disables the
+	// periodic drill; the drill can still be run on demand via the trigger
+	// handler's ?mode=dr-drill query. Kept separate so a deployment can verify
+	// both paths frequently yet exercise the ARMOR-server-is-gone recovery on
+	// its own (typically longer) schedule.
+	DRDrillInterval time.Duration
 
 	// Escalator files verification-failure and staleness beads (ADR-004 §5).
 	// Optional: nil disables escalation entirely, leaving verifier behavior
@@ -462,6 +522,7 @@ func New(
 		stopCh:        make(chan struct{}),
 		doneCh:        make(chan struct{}),
 		interval:      cfg.Interval,
+		drillInterval: cfg.DRDrillInterval,
 		sampleSize:    cfg.SampleSize,
 		escrowMekPath: cfg.EscrowMEKPath,
 		logOutput:     log.Writer(),
@@ -488,15 +549,32 @@ func (v *Verifier) Start(ctx context.Context) {
 
 	ticker := time.NewTicker(v.interval)
 	defer ticker.Stop()
+
+	// The direct-only DR drill runs on its own schedule, independent of the
+	// dual-path interval. A nil channel (drillInterval == 0) means the select
+	// below never fires on it; the drill is still available on demand via the
+	// trigger handler's ?mode=dr-drill query.
+	var drillC <-chan time.Time
+	if v.drillInterval > 0 {
+		log.Printf("DR-drill (direct-only) enabled: interval %v", v.drillInterval)
+		drillTicker := time.NewTicker(v.drillInterval)
+		drillC = drillTicker.C
+		defer drillTicker.Stop()
+	}
 	defer close(v.doneCh)
 
 	// Run initial verification
 	v.runVerification(ctx)
+	if v.drillInterval > 0 {
+		v.runDRDrill(ctx)
+	}
 
 	for {
 		select {
 		case <-ticker.C:
 			v.runVerification(ctx)
+		case <-drillC:
+			v.runDRDrill(ctx)
 		case <-v.stopCh:
 			log.Println("Restore verifier stopping")
 			return
@@ -513,7 +591,7 @@ func (v *Verifier) Stop() {
 	<-v.doneCh
 }
 
-// runVerification executes verification for all configured buckets.
+// runVerification executes dual-path verification for all configured buckets.
 func (v *Verifier) runVerification(ctx context.Context) {
 	log.Println("Starting verification run")
 
@@ -522,7 +600,7 @@ func (v *Verifier) runVerification(ctx context.Context) {
 		wg.Add(1)
 		go func(bucket string, state *BucketState) {
 			defer wg.Done()
-			v.verifyBucket(ctx, bucket, state)
+			v.verifyBucket(ctx, bucket, state, ModeDual)
 		}(bucketName, bucketState)
 	}
 	wg.Wait()
@@ -530,21 +608,48 @@ func (v *Verifier) runVerification(ctx context.Context) {
 	log.Println("Verification run completed")
 }
 
-// verifyBucket verifies a single bucket.
-func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *BucketState) {
+// runDRDrill executes a direct-only restore drill for all configured buckets.
+// It reuses verifyBucket with ModeDRDrill so the sample selection and per-object
+// loop are shared with the dual path; only the restore path exercised, the
+// state fields written, and the metrics published differ.
+func (v *Verifier) runDRDrill(ctx context.Context) {
+	log.Println("Starting DR-drill (direct-only) verification run")
+
+	var wg sync.WaitGroup
+	for bucketName, bucketState := range v.buckets {
+		wg.Add(1)
+		go func(bucket string, state *BucketState) {
+			defer wg.Done()
+			v.verifyBucket(ctx, bucket, state, ModeDRDrill)
+		}(bucketName, bucketState)
+	}
+	wg.Wait()
+
+	log.Println("DR-drill verification run completed")
+}
+
+// verifyBucket verifies a single bucket. mode selects which restore path(s) the
+// run exercises (ModeDual or ModeDRDrill); the per-object loop, sample
+// selection, and recent-results bookkeeping are shared, while the state fields
+// written and metrics published are mode-specific so a direct-only drill never
+// bumps the dual-path restorability gauges (and vice versa).
+func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *BucketState, mode Mode) {
+	drill := mode == ModeDRDrill
 	state.mu.Lock()
-	// Single deferred tail: capture the run's final LastSuccess under the lock,
-	// release the lock, then run staleness escalation *outside* the critical
-	// section so the bf shell-out (up to ExecTimeout) never blocks concurrent
-	// /status readers of this bucket during an outage. Staleness is one bead per
-	// freshness window (never per tick), deduped by the Escalator itself, so
-	// calling it every tick cannot storm. One defer covers every exit path,
-	// including the enumeration-failure early returns below. Nil escalator =
-	// escalation disabled.
+	// Single deferred tail: capture the run's final success timestamp under the
+	// lock, release the lock, then run staleness escalation *outside* the
+	// critical section so the bf shell-out (up to ExecTimeout) never blocks
+	// concurrent /status readers of this bucket during an outage. Staleness is
+	// one bead per freshness window (never per tick), deduped by the Escalator
+	// itself, so calling it every tick cannot storm. One defer covers every exit
+	// path, including the enumeration-failure early returns below. Escalation is
+	// owned by the dual path: a drill failure will be re-found and filed by the
+	// next dual run, so the drill never files beads (avoiding a second dedupe
+	// key per object). Nil escalator = escalation disabled.
 	defer func() {
-		lastSuccess := state.LastSuccess // read while the lock is still held
+		lastSuccess := state.LastSuccess // dual-path success; read while locked
 		state.mu.Unlock()
-		if v.escalator == nil {
+		if v.escalator == nil || drill {
 			return
 		}
 		if id, err := v.escalator.EscalateStaleness(ctx, bucket, lastSuccess); err != nil {
@@ -554,7 +659,11 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 		}
 	}()
 
-	log.Printf("Verifying bucket: %s", bucket)
+	if drill {
+		log.Printf("DR-drilling bucket (direct-only): %s", bucket)
+	} else {
+		log.Printf("Verifying bucket: %s", bucket)
+	}
 
 	// Get most recent backup object (should be the latest generation)
 	latest, err := v.getLatestObject(ctx, bucket)
@@ -563,9 +672,7 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 		// Record the attempt as a failure so a bucket that cannot be enumerated
 		// still advances its restore-age gauge and trips the verification-failure
 		// alert instead of silently emitting no series.
-		state.LastVerification = time.Now()
-		state.FailedObjects++
-		v.recordBucketRun(bucket, state, 0)
+		v.recordFailedEnumeration(bucket, state, drill)
 		return
 	}
 
@@ -573,13 +680,11 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 	historical, err := v.getHistoricalSample(ctx, bucket, state.HistoricalSampleSize)
 	if err != nil {
 		log.Printf("Failed to get historical sample for bucket %s: %v", bucket, err)
-		state.LastVerification = time.Now()
-		state.FailedObjects++
-		v.recordBucketRun(bucket, state, 0)
+		v.recordFailedEnumeration(bucket, state, drill)
 		return
 	}
 
-	state.TotalObjects = int64(1 + len(historical))
+	total := int64(1 + len(historical))
 	objectsToVerify := append([]ObjectSample{latest}, historical...)
 
 	// Per-run tallies. The restorability gauges must reflect this run's sample,
@@ -589,16 +694,26 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 
 	// Verify each object
 	for _, obj := range objectsToVerify {
-		result := v.verifyObject(ctx, obj)
+		result := v.verifyObject(ctx, obj, mode)
 
-		// Update state
+		// Update state (mode-specific fields so the drill and dual paths keep
+		// independent success/failure ledgers).
 		if result.Status == StatusPass {
-			state.VerifiedObjects++
-			state.LastSuccess = result.Timestamp
 			runVerified++
+			if drill {
+				state.DrillVerifiedObjects++
+				state.DrillLastSuccess = result.Timestamp
+			} else {
+				state.VerifiedObjects++
+				state.LastSuccess = result.Timestamp
+			}
 		} else {
-			state.FailedObjects++
 			runFailed++
+			if drill {
+				state.DrillFailedObjects++
+			} else {
+				state.FailedObjects++
+			}
 		}
 
 		// Keep recent results limited
@@ -619,11 +734,25 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 		// fresh bead. The Escalator is storm-proof across ticks — it persists the
 		// dedupe set, so a failing object never files more than one bead, and it
 		// never retries (a failed filing leaves the key unrecorded; the next tick
-		// may make one further bounded attempt, never a loop). Nil when disabled.
-		v.escalateResult(ctx, obj, result)
+		// may make one further bounded attempt, never a loop). Driven only by the
+		// dual path (see the deferred staleness tail above); nil when disabled.
+		if !drill {
+			v.escalateResult(ctx, obj, result)
+		}
 	}
 
-	state.LastVerification = time.Now()
+	now := time.Now()
+	if drill {
+		state.DrillLastVerification = now
+		state.DrillTotalObjects = total
+		v.recordDRDrillRun(bucket, state, runVerified)
+		log.Printf("Bucket %s DR-drill complete: %d/%d recovered direct-only",
+			bucket, runVerified, total)
+		return
+	}
+
+	state.LastVerification = now
+	state.TotalObjects = total
 
 	// VerifiedObjectRatio reflects this run's sample so it stays in [0,1] and
 	// the restorability PrometheusRule behaves correctly. (The state keeps the
@@ -642,6 +771,24 @@ func (v *Verifier) verifyBucket(ctx context.Context, bucket string, state *Bucke
 
 	log.Printf("Bucket %s verification complete: %d/%d verified (%.1f%%)",
 		bucket, runVerified, state.TotalObjects, state.VerifiedObjectRatio*100)
+}
+
+// recordFailedEnumeration advances a bucket's restore-age gauge after a run that
+// could not even enumerate objects, so an unlistable bucket still trips its
+// failure alert instead of silently emitting no series. drill selects whether
+// the dual-path or DR-drill ledger/metrics are advanced.
+func (v *Verifier) recordFailedEnumeration(bucket string, state *BucketState, drill bool) {
+	now := time.Now()
+	if drill {
+		state.DrillLastVerification = now
+		state.DrillTotalObjects = 0
+		state.DrillFailedObjects++
+		v.recordDRDrillRun(bucket, state, 0)
+		return
+	}
+	state.LastVerification = now
+	state.FailedObjects++
+	v.recordBucketRun(bucket, state, 0)
 }
 
 // escalateResult files (or clears) escalation state for a single object's
@@ -695,8 +842,32 @@ func (v *Verifier) recordBucketRun(bucket string, state *BucketState, runVerifie
 	v.metrics.RecordRestoreBucketState(bucket, state.LastVerification, runRatio, state.FailedObjects)
 }
 
-// verifyObject performs dual-path verification on a single object.
-func (v *Verifier) verifyObject(ctx context.Context, obj ObjectSample) VerificationResult {
+// recordDRDrillRun publishes the per-bucket direct-only DR-drill gauges after a
+// drill run — including runs that failed before any object could be recovered
+// (runVerified == 0), so an unenumerable bucket still advances its
+// drill-restore-age and trips the drill-failure signal. Mirrors recordBucketRun:
+// the run ratio is computed from runVerified against this run's
+// state.DrillTotalObjects, and state.DrillFailedObjects is forwarded as the
+// monotonic counter so drill_failures_total only climbs on a new failure.
+// state.DrillLastVerification and DrillLastSuccess must already reflect this
+// attempt.
+func (v *Verifier) recordDRDrillRun(bucket string, state *BucketState, runVerified int64) {
+	if v.metrics == nil {
+		return
+	}
+	var runRatio float64
+	if state.DrillTotalObjects > 0 {
+		runRatio = float64(runVerified) / float64(state.DrillTotalObjects)
+	}
+	v.metrics.RecordDRDrillRun(bucket, state.DrillLastVerification, state.DrillLastSuccess, runRatio, state.DrillFailedObjects)
+}
+
+// verifyObject verifies a single object. mode selects which restore path(s) the
+// run exercises: ModeDual runs both the ARMOR read path and the direct decrypt
+// and asserts they agree; ModeDRDrill runs ONLY the direct-to-ciphertext path,
+// deliberately excluding the ARMOR read path so the run proves recovery works
+// with the ARMOR server gone.
+func (v *Verifier) verifyObject(ctx context.Context, obj ObjectSample, mode Mode) VerificationResult {
 	result := VerificationResult{
 		Key:          obj.Key,
 		Bucket:       obj.Bucket,
@@ -709,6 +880,70 @@ func (v *Verifier) verifyObject(ctx context.Context, obj ObjectSample) Verificat
 	expectedSHA256 := obj.Metadata["x-amz-meta-armor-plaintext-sha256"]
 	result.ExpectedSHA256 = expectedSHA256
 
+	if mode == ModeDRDrill {
+		return v.verifyObjectDirectOnly(ctx, obj, result, expectedSHA256)
+	}
+	return v.verifyObjectDual(ctx, obj, result, expectedSHA256)
+}
+
+// verifyObjectDirectOnly is the DR-drill path (ModeDRDrill): it exercises ONLY
+// the armor-decrypt direct route — MEK unwrap, raw B2 fetch, ADR-003-aware
+// decrypt, checksum + artifact assertion — with the ARMOR read path
+// (restoreViaARMOR) deliberately never called. This is the automated
+// "ARMOR-server-is-gone" drill from docs/disaster-recovery.md: a fresh instance
+// armed with only the escrowed MEK and B2 credentials recovers ciphertext that
+// no ARMOR server touches during the run. result.Path stays PathDirect to make
+// the direct-only nature visible in /status and escalation beads.
+func (v *Verifier) verifyObjectDirectOnly(ctx context.Context, obj ObjectSample, result VerificationResult, expectedSHA256 string) VerificationResult {
+	directStart := time.Now()
+	plaintext, err := v.restoreViaDirectDecrypt(ctx, obj.Bucket, obj.Key)
+	result.DirectPathLatency = time.Since(directStart)
+
+	if err != nil {
+		result.Error = fmt.Sprintf("Direct path failed: %v", err)
+		result.Status = StatusRestoreError
+		result.Path = PathDirect
+		return result
+	}
+
+	directHash := sha256.Sum256(plaintext)
+	result.DirectSHA256 = hex.EncodeToString(directHash[:])
+
+	// Enforce the declared plaintext checksum only when the object actually
+	// declared a real digest: ADR-003 multipart uploads write the SHA-256 of the
+	// empty string as a placeholder digest (gap bf-1v2ehf), so treat that value
+	// (and an absent one) as "no digest declared" rather than something to match.
+	if !isPlaceholderPlaintextSHA(expectedSHA256) && result.DirectSHA256 != expectedSHA256 {
+		result.Status = StatusChecksumError
+		result.Path = PathDirect
+		result.Error = fmt.Sprintf("SHA256 mismatch: expected=%s, got=%s",
+			expectedSHA256, result.DirectSHA256)
+		return result
+	}
+
+	// Application-level assertion: the only check beyond SHA-256, so a corrupt
+	// artifact whose checksum happens to be internally consistent is still caught.
+	assertion := v.getAssertion(obj.ArtifactType)
+	if assertionErr := assertion.Verify(plaintext, obj.Metadata); assertionErr != nil {
+		result.Status = StatusAssertionError
+		result.Path = PathDirect
+		result.Error = fmt.Sprintf("Assertion failed: %v", assertionErr)
+		result.AssertionPassed = false
+		result.AssertionError = assertionErr.Error()
+		return result
+	}
+
+	result.Status = StatusPass
+	result.Path = PathDirect
+	result.AssertionPassed = true
+	return result
+}
+
+// verifyObjectDual is the continuous-verification path (ModeDual, ADR-004): it
+// runs both the ARMOR read path and the armor-decrypt direct route and asserts
+// they agree on every object before honoring the checksum and artifact
+// assertion. result.Path is PathDualMatch only when both paths agree and pass.
+func (v *Verifier) verifyObjectDual(ctx context.Context, obj ObjectSample, result VerificationResult, expectedSHA256 string) VerificationResult {
 	// Path 1: ARMOR read path (normal S3 GetObject through server)
 	armorStart := time.Now()
 	armorPlaintext, armorErr := v.restoreViaARMOR(ctx, obj.Bucket, obj.Key)
@@ -750,8 +985,10 @@ func (v *Verifier) verifyObject(ctx context.Context, obj ObjectSample) Verificat
 		return result
 	}
 
-	// Both paths agree, verify against expected checksum
-	if expectedSHA256 != "" && result.ARMORSHA256 != expectedSHA256 {
+	// Both paths agree; verify against the declared checksum. As on the drill
+	// path, the ADR-003 multipart placeholder (and an absent value) must not be
+	// enforced as a real per-object digest.
+	if !isPlaceholderPlaintextSHA(expectedSHA256) && result.ARMORSHA256 != expectedSHA256 {
 		result.Status = StatusChecksumError
 		result.Path = PathDualMatch
 		result.Error = fmt.Sprintf("SHA256 mismatch: expected=%s, got=%s",
@@ -796,113 +1033,167 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 	return plaintext, nil
 }
 
-// restoreViaDirectDecrypt restores an object using direct B2 access + armor-decrypt logic.
-// This simulates the "ARMOR server is gone" disaster recovery scenario by decrypting
-// directly from B2 ciphertext using the escrowed MEK.
+// restoreViaDirectDecrypt restores an object using direct B2 access + armor-decrypt
+// logic. This simulates the "ARMOR server is gone" disaster recovery scenario by
+// decrypting directly from B2 ciphertext using the escrowed MEK, touching only
+// backend primitives (Head/GetRange/GetDirect) that a fresh instance with B2
+// credentials and the MEK would have — never the ARMOR read path.
+//
+// It honors both on-B2 layouts ARMOR writes (ADR-003):
+//
+//   - Single-PUT objects: [64-byte envelope header][encrypted blocks][inline
+//     HMAC table]. IV and plaintext SHA come from the header.
+//   - Multipart-completed objects: raw concatenated part ciphertext with NO
+//     envelope header (plaintext offset N == ciphertext offset N) and the
+//     per-block HMAC table in a JSON sidecar at .armor/hmac/<sha256(key)>. IV
+//     comes from object metadata; the dispatch marker is
+//     x-amz-meta-armor-multipart: true.
+//
+// A reader that assumes every object has the envelope layout fails on every
+// multipart object (bf-24sxh7); the marker dispatch below is what ADR-003
+// requires of every ARMOR reader, including this one.
 func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key string) ([]byte, error) {
-	// Step 1: Get object metadata to extract ARMOR encryption parameters
+	// Step 1: object metadata -> ARMOR encryption parameters.
 	info, err := v.backend.Head(ctx, bucket, key)
 	if err != nil {
 		return nil, fmt.Errorf("direct path: HeadObject failed: %w", err)
 	}
-
-	// Step 2: Parse ARMOR metadata from headers
 	armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
 	if !ok {
 		return nil, errors.New("direct path: object is not ARMOR-encrypted")
 	}
 
-	// Step 3: Unwrap the DEK using the escrowed MEK
+	// Step 2: unwrap the DEK with the escrowed MEK.
 	dek, err := crypto.UnwrapDEK(v.mek, armorMeta.WrappedDEK)
 	if err != nil {
 		return nil, fmt.Errorf("direct path: failed to unwrap DEK: %w", err)
 	}
 
-	// Step 4: Read envelope header (64 bytes) from B2
-	headerReader, err := v.backend.GetRange(ctx, bucket, key, 0, crypto.HeaderSize)
-	if err != nil {
-		return nil, fmt.Errorf("direct path: failed to read envelope header: %w", err)
-	}
-	defer headerReader.Close()
-
-	headerBuf := make([]byte, crypto.HeaderSize)
-	if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
-		return nil, fmt.Errorf("direct path: failed to read header bytes: %w", err)
-	}
-
-	header, err := crypto.DecodeHeader(headerBuf)
-	if err != nil {
-		return nil, fmt.Errorf("direct path: failed to decode envelope header: %w", err)
-	}
-
-	// Step 5: Read encrypted data from B2
-	// Offset: crypto.HeaderSize (64 bytes)
-	// Length: armorMeta.PlaintextSize (ciphertext size equals plaintext size for CTR mode)
-	encryptedData := make([]byte, armorMeta.PlaintextSize)
-	dataReader, err := v.backend.GetRange(ctx, bucket, key, crypto.HeaderSize, armorMeta.PlaintextSize)
-	if err != nil {
-		return nil, fmt.Errorf("direct path: failed to read encrypted data: %w", err)
-	}
-	defer dataReader.Close()
-
-	if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
-		return nil, fmt.Errorf("direct path: failed to read encrypted bytes: %w", err)
-	}
-
-	// Step 6: Read HMAC table
-	// Check if HMAC is in sidecar (multipart uploads)
-	useSidecarHMAC := header.Reserved[1] == 0x01
-
-	var hmacTable []byte
-	blockCount := crypto.ComputeBlockCount(armorMeta.PlaintextSize, armorMeta.BlockSize)
-	hmacSize := int64(blockCount) * crypto.HMACSize
-
-	if useSidecarHMAC {
-		// Fetch HMAC from sidecar object at .armor/hmac/<sha256(key)>
-		sidecarKey := fmt.Sprintf(".armor/hmac/%x", crypto.ComputePlaintextSHA256([]byte(key)))
-		hmacReader, _, err := v.backend.GetDirect(ctx, bucket, sidecarKey)
-		if err != nil {
-			return nil, fmt.Errorf("direct path: failed to read sidecar HMAC from %s: %w", sidecarKey, err)
-		}
-		defer hmacReader.Close()
-
-		hmacTable = make([]byte, hmacSize)
-		if _, err := io.ReadFull(hmacReader, hmacTable); err != nil {
-			return nil, fmt.Errorf("direct path: failed to read sidecar HMAC bytes: %w", err)
-		}
+	// Step 3: gather ciphertext, HMAC table, and IV per the object's layout.
+	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
+	var (
+		encryptedData []byte
+		hmacTable     []byte
+		iv            []byte
+		header        *crypto.EnvelopeHeader // single-PUT only; nil for multipart
+	)
+	if isMultipart {
+		encryptedData, hmacTable, iv, err = v.readMultipartCiphertext(ctx, bucket, key, armorMeta)
 	} else {
-		// Read inline HMAC table
-		// Offset: crypto.HeaderSize + armorMeta.PlaintextSize
-		hmacOffset := crypto.HeaderSize + armorMeta.PlaintextSize
-		hmacReader, err := v.backend.GetRange(ctx, bucket, key, hmacOffset, hmacSize)
-		if err != nil {
-			return nil, fmt.Errorf("direct path: failed to read HMAC table: %w", err)
-		}
-		defer hmacReader.Close()
-
-		hmacTable = make([]byte, hmacSize)
-		if _, err := io.ReadFull(hmacReader, hmacTable); err != nil {
-			return nil, fmt.Errorf("direct path: failed to read HMAC bytes: %w", err)
-		}
+		encryptedData, hmacTable, iv, header, err = v.readEnvelopeCiphertext(ctx, bucket, key, armorMeta)
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	// Step 7: Decrypt using armor-decrypt logic
-	decryptor, err := crypto.NewDecryptor(dek, header.IV[:], armorMeta.BlockSize)
+	// Step 4: decrypt with per-block HMAC verification (CTR mode: ciphertext
+	// length equals plaintext length).
+	decryptor, err := crypto.NewDecryptor(dek, iv, armorMeta.BlockSize)
 	if err != nil {
 		return nil, fmt.Errorf("direct path: failed to create decryptor: %w", err)
 	}
-
 	plaintext, err := decryptor.Decrypt(encryptedData, hmacTable)
 	if err != nil {
 		return nil, fmt.Errorf("direct path: decryption failed: %w (possible data corruption or wrong MEK)", err)
 	}
 
-	// Step 8: Verify plaintext SHA-256
-	if err := header.VerifyPlaintextSHA(plaintext); err != nil {
-		return nil, fmt.Errorf("direct path: plaintext SHA-256 verification failed: %w", err)
+	// Step 5: verify the plaintext digest. Single-PUT objects carry the true
+	// whole-object SHA in the envelope header, so check it here. Multipart
+	// objects have no header and store the empty-string placeholder digest
+	// (open gap bf-1v2ehf), so there is no header SHA to verify — verifyObject
+	// enforces the metadata digest (a no-op for the placeholder) instead.
+	if header != nil {
+		if err := header.VerifyPlaintextSHA(plaintext); err != nil {
+			return nil, fmt.Errorf("direct path: plaintext SHA-256 verification failed: %w", err)
+		}
 	}
 
 	return plaintext, nil
+}
+
+// readEnvelopeCiphertext reads a single-PUT object: a 64-byte envelope header
+// (decoded for the IV), the encrypted blocks immediately after it, and the
+// inline HMAC table trailing the ciphertext. Returns the decoded header so the
+// caller can run header.VerifyPlaintextSHA on the decrypted plaintext.
+func (v *Verifier) readEnvelopeCiphertext(ctx context.Context, bucket, key string, armorMeta *backend.ARMORMetadata) (encryptedData, hmacTable, iv []byte, header *crypto.EnvelopeHeader, err error) {
+	// Envelope header (64 bytes) at offset 0.
+	headerReader, err := v.backend.GetRange(ctx, bucket, key, 0, crypto.HeaderSize)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("direct path: failed to read envelope header: %w", err)
+	}
+	defer headerReader.Close()
+	headerBuf := make([]byte, crypto.HeaderSize)
+	if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("direct path: failed to read header bytes: %w", err)
+	}
+	header, err = crypto.DecodeHeader(headerBuf)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("direct path: failed to decode envelope header: %w", err)
+	}
+
+	// Encrypted data at offset HeaderSize; CTR mode keeps ciphertext == plaintext size.
+	encryptedData = make([]byte, armorMeta.PlaintextSize)
+	dataReader, err := v.backend.GetRange(ctx, bucket, key, crypto.HeaderSize, armorMeta.PlaintextSize)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("direct path: failed to read encrypted data: %w", err)
+	}
+	defer dataReader.Close()
+	if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("direct path: failed to read encrypted bytes: %w", err)
+	}
+
+	// Inline HMAC table trailing the ciphertext: one HMACSize entry per block.
+	blockCount := crypto.ComputeBlockCount(armorMeta.PlaintextSize, armorMeta.BlockSize)
+	hmacSize := int64(blockCount) * crypto.HMACSize
+	hmacOffset := crypto.HeaderSize + armorMeta.PlaintextSize
+	hmacReader, err := v.backend.GetRange(ctx, bucket, key, hmacOffset, hmacSize)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("direct path: failed to read HMAC table: %w", err)
+	}
+	defer hmacReader.Close()
+	hmacTable = make([]byte, hmacSize)
+	if _, err := io.ReadFull(hmacReader, hmacTable); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("direct path: failed to read HMAC bytes: %w", err)
+	}
+
+	return encryptedData, hmacTable, header.IV[:], header, nil
+}
+
+// readMultipartCiphertext reads an ADR-003 multipart-completed object: raw
+// concatenated part ciphertext at offset 0 (no envelope header; plaintext
+// offset N == ciphertext offset N) and the per-block HMAC table loaded from the
+// JSON sidecar at .armor/hmac/<sha256(key)>. The IV is carried by object
+// metadata (there is no header byte stream to read it from). The sidecar is
+// loaded through the same MultipartStateManager the server uses, so the JSON
+// wire format is shared exactly; its per-block HMACs are flattened into the
+// contiguous raw table the Decryptor consumes.
+func (v *Verifier) readMultipartCiphertext(ctx context.Context, bucket, key string, armorMeta *backend.ARMORMetadata) (encryptedData, hmacTable, iv []byte, err error) {
+	if len(armorMeta.IV) == 0 {
+		return nil, nil, nil, errors.New("direct path: multipart object missing IV metadata")
+	}
+
+	// Raw ciphertext at offset 0; CTR mode keeps ciphertext == plaintext size.
+	encryptedData = make([]byte, armorMeta.PlaintextSize)
+	dataReader, err := v.backend.GetRange(ctx, bucket, key, 0, armorMeta.PlaintextSize)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("direct path: failed to read multipart ciphertext: %w", err)
+	}
+	defer dataReader.Close()
+	if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
+		return nil, nil, nil, fmt.Errorf("direct path: failed to read multipart ciphertext bytes: %w", err)
+	}
+
+	// HMAC table from the JSON sidecar, flattened to one HMACSize entry per block.
+	sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTable(ctx, key)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("direct path: failed to load multipart HMAC sidecar: %w", err)
+	}
+	flat := make([]byte, 0, len(sidecar.BlockHMACs)*crypto.HMACSize)
+	for _, h := range sidecar.BlockHMACs {
+		flat = append(flat, h...)
+	}
+
+	return encryptedData, flat, armorMeta.IV, nil
 }
 
 // getLatestObject returns the most recent backup object for a bucket.

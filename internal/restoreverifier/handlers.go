@@ -57,11 +57,33 @@ func (v *Verifier) BucketStatusHandler(metrics *metrics.Metrics) http.HandlerFun
 	}
 }
 
-// TriggerHandler triggers an immediate verification run.
+// TriggerHandler triggers an immediate verification run. The optional ?mode=
+// query selects which restore path the on-demand run exercises:
+//
+//	mode=dual     (default) both the ARMOR read path and the armor-decrypt
+//	              direct path, asserting they agree (ModeDual).
+//	mode=dr-drill direct-only DR drill: MEK unwrap + raw B2 fetch + decrypt +
+//	              checksum/artifact assertion, with the ARMOR read path
+//	              deliberately excluded (ModeDRDrill). This is the on-demand form
+//	              of the periodic drill — prove recovery with the server gone.
+//
+// An unknown mode is rejected with 400 rather than silently treated as dual, so
+// a typo in an automation job fails loudly instead of running the wrong path.
 func (v *Verifier) TriggerHandler(metrics *metrics.Metrics) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		mode := Mode(r.URL.Query().Get("mode"))
+		if mode == "" {
+			mode = ModeDual
+		}
+		switch mode {
+		case ModeDual, ModeDRDrill:
+		default:
+			http.Error(w, fmt.Sprintf("unknown mode %q (want 'dual' or 'dr-drill')", mode), http.StatusBadRequest)
 			return
 		}
 
@@ -71,21 +93,36 @@ func (v *Verifier) TriggerHandler(metrics *metrics.Metrics) http.HandlerFunc {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
 
-			v.runVerification(ctx)
+			switch mode {
+			case ModeDRDrill:
+				v.runDRDrill(ctx)
+			default:
+				v.runVerification(ctx)
+			}
 
 			// Update metrics
 			metrics.SetRestoreVerifierLastCheckTime(startTime)
 			metrics.SetRestoreVerifierLastError("")
 
-			// Record per-bucket metrics
-			status := v.GetStatus()
-			for bucketName, bucketState := range status {
-				metrics.RecordRestoreVerifierCheck(bucketName, time.Since(startTime), bucketState.FailedObjects == 0)
+			// Record per-bucket dual-path check counters only for a dual run.
+			// The drill publishes its own armor_drill_* gauges from verifyBucket
+			// (recordDRDrillRun), so it must not bump the dual-path
+			// checks/verified/failed counters — that would conflate a direct-only
+			// result with the ARMOR read path's health.
+			if mode == ModeDual {
+				status := v.GetStatus()
+				for bucketName, bucketState := range status {
+					metrics.RecordRestoreVerifierCheck(bucketName, time.Since(startTime), bucketState.FailedObjects == 0)
+				}
 			}
 		}()
 
 		w.WriteHeader(http.StatusAccepted)
-		w.Write([]byte("Verification triggered\n"))
+		if mode == ModeDRDrill {
+			w.Write([]byte("DR-drill (direct-only) triggered\n"))
+		} else {
+			w.Write([]byte("Verification triggered\n"))
+		}
 	}
 }
 

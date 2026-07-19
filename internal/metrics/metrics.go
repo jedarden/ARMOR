@@ -89,6 +89,17 @@ type Metrics struct {
 	RestoreVerifierObjectRatio    *expvar.Map // bucket -> verified/total ratio (0..1)
 	RestoreVerifierFailureCount   *expvar.Map // bucket -> failed object count
 
+	// DR-drill (direct-only) per-bucket gauges — the direct-path analogue of the
+	// three above, kept distinct so a drill run never bumps the dual-path
+	// restorability series (and vice versa). They back the drill_restore_age and
+	// drill-failure signals and expose the drill's own last-success timestamp
+	// (armor_drill_last_success_timestamp) for "when did we last prove recovery
+	// with the ARMOR server deliberately excluded?".
+	RestoreVerifierDrillLastVerifiedTs *expvar.Map // bucket -> last drill attempt time (unix seconds)
+	RestoreVerifierDrillLastSuccessTs  *expvar.Map // bucket -> last successful direct-only recovery (unix seconds)
+	RestoreVerifierDrillObjectRatio    *expvar.Map // bucket -> recovered/total ratio (0..1)
+	RestoreVerifierDrillFailureCount   *expvar.Map // bucket -> cumulative failed direct-only recoveries
+
 	// Internal state
 	startTime time.Time
 }
@@ -173,6 +184,13 @@ func NewMetrics() *Metrics {
 	m.RestoreVerifierLastVerifiedTs = new(expvar.Map).Init()
 	m.RestoreVerifierObjectRatio = new(expvar.Map).Init()
 	m.RestoreVerifierFailureCount = new(expvar.Map).Init()
+
+	// DR-drill (direct-only) per-bucket gauges — distinct from the dual-path
+	// gauges above so a drill never perturbs the continuous-verification series.
+	m.RestoreVerifierDrillLastVerifiedTs = new(expvar.Map).Init()
+	m.RestoreVerifierDrillLastSuccessTs = new(expvar.Map).Init()
+	m.RestoreVerifierDrillObjectRatio = new(expvar.Map).Init()
+	m.RestoreVerifierDrillFailureCount = new(expvar.Map).Init()
 
 	return m
 }
@@ -559,6 +577,34 @@ func (m *Metrics) PrometheusFormat() string {
 		fmt.Fprintf(&sb, "armor_restore_verification_failures_total{bucket=%q} %s\n", kv.Key, kv.Value.String())
 	})
 
+	// DR-drill (direct-only) per-bucket gauges — the direct-path analogue of the
+	// three above. Distinct series so a drill run never perturbs the dual-path
+	// restorability alerting; armor_drill_last_success_timestamp is the
+	// "drill_last_success" status field the task asked for.
+	sb.WriteString("\n# HELP armor_drill_last_verified_timestamp Unix timestamp of the most recent direct-only DR-drill attempt per bucket\n")
+	sb.WriteString("# TYPE armor_drill_last_verified_timestamp gauge\n")
+	m.RestoreVerifierDrillLastVerifiedTs.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_drill_last_verified_timestamp{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	sb.WriteString("# HELP armor_drill_last_success_timestamp Unix timestamp of the most recent successful direct-only recovery per bucket (drill_last_success)\n")
+	sb.WriteString("# TYPE armor_drill_last_success_timestamp gauge\n")
+	m.RestoreVerifierDrillLastSuccessTs.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_drill_last_success_timestamp{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	sb.WriteString("# HELP armor_drill_verified_object_ratio Ratio of objects recovered direct-only to total sampled per bucket (0..1)\n")
+	sb.WriteString("# TYPE armor_drill_verified_object_ratio gauge\n")
+	m.RestoreVerifierDrillObjectRatio.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_drill_verified_object_ratio{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	sb.WriteString("# HELP armor_drill_failures_total Cumulative objects that failed direct-only recovery per bucket\n")
+	sb.WriteString("# TYPE armor_drill_failures_total counter\n")
+	m.RestoreVerifierDrillFailureCount.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_drill_failures_total{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
 	// Uptime
 	uptime := time.Since(m.startTime).Seconds()
 	sb.WriteString("# HELP armor_uptime_seconds Server uptime in seconds\n")
@@ -627,6 +673,38 @@ func (m *Metrics) RecordRestoreBucketState(bucket string, lastVerified time.Time
 	var fc expvar.Int
 	fc.Set(failures)
 	m.RestoreVerifierFailureCount.Set(bucket, &fc)
+}
+
+// RecordDRDrillRun publishes the per-bucket direct-only DR-drill gauges — the
+// drill analogue of RecordRestoreBucketState, plus the drill's own last-success
+// timestamp. lastVerified is this attempt's time (success or failure) so the
+// drill_restore_age signal advances every run; lastSuccess is the most recent
+// *successful* direct-only recovery (zero when none has succeeded yet, so the
+// drill_last_success gauge stays at 0 until recovery is actually proven);
+// ratio is recovered/total in [0,1]; failures is the cumulative drill failure
+// count (a counter so any increase trips the drill-failure signal).
+func (m *Metrics) RecordDRDrillRun(bucket string, lastVerified, lastSuccess time.Time, ratio float64, failures int64) {
+	if bucket == "" {
+		return
+	}
+
+	var ts expvar.Int
+	ts.Set(lastVerified.Unix())
+	m.RestoreVerifierDrillLastVerifiedTs.Set(bucket, &ts)
+
+	var s expvar.Int
+	if !lastSuccess.IsZero() {
+		s.Set(lastSuccess.Unix())
+	}
+	m.RestoreVerifierDrillLastSuccessTs.Set(bucket, &s)
+
+	var r expvar.Float
+	r.Set(ratio)
+	m.RestoreVerifierDrillObjectRatio.Set(bucket, &r)
+
+	var fc expvar.Int
+	fc.Set(failures)
+	m.RestoreVerifierDrillFailureCount.Set(bucket, &fc)
 }
 
 // RequestTracker tracks in-flight requests using a WaitGroup.
