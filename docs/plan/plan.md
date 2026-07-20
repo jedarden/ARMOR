@@ -1289,3 +1289,45 @@ Kubernetes liveness and readiness probes point at `/healthz`, which incorporates
 | Multipart layout | Headerless ciphertext + sidecar HMAC table + metadata marker | B2 concatenates parts byte-for-byte, so no envelope header is possible; read path dispatches on `x-amz-meta-armor-multipart`; unsupported part patterns hard-fail instead of corrupting (see ADR-003) |
 | Multipart ordering | Uniform-part-size contract | Part N's CTR offset = (N−1)×P, order-independent — unmodified concurrent clients (aws cli, SDKs, litestream) work; contract violations hard-fail at UploadPart/Complete (see ADR-005) |
 | Restore proof | Continuous dual-path restore verification | Object presence and canary health don't prove restorability (2026-06 incident); verify through both the ARMOR read path and `armor-decrypt` direct-to-ciphertext, with application-level assertions (see ADR-004) |
+| Provider resilience | Async, opt-in secondary backend (dual-backend replication) | B2 account/bucket loss is outside the blast radius of every existing safeguard (canary, provenance, restore-verifier) — they all trust B2 as ground truth; a second `Backend` implementation written asynchronously after primary ack closes that gap without slowing writes (see ADR-006) |
+
+---
+
+## ADR-006: 2026-07-20 — Dual-Backend Async Replication for Provider-Outage Resilience
+
+**Status:** Proposed
+**Full ADR:** [docs/adr/006-dual-backend-replication.md](../adr/006-dual-backend-replication.md)
+
+### Context
+
+ARMOR's entire durability story — the canary (`internal/canary`), the provenance chain (`internal/provenance`), and the Phase 6 restore-verifier (ADR-004) — proves that **what B2 has is intact and restorable**. None of it protects against B2 not having the object at all: account suspension, a billing/ToS action, an extended regional outage, or an operator error at the bucket level are all outside every existing safeguard's blast radius, because each safeguard reads its "known-good" answer from the same single provider it is trying to verify. `docs/disaster-recovery.md` states "all operational state lives in B2 — a fresh ARMOR instance with the same config can recover all data" as a strength; it is, but only conditional on B2 itself being reachable and intact, and the runbook has no section for "B2 account or bucket is gone" because no recovery path for that scenario currently exists.
+
+`internal/backend/backend.go` already defines a `Backend` interface specifically so storage providers are swappable, and plan.md's "Key Features #4" names MinIO/R2/Wasabi/local-filesystem as anticipated future implementations — but as of this ADR, `internal/backend/b2.go` is the only production implementation. The interface's promise of a second backend has never been exercised outside test mocks.
+
+This is distinct from every corruption incident on record (ADR-002/003/005): those were ARMOR-side encryption/multipart bugs that corrupt data identically regardless of destination backend. This ADR addresses the *storage provider itself* being the point of failure, a risk category this project has never addressed.
+
+### Decision
+
+Add a second `Backend` implementation and use it as an **asynchronous, opt-in mirror** of the primary B2 backend:
+
+1. **Async, non-blocking replication** — after a primary write acknowledges, the object key is enqueued for a background writer to copy to the secondary; the client-facing ack is never delayed by the secondary write, preserving ARMOR's "ingress is fast and free" property.
+2. **Opt-in per deployment** via an env var (e.g. `ARMOR_SECONDARY_BACKEND` + credentials), default disabled — only buckets whose loss would be catastrophic pay the extra storage cost.
+3. **First implementation: a local/off-site filesystem backend** — cheapest to build against the existing interface, no new vendor relationship, and has a failure domain independent of "a cloud object-storage API is unreachable or suspended." A second cloud provider (R2, Wasabi) remains a valid future implementation of the same interface.
+4. **Health and lag are observable** — the canary gains a secondary-backend check (write/read-back both backends, report replication lag) on `/armor/canary` and as a Prometheus gauge, following the existing `multipart_healthy` pattern.
+5. **Read path unchanged by default** — GetObject keeps serving from B2 via Cloudflare; the secondary is write-time insurance, read only during an explicit failover/DR drill (extending `docs/disaster-recovery.md` and the `restore-verifier` DR-drill pattern to a "B2 is gone" scenario).
+6. **Best-effort at the object level, not transactional** — a window exists between primary ack and secondary-write-complete where only B2 has the object; this is an explicit, documented tradeoff, not zero-RPO.
+
+### Alternatives Considered
+
+1. **Do nothing; rely on B2's durability + more frequent restore verification.** Rejected — restore-verification proves restorability of what's *in* B2; it shares fate with a B2 outage and cannot detect the very failure it would need to.
+2. **Synchronous dual-write.** Rejected — doubles write latency and lets a slow secondary throttle the primary path, undermining the fast/free-ingress property core to ARMOR's write workloads.
+3. **Rely on B2's own cross-region replication/lifecycle features.** Rejected — still single-provider/single-account risk, and outside ARMOR's observability.
+4. **Full symmetric multi-backend read distribution.** Rejected as premature — the risk being mitigated is provider outage, not load/latency; symmetric reads add real complexity (cache coherence, doubled read-path testing) for no benefit to this problem.
+
+### Consequences
+
+- Storage cost roughly doubles for any bucket that opts in (~$6–7/TB-mo → ~$12–14/TB-mo) — must stay opt-in, not default.
+- New operational surface: secondary credentials/config, a replication queue that can back up, a new canary check for lag.
+- A best-effort replication window means an object lost from B2 immediately after ack, before the async copy lands, is still lost — must be documented plainly, not oversold as zero-RPO.
+- Failover is a manual/drilled procedure, not automatic read failover — this ADR buys recoverability, not automatic availability.
+- Validates the `Backend` interface design by finally exercising a second real implementation.
