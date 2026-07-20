@@ -1947,10 +1947,64 @@ func TestKeyRotateHandlerSuccess(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
 	rec := httptest.NewRecorder()
 
-	d.KeyRotateHandler(adminServer.Client(), adminServer.URL)(rec, req)
+	d.KeyRotateHandler(adminServer.Client(), adminServer.URL, "")(rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Errorf("Expected status 202, got %d", rec.Code)
+	}
+}
+
+// TestKeyRotateHandlerForwardsAdminToken verifies the loopback rotation call
+// carries the ARMOR_ADMIN_TOKEN bearer so it passes the /admin/key/rotate gate.
+func TestKeyRotateHandlerForwardsAdminToken(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	const wantToken = "loopback-secret"
+	var gotAuth string
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer adminServer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
+	rec := httptest.NewRecorder()
+	d.KeyRotateHandler(adminServer.Client(), adminServer.URL, wantToken)(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("Expected status 202, got %d", rec.Code)
+	}
+	if gotAuth != "Bearer "+wantToken {
+		t.Errorf("Expected admin API to receive bearer token, got %q", gotAuth)
+	}
+}
+
+// TestKeyRotateHandlerOmitsAuthHeaderWhenTokenUnset verifies that when no admin
+// token is configured, the proxy sends no Authorization header (the admin API
+// then rejects rotation fail-closed rather than receiving a stale/empty header).
+func TestKeyRotateHandlerOmitsAuthHeaderWhenTokenUnset(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	var gotAuth = "sentinel"
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer adminServer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
+	rec := httptest.NewRecorder()
+	d.KeyRotateHandler(adminServer.Client(), adminServer.URL, "")(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("Expected status 202, got %d", rec.Code)
+	}
+	if gotAuth != "" {
+		t.Errorf("Expected no Authorization header when token unset, got %q", gotAuth)
 	}
 }
 
@@ -1970,7 +2024,7 @@ func TestKeyRotateHandlerWithAuth(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	// Should fail without auth
-	d.KeyRotateHandlerWithAuth(adminServer.Client(), adminServer.URL)(rec, req)
+	d.KeyRotateHandlerWithAuth(adminServer.Client(), adminServer.URL, "")(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("Expected status 401 without auth, got %d", rec.Code)
 	}
@@ -1980,7 +2034,7 @@ func TestKeyRotateHandlerWithAuth(t *testing.T) {
 	req.SetBasicAuth("admin", "secret")
 	rec = httptest.NewRecorder()
 
-	d.KeyRotateHandlerWithAuth(adminServer.Client(), adminServer.URL)(rec, req)
+	d.KeyRotateHandlerWithAuth(adminServer.Client(), adminServer.URL, "")(rec, req)
 	if rec.Code != http.StatusAccepted {
 		t.Errorf("Expected status 202 with valid auth, got %d", rec.Code)
 	}
@@ -1995,7 +2049,7 @@ func TestKeyRotateHandlerMethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/admin/key/rotate", nil)
 	rec := httptest.NewRecorder()
 
-	d.KeyRotateHandler(nil, "")(rec, req)
+	d.KeyRotateHandler(nil, "", "")(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("Expected status 405, got %d", rec.Code)
@@ -2018,7 +2072,7 @@ func TestKeyRotateHandlerAdminAPIFailure(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
 	rec := httptest.NewRecorder()
 
-	d.KeyRotateHandler(adminServer.Client(), adminServer.URL)(rec, req)
+	d.KeyRotateHandler(adminServer.Client(), adminServer.URL, "")(rec, req)
 
 	// The handler copies the admin API's response status code
 	if rec.Code != http.StatusInternalServerError {
@@ -2036,7 +2090,7 @@ func TestKeyRotateHandlerDefaultURL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/dashboard/admin/key/rotate", nil)
 	rec := httptest.NewRecorder()
 
-	d.KeyRotateHandler(http.DefaultClient, "")(rec, req)
+	d.KeyRotateHandler(http.DefaultClient, "", "")(rec, req)
 
 	// Will fail to connect to localhost:9001, but confirms the default URL is used
 	if rec.Code != http.StatusBadGateway {

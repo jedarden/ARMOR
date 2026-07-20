@@ -101,6 +101,15 @@ type Config struct {
 	DashboardUser  string
 	DashboardPass  string
 	DashboardToken string
+
+	// AdminToken gates the admin API (all /admin/* routes and /armor/audit).
+	// When set, every gated request must carry "Authorization: Bearer <token>"
+	// and is compared in constant time. When unset, gated admin routes are
+	// disabled (fail-closed) so the MEK cannot be exported or rotated without
+	// an explicitly configured secret. Probes (/healthz, /readyz), /armor/canary,
+	// /metrics, and /dashboard* (which carry their own auth) are unaffected.
+	// See bead bf-5m9nde.
+	AdminToken string
 }
 
 // Load reads configuration from environment variables.
@@ -275,6 +284,10 @@ func Load() (*Config, error) {
 	cfg.DashboardUser = os.Getenv("ARMOR_DASHBOARD_USER")
 	cfg.DashboardPass = os.Getenv("ARMOR_DASHBOARD_PASS")
 	cfg.DashboardToken = os.Getenv("ARMOR_DASHBOARD_TOKEN")
+
+	// Admin API bearer token. When set, all /admin/* routes (and /armor/audit)
+	// require it; when unset, gated admin routes are disabled (fail-closed).
+	cfg.AdminToken = os.Getenv("ARMOR_ADMIN_TOKEN")
 
 	return cfg, nil
 }

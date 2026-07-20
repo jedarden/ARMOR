@@ -487,17 +487,17 @@ func (d *Dashboard) metricsHandlerImpl() http.HandlerFunc {
 
 // KeyRotateHandler handles key rotation requests.
 // It generates a new MEK and calls the admin API to perform rotation.
-func (d *Dashboard) KeyRotateHandler(adminClient *http.Client, adminURL string) http.HandlerFunc {
-	return d.keyRotateHandlerImpl(adminClient, adminURL)
+func (d *Dashboard) KeyRotateHandler(adminClient *http.Client, adminURL, adminToken string) http.HandlerFunc {
+	return d.keyRotateHandlerImpl(adminClient, adminURL, adminToken)
 }
 
 // KeyRotateHandlerWithAuth handles key rotation requests with authentication.
-func (d *Dashboard) KeyRotateHandlerWithAuth(adminClient *http.Client, adminURL string) http.HandlerFunc {
-	return d.auth.Wrap(d.keyRotateHandlerImpl(adminClient, adminURL))
+func (d *Dashboard) KeyRotateHandlerWithAuth(adminClient *http.Client, adminURL, adminToken string) http.HandlerFunc {
+	return d.auth.Wrap(d.keyRotateHandlerImpl(adminClient, adminURL, adminToken))
 }
 
 // keyRotateHandlerImpl is the actual implementation of the key rotation handler.
-func (d *Dashboard) keyRotateHandlerImpl(adminClient *http.Client, adminURL string) http.HandlerFunc {
+func (d *Dashboard) keyRotateHandlerImpl(adminClient *http.Client, adminURL, adminToken string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -525,6 +525,12 @@ func (d *Dashboard) keyRotateHandlerImpl(adminClient *http.Client, adminURL stri
 			return
 		}
 		req.Header.Set("Content-Type", "text/plain")
+		// Forward the admin bearer token so the loopback call passes the
+		// /admin/key/rotate token gate (ARMOR_ADMIN_TOKEN). When unset, the
+		// admin API rejects rotation (fail-closed); we send no header then.
+		if adminToken != "" {
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+		}
 
 		resp, err := adminClient.Do(req)
 		if err != nil {
