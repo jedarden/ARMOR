@@ -78,6 +78,19 @@ spec:
             secretKeyRef:
               name: armor-secrets
               key: auth-secret-key
+        # Admin API bearer token (gates MEK export/rotate and all /admin/* routes).
+        # When set, every gated request must carry "Authorization: Bearer <token>"
+        # (constant-time compare). When unset, gated admin routes are disabled
+        # fail-closed (403) so the MEK cannot be exported or rotated without it.
+        # Marked optional so a fleet bump can roll out before the secret exists;
+        # set it on every deployment — without it the admin API is locked down.
+        # See bead bf-5m9nde. Generate with: openssl rand -hex 32
+        - name: ARMOR_ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: admin-token
+              optional: true
         # Optional configuration with defaults
         - name: ARMOR_LISTEN
           value: "0.0.0.0:9000"
