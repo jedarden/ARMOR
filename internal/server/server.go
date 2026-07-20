@@ -413,16 +413,20 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/encryption-stats", s.dashboard.EncryptionStatsHandlerWithAuth())
 		mux.HandleFunc("/dashboard/api/list", s.dashboard.ListAPIHandlerWithAuth())
 
-		// Key rotation proxy handler (authenticated)
+		// Key rotation proxy handler (authenticated).
+		// The dashboard proxies rotation to the admin API over loopback; it must
+		// present the admin token now that /admin/key/rotate is token-gated.
 		adminClient := &http.Client{
 			Timeout: 30 * time.Minute, // Key rotation can take a long time
 		}
 		adminURL := "http://" + s.config.AdminListen + "/admin/key/rotate"
-		mux.HandleFunc("/dashboard/admin/key/rotate", s.dashboard.KeyRotateHandlerWithAuth(adminClient, adminURL))
+		mux.HandleFunc("/dashboard/admin/key/rotate", s.dashboard.KeyRotateHandlerWithAuth(adminClient, adminURL, s.config.AdminToken))
 		mux.HandleFunc("/dashboard/admin/key/status", s.dashboard.KeyRotateStatusHandlerWithAuth())
 	}
 
-	return mux
+	// Gate every non-public admin route behind ARMOR_ADMIN_TOKEN and audit-log
+	// each call. Public probe/scrape/dashboard paths are passed through.
+	return s.adminAuthMiddleware(mux)
 }
 
 // healthz returns the health status.
