@@ -4,8 +4,10 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +17,30 @@ import (
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/manifest"
+)
+
+// B2CopyObjectSizeCeiling is the maximum object size B2's S3-compatible
+// CopyObject API will copy in a single request: 5 GiB, the same ceiling as AWS
+// S3 CopyObject. Rotation re-wraps DEKs via CopyObject(MetadataDirective=
+// REPLACE); objects larger than this cannot be re-wrapped that way and must be
+// rewritten with a multipart copy instead. Rotation enumerates such objects as
+// exceptions (see ErrCopyObjectTooLarge) rather than silently skipping them.
+const B2CopyObjectSizeCeiling int64 = 5 * 1024 * 1024 * 1024 // 5 GiB
+
+// ErrCopyObjectTooLarge is returned by rotateObject when an object exceeds
+// B2CopyObjectSizeCeiling. The rotation loop surfaces these as exceptions
+// (RotationResult.Exceptions / ExceptionKeys) instead of attempting a copy
+// that the B2 API would reject, and instead of silently skipping the object.
+var ErrCopyObjectTooLarge = errors.New("object exceeds B2 CopyObject size ceiling")
+
+// armor metadata header keys used by rotation. Defined here as constants so the
+// merge-and-overwrite logic in rotateObject can never drift from the keys the
+// encrypt/decrypt paths read and write.
+const (
+	armorMetaVersion    = "x-amz-meta-armor-version"
+	armorMetaWrappedDEK = "x-amz-meta-armor-wrapped-dek"
+	armorMetaMultipart  = "x-amz-meta-armor-multipart"
+	armorMetaPartSize   = "x-amz-meta-armor-part-size"
 )
 
 // RotationState tracks the progress of a key rotation operation.
@@ -46,9 +72,16 @@ type RotationResult struct {
 	TotalObjects     int           `json:"total_objects"`
 	ProcessedObjects int           `json:"processed_objects"`
 	SkippedObjects   int           `json:"skipped_objects"`
-	Duration         time.Duration `json:"duration"`
-	Status           string        `json:"status"`
-	ErrorMessage     string        `json:"error_message,omitempty"`
+	// Exceptions is the number of objects that could not be re-wrapped via
+	// CopyObject — currently objects larger than B2CopyObjectSizeCeiling.
+	// These are NOT counted in ProcessedObjects or SkippedObjects and are NOT
+	// silently skipped: ExceptionKeys lists them so an operator can re-wrap them
+	// with a multipart copy.
+	Exceptions     int           `json:"exceptions"`
+	ExceptionKeys  []string      `json:"exception_keys,omitempty"`
+	Duration       time.Duration `json:"duration"`
+	Status         string        `json:"status"`
+	ErrorMessage   string        `json:"error_message,omitempty"`
 }
 
 // KeyRotator handles MEK rotation operations.
@@ -160,6 +193,19 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 
 			// Re-wrap the DEK for this object
 			if err := kr.rotateObject(ctx, obj); err != nil {
+				if errors.Is(err, ErrCopyObjectTooLarge) {
+					// Oversized objects cannot be re-wrapped via CopyObject.
+					// Enumerate them as exceptions (not silently skipped) and
+					// advance LastKey past them so resume doesn't re-report them.
+					result.Exceptions++
+					result.ExceptionKeys = append(result.ExceptionKeys, obj.Key)
+					log.Printf("rotation exception: %s cannot be re-wrapped via CopyObject: %v", obj.Key, err)
+					kr.stateMu.Lock()
+					kr.state.LastKey = obj.Key
+					kr.state.LastUpdated = time.Now()
+					kr.stateMu.Unlock()
+					continue
+				}
 				log.Printf("Warning: failed to rotate key for %s: %v", obj.Key, err)
 				// Continue with other objects - rotation is best-effort
 			}
@@ -204,41 +250,48 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 	return result, nil
 }
 
-// rotateObject re-wraps the DEK for a single object.
+// rotateObject re-wraps the DEK for a single object in place.
+//
+// Rotation re-wraps the DEK via CopyObject with MetadataDirective=REPLACE.
+// REPLACE overwrites the ENTIRE object metadata set with whatever map we send,
+// so we MUST start from the object's current full metadata and overwrite only
+// the wrapped-DEK. Rebuilding the map from ARMORMetadata.ToMetadata() would
+// silently drop x-amz-meta-armor-multipart and x-amz-meta-armor-part-size —
+// which makes every rotated multipart object unreadable, because the read path
+// keys off the multipart marker to find the HMAC sidecar instead of an embedded
+// envelope header. That is exactly the bf-24sxh7 failure mode reintroduced by
+// rotation; preserving the raw metadata here is what prevents it.
 func (kr *KeyRotator) rotateObject(ctx context.Context, obj backend.ObjectInfo) error {
-	var armorMeta *backend.ARMORMetadata
-
-	// Fast path: read wrapped DEK from the in-memory manifest index to avoid
-	// a B2 HeadObject API call per object.
-	if kr.idx != nil {
-		if entry, ok := kr.idx.Get(kr.bucket, obj.Key); ok {
-			armorMeta = &backend.ARMORMetadata{
-				Version:       1,
-				BlockSize:     entry.BlockSize,
-				PlaintextSize: entry.PlaintextSize,
-				ContentType:   entry.ContentType,
-				IV:            entry.IV,
-				WrappedDEK:    entry.WrappedDEK,
-				ETag:          entry.ETag,
-			}
-		}
+	// Enforce the B2 CopyObject size ceiling before attempting the copy. B2/S3
+	// CopyObject rejects objects above 5 GiB; surfacing it here yields a clear,
+	// typed error the loop reports as an exception instead of an opaque
+	// CopyObject failure or — worse — a silent skip.
+	if obj.Size > B2CopyObjectSizeCeiling {
+		return fmt.Errorf("%w: %s is %d bytes (ceiling %d); re-wrap requires a multipart copy, not CopyObject",
+			ErrCopyObjectTooLarge, obj.Key, obj.Size, B2CopyObjectSizeCeiling)
 	}
 
-	if armorMeta == nil {
-		// Manifest miss or disabled: fall back to a B2 HeadObject call.
-		info, err := kr.backend.Head(ctx, kr.bucket, obj.Key)
-		if err != nil {
-			return fmt.Errorf("failed to get object metadata: %w", err)
-		}
-		var ok bool
-		armorMeta, ok = backend.ParseARMORMetadata(info.Metadata)
+	// Resolve the object's full raw metadata. ListObjectsV2 on B2/S3 does not
+	// return custom metadata, so when the List result lacks armor metadata we
+	// fall back to a HeadObject call.
+	rawMeta, err := kr.objectMetadata(ctx, obj)
+	if err != nil {
+		return err
+	}
+
+	// Resolve the current wrapped DEK. Prefer the manifest fast-path (avoids
+	// re-parsing headers); fall back to parsing the raw metadata.
+	oldWrappedDEK := kr.wrappedDEKFromManifest(obj.Key)
+	if oldWrappedDEK == nil {
+		armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
 		if !ok {
-			return fmt.Errorf("object is not ARMOR-encrypted")
+			return fmt.Errorf("object %s is not ARMOR-encrypted", obj.Key)
 		}
+		oldWrappedDEK = armorMeta.WrappedDEK
 	}
 
 	// Unwrap DEK with old MEK
-	dek, err := crypto.UnwrapDEK(kr.oldMEK, armorMeta.WrappedDEK)
+	dek, err := crypto.UnwrapDEK(kr.oldMEK, oldWrappedDEK)
 	if err != nil {
 		return fmt.Errorf("failed to unwrap DEK with old MEK: %w", err)
 	}
@@ -249,16 +302,49 @@ func (kr *KeyRotator) rotateObject(ctx context.Context, obj backend.ObjectInfo) 
 		return fmt.Errorf("failed to wrap DEK with new MEK: %w", err)
 	}
 
-	// Update metadata with new wrapped DEK
-	armorMeta.WrappedDEK = newWrappedDEK
-	newMeta := armorMeta.ToMetadata()
+	// Clone the full raw metadata and overwrite ONLY the wrapped-DEK. This
+	// preserves x-amz-meta-armor-multipart, x-amz-meta-armor-part-size,
+	// x-amz-meta-armor-key-id, plaintext-sha256, etag, and any non-ARMOR user
+	// metadata across the REPLACE copy.
+	newMeta := make(map[string]string, len(rawMeta))
+	for k, v := range rawMeta {
+		newMeta[k] = v
+	}
+	newMeta[armorMetaWrappedDEK] = base64.StdEncoding.EncodeToString(newWrappedDEK)
 
-	// Copy object in place with updated metadata (B2 server-side copy)
-	// For in-place copy, src and dst bucket/key are the same
+	// Copy object in place with updated metadata (B2 server-side copy).
+	// For in-place copy, src and dst bucket/key are the same. The object body
+	// (ciphertext) and ETag are untouched — only metadata changes.
 	if err := kr.backend.Copy(ctx, kr.bucket, obj.Key, kr.bucket, obj.Key, newMeta, true); err != nil {
 		return fmt.Errorf("failed to update object metadata: %w", err)
 	}
 
+	return nil
+}
+
+// objectMetadata returns the object's full raw metadata map. B2/S3
+// ListObjectsV2 omits custom metadata, so when the List result does not carry
+// armor metadata we fall back to a HeadObject call.
+func (kr *KeyRotator) objectMetadata(ctx context.Context, obj backend.ObjectInfo) (map[string]string, error) {
+	if obj.Metadata != nil && obj.Metadata[armorMetaVersion] != "" {
+		return obj.Metadata, nil
+	}
+	info, err := kr.backend.Head(ctx, kr.bucket, obj.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object metadata: %w", err)
+	}
+	return info.Metadata, nil
+}
+
+// wrappedDEKFromManifest returns the wrapped DEK for the object from the
+// in-memory manifest index, or nil if the manifest is disabled or has no entry.
+func (kr *KeyRotator) wrappedDEKFromManifest(key string) []byte {
+	if kr.idx == nil {
+		return nil
+	}
+	if entry, ok := kr.idx.Get(kr.bucket, key); ok {
+		return entry.WrappedDEK
+	}
 	return nil
 }
 
