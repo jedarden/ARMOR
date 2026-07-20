@@ -381,6 +381,8 @@ go test -v -tags=integration ./...
 
 ## Key Rotation Failure Recovery
 
+> For the planned rotation procedure and required ordering (OpenBao → ESO sync → rotate endpoint → pod restart), see [key-rotation-runbook.md](key-rotation-runbook.md). This section covers recovering from an interrupted or failed rotation.
+
 ARMOR tracks key rotation progress in `.armor/rotation-state.json` in the B2 bucket. This allows rotation to resume safely if interrupted.
 
 ### Detecting an Incomplete Rotation

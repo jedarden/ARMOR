@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -28,12 +32,40 @@ type mockRotationBackend struct {
 type mockObject struct {
 	data     []byte
 	metadata map[string]string
+	// fakeSize, when > 0, overrides len(data) as the object's reported Size.
+	// Used to simulate oversized objects for the B2 CopyObject ceiling test
+	// without storing gigabytes of data.
+	fakeSize int64
 }
 
 func newMockRotationBackend() *mockRotationBackend {
 	return &mockRotationBackend{
 		objects: make(map[string]*mockObject),
 	}
+}
+
+// setFakeSize overrides the Size reported for an object, simulating an
+// oversized object for the B2 CopyObject ceiling test.
+func (m *mockRotationBackend) setFakeSize(bucket, key string, size int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if obj, ok := m.objects[bucket+"/"+key]; ok {
+		obj.fakeSize = size
+	}
+}
+
+// objectSize returns the reported size for a mock object, honoring fakeSize.
+func (m *mockRotationBackend) objectSize(bucket, key string) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	obj, ok := m.objects[bucket+"/"+key]
+	if !ok {
+		return 0
+	}
+	if obj.fakeSize > 0 {
+		return obj.fakeSize
+	}
+	return int64(len(obj.data))
 }
 
 // sortObjectsByKey sorts backend.ObjectInfo slice by key (lexicographic order)
@@ -70,9 +102,17 @@ func (m *mockRotationBackend) Get(ctx context.Context, bucket, key string) (io.R
 
 	return io.NopCloser(bytes.NewReader(obj.data)), &backend.ObjectInfo{
 		Key:      key,
-		Size:     int64(len(obj.data)),
+		Size:     reportedSize(obj),
 		Metadata: obj.metadata,
 	}, nil
+}
+
+// reportedSize returns the size a mock object should report (fakeSize if set).
+func reportedSize(obj *mockObject) int64 {
+	if obj.fakeSize > 0 {
+		return obj.fakeSize
+	}
+	return int64(len(obj.data))
 }
 
 func (m *mockRotationBackend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
@@ -112,7 +152,7 @@ func (m *mockRotationBackend) Head(ctx context.Context, bucket, key string) (*ba
 
 	return &backend.ObjectInfo{
 		Key:              key,
-		Size:             int64(len(obj.data)),
+		Size:             reportedSize(obj),
 		Metadata:         obj.metadata,
 		IsARMOREncrypted: isARMOR && armorMeta != nil,
 	}, nil
@@ -150,9 +190,11 @@ func (m *mockRotationBackend) List(ctx context.Context, bucket, prefix, delimite
 		// Parse metadata to check if ARMOR encrypted
 		armorMeta, isARMOR := backend.ParseARMORMetadata(obj.metadata)
 
+		// reportedSize honors fakeSize so the B2 CopyObject ceiling test can
+		// report an oversized object from List without storing gigabytes.
 		objects = append(objects, backend.ObjectInfo{
 			Key:              key,
-			Size:             int64(len(obj.data)),
+			Size:             reportedSize(obj),
 			Metadata:         obj.metadata,
 			IsARMOREncrypted: isARMOR && armorMeta != nil,
 		})
@@ -719,5 +761,580 @@ func TestKeyRotationSkipsInternalObjects(t *testing.T) {
 	// Verify only regular object was processed
 	if result.ProcessedObjects != 1 {
 		t.Errorf("expected 1 processed object, got %d", result.ProcessedObjects)
+	}
+}
+
+// multipartSidecarKey mirrors backend.MultipartStateManager.SaveHMACTable: the
+// HMAC table for a multipart object lives at .armor/hmac/<sha256(key)>.
+func multipartSidecarKey(key string) string {
+	return fmt.Sprintf(".armor/hmac/%x", sha256.Sum256([]byte(key)))
+}
+
+// createTestMultipartARMORObject writes a multipart-format ARMOR object: it
+// carries the x-amz-meta-armor-multipart / -part-size markers and stores its
+// block HMAC table in a sidecar at .armor/hmac/<sha256(key)>, exactly as the
+// real CompleteMultipartUpload path (handlers.go) does. The object body is raw
+// concatenated part ciphertext with no embedded envelope header. It returns the
+// sidecar bytes written so a test can assert rotation never touched them.
+func createTestMultipartARMORObject(t *testing.T, b *mockRotationBackend, mek []byte, bucket, key string, plaintext []byte, partSize int64) []byte {
+	t.Helper()
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		t.Fatalf("generate DEK: %v", err)
+	}
+	iv, err := crypto.GenerateIV()
+	if err != nil {
+		t.Fatalf("generate IV: %v", err)
+	}
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("wrap DEK: %v", err)
+	}
+
+	plaintextSHA := sha256.Sum256(plaintext)
+	meta := map[string]string{
+		"x-amz-meta-armor-version":          "1",
+		"x-amz-meta-armor-block-size":       "65536",
+		"x-amz-meta-armor-plaintext-size":   fmt.Sprintf("%d", len(plaintext)),
+		"x-amz-meta-armor-content-type":     "application/octet-stream",
+		"x-amz-meta-armor-iv":               base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-wrapped-dek":      base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-plaintext-sha256": hex.EncodeToString(plaintextSHA[:]),
+		"x-amz-meta-armor-etag":             "etag-" + key,
+		// The two markers backend.ARMORMetadata.ToMetadata() does NOT emit, and
+		// that rotation must therefore preserve from the raw metadata map. A
+		// dropped armor-multipart marker is exactly the bf-24sxh7 regression
+		// rotation could reintroduce.
+		"x-amz-meta-armor-multipart": "true",
+		"x-amz-meta-armor-part-size": fmt.Sprintf("%d", partSize),
+		// Non-ARMOR user metadata that must also survive the REPLACE copy.
+		"x-amz-meta-customer-owner": "finance",
+	}
+
+	var buf bytes.Buffer
+	buf.Write(plaintext)
+	if err := b.Put(context.Background(), bucket, key, &buf, int64(len(plaintext)), meta); err != nil {
+		t.Fatalf("put multipart object %s: %v", key, err)
+	}
+
+	// HMAC sidecar mirroring backend.MultipartStateManager.SaveHMACTable.
+	sidecar := backend.HMACTableSidecar{
+		Key:        key,
+		BlockSize:  65536,
+		BlockHMACs: [][]byte{[]byte("block-hmac-0"), []byte("block-hmac-1")},
+	}
+	sidecarData, err := json.Marshal(sidecar)
+	if err != nil {
+		t.Fatalf("marshal sidecar: %v", err)
+	}
+	var sbuf bytes.Buffer
+	sbuf.Write(sidecarData)
+	if err := b.Put(context.Background(), bucket, multipartSidecarKey(key), &sbuf, int64(len(sidecarData)), nil); err != nil {
+		t.Fatalf("put sidecar for %s: %v", key, err)
+	}
+	return sidecarData
+}
+
+// dekUnwrapsWith reports whether the object's current wrapped DEK unwraps under
+// the given MEK using the real AES-KWP (RFC 5649) unwrap.
+func dekUnwrapsWith(t *testing.T, b *mockRotationBackend, bucket, key string, mek []byte) bool {
+	t.Helper()
+	info, err := b.Head(context.Background(), bucket, key)
+	if err != nil {
+		t.Fatalf("head %s: %v", key, err)
+	}
+	am, ok := backend.ParseARMORMetadata(info.Metadata)
+	if !ok {
+		t.Fatalf("%s is not ARMOR-encrypted", key)
+	}
+	_, err = crypto.UnwrapDEK(mek, am.WrappedDEK)
+	return err == nil
+}
+
+// objectBody reads an object's full body from the mock backend.
+func objectBody(t *testing.T, b *mockRotationBackend, bucket, key string) []byte {
+	t.Helper()
+	body, _, err := b.Get(context.Background(), bucket, key)
+	if err != nil {
+		t.Fatalf("get %s: %v", key, err)
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read %s: %v", key, err)
+	}
+	return data
+}
+
+// TestKeyRotationMixedPrefixPreservesMultipart rotates a prefix containing both
+// single-PUT and multipart objects and proves: every object decrypts with the
+// NEW MEK and fails with the OLD MEK; plaintext bodies and ETags are unchanged;
+// and — critically for multipart objects — the armor-multipart marker,
+// armor-part-size, and HMAC sidecar all survive the CopyObject REPLACE, so the
+// object round-trips (the read path keys off the multipart marker to find the
+// sidecar; dropping it would reintroduce bf-24sxh7).
+func TestKeyRotationMixedPrefixPreservesMultipart(t *testing.T) {
+	oldMEK := make([]byte, 32)
+	newMEK := make([]byte, 32)
+	rand.Read(oldMEK)
+	rand.Read(newMEK)
+
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	// Two single-PUT objects.
+	singleKeys := []string{"data/single-a.bin", "data/single-b.bin"}
+	singlePlaintext := map[string][]byte{}
+	for _, k := range singleKeys {
+		pt := []byte("single-put payload " + k)
+		singlePlaintext[k] = pt
+		meta, err := createTestARMORObject(oldMEK, bucket, k, pt)
+		if err != nil {
+			t.Fatalf("create single object %s: %v", k, err)
+		}
+		var buf bytes.Buffer
+		buf.Write(pt)
+		if err := mock.Put(context.Background(), bucket, k, &buf, int64(len(pt)), meta); err != nil {
+			t.Fatalf("put %s: %v", k, err)
+		}
+	}
+
+	// Two multipart objects (payload spans more than one 64 KiB block).
+	multipartKeys := []string{"data/multi-a.bin", "data/multi-b.bin"}
+	multipartPlaintext := map[string][]byte{}
+	sidecarBefore := map[string][]byte{}
+	for _, k := range multipartKeys {
+		pt := []byte(strings.Repeat("m", 130000))
+		multipartPlaintext[k] = pt
+		sidecarBefore[k] = createTestMultipartARMORObject(t, mock, oldMEK, bucket, k, pt, 65536)
+	}
+
+	allKeys := append(append([]string{}, singleKeys...), multipartKeys...)
+
+	// Snapshot ETag, plaintext-sha, and body before rotation.
+	type snapshot struct {
+		etag, ptSHA string
+		body        []byte
+	}
+	before := map[string]snapshot{}
+	for _, k := range allKeys {
+		info, err := mock.Head(context.Background(), bucket, k)
+		if err != nil {
+			t.Fatalf("head %s: %v", k, err)
+		}
+		before[k] = snapshot{
+			etag:  info.Metadata["x-amz-meta-armor-etag"],
+			ptSHA: info.Metadata["x-amz-meta-armor-plaintext-sha256"],
+			body:  objectBody(t, mock, bucket, k),
+		}
+	}
+
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, nil)
+	result, err := rotator.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status = %q, want completed", result.Status)
+	}
+	if result.ProcessedObjects != len(allKeys) {
+		t.Errorf("processed = %d, want %d", result.ProcessedObjects, len(allKeys))
+	}
+
+	for _, k := range allKeys {
+		// Decrypts with NEW MEK.
+		if !dekUnwrapsWith(t, mock, bucket, k, newMEK) {
+			t.Errorf("%s: DEK does not unwrap with NEW MEK after rotation", k)
+		}
+		// Fails with OLD MEK.
+		if dekUnwrapsWith(t, mock, bucket, k, oldMEK) {
+			t.Errorf("%s: DEK still unwraps with OLD MEK (not re-wrapped)", k)
+		}
+		// Plaintext body unchanged (CopyObject is server-side; body untouched).
+		if got := objectBody(t, mock, bucket, k); !bytes.Equal(got, before[k].body) {
+			t.Errorf("%s: plaintext body changed across rotation", k)
+		}
+		// ETag and plaintext-sha unchanged.
+		info, err := mock.Head(context.Background(), bucket, k)
+		if err != nil {
+			t.Fatalf("head %s after rotation: %v", k, err)
+		}
+		if got := info.Metadata["x-amz-meta-armor-etag"]; got != before[k].etag {
+			t.Errorf("%s: etag changed %q -> %q", k, before[k].etag, got)
+		}
+		if got := info.Metadata["x-amz-meta-armor-plaintext-sha256"]; got != before[k].ptSHA {
+			t.Errorf("%s: plaintext-sha256 changed %q -> %q", k, before[k].ptSHA, got)
+		}
+	}
+
+	// CRITICAL: rotation must preserve ALL x-amz-meta-armor-* metadata on
+	// multipart objects and must not touch the HMAC sidecar. A dropped
+	// armor-multipart marker silently makes every rotated multipart object
+	// unreadable (the bf-24sxh7 failure mode reintroduced by rotation).
+	for _, k := range multipartKeys {
+		info, err := mock.Head(context.Background(), bucket, k)
+		if err != nil {
+			t.Fatalf("head multipart %s: %v", k, err)
+		}
+		if got := info.Metadata["x-amz-meta-armor-multipart"]; got != "true" {
+			t.Errorf("%s: armor-multipart marker = %q after rotation, want \"true\" (bf-24sxh7 regression)", k, got)
+		}
+		if got := info.Metadata["x-amz-meta-armor-part-size"]; got != "65536" {
+			t.Errorf("%s: armor-part-size = %q after rotation, want \"65536\"", k, got)
+		}
+		if got := info.Metadata["x-amz-meta-armor-content-type"]; got != "application/octet-stream" {
+			t.Errorf("%s: content-type changed to %q", k, got)
+		}
+		// Non-ARMOR user metadata also survives the REPLACE copy.
+		if got := info.Metadata["x-amz-meta-customer-owner"]; got != "finance" {
+			t.Errorf("%s: non-ARMOR user metadata lost: customer-owner = %q", k, got)
+		}
+
+		// HMAC sidecar byte-identical and still parseable.
+		sk := multipartSidecarKey(k)
+		got := objectBody(t, mock, bucket, sk)
+		if !bytes.Equal(got, sidecarBefore[k]) {
+			t.Errorf("%s: HMAC sidecar was mutated by rotation (must be untouched)", k)
+		}
+		var sc backend.HMACTableSidecar
+		if err := json.Unmarshal(got, &sc); err != nil {
+			t.Errorf("%s: HMAC sidecar no longer parseable after rotation: %v", k, err)
+		}
+		if sc.Key != k || sc.BlockSize != 65536 {
+			t.Errorf("%s: sidecar content drift: key=%q block-size=%d", k, sc.Key, sc.BlockSize)
+		}
+
+		// Round-trip: with the marker + wrapped-DEK + sidecar all intact, the
+		// object is still readable exactly as the read path (handlers.go:714)
+		// dispatches on the multipart marker to LoadHMACTable from this sidecar.
+		if !dekUnwrapsWith(t, mock, bucket, k, newMEK) {
+			t.Errorf("%s: multipart object not readable with new MEK after rotation", k)
+		}
+	}
+}
+
+// TestKeyRotationPassthroughUnchanged proves non-ARMOR (passthrough) objects are
+// skipped entirely: body bytes and every metadata key are byte-identical, and
+// no armor metadata is injected.
+func TestKeyRotationPassthroughUnchanged(t *testing.T) {
+	oldMEK := make([]byte, 32)
+	newMEK := make([]byte, 32)
+	rand.Read(oldMEK)
+	rand.Read(newMEK)
+
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	// One ARMOR object so rotation actually does work.
+	armorKey := "data/encrypted.bin"
+	pt := []byte("secret payload")
+	meta, err := createTestARMORObject(oldMEK, bucket, armorKey, pt)
+	if err != nil {
+		t.Fatalf("create armor object: %v", err)
+	}
+	var ab bytes.Buffer
+	ab.Write(pt)
+	if err := mock.Put(context.Background(), bucket, armorKey, &ab, int64(len(pt)), meta); err != nil {
+		t.Fatalf("put armor object: %v", err)
+	}
+
+	// Non-ARMOR passthrough object with arbitrary metadata.
+	plainKey := "uploads/photo.jpg"
+	plainMeta := map[string]string{
+		"Content-Type":        "image/jpeg",
+		"x-amz-meta-uploader": "alice",
+	}
+	plainBody := []byte("raw-jpeg-bytes-not-armor")
+	var pb bytes.Buffer
+	pb.Write(plainBody)
+	if err := mock.Put(context.Background(), bucket, plainKey, &pb, int64(len(plainBody)), plainMeta); err != nil {
+		t.Fatalf("put passthrough object: %v", err)
+	}
+
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, nil)
+	result, err := rotator.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if result.ProcessedObjects != 1 {
+		t.Errorf("processed = %d, want 1 (only the ARMOR object)", result.ProcessedObjects)
+	}
+
+	// Passthrough object untouched.
+	info, err := mock.Head(context.Background(), bucket, plainKey)
+	if err != nil {
+		t.Fatalf("head passthrough: %v", err)
+	}
+	if got := info.Metadata["Content-Type"]; got != "image/jpeg" {
+		t.Errorf("passthrough Content-Type = %q, want image/jpeg", got)
+	}
+	if got := info.Metadata["x-amz-meta-uploader"]; got != "alice" {
+		t.Errorf("passthrough uploader metadata = %q, want alice", got)
+	}
+	if got := objectBody(t, mock, bucket, plainKey); !bytes.Equal(got, plainBody) {
+		t.Errorf("passthrough body mutated by rotation")
+	}
+	if _, injected := info.Metadata["x-amz-meta-armor-version"]; injected {
+		t.Error("rotation injected armor metadata into a passthrough object")
+	}
+
+	// ARMOR object was rotated.
+	if !dekUnwrapsWith(t, mock, bucket, armorKey, newMEK) {
+		t.Error("armor object not rotated to new MEK")
+	}
+}
+
+// errSimulatedCrash is the sentinel panicked by crashBackend to model a pod
+// SIGKILL mid-rotation. It is recovered by the test harness.
+var errSimulatedCrash = errors.New("simulated crash mid-rotation")
+
+// crashBackend wraps mockRotationBackend and panics exactly once, on the
+// crashAfter-th Copy call, BEFORE delegating to the underlying Copy. This
+// faithfully models a pod being killed mid-rotation: the rotator goroutine dies
+// without running any graceful cancel/fail state-save, so the on-disk rotation
+// state is whatever the periodic save (every 100 objects) last wrote — status
+// "in_progress", the only status initOrLoadState will resume from.
+type crashBackend struct {
+	*mockRotationBackend
+	copyCount  atomic.Int64
+	crashAfter int64
+	crashed    atomic.Bool
+}
+
+func (c *crashBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
+	n := c.copyCount.Add(1)
+	if n == c.crashAfter && c.crashed.CompareAndSwap(false, true) {
+		panic(errSimulatedCrash)
+	}
+	return c.mockRotationBackend.Copy(ctx, srcBucket, srcKey, dstBucket, dstKey, meta, replaceMetadata)
+}
+
+// TestKeyRotationInterruptedResume kills a rotation mid-flight (after the
+// periodic save has written an in_progress state), then re-runs rotation and
+// proves it resumes to idempotent completion with no object left old-wrapped.
+func TestKeyRotationInterruptedResume(t *testing.T) {
+	oldMEK := make([]byte, 32)
+	rand.Read(oldMEK)
+	newMEK := make([]byte, 32)
+	rand.Read(newMEK)
+
+	const total = 120
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+	keys := make([]string, total)
+	for i := 0; i < total; i++ {
+		keys[i] = fmt.Sprintf("data/file-%03d.bin", i)
+		pt := []byte(fmt.Sprintf("payload-%03d", i))
+		meta, err := createTestARMORObject(oldMEK, bucket, keys[i], pt)
+		if err != nil {
+			t.Fatalf("create %s: %v", keys[i], err)
+		}
+		var buf bytes.Buffer
+		buf.Write(pt)
+		if err := mock.Put(context.Background(), bucket, keys[i], &buf, int64(len(pt)), meta); err != nil {
+			t.Fatalf("put %s: %v", keys[i], err)
+		}
+	}
+
+	// Crash on the 101st Copy — immediately after the periodic save at the
+	// 100th object wrote an in_progress state with LastKey = keys[99].
+	cb := &crashBackend{mockRotationBackend: mock, crashAfter: 101}
+
+	// First run: dies mid-rotation.
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected simulated crash on first rotation, but it completed")
+			}
+		}()
+		rotator := NewKeyRotator(cb, bucket, oldMEK, newMEK, nil)
+		_, _ = rotator.Rotate(context.Background())
+	}()
+
+	// Persisted state is the periodic save: in_progress, LastKey = keys[99].
+	reader, _, err := mock.GetDirect(context.Background(), bucket, ".armor/rotation-state.json")
+	if err != nil {
+		t.Fatalf("no rotation state found after crash: %v", err)
+	}
+	sd, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	var state RotationState
+	if err := json.Unmarshal(sd, &state); err != nil {
+		t.Fatalf("parse state: %v", err)
+	}
+	if state.Status != "in_progress" {
+		t.Fatalf("persisted status = %q, want \"in_progress\" (resume only resumes in_progress)", state.Status)
+	}
+	if state.LastKey != keys[99] {
+		t.Errorf("persisted LastKey = %q, want %q", state.LastKey, keys[99])
+	}
+
+	// First 100 objects rotated (new MEK); the rest still old-wrapped.
+	for i := 0; i < 100; i++ {
+		if !dekUnwrapsWith(t, mock, bucket, keys[i], newMEK) {
+			t.Errorf("pre-resume: %s not new-wrapped", keys[i])
+		}
+	}
+	for i := 100; i < total; i++ {
+		if dekUnwrapsWith(t, mock, bucket, keys[i], newMEK) {
+			t.Errorf("pre-resume: %s unexpectedly new-wrapped (crash should leave it old)", keys[i])
+		}
+		if !dekUnwrapsWith(t, mock, bucket, keys[i], oldMEK) {
+			t.Errorf("pre-resume: %s lost its old-wrapped DEK", keys[i])
+		}
+	}
+
+	// Second run: resume and complete.
+	rotator2 := NewKeyRotator(cb, bucket, oldMEK, newMEK, nil)
+	result, err := rotator2.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("resume rotation: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("resume status = %q, want completed", result.Status)
+	}
+
+	// Idempotent completion: every object decrypts with the NEW MEK and NONE
+	// with the OLD MEK — no object left old-wrapped.
+	for i := 0; i < total; i++ {
+		if !dekUnwrapsWith(t, mock, bucket, keys[i], newMEK) {
+			t.Errorf("post-resume: %s not new-wrapped (left old-wrapped!)", keys[i])
+		}
+		if dekUnwrapsWith(t, mock, bucket, keys[i], oldMEK) {
+			t.Errorf("post-resume: %s still unwraps with OLD MEK", keys[i])
+		}
+	}
+
+	// Final state on disk is completed.
+	finalState := rotator2.GetState()
+	if finalState == nil || finalState.Status != "completed" {
+		t.Errorf("final state = %+v, want status completed", finalState)
+	}
+}
+
+// TestRotateObjectRejectsOversizedWithTypedError asserts rotateObject returns
+// the typed ErrCopyObjectTooLarge (not an opaque CopyObject failure and not a
+// silent skip) for objects above the B2 CopyObject size ceiling.
+func TestRotateObjectRejectsOversizedWithTypedError(t *testing.T) {
+	oldMEK := make([]byte, 32)
+	rand.Read(oldMEK)
+	newMEK := make([]byte, 32)
+	rand.Read(newMEK)
+
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	bigKey := "data/too-big.bin"
+	pt := []byte("payload")
+	meta, err := createTestARMORObject(oldMEK, bucket, bigKey, pt)
+	if err != nil {
+		t.Fatalf("create oversized object: %v", err)
+	}
+	var buf bytes.Buffer
+	buf.Write(pt)
+	if err := mock.Put(context.Background(), bucket, bigKey, &buf, int64(len(pt)), meta); err != nil {
+		t.Fatalf("put oversized object: %v", err)
+	}
+
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, nil)
+
+	// As List would report it: above the 5 GiB ceiling.
+	big := backend.ObjectInfo{
+		Key:              bigKey,
+		Size:             B2CopyObjectSizeCeiling + 1,
+		Metadata:         meta,
+		IsARMOREncrypted: true,
+	}
+	err = rotator.rotateObject(context.Background(), big)
+	if !errors.Is(err, ErrCopyObjectTooLarge) {
+		t.Errorf("rotateObject oversized: err = %v, want ErrCopyObjectTooLarge", err)
+	}
+
+	// Exactly at the ceiling is still copyable (boundary is exclusive >).
+	atCeiling := backend.ObjectInfo{
+		Key:              bigKey,
+		Size:             B2CopyObjectSizeCeiling,
+		Metadata:         meta,
+		IsARMOREncrypted: true,
+	}
+	if err := rotator.rotateObject(context.Background(), atCeiling); err != nil {
+		t.Errorf("rotateObject at ceiling: unexpected err = %v", err)
+	}
+}
+
+// TestKeyRotationB2CopyObjectCeiling proves oversized ARMOR objects above the
+// B2 CopyObject size ceiling are enumerated as EXCEPTIONS (with their keys in
+// RotationResult.ExceptionKeys) and left old-wrapped, never silently skipped —
+// while normal objects rotate normally.
+func TestKeyRotationB2CopyObjectCeiling(t *testing.T) {
+	oldMEK := make([]byte, 32)
+	rand.Read(oldMEK)
+	newMEK := make([]byte, 32)
+	rand.Read(newMEK)
+
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	// Normal ARMOR object — gets rotated.
+	smallKey := "data/small.bin"
+	pt := []byte("small payload")
+	meta, err := createTestARMORObject(oldMEK, bucket, smallKey, pt)
+	if err != nil {
+		t.Fatalf("create small object: %v", err)
+	}
+	var sb bytes.Buffer
+	sb.Write(pt)
+	if err := mock.Put(context.Background(), bucket, smallKey, &sb, int64(len(pt)), meta); err != nil {
+		t.Fatalf("put small object: %v", err)
+	}
+
+	// Oversized ARMOR object — above the 5 GiB CopyObject ceiling. fakeSize
+	// lets List report it as oversized without storing 5 GiB of data.
+	bigKey := "data/too-big.bin"
+	bigPt := []byte("big payload")
+	bigMeta, err := createTestARMORObject(oldMEK, bucket, bigKey, bigPt)
+	if err != nil {
+		t.Fatalf("create big object: %v", err)
+	}
+	var bb bytes.Buffer
+	bb.Write(bigPt)
+	if err := mock.Put(context.Background(), bucket, bigKey, &bb, int64(len(bigPt)), bigMeta); err != nil {
+		t.Fatalf("put big object: %v", err)
+	}
+	mock.setFakeSize(bucket, bigKey, B2CopyObjectSizeCeiling+1)
+
+	rotator := NewKeyRotator(mock, bucket, oldMEK, newMEK, nil)
+	result, err := rotator.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+
+	// The normal object was rotated; the oversized one was enumerated as an
+	// exception — NOT counted in ProcessedObjects and NOT silently skipped.
+	if result.ProcessedObjects != 1 {
+		t.Errorf("processed = %d, want 1 (only the small object)", result.ProcessedObjects)
+	}
+	if result.Exceptions != 1 {
+		t.Errorf("exceptions = %d, want 1 (oversized object must be enumerated, not skipped)", result.Exceptions)
+	}
+	if len(result.ExceptionKeys) != 1 || result.ExceptionKeys[0] != bigKey {
+		t.Errorf("exception keys = %v, want [%s]", result.ExceptionKeys, bigKey)
+	}
+
+	// The oversized object is left old-wrapped: rotation could not re-wrap it
+	// via CopyObject, so an operator must re-wrap it with a multipart copy.
+	if dekUnwrapsWith(t, mock, bucket, bigKey, newMEK) {
+		t.Error("oversized object was re-wrapped with new MEK (should remain old-wrapped)")
+	}
+	if !dekUnwrapsWith(t, mock, bucket, bigKey, oldMEK) {
+		t.Error("oversized object lost its old-wrapped DEK")
+	}
+
+	// The normal object was rotated.
+	if !dekUnwrapsWith(t, mock, bucket, smallKey, newMEK) {
+		t.Error("small object not rotated to new MEK")
 	}
 }
