@@ -110,6 +110,11 @@ type Config struct {
 	// /metrics, and /dashboard* (which carry their own auth) are unaffected.
 	// See bead bf-5m9nde.
 	AdminToken string
+
+	// Secondary backend configuration (ADR-006)
+	// When set, enables async replication to a secondary backend
+	SecondaryBackendType string // Type: "filesystem" (future: "s3", "wasabi")
+	SecondaryBackendPath string // Path for filesystem backend (required when Type=filesystem)
 }
 
 // Load reads configuration from environment variables.
@@ -288,6 +293,22 @@ func Load() (*Config, error) {
 	// Admin API bearer token. When set, all /admin/* routes (and /armor/audit)
 	// require it; when unset, gated admin routes are disabled (fail-closed).
 	cfg.AdminToken = os.Getenv("ARMOR_ADMIN_TOKEN")
+
+	// Secondary backend configuration (ADR-006)
+	// Only enabled if ARMOR_SECONDARY_BACKEND_TYPE is set
+	cfg.SecondaryBackendType = os.Getenv("ARMOR_SECONDARY_BACKEND_TYPE")
+	if cfg.SecondaryBackendType != "" {
+		// Validate backend type
+		if cfg.SecondaryBackendType != "filesystem" {
+			return nil, fmt.Errorf("ARMOR_SECONDARY_BACKEND_TYPE must be 'filesystem', got '%s'", cfg.SecondaryBackendType)
+		}
+
+		// For filesystem backend, path is required
+		cfg.SecondaryBackendPath = os.Getenv("ARMOR_SECONDARY_BACKEND_PATH")
+		if cfg.SecondaryBackendPath == "" {
+			return nil, fmt.Errorf("ARMOR_SECONDARY_BACKEND_PATH is required when ARMOR_SECONDARY_BACKEND_TYPE=filesystem")
+		}
+	}
 
 	return cfg, nil
 }

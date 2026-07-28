@@ -41,6 +41,7 @@ import (
 type Server struct {
 	config         *config.Config
 	backend        backend.Backend
+	secondaryBackend backend.Backend // Secondary backend for replication (ADR-006)
 	cache          *backend.MetadataCache
 	footerCache    *backend.FooterCache
 	listCache      *backend.ListCache
@@ -68,6 +69,9 @@ type Server struct {
 
 // New creates a new ARMOR server.
 func New(cfg *config.Config) (*Server, error) {
+	// Create logger early for use in backend initialization
+	logger := logging.New("armor")
+
 	// Create B2 backend
 	b2Backend, err := backend.NewB2Backend(context.Background(), backend.B2Config{
 		Region:      cfg.B2Region,
@@ -78,6 +82,27 @@ func New(cfg *config.Config) (*Server, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create B2 backend: %w", err)
+	}
+
+	// Create secondary backend if configured (ADR-006)
+	var secondaryBackend backend.Backend
+	if cfg.SecondaryBackendType != "" {
+		switch cfg.SecondaryBackendType {
+		case "filesystem":
+			fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+				BasePath: cfg.SecondaryBackendPath,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to create filesystem secondary backend: %w", err)
+			}
+			secondaryBackend = fsBackend
+			logger.WithFields(map[string]interface{}{
+				"type": cfg.SecondaryBackendType,
+				"path": cfg.SecondaryBackendPath,
+			}).Info("secondary backend initialized")
+		default:
+			return nil, fmt.Errorf("unsupported secondary backend type: %s", cfg.SecondaryBackendType)
+		}
 	}
 
 	// Create metadata cache
@@ -123,9 +148,6 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// Create provenance manager
 	provenanceMgr := provenance.NewManager(b2Backend, cfg.Bucket, cfg.WriterID)
-
-	// Create logger
-	logger := logging.New("armor")
 
 	// Create presign signer
 	presigner := presign.NewSigner(cfg.PresignSecret, cfg.PresignBaseURL)
@@ -255,6 +277,7 @@ func New(cfg *config.Config) (*Server, error) {
 	return &Server{
 		config:         cfg,
 		backend:        b2Backend,
+		secondaryBackend: secondaryBackend,
 		cache:          cache,
 		footerCache:    footerCache,
 		listCache:      listCache,
