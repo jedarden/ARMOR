@@ -1,7 +1,8 @@
 # ADR-006: Dual-Backend Async Replication for Provider-Outage Resilience
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-07-20
+**Last Updated:** 2026-07-28
 
 ## Context
 
