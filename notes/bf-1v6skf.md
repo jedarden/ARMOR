@@ -1,7 +1,12 @@
 # Investigation Summary: bf-1v6skf - Multipart HMAC Verification Bug
 
-## Root Cause Finding (2026-07-16)
+## Status (2026-07-28)
 
+**BEAD REMAINS OPEN and BLOCKED** - ARMOR code fix is CONFIRMED working, but acceptance criterion cannot be met due to external litestream blocker.
+
+## Root Cause Timeline
+
+### 2026-07-16 Initial Finding
 **NO PRODUCTION BUG FOUND** - The issue was in TEST CODE ONLY.
 
 ## Investigation Details
@@ -84,3 +89,56 @@ The bead description mentioned "HMAC verification failed" errors. These were TES
 - ✅ Production code verified correct (no changes needed)
 
 The queue-api backup chain should be restorable - the production code has been working correctly.
+
+---
+
+## Current Status (2026-07-28)
+
+### What's CONFIRMED ✅
+
+**ARMOR code fix is working correctly** - Verified via live production test on 2026-07-22:
+
+- Successfully downloaded and decrypted 56.6MB multipart production object (`kalshi-tape/parquet/2026-07-22/14/orderbook_delta.parquet`)
+- Object spans ~864 blocks at 64KiB block size (3x past historical block-256 failure point)
+- Byte-exact download (matches ContentLength exactly)
+- Structurally valid Parquet with correct schema (1,868,214 rows, 5 columns)
+- Semantically sane content (real Kalshi market tickers, timestamps matching capture window)
+- Written hours after the 0.1.1901 fleet-wide deploy (genuine post-fix production data)
+
+This definitively confirms the ARMOR multipart/HMAC read path fix (from bf-24sxh7) works correctly on real large-scale production data.
+
+### What's BLOCKING Closure ❌
+
+**queue-api/litestream restore transcript** - Required acceptance criterion cannot be met due to:
+
+**litestream local-state stall on queue-api (ord-devimprint)**:
+- litestream has written ZERO new backup objects to B2 since 2026-07-18 10:37
+- Local `.queue.db-litestream/ltx/0` dir is missing its first segment
+- Continuous "LTX file is missing" errors since pod started 2026-07-21T18:27:47Z
+- 234+ consecutive errors at last check
+- This is a SEPARATE bug from ARMOR - pure litestream generation-tracking state loss
+- Queue-api currently has ZERO valid restorable backups
+
+**Consequence**: No fresh queue-api snapshot exists to test ARMOR fix against. The pre-fix 07-18 snapshot is permanently corrupt (as documented in bead comment 88), so a restore transcript from that snapshot would fail regardless of the ARMOR fix.
+
+### Why Bead Cannot Close
+
+Per bead comment 95 (2026-07-28):
+> "The ARMOR code defect IS resolved (separate verification completed), but the queue-api DR acceptance criterion cannot be met until the litestream issue is fixed. Bead should remain open/blocked pending litestream resolution."
+
+### Next Steps
+
+1. **Resolve litestream issue** on queue-api (ord-devimprint):
+   - Likely requires `litestream reset <db>` or
+   - Delete `.queue.db-litestream` + restart
+   - This is external to ARMOR
+
+2. **Once litestream is healthy**:
+   - Wait for fresh queue-api snapshot to be created
+   - Run full litestream restore test
+   - Capture restore transcript
+   - Close bf-1v6skf with acceptance met
+
+### Action Taken (2026-07-28)
+
+Reviewed bead status, confirmed ARMOR fix is verified but bead cannot close due to external litestream blocker. Documented current state in this note. Bead remains open and blocked per comment 95 guidance.
