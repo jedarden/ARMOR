@@ -311,7 +311,7 @@ func (fs *FSBackend) List(ctx context.Context, bucket, prefix, delimiter, contin
 	bucketPath := fs.bucketPath(bucket)
 
 	var objects []ObjectInfo
-	var commonPrefixes []string
+	commonPrefixMap := make(map[string]bool)
 	count := 0
 
 	err := filepath.Walk(bucketPath, func(path string, info os.FileInfo, err error) error {
@@ -361,7 +361,7 @@ func (fs *FSBackend) List(ctx context.Context, bucket, prefix, delimiter, contin
 			if idx := strings.Index(afterPrefix, delimiter); idx >= 0 {
 				// This is a common prefix
 				commonPrefix := prefix + afterPrefix[:idx+1]
-				commonPrefixes = append(commonPrefixes, commonPrefix)
+				commonPrefixMap[commonPrefix] = true
 				return nil
 			}
 		}
@@ -400,6 +400,12 @@ func (fs *FSBackend) List(ctx context.Context, bucket, prefix, delimiter, contin
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
+	}
+
+	// Convert map to sorted slice
+	var commonPrefixes []string
+	for prefix := range commonPrefixMap {
+		commonPrefixes = append(commonPrefixes, prefix)
 	}
 
 	return &ListResult{
