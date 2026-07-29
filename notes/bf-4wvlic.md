@@ -69,3 +69,18 @@ All facts re-checked first-hand for 267th dispatch:
 ### Recommendation
 
 This bead should be closed as OBSOLETE. The ARMOR_PREFIX for iad-kalshi is complete and live (handled by bf-4016f4). The iad-native-ads target never existed in declarative-config.
+
+---
+
+## 268th dispatch (2026-07-29)
+
+**Re-verified BLOCKED - task premise remains outdated.**
+
+All findings from 267th investigation remain unchanged:
+- ✅ iad-kalshi: `ARMOR_PREFIX: "iad-kalshi/"` (completed by bf-4016f4)
+- ❌ iad-native-ads: does not exist in declarative-config
+- ℹ️ iad-ci: has ARMOR but `ARMOR_PREFIX: ""` (out of scope for this bead)
+
+**No action taken** - per memory instruction "DO NOT execute as written (orphaning hazard, no signoff)" and investigation showing task premise is obsolete.
+
+**Bead LEFT OPEN** - awaiting closure decision.
