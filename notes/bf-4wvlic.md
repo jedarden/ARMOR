@@ -84,3 +84,18 @@ All findings from 267th investigation remain unchanged:
 **No action taken** - per memory instruction "DO NOT execute as written (orphaning hazard, no signoff)" and investigation showing task premise is obsolete.
 
 **Bead LEFT OPEN** - awaiting closure decision.
+
+---
+
+## 269th dispatch (2026-07-29 ~14:45 UTC)
+
+**Re-verified OUTDATED - task premise remains obsolete.**
+
+All findings from 268th dispatch remain confirmed:
+- ✅ iad-kalshi: `ARMOR_PREFIX: "iad-kalshi/"` (completed by bf-4016f4, commit 9cf28d07)
+- ❌ iad-native-ads: directory does not exist in declarative-config
+- ℹ️ declarative-config k8s/ tree: only iad-kalshi armor configmap exists
+
+**No action taken** - per memory instruction "DO NOT execute as written (orphaning hazard, no signoff)" and investigation confirming task premise is obsolete.
+
+**Bead LEFT OPEN** - awaiting closure decision (recommendation: close as OBSOLETE since task was completed by different bead).
