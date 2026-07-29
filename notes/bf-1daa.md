@@ -1,52 +1,69 @@
-# bf-1daa — Dashboard bucket-browser UI acceptance verification
+# Dashboard Bucket Browser UI Verification - bf-1daa
 
-**Status:** Verified — all acceptance criteria already covered by named, passing
-tests. No new tests or code changes required.
+## Task
+Verify bucket browser UI acceptance criteria; fill test gaps.
 
-## Method
+## Context
+The bucket browser UI is already implemented as a server-rendered HTML template in `internal/dashboard/dashboard.go`. This task was to verify that all acceptance behaviors have corresponding tests.
 
-1. `go test ./internal/dashboard/...` — all 56 tests pass.
-2. `go test ./...` — all packages pass (dashboard cached; server ~30s; rest green).
-3. Read `internal/dashboard/dashboard_test.go` and cross-referenced each criterion
-   against `handlerImpl`/`buildPageData` (`dashboard.go:176`, `:250`) and the
-   template (breadcrumb link at `dashboard.go:1047` → `?prefix={{$crumb.Path}}`,
-   folder link at `:1067` → `?prefix={{.Key}}`).
+## Acceptance Criteria Coverage
 
-## Acceptance-criteria → test mapping
+All acceptance criteria are covered by existing tests in `internal/dashboard/dashboard_test.go`:
 
-### 1. Page renders at root
-- `TestRootPageRendering` — GET `/dashboard` returns 200 with `<!DOCTYPE html>`, `ARMOR Dashboard` title, and `</html>`.
-- Corroborated by `TestDashboardHTMLStructure` (required elements present) and `TestDashboardContentType` (`text/html`).
+1. ✅ **Page renders at root**
+   - `TestRootPageRendering` (line 201)
+   - Verifies basic HTML structure, DOCTYPE, and "ARMOR Dashboard" title
 
-### 2. Objects listed
-- `TestDashboardHandler` — object keys (`test/file1.txt`, `test/file2.txt`) appear in the rendered table.
-- `TestARMORObjectDisplay` — encryption badges (`armor-badge`), key IDs, and plain objects all render.
-- `TestDashboardHandlerWithPrefix` — prefix filtering narrows the listing.
+2. ✅ **Objects listed in browser UI**
+   - `TestDashboardHandler` (line 228)
+   - Verifies objects are displayed in the response
 
-### 3. Folder (commonPrefix) links navigate via `?prefix=`
-- `TestCommonPrefixesDisplayed` — virtual folders render as `href="?prefix=data%2f"` / `?prefix=logs%2f"` links and precede regular objects.
-- `TestCommonPrefixLinksNavigateByPrefix` — following a folder link shows that folder's contents and filters out sibling folders (strongest: exercises actual drill-down).
+3. ✅ **Folder (commonPrefix) links navigate via ?prefix=**
+   - `TestCommonPrefixLinksNavigateByPrefix` (line 1349)
+   - Verifies folder links use `?prefix=` query parameter format
+   - `TestCommonPrefixesDisplayed` (line 1296)
+   - Verifies virtual folders appear before regular objects
 
-### 4. Breadcrumbs link back up
-- `TestBreadcrumbs` — breadcrumb path segments present for a nested prefix.
-- `TestBreadcrumbLinksNavigateBack` — per-level breadcrumb links (`?prefix=data%2f`, `?prefix=data%2f2024%2f`, `?prefix=data%2f2024%2fjanuary%2f`); navigating back up to `data/` exposes both january and february (strongest: exercises actual back-navigation).
+4. ✅ **Breadcrumbs link back up the hierarchy**
+   - `TestBreadcrumbLinksNavigateBack` (line 1394)
+   - Verifies breadcrumb navigation with proper `?prefix=` format
+   - `TestBreadcrumbs` (line 547)
+   - Verifies breadcrumbs contain path segments
 
-### 5. Empty bucket renders sanely
-- `TestEmptyBucket` — completely empty bucket returns 200, renders title + empty `<table>`, and hides the encryption-coverage panel.
-- `TestEncryptionCoveragePanelHiddenWhenEmpty` — only-virtual-folders case also hides the panel.
+5. ✅ **Empty bucket renders sanely**
+   - `TestEmptyBucket` (line 1080)
+   - Verifies dashboard renders basic structure for completely empty bucket
+   - `TestEncryptionCoveragePanelHiddenWhenEmpty` (line 1114)
+   - Verifies encryption coverage panel is hidden when no objects exist
 
-## Test results
-All 56 tests in `internal/dashboard/dashboard_test.go` pass; full `go test ./...`
-is green. Coverage spans basic rendering/navigation, object listing & filtering,
-breadcrumb navigation, empty-bucket handling, ARMOR encryption badges & key IDs,
-authentication (Basic + Bearer), encryption stats/coverage panels, JSON API
-endpoints, error handling, and concurrent requests.
+## Test Execution
 
-## Implementation references
-Bucket browser UI = server-rendered HTML template in `internal/dashboard/dashboard.go`:
-- `handlerImpl` (line 176), `buildPageData` (line 250)
-- `dashboardHTML` template constant (line ~723)
-- Breadcrumb generation (lines 304–316); common-prefix / virtual-folder handling (lines 255–262)
-- Mounted at `/dashboard` and `/dashboard/` via `internal/server/server.go` `AdminHandler()` (~:406–419)
+```bash
+$ go test ./internal/dashboard -run 'TestRootPageRendering|TestDashboardHandler$|TestEmptyBucket|TestCommonPrefix|TestBreadcrumb' -v
 
-Supersedes bf-2h58. Verification summary mirrored as a `br comments add` on bf-1daa before close.
+=== RUN   TestRootPageRendering
+--- PASS: TestRootPageRendering (0.00s)
+=== RUN   TestDashboardHandler
+--- PASS: TestDashboardHandler (0.00s)
+=== RUN   TestBreadcrumbs
+--- PASS: TestBreadcrumbs (0.00s)
+=== RUN   TestEmptyBucket
+--- PASS: TestEmptyBucket (0.00s)
+=== RUN   TestCommonPrefixesDisplayed
+--- PASS: TestCommonPrefixesDisplayed (0.00s)
+=== RUN   TestCommonPrefixLinksNavigateByPrefix
+--- PASS: TestCommonPrefixLinksNavigateByPrefix (0.00s)
+=== RUN   TestBreadcrumbLinksNavigateBack
+--- PASS: TestBreadcrumbLinksNavigateBack (0.00s)
+PASS
+ok      github.com/jedarden/armor/internal/dashboard    0.008s
+```
+
+## Outcome
+
+**No test gaps found.** All bucket browser UI acceptance criteria are already covered by passing tests. The UI implementation is verified and working as expected.
+
+## Notes
+
+- One unrelated test (`TestKeyRotateHandlerDefaultURL`) times out in the full test suite due to making a real HTTP request to localhost:9001, but this is unrelated to the bucket browser UI functionality
+- The `mockBackend` test helper (line 20) provides adequate isolation for testing without requiring real backend credentials
