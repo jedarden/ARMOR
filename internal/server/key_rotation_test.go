@@ -54,20 +54,6 @@ func (m *mockRotationBackend) setFakeSize(bucket, key string, size int64) {
 	}
 }
 
-// objectSize returns the reported size for a mock object, honoring fakeSize.
-func (m *mockRotationBackend) objectSize(bucket, key string) int64 {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	obj, ok := m.objects[bucket+"/"+key]
-	if !ok {
-		return 0
-	}
-	if obj.fakeSize > 0 {
-		return obj.fakeSize
-	}
-	return int64(len(obj.data))
-}
-
 // sortObjectsByKey sorts backend.ObjectInfo slice by key (lexicographic order)
 func sortObjectsByKey(objects []backend.ObjectInfo) {
 	sort.Slice(objects, func(i, j int) bool {
