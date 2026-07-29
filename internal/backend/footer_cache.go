@@ -205,7 +205,7 @@ func GetParquetFooterRange(last8Bytes []byte, plaintextSize int64) (ParquetFoote
 
 // Error definitions
 var (
-	ErrNotParquetFile     = &ParquetError{Msg: "not a Parquet file"}
+	ErrNotParquetFile       = &ParquetError{Msg: "not a Parquet file"}
 	ErrInvalidParquetFooter = &ParquetError{Msg: "invalid Parquet footer"}
 )
 

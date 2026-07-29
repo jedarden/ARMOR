@@ -152,27 +152,27 @@ func TestHelperFunctionPatternsForCategory(t *testing.T) {
 		expectedCategories []string
 	}{
 		{
-			name:             "CategoryAuth",
-			category:         CategoryAuth,
-			minExpectedCount: 6,
+			name:               "CategoryAuth",
+			category:           CategoryAuth,
+			minExpectedCount:   6,
 			expectedCategories: []string{"Auth"},
 		},
 		{
-			name:             "CategoryNotFound",
-			category:         CategoryNotFound,
-			minExpectedCount: 1,
+			name:               "CategoryNotFound",
+			category:           CategoryNotFound,
+			minExpectedCount:   1,
 			expectedCategories: []string{"NotFound"},
 		},
 		{
-			name:             "CategoryInternal",
-			category:         CategoryInternal,
-			minExpectedCount: 2,
+			name:               "CategoryInternal",
+			category:           CategoryInternal,
+			minExpectedCount:   2,
 			expectedCategories: []string{"Internal"},
 		},
 		{
-			name:             "Unknown category returns empty",
-			category:         ErrorCategory("Unknown"),
-			minExpectedCount: 0,
+			name:               "Unknown category returns empty",
+			category:           ErrorCategory("Unknown"),
+			minExpectedCount:   0,
 			expectedCategories: []string{},
 		},
 	}
@@ -285,9 +285,9 @@ func TestHelperFunctionCategoryForCode(t *testing.T) {
 // TestHelperFunctionExpectedStatusCodeForCode verifies the ExpectedStatusCodeForCode helper function.
 func TestHelperFunctionExpectedStatusCodeForCode(t *testing.T) {
 	tests := []struct {
-		name            string
-		code            string
-		expectedStatus  int
+		name           string
+		code           string
+		expectedStatus int
 	}{
 		{
 			name:           "NoSuchKey -> 404",

@@ -12,7 +12,7 @@ import (
 // This is a regression test for bf-2sq7gf where parts uploaded out of order
 // caused "block 256: HMAC verification failed".
 func TestMultipartOutOfOrderUpload(t *testing.T) {
-	blockSize := 65536 // 64KB
+	blockSize := 65536                 // 64KB
 	partSize := int64(5 * 1024 * 1024) // 5MB = 80 blocks per part
 
 	// Generate test keys
@@ -70,7 +70,7 @@ func TestMultipartOutOfOrderUpload(t *testing.T) {
 
 	// Upload Part 1 next
 	{
-		_ = 1 // part number
+		_ = 1                        // part number
 		startBlockIndex := uint32(0) // First part starts at 0
 
 		plaintext1 := make([]byte, partSize)

@@ -171,9 +171,11 @@ func (b *countingBackend) Copy(_ context.Context, srcBucket, srcKey, dstBucket, 
 	return nil
 }
 
-func (b *countingBackend) ListBuckets(_ context.Context) ([]backend.BucketInfo, error)        { return nil, nil }
-func (b *countingBackend) CreateBucket(_ context.Context, _ string) error                      { return nil }
-func (b *countingBackend) DeleteBucket(_ context.Context, _ string) error                      { return nil }
+func (b *countingBackend) ListBuckets(_ context.Context) ([]backend.BucketInfo, error) {
+	return nil, nil
+}
+func (b *countingBackend) CreateBucket(_ context.Context, _ string) error { return nil }
+func (b *countingBackend) DeleteBucket(_ context.Context, _ string) error { return nil }
 func (b *countingBackend) GetDirect(_ context.Context, _, _ string) (io.ReadCloser, *backend.ObjectInfo, error) {
 	return nil, nil, fmt.Errorf("not implemented")
 }

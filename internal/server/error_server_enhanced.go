@@ -7,10 +7,11 @@
 // error scenarios.
 //
 // Usage:
-//   server := NewEnhancedErrorServer([]EnhancedErrorScenario{
-//       {Type: ErrorTypeRateLimit, Severity: ErrorSeverityHigh, Frequency: 0.5},
-//   })
-//   defer server.Close()
+//
+//	server := NewEnhancedErrorServer([]EnhancedErrorScenario{
+//	    {Type: ErrorTypeRateLimit, Severity: ErrorSeverityHigh, Frequency: 0.5},
+//	})
+//	defer server.Close()
 package server
 
 import (
@@ -185,7 +186,7 @@ func NewEnhancedErrorServer(scenarios []EnhancedErrorScenario) *EnhancedErrorSer
 
 	return &EnhancedErrorServer{
 		ConfigurableErrorServer: baseServer,
-		EnhancedScenarios:        scenarios,
+		EnhancedScenarios:       scenarios,
 		RandomSource:            rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
@@ -387,11 +388,11 @@ func NewRateLimitScenario(frequency float64, retryAfter time.Duration) EnhancedE
 			ErrorCode:  "SlowDown",
 			Message:    "Rate limit exceeded. Please retry later.",
 			Headers: map[string]string{
-				"Content-Type":  "application/xml",
-				"Retry-After":   fmt.Sprintf("%.0f", retryAfter.Seconds()),
-				"X-RateLimit-Limit": "100",
+				"Content-Type":          "application/xml",
+				"Retry-After":           fmt.Sprintf("%.0f", retryAfter.Seconds()),
+				"X-RateLimit-Limit":     "100",
 				"X-RateLimit-Remaining": "0",
-				"X-RateLimit-Reset": fmt.Sprintf("%d", time.Now().Add(retryAfter).Unix()),
+				"X-RateLimit-Reset":     fmt.Sprintf("%d", time.Now().Add(retryAfter).Unix()),
 			},
 		},
 		Type:       ErrorTypeRateLimit,
@@ -606,9 +607,9 @@ var PreconfiguredEnhancedScenarios = struct {
 	// FrequentServiceUnavailable injects 503 errors 25% of the time
 	FrequentServiceUnavailable EnhancedErrorScenario
 }{
-	OccasionalRateLimit: NewRateLimitScenario(0.10, 5*time.Second),
-	FrequentTimeouts:    NewTimeoutScenario(0.30, 5*time.Second),
-	RareConnectionRefused: NewConnectionRefusedScenario(0.05),
-	SlowResponses:       NewSlowResponseScenario(0.20, 2*time.Second),
+	OccasionalRateLimit:        NewRateLimitScenario(0.10, 5*time.Second),
+	FrequentTimeouts:           NewTimeoutScenario(0.30, 5*time.Second),
+	RareConnectionRefused:      NewConnectionRefusedScenario(0.05),
+	SlowResponses:              NewSlowResponseScenario(0.20, 2*time.Second),
 	FrequentServiceUnavailable: NewServiceUnavailableScenario(0.25, 10*time.Second),
 }

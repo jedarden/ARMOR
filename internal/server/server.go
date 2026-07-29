@@ -22,8 +22,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/b2keys"
+	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
@@ -39,21 +39,21 @@ import (
 
 // Server represents the ARMOR server.
 type Server struct {
-	config         *config.Config
-	backend        backend.Backend
-	secondaryBackend backend.Backend // Secondary backend for replication (ADR-006)
-	cache          *backend.MetadataCache
-	footerCache    *backend.FooterCache
-	listCache      *backend.ListCache
-	keyManager     *keymanager.KeyManager
-	canary         *canary.Monitor
-	provenance     *provenance.Manager
-	presigner      *presign.Signer
-	b2keys         *b2keys.Client // B2 native API key management
-	dashboard      *dashboard.Dashboard
-	manifest           *manifest.Index      // in-memory metadata index (nil when disabled)
-	manifestWriter     *manifest.Writer     // async delta writer (nil when disabled)
-	manifestCompactor  *manifest.Compactor  // background compaction goroutine (nil when disabled)
+	config            *config.Config
+	backend           backend.Backend
+	secondaryBackend  backend.Backend // Secondary backend for replication (ADR-006)
+	cache             *backend.MetadataCache
+	footerCache       *backend.FooterCache
+	listCache         *backend.ListCache
+	keyManager        *keymanager.KeyManager
+	canary            *canary.Monitor
+	provenance        *provenance.Manager
+	presigner         *presign.Signer
+	b2keys            *b2keys.Client // B2 native API key management
+	dashboard         *dashboard.Dashboard
+	manifest          *manifest.Index     // in-memory metadata index (nil when disabled)
+	manifestWriter    *manifest.Writer    // async delta writer (nil when disabled)
+	manifestCompactor *manifest.Compactor // background compaction goroutine (nil when disabled)
 
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
@@ -62,9 +62,9 @@ type Server struct {
 	canaryDisabled bool
 
 	// Metrics and request tracking
-	metrics       *metrics.Metrics
+	metrics        *metrics.Metrics
 	requestTracker *metrics.RequestTracker
-	logger        *logging.Logger
+	logger         *logging.Logger
 }
 
 // New creates a new ARMOR server.
@@ -275,25 +275,25 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	return &Server{
-		config:         cfg,
-		backend:        b2Backend,
-		secondaryBackend: secondaryBackend,
-		cache:          cache,
-		footerCache:    footerCache,
-		listCache:      listCache,
-		keyManager:     keyMgr,
-		canary:         canaryMonitor,
-		canaryDisabled: cfg.CanaryDisabled,
-		provenance:     provenanceMgr,
-		presigner:      presigner,
-		b2keys:         b2keysClient,
-		dashboard:      dash,
+		config:            cfg,
+		backend:           b2Backend,
+		secondaryBackend:  secondaryBackend,
+		cache:             cache,
+		footerCache:       footerCache,
+		listCache:         listCache,
+		keyManager:        keyMgr,
+		canary:            canaryMonitor,
+		canaryDisabled:    cfg.CanaryDisabled,
+		provenance:        provenanceMgr,
+		presigner:         presigner,
+		b2keys:            b2keysClient,
+		dashboard:         dash,
 		manifest:          manifestIdx,
 		manifestWriter:    manifestWriter,
 		manifestCompactor: manifestCompactor,
-		metrics:        metrics.DefaultMetrics,
-		requestTracker: metrics.DefaultRequestTracker,
-		logger:         logger,
+		metrics:           metrics.DefaultMetrics,
+		requestTracker:    metrics.DefaultRequestTracker,
+		logger:            logger,
 	}, nil
 }
 
@@ -423,8 +423,8 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
 	mux.HandleFunc("/admin/presign", s.handlePresign)
-	mux.HandleFunc("/admin/b2/keys", s.handleB2Keys)           // GET=List, POST=Create
-	mux.HandleFunc("/admin/b2/keys/", s.handleB2KeyDelete)     // DELETE=Delete by ID
+	mux.HandleFunc("/admin/b2/keys", s.handleB2Keys)       // GET=List, POST=Create
+	mux.HandleFunc("/admin/b2/keys/", s.handleB2KeyDelete) // DELETE=Delete by ID
 	mux.HandleFunc("/metrics", s.metrics.Handler())
 
 	// Dashboard routes (authenticated via DashboardUser/Pass or DashboardToken)
@@ -578,9 +578,9 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":  "failed",
-			"error":   err.Error(),
-			"result":  result,
+			"status": "failed",
+			"error":  err.Error(),
+			"result": result,
 		})
 		return
 	}
@@ -618,8 +618,8 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"mek":   hex.EncodeToString(defaultKey.MEK),
-		"format": "hex",
+		"mek":     hex.EncodeToString(defaultKey.MEK),
+		"format":  "hex",
 		"warning": "This key provides access to all encrypted data. Store securely.",
 	})
 }
@@ -657,7 +657,7 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status": "error",
-			"error":   err.Error(),
+			"error":  err.Error(),
 		})
 		return
 	}
@@ -935,7 +935,7 @@ func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
 	// Return response
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"url":       shareURL,
+		"url":        shareURL,
 		"expires_in": presign.FormatExpiration(expiration),
 		"expires_at": time.Now().Add(expiration).UTC().Format(time.RFC3339),
 	})

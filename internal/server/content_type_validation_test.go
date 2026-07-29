@@ -60,9 +60,9 @@ func TestContentTypeMatchResult_String(t *testing.T) {
 
 func TestAssertContentType_BooleanMode_Success(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		expectedType     string
+		name         string
+		contentType  string
+		expectedType string
 	}{
 		{"application/json matches application/json", "application/json", "application/json"},
 		{"application/json; charset=utf-8 matches application/json", "application/json; charset=utf-8", "application/json"},
@@ -91,9 +91,9 @@ func TestAssertContentType_BooleanMode_Success(t *testing.T) {
 
 func TestAssertContentType_BooleanMode_Failure(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		expectedType     string
+		name         string
+		contentType  string
+		expectedType string
 	}{
 		{"application/json does not match application/xml", "application/json", "application/xml"},
 		{"text/plain does not match application/json", "text/plain", "application/json"},
@@ -198,9 +198,9 @@ func TestAssertContentType_WithHTTPResponse(t *testing.T) {
 
 func TestAssertContentTypeAny_BooleanMode_Success(t *testing.T) {
 	tests := []struct {
-		name                string
-		contentType         string
-		allowedTypes        []string
+		name         string
+		contentType  string
+		allowedTypes []string
 	}{
 		{"application/json in allowed list", "application/json", []string{"application/json", "text/plain"}},
 		{"text/plain in allowed list", "text/plain", []string{"application/json", "text/plain"}},
@@ -223,9 +223,9 @@ func TestAssertContentTypeAny_BooleanMode_Success(t *testing.T) {
 
 func TestAssertContentTypeAny_BooleanMode_Failure(t *testing.T) {
 	tests := []struct {
-		name                string
-		contentType         string
-		allowedTypes        []string
+		name         string
+		contentType  string
+		allowedTypes []string
 	}{
 		{"text/html not in allowed list", "text/html", []string{"application/json", "text/plain"}},
 		{"application/xml not in allowed list", "application/xml", []string{"application/json", "text/plain"}},
@@ -362,9 +362,9 @@ func TestEnhancedErrorMessages_AssertContentType(t *testing.T) {
 
 func TestValidateContentType_ExactMatch_Success(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		expectedType     string
+		name         string
+		contentType  string
+		expectedType string
 	}{
 		{"application/json matches application/json", "application/json", "application/json"},
 		{"application/xml matches application/xml", "application/xml", "application/xml"},
@@ -386,9 +386,9 @@ func TestValidateContentType_ExactMatch_Success(t *testing.T) {
 
 func TestValidateContentType_PatternMatch_Success(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		expectedType     string
+		name         string
+		contentType  string
+		expectedType string
 	}{
 		{"application/json; charset=utf-8 matches application/json", "application/json; charset=utf-8", "application/json"},
 		{"application/json; charset=iso-8859-1 matches application/json", "application/json; charset=iso-8859-1", "application/json"},
@@ -411,10 +411,10 @@ func TestValidateContentType_PatternMatch_Success(t *testing.T) {
 
 func TestValidateContentType_Failure(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		expectedType     string
-		shouldFail       bool
+		name         string
+		contentType  string
+		expectedType string
+		shouldFail   bool
 	}{
 		{"application/json does not match application/xml", "application/json", "application/xml", true},
 		{"text/plain does not match application/json", "text/plain", "application/json", true},
@@ -442,9 +442,9 @@ func TestValidateContentType_Failure(t *testing.T) {
 
 func TestValidateContentTypeAny_MultipleTypes_Success(t *testing.T) {
 	tests := []struct {
-		name                string
-		contentType         string
-		allowedTypes        []string
+		name         string
+		contentType  string
+		allowedTypes []string
 	}{
 		{"application/json in [application/json, text/plain]", "application/json", []string{"application/json", "text/plain"}},
 		{"text/plain in [application/json, text/plain]", "text/plain", []string{"application/json", "text/plain"}},
@@ -466,10 +466,10 @@ func TestValidateContentTypeAny_MultipleTypes_Success(t *testing.T) {
 
 func TestValidateContentTypeAny_Failure(t *testing.T) {
 	tests := []struct {
-		name                string
-		contentType         string
-		allowedTypes        []string
-		shouldFail          bool
+		name         string
+		contentType  string
+		allowedTypes []string
+		shouldFail   bool
 	}{
 		{"text/html not in [application/json, text/plain]", "text/html", []string{"application/json", "text/plain"}, true},
 		{"application/xml not in [application/json, text/plain]", "application/xml", []string{"application/json", "text/plain"}, true},
@@ -508,9 +508,9 @@ func TestValidateContentTypeAny_EmptyAllowedTypes(t *testing.T) {
 
 func TestValidateContentTypePrefix_Success(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		prefix           string
+		name        string
+		contentType string
+		prefix      string
 	}{
 		{"application/json starts with application/json", "application/json", "application/json"},
 		{"application/json; charset=utf-8 starts with application/json", "application/json; charset=utf-8", "application/json"},
@@ -533,10 +533,10 @@ func TestValidateContentTypePrefix_Success(t *testing.T) {
 
 func TestValidateContentTypePrefix_Failure(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		prefix           string
-		shouldFail       bool
+		name        string
+		contentType string
+		prefix      string
+		shouldFail  bool
 	}{
 		{"application/json does not start with text/", "application/json", "text/", true},
 		{"text/plain does not start with application/", "text/plain", "application/", true},
@@ -564,10 +564,10 @@ func TestValidateContentTypePrefix_Failure(t *testing.T) {
 
 func TestCheckContentType_SingleType(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		expectedType     string
-		expectedResult   bool
+		name           string
+		contentType    string
+		expectedType   string
+		expectedResult bool
 	}{
 		{"application/json matches application/json", "application/json", "application/json", true},
 		{"application/json; charset=utf-8 matches application/json", "application/json; charset=utf-8", "application/json", true},
@@ -592,10 +592,10 @@ func TestCheckContentType_SingleType(t *testing.T) {
 
 func TestCheckContentTypeAny_MultipleTypes(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		allowedTypes     []string
-		expectedResult   bool
+		name           string
+		contentType    string
+		allowedTypes   []string
+		expectedResult bool
 	}{
 		{"application/json in [application/json, text/plain]", "application/json", []string{"application/json", "text/plain"}, true},
 		{"text/plain in [application/json, text/plain]", "text/plain", []string{"application/json", "text/plain"}, true},
@@ -620,10 +620,10 @@ func TestCheckContentTypeAny_MultipleTypes(t *testing.T) {
 
 func TestCheckContentTypePrefix_Prefix(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		prefix           string
-		expectedResult   bool
+		name           string
+		contentType    string
+		prefix         string
+		expectedResult bool
 	}{
 		{"application/json starts with application/json", "application/json", "application/json", true},
 		{"application/json; charset=utf-8 starts with application/json", "application/json; charset=utf-8", "application/json", true},
@@ -652,9 +652,9 @@ func TestCheckContentTypePrefix_Prefix(t *testing.T) {
 
 func TestValidateContentTypeJSON(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		shouldPass       bool
+		name        string
+		contentType string
+		shouldPass  bool
 	}{
 		{"application/json passes", "application/json", true},
 		{"application/json; charset=utf-8 passes", "application/json; charset=utf-8", true},
@@ -683,9 +683,9 @@ func TestValidateContentTypeJSON(t *testing.T) {
 
 func TestValidateContentTypeXML(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		shouldPass       bool
+		name        string
+		contentType string
+		shouldPass  bool
 	}{
 		{"application/xml passes", "application/xml", true},
 		{"application/xml; charset=utf-8 passes", "application/xml; charset=utf-8", true},
@@ -715,9 +715,9 @@ func TestValidateContentTypeXML(t *testing.T) {
 
 func TestValidateContentTypeText(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		shouldPass       bool
+		name        string
+		contentType string
+		shouldPass  bool
 	}{
 		{"text/plain passes", "text/plain", true},
 		{"text/html passes", "text/html", true},
@@ -748,9 +748,9 @@ func TestValidateContentTypeText(t *testing.T) {
 
 func TestValidateContentTypeBinary(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		shouldPass       bool
+		name        string
+		contentType string
+		shouldPass  bool
 	}{
 		{"application/octet-stream passes", "application/octet-stream", true},
 		{"application/pdf passes", "application/pdf", true},
@@ -793,9 +793,9 @@ func TestValidateContentTypeBinary(t *testing.T) {
 
 func TestValidateContentTypeHTML(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		shouldPass       bool
+		name        string
+		contentType string
+		shouldPass  bool
 	}{
 		{"text/html passes", "text/html", true},
 		{"text/html; charset=utf-8 passes", "text/html; charset=utf-8", true},
@@ -825,9 +825,9 @@ func TestValidateContentTypeHTML(t *testing.T) {
 
 func TestValidateContentTypeForm(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		shouldPass       bool
+		name        string
+		contentType string
+		shouldPass  bool
 	}{
 		{"application/x-www-form-urlencoded passes", "application/x-www-form-urlencoded", true},
 		{"multipart/form-data passes", "multipart/form-data", true},
@@ -992,9 +992,9 @@ func TestContentTypeMatches_Comprehensive(t *testing.T) {
 
 func TestGetContentTypeCharset(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		expectedCharset  string
+		name            string
+		contentType     string
+		expectedCharset string
 	}{
 		{"application/json; charset=utf-8 returns utf-8", "application/json; charset=utf-8", "utf-8"},
 		{"application/json; charset=iso-8859-1 returns iso-8859-1", "application/json; charset=iso-8859-1", "iso-8859-1"},
@@ -1041,9 +1041,9 @@ func TestGetContentTypeWithoutParams(t *testing.T) {
 
 func TestIsContentTypeJSON(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		expectedResult   bool
+		name           string
+		contentType    string
+		expectedResult bool
 	}{
 		{"application/json returns true", "application/json", true},
 		{"application/json; charset=utf-8 returns true", "application/json; charset=utf-8", true},
@@ -1067,9 +1067,9 @@ func TestIsContentTypeJSON(t *testing.T) {
 
 func TestIsContentTypeXML(t *testing.T) {
 	tests := []struct {
-		name             string
-		contentType      string
-		expectedResult   bool
+		name           string
+		contentType    string
+		expectedResult bool
 	}{
 		{"application/xml returns true", "application/xml", true},
 		{"application/xml; charset=utf-8 returns true", "application/xml; charset=utf-8", true},
@@ -1148,9 +1148,9 @@ func TestRealWorldUsage_APIResponseValidation(t *testing.T) {
 	t.Run("REST API JSON response validation", func(t *testing.T) {
 		// Simulate various API response scenarios
 		scenarios := []struct {
-			name     string
+			name        string
 			contentType string
-			validate func(*testing.T, *httptest.ResponseRecorder)
+			validate    func(*testing.T, *httptest.ResponseRecorder)
 		}{
 			{
 				"Standard JSON response",

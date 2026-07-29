@@ -226,7 +226,7 @@ func (fs *FSBackend) GetRangeWithHeaders(ctx context.Context, bucket, key string
 // limitedReadCloser limits the number of bytes read from a ReadCloser.
 type limitedReadCloser struct {
 	ReadCloser io.ReadCloser
-	remaining int64
+	remaining  int64
 }
 
 func (l *limitedReadCloser) Read(p []byte) (int, error) {
@@ -409,9 +409,9 @@ func (fs *FSBackend) List(ctx context.Context, bucket, prefix, delimiter, contin
 	}
 
 	return &ListResult{
-		Objects:       objects,
+		Objects:        objects,
 		CommonPrefixes: commonPrefixes,
-		IsTruncated:   false,
+		IsTruncated:    false,
 	}, nil
 }
 
@@ -526,11 +526,11 @@ func (fs *FSBackend) CreateMultipartUpload(ctx context.Context, bucket, key stri
 
 	// Save upload metadata
 	uploadMeta := map[string]interface{}{
-		"bucket":      bucket,
-		"key":         key,
-		"uploadID":    uploadID,
-		"initiated":   time.Now().UTC().Format(time.RFC3339),
-		"metadata":    meta,
+		"bucket":    bucket,
+		"key":       key,
+		"uploadID":  uploadID,
+		"initiated": time.Now().UTC().Format(time.RFC3339),
+		"metadata":  meta,
 	}
 
 	metaData, err := json.Marshal(uploadMeta)
@@ -909,10 +909,10 @@ func (fs *FSBackend) ListObjectVersions(ctx context.Context, bucket, prefix, del
 	}
 
 	return &ListObjectVersionsResult{
-		Versions:        versions,
-		CommonPrefixes:  listResult.CommonPrefixes,
-		IsTruncated:     listResult.IsTruncated,
-		NextKeyMarker:   "",
+		Versions:            versions,
+		CommonPrefixes:      listResult.CommonPrefixes,
+		IsTruncated:         listResult.IsTruncated,
+		NextKeyMarker:       "",
 		NextVersionIDMarker: "",
 	}, nil
 }

@@ -77,25 +77,25 @@ func TestBasicValidation(t *testing.T) {
 	// Define the test table
 	table := []TableTestCase[ValidationInput, error]{
 		{
-			Name:        "empty input returns error",
-			Description: "Tests that empty input returns ErrEmptyInput",
-			Input:       ValidationInput{Value: ""},
+			Name:          "empty input returns error",
+			Description:   "Tests that empty input returns ErrEmptyInput",
+			Input:         ValidationInput{Value: ""},
 			ExpectedError: ErrEmptyInput,
-			ExpectError:  true,
+			ExpectError:   true,
 		},
 		{
-			Name:        "valid input succeeds",
-			Description: "Tests that valid input returns no error",
-			Input:       ValidationInput{Value: "valid"},
+			Name:          "valid input succeeds",
+			Description:   "Tests that valid input returns no error",
+			Input:         ValidationInput{Value: "valid"},
 			ExpectedError: nil,
-			ExpectError:  false,
+			ExpectError:   false,
 		},
 		{
-			Name:        "invalid format returns error",
-			Description: "Tests that input with 'invalid' substring returns ErrInvalidFormat",
-			Input:       ValidationInput{Value: "this is invalid"},
+			Name:          "invalid format returns error",
+			Description:   "Tests that input with 'invalid' substring returns ErrInvalidFormat",
+			Input:         ValidationInput{Value: "this is invalid"},
 			ExpectedError: ErrInvalidFormat,
-			ExpectError:  true,
+			ExpectError:   true,
 		},
 	}
 
@@ -131,32 +131,32 @@ func TestValidationWithHelpers(t *testing.T) {
 func TestComplexInputValidation(t *testing.T) {
 	table := []TableTestCase[ComplexInput, error]{
 		{
-			Name:        "valid complex input",
-			Description: "Tests that valid complex input succeeds",
-			Input:       ComplexInput{Name: "test", Count: 5, Active: true},
+			Name:          "valid complex input",
+			Description:   "Tests that valid complex input succeeds",
+			Input:         ComplexInput{Name: "test", Count: 5, Active: true},
 			ExpectedError: nil,
-			ExpectError:  false,
+			ExpectError:   false,
 		},
 		{
-			Name:        "empty name returns error",
-			Description: "Tests that empty name returns ErrEmptyInput",
-			Input:       ComplexInput{Name: "", Count: 5, Active: true},
+			Name:          "empty name returns error",
+			Description:   "Tests that empty name returns ErrEmptyInput",
+			Input:         ComplexInput{Name: "", Count: 5, Active: true},
 			ExpectedError: ErrEmptyInput,
-			ExpectError:  true,
+			ExpectError:   true,
 		},
 		{
-			Name:        "negative count returns error",
-			Description: "Tests that negative count returns ErrOutOfRange",
-			Input:       ComplexInput{Name: "test", Count: -1, Active: true},
+			Name:          "negative count returns error",
+			Description:   "Tests that negative count returns ErrOutOfRange",
+			Input:         ComplexInput{Name: "test", Count: -1, Active: true},
 			ExpectedError: ErrOutOfRange,
-			ExpectError:  true,
+			ExpectError:   true,
 		},
 		{
-			Name:        "inactive with high count returns error",
-			Description: "Tests that inactive with count > 5 returns ErrInvalidFormat",
-			Input:       ComplexInput{Name: "test", Count: 10, Active: false},
+			Name:          "inactive with high count returns error",
+			Description:   "Tests that inactive with count > 5 returns ErrInvalidFormat",
+			Input:         ComplexInput{Name: "test", Count: 10, Active: false},
 			ExpectedError: ErrInvalidFormat,
-			ExpectError:  true,
+			ExpectError:   true,
 		},
 	}
 
@@ -176,23 +176,23 @@ func TestWithTableBuilder(t *testing.T) {
 		WithDescription("Test cases for input validation").
 		WithTags([]string{"validation", "input"}).
 		WithTestCase(TableTestCase[ValidationInput, error]{
-			Name:        "empty input",
-			Input:       ValidationInput{Value: ""},
+			Name:          "empty input",
+			Input:         ValidationInput{Value: ""},
 			ExpectedError: ErrEmptyInput,
-			ExpectError:  true,
+			ExpectError:   true,
 		}).
 		WithTestCase(TableTestCase[ValidationInput, error]{
-			Name:        "valid input",
-			Input:       ValidationInput{Value: "valid"},
+			Name:          "valid input",
+			Input:         ValidationInput{Value: "valid"},
 			ExpectedError: nil,
-			ExpectError:  false,
+			ExpectError:   false,
 		}).
 		WithTestCases([]TableTestCase[ValidationInput, error]{
 			{
-				Name:        "invalid format",
-				Input:       ValidationInput{Value: "invalid"},
+				Name:          "invalid format",
+				Input:         ValidationInput{Value: "invalid"},
 				ExpectedError: ErrInvalidFormat,
-				ExpectError:  true,
+				ExpectError:   true,
 			},
 		}).
 		Build()
@@ -217,18 +217,18 @@ func TestTableExtension(t *testing.T) {
 	// Add custom cases
 	customCases := []TableTestCase[ValidationInput, error]{
 		{
-			Name:        "custom invalid format",
-			Input:       ValidationInput{Value: "custom invalid"},
+			Name:          "custom invalid format",
+			Input:         ValidationInput{Value: "custom invalid"},
 			ExpectedError: ErrInvalidFormat,
-			ExpectError:  true,
-			Tags:        []string{"custom", "format"},
+			ExpectError:   true,
+			Tags:          []string{"custom", "format"},
 		},
 		{
-			Name:        "custom out of range",
-			Input:       ValidationInput{Value: "this is way too long"},
+			Name:          "custom out of range",
+			Input:         ValidationInput{Value: "this is way too long"},
 			ExpectedError: ErrOutOfRange,
-			ExpectError:  true,
-			Tags:        []string{"custom", "range"},
+			ExpectError:   true,
+			Tags:          []string{"custom", "range"},
 		},
 	}
 
@@ -266,24 +266,24 @@ func TestTableExtension(t *testing.T) {
 func TestErrorMessageValidation(t *testing.T) {
 	table := []TableTestCase[ValidationInput, error]{
 		{
-			Name:        "empty input validates error message",
-			Input:       ValidationInput{Value: ""},
+			Name:          "empty input validates error message",
+			Input:         ValidationInput{Value: ""},
 			ExpectedError: ErrEmptyInput,
-			ExpectError:  true,
+			ExpectError:   true,
 			ErrorContains: "empty",
 		},
 		{
-			Name:        "invalid format validates error message",
-			Input:       ValidationInput{Value: "invalid"},
+			Name:          "invalid format validates error message",
+			Input:         ValidationInput{Value: "invalid"},
 			ExpectedError: ErrInvalidFormat,
-			ExpectError:  true,
+			ExpectError:   true,
 			ErrorContains: "invalid format",
 		},
 		{
-			Name:        "out of range validates error message",
-			Input:       ValidationInput{Value: "this is too long input"},
+			Name:          "out of range validates error message",
+			Input:         ValidationInput{Value: "this is too long input"},
 			ExpectedError: ErrOutOfRange,
-			ExpectError:  true,
+			ExpectError:   true,
 			ErrorContains: "out of range",
 		},
 	}
@@ -301,13 +301,13 @@ func TestWithSkippedCases(t *testing.T) {
 	table := []TableTestCase[ValidationInput, error]{
 		SuccessCase("valid input", ValidationInput{Value: "test"}),
 		{
-			Name:        "skipped test",
-			Description: "This test is skipped",
-			Input:       ValidationInput{Value: "test"},
+			Name:          "skipped test",
+			Description:   "This test is skipped",
+			Input:         ValidationInput{Value: "test"},
 			ExpectedError: nil,
-			ExpectError:  false,
-			Skip:        true,
-			Tags:        []string{"skip"},
+			ExpectError:   false,
+			Skip:          true,
+			Tags:          []string{"skip"},
 		},
 		ErrorCase("error case", ValidationInput{Value: ""}, ErrEmptyInput),
 	}
@@ -375,31 +375,31 @@ func ValidateString(s string) error {
 func TestStringValidation(t *testing.T) {
 	table := []TableTestCase[string, error]{
 		{
-			Name:        "empty string",
-			Description: "Tests that empty string returns error",
-			Input:       "",
-			ExpectError: true,
+			Name:          "empty string",
+			Description:   "Tests that empty string returns error",
+			Input:         "",
+			ExpectError:   true,
 			ErrorContains: "empty",
 		},
 		{
-			Name:        "too short",
-			Description: "Tests that string < 3 characters returns error",
-			Input:       "ab",
-			ExpectError: true,
+			Name:          "too short",
+			Description:   "Tests that string < 3 characters returns error",
+			Input:         "ab",
+			ExpectError:   true,
 			ErrorContains: "at least 3",
 		},
 		{
-			Name:        "too long",
-			Description: "Tests that string > 50 characters returns error",
-			Input:       strings.Repeat("a", 51),
-			ExpectError: true,
+			Name:          "too long",
+			Description:   "Tests that string > 50 characters returns error",
+			Input:         strings.Repeat("a", 51),
+			ExpectError:   true,
 			ErrorContains: "exceed 50",
 		},
 		{
-			Name:        "missing special characters",
-			Description: "Tests that string without @ or . returns error",
-			Input:       "justplaintext",
-			ExpectError: true,
+			Name:          "missing special characters",
+			Description:   "Tests that string without @ or . returns error",
+			Input:         "justplaintext",
+			ExpectError:   true,
 			ErrorContains: "@ or .",
 		},
 		{
@@ -439,10 +439,10 @@ func ValidateNumber(n int) error {
 func TestNumericValidation(t *testing.T) {
 	table := []TableTestCase[int, error]{
 		{
-			Name:        "negative number",
-			Description: "Tests that negative numbers return error",
-			Input:       -1,
-			ExpectError: true,
+			Name:          "negative number",
+			Description:   "Tests that negative numbers return error",
+			Input:         -1,
+			ExpectError:   true,
 			ErrorContains: "non-negative",
 		},
 		{
@@ -464,10 +464,10 @@ func TestNumericValidation(t *testing.T) {
 			ExpectError: false,
 		},
 		{
-			Name:        "number exceeds maximum",
-			Description: "Tests that numbers > 100 return error",
-			Input:       101,
-			ExpectError: true,
+			Name:          "number exceeds maximum",
+			Description:   "Tests that numbers > 100 return error",
+			Input:         101,
+			ExpectError:   true,
 			ErrorContains: "exceed 100",
 		},
 	}

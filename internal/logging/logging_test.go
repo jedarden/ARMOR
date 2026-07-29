@@ -9,8 +9,8 @@ import (
 
 func TestLoggerLevels(t *testing.T) {
 	tests := []struct {
-		level   Level
-		expect  string
+		level  Level
+		expect string
 	}{
 		{LevelDebug, "DEBUG"},
 		{LevelInfo, "INFO"},

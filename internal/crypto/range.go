@@ -65,7 +65,7 @@ func TranslateRange(plaintextStart, plaintextEnd, totalPlaintextSize int64, bloc
 	// HMAC table starts right after the encrypted data, which is at headerSize + totalPlaintextSize
 	hmacTableOffset := int64(headerSize) + totalPlaintextSize
 	hmacOffset := hmacTableOffset + int64(blockStart*HMACSize)
-	hmacLength := int64((blockEnd-blockStart+1) * HMACSize)
+	hmacLength := int64((blockEnd - blockStart + 1) * HMACSize)
 
 	return &RangeTranslation{
 		PlaintextStart: plaintextStart,

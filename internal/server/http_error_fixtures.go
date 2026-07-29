@@ -234,20 +234,23 @@ func (f *HTTPErrorFixture) WithRequestId(requestId string) *HTTPErrorFixture {
 //   - Creating mock responses for GET/HEAD requests on missing resources
 //
 // Args:
-//   path: The resource path that was not found
-//   message: Optional custom error message (default: auto-generated)
-//   errorCode: Optional error code (default: "NoSuchKey")
+//
+//	path: The resource path that was not found
+//	message: Optional custom error message (default: auto-generated)
+//	errorCode: Optional error code (default: "NoSuchKey")
 //
 // Returns:
-//   *HTTPErrorFixture configured for 404 Not Found
+//
+//	*HTTPErrorFixture configured for 404 Not Found
 //
 // Example:
-//   fixture := NotFoundFixture("/api/blobs/missing-file.txt", "", "")
-//   response := fixture.ToXMLResponse()
-//   assert.Equal(t, 404, response.StatusCode)
 //
-//   // Custom message
-//   fixture := NotFoundFixture("/custom/path", "Resource does not exist", "")
+//	fixture := NotFoundFixture("/api/blobs/missing-file.txt", "", "")
+//	response := fixture.ToXMLResponse()
+//	assert.Equal(t, 404, response.StatusCode)
+//
+//	// Custom message
+//	fixture := NotFoundFixture("/custom/path", "Resource does not exist", "")
 func NotFoundFixture(path string, message string, errorCode string) *HTTPErrorFixture {
 	if message == "" {
 		message = fmt.Sprintf("The specified resource does not exist: %s", path)
@@ -274,21 +277,24 @@ func NotFoundFixture(path string, message string, errorCode string) *HTTPErrorFi
 //   - Testing client behavior when using wrong HTTP method
 //
 // Args:
-//   path: The resource path that was accessed
-//   allowedMethods: List of allowed HTTP methods (e.g., "GET, HEAD")
-//   method: The method that was attempted (default: "DELETE")
-//   message: Optional custom error message (default: auto-generated)
+//
+//	path: The resource path that was accessed
+//	allowedMethods: List of allowed HTTP methods (e.g., "GET, HEAD")
+//	method: The method that was attempted (default: "DELETE")
+//	message: Optional custom error message (default: auto-generated)
 //
 // Returns:
-//   *HTTPErrorFixture configured for 405 Method Not Allowed
+//
+//	*HTTPErrorFixture configured for 405 Method Not Allowed
 //
 // Example:
-//   fixture := MethodNotAllowedFixture(
-//       "/api/blobs/file.txt",
-//       "GET, HEAD",
-//       "DELETE",
-//       ""
-//   )
+//
+//	fixture := MethodNotAllowedFixture(
+//	    "/api/blobs/file.txt",
+//	    "GET, HEAD",
+//	    "DELETE",
+//	    ""
+//	)
 func MethodNotAllowedFixture(path string, allowedMethods string, method string, message string) *HTTPErrorFixture {
 	if method == "" {
 		method = "DELETE"
@@ -322,21 +328,24 @@ func MethodNotAllowedFixture(path string, allowedMethods string, method string, 
 //   - Testing API contract compliance for media types
 //
 // Args:
-//   path: The resource path that was accessed
-//   contentType: The unsupported content type that was sent
-//   supportedTypes: Optional list of supported content types
-//   message: Optional custom error message (default: auto-generated)
+//
+//	path: The resource path that was accessed
+//	contentType: The unsupported content type that was sent
+//	supportedTypes: Optional list of supported content types
+//	message: Optional custom error message (default: auto-generated)
 //
 // Returns:
-//   *HTTPErrorFixture configured for 415 Unsupported Media Type
+//
+//	*HTTPErrorFixture configured for 415 Unsupported Media Type
 //
 // Example:
-//   fixture := UnsupportedMediaTypeFixture(
-//       "/api/blobs/file.txt",
-//       "application/json",
-//       "application/xml, text/plain",
-//       ""
-//   )
+//
+//	fixture := UnsupportedMediaTypeFixture(
+//	    "/api/blobs/file.txt",
+//	    "application/json",
+//	    "application/xml, text/plain",
+//	    ""
+//	)
 func UnsupportedMediaTypeFixture(path string, contentType string, supportedTypes string, message string) *HTTPErrorFixture {
 	if message == "" {
 		if supportedTypes != "" {
@@ -354,11 +363,11 @@ func UnsupportedMediaTypeFixture(path string, contentType string, supportedTypes
 	}
 
 	return &HTTPErrorFixture{
-		StatusCode:  415,
-		ErrorCode:   "UnsupportedMediaType",
-		Message:     message,
-		Resource:    path,
-		ContentType: "application/xml",
+		StatusCode:       415,
+		ErrorCode:        "UnsupportedMediaType",
+		Message:          message,
+		Resource:         path,
+		ContentType:      "application/xml",
 		AdditionalFields: additionalFields,
 	}
 }
@@ -372,24 +381,27 @@ func UnsupportedMediaTypeFixture(path string, contentType string, supportedTypes
 //   - Verifying error handling for infrastructure failures
 //
 // Args:
-//   path: Optional resource path that caused the error
-//   message: Error message (default: generic internal error message)
-//   errorCode: Error code type (default: "InternalError")
-//   requestId: Optional request ID for tracking
+//
+//	path: Optional resource path that caused the error
+//	message: Error message (default: generic internal error message)
+//	errorCode: Error code type (default: "InternalError")
+//	requestId: Optional request ID for tracking
 //
 // Returns:
-//   *HTTPErrorFixture configured for 500 Internal Server Error
+//
+//	*HTTPErrorFixture configured for 500 Internal Server Error
 //
 // Example:
-//   fixture := InternalServerErrorFixture("", "", "", "")
 //
-//   // With path and request ID
-//   fixture := InternalServerErrorFixture(
-//       "/api/blobs/file.txt",
-//       "",
-//       "",
-//       "req-12345"
-//   )
+//	fixture := InternalServerErrorFixture("", "", "", "")
+//
+//	// With path and request ID
+//	fixture := InternalServerErrorFixture(
+//	    "/api/blobs/file.txt",
+//	    "",
+//	    "",
+//	    "req-12345"
+//	)
 func InternalServerErrorFixture(path string, message string, errorCode string, requestId string) *HTTPErrorFixture {
 	if message == "" {
 		message = "An internal server error occurred. Please try again later."
@@ -404,11 +416,11 @@ func InternalServerErrorFixture(path string, message string, errorCode string, r
 	}
 
 	return &HTTPErrorFixture{
-		StatusCode:  500,
-		ErrorCode:   errorCode,
-		Message:     message,
-		Resource:    path,
-		ContentType: "application/xml",
+		StatusCode:       500,
+		ErrorCode:        errorCode,
+		Message:          message,
+		Resource:         path,
+		ContentType:      "application/xml",
 		AdditionalFields: additionalFields,
 	}
 }
@@ -422,12 +434,14 @@ func InternalServerErrorFixture(path string, message string, errorCode string, r
 //   - Testing error handling for missing/invalid parameters
 //
 // Args:
-//   path: The resource path that was accessed
-//   message: Error message (default: generic bad request message)
-//   errorCode: Error code type (default: "BadRequest")
+//
+//	path: The resource path that was accessed
+//	message: Error message (default: generic bad request message)
+//	errorCode: Error code type (default: "BadRequest")
 //
 // Returns:
-//   *HTTPErrorFixture configured for 400 Bad Request
+//
+//	*HTTPErrorFixture configured for 400 Bad Request
 func BadRequestFixture(path string, message string, errorCode string) *HTTPErrorFixture {
 	if message == "" {
 		message = "The request could not be understood or was missing required parameters."
@@ -454,12 +468,14 @@ func BadRequestFixture(path string, message string, errorCode string) *HTTPError
 //   - Testing client authentication flow
 //
 // Args:
-//   path: The resource path that was accessed
-//   message: Error message (default: generic unauthorized message)
-//   errorCode: Error code type (default: "Unauthorized")
+//
+//	path: The resource path that was accessed
+//	message: Error message (default: generic unauthorized message)
+//	errorCode: Error code type (default: "Unauthorized")
 //
 // Returns:
-//   *HTTPErrorFixture configured for 401 Unauthorized
+//
+//	*HTTPErrorFixture configured for 401 Unauthorized
 func UnauthorizedFixture(path string, message string, errorCode string) *HTTPErrorFixture {
 	if message == "" {
 		message = "Authentication is required to access this resource."
@@ -486,12 +502,14 @@ func UnauthorizedFixture(path string, message string, errorCode string) *HTTPErr
 //   - Testing client behavior for insufficient permissions
 //
 // Args:
-//   path: The resource path that was accessed
-//   message: Error message (default: generic forbidden message)
-//   errorCode: Error code type (default: "AccessDenied")
+//
+//	path: The resource path that was accessed
+//	message: Error message (default: generic forbidden message)
+//	errorCode: Error code type (default: "AccessDenied")
 //
 // Returns:
-//   *HTTPErrorFixture configured for 403 Forbidden
+//
+//	*HTTPErrorFixture configured for 403 Forbidden
 func ForbiddenFixture(path string, message string, errorCode string) *HTTPErrorFixture {
 	if message == "" {
 		message = "You do not have permission to access this resource."
@@ -518,12 +536,14 @@ func ForbiddenFixture(path string, message string, errorCode string) *HTTPErrorF
 //   - Testing client retry logic for conflicts
 //
 // Args:
-//   path: The resource path that was accessed
-//   message: Error message (default: generic conflict message)
-//   errorCode: Error code type (default: "Conflict")
+//
+//	path: The resource path that was accessed
+//	message: Error message (default: generic conflict message)
+//	errorCode: Error code type (default: "Conflict")
 //
 // Returns:
-//   *HTTPErrorFixture configured for 409 Conflict
+//
+//	*HTTPErrorFixture configured for 409 Conflict
 func ConflictFixture(path string, message string, errorCode string) *HTTPErrorFixture {
 	if message == "" {
 		message = "The request could not be completed due to a conflict."
@@ -646,18 +666,22 @@ var (
 //   - Creating fixtures without knowing the specific error type
 //
 // Args:
-//   statusCode: HTTP status code
-//   path: Optional resource path
+//
+//	statusCode: HTTP status code
+//	path: Optional resource path
 //
 // Returns:
-//   *HTTPErrorFixture for the given status code
+//
+//	*HTTPErrorFixture for the given status code
 //
 // Raises:
-//   panic if status code is not supported
+//
+//	panic if status code is not supported
 //
 // Example:
-//   fixture := GetFixtureByStatusCode(404, "/api/file.txt")
-//   fixture := GetFixtureByStatusCode(405, "/api/file.txt")
+//
+//	fixture := GetFixtureByStatusCode(404, "/api/file.txt")
+//	fixture := GetFixtureByStatusCode(405, "/api/file.txt")
 func GetFixtureByStatusCode(statusCode int, path string) *HTTPErrorFixture {
 	switch statusCode {
 	case 400:
@@ -694,14 +718,17 @@ func GetFixtureByStatusCode(statusCode int, path string) *HTTPErrorFixture {
 //   - Generating fixtures for multiple endpoints at once
 //
 // Args:
-//   statusCodes: List of HTTP status codes to create fixtures for
-//   basePath: Base path for all fixtures
+//
+//	statusCodes: List of HTTP status codes to create fixtures for
+//	basePath: Base path for all fixtures
 //
 // Returns:
-//   []*HTTPErrorFixture for the given status codes
+//
+//	[]*HTTPErrorFixture for the given status codes
 //
 // Example:
-//   fixtures := CreateFixtureBatch([]int{400, 404, 500}, "/api/blobs/file.txt")
+//
+//	fixtures := CreateFixtureBatch([]int{400, 404, 500}, "/api/blobs/file.txt")
 func CreateFixtureBatch(statusCodes []int, basePath string) []*HTTPErrorFixture {
 	fixtures := make([]*HTTPErrorFixture, 0, len(statusCodes))
 
@@ -738,13 +765,15 @@ func CreateFixtureBatch(statusCodes []int, basePath string) []*HTTPErrorFixture 
 // - Content type is set
 //
 // Returns:
-//   error if validation fails, nil otherwise
+//
+//	error if validation fails, nil otherwise
 //
 // Example:
-//   fixture := NotFoundFixture("/path", "", "")
-//   if err := ValidateFixture(fixture); err != nil {
-//       t.Fatalf("Invalid fixture: %v", err)
-//   }
+//
+//	fixture := NotFoundFixture("/path", "", "")
+//	if err := ValidateFixture(fixture); err != nil {
+//	    t.Fatalf("Invalid fixture: %v", err)
+//	}
 func ValidateFixture(fixture *HTTPErrorFixture) error {
 	if fixture.StatusCode < 100 || fixture.StatusCode >= 600 {
 		return fmt.Errorf("invalid status code: %d", fixture.StatusCode)

@@ -9,8 +9,8 @@ import (
 
 // CacheEntry represents a cached metadata entry.
 type CacheEntry struct {
-	Metadata   *ARMORMetadata
-	ExpiresAt  time.Time
+	Metadata  *ARMORMetadata
+	ExpiresAt time.Time
 }
 
 // MetadataCache is an LRU cache for object metadata.

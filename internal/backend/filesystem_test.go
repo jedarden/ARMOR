@@ -30,8 +30,8 @@ func TestFSBackend_PutGet(t *testing.T) {
 	key := "test-object.txt"
 	content := "Hello, ARMOR filesystem backend!"
 	meta := map[string]string{
-		"Content-Type": "text/plain",
-		"x-amz-meta-armor-version": "1",
+		"Content-Type":                    "text/plain",
+		"x-amz-meta-armor-version":        "1",
 		"x-amz-meta-armor-plaintext-size": "35",
 	}
 

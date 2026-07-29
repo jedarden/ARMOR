@@ -64,10 +64,10 @@ func TestHeaderDuplicationDetectionFixed(t *testing.T) {
 
 		// Test only headers that are actually preserved by ARMOR
 		testHeaders := map[string]string{
-			"X-Amz-Date":          "20130524T000000Z",
+			"X-Amz-Date":           "20130524T000000Z",
 			"X-Amz-Content-Sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			"X-Amz-Security-Token": "FwoGZXIvYXdzEBYaDmRiwUKvH.example",
-			"X-Amz-Algorithm":     "AWS4-HMAC-SHA256",
+			"X-Amz-Algorithm":      "AWS4-HMAC-SHA256",
 			"X-Amz-Credential":     "TESTACCESSKEY/20130524/us-east-1/s3/aws4_request",
 		}
 

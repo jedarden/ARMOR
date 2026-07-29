@@ -28,8 +28,8 @@ func TestMultipartLitestreamScenario(t *testing.T) {
 
 	// Simulate a 44MB LTX file (close to the production 44,908,497 byte file)
 	// Use 44,033,024 bytes = 671 blocks exactly (this tests block boundary alignment)
-	const totalSize = 44_033_024 // 671 blocks of 64KB
-	const partSizeConst = 5_242_880  // 5MB = 80 blocks per part
+	const totalSize = 44_033_024    // 671 blocks of 64KB
+	const partSizeConst = 5_242_880 // 5MB = 80 blocks per part
 
 	// We'll have 8 parts plus a final partial part
 	// Parts 1-8: 80 blocks each (5MB)
@@ -139,11 +139,11 @@ func TestMultipartLitestreamScenario(t *testing.T) {
 		name       string
 		start, end int64
 	}{
-		{"Part 1 last block", 79 * int64(blockSize), 80 * int64(blockSize) - 1},
-		{"Part 2 first block", 80 * int64(blockSize), 81 * int64(blockSize) - 1},
-		{"Part 3 first block", 160 * int64(blockSize), 161 * int64(blockSize) - 1},
-		{"Part 4 first block", 240 * int64(blockSize), 241 * int64(blockSize) - 1},
-		{"Block 256", 256 * int64(blockSize), 257 * int64(blockSize) - 1},
+		{"Part 1 last block", 79 * int64(blockSize), 80*int64(blockSize) - 1},
+		{"Part 2 first block", 80 * int64(blockSize), 81*int64(blockSize) - 1},
+		{"Part 3 first block", 160 * int64(blockSize), 161*int64(blockSize) - 1},
+		{"Part 4 first block", 240 * int64(blockSize), 241*int64(blockSize) - 1},
+		{"Block 256", 256 * int64(blockSize), 257*int64(blockSize) - 1},
 		{"Last block start", int64(expectedBlocks-1) * int64(blockSize), int64(len(plaintext)) - 1},
 	}
 

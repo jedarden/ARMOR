@@ -72,7 +72,7 @@ func TestMultipartUpload(t *testing.T) {
 	// Step 1: Create multipart upload
 	uploadID, err := mb.CreateMultipartUpload(ctx, bucket, key, map[string]string{
 		"Content-Type": "application/octet-stream",
-		"test-name": "TestMultipartUpload",
+		"test-name":    "TestMultipartUpload",
 	})
 	if err != nil {
 		t.Fatalf("CreateMultipartUpload failed: %v", err)
@@ -100,7 +100,7 @@ func TestMultipartUpload(t *testing.T) {
 
 		parts = append(parts, CompletedPart{
 			PartNumber: partNum32,
-			ETag:        etag,
+			ETag:       etag,
 		})
 		t.Logf("Uploaded part %d: ETag=%s", partNum32, etag)
 	}
@@ -239,7 +239,7 @@ func TestMultipartUploadNonAlignedFinalPart(t *testing.T) {
 		}
 
 		for i := start; i < end; i++ {
-			uploadContent[i] = byte((partNum<<4) | (i & 0x0F))
+			uploadContent[i] = byte((partNum << 4) | (i & 0x0F))
 		}
 	}
 
@@ -269,7 +269,7 @@ func TestMultipartUploadNonAlignedFinalPart(t *testing.T) {
 
 		parts = append(parts, CompletedPart{
 			PartNumber: partNum32,
-			ETag:        etag,
+			ETag:       etag,
 		})
 
 		t.Logf("Part %d: %d bytes (expected %d bytes for full part)", partNum32, len(partContent), partSize)
@@ -391,7 +391,7 @@ func TestMultipartUploadIrregularFinalPart(t *testing.T) {
 
 		parts = append(parts, CompletedPart{
 			PartNumber: partNum32,
-			ETag:        etag,
+			ETag:       etag,
 		})
 		t.Logf("Uploaded part %d: ETag=%s", partNum32, etag)
 	}
