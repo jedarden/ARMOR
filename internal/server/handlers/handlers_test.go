@@ -388,7 +388,7 @@ func (m *mockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, de
 			Size:         int64(len(m.objects[k])),
 			ETag:         meta["x-amz-meta-armor-etag"],
 			LastModified: time.Now(),
-			IsLatest:   true,
+			IsLatest:     true,
 		}
 		result.Versions = append(result.Versions, info)
 	}
@@ -922,13 +922,13 @@ func TestStreamingDecryption(t *testing.T) {
 // TestStreamingDecryptionVariousSizes tests streaming with different file sizes
 func TestStreamingDecryptionVariousSizes(t *testing.T) {
 	sizes := []int{
-		100,           // Tiny
-		4096,          // One 4KB page
-		65535,         // Just under one block
-		65536,         // Exactly one block
-		65537,         // Just over one block
-		131072,        // Two blocks
-		1000000,       // ~1MB
+		100,     // Tiny
+		4096,    // One 4KB page
+		65535,   // Just under one block
+		65536,   // Exactly one block
+		65537,   // Just over one block
+		131072,  // Two blocks
+		1000000, // ~1MB
 	}
 
 	for _, size := range sizes {
@@ -1627,12 +1627,12 @@ func TestEmptyBucketRendering(t *testing.T) {
 
 	// Parse XML response
 	var result struct {
-		XMLName       xml.Name `xml:"ListBucketResult"`
-		Name          string   `xml:"Name"`
-		Prefix        string   `xml:"Prefix"`
-		MaxKeys       int      `xml:"MaxKeys"`
-		IsTruncated   bool     `xml:"IsTruncated"`
-		Contents      []struct {
+		XMLName     xml.Name `xml:"ListBucketResult"`
+		Name        string   `xml:"Name"`
+		Prefix      string   `xml:"Prefix"`
+		MaxKeys     int      `xml:"MaxKeys"`
+		IsTruncated bool     `xml:"IsTruncated"`
+		Contents    []struct {
 			Key  string `xml:"Key"`
 			Size int64  `xml:"Size"`
 		} `xml:"Contents"`
@@ -2189,8 +2189,8 @@ func TestStreamingEncryptionThreshold(t *testing.T) {
 	threshold := 10 * 1024 * 1024
 
 	tests := []struct {
-		name        string
-		size        int
+		name         string
+		size         int
 		expectStream bool
 	}{
 		{"under_threshold", threshold - 1, false},
@@ -2468,9 +2468,9 @@ func TestDeleteBucketLifecycleConfiguration(t *testing.T) {
 // mockBackendWithObjectLock is a mock backend that supports object lock operations for testing
 type mockBackendWithObjectLock struct {
 	*mockBackend
-	objectLockConfig map[string][]byte          // bucket -> config
-	retentionConfig  map[string][]byte          // bucket/key -> config
-	legalHoldConfig  map[string][]byte          // bucket/key -> config
+	objectLockConfig map[string][]byte // bucket -> config
+	retentionConfig  map[string][]byte // bucket/key -> config
+	legalHoldConfig  map[string][]byte // bucket/key -> config
 }
 
 func newMockBackendWithObjectLock() *mockBackendWithObjectLock {
@@ -3101,11 +3101,11 @@ func TestHeadObjectManifestFastPath(t *testing.T) {
 	h.WithManifest(rec)
 
 	const (
-		bucket      = "test-bucket"
-		key         = "manifest-test/file.parquet"
-		wantSize    = int64(123456)
-		wantCType   = "application/octet-stream"
-		wantETag    = "abc123"
+		bucket    = "test-bucket"
+		key       = "manifest-test/file.parquet"
+		wantSize  = int64(123456)
+		wantCType = "application/octet-stream"
+		wantETag  = "abc123"
 	)
 
 	// Pre-populate the manifest — no object exists in the backend.

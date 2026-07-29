@@ -97,43 +97,43 @@ func TestMalformedSignatureRejection(t *testing.T) {
 
 	t.Run("Invalid signature format returns 403 Forbidden", func(t *testing.T) {
 		tests := []struct {
-			name           string
-			authHeader     string
+			name              string
+			authHeader        string
 			expectedErrorCode string
 		}{
 			{
-				name:           "missing algorithm prefix",
-				authHeader:     "Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc123",
+				name:              "missing algorithm prefix",
+				authHeader:        "Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc123",
 				expectedErrorCode: "InvalidAlgorithm",
 			},
 			{
-				name:           "wrong algorithm",
-				authHeader:     "AWS4-HMAC-SHA1 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc123",
+				name:              "wrong algorithm",
+				authHeader:        "AWS4-HMAC-SHA1 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc123",
 				expectedErrorCode: "InvalidAlgorithm",
 			},
 			{
-				name:           "missing signature component",
-				authHeader:     "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host",
+				name:              "missing signature component",
+				authHeader:        "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host",
 				expectedErrorCode: "IncompleteSignature",
 			},
 			{
-				name:           "missing signed headers",
-				authHeader:     "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, Signature=abc123",
+				name:              "missing signed headers",
+				authHeader:        "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, Signature=abc123",
 				expectedErrorCode: "IncompleteSignature",
 			},
 			{
-				name:           "missing credential",
-				authHeader:     "AWS4-HMAC-SHA256 SignedHeaders=host, Signature=abc123",
+				name:              "missing credential",
+				authHeader:        "AWS4-HMAC-SHA256 SignedHeaders=host, Signature=abc123",
 				expectedErrorCode: "IncompleteSignature",
 			},
 			{
-				name:           "malformed credential - insufficient parts",
-				authHeader:     "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524, SignedHeaders=host, Signature=abc123",
+				name:              "malformed credential - insufficient parts",
+				authHeader:        "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524, SignedHeaders=host, Signature=abc123",
 				expectedErrorCode: "InvalidCredential",
 			},
 			{
-				name:           "empty signature value",
-				authHeader:     "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=",
+				name:              "empty signature value",
+				authHeader:        "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=",
 				expectedErrorCode: "IncompleteSignature",
 			},
 		}
@@ -174,23 +174,23 @@ func TestMalformedSignatureRejection(t *testing.T) {
 
 	t.Run("Partial signature (missing components) returns 403 Forbidden", func(t *testing.T) {
 		tests := []struct {
-			name           string
-			authHeader     string
+			name              string
+			authHeader        string
 			expectedErrorCode string
 		}{
 			{
-				name:           "only algorithm",
-				authHeader:     "AWS4-HMAC-SHA256",
+				name:              "only algorithm",
+				authHeader:        "AWS4-HMAC-SHA256",
 				expectedErrorCode: "InvalidAlgorithm",
 			},
 			{
-				name:           "algorithm and credential only",
-				authHeader:     "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request",
+				name:              "algorithm and credential only",
+				authHeader:        "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request",
 				expectedErrorCode: "IncompleteSignature",
 			},
 			{
-				name:           "missing signature in valid format",
-				authHeader:     "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date",
+				name:              "missing signature in valid format",
+				authHeader:        "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date",
 				expectedErrorCode: "IncompleteSignature",
 			},
 		}
@@ -277,11 +277,11 @@ func TestMalformedSignatureRejection(t *testing.T) {
 				}
 				// Check that it contains at least one relevant term
 				if !strings.Contains(messageLower, "authentication") &&
-				   !strings.Contains(messageLower, "signature") &&
-				   !strings.Contains(messageLower, "credential") &&
-				   !strings.Contains(messageLower, "algorithm") &&
-				   !strings.Contains(messageLower, "header") &&
-				   !strings.Contains(messageLower, "aws4") {
+					!strings.Contains(messageLower, "signature") &&
+					!strings.Contains(messageLower, "credential") &&
+					!strings.Contains(messageLower, "algorithm") &&
+					!strings.Contains(messageLower, "header") &&
+					!strings.Contains(messageLower, "aws4") {
 					t.Errorf("Error message should describe the authentication problem, got: %s", s3Err.Message)
 				}
 			})

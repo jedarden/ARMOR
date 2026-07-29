@@ -18,10 +18,10 @@ import (
 
 // TestServer represents a running ARMOR test server
 type TestServer struct {
-	server      *Server
-	testServer  *httptest.Server
-	config      *config.Config
-	baseURL     string
+	server     *Server
+	testServer *httptest.Server
+	config     *config.Config
+	baseURL    string
 }
 
 // SetupTestServer starts a real ARMOR server for integration testing

@@ -3,24 +3,27 @@
 // that backups are restorable through both the normal server path and disaster recovery.
 //
 // Usage:
-//   restore-verifier [flags]
+//
+//	restore-verifier [flags]
 //
 // Environment Variables:
-//   ARMOR_B2_REGION              B2 region (e.g., us-west-004)
-//   ARMOR_B2_ENDPOINT            B2 S3 API endpoint
-//   ARMOR_B2_ACCESS_KEY_ID       B2 application key ID
-//   ARMOR_B2_SECRET_ACCESS_KEY   B2 application key
-//   ARMOR_CF_DOMAIN              Cloudflare domain (optional)
-//   ARMOR_MEK                    Master encryption key (hex, 64 chars)
-//   ARMOR_BLOCK_SIZE             Encryption block size (default: 65536)
-//   VERIFIER_CHECK_INTERVAL      How often to run verification (default: 6h)
-//   VERIFIER_SAMPLE_SIZE         Number of historical objects to sample (default: 10)
-//   VERIFIER_HTTP_LISTEN         HTTP listen address (default: :9002)
-//   VERIFIER_DR_DRILL_INTERVAL   Cadence of the periodic direct-only DR drill (default: disabled)
+//
+//	ARMOR_B2_REGION              B2 region (e.g., us-west-004)
+//	ARMOR_B2_ENDPOINT            B2 S3 API endpoint
+//	ARMOR_B2_ACCESS_KEY_ID       B2 application key ID
+//	ARMOR_B2_SECRET_ACCESS_KEY   B2 application key
+//	ARMOR_CF_DOMAIN              Cloudflare domain (optional)
+//	ARMOR_MEK                    Master encryption key (hex, 64 chars)
+//	ARMOR_BLOCK_SIZE             Encryption block size (default: 65536)
+//	VERIFIER_CHECK_INTERVAL      How often to run verification (default: 6h)
+//	VERIFIER_SAMPLE_SIZE         Number of historical objects to sample (default: 10)
+//	VERIFIER_HTTP_LISTEN         HTTP listen address (default: :9002)
+//	VERIFIER_DR_DRILL_INTERVAL   Cadence of the periodic direct-only DR drill (default: disabled)
 //
 // HTTP:
-//   POST /trigger            Trigger an immediate dual-path verification run
-//   POST /trigger?mode=dr-drill  Trigger a direct-only DR drill (excludes the ARMOR read path)
+//
+//	POST /trigger            Trigger an immediate dual-path verification run
+//	POST /trigger?mode=dr-drill  Trigger a direct-only DR drill (excludes the ARMOR read path)
 package main
 
 import (
@@ -45,13 +48,13 @@ import (
 
 var (
 	// Configuration flags
-	b2Region      = flag.String("b2-region", os.Getenv("ARMOR_B2_REGION"), "B2 region")
-	b2Endpoint    = flag.String("b2-endpoint", os.Getenv("ARMOR_B2_ENDPOINT"), "B2 S3 endpoint")
-	b2AccessKey   = flag.String("b2-access-key", os.Getenv("ARMOR_B2_ACCESS_KEY_ID"), "B2 access key ID")
-	b2SecretKey   = flag.String("b2-secret-key", os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY"), "B2 secret key")
-	cfDomain      = flag.String("cf-domain", os.Getenv("ARMOR_CF_DOMAIN"), "Cloudflare domain")
-	mekHex        = flag.String("mek", os.Getenv("ARMOR_MEK"), "Master encryption key (hex)")
-	blockSize     = flag.Int("block-size", 65536, "Encryption block size")
+	b2Region    = flag.String("b2-region", os.Getenv("ARMOR_B2_REGION"), "B2 region")
+	b2Endpoint  = flag.String("b2-endpoint", os.Getenv("ARMOR_B2_ENDPOINT"), "B2 S3 endpoint")
+	b2AccessKey = flag.String("b2-access-key", os.Getenv("ARMOR_B2_ACCESS_KEY_ID"), "B2 access key ID")
+	b2SecretKey = flag.String("b2-secret-key", os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY"), "B2 secret key")
+	cfDomain    = flag.String("cf-domain", os.Getenv("ARMOR_CF_DOMAIN"), "Cloudflare domain")
+	mekHex      = flag.String("mek", os.Getenv("ARMOR_MEK"), "Master encryption key (hex)")
+	blockSize   = flag.Int("block-size", 65536, "Encryption block size")
 
 	// Verifier configuration
 	checkInterval = flag.Duration("check-interval", parseDuration(os.Getenv("VERIFIER_CHECK_INTERVAL"), 6*time.Hour), "Verification check interval")

@@ -227,7 +227,7 @@ func TestMergeLastWriteWins(t *testing.T) {
 	idx.Put("bucket", "local-only.parquet", &manifest.Entry{PlaintextSize: 200, LastModified: earlier})
 
 	src := map[string]*manifest.Entry{
-		"bucket/shared.parquet": {PlaintextSize: 999, LastModified: now},   // newer → wins
+		"bucket/shared.parquet":   {PlaintextSize: 999, LastModified: now}, // newer → wins
 		"bucket/src-only.parquet": {PlaintextSize: 300, LastModified: now}, // new key
 	}
 	idx.Merge(src)
@@ -336,7 +336,7 @@ func TestDeltaSeqFromKeyInvalid(t *testing.T) {
 		"",
 		".armor/manifest/writer-1/snapshot.json.gz",
 		".armor/manifest/writer-1/delta-abc.jsonl",
-		".armor/manifest/writer-1/delta-000000001.jsonl",  // 9 digits
+		".armor/manifest/writer-1/delta-000000001.jsonl",   // 9 digits
 		".armor/manifest/writer-1/delta-00000000001.jsonl", // 11 digits
 	}
 	for _, tc := range cases {

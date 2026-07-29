@@ -478,7 +478,7 @@ func errorIs(err, target error) bool {
 //   - base: The base test table to extend
 //   - customCases: Custom test cases to add
 //
-// Returns a new test table containing both base and custom cases
+// # Returns a new test table containing both base and custom cases
 //
 // Example:
 //
@@ -507,7 +507,7 @@ func ExtendTable[I any, E error](base []TableTestCase[I, E], customCases []Table
 //   - table: The test table to filter
 //   - tag: The tag to filter by
 //
-// Returns a filtered test table
+// # Returns a filtered test table
 //
 // Example:
 //
@@ -539,7 +539,7 @@ func FilterTable[I any, E error](table []TableTestCase[I, E], tag string) []Tabl
 //   - table: The test table to filter
 //   - excludeTag: The tag to exclude
 //
-// Returns a filtered test table excluding tests with the specified tag
+// # Returns a filtered test table excluding tests with the specified tag
 //
 // Example:
 //
@@ -579,17 +579,17 @@ func FilterTableByTag[I any, E error](table []TableTestCase[I, E], excludeTag st
 //   - name: The test case name
 //   - input: The input to test
 //
-// Returns a test case configured for success
+// # Returns a test case configured for success
 //
 // Example:
 //
 //	case := SuccessCase("valid input", "test input")
 func SuccessCase[I any](name string, input I) TableTestCase[I, error] {
 	return TableTestCase[I, error]{
-		Name:         name,
-		Input:        input,
+		Name:          name,
+		Input:         input,
 		ExpectedError: nil,
-		ExpectError:  false,
+		ExpectError:   false,
 	}
 }
 
@@ -605,7 +605,7 @@ func SuccessCase[I any](name string, input I) TableTestCase[I, error] {
 //   - input: The input to test
 //   - expectedErr: The expected error (optional, can be nil)
 //
-// Returns a test case configured for error
+// # Returns a test case configured for error
 //
 // Example:
 //
@@ -632,7 +632,7 @@ func ErrorCase[I any](name string, input I, expectedErr error) TableTestCase[I, 
 //   - expectedErr: The expected error
 //   - errorMsg: The substring that should be in the error message
 //
-// Returns a test case configured for error with message validation
+// # Returns a test case configured for error with message validation
 //
 // Example:
 //

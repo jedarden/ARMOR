@@ -55,6 +55,58 @@ type Entry struct {
 	Operation string `json:"operation"`
 }
 
+// KeyEvent represents a key management event in the provenance chain.
+// These events track sensitive key operations that are part of the audit trail.
+type KeyEvent struct {
+	// Sequence is the monotonically increasing sequence number for this writer
+	Sequence int64 `json:"sequence"`
+
+	// EventType is the type of key event (key-rotate-start, key-rotate-complete, key-export)
+	EventType string `json:"event_type"`
+
+	// ChainHash is the hash linking this entry to the previous one
+	ChainHash string `json:"chain_hash"`
+
+	// PrevChainHash is the chain hash of the previous entry
+	PrevChainHash string `json:"prev_chain_hash"`
+
+	// Timestamp is when this event was created
+	Timestamp time.Time `json:"timestamp"`
+
+	// WriterID identifies which ARMOR instance created this entry
+	WriterID string `json:"writer_id"`
+
+	// OldMEKHash is the SHA-256 hash of the old master encryption key (first 16 hex chars)
+	// For key-rotate-start and key-rotate-complete events
+	OldMEKHash string `json:"old_mek_hash,omitempty"`
+
+	// NewMEKHash is the SHA-256 hash of the new master encryption key (first 16 hex chars)
+	// For key-rotate-start and key-rotate-complete events
+	NewMEKHash string `json:"new_mek_hash,omitempty"`
+
+	// RotationID uniquely identifies this rotation operation
+	// For key-rotate-start and key-rotate-complete events
+	RotationID string `json:"rotation_id,omitempty"`
+
+	// RotationResult contains summary of rotation results
+	// For key-rotate-complete events
+	RotationResult *KeyRotationResult `json:"rotation_result,omitempty"`
+
+	// ExportedMEKHash is the SHA-256 hash of the exported master encryption key (first 16 hex chars)
+	// For key-export events
+	ExportedMEKHash string `json:"exported_mek_hash,omitempty"`
+}
+
+// KeyRotationResult summarizes the outcome of a key rotation operation.
+type KeyRotationResult struct {
+	TotalObjects     int     `json:"total_objects"`
+	ProcessedObjects int     `json:"processed_objects"`
+	SkippedObjects   int     `json:"skipped_objects"`
+	Exceptions       int     `json:"exceptions"`
+	DurationSec      float64 `json:"duration_sec"`
+	Status           string  `json:"status"`
+}
+
 // ChainHead represents the current head of a writer's chain.
 type ChainHead struct {
 	// WriterID identifies the ARMOR instance
@@ -72,13 +124,13 @@ type ChainHead struct {
 
 // Manager handles provenance chain operations.
 type Manager struct {
-	backend backend.Backend
-	bucket  string
+	backend  backend.Backend
+	bucket   string
 	writerID string
 
 	// In-memory cache of the current chain head
-	mu       sync.RWMutex
-	head     *ChainHead
+	mu   sync.RWMutex
+	head *ChainHead
 
 	// Skip provenance for internal operations
 	skipPrefixes []string
@@ -87,11 +139,11 @@ type Manager struct {
 // NewManager creates a new provenance manager.
 func NewManager(be backend.Backend, bucket, writerID string) *Manager {
 	return &Manager{
-		backend: be,
-		bucket:  bucket,
+		backend:  be,
+		bucket:   bucket,
 		writerID: writerID,
 		skipPrefixes: []string{
-			".armor/",  // Internal ARMOR objects
+			".armor/", // Internal ARMOR objects
 		},
 	}
 }
@@ -161,6 +213,88 @@ func (m *Manager) RecordUpload(ctx context.Context, objectKey, plaintextSHA256, 
 	return nil
 }
 
+// RecordKeyEvent records a key management event in the provenance chain.
+// Supported event types: "key-rotate-start", "key-rotate-complete", "key-export".
+// This should be called after a successful key operation.
+func (m *Manager) RecordKeyEvent(ctx context.Context, eventType string, opts KeyEventOpts) error {
+	// Validate event type
+	switch eventType {
+	case "key-rotate-start", "key-rotate-complete", "key-export":
+		// Valid event types
+	default:
+		return fmt.Errorf("invalid event type: %s", eventType)
+	}
+
+	// Get or load the current chain head
+	head, err := m.getOrCreateHead(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get chain head: %w", err)
+	}
+
+	// Create the new key event
+	now := time.Now().UTC()
+	event := &KeyEvent{
+		Sequence:      head.Sequence + 1,
+		EventType:     eventType,
+		PrevChainHash: head.ChainHash,
+		Timestamp:     now,
+		WriterID:      m.writerID,
+	}
+
+	// Set optional fields based on event type
+	if eventType == "key-rotate-start" || eventType == "key-rotate-complete" {
+		event.OldMEKHash = opts.OldMEKHash
+		event.NewMEKHash = opts.NewMEKHash
+		event.RotationID = opts.RotationID
+		if eventType == "key-rotate-complete" && opts.RotationResult != nil {
+			event.RotationResult = opts.RotationResult
+		}
+	} else if eventType == "key-export" {
+		event.ExportedMEKHash = opts.ExportedMEKHash
+	}
+
+	// Compute the chain hash
+	event.ChainHash = computeKeyEventHash(event, head.ChainHash)
+
+	// Save the event
+	if err := m.saveKeyEvent(ctx, event); err != nil {
+		return fmt.Errorf("failed to save key event: %w", err)
+	}
+
+	// Update and save the chain head
+	newHead := &ChainHead{
+		WriterID:  m.writerID,
+		Sequence:  event.Sequence,
+		ChainHash: event.ChainHash,
+		Updated:   now,
+	}
+
+	if err := m.saveHead(ctx, newHead); err != nil {
+		return fmt.Errorf("failed to save chain head: %w", err)
+	}
+
+	// Update in-memory cache
+	m.mu.Lock()
+	m.head = newHead
+	m.mu.Unlock()
+
+	return nil
+}
+
+// KeyEventOpts holds optional parameters for key events.
+type KeyEventOpts struct {
+	// OldMEKHash is the first 16 hex characters of the old MEK's SHA-256
+	OldMEKHash string
+	// NewMEKHash is the first 16 hex characters of the new MEK's SHA-256
+	NewMEKHash string
+	// RotationID uniquely identifies this rotation operation
+	RotationID string
+	// RotationResult summarizes the rotation outcome
+	RotationResult *KeyRotationResult
+	// ExportedMEKHash is the first 16 hex characters of the exported MEK's SHA-256
+	ExportedMEKHash string
+}
+
 // getOrCreateHead returns the current chain head, creating an initial one if needed.
 func (m *Manager) getOrCreateHead(ctx context.Context) (*ChainHead, error) {
 	// Check in-memory cache first
@@ -210,6 +344,29 @@ func computeChainHash(entry *Entry, prevChainHash string) string {
 	return fmt.Sprintf("%064x", h.Sum(nil))
 }
 
+// computeKeyEventHash computes the chain hash for a key event.
+// chain_hash = SHA-256(prev_chain_hash || event_type || timestamp || writer_id || mek_hash_or_rotation_id)
+func computeKeyEventHash(event *KeyEvent, prevChainHash string) string {
+	h := sha256.New()
+
+	// Write in deterministic order
+	h.Write([]byte(prevChainHash))
+	h.Write([]byte(event.EventType))
+	h.Write([]byte(event.Timestamp.Format(time.RFC3339Nano)))
+	h.Write([]byte(event.WriterID))
+
+	// Add event-specific fields for cryptographic binding
+	if event.EventType == "key-rotate-start" || event.EventType == "key-rotate-complete" {
+		h.Write([]byte(event.OldMEKHash))
+		h.Write([]byte(event.NewMEKHash))
+		h.Write([]byte(event.RotationID))
+	} else if event.EventType == "key-export" {
+		h.Write([]byte(event.ExportedMEKHash))
+	}
+
+	return fmt.Sprintf("%064x", h.Sum(nil))
+}
+
 // saveEntry saves a chain entry to B2.
 func (m *Manager) saveEntry(ctx context.Context, entry *Entry) error {
 	key := fmt.Sprintf("%s%s/%d.json", ChainPrefix, m.writerID, entry.Sequence)
@@ -223,6 +380,26 @@ func (m *Manager) saveEntry(ctx context.Context, entry *Entry) error {
 		"Content-Type": "application/json",
 	}); err != nil {
 		return fmt.Errorf("failed to put entry: %w", err)
+	}
+
+	return nil
+}
+
+// saveKeyEvent saves a key event to B2.
+// Key events are stored in the same chain namespace as upload events,
+// ensuring they're part of the same tamper-evident audit trail.
+func (m *Manager) saveKeyEvent(ctx context.Context, event *KeyEvent) error {
+	key := fmt.Sprintf("%s%s/%d.json", ChainPrefix, m.writerID, event.Sequence)
+
+	data, err := json.MarshalIndent(event, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal key event: %w", err)
+	}
+
+	if err := m.backend.Put(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), map[string]string{
+		"Content-Type": "application/json",
+	}); err != nil {
+		return fmt.Errorf("failed to put key event: %w", err)
 	}
 
 	return nil
@@ -295,18 +472,18 @@ type AuditResult struct {
 
 // WriterAudit contains audit results for a single writer's chain.
 type WriterAudit struct {
-	WriterID      string `json:"writer_id"`
-	HeadSequence  int64  `json:"head_sequence"`
-	EntriesVerified int  `json:"entries_verified"`
-	Valid         bool   `json:"valid"`
-	Error         string `json:"error,omitempty"`
+	WriterID        string `json:"writer_id"`
+	HeadSequence    int64  `json:"head_sequence"`
+	EntriesVerified int    `json:"entries_verified"`
+	Valid           bool   `json:"valid"`
+	Error           string `json:"error,omitempty"`
 }
 
 // GapInfo describes a gap in a chain.
 type GapInfo struct {
-	WriterID    string `json:"writer_id"`
-	AfterSeq    int64  `json:"after_seq"`
-	MissingSeq  int64  `json:"missing_seq"`
+	WriterID   string `json:"writer_id"`
+	AfterSeq   int64  `json:"after_seq"`
+	MissingSeq int64  `json:"missing_seq"`
 }
 
 // Auditor performs provenance chain audits.

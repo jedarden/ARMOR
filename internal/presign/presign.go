@@ -40,10 +40,10 @@ const (
 
 // Token represents a pre-signed URL token.
 type Token struct {
-	Bucket    string `json:"b"` // Bucket name
-	Key       string `json:"k"` // Object key
-	Expires   int64  `json:"e"` // Expiration timestamp (Unix)
-	Range     string `json:"r,omitempty"` // Optional range header value
+	Bucket             string `json:"b"`           // Bucket name
+	Key                string `json:"k"`           // Object key
+	Expires            int64  `json:"e"`           // Expiration timestamp (Unix)
+	Range              string `json:"r,omitempty"` // Optional range header value
 	ContentDisposition string `json:"d,omitempty"` // Optional Content-Disposition
 }
 

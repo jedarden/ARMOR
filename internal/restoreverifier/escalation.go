@@ -136,7 +136,7 @@ type BeadPayload struct {
 type BeadKind string
 
 const (
-	BeadFailure  BeadKind = "failure"
+	BeadFailure   BeadKind = "failure"
 	BeadStaleness BeadKind = "staleness"
 )
 
@@ -250,9 +250,9 @@ func (noopFiler) File(context.Context, BeadPayload) (string, error) { return "",
 //
 // The zero-value Escalator is not usable; construct with NewEscalator.
 type Escalator struct {
-	filer     BeadFiler
+	filer      BeadFiler
 	deployment string
-	window    time.Duration
+	window     time.Duration
 
 	mu   sync.Mutex
 	path string // persistence file; "" = in-memory only
@@ -437,8 +437,8 @@ func (e *Escalator) failurePayload(r VerificationResult, prov Provenance) BeadPa
 
 // escalationState is the persisted on-disk representation of the dedupe set.
 type escalationState struct {
-	Failures  map[string]bool    `json:"failures"`
-	Staleness map[string]string  `json:"staleness"` // bucket -> RFC3339
+	Failures  map[string]bool   `json:"failures"`
+	Staleness map[string]string `json:"staleness"` // bucket -> RFC3339
 }
 
 // load reads the persisted dedupe state. A missing file is not an error (fresh

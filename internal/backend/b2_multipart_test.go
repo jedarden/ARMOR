@@ -104,10 +104,10 @@ func (t *testableB2Backend) AbortMultipartUpload(ctx context.Context, bucket, ke
 
 // mockS3Client is a mock S3 client for testing multipart operations.
 type mockS3Client struct {
-	createMultipartUploadFunc func(ctx context.Context, input *s3.CreateMultipartUploadInput) (*s3.CreateMultipartUploadOutput, error)
-	uploadPartFunc           func(ctx context.Context, input *s3.UploadPartInput) (*s3.UploadPartOutput, error)
+	createMultipartUploadFunc   func(ctx context.Context, input *s3.CreateMultipartUploadInput) (*s3.CreateMultipartUploadOutput, error)
+	uploadPartFunc              func(ctx context.Context, input *s3.UploadPartInput) (*s3.UploadPartOutput, error)
 	completeMultipartUploadFunc func(ctx context.Context, input *s3.CompleteMultipartUploadInput) (*s3.CompleteMultipartUploadOutput, error)
-	abortMultipartUploadFunc  func(ctx context.Context, input *s3.AbortMultipartUploadInput) (*s3.AbortMultipartUploadOutput, error)
+	abortMultipartUploadFunc    func(ctx context.Context, input *s3.AbortMultipartUploadInput) (*s3.AbortMultipartUploadOutput, error)
 }
 
 func (m *mockS3Client) CreateMultipartUpload(ctx context.Context, input *s3.CreateMultipartUploadInput, opts ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
@@ -266,9 +266,9 @@ func TestB2Backend_AbortMultipartUpload_Success(t *testing.T) {
 // TestB2Backend_MultipartErrorCases tests error cases for multipart operations.
 func TestB2Backend_MultipartErrorCases(t *testing.T) {
 	tests := []struct {
-		name              string
-		operation         string
-		mockFunc          interface{}
+		name                string
+		operation           string
+		mockFunc            interface{}
 		expectErrorContains string
 	}{
 		{
@@ -477,12 +477,12 @@ func TestB2Backend_MultipartThresholds(t *testing.T) {
 	//   - Typical ARMOR part size: 5MB, 10MB, or 50MB (all multiples of 4096)
 
 	const (
-		minMultipartObjectSize = 5 * 1024 * 1024     // 5MB
-		minPartSize           = 5 * 1024 * 1024     // 5MB
-		maxPartSize           = 5 * 1024 * 1024 * 1024 // 5GB
-		maxPartsCount         = 10000
-		maxObjectSize         = 5 * 1024 * 1024 * 1024 * 1024 // 5TB
-		armorBlockSize        = 4096
+		minMultipartObjectSize = 5 * 1024 * 1024        // 5MB
+		minPartSize            = 5 * 1024 * 1024        // 5MB
+		maxPartSize            = 5 * 1024 * 1024 * 1024 // 5GB
+		maxPartsCount          = 10000
+		maxObjectSize          = 5 * 1024 * 1024 * 1024 * 1024 // 5TB
+		armorBlockSize         = 4096
 	)
 
 	if minMultipartObjectSize < minPartSize {
@@ -526,7 +526,7 @@ func TestB2Backend_MultipartUploadWorkflow(t *testing.T) {
 		},
 		completeMultipartUploadFunc: func(ctx context.Context, input *s3.CompleteMultipartUploadInput) (*s3.CompleteMultipartUploadOutput, error) {
 			return &s3.CompleteMultipartUploadOutput{
-				ETag: aws.String("final-workflow-etag"),
+				ETag:     aws.String("final-workflow-etag"),
 				Location: aws.String("https://test-bucket.s3.amazonaws.com/test-key"),
 			}, nil
 		},
@@ -554,7 +554,7 @@ func TestB2Backend_MultipartUploadWorkflow(t *testing.T) {
 		}
 		parts = append(parts, CompletedPart{
 			PartNumber: int32(i),
-			ETag:        etag,
+			ETag:       etag,
 		})
 	}
 
@@ -878,7 +878,7 @@ func TestMockB2Backend_MultipartUploadIntegration(t *testing.T) {
 		}
 		parts = append(parts, CompletedPart{
 			PartNumber: partNum,
-			ETag:        etag,
+			ETag:       etag,
 		})
 	}
 

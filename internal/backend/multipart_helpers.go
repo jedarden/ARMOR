@@ -140,7 +140,7 @@ func (h *MultipartUploadHelper) CanaryUpload(ctx context.Context, key string, da
 	// Create upload
 	info, err := h.CreateUpload(ctx, key, map[string]string{
 		"Content-Type": "application/octet-stream",
-		"canary-test": "true",
+		"canary-test":  "true",
 	})
 	if err != nil {
 		return fmt.Errorf("canary create failed: %w", err)
@@ -270,17 +270,17 @@ type MultipartUploadConstants struct {
 // GetMultipartUploadConstants returns the standard S3 multipart upload constants.
 func GetMultipartUploadConstants() MultipartUploadConstants {
 	const (
-		minPartSize            = 5 * 1024 * 1024            // 5MB
-		maxPartSize            = 5 * 1024 * 1024 * 1024     // 5GB
+		minPartSize            = 5 * 1024 * 1024        // 5MB
+		maxPartSize            = 5 * 1024 * 1024 * 1024 // 5GB
 		maxPartsCount          = 10000
-		minMultipartObjectSize = 5 * 1024 * 1024            // 5MB
+		minMultipartObjectSize = 5 * 1024 * 1024               // 5MB
 		maxObjectSize          = 5 * 1024 * 1024 * 1024 * 1024 // 5TB
 	)
 
 	return MultipartUploadConstants{
 		MinPartSize:            minPartSize,
 		MaxPartSize:            maxPartSize,
-		MaxPartsCount:         maxPartsCount,
+		MaxPartsCount:          maxPartsCount,
 		MinMultipartObjectSize: minMultipartObjectSize,
 		MaxObjectSize:          maxObjectSize,
 	}

@@ -531,15 +531,15 @@ func ExampleCustomPattern() {
 
 	// Create custom configuration
 	customConfig := ErrorScenarioConfig{
-		Name:              "Custom Not Found",
-		ExpectedCode:      basePattern.ExpectedCode,
-		ExpectedStatus:    basePattern.ExpectedStatus,
-		ExpectedMessage:   "Custom not found message",
-		ExpectedKeywords:  []string{"custom", "not", "found"},
-		MinMessageLength:   basePattern.MinMessageLength,
-		MaxResponseTime:   basePattern.MaxResponseTime,
-		Description:       "Custom not found scenario",
-		Category:          basePattern.Category,
+		Name:             "Custom Not Found",
+		ExpectedCode:     basePattern.ExpectedCode,
+		ExpectedStatus:   basePattern.ExpectedStatus,
+		ExpectedMessage:  "Custom not found message",
+		ExpectedKeywords: []string{"custom", "not", "found"},
+		MinMessageLength: basePattern.MinMessageLength,
+		MaxResponseTime:  basePattern.MaxResponseTime,
+		Description:      "Custom not found scenario",
+		Category:         basePattern.Category,
 	}
 
 	fmt.Printf("Custom pattern: %s\n", customConfig.Name)

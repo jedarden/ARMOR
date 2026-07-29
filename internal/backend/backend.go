@@ -11,20 +11,20 @@ import (
 
 // ObjectInfo contains metadata about an object.
 type ObjectInfo struct {
-	Key           string
-	Size          int64 // Plaintext size
-	ContentType   string
-	ETag          string
-	LastModified  time.Time
-	Metadata      map[string]string
+	Key              string
+	Size             int64 // Plaintext size
+	ContentType      string
+	ETag             string
+	LastModified     time.Time
+	Metadata         map[string]string
 	IsARMOREncrypted bool
 }
 
 // ListResult contains the result of a ListObjects operation.
 type ListResult struct {
-	Objects      []ObjectInfo
-	IsTruncated  bool
-	NextToken    string
+	Objects        []ObjectInfo
+	IsTruncated    bool
+	NextToken      string
 	CommonPrefixes []string
 }
 
@@ -158,28 +158,28 @@ type PartInfo struct {
 
 // ListPartsResult contains the result of a ListParts operation.
 type ListPartsResult struct {
-	Bucket           string
-	Key              string
-	UploadID         string
-	Parts            []PartInfo
+	Bucket               string
+	Key                  string
+	UploadID             string
+	Parts                []PartInfo
 	NextPartNumberMarker int
-	IsTruncated      bool
+	IsTruncated          bool
 }
 
 // UploadInfo contains information about an active multipart upload.
 type UploadInfo struct {
-	UploadID   string
-	Key        string
-	Initiated  time.Time
+	UploadID  string
+	Key       string
+	Initiated time.Time
 }
 
 // ListMultipartUploadsResult contains the result of a ListMultipartUploads operation.
 type ListMultipartUploadsResult struct {
-	Bucket       string
-	Uploads      []UploadInfo
-	NextKeyMarker string
+	Bucket             string
+	Uploads            []UploadInfo
+	NextKeyMarker      string
 	NextUploadIDMarker string
-	IsTruncated  bool
+	IsTruncated        bool
 }
 
 // ObjectVersionInfo contains metadata about an object version.
@@ -197,11 +197,11 @@ type ObjectVersionInfo struct {
 
 // ListObjectVersionsResult contains the result of a ListObjectVersions operation.
 type ListObjectVersionsResult struct {
-	Versions           []ObjectVersionInfo
-	IsTruncated        bool
-	NextKeyMarker      string
+	Versions            []ObjectVersionInfo
+	IsTruncated         bool
+	NextKeyMarker       string
 	NextVersionIDMarker string
-	CommonPrefixes     []string
+	CommonPrefixes      []string
 }
 
 // ARMORMetadata extracts ARMOR-specific metadata from object headers.
@@ -225,9 +225,9 @@ func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
 	}
 
 	am := &ARMORMetadata{
-		ContentType: meta["x-amz-meta-armor-content-type"],
+		ContentType:  meta["x-amz-meta-armor-content-type"],
 		PlaintextSHA: meta["x-amz-meta-armor-plaintext-sha256"],
-		ETag:        meta["x-amz-meta-armor-etag"],
+		ETag:         meta["x-amz-meta-armor-etag"],
 	}
 
 	// Parse version (expecting "1")

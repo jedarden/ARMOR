@@ -5,24 +5,24 @@
 // with SigV4 signing. It runs against a REAL B2 backend (not mockBackend).
 //
 // Coverage per test run (all on the same object key to exercise overwrite):
-//   1. PUT (single-part, 1MiB payload)
-//   2. HEAD (verify metadata)
-//   3. GET (full download, byte-exact)
-//   4. GET (byte-range requests)
-//   5. LIST (verify object appears with correct size)
-//   6. PUT (multipart, 2 parts, non-final part >=5MiB)
-//   7. GET (full download of multipart, verify content)
-//   8. GET (byte-range crossing part and block boundaries)
-//   9. Overwrite (PUT same key again with different content)
-//   10. GET (verify new content wins)
-//   11. DELETE
-//   12. Post-delete verification: GET returns 404, HEAD returns 404, LIST no longer includes key
+//  1. PUT (single-part, 1MiB payload)
+//  2. HEAD (verify metadata)
+//  3. GET (full download, byte-exact)
+//  4. GET (byte-range requests)
+//  5. LIST (verify object appears with correct size)
+//  6. PUT (multipart, 2 parts, non-final part >=5MiB)
+//  7. GET (full download of multipart, verify content)
+//  8. GET (byte-range crossing part and block boundaries)
+//  9. Overwrite (PUT same key again with different content)
+//  10. GET (verify new content wins)
+//  11. DELETE
+//  12. Post-delete verification: GET returns 404, HEAD returns 404, LIST no longer includes key
 //
 // Separately tests multipart Abort:
-//   13. CreateMultipartUpload
-//   14. UploadPart (at least 1 part)
-//   15. AbortMultipartUpload
-//   16. ListMultipartUploads (verify incomplete upload is gone)
+//  13. CreateMultipartUpload
+//  14. UploadPart (at least 1 part)
+//  15. AbortMultipartUpload
+//  16. ListMultipartUploads (verify incomplete upload is gone)
 //
 // Each test captures actual HTTP status codes and response bodies as evidence.
 package awsclicompat

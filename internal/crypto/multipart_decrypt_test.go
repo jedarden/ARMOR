@@ -8,15 +8,19 @@ import (
 // TestMultipartDecryptWithSidecar tests the full multipart decrypt path
 // using the sidecar HMAC table, which is how production handles multipart objects.
 func TestMultipartDecryptWithSidecar(t *testing.T) {
-	blockSize := 65536 // 64KB
+	blockSize := 65536                 // 64KB
 	partSize := int64(5 * 1024 * 1024) // 5MB = 80 blocks per part
 	numParts := 4
 
 	// Generate test DEK and IV
 	dek := make([]byte, 32)
 	iv := make([]byte, 16)
-	for i := range dek { dek[i] = byte(i) }
-	for i := range iv { iv[i] = byte(i + 10) }
+	for i := range dek {
+		dek[i] = byte(i)
+	}
+	for i := range iv {
+		iv[i] = byte(i + 10)
+	}
 
 	encryptor, err := NewEncryptor(dek, iv, blockSize)
 	if err != nil {
@@ -29,7 +33,7 @@ func TestMultipartDecryptWithSidecar(t *testing.T) {
 	var allPlaintext []byte
 
 	for partNum := 0; partNum < numParts; partNum++ {
-		startBlockIndex := uint32(partNum * int(partSize / int64(blockSize)))
+		startBlockIndex := uint32(partNum * int(partSize/int64(blockSize)))
 
 		// Create part plaintext with distinguishable pattern
 		partPlaintext := make([]byte, partSize)
@@ -141,7 +145,7 @@ func TestMultipartDecryptWithSidecar(t *testing.T) {
 	// Test 4: DecryptRange to simulate a range request
 	// Request a range that spans part boundaries
 	rangeStart := int64(10 * 1024 * 1024) // 10MB (middle of part 3)
-	rangeEnd := int64(12 * 1024 * 1024)    // 12MB (middle of part 4)
+	rangeEnd := int64(12 * 1024 * 1024)   // 12MB (middle of part 4)
 
 	// Calculate encrypted range (like production does)
 	rangeBlockStart := rangeStart / int64(blockSize)
@@ -157,7 +161,7 @@ func TestMultipartDecryptWithSidecar(t *testing.T) {
 	if err != nil {
 		t.Errorf("DecryptRange failed: %v", err)
 	} else {
-		expectedRangeContent := allPlaintext[rangeStart:rangeEnd+1]
+		expectedRangeContent := allPlaintext[rangeStart : rangeEnd+1]
 		if !bytes.Equal(rangeDecrypted, expectedRangeContent) {
 			t.Errorf("Range decrypted content mismatch")
 		} else {
@@ -174,8 +178,12 @@ func TestMultipartDecryptStream(t *testing.T) {
 
 	dek := make([]byte, 32)
 	iv := make([]byte, 16)
-	for i := range dek { dek[i] = byte(i) }
-	for i := range iv { iv[i] = byte(i + 10) }
+	for i := range dek {
+		dek[i] = byte(i)
+	}
+	for i := range iv {
+		iv[i] = byte(i + 10)
+	}
 
 	encryptor, err := NewEncryptor(dek, iv, blockSize)
 	if err != nil {
@@ -188,7 +196,7 @@ func TestMultipartDecryptStream(t *testing.T) {
 	var allPlaintext []byte
 
 	for partNum := 0; partNum < numParts; partNum++ {
-		startBlockIndex := uint32(partNum * int(partSize / int64(blockSize)))
+		startBlockIndex := uint32(partNum * int(partSize/int64(blockSize)))
 
 		partPlaintext := make([]byte, partSize)
 		for i := range partPlaintext {
@@ -233,8 +241,12 @@ func TestHMACTablePositioning(t *testing.T) {
 	blockSize := 65536
 	dek := make([]byte, 32)
 	iv := make([]byte, 16)
-	for i := range dek { dek[i] = byte(i) }
-	for i := range iv { iv[i] = byte(i + 10) }
+	for i := range dek {
+		dek[i] = byte(i)
+	}
+	for i := range iv {
+		iv[i] = byte(i + 10)
+	}
 
 	encryptor, err := NewEncryptor(dek, iv, blockSize)
 	if err != nil {
@@ -246,7 +258,7 @@ func TestHMACTablePositioning(t *testing.T) {
 	var allHMACs []byte
 
 	for partNum := 0; partNum < 3; partNum++ {
-		startBlockIndex := uint32(partNum * int(partSize / int64(blockSize)))
+		startBlockIndex := uint32(partNum * int(partSize/int64(blockSize)))
 
 		partPlaintext := make([]byte, partSize)
 		_, hmacTable, err := encryptor.EncryptWithStartingCounter(partPlaintext, startBlockIndex)

@@ -24,11 +24,11 @@ import (
 
 // B2Backend implements the Backend interface using B2's S3 API.
 type B2Backend struct {
-	s3Client    *s3.Client
-	region      string
-	endpoint    string
-	cfDomain    string
-	httpClient  *http.Client
+	s3Client   *s3.Client
+	region     string
+	endpoint   string
+	cfDomain   string
+	httpClient *http.Client
 }
 
 // B2Config contains configuration for the B2 backend.
@@ -95,11 +95,11 @@ func (b *B2Backend) Put(ctx context.Context, bucket, key string, body io.Reader,
 		body = tmp
 	}
 	_, err := b.s3Client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:      aws.String(bucket),
-		Key:         aws.String(key),
-		Body:        body,
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		Body:          body,
 		ContentLength: aws.Int64(size),
-		Metadata:    toS3Metadata(meta),
+		Metadata:      toS3Metadata(meta),
 	})
 	if err != nil {
 		return fmt.Errorf("PutObject failed: %w", err)
@@ -650,10 +650,10 @@ func (b *B2Backend) ListParts(ctx context.Context, bucket, key, uploadID string)
 	}
 
 	result := &ListPartsResult{
-		Bucket:           aws.ToString(resp.Bucket),
-		Key:              aws.ToString(resp.Key),
-		UploadID:         aws.ToString(resp.UploadId),
-		IsTruncated:      aws.ToBool(resp.IsTruncated),
+		Bucket:      aws.ToString(resp.Bucket),
+		Key:         aws.ToString(resp.Key),
+		UploadID:    aws.ToString(resp.UploadId),
+		IsTruncated: aws.ToBool(resp.IsTruncated),
 	}
 
 	if resp.NextPartNumberMarker != nil {
@@ -835,10 +835,10 @@ func (b *B2Backend) parseLifecycleConfig(config []byte) ([]types.LifecycleRule, 
 	type LifecycleConfiguration struct {
 		XMLName xml.Name `xml:"LifecycleConfiguration"`
 		Rules   []struct {
-			ID          string `xml:"ID"`
-			Status      string `xml:"Status"`
-			Prefix      string `xml:"Prefix"`
-			Filter      *struct {
+			ID     string `xml:"ID"`
+			Status string `xml:"Status"`
+			Prefix string `xml:"Prefix"`
+			Filter *struct {
 				Prefix string `xml:"Prefix"`
 			} `xml:"Filter"`
 			Expiration *struct {
@@ -955,9 +955,9 @@ func (b *B2Backend) GetObjectLockConfiguration(ctx context.Context, bucket strin
 func (b *B2Backend) PutObjectLockConfiguration(ctx context.Context, bucket string, config []byte) error {
 	// Parse the object lock configuration XML
 	type ObjectLockConfiguration struct {
-		XMLName          xml.Name `xml:"ObjectLockConfiguration"`
-		ObjectLockEnabled string  `xml:"ObjectLockEnabled"`
-		Rule             *struct {
+		XMLName           xml.Name `xml:"ObjectLockConfiguration"`
+		ObjectLockEnabled string   `xml:"ObjectLockEnabled"`
+		Rule              *struct {
 			DefaultRetention *struct {
 				Mode  string `xml:"Mode"`
 				Days  *int   `xml:"Days"`
@@ -1044,9 +1044,9 @@ func (b *B2Backend) GetObjectRetention(ctx context.Context, bucket, key string) 
 func (b *B2Backend) PutObjectRetention(ctx context.Context, bucket, key string, retention []byte) error {
 	// Parse the retention XML
 	type Retention struct {
-		XMLName        xml.Name `xml:"Retention"`
-		Mode           string   `xml:"Mode"`
-		RetainUntilDate string  `xml:"RetainUntilDate"`
+		XMLName         xml.Name `xml:"Retention"`
+		Mode            string   `xml:"Mode"`
+		RetainUntilDate string   `xml:"RetainUntilDate"`
 	}
 
 	var r Retention
@@ -1171,8 +1171,8 @@ func (b *B2Backend) ListObjectVersions(ctx context.Context, bucket, prefix, deli
 	}
 
 	result := &ListObjectVersionsResult{
-		IsTruncated:        aws.ToBool(resp.IsTruncated),
-		NextKeyMarker:      aws.ToString(resp.NextKeyMarker),
+		IsTruncated:         aws.ToBool(resp.IsTruncated),
+		NextKeyMarker:       aws.ToString(resp.NextKeyMarker),
 		NextVersionIDMarker: aws.ToString(resp.NextVersionIdMarker),
 	}
 

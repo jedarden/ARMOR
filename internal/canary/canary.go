@@ -73,11 +73,11 @@ type Result struct {
 	LastError         string    `json:"last_error,omitempty"`
 
 	// Multipart canary result
-	MultipartHealthy           Status    `json:"multipart_healthy_status"`
-	MultipartHealthyBool       bool      `json:"multipart_healthy"`
-	MultipartLastCheck         time.Time `json:"multipart_last_check"`
-	MultipartConsecutiveFails  int       `json:"multipart_consecutive_fails"`
-	MultipartLastError         string    `json:"multipart_last_error,omitempty"`
+	MultipartHealthy          Status    `json:"multipart_healthy_status"`
+	MultipartHealthyBool      bool      `json:"multipart_healthy"`
+	MultipartLastCheck        time.Time `json:"multipart_last_check"`
+	MultipartConsecutiveFails int       `json:"multipart_consecutive_fails"`
+	MultipartLastError        string    `json:"multipart_last_error,omitempty"`
 }
 
 // Monitor manages the canary integrity checks.
@@ -105,15 +105,15 @@ type Monitor struct {
 
 // Config holds configuration for the canary monitor.
 type Config struct {
-	Backend          backend.Backend
-	Bucket           string
-	MEK              []byte
-	BlockSize        int
-	InstanceID       string
-	Interval         time.Duration // Check interval (default 5 minutes)
-	CanarySize       int           // Size of canary content (default 1024 bytes)
-	MaxRetries       int           // Max retries on failure (default 3)
-	RetryDelay       time.Duration // Delay between retries (default 10s)
+	Backend           backend.Backend
+	Bucket            string
+	MEK               []byte
+	BlockSize         int
+	InstanceID        string
+	Interval          time.Duration // Check interval (default 5 minutes)
+	CanarySize        int           // Size of canary content (default 1024 bytes)
+	MaxRetries        int           // Max retries on failure (default 3)
+	RetryDelay        time.Duration // Delay between retries (default 10s)
 	MultipartInterval time.Duration // Multipart check interval (default 1 hour)
 	MultipartSize     int           // Size of multipart canary (default 6MB)
 }
@@ -835,19 +835,19 @@ func (m *Monitor) GetStatus() Result {
 	defer m.state.mu.RUnlock()
 
 	return Result{
-		Status:                     m.state.Status,
-		LastCheck:                  m.state.LastCheck,
-		UploadLatencyMs:            m.state.UploadLatencyMs,
-		DownloadLatencyMs:          m.state.DownloadLatencyMs,
-		DecryptVerified:            m.state.DecryptVerified,
-		HMACVerified:               m.state.HMACVerified,
-		CFCacheHit:                 m.state.CFCacheHit,
-		LastError:                  m.state.LastError,
-		MultipartHealthy:           m.state.MultipartHealthy,
-		MultipartHealthyBool:       m.state.MultipartHealthy == StatusHealthy,
-		MultipartLastCheck:         m.state.MultipartLastCheck,
-		MultipartConsecutiveFails:  m.state.MultipartConsecutiveFails,
-		MultipartLastError:         m.state.MultipartLastError,
+		Status:                    m.state.Status,
+		LastCheck:                 m.state.LastCheck,
+		UploadLatencyMs:           m.state.UploadLatencyMs,
+		DownloadLatencyMs:         m.state.DownloadLatencyMs,
+		DecryptVerified:           m.state.DecryptVerified,
+		HMACVerified:              m.state.HMACVerified,
+		CFCacheHit:                m.state.CFCacheHit,
+		LastError:                 m.state.LastError,
+		MultipartHealthy:          m.state.MultipartHealthy,
+		MultipartHealthyBool:      m.state.MultipartHealthy == StatusHealthy,
+		MultipartLastCheck:        m.state.MultipartLastCheck,
+		MultipartConsecutiveFails: m.state.MultipartConsecutiveFails,
+		MultipartLastError:        m.state.MultipartLastError,
 	}
 }
 

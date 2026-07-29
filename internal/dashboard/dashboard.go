@@ -143,7 +143,7 @@ func (d *Dashboard) keyRotateStatusHandlerImpl() http.HandlerFunc {
 			// No rotation state file means no rotation in progress
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"status": "none",
+				"status":  "none",
 				"message": "No rotation in progress",
 			})
 			return
@@ -232,9 +232,9 @@ type PageData struct {
 	// Encryption statistics for the current listing
 	EncryptedCount   int
 	PlaintextCount   int
-	TotalObjectCount int     // EncryptedCount + PlaintextCount (excludes folders)
+	TotalObjectCount int // EncryptedCount + PlaintextCount (excludes folders)
 	KeyIDs           []string
-	EncryptedPct     string  // e.g. "75.0" — used as CSS width and display value
+	EncryptedPct     string // e.g. "75.0" — used as CSS width and display value
 	// Additional metrics exposed in the stats grid
 	RangeBytesSaved string
 	KeyWrapOps      string
@@ -623,11 +623,11 @@ func (d *Dashboard) encryptionStatsHandlerImpl() http.HandlerFunc {
 
 // ListObject represents an object in the JSON list response.
 type ListObject struct {
-	Key          string    `json:"key"`
-	Size         int64     `json:"size"`
-	LastModified string    `json:"last_modified"`
-	Encrypted    bool      `json:"encrypted"`
-	KeyID        string    `json:"key_id,omitempty"`
+	Key          string `json:"key"`
+	Size         int64  `json:"size"`
+	LastModified string `json:"last_modified"`
+	Encrypted    bool   `json:"encrypted"`
+	KeyID        string `json:"key_id,omitempty"`
 }
 
 // ListAPIResponse holds the JSON response for the list endpoint.

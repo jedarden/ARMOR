@@ -48,60 +48,60 @@ func TestAuthorizationHeaderPassthrough(t *testing.T) {
 
 	// Define test cases covering various AWS4-HMAC-SHA256 header formats
 	testCases := []struct {
-		name             string
-		authHeader       string
-		expectedAccessKey string
-		expectedSignature string
+		name                  string
+		authHeader            string
+		expectedAccessKey     string
+		expectedSignature     string
 		expectedSignedHeaders string
-		description      string
+		description           string
 	}{
 		{
-			name: "Standard AWS4-HMAC-SHA256 with host and x-amz-date",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
-			expectedAccessKey: "TESTACCESSKEY",
-			expectedSignature: "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+			name:                  "Standard AWS4-HMAC-SHA256 with host and x-amz-date",
+			authHeader:            "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+			expectedAccessKey:     "TESTACCESSKEY",
+			expectedSignature:     "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
 			expectedSignedHeaders: "host;x-amz-date",
-			description: "Standard format with most common signed headers",
+			description:           "Standard format with most common signed headers",
 		},
 		{
-			name: "AWS4-HMAC-SHA256 with content-type header",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=fe5f80f77d5fa27bec129f320a5cfe8cd23c890a9f1de8b7b99b1b5b8b7b5b1b",
-			expectedAccessKey: "TESTACCESSKEY",
-			expectedSignature: "fe5f80f77d5fa27bec129f320a5cfe8cd23c890a9f1de8b7b99b1b5b8b7b5b1b",
+			name:                  "AWS4-HMAC-SHA256 with content-type header",
+			authHeader:            "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=fe5f80f77d5fa27bec129f320a5cfe8cd23c890a9f1de8b7b99b1b5b8b7b5b1b",
+			expectedAccessKey:     "TESTACCESSKEY",
+			expectedSignature:     "fe5f80f77d5fa27bec129f320a5cfe8cd23c890a9f1de8b7b99b1b5b8b7b5b1b",
 			expectedSignedHeaders: "host;x-amz-content-sha256;x-amz-date",
-			description: "Format with content-sha256 header included",
+			description:           "Format with content-sha256 header included",
 		},
 		{
-			name: "AWS4-HMAC-SHA256 with multiple signed headers",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=c3a5e2f8b1d9e4a7b2c5d8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
-			expectedAccessKey: "TESTACCESSKEY",
-			expectedSignature: "c3a5e2f8b1d9e4a7b2c5d8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+			name:                  "AWS4-HMAC-SHA256 with multiple signed headers",
+			authHeader:            "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=c3a5e2f8b1d9e4a7b2c5d8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+			expectedAccessKey:     "TESTACCESSKEY",
+			expectedSignature:     "c3a5e2f8b1d9e4a7b2c5d8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
 			expectedSignedHeaders: "content-type;host;x-amz-date",
-			description: "Format with content-type and multiple signed headers",
+			description:           "Format with content-type and multiple signed headers",
 		},
 		{
-			name: "AWS4-HMAC-SHA256 with long signature (128 characters)",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-			expectedAccessKey: "TESTACCESSKEY",
-			expectedSignature: "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			name:                  "AWS4-HMAC-SHA256 with long signature (128 characters)",
+			authHeader:            "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			expectedAccessKey:     "TESTACCESSKEY",
+			expectedSignature:     "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			expectedSignedHeaders: "host;x-amz-date",
-			description: "Verifies signature is not truncated (full 128-char signature)",
+			description:           "Verifies signature is not truncated (full 128-char signature)",
 		},
 		{
-			name: "AWS4-HMAC-SHA256 with compact spacing",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request,SignedHeaders=host;x-amz-date,Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
-			expectedAccessKey: "TESTACCESSKEY",
-			expectedSignature: "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+			name:                  "AWS4-HMAC-SHA256 with compact spacing",
+			authHeader:            "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request,SignedHeaders=host;x-amz-date,Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+			expectedAccessKey:     "TESTACCESSKEY",
+			expectedSignature:     "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
 			expectedSignedHeaders: "host;x-amz-date",
-			description: "Format with minimal spacing (no space after commas)",
+			description:           "Format with minimal spacing (no space after commas)",
 		},
 		{
-			name: "AWS4-HMAC-SMAC-SHA256 with extra spaces",
-			authHeader: "AWS4-HMAC-SHA256  Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request,  SignedHeaders=host;x-amz-date,  Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
-			expectedAccessKey: "TESTACCESSKEY",
-			expectedSignature: "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+			name:                  "AWS4-HMAC-SMAC-SHA256 with extra spaces",
+			authHeader:            "AWS4-HMAC-SHA256  Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request,  SignedHeaders=host;x-amz-date,  Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+			expectedAccessKey:     "TESTACCESSKEY",
+			expectedSignature:     "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
 			expectedSignedHeaders: "host;x-amz-date",
-			description: "Format with extra spaces (should be normalized)",
+			description:           "Format with extra spaces (should be normalized)",
 		},
 	}
 
@@ -462,28 +462,28 @@ func TestAuthorizationHeaderExactPassthrough(t *testing.T) {
 		description string
 	}{
 		{
-			name: "Standard AWS SigV4 with common headers",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+			name:        "Standard AWS SigV4 with common headers",
+			authHeader:  "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
 			description: "Standard format with most common signed headers",
 		},
 		{
-			name: "AWS SigV4 with content-type and additional headers",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-west-2/s3/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=fe5f80f77d5fa27bec129f320a5cfe8cd23c890a9f1de8b7b99b1b5b8b7b5b1b",
+			name:        "AWS SigV4 with content-type and additional headers",
+			authHeader:  "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-west-2/s3/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=fe5f80f77d5fa27bec129f320a5cfe8cd23c890a9f1de8b7b99b1b5b8b7b5b1b",
 			description: "Format with content-type and content-sha256 headers",
 		},
 		{
-			name: "AWS SigV4 with security token (session credentials)",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date;x-amz-security-token, Signature=c3a5e2f8b1d9e4a7b2c5d8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+			name:        "AWS SigV4 with security token (session credentials)",
+			authHeader:  "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date;x-amz-security-token, Signature=c3a5e2f8b1d9e4a7b2c5d8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
 			description: "Session token authentication format",
 		},
 		{
-			name: "AWS SigV4 with long signature (128 characters)",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+			name:        "AWS SigV4 with long signature (128 characters)",
+			authHeader:  "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			description: "Verifies long signatures aren't truncated",
 		},
 		{
-			name: "AWS SigV4 with minimal spacing",
-			authHeader: "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request,SignedHeaders=host;x-amz-date,Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+			name:        "AWS SigV4 with minimal spacing",
+			authHeader:  "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request,SignedHeaders=host;x-amz-date,Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
 			description: "Compact format without spaces after commas",
 		},
 	}

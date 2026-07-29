@@ -6,11 +6,12 @@
 // configurable error responses. These are used across multiple test files.
 //
 // Usage:
-//   scenarios := []ErrorServerScenario{
-//       {StatusCode: 404, ErrorCode: "NoSuchKey", Message: "Not found"},
-//   }
-//   server := NewConfigurableErrorServer(scenarios)
-//   defer server.Close()
+//
+//	scenarios := []ErrorServerScenario{
+//	    {StatusCode: 404, ErrorCode: "NoSuchKey", Message: "Not found"},
+//	}
+//	server := NewConfigurableErrorServer(scenarios)
+//	defer server.Close()
 package server
 
 import (
@@ -125,8 +126,8 @@ type LoggedResponse struct {
 //	// Make requests to server.URL
 func NewConfigurableErrorServer(scenarios []ErrorServerScenario) *ConfigurableErrorServer {
 	s := &ConfigurableErrorServer{
-		Scenarios:  scenarios,
-		RequestLog: make([]LoggedRequest, 0),
+		Scenarios:   scenarios,
+		RequestLog:  make([]LoggedRequest, 0),
 		ResponseLog: make([]LoggedResponse, 0),
 	}
 
@@ -232,9 +233,9 @@ func (s *ConfigurableErrorServer) getResponseBody(scenario ErrorServerScenario) 
 
 	// Generate S3 error XML
 	s3Err := S3ErrorResponse{
-		Code:     scenario.ErrorCode,
-		Message:  scenario.Message,
-		Resource: scenario.Resource,
+		Code:      scenario.ErrorCode,
+		Message:   scenario.Message,
+		Resource:  scenario.Resource,
 		RequestId: fmt.Sprintf("req-%d", s.RequestCount),
 	}
 
@@ -597,7 +598,7 @@ var PredefinedErrorScenarios = struct {
 		Message:    "Authentication required",
 		Resource:   "/api/resource",
 		Headers: map[string]string{
-			"Content-Type":    "application/xml",
+			"Content-Type":     "application/xml",
 			"WWW-Authenticate": "AWS4-HMAC-SHA256",
 		},
 	},
@@ -625,9 +626,9 @@ var PredefinedErrorScenarios = struct {
 		Message:    "The specified method is not allowed against this resource",
 		Resource:   "/api/resource",
 		Headers: map[string]string{
-			"Content-Type":     "application/xml",
-			"Allow":            "GET, HEAD, PUT",
-			"X-Error-Method":   "POST",
+			"Content-Type":            "application/xml",
+			"Allow":                   "GET, HEAD, PUT",
+			"X-Error-Method":          "POST",
 			"X-Error-Allowed-Methods": "GET, HEAD, PUT",
 		},
 	},
@@ -637,7 +638,7 @@ var PredefinedErrorScenarios = struct {
 		Message:    "The content type is not supported",
 		Resource:   "/api/resource",
 		Headers: map[string]string{
-			"Content-Type":        "application/xml",
+			"Content-Type":         "application/xml",
 			"X-Error-Content-Type": "application/json",
 		},
 	},
@@ -661,4 +662,3 @@ var PredefinedErrorScenarios = struct {
 		},
 	},
 }
-

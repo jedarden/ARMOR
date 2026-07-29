@@ -69,19 +69,19 @@ type RotationState struct {
 
 // RotationResult contains the result of a key rotation operation.
 type RotationResult struct {
-	TotalObjects     int           `json:"total_objects"`
-	ProcessedObjects int           `json:"processed_objects"`
-	SkippedObjects   int           `json:"skipped_objects"`
+	TotalObjects     int `json:"total_objects"`
+	ProcessedObjects int `json:"processed_objects"`
+	SkippedObjects   int `json:"skipped_objects"`
 	// Exceptions is the number of objects that could not be re-wrapped via
 	// CopyObject — currently objects larger than B2CopyObjectSizeCeiling.
 	// These are NOT counted in ProcessedObjects or SkippedObjects and are NOT
 	// silently skipped: ExceptionKeys lists them so an operator can re-wrap them
 	// with a multipart copy.
-	Exceptions     int           `json:"exceptions"`
-	ExceptionKeys  []string      `json:"exception_keys,omitempty"`
-	Duration       time.Duration `json:"duration"`
-	Status         string        `json:"status"`
-	ErrorMessage   string        `json:"error_message,omitempty"`
+	Exceptions    int           `json:"exceptions"`
+	ExceptionKeys []string      `json:"exception_keys,omitempty"`
+	Duration      time.Duration `json:"duration"`
+	Status        string        `json:"status"`
+	ErrorMessage  string        `json:"error_message,omitempty"`
 }
 
 // KeyRotator handles MEK rotation operations.

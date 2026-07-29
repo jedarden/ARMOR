@@ -368,20 +368,20 @@ func TestBeadPayload_FailureTitleAndBody(t *testing.T) {
 	// A pathological object key must not blow the beads schema's title CHECK.
 	longKey := strings.Repeat("k", 8000)
 	p := BeadPayload{
-		Kind:             BeadFailure,
-		Bucket:           "bkt",
-		ObjectKey:        longKey,
-		Path:             PathARMOR,
-		FailureClass:     FailureRestoreError,
-		Deployment:       "ord-devimprint",
-		ArtifactType:     ArtifactSQLite,
-		EnvelopeVersion:  "3",
-		WriterID:         "",
-		ExpectedSHA256:   "abc",
-		ARMORSHA256:      "def",
-		DirectSHA256:     "ghi",
-		Error:            "ARMOR path failed: boom",
-		Detected:         time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC),
+		Kind:            BeadFailure,
+		Bucket:          "bkt",
+		ObjectKey:       longKey,
+		Path:            PathARMOR,
+		FailureClass:    FailureRestoreError,
+		Deployment:      "ord-devimprint",
+		ArtifactType:    ArtifactSQLite,
+		EnvelopeVersion: "3",
+		WriterID:        "",
+		ExpectedSHA256:  "abc",
+		ARMORSHA256:     "def",
+		DirectSHA256:    "ghi",
+		Error:           "ARMOR path failed: boom",
+		Detected:        time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC),
 	}
 	title := p.Title()
 	if len(title) > 500 {

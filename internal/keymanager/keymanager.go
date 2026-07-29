@@ -25,17 +25,17 @@ type Route struct {
 
 // KeyManager manages multiple MEKs and routes object keys to the appropriate key.
 type KeyManager struct {
-	mu     sync.RWMutex
-	keys   map[string]*Key    // name -> key
-	routes []Route            // sorted by prefix length (longest first)
+	mu             sync.RWMutex
+	keys           map[string]*Key // name -> key
+	routes         []Route         // sorted by prefix length (longest first)
 	defaultKeyName string
 }
 
 // New creates a new KeyManager with the given keys and routes.
 func New(defaultMEK []byte, namedKeys map[string][]byte, routes []Route) (*KeyManager, error) {
 	km := &KeyManager{
-		keys:   make(map[string]*Key),
-		routes: routes,
+		keys:           make(map[string]*Key),
+		routes:         routes,
 		defaultKeyName: "default",
 	}
 
