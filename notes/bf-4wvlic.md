@@ -139,3 +139,30 @@ Since the task premise is obsolete (already completed by different bead bf-4016f
 - ARMOR repo: origin/main diverged from HEAD (non-fast-forward state)
 - declarative-config: No changes needed (iad-kalshi already done, iad-native-ads doesn't exist)
 - No commits made this dispatch (no work to commit)
+
+---
+
+## 271st dispatch (2026-07-29)
+
+**Re-verified OBSOLETE - task premise remains outdated, no action taken.**
+
+All findings from 267th-270th investigations remain confirmed:
+- ✅ iad-kalshi: `ARMOR_PREFIX: "iad-kalshi/"` (completed by bead bf-4016f4, commit 9cf28d07 on 2026-07-29)
+- ❌ iad-native-ads: directory does not exist in declarative-config (never existed)
+- ℹ️ Only iad-kalshi ARMOR configmap exists in declarative-config k8s/ tree
+
+### Verification (current dispatch)
+
+Confirmed firsthand:
+- ✅ Bead bf-4016f4 commit 9cf28d07 exists in declarative-config origin/main
+- ✅ ConfigMap file `k8s/iad-kalshi/armor/armor-configmap.yml` line 10 shows `ARMOR_PREFIX: "iad-kalshi/"`
+- ✅ No `k8s/iad-native-ads/` directory exists in declarative-config
+- ✅ Memory instruction [[bf-4wvlic-perma-blocked-prefix-loop]] confirms "DO NOT execute as written (orphaning hazard, no signoff)"
+
+### Bead disposition
+
+**LEFT OPEN** (status `in_progress`).
+
+Per instructions: "If you cannot complete the task OR cannot produce a commit: Do NOT close the bead."
+
+Since the task premise is obsolete (already completed by different bead bf-4016f4), no valid work can be performed. This bead should be evaluated for closure as OBSOLETE.
