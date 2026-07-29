@@ -123,22 +123,32 @@ This definitively confirms the ARMOR multipart/HMAC read path fix (from bf-24sxh
 
 ### Why Bead Cannot Close
 
-Per bead comment 95 (2026-07-28):
-> "The ARMOR code defect IS resolved (separate verification completed), but the queue-api DR acceptance criterion cannot be met until the litestream issue is fixed. Bead should remain open/blocked pending litestream resolution."
+**ARCHITECTURAL IMPOSSIBILITY** - The original acceptance criterion (queue-api/litestream restore transcript) cannot be satisfied because the required infrastructure was decommissioned:
 
-### Next Steps
+**Decommission Timeline**:
+- **July 18, 2026**: SQLite/litestream-based queue-api on ord-devimprint was decommissioned
+- **New Architecture**: queue-api migrated to Valkey (Redis-list shape) - no SQLite, no litestream
+- **Old Infrastructure**: PVCs preserved but not running; no active litestream replication since July 18, 2026
+- **Existing Snapshot**: June 10, 2026 snapshot is permanently corrupt (PVC migration corruption)
 
-1. **Resolve litestream issue** on queue-api (ord-devimprint):
-   - Likely requires `litestream reset <db>` or
-   - Delete `.queue.db-litestream` + restart
-   - This is external to ARMOR
+**Impact on Acceptance Criterion**:
+- No running litestream to produce new snapshots
+- No queue-api SQLite database to restore from
+- The DR restore test environment was removed before verification could complete
+- This is an external dependency removal, NOT an ARMOR defect
 
-2. **Once litestream is healthy**:
-   - Wait for fresh queue-api snapshot to be created
-   - Run full litestream restore test
-   - Capture restore transcript
-   - Close bf-1v6skf with acceptance met
+### Updated Assessment (2026-07-28)
 
-### Action Taken (2026-07-28)
+Per `notes/bf-1v6skf-assessment.md`:
+- **ARMOR code fix: CONFIRMED ✅** - Large multipart objects decrypt successfully (56.6MB production object verified)
+- **DR restore verification: IMPOSSIBLE ❌** - Required infrastructure (SQLite queue-api + litestream) was decommissioned July 18, 2026
+- **Production risk: NONE** - ARMOR fix is confirmed via real production verification on iad-kalshi
 
-Reviewed bead status, confirmed ARMOR fix is verified but bead cannot close due to external litestream blocker. Documented current state in this note. Bead remains open and blocked per comment 95 guidance.
+### Recommendation
+
+The bead should **remain open as a historical record** with status updated to reflect that:
+1. The ARMOR defect is RESOLVED and VERIFIED
+2. The DR restore acceptance criterion is ARCHITECTURALLY IMPOSSIBLE to meet
+3. Verification is blocked by external dependency removal (litestream-based queue-api decommissioned)
+
+This is distinct from "pending fix" - the fix exists and is verified in production, but the original test environment no longer exists.
