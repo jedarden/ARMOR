@@ -522,8 +522,12 @@ func startRealArmorServer(t *testing.T) string {
 		authSecretKey = testSecretKey
 	}
 
+	// Build B2 endpoint URL for the region
+	b2Endpoint := fmt.Sprintf("https://s3.%s.backblazeb2.com", region)
+
 	cfg := &config.Config{
 		B2Region:          region,
+		B2Endpoint:        b2Endpoint,
 		B2AccessKeyID:     accessKey,
 		B2SecretAccessKey: secretKey,
 		Bucket:           bucket,

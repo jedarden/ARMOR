@@ -439,17 +439,29 @@ func TestLifecycle_HeadAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LIST failed: %v", err)
 	}
-	t.Logf("LIST succeeded: HTTP 200, KeyCount=%d", *listResult.KeyCount)
+	keyCount := int32(0)
+	if listResult.KeyCount != nil {
+		keyCount = *listResult.KeyCount
+	}
+	t.Logf("LIST succeeded: HTTP 200, KeyCount=%d", keyCount)
 
 	// Verify our key appears in LIST with correct size
 	found := false
 	for _, obj := range listResult.Contents {
-		if *obj.Key == key {
+		if obj.Key != nil && *obj.Key == key {
 			found = true
-			if *obj.Size != int64(len(payload)) {
+			if obj.Size != nil && *obj.Size != int64(len(payload)) {
 				t.Fatalf("LIST object size mismatch: got %d, want %d", *obj.Size, len(payload))
 			}
-			t.Logf("Found object in LIST: Key=%s, Size=%d, ETag=%s", *obj.Key, *obj.Size, *obj.ETag)
+			objSize := int64(0)
+			if obj.Size != nil {
+				objSize = *obj.Size
+			}
+			objETag := "nil"
+			if obj.ETag != nil {
+				objETag = *obj.ETag
+			}
+			t.Logf("Found object in LIST: Key=%s, Size=%d, ETag=%s", *obj.Key, objSize, objETag)
 			break
 		}
 	}
@@ -628,11 +640,15 @@ func TestLifecycle_DeleteAndVerify(t *testing.T) {
 	}
 
 	for _, obj := range listResult.Contents {
-		if *obj.Key == key {
+		if obj.Key != nil && *obj.Key == key {
 			t.Fatalf("Key %s still appears in LIST after DELETE", key)
 		}
 	}
-	t.Logf("LIST succeeded: HTTP 200, KeyCount=%d (verified deleted key does not appear)", *listResult.KeyCount)
+	keyCount := int32(0)
+	if listResult.KeyCount != nil {
+		keyCount = *listResult.KeyCount
+	}
+	t.Logf("LIST succeeded: HTTP 200, KeyCount=%d (verified deleted key does not appear)", keyCount)
 }
 
 // TestLifecycle_MultipartAbort tests multipart Abort as a deliberate operation.
