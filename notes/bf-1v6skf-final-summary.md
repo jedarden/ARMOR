@@ -2,7 +2,9 @@
 
 ## Executive Summary
 
-The multipart HMAC verification bug reported in bf-1v6skf has been **ROOT CAUSE IDENTIFIED AND FIXED** in the codebase. However, the fix has **NOT BEEN DEPLOYED TO PRODUCTION**, which is why the restore test failed on 2026-07-14.
+The multipart HMAC verification bug reported in bf-1v6skf has been **ROOT CAUSE IDENTIFIED, FIXED, AND VERIFIED IN PRODUCTION**. The ARMOR code fix is confirmed working on the iad-kalshi fleet (version 0.1.1901) with successful multipart object decryption of a 56.6MB production object spanning ~864 blocks.
+
+However, the original DR restore acceptance criterion (queue-api/litestream restore transcript) became **ARCHITECTURALLY IMPOSSIBLE** when the SQLite/litestream-based queue-api was decommissioned on July 18, 2026 and replaced with a Valkey architecture. This is an external dependency removal, not an ARMOR defect.
 
 ## Key Findings
 
@@ -58,42 +60,51 @@ Three critical changes:
 
 ✅ **Code Review**: Fix is correct and comprehensive
 
-❌ **Production Status**: Fix NOT deployed (still on buggy version 0.1.42)
+✅ **PRODUCTION VERIFICATION (2026-07-22)**:
+- Clean GET+decrypt of real 56.6MB production object (kalshi-tape orderbook_delta.parquet)
+- Byte-exact download (matches ContentLength exactly)
+- Valid Parquet on read (1,868,214 rows, correct schema)
+- Semantically sane content (real Kalshi market tickers, correct timestamps)
+- Spans ~864 blocks at 64KiB block size (over 3x past historical block-256 failure point)
+- Deployed version: ARMOR 0.1.1901 fleet on iad-kalshi
 
-❌ **Snapshot Status**: 2026-07-14 snapshot is permanently corrupted
+❌ **DR Restore Acceptance Criterion**: ARCHITECTURALLY IMPOSSIBLE
+- SQLite/litestream-based queue-api decommissioned July 18, 2026
+- Replaced with Valkey architecture
+- No running litestream exists to produce new snapshots
+- Existing snapshots permanently corrupt (June 10, 2026 PVC migration corruption)
 
 ## Acceptance Criteria Status
 
 - ✅ **Root cause identified**: HMACs computed with relative indices + out-of-order part handling
-- ✅ **Fix applied and verified**: Code fixed in commit 3edbb9b4, all tests pass
+- ✅ **Fix applied**: Code fixed in commit 3edbb9b4, all tests pass
 - ✅ **Regression test added**: Multiple comprehensive tests added
-- ❌ **queue-api backup chain re-verified**: BLOCKED - requires deployment + new snapshot
+- ✅ **Fix deployed and verified in production**: ARMOR 0.1.1901 on iad-kalshi confirmed working
+- ❌ **queue-api DR restore transcript**: ARCHITECTURALLY IMPOSSIBLE (queue-api decommissioned July 18, 2026)
 
 ## Deployment Requirements
 
-The fix needs to be deployed to production:
-
-1. **Build**: Create Docker image with version 0.1.1859+
-2. **Update**: Change declarative-config to use new image
-3. **Deploy**: ArgoCD will sync to ord-devimprint
-4. **Verify**: Check deployment health and logs
-5. **Wait**: Litestream will create new snapshot automatically
-6. **Test**: Verify restore works with new snapshot
-
-See `notes/bf-1v6skf-deployment-guide.md` for detailed deployment instructions.
+**DEPLOYMENT COMPLETED**:
+1. ✅ **Build**: Docker image created with version 0.1.1859+
+2. ✅ **Update**: declarative-config updated to use new image
+3. ✅ **Deploy**: ArgoCD synced to production fleets
+4. ✅ **Verify**: Deployment health confirmed on iad-kalshi fleet
+5. ✅ **Production test**: 56.6MB multipart object verified working (2026-07-22)
+6. ❌ **DR restore test**: NOT POSSIBLE (queue-api decommissioned July 18, 2026)
 
 ## Impact Assessment
 
-### Before Deployment (Current State)
-- ❌ queue-api DR restore is BROKEN
-- ❌ New multipart uploads with current version are corrupted
-- ❌ Backup chain cannot be restored
+### Before Fix (Historical State)
+- ❌ queue-api DR restore was BROKEN
+- ❌ New multipart uploads were corrupted
+- ❌ Backup chain could not be restored
 
-### After Deployment
-- ✅ New multipart uploads will have correct HMACs
-- ✅ New snapshots will be restorable
-- ⚠️ Old snapshots created with v0.1.42 remain corrupted
-- ✅ Litestream will create new clean snapshots automatically
+### After Fix and Deployment (Current State)
+- ✅ **ARMOR production fleet VERIFIED WORKING** (iad-kalshi, v0.1.1901)
+- ✅ New multipart uploads have correct HMACs
+- ✅ Multipart objects decrypt successfully (verified to 56.6MB, ~864 blocks)
+- ⚠️ **DR restore path**: ARCHITECTURALLY IMPOSSIBLE (queue-api decommissioned July 18, 2026)
+- ⚠️ **Historical snapshots**: Remain corrupted (created with pre-fix ARMOR versions)
 
 ## Files Modified in Fix
 
@@ -106,16 +117,21 @@ See `notes/bf-1v6skf-deployment-guide.md` for detailed deployment instructions.
 
 ## Conclusion
 
-The multipart HMAC verification bug has been **COMPLETELY FIXED** in the codebase with comprehensive regression tests. The fix is verified and ready for deployment. However, the fix has **NOT BEEN DEPLOYED TO PRODUCTION**, which is why the restore test failed.
+The multipart HMAC verification bug has been **COMPLETELY FIXED AND VERIFIED IN PRODUCTION**. The ARMOR code fix is confirmed working on the iad-kalshi fleet with successful verification of large multipart objects (56.6MB, ~864 blocks).
 
-The corrupted snapshot created on 2026-07-14 cannot be repaired - it was created with buggy code. After deploying the fix, new snapshots will work correctly and the queue-api backup chain will recover once litestream creates a new snapshot with the fixed ARMOR version.
+**However**, the original DR restore acceptance criterion became **ARCHITECTURALLY IMPOSSIBLE** when the SQLite/litestream-based queue-api was decommissioned on July 18, 2026 and replaced with a Valkey architecture. This represents an external dependency removal, not an ARMOR defect.
 
-**NEXT STEP**: Deploy ARMOR version 0.1.1859+ to ord-devimprint via declarative-config update and CI/CD pipeline.
+**KEY POINTS**:
+- ✅ ARMOR production fleet is VERIFIED WORKING
+- ✅ Multipart HMAC fix is confirmed in production (v0.1.1901)
+- ❌ DR restore acceptance criterion cannot be met (test environment decommissioned)
+- ℹ️  This bead documents a successful bug fix despite the test environment becoming unavailable
 
 ---
 
-**Bead ID**: bf-1v6skf  
-**Status**: CODE FIX COMPLETE - DEPLOYMENT REQUIRED  
-**Commit**: 3edbb9b4 (fix) + 1aba3d28 (documentation)  
-**Version**: 0.1.1859 (includes fix)  
-**Production Version**: 0.1.42 (BUGGY - NEEDS UPGRADE)
+**Bead ID**: bf-1v6skf
+**Final Status**: ARMOR FIX VERIFIED IN PRODUCTION; DR RESTORE ACCEPTANCE CRITERION ARCHITECTURALLY IMPOSSIBLE
+**Fix Commit**: 3edbb9b4
+**Production Version**: 0.1.1901 (VERIFIED WORKING)
+**DR Restore Status**: IMPOSSIBLE (queue-api decommissioned July 18, 2026)
+**Closed**: 2026-07-28
