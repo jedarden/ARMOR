@@ -480,6 +480,79 @@ func startArmorServer(t *testing.T) string {
 	return hs.URL
 }
 
+// startRealArmorServer brings up an in-process ARMOR HTTP server backed by a REAL
+// B2 backend (not mockBackend). This enables full HTTP API lifecycle testing that
+// exercises ARMOR's S3 handler layer (SigV4 auth, routing, encryption/decryption)
+// while still using real B2 storage. Returns the server URL for testing.
+func startRealArmorServer(t *testing.T) string {
+	t.Helper()
+
+	// Get B2 credentials from environment
+	region := os.Getenv("ARMOR_B2_REGION")
+	accessKey := os.Getenv("ARMOR_B2_ACCESS_KEY_ID")
+	secretKey := os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY")
+	bucket := os.Getenv("ARMOR_BUCKET")
+	cfDomain := os.Getenv("ARMOR_CF_DOMAIN") // optional
+
+	if region == "" || accessKey == "" || secretKey == "" || bucket == "" {
+		t.Skip("Set ARMOR_B2_REGION, ARMOR_B2_ACCESS_KEY_ID, ARMOR_B2_SECRET_ACCESS_KEY, and ARMOR_BUCKET to run HTTP API lifecycle tests against real ARMOR server")
+	}
+
+	// Generate a test MEK if not provided
+	mekStr := os.Getenv("ARMOR_MEK")
+	var mek []byte
+	if mekStr == "" {
+		mek = testMEK()
+	} else {
+		var err error
+		mek, err = hex.DecodeString(mekStr)
+		if err != nil {
+			t.Fatalf("Invalid ARMOR_MEK: %v", err)
+		}
+		if len(mek) != 32 {
+			t.Fatalf("ARMOR_MEK must be 32 bytes (64 hex chars), got %d bytes", len(mek))
+		}
+	}
+
+	// Get ARMOR auth credentials from environment (or generate test credentials)
+	authAccessKey := os.Getenv("ARMOR_AUTH_ACCESS_KEY")
+	authSecretKey := os.Getenv("ARMOR_AUTH_SECRET_KEY")
+	if authAccessKey == "" || authSecretKey == "" {
+		authAccessKey = testAccessKey
+		authSecretKey = testSecretKey
+	}
+
+	cfg := &config.Config{
+		B2Region:          region,
+		B2AccessKeyID:     accessKey,
+		B2SecretAccessKey: secretKey,
+		Bucket:           bucket,
+		CFDomain:         cfDomain,
+		MEK:              mek,
+		BlockSize:        65536,
+		CacheMaxEntries:  1000,
+		CacheTTL:         300,
+		AuthAccessKey:    authAccessKey,
+		AuthSecretKey:    authSecretKey,
+		Credentials: map[string]*config.Credential{
+			authAccessKey: {
+				AccessKey: authAccessKey,
+				SecretKey: authSecretKey,
+				ACLs:      nil, // full access
+			},
+		},
+	}
+
+	srv, err := server.New(cfg) // Uses real B2 backend, not mockBackend
+	if err != nil {
+		t.Fatalf("server.New with real B2 backend: %v", err)
+	}
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+	t.Logf("Started real ARMOR server at %s (bucket=%s, region=%s)", hs.URL, bucket, region)
+	return hs.URL
+}
+
 // requireAWSCLI skips the test unless the `aws` binary is available (and not
 // running under -short). The message explains how to install it so the suite
 // actually runs.
