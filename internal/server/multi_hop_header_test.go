@@ -14,8 +14,8 @@ import (
 //
 // In production, requests may pass through multiple intermediaries before reaching ARMOR:
 //
-//   Client → Cloudflare/Load Balancer → ARMOR → B2 Backend
-//   (or)   Client → Reverse Proxy 1 → Reverse Proxy 2 → ARMOR
+//	Client → Cloudflare/Load Balancer → ARMOR → B2 Backend
+//	(or)   Client → Reverse Proxy 1 → Reverse Proxy 2 → ARMOR
 //
 // This test simulates multi-hop scenarios by wrapping ARMOR's handler in multiple
 // middleware layers that represent typical reverse proxy behavior. It verifies that:
@@ -109,10 +109,10 @@ func TestMultiHopHeaderPreservation(t *testing.T) {
 		{
 			name: "Authorization with security token",
 			headers: map[string]string{
-				"Authorization":    "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date;x-amz-security-token, Signature=c3a5e2f8b1d9e4a7b2c5d8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
-				"X-Amz-Date":       "20130524T000000Z",
+				"Authorization":        "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date;x-amz-security-token, Signature=c3a5e2f8b1d9e4a7b2c5d8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+				"X-Amz-Date":           "20130524T000000Z",
 				"X-Amz-Security-Token": "FwoGZXIvYXdzEBYaDmRiwUKvH.example4tZKheCbhYS7CfjzRl6oP2KDsSExamplevmLpU5TyPQc8CnjCEZrzRQEXAMPLE",
-				"Host":             "test-bucket.s3.amazonaws.com",
+				"Host":                 "test-bucket.s3.amazonaws.com",
 			},
 			description:     "Session credentials with security token",
 			validateHeaders: []string{"Authorization", "X-Amz-Date", "X-Amz-Security-Token"},
@@ -120,13 +120,13 @@ func TestMultiHopHeaderPreservation(t *testing.T) {
 		{
 			name: "Multiple X-Amz-* headers",
 			headers: map[string]string{
-				"Authorization":          "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=fe5f80f77d5fa27bec129f320a5cfe8cd23c890a9f1de8b7b99b1b5b8b7b5b1b",
-				"X-Amz-Date":             "20130524T000000Z",
-				"X-Amz-Content-Sha256":    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-				"X-Amz-Algorithm":         "AWS4-HMAC-SHA256",
-				"X-Amz-Credential":        "TESTACCESSKEY/20130524/us-east-1/s3/aws4_request",
-				"X-Amz-SignedHeaders":     "host;x-amz-content-sha256;x-amz-date",
-				"Host":                    "test-bucket.s3.amazonaws.com",
+				"Authorization":        "AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=fe5f80f77d5fa27bec129f320a5cfe8cd23c890a9f1de8b7b99b1b5b8b7b5b1b",
+				"X-Amz-Date":           "20130524T000000Z",
+				"X-Amz-Content-Sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				"X-Amz-Algorithm":      "AWS4-HMAC-SHA256",
+				"X-Amz-Credential":     "TESTACCESSKEY/20130524/us-east-1/s3/aws4_request",
+				"X-Amz-SignedHeaders":  "host;x-amz-content-sha256;x-amz-date",
+				"Host":                 "test-bucket.s3.amazonaws.com",
 			},
 			description:     "Full SigV4 header suite with multiple X-Amz-* headers",
 			validateHeaders: []string{"Authorization", "X-Amz-Date", "X-Amz-Content-Sha256", "X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-SignedHeaders"},
@@ -457,7 +457,7 @@ func TestMultiHopEndToEndHeaderFidelity(t *testing.T) {
 		// Capture headers at each hop
 		var (
 			headersAfterCF, headersAfterLB, headersAtArmor map[string]string
-			capturedCF, capturedLB, capturedArmor bool
+			capturedCF, capturedLB, capturedArmor          bool
 		)
 
 		// Wrap to capture after Cloudflare

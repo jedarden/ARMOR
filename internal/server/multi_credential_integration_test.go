@@ -377,7 +377,7 @@ func TestCredentialEdgeCases(t *testing.T) {
 				AccessKey: accessKey,
 				SecretKey: secretKey,
 				ACLs: []config.ACLEntry{
-					{Bucket: "test-bucket", Prefix: string(rune('a' + i)) + "/"},
+					{Bucket: "test-bucket", Prefix: string(rune('a'+i)) + "/"},
 				},
 			}
 		}
@@ -387,7 +387,7 @@ func TestCredentialEdgeCases(t *testing.T) {
 
 		// Test first and last credentials
 		firstResp := MakeAuthenticatedRequest(t, ts, "GET", "/test-bucket/a/file", nil,
-			"CRED" + string(rune('A'+0)), "SECRET" + string(rune('A'+0)) + "123456789012345678901234567890")
+			"CRED"+string(rune('A'+0)), "SECRET"+string(rune('A'+0))+"123456789012345678901234567890")
 		defer firstResp.Body.Close()
 
 		lastResp := MakeAuthenticatedRequest(t, ts, "GET", "/test-bucket/az/file", nil,

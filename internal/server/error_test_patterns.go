@@ -333,13 +333,13 @@ func ExtractMetadata(resp *http.Response, duration time.Duration) ErrorResponseM
 	xml.Unmarshal(body, &s3Err)
 
 	return ErrorResponseMetadata{
-		StatusCode:   resp.StatusCode,
-		ErrorCode:    s3Err.Code,
-		Message:      s3Err.Message,
-		ResponseTime: duration,
+		StatusCode:    resp.StatusCode,
+		ErrorCode:     s3Err.Code,
+		Message:       s3Err.Message,
+		ResponseTime:  duration,
 		ContentLength: resp.ContentLength,
-		ContentType:  resp.Header.Get("Content-Type"),
-		Timestamp:    time.Now(),
+		ContentType:   resp.Header.Get("Content-Type"),
+		Timestamp:     time.Now(),
 	}
 }
 
@@ -438,11 +438,11 @@ func ToFixture(resp *http.Response, duration time.Duration) (*ErrorResponseFixtu
 	}
 
 	return &ErrorResponseFixture{
-		S3Error:   s3Err,
+		S3Error:    s3Err,
 		HTTPStatus: resp.StatusCode,
-		Headers:   resp.Header.Clone(),
-		Body:      body,
-		Duration:  duration,
+		Headers:    resp.Header.Clone(),
+		Body:       body,
+		Duration:   duration,
 	}, nil
 }
 
@@ -682,8 +682,8 @@ const (
 func CategoryForCode(code string) ErrorCategory {
 	switch code {
 	case ErrorCodeAccessDenied, ErrorCodeInvalidAccessKeyId,
-	     ErrorCodeSignatureDoesNotMatch, ErrorCodeMissingAuthenticationToken,
-	     ErrorCodeRequestExpired:
+		ErrorCodeSignatureDoesNotMatch, ErrorCodeMissingAuthenticationToken,
+		ErrorCodeRequestExpired:
 		return CategoryAuth
 	case ErrorCodeNoSuchKey:
 		return CategoryNotFound
@@ -738,8 +738,8 @@ func CategoryForCode(code string) ErrorCategory {
 func ExpectedStatusCodeForCode(code string) int {
 	switch code {
 	case ErrorCodeAccessDenied, ErrorCodeInvalidAccessKeyId,
-	     ErrorCodeSignatureDoesNotMatch, ErrorCodeMissingAuthenticationToken,
-	     ErrorCodeRequestExpired:
+		ErrorCodeSignatureDoesNotMatch, ErrorCodeMissingAuthenticationToken,
+		ErrorCodeRequestExpired:
 		return 403
 	case ErrorCodeNoSuchKey:
 		return 404
@@ -810,106 +810,106 @@ var CommonErrorPatterns = struct {
 }{
 	// ResourceNotFound: Standard 404 error for missing objects
 	ResourceNotFound: ErrorScenarioConfig{
-		Name:              "Resource Not Found",
-		ExpectedCode:      ErrorCodeNoSuchKey,
-		ExpectedStatus:    404,
-		ExpectedMessage:   "The specified key does not exist",
-		ExpectedKeywords:  []string{"not", "found", "exist", "no such key"},
-		MinMessageLength:   15,
-		MaxResponseTime:    500 * time.Millisecond,
-		Description:       "Tests for requests attempting to access non-existent resources. Covers GET, HEAD, and other operations on missing objects.",
-		Category:          string(CategoryNotFound),
+		Name:             "Resource Not Found",
+		ExpectedCode:     ErrorCodeNoSuchKey,
+		ExpectedStatus:   404,
+		ExpectedMessage:  "The specified key does not exist",
+		ExpectedKeywords: []string{"not", "found", "exist", "no such key"},
+		MinMessageLength: 15,
+		MaxResponseTime:  500 * time.Millisecond,
+		Description:      "Tests for requests attempting to access non-existent resources. Covers GET, HEAD, and other operations on missing objects.",
+		Category:         string(CategoryNotFound),
 	},
 
 	// AccessDenied: Authentication failure with invalid credentials
 	AccessDenied: ErrorScenarioConfig{
-		Name:              "Access Denied",
-		ExpectedCode:      ErrorCodeAccessDenied,
-		ExpectedStatus:    403,
-		ExpectedMessage:   "Access Denied",
-		ExpectedKeywords:  []string{"access", "denied", "permission", "authorized"},
-		MinMessageLength:   12,
-		MaxResponseTime:    300 * time.Millisecond,
-		Description:       "Tests for requests with invalid or missing credentials. Covers both missing Authorization headers and invalid access keys.",
-		Category:          string(CategoryAuth),
+		Name:             "Access Denied",
+		ExpectedCode:     ErrorCodeAccessDenied,
+		ExpectedStatus:   403,
+		ExpectedMessage:  "Access Denied",
+		ExpectedKeywords: []string{"access", "denied", "permission", "authorized"},
+		MinMessageLength: 12,
+		MaxResponseTime:  300 * time.Millisecond,
+		Description:      "Tests for requests with invalid or missing credentials. Covers both missing Authorization headers and invalid access keys.",
+		Category:         string(CategoryAuth),
 	},
 
 	// InvalidRequest: Malformed request parameters
 	InvalidRequest: ErrorScenarioConfig{
-		Name:              "Invalid Request",
-		ExpectedCode:      ErrorCodeInvalidRequest,
-		ExpectedStatus:    400,
-		ExpectedMessage:   "The request is invalid",
-		ExpectedKeywords:  []string{"invalid", "request", "malformed"},
-		MinMessageLength:   15,
-		MaxResponseTime:    200 * time.Millisecond,
-		Description:       "Tests for requests with missing required parameters, invalid query strings, or malformed request bodies.",
-		Category:          string(CategoryInvalidRequest),
+		Name:             "Invalid Request",
+		ExpectedCode:     ErrorCodeInvalidRequest,
+		ExpectedStatus:   400,
+		ExpectedMessage:  "The request is invalid",
+		ExpectedKeywords: []string{"invalid", "request", "malformed"},
+		MinMessageLength: 15,
+		MaxResponseTime:  200 * time.Millisecond,
+		Description:      "Tests for requests with missing required parameters, invalid query strings, or malformed request bodies.",
+		Category:         string(CategoryInvalidRequest),
 	},
 
 	// UnsupportedMediaType: Content-type validation error
 	UnsupportedMediaType: ErrorScenarioConfig{
-		Name:              "Unsupported Media Type",
-		ExpectedCode:      ErrorCodeUnsupportedMediaType,
-		ExpectedStatus:    415,
-		ExpectedMessage:   "The content type is not supported",
-		ExpectedKeywords:  []string{"content", "type", "supported", "media"},
-		MinMessageLength:   20,
-		MaxResponseTime:    200 * time.Millisecond,
-		Description:       "Tests for requests with unsupported Content-Type headers. Used when the server requires specific content types (e.g., application/xml).",
-		Category:          string(CategoryInvalidRequest),
+		Name:             "Unsupported Media Type",
+		ExpectedCode:     ErrorCodeUnsupportedMediaType,
+		ExpectedStatus:   415,
+		ExpectedMessage:  "The content type is not supported",
+		ExpectedKeywords: []string{"content", "type", "supported", "media"},
+		MinMessageLength: 20,
+		MaxResponseTime:  200 * time.Millisecond,
+		Description:      "Tests for requests with unsupported Content-Type headers. Used when the server requires specific content types (e.g., application/xml).",
+		Category:         string(CategoryInvalidRequest),
 	},
 
 	// MethodNotAllowed: HTTP method validation error
 	MethodNotAllowed: ErrorScenarioConfig{
-		Name:              "Method Not Allowed",
-		ExpectedCode:      ErrorCodeMethodNotAllowed,
-		ExpectedStatus:    405,
-		ExpectedMessage:   "The specified method is not allowed",
-		ExpectedKeywords:  []string{"method", "allowed", "supported"},
-		MinMessageLength:   20,
-		MaxResponseTime:    200 * time.Millisecond,
-		Description:       "Tests for requests using HTTP methods that are not supported for the given resource. Commonly tested with POST on object endpoints.",
-		Category:          string(CategoryMethodNotAllowed),
+		Name:             "Method Not Allowed",
+		ExpectedCode:     ErrorCodeMethodNotAllowed,
+		ExpectedStatus:   405,
+		ExpectedMessage:  "The specified method is not allowed",
+		ExpectedKeywords: []string{"method", "allowed", "supported"},
+		MinMessageLength: 20,
+		MaxResponseTime:  200 * time.Millisecond,
+		Description:      "Tests for requests using HTTP methods that are not supported for the given resource. Commonly tested with POST on object endpoints.",
+		Category:         string(CategoryMethodNotAllowed),
 	},
 
 	// InternalServerError: Server-side errors
 	InternalServerError: ErrorScenarioConfig{
-		Name:              "Internal Server Error",
-		ExpectedCode:      ErrorCodeInternalError,
-		ExpectedStatus:    500,
-		ExpectedMessage:   "Internal server error",
-		ExpectedKeywords:  []string{"internal", "error", "server"},
-		MinMessageLength:   15,
-		MaxResponseTime:    1000 * time.Millisecond,
-		Description:       "Tests for unexpected server-side errors. These typically indicate a bug or infrastructure issue that needs investigation.",
-		Category:          string(CategoryInternal),
+		Name:             "Internal Server Error",
+		ExpectedCode:     ErrorCodeInternalError,
+		ExpectedStatus:   500,
+		ExpectedMessage:  "Internal server error",
+		ExpectedKeywords: []string{"internal", "error", "server"},
+		MinMessageLength: 15,
+		MaxResponseTime:  1000 * time.Millisecond,
+		Description:      "Tests for unexpected server-side errors. These typically indicate a bug or infrastructure issue that needs investigation.",
+		Category:         string(CategoryInternal),
 	},
 
 	// SignatureMismatch: AWS signature validation failure
 	SignatureMismatch: ErrorScenarioConfig{
-		Name:              "Signature Does Not Match",
-		ExpectedCode:      ErrorCodeSignatureDoesNotMatch,
-		ExpectedStatus:    403,
-		ExpectedMessage:   "The request signature we calculated does not match",
-		ExpectedKeywords:  []string{"signature", "match", "calculated"},
-		MinMessageLength:   25,
-		MaxResponseTime:    300 * time.Millisecond,
-		Description:       "Tests for requests with incorrect AWS signature calculations. Covers malformed signatures, tampered requests, and incorrect secret keys.",
-		Category:          string(CategoryAuth),
+		Name:             "Signature Does Not Match",
+		ExpectedCode:     ErrorCodeSignatureDoesNotMatch,
+		ExpectedStatus:   403,
+		ExpectedMessage:  "The request signature we calculated does not match",
+		ExpectedKeywords: []string{"signature", "match", "calculated"},
+		MinMessageLength: 25,
+		MaxResponseTime:  300 * time.Millisecond,
+		Description:      "Tests for requests with incorrect AWS signature calculations. Covers malformed signatures, tampered requests, and incorrect secret keys.",
+		Category:         string(CategoryAuth),
 	},
 
 	// RequestExpired: Timestamp validation error
 	RequestExpired: ErrorScenarioConfig{
-		Name:              "Request Expired",
-		ExpectedCode:      ErrorCodeRequestExpired,
-		ExpectedStatus:    403,
-		ExpectedMessage:   "Request has expired",
-		ExpectedKeywords:  []string{"expired", "timestamp", "date"},
-		MinMessageLength:   15,
-		MaxResponseTime:    300 * time.Millisecond,
-		Description:       "Tests for requests with expired timestamps. AWS S3 requires requests to be made within a specific time window (typically 15 minutes).",
-		Category:          string(CategoryAuth),
+		Name:             "Request Expired",
+		ExpectedCode:     ErrorCodeRequestExpired,
+		ExpectedStatus:   403,
+		ExpectedMessage:  "Request has expired",
+		ExpectedKeywords: []string{"expired", "timestamp", "date"},
+		MinMessageLength: 15,
+		MaxResponseTime:  300 * time.Millisecond,
+		Description:      "Tests for requests with expired timestamps. AWS S3 requires requests to be made within a specific time window (typically 15 minutes).",
+		Category:         string(CategoryAuth),
 	},
 }
 
@@ -1041,80 +1041,80 @@ var AuthErrorPatterns = struct {
 }{
 	// MissingAuthHeader: No Authorization header present
 	MissingAuthHeader: ErrorScenarioConfig{
-		Name:              "Missing Authentication Token",
-		ExpectedCode:      ErrorCodeMissingAuthenticationToken,
-		ExpectedStatus:    403,
-		ExpectedMessage:   "Missing Authentication Token",
-		ExpectedKeywords:  []string{"missing", "authentication", "token", "authorization"},
-		MinMessageLength:   15,
-		MaxResponseTime:    250 * time.Millisecond,
-		Description:       "Tests for requests completely missing the Authorization header. This is the most basic authentication failure scenario.",
-		Category:          string(CategoryAuth),
+		Name:             "Missing Authentication Token",
+		ExpectedCode:     ErrorCodeMissingAuthenticationToken,
+		ExpectedStatus:   403,
+		ExpectedMessage:  "Missing Authentication Token",
+		ExpectedKeywords: []string{"missing", "authentication", "token", "authorization"},
+		MinMessageLength: 15,
+		MaxResponseTime:  250 * time.Millisecond,
+		Description:      "Tests for requests completely missing the Authorization header. This is the most basic authentication failure scenario.",
+		Category:         string(CategoryAuth),
 	},
 
 	// InvalidAccessKeyId: Access key not found or invalid
 	InvalidAccessKeyId: ErrorScenarioConfig{
-		Name:              "Invalid Access Key ID",
-		ExpectedCode:      ErrorCodeInvalidAccessKeyId,
-		ExpectedStatus:    403,
-		ExpectedMessage:   "The AWS Access Key Id you provided does not exist in our records",
-		ExpectedKeywords:  []string{"access", "key", "invalid", "exist"},
-		MinMessageLength:   20,
-		MaxResponseTime:    300 * time.Millisecond,
-		Description:       "Tests for requests with an invalid or non-existent access key ID. This typically means the key was mistyped or does not belong to any account.",
-		Category:          string(CategoryAuth),
+		Name:             "Invalid Access Key ID",
+		ExpectedCode:     ErrorCodeInvalidAccessKeyId,
+		ExpectedStatus:   403,
+		ExpectedMessage:  "The AWS Access Key Id you provided does not exist in our records",
+		ExpectedKeywords: []string{"access", "key", "invalid", "exist"},
+		MinMessageLength: 20,
+		MaxResponseTime:  300 * time.Millisecond,
+		Description:      "Tests for requests with an invalid or non-existent access key ID. This typically means the key was mistyped or does not belong to any account.",
+		Category:         string(CategoryAuth),
 	},
 
 	// SignatureDoesNotMatch: Calculated signature doesn't match
 	SignatureDoesNotMatch: ErrorScenarioConfig{
-		Name:              "Signature Does Not Match",
-		ExpectedCode:      ErrorCodeSignatureDoesNotMatch,
-		ExpectedStatus:    403,
-		ExpectedMessage:   "The request signature we calculated does not match the signature you provided",
-		ExpectedKeywords:  []string{"signature", "match", "calculated", "provided"},
-		MinMessageLength:   30,
-		MaxResponseTime:    350 * time.Millisecond,
-		Description:       "Tests for requests where the signature calculation failed. This can be due to incorrect secret key, tampered request, or signing algorithm mismatch.",
-		Category:          string(CategoryAuth),
+		Name:             "Signature Does Not Match",
+		ExpectedCode:     ErrorCodeSignatureDoesNotMatch,
+		ExpectedStatus:   403,
+		ExpectedMessage:  "The request signature we calculated does not match the signature you provided",
+		ExpectedKeywords: []string{"signature", "match", "calculated", "provided"},
+		MinMessageLength: 30,
+		MaxResponseTime:  350 * time.Millisecond,
+		Description:      "Tests for requests where the signature calculation failed. This can be due to incorrect secret key, tampered request, or signing algorithm mismatch.",
+		Category:         string(CategoryAuth),
 	},
 
 	// MissingDateHeader: Required date header is missing
 	MissingDateHeader: ErrorScenarioConfig{
-		Name:              "Missing Date Header",
-		ExpectedCode:      ErrorCodeMissingAuthenticationToken,
-		ExpectedStatus:    403,
-		ExpectedMessage:   "Missing required date header",
-		ExpectedKeywords:  []string{"missing", "date", "header", "timestamp"},
-		MinMessageLength:   15,
-		MaxResponseTime:    250 * time.Millisecond,
-		Description:       "Tests for requests missing the X-Amz-Date header. The date header is required for signature calculation and request timestamp validation.",
-		Category:          string(CategoryAuth),
+		Name:             "Missing Date Header",
+		ExpectedCode:     ErrorCodeMissingAuthenticationToken,
+		ExpectedStatus:   403,
+		ExpectedMessage:  "Missing required date header",
+		ExpectedKeywords: []string{"missing", "date", "header", "timestamp"},
+		MinMessageLength: 15,
+		MaxResponseTime:  250 * time.Millisecond,
+		Description:      "Tests for requests missing the X-Amz-Date header. The date header is required for signature calculation and request timestamp validation.",
+		Category:         string(CategoryAuth),
 	},
 
 	// RequestExpired: Request timestamp is too old
 	RequestExpired: ErrorScenarioConfig{
-		Name:              "Request Expired",
-		ExpectedCode:      ErrorCodeRequestExpired,
-		ExpectedStatus:    403,
-		ExpectedMessage:   "Request has expired",
-		ExpectedKeywords:  []string{"expired", "timestamp", "date", "old"},
-		MinMessageLength:   15,
-		MaxResponseTime:    300 * time.Millisecond,
-		Description:       "Tests for requests with timestamps outside the valid window (typically more than 15 minutes old). AWS S3 rejects stale requests.",
-		Category:          string(CategoryAuth),
+		Name:             "Request Expired",
+		ExpectedCode:     ErrorCodeRequestExpired,
+		ExpectedStatus:   403,
+		ExpectedMessage:  "Request has expired",
+		ExpectedKeywords: []string{"expired", "timestamp", "date", "old"},
+		MinMessageLength: 15,
+		MaxResponseTime:  300 * time.Millisecond,
+		Description:      "Tests for requests with timestamps outside the valid window (typically more than 15 minutes old). AWS S3 rejects stale requests.",
+		Category:         string(CategoryAuth),
 	},
 
 	// MalformedAuthHeader: Authorization header format is invalid
 	MalformedAuthHeader: ErrorScenarioConfig{
-		Name:              "Malformed Authorization Header",
-		ExpectedCode:      ErrorCodeMissingAuthenticationToken,
-		ExpectedStatus:    403,
-		ExpectedMessage:   "Invalid authorization header format",
-		ExpectedKeywords:  []string{"authorization", "header", "malformed", "format", "invalid"},
-		MinMessageLength:   20,
-		MaxResponseTime:    250 * time.Millisecond,
-		Description:       "Tests for requests with Authorization headers that don't match the expected AWS signature format. Covers missing fields or incorrect structure.",
-		Category:          string(CategoryAuth),
+		Name:             "Malformed Authorization Header",
+		ExpectedCode:     ErrorCodeMissingAuthenticationToken,
+		ExpectedStatus:   403,
+		ExpectedMessage:  "Invalid authorization header format",
+		ExpectedKeywords: []string{"authorization", "header", "malformed", "format", "invalid"},
+		MinMessageLength: 20,
+		MaxResponseTime:  250 * time.Millisecond,
+		Description:      "Tests for requests with Authorization headers that don't match the expected AWS signature format. Covers missing fields or incorrect structure.",
+		Category:         string(CategoryAuth),
 	},
 }
 
@@ -1213,15 +1213,15 @@ var ClientErrorPatterns = struct {
 }{
 	// BadRequest: Generic bad request error
 	BadRequest: ErrorScenarioConfig{
-		Name:              "Bad Request",
-		ExpectedCode:      ErrorCodeInvalidRequest,
-		ExpectedStatus:    400,
-		ExpectedMessage:   "Bad Request",
-		ExpectedKeywords:  []string{"bad", "request", "invalid"},
-		MinMessageLength:   10,
-		MaxResponseTime:    200 * time.Millisecond,
-		Description:       "Tests for generic bad request errors. This is a catch-all for malformed requests that don't fit more specific error categories.",
-		Category:          string(CategoryInvalidRequest),
+		Name:             "Bad Request",
+		ExpectedCode:     ErrorCodeInvalidRequest,
+		ExpectedStatus:   400,
+		ExpectedMessage:  "Bad Request",
+		ExpectedKeywords: []string{"bad", "request", "invalid"},
+		MinMessageLength: 10,
+		MaxResponseTime:  200 * time.Millisecond,
+		Description:      "Tests for generic bad request errors. This is a catch-all for malformed requests that don't fit more specific error categories.",
+		Category:         string(CategoryInvalidRequest),
 	},
 
 	// NotFound: Resource not found
@@ -1305,15 +1305,15 @@ var ServerErrorPatterns = struct {
 
 	// ServiceUnavailable: Service temporarily unavailable
 	ServiceUnavailable: ErrorScenarioConfig{
-		Name:              "Service Unavailable",
-		ExpectedCode:      ErrorCodeInternalError,
-		ExpectedStatus:    503,
-		ExpectedMessage:   "Service Unavailable",
-		ExpectedKeywords:  []string{"unavailable", "service", "temporarily"},
-		MinMessageLength:   15,
-		MaxResponseTime:    2000 * time.Millisecond,
-		Description:       "Tests for service unavailability errors. This typically occurs during maintenance, overload, or infrastructure issues.",
-		Category:          string(CategoryInternal),
+		Name:             "Service Unavailable",
+		ExpectedCode:     ErrorCodeInternalError,
+		ExpectedStatus:   503,
+		ExpectedMessage:  "Service Unavailable",
+		ExpectedKeywords: []string{"unavailable", "service", "temporarily"},
+		MinMessageLength: 15,
+		MaxResponseTime:  2000 * time.Millisecond,
+		Description:      "Tests for service unavailability errors. This typically occurs during maintenance, overload, or infrastructure issues.",
+		Category:         string(CategoryInternal),
 	},
 }
 
@@ -1515,14 +1515,14 @@ func PatternsForCategory(category ErrorCategory) []ErrorScenarioConfig {
 //	totalPatterns := len(AllCommonPatterns()) // 8
 //
 // Returned patterns (in order):
-//   1. ResourceNotFound (404)
-//   2. AccessDenied (403)
-//   3. InvalidRequest (400)
-//   4. UnsupportedMediaType (415)
-//   5. MethodNotAllowed (405)
-//   6. InternalServerError (500)
-//   7. SignatureMismatch (403)
-//   8. RequestExpired (403)
+//  1. ResourceNotFound (404)
+//  2. AccessDenied (403)
+//  3. InvalidRequest (400)
+//  4. UnsupportedMediaType (415)
+//  5. MethodNotAllowed (405)
+//  6. InternalServerError (500)
+//  7. SignatureMismatch (403)
+//  8. RequestExpired (403)
 func AllCommonPatterns() []ErrorScenarioConfig {
 	return []ErrorScenarioConfig{
 		CommonErrorPatterns.ResourceNotFound,

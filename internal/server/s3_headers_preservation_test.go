@@ -49,10 +49,10 @@ func TestS3HeadersPreservation(t *testing.T) {
 
 	// Define test cases for S3-specific headers
 	testCases := []struct {
-		name             string
-		headers          map[string]string
-		description      string
-		validateHeaders  []string // Headers to validate preservation
+		name            string
+		headers         map[string]string
+		description     string
+		validateHeaders []string // Headers to validate preservation
 	}{
 		{
 			name: "X-Amz-Content-Sha256 header - standard hash",
@@ -145,11 +145,11 @@ func TestS3HeadersPreservation(t *testing.T) {
 		{
 			name: "Multiple S3 headers simultaneously",
 			headers: map[string]string{
-				"X-Amz-Content-Sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-				"X-Amz-Security-Token":  "FwoGZXIvYXdzEBYaDmRiwUKvH.example4tZKheCbhYS7CfjzRl6oP2KDsSExamplevmLpU5TyPQc8CnjCEZrzRQEXAMPLE",
-				"X-Amz-Algorithm":       "AWS4-HMAC-SHA256",
-				"X-Amz-Credential":      "TESTACCESSKEY/20260715/us-east-1/s3/aws4_request",
-				"X-Amz-SignedHeaders":   "host;x-amz-date;x-amz-content-sha256;x-amz-security-token",
+				"X-Amz-Content-Sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				"X-Amz-Security-Token": "FwoGZXIvYXdzEBYaDmRiwUKvH.example4tZKheCbhYS7CfjzRl6oP2KDsSExamplevmLpU5TyPQc8CnjCEZrzRQEXAMPLE",
+				"X-Amz-Algorithm":      "AWS4-HMAC-SHA256",
+				"X-Amz-Credential":     "TESTACCESSKEY/20260715/us-east-1/s3/aws4_request",
+				"X-Amz-SignedHeaders":  "host;x-amz-date;x-amz-content-sha256;x-amz-security-token",
 			},
 			description:     "All S3 headers sent together",
 			validateHeaders: []string{"X-Amz-Content-Sha256", "X-Amz-Security-Token", "X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-SignedHeaders"},
@@ -221,11 +221,11 @@ func TestS3HeadersPreservation(t *testing.T) {
 		{
 			name: "All headers with maximum values",
 			headers: map[string]string{
-				"X-Amz-Content-Sha256": strings.Repeat("ff", 32), // 64-char hash
+				"X-Amz-Content-Sha256": strings.Repeat("ff", 32),  // 64-char hash
 				"X-Amz-Security-Token": strings.Repeat("T", 1000), // Long token
-				"X-Amz-Algorithm":       "AWS4-HMAC-SHA256",
-				"X-Amz-Credential":      "AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request",
-				"X-Amz-SignedHeaders":   "content-type;content-length;host;x-amz-date;x-amz-content-sha256;x-amz-security-token;x-amz-user-agent;x-amz-storage-class",
+				"X-Amz-Algorithm":      "AWS4-HMAC-SHA256",
+				"X-Amz-Credential":     "AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request",
+				"X-Amz-SignedHeaders":  "content-type;content-length;host;x-amz-date;x-amz-content-sha256;x-amz-security-token;x-amz-user-agent;x-amz-storage-class",
 			},
 			description:     "All headers with maximum/edge case values",
 			validateHeaders: []string{"X-Amz-Content-Sha256", "X-Amz-Security-Token", "X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-SignedHeaders"},
@@ -381,11 +381,11 @@ func TestS3HeadersPreservationWithAuthorization(t *testing.T) {
 		// Set all S3 headers
 		s3Headers := map[string]string{
 			"X-Amz-Date":           "20260715T120000Z",
-			"X-Amz-Content-Sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-			"X-Amz-Algorithm":       "AWS4-HMAC-SHA256",
-			"X-Amz-Credential":      "TESTACCESSKEY/20260715/us-east-1/s3/aws4_request",
-			"X-Amz-SignedHeaders":   "host;x-amz-date;x-amz-content-sha256",
-			"Host":                  "test-bucket.s3.amazonaws.com",
+			"X-Amz-Content-Sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"X-Amz-Algorithm":      "AWS4-HMAC-SHA256",
+			"X-Amz-Credential":     "TESTACCESSKEY/20260715/us-east-1/s3/aws4_request",
+			"X-Amz-SignedHeaders":  "host;x-amz-date;x-amz-content-sha256",
+			"Host":                 "test-bucket.s3.amazonaws.com",
 		}
 
 		for headerName, headerValue := range s3Headers {
@@ -465,12 +465,12 @@ func TestS3HeadersPreservationWithAuthorization(t *testing.T) {
 		// Set S3 headers including security token
 		s3Headers := map[string]string{
 			"X-Amz-Date":           "20260715T120000Z",
-			"X-Amz-Content-Sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"X-Amz-Content-Sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			"X-Amz-Security-Token": "FwoGZXIvYXdzEBYaDmRiwUKvH.example4tZKheCbhYS7CfjzRl6oP2KDsSExamplevmLpU5TyPQc8CnjCEZrzRQEXAMPLE",
-			"X-Amz-Algorithm":       "AWS4-HMAC-SHA256",
-			"X-Amz-Credential":      "TESTACCESSKEY/20260715/us-east-1/s3/aws4_request",
-			"X-Amz-SignedHeaders":   "host;x-amz-date;x-amz-content-sha256;x-amz-security-token",
-			"Host":                  "test-bucket.s3.amazonaws.com",
+			"X-Amz-Algorithm":      "AWS4-HMAC-SHA256",
+			"X-Amz-Credential":     "TESTACCESSKEY/20260715/us-east-1/s3/aws4_request",
+			"X-Amz-SignedHeaders":  "host;x-amz-date;x-amz-content-sha256;x-amz-security-token",
+			"Host":                 "test-bucket.s3.amazonaws.com",
 		}
 
 		for headerName, headerValue := range s3Headers {
@@ -637,7 +637,7 @@ func TestS3HeadersEdgeCases(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test-bucket/test-key", nil)
 
 		// Test maximum practical header values
-		maxHash := strings.Repeat("ab", 32) // 64 characters (standard SHA256 length)
+		maxHash := strings.Repeat("ab", 32)   // 64 characters (standard SHA256 length)
 		maxToken := strings.Repeat("T", 1000) // Long token
 		maxCredential := "AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request"
 		maxSignedHeaders := "content-type;content-length;host;x-amz-date;x-amz-content-sha256;x-amz-security-token;x-amz-user-agent;x-amz-storage-class"

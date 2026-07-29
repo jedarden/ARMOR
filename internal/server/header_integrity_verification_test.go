@@ -47,115 +47,115 @@ func TestHeaderIntegrityWithSpecialCharacters(t *testing.T) {
 	handler := srv.Handler()
 
 	testCases := []struct {
-		name         string
-		headerName   string
-		headerValue  string
-		description  string
+		name           string
+		headerName     string
+		headerValue    string
+		description    string
 		shouldPreserve bool
 	}{
 		{
-			name:         "Base64-encoded value",
-			headerName:   "X-Amz-Meta-Base64",
-			headerValue:  "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc=",
-			description:  "Base64-encoded string with padding (=)",
+			name:           "Base64-encoded value",
+			headerName:     "X-Amz-Meta-Base64",
+			headerValue:    "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc=",
+			description:    "Base64-encoded string with padding (=)",
 			shouldPreserve: true,
 		},
 		{
-			name:         "URL-encoded characters",
-			headerName:   "X-Amz-Meta-UrlEncoded",
-			headerValue:  "name=John%20Doe&age=30&city=New%20York",
-			description:  "URL-encoded string with %20 for spaces",
+			name:           "URL-encoded characters",
+			headerName:     "X-Amz-Meta-UrlEncoded",
+			headerValue:    "name=John%20Doe&age=30&city=New%20York",
+			description:    "URL-encoded string with %20 for spaces",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Unicode characters (UTF-8)",
-			headerName:   "X-Amz-Meta-Unicode",
-			headerValue:  "Hello世界こんにちは🌍",
-			description:  "UTF-8 string with multi-byte characters",
+			name:           "Unicode characters (UTF-8)",
+			headerName:     "X-Amz-Meta-Unicode",
+			headerValue:    "Hello世界こんにちは🌍",
+			description:    "UTF-8 string with multi-byte characters",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Special punctuation",
-			headerName:   "X-Amz-Meta-Special",
-			headerValue:  "!@#$%^&*()_+-=[]{}|;':\",./<>?",
-			description:  "String with all common punctuation characters",
+			name:           "Special punctuation",
+			headerName:     "X-Amz-Meta-Special",
+			headerValue:    "!@#$%^&*()_+-=[]{}|;':\",./<>?",
+			description:    "String with all common punctuation characters",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Quoted string with spaces",
-			headerName:   "X-Amz-Meta-Quoted",
-			headerValue:  `"This is a quoted value with spaces"`,
-			description:  "Quoted value (common in HTTP headers)",
+			name:           "Quoted string with spaces",
+			headerName:     "X-Amz-Meta-Quoted",
+			headerValue:    `"This is a quoted value with spaces"`,
+			description:    "Quoted value (common in HTTP headers)",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Header with newlines escaped",
-			headerName:   "X-Amz-Metadata-Custom",
-			headerValue:  "key=value\nwith=newlines\tescaped=tab",
-			description:  "String with escaped newlines and tabs",
+			name:           "Header with newlines escaped",
+			headerName:     "X-Amz-Metadata-Custom",
+			headerValue:    "key=value\nwith=newlines\tescaped=tab",
+			description:    "String with escaped newlines and tabs",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Header with backslash characters",
-			headerName:   "X-Amz-Meta-Path",
-			headerValue:  "C:\\Users\\Documents\\file.txt",
-			description:  "Windows-style path with backslashes",
+			name:           "Header with backslash characters",
+			headerName:     "X-Amz-Meta-Path",
+			headerValue:    "C:\\Users\\Documents\\file.txt",
+			description:    "Windows-style path with backslashes",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Header with forward slashes",
-			headerName:   "X-Amz-Metadata-Url",
-			headerValue:  "https://example.com/path/to/resource?query=value&other=123",
-			description:  "Full URL with query parameters",
+			name:           "Header with forward slashes",
+			headerName:     "X-Amz-Metadata-Url",
+			headerValue:    "https://example.com/path/to/resource?query=value&other=123",
+			description:    "Full URL with query parameters",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Header with equals signs",
-			headerName:   "X-Amz-Metadata-Equals",
-			headerValue:  "a=b=c=d=e=f",
-			description:  "String with multiple equals signs",
+			name:           "Header with equals signs",
+			headerName:     "X-Amz-Metadata-Equals",
+			headerValue:    "a=b=c=d=e=f",
+			description:    "String with multiple equals signs",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Header with semicolons",
-			headerName:   "X-Amz-Metadata-Semicolons",
-			headerValue:  "value1;value2;value3;value4",
-			description:  "String with multiple semicolons (similar to signed headers format)",
+			name:           "Header with semicolons",
+			headerName:     "X-Amz-Metadata-Semicolons",
+			headerValue:    "value1;value2;value3;value4",
+			description:    "String with multiple semicolons (similar to signed headers format)",
 			shouldPreserve: true,
 		},
 		{
-			name:         "JSON string in header",
-			headerName:   "X-Amz-Metadata-Json",
-			headerValue:  `{"key":"value","number":123,"nested":{"item":"data"}}`,
-			description:  "JSON object with quotes and braces",
+			name:           "JSON string in header",
+			headerName:     "X-Amz-Metadata-Json",
+			headerValue:    `{"key":"value","number":123,"nested":{"item":"data"}}`,
+			description:    "JSON object with quotes and braces",
 			shouldPreserve: true,
 		},
 		{
-			name:         "XML string in header",
-			headerName:   "X-Amz-Metadata-Xml",
-			headerValue:  `<root><item id="1">data</item></root>`,
-			description:  "XML fragment with tags and attributes",
+			name:           "XML string in header",
+			headerName:     "X-Amz-Metadata-Xml",
+			headerValue:    `<root><item id="1">data</item></root>`,
+			description:    "XML fragment with tags and attributes",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Header with emoji and symbols",
-			headerName:   "X-Amz-Metadata-Emoji",
-			headerValue:  "🚀🌟✅❤️🎉🔥💡🎯⭐🛡️🔒",
-			description:  "String with emoji characters (multi-byte UTF-8)",
+			name:           "Header with emoji and symbols",
+			headerName:     "X-Amz-Metadata-Emoji",
+			headerValue:    "🚀🌟✅❤️🎉🔥💡🎯⭐🛡️🔒",
+			description:    "String with emoji characters (multi-byte UTF-8)",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Header with mixed encodings",
-			headerName:   "X-Amz-Metadata-Mixed",
-			headerValue:  "text: Hello, number: 123, symbol: ©, emoji: 🌍, base64: SGVsbG8=",
-			description:  "Mixed encoding types in single header",
+			name:           "Header with mixed encodings",
+			headerName:     "X-Amz-Metadata-Mixed",
+			headerValue:    "text: Hello, number: 123, symbol: ©, emoji: 🌍, base64: SGVsbG8=",
+			description:    "Mixed encoding types in single header",
 			shouldPreserve: true,
 		},
 		{
-			name:         "Header with null-byte representation",
-			headerName:   "X-Amz-Metadata-Null",
-			headerValue:  "value\x00with\x00nulls",
-			description:  "String with null bytes (binary data representation)",
+			name:           "Header with null-byte representation",
+			headerName:     "X-Amz-Metadata-Null",
+			headerValue:    "value\x00with\x00nulls",
+			description:    "String with null bytes (binary data representation)",
 			shouldPreserve: true,
 		},
 	}
@@ -455,10 +455,10 @@ func TestHeaderDuplicationDetection(t *testing.T) {
 			// Note: X-Amz-SignedHeaders is NOT a standalone header - it's part of
 			// the Authorization header or a query parameter, not a passthrough header
 			"X-Amz-Date":           "20130524T000000Z",
-			"X-Amz-Content-Sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-			"X-Amz-Security-Token":  "FwoGZXIvYXdzEBYaDmRiwUKvH.example",
-			"X-Amz-Algorithm":       "AWS4-HMAC-SHA256",
-			"X-Amz-Credential":      "TESTACCESSKEY/20130524/us-east-1/s3/aws4_request",
+			"X-Amz-Content-Sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"X-Amz-Security-Token": "FwoGZXIvYXdzEBYaDmRiwUKvH.example",
+			"X-Amz-Algorithm":      "AWS4-HMAC-SHA256",
+			"X-Amz-Credential":     "TESTACCESSKEY/20130524/us-east-1/s3/aws4_request",
 		}
 
 		for name, value := range testHeaders {
@@ -707,9 +707,9 @@ func TestHeaderIntegrityWithEncodingVariations(t *testing.T) {
 
 	t.Run("URL-encoded header values", func(t *testing.T) {
 		testValues := []string{
-			"Hello%20World%21",                          // URL encoded spaces and exclamation
-			"name%3DJohn%26age%3D30%26city%3DNYC",      // URL encoded key-value pairs
-			"path%2Fto%2Ffile%3A%C3%A9%C3%A0%C3%B9",     // URL encoded path with unicode
+			"Hello%20World%21",                              // URL encoded spaces and exclamation
+			"name%3DJohn%26age%3D30%26city%3DNYC",           // URL encoded key-value pairs
+			"path%2Fto%2Ffile%3A%C3%A9%C3%A0%C3%B9",         // URL encoded path with unicode
 			"%E2%9C%93%EF%B8%8F%20%F0%9F%9A%80%F0%9F%8C%9F", // URL encoded emoji
 		}
 
@@ -743,9 +743,9 @@ func TestHeaderIntegrityWithEncodingVariations(t *testing.T) {
 	t.Run("Base64-encoded header values", func(t *testing.T) {
 		testValues := []string{
 			"SGVsbG8gV29ybGQ=",                               // "Hello World"
-			"eyJrZXkiOiAidmFsdWUifQ==",                        // JSON object
-			"PGh0bWw+PGJvZHk+SGk8L2JvZHk+PC9odG1wPg==",        // HTML snippet
-			strings.Repeat("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 10),    // Long base64 string
+			"eyJrZXkiOiAidmFsdWUifQ==",                       // JSON object
+			"PGh0bWw+PGJvZHk+SGk8L2JvZHk+PC9odG1wPg==",       // HTML snippet
+			strings.Repeat("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 10), // Long base64 string
 		}
 
 		for i, testValue := range testValues {

@@ -48,13 +48,13 @@ func NewSigV4AuthWithCredentials(credentials map[string]*config.Credential, regi
 
 // AuthHeader represents parsed SigV4 Authorization header components.
 type AuthHeader struct {
-	Algorithm     string
-	AccessKey     string
+	Algorithm      string
+	AccessKey      string
 	CredentialDate string
-	Region        string
-	Service       string
-	SignedHeaders []string
-	Signature     string
+	Region         string
+	Service        string
+	SignedHeaders  []string
+	Signature      string
 }
 
 // ParseAuthHeader parses the AWS SigV4 Authorization header.
@@ -337,16 +337,16 @@ func sha256Hex(data []byte) string {
 
 // Authentication errors
 var (
-	ErrMissingAuthHeader   = &AuthError{Code: "MissingAuthenticationToken", Message: "Missing Authentication Token"}
-	ErrInvalidAlgorithm    = &AuthError{Code: "InvalidAlgorithm", Message: "Only AWS4-HMAC-SHA256 is supported"}
-	ErrInvalidCredential   = &AuthError{Code: "InvalidCredential", Message: "Invalid credential format"}
-	ErrMissingFields       = &AuthError{Code: "IncompleteSignature", Message: "Authorization header is missing required fields"}
-	ErrInvalidAccessKey    = &AuthError{Code: "InvalidAccessKeyId", Message: "The AWS Access Key Id you provided does not exist"}
-	ErrMissingDateHeader   = &AuthError{Code: "MissingDateHeader", Message: "Missing X-Amz-Date header"}
-	ErrInvalidDateFormat   = &AuthError{Code: "InvalidDateFormat", Message: "Invalid date format in X-Amz-Date header"}
-	ErrRequestExpired      = &AuthError{Code: "RequestExpired", Message: "Request has expired"}
-	ErrSignatureMismatch   = &AuthError{Code: "SignatureDoesNotMatch", Message: "The request signature we calculated does not match the signature you provided"}
-	ErrAccessDenied        = &AuthError{Code: "AccessDenied", Message: "Access Denied"}
+	ErrMissingAuthHeader = &AuthError{Code: "MissingAuthenticationToken", Message: "Missing Authentication Token"}
+	ErrInvalidAlgorithm  = &AuthError{Code: "InvalidAlgorithm", Message: "Only AWS4-HMAC-SHA256 is supported"}
+	ErrInvalidCredential = &AuthError{Code: "InvalidCredential", Message: "Invalid credential format"}
+	ErrMissingFields     = &AuthError{Code: "IncompleteSignature", Message: "Authorization header is missing required fields"}
+	ErrInvalidAccessKey  = &AuthError{Code: "InvalidAccessKeyId", Message: "The AWS Access Key Id you provided does not exist"}
+	ErrMissingDateHeader = &AuthError{Code: "MissingDateHeader", Message: "Missing X-Amz-Date header"}
+	ErrInvalidDateFormat = &AuthError{Code: "InvalidDateFormat", Message: "Invalid date format in X-Amz-Date header"}
+	ErrRequestExpired    = &AuthError{Code: "RequestExpired", Message: "Request has expired"}
+	ErrSignatureMismatch = &AuthError{Code: "SignatureDoesNotMatch", Message: "The request signature we calculated does not match the signature you provided"}
+	ErrAccessDenied      = &AuthError{Code: "AccessDenied", Message: "Access Denied"}
 )
 
 // AuthError represents an authentication error.

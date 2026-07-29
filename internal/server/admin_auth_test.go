@@ -220,8 +220,8 @@ func TestAdminAuditLogging(t *testing.T) {
 // TestIsAdminPathPublic is a table test for the path classifier used by the gate.
 func TestIsAdminPathPublic(t *testing.T) {
 	cases := []struct {
-		path    string
-		public  bool
+		path   string
+		public bool
 	}{
 		{"/healthz", true},
 		{"/readyz", true},

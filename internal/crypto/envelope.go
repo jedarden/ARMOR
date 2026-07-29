@@ -31,12 +31,12 @@ const (
 )
 
 var (
-	ErrInvalidMagic    = errors.New("invalid ARMOR magic")
-	ErrInvalidVersion  = errors.New("unsupported envelope version")
-	ErrInvalidHeader   = errors.New("invalid envelope header")
-	ErrBlockSizePower  = errors.New("block size must be power of 2")
-	ErrHMACMismatch    = errors.New("HMAC verification failed")
-	ErrInvalidBlock    = errors.New("invalid block index")
+	ErrInvalidMagic      = errors.New("invalid ARMOR magic")
+	ErrInvalidVersion    = errors.New("unsupported envelope version")
+	ErrInvalidHeader     = errors.New("invalid envelope header")
+	ErrBlockSizePower    = errors.New("block size must be power of 2")
+	ErrHMACMismatch      = errors.New("HMAC verification failed")
+	ErrInvalidBlock      = errors.New("invalid block index")
 	ErrPlaintextMismatch = errors.New("plaintext SHA-256 mismatch")
 )
 

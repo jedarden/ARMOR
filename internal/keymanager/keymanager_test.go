@@ -335,10 +335,10 @@ func TestParseNamedKeys(t *testing.T) {
 	sensitiveMEKHex := hex.EncodeToString(sensitiveMEK)
 
 	envVars := map[string]string{
-		"ARMOR_MEK":          defaultMEKHex,
+		"ARMOR_MEK":           defaultMEKHex,
 		"ARMOR_MEK_SENSITIVE": sensitiveMEKHex,
 		"ARMOR_MEK_ARCHIVE":   sensitiveMEKHex,
-		"OTHER_VAR":          "ignored",
+		"OTHER_VAR":           "ignored",
 	}
 
 	namedKeys, err := ParseNamedKeys(envVars)

@@ -72,7 +72,7 @@ func TestXAmzDateHeaderPassthrough(t *testing.T) {
 			name:           "Timestamp with leap second (60)",
 			xAmzDateHeader: "20161231T235960Z",
 			description:    "Timestamp with leap second (valid in AWS, though Go's time.Parse doesn't support it)",
-			skipParsing:   true,
+			skipParsing:    true,
 		},
 		{
 			name:           "Historical timestamp",
@@ -520,25 +520,25 @@ func TestXAmzDateHeaderTimeZones(t *testing.T) {
 		{
 			name:           "Missing timezone",
 			xAmzDateHeader: "20250114T120000",
-			shouldParse:   false,
+			shouldParse:    false,
 			description:    "Missing timezone indicator (invalid)",
 		},
 		{
 			name:           "UTC offset format (+00:00)",
 			xAmzDateHeader: "20250114T120000+00:00",
-			shouldParse:   false,
+			shouldParse:    false,
 			description:    "ISO8601 offset format (not used by AWS)",
 		},
 		{
 			name:           "Negative UTC offset",
 			xAmzDateHeader: "20250114T120000-05:00",
-			shouldParse:   false,
+			shouldParse:    false,
 			description:    "Negative offset (not used by AWS)",
 		},
 		{
 			name:           "Positive UTC offset",
 			xAmzDateHeader: "20250114T120000+05:30",
-			shouldParse:   false,
+			shouldParse:    false,
 			description:    "Positive offset (not used by AWS)",
 		},
 	}

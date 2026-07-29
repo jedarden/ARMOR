@@ -62,8 +62,8 @@ func TestApplyPrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				Prefix:         tt.prefix,
-				BlockSize:      65536,
+				Prefix:        tt.prefix,
+				BlockSize:     65536,
 				AuthAccessKey: "test",
 				AuthSecretKey: "test",
 			}
@@ -150,8 +150,8 @@ func TestStripPrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				Prefix:         tt.prefix,
-				BlockSize:      65536,
+				Prefix:        tt.prefix,
+				BlockSize:     65536,
 				AuthAccessKey: "test",
 				AuthSecretKey: "test",
 			}
@@ -238,8 +238,8 @@ func TestStripPrefixFromCommonPrefix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				Prefix:         tt.prefix,
-				BlockSize:      65536,
+				Prefix:        tt.prefix,
+				BlockSize:     65536,
 				AuthAccessKey: "test",
 				AuthSecretKey: "test",
 			}
@@ -290,8 +290,8 @@ func TestPrefixRoundTrip(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				Prefix:         tt.prefix,
-				BlockSize:      65536,
+				Prefix:        tt.prefix,
+				BlockSize:     65536,
 				AuthAccessKey: "test",
 				AuthSecretKey: "test",
 			}
@@ -312,11 +312,11 @@ func TestPrefixRoundTrip(t *testing.T) {
 // TestPrefixMethodsEdgeCases tests edge cases specific to S3 prefix handling.
 func TestPrefixMethodsEdgeCases(t *testing.T) {
 	tests := []struct {
-		name           string
-		prefix         string
-		key            string
-		applyExpected  string
-		stripExpected  string
+		name          string
+		prefix        string
+		key           string
+		applyExpected string
+		stripExpected string
 	}{
 		{
 			name:          "unicode characters in key",
@@ -351,8 +351,8 @@ func TestPrefixMethodsEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
-				Prefix:         tt.prefix,
-				BlockSize:      65536,
+				Prefix:        tt.prefix,
+				BlockSize:     65536,
 				AuthAccessKey: "test",
 				AuthSecretKey: "test",
 			}

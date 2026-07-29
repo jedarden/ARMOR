@@ -30,10 +30,10 @@ type Metrics struct {
 	CacheMissesTotal *expvar.Int
 
 	// Encryption metrics
-	EncryptionOpsTotal   *expvar.Map
-	DecryptionOpsTotal   *expvar.Map
-	KeyWrapOpsTotal      *expvar.Int
-	KeyUnwrapOpsTotal    *expvar.Int
+	EncryptionOpsTotal *expvar.Map
+	DecryptionOpsTotal *expvar.Map
+	KeyWrapOpsTotal    *expvar.Int
+	KeyUnwrapOpsTotal  *expvar.Int
 
 	// Canary metrics
 	CanaryChecksTotal    *expvar.Int
@@ -49,9 +49,9 @@ type Metrics struct {
 	MultipartCanaryHealthy        *expvar.Int
 
 	// Multipart histogram metrics (bucketed by operation and status)
-	MultipartUploadBuckets    *expvar.Map // Histogram buckets: upload operation, keyed by latency
+	MultipartUploadBuckets       *expvar.Map // Histogram buckets: upload operation, keyed by latency
 	MultipartVerificationBuckets *expvar.Map // Histogram buckets: verification operation, keyed by latency
-	MultipartOperationTotal    *expvar.Map // Counter by operation and status: operation_status
+	MultipartOperationTotal      *expvar.Map // Counter by operation and status: operation_status
 
 	// Multipart metrics
 	ActiveMultipartUploads *expvar.Int

@@ -105,10 +105,10 @@ func TestListObjectsV2WithPrefix(t *testing.T) {
 
 	// Upload multiple objects in different directories
 	objects := map[string]string{
-		"data/file1.txt":           "Content 1",
-		"data/file2.txt":           "Content 2",
-		"logs/2024/01.log":         "Log content",
-		"config/settings.json":     "{}",
+		"data/file1.txt":            "Content 1",
+		"data/file2.txt":            "Content 2",
+		"logs/2024/01.log":          "Log content",
+		"config/settings.json":      "{}",
 		"nested/deep/path/file.txt": "Deep file",
 	}
 
@@ -610,9 +610,9 @@ func TestSpecialCharactersInKeyWithPrefix(t *testing.T) {
 	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	specialKeys := []struct {
-		name         string
-		key          string
-		encodedKey   string
+		name       string
+		key        string
+		encodedKey string
 	}{
 		{
 			name:       "file with spaces",

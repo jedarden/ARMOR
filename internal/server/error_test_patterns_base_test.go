@@ -323,97 +323,98 @@ type ErrorTestResult struct {
 // - Invalid signature
 //
 // Usage:
-//   tests := StandardAuthenticationErrorTests()
-//   for _, tt := range tests {
-//       t.Run(tt.Name, func(t *testing.T) {
-//           RunAuthenticationTestCase(t, fixture, tt)
-//       })
-//   }
+//
+//	tests := StandardAuthenticationErrorTests()
+//	for _, tt := range tests {
+//	    t.Run(tt.Name, func(t *testing.T) {
+//	        RunAuthenticationTestCase(t, fixture, tt)
+//	    })
+//	}
 func StandardAuthenticationErrorTests() []AuthenticationErrorTestCase {
 	return []AuthenticationErrorTestCase{
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Missing authorization header",
-				Description:              "Request without Authorization header should return 403",
-				SetupRequest:             createMissingAuthHeaderRequest,
-				ExpectedStatus:           403,
-				ExpectedCode:             ErrorCodeMissingAuthenticationToken,
-				ExpectedMessageKeywords:  []string{"missing", "authentication", "token"},
-				MinMessageLength:          15,
-				SkipCORSValidation:        false,
+				Name:                    "Missing authorization header",
+				Description:             "Request without Authorization header should return 403",
+				SetupRequest:            createMissingAuthHeaderRequest,
+				ExpectedStatus:          403,
+				ExpectedCode:            ErrorCodeMissingAuthenticationToken,
+				ExpectedMessageKeywords: []string{"missing", "authentication", "token"},
+				MinMessageLength:        15,
+				SkipCORSValidation:      false,
 			},
-			AccessKey:        "",
-			AuthErrorType:    "MissingAuthHeader",
+			AccessKey:         "",
+			AuthErrorType:     "MissingAuthHeader",
 			ExpectedAuthError: ErrMissingAuthHeader,
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Invalid access key",
-				Description:              "Request with invalid access key should return 403",
-				SetupRequest:             createInvalidKeyRequest,
-				ExpectedStatus:           403,
-				ExpectedCode:             "InvalidAccessKeyId",
-				ExpectedMessageKeywords:  []string{"invalid", "access", "key"},
-				MinMessageLength:          15,
+				Name:                    "Invalid access key",
+				Description:             "Request with invalid access key should return 403",
+				SetupRequest:            createInvalidKeyRequest,
+				ExpectedStatus:          403,
+				ExpectedCode:            "InvalidAccessKeyId",
+				ExpectedMessageKeywords: []string{"invalid", "access", "key"},
+				MinMessageLength:        15,
 			},
-			AccessKey:        "INVALIDKEY",
-			AuthErrorType:    "InvalidAccessKey",
+			AccessKey:         "INVALIDKEY",
+			AuthErrorType:     "InvalidAccessKey",
 			ExpectedAuthError: ErrInvalidAccessKey,
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Invalid signature",
-				Description:              "Request with incorrect signature should return 403",
-				SetupRequest:             createInvalidSignatureRequest,
-				ExpectedStatus:           403,
-				ExpectedCode:             "SignatureDoesNotMatch",
-				ExpectedMessageKeywords:  []string{"signature", "match"},
-				MinMessageLength:          15,
+				Name:                    "Invalid signature",
+				Description:             "Request with incorrect signature should return 403",
+				SetupRequest:            createInvalidSignatureRequest,
+				ExpectedStatus:          403,
+				ExpectedCode:            "SignatureDoesNotMatch",
+				ExpectedMessageKeywords: []string{"signature", "match"},
+				MinMessageLength:        15,
 			},
-			AccessKey:        "TESTACCESSKEY",
-			AuthErrorType:    "SignatureMismatch",
+			AccessKey:         "TESTACCESSKEY",
+			AuthErrorType:     "SignatureMismatch",
 			ExpectedAuthError: ErrSignatureMismatch,
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Malformed authorization header",
-				Description:              "Request with malformed Authorization header should return 403",
-				SetupRequest:             createMalformedAuthRequest,
-				ExpectedStatus:           403,
-				ExpectedCode:             ErrorCodeMissingAuthenticationToken,
-				ExpectedMessageKeywords:  []string{"authorization", "header"},
-				MinMessageLength:          15,
+				Name:                    "Malformed authorization header",
+				Description:             "Request with malformed Authorization header should return 403",
+				SetupRequest:            createMalformedAuthRequest,
+				ExpectedStatus:          403,
+				ExpectedCode:            ErrorCodeMissingAuthenticationToken,
+				ExpectedMessageKeywords: []string{"authorization", "header"},
+				MinMessageLength:        15,
 			},
-			AccessKey:        "",
-			AuthErrorType:    "MalformedAuthHeader",
+			AccessKey:         "",
+			AuthErrorType:     "MalformedAuthHeader",
 			ExpectedAuthError: ErrInvalidCredential,
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Missing date header",
-				Description:              "Request without X-Amz-Date header should return 403",
-				SetupRequest:             createMissingDateRequest,
-				ExpectedStatus:           403,
-				ExpectedCode:             ErrorCodeMissingAuthenticationToken,
-				ExpectedMessageKeywords:  []string{"date", "header"},
-				MinMessageLength:          15,
+				Name:                    "Missing date header",
+				Description:             "Request without X-Amz-Date header should return 403",
+				SetupRequest:            createMissingDateRequest,
+				ExpectedStatus:          403,
+				ExpectedCode:            ErrorCodeMissingAuthenticationToken,
+				ExpectedMessageKeywords: []string{"date", "header"},
+				MinMessageLength:        15,
 			},
-			AccessKey:        "TESTACCESSKEY",
-			AuthErrorType:    "MissingDateHeader",
+			AccessKey:         "TESTACCESSKEY",
+			AuthErrorType:     "MissingDateHeader",
 			ExpectedAuthError: ErrMissingDateHeader,
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Expired request",
-				Description:              "Request with expired timestamp should return 403",
-				SetupRequest:             createExpiredRequest,
-				ExpectedStatus:           403,
-				ExpectedCode:             ErrorCodeMissingAuthenticationToken,
-				ExpectedMessageKeywords:  []string{"expired", "request"},
-				MinMessageLength:          15,
+				Name:                    "Expired request",
+				Description:             "Request with expired timestamp should return 403",
+				SetupRequest:            createExpiredRequest,
+				ExpectedStatus:          403,
+				ExpectedCode:            ErrorCodeMissingAuthenticationToken,
+				ExpectedMessageKeywords: []string{"expired", "request"},
+				MinMessageLength:        15,
 			},
-			AccessKey:        "TESTACCESSKEY",
-			AuthErrorType:    "RequestExpired",
+			AccessKey:         "TESTACCESSKEY",
+			AuthErrorType:     "RequestExpired",
 			ExpectedAuthError: ErrRequestExpired,
 		},
 	}
@@ -429,69 +430,70 @@ func StandardAuthenticationErrorTests() []AuthenticationErrorTestCase {
 // - Internal server error (500)
 //
 // Usage:
-//   tests := StandardNonAuthenticationErrorTests()
-//   for _, tt := range tests {
-//       t.Run(tt.Name, func(t *testing.T) {
-//           RunNonAuthenticationTestCase(t, fixture, tt)
-//       })
-//   }
+//
+//	tests := StandardNonAuthenticationErrorTests()
+//	for _, tt := range tests {
+//	    t.Run(tt.Name, func(t *testing.T) {
+//	        RunNonAuthenticationTestCase(t, fixture, tt)
+//	    })
+//	}
 func StandardNonAuthenticationErrorTests() []NonAuthenticationErrorTestCase {
 	return []NonAuthenticationErrorTestCase{
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Non-existent resource returns 404",
-				Description:              "Request for non-existent resource should return 404 NoSuchKey",
-				SetupRequest:             createNotFoundRequest,
-				ExpectedStatus:           404,
-				ExpectedCode:             "NoSuchKey",
-				ExpectedMessageKeywords:  []string{"not", "found", "exist"},
-				MinMessageLength:          15,
+				Name:                    "Non-existent resource returns 404",
+				Description:             "Request for non-existent resource should return 404 NoSuchKey",
+				SetupRequest:            createNotFoundRequest,
+				ExpectedStatus:          404,
+				ExpectedCode:            "NoSuchKey",
+				ExpectedMessageKeywords: []string{"not", "found", "exist"},
+				MinMessageLength:        15,
 			},
-			ErrorCategory:  "NotFound",
-			RequiresAuth:   true,
-			ResourcePath:   "/test-bucket/nonexistent",
+			ErrorCategory: "NotFound",
+			RequiresAuth:  true,
+			ResourcePath:  "/test-bucket/nonexistent",
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Unsupported method returns 405",
-				Description:              "Request with unsupported HTTP method should return 405",
-				SetupRequest:             createMethodNotAllowedRequest,
-				ExpectedStatus:           405,
-				ExpectedCode:             "MethodNotAllowed",
-				ExpectedMessageKeywords:  []string{"method", "allowed"},
-				MinMessageLength:          15,
+				Name:                    "Unsupported method returns 405",
+				Description:             "Request with unsupported HTTP method should return 405",
+				SetupRequest:            createMethodNotAllowedRequest,
+				ExpectedStatus:          405,
+				ExpectedCode:            "MethodNotAllowed",
+				ExpectedMessageKeywords: []string{"method", "allowed"},
+				MinMessageLength:        15,
 			},
-			ErrorCategory:  "MethodNotAllowed",
-			RequiresAuth:   true,
-			ResourcePath:   "/test-bucket/key",
+			ErrorCategory: "MethodNotAllowed",
+			RequiresAuth:  true,
+			ResourcePath:  "/test-bucket/key",
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Unsupported media type returns 415",
-				Description:              "Request with unsupported content type should return 415",
-				SetupRequest:             createUnsupportedMediaTypeRequest,
-				ExpectedStatus:           415,
-				ExpectedCode:             "UnsupportedMediaType",
-				ExpectedMessageKeywords:  []string{"content", "type", "supported"},
-				MinMessageLength:          15,
+				Name:                    "Unsupported media type returns 415",
+				Description:             "Request with unsupported content type should return 415",
+				SetupRequest:            createUnsupportedMediaTypeRequest,
+				ExpectedStatus:          415,
+				ExpectedCode:            "UnsupportedMediaType",
+				ExpectedMessageKeywords: []string{"content", "type", "supported"},
+				MinMessageLength:        15,
 			},
-			ErrorCategory:  "UnsupportedMediaType",
-			RequiresAuth:   true,
-			ResourcePath:   "/test-bucket/key",
+			ErrorCategory: "UnsupportedMediaType",
+			RequiresAuth:  true,
+			ResourcePath:  "/test-bucket/key",
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Internal server error returns 500",
-				Description:              "Server error should return 500 with error details",
-				SetupRequest:             createInternalErrorRequest,
-				ExpectedStatus:           500,
-				ExpectedCode:             "InternalError",
-				ExpectedMessageKeywords:  []string{"internal", "error"},
-				MinMessageLength:          15,
+				Name:                    "Internal server error returns 500",
+				Description:             "Server error should return 500 with error details",
+				SetupRequest:            createInternalErrorRequest,
+				ExpectedStatus:          500,
+				ExpectedCode:            "InternalError",
+				ExpectedMessageKeywords: []string{"internal", "error"},
+				MinMessageLength:        15,
 			},
-			ErrorCategory:  "InternalError",
-			RequiresAuth:   true,
-			ResourcePath:   "/test-bucket/key",
+			ErrorCategory: "InternalError",
+			RequiresAuth:  true,
+			ResourcePath:  "/test-bucket/key",
 		},
 	}
 }
@@ -500,55 +502,56 @@ func StandardNonAuthenticationErrorTests() []NonAuthenticationErrorTestCase {
 // These tests verify that CORS headers are present on error responses.
 //
 // Usage:
-//   tests := StandardCORSErrorTests()
-//   for _, tt := range tests {
-//       t.Run(tt.Name, func(t *testing.T) {
-//           RunCORSTestCase(t, fixture, tt)
-//       })
-//   }
+//
+//	tests := StandardCORSErrorTests()
+//	for _, tt := range tests {
+//	    t.Run(tt.Name, func(t *testing.T) {
+//	        RunCORSTestCase(t, fixture, tt)
+//	    })
+//	}
 func StandardCORSErrorTests() []CORSErrorTestCase {
 	return []CORSErrorTestCase{
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "404 error includes CORS headers",
-				Description:              "NotFound error should include CORS headers",
-				SetupRequest:             createNotFoundRequest,
-				ExpectedStatus:           404,
-				ExpectedCode:             "NoSuchKey",
-				MinMessageLength:          15,
+				Name:             "404 error includes CORS headers",
+				Description:      "NotFound error should include CORS headers",
+				SetupRequest:     createNotFoundRequest,
+				ExpectedStatus:   404,
+				ExpectedCode:     "NoSuchKey",
+				MinMessageLength: 15,
 			},
-			Origin:             "*",
-			ExpectedCORSOrigin: "*",
+			Origin:              "*",
+			ExpectedCORSOrigin:  "*",
 			ExpectedCORSMethods: "GET, PUT, DELETE, HEAD, POST, OPTIONS",
 			ExpectedCORSHeaders: "Authorization, Content-Type, Range, Content-Length",
 			IsPreflight:         false,
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "403 error includes CORS headers",
-				Description:              "AccessDenied error should include CORS headers",
-				SetupRequest:             createInvalidKeyRequest,
-				ExpectedStatus:           403,
-				ExpectedCode:             "InvalidAccessKeyId",
-				MinMessageLength:          15,
+				Name:             "403 error includes CORS headers",
+				Description:      "AccessDenied error should include CORS headers",
+				SetupRequest:     createInvalidKeyRequest,
+				ExpectedStatus:   403,
+				ExpectedCode:     "InvalidAccessKeyId",
+				MinMessageLength: 15,
 			},
-			Origin:             "*",
-			ExpectedCORSOrigin: "*",
+			Origin:              "*",
+			ExpectedCORSOrigin:  "*",
 			ExpectedCORSMethods: "GET, PUT, DELETE, HEAD, POST, OPTIONS",
 			ExpectedCORSHeaders: "Authorization, Content-Type, Range, Content-Length",
 			IsPreflight:         false,
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "CORS preflight on invalid resource",
-				Description:              "OPTIONS request should return CORS headers",
-				SetupRequest:             createPreflightRequest,
-				ExpectedStatus:           404,
-				ExpectedCode:             "NoSuchKey",
-				MinMessageLength:          15,
+				Name:             "CORS preflight on invalid resource",
+				Description:      "OPTIONS request should return CORS headers",
+				SetupRequest:     createPreflightRequest,
+				ExpectedStatus:   404,
+				ExpectedCode:     "NoSuchKey",
+				MinMessageLength: 15,
 			},
-			Origin:             "https://example.com",
-			ExpectedCORSOrigin: "https://example.com",
+			Origin:              "https://example.com",
+			ExpectedCORSOrigin:  "https://example.com",
 			ExpectedCORSMethods: "GET, PUT, DELETE, HEAD, POST, OPTIONS",
 			ExpectedCORSHeaders: "Authorization, Content-Type, Range, Content-Length",
 			IsPreflight:         true,
@@ -560,40 +563,41 @@ func StandardCORSErrorTests() []CORSErrorTestCase {
 // These tests verify content-type validation errors.
 //
 // Usage:
-//   tests := StandardContentTypeErrorTests()
-//   for _, tt := range tests {
-//       t.Run(tt.Name, func(t *testing.T) {
-//           RunContentTypeTestCase(t, fixture, tt)
-//       })
-//   }
+//
+//	tests := StandardContentTypeErrorTests()
+//	for _, tt := range tests {
+//	    t.Run(tt.Name, func(t *testing.T) {
+//	        RunContentTypeTestCase(t, fixture, tt)
+//	    })
+//	}
 func StandardContentTypeErrorTests() []ContentTypeErrorTestCase {
 	return []ContentTypeErrorTestCase{
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Unsupported content type rejected",
-				Description:              "Request with unsupported content type should return 415",
-				SetupRequest:             createUnsupportedMediaTypeRequest,
-				ExpectedStatus:           415,
-				ExpectedCode:             "UnsupportedMediaType",
-				ExpectedMessageKeywords:  []string{"content", "type"},
-				MinMessageLength:          15,
+				Name:                    "Unsupported content type rejected",
+				Description:             "Request with unsupported content type should return 415",
+				SetupRequest:            createUnsupportedMediaTypeRequest,
+				ExpectedStatus:          415,
+				ExpectedCode:            "UnsupportedMediaType",
+				ExpectedMessageKeywords: []string{"content", "type"},
+				MinMessageLength:        15,
 			},
 			RequestContentType:    "application/json",
-			ExpectedContentType:  "application/json",
+			ExpectedContentType:   "application/json",
 			SupportedContentTypes: []string{"application/xml", "text/plain"},
 		},
 		{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:                     "Missing content type rejected",
-				Description:              "Request without content type should return 400",
-				SetupRequest:             createMissingContentTypeRequest,
-				ExpectedStatus:           400,
-				ExpectedCode:             "InvalidRequest",
-				ExpectedMessageKeywords:  []string{"content", "type", "required"},
-				MinMessageLength:          15,
+				Name:                    "Missing content type rejected",
+				Description:             "Request without content type should return 400",
+				SetupRequest:            createMissingContentTypeRequest,
+				ExpectedStatus:          400,
+				ExpectedCode:            "InvalidRequest",
+				ExpectedMessageKeywords: []string{"content", "type", "required"},
+				MinMessageLength:        15,
 			},
 			RequestContentType:    "",
-			ExpectedContentType:  "",
+			ExpectedContentType:   "",
 			SupportedContentTypes: []string{"application/xml"},
 		},
 	}
@@ -875,8 +879,8 @@ func createMissingContentTypeRequest(t *testing.T) *http.Request {
 func createPreflightRequest(t *testing.T) *http.Request {
 	t.Helper()
 	req := CreateTestRequest(t, "OPTIONS", "/test-bucket/nonexistent", nil, map[string]string{
-		"Origin":                        "https://example.com",
-		"Access-Control-Request-Method": "GET",
+		"Origin":                         "https://example.com",
+		"Access-Control-Request-Method":  "GET",
 		"Access-Control-Request-Headers": "authorization",
 	})
 	return req
@@ -892,19 +896,20 @@ func createPreflightRequest(t *testing.T) *http.Request {
 // Use this to add custom authentication scenarios to the standard suite.
 //
 // Example:
-//   customTests := []AuthenticationErrorTestCase{
-//       {
-//           CommonErrorTestCase: CommonErrorTestCase{
-//               Name: "My custom auth test",
-//               SetupRequest: func(t *testing.T) *http.Request {
-//                   return createMyCustomRequest(t)
-//               },
-//               ExpectedStatus: 403,
-//               ExpectedCode:             ErrorCodeMissingAuthenticationToken,
-//           },
-//       },
-//   }
-//   tests := ExtendAuthenticationTests(customTests)
+//
+//	customTests := []AuthenticationErrorTestCase{
+//	    {
+//	        CommonErrorTestCase: CommonErrorTestCase{
+//	            Name: "My custom auth test",
+//	            SetupRequest: func(t *testing.T) *http.Request {
+//	                return createMyCustomRequest(t)
+//	            },
+//	            ExpectedStatus: 403,
+//	            ExpectedCode:             ErrorCodeMissingAuthenticationToken,
+//	        },
+//	    },
+//	}
+//	tests := ExtendAuthenticationTests(customTests)
 func ExtendAuthenticationTests(customTests []AuthenticationErrorTestCase) []AuthenticationErrorTestCase {
 	baseTests := StandardAuthenticationErrorTests()
 	extended := make([]AuthenticationErrorTestCase, 0, len(baseTests)+len(customTests))
@@ -917,21 +922,22 @@ func ExtendAuthenticationTests(customTests []AuthenticationErrorTestCase) []Auth
 // Use this to add custom non-authentication scenarios to the standard suite.
 //
 // Example:
-//   customTests := []NonAuthenticationErrorTestCase{
-//       {
-//           CommonErrorTestCase: CommonErrorTestCase{
-//               Name: "My custom non-auth test",
-//               SetupRequest: func(t *testing.T) *http.Request {
-//                   return createMyCustomRequest(t)
-//               },
-//               ExpectedStatus: 404,
-//               ExpectedCode: "NoSuchKey",
-//           },
-//           ErrorCategory: "CustomNotFound",
-//           RequiresAuth: true,
-//       },
-//   }
-//   tests := ExtendNonAuthenticationTests(customTests)
+//
+//	customTests := []NonAuthenticationErrorTestCase{
+//	    {
+//	        CommonErrorTestCase: CommonErrorTestCase{
+//	            Name: "My custom non-auth test",
+//	            SetupRequest: func(t *testing.T) *http.Request {
+//	                return createMyCustomRequest(t)
+//	            },
+//	            ExpectedStatus: 404,
+//	            ExpectedCode: "NoSuchKey",
+//	        },
+//	        ErrorCategory: "CustomNotFound",
+//	        RequiresAuth: true,
+//	    },
+//	}
+//	tests := ExtendNonAuthenticationTests(customTests)
 func ExtendNonAuthenticationTests(customTests []NonAuthenticationErrorTestCase) []NonAuthenticationErrorTestCase {
 	baseTests := StandardNonAuthenticationErrorTests()
 	extended := make([]NonAuthenticationErrorTestCase, 0, len(baseTests)+len(customTests))
@@ -944,21 +950,22 @@ func ExtendNonAuthenticationTests(customTests []NonAuthenticationErrorTestCase) 
 // Use this to add custom CORS scenarios to the standard suite.
 //
 // Example:
-//   customTests := []CORSErrorTestCase{
-//       {
-//           CommonErrorTestCase: CommonErrorTestCase{
-//               Name: "My custom CORS test",
-//               SetupRequest: func(t *testing.T) *http.Request {
-//                   return createMyCustomRequest(t)
-//               },
-//               ExpectedStatus: 404,
-//               ExpectedCode: "NoSuchKey",
-//           },
-//           Origin: "*",
-//           ExpectedCORSOrigin: "*",
-//       },
-//   }
-//   tests := ExtendCORSTests(customTests)
+//
+//	customTests := []CORSErrorTestCase{
+//	    {
+//	        CommonErrorTestCase: CommonErrorTestCase{
+//	            Name: "My custom CORS test",
+//	            SetupRequest: func(t *testing.T) *http.Request {
+//	                return createMyCustomRequest(t)
+//	            },
+//	            ExpectedStatus: 404,
+//	            ExpectedCode: "NoSuchKey",
+//	        },
+//	        Origin: "*",
+//	        ExpectedCORSOrigin: "*",
+//	    },
+//	}
+//	tests := ExtendCORSTests(customTests)
 func ExtendCORSTests(customTests []CORSErrorTestCase) []CORSErrorTestCase {
 	baseTests := StandardCORSErrorTests()
 	extended := make([]CORSErrorTestCase, 0, len(baseTests)+len(customTests))
@@ -983,7 +990,7 @@ func NewAuthenticationTestCaseBuilder(name string) *AuthenticationTestCaseBuilde
 	return &AuthenticationTestCaseBuilder{
 		testCase: AuthenticationErrorTestCase{
 			CommonErrorTestCase: CommonErrorTestCase{
-				Name:            name,
+				Name:             name,
 				MinMessageLength: 15,
 			},
 		},

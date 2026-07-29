@@ -334,12 +334,13 @@ func getEnvInt(key string, defaultVal int) int {
 // - Ensures exactly one trailing slash
 // - Empty string stays empty (no prefix)
 // Examples:
-//   "" → ""
-//   "kalshi-tape" → "kalshi-tape/"
-//   "kalshi-tape/" → "kalshi-tape/"
-//   "/kalshi-tape" → "kalshi-tape/"
-//   "/kalshi-tape/" → "kalshi-tape/"
-//   "kalshi-tape//" → "kalshi-tape/"
+//
+//	"" → ""
+//	"kalshi-tape" → "kalshi-tape/"
+//	"kalshi-tape/" → "kalshi-tape/"
+//	"/kalshi-tape" → "kalshi-tape/"
+//	"/kalshi-tape/" → "kalshi-tape/"
+//	"kalshi-tape//" → "kalshi-tape/"
 func normalizePrefix(prefix string) string {
 	if prefix == "" {
 		return ""

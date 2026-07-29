@@ -288,7 +288,7 @@ func TestAuthError_ExpiredToken(t *testing.T) {
 	// Calculate timestamps for temporal testing
 	now := time.Now().UTC()
 	expiredTime := now.Add(-20 * time.Minute) // 20 minutes in the past
-	futureTime := now.Add(20 * time.Minute)  // 20 minutes in the future
+	futureTime := now.Add(20 * time.Minute)   // 20 minutes in the future
 
 	table := []testutil.TableTestCase[AuthTestInput, error]{
 		{

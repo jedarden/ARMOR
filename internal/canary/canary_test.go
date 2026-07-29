@@ -714,13 +714,13 @@ func TestMarshalJSON(t *testing.T) {
 // TestResultJSON tests Result JSON marshaling.
 func TestResultJSON(t *testing.T) {
 	result := Result{
-		Status:          StatusHealthy,
-		LastCheck:       time.Now(),
-		UploadLatencyMs:  45,
+		Status:            StatusHealthy,
+		LastCheck:         time.Now(),
+		UploadLatencyMs:   45,
 		DownloadLatencyMs: 12,
-		DecryptVerified:  true,
-		HMACVerified:     true,
-		CFCacheHit:       false,
+		DecryptVerified:   true,
+		HMACVerified:      true,
+		CFCacheHit:        false,
 	}
 
 	// Just verify it can be serialized
@@ -743,12 +743,12 @@ func TestMonitorMultipartCheck(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:        mb,
-		Bucket:         "test-bucket",
-		MEK:            mek,
-		BlockSize:      65536,
-		InstanceID:     "test-instance",
-		MultipartSize:  100, // Small size for testing (would be 10.5 MiB in prod)
+		Backend:       mb,
+		Bucket:        "test-bucket",
+		MEK:           mek,
+		BlockSize:     65536,
+		InstanceID:    "test-instance",
+		MultipartSize: 100, // Small size for testing (would be 10.5 MiB in prod)
 	}
 
 	m := NewMonitor(cfg)
@@ -792,12 +792,12 @@ func TestMonitorMultipartIntegration(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:        mb,
-		Bucket:         "test-bucket",
-		MEK:            mek,
-		BlockSize:      65536,
-		InstanceID:     "test-instance",
-		MultipartSize:  100, // Small size for testing
+		Backend:       mb,
+		Bucket:        "test-bucket",
+		MEK:           mek,
+		BlockSize:     65536,
+		InstanceID:    "test-instance",
+		MultipartSize: 100, // Small size for testing
 	}
 
 	m := NewMonitor(cfg)
@@ -835,12 +835,12 @@ func TestMultipartHealthyBoolField(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:        mb,
-		Bucket:         "test-bucket",
-		MEK:            mek,
-		BlockSize:      65536,
-		InstanceID:     "test-instance",
-		MultipartSize:  100, // Small size for testing
+		Backend:       mb,
+		Bucket:        "test-bucket",
+		MEK:           mek,
+		BlockSize:     65536,
+		InstanceID:    "test-instance",
+		MultipartSize: 100, // Small size for testing
 	}
 
 	m := NewMonitor(cfg)
@@ -890,12 +890,12 @@ func TestMultipartHealthyBoolFieldFailure(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:        mb,
-		Bucket:         "test-bucket",
-		MEK:            mek,
-		BlockSize:      65536,
-		InstanceID:     "test-instance",
-		MultipartSize:  100,
+		Backend:       mb,
+		Bucket:        "test-bucket",
+		MEK:           mek,
+		BlockSize:     65536,
+		InstanceID:    "test-instance",
+		MultipartSize: 100,
 	}
 
 	m := NewMonitor(cfg)
@@ -921,12 +921,12 @@ func TestCanaryHealthResponseJSON(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:        mb,
-		Bucket:         "test-bucket",
-		MultipartSize:  100,
-		BlockSize:      65536,
-		MEK:            mek,
-		InstanceID:     "test-instance",
+		Backend:       mb,
+		Bucket:        "test-bucket",
+		MultipartSize: 100,
+		BlockSize:     65536,
+		MEK:           mek,
+		InstanceID:    "test-instance",
 	}
 
 	m := NewMonitor(cfg)
@@ -959,12 +959,12 @@ func TestMultipartCanaryMetricsEmission(t *testing.T) {
 	rand.Read(mek)
 
 	cfg := Config{
-		Backend:        mb,
-		Bucket:         "test-bucket",
-		MultipartSize:  100,
-		BlockSize:      65536,
-		MEK:            mek,
-		InstanceID:     "test-instance",
+		Backend:       mb,
+		Bucket:        "test-bucket",
+		MultipartSize: 100,
+		BlockSize:     65536,
+		MEK:           mek,
+		InstanceID:    "test-instance",
 	}
 
 	m := NewMonitor(cfg)
@@ -1129,4 +1129,3 @@ func TestCanaryMultipartPartSizing(t *testing.T) {
 		t.Fatalf("expected at least one non-final part; got %d (envelope=%d partSize=%d)", nonFinal, envelopeSize, partSize)
 	}
 }
-

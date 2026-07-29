@@ -41,8 +41,8 @@ func TestParseAuthHeader(t *testing.T) {
 			expectError: ErrInvalidCredential,
 		},
 		{
-			name: "valid header",
-			auth: "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+			name:        "valid header",
+			auth:        "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
 			expectError: nil,
 			expectKey:   "AKIAIOSFODNN7EXAMPLE",
 			expectSig:   "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",

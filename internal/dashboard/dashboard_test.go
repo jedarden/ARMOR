@@ -228,11 +228,11 @@ func TestRootPageRendering(t *testing.T) {
 func TestDashboardHandler(t *testing.T) {
 	mb := newMockBackend()
 	mb.objects["test/file1.txt"] = &backend.ObjectInfo{
-		Key:            "test/file1.txt",
-		Size:           100,
-		ContentType:    "text/plain",
-		ETag:           "abc123",
-		LastModified:   time.Now(),
+		Key:              "test/file1.txt",
+		Size:             100,
+		ContentType:      "text/plain",
+		ETag:             "abc123",
+		LastModified:     time.Now(),
 		IsARMOREncrypted: true,
 		Metadata: map[string]string{
 			"x-amz-meta-armor-version":        "1",
@@ -322,12 +322,12 @@ func TestObjectDetailHandler(t *testing.T) {
 		LastModified:     time.Now(),
 		IsARMOREncrypted: true,
 		Metadata: map[string]string{
-			"x-amz-meta-armor-version":        "1",
-			"x-amz-meta-armor-block-size":     "65536",
-			"x-amz-meta-armor-plaintext-size": "1000",
-			"x-amz-meta-armor-key-id":         "default",
-			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
-			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
+			"x-amz-meta-armor-version":          "1",
+			"x-amz-meta-armor-block-size":       "65536",
+			"x-amz-meta-armor-plaintext-size":   "1000",
+			"x-amz-meta-armor-key-id":           "default",
+			"x-amz-meta-armor-iv":               "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":      "d3JhcHBlZGRlaw==",
 			"x-amz-meta-armor-plaintext-sha256": "abcdef123456",
 		},
 	}
@@ -625,7 +625,6 @@ func TestObjectDetailContentType(t *testing.T) {
 		t.Errorf("Expected Content-Type application/json, got %s", contentType)
 	}
 }
-
 
 // Test non-ARMOR object detail
 func TestNonARMORObjectDetail(t *testing.T) {
