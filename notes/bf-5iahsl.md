@@ -78,4 +78,5 @@ kubectl --server=http://kubectl-proxy-iad-kalshi:8001 get pods -n armor
 
 ## Verification Timestamp
 
-2026-07-29 approximately 10:00 UTC
+- Initial verification: 2026-07-29 approximately 10:00 UTC
+- Re-verification: 2026-07-29 approximately 12:00 UTC (confirmed ARMOR_PREFIX still correct: `iad-kalshi/`, pod stable)
