@@ -1,3 +1,0 @@
-SPLIT_COMPLETE: Created 4 children, parent converted to umbrella
-
-Children: bf-4rm7, bf-5zxa, bf-tojg, bf-tr44
