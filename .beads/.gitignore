@@ -13,6 +13,7 @@ last-touched
 
 # Local history backups
 .br_history/
+.bf_history/
 
 # Sync state (local-only, per-machine)
 .sync.lock

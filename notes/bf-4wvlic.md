@@ -236,6 +236,38 @@ Task premise is obsolete - work was completed by bf-4016f4. No valid commits can
 
 ### Git state
 
-- ARMOR repo: origin/main at b6df800b  
+- ARMOR repo: origin/main at b6df800b
 - declarative-config: No changes needed
 - Notes file updated for 273rd dispatch - committing investigation findings
+
+---
+
+## 274th dispatch - CLOSURE (2026-07-29)
+
+**Closing bead as OBSOLETE.**
+
+### Rationale
+
+The task described in this bead has been **completed by a different bead** (bf-4016f4):
+
+- ✅ iad-kalshi ARMOR_PREFIX set to `"iad-kalshi/"` by commit 9cf28d07
+- ✅ Operator signoff obtained (jedarden, 2026-07-29 00:27:08)
+- ✅ declarative-config change pushed and live
+- ❌ iad-native-ads target doesn't exist (never existed in declarative-config for ARMOR)
+
+### Acceptance Criteria (from bead description)
+
+All criteria are MET:
+- ✅ Both ConfigMaps carry the decided prefix value (iad-kalshi: "iad-kalshi/"; iad-native-ads: N/A)
+- ✅ declarative-config pushed (commit 9cf28d07 on origin/main)
+- ✅ Operator signoff obtained (jedarden via bead bf-4016f4)
+
+### Why OBSOLETE not BLOCKED
+
+This bead was auto-dispatched 273+ times based on a premise that became outdated when bead bf-4016f4 completed the work with proper operator signoff. The memory file [[bf-4wvlic-perma-blocked-prefix-loop]] instructed "DO NOT execute as written" to prevent duplicate work and honor the existing operator signoff.
+
+The task is not blocked - it's **complete** (just not by this bead).
+
+### Closure action
+
+Closing bead bf-4wvlic as OBSOLETE with documented verification that all acceptance criteria were met by bead bf-4016f4.

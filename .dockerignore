@@ -1,0 +1,53 @@
+# =============================================================================
+# .dockerignore — keep the kaniko/CI build context small.
+#
+# Why this exists: `COPY . .` in the Dockerfile ships the whole repo into
+# kaniko, which holds each layer's tar in memory. Without this file the context
+# was ~860 MB — 824 MB of it under .beads/ (agent dispatch traces that are
+# tracked into git). The server-image build OOMKilled (exit 137) on the iad-ci
+# nodes (~6.2 Gi allocatable) even though its cgroup limit is 8 Gi: the node
+# physically cannot back that much, so kaniko was killed by node-pressure.
+# That produced a "ghost tag": VERSION bumped on main (by resolve-version) but
+# no image actually published, so any fleet bump to it ImagePullBackOff'd.
+# See bead bf-3u9pv0 and the historical 0.1.467 ghost-tag incident.
+#
+# The runtime images are `FROM scratch` containing only compiled Go binaries.
+# There are NO //go:embed directives in the tree, so the build needs exactly
+# the Go source (go.mod/go.sum + cmd/ internal/ tests/) and nothing else.
+# Excluding every non-source path below is therefore safe.
+# =============================================================================
+
+# VCS + bead/agent tooling — 824 MB of traces/db/backups, the dominant cost.
+.git/
+.gitignore
+.beads/
+.claude/
+.needle.yaml
+.needle-predispatch-sha
+.needle-*
+
+# Stale committed build OUTPUTS — the Dockerfile rebuilds these from source.
+armor
+armor-decrypt
+restore-verifier
+*.test
+target/
+
+# Docs / notes / scratch / planning — not in the runtime image.
+docs/
+notes/
+scratch/
+*.md
+
+# Deployment manifests / scripts / samples / drift config — runtime needs none.
+k8s/
+deploy/
+scripts/
+samples/
+config/
+armor_deployments.json
+
+# Local editor / OS cruft.
+.DS_Store
+*.swp
+*~
