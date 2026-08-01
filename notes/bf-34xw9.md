@@ -138,8 +138,18 @@ The in-cluster restore job template exists but targets the old location:
 - Queue-api migration: commitgraph namespace on ord-devimprint (23 days ago as of 2026-08-01)
 - B2 direct backup: `s3://<commitgraph-bucket>/commitgraph/prefix/`
 
+## Final Verification (2026-08-01)
+
+Confirmed all documented findings:
+- ✅ queue-api confirmed in commitgraph namespace (23d uptime)
+- ✅ SECRET_ACCESS_KEY file does not exist or is empty (cannot proceed with restore)
+- ✅ Premise remains obsolete: backup location changed from ARMOR to B2 direct
+
+**Action taken:** Verified obsolete premise, documented this final confirmation. Bead left OPEN per recommendation.
+
 ---
-**Document Version:** 1.0
+**Document Version:** 1.1 (final verification)
 **Created:** 2026-08-01
+**Updated:** 2026-08-01
 **Author:** Claude Code (claude-code-glm-4.7-roam7)
 **Bead ID:** bf-34xw9
