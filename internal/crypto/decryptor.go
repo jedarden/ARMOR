@@ -8,6 +8,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // Decryptor handles AES-256-CTR decryption with per-block HMAC verification.
@@ -287,18 +289,45 @@ func (d *Decryptor) IV() []byte {
 }
 
 // IsCompressed detects if the decrypted plaintext is compressed.
-// Currently checks for zstd magic bytes: 0xFD2FB528 (little-endian).
+// Currently checks for zstd magic bytes: 0x28B52FFD (zstd frame identifier).
 // Returns true if the data appears to be zstd-compressed.
 func IsCompressed(plaintext []byte) bool {
 	if len(plaintext) < 4 {
 		return false
 	}
-	// Zstandard frame magic number (little-endian): 0xFD 0x2F 0xB5 0x28
-	zstdMagic := []byte{0xFD, 0x2F, 0xB5, 0x28}
+	// Zstandard frame magic number: 0x28 0xB5 0x2F 0xFD
+	zstdMagic := []byte{0x28, 0xB5, 0x2F, 0xFD}
 	return plaintext[0] == zstdMagic[0] &&
 		plaintext[1] == zstdMagic[1] &&
 		plaintext[2] == zstdMagic[2] &&
 		plaintext[3] == zstdMagic[3]
+}
+
+// Decompress decompresses zstd-compressed data.
+// Returns the decompressed data or an error if decompression fails.
+// If the data is not compressed (no zstd magic), returns the data unchanged.
+func Decompress(compressed []byte) ([]byte, error) {
+	if len(compressed) < 4 {
+		return compressed, nil
+	}
+
+	// Check for zstd magic bytes before attempting decompression
+	if !IsCompressed(compressed) {
+		return compressed, nil
+	}
+
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd decoder: %w", err)
+	}
+	defer decoder.Close()
+
+	decompressed, err := decoder.DecodeAll(compressed, nil)
+	if err != nil {
+		return nil, fmt.Errorf("zstd decompression failed: %w", err)
+	}
+
+	return decompressed, nil
 }
 
 func min(a, b int64) int64 {

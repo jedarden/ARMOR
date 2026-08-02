@@ -313,7 +313,7 @@ func TestIsCompressed(t *testing.T) {
 	}{
 		{
 			name:     "zstd magic bytes",
-			data:     []byte{0xFD, 0x2F, 0xB5, 0x28, 0x01, 0x00, 0x00, 0x00},
+			data:     []byte{0x28, 0xB5, 0x2F, 0xFD, 0x01, 0x00, 0x00, 0x00},
 			expected: true,
 		},
 		{
@@ -338,7 +338,7 @@ func TestIsCompressed(t *testing.T) {
 		},
 		{
 			name:     "partial zstd magic",
-			data:     []byte{0xFD, 0x2F, 0xB5, 0x00},
+			data:     []byte{0x28, 0xB5, 0x2F, 0x00},
 			expected: false,
 		},
 	}
