@@ -1027,6 +1027,13 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Detect and log compression status
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     token.Bucket,
+		"key":        token.Key,
+		"compressed": armorMeta.Compressed,
+	}).Debug("share/range request: compression status detected")
+
 	// Set response headers
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", armorMeta.PlaintextSize))
 	w.Header().Set("Content-Type", armorMeta.ContentType)
@@ -1057,6 +1064,16 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 	blockSize := armorMeta.BlockSize
 	blockCount := int(crypto.ComputeBlockCount(armorMeta.PlaintextSize, blockSize))
 	plaintextSize := armorMeta.PlaintextSize
+
+	// Detect and log compression status from metadata
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":     token.Bucket,
+		"key":        token.Key,
+		"compressed": armorMeta.Compressed,
+	}).Debug("share full object: compression status from metadata")
+
+	// Track if we've checked compression from decrypted data
+	checkedCompression := false
 
 	// Calculate offsets
 	hmacTableOffset := crypto.HeaderSize + plaintextSize
@@ -1134,6 +1151,18 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 		stream := cipher.NewCTR(decryptor.CipherBlock(), ctr)
 		stream.XORKeyStream(decrypted, encryptedBuf)
 
+		// Check compression from first decrypted block (contains zstd magic if compressed)
+		if blockIndex == 0 && !checkedCompression {
+			isCompressed := crypto.IsCompressed(decrypted)
+			s.logger.WithFields(map[string]interface{}{
+				"bucket":              token.Bucket,
+				"key":                 token.Key,
+				"compressed_meta":     armorMeta.Compressed,
+				"compressed_detected": isCompressed,
+			}).Debug("share full object: compression status detected (post-decrypt first block)")
+			checkedCompression = true
+		}
+
 		// Write to client
 		w.Write(decrypted)
 	}
@@ -1202,6 +1231,18 @@ func (s *Server) handleShareRangeRequest(w http.ResponseWriter, r *http.Request,
 		http.Error(w, fmt.Sprintf("Failed to decrypt range: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	// Detect compression from decrypted plaintext
+	isCompressed := crypto.IsCompressed(plaintext)
+
+	// Detect and log compression status
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":            token.Bucket,
+		"key":               token.Key,
+		"range":             rangeHeader,
+		"compressed_meta":   armorMeta.Compressed,
+		"compressed_detected": isCompressed,
+	}).Debug("share/range request: compression status detected (post-decrypt)")
 
 	// Set response headers
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(plaintext)))
