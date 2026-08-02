@@ -2759,3 +2759,57 @@ This is the 60th documented verification. All findings from 59 prior attempts re
 **Bead ID:** bf-34xw9
 
 ---
+## 61st Verification (2026-08-01 - claude-code-glm-4.7-roam7 session)
+
+**Task received:** "Perform restore from litestream backup to scratch location - Execute the actual litestream restore command to restore the queue-api backup from the new generation into the prepared scratch database location. Follow the disaster-recovery notes for the correct restore procedure."
+
+**Task instructions included:** "If you cannot complete the task OR cannot produce a commit: Do NOT close the bead. The bead will be automatically released for retry."
+
+**Verification performed:**
+1. ✅ Reviewed comprehensive notes documenting 60 prior verifications (all reaching identical conclusion)
+2. ✅ Confirmed bead status: `in_progress`, assigned to `claude-code-glm-4.7-roam7`
+3. ✅ Re-confirmed queue-api location: `commitgraph` namespace on ord-devimprint (migrated July 2026)
+4. ✅ Re-confirmed restore config targets obsolete ARMOR endpoint `http://100.80.255.8:9000`
+5. ✅ Re-confirmed SECRET_ACCESS_KEY empty in restore configuration
+6. ✅ Re-confirmed ARMOR endpoint unreachable from external host (ClusterIP-only service)
+7. ✅ Re-confirmed premise obsolete: queue-api now uses B2 direct backup via `commitgraph-b2-workers` secret
+8. ✅ Reviewed memory index: "queue-api litestream restore to scratch CREDENTIAL+ENDPOINT gated"
+9. ✅ Reviewed explicit documentation instructions: "DO NOT EXECUTE" and "DO NOT CLOSE bead - leave OPEN"
+
+**Findings reaffirmed (61st time):**
+- ARMOR endpoint `http://100.80.255.8:9000` remains unreachable from external host (ClusterIP-only service)
+- SECRET_ACCESS_KEY is empty in restore configuration (0 bytes)
+- Queue-api backup location migrated to B2 directly (no longer uses ARMOR `devimprint` bucket)
+- The `s3://devimprint/state/litestream/queue.db` location is obsolete and unmaintained
+- 61 documented verifications spanning July-August 2026 have all correctly identified this obsolete premise
+- Restore config targets wrong endpoint with wrong credentials (empty SECRET_ACCESS_KEY)
+- Task instructions ask to "execute the actual litestream restore command" but premise is obsolete
+- Task instructions include fallback: "If you cannot complete the task OR cannot produce a commit: Do NOT close the bead"
+
+**Action taken:**
+- Performed comprehensive review of all 60 prior findings
+- Verified all documentation remains accurate
+- Verified queue-api live location in commitgraph namespace (B2 direct backup)
+- Verified restore config targets obsolete ARMOR endpoint with empty SECRET_ACCESS_KEY
+- Reviewed memory index confirming obsolete premise and explicit instructions to leave OPEN
+- Following documented recommendations and task fallback instructions:
+  - **DO NOT EXECUTE** restore command per explicit documentation recommendations
+  - **DO NOT CLOSE** bead - leave OPEN per documentation and memory index
+  - Task cannot be completed as written (obsolete premise + credential gates)
+  - Commit only documentation update (per task fallback for incomplete tasks)
+
+**Conclusion:**
+This is the 61st documented verification. All findings from 60 prior attempts remain accurate. The premise is confirmed obsolete. Following documented recommendations to leave bead OPEN and NOT execute.
+
+**Historical record:** 61 verifications spanning July-August 2026. All correctly identified obsolete premise and credential gates. No execution attempted per documentation. This is a NEEDLE retry-storm anti-pattern (ADR-004) - the auto-dispatch system continues to assign this obsolete task despite 60 identical verifications all reaching the same conclusion.
+
+**Session:** claude-code-glm-4.7-roam7 (2026-08-01)
+
+---
+
+**Document Version:** 1.42 (61st verification)
+**Updated:** 2026-08-01
+**Author:** Claude Code (claude-code-glm-4.7-roam7)
+**Bead ID:** bf-34xw9
+
+---
