@@ -1034,8 +1034,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		"compressed": armorMeta.Compressed,
 	}).Debug("share/range request: compression status detected")
 
-	// Set response headers
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", armorMeta.PlaintextSize))
+	// Set response headers (Content-Length will be set by handleShareFullObject after decompression)
 	w.Header().Set("Content-Type", armorMeta.ContentType)
 	w.Header().Set("Accept-Ranges", "bytes")
 	if token.ContentDisposition != "" {
@@ -1108,10 +1107,8 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 		return
 	}
 
-	// 4. Write status before streaming
-	w.WriteHeader(http.StatusOK)
-
-	// 5. Stream decrypt
+	// 4. Collect all decrypted blocks into a buffer for decompression
+	allDecrypted := make([]byte, 0, plaintextSize)
 	encryptedBuf := make([]byte, blockSize)
 	for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
 		remaining := plaintextSize - int64(blockIndex)*int64(blockSize)
@@ -1151,6 +1148,9 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 		stream := cipher.NewCTR(decryptor.CipherBlock(), ctr)
 		stream.XORKeyStream(decrypted, encryptedBuf)
 
+		// Append to buffer
+		allDecrypted = append(allDecrypted, decrypted...)
+
 		// Check compression from first decrypted block (contains zstd magic if compressed)
 		if blockIndex == 0 && !checkedCompression {
 			isCompressed := crypto.IsCompressed(decrypted)
@@ -1162,10 +1162,28 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 			}).Debug("share full object: compression status detected (post-decrypt first block)")
 			checkedCompression = true
 		}
-
-		// Write to client
-		w.Write(decrypted)
 	}
+
+	// 5. Decompress if the data is compressed
+	finalData := allDecrypted
+	if crypto.IsCompressed(allDecrypted) {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket": token.Bucket,
+			"key":    token.Key,
+		}).Debug("share full object: decompressing zstd data")
+
+		decompressed, err := crypto.Decompress(allDecrypted)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decompress data: %v", err), http.StatusInternalServerError)
+			return
+		}
+		finalData = decompressed
+	}
+
+	// 6. Set Content-Length and write status
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(finalData)))
+	w.WriteHeader(http.StatusOK)
+	w.Write(finalData)
 }
 
 // handleShareRangeRequest handles range requests for share endpoint.

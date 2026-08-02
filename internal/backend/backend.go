@@ -215,6 +215,7 @@ type ARMORMetadata struct {
 	PlaintextSHA  string
 	ETag          string
 	KeyID         string // Key identifier for multi-key support (empty = default)
+	Compressed    bool   // Object payload is compressed (e.g., zstd)
 }
 
 // ParseARMORMetadata extracts ARMOR metadata from S3 headers.
@@ -268,6 +269,11 @@ func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
 	// Parse key ID (for multi-key support)
 	am.KeyID = meta["x-amz-meta-armor-key-id"]
 
+	// Parse compressed flag
+	if compressed := meta["x-amz-meta-armor-compressed"]; compressed != "" {
+		am.Compressed = compressed == "true"
+	}
+
 	return am, true
 }
 
@@ -285,6 +291,10 @@ func (am *ARMORMetadata) ToMetadata() map[string]string {
 	// Only include key-id if set (non-default key)
 	if am.KeyID != "" && am.KeyID != "default" {
 		meta["x-amz-meta-armor-key-id"] = am.KeyID
+	}
+	// Include compressed flag if set
+	if am.Compressed {
+		meta["x-amz-meta-armor-compressed"] = "true"
 	}
 	return meta
 }
