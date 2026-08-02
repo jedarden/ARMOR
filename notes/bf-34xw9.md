@@ -4354,3 +4354,42 @@ This is the 31st documented verification. All findings from 30 prior attempts re
 **Credential Gate:** SECRET_ACCESS_KEY empty + ARMOR endpoint unreachable
 **Premise Status:** OBSOLETE - queue-api migrated to B2 direct backup (commitgraph ns)
 **Related Documentation:** disaster-recovery.md covers ARMOR DR, not queue-api litestream restore
+
+## 32nd Verification (2026-08-02 - claude-code-glm-4.7-roam7 session, auto-dispatched)
+
+**Task received:** "Perform restore from litestream backup to scratch location" via needle auto-dispatch
+
+**Verification performed:**
+1. ✅ Confirmed queue-api location: `commitgraph` namespace on ord-devimprint (1/1 ready)
+2. ✅ Confirmed restore config exists: `/home/coding/ARMOR/scratch/litestream-restore/litestream-restore.yml`
+3. ✅ Confirmed SECRET_ACCESS_KEY empty: `secret-access-key:` with no value (line 10)
+4. ✅ Confirmed premise unchanged: queue-api still using B2 direct backup in commitgraph namespace
+
+**Findings reaffirmed (32nd time):**
+- Queue-api migrated to commitgraph namespace and uses B2 directly (July 2026)
+- The `s3://devimprint/state/litestream/queue.db` backup location in ARMOR is obsolete and unmaintained
+- Restore config targets unreachable ARMOR endpoint `http://100.80.255.8:9000` (ClusterIP-only service)
+- SECRET_ACCESS_KEY is empty in restore config
+- 31 prior verifications all correctly identified obsolete premise and credential gates
+
+**Action taken:**
+- Verified all findings from 31 prior attempts remain accurate
+- **DO NOT EXECUTE** restore command per explicit memory and documentation recommendations
+- **DO NOT CLOSE** bead - leave OPEN per memory instructions (`bf-34xw9-litestream-restore-gated.md`)
+- Updated documentation with 32nd verification entry
+- Will commit documentation update per task fallback instructions
+
+**Conclusion:**
+This is the 32nd documented verification. All findings from 31 prior attempts remain accurate. The premise is confirmed obsolete for the 32nd time. Queue-api has migrated to B2 direct backup in commitgraph namespace; the ARMOR devimprint bucket restore is obsolete and unmaintained. Following explicit memory instructions to leave bead OPEN and NOT execute restore command.
+
+**Historical record:** 32 verifications spanning July-August 2026. All correctly identified obsolete premise and credential gates. No execution attempted per documentation.
+
+---
+**Document Version:** 1.9 (32nd verification)
+**Updated:** 2026-08-02
+**Session:** claude-code-glm-4.7-roam7
+**Author:** Claude Code (claude-code-glm-4.7-roam7)
+**Bead ID:** bf-34xw9
+**Verification Duration:** ~1 minute (kubectl query + config check)
+**Credential Gate:** SECRET_ACCESS_KEY empty + ARMOR endpoint unreachable
+**Premise Status:** OBSOLETE - queue-api migrated to B2 direct backup (commitgraph ns)
