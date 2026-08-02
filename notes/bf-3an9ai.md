@@ -54,3 +54,19 @@ To complete this restore, one of the following would need to be provided:
 1. Valid B2 credentials for the commitgraph bucket
 2. Valid ARMOR credentials for the devimprint bucket (if still applicable post-migration)
 3. Direct access to cluster secrets (currently blocked by read-only proxy)
+
+## Re-execution Attempt - 2026-08-02 15:22
+Re-executed restore command to confirm current state:
+```bash
+cd /home/coding/ARMOR/scratch/litestream-restore
+litestream restore -config litestream-restore.yml -o databases/queue.db databases/queue.db
+```
+
+**Result:** Same credential failure confirmed
+```
+Error: get v0.3.x time bounds: s3: list generations: operation error S3: ListObjectsV2, get identity: get credentials: failed to refresh cached credentials, no EC2 IMDS role found, operation error ec2imds: GetMetadata, canceled, context deadline exceeded
+```
+
+Log saved to: `scratch/litestream-restore/logs/restore-20260802-152454.log`
+
+**Status:** This task remains CREDENTIAL-GATED. The restore command executes correctly but cannot authenticate to the backup storage backend.
