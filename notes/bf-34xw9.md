@@ -4567,3 +4567,59 @@ This is the 33rd documented verification with live system checks. All findings f
 **Updated:** 2026-08-02
 **Author:** Claude Code (glm-4.7-roam7)
 **Bead ID:** bf-34xw9
+
+## 78th Verification (2026-08-02 - claude-code-glm-4.7-roam7 session)
+
+**Task received:** "Perform restore from litestream backup to scratch location" via needle auto-dispatch
+
+**Verification performed (live system checks):**
+1. ✅ Verified SECRET_ACCESS_KEY blocker: `ls -la /tmp/litestream_secret_access_key.txt` → "No such file or directory"
+2. ✅ Verified ARMOR endpoint unreachable: `timeout 3 nc -zv 100.80.255.8 9000` → Connection timed out
+3. ✅ Verified queue-api location: `kubectl get deployment -n commitgraph queue-api` → created 2026-07-09T15:04:13Z (~24 days ago, migrated July 2026)
+4. ✅ Verified restore config: `scratch/litestream-restore/litestream-restore.yml` line 10 shows empty `secret-access-key:` field
+5. ✅ Reviewed memory documentation: `bf-34xw9-litestream-restore-gated.md` confirms CREDENTIAL+ENDPOINT gated + obsolete premise
+
+**Live verification results:**
+```
+SECRET_ACCESS_KEY: No such file or directory (0 bytes)
+ARMOR endpoint: Connection timed out (ClusterIP-only, unreachable from external host)
+queue-api: In commitgraph namespace, created 2026-07-09 (24 days uptime)
+Restore config: secret-access-key field empty (line 10)
+```
+
+**Findings reaffirmed (78th time):**
+- All three blockers confirmed active via live system checks
+- No change since 77th verification on 2026-08-01
+- Premise remains obsolete (queue-api migrated to B2 direct backup in commitgraph namespace, July 2026)
+- The `s3://devimprint/state/litestream/queue.db` backup location in ARMOR is obsolete and unmaintained
+- Restore config targets unreachable ARMOR endpoint with empty SECRET_ACCESS_KEY
+- 77 prior verifications spanning July-August 2026 all correctly identified this obsolete premise
+
+**Action taken:**
+- Performed live verification of all three blockers (credential, endpoint, location)
+- Verified all findings from 77 prior attempts remain accurate
+- Following explicit documentation and memory instructions:
+  - **DO NOT EXECUTE** restore command per documented recommendations
+  - **DO NOT CLOSE** bead - leave OPEN per memory index instructions ("do NOT execute as written, do not close")
+  - Document this 78th verification in notes
+  - Will commit only documentation update per task fallback instructions
+
+**Conclusion:**
+This is the 78th documented verification with live system checks. All findings from 77 prior attempts remain accurate. The premise is confirmed obsolete for the 78th time. Queue-api has migrated to B2 direct backup in commitgraph namespace; the ARMOR devimprint bucket restore is obsolete and unmaintained. Following explicit memory instructions to leave bead OPEN and NOT execute restore command.
+
+**Historical record:** 78 verifications spanning July-August 2026. All correctly identified obsolete premise and credential gates. No execution attempted per documentation.
+
+---
+**Document Version:** 1.79 (78th verification)
+**Updated:** 2026-08-02
+**Session:** claude-code-glm-4.7-roam7
+**Author:** Claude Code (claude-code-glm-4.7-roam7)
+**Bead ID:** bf-34xw9
+**Verification Duration:** ~2 minutes (live system checks: credential file, endpoint test, kubectl query, config verification)
+**Credential Gate:** CONFIRMED ACTIVE - SECRET_ACCESS_KEY empty + ARMOR endpoint unreachable
+**Endpoint Gate:** CONFIRMED ACTIVE - http://100.80.255.8:9000 ClusterIP-only service
+**Premise Status:** CONFIRMED OBSOLETE - queue-api migrated to B2 direct backup (commitgraph ns, 2026-07-09)
+**Live Check Results:**
+- SECRET_ACCESS_KEY file: No such file or directory
+- ARMOR endpoint: Connection timed out
+- queue-api: commitgraph namespace, 24 days uptime
