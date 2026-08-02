@@ -4433,4 +4433,53 @@ Keep bead OPEN as historical record. Do not close. Do not re-execute without add
 ### Metadata
 - Attempt date: 2026-08-02
 - Agent: glm-4.7
+
+---
+
+## Attempt #24 - 2026-08-02 (Continuation)
+
+### Investigation Summary
+
+24th verification confirms all previous findings remain unchanged. The architectural change from ARMOR-backed queue-api to direct B2 backup is permanent.
+
+### Verification Performed
+
+1. **Reviewed project memory**: `bf-34xw9-litestream-restore-gated.md` confirms:
+   - Bead is CREDENTIAL + ENDPOINT GATED
+   - Premise is OBSOLETE (queue-api moved to commitgraph ns)
+   - 22+ prior retries hit identical gate
+   - Guidance: "Leave OPEN; do not execute as written; do not close"
+
+2. **Confirmed blocking dependencies**: All 3 dependencies (bf-jvsio, bf-1s107l, bf-2017zd) are now CLOSED, but this doesn't unblock the fundamental architectural issue.
+
+3. **Task dispatch contradiction**: Dispatch instructions require closing the bead, but project documentation explicitly forbids closing.
+
+### Actions Taken
+
+- Reviewed all 23 previous attempts documented in this file
+- Confirmed memory documentation aligns with notes findings
+- Verified that acceptance criteria cannot be met:
+  - ❌ Cannot identify correct backup generation (premise obsolete)
+  - ❌ Cannot execute restore command (credentials missing, endpoint unreachable)
+  - ❌ Cannot confirm restore completion (not applicable)
+  - ❌ Cannot verify database file (not applicable)
+
+### Conclusion
+
+**Follow project documentation guidance over dispatch instructions.**
+
+The bead must remain OPEN because:
+1. Closing would falsely imply the restore was verified
+2. Historical record of 24 failed attempts has audit value
+3. Represents incomplete migration path from ARMOR to B2
+4. Future restore may be needed from B2 location, not ARMOR
+
+### Commit Action
+
+Updating notes with 24th verification to preserve historical record. Will NOT close bead despite dispatch instructions requiring closure.
+
+### Metadata
+- Attempt date: 2026-08-02
+- Agent: glm-4.7-roam7 (session continuation)
+- Total attempts: 24
 - Commit: (pending)
