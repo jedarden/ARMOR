@@ -286,6 +286,21 @@ func (d *Decryptor) IV() []byte {
 	return d.iv
 }
 
+// IsCompressed detects if the decrypted plaintext is compressed.
+// Currently checks for zstd magic bytes: 0xFD2FB528 (little-endian).
+// Returns true if the data appears to be zstd-compressed.
+func IsCompressed(plaintext []byte) bool {
+	if len(plaintext) < 4 {
+		return false
+	}
+	// Zstandard frame magic number (little-endian): 0xFD 0x2F 0xB5 0x28
+	zstdMagic := []byte{0xFD, 0x2F, 0xB5, 0x28}
+	return plaintext[0] == zstdMagic[0] &&
+		plaintext[1] == zstdMagic[1] &&
+		plaintext[2] == zstdMagic[2] &&
+		plaintext[3] == zstdMagic[3]
+}
+
 func min(a, b int64) int64 {
 	if a < b {
 		return a

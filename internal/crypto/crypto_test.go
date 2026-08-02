@@ -304,3 +304,51 @@ func TestHexEncoding(t *testing.T) {
 		t.Error("Hex encode/decode roundtrip failed")
 	}
 }
+
+func TestIsCompressed(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		expected bool
+	}{
+		{
+			name:     "zstd magic bytes",
+			data:     []byte{0xFD, 0x2F, 0xB5, 0x28, 0x01, 0x00, 0x00, 0x00},
+			expected: true,
+		},
+		{
+			name:     "empty data",
+			data:     []byte{},
+			expected: false,
+		},
+		{
+			name:     "too short data",
+			data:     []byte{0xFD, 0x2F},
+			expected: false,
+		},
+		{
+			name:     "plaintext",
+			data:     []byte("Hello, ARMOR!"),
+			expected: false,
+		},
+		{
+			name:     "random bytes",
+			data:     []byte{0x01, 0x02, 0x03, 0x04, 0x05},
+			expected: false,
+		},
+		{
+			name:     "partial zstd magic",
+			data:     []byte{0xFD, 0x2F, 0xB5, 0x00},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsCompressed(tt.data)
+			if result != tt.expected {
+				t.Errorf("IsCompressed(%v) = %v, expected %v", tt.data, result, tt.expected)
+			}
+		})
+	}
+}
