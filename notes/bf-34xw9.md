@@ -1604,8 +1604,123 @@ The task asks to execute the litestream restore command following disaster-recov
 
 ---
 
-**Document Version:** 1.28 (48th verification)
-**Updated:** 2026-08-02
+## 49th Verification (2026-08-01 - claude-code-glm-4.7-roam7 session)
+
+**Task received:** "Perform restore from litestream backup to scratch location - Execute the actual litestream restore command to restore the queue-api backup from the new generation into the prepared scratch database location. Follow the disaster-recovery notes for the correct restore procedure."
+
+**Task instructions included:** "If you cannot complete the task OR cannot produce a commit: Do NOT close the bead. The bead will be automatically released for retry."
+
+**Verification performed:**
+1. ✅ Reviewed comprehensive notes documenting 48 prior verifications (all reaching identical conclusion)
+2. ✅ Confirmed bead status: `in_progress`, assigned to `claude-code-glm-4.7-roam7`
+3. ✅ Re-confirmed queue-api location: `commitgraph` namespace on ord-devimprint (1/1 replicas ready)
+4. ✅ Re-confirmed restore config targets obsolete ARMOR endpoint `http://100.80.255.8:9000` (ClusterIP-only service)
+5. ✅ Re-confirmed SECRET_ACCESS_KEY empty in restore configuration (line 10: `secret-access-key: ` with 0 bytes after)
+6. ✅ Re-confirmed queue-api uses B2 direct backup configuration
+7. ✅ Re-confirmed queue-api uses `commitgraph-b2-workers` secret for credentials (not ARMOR credentials)
+8. ✅ Re-confirmed litestream backup target is now `commitgraph-ops` bucket via B2 endpoint (not ARMOR `devimprint` bucket)
+9. ✅ Re-confirmed litestream backup path is now `queue-api/queue.db` (not `state/litestream/queue.db`)
+10. ✅ Reviewed memory index: "CREDENTIAL+ENDPOINT gated (empty secret-access-key, no env creds, bf-24hrg OPEN, 100.80.255.8:9000 unreachable) + obsolete premise"
+11. ✅ Reviewed explicit documentation instructions: "DO NOT EXECUTE" and "DO NOT CLOSE bead - leave OPEN"
+12. ✅ Reviewed bead notes field: 2026-07-14 restore test FAILED due to HMAC verification failure on large snapshot objects (ARMOR multipart bug)
+13. ✅ Verified restore config file exists and is unchanged (287 bytes, 11 lines)
+
+**Findings reaffirmed (49th time):**
+- ARMOR endpoint `http://100.80.255.8:9000` remains unreachable from external host (ClusterIP-only service)
+- SECRET_ACCESS_KEY is empty in restore configuration (0 bytes after `secret-access-key:`)
+- Queue-api backup location migrated to B2 directly (no longer uses ARMOR `devimprint` bucket)
+- Queue-api now uses `commitgraph-b2-workers` secret for B2 credentials (not ARMOR credentials)
+- Litestream backup target is now `commitgraph-ops` bucket via B2 endpoint (not ARMOR `devimprint` bucket)
+- Litestream backup path is now `queue-api/queue.db` (not `state/litestream/queue.db`)
+- The `s3://devimprint/state/litestream/queue.db` location in restore config is obsolete and unmaintained
+- 49 documented verifications spanning July-August 2026 have all correctly identified this obsolete premise
+- Restore config targets wrong endpoint with wrong bucket, wrong path, and wrong credentials (empty SECRET_ACCESS_KEY)
+- Task instructions ask to "execute the actual litestream restore command" but premise is obsolete
+- Task instructions include fallback: "If you cannot complete the task OR cannot produce a commit: Do NOT close the bead"
+- Bead notes confirm: Even with correct credentials (bf-24hrg resolved), restore FAILED on 2026-07-14 due to HMAC verification failure on large snapshot objects (ARMOR multipart bug)
+
+**Live queue-api configuration confirmed (49th verification):**
+- Namespace: `commitgraph` (migrated from `devimprint` July 2026)
+- Deployment status: 1/1 replicas ready
+- Image: `ronaldraygun/commitgraph-queue-api:2.8.0`
+- B2 endpoint: `https://s3.us-west-002.backblazeb2.com`
+- B2 credentials: `commitgraph-b2-workers` secret (key-id, application-key, bucket, prefix)
+- Litestream sidecar: `litestream/litestream:0.5.11`
+- Litestream backup target: `commitgraph-ops` bucket via B2 endpoint
+- Litestream backup path: `queue-api/queue.db`
+
+**Obsolete restore configuration (confirmed unchanged, 49th verification):**
+```yaml
+dbs:
+  - path: databases/queue.db
+    replica:
+      type: s3
+      bucket: devimprint  # WRONG - queue-api now uses commitgraph-ops
+      path: state/litestream/queue.db  # WRONG - queue-api now uses queue-api/queue.db
+      endpoint: http://100.80.255.8:9000  # WRONG - queue-api now uses B2 endpoint
+      force-path-style: true
+      access-key-id: lcs18qaArvWltpK/3oSfFrqiZ/oD7bcGMNYVkW2buD0=  # WRONG - queue-api uses commitgraph-b2-workers
+      secret-access-key:  # EMPTY - queue-api uses commitgraph-b2-workers secret
+```
+
+**Bead notes field additional finding (ARMOR multipart bug):**
+The bead notes field contains a critical finding from 2026-07-14: even with correct credentials and proper litestream version (v0.5.14), the restore test FAILED reproducibly due to HMAC verification failure on large snapshot objects. Direct aws-cli GetObject on the level-9 snapshot object (queue.db/0009/0000000000000001-0000000000066562.ltx, 44908497 bytes, created 2026-07-14 00:02 UTC) failed with "InternalError Failed to decrypt range: block 256: HMAC verification failed." This is the same ARMOR multipart bug as documented in reference_armor_multipart_corruption_bug memory - not a credentials issue, but a live ARMOR bug requiring engineering investigation.
+
+**Action taken:**
+- Performed comprehensive review of all 48 prior findings
+- Verified all documentation remains accurate
+- Verified queue-api live location in commitgraph namespace (1/1 replicas ready)
+- Verified queue-api B2 configuration with live deployment inspection
+- Verified restore config targets obsolete ARMOR endpoint with empty SECRET_ACCESS_KEY
+- Reviewed bead notes confirming 2026-07-14 restore test FAILED due to ARMOR HMAC verification bug (not credentials)
+- Following documented recommendations and task fallback instructions:
+  - **DO NOT EXECUTE** restore command per explicit documentation recommendations
+  - **DO NOT CLOSE** bead - leave OPEN per documentation and memory index
+  - Task cannot be completed as written (obsolete premise + credential gates + ARMOR multipart bug)
+  - Commit only documentation update (per task fallback for incomplete tasks)
+  - Release bead for automatic retry per task instructions
+
+**Conclusion:**
+This is the 49th documented verification. All findings from 48 prior attempts remain accurate. The premise is confirmed obsolete. Following documented recommendations to leave bead OPEN and NOT execute.
+
+The task asks to execute the litestream restore command following disaster-recovery notes, but:
+1. Disaster-recovery.md covers ARMOR MEK backup/escrow, not litestream restore procedures
+2. Litestream-specific documentation exists but covers a different bead chain (bf-5aqh0) with different assumptions
+3. Memory index confirms this is "CREDENTIAL+ENDPOINT gated" with unreachable endpoint and empty credentials
+4. Restore configuration targets wrong endpoint with wrong bucket and wrong path (all obsolete since July 2026 migration)
+5. Executing the restore would either fail (unreachable endpoint, empty credentials) or restore stale data from an unmaintained backup location
+6. Even with corrected credentials and endpoint, the 2026-07-14 test confirmed restore FAILS due to ARMOR HMAC verification bug on large snapshot objects (multipart corruption)
+7. All prior 48 verifications reached identical conclusions and documented explicit recommendations to NOT execute and NOT close
+8. Task instructions include fallback: "If you cannot complete the task OR cannot produce a commit: Do NOT close the bead" - applies here
+9. Bead notes confirm ARMOR has a live multipart bug requiring engineering investigation (not a retry issue)
+
+**Historical record:** 49 verifications spanning July-August 2026. All correctly identified obsolete premise and credential gates. No execution attempted per documentation. This is a NEEDLE retry-storm anti-pattern (ADR-004) - the auto-dispatch system continues to assign this obsolete task despite 49 identical verifications all reaching the same conclusion.
+
+**NEEDLE retry-storm anti-pattern documentation:**
+- 22+ retries documented in original summary (2026-07-15)
+- Additional 27 verifications since then (total 49)
+- All hit identical credential gate and obsolete premise
+- Task instructions and documentation are mutually contradictory:
+  - Task: "Execute the actual litestream restore command" + "Close the bead"
+  - Documentation: "DO NOT EXECUTE" + "DO NOT CLOSE bead - leave OPEN"
+  - Memory: "leave OPEN, documented notes/bf-34xw9.md"
+  - Task fallback: "If you cannot complete... Do NOT close the bead"
+  - Bead notes: 2026-07-14 test FAILED due to ARMOR HMAC verification bug (not credentials)
+
+**Bead status rationale:** This bead represents an incomplete migration path that was never properly executed and is now obsolete. It should remain OPEN because:
+- Closing it would falsely suggest the restore was verified and completed
+- The historical record of 49 documented failed attempts has audit value
+- A future restore might be needed from the B2 location instead (different procedure)
+- It documents the queue-api migration from ARMOR devimprint bucket to B2 direct backup
+- Even with correct configuration, the 2026-07-14 test confirmed restore FAILS due to ARMOR multipart bug requiring engineering investigation
+- Explicit documentation and memory instructions state: "leave OPEN"
+
+**Session:** claude-code-glm-4.7-roam7 (2026-08-01)
+
+---
+
+**Document Version:** 1.29 (49th verification)
+**Updated:** 2026-08-01
 **Author:** Claude Code (claude-code-glm-4.7-roam7)
 **Bead ID:** bf-34xw9
 
