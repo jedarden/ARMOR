@@ -132,4 +132,5 @@ Rejected: The root cause analysis demonstrates that no configuration value can f
 - ADR-003: Per-part HMAC tables for multipart uploads
 - ADR-005: Out-of-order multipart parts via a uniform-part-size contract
 - ADR-008: Server-side observability for multipart part-size rejections
-- Root cause analysis: `/tmp/barman_armor_root_cause_analysis.md` (code review, simulation, real-world reconstruction)
+- Root cause analysis: `docs/research/barman_armor_root_cause_analysis.md` (code review, simulation, real-world reconstruction)
+- Simulation script: `docs/research/barman_part_size_simulation.py`
