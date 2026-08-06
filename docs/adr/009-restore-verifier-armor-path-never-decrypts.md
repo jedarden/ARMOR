@@ -1,0 +1,58 @@
+# ADR-009: restore-verifier's "ARMOR path" never decrypts anything
+
+**Status:** Accepted
+**Date:** 2026-08-06
+
+## Context
+
+[ADR-004](004-continuous-restore-verification.md) built `restore-verifier`'s dual-path check specifically so that no single implementation bug could produce a false "restorable" reading: one path (`restoreViaDirectDecrypt`) independently re-implements decryption from raw ciphertext + escrowed MEK, and the other (`restoreViaARMOR`) is supposed to exercise "the normal backend GetObject which will decrypt through ARMOR" (per its own doc comment) — i.e. the actual production read path, not a reimplementation of it. Agreement between the two paths is the signal Phase 6 relies on.
+
+Live investigation on 2026-08-06, triggered by `restore-verifier-acb` (a temporary instance stood up against the `armor-apexalgo` bucket) reporting 0/11 objects verified, found that the "ARMOR path" does not do what its own comment claims, and never has for any deployed instance. Full investigation, method, and byte-for-byte reproduction: `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md`.
+
+### The bug
+
+`restoreViaARMOR` (`internal/restoreverifier/verifier.go:1052`) calls `v.backend.Get(ctx, bucket, key)`. `cmd/restore-verifier/main.go` (backend construction ~lines 162-173, passed to `restoreverifier.New` ~lines 237-243) constructs exactly **one** `backend.Backend` for the entire verifier — a raw `backend.NewB2Backend(...)` pointed directly at B2/Cloudflare — and hands it to *both* `restoreViaARMOR` and `restoreViaDirectDecrypt`. There is no HTTP client anywhere in `cmd/restore-verifier` pointed at a live ARMOR server's S3 endpoint, no `-armor-url`/`ARMOR_ENDPOINT` flag, nothing. `B2Backend.Get()` (`internal/backend/b2.go:112`) is a plain storage read — it never touches `internal/crypto`. So "the ARMOR path" is, today, a second raw-storage read using the same backend as the direct path, misnamed and miswired to look like something else.
+
+That alone would just make the two paths redundant (bad, but not actively wrong) — except `B2Backend.Head()` (`internal/backend/b2.go:188-213`) deliberately overrides `ObjectInfo.Size` from the true raw `Content-Length` to the object's `x-amz-meta-armor-plaintext-size` metadata value for ARMOR-encrypted objects (by design — other legitimate callers want the logical/decrypted size). `Get()` then does `GetRange(0, info.Size)`: it fetches `plaintextSize` raw bytes starting at raw offset 0. That range is neither the true raw object (header + ciphertext + HMAC trailer, which is longer than plaintextSize) nor the true plaintext (which doesn't start at raw offset 0 — the first 64 bytes of the raw object are the envelope header, not plaintext). The result is a deterministic but meaningless blob: the 64-byte envelope header followed by the first `(plaintextSize − 64)` bytes of ciphertext, missing the ciphertext's tail and the entire HMAC trailer.
+
+This blob is SHA-256'd and reported as `ARMORSHA256` (verifier.go:991), then compared against the correctly-decrypted `DirectSHA256` at verifier.go:1011 — **guaranteed to mismatch for every ARMOR-encrypted object, unconditionally, independent of whether the underlying data is actually corrupted.** Confirmed empirically, not just by code reading: a standalone program calling `B2Backend.Get()` directly, with real production credentials, reproduced the exact `ARMOR=` hash values from a live pod's logs, byte for byte, for two objects tested.
+
+### Scope
+
+`verifyObjectDual` is the *only* verification mode `runVerification()` — the default periodic loop every deployed `restore-verifier` instance runs — ever calls. Every instance, verifying any bucket, on every scheduled cycle, reports every real ARMOR-encrypted object as a checksum conflict. This is not new, not `armor-apexalgo`-specific, and not related to [ADR-002](002-multipart-corruption-detection-gaps.md)'s legacy multipart corruption — it reproduces identically for small, single-PUT, never-multipart objects. It has almost certainly been producing nonzero `armor_restore_verification_failures_total` and near-zero `runRatio` gauge values on every fleet instance running `ModeDual` against real data, for as long as any of them have been running against real data.
+
+**What is not affected:** `ModeDRDrill` (`verifyObjectDirectOnly`) — the actual disaster-recovery drill path documented in `docs/disaster-recovery.md` — never calls `restoreViaARMOR` at all. It only exercises the correctly-implemented direct-decrypt path. The real "can we recover data with just the escrowed MEK and B2 credentials if ARMOR itself is gone" guarantee this project cares about most is intact and not implicated by this bug.
+
+## Why this is worse than [ADR-007](007-restore-verifier-discovery-reliability.md)'s discovery bugs
+
+ADR-007 covers false *negatives* — discovery finding nothing to verify, so no signal is produced either way. This bug produces a false *positive* on every object it does manage to check: a confident, specific-looking "SHA256 mismatch" report against data that is provably intact. That's a materially worse failure mode for an operator or an on-call escalation to receive — it reads as active corruption, is the kind of signal that could justify a costly and unnecessary MEK-rotation or re-upload response, and (per the corruption inventory doc above) is exactly the kind of evidence a less careful investigation could have mistaken for confirmation of legacy multipart corruption instead of ruling it out.
+
+## Decision
+
+Make the "ARMOR path" actually exercise ARMOR's production decrypt-on-GET behavior, so the dual-path comparison tests what ADR-004 designed it to test. This ADR does not prescribe exact code changes — implementer's call on the tactical approach — but two directions seem plausible:
+
+1. **Give `restoreViaARMOR` a real ARMOR S3 client.** Add an `-armor-url`/`ARMOR_ENDPOINT` (+ client auth key/secret) configuration path to `cmd/restore-verifier`, construct a second `backend.Backend` (or a dedicated lightweight S3 GetObject client) pointed at it, and have `restoreViaARMOR` call *that* instead of the raw `B2Backend`. This is closest to the doc comment's original intent and gives the strongest guarantee (it's testing the actual live proxy, including auth, routing, and whatever else sits in front of decryption) — but it means `restore-verifier` now depends on a running ARMOR proxy for half of every check, which the current architecture deliberately avoided (see ADR-004's "Alternatives Considered" on why the direct path exists standalone). Deployments without a co-located ARMOR proxy (like the current `armor-apexalgo` situation, or any future restore-verifier run purely for audit purposes against a bucket with no live proxy) would need this to be optional or fall back gracefully.
+2. **Make the "ARMOR path" a second independent decrypt implementation, not a second raw read.** If the dual-path design's real intent is "two different code paths for decrypting the same ciphertext must agree" rather than specifically "the live production server must agree with an offline check," then `restoreViaARMOR` could call into `internal/crypto` directly (the same package `internal/server/handlers` uses for real client GETs) rather than either reimplementing it a third time (`restoreViaDirectDecrypt`'s job) or silently not decrypting at all (today's bug). This keeps `restore-verifier` fully standalone (no live ARMOR dependency) while still getting two independently-exercised code paths through the same crypto package's public API, rather than one path exercising it and the other not exercising it at all.
+
+Whichever direction is chosen, `B2Backend.Head()`'s plaintext-size override behavior should be left alone — it's correct and load-bearing for its actual intended callers (see `internal/backend/b2.go:188-213`'s design intent). The fix belongs entirely in how `restoreViaARMOR` uses (or stops using) the backend it's given, not in changing `Head()`/`Get()`'s existing contract.
+
+Regardless of direction, add a regression test shaped like the reproduction in `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md`: a real (or realistically mocked) ARMOR-encrypted object run through `verifyObjectDual`, asserting `ARMORSHA256 == DirectSHA256` for known-good data. The existing test suite apparently never caught this — worth checking why (likely: existing `ModeDual` tests use a mock backend that doesn't reproduce `Head()`'s size-override behavior, or don't exercise `ModeDual` against real ARMOR-encrypted fixtures at all).
+
+## Evidence
+
+Full method, object-level ground truth table, and byte-for-byte reproduction: `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md`. Summary: all 10 real objects sampled from `armor-apexalgo` (a bucket with no other tracking/monitoring at the time) independently decrypted correctly via a rebuilt `cmd/armor-decrypt` and matched their own upload-time-embedded plaintext SHA-256 — the data was never at risk. The "0/11 verified" reading that triggered this investigation was entirely this bug.
+
+## Alternatives Considered
+
+**Leave `restoreViaARMOR` as-is; rely solely on `restoreViaDirectDecrypt`'s result.** Rejected — this abandons ADR-004's dual-path design rather than fixing it, and the direct path alone is exactly the single-implementation-can't-catch-its-own-bugs risk ADR-004 was written to avoid. (It's also, incidentally, what `ModeDRDrill` already does — but that mode exists for a different purpose, disaster-recovery drilling, not continuous dual-path verification.)
+
+**Just fix `Get()`'s range calculation so it fetches the correct raw byte range for the true object.** Rejected as a standalone fix — even a byte-correct raw read still never calls `internal/crypto`, so `ARMORSHA256` would become the SHA-256 of *raw ciphertext*, not decrypted plaintext, and would never match `DirectSHA256` (which is a plaintext hash) regardless of correctness. The bug isn't primarily in the range math; it's that this path was never wired to decrypt at all. Fixing only the range math would trade one guaranteed-mismatch failure mode for another.
+
+## Consequences
+
+- Any historical `armor_restore_verification_failures_total` increase or near-zero `armor_verified_object_ratio` reading, on any cluster, for any bucket, prior to this fix, should be treated as **uninformative**, not as evidence of an actual restorability problem — it is this bug, not corruption, unless independently corroborated (e.g. by `ModeDRDrill`, or by manual `armor-decrypt` as done for `armor-apexalgo`).
+- No escalation-to-bead behavior should be trusted based on `ModeDual` failures until this is fixed — check whether `VERIFIER_ESCALATION` is enabled on any fleet instance and, if so, whether it has been auto-filing beads against this false-positive signal; those would need to be identified and closed as invalid once the real fix lands.
+- No change to the encryption/HMAC/provenance design, `ModeDRDrill`, `restoreViaDirectDecrypt`, or `B2Backend.Head()`/`Get()`'s existing contract for their other callers — this is entirely a fix to what `restoreViaARMOR` does with the backend it's given.
+- This is independent of and additive to [ADR-007](007-restore-verifier-discovery-reliability.md)'s discovery-layer fixes — a bucket could have both bugs (never discovers anything) or just this one (discovers real objects, then falsely fails all of them, as `armor-apexalgo` did once a working discovery pass — `restore-verifier-acb`'s reservoir sampler — was pointed at it).
+
+Related: [ADR-004](004-continuous-restore-verification.md), [ADR-007](007-restore-verifier-discovery-reliability.md), `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md`, bf-1ebnuz.
