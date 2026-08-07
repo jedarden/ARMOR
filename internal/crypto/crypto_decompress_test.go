@@ -149,3 +149,95 @@ func compressData(data []byte) []byte {
 	encoder.Close()
 	return buf.Bytes()
 }
+
+func TestDecompressErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		wantErr bool
+	}{
+		{
+			name:    "zstd magic with corrupted content",
+			wantErr: true,
+			input: func() []byte {
+				// Create valid zstd data
+				valid := compressData([]byte("Hello, ARMOR!"))
+				// Corrupt the content after magic bytes
+				corrupted := make([]byte, len(valid))
+				copy(corrupted, valid)
+				// Flip some bytes after the magic header (magic is 4 bytes)
+				for i := 4; i < len(corrupted); i += 7 {
+					corrupted[i] ^= 0xFF
+				}
+				return corrupted
+			}(),
+		},
+		{
+			name:    "zstd magic with truncated stream",
+			wantErr: true,
+			input: func() []byte {
+				// Create valid zstd data
+				valid := compressData([]byte("Hello, ARMOR!"))
+				// Truncate it to make it incomplete
+				if len(valid) > 10 {
+					return valid[:len(valid)/2]
+				}
+				return valid[:5]
+			}(),
+		},
+		{
+			name:    "zstd magic with only magic bytes",
+			wantErr: true,
+			input:   []byte{0x28, 0xB5, 0x2F, 0xFD},
+		},
+		{
+			name:    "zstd magic with partial frame",
+			wantErr: true,
+			input: func() []byte {
+				// Create valid zstd data
+				valid := compressData([]byte("test"))
+				// Return just the magic bytes and a few more bytes
+				if len(valid) > 8 {
+					return valid[:8]
+				}
+				return valid
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Decompress(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Decompress() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDecompressLargeData(t *testing.T) {
+	// Test with large random data to ensure decompression handles realistic payloads
+	original := make([]byte, 1024*1024) // 1MB
+	if _, err := rand.Read(original); err != nil {
+		t.Fatalf("Failed to generate random data: %v", err)
+	}
+
+	// Compress
+	compressed := compressData(original)
+
+	// Decompress
+	decompressed, err := Decompress(compressed)
+	if err != nil {
+		t.Fatalf("Decompress() failed: %v", err)
+	}
+
+	// Verify
+	if !bytes.Equal(decompressed, original) {
+		t.Errorf("Decompress() roundtrip failed for large data: got %d bytes, want %d bytes", len(decompressed), len(original))
+	}
+
+	// Verify compression actually happened (compressed should be smaller)
+	if len(compressed) >= len(original) {
+		t.Logf("Note: Compression didn't reduce size for random data (compressed: %d, original: %d) - this is expected for high-entropy data", len(compressed), len(original))
+	}
+}
