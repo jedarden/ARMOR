@@ -1166,7 +1166,7 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 
 	// 5. Decompress if the data is compressed
 	finalData := allDecrypted
-	if crypto.IsCompressed(allDecrypted) {
+	if armorMeta.Compressed {
 		s.logger.WithFields(map[string]interface{}{
 			"bucket": token.Bucket,
 			"key":    token.Key,
