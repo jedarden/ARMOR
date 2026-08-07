@@ -503,7 +503,7 @@ ARMOR is configured exclusively via environment variables. No config files.
 | `ARMOR_B2_SECRET_ACCESS_KEY` | Yes | — | B2 application key |
 | `ARMOR_BUCKET` | Yes | — | B2 bucket name. Used for both uploads (direct to B2) and downloads (Cloudflare URL assembly). |
 | `ARMOR_PREFIX` | No | (none) | Optional key prefix applied to all S3 operations before they reach B2. Enables multiple ARMOR deployments to share a single bucket without key collisions. Normalized to a single trailing slash with no leading slash (e.g. `kalshi-tape` → `kalshi-tape/`). When unset or empty, no prefix is applied and behavior is identical to previous versions. See ADR-001. |
-| `ARMOR_CF_DOMAIN` | Yes | — | Cloudflare domain CNAME'd to B2 bucket (e.g., `armor-b2.example.com`) |
+| `ARMOR_CF_DOMAIN` | No | (none) | Cloudflare domain CNAME'd to B2 bucket (e.g., `armor-b2.example.com`). When unset, downloads fall back to direct B2 reads — the zero-egress path is skipped, which is fine for test instances. |
 | `ARMOR_MEK` | Yes | — | Master encryption key, hex-encoded 32 bytes. Generate with `openssl rand -hex 32`. |
 | `ARMOR_AUTH_ACCESS_KEY` | No | (random on startup) | S3 access key ID for client auth to ARMOR (the default credential) |
 | `ARMOR_AUTH_SECRET_KEY` | No | (random on startup) | S3 secret access key for client auth to ARMOR (the default credential) |
