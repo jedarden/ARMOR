@@ -1145,6 +1145,13 @@ func (b *B2Backend) PutObjectLegalHold(ctx context.Context, bucket, key string, 
 
 // ListObjectVersions lists all versions of objects in a bucket.
 // It corrects plaintext sizes for ARMOR-encrypted objects.
+// ListObjectVersions lists all versions of objects in a bucket.
+// When ARMOR_PREFIX is configured, the handler layer prepends the prefix to
+// the prefix, keyMarker, and delimiter parameters before calling this method.
+// This backend method receives and operates on prefixed keys, and returns
+// results with prefixed keys. The handler layer strips the prefix from
+// version keys and common prefixes before returning to the client.
+// This matches the prefix handling pattern used by ListObjectsV2.
 func (b *B2Backend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*ListObjectVersionsResult, error) {
 	input := &s3.ListObjectVersionsInput{
 		Bucket: aws.String(bucket),

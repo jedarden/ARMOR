@@ -887,7 +887,13 @@ func (fs *FSBackend) PutObjectLegalHold(ctx context.Context, bucket, key string,
 }
 
 // ListObjectVersions lists all versions of objects in a bucket.
-// Filesystem backend doesn't support versioning.
+// Filesystem backend doesn't support versioning, so it returns current objects as latest versions.
+// When ARMOR_PREFIX is configured, the handler layer prepends the prefix to
+// the prefix, keyMarker, and delimiter parameters before calling this method.
+// This backend method receives and operates on prefixed keys, and returns
+// results with prefixed keys. The handler layer strips the prefix from
+// version keys and common prefixes before returning to the client.
+// This matches the prefix handling pattern used by ListObjectsV2.
 func (fs *FSBackend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*ListObjectVersionsResult, error) {
 	// Filesystem backend doesn't support versioning
 	// Return current objects as latest versions
