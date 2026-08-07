@@ -242,14 +242,15 @@ func (m *Manager) RecordKeyEvent(ctx context.Context, eventType string, opts Key
 	}
 
 	// Set optional fields based on event type
-	if eventType == "key-rotate-start" || eventType == "key-rotate-complete" {
+	switch eventType {
+	case "key-rotate-start", "key-rotate-complete":
 		event.OldMEKHash = opts.OldMEKHash
 		event.NewMEKHash = opts.NewMEKHash
 		event.RotationID = opts.RotationID
 		if eventType == "key-rotate-complete" && opts.RotationResult != nil {
 			event.RotationResult = opts.RotationResult
 		}
-	} else if eventType == "key-export" {
+	case "key-export":
 		event.ExportedMEKHash = opts.ExportedMEKHash
 	}
 
@@ -355,12 +356,18 @@ func computeKeyEventHash(event *KeyEvent, prevChainHash string) string {
 	h.Write([]byte(event.Timestamp.Format(time.RFC3339Nano)))
 	h.Write([]byte(event.WriterID))
 
-	// Add event-specific fields for cryptographic binding
-	if event.EventType == "key-rotate-start" || event.EventType == "key-rotate-complete" {
+	// Add event-specific fields for cryptographic binding.
+	// NOTE: this is a chain-hash input. The case set and the order of the
+	// h.Write calls must stay byte-for-byte identical to the previous
+	// if/else-if form, or every existing provenance chain fails verification.
+	// A tagged switch over the same values in the same order is exactly
+	// equivalent; do not reorder or merge these writes.
+	switch event.EventType {
+	case "key-rotate-start", "key-rotate-complete":
 		h.Write([]byte(event.OldMEKHash))
 		h.Write([]byte(event.NewMEKHash))
 		h.Write([]byte(event.RotationID))
-	} else if event.EventType == "key-export" {
+	case "key-export":
 		h.Write([]byte(event.ExportedMEKHash))
 	}
 
