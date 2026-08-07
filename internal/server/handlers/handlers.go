@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -819,12 +820,19 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 	}
 
 	// 4. Set response headers before streaming
-	w.Header().Set("Content-Length", strconv.FormatInt(plaintextSize, 10))
+	// Note: Content-Length is not set for compressed objects because decompression
+	// changes the size dynamically. HTTP will use chunked transfer encoding.
+	if !armorMeta.Compressed {
+		w.Header().Set("Content-Length", strconv.FormatInt(plaintextSize, 10))
+	}
 	w.Header().Set("Content-Type", armorMeta.ContentType)
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, armorMeta.ETag))
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
 	w.Header().Set("X-Armor-Stream", "pipelined")
+	if armorMeta.Compressed {
+		w.Header().Set("X-Armor-Decompressed", "true")
+	}
 	w.WriteHeader(http.StatusOK)
 
 	// 5. Stream decrypt using io.Pipe
@@ -938,8 +946,25 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		}
 	}()
 
-	// Stream plaintext to client
-	io.Copy(w, pr)
+	// 6. Stream plaintext to client
+	// If the object is compressed, decompress it before writing to response
+	if armorMeta.Compressed {
+		// Create a zstd decoder for streaming decompression
+		decoder, err := zstd.NewReader(pr)
+		if err != nil {
+			// Decompression setup failed - close pipe and return error
+			pr.Close()
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to create decompression decoder: %v", err), 500)
+			return
+		}
+		defer decoder.Close()
+
+		// Stream decompressed data to client
+		io.Copy(w, decoder)
+	} else {
+		// Stream plaintext directly to client
+		io.Copy(w, pr)
+	}
 }
 
 // makeCounter creates a 16-byte counter value from the IV and block index.
@@ -2027,8 +2052,19 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 		contentType = "application/octet-stream"
 	}
 
-	// Initiate multipart upload with B2 (no ARMOR metadata yet - that comes on completion)
-	uploadID, err := h.backend.CreateMultipartUpload(ctx, bucket, key, nil)
+	// Initiate multipart upload with B2 (no ARMOR metadata yet - that comes on completion).
+	//
+	// ARMOR_PREFIX must be applied here, exactly as every single-object handler
+	// does (ADR-001: the proxy prepends the prefix on the way to storage and
+	// strips it from responses, so it stays transparent to clients). This whole
+	// path used to pass the RAW key while the read path applied the prefix, so on
+	// any deployment with a non-empty prefix every multipart object was written
+	// to an unprefixed key and was then unreachable: reads 404'd against
+	// <prefix>/<key> while the bytes sat at <key>. Confirmed live on
+	// ord-devimprint, where a Postgres base backup's data.tar (33.4MB) landed at
+	// postgres/cnpg/... while its single-PUT backup.info correctly landed at
+	// commitgraph/postgres/cnpg/..., making the backup unrestorable.
+	uploadID, err := h.backend.CreateMultipartUpload(ctx, bucket, h.applyPrefix(key), nil)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create multipart upload: %v", err), 500)
 		return
@@ -2342,8 +2378,10 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// Upload encrypted part to B2
-	etag, err := h.backend.UploadPart(ctx, bucket, key, uploadID, int32(partNumber), bytes.NewReader(encrypted), int64(len(encrypted)))
+	// Upload encrypted part to B2. Prefixed for the same reason as
+	// CreateMultipartUpload above — the part must be addressed by the same
+	// storage key the upload was created under.
+	etag, err := h.backend.UploadPart(ctx, bucket, h.applyPrefix(key), uploadID, int32(partNumber), bytes.NewReader(encrypted), int64(len(encrypted)))
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to upload part: %v", err), 500)
 		return
@@ -2551,8 +2589,9 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Complete the multipart upload in B2
-	etag, err := h.backend.CompleteMultipartUpload(ctx, bucket, key, uploadID, parts)
+	// Complete the multipart upload in B2, under the same prefixed storage key
+	// the upload was created and its parts uploaded under.
+	etag, err := h.backend.CompleteMultipartUpload(ctx, bucket, h.applyPrefix(key), uploadID, parts)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to complete multipart upload: %v", err), 500)
 		return
@@ -2603,8 +2642,10 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// not independently reproducible.
 	meta["x-amz-meta-armor-part-size"] = strconv.FormatInt(P, 10)
 
-	// Update metadata via CopyObject
-	if err := h.backend.Copy(ctx, bucket, key, bucket, key, meta, true); err != nil {
+	// Update metadata via CopyObject. Both source and destination are the
+	// prefixed storage key — copying raw->raw here would silently resurrect the
+	// unprefixed object this fix exists to eliminate.
+	if err := h.backend.Copy(ctx, bucket, h.applyPrefix(key), bucket, h.applyPrefix(key), meta, true); err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to update metadata: %v", err), 500)
 		return
 	}
