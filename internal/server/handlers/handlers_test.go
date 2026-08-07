@@ -371,16 +371,45 @@ func (m *mockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, de
 		IsTruncated: false,
 	}
 
+	bucketPrefix := bucket + "/"
+
 	// Find objects matching the prefix
 	for k := range m.objects {
-		if !strings.HasPrefix(k, bucket+"/") {
+		if !strings.HasPrefix(k, bucketPrefix) {
 			continue
 		}
-		key := strings.TrimPrefix(k, bucket+"/")
+		key := strings.TrimPrefix(k, bucketPrefix)
+
 		if prefix != "" && !strings.HasPrefix(key, prefix) {
 			continue
 		}
-		// Create version info
+
+		// If delimiter is set, check for common prefixes
+		if delimiter != "" {
+			// Find the delimiter position after the prefix
+			searchStart := len(prefix)
+			if len(key) > searchStart {
+				delimiterPos := strings.Index(key[searchStart:], delimiter)
+				if delimiterPos != -1 {
+					// This is a common prefix (directory)
+					commonPrefix := key[:searchStart+delimiterPos+len(delimiter)]
+					// Avoid duplicates
+					found := false
+					for _, cp := range result.CommonPrefixes {
+						if cp == commonPrefix {
+							found = true
+							break
+						}
+					}
+					if !found {
+						result.CommonPrefixes = append(result.CommonPrefixes, commonPrefix)
+					}
+					continue // Skip this key, it's represented as a common prefix
+				}
+			}
+		}
+
+		// Create version info for actual objects (not common prefixes)
 		meta := m.meta[k]
 		info := backend.ObjectVersionInfo{
 			Key:          key,
@@ -2937,6 +2966,178 @@ func TestListObjectVersions(t *testing.T) {
 		t.Errorf("response should contain version-test.txt, got: %s", string(body))
 	}
 }
+
+	// TestListObjectVersions_VersionKeysHavePrefixStripped tests that version keys
+	// in the response have the configured prefix stripped.
+	func TestListObjectVersions_VersionKeysHavePrefixStripped(t *testing.T) {
+		mek := make([]byte, 32)
+		if _, err := rand.Read(mek); err != nil {
+			t.Fatalf("failed to generate MEK: %v", err)
+		}
+
+		cfg := &config.Config{
+			BlockSize:     65536,
+			Prefix:        "my-prefix/",
+			AuthAccessKey: "test-access-key",
+			AuthSecretKey: "test-secret-key",
+		}
+
+		mb := newMockBackend()
+		cache := backend.NewMetadataCache(1000, 300)
+		footerCache := backend.NewFooterCache(1000, 300)
+		km, err := keymanager.New(mek, nil, nil)
+		if err != nil {
+			t.Fatalf("failed to create key manager: %v", err)
+		}
+
+		h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+		// Add a version directly to the mock backend with the prefixed key
+		testContent := []byte("Test content for version")
+		mb.Put(context.Background(), "test-bucket", "my-prefix/test-file.txt", bytes.NewReader(testContent), int64(len(testContent)), map[string]string{
+			"Content-Type": "text/plain",
+		})
+
+		// List versions
+		req := httptest.NewRequest(http.MethodGet, "/test-bucket?versions", nil)
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("ListObjectVersions failed: status %d, body: %s", w.Code, w.Body.String())
+		}
+
+		// Parse the XML response
+		var result struct {
+			Versions []struct {
+				Key string `xml:"Key"`
+			} `xml:"Version"`
+		}
+
+		body, err := io.ReadAll(w.Body)
+		if err != nil {
+			t.Fatalf("failed to read response body: %v", err)
+		}
+
+		if err := xml.Unmarshal(body, &result); err != nil {
+			t.Fatalf("failed to parse XML: %v\nResponse: %s", err, string(body))
+		}
+
+		// Verify that the prefix was stripped from version keys
+		if len(result.Versions) == 0 {
+			t.Fatal("expected at least one version in response")
+		}
+
+		for _, v := range result.Versions {
+			if strings.HasPrefix(v.Key, "my-prefix/") {
+				t.Errorf("version key %q still has prefix, expected it to be stripped", v.Key)
+			}
+			if v.Key == "my-prefix/test-file.txt" {
+				t.Errorf("version key was not stripped: got %q, want %q", v.Key, "test-file.txt")
+			}
+		}
+
+		// Verify we got the expected key without prefix
+		found := false
+		for _, v := range result.Versions {
+			if v.Key == "test-file.txt" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			keys := make([]string, len(result.Versions))
+			for i, v := range result.Versions {
+				keys[i] = v.Key
+			}
+			t.Errorf("expected key 'test-file.txt' in response, got keys: %v", keys)
+		}
+	}
+
+	// TestListObjectVersions_CommonPrefixesHavePrefixStripped tests that common prefixes
+	// in the response have the configured prefix stripped.
+	func TestListObjectVersions_CommonPrefixesHavePrefixStripped(t *testing.T) {
+		mek := make([]byte, 32)
+		if _, err := rand.Read(mek); err != nil {
+			t.Fatalf("failed to generate MEK: %v", err)
+		}
+
+		cfg := &config.Config{
+			BlockSize:     65536,
+			Prefix:        "apps/prod/",
+			AuthAccessKey: "test-access-key",
+			AuthSecretKey: "test-secret-key",
+		}
+
+		mb := newMockBackend()
+		cache := backend.NewMetadataCache(1000, 300)
+		footerCache := backend.NewFooterCache(1000, 300)
+		km, err := keymanager.New(mek, nil, nil)
+		if err != nil {
+			t.Fatalf("failed to create key manager: %v", err)
+		}
+
+		h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+		// Add some objects with different directories
+		testContent := []byte("Test content")
+		mb.Put(context.Background(), "test-bucket", "apps/prod/data/file1.txt", bytes.NewReader(testContent), int64(len(testContent)), map[string]string{
+			"Content-Type": "text/plain",
+		})
+		mb.Put(context.Background(), "test-bucket", "apps/prod/logs/file2.txt", bytes.NewReader(testContent), int64(len(testContent)), map[string]string{
+			"Content-Type": "text/plain",
+		})
+
+		// List versions with delimiter to get common prefixes
+		// Note: We pass prefix= (empty) because the configured prefix is hidden from clients.
+		// The handler will apply the configured prefix, making it look for apps/prod/* in the backend.
+		req := httptest.NewRequest(http.MethodGet, "/test-bucket?versions&delimiter=/&prefix=", nil)
+		w := httptest.NewRecorder()
+		h.HandleRoot(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("ListObjectVersions failed: status %d, body: %s", w.Code, w.Body.String())
+		}
+
+		// Parse the XML response
+		var result struct {
+			CommonPrefixes []string `xml:"CommonPrefixes>Prefix"`
+		}
+
+		body, err := io.ReadAll(w.Body)
+		if err != nil {
+			t.Fatalf("failed to read response body: %v", err)
+		}
+
+		if err := xml.Unmarshal(body, &result); err != nil {
+			t.Fatalf("failed to parse XML: %v\nResponse: %s", err, string(body))
+		}
+
+		// Verify that the prefix was stripped from common prefixes
+		for _, cp := range result.CommonPrefixes {
+			if strings.HasPrefix(cp, "apps/prod/") {
+				t.Errorf("common prefix %q still has the configured prefix, expected it to be stripped", cp)
+			}
+		}
+
+		// Verify we get the expected common prefixes without the configured prefix
+		expectedPrefixes := map[string]bool{
+			"data/": false,
+			"logs/": false,
+		}
+
+		for _, cp := range result.CommonPrefixes {
+			if _, expected := expectedPrefixes[cp]; expected {
+				expectedPrefixes[cp] = true
+			}
+		}
+
+		for prefix, found := range expectedPrefixes {
+			if !found {
+				t.Errorf("expected common prefix %q not found in response", prefix)
+			}
+		}
+	}
 
 // countingListBackend wraps mockBackend and counts List() calls.
 type countingListBackend struct {
