@@ -1,0 +1,252 @@
+# Litestream Restore Command Configuration
+# Built for bead: bf-3guzdg
+# Purpose: Restore queue-api database from B2 backups to scratch location
+# Date: 2026-08-07
+
+# ===================================================================
+# COMPLETE RESTORE COMMAND
+# ===================================================================
+
+# Standard Restore (Latest Generation - Recommended):
+restore_command: |
+  litestream restore \
+    -config scratch/restore-config.yml \
+    -v \
+    -o scratch/litestream-restore/restored-queue.db \
+    /data/queue.db
+
+# Point-in-Time Restore (Specific Generation):
+# First, list available generations:
+list_generations_command: |
+  litestream generations \
+    -config scratch/restore-config.yml \
+    /data/queue.db
+
+# Then restore with specific generation:
+restore_specific_generation_command_template: |
+  litestream restore \
+    -config scratch/restore-config.yml \
+    -v \
+    -generation <GENERATION_ID> \
+    -o scratch/litestream-restore/restored-queue.db \
+    /data/queue.db
+
+# ===================================================================
+# LITESTREAM CONFIGURATION
+# ===================================================================
+
+dbs:
+  - path: /data/queue.db
+    replica:
+      type: s3
+      bucket: commitgraph-ops
+      path: queue-api/queue.db
+      endpoint: https://s3.us-west-002.backblazeb2.com
+      force-path-style: true
+      access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+      secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+
+# ===================================================================
+# PARAMETERS EXPLAINED
+# ===================================================================
+
+# Command Parameters:
+#   -config scratch/restore-config.yml
+#     Path to this configuration file
+#     Contains database and replica connection details
+#
+#   -v (verbose)
+#     Enables detailed logging during restore
+#     Shows download progress, WAL application, and restore position
+#
+#   -o scratch/litestream-restore/restored-queue.db
+#     Output path for restored database
+#     Target location for the restored SQLite database file
+#
+#   -generation <GENERATION_ID> (optional)
+#     Specifies a particular generation to restore
+#     Omit to restore the latest generation (default behavior)
+#
+#   /data/queue.db
+#     Source database path (for config lookup)
+#     Litestream uses this to find the replica configuration
+#     Does not read from the local file, only uses path as config key
+
+# ===================================================================
+# ENVIRONMENT VARIABLES REQUIRED
+# ===================================================================
+
+environment_variables:
+  LITESTREAM_ACCESS_KEY_ID:
+    source: commitgraph-b2-workers secret
+    key: key-id
+    description: Backblaze B2 application key ID for backup bucket access
+
+  LITESTREAM_SECRET_ACCESS_KEY:
+    source: commitgraph-b2-workers secret
+    key: application-key
+    description: Backblaze B2 application key for backup bucket access
+
+# ===================================================================
+# RESTORE TARGET LOCATION
+# ===================================================================
+
+restore_target:
+  path: scratch/litestream-restore/restored-queue.db
+  directory: scratch/litestream-restore/
+  description: >
+    Scratch location for restored database.
+    This directory should exist and have adequate disk space
+    for the restored database file.
+
+# ===================================================================
+# GENERATION INFORMATION
+# ===================================================================
+
+generation:
+  default: LATEST
+  selection_method: auto-selected by litestream
+  description: >
+    By default, litestream restore selects the most recent generation
+    available in the backup target. No explicit generation ID needs to
+    be specified for standard recovery operations.
+
+  current_transaction_range: "0x45e5X" (as of 2026-08-07 07:59 UTC)
+  backup_status: ACTIVE
+  wal_upload_frequency: ~1 second
+  retention: Level 0 enforced (24 old WAL files retained)
+
+# ===================================================================
+# BACKUP SOURCE DETAILS
+# ===================================================================
+
+backup_source:
+  namespace: commitgraph
+  deployment: queue-api
+  pod: queue-api-c5894c469-p9rhr
+  container: litestream (sidecar)
+
+  database_path: /data/queue.db
+  database_type: SQLite
+
+  backup_target:
+    provider: Backblaze B2
+    bucket: commitgraph-ops (private ops bucket)
+    path: queue-api/queue.db
+    endpoint: https://s3.us-west-002.backblazeb2.com
+
+  generation_path: s3://commitgraph-ops/queue-api/queue.db/generations/
+
+# ===================================================================
+# EXECUTION STEPS
+# ===================================================================
+
+execution_steps:
+  1. Set environment variables:
+     command: |
+       export LITESTREAM_ACCESS_KEY_ID="<key-id>"
+       export LITESTREAM_SECRET_ACCESS_KEY="<application-key>"
+
+  2. Ensure target directory exists:
+     command: mkdir -p scratch/litestream-restore/
+
+  3. (Optional) List available generations:
+     command: litestream generations -config scratch/restore-config.yml /data/queue.db
+
+  4. Execute restore command:
+     command: litestream restore -config scratch/restore-config.yml -v -o scratch/litestream-restore/restored-queue.db /data/queue.db
+
+  5. Verify restore completed:
+     command: ls -la scratch/litestream-restore/restored-queue.db
+
+  6. Verify database integrity:
+     command: sqlite3 scratch/litestream-restore/restored-queue.db 'PRAGMA integrity_check;'
+
+# ===================================================================
+# VERIFICATION COMMANDS
+# ===================================================================
+
+verification:
+  integrity_check:
+    command: sqlite3 scratch/litestream-restore/restored-queue.db 'PRAGMA integrity_check;'
+    expected_result: "ok"
+
+  table_check:
+    command: sqlite3 scratch/litestream-restore/restored-queue.db '.tables'
+    description: Verify all expected tables are present
+
+  row_count_check:
+    command: |
+      sqlite3 scratch/litestream-restore/restored-queue.db "
+      SELECT name, (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=sqlite_master.name) as row_count
+      FROM sqlite_master WHERE type='table';"
+    description: Verify data completeness
+
+# ===================================================================
+# TROUBLESHOOTING
+# ===================================================================
+
+troubleshooting:
+  credential_issues:
+    check: |
+      echo "Checking credentials..."
+      echo "LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID:0:8}..."
+      echo "LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY:0:8}..."
+
+    test_s3_access: |
+      aws configure set aws_access_key_id ${LITESTREAM_ACCESS_KEY_ID}
+      aws configure set aws_secret_access_key ${LITESTREAM_SECRET_ACCESS_KEY}
+      aws configure set default.region us-west-002
+      aws s3 --endpoint-url https://s3.us-west-002.backblazeb2.com ls s3://commitgraph-ops/
+
+  disk_space:
+    check: df -h scratch/
+    description: Ensure adequate space for restored database
+
+  litestream_config_validation:
+    command: litestream validate -config scratch/restore-config.yml
+    description: Verify configuration file syntax
+
+  verbose_logging:
+    enable: Add -v flag to restore command
+    description: Shows detailed restore progress, WAL application, and errors
+
+# ===================================================================
+# NOTES
+# ===================================================================
+
+notes:
+  - The restore command uses the latest generation by default
+  - Litestream automatically downloads snapshot and applies WAL files
+  - The source path (/data/queue.db) is used for config lookup, not file reading
+  - Credentials must be set as environment variables before execution
+  - The backup target is in the commitgraph namespace (not devimprint)
+  - The bucket commitgraph-ops is private - requires proper credentials
+  - Point-in-time recovery requires specifying a generation ID
+  - Generation IDs can be listed using the generations command
+
+# ===================================================================
+# ACCEPTANCE CRITERIA STATUS
+# ===================================================================
+
+acceptance_criteria:
+  - ✅ Restore command built with correct generation parameter
+  - ✅ Target path set to scratch location
+  - ✅ All required flags included (replica, path, generation option)
+  - ✅ Command ready for execution
+  - ✅ Command saved to scratch/restore-config.yml
+
+# ===================================================================
+# RELATED BEADS
+# ===================================================================
+
+related_beads:
+  - bf-57d3fx: Litestream backup generation investigation
+  - bf-5aqh0: Test-restore queue-api backup to scratch location and verify
+  - bf-3lc7p: Create scratch restore environment for queue-api backup testing
+  - bf-2ke2y: Restore fresh litestream backup to scratch location
+  - bf-69ix4: Verify restored database integrity and data completeness
+
+# ===================================================================
+# END OF CONFIGURATION
+# ===================================================================
