@@ -156,6 +156,94 @@ func recordingTestSetup(t *testing.T) (*config.Config, *recordingBackend, *handl
 	return cfg, rb, h
 }
 
+// recordingTestSetupWithPrefix is recordingTestSetup with ARMOR_PREFIX set, for
+// asserting that the multipart path addresses storage by the PREFIXED key.
+func recordingTestSetupWithPrefix(t *testing.T, prefix string) (*config.Config, *recordingBackend, *handlers.Handlers) {
+	t.Helper()
+	mek := make([]byte, 32)
+	if _, err := rand.Read(mek); err != nil {
+		t.Fatalf("failed to generate MEK: %v", err)
+	}
+	cfg := &config.Config{
+		BlockSize:     65536,
+		AuthAccessKey: "test-access-key",
+		AuthSecretKey: "test-secret-key",
+		Prefix:        prefix,
+	}
+	rb := newRecordingBackend()
+	cache := backend.NewMetadataCache(1000, 300)
+	footerCache := backend.NewFooterCache(1000, 300)
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+	h := handlers.New(cfg, rb, cache, footerCache, km, nil)
+	return cfg, rb, h
+}
+
+// TestMultipartAppliesArmorPrefix is the regression tripwire for a bug that made
+// every multipart object on a prefixed ARMOR deployment permanently unreadable.
+//
+// ADR-001 makes ARMOR_PREFIX transparent: the proxy prepends it on the way to
+// storage and strips it from responses. Every single-object handler did that;
+// CreateMultipartUpload, UploadPart, CompleteMultipartUpload and the metadata
+// Copy did not, so multipart objects were written to the RAW key while reads
+// looked under <prefix><key> and 404'd.
+//
+// It was invisible wherever ARMOR_PREFIX was empty (raw and prefixed keys
+// coincide), which is why it survived. Found live on ord-devimprint
+// (ARMOR_PREFIX="commitgraph/"): a Postgres base backup's 33.4MB data.tar landed
+// at postgres/cnpg/... while its single-PUT backup.info correctly landed at
+// commitgraph/postgres/cnpg/..., so CNPG reported the backup completed and the
+// restore then failed with "Missing file .../data.*".
+func TestMultipartAppliesArmorPrefix(t *testing.T) {
+	const prefix = "tenant-a/"
+	_, rb, h := recordingTestSetupWithPrefix(t, prefix)
+	bucket, key := "test-bucket", "backups/base/data.tar"
+
+	const block = 65536
+	part1 := make([]byte, 5*1024*1024) // aligned, pins P
+	for i := range part1 {
+		part1[i] = byte(i % 251)
+	}
+	part2 := make([]byte, 3*block) // short final part
+	for i := range part2 {
+		part2[i] = byte(255 - i%251)
+	}
+	plaintext := append(append([]byte{}, part1...), part2...)
+
+	uploadID := initiateMultipart(t, h, bucket, key)
+	e1 := uploadPart(t, h, bucket, key, uploadID, 1, part1)
+	e2 := uploadPart(t, h, bucket, key, uploadID, 2, part2)
+	completeMultipart(t, h, bucket, key, uploadID, []string{e1, e2})
+
+	// The object must exist in the backend under the PREFIXED key...
+	rb.mu.Lock()
+	_, atPrefixed := rb.objects[bucket+"/"+prefix+key]
+	_, atRaw := rb.objects[bucket+"/"+key]
+	rb.mu.Unlock()
+	if !atPrefixed {
+		t.Errorf("multipart object missing at prefixed storage key %q", bucket+"/"+prefix+key)
+	}
+	// ...and must NOT exist at the raw key, which is where the bug put it.
+	if atRaw {
+		t.Errorf("multipart object was written to the RAW key %q — ARMOR_PREFIX was not applied", bucket+"/"+key)
+	}
+
+	// And it must still read back byte-for-byte through the handler, which
+	// applies the prefix itself — the end-to-end property the bug destroyed.
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET after prefixed multipart complete failed: status %d: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Equal(w.Body.Bytes(), plaintext) {
+		t.Fatalf("prefixed multipart round-trip mismatch: got %d bytes, want %d; first divergence at %d",
+			w.Body.Len(), len(plaintext), firstDivergence(w.Body.Bytes(), plaintext))
+	}
+}
+
 func initiateMultipart(t *testing.T, h *handlers.Handlers, bucket, key string) string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/%s/%s?uploads", bucket, key), nil)
