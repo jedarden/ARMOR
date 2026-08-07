@@ -1,6 +1,14 @@
 # ADR-010: Barman-Cloud-Backup Multipart Incompatibility with ARMOR Encryption
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-011](011-barman-stays-on-armor-non-uniform-multipart.md) (2026-08-07)
+
+> **Superseded.** The barman root-cause analysis below remains valid and is the
+> reference for why no `chunk_size` can fix part alignment. Its *decision* —
+> reroute base backups to Garage — is **not** adopted: barman backups stay on
+> ARMOR (ADR-011). This ADR also missed that ARMOR's alignment rule was
+> over-broad: alignment is only required of parts that another part is placed
+> after, so part 1 and a short final part never needed it. Correcting that
+> makes single-part uploads of any size work without weakening the contract.
 **Date:** 2026-08-06
 **Related:** ADR-002, ADR-003, ADR-005, ADR-008
 
@@ -87,44 +95,45 @@ No fixed C can satisfy this for arbitrary N (i.e., arbitrary data sizes). The on
 
 ## Decision
 
-**Route `queue-db` and `forgejo-postgres` base backups through an S3-compatible backend that does not require block-aligned parts** (e.g., Garage, which other clusters already use for barman), with ARMOR/B2 maintained as a secondary off-site copy via replication or a separate backup job. This is the lowest-risk option that:
+**REVISED 2026-08-07 — superseded below.** The original decision here (routing these two backup targets through Garage instead of ARMOR) was rejected: this backup topology stays on ARMOR/B2. Instead:
 
-1. **Immediately resolves the 600+ consecutive backup failures** on iad-ci.
-2. **Maintains ARMOR's correctness guarantees** — the uniform-part-size contract remains enforced for all clients that can satisfy it.
-3. **Follows an already-operational pattern** — `apexalgo-iad` and `ardenone-cluster` already route barman backups through non-ARMOR backends.
+**Add an opt-in "variable-part-size" mode to ARMOR** that lets an explicitly-scoped client accommodate non-uniform, non-block-aligned multipart parts — targeting barman's actual behavior directly instead of asking the backup topology or barman itself to change. This mode must not weaken ADR-005's guarantees for any client that doesn't opt in.
+
+The mechanism, replacing the uniform-part-size assumption for opted-in uploads only:
+
+1. **Explicit, narrow opt-in.** The client signals this mode on `CreateMultipartUpload` (e.g. a request header or query param specific to this mode); it must not be inferable or defaulted, and should be further scoped to the specific credential/bucket-prefix these two backup targets use so no other client can trigger it accidentally.
+2. **Sequential-only delivery is required.** A part arriving out of expected order (`partNumber` ≠ next-expected) is rejected outright — the same poison-detection posture ADR-005 already applies to its own contract, just enforcing order instead of size uniformity. This removes any need to guess at an unseen part's offset.
+3. **True cumulative byte offset, tracked server-side.** ARMOR persists a running offset in the upload's existing state (alongside the ADR-003 per-part HMAC table), computed from each part's *actual* received size — not `(partNumber-1) × partSize`.
+4. **Blocks that straddle a part boundary must be handled explicitly.** Since part sizes are no longer guaranteed multiples of the 64 KiB encryption block, a block can now span the tail of one part and the head of the next — the current code assumes every part starts and ends on a block boundary and does not handle this. The implementation must buffer an incomplete trailing block's plaintext across the `UploadPart` boundary until enough bytes arrive to complete it. This buffered state must either survive a process restart within the upload's lifetime, or the upload must fail loudly on restart — silently dropping buffered bytes would reintroduce exactly the class of silent corruption ADR-002/003/005 already fought.
+
+This is real crypto-engineering work, not a config flag — the cost estimate in "Alternatives Considered" below ("more design work than the immediate iad-ci outage warrants") was accurate when written; the direction is chosen anyway because keeping a single backend (ARMOR/B2) for this backup topology was judged more valuable than that added cost.
 
 ## Alternatives Considered
 
-### 1. Modify barman-cloud-backup source code
+### 1. Route through Garage
 
-Rejected: This is outside the scope of this ADR (it requires upstream changes to the barman project) and would not address the immediate backup failures on iad-ci. If pursued, it would require patching `CloudTarUploader.write()` to pad parts to 65536-byte boundaries before flushing.
+**Originally accepted, now rejected.** Would have immediately resolved the failures with lower engineering risk by reusing the pattern `apexalgo-iad`/`ardenone-cluster` already use, at the cost of a second backend/topology for these two backup targets. Rejected in favor of keeping everything on the existing ARMOR/B2 path.
 
-### 2. Add an opt-in ARMOR mode for misaligned parts
+### 2. Modify barman-cloud-backup source code
 
-Rejected for now as higher-risk than routing through an alternative backend. Could be revisited if:
-- Multiple S3 clients cannot be modified to satisfy the uniform-part-size contract.
-- A carefully threat-modeled design is produced that does not reintroduce the silent corruption from ADR-002.
-- The new integrity mechanism is extensively tested against the same failure modes that ADR-002/003/005 addressed.
-
-The risk is that any accommodation for misaligned parts must compute HMAC offsets differently, and this new path must not have the same blind spots as the pre-ADR-005 code. This requires more design work than the immediate iad-ci backup outage warrants.
+Rejected: requires upstream changes to the barman project, would need to be maintained across barman version upgrades, and only fixes barman specifically — the ARMOR accommodation (the chosen decision) is reusable for any future client with the same limitation. If pursued instead, it would require patching `CloudTarUploader.write()` to pad parts to 65536-byte boundaries before flushing.
 
 ### 3. Continue attempting configuration workarounds
 
-Rejected: The root cause analysis demonstrates that no configuration value can fix the incompatibility. Further attempts would waste time without addressing the fundamental issue.
+Rejected: the root cause analysis demonstrates that no configuration value can fix the incompatibility. Further attempts would waste time without addressing the fundamental issue.
 
 ## Consequences
 
 ### Immediate
 
-- `queue-db` and `forgejo-postgres` base backups must be routed to a non-ARMOR backend (e.g., Garage) in iad-ci.
-- ARMOR/B2 can be maintained as a secondary off-site copy via a separate backup job or replication.
-- The uniform-part-size contract (ADR-005) remains enforced for all other clients.
+- ARMOR needs a new opt-in variable-part-size multipart mode (see Decision) before `queue-db`/`forgejo-postgres` backups can succeed. Until it ships, both remain broken exactly as described in Root Cause — no interim topology change is planned.
+- The uniform-part-size contract (ADR-005) remains fully enforced, unchanged, for every client that doesn't explicitly opt in.
 
 ### Long-Term
 
-- ARMOR's uniform-part-size contract is documented as a requirement for clients using ARMOR's S3 endpoint for multipart uploads.
-- Future S3 client integrations should be evaluated for their ability to produce block-aligned parts before deployment.
-- If more clients cannot satisfy the contract, an ARMOR accommodation (Alternative 2) may be worth the design investment — but only with adversarial threat modeling and extensive testing.
+- ARMOR's uniform-part-size contract remains the default and documented requirement for clients using ARMOR's S3 endpoint for multipart uploads; the variable-part-size mode is an explicit, narrowly-scoped exception, not a relaxation of the default.
+- Future S3 clients that can't produce block-aligned parts can reuse the variable-part-size mode instead of requiring a bespoke accommodation each time — but each new user of it should be deliberately reviewed, not silently allowed.
+- Given this project's repeated history of silent multipart corruption (ADR-002/003/005), any change to the variable-part-size mode after initial ship must be held to the same adversarial-threat-modeling and real-crypto-path-testing bar as the initial implementation.
 
 ## Related Documentation
 
