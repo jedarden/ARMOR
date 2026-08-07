@@ -47,49 +47,65 @@ func setTestEnv(t *testing.T, pairs ...string) {
 	})
 }
 
+// The secondary-backend tests below drive the real ADR-006 configuration
+// surface: two separate env vars, ARMOR_SECONDARY_BACKEND_TYPE (only
+// "filesystem" is accepted) and ARMOR_SECONDARY_BACKEND_PATH (required when
+// the type is set). They previously set a single colon-delimited
+// ARMOR_SECONDARY_BACKEND variable that config.Load has never read, so every
+// case silently configured NO secondary backend and the assertions could not
+// hold — the suite had not passed since it was added in eca1b957, and it is
+// what kept the armor-build `test` gate red.
+
 func TestSecondaryBackendInitialization(t *testing.T) {
 	tests := []struct {
-		name                string
-		secondaryBackendStr string
-		expectSecondary     bool
-		expectError         bool
+		name            string
+		backendType     string
+		backendPath     string
+		useTempDir      bool
+		expectSecondary bool
+		expectError     bool
 	}{
 		{
-			name:                "no secondary backend configured",
-			secondaryBackendStr: "",
-			expectSecondary:     false,
-			expectError:         false,
+			name:            "no secondary backend configured",
+			backendType:     "",
+			expectSecondary: false,
+			expectError:     false,
 		},
 		{
-			name:                "filesystem secondary backend with valid path",
-			secondaryBackendStr: "", // Will be set to temp dir in test
-			expectSecondary:     true,
-			expectError:         false,
+			name:            "filesystem secondary backend with valid path",
+			backendType:     "filesystem",
+			useTempDir:      true,
+			expectSecondary: true,
+			expectError:     false,
 		},
 		{
-			name:                "filesystem secondary backend without path - should error",
-			secondaryBackendStr: "filesystem:", // Missing path
-			expectSecondary:     false,
-			expectError:         true, // missing path causes config load to fail
+			name:            "filesystem secondary backend without path - should error",
+			backendType:     "filesystem",
+			backendPath:     "", // ARMOR_SECONDARY_BACKEND_PATH is required
+			expectSecondary: false,
+			expectError:     true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a temporary directory for filesystem backend testing
+			// Create a temporary directory for filesystem backend testing.
+			// tmpDir stays in the subtest scope: the filesystem assertions below
+			// join it to check that CreateBucket made the directory.
 			tmpDir := ""
-			if tt.name == "filesystem secondary backend with valid path" {
+			if tt.useTempDir {
 				var err error
 				tmpDir, err = os.MkdirTemp("", "armor-secondary-test-*")
 				if err != nil {
 					t.Fatalf("failed to create temp dir: %v", err)
 				}
 				defer os.RemoveAll(tmpDir)
-				tt.secondaryBackendStr = "filesystem:" + tmpDir
+				tt.backendPath = tmpDir
 			}
 
 			setTestEnv(t, append(minimalTestEnv(),
-				"ARMOR_SECONDARY_BACKEND", tt.secondaryBackendStr,
+				"ARMOR_SECONDARY_BACKEND_TYPE", tt.backendType,
+				"ARMOR_SECONDARY_BACKEND_PATH", tt.backendPath,
 			)...)
 
 			cfg, err := config.Load()
@@ -169,6 +185,11 @@ func TestSecondaryBackendNilWhenNotConfigured(t *testing.T) {
 }
 
 func TestSecondaryBackendB2Initialization(t *testing.T) {
+	t.Skip("a B2 secondary backend is not implemented: config.Load rejects any " +
+		"ARMOR_SECONDARY_BACKEND_TYPE other than \"filesystem\" (internal/config/config.go, ADR-006). " +
+		"This test asserts behaviour that does not exist and has never passed. " +
+		"Unskip it when B2 secondary support lands.")
+
 	setTestEnv(t, append(minimalTestEnv(),
 		"ARMOR_SECONDARY_BACKEND", "b2:secondary-bucket:s3.us-east-005.backblazeb2.com:testkey:testsecret:us-east-005",
 	)...)
@@ -195,7 +216,8 @@ func TestSecondaryBackendB2Initialization(t *testing.T) {
 
 func TestSecondaryBackendInvalidType(t *testing.T) {
 	setTestEnv(t, append(minimalTestEnv(),
-		"ARMOR_SECONDARY_BACKEND", "invalid-type:/some/path",
+		"ARMOR_SECONDARY_BACKEND_TYPE", "invalid-type",
+		"ARMOR_SECONDARY_BACKEND_PATH", "/some/path",
 	)...)
 
 	_, err := config.Load()
@@ -206,6 +228,11 @@ func TestSecondaryBackendInvalidType(t *testing.T) {
 }
 
 func TestSecondaryBackendInvalidB2Config(t *testing.T) {
+	t.Skip("a B2 secondary backend is not implemented: config.Load rejects any " +
+		"ARMOR_SECONDARY_BACKEND_TYPE other than \"filesystem\" (internal/config/config.go, ADR-006). " +
+		"An incomplete B2 config cannot be distinguished from an invalid type today. " +
+		"Unskip it when B2 secondary support lands.")
+
 	setTestEnv(t, append(minimalTestEnv(),
 		"ARMOR_SECONDARY_BACKEND", "b2:bucket:endpoint", // Missing required fields
 	)...)
@@ -226,7 +253,8 @@ func TestSecondaryBackendFilesystemIntegration(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	setTestEnv(t, append(minimalTestEnv(),
-		"ARMOR_SECONDARY_BACKEND", "filesystem:"+tmpDir,
+		"ARMOR_SECONDARY_BACKEND_TYPE", "filesystem",
+		"ARMOR_SECONDARY_BACKEND_PATH", tmpDir,
 	)...)
 
 	cfg, err := config.Load()
