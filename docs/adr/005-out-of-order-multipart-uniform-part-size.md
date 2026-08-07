@@ -1,6 +1,6 @@
 # ADR-005: Out-of-order multipart parts via a uniform-part-size contract
 
-**Status:** Implemented (design decided 2026-07-19; shipped on main 2026-07-19 — bf-5tol4d core uniform-part-size contract, bf-4oi87m part-1 pinning + `503 SlowDown` deferral of earlier arrivals; amends ADR-003 §4)
+**Status:** Implemented (design decided 2026-07-19; shipped on main 2026-07-19; amended 2026-08-07 for the single-part alignment exemption — bf-5tol4d core uniform-part-size contract, bf-4oi87m part-1 pinning + `503 SlowDown` deferral of earlier arrivals; amends ADR-003 §4)
 **Date:** 2026-07-19
 
 ## Context
@@ -38,6 +38,23 @@ Amended rules:
 3. The contradiction detection from rule 4 stays as defense-in-depth (e.g., a client that never sends part 1).
 
 Acceptance for the amendment: a 50 MB `aws s3 cp` with **default** concurrency must round-trip byte-identically.
+
+## Amendment (2026-08-07 UTC): alignment is required only of parts something is placed after
+
+Rule 1 required *every* part to be block-aligned, while rule 3 exempted the final part from the uniform *size*. Nothing reconciled the two for the part that is both first and final, and the check that enforced rule 1 ran at `UploadPart` — before the part count is knowable. The result: **a multipart upload whose entire payload fits in one part could never complete.**
+
+This is not hypothetical. `barman-cloud-backup` of a small Postgres emits exactly one part sized by the data. Live on `commitgraph-db` (ord-devimprint, 2026-08-07T02:08Z) every base backup failed with `InvalidPartSize: Part size 11917312 is not a multiple of the block size (65536 bytes)` — 11,917,312 is 55,296 bytes past a boundary. The same signature explains the `queue-db` (iad-ci) and `forgejo-postgres` failures; the previously-recorded workaround of disabling `data.compression` only helps when the payload is large enough to produce a full-size part *before* the short final one, which a small database never does.
+
+Alignment exists for exactly one purpose: to keep the `(N−1)×P/blockSize` offset of a *following* part on a block boundary. It therefore has no force for a part nothing follows. Amended rules:
+
+1. **Part 1 may be any size.** It always starts at block 0 — `(1−1)×P/blockSize` is 0 for every `P` — so its own ciphertext and its absolute HMAC indices are correct regardless. A non-aligned part 1 pins a non-aligned `P`, which marks the upload **single-part-only**.
+2. **Any part >1 on a single-part-only upload is rejected and poisons it**, since it could not be placed on a block boundary. Enforced before the body is read, so a large deferred part costs no memory.
+3. **The presumed-final part (size < `P`) may be any size.** Nothing is placed after it, and its partial trailing block is exactly what every ordinary non-multipart `PUT` of arbitrary size already produces.
+4. **`CompleteMultipartUpload` backstops rule 2:** more than one part with a non-aligned `P` is rejected before assembly, so a violating state that reached Complete anyway never becomes a stored object.
+
+A non-aligned regular part — one that another part *is* placed after — is still rejected exactly as before.
+
+Acceptance: a single-part multipart upload of 11,917,312 bytes must round-trip byte-identically, including a range read inside the partial trailing block (`TestMultipartLonePartByteVerification`).
 
 ## Consequences
 
