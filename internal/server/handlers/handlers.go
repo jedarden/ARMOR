@@ -2837,8 +2837,16 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 }
 
 // ListObjectVersions handles S3 ListObjectVersions operation.
-// It lists all versions of objects in a bucket, For ARMOR-encrypted objects,
+// It lists all versions of objects in a bucket. For ARMOR-encrypted objects,
 // it retrieves per-version metadata to provide plaintext sizes.
+//
+// Prefix handling (when ARMOR_PREFIX is configured):
+// 1. Client sends unprefixed keys in request (prefix, keyMarker)
+// 2. Handler prepends prefix before calling backend: backendPrefix = applyPrefix(prefix)
+// 3. Backend returns results with prefixed keys
+// 4. Handler strips prefix from version keys and common prefixes before returning to client
+//
+// This pattern matches ListObjectsV2 exactly, ensuring consistent behavior across all list operations.
 func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
 
