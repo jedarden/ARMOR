@@ -1,57 +1,54 @@
 # Task bf-2p1wr: Obtain ord-devimprint kubeconfig with write access
 
-## Current Status: BLOCKED - Requires Administrator Intervention
+## Situation Analysis
 
-## Existing Kubeconfigs Tested
+### Existing kubeconfigs found:
+1. **`ord-devimprint-observer.kubeconfig`** - Read-only, long-lived SA token, explicitly denies access to secrets
+2. **`ord-devimprint-admin.kubeconfig`** - Admin access, uses OIDC token that expires every ~3 days
 
-1. **`/home/coding/.kube/ord-devimprint-admin.kubeconfig`**
-   - Status: ❌ Unauthorized (OIDC token expired)
-   - Last updated: July 26, 2026
-   - Issue: OIDC tokens expire every ~3 days
-   - Resolution required: Regenerate from Rackspace Spot UI
+### Current Status
+The admin kubeconfig exists but its authentication has failed:
 
-2. **`/home/coding/.kube/ord-devimprint.kubeconfig`**
-   - Status: ❌ Connection timeout
-   - Last updated: May 4, 2026
-   - Issue: Likely stale or endpoint changed
+1. **OIDC Authentication** (current context: `apexalgo-ord-devimprint-oidc`):
+   - Requires interactive browser-based authentication
+   - Failed with: "could not open the browser" and "authorization error: context deadline exceeded"
+   - This environment is a server without a graphical browser
 
-3. **`/home/coding/.kube/ord-devimprint-token.kubeconfig`**
-   - Status: ❌ Unauthorized (token expired)
-   - Last updated: June 9, 2026
-   - Issue: ServiceAccount token expired
-
-4. **`/home/coding/.kube/ord-devimprint-observer.kubeconfig`**
-   - Status: ⚠️ Read-only access confirmed
-   - Can list: ✅ Yes
-   - Can read secret data: ❌ Forbidden (User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource "secrets")
+2. **Static Token Authentication** (context: `apexalgo-ord-devimprint`):
+   - Contains a JWT token that was issued on 2026-07-26
+   - Token has expired (current date: 2026-08-06, ~11 days past issue date)
+   - Returns "Unauthorized" error
 
 ## What's Needed
 
-To retrieve the `armor-writer` secret from the `devimprint` namespace, we need a kubeconfig with:
+The Rackspace Spot cloudspace-admin OIDC token must be regenerated manually through the Spot UI. This cannot be done from this server because:
 
-- Valid authentication (not expired)
-- Permission to read secrets in the `devimprint` namespace
+1. The OIDC authentication flow requires a web browser for the OAuth2 authorization code flow
+2. The token expires every ~3 days and must be refreshed through the Spot control panel
+3. There is no command-line API to generate new admin tokens without browser interaction
 
-## Action Required
+## Resolution Path
 
-The cluster administrator with access to the Rackspace Spot cloudspace UI needs to:
+**Manual intervention required:**
 
-1. Log into the Rackspace Spot UI for the `ord-devimprint` cloudspace
-2. Navigate to the kubeconfig download section
-3. Generate a new `cloudspace-admin` OIDC token
-4. Update `/home/coding/.kube/ord-devimprint-admin.kubeconfig` with the new credentials
+1. Log into Rackspace Spot console (https://spot.rackspace.com/)
+2. Navigate to the ord-devimprint cloudspace
+3. Access the cloudspace-admin credentials section
+4. Generate a new kubeconfig/OIDC token
+5. Replace or update `/home/coding/.kube/ord-devimprint-admin.kubeconfig` with the new credentials
+6. Verify access with: `kubectl get secrets -n devimprint`
 
-## Verification Steps (once admin provides new kubeconfig)
+## Alternative Approaches to Consider
 
-```bash
-# Test secret access
-kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig \
-  get secret armor-writer -n devimprint -o jsonpath='{.data}'
-```
+1. **Long-lived service account**: Instead of using the expiring OIDC token, create a long-lived ServiceAccount in the devimprint namespace with secret read permissions
+2. **API-based authentication**: If Rackspace Spot provides an API for generating admin credentials, that could be scripted
+3. **Use the observer RBAC as base**: The observer SA already exists; we could extend its permissions to allow secret reading in specific namespaces
 
-## Timeline
+## Files Referenced
+- `/home/coding/.kube/ord-devimprint-admin.kubeconfig` - Admin kubeconfig (expired)
+- `/home/coding/.kube/ord-devimprint-observer.kubeconfig` - Observer kubeconfig (read-only, no secrets)
+- `/home/coding/.kube/ord-devimprint.kubeconfig` - Another kubeconfig file (purpose unknown, dated May 4)
+- `/home/coding/.kube/ord-devimprint-token.kubeconfig` - Token-based kubeconfig (dated Jun 9)
 
-- Current date: August 6, 2026
-- Last valid admin kubeconfig: July 26, 2026 (11 days ago)
-- OIDC token lifetime: ~3 days
-- Token has been expired for approximately 8 days
+## Context
+This bead (bf-2p1wr) is a dependency for parent task bf-2p1wp, which needs to retrieve the `armor-writer` secret from the devimprint namespace.
