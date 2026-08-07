@@ -56,6 +56,143 @@ A non-aligned regular part — one that another part *is* placed after — is st
 
 Acceptance: a single-part multipart upload of 11,917,312 bytes must round-trip byte-identically, including a range read inside the partial trailing block (`TestMultipartLonePartByteVerification`).
 
+## Valid Upload Patterns (Examples)
+
+The contract supports these multipart upload patterns:
+
+### Pattern 1: Fully-aligned multi-part upload (standard case)
+
+All parts except possibly the last are block-aligned (multiple of 65536 bytes):
+
+```
+Part 1: 16,777,216 bytes  (16 MiB, = 256 × 65536) ✓ aligned
+Part 2: 16,777,216 bytes  (16 MiB, = 256 × 65536) ✓ aligned
+Part 3: 16,777,216 bytes  (16 MiB, = 256 × 65536) ✓ aligned
+Part 4:  8,388,608 bytes  ( 8 MiB, = 128 × 65536) ✓ aligned (final)
+→ P = 16,777,216 (aligned), 4 parts, total = 58,720,256 bytes
+```
+
+This is the standard pattern used by most S3 clients (aws cli, SDKs, rclone). All parts are block-aligned, so every CTR offset is on a boundary.
+
+### Pattern 2: Aligned parts with short final part (standard S3 semantics)
+
+All regular parts are aligned; the final part may be any size < P:
+
+```
+Part 1: 16,777,216 bytes  (16 MiB, = 256 × 65536) ✓ aligned
+Part 2: 16,777,216 bytes  (16 MiB, = 256 × 65536) ✓ aligned
+Part 3: 16,777,216 bytes  (16 MiB, = 256 × 65536) ✓ aligned
+Part 4:  5,200,000 bytes  (5.2 MiB, NOT a multiple of 65536) ✓ short final
+→ P = 16,777,216 (aligned), 4 parts, total = 55,055,216 bytes
+```
+
+The short final part (5.2 MiB) is accepted because nothing is placed after it. Its partial trailing block is exactly what a non-multipart PUT of arbitrary size already produces.
+
+### Pattern 3: Single short part (barman-cloud-backup case)
+
+A single part that is both first and final, regardless of alignment:
+
+```
+Part 1: 11,917,312 bytes  (11.9 MiB, NOT a multiple of 65536) ✓ single part
+→ P = 11,917,312 (non-aligned), 1 part, total = 11,917,312 bytes
+```
+
+Part 1 always starts at block 0, so its ciphertext and HMAC indices are correct regardless of size. A non-aligned P marks the upload as single-part-only; any attempt to add part 2 would be rejected.
+
+### Pattern 4: Single aligned part (valid but unusual)
+
+A single part that happens to be block-aligned:
+
+```
+Part 1: 16,777,216 bytes  (16 MiB, = 256 × 65536) ✓ single part
+→ P = 16,777,216 (aligned), 1 part, total = 16,777,216 bytes
+```
+
+Valid, but clients typically use this size only when they expect more data (Pattern 1 or 2).
+
+## Invalid Patterns (Rejected)
+
+These patterns violate the contract and are rejected before storage:
+
+### Invalid 1: Non-aligned regular part
+
+A part >1 with size not equal to P:
+
+```
+Part 1: 16,777,216 bytes  (16 MiB) ✓ P pinned
+Part 2: 15,000,000 bytes  (15 MiB, ≠ P, > P) ✗ rejected, upload poisoned
+```
+
+Reason: Part 2's offset would be `(2-1) × 16,777,216 / 65536 = 256` blocks (on boundary), but its content is sized for offset 240. This would corrupt the CTR keystream.
+
+### Invalid 2: Two presumed-final parts
+
+Two parts both smaller than P:
+
+```
+Part 1: 16,777,216 bytes  (16 MiB) ✓ P pinned
+Part 2:  5,000,000 bytes  (5 MiB, < P) ✓ accepted as presumed-final
+Part 3:  3,000,000 bytes  (3 MiB, < P) ✗ rejected, upload poisoned
+```
+
+Reason: Part 3 contradicts the presumption that part 2 was final. The contract allows at most one short part (the final one).
+
+### Invalid 3: Attempting to add part 2 to a single-part-only upload
+
+Adding a second part after a non-aligned part 1:
+
+```
+Part 1: 11,917,312 bytes  (11.9 MiB, not aligned) ✓ P pinned, single-part-only
+Part 2: 16,777,216 bytes  (16 MiB)                 ✗ rejected, upload poisoned
+```
+
+Reason: Part 2's offset would be `(2-1) × 11,917,312 / 65536 = 181.8` blocks (NOT on boundary), corrupting encryption.
+
+## Edge Cases
+
+### Zero-byte final part
+
+An empty final part (size 0) is accepted as the presumed-final part:
+
+```
+Part 1: 16,777,216 bytes  (16 MiB) ✓ aligned
+Part 2:          0 bytes  (0 bytes) ✓ zero-byte final part
+→ P = 16,777,216, 2 parts, total = 16,777,216 bytes
+```
+
+The zero-byte part contributes no data but marks completion. This matches standard S3 behavior.
+
+### Minimum-size single part
+
+A single part at B2's 5 MiB minimum:
+
+```
+Part 1: 5,242,880 bytes  (5 MiB, = 80 × 65536) ✓ aligned single part
+→ P = 5,242,880, 1 part, total = 5,242,880 bytes
+```
+
+Valid and aligned. The same size without alignment would also be valid as a single part (Pattern 3).
+
+### Sub-block single part
+
+A single part smaller than one full block (65536 bytes):
+
+```
+Part 1: 40,000 bytes  (40 KiB, < 65536) ✓ single part
+→ P = 40,000 (non-aligned), 1 part, total = 40,000 bytes
+```
+
+Valid because part 1 starts at block 0. The partial block is encrypted normally; no corruption possible.
+
+## Rationale Summary
+
+The alignment invariant serves exactly one purpose: **keep the CTR counter offset on a block boundary for every part that has a follower**. Parts with no follower (part 1 in single-part uploads, the presumed-final part) have no follower to misalign, so their alignment is irrelevant. This interpretation:
+
+1. Preserves correctness for all multi-part uploads (regular parts still aligned)
+2. Enables standard S3 client compatibility (short final parts are normal)
+3. Fixes the barman-cloud-backup outage (single-part uploads now work)
+4. Requires no format change, no new metadata fields, and no range-read complexity
+
 ## Consequences
 
 - Standard concurrent clients (aws cli defaults, SDK uploaders, litestream, rclone) work against ARMOR unmodified — the serial-configuration caveat in plan.md has been removed and the litestream deployment note in bf-4qq1 is void.
