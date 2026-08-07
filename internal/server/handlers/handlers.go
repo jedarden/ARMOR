@@ -2799,7 +2799,14 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 		}
 	}
 
-	result, err := h.backend.ListObjectVersions(ctx, bucket, prefix, delimiter, keyMarker, versionIDMarker, maxKeys)
+	// Apply the configured prefix to the prefix parameter for backend operations.
+	// When ARMOR_PREFIX is set, the backend stores all keys with the prefix prepended,
+	// but clients don't know about it. We need to prepend the prefix to the client's
+	// requested prefix so the backend finds the right objects.
+	backendPrefix := h.applyPrefix(prefix)
+	backendKeyMarker := h.applyPrefix(keyMarker)
+
+	result, err := h.backend.ListObjectVersions(ctx, bucket, backendPrefix, delimiter, backendKeyMarker, versionIDMarker, maxKeys)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list object versions: %v", err), 500)
 		return
@@ -2848,8 +2855,11 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 
 	// Process versions and retrieve per-version metadata for ARMOR objects
 	for _, version := range result.Versions {
+		// Strip the configured prefix from version keys before returning to client.
+		// Clients don't know about the prefix, so we need to remove it from the keys.
+		strippedKey := h.stripPrefix(version.Key)
 		v := Version{
-			Key:            version.Key,
+			Key:            strippedKey,
 			VersionID:      version.VersionID,
 			IsLatest:       version.IsLatest,
 			IsDeleteMarker: version.IsDeleteMarker,
@@ -2894,7 +2904,12 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 	}
 
 	// Process common prefixes
-	resp.CommonPrefixes = append(resp.CommonPrefixes, result.CommonPrefixes...)
+	for _, p := range result.CommonPrefixes {
+		// Strip the configured prefix from common prefixes before returning to client.
+		// Common prefixes are used for directory-like listings with delimiters.
+		strippedPrefix := h.stripPrefixFromCommonPrefix(p)
+		resp.CommonPrefixes = append(resp.CommonPrefixes, strippedPrefix)
+	}
 
 	output, err := xml.Marshal(resp)
 	if err != nil {
