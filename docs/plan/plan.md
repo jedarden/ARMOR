@@ -356,7 +356,9 @@ B2's multipart assembly concatenates parts byte-for-byte — there is no opportu
 These B2 S3 API features are out of scope for v1:
 
 - Object tagging (B2 doesn't support it anyway)
-- ACLs beyond bucket-level (B2 limitation)
+- The S3 ACL **API** (`PutObjectAcl`/`GetObjectAcl` — B2 limitation). Not to
+  be confused with ARMOR's own per-credential prefix ACLs, which are
+  implemented (see §Authentication and ADR-012).
 - Filename encryption — filenames are stored in plaintext on B2 (v2 feature)
 - Versioning — B2 bucket versioning is **not enabled** in v1. Without versioning, CopyObject during key rotation overwrites in place and old wrapped DEKs do not persist. If versioning is enabled in a future version, key rotation must expire non-current versions after completion.
 
@@ -446,7 +448,23 @@ These are **ARMOR-specific credentials**, not B2 credentials. ARMOR validates th
 - Multiple clients can share ARMOR with different access keys
 - Access keys can be scoped per-bucket or per-prefix (ARMOR enforces this)
 
-For a single-user deployment (the primary use case), a single static key pair in the config file is sufficient.
+**Named credentials (implemented, previously undocumented):** any number of
+additional credentials can be configured via environment triplets —
+`ARMOR_AUTH_<NAME>_ACCESS_KEY`, `ARMOR_AUTH_<NAME>_SECRET_KEY`, and optional
+`ARMOR_AUTH_<NAME>_ACL` (see `internal/config/config.go
+loadNamedCredentials`). Each is SigV4-verified independently and enforced at
+the router (`CheckACL`), with list operations checked against the `?prefix`
+query param. An empty/absent ACL means full access to the configured bucket.
+
+**Current limitation:** ACLs carry no action verbs — a credential's access to
+a prefix is all-or-nothing (read implies write implies delete). Append-only
+backup writers are therefore not yet expressible, and as of 2026-08-07 all
+production consumers share the single default credential. Both are addressed
+by [ADR-012](../adr/012-authorization-action-verbs-and-consumer-separation.md)
+(Phase 7).
+
+For a single-user deployment (the original primary use case), a single static
+key pair in the config file is sufficient.
 
 ### Metadata Cache
 
@@ -487,8 +505,11 @@ ARMOR is configured exclusively via environment variables. No config files.
 | `ARMOR_PREFIX` | No | (none) | Optional key prefix applied to all S3 operations before they reach B2. Enables multiple ARMOR deployments to share a single bucket without key collisions. Normalized to a single trailing slash with no leading slash (e.g. `kalshi-tape` → `kalshi-tape/`). When unset or empty, no prefix is applied and behavior is identical to previous versions. See ADR-001. |
 | `ARMOR_CF_DOMAIN` | Yes | — | Cloudflare domain CNAME'd to B2 bucket (e.g., `armor-b2.example.com`) |
 | `ARMOR_MEK` | Yes | — | Master encryption key, hex-encoded 32 bytes. Generate with `openssl rand -hex 32`. |
-| `ARMOR_AUTH_ACCESS_KEY` | No | (random on startup) | S3 access key ID for client auth to ARMOR |
-| `ARMOR_AUTH_SECRET_KEY` | No | (random on startup) | S3 secret access key for client auth to ARMOR |
+| `ARMOR_AUTH_ACCESS_KEY` | No | (random on startup) | S3 access key ID for client auth to ARMOR (the default credential) |
+| `ARMOR_AUTH_SECRET_KEY` | No | (random on startup) | S3 secret access key for client auth to ARMOR (the default credential) |
+| `ARMOR_AUTH_<NAME>_ACCESS_KEY` | No | — | Access key ID for an additional named credential. Any number of named credentials may be defined. |
+| `ARMOR_AUTH_<NAME>_SECRET_KEY` | No | — | Secret key for the named credential (required with its access key) |
+| `ARMOR_AUTH_<NAME>_ACL` | No | (full access) | Prefix ACL for the named credential (see `parseACL`). Empty means full access to the configured bucket. Action verbs: ADR-012, Phase 7. |
 | `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size for new uploads (power of 2, ≥4096). Existing files use their own block size from the envelope header. |
 | `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID. Set per cluster for multi-writer deployments. |
 | `ARMOR_CACHE_MAX_ENTRIES` | No | `10000` | Metadata cache max entries |
@@ -908,6 +929,46 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 - [x] **Scheduled DR drill** — **automation built** (`ModeDRDrill`/`runDRDrill` in `internal/restoreverifier`, on-demand `POST /trigger?mode=dr-drill`, and a `-dr-drill-interval` / `VERIFIER_DR_DRILL_INTERVAL` scheduler): runs the `armor-decrypt`-only drill (MEK unwrap → raw B2 fetch → ADR-003-aware decrypt → checksum → application assertion) with the ARMOR read path deliberately excluded, proving the "ARMOR server is gone" recovery path from `docs/disaster-recovery.md`. **Caveat:** the periodic cadence defaults to 0 (disabled) and is not yet set in any deployment manifest, so today the drill is on-demand only — not yet continuously proven on a schedule.
 
 **Boundary:** ARMOR proves restorability of what ARMOR stores. Estate-wide restore verification of non-ARMOR streams (CNPG/barman WAL, Litestream SQLite, restic backup-home, Velero) belongs to DRILL (Disaster Recovery Integrity & Liveness Loop), the standalone restore-proof engine — keep metric naming and bead conventions compatible so DRILL can subsume these results into one estate-wide restorability view.
+
+---
+
+### Phase 7: Authorization Hardening & Consumer Separation
+
+**Goal:** end the shared-master-credential era. Every consumer gets its own
+named credential with an enforced prefix ACL; ACLs gain action verbs so
+backup writers become append-only; authorization decisions become visible in
+logs. Design: [ADR-012](../adr/012-authorization-action-verbs-and-consumer-separation.md).
+
+**Context:** the named-credential + prefix-ACL mechanism is already
+implemented (`loadNamedCredentials`, `CheckACL`) but deployed nowhere and —
+until this phase — documented nowhere. All production consumers share the
+single default credential with full-bucket access. See ADR-012 for the full
+gap analysis, including why `ARMOR_PREFIX` (instance-level) and per-prefix
+MEKs (cryptographic blast radius) are adjacent layers, not substitutes.
+
+#### Implementation tasks
+
+- [ ] **P0 consumer split (zero code):** named credentials + prefix ACLs for
+      every iad-ci consumer (Forgejo, CNPG/barman, restore-verifier, CI
+      cache) via declarative-config env + OpenBao. Converts "any client can
+      destroy everything" into per-prefix blast radius immediately.
+- [ ] **Test instance:** a second ARMOR Deployment (`armor-test`) isolated by
+      `ARMOR_PREFIX=armor-test/` in the existing bucket (ADR-001), throwaway
+      MEK, named-credential matrix — the validation target for everything
+      below, never the production backup path.
+- [ ] **Action verbs** in `ACLEntry` (`{Get, Put, Delete, List}`),
+      backward-compatible `_ACL` parse extension, verb threading through both
+      `CheckACL` call sites; append-only (`Put+List`) becomes the standard
+      backup-writer role.
+- [ ] **Enforcement coverage tests:** CopyObject source-key, DeleteObjects
+      batch body, multipart lifecycle verbs, scoped-credential broad-list
+      denial (pin existing behavior).
+- [ ] **Identity audit logging:** access-key ID + verb + key + allow/deny on
+      the per-request log line (complements ADR-008's error-code
+      observability; never logs secrets).
+- [ ] **Documentation:** README authentication section covering named
+      credentials and verbs (the mechanism's invisibility is itself the
+      defect that triggered this phase).
 
 ---
 
