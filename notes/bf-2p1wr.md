@@ -1,54 +1,200 @@
 # Task bf-2p1wr: Obtain ord-devimprint kubeconfig with write access
 
-## Situation Analysis
+## Summary
 
-### Existing kubeconfigs found:
-1. **`ord-devimprint-observer.kubeconfig`** - Read-only, long-lived SA token, explicitly denies access to secrets
-2. **`ord-devimprint-admin.kubeconfig`** - Admin access, uses OIDC token that expires every ~3 days
+**STATUS: ⛔ BLOCKED - Requires manual intervention through Rackspace Spot UI**
 
-### Current Status
-The admin kubeconfig exists but its authentication has failed:
+This bead cannot be completed from this server due to the authentication requirements of the Rackspace Spot cloudspace-admin credentials. The OIDC authentication flow requires a web browser for OAuth2 authorization code exchange, which is not available in this headless server environment.
 
-1. **OIDC Authentication** (current context: `apexalgo-ord-devimprint-oidc`):
-   - Requires interactive browser-based authentication
-   - Failed with: "could not open the browser" and "authorization error: context deadline exceeded"
-   - This environment is a server without a graphical browser
+---
 
-2. **Static Token Authentication** (context: `apexalgo-ord-devimprint`):
-   - Contains a JWT token that was issued on 2026-07-26
-   - Token has expired (current date: 2026-08-06, ~11 days past issue date)
-   - Returns "Unauthorized" error
+## Situation Analysis (Updated 2026-08-06)
+
+### Existing kubeconfigs tested:
+
+| Kubeconfig | Date | Status | Issue |
+|------------|------|--------|-------|
+| `ord-devimprint-observer.kubeconfig` | Jun 21 | ✅ Working | Read-only, denies secret access |
+| `ord-devimprint-admin.kubeconfig` | Aug 6 | ❌ Expired | OIDC requires browser, static token expired Jul 29 |
+| `ord-devimprint.kubeconfig` | May 4 | ❌ Expired | OIDC requires browser |
+| `ord-devimprint-token.kubeconfig` | Jun 9 | ❌ Expired | "You must be logged in to the server" |
+
+### Admin Kubeconfig Details
+
+The admin kubeconfig contains **two authentication contexts**:
+
+1. **`apexalgo-ord-devimprint-oidc`** (currently active):
+   - Uses `kubectl oidc-login get-token` exec plugin
+   - Requires browser for OAuth2 authorization code flow
+   - Error: `could not open the browser: exec: "xdg-open,x-www-browser,www-browser": executable file not found in $PATH`
+   - Callback URL: `http://localhost:18000/`
+   - Timeout: `authorization error: context deadline exceeded`
+
+2. **`apexalgo-ord-devimprint`** (static token):
+   - JWT token issued: 2026-07-26T13:21:32.782Z
+   - JWT expiration: 2026-07-29 (~3 day validity)
+   - Current date: 2026-08-06 (token expired ~8 days ago)
+   - Payload includes: `group: cloudspace-admin`, `nickname: rackspace`, `email: rackspace@jedarden.com`
+
+### Test Results
+
+```bash
+# Observer works but is read-only
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-observer.kubeconfig version
+# ✅ Client Version: v1.35.3, Server Version: v1.34.9
+
+# Admin fails - OIDC browser requirement
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig get secrets -n devimprint
+# ❌ could not open the browser ... authorization error: context deadline exceeded
+```
+
+---
 
 ## What's Needed
 
-The Rackspace Spot cloudspace-admin OIDC token must be regenerated manually through the Spot UI. This cannot be done from this server because:
+### Manual Intervention Required
 
-1. The OIDC authentication flow requires a web browser for the OAuth2 authorization code flow
-2. The token expires every ~3 days and must be refreshed through the Spot control panel
-3. There is no command-line API to generate new admin tokens without browser interaction
+The Rackspace Spot cloudspace-admin credentials must be regenerated through the Spot web UI. This cannot be automated from this server because:
+
+1. **OAuth2 Requirement**: The OIDC authentication flow uses the authorization code flow with PKCE, requiring:
+   - Interactive user consent in a browser
+   - Callback to localhost:18000 for token exchange
+   - This is a security feature to prevent automated token generation
+
+2. **Token Expiration**: Both OIDC sessions and static JWT tokens expire after ~3 days
+   - OIDC tokens: Session timeout in Rackspace Spot
+   - Static JWT tokens: Hardcoded 3-day expiration in JWT claims
+
+3. **No API Alternative**: Rackspace Spot does not provide an API for generating cloudspace-admin credentials without browser interaction
+
+---
 
 ## Resolution Path
 
-**Manual intervention required:**
+### For Cluster Administrator (Manual Steps)
 
-1. Log into Rackspace Spot console (https://spot.rackspace.com/)
-2. Navigate to the ord-devimprint cloudspace
-3. Access the cloudspace-admin credentials section
-4. Generate a new kubeconfig/OIDC token
-5. Replace or update `/home/coding/.kube/ord-devimprint-admin.kubeconfig` with the new credentials
-6. Verify access with: `kubectl get secrets -n devimprint`
+1. **Access Rackspace Spot Console**
+   - URL: https://spot.rackspace.com/
+   - Navigate to the `ord-devimprint` cloudspace
+   - Access "Credentials" or "Access" section
 
-## Alternative Approaches to Consider
+2. **Generate New kubeconfig**
+   - Select "cloudspace-admin" role
+   - Download kubeconfig or copy token
+   - Choose OIDC or static token format (OIDC is more secure)
 
-1. **Long-lived service account**: Instead of using the expiring OIDC token, create a long-lived ServiceAccount in the devimprint namespace with secret read permissions
-2. **API-based authentication**: If Rackspace Spot provides an API for generating admin credentials, that could be scripted
-3. **Use the observer RBAC as base**: The observer SA already exists; we could extend its permissions to allow secret reading in specific namespaces
+3. **Update Server Kubeconfig**
+   ```bash
+   # On the server (this machine), replace the kubeconfig:
+   vim /home/coding/.kube/ord-devimprint-admin.kubeconfig
+   # Paste new kubeconfig content
+   
+   chmod 600 /home/coding/.kube/ord-devimprint-admin.kubeconfig
+   ```
+
+4. **Verify Access**
+   ```bash
+   # Test basic connectivity
+   kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig version
+   
+   # Test secret access (acceptance criteria)
+   kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig get secrets -n devimprint
+   
+   # List armor-writer secret specifically
+   kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig \
+     get secret armor-writer -n devimprint
+   ```
+
+5. **Close This Bead**
+   ```bash
+   # After verification, close the bead:
+   bf close bf-2p1wr
+   ```
+
+---
+
+## Alternative Approaches (Long-term Solutions)
+
+### Option 1: Create Long-lived ServiceAccount
+Instead of using the expiring cloudspace-admin OIDC token, create a dedicated ServiceAccount with secret read permissions:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: armor-secret-reader
+  namespace: devimprint
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: armor-secret-reader
+  namespace: devimprint
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+  resourceNames: ["armor-writer"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: armor-secret-reader
+  namespace: devimprint
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: armor-secret-reader
+subjects:
+- kind: ServiceAccount
+  name: armor-secret-reader
+  namespace: devimprint
+```
+
+Then create a long-lived token for this ServiceAccount (won't expire).
+
+**Pros**: No expiration, least privilege, no browser needed  
+**Cons**: Requires admin access to create, token must be stored securely
+
+### Option 2: Use ExternalSecrets Operator
+If the `armor-writer` secret needs to be accessed regularly, consider using ExternalSecrets to sync it to a location where it can be accessed without admin privileges.
+
+**Pros**: No admin kubeconfig needed, automated sync  
+**Cons**: Requires setup of ExternalSecrets, adds complexity
+
+### Option 3: Rackspace Spot API for Credential Generation
+Investigate if Rackspace Spot provides an API for generating cloudspace-admin credentials that could be scripted.
+
+**Pros**: Could be automated  
+**Cons**: May not exist due to security requirements, would still need credentials to call API
+
+---
 
 ## Files Referenced
-- `/home/coding/.kube/ord-devimprint-admin.kubeconfig` - Admin kubeconfig (expired)
-- `/home/coding/.kube/ord-devimprint-observer.kubeconfig` - Observer kubeconfig (read-only, no secrets)
-- `/home/coding/.kube/ord-devimprint.kubeconfig` - Another kubeconfig file (purpose unknown, dated May 4)
-- `/home/coding/.kube/ord-devimprint-token.kubeconfig` - Token-based kubeconfig (dated Jun 9)
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `/home/coding/.kube/ord-devimprint-admin.kubeconfig` | Admin credentials | Expired, needs regeneration |
+| `/home/coding/.kube/ord-devimprint-observer.kubeconfig` | Observer credentials | Working, read-only |
+| `/home/coding/.kube/ord-devimprint.kubeconfig` | Alternative admin | Expired |
+| `/home/coding/.kube/ord-devimprint-token.kubeconfig` | Token-based | Expired |
+
+---
 
 ## Context
-This bead (bf-2p1wr) is a dependency for parent task bf-2p1wp, which needs to retrieve the `armor-writer` secret from the devimprint namespace.
+
+- **Parent Task**: bf-2p1wp (needs to retrieve `armor-writer` secret from devimprint namespace)
+- **Blocker**: bf-2p1wr blocks parent task bf-2p1wp
+- **Acceptance Criteria**: Successfully run `kubectl get secrets -n devimprint` with write-access kubeconfig
+- **Security**: Cloudspace-admin OIDC tokens expire every ~3 days as a security measure
+- **Environment**: Headless server (no browser, no GUI)
+
+---
+
+## Notes
+
+- The observer kubeconfig uses a **long-lived ServiceAccount token** and does not expire
+- The admin kubeconfig uses **OIDC tokens** which expire every ~3 days from Rackspace Spot
+- Both kubeconfigs are managed via GitOps through `declarative-config`
+- Cluster is accessed via Tailscale operator at `kubectl-proxy-ord-devimprint:8001` (read-only proxy)
+- When updating the kubeconfig, ensure permissions are `600` for security
