@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -347,6 +348,83 @@ func TestMultipartFullCycleByteVerification(t *testing.T) {
 	_ = rb
 }
 
+// TestMultipartLonePartByteVerification proves the ADR-005 single-part
+// exemption is not just accepted but CORRECT: a multipart upload consisting of
+// one non-block-aligned part must decrypt byte-for-byte, including across
+// ranges and in the partial trailing block.
+//
+// This is the barman-cloud-backup shape. A base backup of a small Postgres
+// fits in a single flush, so barman emits exactly one part sized by the data
+// (11,917,312 bytes live on commitgraph-db, 55,296 bytes past a block
+// boundary). Part 1 starts at block 0 for any P, so nothing about the CTR
+// geometry or the absolute HMAC indices depends on that size — this test is
+// what makes that argument checkable rather than asserted.
+func TestMultipartLonePartByteVerification(t *testing.T) {
+	_, _, h := recordingTestSetup(t)
+	bucket, key := "test-bucket", "lone-part-cycle.tar"
+
+	const block = 65536
+	const size = 11_917_312 // the exact size that failed live; % 65536 == 55296
+	if size%block == 0 {
+		t.Fatal("fixture must be non-block-aligned to exercise the exemption")
+	}
+	plaintext := make([]byte, size)
+	for i := range plaintext {
+		plaintext[i] = byte(i%251) ^ byte(i>>11)
+	}
+
+	uploadID := initiateMultipart(t, h, bucket, key)
+	etag := uploadPart(t, h, bucket, key, uploadID, 1, plaintext)
+	completeMultipart(t, h, bucket, key, uploadID, []string{etag})
+
+	// Full GET: byte-for-byte.
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET after complete failed: status %d: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Equal(w.Body.Bytes(), plaintext) {
+		t.Fatalf("full GET mismatch: got %d bytes, want %d; first divergence at %d",
+			w.Body.Len(), len(plaintext), firstDivergence(w.Body.Bytes(), plaintext))
+	}
+
+	// Range GET landing inside the PARTIAL trailing block — the region that only
+	// exists because the part is non-aligned.
+	lo := (size/block)*block + 17
+	hi := size - 1
+	req = httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", lo, hi))
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("partial-trailing-block range GET failed: status %d: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Equal(w.Body.Bytes(), plaintext[lo:hi+1]) {
+		t.Fatalf("partial-trailing-block range GET mismatch (bytes=%d-%d)", lo, hi)
+	}
+
+	// Suffix range — the footer access pattern.
+	req = httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+	req.Header.Set("Range", "bytes=-1000")
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("suffix range GET failed: status %d", w.Code)
+	}
+	if !bytes.Equal(w.Body.Bytes(), plaintext[len(plaintext)-1000:]) {
+		t.Fatal("suffix range GET mismatch")
+	}
+
+	// HEAD reports plaintext length.
+	req = httptest.NewRequest(http.MethodHead, "/"+bucket+"/"+key, nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if cl := w.Header().Get("Content-Length"); cl != strconv.Itoa(size) {
+		t.Fatalf("HEAD Content-Length = %s, want %d", cl, size)
+	}
+}
+
 // TestMultipartSuspectPatterns documents the ADR-005 behavior for the upload
 // patterns real SDKs use by default (docs/upload-retrieval-test-matrix.md
 // U6/U7/U8). ADR-005 reverses the old ADR-003 §4 interim behavior:
@@ -355,8 +433,10 @@ func TestMultipartFullCycleByteVerification(t *testing.T) {
 //	    function of part number alone, not arrival order).
 //	U7 part retry after network failure     — now IDEMPOTENT for same-size
 //	    retries (CTR is deterministic; same N → same offset → same ciphertext).
-//	U8 non-block-aligned part               — still REJECTED (the (N-1)*P/
-//	    BlockSize offset formula requires every part on a block boundary).
+//	U8 non-block-aligned part               — REJECTED only where alignment does
+//	    work: a regular part that another part is placed after. A lone part 1
+//	    (single-part upload) and a short final part are exempt, since nothing is
+//	    positioned after them — see TestMultipartLonePartByteVerification.
 //
 // The contradiction cases (a part larger than P, two short parts, a retry with
 // a different size) poison the upload — those are covered in
@@ -456,29 +536,109 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 		uploadPart(t, h, bucket, key, uploadID, 1, part1Retry) // fatals if not 200
 	})
 
-	t.Run("U8_non_block_aligned_part_rejected", func(t *testing.T) {
+	t.Run("U8_non_block_aligned_regular_part_rejected", func(t *testing.T) {
+		// A non-aligned part that is NEITHER part 1 nor shorter than P is a
+		// regular part with another part placed after it — still rejected, since
+		// its size would misalign every subsequent part's HMAC index.
 		_, _, h := recordingTestSetup(t)
-		bucket, key := "test-bucket", "unaligned-test.dat"
+		bucket, key := "test-bucket", "unaligned-regular.dat"
 
 		uploadID := initiateMultipart(t, h, bucket, key)
 
-		// A part whose size is not a multiple of the block size. 10,000,000 %
-		// 65536 = 16976 (not aligned) — still rejected under ADR-005 rule 1.
-		part := make([]byte, 10_000_000)
-		for i := range part {
-			part[i] = 0xAA
+		// Part 1 pins an aligned P of 5 MiB.
+		part1 := make([]byte, 5*1024*1024)
+		for i := range part1 {
+			part1[i] = 0xAA
 		}
-		url := fmt.Sprintf("/%s/%s?partNumber=1&uploadId=%s", bucket, key, uploadID)
-		req := httptest.NewRequest(http.MethodPut, url, bytes.NewReader(part))
-		w := httptest.NewRecorder()
-		h.HandleRoot(w, req)
+		uploadPart(t, h, bucket, key, uploadID, 1, part1)
 
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400 BadRequest for non-block-aligned part, got %d: %s", w.Code, w.Body.String())
+		// Part 2 is LARGER than P and non-aligned (10,000,000 % 65536 = 16976).
+		part2 := make([]byte, 10_000_000)
+		for i := range part2 {
+			part2[i] = 0xBB
 		}
-		if !bytes.Contains(w.Body.Bytes(), []byte("not a multiple of the block size")) {
-			t.Errorf("Expected error message about block alignment, got: %s", w.Body.String())
+		code, _, body := uploadPartResponse(t, h, bucket, key, uploadID, 2, part2)
+		if code != http.StatusBadRequest {
+			t.Errorf("Expected 400 for non-block-aligned regular part, got %d: %s", code, body)
 		}
+		if !strings.Contains(body, "not a multiple of the block size") {
+			t.Errorf("Expected block-alignment error, got: %s", body)
+		}
+	})
+
+	t.Run("U8_lone_non_aligned_part_accepted_and_completes", func(t *testing.T) {
+		// ADR-005 exemption (b): part 1 always starts at block 0, so when it is
+		// the ONLY part its size is unconstrained. This is the shape
+		// barman-cloud-backup produces for a small Postgres — the entire base
+		// backup fits in one flush — and it used to fail with InvalidPartSize,
+		// making such databases unbackable through ARMOR.
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "lone-unaligned.dat"
+
+		uploadID := initiateMultipart(t, h, bucket, key)
+
+		// 11,917,312 is the exact part size that failed live on commitgraph-db:
+		// 11917312 % 65536 = 55296.
+		part := make([]byte, 11_917_312)
+		for i := range part {
+			part[i] = byte(i % 251)
+		}
+		if len(part)%65536 == 0 {
+			t.Fatal("test fixture must be non-block-aligned to be meaningful")
+		}
+		etag := uploadPart(t, h, bucket, key, uploadID, 1, part)
+		completeMultipart(t, h, bucket, key, uploadID, []string{etag})
+	})
+
+	t.Run("U8_second_part_after_non_aligned_part1_rejected", func(t *testing.T) {
+		// The enforcement half of exemption (b): a non-aligned part 1 makes the
+		// upload single-part-only, because no later part could be placed on a
+		// block boundary. Adding one must fail loudly and poison the upload.
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "unaligned-then-second.dat"
+
+		uploadID := initiateMultipart(t, h, bucket, key)
+
+		part1 := make([]byte, 11_917_312) // non-aligned
+		for i := range part1 {
+			part1[i] = 0xAA
+		}
+		uploadPart(t, h, bucket, key, uploadID, 1, part1)
+
+		part2 := make([]byte, 5*1024*1024) // aligned, but irrelevant now
+		for i := range part2 {
+			part2[i] = 0xBB
+		}
+		code, _, body := uploadPartResponse(t, h, bucket, key, uploadID, 2, part2)
+		if code != http.StatusBadRequest {
+			t.Errorf("Expected 400 for a second part after a non-aligned part 1, got %d: %s", code, body)
+		}
+		if !strings.Contains(body, "only that single part") {
+			t.Errorf("Expected single-part-only error, got: %s", body)
+		}
+	})
+
+	t.Run("U8_short_final_part_may_be_non_aligned", func(t *testing.T) {
+		// ADR-005 exemption (a): nothing is placed after the presumed-final
+		// part, so a partial trailing block is ordinary — exactly what every
+		// non-multipart PUT of arbitrary size already produces.
+		_, _, h := recordingTestSetup(t)
+		bucket, key := "test-bucket", "short-final-unaligned.dat"
+
+		uploadID := initiateMultipart(t, h, bucket, key)
+
+		part1 := make([]byte, 5*1024*1024) // aligned, pins P
+		for i := range part1 {
+			part1[i] = 0xAA
+		}
+		etag1 := uploadPart(t, h, bucket, key, uploadID, 1, part1)
+
+		part2 := make([]byte, 1_000_003) // < P and not block-aligned
+		for i := range part2 {
+			part2[i] = 0xBB
+		}
+		etag2 := uploadPart(t, h, bucket, key, uploadID, 2, part2)
+		completeMultipart(t, h, bucket, key, uploadID, []string{etag1, etag2})
 	})
 
 	t.Run("U8_zero_byte_first_part_rejected", func(t *testing.T) {
