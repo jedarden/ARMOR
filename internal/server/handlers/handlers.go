@@ -2096,10 +2096,27 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 // loudly so any pattern ARMOR cannot encrypt correctly fails instead of
 // producing corrupt ciphertext:
 //
-//   - P is pinned from part NUMBER 1 (ADR-005, amended 2026-07-19) and must be
-//     block-aligned (InvalidPartSize). A part numbered >1 arriving before part 1
-//     has pinned P is deferred with a retryable 503 SlowDown (nothing stored);
-//     standard clients retry it after part 1 arrives.
+//   - P is pinned from part NUMBER 1 (ADR-005, amended 2026-07-19). A part
+//     numbered >1 arriving before part 1 has pinned P is deferred with a
+//     retryable 503 SlowDown (nothing stored); standard clients retry it after
+//     part 1 arrives.
+//   - Block alignment is required only of parts that another part is placed
+//     AFTER, because alignment exists solely to keep the (N-1)*P/BlockSize
+//     offset on a block boundary. Two kinds of part are therefore exempt, and
+//     rejecting them was a gap between rule 1 and rule 3:
+//     (a) a part smaller than an already-pinned P — the presumed-final part.
+//     Nothing is placed after it, and a partial trailing block is exactly what
+//     every ordinary non-multipart PUT of arbitrary size already produces.
+//     (b) part 1 itself, which always starts at block 0 — (1-1)*P/BlockSize is
+//     0 for any P — so its own ciphertext and absolute HMAC indices are correct
+//     at any size. A part 1 that turns out to be the ONLY part (a single-part
+//     multipart upload) thus needs no alignment at all. We cannot know at
+//     UploadPart time whether more parts follow, so a non-aligned part 1 is
+//     accepted and pins a non-aligned P, which marks the upload single-part-
+//     only: any later part is rejected and poisons it, and Complete backstops
+//     the same rule. Before this, an upload whose entire payload fit in one
+//     part could never complete — barman-cloud-backup of a small Postgres
+//     produces exactly that, and every such backup failed with InvalidPartSize.
 //   - A part equal to P is a regular part; a part smaller than P is presumed final.
 //   - A part larger than P, or a second distinct short (presumed-final) part,
 //     contradicts P: the offending UploadPart is rejected AND the upload id is
@@ -2179,6 +2196,20 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
+	// A non-block-aligned P can only have come from a part 1 that was the whole
+	// payload (see the alignment check below), which makes this upload
+	// single-part-only: no later part can be given a correct
+	// (N-1)*P/BlockSize offset, because that is not a block boundary. Reject
+	// and poison before reading the body, so a large deferred part costs no
+	// memory. This is the enforcement half of exemption (b) above.
+	if partNumber != 1 && state.PartSize%int64(state.BlockSize) != 0 {
+		reason := fmt.Sprintf("part 1 pinned a non-block-aligned uniform part size (%d), valid only for a single-part upload; part %d cannot be placed on a block boundary", state.PartSize, partNumber)
+		h.poisonUpload(ctx, manager, state, reason)
+		h.writeError(w, "InvalidPart",
+			fmt.Sprintf("Part 1 of this upload has size %d, which is not a multiple of the block size (%d bytes), so this upload may contain only that single part. Part %d cannot be added. %s", state.PartSize, state.BlockSize, partNumber, multipartRetryMessage), 400)
+		return
+	}
+
 	// Read plaintext part
 	plaintext, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -2187,11 +2218,21 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	}
 	plaintextSize := int64(len(plaintext))
 
-	// ADR-005 rule 1 / U8: every part must be block-aligned. The offset formula
-	// (N-1)*P/BlockSize requires P on a block boundary, and a non-aligned part
-	// would misalign every subsequent part's HMAC index. (0 bytes is trivially
-	// aligned but is rejected below — it cannot pin P and is not a useful part.)
-	if plaintextSize > 0 && plaintextSize%int64(state.BlockSize) != 0 {
+	// ADR-005 rule 1 / U8: block alignment is required only where it does work —
+	// of a part that another part is placed after. The offset formula
+	// (N-1)*P/BlockSize needs P on a block boundary, and a non-aligned regular
+	// part would misalign every subsequent part's HMAC index.
+	//
+	// Exempt (see the rule list above the function):
+	//   - pinningP: part 1, which always starts at block 0 whatever its size. If
+	//     it is non-aligned the upload becomes single-part-only, enforced by the
+	//     guard above and backstopped at Complete.
+	//   - presumedFinal: a part smaller than an already-pinned P. Nothing is
+	//     placed after it; its partial trailing block is ordinary.
+	// (0 bytes is trivially aligned but is rejected below — it cannot pin P.)
+	pinningP := state.PartSize == 0
+	presumedFinal := state.PartSize != 0 && plaintextSize < state.PartSize
+	if plaintextSize > 0 && !pinningP && !presumedFinal && plaintextSize%int64(state.BlockSize) != 0 {
 		h.writeError(w, "InvalidPartSize",
 			fmt.Sprintf("Part size %d is not a multiple of the block size (%d bytes). ARMOR's uniform-part-size contract (ADR-005) requires block-aligned parts. Use a part size that's a multiple of %d (e.g., 5,242,880 for 5MiB, 16,777,216 for 16MiB).", plaintextSize, state.BlockSize, state.BlockSize), 400)
 		return
@@ -2464,6 +2505,19 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	if len(completeReq.Parts) > 1 && P < multipartMinPartSize {
 		h.writeError(w, "InvalidPartSize",
 			fmt.Sprintf("Uniform part size %d is smaller than the 5 MiB minimum for a multipart object (ADR-005). Use a part size of at least %d bytes. %s", P, multipartMinPartSize, multipartRetryMessage), 400)
+		return
+	}
+	// Backstop for the single-part alignment exemption. A non-block-aligned P is
+	// valid ONLY when the upload has exactly one part: part 1 starts at block 0,
+	// so its size is unconstrained, but with a second part the
+	// (N-1)*P/BlockSize offsets stop landing on block boundaries and the
+	// assembled object would decrypt to garbage. UploadPart already rejects and
+	// poisons a part >1 on such an upload; this catches a violating state that
+	// reached Complete anyway (e.g. a best-effort poison save that dropped),
+	// before anything is assembled or stored.
+	if len(completeReq.Parts) > 1 && P%int64(state.BlockSize) != 0 {
+		h.writeError(w, "InvalidPartSize",
+			fmt.Sprintf("Uniform part size %d is not a multiple of the block size (%d bytes), which is only valid for a single-part upload, but this upload has %d parts. %s", P, state.BlockSize, len(completeReq.Parts), multipartRetryMessage), 400)
 		return
 	}
 
