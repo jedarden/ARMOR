@@ -1071,7 +1071,7 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 		"compressed": armorMeta.Compressed,
 	}).Debug("share full object: compression status from metadata")
 
-	// Track if we've checked compression from decrypted data
+	// Track whether compression has been checked from first block
 	checkedCompression := false
 
 	// Calculate offsets
