@@ -113,6 +113,7 @@ type Config struct {
 
 	// Secondary backend configuration (ADR-006)
 	// When set, enables async replication to a secondary backend
+	SecondaryBackend string // Backend identifier (e.g., "filesystem", "s3", "wasabi")
 	SecondaryBackendType string // Type: "filesystem" (future: "s3", "wasabi")
 	SecondaryBackendPath string // Path for filesystem backend (required when Type=filesystem)
 }
