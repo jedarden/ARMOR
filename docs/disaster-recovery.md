@@ -345,6 +345,13 @@ For a more thorough validation, use the offline decrypt CLI to verify a few obje
 go build -o armor-decrypt ./cmd/armor-decrypt
 
 # Decrypt a specific object from B2
+# B2 reads REQUIRE these four (AWS_* names are ignored) — see
+# "Offline Decryption Without ARMOR" for the full, verified procedure.
+export ARMOR_B2_ACCESS_KEY_ID=<b2 key id>
+export ARMOR_B2_SECRET_ACCESS_KEY=<b2 application key>
+export ARMOR_B2_REGION=us-west-002
+export ARMOR_B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
+
 armor-decrypt \
   -mek $(cat ~/mek-recovered.hex) \
   -input b2://your-bucket/data/sensor-readings.parquet \
@@ -378,6 +385,104 @@ go test -v -tags=integration ./...
 ```
 
 ---
+
+## Offline Decryption Without ARMOR (verified 2026-08-08)
+
+The fastest recovery path does **not** involve redeploying ARMOR. `armor-decrypt`
+reads objects straight from B2 and decrypts them locally, needing only the MEK,
+B2 credentials, and the binary. Use this when you need data back now, or when
+ARMOR itself is what is broken.
+
+> The `armor-decrypt` examples elsewhere in this runbook show only `-mek` and
+> `-input`. **That is not sufficient** — the tool also requires four B2
+> environment variables, and it ignores the standard `AWS_*` names. Following
+> those examples literally fails with
+> `B2 credentials not set: set ARMOR_B2_REGION, ARMOR_B2_ENDPOINT, ARMOR_B2_ACCESS_KEY_ID, ARMOR_B2_SECRET_ACCESS_KEY`.
+
+### Procedure (executed end to end, not theoretical)
+
+```bash
+go build -o armor-decrypt ./cmd/armor-decrypt
+
+# MEK — take it from escrow, NOT from the cluster you are recovering.
+export ARMOR_MEK=$(vault kv get -field=MASTER_ENCRYPTION_KEY \
+                     secret/rs-manager/<cluster>/armor)
+
+# B2 credentials. These names are mandatory; AWS_* is ignored.
+export ARMOR_B2_ACCESS_KEY_ID=<b2 key id>
+export ARMOR_B2_SECRET_ACCESS_KEY=<b2 application key>
+export ARMOR_B2_REGION=us-west-002
+export ARMOR_B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
+
+./armor-decrypt -v \
+  -input  b2://<bucket>/<key> \
+  -output /tmp/recovered.bin
+```
+
+**If you do not know the region or endpoint**, B2 will tell you — they are not
+recorded in the credential store, which holds only `key_id` and
+`application_key`:
+
+```bash
+curl -s -u "$KEY_ID:$APP_KEY" \
+  https://api.backblazeb2.com/b2api/v3/b2_authorize_account \
+  | jq -r '.apiInfo.storageApi | "endpoint=\(.s3ApiUrl)  bucket=\(.bucketName)"'
+```
+
+### Expected output
+
+```
+Loaded MEK from env
+Reading from B2: <bucket>/<key>
+ARMOR version: 1, Block size: 65536, Plaintext size: 12225178
+Successfully unwrapped DEK
+Read 12225178 encrypted bytes and 187 HMAC entries
+Verified plaintext SHA-256: 5328674abb1558b8…
+Decryption successful
+```
+
+Every object carries its own wrapped DEK, IV, block size, plaintext size and
+plaintext SHA-256 as S3 object metadata, plus per-block HMACs — so decryption is
+self-verifying. No external manifest is required for a single object.
+
+### Verification performed
+
+Run on a host outside the protected cluster, with the MEK read from a
+*different* cluster's secret store:
+
+- 12,225,178-byte object decrypted in **3 seconds**, plaintext SHA-256 verified
+- Output was a valid gzip tarball; `git fsck --connectivity-only` passed
+- Recovered repository HEAD matched live production **exactly** (`af0e37cbac8d`)
+- MEK in escrow confirmed identical to the live cluster's by SHA-256 comparison
+
+### Two network paths — know which one you are on
+
+| Path | Throughput (measured, 154 MB object) | Egress cost |
+|---|---|---|
+| Cloudflare (`ARMOR_CF_DOMAIN`, e.g. `b2-us-west-002.ardenone.com`) | **~7.9 MB/s** | **free** (Bandwidth Alliance) |
+| Direct B2 S3 (`ARMOR_B2_ENDPOINT`) | **~38 MB/s** | billed |
+
+The ARMOR *service* reads via Cloudflare and falls back to direct S3 only when
+`ARMOR_CF_DOMAIN` is empty (`internal/backend/b2.go`, `GetRangeWithHeaders`).
+
+**`armor-decrypt` has no Cloudflare path.** It builds an S3 client from
+`ARMOR_B2_ENDPOINT` and nothing else, so offline recovery always uses the
+**billed** endpoint. That is a deliberate trade to accept in an emergency — at
+B2's rate a full multi-GB restore costs cents — but it is worth knowing you are
+spending egress, and it is a gap worth closing if offline restores become
+routine. The two are not trivially interchangeable: the CF domain fronts B2's
+*native* download API (`/file/<bucket>/<key>`) with a different auth scheme, not
+the S3 API.
+
+### Why the service is slower than either raw path
+
+The CF read path issues a **ranged GET per 64 KiB block**
+(`bytes=<off>-<off+len-1>`), and those requests are not pipelined. Against a
+cross-country round trip (measured: 74 ms TCP connect to `us-west-002`) that
+caps throughput near `65536 / RTT` — around 0.9 MB/s serial, ~1.5 MB/s observed.
+So the ARMOR service reads at roughly **1/5th** of the Cloudflare path's own
+capacity. Restoring through the service is therefore the slowest of the three
+options; `armor-decrypt` is faster precisely because it bypasses that logic.
 
 ## Key Rotation Failure Recovery
 
@@ -688,12 +793,18 @@ curl -X POST http://localhost:9001/admin/key/rotate \
 go build -o armor-decrypt ./cmd/armor-decrypt
 
 # Decrypt from B2
+# B2 reads REQUIRE these four; the tool ignores AWS_* names entirely.
+export ARMOR_B2_ACCESS_KEY_ID=<b2 key id>
+export ARMOR_B2_SECRET_ACCESS_KEY=<b2 application key>
+export ARMOR_B2_REGION=us-west-002
+export ARMOR_B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
+
 armor-decrypt \
   -mek $(cat mek-backup.hex) \
   -input b2://bucket/object-key \
   -output recovered-file.bin
 
-# Decrypt from local file with wrapped DEK
+# Decrypt from local file with wrapped DEK (no B2 vars needed)
 armor-decrypt \
   -mek $(cat mek-backup.hex) \
   -input encrypted.bin \
