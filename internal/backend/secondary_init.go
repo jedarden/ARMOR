@@ -2,6 +2,7 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"os"
 )
@@ -85,6 +86,64 @@ func InitFilesystemBackend(cfg BackendConfig) (Backend, error) {
 	// Path is validated as an existing directory; NewFSBackend's MkdirAll is a
 	// no-op here but keeps the constructor's invariants intact.
 	return NewFSBackend(FSConfig{BasePath: cfg.Path})
+}
+
+// InitB2Backend initializes a B2 backend from a parsed BackendConfig
+// (Type="b2", Bucket, Region, Endpoint, AccessKeyID, SecretKey).
+//
+// It first validates the config structurally via validateB2Config (pure — no
+// network or SDK calls), then maps the B2 fields onto a B2Config and hands it
+// to NewB2Backend, which loads the static credentials and configures the S3
+// client against the target endpoint.
+//
+// Unlike InitFilesystemBackend, this initializer takes a context.Context. ctx
+// is required because NewB2Backend passes it to config.LoadDefaultConfig, which
+// the AWS SDK uses for the config and credential load (and which Child 4 will
+// use for a live connection check); callers should pass the request/bootstrap
+// context they want construction — and its cancellation — bound to.
+// InitFilesystemBackend needs no ctx because NewFSBackend performs only
+// synchronous local filesystem work with no SDK call to honor a deadline
+// against, so there is nothing to thread a context through.
+//
+// The Cloudflare egress domain (B2Config.CFDomain) is intentionally left
+// empty: a secondary replication target downloads objects for verification
+// directly rather than via the free-egress CDN (see the BackendConfig docs).
+//
+// cfg.Bucket is validated by validateB2Config but is not copied onto B2Config:
+// the Backend interface is bucket-agnostic (every call takes its bucket), so
+// the secondary target's single fixed bucket stays in BackendConfig for the
+// replication caller to pass per operation.
+//
+// It returns the initialized backend on success, or an error if:
+//   - the type is non-empty and not "b2" (programming error),
+//   - a required B2 field is missing (returned as-is from validateB2Config),
+//   - NewB2Backend fails to construct the S3 client.
+func InitB2Backend(ctx context.Context, cfg BackendConfig) (Backend, error) {
+	// Defensive type check: a non-empty type that isn't b2 is a programming
+	// error from the dispatcher. An empty type is allowed so the function can
+	// be called with only the B2 fields, mirroring InitFilesystemBackend.
+	if cfg.Type != "" && cfg.Type != "b2" {
+		return nil, fmt.Errorf("B2 backend requires type %q, got %q", "b2", cfg.Type)
+	}
+
+	// Structural validation (pure, no I/O) — fail fast on a misconfigured
+	// target before NewB2Backend's credential load surfaces an opaque SDK error.
+	if err := validateB2Config(cfg); err != nil {
+		return nil, err
+	}
+
+	// B2Config carries no bucket (the interface is per-call); only the
+	// connection parameters map across. CFDomain is left empty by design.
+	b2Cfg := B2Config{
+		Region:      cfg.Region,
+		Endpoint:    cfg.Endpoint,
+		AccessKeyID: cfg.AccessKeyID,
+		SecretKey:   cfg.SecretKey,
+	}
+
+	// NewB2Backend returns *B2Backend, which already satisfies the Backend
+	// interface, so it can be returned directly.
+	return NewB2Backend(ctx, b2Cfg)
 }
 
 // validateB2Config validates that a BackendConfig carries every field a B2
