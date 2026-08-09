@@ -406,6 +406,12 @@ func (s *Server) Handler() http.Handler {
 		h.WithManifest(&manifestRecorder{idx: s.manifest, writer: s.manifestWriter})
 	}
 
+	// Wire up secondary backend for async replication if configured (ADR-006).
+	// When unset, secondaryBackend is nil and replication is a no-op.
+	if s.secondaryBackend != nil {
+		h.WithSecondaryBackend(s.secondaryBackend)
+	}
+
 	// Bucket operations
 	mux.HandleFunc("/", s.wrapHandler(h.HandleRoot))
 

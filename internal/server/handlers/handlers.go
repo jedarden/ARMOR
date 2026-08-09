@@ -66,14 +66,15 @@ type ManifestRecorder interface {
 
 // Handlers contains all S3 operation handlers.
 type Handlers struct {
-	config      *config.Config
-	backend     backend.Backend
-	cache       *backend.MetadataCache
-	footerCache *backend.FooterCache
-	listCache   *backend.ListCache
-	keyManager  *keymanager.KeyManager
-	provenance  ProvenanceRecorder
-	manifest    ManifestRecorder
+	config           *config.Config
+	backend          backend.Backend
+	secondaryBackend backend.Backend // Secondary backend for async replication (ADR-006); nil when unset (no-op)
+	cache            *backend.MetadataCache
+	footerCache      *backend.FooterCache
+	listCache        *backend.ListCache
+	keyManager       *keymanager.KeyManager
+	provenance       ProvenanceRecorder
+	manifest         ManifestRecorder
 
 	// multipartLocks serializes per-upload state updates. ADR-005 removes the
 	// sequential-only rejection, so parts of one upload may now arrive
@@ -115,6 +116,17 @@ func (h *Handlers) WithProvenance(p ProvenanceRecorder) {
 // delta ops for async B2 persistence.
 func (h *Handlers) WithManifest(m ManifestRecorder) {
 	h.manifest = m
+}
+
+// WithSecondaryBackend wires an optional secondary backend into the handlers
+// for async replication (ADR-006). When ARMOR_SECONDARY_BACKEND_TYPE is unset
+// the server passes nil and this method is never called, leaving
+// secondaryBackend nil and replication a complete no-op — no handler touches
+// the secondary backend unless a non-nil one is wired in. The backend is
+// constructed once by the server from configuration and injected here, the
+// same pattern used for the primary backend in New.
+func (h *Handlers) WithSecondaryBackend(be backend.Backend) {
+	h.secondaryBackend = be
 }
 
 // HandleRoot routes S3 operations based on the request.
