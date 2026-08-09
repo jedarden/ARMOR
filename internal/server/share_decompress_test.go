@@ -304,6 +304,15 @@ func TestShareGET_CompressionBehavior(t *testing.T) {
 				t.Fatalf("Failed to read response body: %v", err)
 			}
 
+			// Verify response is non-empty — an empty body means the GET
+			// produced nothing (object retrieval failed silently or
+			// decompression yielded no output). The equality checks below
+			// only catch a wrong body, not a missing one, so guard it here.
+			if len(retrievedData) == 0 {
+				t.Fatalf("%s: expected non-empty response body after decompression, got 0 bytes",
+					tc.description)
+			}
+
 			// Verify retrieved data matches original (before compression)
 			if !bytes.Equal(retrievedData, tc.data) {
 				t.Errorf("%s: data mismatch.\nGot: %q (%d bytes)\nWant: %q (%d bytes)",
