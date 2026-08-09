@@ -213,6 +213,27 @@ func TestShareGET_CompressionBehavior(t *testing.T) {
 			description:       "compressed binary object - should decompress",
 		},
 		{
+			name:              "compressed_highly_repetitive_large",
+			data:              bytes.Repeat([]byte("ARMOR compresses well. "), 10*1024), // ~250KB highly repetitive, compresses to a tiny fraction
+			compressed:        true,
+			wantDecompression: true,
+			description:       "compressed large highly-repetitive object (excellent compression ratio) - should decompress",
+		},
+		{
+			name: "compressed_structured_json",
+			data: bytes.Repeat([]byte(`{"id":12345,"name":"armor-test","payload":"compressed structured data compresses well"}`), 256), // ~21KB of repeated JSON records
+			compressed:        true,
+			wantDecompression: true,
+			description:       "compressed structured JSON object (repeated records compress efficiently) - should decompress",
+		},
+		{
+			name: "compressed_repeated_log_lines",
+			data: bytes.Repeat([]byte("2026-08-09T12:00:00Z INFO armor request handled status=200 bytes=1024 duration=5ms\n"), 3*1024), // ~250KB of repeated timestamped log entries, compresses extremely well
+			compressed:        true,
+			wantDecompression: true,
+			description:       "compressed repeated log entries (timestamped log data compresses efficiently) - should decompress",
+		},
+		{
 			name:              "legacy_object_no_compression_flag",
 			data:              []byte("Legacy object without compression metadata flag."),
 			compressed:        false, // legacy objects don't have compression flag set
@@ -475,11 +496,22 @@ func TestShareGET_CompressionDetectionFromFirstBlock(t *testing.T) {
 	tmpDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
 	cfg := loadTestConfig(t, tmpDir)
-	srv, err := New(cfg)
+	srv, err := NewWithBackend(cfg, fsBackend)
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
 
 	// Create data that will be compressed
 	originalData := []byte("Repeat data pattern for compression. " +
@@ -527,11 +559,22 @@ func TestShareGET_RangeRequestWithCompression(t *testing.T) {
 	tmpDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
 	cfg := loadTestConfig(t, tmpDir)
-	srv, err := New(cfg)
+	srv, err := NewWithBackend(cfg, fsBackend)
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
 
 	// Create and compress test data
 	originalData := generateRandomData(200 * 1024) // 200KB
