@@ -96,6 +96,13 @@ func InitFilesystemBackend(cfg BackendConfig) (Backend, error) {
 // to NewB2Backend, which loads the static credentials and configures the S3
 // client against the target endpoint.
 //
+// NewB2Backend is lazy — it makes no network call, so construction succeeds for
+// any syntactically valid config regardless of whether the endpoint is
+// reachable or the credentials authenticate. To surface those failures at boot
+// rather than on the first replication, InitB2Backend runs an explicit
+// HeadBucket connectivity probe against the configured bucket after
+// construction (this is where credential and connection validation live).
+//
 // Unlike InitFilesystemBackend, this initializer takes a context.Context. ctx
 // is required because NewB2Backend passes it to config.LoadDefaultConfig, which
 // the AWS SDK uses for the config and credential load (and which Child 4 will
@@ -142,8 +149,24 @@ func InitB2Backend(ctx context.Context, cfg BackendConfig) (Backend, error) {
 	}
 
 	// NewB2Backend returns *B2Backend, which already satisfies the Backend
-	// interface, so it can be returned directly.
-	return NewB2Backend(ctx, b2Cfg)
+	// interface. Capture it into a local so the connectivity probe can run
+	// against the constructed client before it is handed back to the caller.
+	b2, err := NewB2Backend(ctx, b2Cfg)
+	if err != nil {
+		return nil, fmt.Errorf("b2 backend initialization failed: %w", err)
+	}
+
+	// NewB2Backend is lazy — it makes no network call, so construction alone
+	// proves nothing about reachability or credentials. HeadBucket is the AWS
+	// SDK's first request against the configured bucket, so this is where
+	// endpoint-unreachable and credential-rejection failures actually surface.
+	// Surface them at boot rather than on the first replication; on failure
+	// return no backend so a partially-constructed client never escapes.
+	if err := b2.HeadBucket(ctx, cfg.Bucket); err != nil {
+		return nil, fmt.Errorf("b2 backend initialization failed: %w", err)
+	}
+
+	return b2, nil
 }
 
 // validateB2Config validates that a BackendConfig carries every field a B2
