@@ -8,7 +8,8 @@ generations, run restore) reads to reach the `commitgraph` Litestream/B2 backup
 re-checked). Source beads: bf-3hbw6f (recon), bf-3hvieu (kubeconfig probe),
 bf-3bdye7 (Path A re-verify), bf-3e5ktj (Path B re-verify), bf-1k77wu (§1+§2
 re-verify via observer kubeconfig), bf-3xv6g7 (§4 finalize + CLI/config re-verify),
-bf-5owyzi (§5+§6+Appendix finalize + live re-verify), this doc bf-53li0z.
+bf-5owyzi (§5+§6+Appendix finalize + live re-verify), this doc bf-53li0z;
+§0+§5 RECOMMENDED/validation reconciliation bf-25j9d8.
 
 ---
 
@@ -23,6 +24,20 @@ bf-5owyzi (§5+§6+Appendix finalize + live re-verify), this doc bf-53li0z.
 > on 2026-08-09 (evidence in Appendix). The recipes below fire verbatim the
 > moment a single refreshed `ord-devimprint-admin` kubeconfig authenticates; that
 > one kubeconfig grants **both** operations (same cluster-admin OIDC identity).
+
+**Recommended path — designation, NOT a validation claim.** **Path A (in-pod
+exec) is the designated primary / RECOMMENDED path** — chosen for *structural*
+soundness, not because it has run live. It sidesteps the local IMDS-credential
+failure mode entirely (the B2 keys are in-pod at exec time; see §3 "Why
+recommended"). That label only signals "run this one first once unblocked"; it
+does **not** mean Path A is validated. **Neither path is live-validated today.**
+Both carry `Status: BLOCKED-pending-validation`, and the live-validated qualifier
+is explicitly **provisional-pending-operator-unblock**: §3 (Path A) and §4 (Path
+B) flip from `BLOCKED-pending-validation` to **live-validated** the moment §6
+lands and the expected outputs below are captured (tracker beads bf-5ju7f7 /
+bf-2hzix5). So the doc satisfies "a recommended path is marked" in prose, while
+honestly deferring the live run to the operator gate — nothing here is
+overclaimed as validated.
 
 This doc records the exact commands to run once unblocked. It is deliberately
 self-contained: bucket facts, cluster, kubeconfigs, both paths, and the verify
@@ -211,10 +226,16 @@ prevent).
 
 ## 5. Verify connectivity — quick reference (both paths)
 
-| Path | One-liner (run after §6 unblock) |
-|---|---|
-| **A (in-pod, recommended)** | `kubectl --kubeconfig=$KC exec -n commitgraph -l app=queue-api -c litestream -- litestream databases` |
-| **B (local, fallback)** | `aws s3 ls s3://commitgraph-ops/ --endpoint-url https://s3.us-west-002.backblazeb2.com --region us-west-002` (with `LITESTREAM_*` exported) |
+| Path | One-liner (run after §6 unblock) | Validation today |
+|---|---|---|
+| **A — RECOMMENDED** (designated primary) | `kubectl --kubeconfig=$KC exec -n commitgraph -l app=queue-api -c litestream -- litestream databases` | **provisional-pending-operator-unblock** (see §0, §3) |
+| **B — FALLBACK** (local creds) | `aws s3 ls s3://commitgraph-ops/ --endpoint-url https://s3.us-west-002.backblazeb2.com --region us-west-002` (with `LITESTREAM_*` exported) | **provisional-pending-operator-unblock** (see §0, §4) |
+
+> **What "RECOMMENDED" means here:** Path A is the designated primary by
+> *structural* soundness (in-pod creds → no IMDS fallback), **not** a claim it
+> has run live. **Neither path is live-validated today** — both are
+> provisional-pending-operator-unblock. §3 / §4 flip to **live-validated** once
+> §6 lands and the expected outputs are captured (trackers bf-5ju7f7 / bf-2hzix5).
 
 **Pass criterion:** a real result (db/replica list or bucket listing) with NO
 `EC2 IMDS` / `context deadline exceeded` error. **Fail criterion** (current
