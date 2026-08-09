@@ -1,453 +1,246 @@
-# commitgraph namespace — host cluster & access surface inventory
+# commitgraph B2 access — downstream reuse doc
 
-**Recon date:** 2026-08-09
-**Bead:** bf-3hbw6f (de-risking reconnaissance for downstream commitgraph / B2 work)
-**Access used:** READ-ONLY only (no exec, no secret values read). Observer SA.
+**Purpose:** the single self-contained file a downstream agent (enumerate
+generations, run restore) reads to reach the `commitgraph` Litestream/B2 backup
+**without** re-deriving cluster, kubeconfig, or credential steps.
 
----
-
-## 1. Host cluster: `ord-devimprint`
-
-The `commitgraph` namespace lives on the **`ord-devimprint`** cluster. Probed every
-candidate cluster with `kubectl get ns commitgraph` (read-only). Result matrix:
-
-| Cluster | Path tried | Result |
-|---|---|---|
-| ord-devimprint | observer kubeconfig **AND** kubectl-proxy | ✅ **FOUND** (Active, 17h old) |
-| apexalgo-iad | proxy `traefik-apexalgo-iad:8001` | NotFound |
-| ardenone-cluster | proxy `traefik-ardenone-cluster:8001` | NotFound |
-| ardenone-manager | proxy `traefik-ardenone-manager:8001` | NotFound |
-| rs-manager | proxy `traefik-rs-manager:8001` | NotFound |
-| iad-ci | kubeconfig `iad-ci.kubeconfig` | NotFound |
-| iad-kalshi | proxy `kubectl-proxy-iad-kalshi:8001` | NotFound |
-| iad-options | observer kubeconfig | NotFound |
-| iad-native-ads | — | DECOMMISSIONED (not probed) |
-
-> Prior notes (bf-57d3fx / bf-3dntjx) found queue-api in `commitgraph` via an
-> all-namespaces pod grep but never recorded which cluster that ran against.
-> It was **ord-devimprint**.
-
-### Reusable read-only command lines
-
-```bash
-# Primary (observer kubeconfig, long-lived SA token — never expires)
-kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-observer.kubeconfig get pods -n commitgraph
-
-# Alt (read-only kubectl-proxy via Tailscale operator)
-kubectl --server=http://kubectl-proxy-ord-devimprint:8001 get pods -n commitgraph
-
-# All-namespaces grep (the original discovery path):
-kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-observer.kubeconfig get pods --all-namespaces | grep queue-api
-```
-
-For work needing **read/write or secret values** (downstream children): the admin
-kubeconfig is `/home/coding/.kube/ord-devimprint-admin.kubeconfig`
-(`cloudspace-admin` OIDC token, ~3 day expiry — regenerate from Spot UI).
+**Last re-confirmed:** 2026-08-09 (live pod + kubeconfig mtimes + OIDC cache
+re-checked). Source beads: bf-3hbw6f (recon), bf-3hvieu (kubeconfig probe),
+bf-3bdye7 (Path A re-verify), bf-3e5ktj (Path B re-verify), this doc bf-53li0z.
 
 ---
 
-## 2. queue-api pod (re-confirmed — pods rotate)
+## 0. STATUS — BLOCKED on operator action (read this first)
+
+> **Neither access path works today.** Both Path A (in-pod exec) and Path B
+> (local secret-read) are blocked by the **same** gate: no live kubeconfig
+> authenticates against `ord-devimprint`. The read-only observer works, but it
+> grants neither `exec` nor `secret get`. **Unblock = operator refreshes the
+> ord-devimprint admin kubeconfig via the Rackspace Spot dashboard** (see §6).
+> Do **not** re-probe the kubeconfigs — all candidates were exhaustively tested
+> on 2026-08-09 (evidence in Appendix). The recipes below fire verbatim the
+> moment a single refreshed `ord-devimprint-admin` kubeconfig authenticates; that
+> one kubeconfig grants **both** operations (same cluster-admin OIDC identity).
+
+This doc records the exact commands to run once unblocked. It is deliberately
+self-contained: bucket facts, cluster, kubeconfigs, both paths, and the verify
+command are all here.
+
+---
+
+## 1. Bucket facts (constants — reuse verbatim)
 
 | Field | Value |
 |---|---|
-| Pod name | `queue-api-c5894c469-pzjsl` |
-| Status | Running, 2/2, 0 restarts, ~17h |
-| Prior (bf-57d3fx) | `queue-api-c5894c469-p9rhr` → **rotated** (suffix changed), as expected |
-| Deployment | `queue-api` (1/1 ready, replica 1) |
-| Node | `prod-instance-17862171401240367` |
-| Pod IP | `10.20.59.197` |
-| Service `queue-api` | ClusterIP `10.21.222.173:8080` |
+| **Bucket** | `commitgraph-ops` |
+| **S3 endpoint** | `https://s3.us-west-002.backblazeb2.com` |
+| **Region** | `us-west-002` |
+| **Backup path (key prefix)** | `queue-api/queue.db` |
+| **In-pod DB path** | `/data/queue.db` |
+| **Litestream config (in-pod)** | `/etc/litestream.yml` |
 
-> Pod names rotate on rollout. The stable handle is the Deployment `queue-api`
-> or `kubectl get pods -n commitgraph -l app=queue-api`.
+Source of truth: ConfigMap `queue-api-litestream-config` in namespace
+`commitgraph` (originally documented in bf-57d3fx; matches the sidecar's mounted
+config).
 
-### Containers on the pod
+---
 
-| Container | Image | Role |
+## 2. Host cluster & kubeconfigs
+
+The `commitgraph` namespace exists **only** on **`ord-devimprint`**. Probed
+every cluster on 2026-08-09: NotFound on apexalgo-iad, ardenone-cluster,
+ardenone-manager, rs-manager, iad-ci, iad-kalshi, iad-options; iad-native-ads is
+decommissioned.
+
+| Purpose | Kubeconfig | Works today? |
 |---|---|---|
-| `queue-api` | `ronaldraygun/commitgraph-queue-api:2.8.0` | main app |
-| **`litestream`** ✅ | `litestream/litestream:0.5.11` | **sidecar (CONFIRMED name = `litestream`)** |
-| `init-schema` (init) | — | schema init |
+| **Read-only** (get/describe/logs) | `/home/coding/.kube/ord-devimprint-observer.kubeconfig` | ✅ Yes (long-lived SA token, never expires). Grants neither `exec` nor `secret get`. |
+| **Read-only (alt)** | `--server=http://kubectl-proxy-ord-devimprint:8001` | ✅ Yes (Tailscale operator proxy) |
+| **Admin (exec + secret-read)** | `/home/coding/.kube/ord-devimprint-admin.kubeconfig` | ❌ **BLOCKED** — static token expired (401); OIDC exec path has no cached token + no browser headless (timeout). Needs operator refresh (§6). |
 
-**Litestream sidecar container name = `litestream`** (confirmed against live pod spec).
+> The admin kubeconfig is the same one for **both** Path A and Path B. There is
+> not a separate kubeconfig per operation. Mtime as of 2026-08-09:
+> `2026-08-07 20:01` (not regenerated since).
 
----
-
-## 3. ConfigMap `queue-api-litestream-config` — EXISTS ✅
-
-```
-NAME                          DATA   AGE
-queue-api-litestream-config   1      17h
-```
-
-Lives in `commitgraph`. (Contents already documented in bf-57d3fx: backs up
-`/data/queue.db` → B2 bucket `commitgraph-ops`, path `queue-api/queue.db`,
-endpoint `https://s3.us-west-002.backblazeb2.com`.)
-
----
-
-## 4. Secret `commitgraph-b2-workers` — expected DENIAL recorded
-
-The observer SA **can list** secrets (metadata + data-key count only) but
-**cannot `get`** an individual secret. Both behaviors observed:
-
-### List (allowed — metadata only)
-
-```
-$ kubectl --kubeconfig=...ord-devimprint-observer.kubeconfig get secrets -n commitgraph
-NAME                         TYPE                             DATA   AGE
-armor-mek                    Opaque                           1      17h
-armor-writer                 Opaque                           2      17h
-b2-aggregator                Opaque                           5      17h
-b2-aggregator-web            Opaque                           5      17h
-b2-compact                   Opaque                           5      17h
-b2-filter-worker             Opaque                           5      17h
-commitgraph-b2-workers       Opaque                           5      17h
-commitgraph-db-app           kubernetes.io/basic-auth         11     17h
-commitgraph-db-ca            Opaque                           2      17h
-commitgraph-db-replication   kubernetes.io/tls                2      17h
-commitgraph-db-server        kubernetes.io/tls                2      17h
-corpus-keyring               Opaque                           1      17h
-devimprint-b2-workers        Opaque                           5      17h
-docker-hub-registry          kubernetes.io/dockerconfigjson   1      17h
-github-pat                   Opaque                           1      17h
-queue-api-auth               Opaque                           2      17h
-```
-
-### Get of `commitgraph-b2-workers` (DENIED — expected, not a failure)
-
-```
-$ kubectl --kubeconfig=...ord-devimprint-observer.kubeconfig get secret commitgraph-b2-workers -n commitgraph
-Error from server (Forbidden): secrets "commitgraph-b2-workers" is forbidden:
-User "system:serviceaccount:devpod-observer:devpod-observer" cannot get resource
-"secrets" in API group "" in the namespace "commitgraph"
-```
-
-This denial is **expected evidence**. Reading the secret VALUES requires the
-admin kubeconfig (`/home/coding/.kube/ord-devimprint-admin.kubeconfig`,
-OIDC ~3 day expiry) — the downstream task should plan for that.
-
-### Secret consumption (from deployment env refs — read-only, observable)
-
-`commitgraph-b2-workers` is consumed by **both** containers on the queue-api pod:
-- `queue-api` container: 4 keys via `valueFrom.secretKeyRef`
-- `litestream` container: 2 keys via `valueFrom.secretKeyRef`
-  (the `LITESTREAM_ACCESS_KEY_ID` / `LITESTREAM_SECRET_ACCESS_KEY` envs from bf-57d3fx)
-
----
-
-## 5. Other namespace resources (context for downstream)
-
-**Postgres (CloudNativePG) cluster:** `commitgraph-db` — pod `commitgraph-db-1`,
-3 services (`-r`/`-ro`/`-rw`) on `:5432`. DB creds in `commitgraph-db-app`
-(basic-auth).
-
-**ConfigMaps:** `admin-alias-map`, `bot-classification`, `cnpg-default-monitoring`,
-`queue-api-litestream-config`, `kube-root-ca.crt`.
-
-**B2 worker secret family present:** `commitgraph-b2-workers`, `devimprint-b2-workers`,
-`b2-aggregator`, `b2-aggregator-web`, `b2-compact`, `b2-filter-worker`
-(each Opaque, 5 data keys — same shape).
-
-**ARMOR-related secrets present:** `armor-mek` (master encrypt key), `armor-writer`.
-
-**ServiceAccounts:** `commitgraph-db`, `default`.
-
----
-
-## Summary for downstream children
-
-- **Host cluster:** `ord-devimprint`
-- **Read-only access:** `kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-observer.kubeconfig ... -n commitgraph`
-  (alt: `--server=http://kubectl-proxy-ord-devimprint:8001`)
-- **queue-api pod:** `queue-api-c5894c469-pzjsl` (rotates — use `-l app=queue-api` or the Deployment)
-- **litestream container:** `litestream` (image `litestream/litestream:0.5.11`)
-- **ConfigMap:** `queue-api-litestream-config` ✅ exists
-- **Secret `commitgraph-b2-workers`:** list-OK / get-DENIED on observer; values need admin kubeconfig
-
----
-
-## Appendix A — exec + secret-read kubeconfig probe (bf-3hvieu, 2026-08-09)
-
-**Outcome: BLOCKED — no live kubeconfig grants secret-read OR exec against `commitgraph`.**
-This is the gate the prior attempts (bf-1q3s0v etc.) never cleared, and it is still
-closed. Detailed probe + exact remediation below. This blocker report is the
-closable deliverable for bf-3hvieu.
-
-### Probe method
-
-Re-confirmed the live pod first (observer SA, read-only, never expires):
-
-```
-queue-api-c5894c469-pzjsl   2/2 Running  0  17h   (Deployment queue-api; use -l app=queue-api)
-litestream sidecar container = litestream  (unchanged)
-```
-
-Two operations tested, each with a 35–45s timeout (stale Spot OIDC tokens HANG
-rather than failing fast — the timeout is load-bearing):
-
-- **(a) secret-read:** `kubectl <kc> --context=<ctx> get secret commitgraph-b2-workers -n commitgraph -o jsonpath='{.data}'`
-- **(b) exec:**          `kubectl <kc> --context=<ctx> exec queue-api-c5894c469-pzjsl -c litestream -n commitgraph -- echo ok`
-
-### Result matrix — every ord-devimprint direct/admin kubeconfig
-
-| Kubeconfig | Context (user) | secret-read | exec | Root cause |
-|---|---|---|---|---|
-| `ord-devimprint-token.kubeconfig` | `token-context` (`ngpc-user` static) | ❌ `401 Unauthorized` | ❌ `401 Unauthorized` | static bootstrap token expired |
-| `ord-devimprint-admin.kubeconfig` | `apexalgo-ord-devimprint` (`ngpc-user-apex…` static) | ❌ `401 Unauthorized` | ❌ `401 Unauthorized` | static bootstrap token expired |
-| `ord-devimprint.kubeconfig` | `apexalgo-ord-devimprint` (`ngpc-user` static) | ❌ `401 Unauthorized` | ❌ `401 Unauthorized` | static bootstrap token expired |
-| `ord-devimprint-admin.kubeconfig` | `apexalgo-ord-devimprint-oidc` (`oidc` exec) | ❌ TIMEOUT (no token) | ❌ TIMEOUT (no token) | OIDC cache empty + no browser headless |
-| `ord-devimprint.kubeconfig` | `apexalgo-ord-devimprint-oidc` (`oidc` exec) | ❌ TIMEOUT (no token) | ❌ TIMEOUT (no token) | OIDC cache empty + no browser headless |
-| `ord-devimprint-observer.kubeconfig` | observer (`devpod-observer` SA) | ❌ `403 Forbidden` (known) | ❌ `403 Forbidden` (known) | read-only RBAC by design — never grants these |
-
-Auth fails at the API layer, so it blocks **both** operations identically.
-
-### Evidence (representative, truncated)
-
-Static token path — fast 401 (server IS reachable; the token is the problem):
-```
-$ kubectl --kubeconfig=...ord-devimprint-admin.kubeconfig --context=apexalgo-ord-devimprint \
-    get secret commitgraph-b2-workers -n commitgraph -o jsonpath='{.data}'
-error: You must be logged in to the server (Unauthorized)
-```
-Direct API server reachability confirmed independently — unauth curl returns
-`http_code=403`, i.e. the control plane answers; this is an auth failure, not a
-network/DNS problem.
-
-OIDC path — hangs then times out (cache empty, no browser):
-```
-error: could not open the browser: exec: "xdg-open,x-www-browser,www-browser": executable file not found in $PATH
-Please visit the following URL in your browser manually: http://localhost:8000/
-error: get-token: authentication error: … authorization error: context canceled   (timeout 124)
-```
-OIDC token cache state (`--token-cache-dir=~/.kube/cache/oidc-login/org_KsELolwAOxl3Zxfm`):
-```
-2026-05-03 06:46  0  …/90e1…cc6.lock          (0-byte lock, no token blob)
-2026-08-07 19:21  0  …/org_KsELolwAOxl3Zxfm/90e1…cc6.lock   (0-byte lock, no token blob)
-```
-No cached access/refresh token exists anywhere under `~/.kube/cache/oidc-login/`, so
-`kubectl oidc-login get-token` must run the interactive browser authorization-code
-flow — impossible on this headless Hetzner box (and per bf-1q3s0v, Spot's OIDC has
-**no CLI refresh** path).
-
-### Why the other-cluster admin kubeconfigs are not candidates
-
-`commitgraph` exists ONLY on ord-devimprint (recon §1). Every other admin/direct
-kubeconfig in `~/.kube/` points at a different API server where the namespace is
-`NotFound`:
-
-| Kubeconfig | Points at | `get ns commitgraph` |
-|---|---|---|
-| `apexalgo-iad.kubeconfig`, `apexalgo-iad-alpha/-ts` | apexalgo-iad | NotFound |
-| `ardenone-manager-temp.kubeconfig` | ardenone-manager | NotFound |
-| `rs-manager.kubeconfig` (+ `.bak*`) | rs-manager | NotFound |
-| `iad-ci.kubeconfig` | iad-ci | NotFound |
-| `iad-options.kubeconfig`, `iad-options-observer` | iad-options | NotFound |
-| `iad-kalshi(-admin).kubeconfig`, default `~/.kube/config` | iad-kalshi | NotFound (and token also dead) |
-| `iad-native-ads*` | decommissioned 2026-07-27 | cluster gone |
-
-Cross-cluster RBAC is not a thing here; only ord-devimprint kubeconfigs can reach
-the namespace, and all of those fail auth (matrix above).
-
-### Exact remediation needed (operator self-service — mirrors bf-1q3s0v)
-
-The token is NOT something this headless agent can refresh. The operator (jedarden)
-must:
-
-1. **Rackspace Spot dashboard → ord-devimprint cloudspace → generate fresh admin
-   kubeconfig** (regenerates the `cloudspace-admin` OIDC credential). Overwrite
-   `~/.kube/ord-devimprint-admin.kubeconfig` (`chmod 600`).
-2. **Prime the OIDC token cache once from a browser-capable machine** — run any
-   `kubectl --kubeconfig=…ord-devimprint-admin.kubeconfig …` (e.g. `get ns`) and
-   complete the `login.spot.rackspace.com` SSO in a browser. This writes the access
-   + refresh token into `~/.kube/cache/oidc-login/org_KsELolwAOxl3Zxfm/`, after
-   which the OIDC `exec` path works headless until the refresh token lapses.
-   - Shortcut: the freshly-downloaded kubeconfig also carries a **static
-     `ngpc-user` token** that works headless immediately — but it is short-lived
-     (the Aug-07 20:01 regeneration's static token was already `Unauthorized` by
-     2026-08-09, i.e. < ~37h). Treat it as a temporary unlock, not a fix.
-3. **Verify both operations** before handing off:
-   ```
-   kubectl --kubeconfig=~/.kube/ord-devimprint-admin.kubeconfig \
-       get secret commitgraph-b2-workers -n commitgraph -o jsonpath='{.data}'   # (a) secret-read
-   kubectl --kubeconfig=~/.kube/ord-devimprint-admin.kubeconfig \
-       exec -n commitgraph -l app=queue-api -c litestream -- echo ok             # (b) exec
-   ```
-
-Once a single refreshed `ord-devimprint-admin` kubeconfig authenticates, it grants
-**both** secret-read and exec (same `cluster-admin` OIDC identity) — no separate
-kubeconfig per operation is needed.
-
-### Bottom line for downstream children
-
-- **No working kubeconfig today.** Both Path A (pod-exec on queue-api/litestream)
-  and Path B (secret-read on commitgraph-b2-workers) are blocked by the SAME
-  auth failure on ord-devimprint.
-- **Unblock = Spot-dashboard OIDC refresh + cache prime** (operator action).
-- Until then, the **only** working access is the read-only observer
-  (`ord-devimprint-observer.kubeconfig`), which grants neither secret-read nor exec.
-
----
-
-## Appendix B — Path A (in-pod litestream exec) re-verification: STILL BLOCKED (bf-3bdye7, 2026-08-09)
-
-**Outcome: BLOCKED — exec path unavailable, blocked on kubeconfig refresh. Defers to Path B.**
-
-This bead's task was to run litestream CLI commands IN-POD (Path A), which bypasses
-the local EC2-IMDS credential error entirely because the B2 credentials are already
-mounted into the `litestream` sidecar via env. That approach is sound — but it
-requires `pods/exec` against `commitgraph`, which no live kubeconfig grants today.
-
-### Re-verification (live pod re-confirmed first)
-
-Live pod re-confirmed via observer SA (read-only): `queue-api-c5894c469-pzjsl`,
-2/2 Running, litestream sidecar container = `litestream` (unchanged). No kubeconfig
-file in `~/.kube/` has been touched since bf-3hvieu's Aug-09 probe (admin mtime still
-`Aug 7 20:01`); the OIDC token cache still holds only 0-byte lock files (no token blob).
-
-Every candidate kubeconfig was probed directly for exec — all fail:
-
-| Probe | Kubeconfig / context | `exec ... -c litestream -- echo OK` | exit |
-|---|---|---|---|
-| 1 | `ord-devimprint-observer.kubeconfig` | `403 Forbidden` — observer SA cannot `create pods/exec` in commitgraph | 1 |
-| 2 | `ord-devimprint-admin.kubeconfig` / `apexalgo-ord-devimprint` (static token) | `401 Unauthorized` — bootstrap token expired | 1 |
-| 3 | `ord-devimprint-admin.kubeconfig` / `apexalgo-ord-devimprint-oidc` (OIDC exec) | **TIMEOUT** — no cached token, no browser on headless box | 124 |
-| 4 | `ord-devimprint.kubeconfig` / `apexalgo-ord-devimprint` (static token) | `401 Unauthorized` | 1 |
-| 5 | `ord-devimprint-token.kubeconfig` / `token-context` (static token) | `401 Unauthorized` | 1 |
-
-Auth fails at the API layer, so it blocks exec exactly as it blocks secret-read
-(Appendix A). No other cluster's kubeconfig can reach the namespace (`commitgraph`
-exists only on ord-devimprint).
-
-### Conclusion for downstream children
-
-- **Path A (in-pod exec) is unavailable today** — same blocker as Path B. Do not
-  re-probe; the gate is an operator OIDC refresh + cache prime (see Appendix A
-  remediation), not something this headless agent can clear.
-- **Defer to Path B** (read `commitgraph-b2-workers` secret values locally and run
-  litestream against B2 with `LITESTREAM_ACCESS_KEY_ID`/`LITESTREAM_SECRET_ACCESS_KEY`
-  exported). Path B hits the identical kubeconfig-auth blocker, so it is not
-  unblocked either — but it is the structurally correct fallback once any single
-  refreshed `ord-devimprint-admin` kubeconfig authenticates (it grants both exec
-  and secret-read).
-- **Neither path proceeds until the operator refreshes ord-devimprint admin access.**
-
-### Canonical exec command line (for downstream generation-enumeration reuse)
-
-Once a refreshed admin kubeconfig authenticates, the exact command downstream
-`enumerate-generations` work should run (substitute the resolved pod name, or use
-`-l app=queue-api` for pod-name-independence):
+### queue-api pod (rotates — use the label selector, not the name)
 
 ```bash
-# (1) confirm the replica/db mounts with NO IMDS error (credentials are in-pod)
-kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig \
-  exec -n commitgraph -l app=queue-api -c litestream -- litestream databases
-
-# (2) the exact command generation-enumeration needs:
-kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig \
-  exec -n commitgraph -l app=queue-api -c litestream -- litestream generations /data/queue.db
-
-# (3) optionally re-confirm the mounted config in-pod:
-kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig \
-  exec -n commitgraph -l app=queue-api -c litestream -- cat /etc/litestream.yml
-#   expect: bucket=commitgraph-ops, path=queue-api/queue.db,
-#           endpoint=https://s3.us-west-002.backblazeb2.com
+# Pod-name-independent (STABLE — use this):
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-observer.kubeconfig \
+  get pods -n commitgraph -l app=queue-api
 ```
 
-These commands were NOT run successfully (auth blocked). They are recorded here so
-the downstream child can execute them verbatim immediately after the kubeconfig
-refresh, without re-deriving the access path.
+- Deployment: `queue-api` (replica 1). Current pod (2026-08-09):
+  `queue-api-c5894c469-pzjsl`, 2/2 Running.
+- Containers: `queue-api` (`ronaldraygun/commitgraph-queue-api:2.8.0`) and
+  **`litestream`** sidecar (`litestream/litestream:0.5.11`). The sidecar
+  container name is confirmed = **`litestream`** (use `-c litestream`).
+- Secret `commitgraph-b2-workers` (Opaque, 5 data keys) feeds the litestream
+  sidecar via `valueFrom.secretKeyRef`: keys `key-id` and `application-key`.
 
 ---
 
-## Appendix C — Path B (local secret-read → B2 connectivity) verification: STILL BLOCKED (bf-3e5ktj, 2026-08-09)
+## 3. Path A — RECOMMENDED (in-pod litestream exec)
 
-**Outcome: BLOCKED — `commitgraph-b2-workers` secret values could NOT be obtained.
-Path B (decode creds locally, export as env vars, run local S3/litestream call)
-cannot run today. It hits the IDENTICAL kubeconfig-auth gate as Path A/B above.**
+**Why recommended:** running litestream **inside the sidecar** sidesteps the
+local EC2-IMDS credential fallback entirely — the B2 keys are already mounted as
+env in the pod, so there is no `LITESTREAM_*` to forget to export and no IMDS
+error path. This is the structurally cleanest path; Path B is the fallback for
+when exec is unavailable.
 
-This bead's task was the fallback path: read the secret values locally with a
-secret-read-capable kubeconfig, base64-decode `key-id` / `application-key`, export
-them as `LITESTREAM_ACCESS_KEY_ID` / `LITESTREAM_SECRET_ACCESS_KEY`, then run a local
-`aws s3 ls` or `litestream generations` against `s3://commitgraph-ops/` to prove B2
-connectivity with NO EC2-IMDS error. The approach is structurally sound — exporting
-the env vars is precisely what prevents litestream's IMDS fallback (the root cause of
-the bf-3dntjx restore failure). The blocker is NOT the approach; it is purely that no
-live kubeconfig can read the secret today.
+**Status:** BLOCKED (no live kubeconfig grants `pods/exec` — see §0, Appendix).
 
-### No secret-read-capable kubeconfig exists today (re-verified live)
-
-State unchanged since the bf-3hvieu / bf-3bdye7 probes — i.e. the operator has NOT
-refreshed ord-devimprint admin access in between:
-
-- `ord-devimprint-admin.kubeconfig` mtime still **`2026-08-07 20:01`** (not regenerated).
-- OIDC token cache (`~/.kube/cache/oidc-login/org_KsELolwAOxl3Zxfm/`) still holds
-  **only 0-byte lock files** — no access/refresh token blob, so the OIDC `exec`
-  path must run an interactive browser auth-code flow (impossible on this headless
-  Hetzner box, and Spot OIDC has no CLI refresh per bf-1q3s0v).
-
-Fresh secret-read probes (each with a load-bearing 30–40s timeout, because stale
-Spot OIDC tokens HANG rather than failing fast):
-
-| # | Kubeconfig / context | `get secret commitgraph-b2-workers -n commitgraph -o jsonpath='{.data}'` | exit | Root cause |
-|---|---|---|---|---|
-| 1 | `ord-devimprint-admin.kubeconfig` / `apexalgo-ord-devimprint` (static) | ❌ `error: You must be logged in to the server (Unauthorized)` | 1 | static bootstrap token expired |
-| 2 | `ord-devimprint-admin.kubeconfig` / `apexalgo-ord-devimprint-oidc` (OIDC exec) | ❌ **TIMEOUT** (`Terminated` at 30s) | 124 | OIDC cache empty + no browser headless |
-| 3 | `ord-devimprint-observer.kubeconfig` / observer | ❌ `403 Forbidden … devpod-observer cannot get resource "secrets" … in namespace "commitgraph"` | 1 | read-only RBAC by design |
-| 4 | `ord-devimprint-token.kubeconfig` / `token-context` (static) | ❌ `error: You must be logged in to the server (Unauthorized)` | 1 | static token expired |
-
-Auth fails at the API layer, so it blocks secret-read exactly as it blocks exec
-(Appendix A/B). `commitgraph` exists ONLY on ord-devimprint (recon §1), so no other
-cluster's kubeconfig can reach the namespace. **There is no working secret-read path.**
-
-### What this bead did NOT obtain (redaction record)
-
-- No secret **values** were read — `key-id` and `application-key` could not be
-  base64-decoded because the secret `get` is denied on every kubeconfig.
-- No credentials are recorded here, exported, or used. This appendix records only
-  *how* to obtain them and *that the attempt was denied*, consistent with the task's
-  redaction requirement.
-- The local connectivity check (`aws s3 ls` / `litestream generations`) was
-  therefore NOT executed — without the creds exported, it would reproduce the exact
-  EC2-IMDS error of bf-3dntjx, so running it would prove nothing new.
-
-### Exact unblock + run recipe (verbatim, for the next child once admin access is refreshed)
-
-The blocker is operator-actionable only. Once a single refreshed
-`ord-devimprint-admin` kubeconfig authenticates (Spot-dashboard OIDC refresh +
-one-time browser cache prime — see Appendix A remediation), Path B runs verbatim:
+### Verify connectivity (copy-paste) — Path A
 
 ```bash
-KC=/home/coding/.kube/ord-devimprint-admin.kubeconfig   # after operator refresh
+KC=/home/coding/.kube/ord-devimprint-admin.kubeconfig   # after operator refresh (§6)
 NS=commitgraph
 
-# (1) decode the two B2 keys the litestream sidecar mounts (NO IMDS — creds explicit)
+# (1) verify connectivity + replica/db mounts, NO IMDS error (creds are in-pod):
+kubectl --kubeconfig=$KC exec -n $NS -l app=queue-api -c litestream -- \
+  litestream databases
+```
+
+**Expected output (once unblocked):** a table listing `/data/queue.db` with its
+replica(s) against `s3://commitgraph-ops/queue-api/queue.db` — and **no**
+`failed to refresh cached credentials, no EC2 IMDS role found` line. *(Not yet
+captured live — exec is blocked today.)*
+
+### Enumerate generations (the downstream target) — Path A
+
+```bash
+kubectl --kubeconfig=$KC exec -n $NS -l app=queue-api -c litestream -- \
+  litestream generations /data/queue.db
+```
+
+### Optionally re-confirm the mounted config in-pod
+
+```bash
+kubectl --kubeconfig=$KC exec -n $NS -l app=queue-api -c litestream -- \
+  cat /etc/litestream.yml
+# expect: bucket=commitgraph-ops, path=queue-api/queue.db,
+#         endpoint=https://s3.us-west-002.backblazeb2.com
+```
+
+---
+
+## 4. Path B — FALLBACK (local secret-read → export → B2 call)
+
+**Use when:** exec is unavailable but a secret-read-capable kubeconfig exists.
+Read the B2 keys locally, base64-decode, **export them as env vars** (this is
+load-bearing — exporting them is exactly what prevents litestream's IMDS
+fallback, the root cause of the bf-3dntjx restore failure).
+
+**Status:** BLOCKED (same kubeconfig-auth gate — no live kubeconfig grants
+`secret get` against `commitgraph`; see §0, Appendix). Local CLIs needed for
+this path are all present: `litestream` (`/usr/local/bin/litestream`), `aws`,
+`b2`.
+
+### Decode + export the two B2 keys (copy-paste) — Path B
+
+```bash
+KC=/home/coding/.kube/ord-devimprint-admin.kubeconfig   # after operator refresh (§6)
+NS=commitgraph
+
+# Decode the two keys the litestream sidecar mounts (NO IMDS — creds explicit):
 export LITESTREAM_ACCESS_KEY_ID=$(kubectl --kubeconfig=$KC -n $NS \
   get secret commitgraph-b2-workers -o jsonpath='{.data.key-id}' | base64 -d)
 export LITESTREAM_SECRET_ACCESS_KEY=$(kubectl --kubeconfig=$KC -n $NS \
   get secret commitgraph-b2-workers -o jsonpath='{.data.application-key}' | base64 -d)
+```
 
-# (2a) local connectivity check via aws-cli (returns bucket listing, no IMDS error)
-aws s3 ls s3://commitgraph-ops/ --endpoint-url https://s3.us-west-002.backblazeb2.com \
-  --region us-west-002
+> No credential values are recorded in this file. Once decoded, verify the vars
+> are non-empty in the shell (`test -n "$LITESTREAM_ACCESS_KEY_ID"`) before
+> proceeding — if they are empty, the `get secret` was denied and downstream
+> calls will fall back to IMDS.
 
-# (2b) OR local litestream generations (returns a generation, no IMDS error)
+### Verify connectivity (copy-paste) — Path B
+
+```bash
+# (2a) aws-cli bucket listing (returns objects, NO IMDS error):
+aws s3 ls s3://commitgraph-ops/ \
+  --endpoint-url https://s3.us-west-002.backblazeb2.com --region us-west-002
+
+# (2b) OR local litestream generations (returns a generation, NO IMDS error):
 litestream generations -config scratch/litestream-restore/restore-config.yml /data/queue.db
 ```
 
-Expected on success: a bucket object listing (2a) or a generation row (2b) with **no**
-`failed to refresh cached credentials, no EC2 IMDS role found` error. If the IMDS
-error reappears, the env vars were not exported into that shell (the failure mode
-this bead exists to prevent).
+**Expected output (once unblocked):** (2a) a bucket object listing including
+`queue-api/queue.db` WAL segments; or (2b) a generation row — with **no**
+`failed to refresh cached credentials, no EC2 IMDS role found` error. *(Not yet
+captured live — secret-read is blocked today.)* If the IMDS error reappears, the
+env vars were not exported into that shell (the failure mode this bead exists to
+prevent).
 
-### Conclusion for downstream children
+---
 
-- **Path B is blocked today** by the same kubeconfig-auth gate as Path A. Do not
-  re-probe — the gate is an operator OIDC refresh + cache prime, not something this
-  headless agent can clear (mirrors bf-3hvieu / bf-3bdye7).
-- Once any single refreshed `ord-devimprint-admin` kubeconfig authenticates, it
-  grants **both** secret-read (this path) and exec (Path A) — run the recipe above;
-  no re-derivation of the access path is needed.
-- **Neither Path A nor Path B proceeds until the operator refreshes ord-devimprint
-  admin access.** The read-only observer remains the only working kubeconfig and
-  grants neither operation.
+## 5. Verify connectivity — quick reference (both paths)
+
+| Path | One-liner (run after §6 unblock) |
+|---|---|
+| **A (in-pod, recommended)** | `kubectl --kubeconfig=$KC exec -n commitgraph -l app=queue-api -c litestream -- litestream databases` |
+| **B (local, fallback)** | `aws s3 ls s3://commitgraph-ops/ --endpoint-url https://s3.us-west-002.backblazeb2.com --region us-west-002` (with `LITESTREAM_*` exported) |
+
+**Pass criterion:** a real result (db/replica list or bucket listing) with NO
+`EC2 IMDS` / `context deadline exceeded` error. **Fail criterion** (current
+state, pre-unblock): `401 Unauthorized` (static token) / `403 Forbidden`
+(observer) / OIDC timeout (admin OIDC exec).
+
+---
+
+## 6. How to unblock (operator action only)
+
+This headless agent **cannot** clear the gate — Spot OIDC has no CLI refresh
+path (per bf-1q3s0v), and the OIDC token cache holds only a 0-byte lock file
+(no token blob), so the `oidc-login` exec provider must run an interactive
+browser auth-code flow impossible on this Hetzner box.
+
+The operator (jedarden) must:
+
+1. **Rackspace Spot dashboard → ord-devimprint cloudspace → generate fresh admin
+   kubeconfig.** Overwrite `/home/coding/.kube/ord-devimprint-admin.kubeconfig`
+   (`chmod 600`).
+2. **Prime the OIDC token cache once from a browser-capable machine** — run any
+   command (`kubectl --kubeconfig=…ord-devimprint-admin.kubeconfig get ns`) and
+   complete the `login.spot.rackspace.com` SSO in a browser. This writes the
+   access + refresh token into `~/.kube/cache/oidc-login/org_KsELolwAOxl3Zxfm/`,
+   after which the OIDC exec path works headless until the refresh token lapses.
+   - Shortcut: the freshly-downloaded kubeconfig also carries a **static
+     `ngpc-user` token** that works headless immediately — but it is short-lived
+     (the Aug-07 20:01 regeneration's static token was already `Unauthorized`
+     by 2026-08-09, i.e. < ~37h). Treat it as a temporary unlock, not a fix.
+3. **Verify both operations before handing off:**
+   ```bash
+   KC=/home/coding/.kube/ord-devimprint-admin.kubeconfig
+   kubectl --kubeconfig=$KC get secret commitgraph-b2-workers -n commitgraph -o jsonpath='{.data}'  # secret-read
+   kubectl --kubeconfig=$KC exec -n commitgraph -l app=queue-api -c litestream -- echo ok            # exec
+   ```
+
+Once one refreshed `ord-devimprint-admin` kubeconfig authenticates, it grants
+**both** secret-read and exec — run the §3/§4 recipes; no re-derivation needed.
+
+---
+
+## Appendix — probe evidence (why not to re-probe)
+
+Every ord-devimprint kubeconfig was exhaustively tested for both operations on
+2026-08-09 (each with a 30–45s timeout — stale Spot OIDC tokens HANG rather than
+fail fast). Auth fails at the API layer, so it blocks **both** operations
+identically.
+
+| Kubeconfig | Context (user) | secret-read | exec | Root cause |
+|---|---|---|---|---|
+| `ord-devimprint-observer.kubeconfig` | observer (`devpod-observer` SA) | ❌ `403 Forbidden` (by design) | ❌ `403 Forbidden` (by design) | read-only RBAC — never grants these |
+| `ord-devimprint-admin.kubeconfig` | `apexalgo-ord-devimprint` (`ngpc-user` static) | ❌ `401 Unauthorized` | ❌ `401 Unauthorized` | static bootstrap token expired |
+| `ord-devimprint-admin.kubeconfig` | `apexalgo-ord-devimprint-oidc` (`oidc` exec) | ❌ TIMEOUT | ❌ TIMEOUT | OIDC cache empty + no browser headless |
+| `ord-devimprint.kubeconfig` | `apexalgo-ord-devimprint` (`ngpc-user` static) | ❌ `401 Unauthorized` | ❌ `401 Unauthorized` | static token expired |
+| `ord-devimprint-token.kubeconfig` | `token-context` (`ngpc-user` static) | ❌ `401 Unauthorized` | ❌ `401 Unauthorized` | static token expired |
+
+No other cluster's kubeconfig can reach the namespace (`commitgraph` exists only
+on ord-devimprint); cross-cluster RBAC is not a thing here. Direct API server
+reachability was confirmed independently (unauth curl returns `http_code=403`,
+i.e. the control plane answers — this is an auth failure, not DNS/network).
+
+**Bottom line:** there is no working secret-read OR exec path today. The
+read-only observer is the only working kubeconfig and grants neither. Re-probing
+is wasted effort until §6 unblock.
