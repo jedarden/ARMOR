@@ -8,7 +8,7 @@ generations, run restore) reads to reach the `commitgraph` Litestream/B2 backup
 re-checked). Source beads: bf-3hbw6f (recon), bf-3hvieu (kubeconfig probe),
 bf-3bdye7 (Path A re-verify), bf-3e5ktj (Path B re-verify), bf-1k77wu (§1+§2
 re-verify via observer kubeconfig), bf-3xv6g7 (§4 finalize + CLI/config re-verify),
-this doc bf-53li0z.
+bf-5owyzi (§5+§6+Appendix finalize + live re-verify), this doc bf-53li0z.
 
 ---
 
