@@ -3,6 +3,9 @@ package backend
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,13 +192,24 @@ func TestInitFilesystemBackend_ReturnsBackendInterface(t *testing.T) {
 // so a valid-looking config succeeds offline, mirroring how the string-based
 // initB2Backend is exercised in secondary_test.go.
 func TestInitB2BackendFromConfig(t *testing.T) {
+	// InitB2Backend's HeadBucket connectivity probe makes a real request
+	// against the configured endpoint. To keep the success subtests offline
+	// (no live B2 account, no -short gate), point the endpoint at a local
+	// server that answers every request 200 OK so the probe succeeds. The
+	// validation subtests fail at validateB2Config before the probe, so the
+	// endpoint value is irrelevant to them; only the success cases reach it.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
 	// A fully-populated B2 config; success cases derive from this by clearing
 	// only the field under test.
 	valid := BackendConfig{
 		Type:        "b2",
 		Bucket:      "armor-secondary",
 		Region:      "us-east-005",
-		Endpoint:    "https://s3.us-east-005.backblazeb2.com",
+		Endpoint:    srv.URL,
 		AccessKeyID: "KEYID",
 		SecretKey:   "SECRET",
 	}
@@ -296,3 +310,68 @@ func TestInitB2BackendFromConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestInitB2Backend_UnreachableEndpoint covers the offline error-propagation
+// path added by the HeadBucket connectivity probe. It points InitB2Backend at
+// a localhost port with no listener — a connection guaranteed to fail without
+// any live B2 credentials — and asserts the probe failure surfaces as a
+// non-nil error wrapped with the initialization-failure context, that the
+// underlying SDK connection error is reachable through the wrap chain, and
+// that no partially-constructed Backend leaks.
+//
+// It runs under the default `go test ./internal/backend/` run: no -short gate
+// and no B2 credentials in the environment. (The real-credentials rejection
+// path — bad creds against the live B2 endpoint — is covered separately.)
+func TestInitB2Backend_UnreachableEndpoint(t *testing.T) {
+	// Reserve a free TCP port and immediately close it so nothing is
+	// listening: the SDK's HeadBucket dial must fail (connection refused)
+	// deterministically, with no live network or B2 account required.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve listener: %v", err)
+	}
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+
+	cfg := BackendConfig{
+		Type:        "b2",
+		Bucket:      "armor-secondary",
+		Region:      "us-east-005",
+		Endpoint:    "http://" + addr,
+		AccessKeyID: "KEYID",
+		SecretKey:   "SECRET",
+	}
+
+	b, err := InitB2Backend(context.Background(), cfg)
+
+	// The probe failure must surface as a non-nil error.
+	if err == nil {
+		t.Fatalf("expected error for unreachable endpoint, got backend %T", b)
+	}
+
+	// No partially-constructed backend may escape a probe failure.
+	if b != nil {
+		t.Errorf("expected nil backend on probe failure, got %T", b)
+	}
+
+	// The error must carry the initialization-failure wrap context.
+	const wrapPrefix = "b2 backend initialization failed"
+	if !strings.Contains(err.Error(), wrapPrefix) {
+		t.Errorf("error %q missing wrap prefix %q", err.Error(), wrapPrefix)
+	}
+
+	// The underlying cause must be reachable: the SDK HeadBucket failure and
+	// its connection error must be present in the error chain rather than
+	// swallowed into an opaque message. "HeadBucket" confirms the SDK error
+	// surfaced; "connection refused" confirms it failed at the dial (the
+	// endpoint has no listener), not e.g. a 403 from real credentials.
+	if !strings.Contains(err.Error(), "HeadBucket") {
+		t.Errorf("error %q does not surface the HeadBucket SDK failure", err.Error())
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("error %q does not report a connection failure (wanted %q)", err.Error(), "connection refused")
+	}
+}
+
