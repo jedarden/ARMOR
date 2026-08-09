@@ -7,7 +7,8 @@ generations, run restore) reads to reach the `commitgraph` Litestream/B2 backup
 **Last re-confirmed:** 2026-08-09 (live pod + kubeconfig mtimes + OIDC cache
 re-checked). Source beads: bf-3hbw6f (recon), bf-3hvieu (kubeconfig probe),
 bf-3bdye7 (Path A re-verify), bf-3e5ktj (Path B re-verify), bf-1k77wu (§1+§2
-re-verify via observer kubeconfig), this doc bf-53li0z.
+re-verify via observer kubeconfig), bf-3xv6g7 (§4 finalize + CLI/config re-verify),
+this doc bf-53li0z.
 
 ---
 
@@ -155,10 +156,20 @@ Read the B2 keys locally, base64-decode, **export them as env vars** (this is
 load-bearing — exporting them is exactly what prevents litestream's IMDS
 fallback, the root cause of the bf-3dntjx restore failure).
 
-**Status:** BLOCKED (same kubeconfig-auth gate — no live kubeconfig grants
-`secret get` against `commitgraph`; see §0, Appendix). Local CLIs needed for
-this path are all present: `litestream` (`/usr/local/bin/litestream`), `aws`,
-`b2`.
+**Status:** BLOCKED-pending-validation — no live kubeconfig grants `secret get`
+against `commitgraph` today (same kubeconfig-auth gate; see §0, Appendix), so the
+expected outputs below are **not** live-captured. The recipe is nonetheless
+**structurally complete**: the decode+export block, both verify one-liners, and
+the IMDS-fallback warning below are all present, and every literal they rely on
+is read-only-confirmed via the observer kubeconfig — secret name
+`commitgraph-b2-workers`, key names `key-id`/`application-key` (§2), bucket
+`commitgraph-ops`, endpoint `https://s3.us-west-002.backblazeb2.com`, and the
+local restore config `scratch/litestream-restore/restore-config.yml` (which
+mounts the same `${LITESTREAM_*}` env interpolation). LIVE output capture is
+deferred to operator unblock (§6) — do **not** treat §4 as validated until then.
+Local CLIs needed for this path are all present and verified (2026-08-09):
+`litestream` (`/usr/local/bin/litestream`, v0.5.14), `aws` (v1.44.78), `b2`
+(v4.6.0).
 
 ### Decode + export the two B2 keys (copy-paste) — Path B
 
