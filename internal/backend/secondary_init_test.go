@@ -375,3 +375,67 @@ func TestInitB2Backend_UnreachableEndpoint(t *testing.T) {
 	}
 }
 
+// TestInitB2Backend_RejectedProbe is the HTTP-level counterpart to
+// TestInitB2Backend_UnreachableEndpoint. That test points the HeadBucket probe
+// at a closed port so the SDK fails at the dial (connection refused); this test
+// points it at a reachable local server that responds 403 Forbidden, so the
+// probe fails inside the HTTP layer — the same shape as a real credential
+// rejection (B2 returns 403 SignatureDoesNotMatch for a wrong secret) but
+// deterministically and offline, with no live B2 account required.
+//
+// Together the three probe-failure tests cover the rejection surface at every
+// layer without overlapping:
+//   - UnreachableEndpoint: connection refused (network/dial layer), default run.
+//   - RejectedProbe (this): HTTP 403 (auth/permission layer), default run.
+//   - BadCredentialsRejection: live 403 against a real B2 endpoint, env-gated.
+//
+// It runs under the default `go test ./internal/backend/` run: no -short gate
+// and no ARMOR_B2_TEST_* env vars. The local server returns 403 regardless of
+// the (static, unsigned-against-it) credentials, so the SDK's HeadBucket turns
+// the response into an operation error that InitB2Backend must surface.
+func TestInitB2Backend_RejectedProbe(t *testing.T) {
+	// A reachable server that rejects every request at the HTTP layer with 403,
+	// mirroring B2's response to bad credentials. No listener tricks: the dial
+	// succeeds, the SDK receives the 403, and HeadBucket returns an error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := BackendConfig{
+		Type:        "b2",
+		Bucket:      "armor-secondary",
+		Region:      "us-east-005",
+		Endpoint:    srv.URL,
+		AccessKeyID: "KEYID",
+		SecretKey:   "SECRET",
+	}
+
+	b, err := InitB2Backend(context.Background(), cfg)
+
+	// The probe rejection must surface as a non-nil error.
+	if err == nil {
+		t.Fatalf("expected error for rejected probe, got backend %T", b)
+	}
+
+	// No partially-constructed backend may escape a probe failure.
+	if b != nil {
+		t.Errorf("expected nil backend on probe rejection, got %T", b)
+	}
+
+	// The error must carry the initialization-failure wrap context.
+	const wrapPrefix = "b2 backend initialization failed"
+	if !strings.Contains(err.Error(), wrapPrefix) {
+		t.Errorf("error %q missing wrap prefix %q", err.Error(), wrapPrefix)
+	}
+
+	// "HeadBucket" confirms the SDK operation surfaced; "403" confirms it
+	// failed at the HTTP/auth layer (a reachable rejection), not at the dial —
+	// distinguishing this from the connection-refused path above.
+	if !strings.Contains(err.Error(), "HeadBucket") {
+		t.Errorf("error %q does not surface the HeadBucket SDK failure", err.Error())
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("error %q does not report the HTTP rejection status (wanted %q)", err.Error(), "403")
+	}
+}
