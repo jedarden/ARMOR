@@ -97,12 +97,22 @@ kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-observer.kubeconfig \
 ## 3. Path A — RECOMMENDED (in-pod litestream exec)
 
 **Why recommended:** running litestream **inside the sidecar** sidesteps the
-local EC2-IMDS credential fallback entirely — the B2 keys are already mounted as
-env in the pod, so there is no `LITESTREAM_*` to forget to export and no IMDS
-error path. This is the structurally cleanest path; Path B is the fallback for
-when exec is unavailable.
+local EC2-IMDS credential fallback entirely. The mounted `/etc/litestream.yml`
+pulls credentials via env interpolation —
+`access-key-id: ${LITESTREAM_ACCESS_KEY_ID}` /
+`secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}` — and both vars are injected
+into the pod from secret `commitgraph-b2-workers` (read-only-confirmed in the
+deployment spec; see §2). So the B2 keys are present in-pod at exec time: no
+`LITESTREAM_*` to remember to export locally, and no IMDS error path. This is the
+structurally cleanest path; Path B is the fallback for when exec is unavailable.
 
-**Status:** BLOCKED (no live kubeconfig grants `pods/exec` — see §0, Appendix).
+**Status:** BLOCKED-pending-validation — no live kubeconfig grants `pods/exec`
+today (see §0, Appendix), so the expected outputs below are **not** live-captured.
+The recipe is nonetheless **correct-by-construction**: every literal it relies on
+is read-only-confirmed via the observer kubeconfig — container name `litestream`
+(`-c litestream`), label `-l app=queue-api`, DB path `/data/queue.db`, config path
+`/etc/litestream.yml`, and the `${LITESTREAM_*}` env interpolation. Do **not**
+treat §3 as validated until §6 unblock yields the expected output.
 
 ### Verify connectivity (copy-paste) — Path A
 
