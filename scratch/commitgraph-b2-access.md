@@ -164,3 +164,125 @@ OIDC ~3 day expiry) — the downstream task should plan for that.
 - **litestream container:** `litestream` (image `litestream/litestream:0.5.11`)
 - **ConfigMap:** `queue-api-litestream-config` ✅ exists
 - **Secret `commitgraph-b2-workers`:** list-OK / get-DENIED on observer; values need admin kubeconfig
+
+---
+
+## Appendix A — exec + secret-read kubeconfig probe (bf-3hvieu, 2026-08-09)
+
+**Outcome: BLOCKED — no live kubeconfig grants secret-read OR exec against `commitgraph`.**
+This is the gate the prior attempts (bf-1q3s0v etc.) never cleared, and it is still
+closed. Detailed probe + exact remediation below. This blocker report is the
+closable deliverable for bf-3hvieu.
+
+### Probe method
+
+Re-confirmed the live pod first (observer SA, read-only, never expires):
+
+```
+queue-api-c5894c469-pzjsl   2/2 Running  0  17h   (Deployment queue-api; use -l app=queue-api)
+litestream sidecar container = litestream  (unchanged)
+```
+
+Two operations tested, each with a 35–45s timeout (stale Spot OIDC tokens HANG
+rather than failing fast — the timeout is load-bearing):
+
+- **(a) secret-read:** `kubectl <kc> --context=<ctx> get secret commitgraph-b2-workers -n commitgraph -o jsonpath='{.data}'`
+- **(b) exec:**          `kubectl <kc> --context=<ctx> exec queue-api-c5894c469-pzjsl -c litestream -n commitgraph -- echo ok`
+
+### Result matrix — every ord-devimprint direct/admin kubeconfig
+
+| Kubeconfig | Context (user) | secret-read | exec | Root cause |
+|---|---|---|---|---|
+| `ord-devimprint-token.kubeconfig` | `token-context` (`ngpc-user` static) | ❌ `401 Unauthorized` | ❌ `401 Unauthorized` | static bootstrap token expired |
+| `ord-devimprint-admin.kubeconfig` | `apexalgo-ord-devimprint` (`ngpc-user-apex…` static) | ❌ `401 Unauthorized` | ❌ `401 Unauthorized` | static bootstrap token expired |
+| `ord-devimprint.kubeconfig` | `apexalgo-ord-devimprint` (`ngpc-user` static) | ❌ `401 Unauthorized` | ❌ `401 Unauthorized` | static bootstrap token expired |
+| `ord-devimprint-admin.kubeconfig` | `apexalgo-ord-devimprint-oidc` (`oidc` exec) | ❌ TIMEOUT (no token) | ❌ TIMEOUT (no token) | OIDC cache empty + no browser headless |
+| `ord-devimprint.kubeconfig` | `apexalgo-ord-devimprint-oidc` (`oidc` exec) | ❌ TIMEOUT (no token) | ❌ TIMEOUT (no token) | OIDC cache empty + no browser headless |
+| `ord-devimprint-observer.kubeconfig` | observer (`devpod-observer` SA) | ❌ `403 Forbidden` (known) | ❌ `403 Forbidden` (known) | read-only RBAC by design — never grants these |
+
+Auth fails at the API layer, so it blocks **both** operations identically.
+
+### Evidence (representative, truncated)
+
+Static token path — fast 401 (server IS reachable; the token is the problem):
+```
+$ kubectl --kubeconfig=...ord-devimprint-admin.kubeconfig --context=apexalgo-ord-devimprint \
+    get secret commitgraph-b2-workers -n commitgraph -o jsonpath='{.data}'
+error: You must be logged in to the server (Unauthorized)
+```
+Direct API server reachability confirmed independently — unauth curl returns
+`http_code=403`, i.e. the control plane answers; this is an auth failure, not a
+network/DNS problem.
+
+OIDC path — hangs then times out (cache empty, no browser):
+```
+error: could not open the browser: exec: "xdg-open,x-www-browser,www-browser": executable file not found in $PATH
+Please visit the following URL in your browser manually: http://localhost:8000/
+error: get-token: authentication error: … authorization error: context canceled   (timeout 124)
+```
+OIDC token cache state (`--token-cache-dir=~/.kube/cache/oidc-login/org_KsELolwAOxl3Zxfm`):
+```
+2026-05-03 06:46  0  …/90e1…cc6.lock          (0-byte lock, no token blob)
+2026-08-07 19:21  0  …/org_KsELolwAOxl3Zxfm/90e1…cc6.lock   (0-byte lock, no token blob)
+```
+No cached access/refresh token exists anywhere under `~/.kube/cache/oidc-login/`, so
+`kubectl oidc-login get-token` must run the interactive browser authorization-code
+flow — impossible on this headless Hetzner box (and per bf-1q3s0v, Spot's OIDC has
+**no CLI refresh** path).
+
+### Why the other-cluster admin kubeconfigs are not candidates
+
+`commitgraph` exists ONLY on ord-devimprint (recon §1). Every other admin/direct
+kubeconfig in `~/.kube/` points at a different API server where the namespace is
+`NotFound`:
+
+| Kubeconfig | Points at | `get ns commitgraph` |
+|---|---|---|
+| `apexalgo-iad.kubeconfig`, `apexalgo-iad-alpha/-ts` | apexalgo-iad | NotFound |
+| `ardenone-manager-temp.kubeconfig` | ardenone-manager | NotFound |
+| `rs-manager.kubeconfig` (+ `.bak*`) | rs-manager | NotFound |
+| `iad-ci.kubeconfig` | iad-ci | NotFound |
+| `iad-options.kubeconfig`, `iad-options-observer` | iad-options | NotFound |
+| `iad-kalshi(-admin).kubeconfig`, default `~/.kube/config` | iad-kalshi | NotFound (and token also dead) |
+| `iad-native-ads*` | decommissioned 2026-07-27 | cluster gone |
+
+Cross-cluster RBAC is not a thing here; only ord-devimprint kubeconfigs can reach
+the namespace, and all of those fail auth (matrix above).
+
+### Exact remediation needed (operator self-service — mirrors bf-1q3s0v)
+
+The token is NOT something this headless agent can refresh. The operator (jedarden)
+must:
+
+1. **Rackspace Spot dashboard → ord-devimprint cloudspace → generate fresh admin
+   kubeconfig** (regenerates the `cloudspace-admin` OIDC credential). Overwrite
+   `~/.kube/ord-devimprint-admin.kubeconfig` (`chmod 600`).
+2. **Prime the OIDC token cache once from a browser-capable machine** — run any
+   `kubectl --kubeconfig=…ord-devimprint-admin.kubeconfig …` (e.g. `get ns`) and
+   complete the `login.spot.rackspace.com` SSO in a browser. This writes the access
+   + refresh token into `~/.kube/cache/oidc-login/org_KsELolwAOxl3Zxfm/`, after
+   which the OIDC `exec` path works headless until the refresh token lapses.
+   - Shortcut: the freshly-downloaded kubeconfig also carries a **static
+     `ngpc-user` token** that works headless immediately — but it is short-lived
+     (the Aug-07 20:01 regeneration's static token was already `Unauthorized` by
+     2026-08-09, i.e. < ~37h). Treat it as a temporary unlock, not a fix.
+3. **Verify both operations** before handing off:
+   ```
+   kubectl --kubeconfig=~/.kube/ord-devimprint-admin.kubeconfig \
+       get secret commitgraph-b2-workers -n commitgraph -o jsonpath='{.data}'   # (a) secret-read
+   kubectl --kubeconfig=~/.kube/ord-devimprint-admin.kubeconfig \
+       exec -n commitgraph -l app=queue-api -c litestream -- echo ok             # (b) exec
+   ```
+
+Once a single refreshed `ord-devimprint-admin` kubeconfig authenticates, it grants
+**both** secret-read and exec (same `cluster-admin` OIDC identity) — no separate
+kubeconfig per operation is needed.
+
+### Bottom line for downstream children
+
+- **No working kubeconfig today.** Both Path A (pod-exec on queue-api/litestream)
+  and Path B (secret-read on commitgraph-b2-workers) are blocked by the SAME
+  auth failure on ord-devimprint.
+- **Unblock = Spot-dashboard OIDC refresh + cache prime** (operator action).
+- Until then, the **only** working access is the read-only observer
+  (`ord-devimprint-observer.kubeconfig`), which grants neither secret-read nor exec.
