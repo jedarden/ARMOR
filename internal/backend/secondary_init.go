@@ -96,18 +96,24 @@ func InitFilesystemBackend(cfg BackendConfig) (Backend, error) {
 // to NewB2Backend, which loads the static credentials and configures the S3
 // client against the target endpoint.
 //
-// NewB2Backend is lazy — it makes no network call, so construction succeeds for
-// any syntactically valid config regardless of whether the endpoint is
-// reachable or the credentials authenticate. To surface those failures at boot
-// rather than on the first replication, InitB2Backend runs an explicit
-// HeadBucket connectivity probe against the configured bucket after
-// construction (this is where credential and connection validation live).
+// NewB2Backend is lazy: it stores the static credentials and constructs the S3
+// client but makes no network call, deferring authentication to the first
+// signed request. Construction therefore succeeds for any syntactically valid
+// config regardless of whether the endpoint is reachable or the credentials
+// authenticate — without a probe, this initializer would succeed offline even
+// for invalid credentials. To surface those failures at boot rather than on the
+// first replication, InitB2Backend runs an explicit HeadBucket connectivity
+// probe against cfg.Bucket after construction. That probe is the SDK's first
+// request, so it is where endpoint-unreachable and credential-rejection errors
+// actually surface: credential and connection validation live here, not in the
+// (lazy) constructor.
 //
 // Unlike InitFilesystemBackend, this initializer takes a context.Context. ctx
 // is required because NewB2Backend passes it to config.LoadDefaultConfig, which
-// the AWS SDK uses for the config and credential load (and which Child 4 will
-// use for a live connection check); callers should pass the request/bootstrap
-// context they want construction — and its cancellation — bound to.
+// the AWS SDK uses for the config and credential load, and the HeadBucket
+// connectivity probe uses it as the live request whose cancellation the SDK
+// honors; callers should pass the request/bootstrap context they want both
+// construction and the probe — and their cancellation — bound to.
 // InitFilesystemBackend needs no ctx because NewFSBackend performs only
 // synchronous local filesystem work with no SDK call to honor a deadline
 // against, so there is nothing to thread a context through.
@@ -119,12 +125,15 @@ func InitFilesystemBackend(cfg BackendConfig) (Backend, error) {
 // cfg.Bucket is validated by validateB2Config but is not copied onto B2Config:
 // the Backend interface is bucket-agnostic (every call takes its bucket), so
 // the secondary target's single fixed bucket stays in BackendConfig for the
-// replication caller to pass per operation.
+// replication caller to pass per operation — and for the HeadBucket probe to
+// target here at construction time.
 //
 // It returns the initialized backend on success, or an error if:
 //   - the type is non-empty and not "b2" (programming error),
 //   - a required B2 field is missing (returned as-is from validateB2Config),
-//   - NewB2Backend fails to construct the S3 client.
+//   - NewB2Backend fails to construct the S3 client,
+//   - the HeadBucket connectivity probe fails (endpoint unreachable or
+//     credentials rejected by B2).
 func InitB2Backend(ctx context.Context, cfg BackendConfig) (Backend, error) {
 	// Defensive type check: a non-empty type that isn't b2 is a programming
 	// error from the dispatcher. An empty type is allowed so the function can
