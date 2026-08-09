@@ -20,6 +20,21 @@ type KeyRoute struct {
 type ACLEntry struct {
 	Bucket string // Bucket name, "*" for all buckets
 	Prefix string // Key prefix, "*" or "" for any prefix
+
+	// Actions is the set of action verbs this rule permits, drawn from
+	// {get, put, delete, list} per ADR-012 (one verb per S3 operation:
+	// GetObject/HeadObject → get; PutObject and multipart create/upload-part/
+	// complete and CopyObject destination → put; DeleteObject(s) and
+	// AbortMultipartUpload → delete; ListObjectsV2/ListMultipartUploads →
+	// list). Membership is tested with a map lookup, e.g. entry.Actions["get"].
+	//
+	// The zero value is a nil map, which reads as an empty set (it holds no
+	// verbs). An empty set means ALL verbs are permitted: this keeps existing
+	// "bucket:prefix" ACL strings — which specify no verbs — backward
+	// compatible. Restricting a credential's verbs requires a non-empty set.
+	//
+	// This is the data model only; parseACL does not populate it yet (Phase 7).
+	Actions map[string]bool
 }
 
 // Credential represents an ARMOR client credential with optional ACLs.
