@@ -234,6 +234,17 @@ func TestShareGET_CompressionBehavior(t *testing.T) {
 			description:       "compressed repeated log entries (timestamped log data compresses efficiently) - should decompress",
 		},
 		{
+			// Multilingual UTF-8 content — emoji (4-byte sequences), CJK, accented
+			// Latin, Cyrillic and Greek. No existing case exercises non-ASCII byte
+			// patterns, so this case verifies byte-exact decompression of content
+			// whose original bytes span the full range of UTF-8 multibyte encodings.
+			name:              "compressed_unicode_multilingual",
+			data:              bytes.Repeat([]byte("Hello 世界! 🌍 Café — 日本語 тест ελληνικά \n"), 2*1024), // ~150KB multilingual UTF-8, compresses well
+			compressed:        true,
+			wantDecompression: true,
+			description:       "compressed multilingual UTF-8 text (emoji/CJK/Cyrillic/Greek diverse byte patterns) - should decompress",
+		},
+		{
 			name:              "legacy_object_no_compression_flag",
 			data:              []byte("Legacy object without compression metadata flag."),
 			compressed:        false, // legacy objects don't have compression flag set
