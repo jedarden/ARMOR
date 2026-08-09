@@ -6,7 +6,8 @@ generations, run restore) reads to reach the `commitgraph` Litestream/B2 backup
 
 **Last re-confirmed:** 2026-08-09 (live pod + kubeconfig mtimes + OIDC cache
 re-checked). Source beads: bf-3hbw6f (recon), bf-3hvieu (kubeconfig probe),
-bf-3bdye7 (Path A re-verify), bf-3e5ktj (Path B re-verify), this doc bf-53li0z.
+bf-3bdye7 (Path A re-verify), bf-3e5ktj (Path B re-verify), bf-1k77wu (§1+§2
+re-verify via observer kubeconfig), this doc bf-53li0z.
 
 ---
 
@@ -41,7 +42,13 @@ command are all here.
 
 Source of truth: ConfigMap `queue-api-litestream-config` in namespace
 `commitgraph` (originally documented in bf-57d3fx; matches the sidecar's mounted
-config).
+config). Re-confirmed live via observer kubeconfig on 2026-08-09 (bf-1k77wu):
+`bucket`, `endpoint`, `path` (backup key), and the in-pod `path: /data/queue.db`
+are all literal fields in the ConfigMap's `litestream.yml`. The `region`
+(`us-west-002`) is **not** a ConfigMap field — it is parsed from the endpoint
+hostname (`s3.<region>.backblazeb2.com`). The `/etc/litestream.yml` in-pod path is
+confirmed via the deployment's `volumeMount` (`litestream-config` →
+`/etc/litestream.yml`), not the ConfigMap itself.
 
 ---
 
@@ -75,8 +82,15 @@ kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-observer.kubeconfig \
 - Containers: `queue-api` (`ronaldraygun/commitgraph-queue-api:2.8.0`) and
   **`litestream`** sidecar (`litestream/litestream:0.5.11`). The sidecar
   container name is confirmed = **`litestream`** (use `-c litestream`).
-- Secret `commitgraph-b2-workers` (Opaque, 5 data keys) feeds the litestream
-  sidecar via `valueFrom.secretKeyRef`: keys `key-id` and `application-key`.
+- Secret `commitgraph-b2-workers` feeds both containers via
+  `valueFrom.secretKeyRef`. Observer-verifiable facts: `get secrets -n
+  commitgraph` (list — allowed) shows it as **`Opaque`, 5 data keys**; the
+  deployment env refs name four of those keys — `key-id`, `application-key`,
+  `bucket`, `prefix` — and the two B2 keys the restore needs are `key-id` and
+  `application-key`. What the observer *cannot* do is read the secret **values**:
+  individual `get secret commitgraph-b2-workers` / `describe` returns `403
+  Forbidden` (which is exactly what confirms the §2 table's "grants neither exec
+  nor secret get").
 
 ---
 
