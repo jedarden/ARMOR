@@ -86,3 +86,36 @@ func InitFilesystemBackend(cfg BackendConfig) (Backend, error) {
 	// no-op here but keeps the constructor's invariants intact.
 	return NewFSBackend(FSConfig{BasePath: cfg.Path})
 }
+
+// validateB2Config validates that a BackendConfig carries every field a B2
+// backend needs. It is pure validation — no network or SDK calls — so it can
+// run before NewB2Backend's credential load and endpoint resolution, failing
+// fast on a misconfigured secondary target instead of surfacing an opaque AWS
+// SDK error on the first operation.
+//
+// Each check returns an error that names the offending field so an operator
+// can pinpoint and fix the missing config value. It returns nil only when
+// Bucket, Region, Endpoint, AccessKeyID, and SecretKey are all non-empty.
+//
+// The Type field is intentionally not validated here: type dispatch is the
+// caller's responsibility (InitB2Backend, added in a follow-up), mirroring how
+// InitFilesystemBackend handles its own type check. This function validates
+// only the B2-specific parameters.
+func validateB2Config(cfg BackendConfig) error {
+	if cfg.Bucket == "" {
+		return fmt.Errorf("B2 backend bucket is required")
+	}
+	if cfg.Region == "" {
+		return fmt.Errorf("B2 backend region is required")
+	}
+	if cfg.Endpoint == "" {
+		return fmt.Errorf("B2 backend endpoint is required")
+	}
+	if cfg.AccessKeyID == "" {
+		return fmt.Errorf("B2 backend access key ID is required")
+	}
+	if cfg.SecretKey == "" {
+		return fmt.Errorf("B2 backend secret key is required")
+	}
+	return nil
+}
