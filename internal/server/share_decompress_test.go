@@ -251,6 +251,38 @@ func TestShareGET_CompressionBehavior(t *testing.T) {
 			wantDecompression: false,
 			description:       "legacy object - should bypass decompression",
 		},
+		{
+			// A genuine legacy object (written before compression existed) whose
+			// stored metadata carries NO x-amz-meta-armor-compressed key, so the
+			// Compressed flag stays at its zero value (false) and decompression is
+			// bypassed. The plaintext here begins with the zstd magic number
+			// (0x28 0xB5 0x2F 0xFD) — the real backward-compat hazard: a
+			// decompression path that sniffed content rather than trusting the
+			// metadata flag would try to decompress (and corrupt) this object.
+			// Serving the bytes through unchanged proves the legacy path honors the
+			// absent flag and triggers no decompression and no error.
+			name:              "legacy_object_zstd_magic_prefix_no_flag",
+			data:              append([]byte{0x28, 0xb5, 0x2f, 0xfd}, []byte(" legacy plaintext that coincidentally begins with zstd magic bytes")...),
+			compressed:        false,
+			wantDecompression: false,
+			description:       "legacy object with zstd magic-byte prefix and no compression flag - must serve bytes unchanged without decompression",
+		},
+		{
+			// A legacy object larger than a single encryption block
+			// (BlockSize=65536), so its ciphertext spans multiple blocks that
+			// the GET path must decrypt and reassemble across block boundaries.
+			// Like every legacy object it carries NO x-amz-meta-armor-compressed
+			// key, so the Compressed flag stays false and decompression is
+			// bypassed. This is distinct from the other legacy cases (all well
+			// under one block): it proves the multi-block reassembly path honors
+			// the absent flag end-to-end and serves the object byte-exact with
+			// no error, not just single-block objects.
+			name:              "legacy_object_multiblock_no_flag",
+			data:              bytes.Repeat([]byte("legacy multi-block payload segment. "), 4*1024), // ~136KB, spans multiple 64KB blocks
+			compressed:        false,
+			wantDecompression: false,
+			description:       "legacy multi-block object (spans >1 encryption block) with no compression flag - must reassemble and serve unchanged without decompression",
+		},
 	}
 
 	for _, tc := range testCases {
