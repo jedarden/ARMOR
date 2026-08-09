@@ -286,3 +286,74 @@ kubeconfig per operation is needed.
 - **Unblock = Spot-dashboard OIDC refresh + cache prime** (operator action).
 - Until then, the **only** working access is the read-only observer
   (`ord-devimprint-observer.kubeconfig`), which grants neither secret-read nor exec.
+
+---
+
+## Appendix B — Path A (in-pod litestream exec) re-verification: STILL BLOCKED (bf-3bdye7, 2026-08-09)
+
+**Outcome: BLOCKED — exec path unavailable, blocked on kubeconfig refresh. Defers to Path B.**
+
+This bead's task was to run litestream CLI commands IN-POD (Path A), which bypasses
+the local EC2-IMDS credential error entirely because the B2 credentials are already
+mounted into the `litestream` sidecar via env. That approach is sound — but it
+requires `pods/exec` against `commitgraph`, which no live kubeconfig grants today.
+
+### Re-verification (live pod re-confirmed first)
+
+Live pod re-confirmed via observer SA (read-only): `queue-api-c5894c469-pzjsl`,
+2/2 Running, litestream sidecar container = `litestream` (unchanged). No kubeconfig
+file in `~/.kube/` has been touched since bf-3hvieu's Aug-09 probe (admin mtime still
+`Aug 7 20:01`); the OIDC token cache still holds only 0-byte lock files (no token blob).
+
+Every candidate kubeconfig was probed directly for exec — all fail:
+
+| Probe | Kubeconfig / context | `exec ... -c litestream -- echo OK` | exit |
+|---|---|---|---|
+| 1 | `ord-devimprint-observer.kubeconfig` | `403 Forbidden` — observer SA cannot `create pods/exec` in commitgraph | 1 |
+| 2 | `ord-devimprint-admin.kubeconfig` / `apexalgo-ord-devimprint` (static token) | `401 Unauthorized` — bootstrap token expired | 1 |
+| 3 | `ord-devimprint-admin.kubeconfig` / `apexalgo-ord-devimprint-oidc` (OIDC exec) | **TIMEOUT** — no cached token, no browser on headless box | 124 |
+| 4 | `ord-devimprint.kubeconfig` / `apexalgo-ord-devimprint` (static token) | `401 Unauthorized` | 1 |
+| 5 | `ord-devimprint-token.kubeconfig` / `token-context` (static token) | `401 Unauthorized` | 1 |
+
+Auth fails at the API layer, so it blocks exec exactly as it blocks secret-read
+(Appendix A). No other cluster's kubeconfig can reach the namespace (`commitgraph`
+exists only on ord-devimprint).
+
+### Conclusion for downstream children
+
+- **Path A (in-pod exec) is unavailable today** — same blocker as Path B. Do not
+  re-probe; the gate is an operator OIDC refresh + cache prime (see Appendix A
+  remediation), not something this headless agent can clear.
+- **Defer to Path B** (read `commitgraph-b2-workers` secret values locally and run
+  litestream against B2 with `LITESTREAM_ACCESS_KEY_ID`/`LITESTREAM_SECRET_ACCESS_KEY`
+  exported). Path B hits the identical kubeconfig-auth blocker, so it is not
+  unblocked either — but it is the structurally correct fallback once any single
+  refreshed `ord-devimprint-admin` kubeconfig authenticates (it grants both exec
+  and secret-read).
+- **Neither path proceeds until the operator refreshes ord-devimprint admin access.**
+
+### Canonical exec command line (for downstream generation-enumeration reuse)
+
+Once a refreshed admin kubeconfig authenticates, the exact command downstream
+`enumerate-generations` work should run (substitute the resolved pod name, or use
+`-l app=queue-api` for pod-name-independence):
+
+```bash
+# (1) confirm the replica/db mounts with NO IMDS error (credentials are in-pod)
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig \
+  exec -n commitgraph -l app=queue-api -c litestream -- litestream databases
+
+# (2) the exact command generation-enumeration needs:
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig \
+  exec -n commitgraph -l app=queue-api -c litestream -- litestream generations /data/queue.db
+
+# (3) optionally re-confirm the mounted config in-pod:
+kubectl --kubeconfig=/home/coding/.kube/ord-devimprint-admin.kubeconfig \
+  exec -n commitgraph -l app=queue-api -c litestream -- cat /etc/litestream.yml
+#   expect: bucket=commitgraph-ops, path=queue-api/queue.db,
+#           endpoint=https://s3.us-west-002.backblazeb2.com
+```
+
+These commands were NOT run successfully (auth blocked). They are recorded here so
+the downstream child can execute them verbatim immediately after the kubeconfig
+refresh, without re-deriving the access path.
