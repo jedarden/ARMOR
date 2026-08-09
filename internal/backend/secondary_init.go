@@ -8,19 +8,40 @@ import (
 
 // BackendConfig is the parsed representation of a secondary backend
 // configuration. It is produced by the secondary-backend config parser and
-// consumed by the per-type initializers (InitFilesystemBackend and, in a
-// sibling task, the B2 initializer).
+// consumed by the per-type initializers (InitFilesystemBackend and
+// InitB2Backend).
 //
 // Only the fields relevant to the configured backend type are populated:
 //   - Type="filesystem" uses Path
+//   - Type="b2" uses Bucket, Region, Endpoint, AccessKeyID, and SecretKey
 //
-// B2 fields are intentionally omitted here; they are added by the B2
-// initialization task once its config format is settled.
+// Region and Endpoint are carried here rather than derived or defaulted by
+// InitB2Backend: both are operator-provided and account-specific (B2 exposes
+// multiple regions, and the S3 endpoint embeds the region), so neither has a
+// sensible universal default. They map directly onto B2Config for
+// NewB2Backend. The Cloudflare egress domain (B2Config.CFDomain) is
+// intentionally absent: a secondary replication target downloads objects for
+// verification rather than via the free-egress CDN, so InitB2Backend leaves
+// CFDomain empty.
 type BackendConfig struct {
 	// Type selects the backend implementation ("filesystem", "b2").
 	Type string
 	// Path is the root directory for a filesystem backend.
 	Path string
+
+	// Bucket is the target bucket for a B2 backend. Unlike B2Config (where the
+	// bucket is a per-operation parameter), a secondary backend replicates to a
+	// single fixed bucket, so it lives in the config rather than each call.
+	Bucket string
+	// Region is the B2 region of the target bucket (e.g. "us-east-005").
+	Region string
+	// Endpoint is the B2 S3 API endpoint (e.g.
+	// "https://s3.us-east-005.backblazeb2.com").
+	Endpoint string
+	// AccessKeyID is the B2 application key ID.
+	AccessKeyID string
+	// SecretKey is the B2 application key secret.
+	SecretKey string
 }
 
 // InitFilesystemBackend initializes a filesystem backend from a parsed
