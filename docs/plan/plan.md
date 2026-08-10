@@ -974,10 +974,16 @@ MEKs (cryptographic blast radius) are adjacent layers, not substitutes.
       `ARMOR_PREFIX=armor-test/` in the existing bucket (ADR-001), throwaway
       MEK, named-credential matrix — the validation target for everything
       below, never the production backup path.
-- [ ] **Action verbs** in `ACLEntry` (`{Get, Put, Delete, List}`),
-      backward-compatible `_ACL` parse extension, verb threading through both
-      `CheckACL` call sites; append-only (`Put+List`) becomes the standard
-      backup-writer role.
+- [x] **Action verbs** in `ACLEntry` (`{Get, Put, Delete, List}`),
+      backward-compatible `_ACL` parse extension (`bucket:prefix:get+list`),
+      verb threading through both `CheckACL` call sites (`wrapHandler` via
+      `ActionForRequest`, `handlePresign` via `ActionGet`); append-only
+      (`Put+List`) becomes the standard backup-writer role. Implemented: config
+      parse (`parseActions`/`validActions`), operation→verb map
+      (`operationAction`/`ActionForRequest`), `CheckACL` verb enforcement, and
+      verb + append-only tests (`auth_test.go`, `actions_test.go`,
+      `auth_integration_test.go`). Overwrite-as-destruction remains accepted v1
+      residual risk (no bucket versioning); pinned by an integration test.
 - [ ] **Enforcement coverage tests:** CopyObject source-key, DeleteObjects
       batch body, multipart lifecycle verbs, scoped-credential broad-list
       denial (pin existing behavior).

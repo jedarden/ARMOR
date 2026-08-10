@@ -242,6 +242,94 @@ func TestAuthIntegration(t *testing.T) {
 	})
 }
 
+// TestACLActionVerbEnforcement exercises ADR-012 action-verb enforcement
+// end-to-end through the same authorization path a live request follows in
+// wrapHandler: a SigV4-signed request is verified, the verb is derived via
+// ActionForRequest, and CheckACL decides allow/deny. It pins the ADR-012
+// decision-3 append-only (Put+List) backup-writer role — a compromised backup
+// client can write and list but cannot exfiltrate (Get) or destroy (Delete)
+// its history. The unit tests in auth_test.go assert CheckACL's verb logic in
+// isolation; this test drives it through full SigV4 verification + the request
+// classifier, the combination no other test covers.
+func TestACLActionVerbEnforcement(t *testing.T) {
+	// Append-only backup-writer credential (ADR-012 decision 3): writes and
+	// listings only, scoped to a backups/ prefix.
+	credentials := map[string]*config.Credential{
+		"BACKUPKEY": {
+			AccessKey: "BACKUPKEY",
+			SecretKey: "BACKUPSECRET1234567890123456789012",
+			ACLs: []config.ACLEntry{{
+				Bucket:  "test-bucket",
+				Prefix:  "backups/",
+				Actions: map[string]bool{ActionPut: true, ActionList: true},
+			}},
+		},
+	}
+	auth := NewSigV4AuthWithCredentials(credentials, "us-east-005")
+
+	// checkSigned mirrors wrapHandler's authorization path for object-level
+	// requests: verify the SigV4 signature, derive the verb from the request
+	// via ActionForRequest (exactly as wrapHandler does), and run CheckACL.
+	// Returns the ACL error (nil = allowed).
+	checkSigned := func(t *testing.T, method, path, key string) error {
+		t.Helper()
+		req := createSignedRequestForAuthTest(t, method, path, "", "BACKUPKEY", "BACKUPSECRET1234567890123456789012", nil)
+		cred, err := auth.VerifyRequest(req, nil)
+		if err != nil {
+			t.Fatalf("SigV4 verification failed: %v", err)
+		}
+		return CheckACL(cred, "test-bucket", key, ActionForRequest(req))
+	}
+
+	// Append-only role permits writes and listings.
+	t.Run("append-only allows backup write (PutObject)", func(t *testing.T) {
+		if err := checkSigned(t, "PUT", "/test-bucket/backups/db.dump", "backups/db.dump"); err != nil {
+			t.Errorf("PutObject should be allowed for append-only role, got: %v", err)
+		}
+	})
+
+	t.Run("append-only allows listing (ListObjectsV2)", func(t *testing.T) {
+		// ListObjectsV2 is a bucket-level GET with no key in the path; wrapHandler
+		// falls back to the ?prefix query param as the key. Simulate that fallback
+		// by checking the prefix the credential is scoped to with the list verb.
+		req := createSignedRequestForAuthTest(t, "GET", "/test-bucket?prefix=backups/", "", "BACKUPKEY", "BACKUPSECRET1234567890123456789012", nil)
+		cred, err := auth.VerifyRequest(req, nil)
+		if err != nil {
+			t.Fatalf("SigV4 verification failed: %v", err)
+		}
+		if err := CheckACL(cred, "test-bucket", "backups/", ActionList); err != nil {
+			t.Errorf("ListObjectsV2 should be allowed for append-only role, got: %v", err)
+		}
+	})
+
+	// Append-only role denies reads and deletes — the credential can write the
+	// prefix but cannot exfiltrate or destroy what it wrote.
+	t.Run("append-only denies exfiltration (GetObject)", func(t *testing.T) {
+		err := checkSigned(t, "GET", "/test-bucket/backups/db.dump", "backups/db.dump")
+		if err != ErrAccessDenied {
+			t.Errorf("GetObject should be denied for append-only role, got: %v", err)
+		}
+	})
+
+	t.Run("append-only denies destruction (DeleteObject)", func(t *testing.T) {
+		err := checkSigned(t, "DELETE", "/test-bucket/backups/db.dump", "backups/db.dump")
+		if err != ErrAccessDenied {
+			t.Errorf("DeleteObject should be denied for append-only role, got: %v", err)
+		}
+	})
+
+	// Overwrite-as-destruction is the accepted v1 residual risk (ADR-012
+	// decision 3): a Put against an existing key is permitted by the verb set
+	// even though it clobbers the prior object — there is no versioning to
+	// prevent it. Pin that this is the behavior so a future tightening (B2
+	// versioning) is a visible change.
+	t.Run("append-only permits overwrite (residual risk, no versioning in v1)", func(t *testing.T) {
+		if err := checkSigned(t, "PUT", "/test-bucket/backups/db.dump", "backups/db.dump"); err != nil {
+			t.Errorf("overwrite PutObject should be permitted by append-only role (v1 residual risk), got: %v", err)
+		}
+	})
+}
+
 // TestAuthenticationHeaders tests that authentication headers are properly passed through
 func TestAuthenticationHeaders(t *testing.T) {
 	credentials := map[string]*config.Credential{
