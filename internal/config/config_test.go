@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -50,6 +51,98 @@ func TestParseACL(t *testing.T) {
 			checkFunc: func(acls []ACLEntry) bool {
 				return acls[0].Bucket == "*" && acls[0].Prefix == "public/"
 			},
+		},
+		{
+			// Backward compatibility: a two-segment entry specifies no verbs,
+			// so Actions must be nil (which reads as "all verbs permitted").
+			name:        "two-segment defaults to all actions (nil map)",
+			aclStr:      "my-bucket:data/",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == "data/" && acls[0].Actions == nil
+			},
+		},
+		{
+			name:        "three-segment single verb",
+			aclStr:      "mybucket:foo/:get",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "mybucket" && acls[0].Prefix == "foo/" &&
+					actionsEqual(acls[0].Actions, "get")
+			},
+		},
+		{
+			name:        "three-segment multiple verbs plus-separated",
+			aclStr:      "mybucket:foo/:get+list",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "mybucket" && acls[0].Prefix == "foo/" &&
+					actionsEqual(acls[0].Actions, "get", "list")
+			},
+		},
+		{
+			name:        "three-segment multiple verbs space-separated",
+			aclStr:      "mybucket:foo/:put delete",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "mybucket" && acls[0].Prefix == "foo/" &&
+					actionsEqual(acls[0].Actions, "put", "delete")
+			},
+		},
+		{
+			name:        "three-segment mixed separators and whitespace",
+			aclStr:      "mybucket:foo/:get + list",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "mybucket" && acls[0].Prefix == "foo/" &&
+					actionsEqual(acls[0].Actions, "get", "list")
+			},
+		},
+		{
+			name:        "three-segment all four verbs",
+			aclStr:      "bucket:/:get+put+delete+list",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "bucket" && acls[0].Prefix == "/" &&
+					actionsEqual(acls[0].Actions, "get", "put", "delete", "list")
+			},
+		},
+		{
+			// A present-but-empty third segment is treated like an absent one:
+			// no verbs specified → all permitted (nil map).
+			name:        "trailing empty segment defaults to all actions",
+			aclStr:      "bucket:prefix/:",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "bucket" && acls[0].Prefix == "prefix/" && acls[0].Actions == nil
+			},
+		},
+		{
+			// Verb scoping is per-entry: only the scoped entry is restricted.
+			name:        "mixed scoped and unscoped entries",
+			aclStr:      "bucket-a:data/:get+list,bucket-b:other/",
+			expectCount: 2,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "bucket-a" && acls[0].Prefix == "data/" &&
+					actionsEqual(acls[0].Actions, "get", "list") &&
+					acls[1].Bucket == "bucket-b" && acls[1].Prefix == "other/" && acls[1].Actions == nil
+			},
+		},
+		{
+			name:        "three-segment invalid verb",
+			aclStr:      "bucket:foo/:read",
+			expectError: true,
+		},
+		{
+			name:        "three-segment unknown verb among valid ones",
+			aclStr:      "bucket:foo/:get+write",
+			expectError: true,
+		},
+		{
+			// Verbs are case-sensitive: capitalized forms are rejected.
+			name:        "three-segment uppercase verb rejected (case-sensitive)",
+			aclStr:      "bucket:foo/:Get",
+			expectError: true,
 		},
 		{
 			name:        "invalid format - missing colon",
@@ -399,4 +492,14 @@ func TestArmorPrefix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// actionsEqual reports whether got matches the expected set of verbs (a nil
+// got is treated as the empty set). A nil expected asserts the set is empty.
+func actionsEqual(got map[string]bool, expected ...string) bool {
+	want := make(map[string]bool, len(expected))
+	for _, v := range expected {
+		want[v] = true
+	}
+	return reflect.DeepEqual(got, want)
 }

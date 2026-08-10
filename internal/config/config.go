@@ -33,7 +33,9 @@ type ACLEntry struct {
 	// "bucket:prefix" ACL strings — which specify no verbs — backward
 	// compatible. Restricting a credential's verbs requires a non-empty set.
 	//
-	// This is the data model only; parseACL does not populate it yet (Phase 7).
+	// parseACL populates this from the optional third ACL segment
+	// ("bucket:prefix:get+list"); an entry whose ACL string omits the segment
+	// leaves Actions nil (all verbs permitted).
 	Actions map[string]bool
 }
 
@@ -128,7 +130,7 @@ type Config struct {
 
 	// Secondary backend configuration (ADR-006)
 	// When set, enables async replication to a secondary backend
-	SecondaryBackend string // Backend identifier (e.g., "filesystem", "s3", "wasabi")
+	SecondaryBackend     string // Backend identifier (e.g., "filesystem", "s3", "wasabi")
 	SecondaryBackendType string // Type: "filesystem" (future: "s3", "wasabi")
 	SecondaryBackendPath string // Path for filesystem backend (required when Type=filesystem)
 }
@@ -495,6 +497,13 @@ func loadNamedCredentials(cfg *Config) error {
 // Format: "bucket1:prefix1,bucket2:prefix2,bucket3:*"
 // A bucket of "*" means all buckets.
 // A prefix of "*" or "" means any prefix within the bucket.
+//
+// An optional third segment restricts an entry to specific action verbs per
+// ADR-012, e.g. "bucket:prefix:get+list". Verbs are space- or '+'-separated,
+// matched case-sensitively against {get, put, delete, list}, and an unknown
+// verb is a parse error. When the segment is absent (or empty) the entry
+// permits all verbs — its Actions map stays nil — so existing two-segment
+// "bucket:prefix" ACL strings keep their meaning.
 func parseACL(aclStr string) ([]ACLEntry, error) {
 	if aclStr == "" {
 		return nil, nil
@@ -509,14 +518,15 @@ func parseACL(aclStr string) ([]ACLEntry, error) {
 			continue
 		}
 
-		// Split bucket:prefix
-		kv := strings.SplitN(part, ":", 2)
-		if len(kv) != 2 {
+		// Split bucket:prefix[:actions]. The optional third segment carries
+		// the action verbs (e.g. "get+list") per ADR-012.
+		seg := strings.SplitN(part, ":", 3)
+		if len(seg) < 2 {
 			return nil, fmt.Errorf("invalid ACL entry %q (expected bucket:prefix)", part)
 		}
 
-		bucket := strings.TrimSpace(kv[0])
-		prefix := strings.TrimSpace(kv[1])
+		bucket := strings.TrimSpace(seg[0])
+		prefix := strings.TrimSpace(seg[1])
 
 		if bucket == "" {
 			return nil, fmt.Errorf("invalid ACL entry %q (empty bucket)", part)
@@ -527,10 +537,22 @@ func parseACL(aclStr string) ([]ACLEntry, error) {
 			prefix = ""
 		}
 
-		entries = append(entries, ACLEntry{
+		entry := ACLEntry{
 			Bucket: bucket,
 			Prefix: prefix,
-		})
+		}
+
+		// Optional third segment: action verbs. A present-but-empty segment is
+		// treated like an absent one (no verbs → all permitted).
+		if len(seg) == 3 {
+			actions, err := parseActions(seg[2])
+			if err != nil {
+				return nil, fmt.Errorf("invalid ACL entry %q: %w", part, err)
+			}
+			entry.Actions = actions
+		}
+
+		entries = append(entries, entry)
 	}
 
 	if len(entries) == 0 {
@@ -538,4 +560,37 @@ func parseACL(aclStr string) ([]ACLEntry, error) {
 	}
 
 	return entries, nil
+}
+
+// validActions is the closed set of action verbs an ACL entry may grant, per
+// ADR-012. Membership is matched case-sensitively (lowercase canonical forms
+// only); see the ACLEntry.Actions doc for the S3-operation each verb covers.
+var validActions = map[string]bool{
+	"get":    true,
+	"put":    true,
+	"delete": true,
+	"list":   true,
+}
+
+// parseActions parses the optional third ACL segment ("get+list") into an
+// Actions set. It accepts space- and/or '+'-separated verb names and validates
+// each case-sensitively against validActions. It returns nil (meaning "all
+// verbs permitted") when the segment carries no verbs, keeping "bucket:prefix"
+// ACL strings backward compatible. An unknown verb yields an error.
+func parseActions(verbStr string) (map[string]bool, error) {
+	// Normalize '+' to a space so a single strings.Fields collapses both
+	// separators and any surrounding/interleaved whitespace.
+	verbs := strings.Fields(strings.ReplaceAll(verbStr, "+", " "))
+	if len(verbs) == 0 {
+		return nil, nil
+	}
+
+	actions := make(map[string]bool, len(verbs))
+	for _, v := range verbs {
+		if !validActions[v] {
+			return nil, fmt.Errorf("invalid action verb %q (expected one of get, put, delete, list)", v)
+		}
+		actions[v] = true
+	}
+	return actions, nil
 }
