@@ -718,7 +718,7 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			if key == "" {
 				key = r.URL.Query().Get("prefix")
 			}
-			if err := CheckACL(cred, bucket, key); err != nil {
+			if err := CheckACL(cred, bucket, key, ActionForRequest(r)); err != nil {
 				s.writeError(w, "AccessDenied", "Access Denied", 403)
 				s.metrics.IncRequestsTotal("acl", 403)
 				return
@@ -906,8 +906,9 @@ func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check ACL for the request
-	if err := CheckACL(cred, bucket, req.Key); err != nil {
+	// Check ACL for the request. Presigning mints a download (GET) URL, so the
+	// action verb under test is "get" — the caller must be permitted to read.
+	if err := CheckACL(cred, bucket, req.Key, ActionGet); err != nil {
 		s.writeError(w, "AccessDenied", "Access Denied", 403)
 		return
 	}
