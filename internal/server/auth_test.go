@@ -571,6 +571,7 @@ func TestCheckACL(t *testing.T) {
 		acl         []config.ACLEntry
 		bucket      string
 		key         string
+		verb        string // ADR-012 verb under test; "" defaults to ActionGet below
 		expectError bool
 	}{
 		{
@@ -664,6 +665,64 @@ func TestCheckACL(t *testing.T) {
 			key:         "any/key",
 			expectError: true,
 		},
+		// --- verb-specific enforcement (ADR-012 action verbs) ---
+		{
+			name: "verb granted by Actions set",
+			acl: []config.ACLEntry{
+				{Bucket: "my-bucket", Prefix: "", Actions: map[string]bool{"get": true}},
+			},
+			bucket: "my-bucket", key: "any/key", verb: ActionGet,
+			expectError: false,
+		},
+		{
+			name: "verb denied by Actions set",
+			acl: []config.ACLEntry{
+				{Bucket: "my-bucket", Prefix: "", Actions: map[string]bool{"get": true}},
+			},
+			bucket: "my-bucket", key: "any/key", verb: ActionPut,
+			expectError: true,
+		},
+		{
+			name: "multiple verbs granted",
+			acl: []config.ACLEntry{
+				{Bucket: "my-bucket", Prefix: "", Actions: map[string]bool{"get": true, "list": true}},
+			},
+			bucket: "my-bucket", key: "any/key", verb: ActionList,
+			expectError: false,
+		},
+		{
+			name: "multiple verbs denied",
+			acl: []config.ACLEntry{
+				{Bucket: "my-bucket", Prefix: "", Actions: map[string]bool{"get": true, "list": true}},
+			},
+			bucket: "my-bucket", key: "any/key", verb: ActionDelete,
+			expectError: true,
+		},
+		{
+			name: "nil Actions permits any verb (backward compat)",
+			acl: []config.ACLEntry{
+				{Bucket: "my-bucket", Prefix: ""},
+			},
+			bucket: "my-bucket", key: "any/key", verb: ActionDelete,
+			expectError: false,
+		},
+		{
+			name: "verb scoping is per entry — unscoped entry covers other buckets",
+			acl: []config.ACLEntry{
+				{Bucket: "bucket-a", Prefix: "", Actions: map[string]bool{"get": true}},
+				{Bucket: "bucket-b", Prefix: ""},
+			},
+			bucket: "bucket-b", key: "any/key", verb: ActionPut,
+			expectError: false,
+		},
+		{
+			name: "prefix mismatch denies before verb is considered",
+			acl: []config.ACLEntry{
+				{Bucket: "my-bucket", Prefix: "data/", Actions: map[string]bool{"get": true}},
+			},
+			bucket: "my-bucket", key: "other/file.txt", verb: ActionGet,
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -674,7 +733,11 @@ func TestCheckACL(t *testing.T) {
 				ACLs:      tt.acl,
 			}
 
-			err := CheckACL(cred, tt.bucket, tt.key)
+			verb := tt.verb
+			if verb == "" {
+				verb = ActionGet
+			}
+			err := CheckACL(cred, tt.bucket, tt.key, verb)
 			if tt.expectError && err == nil {
 				t.Error("expected error, got nil")
 			}
