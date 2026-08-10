@@ -129,7 +129,7 @@ func TestAuthIntegration(t *testing.T) {
 			t.Fatalf("Authentication failed: %v", err)
 		}
 
-		err = CheckACL(cred, "test-bucket", "limited/test-key")
+		err = CheckACL(cred, "test-bucket", "limited/test-key", ActionGet)
 		if err != nil {
 			t.Errorf("ACL check failed for allowed path: %v", err)
 		}
@@ -142,7 +142,7 @@ func TestAuthIntegration(t *testing.T) {
 			t.Fatalf("Authentication failed: %v", err)
 		}
 
-		err = CheckACL(cred, "test-bucket", "other-key")
+		err = CheckACL(cred, "test-bucket", "other-key", ActionGet)
 		if err != ErrAccessDenied {
 			t.Errorf("Expected ErrAccessDenied, got %v", err)
 		}
@@ -167,7 +167,7 @@ func TestAuthIntegration(t *testing.T) {
 			t.Fatalf("Authentication failed: %v", err)
 		}
 
-		err = CheckACL(cred, "any-bucket", "any-key")
+		err = CheckACL(cred, "any-bucket", "any-key", ActionGet)
 		if err != nil {
 			t.Errorf("Wildcard ACL check failed: %v", err)
 		}
