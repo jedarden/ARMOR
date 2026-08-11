@@ -24,9 +24,10 @@ import (
 
 // mockBackend implements backend.Backend for testing.
 type mockBackend struct {
-	mu      sync.Mutex
-	objects map[string][]byte
-	meta    map[string]map[string]string
+	mu                                 sync.Mutex
+	objects                            map[string][]byte
+	meta                               map[string]map[string]string
+	capturedListMultipartUploadsPrefix string // Captured prefix argument for testing
 }
 
 func newMockBackend() *mockBackend {
@@ -322,7 +323,29 @@ func (m *mockBackend) ListParts(ctx context.Context, bucket, key, uploadID strin
 }
 
 func (m *mockBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*backend.ListMultipartUploadsResult, error) {
-	return &backend.ListMultipartUploadsResult{}, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Capture the prefix for test assertions
+	m.capturedListMultipartUploadsPrefix = prefix
+
+	// Return a result with at least one upload and a NextKeyMarker with the prefix prepended
+	// This allows tests to verify prefix handling and stripPrefix logic
+	result := &backend.ListMultipartUploadsResult{
+		Bucket:        bucket,
+		Uploads:       []backend.UploadInfo{},
+		NextKeyMarker: prefix + "next-upload-marker.txt",
+		IsTruncated:   true,
+	}
+
+	// Return an upload with the prefix prepended to exercise stripPrefix logic
+	result.Uploads = append(result.Uploads, backend.UploadInfo{
+		UploadID:  "test-upload-id",
+		Key:       prefix + "test-multipart-upload.txt",
+		Initiated: time.Now(),
+	})
+
+	return result, nil
 }
 
 // Lifecycle configuration methods (stub implementations for testing)
