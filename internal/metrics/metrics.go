@@ -100,6 +100,10 @@ type Metrics struct {
 	RestoreVerifierDrillObjectRatio    *expvar.Map // bucket -> recovered/total ratio (0..1)
 	RestoreVerifierDrillFailureCount   *expvar.Map // bucket -> cumulative failed direct-only recoveries
 
+	// Replication queue metrics for async secondary backend replication
+	ReplicationQueueDepth   *expvar.Int // Current number of items in replication queue
+	ReplicationDroppedTotal *expvar.Int // Total number of items dropped due to full queue
+
 	// Internal state
 	startTime time.Time
 }
@@ -191,6 +195,10 @@ func NewMetrics() *Metrics {
 	m.RestoreVerifierDrillLastSuccessTs = new(expvar.Map).Init()
 	m.RestoreVerifierDrillObjectRatio = new(expvar.Map).Init()
 	m.RestoreVerifierDrillFailureCount = new(expvar.Map).Init()
+
+	// Replication queue metrics
+	m.ReplicationQueueDepth = new(expvar.Int)
+	m.ReplicationDroppedTotal = new(expvar.Int)
 
 	return m
 }
@@ -605,6 +613,10 @@ func (m *Metrics) PrometheusFormat() string {
 		fmt.Fprintf(&sb, "armor_drill_failures_total{bucket=%q} %s\n", kv.Key, kv.Value.String())
 	})
 
+	// Replication queue metrics
+	writeMetric("replication_queue_depth", "Current number of items in the replication queue", "gauge", m.ReplicationQueueDepth)
+	writeMetric("replication_dropped_total", "Total number of items dropped due to full replication queue", "counter", m.ReplicationDroppedTotal)
+
 	// Uptime
 	uptime := time.Since(m.startTime).Seconds()
 	sb.WriteString("# HELP armor_uptime_seconds Server uptime in seconds\n")
@@ -705,6 +717,21 @@ func (m *Metrics) RecordDRDrillRun(bucket string, lastVerified, lastSuccess time
 	var fc expvar.Int
 	fc.Set(failures)
 	m.RestoreVerifierDrillFailureCount.Set(bucket, &fc)
+}
+
+// SetReplicationQueueDepth sets the current replication queue depth.
+func (m *Metrics) SetReplicationQueueDepth(depth int64) {
+	m.ReplicationQueueDepth.Set(depth)
+}
+
+// AddReplicationQueueDepth adds to the replication queue depth (can be negative).
+func (m *Metrics) AddReplicationQueueDepth(delta int64) {
+	m.ReplicationQueueDepth.Add(delta)
+}
+
+// IncReplicationDropped increments the replication dropped counter.
+func (m *Metrics) IncReplicationDropped() {
+	m.ReplicationDroppedTotal.Add(1)
 }
 
 // RequestTracker tracks in-flight requests using a WaitGroup.
