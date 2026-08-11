@@ -675,10 +675,16 @@ func (b *B2Backend) ListParts(ctx context.Context, bucket, key, uploadID string)
 }
 
 // ListMultipartUploads lists active multipart uploads.
-func (b *B2Backend) ListMultipartUploads(ctx context.Context, bucket string) (*ListMultipartUploadsResult, error) {
-	resp, err := b.s3Client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
+func (b *B2Backend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*ListMultipartUploadsResult, error) {
+	input := &s3.ListMultipartUploadsInput{
 		Bucket: aws.String(bucket),
-	})
+	}
+	// Apply the key prefix filter when one is provided so the backend only
+	// returns uploads under the ARMOR namespace.
+	if prefix != "" {
+		input.Prefix = aws.String(prefix)
+	}
+	resp, err := b.s3Client.ListMultipartUploads(ctx, input)
 	if err != nil {
 		return nil, fmt.Errorf("ListMultipartUploads failed: %w", err)
 	}
