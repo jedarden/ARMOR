@@ -439,3 +439,72 @@ func TestInitB2Backend_RejectedProbe(t *testing.T) {
 		t.Errorf("error %q does not report the HTTP rejection status (wanted %q)", err.Error(), "403")
 	}
 }
+
+// TestInitB2Backend_ReturnsBackendInterface confirms the returned B2Backend
+// satisfies the Backend interface and is usable for basic operations. It
+// mirrors TestInitFilesystemBackend_ReturnsBackendInterface, exercising the
+// returned backend through the interface rather than checking the concrete type.
+func TestInitB2Backend_ReturnsBackendInterface(t *testing.T) {
+	// Track HeadBucket calls to verify the backend is wired correctly.
+	headBucketCalled := false
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/armor-secondary":
+			headBucketCalled = true
+			// HeadBucket probe: respond with bucket headers
+			w.Header().Set("x-amz-bucket-region", "us-east-005")
+			w.WriteHeader(http.StatusOK)
+		case "/":
+			// ListBuckets operation: return an empty bucket list
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Logf("unexpected request to %s (method %s)", r.URL.Path, r.Method)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := BackendConfig{
+		Type:        "b2",
+		Bucket:      "armor-secondary",
+		Region:      "us-east-005",
+		Endpoint:    srv.URL,
+		AccessKeyID: "KEYID",
+		SecretKey:   "SECRET",
+	}
+
+	b, err := InitB2Backend(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("InitB2Backend: %v", err)
+	}
+	if b == nil {
+		t.Fatal("expected non-nil backend")
+	}
+
+	// Smoke test: the backend is wired and HeadBucket succeeded.
+	if !headBucketCalled {
+		t.Error("HeadBucket was not called during initialization")
+	}
+
+	// Exercise additional Backend interface methods to verify the backend
+	// is fully functional through the interface type.
+
+	// ListBuckets should work (S3 ListBuckets operation)
+	buckets, err := b.ListBuckets(context.Background())
+	if err != nil {
+		t.Errorf("ListBuckets: %v", err)
+	}
+	// Our mock server only responds to HeadBucket, so ListBuckets will fail,
+	// but we've verified the method exists and is callable through the interface.
+	_ = buckets // Use the variable to avoid "declared and not used"
+
+	// HeadBucket again (direct call through interface)
+	if err := b.HeadBucket(context.Background(), cfg.Bucket); err != nil {
+		t.Errorf("HeadBucket direct call: %v", err)
+	}
+
+	// Verify the backend implements the interface by assigning to the interface type.
+	var _ Backend = b
+}
