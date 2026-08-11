@@ -99,8 +99,9 @@ type Backend interface {
 	// ListParts lists the parts of a multipart upload.
 	ListParts(ctx context.Context, bucket, key, uploadID string) (*ListPartsResult, error)
 
-	// ListMultipartUploads lists active multipart uploads.
-	ListMultipartUploads(ctx context.Context, bucket string) (*ListMultipartUploadsResult, error)
+	// ListMultipartUploads lists active multipart uploads, optionally filtered by
+	// a key prefix. The prefix is the ARMOR-internal (already applyPrefix'd) value.
+	ListMultipartUploads(ctx context.Context, bucket, prefix string) (*ListMultipartUploadsResult, error)
 
 	// Lifecycle configuration operations (passthrough)
 

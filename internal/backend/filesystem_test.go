@@ -507,7 +507,7 @@ func TestFSBackend_ListMultipartUploads(t *testing.T) {
 	}
 
 	// List multipart uploads
-	result, err := fs.ListMultipartUploads(ctx, bucket)
+	result, err := fs.ListMultipartUploads(ctx, bucket, "")
 	if err != nil {
 		t.Fatalf("Failed to list multipart uploads: %v", err)
 	}

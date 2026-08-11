@@ -322,7 +322,7 @@ func (m *mockBackend) ListParts(ctx context.Context, bucket, key, uploadID strin
 	return &backend.ListPartsResult{}, nil
 }
 
-func (m *mockBackend) ListMultipartUploads(ctx context.Context, bucket string) (*backend.ListMultipartUploadsResult, error) {
+func (m *mockBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*backend.ListMultipartUploadsResult, error) {
 	return &backend.ListMultipartUploadsResult{}, nil
 }
 

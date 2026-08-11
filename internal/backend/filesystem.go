@@ -741,7 +741,7 @@ func (fs *FSBackend) ListParts(ctx context.Context, bucket, key, uploadID string
 }
 
 // ListMultipartUploads lists active multipart uploads.
-func (fs *FSBackend) ListMultipartUploads(ctx context.Context, bucket string) (*ListMultipartUploadsResult, error) {
+func (fs *FSBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*ListMultipartUploadsResult, error) {
 	multipartDir := filepath.Join(fs.bucketPath(bucket), ".armor", "multipart")
 
 	entries, err := os.ReadDir(multipartDir)
@@ -764,6 +764,13 @@ func (fs *FSBackend) ListMultipartUploads(ctx context.Context, bucket string) (*
 		}
 
 		key := keyEntry.Name()
+
+		// Filter by prefix when one is provided so only uploads under the
+		// ARMOR namespace are returned.
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			continue
+		}
+
 		keyDir := filepath.Join(multipartDir, key)
 
 		uploadEntries, err := os.ReadDir(keyDir)
