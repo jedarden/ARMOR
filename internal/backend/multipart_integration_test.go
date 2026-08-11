@@ -720,7 +720,7 @@ func (m *mockBackendForMultipart) ListParts(ctx context.Context, bucket, key, up
 	return &ListPartsResult{}, fmt.Errorf("not implemented")
 }
 
-func (m *mockBackendForMultipart) ListMultipartUploads(ctx context.Context, bucket string) (*ListMultipartUploadsResult, error) {
+func (m *mockBackendForMultipart) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*ListMultipartUploadsResult, error) {
 	return &ListMultipartUploadsResult{}, fmt.Errorf("not implemented")
 }
 

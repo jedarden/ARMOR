@@ -275,7 +275,7 @@ func (m *mockRotationBackend) ListParts(ctx context.Context, bucket, key, upload
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (m *mockRotationBackend) ListMultipartUploads(ctx context.Context, bucket string) (*backend.ListMultipartUploadsResult, error) {
+func (m *mockRotationBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*backend.ListMultipartUploadsResult, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 

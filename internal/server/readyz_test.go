@@ -192,7 +192,7 @@ func (b *countingBackend) AbortMultipartUpload(_ context.Context, _, _, _ string
 func (b *countingBackend) ListParts(_ context.Context, _, _, _ string) (*backend.ListPartsResult, error) {
 	return &backend.ListPartsResult{}, nil
 }
-func (b *countingBackend) ListMultipartUploads(_ context.Context, _ string) (*backend.ListMultipartUploadsResult, error) {
+func (b *countingBackend) ListMultipartUploads(_ context.Context, _, _ string) (*backend.ListMultipartUploadsResult, error) {
 	return &backend.ListMultipartUploadsResult{}, nil
 }
 func (b *countingBackend) GetBucketLifecycleConfiguration(_ context.Context, _ string) ([]byte, error) {

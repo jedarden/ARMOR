@@ -340,7 +340,7 @@ func (m *mockBackend) ListParts(_ context.Context, _, _, uploadID string) (*back
 	return res, nil
 }
 
-func (m *mockBackend) ListMultipartUploads(_ context.Context, _ string) (*backend.ListMultipartUploadsResult, error) {
+func (m *mockBackend) ListMultipartUploads(_ context.Context, _, _ string) (*backend.ListMultipartUploadsResult, error) {
 	return &backend.ListMultipartUploadsResult{}, nil
 }
 

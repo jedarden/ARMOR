@@ -2824,10 +2824,26 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 
 // ListMultipartUploads handles S3 ListMultipartUploads operation.
 // It forwards directly to B2 (passthrough operation).
+//
+// Prefix handling (when ARMOR_PREFIX is configured):
+// 1. Client sends unprefixed keys in request (prefix, key-marker)
+// 2. Handler prepends prefix before calling backend: backendPrefix = applyPrefix(prefix)
+// 3. Backend returns results with prefixed keys
+// 4. Handler strips prefix from upload keys and next-key marker before returning to client
+//
+// This pattern matches ListObjectsV2 and ListObjectVersions exactly.
 func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
 
-	result, err := h.backend.ListMultipartUploads(ctx, bucket)
+	prefix := r.URL.Query().Get("prefix")
+
+	// Apply the configured prefix to the prefix parameter for backend operations.
+	// When ARMOR_PREFIX is set, the backend stores all keys with the prefix prepended,
+	// but clients don't know about it. We need to prepend the prefix to the client's
+	// requested prefix so the backend finds the right uploads.
+	backendPrefix := h.applyPrefix(prefix)
+
+	result, err := h.backend.ListMultipartUploads(ctx, bucket, backendPrefix)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list multipart uploads: %v", err), 500)
 		return
@@ -2861,14 +2877,16 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 		Bucket:             bucket,
 		KeyMarker:          r.URL.Query().Get("key-marker"),
 		UploadIDMarker:     r.URL.Query().Get("upload-id-marker"),
-		NextKeyMarker:      result.NextKeyMarker,
+		NextKeyMarker:      h.stripPrefix(result.NextKeyMarker),
 		NextUploadIDMarker: result.NextUploadIDMarker,
 		IsTruncated:        result.IsTruncated,
 	}
 
 	for _, upload := range result.Uploads {
+		// Strip the configured prefix from upload keys before returning to client.
+		// Clients don't know about the prefix, so we remove it from the keys.
 		resp.Uploads = append(resp.Uploads, Upload{
-			Key:          upload.Key,
+			Key:          h.stripPrefix(upload.Key),
 			UploadID:     upload.UploadID,
 			Initiator:    "armor",
 			Owner:        "armor",
