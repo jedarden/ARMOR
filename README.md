@@ -166,17 +166,96 @@ ARMOR_MEK_ARCHIVE=<hex>                   # named key
 ARMOR_KEY_ROUTES="data/pii/*=sensitive,archive/*=archive,*=default"
 ```
 
-### Multi-Credential Configuration
+### Authentication
+
+ARMOR uses its own credential system for client authentication. **These ARMOR credentials are separate from your B2 credentials** — ARMOR validates clients locally, then uses its own B2 credentials to talk to the backend. This means:
+
+- B2 credentials never leave the ARMOR server
+- Multiple clients can share ARMOR with different access keys and permissions
+- Access keys can be scoped per-bucket or per-prefix
+
+#### Default Credential
+
+The simplest deployment uses a single static key pair:
 
 ```bash
+ARMOR_AUTH_ACCESS_KEY=my-access-key
+ARMOR_AUTH_SECRET_KEY=my-secret-key
+```
+
+If unset, ARMOR generates a random pair on startup (check the logs).
+
+#### Named Credentials with ACLs
+
+For multi-user deployments, define any number of named credentials via environment triplets — one `ACCESS_KEY`, one `SECRET_KEY`, and one optional `ACL`:
+
+```bash
+# Credential named "READONLY" (the name is for your bookkeeping)
 ARMOR_AUTH_READONLY_ACCESS_KEY=reader-key
 ARMOR_AUTH_READONLY_SECRET_KEY=reader-secret
 ARMOR_AUTH_READONLY_ACL="mybucket:readonly/*"
 
+# Credential named "WRITER"
 ARMOR_AUTH_WRITER_ACCESS_KEY=writer-key
 ARMOR_AUTH_WRITER_SECRET_KEY=writer-secret
 ARMOR_AUTH_WRITER_ACL="mybucket:*,otherbucket:uploads/*"
 ```
+
+**ACL Format**
+
+An ACL string grants scoped access to specific bucket and prefix combinations:
+
+- **Syntax:** `bucket:[:actions]`
+- **Multiple rules:** Comma-separated (`bucket1:prefix1,bucket2:prefix2`)
+- **Wildcard bucket:** Use `*` to match all buckets
+- **Wildcard prefix:** Use `*` or empty string to match all keys
+
+**Action Verbs**
+
+ACLs support fine-grained action verbs per [ADR-012](docs/adr/012-authorization-action-verbs-and-consumer-separation.md). If no actions are specified, all verbs are permitted (backward compatible).
+
+| Verb | S3 Operations Covered |
+|------|----------------------|
+| `get` | GetObject, HeadObject |
+| `put` | PutObject, CreateMultipartUpload, UploadPart, CompleteMultipartUpload, CopyObject (destination) |
+| `delete` | DeleteObject, DeleteObjects, AbortMultipartUpload |
+| `list` | ListObjectsV2, ListMultipartUploads |
+
+Specify actions as the optional third segment, separated by `:` and using `+` or spaces to combine verbs:
+
+```bash
+# All verbs on logs/ prefix (no action segment = all permitted)
+ARMOR_AUTH_LOGS_ACL="mybucket:logs/*"
+
+# Only GET and LIST on readonly/ prefix
+ARMOR_AUTH_READONLY_ACL="mybucket:readonly/*:get+list"
+
+# Only PUT and LIST on backups/ prefix (append-only backup writer)
+ARMOR_AUTH_BACKUP_ACL="mybucket:backups/*:put+list"
+```
+
+**Append-Only Backup Writers**
+
+The standard pattern for backup systems is `put+list` — the client can write new backups and list what it wrote, but cannot read, overwrite, or delete existing data:
+
+```bash
+ARMOR_AUTH_BACKUP_WRITER_ACCESS_KEY=backup-writer
+ARMOR_AUTH_BACKUP_WRITER_SECRET_KEY=backup-secret
+ARMOR_AUTH_BACKUP_WRITER_ACL="mybucket:backups/*:put+list"
+```
+
+**Overwrite-as-Destruction Risk:** Without bucket versioning enabled, a compromised `put`-only credential can still overwrite existing objects by re-uploading poisoned data (S3 `PutObject` overwrites by default). Append-only writers mitigate but do not eliminate this risk in v1 — the credential cannot delete, but it can still destroy data by overwriting. This is accepted residual risk; revisit if B2 versioning is enabled.
+
+**Multi-Bucket Example**
+
+```bash
+# Full access to one bucket, read-only to another
+ARMOR_AUTH_CROSSBUCKET_ACL="bucket-primary:*:get+put+delete+list,bucket-audit:logs/*:get+list"
+```
+
+**Empty ACL**
+
+If a credential has no `ACL` defined, it has full access to the configured `ARMOR_BUCKET`. This is the default for the unnamed `ARMOR_AUTH_*` pair.
 
 ## S3 API Coverage
 
