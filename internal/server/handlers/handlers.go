@@ -2982,7 +2982,7 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 		IsTruncated:         result.IsTruncated,
 		KeyMarker:           keyMarker,
 		VersionIDMarker:     versionIDMarker,
-		NextKeyMarker:       result.NextKeyMarker,
+		NextKeyMarker:       h.stripPrefix(result.NextKeyMarker),
 		NextVersionIDMarker: result.NextVersionIDMarker,
 	}
 
