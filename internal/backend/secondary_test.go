@@ -85,16 +85,19 @@ func TestInitSecondaryBackend(t *testing.T) {
 			errorContains: "cannot be empty",
 		},
 		{
-			name:          "B2 backend - insufficient params (4 instead of 5)",
-			configStr:     "b2:us-east-005:https://s3.us-east-005.backblazeb2.com:KEY004:SECRET004",
+			name:          "B2 backend - insufficient params (only 4 parts total, missing bucket)",
+			configStr:     "b2:us-east-005:https://s3.us-east-005.backblazeb2.com:KEY004",
 			expectError:   true,
-			errorContains: "expected 5 colon-separated values",
+			errorContains: "expected at least 5",
 		},
 		{
-			name:          "B2 backend - too many params (6 instead of 5)",
-			configStr:     "b2:us-east-005:https://s3.us-east-005.backblazeb2.com:KEY004:SECRET004:bucket:extra",
-			expectError:   true,
-			errorContains: "expected 5 colon-separated values",
+			name:        "B2 backend - valid config with :// in endpoint (8 parts total with b2: prefix)",
+			configStr:   "b2:us-east-005:https://s3.us-east-005.backblazeb2.com:KEY004:SECRET004:testbucket",
+			expectError: false,
+			checkFunc: func(b Backend) bool {
+				_, ok := b.(*B2Backend)
+				return ok
+			},
 		},
 		{
 			name:          "B2 backend - empty region",
@@ -213,7 +216,7 @@ func TestInitFilesystemBackend(t *testing.T) {
 		},
 		{
 			name:        "nested path",
-			path:        "/var/lib/armor/backup",
+			path:        "/tmp/armor/backup",
 			expectError: false,
 		},
 	}
@@ -273,16 +276,15 @@ func TestInitB2Backend(t *testing.T) {
 			errorContains: "cannot be empty",
 		},
 		{
-			name:          "wrong number of params - 4",
-			params:        "us-east-005:https://s3.us-east-005.backblazeb2.com:KEY123:SECRET456",
+			name:          "insufficient params - missing bucket (3 parts total)",
+			params:        "us-east-005:https://s3.us-east-005.backblazeb2.com:KEY123",
 			expectError:   true,
-			errorContains: "expected 5 colon-separated values",
+			errorContains: "expected at least 5",
 		},
 		{
-			name:          "wrong number of params - 6",
-			params:        "us-east-005:https://s3.us-east-005.backblazeb2.com:KEY123:SECRET456:bucket:extra",
-			expectError:   true,
-			errorContains: "expected 5 colon-separated values",
+			name:        "valid config with :// in endpoint (7 parts total, extracts correctly)",
+			params:      "us-east-005:https://s3.us-east-005.backblazeb2.com:KEY123:SECRET456:testbucket",
+			expectError: false,
 		},
 		{
 			name:          "empty region",

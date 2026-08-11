@@ -85,23 +85,38 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create secondary backend if configured (ADR-006)
+	// ARMOR_SECONDARY_BACKEND environment variable is parsed as a colon-separated
+	// format: "type:params" (e.g., "filesystem:/path" or "b2:region:endpoint:keyId:secret:bucket")
+	// When unset, secondaryBackend remains nil and replication is a complete no-op.
 	var secondaryBackend backend.Backend
-	if cfg.SecondaryBackendType != "" {
-		switch cfg.SecondaryBackendType {
+	secondaryCfg, err := backend.ParseSecondaryBackendEnv()
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ARMOR_SECONDARY_BACKEND: %w", err)
+	}
+
+	if secondaryCfg.Type != "" {
+		// Initialize backend based on type using the proper BackendConfig-based initializers
+		switch secondaryCfg.Type {
 		case "filesystem":
-			fsBackend, err := backend.NewFSBackend(backend.FSConfig{
-				BasePath: cfg.SecondaryBackendPath,
-			})
+			secondaryBackend, err = backend.InitFilesystemBackend(secondaryCfg)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create filesystem secondary backend: %w", err)
+				return nil, fmt.Errorf("failed to initialize filesystem secondary backend: %w", err)
 			}
-			secondaryBackend = fsBackend
 			logger.WithFields(map[string]interface{}{
-				"type": cfg.SecondaryBackendType,
-				"path": cfg.SecondaryBackendPath,
+				"type": secondaryCfg.Type,
+				"path": secondaryCfg.Path,
+			}).Info("secondary backend initialized")
+		case "b2":
+			secondaryBackend, err = backend.InitB2Backend(context.Background(), secondaryCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize B2 secondary backend: %w", err)
+			}
+			logger.WithFields(map[string]interface{}{
+				"type":   secondaryCfg.Type,
+				"bucket": secondaryCfg.Bucket,
 			}).Info("secondary backend initialized")
 		default:
-			return nil, fmt.Errorf("unsupported secondary backend type: %s", cfg.SecondaryBackendType)
+			return nil, fmt.Errorf("unsupported secondary backend type: %s", secondaryCfg.Type)
 		}
 	}
 
