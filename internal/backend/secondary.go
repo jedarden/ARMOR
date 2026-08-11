@@ -89,12 +89,20 @@ func initB2Backend(ctx context.Context, params string) (Backend, error) {
 	// Split by colon to get all parts
 	parts := strings.Split(params, ":")
 
-	// Minimum parts: region, endpoint, accessKeyId, secretKey, bucket = 5 parts
-	// But endpoint may contain "://", so we need at least 4 parts minimum
-	// We extract bucket, secretKey, accessKeyID from the end (always last 3)
-	// Then reconstruct endpoint and region from the remaining parts
-	if len(parts) < 4 {
-		return nil, fmt.Errorf("invalid B2 format: expected at least 4 colon-separated values (region:endpoint:accessKeyId:secretKey:bucket), got %d", len(parts))
+	// Since the endpoint may contain "://" (e.g., "https://s3..."), simply splitting
+	// by colon doesn't give us a fixed number of parts. We need to validate that we have
+	// at least enough parts to extract all required fields:
+	// - bucket (last 1)
+	// - secretKey (last 2)
+	// - accessKeyID (last 3)
+	// - at least one endpoint part (last 4)
+	// - region (remaining parts)
+	// So we need at least 5 parts total after the type prefix.
+	//
+	// However, because "://" adds extra parts, a valid config with https:// will have 7+ parts.
+	// The minimum case (no "://") is exactly 5 parts.
+	if len(parts) < 5 {
+		return nil, fmt.Errorf("invalid B2 format: expected at least 5 colon-separated values (region:endpoint:accessKeyId:secretKey:bucket), got %d", len(parts))
 	}
 
 	// Extract from the end (last 3 are always: bucket, secretKey, accessKeyID)
