@@ -1910,27 +1910,29 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 		return
 	}
 
-	// Extract keys
-	keys := make([]string, len(deleteReq.Objects))
+	// Extract original keys from request and prepare prefixed keys for backend
+	originalKeys := make([]string, len(deleteReq.Objects))
+	prefixedKeys := make([]string, len(deleteReq.Objects))
 	for i, obj := range deleteReq.Objects {
-		keys[i] = obj.Key
+		originalKeys[i] = obj.Key
+		prefixedKeys[i] = h.applyPrefix(obj.Key)
 	}
 
-	// Perform bulk delete
-	if err := h.backend.DeleteObjects(ctx, bucket, keys); err != nil {
+	// Perform bulk delete with prefixed keys
+	if err := h.backend.DeleteObjects(ctx, bucket, prefixedKeys); err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("DeleteObjects failed: %v", err), 500)
 		return
 	}
 
-	// Remove from manifest
+	// Remove from manifest using original (unprefixed) keys
 	if h.manifest != nil {
-		for _, key := range keys {
+		for _, key := range originalKeys {
 			h.manifest.RecordDelete(bucket, key)
 		}
 	}
 
-	// Invalidate cache for deleted objects
-	for _, key := range keys {
+	// Invalidate cache for deleted objects using original (unprefixed) keys
+	for _, key := range originalKeys {
 		h.cache.Delete(bucket, key)
 		h.footerCache.Delete(bucket, key)
 	}
@@ -1955,9 +1957,9 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 	}
 
-	// If not quiet mode, include all deleted keys
+	// If not quiet mode, include all deleted keys (using original unprefixed keys)
 	if !deleteReq.Quiet {
-		for _, key := range keys {
+		for _, key := range originalKeys {
 			result.Deleted = append(result.Deleted, DeletedObject{Key: key})
 		}
 	}
