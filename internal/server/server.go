@@ -1086,6 +1086,13 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 	blockCount := int(crypto.ComputeBlockCount(armorMeta.PlaintextSize, blockSize))
 	plaintextSize := armorMeta.PlaintextSize
 
+	// DEBUG: Log empty object detection
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":       token.Bucket,
+		"key":          token.Key,
+		"plaintextSize": plaintextSize,
+	}).Debug("handleShareFullObject: checking for empty object")
+
 	// Detect and log compression status from metadata
 	s.logger.WithFields(map[string]interface{}{
 		"bucket":     token.Bucket,
@@ -1095,6 +1102,23 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 
 	// Track whether compression has been checked from first block
 	checkedCompression := false
+
+	// Early return for empty objects (plaintextSize = 0)
+	// This prevents returning the envelope header instead of an empty body
+	s.logger.WithFields(map[string]interface{}{
+		"bucket":       token.Bucket,
+		"key":          token.Key,
+		"plaintextSize": plaintextSize,
+	}).Debug("handleShareFullObject: checking empty object early return")
+	if plaintextSize == 0 {
+		s.logger.Debug("handleShareFullObject: HIT empty object early return - setting Content-Length: 0 and returning")
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	s.logger.WithFields(map[string]interface{}{
+		"plaintextSize": plaintextSize,
+	}).Debug("handleShareFullObject: PASSED empty object check - continuing to normal flow")
 
 	// Calculate offsets
 	hmacTableOffset := crypto.HeaderSize + plaintextSize
