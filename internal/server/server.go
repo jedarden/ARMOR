@@ -85,16 +85,17 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create secondary backend if configured (ADR-006)
-	// ARMOR_SECONDARY_BACKEND environment variable is parsed as a colon-separated
-	// format: "type:params" (e.g., "filesystem:/path" or "b2:region:endpoint:keyId:secret:bucket")
-	// When unset, secondaryBackend remains nil and replication is a complete no-op.
+	// Config package has already validated ARMOR_SECONDARY_BACKEND_TYPE and
+	// ARMOR_SECONDARY_BACKEND_PATH (when Type=filesystem). When Type is empty,
+	// secondaryBackend remains nil and replication is a complete no-op.
 	var secondaryBackend backend.Backend
-	secondaryCfg, err := backend.ParseSecondaryBackendEnv()
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse ARMOR_SECONDARY_BACKEND: %w", err)
-	}
+	if cfg.SecondaryBackendType != "" {
+		// Build BackendConfig from validated config fields
+		secondaryCfg := backend.BackendConfig{
+			Type: cfg.SecondaryBackendType,
+			Path: cfg.SecondaryBackendPath,
+		}
 
-	if secondaryCfg.Type != "" {
 		// Initialize backend based on type using the proper BackendConfig-based initializers
 		switch secondaryCfg.Type {
 		case "filesystem":
@@ -1002,8 +1003,10 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if object is ARMOR-encrypted
+	fmt.Printf("DEBUG: handleShare - IsARMOREncrypted=%v, Size=%d\n", info.IsARMOREncrypted, info.Size)
 	if !info.IsARMOREncrypted {
 		// Serve non-ARMOR objects directly (passthrough)
+		fmt.Printf("DEBUG: handleShare - serving non-ARMOR object directly\n")
 		body, _, err := s.backend.Get(ctx, token.Bucket, token.Key)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to get object: %v", err), http.StatusInternalServerError)
@@ -1080,6 +1083,7 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 // handleShareFullObject handles full object downloads for share endpoint.
 func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, token *presign.Token, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata) {
+	fmt.Printf("DEBUG: handleShareFullObject ENTRY - plaintextSize=%d\n", armorMeta.PlaintextSize)
 	ctx := r.Context()
 
 	blockSize := armorMeta.BlockSize
@@ -1105,17 +1109,20 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 
 	// Early return for empty objects (plaintextSize = 0)
 	// This prevents returning the envelope header instead of an empty body
+	fmt.Printf("DEBUG: handleShareFullObject checking empty object - plaintextSize=%d\n", plaintextSize)
 	s.logger.WithFields(map[string]interface{}{
 		"bucket":       token.Bucket,
 		"key":          token.Key,
 		"plaintextSize": plaintextSize,
 	}).Debug("handleShareFullObject: checking empty object early return")
 	if plaintextSize == 0 {
+		fmt.Printf("DEBUG: HIT empty object early return - returning empty body\n")
 		s.logger.Debug("handleShareFullObject: HIT empty object early return - setting Content-Length: 0 and returning")
 		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	fmt.Printf("DEBUG: PASSED empty object check - continuing to normal flow\n")
 	s.logger.WithFields(map[string]interface{}{
 		"plaintextSize": plaintextSize,
 	}).Debug("handleShareFullObject: PASSED empty object check - continuing to normal flow")
