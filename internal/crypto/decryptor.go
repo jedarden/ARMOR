@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -318,16 +319,123 @@ func Decompress(compressed []byte) ([]byte, error) {
 
 	decoder, err := zstd.NewReader(nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create zstd decoder: %w", err)
+		return nil, &DecompressionError{
+			Err:        fmt.Errorf("failed to create zstd decoder: %w", err),
+			ErrType:    ErrTypeServer,
+			Cause:      "decoder_init_failed",
+		}
 	}
 	defer decoder.Close()
 
 	decompressed, err := decoder.DecodeAll(compressed, nil)
 	if err != nil {
-		return nil, fmt.Errorf("zstd decompression failed: %w", err)
+		// Classify the error based on its content
+		errType := classifyDecompressionError(err)
+		return nil, &DecompressionError{
+			Err:        err,
+			ErrType:    errType,
+			Cause:      determineErrorCause(err),
+		}
 	}
 
 	return decompressed, nil
+}
+
+// DecompressionError wraps decompression errors with classification.
+type DecompressionError struct {
+	Err     error
+	ErrType ErrorType
+	Cause   string
+}
+
+func (e *DecompressionError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *DecompressionError) Unwrap() error {
+	return e.Err
+}
+
+// ErrorType classifies decompression errors.
+type ErrorType int
+
+const (
+	// ErrTypeClient indicates client-side data integrity issues (400 Bad Request)
+	ErrTypeClient ErrorType = iota
+	// ErrTypeServer indicates server-side infrastructure issues (500 Internal Server Error)
+	ErrTypeServer
+)
+
+// classifyDecompressionError determines if an error is client-side (data integrity) or server-side (infrastructure).
+func classifyDecompressionError(err error) ErrorType {
+	if err == nil {
+		return ErrTypeServer
+	}
+
+	errMsg := err.Error()
+
+	// Client-side errors: data integrity issues in stored data
+	//
+	// Truncated/incomplete data
+	if strings.Contains(errMsg, "unexpected EOF") || strings.Contains(errMsg, "EOF") {
+		return ErrTypeClient
+	}
+
+	// Invalid format / corrupt data
+	if strings.Contains(errMsg, "magic") || strings.Contains(errMsg, "corrupt") ||
+		strings.Contains(errMsg, "invalid input") || strings.Contains(errMsg, "reserved block") {
+		return ErrTypeClient
+	}
+
+	// Size violations
+	if strings.Contains(errMsg, "size too big") || strings.Contains(errMsg, "size exceeded") ||
+		strings.Contains(errMsg, "window size") {
+		return ErrTypeClient
+	}
+
+	// Default to server-side for infrastructure issues
+	return ErrTypeServer
+}
+
+// determineErrorCause provides a human-readable cause for the error.
+func determineErrorCause(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+
+	errMsg := err.Error()
+
+	// Truncated data
+	if strings.Contains(errMsg, "unexpected EOF") || strings.Contains(errMsg, "EOF") {
+		return "truncated_data"
+	}
+
+	// Invalid format
+	if strings.Contains(errMsg, "magic") {
+		return "invalid_format"
+	}
+
+	// Corrupt data
+	if strings.Contains(errMsg, "corrupt") {
+		return "corrupted_data"
+	}
+
+	// Reserved block type
+	if strings.Contains(errMsg, "reserved block") {
+		return "invalid_format"
+	}
+
+	// Size issues
+	if strings.Contains(errMsg, "size too big") || strings.Contains(errMsg, "size exceeded") {
+		return "size_violation"
+	}
+
+	if strings.Contains(errMsg, "window size") {
+		return "size_violation"
+	}
+
+	// Default
+	return "decompression_failed"
 }
 
 func min(a, b int64) int64 {

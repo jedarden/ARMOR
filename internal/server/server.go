@@ -1227,6 +1227,29 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 
 		decompressed, err := crypto.Decompress(allDecrypted)
 		if err != nil {
+			// Classify the error to determine appropriate HTTP status code
+			var decompErr *crypto.DecompressionError
+			if errors.As(err, &decompErr) {
+				// Log the corruption with metadata
+				s.logger.WithFields(map[string]interface{}{
+					"bucket":         token.Bucket,
+					"key":            token.Key,
+					"corruption_type": decompErr.Cause,
+					"error_type":     "client",
+				}).Warn("share full object: corrupted compressed data detected")
+
+				// Client-side data integrity issue: 400 Bad Request
+				http.Error(w, fmt.Sprintf("Failed to decompress data: %v (corruption type: %s)", err, decompErr.Cause), http.StatusBadRequest)
+				return
+			}
+
+			// Server-side infrastructure issue: 500 Internal Server Error
+			s.logger.WithFields(map[string]interface{}{
+				"bucket": token.Bucket,
+				"key":    token.Key,
+				"error":  err.Error(),
+			}).Error("share full object: decompression infrastructure error")
+
 			http.Error(w, fmt.Sprintf("Failed to decompress data: %v", err), http.StatusInternalServerError)
 			return
 		}
