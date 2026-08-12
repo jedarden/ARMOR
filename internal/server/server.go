@@ -1245,6 +1245,20 @@ func (s *Server) handleShareRangeRequest(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	// Fail-closed: range requests over compressed objects are not supported
+	// Compression destroys fixed-offset seeking (zstd is variable-length encoding),
+	// so byte ranges into compressed ciphertext would return corrupt data.
+	if armorMeta.Compressed {
+		s.logger.WithFields(map[string]interface{}{
+			"bucket":     token.Bucket,
+			"key":        token.Key,
+			"range":      rangeHeader,
+			"compressed": armorMeta.Compressed,
+		}).Warn("share/range request rejected: range reads unsupported on compressed objects")
+		http.Error(w, "Range reads unsupported on compressed objects", http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+
 	// Translate range to encrypted blocks
 	translation, err := crypto.TranslateRange(start, end, plaintextSize, armorMeta.BlockSize, crypto.HeaderSize)
 	if err != nil {
