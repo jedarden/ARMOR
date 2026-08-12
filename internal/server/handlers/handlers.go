@@ -1703,7 +1703,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		// plaintext length.
 		h.enrichPlaintextSizes(ctx, bucket, result)
 		if h.listCache != nil {
-			h.listCache.Set(bucket, prefix, delimiter, maxKeys, contToken, result)
+			h.listCache.Set(bucket, backendPrefix, delimiter, maxKeys, contToken, result)
 		}
 	}
 
