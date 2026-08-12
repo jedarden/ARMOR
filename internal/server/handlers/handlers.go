@@ -1650,7 +1650,8 @@ func (h *Handlers) enrichPlaintextSizes(ctx context.Context, bucket string, resu
 			continue
 		}
 		eg.Go(func() error {
-			info, err := h.backend.Head(egCtx, bucket, key)
+			prefixedKey := h.applyPrefix(key)
+			info, err := h.backend.Head(egCtx, bucket, prefixedKey)
 			if err != nil {
 				return nil // non-fatal: keep encrypted size rather than failing the listing
 			}
