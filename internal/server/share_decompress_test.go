@@ -836,3 +836,395 @@ func generateRandomData(size int) []byte {
 	}
 	return data
 }
+
+// TestShareGET_EmptyObject tests that empty objects (0-byte plaintext) are handled correctly
+func TestShareGET_EmptyObject(t *testing.T) {
+	tmpDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
+	cfg := loadTestConfig(t, tmpDir)
+	srv, err := NewWithBackend(cfg, fsBackend)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
+
+	// Create empty data (0 bytes)
+	originalData := []byte("")
+
+	// Encrypt the empty data without compression
+	encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, originalData, false)
+
+	// Verify plaintext size is 0
+	if armorMeta.PlaintextSize != 0 {
+		t.Errorf("Expected PlaintextSize 0 for empty object, got %d", armorMeta.PlaintextSize)
+	}
+
+	// Store the empty object
+	ctx := context.Background()
+	storeTestObject(t, srv.backend, ctx, "test-bucket", "empty-object", encryptedData, hmacTable, armorMeta)
+
+	// Generate share token
+	token := generateTestToken(t, srv, "test-bucket", "empty-object", time.Hour)
+
+	// Make GET request
+	req := httptest.NewRequest("GET", "/share/"+token, nil)
+	w := httptest.NewRecorder()
+	srv.handleShare(w, req)
+
+	// Check response
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 for empty object, got %d", resp.StatusCode)
+	}
+
+	// Read response body
+	retrievedData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+
+	// Verify empty object is returned correctly (0 bytes)
+	if len(retrievedData) != 0 {
+		t.Errorf("Expected empty body (0 bytes), got %d bytes: %q", len(retrievedData), string(retrievedData))
+	}
+
+	// Verify the data is empty
+	if !bytes.Equal(retrievedData, originalData) {
+		t.Errorf("Empty object data mismatch.\nGot: %q (%d bytes)\nWant: %q (%d bytes)",
+			string(retrievedData), len(retrievedData), string(originalData), len(originalData))
+	}
+}
+
+// TestShareGET_SingleByteObject tests that single-byte objects are handled correctly
+func TestShareGET_SingleByteObject(t *testing.T) {
+	tmpDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
+	cfg := loadTestConfig(t, tmpDir)
+	srv, err := NewWithBackend(cfg, fsBackend)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
+
+	// Test each possible single-byte value
+	testCases := []struct {
+		name  string
+		data  []byte
+		desc  string
+	}{
+		{
+			name: "single_byte_zero",
+			data: []byte{0x00},
+			desc: "single byte with value 0x00",
+		},
+		{
+			name: "single_byte_a",
+			data: []byte{'a'},
+			desc: "single ASCII character 'a'",
+		},
+		{
+			name: "single_byte_ff",
+			data: []byte{0xFF},
+			desc: "single byte with value 0xFF",
+		},
+		{
+			name: "single_byte_space",
+			data: []byte{' '},
+			desc: "single space character",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Encrypt the single-byte data without compression
+			encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, tc.data, false)
+
+			// Verify plaintext size is 1
+			if armorMeta.PlaintextSize != 1 {
+				t.Errorf("Expected PlaintextSize 1 for single-byte object, got %d", armorMeta.PlaintextSize)
+			}
+
+			// Store the single-byte object
+			ctx := context.Background()
+			objectKey := "single-byte-" + tc.name
+			storeTestObject(t, srv.backend, ctx, "test-bucket", objectKey, encryptedData, hmacTable, armorMeta)
+
+			// Generate share token
+			token := generateTestToken(t, srv, "test-bucket", objectKey, time.Hour)
+
+			// Make GET request
+			req := httptest.NewRequest("GET", "/share/"+token, nil)
+			w := httptest.NewRecorder()
+			srv.handleShare(w, req)
+
+			// Check response
+			resp := w.Result()
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("Expected status 200 for single-byte object, got %d", resp.StatusCode)
+			}
+
+			// Read response body
+			retrievedData, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("Failed to read response body: %v", err)
+			}
+
+			// Verify single byte is returned correctly
+			if len(retrievedData) != 1 {
+				t.Errorf("Expected 1 byte, got %d bytes: %q", len(retrievedData), retrievedData)
+			}
+
+			// Verify the exact byte value
+			if !bytes.Equal(retrievedData, tc.data) {
+				t.Errorf("%s: data mismatch.\nGot: %v (%d bytes)\nWant: %v (%d bytes)",
+					tc.desc, retrievedData, len(retrievedData), tc.data, len(tc.data))
+			}
+
+			// Verify the exact byte value
+			if retrievedData[0] != tc.data[0] {
+				t.Errorf("%s: byte value mismatch.\nGot: 0x%02X\nWant: 0x%02X",
+					tc.desc, retrievedData[0], tc.data[0])
+			}
+		})
+	}
+}
+
+// TestShareGET_SmallObjectsCompressedFlag tests small objects (<4 bytes) with Compressed=true flag
+// This exercises the Decompress len<4 early-return path where data is returned unchanged
+func TestShareGET_SmallObjectsCompressedFlag(t *testing.T) {
+	tmpDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
+	cfg := loadTestConfig(t, tmpDir)
+	srv, err := NewWithBackend(cfg, fsBackend)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
+
+	// Test small objects (< 4 bytes) with Compressed=true flag set
+	// This exercises the Decompress early-return: len(compressed) < 4 returns data unchanged
+	testCases := []struct {
+		name       string
+		data       []byte
+		compressed bool
+		desc       string
+	}{
+		{
+			name:       "empty_compressed_flag",
+			data:       []byte(""),
+			compressed: true,
+			desc:       "empty object (0 bytes) with Compressed=true - should return unchanged",
+		},
+		{
+			name:       "one_byte_compressed_flag",
+			data:       []byte{'X'},
+			compressed: true,
+			desc:       "single-byte object with Compressed=true - should return unchanged",
+		},
+		{
+			name:       "two_bytes_compressed_flag",
+			data:       []byte{'A', 'B'},
+			compressed: true,
+			desc:       "two-byte object with Compressed=true - should return unchanged",
+		},
+		{
+			name:       "three_bytes_compressed_flag",
+			data:       []byte{'1', '2', '3'},
+			compressed: true,
+			desc:       "three-byte object with Compressed=true - should return unchanged",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Encrypt the data WITH Compressed=true flag set
+			// Note: We don't actually compress since it's < 4 bytes, we just set the flag
+			encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, tc.data, tc.compressed)
+
+			// Verify Compressed flag is set
+			if !armorMeta.Compressed {
+				t.Errorf("Expected Compressed flag to be true for test case %s", tc.name)
+			}
+
+			// Verify plaintext size matches
+			if armorMeta.PlaintextSize != int64(len(tc.data)) {
+				t.Errorf("PlaintextSize mismatch: got %d, want %d", armorMeta.PlaintextSize, len(tc.data))
+			}
+
+			// Store the object
+			ctx := context.Background()
+			objectKey := "small-" + tc.name
+			storeTestObject(t, srv.backend, ctx, "test-bucket", objectKey, encryptedData, hmacTable, armorMeta)
+
+			// Generate share token
+			token := generateTestToken(t, srv, "test-bucket", objectKey, time.Hour)
+
+			// Make GET request
+			req := httptest.NewRequest("GET", "/share/"+token, nil)
+			w := httptest.NewRecorder()
+			srv.handleShare(w, req)
+
+			// Check response - should return 200 with no panic
+			resp := w.Result()
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("Expected status 200, got %d", resp.StatusCode)
+			}
+
+			// Read response body
+			retrievedData, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("Failed to read response body: %v", err)
+			}
+
+			// Verify data is returned unchanged (exercising Decompress len<4 early-return)
+			if !bytes.Equal(retrievedData, tc.data) {
+				t.Errorf("%s: data mismatch.\nGot: %v (%d bytes)\nWant: %v (%d bytes)",
+					tc.desc, retrievedData, len(retrievedData), tc.data, len(tc.data))
+			}
+
+			// For objects < 4 bytes with Compressed=true, the Decompress function
+			// should return data unchanged (early return at len < 4)
+			// Verify we got the original bytes, not an error or corruption
+			if len(retrievedData) != len(tc.data) {
+				t.Errorf("%s: length mismatch after Decompress early-return.\nGot: %d bytes\nWant: %d bytes",
+					tc.desc, len(retrievedData), len(tc.data))
+			}
+		})
+	}
+}
+
+// TestSmallCompressedObjectGet tests that objects <4 bytes with Compressed=true
+// exercise the Decompress early-return path (crypto/decryptor.go:310-312)
+// and return the bytes unchanged without error.
+func TestSmallCompressedObjectGet(t *testing.T) {
+	tmpDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
+	cfg := loadTestConfig(t, tmpDir)
+	srv, err := NewWithBackend(cfg, fsBackend)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
+
+	// Test case: 3-byte object with Compressed=true
+	// This exercises the Decompress len<4 early-return at crypto/decryptor.go:310-312
+	smallData := []byte("ABC") // 3 bytes (< 4 bytes threshold)
+
+	// Encrypt the data WITH Compressed=true flag set
+	// Note: We don't actually compress since it's < 4 bytes, we just set the flag
+	encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, smallData, true)
+
+	// Verify Compressed flag is set
+	if !armorMeta.Compressed {
+		t.Errorf("Expected Compressed flag to be true for small object test")
+	}
+
+	// Verify plaintext size matches (3 bytes)
+	if armorMeta.PlaintextSize != 3 {
+		t.Errorf("PlaintextSize mismatch: got %d, want %d", armorMeta.PlaintextSize, 3)
+	}
+
+	// Store the object
+	ctx := context.Background()
+	objectKey := "small-compressed-test"
+	storeTestObject(t, srv.backend, ctx, "test-bucket", objectKey, encryptedData, hmacTable, armorMeta)
+
+	// Generate share token
+	token := generateTestToken(t, srv, "test-bucket", objectKey, time.Hour)
+
+	// Make GET request
+	req := httptest.NewRequest("GET", "/share/"+token, nil)
+	w := httptest.NewRecorder()
+	srv.handleShare(w, req)
+
+	// Check response - should return HTTP 200 with no panic
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected HTTP 200 status for small compressed object, got %d", resp.StatusCode)
+	}
+
+	// Read response body
+	retrievedData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+
+	// Verify data is returned unchanged (exercising Decompress len<4 early-return)
+	// The Decompress function at crypto/decryptor.go:310-312 should return data unchanged
+	if !bytes.Equal(retrievedData, smallData) {
+		t.Errorf("Small compressed object data mismatch.\nGot: %v (%d bytes)\nWant: %v (%d bytes)",
+			retrievedData, len(retrievedData), smallData, len(smallData))
+	}
+
+	// Verify length is preserved (3 bytes)
+	if len(retrievedData) != 3 {
+		t.Errorf("Expected 3 bytes after Decompress early-return, got %d bytes", len(retrievedData))
+	}
+
+	// Verify the exact byte values
+	if retrievedData[0] != smallData[0] || retrievedData[1] != smallData[1] || retrievedData[2] != smallData[2] {
+		t.Errorf("Byte values corrupted after Decompress early-return.\nGot: %v\nWant: %v",
+			retrievedData, smallData)
+	}
+
+	// Test confirms that the Decompress guard at crypto/decryptor.go:310-312 works correctly:
+	// - For len(compressed) < 4, Decompress returns data unchanged with nil error
+	// - No panic or error occurs from the early-return path
+	// - The <4-byte compressed object is served correctly via GET
+	t.Logf("✓ TestSmallCompressedObjectGet passed: Decompress early-return works correctly for <4-byte objects")
+	t.Logf("  - Input: %d bytes with Compressed=true", len(smallData))
+	t.Logf("  - Output: %d bytes unchanged", len(retrievedData))
+	t.Logf("  - HTTP Status: %d", resp.StatusCode)
+}
