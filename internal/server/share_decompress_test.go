@@ -650,9 +650,86 @@ func TestShareGET_RangeRequestWithCompression(t *testing.T) {
 	resp := w.Result()
 	defer resp.Body.Close()
 
-	// Should return partial content status
-	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status 206 or 200, got %d", resp.StatusCode)
+	// Range requests over compressed objects should return 416 (Range Not Satisfiable)
+	// Compression destroys fixed-offset seeking (zstd is variable-length encoding)
+	if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Errorf("Expected status 416 (Range Not Satisfiable) for compressed object, got %d", resp.StatusCode)
+	}
+
+	// Verify error message explains the limitation
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+	errorMsg := string(body)
+	if !strings.Contains(errorMsg, "Range reads unsupported on compressed objects") {
+		t.Errorf("Expected error message about range reads on compressed objects, got: %s", errorMsg)
+	}
+}
+
+// TestShareGET_RangeRequestUncompressed tests that range requests work correctly for uncompressed objects
+func TestShareGET_RangeRequestUncompressed(t *testing.T) {
+	tmpDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
+	cfg := loadTestConfig(t, tmpDir)
+	srv, err := NewWithBackend(cfg, fsBackend)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
+
+	// Create test data (NOT compressed)
+	originalData := generateRandomData(200 * 1024) // 200KB
+
+	// Encrypt and store WITHOUT compression
+	encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, originalData, false)
+	ctx := context.Background()
+	storeTestObject(t, srv.backend, ctx, "test-bucket", "test-key-uncompressed-range", encryptedData, hmacTable, armorMeta)
+
+	// Generate token
+	token := generateTestToken(t, srv, "test-bucket", "test-key-uncompressed-range", time.Hour)
+
+	// Make range request
+	req := httptest.NewRequest("GET", "/share/"+token, nil)
+	req.Header.Set("Range", "bytes=0-9999") // Request first 10KB
+	w := httptest.NewRecorder()
+	srv.handleShare(w, req)
+
+	// Check response
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	// Should return 206 Partial Content for successful range request
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Errorf("Expected status 206 (Partial Content) for uncompressed object, got %d", resp.StatusCode)
+	}
+
+	// Verify we got the expected range of data
+	retrievedData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+
+	// Should have received 10KB (bytes 0-9999)
+	expectedLen := 10000
+	if len(retrievedData) != expectedLen {
+		t.Errorf("Expected %d bytes from range request, got %d", expectedLen, len(retrievedData))
+	}
+
+	// Verify the data matches the original range
+	if !bytes.Equal(retrievedData, originalData[:expectedLen]) {
+		t.Errorf("Range data mismatch: retrieved data doesn't match original data range")
 	}
 }
 
