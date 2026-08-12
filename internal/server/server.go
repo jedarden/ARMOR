@@ -1003,10 +1003,8 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if object is ARMOR-encrypted
-	fmt.Printf("DEBUG: handleShare - IsARMOREncrypted=%v, Size=%d\n", info.IsARMOREncrypted, info.Size)
 	if !info.IsARMOREncrypted {
 		// Serve non-ARMOR objects directly (passthrough)
-		fmt.Printf("DEBUG: handleShare - serving non-ARMOR object directly\n")
 		body, _, err := s.backend.Get(ctx, token.Bucket, token.Key)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to get object: %v", err), http.StatusInternalServerError)
@@ -1083,49 +1081,22 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 // handleShareFullObject handles full object downloads for share endpoint.
 func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, token *presign.Token, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata) {
-	fmt.Printf("DEBUG: handleShareFullObject ENTRY - plaintextSize=%d\n", armorMeta.PlaintextSize)
 	ctx := r.Context()
 
 	blockSize := armorMeta.BlockSize
 	blockCount := int(crypto.ComputeBlockCount(armorMeta.PlaintextSize, blockSize))
 	plaintextSize := armorMeta.PlaintextSize
 
-	// DEBUG: Log empty object detection
-	s.logger.WithFields(map[string]interface{}{
-		"bucket":       token.Bucket,
-		"key":          token.Key,
-		"plaintextSize": plaintextSize,
-	}).Debug("handleShareFullObject: checking for empty object")
-
-	// Detect and log compression status from metadata
-	s.logger.WithFields(map[string]interface{}{
-		"bucket":     token.Bucket,
-		"key":        token.Key,
-		"compressed": armorMeta.Compressed,
-	}).Debug("share full object: compression status from metadata")
-
 	// Track whether compression has been checked from first block
 	checkedCompression := false
 
 	// Early return for empty objects (plaintextSize = 0)
 	// This prevents returning the envelope header instead of an empty body
-	fmt.Printf("DEBUG: handleShareFullObject checking empty object - plaintextSize=%d\n", plaintextSize)
-	s.logger.WithFields(map[string]interface{}{
-		"bucket":       token.Bucket,
-		"key":          token.Key,
-		"plaintextSize": plaintextSize,
-	}).Debug("handleShareFullObject: checking empty object early return")
 	if plaintextSize == 0 {
-		fmt.Printf("DEBUG: HIT empty object early return - returning empty body\n")
-		s.logger.Debug("handleShareFullObject: HIT empty object early return - setting Content-Length: 0 and returning")
 		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	fmt.Printf("DEBUG: PASSED empty object check - continuing to normal flow\n")
-	s.logger.WithFields(map[string]interface{}{
-		"plaintextSize": plaintextSize,
-	}).Debug("handleShareFullObject: PASSED empty object check - continuing to normal flow")
 
 	// Calculate offsets
 	hmacTableOffset := crypto.HeaderSize + plaintextSize
