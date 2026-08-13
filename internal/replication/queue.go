@@ -9,6 +9,14 @@ import (
 	"sync/atomic"
 )
 
+// Enqueuer is the interface for enqueuing replication tasks.
+// This allows handlers to use either the real queue or a mock for testing.
+type Enqueuer interface {
+	// Enqueue adds a replication task for the given bucket and key.
+	// Implementations must be non-blocking.
+	Enqueue(bucket, key string)
+}
+
 // DefaultQueueBufferSize is the default buffered channel capacity for ReplicationQueue.
 const DefaultQueueBufferSize = 4096
 
