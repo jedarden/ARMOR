@@ -108,8 +108,9 @@ type Metrics struct {
 	// Operations are: "put" for standard uploads, "put-streaming" for streaming uploads.
 	ReplicationEnqueuedTotal *expvar.Map // Deprecated: kept for Prometheus format compatibility
 	// Atomic counters for thread-safe increments
-	replicationEnqueuedPut          atomic.Int64 // Counter for "put" operations
-	replicationEnqueuedPutStreaming atomic.Int64 // Counter for "put-streaming" operations
+	replicationEnqueuedPut               atomic.Int64 // Counter for "put" operations
+	replicationEnqueuedPutStreaming     atomic.Int64 // Counter for "put-streaming" operations
+	replicationEnqueuedCompleteMultipart atomic.Int64 // Counter for "completemultipart" operations
 
 	// Internal state
 	startTime time.Time
@@ -483,12 +484,15 @@ func (m *Metrics) RecordBackendRequestDuration(operation string, duration time.D
 // Supported operations:
 //   - "put" — standard object uploads (PutObject)
 //   - "put-streaming" — streaming uploads (PutObject with streaming)
+//   - "completemultipart" — multipart upload completions (CompleteMultipartUpload)
 func (m *Metrics) IncReplicationEnqueued(operation string) {
 	switch operation {
 	case "put":
 		m.replicationEnqueuedPut.Add(1)
 	case "put-streaming":
 		m.replicationEnqueuedPutStreaming.Add(1)
+	case "completemultipart":
+		m.replicationEnqueuedCompleteMultipart.Add(1)
 	}
 }
 
@@ -658,6 +662,7 @@ func (m *Metrics) PrometheusFormat() string {
 	// Read from atomic counters
 	fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %d\n", "put", m.replicationEnqueuedPut.Load())
 	fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %d\n", "put-streaming", m.replicationEnqueuedPutStreaming.Load())
+	fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %d\n", "completemultipart", m.replicationEnqueuedCompleteMultipart.Load())
 
 
 	// Uptime

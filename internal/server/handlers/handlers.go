@@ -79,7 +79,7 @@ type Handlers struct {
 	provenance       ProvenanceRecorder
 	manifest         ManifestRecorder
 	metrics          *metrics.Metrics
-	replicationQueue *replication.ReplicationQueue
+	replicationQueue replication.Enqueuer
 
 	// multipartLocks serializes per-upload state updates. ADR-005 removes the
 	// sequential-only rejection, so parts of one upload may now arrive
@@ -145,7 +145,7 @@ func (h *Handlers) WithMetrics(m *metrics.Metrics) {
 // tasks after successful PutObject operations. When unconfigured, the server
 // passes nil and this method is never called, leaving replicationQueue nil and
 // replication a complete no-op.
-func (h *Handlers) WithReplicationQueue(q *replication.ReplicationQueue) {
+func (h *Handlers) WithReplicationQueue(q replication.Enqueuer) {
 	h.replicationQueue = q
 }
 
@@ -2791,6 +2791,31 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>`))
 	w.Write(output)
+
+	// Enqueue replication task to secondary backend if configured (non-blocking)
+	// This runs in a goroutine after the client receives the success response
+	if h.replicationQueue != nil {
+		go func() {
+			// Recover from panics to prevent goroutine crashes
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC in replication enqueue (completemultipart %s/%s): %v", bucket, key, r)
+				}
+			}()
+
+			// Enqueue the replication task
+			// Note: Enqueue() is non-blocking and does not return errors
+			// Dropped items are tracked via the replication_dropped_total metric
+			if h.replicationQueue != nil {
+				h.replicationQueue.Enqueue(bucket, key)
+				if h.metrics != nil {
+					h.metrics.IncReplicationEnqueued("completemultipart")
+				}
+			} else {
+				log.Printf("replication queue is nil, skipping enqueue for %s/%s", bucket, key)
+			}
+		}()
+	}
 }
 
 // AbortMultipartUpload handles S3 AbortMultipartUpload.
