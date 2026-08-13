@@ -435,14 +435,6 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	// Enqueue replication task to secondary backend if configured
-	if h.replicationQueue != nil {
-		h.replicationQueue.Enqueue(bucket, key)
-		if h.metrics != nil {
-			h.metrics.IncReplicationEnqueued("put")
-		}
-	}
-
 	// Record in manifest for fast metadata lookup (async B2 persistence)
 	if h.manifest != nil {
 		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag)
@@ -462,6 +454,17 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Return ETag
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
 	w.WriteHeader(http.StatusOK)
+
+	// Enqueue replication task to secondary backend if configured (non-blocking)
+	// This runs in a goroutine after the client receives the success response
+	if h.replicationQueue != nil {
+		go func() {
+			h.replicationQueue.Enqueue(bucket, key)
+			if h.metrics != nil {
+				h.metrics.IncReplicationEnqueued("put")
+			}
+		}()
+	}
 }
 
 // putObjectStreaming handles large file uploads with streaming encryption.
@@ -640,14 +643,6 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		return
 	}
 
-	// Enqueue replication task to secondary backend if configured
-	if h.replicationQueue != nil {
-		h.replicationQueue.Enqueue(bucket, key)
-		if h.metrics != nil {
-			h.metrics.IncReplicationEnqueued("put-streaming")
-		}
-	}
-
 	// Record in manifest for fast metadata lookup (async B2 persistence)
 	if h.manifest != nil {
 		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag)
@@ -668,6 +663,17 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
 	w.Header().Set("X-Armor-Streaming", "true")
 	w.WriteHeader(http.StatusOK)
+
+	// Enqueue replication task to secondary backend if configured (non-blocking)
+	// This runs in a goroutine after the client receives the success response
+	if h.replicationQueue != nil {
+		go func() {
+			h.replicationQueue.Enqueue(bucket, key)
+			if h.metrics != nil {
+				h.metrics.IncReplicationEnqueued("put-streaming")
+			}
+		}()
+	}
 }
 
 // GetObject handles S3 GetObject with decryption and range support.
