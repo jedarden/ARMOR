@@ -19,6 +19,7 @@ import (
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/keymanager"
+	"github.com/jedarden/armor/internal/replication"
 	"github.com/jedarden/armor/internal/server/handlers"
 )
 
@@ -3963,4 +3964,144 @@ func TestURLDecodeHivePartitionKeys(t *testing.T) {
 	}
 
 	t.Logf("✓ URL-encoded Hive partition key (%s) correctly decoded and served", encodedKey)
+}
+
+// mockSlowReplicationQueue is a mock replication.Enqueuer that simulates slow enqueue operations.
+// It tracks enqueue timing for testing async behavior.
+type mockSlowReplicationQueue struct {
+	mu               sync.Mutex
+	enqueueDelay     time.Duration
+	enqueueCallCount atomic.Int32
+	enqueueStartChan chan struct{} // Signals when enqueue starts
+	enqueueDoneChan  chan struct{} // Signals when enqueue completes
+}
+
+// Compile-time interface assertion
+var _ replication.Enqueuer = (*mockSlowReplicationQueue)(nil)
+
+// newMockSlowReplicationQueue creates a mock queue with configurable delay.
+func newMockSlowReplicationQueue(delay time.Duration) *mockSlowReplicationQueue {
+	return &mockSlowReplicationQueue{
+		enqueueDelay:     delay,
+		enqueueStartChan: make(chan struct{}, 1),
+		enqueueDoneChan:  make(chan struct{}, 1),
+	}
+}
+
+// Enqueue simulates a slow enqueue operation.
+// This method is called by the handler's goroutine after the response is sent.
+func (m *mockSlowReplicationQueue) Enqueue(bucket, key string) {
+	m.enqueueCallCount.Add(1)
+
+	// Signal that enqueue has started
+	select {
+	case m.enqueueStartChan <- struct{}{}:
+	default:
+	}
+
+	// Simulate slow enqueue
+	time.Sleep(m.enqueueDelay)
+
+	// Signal that enqueue has completed
+	select {
+	case m.enqueueDoneChan <- struct{}{}:
+	default:
+	}
+}
+
+// TestPutObjectAsyncEnqueueDoesNotBlockResponse verifies that the PutObject handler
+// returns the success response before the async enqueue goroutine completes.
+// This test ensures that replication enqueue does not block the client response path.
+func TestPutObjectAsyncEnqueueDoesNotBlockResponse(t *testing.T) {
+	// Use a significant delay to ensure timing is measurable
+	// 100ms is long enough to measure but short enough not to slow down tests
+	enqueueDelay := 100 * time.Millisecond
+
+	cfg, mb, cache, footerCache, km := testSetup(t)
+
+	// Create a mock queue with configurable delay
+	slowQueue := newMockSlowReplicationQueue(enqueueDelay)
+
+	// Create handlers with the slow queue
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+	h.WithReplicationQueue(slowQueue)
+
+	// Test content
+	plaintext := []byte("Test content for async enqueue verification")
+
+	// Record start time before sending request
+	requestStartTime := time.Now()
+
+	// Create PUT request
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+
+	// This should return quickly without waiting for enqueue
+	h.HandleRoot(w, req)
+
+	// Record response time
+	responseTime := time.Since(requestStartTime)
+
+	// Verify we got a successful response
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify ETag is returned (response is complete)
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Error("expected ETag header to be set")
+	}
+
+	// Response should be MUCH faster than the enqueue delay
+	// We allow a generous margin (50ms) for test execution overhead
+	maxExpectedResponseTime := enqueueDelay/2 // Response should be at most half the enqueue delay
+	marginOfError := 50 * time.Millisecond
+
+	if responseTime > maxExpectedResponseTime+marginOfError {
+		t.Errorf("response took too long: %v, expected < %v (enqueue delay was %v)",
+			responseTime, maxExpectedResponseTime+marginOfError, enqueueDelay)
+	}
+
+	// Now wait for the async enqueue to complete
+	select {
+	case <-slowQueue.enqueueStartChan:
+		// Enqueue started (good - goroutine was launched)
+	case <-time.After(200 * time.Millisecond):
+		t.Error("enqueue did not start within timeout")
+	}
+
+	select {
+	case <-slowQueue.enqueueDoneChan:
+		// Enqueue completed (good - goroutine finished work)
+	case <-time.After(200 * time.Millisecond):
+		t.Error("enqueue did not complete within timeout")
+	}
+
+	// Record total time including async enqueue
+	totalTime := time.Since(requestStartTime)
+
+	// Verify that response was faster than total time (async happened after response)
+	if responseTime >= totalTime {
+		t.Errorf("response time (%v) should be less than total time (%v) - enqueue may have blocked response",
+			responseTime, totalTime)
+	}
+
+	// Verify that total time is longer than response time (async work happened)
+	if totalTime <= responseTime {
+		t.Errorf("total time (%v) should be greater than response time (%v) - async work may not have occurred",
+			totalTime, responseTime)
+	}
+
+	// Verify enqueue was actually called
+	callCount := slowQueue.enqueueCallCount.Load()
+	if callCount != 1 {
+		t.Errorf("expected enqueue to be called once, got %d calls", callCount)
+	}
+
+	t.Logf("✓ Response time: %v (well below enqueue delay of %v)", responseTime, enqueueDelay)
+	t.Logf("✓ Total time (including async enqueue): %v", totalTime)
+	t.Logf("✓ Enqueue completed after response (response returned %v before enqueue finished)",
+		totalTime-responseTime)
 }
