@@ -103,7 +103,10 @@ type Metrics struct {
 	// Replication queue metrics for async secondary backend replication
 	ReplicationQueueDepth   *expvar.Int // Current number of items in replication queue
 	ReplicationDroppedTotal *expvar.Int // Total number of items dropped due to full queue
-	ReplicationEnqueuedTotal *expvar.Map // Total number of items enqueued by operation
+	// ReplicationEnqueuedTotal tracks total enqueued replication operations by operation type.
+	// Safe for concurrent use — expvar.Map.Add is internally synchronized with a mutex.
+	// Operations are: "put" for standard uploads, "put-streaming" for streaming uploads.
+	ReplicationEnqueuedTotal *expvar.Map
 
 	// Internal state
 	startTime time.Time
@@ -459,10 +462,26 @@ func (m *Metrics) RecordBackendRequestDuration(operation string, duration time.D
 }
 
 // IncReplicationEnqueued increments the replication enqueued counter for an operation.
+// Safe for concurrent calls — expvar.Map.Add is internally synchronized with a mutex.
+// Multiple goroutines can call this method simultaneously without data races.
+//
+// Example usage (concurrent):
+//
+//	// In upload handler goroutine 1:
+//	go func() {
+//	    metrics.IncReplicationEnqueued("put")
+//	}()
+//
+//	// In upload handler goroutine 2 (simultaneous):
+//	go func() {
+//	    metrics.IncReplicationEnqueued("put-streaming")
+//	}()
+//
+// Supported operations:
+//   - "put" — standard object uploads (PutObject)
+//   - "put-streaming" — streaming uploads (PutObject with streaming)
 func (m *Metrics) IncReplicationEnqueued(operation string) {
-	var counter expvar.Int
-	counter.Add(1)
-	m.ReplicationEnqueuedTotal.Set(operation, &counter)
+	m.ReplicationEnqueuedTotal.Add(operation, 1)
 }
 
 // PrometheusFormat returns metrics in Prometheus text format.
