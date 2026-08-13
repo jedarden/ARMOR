@@ -103,6 +103,7 @@ type Metrics struct {
 	// Replication queue metrics for async secondary backend replication
 	ReplicationQueueDepth   *expvar.Int // Current number of items in replication queue
 	ReplicationDroppedTotal *expvar.Int // Total number of items dropped due to full queue
+	ReplicationEnqueuedTotal *expvar.Map // Total number of items enqueued by operation
 
 	// Internal state
 	startTime time.Time
@@ -199,6 +200,7 @@ func NewMetrics() *Metrics {
 	// Replication queue metrics
 	m.ReplicationQueueDepth = new(expvar.Int)
 	m.ReplicationDroppedTotal = new(expvar.Int)
+	m.ReplicationEnqueuedTotal = new(expvar.Map).Init()
 
 	return m
 }
@@ -456,6 +458,13 @@ func (m *Metrics) RecordBackendRequestDuration(operation string, duration time.D
 	m.BackendRequestDuration.Set(bucket, &counter)
 }
 
+// IncReplicationEnqueued increments the replication enqueued counter for an operation.
+func (m *Metrics) IncReplicationEnqueued(operation string) {
+	var counter expvar.Int
+	counter.Add(1)
+	m.ReplicationEnqueuedTotal.Set(operation, &counter)
+}
+
 // PrometheusFormat returns metrics in Prometheus text format.
 func (m *Metrics) PrometheusFormat() string {
 	var sb strings.Builder
@@ -616,6 +625,12 @@ func (m *Metrics) PrometheusFormat() string {
 	// Replication queue metrics
 	writeMetric("replication_queue_depth", "Current number of items in the replication queue", "gauge", m.ReplicationQueueDepth)
 	writeMetric("replication_dropped_total", "Total number of items dropped due to full replication queue", "counter", m.ReplicationDroppedTotal)
+
+	sb.WriteString("\n# HELP armor_replication_enqueued_total Total number of items enqueued for replication by operation\n")
+	sb.WriteString("# TYPE armor_replication_enqueued_total counter\n")
+	m.ReplicationEnqueuedTotal.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %s\n", kv.Key, kv.Value.String())
+	})
 
 	// Uptime
 	uptime := time.Since(m.startTime).Seconds()
