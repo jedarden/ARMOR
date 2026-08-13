@@ -151,6 +151,9 @@ Real-time operational metrics:
 - **Bytes Downloaded** - Plaintext bytes served to clients
 - **Uptime** - Server uptime duration
 - **Canary Status** - Health status from the canary integrity monitor
+- **Replication Queue Depth** - Current number of items awaiting replication to secondary backend
+- **Replication Enqueued** - Total items queued for replication (by operation type)
+- **Replication Dropped** - Total items dropped due to full queue
 
 ### 5. Object Details
 
@@ -201,7 +204,13 @@ Returns:
   "canary_failures": 0,
   "active_multipart": 0,
   "provenance_entries": 150,
-  "uptime_seconds": 86400.0
+  "uptime_seconds": 86400.0,
+  "replication_queue_depth": 42,
+  "replication_enqueued_total": {
+    "put": 1234,
+    "put-streaming": 567
+  },
+  "replication_dropped_total": 0
 }
 ```
 
