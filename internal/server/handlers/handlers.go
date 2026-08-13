@@ -29,6 +29,8 @@ import (
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/keymanager"
+	"github.com/jedarden/armor/internal/metrics"
+	"github.com/jedarden/armor/internal/replication"
 )
 
 // ProvenanceRecorder records uploads in the provenance chain.
@@ -75,6 +77,8 @@ type Handlers struct {
 	keyManager       *keymanager.KeyManager
 	provenance       ProvenanceRecorder
 	manifest         ManifestRecorder
+	metrics          *metrics.Metrics
+	replicationQueue *replication.ReplicationQueue
 
 	// multipartLocks serializes per-upload state updates. ADR-005 removes the
 	// sequential-only rejection, so parts of one upload may now arrive
@@ -127,6 +131,21 @@ func (h *Handlers) WithManifest(m ManifestRecorder) {
 // same pattern used for the primary backend in New.
 func (h *Handlers) WithSecondaryBackend(be backend.Backend) {
 	h.secondaryBackend = be
+}
+
+// WithMetrics wires the metrics instance into the handlers.
+func (h *Handlers) WithMetrics(m *metrics.Metrics) {
+	h.metrics = m
+}
+
+// WithReplicationQueue wires the replication queue into the handlers.
+// When ARMOR_SECONDARY_BACKEND is configured, the server passes a non-nil
+// queue and this method is called, leaving replicationQueue ready to enqueue
+// tasks after successful PutObject operations. When unconfigured, the server
+// passes nil and this method is never called, leaving replicationQueue nil and
+// replication a complete no-op.
+func (h *Handlers) WithReplicationQueue(q *replication.ReplicationQueue) {
+	h.replicationQueue = q
 }
 
 // HandleRoot routes S3 operations based on the request.
@@ -416,6 +435,14 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
+	// Enqueue replication task to secondary backend if configured
+	if h.replicationQueue != nil {
+		h.replicationQueue.Enqueue(bucket, key)
+		if h.metrics != nil {
+			h.metrics.IncReplicationEnqueued("put")
+		}
+	}
+
 	// Record in manifest for fast metadata lookup (async B2 persistence)
 	if h.manifest != nil {
 		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag)
@@ -611,6 +638,14 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	if encErrVal := <-encErr; encErrVal != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
 		return
+	}
+
+	// Enqueue replication task to secondary backend if configured
+	if h.replicationQueue != nil {
+		h.replicationQueue.Enqueue(bucket, key)
+		if h.metrics != nil {
+			h.metrics.IncReplicationEnqueued("put-streaming")
+		}
 	}
 
 	// Record in manifest for fast metadata lookup (async B2 persistence)
