@@ -614,12 +614,42 @@ Content-Type: text/plain
 
 # HELP armor_requests_total Total number of requests
 # TYPE armor_requests_total counter
-armor_requests_total{method="GET",status="200"} 1234
+armor_requests_total 1234
 ...
 ```
 
+**Key Replication Metrics:**
+```
+# HELP armor_replication_enqueued_total Total number of items enqueued for replication by operation
+# TYPE armor_replication_enqueued_total counter
+armor_replication_enqueued_total{operation="put"} 1234
+armor_replication_enqueued_total{operation="put-streaming"} 567
+
+# HELP armor_replication_queue_depth Current number of items in the replication queue
+# TYPE armor_replication_queue_depth gauge
+armor_replication_queue_depth 42
+
+# HELP armor_replication_dropped_total Total number of items dropped due to full replication queue
+# TYPE armor_replication_dropped_total counter
+armor_replication_dropped_total 0
+```
+
+**Example Usage:**
+```bash
+# Test the endpoint
+curl http://localhost:9001/metrics
+
+# Filter replication metrics
+curl -s http://localhost:9001/metrics | grep replication
+
+# Monitor enqueue rate by operation
+curl -s http://localhost:9001/metrics | grep replication_enqueued_total
+```
+
 **Headers:**
-- `Content-Type: text/plain` (Prometheus text format)
+- `Content-Type: text/plain; version=0.0.4` (Prometheus text format)
+
+**Documentation:** See [metrics.md](metrics.md) for comprehensive metrics documentation including thread-safety guarantees, alerting examples, and Grafana queries.
 
 ---
 
