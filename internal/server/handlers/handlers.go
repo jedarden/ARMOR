@@ -12,6 +12,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -459,9 +460,23 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// This runs in a goroutine after the client receives the success response
 	if h.replicationQueue != nil {
 		go func() {
-			h.replicationQueue.Enqueue(bucket, key)
-			if h.metrics != nil {
-				h.metrics.IncReplicationEnqueued("put")
+			// Recover from panics to prevent goroutine crashes
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC in replication enqueue (put %s/%s): %v", bucket, key, r)
+				}
+			}()
+
+			// Enqueue the replication task
+			// Note: Enqueue() is non-blocking and does not return errors
+			// Dropped items are tracked via the replication_dropped_total metric
+			if h.replicationQueue != nil {
+				h.replicationQueue.Enqueue(bucket, key)
+				if h.metrics != nil {
+					h.metrics.IncReplicationEnqueued("put")
+				}
+			} else {
+				log.Printf("replication queue is nil, skipping enqueue for %s/%s", bucket, key)
 			}
 		}()
 	}
@@ -668,9 +683,23 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// This runs in a goroutine after the client receives the success response
 	if h.replicationQueue != nil {
 		go func() {
-			h.replicationQueue.Enqueue(bucket, key)
-			if h.metrics != nil {
-				h.metrics.IncReplicationEnqueued("put-streaming")
+			// Recover from panics to prevent goroutine crashes
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC in replication enqueue (put-streaming %s/%s): %v", bucket, key, r)
+				}
+			}()
+
+			// Enqueue the replication task
+			// Note: Enqueue() is non-blocking and does not return errors
+			// Dropped items are tracked via the replication_dropped_total metric
+			if h.replicationQueue != nil {
+				h.replicationQueue.Enqueue(bucket, key)
+				if h.metrics != nil {
+					h.metrics.IncReplicationEnqueued("put-streaming")
+				}
+			} else {
+				log.Printf("replication queue is nil, skipping enqueue for %s/%s", bucket, key)
 			}
 		}()
 	}
