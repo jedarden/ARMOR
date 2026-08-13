@@ -474,15 +474,19 @@ routine. The two are not trivially interchangeable: the CF domain fronts B2's
 *native* download API (`/file/<bucket>/<key>`) with a different auth scheme, not
 the S3 API.
 
-### Why the service is slower than either raw path
+### Why the service was slower than either raw path
 
-The CF read path issues a **ranged GET per 64 KiB block**
-(`bytes=<off>-<off+len-1>`), and those requests are not pipelined. Against a
-cross-country round trip (measured: 74 ms TCP connect to `us-west-002`) that
-caps throughput near `65536 / RTT` — around 0.9 MB/s serial, ~1.5 MB/s observed.
-So the ARMOR service reads at roughly **1/5th** of the Cloudflare path's own
-capacity. Restoring through the service is therefore the slowest of the three
-options; `armor-decrypt` is faster precisely because it bypasses that logic.
+The measurements above predate [ADR-013](adr/013-read-throughput-unpipelined-block-fetches.md).
+Before that fix, the CF read path issued a **ranged GET per 64 KiB block**
+(`bytes=<off>-<off+len-1>`) serially. Against a cross-country round trip
+(measured: 74 ms TCP connect to `us-west-002`) that capped throughput near
+`65536 / RTT` — around 0.9 MB/s serial, ~1.5 MB/s observed.
+
+`GetRangeWithHeaders` now pipelines those requests with a bounded worker pool,
+preserves block order, and fails the whole read if any block fails or is
+truncated. `ARMOR_READ_CONCURRENCY` controls the maximum number of ranged GETs
+in flight and defaults to 16. `armor-decrypt` remains faster in a direct-B2
+configuration because it bypasses the Cloudflare path, at billed egress.
 
 ## Key Rotation Failure Recovery
 

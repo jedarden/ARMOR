@@ -48,13 +48,14 @@ import (
 
 var (
 	// Configuration flags
-	b2Region    = flag.String("b2-region", os.Getenv("ARMOR_B2_REGION"), "B2 region")
-	b2Endpoint  = flag.String("b2-endpoint", os.Getenv("ARMOR_B2_ENDPOINT"), "B2 S3 endpoint")
-	b2AccessKey = flag.String("b2-access-key", os.Getenv("ARMOR_B2_ACCESS_KEY_ID"), "B2 access key ID")
-	b2SecretKey = flag.String("b2-secret-key", os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY"), "B2 secret key")
-	cfDomain    = flag.String("cf-domain", os.Getenv("ARMOR_CF_DOMAIN"), "Cloudflare domain")
-	mekHex      = flag.String("mek", os.Getenv("ARMOR_MEK"), "Master encryption key (hex)")
-	blockSize   = flag.Int("block-size", 65536, "Encryption block size")
+	b2Region        = flag.String("b2-region", os.Getenv("ARMOR_B2_REGION"), "B2 region")
+	b2Endpoint      = flag.String("b2-endpoint", os.Getenv("ARMOR_B2_ENDPOINT"), "B2 S3 endpoint")
+	b2AccessKey     = flag.String("b2-access-key", os.Getenv("ARMOR_B2_ACCESS_KEY_ID"), "B2 access key ID")
+	b2SecretKey     = flag.String("b2-secret-key", os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY"), "B2 secret key")
+	cfDomain        = flag.String("cf-domain", os.Getenv("ARMOR_CF_DOMAIN"), "Cloudflare domain")
+	mekHex          = flag.String("mek", os.Getenv("ARMOR_MEK"), "Master encryption key (hex)")
+	blockSize       = flag.Int("block-size", 65536, "Encryption block size")
+	readConcurrency = flag.Int("read-concurrency", parseInt(os.Getenv("ARMOR_READ_CONCURRENCY"), 16), "Maximum concurrent ranged reads")
 
 	// Verifier configuration
 	checkInterval = flag.Duration("check-interval", parseDuration(os.Getenv("VERIFIER_CHECK_INTERVAL"), 6*time.Hour), "Verification check interval")
@@ -162,11 +163,12 @@ func main() {
 	// Initialize B2 backend
 	ctx := context.Background()
 	b2Backend, err := backend.NewB2Backend(ctx, backend.B2Config{
-		Region:      *b2Region,
-		Endpoint:    *b2Endpoint,
-		AccessKeyID: *b2AccessKey,
-		SecretKey:   *b2SecretKey,
-		CFDomain:    *cfDomain,
+		Region:          *b2Region,
+		Endpoint:        *b2Endpoint,
+		AccessKeyID:     *b2AccessKey,
+		SecretKey:       *b2SecretKey,
+		CFDomain:        *cfDomain,
+		ReadConcurrency: *readConcurrency,
 	})
 	if err != nil {
 		log.Fatalf("Failed to initialize B2 backend: %v", err)
