@@ -74,11 +74,12 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// Create B2 backend
 	b2Backend, err := backend.NewB2Backend(context.Background(), backend.B2Config{
-		Region:      cfg.B2Region,
-		Endpoint:    cfg.B2Endpoint,
-		AccessKeyID: cfg.B2AccessKeyID,
-		SecretKey:   cfg.B2SecretAccessKey,
-		CFDomain:    cfg.CFDomain,
+		Region:          cfg.B2Region,
+		Endpoint:        cfg.B2Endpoint,
+		AccessKeyID:     cfg.B2AccessKeyID,
+		SecretKey:       cfg.B2SecretAccessKey,
+		CFDomain:        cfg.CFDomain,
+		ReadConcurrency: cfg.ReadConcurrency,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create B2 backend: %w", err)

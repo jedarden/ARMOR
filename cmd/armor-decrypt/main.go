@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -38,7 +39,8 @@ var (
 	outputFlag string
 
 	// Other options
-	verboseFlag bool
+	verboseFlag     bool
+	readConcurrency int
 )
 
 func init() {
@@ -53,6 +55,7 @@ func init() {
 	flag.StringVar(&ivFlag, "iv", "", "Object IV (hex, 16 bytes) for a local multipart object (required with -sidecar)")
 	flag.StringVar(&outputFlag, "output", "", "Output file path (default: stdout)")
 	flag.BoolVar(&verboseFlag, "v", false, "Verbose output")
+	flag.IntVar(&readConcurrency, "read-concurrency", envInt("ARMOR_READ_CONCURRENCY", 16), "Maximum concurrent ranged reads")
 }
 
 func main() {
@@ -135,6 +138,7 @@ Output:
 
 Options:
   -v                  Verbose output (to stderr)
+  -read-concurrency N Maximum concurrent ranged reads (default: 16)
 
 Examples:
   # Decrypt from B2 with MEK from flag
@@ -683,12 +687,21 @@ func initB2Backend() (*backend.B2Backend, error) {
 	}
 
 	return backend.NewB2Backend(context.Background(), backend.B2Config{
-		Region:      region,
-		Endpoint:    endpoint,
-		AccessKeyID: accessKey,
-		SecretKey:   secretKey,
-		CFDomain:    cfDomain,
+		Region:          region,
+		Endpoint:        endpoint,
+		AccessKeyID:     accessKey,
+		SecretKey:       secretKey,
+		CFDomain:        cfDomain,
+		ReadConcurrency: readConcurrency,
 	})
+}
+
+func envInt(name string, defaultValue int) int {
+	value, err := strconv.Atoi(os.Getenv(name))
+	if err != nil || value < 1 {
+		return defaultValue
+	}
+	return value
 }
 
 // writeOutput writes data to file or stdout.
