@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,7 +21,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
+
+// IsNoSuchUpload reports whether an error ultimately came from the S3
+// NoSuchUpload response. CompleteMultipartUpload can have an ambiguous result:
+// the object store may finish assembling the object after the proxy request
+// times out, so a retry sees NoSuchUpload even though the object now exists.
+func IsNoSuchUpload(err error) bool {
+	var apiErr smithy.APIError
+	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchUpload"
+}
 
 // B2Backend implements the Backend interface using B2's S3 API.
 type B2Backend struct {
