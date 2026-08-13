@@ -2608,8 +2608,23 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// the upload was created and its parts uploaded under.
 	etag, err := h.backend.CompleteMultipartUpload(ctx, bucket, h.applyPrefix(key), uploadID, parts)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to complete multipart upload: %v", err), 500)
-		return
+		// A long object-store completion can outlive the originating HTTP
+		// request. In that ambiguous-success case the retry receives
+		// NoSuchUpload because B2 already consumed the upload id. Resume the
+		// ARMOR metadata/sidecar finalization only when the newly assembled raw
+		// object has the exact expected ciphertext size and was created after
+		// this upload began. This rejects a stale same-key object instead of
+		// blessing it as the result of the timed-out upload.
+		if !backend.IsNoSuchUpload(err) {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to complete multipart upload: %v", err), 500)
+			return
+		}
+		info, headErr := h.backend.Head(ctx, bucket, h.applyPrefix(key))
+		if headErr != nil || info == nil || info.Size != totalPlaintextSize || info.LastModified.Before(state.Created) {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to recover ambiguous multipart completion: complete=%v head=%v", err, headErr), 500)
+			return
+		}
+		etag = info.ETag
 	}
 
 	// Store HMAC table as sidecar
