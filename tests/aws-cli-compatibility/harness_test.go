@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -36,6 +37,7 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
+	"github.com/jedarden/armor/internal/presign"
 	"github.com/jedarden/armor/internal/server"
 )
 
@@ -47,6 +49,7 @@ const (
 	testSecretKey = "armorcompatsecretkey0123456789abcdef"
 	testRegion    = "us-east-1"
 	testBucket    = "compat-bucket"
+	testPresignSecret = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
 // cmdTimeout bounds each CLI invocation so a hung subprocess cannot stall the
@@ -475,9 +478,45 @@ func startArmorServer(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("NewWithBackend: %v", err)
 	}
+	// Initialize presigner for share token generation
+	presignSecret, _ := hex.DecodeString(testPresignSecret)
+	srv.SetPresigner(presign.NewSigner(presignSecret, ""))
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
 	return hs.URL
+}
+
+// startArmorServerWithPresigner brings up an in-process ARMOR server and returns
+// both the base URL and the presigner for generating share tokens in tests.
+func startArmorServerWithPresigner(t *testing.T) (string, *presign.Signer) {
+	t.Helper()
+	cfg := &config.Config{
+		B2Region:        testRegion,
+		MEK:             testMEK(),
+		BlockSize:       65536,
+		CacheMaxEntries: 1000,
+		CacheTTL:        300,
+		AuthAccessKey:   testAccessKey,
+		AuthSecretKey:   testSecretKey,
+		Credentials: map[string]*config.Credential{
+			testAccessKey: {
+				AccessKey: testAccessKey,
+				SecretKey: testSecretKey,
+				ACLs:      nil, // full access
+			},
+		},
+	}
+	srv, err := server.NewWithBackend(cfg, newMockBackend())
+	if err != nil {
+		t.Fatalf("NewWithBackend: %v", err)
+	}
+	// Initialize presigner for share token generation
+	presignSecret, _ := hex.DecodeString(testPresignSecret)
+	signer := presign.NewSigner(presignSecret, "")
+	srv.SetPresigner(signer)
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+	return hs.URL, signer
 }
 
 // startRealArmorServer brings up an in-process ARMOR HTTP server backed by a REAL
@@ -727,5 +766,119 @@ func assertFilesEqual(t *testing.T, wantPath, gotPath string) {
 	t.Helper()
 	if w, g := sha256File(t, wantPath), sha256File(t, gotPath); w != g {
 		t.Fatalf("content mismatch: want %s (sha256 %s), got %s (sha256 %s)", wantPath, w, gotPath, g)
+	}
+}
+
+// GETResponse represents a parsed GET operation response with status code,
+// body data, and extracted metadata.
+type GETResponse struct {
+	StatusCode    int
+	Body          []byte
+	ContentLength int64
+	ETag          string
+	ContentType   string
+	LastModified  string
+	Headers       map[string]string
+}
+
+// parseGETResponse parses an HTTP GET response, extracting the body data,
+// status code, and object metadata headers. Returns an error if the response
+// cannot be read or the status code indicates failure.
+func parseGETResponse(resp *http.Response) (*GETResponse, error) {
+	if resp == nil {
+		return nil, fmt.Errorf("nil response")
+	}
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading GET response body: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Extract metadata from headers
+	headers := make(map[string]string)
+	for k, v := range resp.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+
+	// Build parsed response
+	parsed := &GETResponse{
+		StatusCode:    resp.StatusCode,
+		Body:          body,
+		ContentLength: resp.ContentLength,
+		Headers:       headers,
+	}
+
+	// Extract common S3 metadata headers
+	parsed.ETag = resp.Header.Get("ETag")
+	parsed.ContentType = resp.Header.Get("Content-Type")
+	parsed.LastModified = resp.Header.Get("Last-Modified")
+
+	return parsed, nil
+}
+
+// assertGETSuccess verifies that a GET response succeeded (HTTP 200) and
+// returns the parsed response for further inspection. Fatals on failure.
+func assertGETSuccess(t *testing.T, resp *http.Response) *GETResponse {
+	t.Helper()
+
+	parsed, err := parseGETResponse(resp)
+	if err != nil {
+		t.Fatalf("GET response parsing failed: %v", err)
+	}
+
+	if parsed.StatusCode != http.StatusOK {
+		t.Fatalf("GET returned status %d, body: %s", parsed.StatusCode, string(parsed.Body))
+	}
+
+	return parsed
+}
+
+// assertGET404 verifies that a GET response returned 404 Not Found.
+// Used for post-delete verification.
+func assertGET404(t *testing.T, resp *http.Response) {
+	t.Helper()
+
+	parsed, err := parseGETResponse(resp)
+	if err != nil {
+		t.Fatalf("GET response parsing failed: %v", err)
+	}
+
+	if parsed.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET expected 404 Not Found, got status %d, body: %s", parsed.StatusCode, string(parsed.Body))
+	}
+}
+
+// assertGETContentEqual verifies that a GET response body matches expected
+// data byte-for-byte.
+func assertGETContentEqual(t *testing.T, resp *http.Response, expectedData []byte) {
+	t.Helper()
+
+	parsed := assertGETSuccess(t, resp)
+
+	if !bytes.Equal(parsed.Body, expectedData) {
+		t.Fatalf("GET content mismatch: got %d bytes, want %d bytes", len(parsed.Body), len(expectedData))
+	}
+}
+
+// assertGETMetadata verifies that GET response metadata matches expected values.
+func assertGETMetadata(t *testing.T, resp *http.Response, expectedLength int64, expectedETag, expectedContentType string) {
+	t.Helper()
+
+	parsed := assertGETSuccess(t, resp)
+
+	if parsed.ContentLength != expectedLength {
+		t.Errorf("GET Content-Length mismatch: got %d, want %d", parsed.ContentLength, expectedLength)
+	}
+
+	if expectedETag != "" && parsed.ETag != expectedETag {
+		t.Errorf("GET ETag mismatch: got %s, want %s", parsed.ETag, expectedETag)
+	}
+
+	if expectedContentType != "" && parsed.ContentType != expectedContentType {
+		t.Errorf("GET Content-Type mismatch: got %s, want %s", parsed.ContentType, expectedContentType)
 	}
 }
