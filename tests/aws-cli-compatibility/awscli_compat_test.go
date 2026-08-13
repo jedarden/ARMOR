@@ -1,10 +1,16 @@
 package awsclicompat
 
 import (
+	"bytes"
+	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // endpointFlag returns the standard --endpoint-url argument pair.
@@ -211,4 +217,53 @@ func TestRclone_CopyRoundTrip(t *testing.T) {
 	if ents, err := os.ReadDir(dstDir); err != nil || len(ents) == 0 {
 		t.Fatalf("rclone pulled no files into %s", dstDir)
 	}
+}
+
+// TestShareGET_BasicRoundTrip verifies the share endpoint GET operation
+// performs a basic round-trip: upload object, generate presigned token,
+// retrieve via /share/<token>, verify content matches.
+func TestShareGET_BasicRoundTrip(t *testing.T) {
+	endpoint, signer := startArmorServerWithPresigner(t)
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
+	bucket := testBucket
+	key := "share/basic-roundtrip.txt"
+
+	// Original test data
+	originalData := []byte("Share GET round-trip test data. This should be retrieved via presigned URL.")
+
+	// Upload the object using the SDK
+	putIn := &s3.PutObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+		Body:   bytes.NewReader(originalData),
+	}
+	if _, err := client.PutObject(ctx, putIn); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	// Generate a presigned share token (valid for 1 hour)
+	token, err := signer.GenerateToken(bucket, key, time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	// Build the share endpoint URL
+	shareURL := endpoint + "/share/" + token
+
+	// Make GET request to the share endpoint and parse response
+	resp, err := http.Get(shareURL)
+	if err != nil {
+		t.Fatalf("http.Get share endpoint: %v", err)
+	}
+
+	// Parse and verify GET response
+	parsed := assertGETSuccess(t, resp)
+
+	// Verify the response body matches original data
+	if !bytes.Equal(parsed.Body, originalData) {
+		t.Fatalf("share GET round-trip mismatch: got %d bytes, want %d bytes", len(parsed.Body), len(originalData))
+	}
+
+	t.Logf("Share GET round-trip OK: %d bytes retrieved via presigned token", len(parsed.Body))
 }
