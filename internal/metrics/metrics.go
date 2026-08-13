@@ -104,9 +104,12 @@ type Metrics struct {
 	ReplicationQueueDepth   *expvar.Int // Current number of items in replication queue
 	ReplicationDroppedTotal *expvar.Int // Total number of items dropped due to full queue
 	// ReplicationEnqueuedTotal tracks total enqueued replication operations by operation type.
-	// Safe for concurrent use — expvar.Map.Add is internally synchronized with a mutex.
+	// Uses atomic operations for thread-safe increments without mutex contention.
 	// Operations are: "put" for standard uploads, "put-streaming" for streaming uploads.
-	ReplicationEnqueuedTotal *expvar.Map
+	ReplicationEnqueuedTotal *expvar.Map // Deprecated: kept for Prometheus format compatibility
+	// Atomic counters for thread-safe increments
+	replicationEnqueuedPut          atomic.Int64 // Counter for "put" operations
+	replicationEnqueuedPutStreaming atomic.Int64 // Counter for "put-streaming" operations
 
 	// Internal state
 	startTime time.Time
@@ -462,7 +465,7 @@ func (m *Metrics) RecordBackendRequestDuration(operation string, duration time.D
 }
 
 // IncReplicationEnqueued increments the replication enqueued counter for an operation.
-// Safe for concurrent calls — expvar.Map.Add is internally synchronized with a mutex.
+// Uses atomic operations for thread-safe increments without mutex contention.
 // Multiple goroutines can call this method simultaneously without data races.
 //
 // Example usage (concurrent):
@@ -481,7 +484,12 @@ func (m *Metrics) RecordBackendRequestDuration(operation string, duration time.D
 //   - "put" — standard object uploads (PutObject)
 //   - "put-streaming" — streaming uploads (PutObject with streaming)
 func (m *Metrics) IncReplicationEnqueued(operation string) {
-	m.ReplicationEnqueuedTotal.Add(operation, 1)
+	switch operation {
+	case "put":
+		m.replicationEnqueuedPut.Add(1)
+	case "put-streaming":
+		m.replicationEnqueuedPutStreaming.Add(1)
+	}
 }
 
 // PrometheusFormat returns metrics in Prometheus text format.
@@ -647,9 +655,10 @@ func (m *Metrics) PrometheusFormat() string {
 
 	sb.WriteString("\n# HELP armor_replication_enqueued_total Total number of items enqueued for replication by operation\n")
 	sb.WriteString("# TYPE armor_replication_enqueued_total counter\n")
-	m.ReplicationEnqueuedTotal.Do(func(kv expvar.KeyValue) {
-		fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %s\n", kv.Key, kv.Value.String())
-	})
+	// Read from atomic counters
+	fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %d\n", "put", m.replicationEnqueuedPut.Load())
+	fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %d\n", "put-streaming", m.replicationEnqueuedPutStreaming.Load())
+
 
 	// Uptime
 	uptime := time.Since(m.startTime).Seconds()
