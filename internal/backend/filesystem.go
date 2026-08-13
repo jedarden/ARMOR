@@ -262,8 +262,12 @@ func (fs *FSBackend) Head(ctx context.Context, bucket, key string) (*ObjectInfo,
 	}
 
 	// Check if this is an ARMOR-encrypted object
-	if meta.PlaintextSize > 0 {
+	// ARMOR objects have x-amz-meta-armor-version in their metadata
+	_, hasArmorVersion := meta.Metadata["x-amz-meta-armor-version"]
+	if hasArmorVersion {
 		info.IsARMOREncrypted = true
+		// For ARMOR objects, report the plaintext size (not envelope size)
+		// This works even for empty objects where PlaintextSize == 0
 		info.Size = meta.PlaintextSize
 	}
 
