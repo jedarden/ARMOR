@@ -184,6 +184,8 @@ func TestShareGET_CompressionBehavior(t *testing.T) {
 		wantDecompression bool // whether decompression should occur
 		description       string
 	}{
+		// EXTENSION POINT: Add new test cases here to expand coverage
+		// Follow the pattern: name, data, compressed, wantDecompression, description
 		{
 			name:              "uncompressed_small_text",
 			data:              []byte("Hello, ARMOR! This is uncompressed test data."),
@@ -474,32 +476,56 @@ func TestShareGET_RoundTrip(t *testing.T) {
 	// Initialize presigner for token generation
 	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
 
-	// Test various data sizes and types
+	// Test various data sizes and types, with both compressed and uncompressed modes
 	testCases := []struct {
-		name string
-		data []byte
+		name       string
+		data       []byte
+		compressed bool // whether to compress before encryption
 	}{
 		{
-			name: "small_text",
-			data: []byte("Small text data for round-trip testing."),
+			name:       "small_text_compressed",
+			data:       []byte("Small text data for round-trip testing."),
+			compressed: true,
 		},
 		{
-			name: "medium_binary",
-			data: generateRandomData(100 * 1024), // 100KB
+			name:       "small_text_uncompressed",
+			data:       []byte("Small text data for round-trip testing."),
+			compressed: false,
 		},
 		{
-			name: "large_binary",
-			data: generateRandomData(512 * 1024), // 512KB (reduced from 1MB for speed)
+			name:       "medium_binary_compressed",
+			data:       generateRandomData(100 * 1024), // 100KB
+			compressed: true,
+		},
+		{
+			name:       "medium_binary_uncompressed",
+			data:       generateRandomData(100 * 1024), // 100KB
+			compressed: false,
+		},
+		{
+			name:       "large_binary_compressed",
+			data:       generateRandomData(512 * 1024), // 512KB (reduced from 1MB for speed)
+			compressed: true,
+		},
+		{
+			name:       "large_binary_uncompressed",
+			data:       generateRandomData(512 * 1024), // 512KB (reduced from 1MB for speed)
+			compressed: false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Step 1: Compress the data
-			compressedData := compressData(tc.data)
+			// Step 1: Prepare data based on compression setting
+			var dataToEncrypt []byte
+			if tc.compressed {
+				dataToEncrypt = compressData(tc.data)
+			} else {
+				dataToEncrypt = tc.data
+			}
 
-			// Step 2: Encrypt the compressed data
-			encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, compressedData, true)
+			// Step 2: Encrypt the data
+			encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, dataToEncrypt, tc.compressed)
 
 			// Step 3: Store in backend
 			objectKey := "test-key-roundtrip-" + tc.name
@@ -528,16 +554,16 @@ func TestShareGET_RoundTrip(t *testing.T) {
 				t.Fatalf("Failed to read response body: %v", err)
 			}
 
-			// Verify complete round-trip: original → compress → encrypt → store → GET → decompress → original
+			// Verify complete round-trip: original → [compress] → encrypt → store → GET → [decompress] → original
 			if !bytes.Equal(retrievedData, tc.data) {
 				t.Errorf("Round-trip failed for %s.\nOriginal size: %d bytes\nRetrieved size: %d bytes",
 					tc.name, len(tc.data), len(retrievedData))
 			}
 
-			// Verify compression ratio (compressed should be smaller for most data)
-			if len(compressedData) >= len(tc.data) && tc.name != "small_text" {
+			// Verify compression ratio for compressed objects (should be smaller for most data)
+			if tc.compressed && len(dataToEncrypt) >= len(tc.data) && !strings.Contains(tc.name, "small_text") {
 				t.Logf("Note: Compression didn't reduce size for %s (compressed: %d, original: %d)",
-					tc.name, len(compressedData), len(tc.data))
+					tc.name, len(dataToEncrypt), len(tc.data))
 			}
 		})
 	}
@@ -732,6 +758,55 @@ func TestShareGET_RangeRequestUncompressed(t *testing.T) {
 		t.Errorf("Range data mismatch: retrieved data doesn't match original data range")
 	}
 }
+
+// ============================================================================
+// EXTENSION POINTS: Add new GET test functions here
+// ============================================================================
+//
+// The share endpoint (/share/<token>) only handles GET operations.
+// To add new test cases for share GET operations, use these patterns:
+//
+// 1. TABLE-DRIVEN EXPANSION: Add test cases to TestShareGET_CompressionBehavior (lines 180-286)
+//    - Follow the struct pattern: name, data, compressed, wantDecompression, description
+//    - Test new data types, sizes, or compression scenarios
+//
+// 2. NEW TEST FUNCTIONS: Create standalone TestShareGET_* functions following this pattern:
+//    func TestShareGET_YourScenario(t *testing.T) {
+//        tmpDir, cleanup := setupTestEnvironment(t)
+//        defer cleanup()
+//        fsBackend, _ := backend.NewFSBackend(backend.FSConfig{BasePath: tmpDir})
+//        cfg := loadTestConfig(t, tmpDir)
+//        srv, _ := NewWithBackend(cfg, fsBackend)
+//        srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
+//        // ... create test data, encrypt, store, generate token, make GET request ...
+//        token := generateTestToken(t, srv, "test-bucket", "test-key", time.Hour)
+//        req := httptest.NewRequest("GET", "/share/"+token, nil)
+//        w := httptest.NewRecorder()
+//        srv.handleShare(w, req)
+//        resp := w.Result()
+//        // ... assertions ...
+//    }
+//
+// 3. CORRUPTION/ERROR TESTING: Add cases to TestShareGET_CorruptedCompressedData
+//    in share_decompress_corrupted_test.go following the existing pattern.
+//
+// HELPER FUNCTIONS AVAILABLE (defined below):
+// - setupTestEnvironment(t) → (tmpDir, cleanup)
+// - loadTestConfig(t, tmpDir) → *config.Config
+// - encryptTestData(t, srv, data, compressed) → (encrypted, hmacTable, armorMeta)
+// - storeTestObject(t, backend, ctx, bucket, key, encryptedData, hmacTable, armorMeta)
+// - generateTestToken(t, srv, bucket, key, expiration) → token string
+// - compressData(data) → compressed []byte
+// - generateRandomData(size) → random []byte
+//
+// Example scenarios to add:
+// - Content-Disposition header handling
+// - Token expiration edge cases
+// - Concurrent requests to same object
+// - Large object streaming (> 1MB)
+// - Custom metadata propagation
+// - ETag and cache headers
+// ============================================================================
 
 // Helper functions
 
