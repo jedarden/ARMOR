@@ -506,5 +506,5 @@ func TestInitB2Backend_ReturnsBackendInterface(t *testing.T) {
 	}
 
 	// Verify the backend implements the interface by assigning to the interface type.
-	var _ Backend = b
+	var _ = Backend(b)
 }

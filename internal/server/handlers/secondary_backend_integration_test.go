@@ -727,11 +727,11 @@ func TestSecondaryNilDoesNotPanic(t *testing.T) {
 	}
 
 	h := &Handlers{
-		config:      cfg,
-		backend:     primaryBackend,
-		cache:       backend.NewMetadataCache(1000, 300),
-		listCache:   backend.NewListCache(1000, 300),
-		keyManager:  km,
+		config:     cfg,
+		backend:    primaryBackend,
+		cache:      backend.NewMetadataCache(1000, 300),
+		listCache:  backend.NewListCache(1000, 300),
+		keyManager: km,
 		// secondaryBackend is explicitly nil
 	}
 
@@ -809,9 +809,9 @@ func TestConfigUnset(t *testing.T) {
 
 	// Create a config with unset secondary backend
 	cfg := &config.Config{
-		BlockSize:           65536,
-		AuthAccessKey:       "test",
-		AuthSecretKey:       "test",
+		BlockSize:            65536,
+		AuthAccessKey:        "test",
+		AuthSecretKey:        "test",
 		SecondaryBackendType: "", // Empty = not configured (no secondary backend)
 		SecondaryBackendPath: "", // Empty when type is unset
 	}
@@ -1426,9 +1426,9 @@ func TestSecondaryBackendIntegrationWithConfig(t *testing.T) {
 		// In real scenario, these would be set via os.Setenv() before config.Load()
 
 		cfg := &config.Config{
-			BlockSize:           65536,
-			AuthAccessKey:       "test",
-			AuthSecretKey:       "test",
+			BlockSize:            65536,
+			AuthAccessKey:        "test",
+			AuthSecretKey:        "test",
 			SecondaryBackendType: "filesystem",
 			SecondaryBackendPath: t.TempDir(),
 		}
@@ -1473,11 +1473,11 @@ func TestSecondaryBackendIntegrationWithConfig(t *testing.T) {
 	// Test Case 2: Config without secondary backend (disabled)
 	t.Run("config_without_secondary_backend", func(t *testing.T) {
 		cfg := &config.Config{
-			BlockSize:           65536,
-			AuthAccessKey:       "test",
-			AuthSecretKey:       "test",
-			SecondaryBackendType: "",     // Empty = disabled
-			SecondaryBackendPath: "",     // Empty when disabled
+			BlockSize:            65536,
+			AuthAccessKey:        "test",
+			AuthSecretKey:        "test",
+			SecondaryBackendType: "", // Empty = disabled
+			SecondaryBackendPath: "", // Empty when disabled
 		}
 
 		primaryDir := t.TempDir()
@@ -1680,13 +1680,14 @@ func TestGetObjectChecksSecondaryBackendOnPrimaryFailure(t *testing.T) {
 	// The current implementation does not implement secondary fallback for GetObject.
 	// This test verifies the current behavior (primary failure = 404) and documents
 	// that secondary fallback is not yet implemented.
-	if wGet.Code == http.StatusOK {
+	switch wGet.Code {
+	case http.StatusOK:
 		t.Log("GetObject succeeded via secondary backend - fallback is implemented")
 		// If fallback is implemented, verify we got the right content
 		if !bytes.Equal(wGet.Body.Bytes(), body) {
 			t.Errorf("content mismatch: got %q, want %q", wGet.Body.String(), string(body))
 		}
-	} else if wGet.Code == http.StatusNotFound {
+	case http.StatusNotFound:
 		t.Log("GetObject returned 404 - secondary backend fallback not yet implemented (expected current behavior)")
 		// Verify the object exists in secondary (demonstrating it was there for potential fallback)
 		secBody, secInfo, err := secondaryBackend.Get(ctx, bucket, key)
@@ -1698,7 +1699,7 @@ func TestGetObjectChecksSecondaryBackendOnPrimaryFailure(t *testing.T) {
 				t.Errorf("secondary object size mismatch: got %d, want %d", secInfo.Size, len(body))
 			}
 		}
-	} else {
+	default:
 		t.Errorf("unexpected status code: got %d, want 200 or 404", wGet.Code)
 	}
 }
