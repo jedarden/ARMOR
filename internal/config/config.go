@@ -76,6 +76,9 @@ type Config struct {
 	MEK       []byte
 	BlockSize int
 
+	// Read path configuration
+	ReadConcurrency int // Maximum concurrent ranged GETs (default 16)
+
 	// Multi-key configuration
 	NamedKeys map[string][]byte // Named MEKs (key name -> MEK)
 	KeyRoutes []KeyRoute        // Prefix to key name mappings
@@ -196,6 +199,12 @@ func Load() (*Config, error) {
 	cfg.BlockSize = getEnvInt("ARMOR_BLOCK_SIZE", 65536)
 	if cfg.BlockSize < 4096 || (cfg.BlockSize&(cfg.BlockSize-1)) != 0 {
 		return nil, fmt.Errorf("ARMOR_BLOCK_SIZE must be a power of 2 >= 4096")
+	}
+
+	// Number of ranged reads allowed in flight for a backend read.
+	cfg.ReadConcurrency = getEnvInt("ARMOR_READ_CONCURRENCY", 16)
+	if cfg.ReadConcurrency < 1 {
+		return nil, fmt.Errorf("ARMOR_READ_CONCURRENCY must be at least 1")
 	}
 
 	// Auth credentials (generate random if not provided)

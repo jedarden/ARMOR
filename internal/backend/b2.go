@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -35,20 +36,39 @@ func IsNoSuchUpload(err error) bool {
 
 // B2Backend implements the Backend interface using B2's S3 API.
 type B2Backend struct {
-	s3Client   *s3.Client
-	region     string
-	endpoint   string
-	cfDomain   string
-	httpClient *http.Client
+	s3Client        *s3.Client
+	region          string
+	endpoint        string
+	cfDomain        string
+	httpClient      *http.Client
+	readBlockSize   int64
+	readConcurrency int
 }
+
+const (
+	defaultReadBlockSize   = 64 * 1024
+	defaultReadConcurrency = 16
+)
 
 // B2Config contains configuration for the B2 backend.
 type B2Config struct {
-	Region      string
-	Endpoint    string
-	AccessKeyID string
-	SecretKey   string
-	CFDomain    string // Cloudflare domain for free egress downloads
+	Region          string
+	Endpoint        string
+	AccessKeyID     string
+	SecretKey       string
+	CFDomain        string // Cloudflare domain for free egress downloads
+	ReadConcurrency int    // Maximum concurrent ranged reads; zero uses the default
+}
+
+type rangedBlockJob struct {
+	index  int64
+	offset int64
+	length int64
+}
+
+type rangedBlockResult struct {
+	index int64
+	data  []byte
 }
 
 // NewB2Backend creates a new B2 backend.
@@ -75,12 +95,19 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
 
+	readConcurrency := cfg.ReadConcurrency
+	if readConcurrency <= 0 {
+		readConcurrency = defaultReadConcurrency
+	}
+
 	return &B2Backend{
-		s3Client:   s3Client,
-		region:     cfg.Region,
-		endpoint:   cfg.Endpoint,
-		cfDomain:   cfg.CFDomain,
-		httpClient: &http.Client{Timeout: 30 * time.Minute},
+		s3Client:        s3Client,
+		region:          cfg.Region,
+		endpoint:        cfg.Endpoint,
+		cfDomain:        cfg.CFDomain,
+		httpClient:      &http.Client{Timeout: 30 * time.Minute},
+		readBlockSize:   defaultReadBlockSize,
+		readConcurrency: readConcurrency,
 	}, nil
 }
 
@@ -136,18 +163,119 @@ func (b *B2Backend) Get(ctx context.Context, bucket, key string) (io.ReadCloser,
 	return body, info, nil
 }
 
-// GetRange retrieves a byte range from an object via Cloudflare.
+// GetRange retrieves a byte range from an object using bounded pipelined
+// ranged requests (via Cloudflare when configured).
 func (b *B2Backend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
 	body, _, err := b.GetRangeWithHeaders(ctx, bucket, key, offset, length)
 	return body, err
 }
 
-// GetRangeWithHeaders retrieves a byte range from an object via Cloudflare along with response headers.
-// Falls back to direct S3 API when cfDomain is empty (e.g. CF CDN unavailable).
+// GetRangeWithHeaders retrieves a byte range using bounded pipelined ranged
+// requests and returns the first response's relevant headers. It falls back to
+// direct S3 API requests when cfDomain is empty (e.g. CF CDN unavailable).
 func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, map[string]string, error) {
+	if offset < 0 || length < 0 {
+		return nil, nil, fmt.Errorf("invalid range: offset=%d length=%d", offset, length)
+	}
+	if length == 0 {
+		return io.NopCloser(bytes.NewReader(nil)), nil, nil
+	}
+
+	blockSize := b.readBlockSize
+	if blockSize <= 0 {
+		blockSize = defaultReadBlockSize
+	}
+	concurrency := b.readConcurrency
+	if concurrency <= 0 {
+		concurrency = defaultReadConcurrency
+	}
+
+	blockCount := 1 + (length-1)/blockSize
+	firstLength := minInt64(blockSize, length)
+	first, headers, err := b.fetchRange(ctx, bucket, key, offset, firstLength)
+	if err != nil {
+		return nil, nil, err
+	}
+	if blockCount == 1 {
+		return io.NopCloser(bytes.NewReader(first)), headers, nil
+	}
+
+	// The first request is made synchronously so the existing header-reporting
+	// contract remains intact. The rest of the range is fetched by a bounded
+	// worker pool while the caller consumes the first block.
+	pipelineCtx, cancel := context.WithCancelCause(ctx)
+	workerCount := concurrency - 1
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	if int64(workerCount) > blockCount-1 {
+		workerCount = int(blockCount - 1)
+	}
+
+	jobs := make(chan rangedBlockJob)
+	results := make(chan rangedBlockResult, workerCount)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer workers.Done()
+			for job := range jobs {
+				data, _, fetchErr := b.fetchRange(pipelineCtx, bucket, key, job.offset, job.length)
+				if fetchErr != nil {
+					cancel(fmt.Errorf("fetch range block %d: %w", job.index, fetchErr))
+					return
+				}
+
+				select {
+				case results <- rangedBlockResult{index: job.index, data: data}:
+				case <-pipelineCtx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for index := int64(1); index < blockCount; index++ {
+			blockOffset := index * blockSize
+			job := rangedBlockJob{
+				index:  index,
+				offset: offset + blockOffset,
+				length: minInt64(blockSize, length-blockOffset),
+			}
+			select {
+			case jobs <- job:
+			case <-pipelineCtx.Done():
+				return
+			}
+		}
+	}()
+
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+
+	return &pipelinedRangeReader{
+		current:     first,
+		nextBlock:   1,
+		totalBlocks: blockCount,
+		pipelineCtx: pipelineCtx,
+		cancel:      cancel,
+		workers:     &workers,
+		results:     results,
+		pending:     make(map[int64][]byte, workerCount),
+	}, headers, nil
+}
+
+// fetchRange performs one bounded ranged request and fully buffers its block.
+// Buffering is intentional: it lets the caller consume blocks in order while
+// later ranged requests complete out of order, without buffering the object.
+func (b *B2Backend) fetchRange(ctx context.Context, bucket, key string, offset, length int64) ([]byte, map[string]string, error) {
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)
 	if b.cfDomain == "" {
 		// No CF domain configured — fall back to direct S3 range request.
-		rangeHeader := fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)
 		resp, err := b.s3Client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
@@ -156,31 +284,56 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 		if err != nil {
 			return nil, nil, fmt.Errorf("direct S3 range request failed: %w", err)
 		}
-		return resp.Body, nil, nil
+		defer resp.Body.Close()
+		data, err := readRangeBody(resp.Body, length)
+		if err != nil {
+			return nil, nil, fmt.Errorf("direct S3 range response: %w", err)
+		}
+		return data, nil, nil
 	}
 
-	// Construct Cloudflare download URL
+	// Construct Cloudflare download URL.
 	cfURL := fmt.Sprintf("https://%s/file/%s/%s", b.cfDomain, bucket, url.PathEscape(key))
-
-	req, err := http.NewRequestWithContext(ctx, "GET", cfURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfURL, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Range", rangeHeader)
 
-	// Set Range header
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
-
-	resp, err := b.httpClient.Do(req)
+	httpClient := b.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cloudflare request failed: %w", err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		resp.Body.Close()
 		return nil, nil, fmt.Errorf("cloudflare returned status %d", resp.StatusCode)
 	}
 
-	// Extract relevant headers
+	data, err := readRangeBody(resp.Body, length)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cloudflare range response: %w", err)
+	}
+
+	return data, cloudflareHeaders(resp), nil
+}
+
+func readRangeBody(body io.Reader, expectedLength int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, expectedLength+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %d bytes: %w", expectedLength, err)
+	}
+	if int64(len(data)) != expectedLength {
+		return nil, fmt.Errorf("received %d bytes, want %d", len(data), expectedLength)
+	}
+	return data, nil
+}
+
+func cloudflareHeaders(resp *http.Response) map[string]string {
 	headers := make(map[string]string)
 	if cfStatus := resp.Header.Get("CF-Cache-Status"); cfStatus != "" {
 		headers["CF-Cache-Status"] = cfStatus
@@ -191,8 +344,104 @@ func (b *B2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string,
 	if age := resp.Header.Get("Age"); age != "" {
 		headers["Age"] = age
 	}
+	return headers
+}
 
-	return resp.Body, headers, nil
+type pipelinedRangeReader struct {
+	current     []byte
+	currentPos  int
+	nextBlock   int64
+	totalBlocks int64
+
+	pipelineCtx context.Context
+	cancel      context.CancelCauseFunc
+	workers     *sync.WaitGroup
+	results     <-chan rangedBlockResult
+	pending     map[int64][]byte
+	closeOnce   sync.Once
+}
+
+func (r *pipelinedRangeReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	read := 0
+	for read < len(p) {
+		if err := r.pipelineError(); err != nil {
+			return read, err
+		}
+
+		if r.currentPos < len(r.current) {
+			n := copy(p[read:], r.current[r.currentPos:])
+			r.currentPos += n
+			read += n
+			continue
+		}
+
+		if r.nextBlock >= r.totalBlocks {
+			return read, io.EOF
+		}
+
+		data, err := r.nextBlockData()
+		if err != nil {
+			return read, err
+		}
+		r.current = data
+		r.currentPos = 0
+	}
+	return read, nil
+}
+
+func (r *pipelinedRangeReader) nextBlockData() ([]byte, error) {
+	for {
+		if data, ok := r.pending[r.nextBlock]; ok {
+			delete(r.pending, r.nextBlock)
+			r.nextBlock++
+			return data, nil
+		}
+		if err := r.pipelineError(); err != nil {
+			return nil, err
+		}
+
+		select {
+		case result, ok := <-r.results:
+			if !ok {
+				return nil, fmt.Errorf("pipelined range read ended before block %d: %w", r.nextBlock, io.ErrUnexpectedEOF)
+			}
+			r.pending[result.index] = result.data
+		case <-r.pipelineCtx.Done():
+			return nil, r.pipelineError()
+		}
+	}
+}
+
+func (r *pipelinedRangeReader) pipelineError() error {
+	select {
+	case <-r.pipelineCtx.Done():
+		cause := context.Cause(r.pipelineCtx)
+		if cause == nil {
+			cause = r.pipelineCtx.Err()
+		}
+		return fmt.Errorf("pipelined range read failed: %w", cause)
+	default:
+		return nil
+	}
+}
+
+func (r *pipelinedRangeReader) Close() error {
+	r.closeOnce.Do(func() {
+		r.cancel(context.Canceled)
+		r.workers.Wait()
+	})
+	return nil
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // Head retrieves object metadata without the body.

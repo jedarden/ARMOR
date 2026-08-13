@@ -149,6 +149,7 @@ ARMOR is configured via environment variables:
 | `ARMOR_AUTH_ACCESS_KEY` | No | (random) | Client access key |
 | `ARMOR_AUTH_SECRET_KEY` | No | (random) | Client secret key |
 | `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size (bytes) |
+| `ARMOR_READ_CONCURRENCY` | No | `16` | Maximum concurrent ranged reads |
 | `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID |
 | `ARMOR_READYZ_CACHE_TTL` | No | `30` | Seconds to cache backend connectivity in `/readyz` |
 | `ARMOR_DASHBOARD_USER` | No | — | Dashboard HTTP Basic Auth username |

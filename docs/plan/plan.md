@@ -254,19 +254,18 @@ The metadata headers enable `HeadObject` to return the plaintext file size and c
 
 The server's `ARMOR_BLOCK_SIZE` controls the block size for **new uploads only**. On reads, ARMOR always uses the block size from the file's envelope header (or `x-amz-meta-armor-block-size`). This means an ARMOR instance configured with 16 KB blocks can correctly read files written with 64 KB blocks — the per-file header is authoritative. Rule: **read from header, write from config.**
 
-> **Block size interacts with read throughput, and currently dominates it.**
-> The read path issues one HTTP ranged GET per block and does not pipeline them
-> (`internal/backend/b2.go`, `GetRangeWithHeaders`), so bulk read throughput is
-> bounded by `blockSize / RTT`, not by bandwidth. Measured 2026-08-08 against
-> production: 74 ms RTT to `us-west-002` and 64 KB blocks give ~0.9 MB/s serial;
-> ~1.5 MB/s was observed, against ~7.9 MB/s available on the same Cloudflare
-> path and ~38 MB/s direct to B2.
+> **Block size interacts with read throughput, and previously dominated it.**
+> The read path now issues one HTTP ranged GET per 64 KiB transfer block and
+> pipelines them with bounded concurrency (`internal/backend/b2.go`,
+> `GetRangeWithHeaders`). `ARMOR_READ_CONCURRENCY` defaults to 16. Before
+> ADR-013, the requests were serial, so 74 ms RTT to `us-west-002` and 64 KB
+> blocks gave ~0.9 MB/s serial; ~1.5 MB/s was observed, against ~7.9 MB/s
+> available on the same Cloudflare path and ~38 MB/s direct to B2.
 >
 > The table above weighs block size against HMAC overhead and range granularity;
-> it should also be read as a **latency amplifier** for sequential reads. The
-> fix is to pipeline block fetches rather than to enlarge blocks — enlarging
-> them changes the stored format and cannot help objects already written. See
-> [ADR-013](../adr/013-read-throughput-unpipelined-block-fetches.md).
+> it should not be used as a reason to enlarge blocks solely for throughput —
+> enlarging them changes the stored format and cannot help objects already
+> written. Pipelining is the compatible throughput fix. See [ADR-013](../adr/013-read-throughput-unpipelined-block-fetches.md).
 >
 > Writes are unaffected: 64 MiB multipart parts amortise 1024 blocks into one
 > streamed PUT, which is why the write path shows ~27% overhead where the read

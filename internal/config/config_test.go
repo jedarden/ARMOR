@@ -323,6 +323,34 @@ func TestManifestConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestReadConcurrencyConfig(t *testing.T) {
+	env := append(minimalEnv(), "ARMOR_READ_CONCURRENCY", "16")
+	setEnv(t, env...)
+	os.Unsetenv("ARMOR_READ_CONCURRENCY")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.ReadConcurrency != 16 {
+		t.Fatalf("ReadConcurrency default = %d, want 16", cfg.ReadConcurrency)
+	}
+
+	os.Setenv("ARMOR_READ_CONCURRENCY", "4")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() with ARMOR_READ_CONCURRENCY=4: %v", err)
+	}
+	if cfg.ReadConcurrency != 4 {
+		t.Fatalf("ReadConcurrency = %d, want 4", cfg.ReadConcurrency)
+	}
+
+	os.Setenv("ARMOR_READ_CONCURRENCY", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() accepted ARMOR_READ_CONCURRENCY=0")
+	}
+}
+
 func TestManifestEnabledFalse(t *testing.T) {
 	setEnv(t, minimalEnv()...)
 	for _, v := range []string{"false", "0"} {
