@@ -432,6 +432,11 @@ func (m *mockBackend) infoFor(k, key string, data []byte) *backend.ObjectInfo {
 		info.Size = am.PlaintextSize
 		info.ContentType = am.ContentType
 		info.ETag = am.ETag
+	} else {
+		// For uncompressed objects, fall back to Content-Type from metadata
+		if ct, ok := meta["Content-Type"]; ok {
+			info.ContentType = ct
+		}
 	}
 	return info
 }
@@ -1166,4 +1171,236 @@ func TestHarness_GET_NonexistentObject(t *testing.T) {
 	assertGET404(t, resp)
 
 	t.Logf("GET nonexistent object correctly returned 404")
+}
+
+// TestMockBackend_GET_UncompressedObject tests GET operations directly on the mockBackend
+// for uncompressed objects, bypassing HTTP and signature complexity.
+// This verifies that the backend correctly stores and retrieves uncompressed objects.
+func TestMockBackend_GET_UncompressedObject(t *testing.T) {
+	ctx := context.Background()
+	backend := newMockBackend()
+
+	// Test data - uncompressed object
+	testData := []byte("Uncompressed test data for GET operation")
+	key := "get-uncompressed/test.txt"
+	meta := map[string]string{
+		"Content-Type": "text/plain",
+	}
+
+	// PUT the object
+	err := backend.Put(ctx, testBucket, key, bytes.NewReader(testData), int64(len(testData)), meta)
+	if err != nil {
+		t.Fatalf("PUT failed: %v", err)
+	}
+
+	// GET the object
+	body, info, err := backend.Get(ctx, testBucket, key)
+	if err != nil {
+		t.Fatalf("GET failed: %v", err)
+	}
+	defer body.Close()
+
+	// Verify content
+	retrievedData, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("Failed to read GET response body: %v", err)
+	}
+
+	if !bytes.Equal(retrievedData, testData) {
+		t.Errorf("GET content mismatch: got %d bytes, want %d bytes", len(retrievedData), len(testData))
+		t.Logf("Retrieved: %q", retrievedData)
+		t.Logf("Expected:  %q", testData)
+	}
+
+	// Verify metadata
+	if info.Size != int64(len(testData)) {
+		t.Errorf("GET size mismatch: got %d, want %d", info.Size, len(testData))
+	}
+
+	if info.ContentType != "text/plain" {
+		t.Errorf("GET Content-Type mismatch: got %s, want text/plain", info.ContentType)
+	}
+
+	if info.Key != key {
+		t.Errorf("GET key mismatch: got %s, want %s", info.Key, key)
+	}
+
+	t.Logf("GET uncompressed object test passed: %d bytes retrieved", len(retrievedData))
+}
+
+// TestMockBackend_GET_MultipleUncompressedObjects tests GET operations on multiple
+// uncompressed objects of different sizes and content patterns.
+func TestMockBackend_GET_MultipleUncompressedObjects(t *testing.T) {
+	ctx := context.Background()
+	backend := newMockBackend()
+
+	testCases := []struct {
+		name         string
+		key          string
+		data         []byte
+		contentType  string
+	}{
+		{
+			name:        "small-text",
+			key:         "get-multi/small.txt",
+			data:        []byte("Small text object"),
+			contentType: "text/plain",
+		},
+		{
+			name:        "medium-binary",
+			key:         "get-multi/medium.bin",
+			data:        bytes.Repeat([]byte{0xAB, 0xCD, 0xEF}, 1000),
+			contentType: "application/octet-stream",
+		},
+		{
+			name:        "large-text",
+			key:         "get-multi/large.txt",
+			data:        bytes.Repeat([]byte("Large text pattern "), 1000),
+			contentType: "text/plain",
+		},
+		{
+			name:        "empty-object",
+			key:         "get-multi/empty.txt",
+			data:        []byte{},
+			contentType: "text/plain",
+		},
+		{
+			name:        "single-byte",
+			key:         "get-multi/single.txt",
+			data:        []byte{0x42},
+			contentType: "application/octet-stream",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := map[string]string{"Content-Type": tc.contentType}
+
+			// PUT the object
+			err := backend.Put(ctx, testBucket, tc.key, bytes.NewReader(tc.data), int64(len(tc.data)), meta)
+			if err != nil {
+				t.Fatalf("PUT failed: %v", err)
+			}
+
+			// GET the object
+			body, info, err := backend.Get(ctx, testBucket, tc.key)
+			if err != nil {
+				t.Fatalf("GET failed: %v", err)
+			}
+			defer body.Close()
+
+			// Verify content
+			retrievedData, err := io.ReadAll(body)
+			if err != nil {
+				t.Fatalf("Failed to read GET response body: %v", err)
+			}
+
+			if !bytes.Equal(retrievedData, tc.data) {
+				t.Errorf("GET content mismatch for %s: got %d bytes, want %d bytes",
+					tc.key, len(retrievedData), len(tc.data))
+			}
+
+			// Verify metadata
+			if info.Size != int64(len(tc.data)) {
+				t.Errorf("GET size mismatch for %s: got %d, want %d",
+					tc.key, info.Size, len(tc.data))
+			}
+
+			if info.ContentType != tc.contentType {
+				t.Errorf("GET Content-Type mismatch for %s: got %s, want %s",
+					tc.key, info.ContentType, tc.contentType)
+			}
+
+			t.Logf("GET %s passed: %d bytes", tc.name, len(retrievedData))
+		})
+	}
+}
+
+// TestMockBackend_GET_NonexistentObject verifies that GET returns an error
+// for objects that don't exist.
+func TestMockBackend_GET_NonexistentObject(t *testing.T) {
+	ctx := context.Background()
+	backend := newMockBackend()
+
+	key := "does-not-exist.txt"
+
+	// Try to GET a non-existent object
+	body, info, err := backend.Get(ctx, testBucket, key)
+
+	if err == nil {
+		defer body.Close()
+		t.Errorf("GET expected error for non-existent object, got nil error and info: %+v", info)
+	}
+
+	expectedErrMsg := "object not found"
+	if err == nil || !strings.Contains(err.Error(), expectedErrMsg) {
+		t.Errorf("GET error message should contain %q, got: %v", expectedErrMsg, err)
+	}
+
+	t.Logf("GET nonexistent object correctly returned error: %v", err)
+}
+
+// TestMockBackend_GET_ConcurrentOperations tests that GET operations work correctly
+// under concurrent access.
+func TestMockBackend_GET_ConcurrentOperations(t *testing.T) {
+	ctx := context.Background()
+	backend := newMockBackend()
+
+	// Create multiple objects
+	numObjects := 10
+	objects := make(map[string][]byte)
+	for i := 0; i < numObjects; i++ {
+		key := fmt.Sprintf("concurrent/obj%d.txt", i)
+		data := []byte(fmt.Sprintf("Object %d data", i))
+		meta := map[string]string{"Content-Type": "text/plain"}
+
+		err := backend.Put(ctx, testBucket, key, bytes.NewReader(data), int64(len(data)), meta)
+		if err != nil {
+			t.Fatalf("PUT failed for %s: %v", key, err)
+		}
+		objects[key] = data
+	}
+
+	// Concurrently GET all objects
+	var wg sync.WaitGroup
+	errors := make(chan error, numObjects)
+
+	for key := range objects {
+		wg.Add(1)
+		go func(k string) {
+			defer wg.Done()
+			body, info, err := backend.Get(ctx, testBucket, k)
+			if err != nil {
+				errors <- fmt.Errorf("GET failed for %s: %v", k, err)
+				return
+			}
+			defer body.Close()
+
+			retrievedData, err := io.ReadAll(body)
+			if err != nil {
+				errors <- fmt.Errorf("read failed for %s: %v", k, err)
+				return
+			}
+
+			if !bytes.Equal(retrievedData, objects[k]) {
+				errors <- fmt.Errorf("content mismatch for %s: got %d bytes, want %d bytes",
+					k, len(retrievedData), len(objects[k]))
+			}
+
+			if info.Size != int64(len(objects[k])) {
+				errors <- fmt.Errorf("size mismatch for %s: got %d, want %d",
+					k, info.Size, len(objects[k]))
+			}
+		}(key)
+	}
+
+	wg.Wait()
+	close(errors)
+
+	// Check for any errors
+	for err := range errors {
+		t.Errorf("Concurrent GET operation error: %v", err)
+	}
+
+	t.Logf("Concurrent GET operations completed successfully for %d objects", numObjects)
 }
