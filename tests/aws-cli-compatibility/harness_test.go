@@ -23,6 +23,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,10 +37,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
+	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/presign"
 	"github.com/jedarden/armor/internal/server"
+	"github.com/klauspost/compress/zstd"
 )
 
 // Test credentials and region. The SigV4 verifier authenticates against the
@@ -49,9 +54,11 @@ const (
 	testAccessKey = "ARMORCOMPAT"
 	testSecretKey = "armorcompatsecretkey0123456789abcdef"
 	testRegion    = "us-east-1"
-	testBucket    = "compat-bucket"
 	testPresignSecret = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
+
+// testBucket is a variable so tests can take its address for SDK calls.
+var testBucket = "compat-bucket"
 
 // cmdTimeout bounds each CLI invocation so a hung subprocess cannot stall the
 // test binary.
@@ -932,12 +939,23 @@ func (s *testSigner) Sign(req *http.Request, service, operation, bucket, key str
 	}
 	canonicalQueryString := req.URL.Query().Encode()
 
-	payloadHash := sha256.Sum256([]byte{})
-	if req.Method != http.MethodGet && req.Method != http.MethodDelete && req.Body != nil {
+	// For payload hash, we need to use the same value in the header and canonical request
+	var payloadHashStr string
+	if req.Method == http.MethodGet || req.Method == http.MethodDelete {
+		// For GET/DELETE with no body, use hash of empty string
+		payloadHash := sha256.Sum256([]byte{})
+		payloadHashStr = hex.EncodeToString(payloadHash[:])
+		req.Header.Set("X-Amz-Content-Sha256", payloadHashStr)
+	} else if req.Body != nil {
 		// For PUT/POST with body, we'd need to read the body to hash it
 		// For simplicity in tests, we'll use UNSIGNED-PAYLOAD
-		req.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
-		payloadHash = sha256.Sum256([]byte("UNSIGNED-PAYLOAD"))
+		payloadHashStr = "UNSIGNED-PAYLOAD"
+		req.Header.Set("X-Amz-Content-Sha256", payloadHashStr)
+	} else {
+		// No body case (shouldn't happen for PUT/POST, but handle gracefully)
+		payloadHash := sha256.Sum256([]byte{})
+		payloadHashStr = hex.EncodeToString(payloadHash[:])
+		req.Header.Set("X-Amz-Content-Sha256", payloadHashStr)
 	}
 
 	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
@@ -946,7 +964,7 @@ func (s *testSigner) Sign(req *http.Request, service, operation, bucket, key str
 		canonicalQueryString,
 		canonicalHeaders,
 		signedHeaders,
-		hex.EncodeToString(payloadHash[:]))
+		payloadHashStr)
 
 	// Create string to sign
 	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", dateStamp, s.region, service)
@@ -1012,72 +1030,63 @@ func hmacSHA256(key []byte, data string) []byte {
 // This test verifies that GET can be invoked from the test framework and returns expected results.
 func TestHarness_GET_BasicUncompressedObject(t *testing.T) {
 	endpoint := startArmorServer(t)
-	client := &http.Client{}
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
 
 	// Test data - small uncompressed object
 	testData := []byte("Basic uncompressed test object content")
 	key := "get-test/basic-uncompressed.txt"
 
-	// First, PUT the object using direct HTTP request
-	putURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, key)
-	putReq, err := http.NewRequest(http.MethodPut, putURL, bytes.NewReader(testData))
-	if err != nil {
-		t.Fatalf("Failed to create PUT request: %v", err)
+	// First, PUT the object using SDK
+	putIn := &s3.PutObjectInput{
+		Bucket: &testBucket,
+		Key:    &key,
+		Body:   bytes.NewReader(testData),
 	}
 
-	// Sign the request with AWS SigV4
-	signer := newTestSigner(t)
-	signer.Sign(putReq, "s3", "PutObject", testBucket, key)
-
-	putResp, err := client.Do(putReq)
-	if err != nil {
-		t.Fatalf("PUT request failed: %v", err)
-	}
-	defer putResp.Body.Close()
-
-	if putResp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT failed with status %d", putResp.StatusCode)
+	if _, err := client.PutObject(ctx, putIn); err != nil {
+		t.Fatalf("PUT failed: %v", err)
 	}
 
 	t.Logf("PUT succeeded for %s", key)
 
-	// Now perform GET operation
-	getURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, key)
-	getReq, err := http.NewRequest(http.MethodGet, getURL, nil)
-	if err != nil {
-		t.Fatalf("Failed to create GET request: %v", err)
+	// Now perform GET operation using SDK
+	getIn := &s3.GetObjectInput{
+		Bucket: &testBucket,
+		Key:    &key,
 	}
 
-	// Sign the GET request
-	signer.Sign(getReq, "s3", "GetObject", testBucket, key)
-
-	getResp, err := client.Do(getReq)
+	getOut, err := client.GetObject(ctx, getIn)
 	if err != nil {
 		t.Fatalf("GET request failed: %v", err)
 	}
-	defer getResp.Body.Close()
+	defer getOut.Body.Close()
 
-	// Verify GET response using the harness helper
-	parsed := assertGETSuccess(t, getResp)
+	// Read response body
+	body, err := io.ReadAll(getOut.Body)
+	if err != nil {
+		t.Fatalf("Failed to read GET response body: %v", err)
+	}
 
 	// Verify content matches
-	if !bytes.Equal(parsed.Body, testData) {
-		t.Fatalf("GET content mismatch: got %d bytes, want %d bytes", len(parsed.Body), len(testData))
+	if !bytes.Equal(body, testData) {
+		t.Fatalf("GET content mismatch: got %d bytes, want %d bytes", len(body), len(testData))
 	}
 
 	// Verify Content-Length header
-	if parsed.ContentLength != int64(len(testData)) {
-		t.Errorf("GET Content-Length mismatch: got %d, want %d", parsed.ContentLength, len(testData))
+	if getOut.ContentLength == nil || *getOut.ContentLength != int64(len(testData)) {
+		t.Errorf("GET Content-Length mismatch: got %v, want %d", getOut.ContentLength, len(testData))
 	}
 
-	t.Logf("GET basic uncompressed object test passed: %d bytes retrieved", len(parsed.Body))
+	t.Logf("GET basic uncompressed object test passed: %d bytes retrieved", len(body))
 }
 
 // TestHarness_GET_MultipleUncompressedObjects tests GET operations on multiple
 // uncompressed objects with different sizes and content patterns.
 func TestHarness_GET_MultipleUncompressedObjects(t *testing.T) {
 	endpoint := startArmorServer(t)
-	client := &http.Client{}
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
 
 	testCases := []struct {
 		name string
@@ -1101,45 +1110,43 @@ func TestHarness_GET_MultipleUncompressedObjects(t *testing.T) {
 		},
 	}
 
-	signer := newTestSigner(t)
-
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// PUT the object
-			putURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, tc.key)
-			putReq, _ := http.NewRequest(http.MethodPut, putURL, bytes.NewReader(tc.data))
-			signer.Sign(putReq, "s3", "PutObject", testBucket, tc.key)
+			// PUT the object using SDK
+			putIn := &s3.PutObjectInput{
+				Bucket: &testBucket,
+				Key:    &tc.key,
+				Body:   bytes.NewReader(tc.data),
+			}
 
-			putResp, err := client.Do(putReq)
-			if err != nil {
+			if _, err := client.PutObject(ctx, putIn); err != nil {
 				t.Fatalf("PUT failed: %v", err)
 			}
-			putResp.Body.Close()
 
-			if putResp.StatusCode != http.StatusOK {
-				t.Fatalf("PUT failed with status %d", putResp.StatusCode)
+			// GET the object using SDK
+			getIn := &s3.GetObjectInput{
+				Bucket: &testBucket,
+				Key:    &tc.key,
 			}
 
-			// GET the object
-			getURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, tc.key)
-			getReq, _ := http.NewRequest(http.MethodGet, getURL, nil)
-			signer.Sign(getReq, "s3", "GetObject", testBucket, tc.key)
-
-			getResp, err := client.Do(getReq)
+			getOut, err := client.GetObject(ctx, getIn)
 			if err != nil {
 				t.Fatalf("GET failed: %v", err)
 			}
-			defer getResp.Body.Close()
+			defer getOut.Body.Close()
 
 			// Verify GET response
-			parsed := assertGETSuccess(t, getResp)
-
-			if !bytes.Equal(parsed.Body, tc.data) {
-				t.Errorf("GET content mismatch for %s: got %d bytes, want %d bytes",
-					tc.key, len(parsed.Body), len(tc.data))
+			body, err := io.ReadAll(getOut.Body)
+			if err != nil {
+				t.Fatalf("Failed to read GET response body: %v", err)
 			}
 
-			t.Logf("GET %s passed: %d bytes", tc.name, len(parsed.Body))
+			if !bytes.Equal(body, tc.data) {
+				t.Errorf("GET content mismatch for %s: got %d bytes, want %d bytes",
+					tc.key, len(body), len(tc.data))
+			}
+
+			t.Logf("GET %s passed: %d bytes", tc.name, len(body))
 		})
 	}
 }
@@ -1148,29 +1155,34 @@ func TestHarness_GET_MultipleUncompressedObjects(t *testing.T) {
 // objects that don't exist.
 func TestHarness_GET_NonexistentObject(t *testing.T) {
 	endpoint := startArmorServer(t)
-	client := &http.Client{}
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
 
 	key := "get-test/does-not-exist.txt"
 
-	// Try to GET a non-existent object
-	getURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, key)
-	getReq, err := http.NewRequest(http.MethodGet, getURL, nil)
-	if err != nil {
-		t.Fatalf("Failed to create GET request: %v", err)
+	// Try to GET a non-existent object using SDK
+	getIn := &s3.GetObjectInput{
+		Bucket: &testBucket,
+		Key:    &key,
 	}
 
-	signer := newTestSigner(t)
-	signer.Sign(getReq, "s3", "GetObject", testBucket, key)
+	_, err := client.GetObject(ctx, getIn)
 
-	resp, err := client.Do(getReq)
-	if err != nil {
-		t.Fatalf("GET request failed: %v", err)
+	// Verify we get a NotFound error
+	if err == nil {
+		t.Fatalf("GET expected error for non-existent object, got nil error")
 	}
-	defer resp.Body.Close()
 
-	assertGET404(t, resp)
+	var noSuchKey *types.NoSuchKey
+	if !strings.Contains(err.Error(), "NoSuchKey") && !errors.As(err, &noSuchKey) {
+		t.Logf("GET error for non-existent object: %v", err)
+		// The error should mention the object doesn't exist
+		if !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "NoSuchKey") {
+			t.Errorf("Expected NotFound/NoSuchKey error, got: %v", err)
+		}
+	}
 
-	t.Logf("GET nonexistent object correctly returned 404")
+	t.Logf("GET nonexistent object correctly returned error: %v", err)
 }
 
 // TestMockBackend_GET_UncompressedObject tests GET operations directly on the mockBackend
@@ -1403,4 +1415,295 @@ func TestMockBackend_GET_ConcurrentOperations(t *testing.T) {
 	}
 
 	t.Logf("Concurrent GET operations completed successfully for %d objects", numObjects)
+}
+
+// compressData compresses data using zstd for testing
+func compressData(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	encoder, err := zstd.NewWriter(&buf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd encoder: %w", err)
+	}
+
+	if _, err := encoder.Write(data); err != nil {
+		encoder.Close()
+		return nil, fmt.Errorf("failed to write compressed data: %w", err)
+	}
+
+	if err := encoder.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close encoder: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// TestMockBackend_GET_CompressedObject tests GET operations directly on the mockBackend
+// for compressed objects, bypassing HTTP and signature complexity.
+// This verifies that compressed objects can be stored and retrieved correctly.
+func TestMockBackend_GET_CompressedObject(t *testing.T) {
+	ctx := context.Background()
+	backend := newMockBackend()
+
+	// Test data - compressible content
+	originalData := bytes.Repeat([]byte("Compressible test data pattern "), 100)
+	key := "get-compressed/test.txt"
+
+	// Compress the data
+	compressedData, err := compressData(originalData)
+	if err != nil {
+		t.Fatalf("Failed to compress test data: %v", err)
+	}
+
+	// Verify compression actually happened
+	if bytes.Equal(compressedData, originalData) {
+		t.Fatal("Compressed data should differ from original")
+	}
+
+	// Store the compressed data with ARMOR compression metadata
+	meta := map[string]string{
+		"Content-Type": "text/plain",
+		"x-amz-meta-armor-compressed": "true",
+		"x-amz-meta-armor-version": "1",
+		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
+	}
+
+	err = backend.Put(ctx, testBucket, key, bytes.NewReader(compressedData), int64(len(compressedData)), meta)
+	if err != nil {
+		t.Fatalf("PUT failed: %v", err)
+	}
+
+	// GET the compressed object
+	body, info, err := backend.Get(ctx, testBucket, key)
+	if err != nil {
+		t.Fatalf("GET failed: %v", err)
+	}
+	defer body.Close()
+
+	// Read the compressed data from backend
+	retrievedData, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("Failed to read GET response body: %v", err)
+	}
+
+	// Verify the retrieved data is still compressed (backend stores as-is)
+	if !bytes.Equal(retrievedData, compressedData) {
+		t.Errorf("Backend should return compressed data as-is")
+		t.Logf("Retrieved: %d bytes, Stored: %d bytes", len(retrievedData), len(compressedData))
+	}
+
+	// Verify metadata indicates compression
+	if compressedFlag, ok := info.Metadata["x-amz-meta-armor-compressed"]; !ok || compressedFlag != "true" {
+		t.Errorf("Expected x-amz-meta-armor-compressed=true, got: %v", compressedFlag)
+	}
+
+	t.Logf("GET compressed object test passed: %d bytes stored (original was %d bytes)",
+		len(retrievedData), len(originalData))
+}
+
+// TestMockBackend_GET_CompressedAndUncompressed verifies that both compressed
+// and uncompressed objects with the same content can be retrieved correctly.
+func TestMockBackend_GET_CompressedAndUncompressed(t *testing.T) {
+	ctx := context.Background()
+	backend := newMockBackend()
+
+	// Test data - highly compressible content
+	originalData := []byte(strings.Repeat("AAAAABBBBBCCCCCDDDDDEEEEE", 200))
+
+	// Create compressed version
+	compressedData, err := compressData(originalData)
+	if err != nil {
+		t.Fatalf("Failed to compress test data: %v", err)
+	}
+
+	compressedKey := "test-comparison/compressed.bin"
+	uncompressedKey := "test-comparison/uncompressed.bin"
+
+	// PUT compressed object
+	compressedMeta := map[string]string{
+		"Content-Type": "application/octet-stream",
+		"x-amz-meta-armor-compressed": "true",
+		"x-amz-meta-armor-version": "1",
+		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
+	}
+
+	err = backend.Put(ctx, testBucket, compressedKey, bytes.NewReader(compressedData), int64(len(compressedData)), compressedMeta)
+	if err != nil {
+		t.Fatalf("PUT compressed failed: %v", err)
+	}
+
+	// PUT uncompressed object
+	uncompressedMeta := map[string]string{
+		"Content-Type": "application/octet-stream",
+		"x-amz-meta-armor-compressed": "false",
+		"x-amz-meta-armor-version": "1",
+		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
+	}
+
+	err = backend.Put(ctx, testBucket, uncompressedKey, bytes.NewReader(originalData), int64(len(originalData)), uncompressedMeta)
+	if err != nil {
+		t.Fatalf("PUT uncompressed failed: %v", err)
+	}
+
+	// GET compressed object and verify
+	body1, info1, err := backend.Get(ctx, testBucket, compressedKey)
+	if err != nil {
+		t.Fatalf("GET compressed failed: %v", err)
+	}
+	defer body1.Close()
+
+	retrievedCompressed, err := io.ReadAll(body1)
+	if err != nil {
+		t.Fatalf("Failed to read compressed GET response: %v", err)
+	}
+
+	// Verify compressed data matches what we stored
+	if !bytes.Equal(retrievedCompressed, compressedData) {
+		t.Errorf("Compressed data mismatch: got %d bytes, want %d bytes",
+			len(retrievedCompressed), len(compressedData))
+	}
+
+	// GET uncompressed object and verify
+	body2, info2, err := backend.Get(ctx, testBucket, uncompressedKey)
+	if err != nil {
+		t.Fatalf("GET uncompressed failed: %v", err)
+	}
+	defer body2.Close()
+
+	retrievedUncompressed, err := io.ReadAll(body2)
+	if err != nil {
+		t.Fatalf("Failed to read uncompressed GET response: %v", err)
+	}
+
+	// Verify uncompressed data matches original
+	if !bytes.Equal(retrievedUncompressed, originalData) {
+		t.Errorf("Uncompressed data mismatch: got %d bytes, want %d bytes",
+			len(retrievedUncompressed), len(originalData))
+	}
+
+	// Verify metadata flags are different
+	if info1.Metadata["x-amz-meta-armor-compressed"] != "true" {
+		t.Errorf("Expected compressed=true for compressed object, got: %v",
+			info1.Metadata["x-amz-meta-armor-compressed"])
+	}
+
+	if info2.Metadata["x-amz-meta-armor-compressed"] != "false" {
+		t.Errorf("Expected compressed=false for uncompressed object, got: %v",
+			info2.Metadata["x-amz-meta-armor-compressed"])
+	}
+
+	t.Logf("Both compressed and uncompressed objects retrieved successfully")
+	t.Logf("Compressed: %d bytes -> %d bytes (%.1f%% reduction)",
+		len(originalData), len(compressedData),
+		100.0*(1.0-float64(len(compressedData))/float64(len(originalData))))
+}
+
+// TestHarness_GET_CompressedObjectViaHTTP tests GET operations on compressed objects
+// through the full HTTP API using the SDK.
+func TestHarness_GET_CompressedObjectViaHTTP(t *testing.T) {
+	endpoint := startArmorServer(t)
+	client := newSDKClient(t, endpoint)
+	ctx := context.Background()
+
+	// Test data - compressible content
+	originalData := bytes.Repeat([]byte("HTTP compressed test data "), 50)
+
+	// Compress the data
+	compressedData, err := compressData(originalData)
+	if err != nil {
+		t.Fatalf("Failed to compress test data: %v", err)
+	}
+
+	key := "get-http-test/compressed.txt"
+
+	// Create ARMOR metadata for compressed object
+	contentType := "text/plain"
+	armorMeta := map[string]string{
+		"x-amz-meta-armor-version":       "1",
+		"x-amz-meta-armor-block-size":   "65536",
+		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
+		"x-amz-meta-armor-content-type":  contentType,
+		"x-amz-meta-armor-iv":            hex.EncodeToString([]byte("0123456789123456")),
+		"x-amz-meta-armor-wrapped-dek":   hex.EncodeToString(bytes.Repeat([]byte("dek"), 32)),
+		"x-amz-meta-armor-plaintext-sha256": hex.EncodeToString(bytes.Repeat([]byte("sha"), 32)),
+		"x-amz-meta-armor-etag":          "\"test-etag\"",
+		"x-amz-meta-armor-compressed":    "true",
+	}
+
+	// PUT the compressed object via SDK
+	putIn := &s3.PutObjectInput{
+		Bucket:   &testBucket,
+		Key:      &key,
+		Body:     bytes.NewReader(compressedData),
+		Metadata: armorMeta,
+	}
+
+	if _, err := client.PutObject(ctx, putIn); err != nil {
+		t.Fatalf("PUT failed: %v", err)
+	}
+
+	t.Logf("PUT succeeded for compressed object %s", key)
+
+	// GET the compressed object via SDK
+	getIn := &s3.GetObjectInput{
+		Bucket: &testBucket,
+		Key:    &key,
+	}
+
+	getOut, err := client.GetObject(ctx, getIn)
+	if err != nil {
+		t.Fatalf("GET request failed: %v", err)
+	}
+	defer getOut.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(getOut.Body)
+	if err != nil {
+		t.Fatalf("Failed to read GET response body: %v", err)
+	}
+
+	t.Logf("GET compressed object test passed: %d bytes retrieved", len(body))
+}
+
+// TestDecompressionUtilities tests the compression/decompression utilities
+func TestDecompressionUtilities(t *testing.T) {
+	// Test compression and decompression round-trip
+	originalData := []byte("Test data for compression utilities")
+
+	compressed, err := compressData(originalData)
+	if err != nil {
+		t.Fatalf("compressData failed: %v", err)
+	}
+
+	// Verify it's actually compressed (should be different)
+	if bytes.Equal(compressed, originalData) {
+		t.Error("Compressed data should differ from original for non-trivial input")
+	}
+
+	// Verify compression detection
+	if !crypto.IsCompressed(compressed) {
+		t.Error("IsCompressed should return true for zstd-compressed data")
+	}
+
+	// Verify decompression
+	decompressed, err := crypto.Decompress(compressed)
+	if err != nil {
+		t.Fatalf("Decompress failed: %v", err)
+	}
+
+	if !bytes.Equal(decompressed, originalData) {
+		t.Errorf("Decompressed data doesn't match original: got %d bytes, want %d bytes",
+			len(decompressed), len(originalData))
+	}
+
+	// Test that decompressing uncompressed data returns it unchanged
+	result, err := crypto.Decompress(originalData)
+	if err != nil {
+		t.Fatalf("Decompress of uncompressed data failed: %v", err)
+	}
+
+	if !bytes.Equal(result, originalData) {
+		t.Error("Decompress should return data unchanged if not compressed")
+	}
+
+	t.Logf("Compression utilities test passed")
 }
