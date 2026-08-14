@@ -278,6 +278,289 @@ type VerificationError struct {
 	ActualLength int
 }
 
+// ========================================================================
+// Error Message Examples for Common Verification Failure Scenarios
+// ========================================================================
+// The following examples demonstrate how VerificationError instances map
+// to both human-readable messages and JSON output for common failure scenarios.
+//
+// Scenario 1: Single byte mismatch at a specific offset
+// -------------------------------------------------------
+// A single byte at position 512 is corrupted (null byte overwrite).
+//
+// **VerificationError instance:**
+//   verr := &VerificationError{
+//       Offset:        512,
+//       Expected:      []byte{0x03},
+//       Actual:        []byte{0x00},
+//       ContextBytes:  0,
+//       ExpectedLength: 1024,
+//       ActualLength:  1024,
+//   }
+//
+// **Human-readable message:**
+//   "verification failed: byte mismatch at offset 512 (expected 0x03, got 0x00)"
+//
+// **JSON output (required fields only):**
+//   {
+//     "offset": 512,
+//     "expected": "0x03",
+//     "actual": "0x00"
+//   }
+//
+// **JSON output (with optional context fields):**
+//   {
+//     "offset": 512,
+//     "expected": "0x03",
+//     "actual": "0x00",
+//     "error_type": "byte_mismatch",
+//     "severity": "high"
+//   }
+//
+// **Interpretation:** Single byte corruption at offset 512 - null byte (0x00) overwrote expected data (0x03)
+//
+// Scenario 2: Multi-byte mismatch (corrupted chunk)
+// ------------------------------------------------
+// A sequential burst of corrupted bytes starting at offset 1024.
+//
+// **VerificationError instance:**
+//   verr := &VerificationError{
+//       Offset:        1024,
+//       Expected:      []byte{0x41, 0x42, 0x43, 0x44, 0x45}, // "ABCDE"
+//       Actual:        []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, // burst overwrite
+//       ContextBytes:  16,
+//       ContextBefore: 16,
+//       ContextAfter:  16,
+//       ExpectedLength: 2048,
+//       ActualLength:  2048,
+//   }
+//
+// **Human-readable message:**
+//   "verification failed: byte mismatch at offset 1024 (expected 5-byte context, got 5-byte context) [16 bytes context: 16 before, 16 after]"
+//
+// **JSON output (required fields only):**
+//   {
+//     "offset": 1024,
+//     "expected": "0x41 0x42 0x43 0x44 0x45",
+//     "actual": "0xFF 0xFF 0xFF 0xFF 0xFF"
+//   }
+//
+// **JSON output (with optional context fields):**
+//   {
+//     "offset": 1024,
+//     "expected": "0x41 0x42 0x43 0x44 0x45",
+//     "actual": "0xFF 0xFF 0xFF 0xFF 0xFF",
+//     "context_bytes": 16,
+//     "context_before": 16,
+//     "context_after": 16,
+//     "error_type": "byte_mismatch",
+//     "severity": "medium"
+//   }
+//
+// **Interpretation:** Burst corruption starting at offset 1024 - 5 sequential bytes overwritten with 0xFF pattern
+//
+// Scenario 3: Offset mismatch in range request
+// --------------------------------------------
+// Verification of an HTTP range request fails at a specific absolute offset.
+//
+// **VerificationError instance:**
+//   verr := &VerificationError{
+//       Offset:        1536,  // Absolute offset in full object
+//       Expected:      []byte{0x00, 0x01, 0x02, 0x03},
+//       Actual:        []byte{0x00, 0x01, 0xFF, 0x03},  // Byte 2 corrupted in range
+//       ContextBytes:  8,
+//       ContextBefore: 2,
+//       ContextAfter:  2,
+//       ExpectedLength: 1024,  // Range length
+//       ActualLength:  1024,
+//   }
+//
+// **Human-readable message (from VerifyRangeDecompression):**
+//   "range byte mismatch at absolute offset 1536 (relative offset 512 within range 1024-2047): expected 0x02 (2), got 0xFF (255)"
+//
+// **JSON output (required fields only):**
+//   {
+//     "offset": 1536,
+//     "expected": "0x00 0x01 0x02 0x03",
+//     "actual": "0x00 0x01 0xFF 0x03"
+//   }
+//
+// **JSON output (with optional context fields):**
+//   {
+//     "offset": 1536,
+//     "expected": "0x00 0x01 0x02 0x03",
+//     "actual": "0x00 0x01 0xFF 0x03",
+//     "context_bytes": 8,
+//     "context_before": 2,
+//     "context_after": 2,
+//     "error_type": "range_mismatch",
+//     "severity": "medium",
+//     "range_start": 1024,
+//     "range_end": 2047
+//   }
+//
+// **Interpretation:** Range request verification failed - corruption at relative offset 512 within the requested range
+//
+// Scenario 4: Entire object mismatch (wrong data entirely)
+// -------------------------------------------------------
+// The decompressed output is completely different from expected (wrong object, wrong decryption key, etc.).
+//
+// **VerificationError instance:**
+//   verr := &VerificationError{
+//       Offset:        0,  // First byte already differs
+//       Expected:      []byte{0x89, 0x50, 0x4E, 0x47}, // PNG signature
+//       Actual:        []byte{0x50, 0x4B, 0x03, 0x04}, // ZIP signature
+//       ContextBytes:  0,
+//       ExpectedLength: 1048576,
+//       ActualLength:  1048576,
+//   }
+//
+// **Human-readable message:**
+//   "verification failed: byte mismatch at offset 0 (expected 0x89, got 0x50)"
+//
+// **JSON output (required fields only):**
+//   {
+//     "offset": 0,
+//     "expected": "0x89",
+//     "actual": "0x50"
+//   }
+//
+// **JSON output (with optional context fields):**
+//   {
+//     "offset": 0,
+//     "expected": "0x89",
+//     "actual": "0x50",
+//     "error_type": "byte_mismatch",
+//     "severity": "critical"
+//   }
+//
+// **Interpretation:** Completely wrong data - expected PNG file signature, got ZIP file signature (wrong object retrieved or decryption error)
+//
+// Scenario 5: Missing or truncated data
+// ------------------------------------
+// Decompressed output is shorter than expected (incomplete decompression, network truncation, etc.).
+//
+// **VerificationError instance:**
+//   verr := &VerificationError{
+//       Offset:         -2,  // Special code for length mismatch
+//       Expected:       nil,  // Not applicable for length mismatch
+//       Actual:         nil,
+//       ContextBytes:   0,
+//       ExpectedLength: 1024,
+//       ActualLength:   997,  // 27 bytes missing
+//   }
+//
+// **Human-readable message:**
+//   "verification failed: length mismatch (got 997 bytes, expected 1024 bytes)"
+//
+// **JSON output (required fields only):**
+//   {
+//     "offset": -2,
+//     "expected_length": 1024,
+//     "actual_length": 997
+//   }
+//
+// **JSON output (with optional context fields):**
+//   {
+//     "offset": -2,
+//     "expected_length": 1024,
+//     "actual_length": 997,
+//     "error_type": "length_mismatch",
+//     "severity": "critical",
+//     "missing_bytes": 27
+//   }
+//
+// **Interpretation:** Data truncation - decompressed output is 27 bytes too short (incomplete transfer or decompression error)
+//
+// Scenario 6: Bit-flip corruption
+// -------------------------------
+// A single bit differs at a specific offset (often indicates transmission error or memory corruption).
+//
+// **VerificationError instance:**
+//   verr := &VerificationError{
+//       Offset:        2048,
+//       Expected:      []byte{0x55}, // 01010101 binary
+//       Actual:        []byte{0x54}, // 01010100 binary - LSB flipped
+//       ContextBytes:  0,
+//       ExpectedLength: 4096,
+//       ActualLength:  4096,
+//   }
+//
+// **Human-readable message:**
+//   "verification failed: byte mismatch at offset 2048 (expected 0x55, got 0x54)"
+//
+// **JSON output (required fields only):**
+//   {
+//     "offset": 2048,
+//     "expected": "0x55",
+//     "actual": "0x54"
+//   }
+//
+// **JSON output (with optional context fields):**
+//   {
+//     "offset": 2048,
+//     "expected": "0x55",
+//     "actual": "0x54",
+//     "error_type": "bit_flip",
+//     "severity": "low"
+//   }
+//
+// **Interpretation:** Single-bit difference - suggests transmission error or memory corruption rather than data replacement
+//
+// Scenario 7: Offset out of range
+// ------------------------------
+// The requested offset exceeds the bounds of the data (programming error or corrupted metadata).
+//
+// **VerificationError instance:**
+//   verr := &VerificationError{
+//       Offset:        5000,  // Exceeds data length
+//       Expected:      nil,  // Out of range
+//       Actual:        nil,
+//       ContextBytes:  0,
+//       ExpectedLength: 1024,
+//       ActualLength:  1024,
+//   }
+//
+// **Human-readable message:**
+//   "verification failed: invalid offset 5000"
+//
+// **JSON output (required fields only):**
+//   {
+//     "offset": 5000,
+//     "expected": null,
+//     "actual": null
+//   }
+//
+// **JSON output (with optional context fields):**
+//   {
+//     "offset": 5000,
+//     "expected": null,
+//     "actual": null,
+//     "error_type": "out_of_range",
+//     "severity": "unknown",
+//     "data_length": 1024
+//   }
+//
+// **Interpretation:** Invalid offset request - offset 5000 exceeds data length of 1024 bytes (metadata corruption or programming error)
+//
+// ========================================================================
+// VerificationError to Message Mapping Summary
+// ========================================================================
+// The Error() method converts VerificationError instances to human-readable
+// messages following this mapping logic:
+//
+// 1. nil error → "verification failed: nil error"
+// 2. Offset == -2 → "verification failed: length mismatch (got X bytes, expected Y bytes)"
+// 3. Offset < -2 → "verification failed: invalid offset X"
+// 4. Offset >= 0 → "verification failed: byte mismatch at offset X (expected Y, got Z)"
+//    - Appends "[C bytes context: B before, A after]" if ContextBytes > 0
+//
+// Special offset values:
+// - -1: No error (content matches) - typically represented by Pass=true instead
+// - -2: Length mismatch (total sizes differ)
+// - < -2: Reserved for future error types
+//
+
 // Error implements the error interface for VerificationError.
 //
 // Returns a human-readable string describing the verification failure.
