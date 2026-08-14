@@ -792,13 +792,9 @@ func (vr VerifyResult) String() string {
 	return fmt.Sprintf("FAIL: %s", vr.Diagnostic)
 }
 
-// VerificationResult represents the result of a decompression verification check.
-type VerificationResult struct {
-	Passed      bool   // true if decompressed content matches expected
-	Message     string // human-readable result message
-	ByteOffset  int64  // -1 if passed, otherwise the offset where first difference occurs
-	ContextSize int    // number of bytes to show around the mismatch
-}
+// VerificationResult is an alias for VerifyResult for backward compatibility.
+// Deprecated: Use VerifyResult directly.
+type VerificationResult = VerifyResult
 
 // BytesMismatch provides detailed information about byte-level mismatches.
 type BytesMismatch struct {
@@ -822,7 +818,7 @@ type BytesMismatch struct {
 //
 // **Function Signature:**
 //
-//	func VerifyDecompression(decompressed, expected []byte) *VerificationResult
+//	func VerifyDecompression(decompressed, expected []byte) *VerifyResult
 //
 // **Conceptual Integration Signature (for restore verifier):**
 //
@@ -842,9 +838,9 @@ type BytesMismatch struct {
 //     * Known-good test fixtures
 //
 // **Return Type:**
-//   - *VerificationResult: Contains pass/fail status, diagnostic message, and error details.
-//     The result.Passed field is the primary success indicator; result.Diagnostic provides
-//     human-readable details; result.ByteOffset gives precise failure location.
+//   - *VerifyResult: Contains pass/fail status, diagnostic message, and error details.
+//     The result.Pass field is the primary success indicator; result.Diagnostic provides
+//     human-readable details; result.Error contains structured VerificationError.
 //
 // **Constraints:**
 //   - Both parameters must be non-nil byte slices
@@ -859,9 +855,9 @@ type BytesMismatch struct {
 //
 // **Error Handling:**
 //   - Never panics, even with nil or malformed input
-//   - Returns VerificationResult with Passed=false and appropriate diagnostic message
-//   - ByteOffset field indicates failure type:
-//     - -1: Verification passed
+//   - Returns VerifyResult with Pass=false and appropriate VerificationError
+//   - VerificationError.Offset indicates failure type:
+//     - -1: Verification passed (no error)
 //     - -2: Length mismatch
 //     - >= 0: Byte offset of first difference
 //
@@ -875,8 +871,8 @@ type BytesMismatch struct {
 //
 //	// Verify against the original plaintext (e.g., from B2 metadata or known-good copy)
 //	result := crypto.VerifyDecompression(decompressed, originalPlaintext)
-//	if !result.Passed() {
-//	    return fmt.Errorf("decompression verification failed: %s", result)
+//	if !result.Pass {
+//	    return fmt.Errorf("decompression verification failed: %s", result.Diagnostic)
 //	}
 //
 // **Integration with Backend:**
@@ -884,50 +880,130 @@ type BytesMismatch struct {
 //	// The restore verifier integrates this as:
 //	plaintext, err := v.backend.Get(ctx, bucket, key)  // decrypts via ARMOR read path
 //	if err != nil {
-//	    return VerificationResult{Status: StatusRestoreError, Error: err.Error()}
+//	    return fmt.Errorf("restore error: %w", err)
 //	}
 //
-//	expectedSHA256 := metadata["x-amz-meta-armor-plaintext-sha256"]
-//	result := crypto.VerifyDecompression(plaintext, expectedPlaintext)
-//	if !result.Passed() {
-//	    return VerificationResult{Status: StatusChecksumError, Error: result.Message}
+//	// Read and verify
+//	decompressed, _ := io.ReadAll(plaintext)
+//	defer plaintext.Close()
+//
+//	expectedPlaintext := getExpectedPlaintext(objectID)
+//	result := crypto.VerifyDecompression(decompressed, expectedPlaintext)
+//	if !result.Pass {
+//	    return fmt.Errorf("checksum error: %s", result.Diagnostic)
 //	}
 //
 // **Performance:**
 //   - O(n) time complexity where n is the length of the shorter slice
 //   - O(1) additional memory (only stores mismatch offset and context)
 //   - Short-circuits on first mismatch for fast failure detection
-func VerifyDecompression(decompressed, expected []byte) *VerificationResult {
-	result := &VerificationResult{
-		ContextSize: 16, // show 16 bytes before and after mismatch
+func VerifyDecompression(decompressed, expected []byte) *VerifyResult {
+	const contextBytes = 16 // show 16 bytes before and after mismatch
+
+	// Handle nil inputs gracefully
+	if decompressed == nil && expected == nil {
+		return &VerifyResult{
+			Pass:       true,
+			Diagnostic: "verified: both inputs are nil",
+		}
 	}
 
 	// Check if lengths match
 	if len(decompressed) != len(expected) {
-		result.Passed = false
-		result.Message = fmt.Sprintf("length mismatch: got %d bytes, expected %d bytes",
-			len(decompressed), len(expected))
-		result.ByteOffset = -2 // Special code for length mismatch
-		return result
+		return &VerifyResult{
+			Pass: false,
+			Diagnostic: fmt.Sprintf("length mismatch: got %d bytes, expected %d bytes",
+				len(decompressed), len(expected)),
+			Error: &VerificationError{
+				Offset:         -2, // Special code for length mismatch
+				Expected:       nil,
+				Actual:         nil,
+				ContextBytes:   0,
+				ContextBefore:  0,
+				ContextAfter:   0,
+				ExpectedLength: len(expected),
+				ActualLength:   len(decompressed),
+			},
+		}
 	}
 
-	// Perform byte-for-byte comparison
-	if bytes.Equal(decompressed, expected) {
-		result.Passed = true
-		result.Message = fmt.Sprintf("verified: %d bytes match exactly", len(decompressed))
-		result.ByteOffset = -1
-		return result
+	// Handle empty slices (both are empty and have same length)
+	if len(decompressed) == 0 {
+		return &VerifyResult{
+			Pass:       true,
+			Diagnostic: "verified: 0 bytes (empty)",
+		}
 	}
 
-	// Find the first mismatching byte
-	offset := findFirstMismatch(decompressed, expected)
-	result.Passed = false
-	result.ByteOffset = offset
+	// Perform byte-for-byte comparison with early exit on first mismatch
+	for i := 0; i < len(decompressed); i++ {
+		if decompressed[i] != expected[i] {
+			// Found the first mismatch - capture context and return
+			return createMismatchResult(decompressed, expected, i, contextBytes)
+		}
+	}
 
-	mismatch := createMismatchDetail(decompressed, expected, offset, result.ContextSize)
-	result.Message = formatMismatchMessage(mismatch, len(decompressed), len(expected))
+	// All bytes match
+	return &VerifyResult{
+		Pass:       true,
+		Diagnostic: fmt.Sprintf("verified: %d bytes match exactly", len(decompressed)),
+	}
+}
 
-	return result
+// createMismatchResult creates a VerifyResult for a byte mismatch at the given offset.
+func createMismatchResult(decompressed, expected []byte, offset int, contextBytes int) *VerifyResult {
+	// Calculate context boundaries
+	contextBefore := contextBytes
+	if offset-contextBefore < 0 {
+		contextBefore = offset
+	}
+
+	contextAfter := contextBytes
+	if offset+contextAfter >= len(decompressed) {
+		contextAfter = len(decompressed) - offset - 1
+	}
+
+	// Extract context byte ranges
+	expectedStart := offset - contextBefore
+	expectedEnd := offset + contextAfter + 1
+	actualStart := offset - contextBefore
+	actualEnd := offset + contextAfter + 1
+
+	// Ensure bounds are valid
+	if expectedEnd > len(expected) {
+		expectedEnd = len(expected)
+	}
+	if actualEnd > len(decompressed) {
+		actualEnd = len(decompressed)
+	}
+	if expectedStart < 0 {
+		expectedStart = 0
+	}
+	if actualStart < 0 {
+		actualStart = 0
+	}
+
+	// Build context slices for diagnostic value
+	expectedCtx := expected[expectedStart:expectedEnd]
+	actualCtx := decompressed[actualStart:actualEnd]
+
+	// Create the error
+	verr := &VerificationError{
+		Offset:         int64(offset),
+		Expected:       expectedCtx,
+		Actual:         actualCtx,
+		ContextBytes:   contextBytes,
+		ContextBefore:  contextBefore,
+		ContextAfter:   contextAfter,
+		ExpectedLength: len(expected),
+		ActualLength:   len(decompressed),
+	}
+
+	return &VerifyResult{
+		Pass:       false,
+		Diagnostic: verr.Error(),
+		Error:      verr,
+	}
 }
 
 // VerifyRangeDecompression verifies that a decompressed range matches the expected range.
@@ -1048,36 +1124,49 @@ func VerifyDecompression(decompressed, expected []byte) *VerificationResult {
 //   - Used in HTTP range request handlers (e.g., GET with Range header)
 //   - Can be integrated with backend.GetRange() for direct range verification
 //   - Supports partial object verification without full download
-func VerifyRangeDecompression(decompressed, expected []byte, rangeStart int64) *VerificationResult {
-	result := &VerificationResult{
-		ContextSize: 16,
-	}
+func VerifyRangeDecompression(decompressed, expected []byte, rangeStart int64) *VerifyResult {
+	const contextBytes = 16
 
 	// Check if decompressed length matches expected range length
 	if len(decompressed) != len(expected) {
-		result.Passed = false
-		result.Message = fmt.Sprintf("range length mismatch: got %d bytes, expected %d bytes (range starts at offset %d)",
-			len(decompressed), len(expected), rangeStart)
-		result.ByteOffset = -2
-		return result
+		return &VerifyResult{
+			Pass: false,
+			Diagnostic: fmt.Sprintf("range length mismatch: got %d bytes, expected %d bytes (range starts at offset %d)",
+				len(decompressed), len(expected), rangeStart),
+			Error: &VerificationError{
+				Offset:         -2,
+				Expected:       nil,
+				Actual:         nil,
+				ContextBytes:   0,
+				ContextBefore:  0,
+				ContextAfter:   0,
+				ExpectedLength: len(expected),
+				ActualLength:   len(decompressed),
+			},
+		}
 	}
 
 	// Perform byte-for-byte comparison
 	if bytes.Equal(decompressed, expected) {
-		result.Passed = true
-		result.Message = fmt.Sprintf("range verified: %d bytes match exactly (range starts at offset %d)",
-			len(decompressed), rangeStart)
-		result.ByteOffset = -1
-		return result
+		return &VerifyResult{
+			Pass:       true,
+			Diagnostic: fmt.Sprintf("range verified: %d bytes match exactly (range starts at offset %d)",
+				len(decompressed), rangeStart),
+		}
 	}
 
 	// Find the first mismatching byte within the range
 	offset := findFirstMismatch(decompressed, expected)
-	result.Passed = false
-	result.ByteOffset = rangeStart + offset // Convert to absolute offset
+	absoluteOffset := rangeStart + int64(offset)
 
-	mismatch := createMismatchDetail(decompressed, expected, offset, result.ContextSize)
-	result.Message = formatRangeMismatchMessage(mismatch, rangeStart, len(decompressed))
+	// Create mismatch result with absolute offset
+	result := createMismatchResult(decompressed, expected, offset, contextBytes)
+	// Update the offset to be absolute
+	if result.Error != nil {
+		result.Error.Offset = absoluteOffset
+		result.Diagnostic = fmt.Sprintf("range byte mismatch at absolute offset %d (relative offset %d within range): %s",
+			absoluteOffset, offset, result.Diagnostic)
+	}
 
 	return result
 }
@@ -1165,40 +1254,31 @@ func VerifyRangeDecompression(decompressed, expected []byte, rangeStart int64) *
 //   - Debugging multi-tenant systems where context identifies the tenant
 //   - Escalation bead correlation (ADR-004 §5)
 //   - DR drill vs. normal path distinction in logs
-func VerifyDecompressionWithContext(decompressed, expected []byte, context string) *VerificationResult {
+func VerifyDecompressionWithContext(decompressed, expected []byte, context string) *VerifyResult {
 	result := VerifyDecompression(decompressed, expected)
-	if !result.Passed {
-		result.Message = fmt.Sprintf("[%s] %s", context, result.Message)
-	} else {
-		result.Message = fmt.Sprintf("[%s] %s", context, result.Message)
-	}
+	result.Diagnostic = fmt.Sprintf("[%s] %s", context, result.Diagnostic)
 	return result
 }
 
 // GetMismatchDetail extracts detailed information about byte mismatches.
 // Returns nil if verification passed.
-func (vr *VerificationResult) GetMismatchDetail(decompressed, expected []byte) *BytesMismatch {
-	if vr.Passed || vr.ByteOffset < 0 {
+func (vr *VerifyResult) GetMismatchDetail(decompressed, expected []byte) *BytesMismatch {
+	if vr.Pass || vr.Error == nil || vr.Error.Offset < 0 {
 		return nil
 	}
 
 	// Convert absolute offset to relative if needed
-	offset := vr.ByteOffset
-	if offset >= int64(len(decompressed)) {
+	offset := int(vr.Error.Offset)
+	if offset >= len(decompressed) {
 		offset = 0
 	}
 
-	return createMismatchDetail(decompressed, expected, int(offset), vr.ContextSize)
-}
-
-// String returns a formatted string representation of the verification result.
-func (vr *VerificationResult) String() string {
-	return vr.Message
+	return createMismatchDetail(decompressed, expected, offset, vr.Error.ContextBytes)
 }
 
 // Passed returns true if verification passed.
-func (vr *VerificationResult) Passed() bool {
-	return vr.Passed
+func (vr *VerifyResult) Passed() bool {
+	return vr.Pass
 }
 
 // findFirstMismatch finds the byte offset where two byte slices first differ.
