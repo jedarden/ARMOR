@@ -1,4 +1,41 @@
 // Package crypto provides decompression correctness verification helpers.
+//
+// **VerificationError Mapping Documentation:**
+// The VerificationError type in this package implements the error message format
+// specification defined in the following documentation:
+//
+// 1. docs/error-message-structure.md
+//    - Core error message format with required fields (offset, expected, actual)
+//    - Optional context fields for detailed diagnostics
+//    - JSON serialization structure
+//
+// 2. docs/verification-error-to-message-mapping.md
+//    - Field-by-field mapping from VerificationError struct to message format
+//    - Transformation logic (byte arrays → hex strings or descriptions)
+//    - Special offset value semantics (-1, -2, < -2)
+//    - Integration with VerifyResult wrapper type
+//
+// 3. docs/verification-error-message-examples.md
+//    - Concrete error message examples for common failure scenarios
+//    - Human-readable format vs. JSON format
+//    - Go code to generate each error type
+//
+// **Mapping Summary:**
+// VerificationError fields → Error message format → Human-readable output
+//   Offset               → "offset" field           → "byte mismatch at offset X"
+//   Expected[]           → "expected" field        → "expected 0x03" or "expected N-byte context"
+//   Actual[]             → "actual" field          → "got 0x00" or "got N-byte context"
+//   ContextBytes         → Optional context        → "[C bytes context: B before, A after]"
+//   ContextBefore/After  → Optional context        → Included in context description
+//   ExpectedLength       → Optional context        → "(got X bytes, expected Y bytes)"
+//   ActualLength         → Optional context        → "(got X bytes, expected Y bytes)"
+//
+// **Key Implementation Points:**
+// - Error() method: Implements human-readable message construction
+// - MismatchSeverity(): Classifies error severity (critical/high/medium/low)
+// - IsLengthMismatch()/IsByteMismatch()/IsOutOfRange(): Type check helpers
+//
+// See individual type and method documentation for detailed mapping examples.
 package crypto
 
 // Verification Function Signatures - Quick Reference
@@ -129,6 +166,15 @@ type VerifyResult struct {
 // mismatches between decompressed and expected content. It is used to precisely
 // identify corruption points and provide context for debugging.
 //
+// **Documentation Reference:**
+// This type maps to the core error message structure defined in:
+// - docs/error-message-structure.md (core format with required fields)
+// - docs/verification-error-to-message-mapping.md (field-by-field mapping)
+// - docs/verification-error-message-examples.md (concrete scenarios)
+//
+// The Error() method below implements the conversion to human-readable format
+// following the documented message format specification.
+//
 // Error Type Classification:
 // - Length mismatch: Decompressed content has different total size than expected
 // - Byte mismatch: Content matches in length but differs at one or more byte positions
@@ -163,6 +209,13 @@ type VerifyResult struct {
 type VerificationError struct {
 	// Offset is the byte position where the first difference occurs.
 	//
+	// **Message Format Mapping:**
+	// This field maps directly to the "offset" field in the error message format
+	// (see docs/error-message-structure.md). The Error() method uses this field
+	// to construct messages like:
+	// - "byte mismatch at offset 512..." (when Offset >= 0)
+	// - "length mismatch..." (when Offset == -2)
+	//
 	// How to calculate the offset:
 	// 1. Start byte-by-byte comparison from position 0
 	// 2. Compare decompressed[i] with expected[i] for each i
@@ -183,6 +236,12 @@ type VerificationError struct {
 
 	// Expected is the byte or byte sequence that was expected at the error offset.
 	//
+	// **Message Format Mapping:**
+	// This field maps to the "expected" field in the error message format.
+	// In Error() method:
+	// - Single byte → hex format: "expected 0x03"
+	// - Multi-byte → description: "expected N-byte context"
+	//
 	// For single-byte errors, this contains a single byte.
 	// For multi-byte context (when ContextBytes > 0), this contains a slice
 	// of [ContextBefore + 1 + ContextAfter] bytes centered on the error offset.
@@ -198,6 +257,12 @@ type VerificationError struct {
 
 	// Actual is the byte or byte sequence that was found in the decompressed content
 	// at the error offset.
+	//
+	// **Message Format Mapping:**
+	// This field maps to the "actual" field in the error message format.
+	// In Error() method:
+	// - Single byte → hex format: "got 0x00"
+	// - Multi-byte → description: "got N-byte context"
 	//
 	// Mirrors the Expected field structure:
 	// - Single-byte errors: one byte
@@ -279,10 +344,26 @@ type VerificationError struct {
 }
 
 // ========================================================================
-// Error Message Examples for Common Verification Failure Scenarios
+// VerificationError to Message Mapping - Documentation Integration
 // ========================================================================
-// The following examples demonstrate how VerificationError instances map
+// The following sections demonstrate how VerificationError instances map
 // to both human-readable messages and JSON output for common failure scenarios.
+//
+// **Documentation Mapping:**
+// Each scenario below corresponds to examples in the documentation:
+// - Scenario 1 (Single byte mismatch) → docs/verification-error-message-examples.md Example 1
+// - Scenario 2 (Multi-byte mismatch) → docs/verification-error-message-examples.md Example 2
+// - Scenarios 3-7 → Additional failure patterns documented in mapping spec
+//
+// **Construction Pattern:**
+// For each scenario, the pattern is:
+// 1. Create VerificationError instance with appropriate fields
+// 2. Call Error() method to construct human-readable message
+// 3. Reference JSON serialization format (for structured output)
+// 4. Show interpretation and diagnostic value
+//
+// See docs/verification-error-to-message-mapping.md for complete field-by-field
+// mapping and transformation logic.
 //
 // Scenario 1: Single byte mismatch at a specific offset
 // -------------------------------------------------------
@@ -567,43 +648,75 @@ type VerificationError struct {
 // The format is intentionally detailed to aid debugging without requiring
 // field inspection.
 //
+// **Message Construction Process:**
+// This method implements the error message format specification defined in
+// docs/error-message-structure.md. The mapping from VerificationError fields
+// to message format is:
+//
+// 1. nil error → "verification failed: nil error"
+// 2. Offset == -2 → "verification failed: length mismatch (got X bytes, expected Y bytes)"
+//    - Maps from: ActualLength, ExpectedLength fields
+// 3. Offset < -2 → "verification failed: invalid offset X"
+//    - Reserved for future error types
+// 4. Offset >= 0 → "verification failed: byte mismatch at offset X (expected Y, got Z)"
+//    - Maps from: Offset, Expected[0], Actual[0] (or full context arrays)
+//    - Appends context information if ContextBytes > 0
+//
+// **Transformations Applied:**
+// - Single-byte arrays → hex format: "0x03"
+// - Multi-byte arrays → description: "N-byte context"
+// - ContextBytes > 0 → append: "[C bytes context: B before, A after]"
+//
+// See docs/verification-error-to-message-mapping.md for complete field-by-field
+// mapping documentation and transformation examples.
+//
 // Example outputs:
 //
 //	"verification failed: length mismatch (got 997 bytes, expected 1024 bytes)"
 //	"verification failed: byte mismatch at offset 512 (expected 0x03, got 0x00)"
-//	"verification failed: offset 5000 out of range (data length: 1024)"
+//	"verification failed: byte mismatch at offset 512 (expected 0x03, got 0x00) [16 bytes context: 16 before, 16 after]"
+//	"verification failed: invalid offset 5000"
 func (ve *VerificationError) Error() string {
 	if ve == nil {
 		return "verification failed: nil error"
 	}
 
 	// Length mismatch (special offset code)
+	// Maps: ActualLength → "got X bytes", ExpectedLength → "expected Y bytes"
 	if ve.Offset == -2 {
 		return fmt.Sprintf("verification failed: length mismatch (got %d bytes, expected %d bytes)",
 			ve.ActualLength, ve.ExpectedLength)
 	}
 
 	// Out of range offset
+	// Reserved for future error types (see docs/error-message-structure.md §Offset)
 	if ve.Offset < 0 {
 		return fmt.Sprintf("verification failed: invalid offset %d", ve.Offset)
 	}
 
 	// Build expected/actual representation
+	// Transformation: byte arrays → formatted strings
+	// - Single byte: hex format "0x03" (from docs/error-message-structure.md)
+	// - Multi-byte: description "N-byte context"
 	expectedStr := "<nil>"
 	actualStr := "<nil>"
 
 	if len(ve.Expected) > 0 {
 		if len(ve.Expected) == 1 {
+			// Single-byte format: "0x03" (hexadecimal representation)
 			expectedStr = fmt.Sprintf("0x%02X", ve.Expected[0])
 		} else {
+			// Multi-byte format: "N-byte context" (size description)
 			expectedStr = fmt.Sprintf("%d-byte context", len(ve.Expected))
 		}
 	}
 
 	if len(ve.Actual) > 0 {
 		if len(ve.Actual) == 1 {
+			// Single-byte format: "0x00" (hexadecimal representation)
 			actualStr = fmt.Sprintf("0x%02X", ve.Actual[0])
 		} else {
+			// Multi-byte format: "N-byte context" (size description)
 			actualStr = fmt.Sprintf("%d-byte context", len(ve.Actual))
 		}
 	}
