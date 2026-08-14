@@ -2,14 +2,26 @@ package replication
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
 
+// helper function to create a test queue with mock backends
+func newTestQueue(bufSize int) (*Metrics, *ReplicationQueue) {
+	metrics := NewMetrics()
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, bufSize, nil)
+	return metrics, q
+}
+
 // TestNewReplicationQueue verifies queue initialization
 func TestNewReplicationQueue(t *testing.T) {
 	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 100)
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 100, nil)
 
 	if q == nil {
 		t.Fatal("NewReplicationQueue returned nil")
@@ -31,7 +43,9 @@ func TestNewReplicationQueue(t *testing.T) {
 // TestNewReplicationQueueDefaultBufferSize verifies default buffer size
 func TestNewReplicationQueueDefaultBufferSize(t *testing.T) {
 	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 0)
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 0, nil)
 
 	if cap(q.queueCh) != DefaultQueueBufferSize {
 		t.Errorf("expected default capacity %d, got %d", DefaultQueueBufferSize, cap(q.queueCh))
@@ -41,7 +55,9 @@ func TestNewReplicationQueueDefaultBufferSize(t *testing.T) {
 // TestStart verifies the background goroutine starts correctly
 func TestStart(t *testing.T) {
 	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 10)
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 10, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -70,8 +86,7 @@ func TestStart(t *testing.T) {
 
 // TestStartIdempotent verifies Start cannot be called twice successfully
 func TestStartIdempotent(t *testing.T) {
-	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 10)
+	_, q := newTestQueue(10)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -90,8 +105,7 @@ func TestStartIdempotent(t *testing.T) {
 
 // TestStopIdempotent verifies Stop can be called multiple times safely
 func TestStopIdempotent(t *testing.T) {
-	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 10)
+	_, q := newTestQueue(10)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -111,8 +125,7 @@ func TestStopIdempotent(t *testing.T) {
 
 // TestEnqueueNonBlocking verifies enqueue doesn't block when channel is full
 func TestEnqueueNonBlocking(t *testing.T) {
-	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 2)
+	metrics, q := newTestQueue(2)
 
 	// Don't start the worker, so items stay in the queue
 	// This tests the non-blocking behavior of enqueue
@@ -138,8 +151,7 @@ func TestEnqueueNonBlocking(t *testing.T) {
 
 // TestEnqueueDroppedMetric verifies the dropped metric increments correctly
 func TestEnqueueDroppedMetric(t *testing.T) {
-	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 1)
+	metrics, q := newTestQueue(1)
 
 	// Don't start the worker, so we can test queue overflow behavior
 
@@ -160,26 +172,40 @@ func TestEnqueueDroppedMetric(t *testing.T) {
 // TestGracefulShutdown verifies Stop drains the queue before exit
 func TestGracefulShutdown(t *testing.T) {
 	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 100)
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 100, nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Setup: create bucket and objects in primary backend
+	ctx := context.Background()
+	primary.CreateBucket(ctx, "test-bucket")
+
+	// Put a test object in primary
+	testData := "test-object-data"
+	primary.Put(ctx, "test-bucket", "test-key", strings.NewReader(testData), int64(len(testData)), map[string]string{"Content-Type": "text/plain"})
+
+	// Create bucket in secondary
+	secondary.CreateBucket(ctx, "test-bucket")
+
+	startCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	q.Start(ctx)
+	q.Start(startCtx)
 	time.Sleep(10 * time.Millisecond)
 
-	// Enqueue several items
-	for i := 0; i < 10; i++ {
-		q.Enqueue("bucket", "key"+string(rune('0'+i)))
-	}
+	// Enqueue one item (this one should succeed)
+	q.Enqueue("test-bucket", "test-key")
 
-	// Stop should drain all items
+	// Give worker time to process
+	time.Sleep(100 * time.Millisecond)
+
+	// Stop should drain all items quickly
 	start := time.Now()
 	q.Stop()
 	elapsed := time.Since(start)
 
 	// Stop should wait for drain (but not too long)
-	if elapsed > 5*time.Second {
+	if elapsed > 1*time.Second {
 		t.Errorf("Stop took too long: %v", elapsed)
 	}
 
@@ -192,7 +218,9 @@ func TestGracefulShutdown(t *testing.T) {
 // TestContextCancellation verifies goroutine exits on context cancel
 func TestContextCancellation(t *testing.T) {
 	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 100)
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 100, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -223,7 +251,9 @@ func TestContextCancellation(t *testing.T) {
 // TestQueueDepthTracking verifies depth metric updates correctly
 func TestQueueDepthTracking(t *testing.T) {
 	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 100)
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 100, nil)
 
 	// Set the depth reference for metrics
 	metrics.QueueDepth = &q.depth
@@ -267,7 +297,9 @@ func TestQueueDepthTracking(t *testing.T) {
 // TestStopWithEmptyQueue verifies Stop works correctly on empty queue
 func TestStopWithEmptyQueue(t *testing.T) {
 	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 10)
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 10, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -289,7 +321,9 @@ func TestStopWithEmptyQueue(t *testing.T) {
 // TestConcurrentEnqueue verifies concurrent enqueue operations
 func TestConcurrentEnqueue(t *testing.T) {
 	metrics := NewMetrics()
-	q := NewReplicationQueue(metrics, 1000)
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 1000, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -477,7 +477,23 @@ This section records the declarative-config commit SHAs for ARMOR fleet-wide ima
 
 | Date | ARMOR Image Tag | declarative-config Commit | Files Changed | Clusters | Status |
 |------|----------------|---------------------------|---------------|----------|--------|
+| 2026-08-13 | 0.1.1911 | `fe3e839e` (Forgejo origin/main) | 6 files (iad-ci, iad-kalshi, ord-devimprint, rs-manager deployments + commitgraph) | 4 clusters (iad-ci, iad-kalshi, ord-devimprint, rs-manager) | ✅ Synced and verified |
 | 2026-08-10 | 0.1.1906 | `b5169cce` (Forgejo origin/main) | 5 files (iad-ci, iad-kalshi, ord-devimprint, rs-manager deployments) | 4 clusters (iad-ci, iad-kalshi, ord-devimprint, rs-manager) | ✅ Synced and verified |
+
+**Commit `fe3e839e` details:**
+- Commit: `chore(armor): deploy multipart completion recovery`
+- Changed files:
+  - `k8s/commitgraph-dashboard/parquet-mirror-deployment.yml`
+  - `k8s/iad-ci/armor-test/armor-test-deployment.yml`
+  - `k8s/iad-ci/armor/armor-deployment.yaml`
+  - `k8s/iad-kalshi/armor/armor-deployment.yml`
+  - `k8s/ord-devimprint/devimprint/armor-deployment.yml`
+  - `k8s/rs-manager/armor/armor-deployment.yml`
+- All changed to image: `ronaldraygun/armor:0.1.1911`
+- Repo: `jedarden/declarative-config` (Forgejo: git.ardenone.com)
+- Parent bead: `bf-1oe7yn` (GitOps ship step)
+- Verification bead: `bf-4miwq8` (final verification)
+- Verification completed: 2026-08-13 19:24 UTC
 
 **Commit `b5169cce` details:**
 - Commit: `fix(armor): converge fleet to HEAD image 0.1.1906 (bf-1oe7yn)`

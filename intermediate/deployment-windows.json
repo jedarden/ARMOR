@@ -1,0 +1,142 @@
+{
+  "bug_window": {
+    "start": "2026-03-24T00:00:00Z",
+    "end": "2026-07-16T23:59:59Z",
+    "description": "Multipart upload corruption bug window"
+  },
+  "affected_deployment_windows": [
+    {
+      "version": "0.1.0",
+      "deployed_at": "2026-03-28T09:10:52Z",
+      "window_start": "2026-03-28T09:10:52Z",
+      "window_end": "2026-04-23T07:43:00Z",
+      "commit": "f1b9cf185e5ebb2e1c7c9e415561a43c38256f8d",
+      "message": "Pin ARMOR image to v0.1.0 semver tag"
+    },
+    {
+      "version": "0.1.3",
+      "deployed_at": "2026-04-23T07:43:00Z",
+      "window_start": "2026-04-23T07:43:00Z",
+      "window_end": "2026-04-28T14:36:46Z",
+      "commit": "55a54bfb2e837d2913320af49cf55fe46b1d61b5",
+      "message": "chore(armor): pin to 0.1.3 with SigV4 region + log fixes"
+    },
+    {
+      "version": "0.1.8",
+      "deployed_at": "2026-04-28T14:36:46Z",
+      "window_start": "2026-04-28T14:36:46Z",
+      "window_end": "2026-05-01T23:42:23Z",
+      "commit": "82296e9de5cae943decd18c1df98a9a33a2eacbf",
+      "message": "feat(armor): bump image to v0.1.8 for DuckDB httpfs date fix"
+    },
+    {
+      "version": "0.1.13",
+      "deployed_at": "2026-05-01T23:42:23Z",
+      "window_start": "2026-05-01T23:42:23Z",
+      "window_end": "2026-05-09T19:03:10Z",
+      "commit": "0c327f24a53d481506ea9f297e033af0b34c4b06",
+      "message": "feat(ardenone-hub): upgrade ARMOR to v0.1.13 for URL decode fix"
+    },
+    {
+      "version": "0.1.15",
+      "deployed_at": "2026-05-09T19:03:10Z",
+      "window_start": "2026-05-09T19:03:10Z",
+      "window_end": "2026-05-09T19:04:29Z",
+      "commit": "8f68f2335345862c9c778e79eede684f967761ae",
+      "message": "fix(armor): disable canary, bump to 0.1.15, add imagePullSecrets"
+    },
+    {
+      "version": "0.1.16",
+      "deployed_at": "2026-05-09T19:04:29Z",
+      "window_start": "2026-05-09T19:04:29Z",
+      "window_end": "2026-05-13T22:08:11Z",
+      "commit": "40b3e903afc613ed696c6407e70875c89f7adc61",
+      "message": "fix(armor): use 0.1.16 \u2014 image just built and pushed by armor-build-manual-l8jmb"
+    },
+    {
+      "version": "0.1.20",
+      "deployed_at": "2026-05-13T22:08:11Z",
+      "window_start": "2026-05-13T22:08:11Z",
+      "window_end": "2026-05-13T22:14:36Z",
+      "commit": "e030d652d63aed3283c15dcd276d1b02afdfbdf5",
+      "message": "fix(iad-ci/armor): bump to 0.1.20 \u2014 S3 GetBucketLocation + GET routing fix"
+    },
+    {
+      "version": "0.1.21",
+      "deployed_at": "2026-05-13T22:14:36Z",
+      "window_start": "2026-05-13T22:14:36Z",
+      "window_end": "2026-05-14T12:35:39Z",
+      "commit": "237d8579f15045a774637da9a1eb2a612ccb365e",
+      "message": "fix(iad-ci/armor): bump to 0.1.21 \u2014 add GetBucketVersioning stub"
+    },
+    {
+      "version": "0.1.22",
+      "deployed_at": "2026-05-14T12:35:39Z",
+      "window_start": "2026-05-14T12:35:39Z",
+      "window_end": "2026-05-14T12:44:44Z",
+      "commit": "fe68e56c4c6a0bbd56f5d3da7fb9912732f2a10f",
+      "message": "feat(iad-ci/armor): deploy armor 0.1.22"
+    },
+    {
+      "version": "0.1.23",
+      "deployed_at": "2026-05-14T12:44:44Z",
+      "window_start": "2026-05-14T12:44:44Z",
+      "window_end": "2026-05-14T12:53:25Z",
+      "commit": "fe34ee07315bf25723b58ae76036a3ec1d916a94",
+      "message": "feat(iad-ci/armor): deploy armor 0.1.23"
+    },
+    {
+      "version": "0.1.24",
+      "deployed_at": "2026-05-14T12:53:25Z",
+      "window_start": "2026-05-14T12:53:25Z",
+      "window_end": "2026-06-10T15:08:42Z",
+      "commit": "1f55d797baabaa4eb5db9160e06536f808546f21",
+      "message": "feat(iad-ci/armor): deploy armor 0.1.24"
+    },
+    {
+      "version": "0.1.37",
+      "deployed_at": "2026-06-10T15:08:42Z",
+      "window_start": "2026-06-10T15:08:42Z",
+      "window_end": "2026-06-10T15:47:18Z",
+      "commit": "9b8bcda16e1be202640d98056c83699648afd672",
+      "message": "deploy(iad-native-ads): armor 0.1.37 \u2014 fixes B2 multipart completion (WAL archiving)"
+    },
+    {
+      "version": "0.1.38",
+      "deployed_at": "2026-06-10T15:47:18Z",
+      "window_start": "2026-06-10T15:47:18Z",
+      "window_end": "2026-06-11T11:34:42Z",
+      "commit": "5258a121cf6a30f77db90b90522e5d4b8af36827",
+      "message": "deploy(iad-native-ads): armor 0.1.38 \u2014 UploadPart PUT routing fix (true WAL-archiving root cause)"
+    },
+    {
+      "version": "0.1.42",
+      "deployed_at": "2026-06-11T11:34:42Z",
+      "window_start": "2026-06-11T11:34:42Z",
+      "window_end": "2026-07-16T23:59:59Z",
+      "commit": "0d11f9fa422203d516ca20a589a21d099ad23adb",
+      "message": "deploy(iad-native-ads): armor 0.1.42 \u2014 spool unseekable PutObject bodies (fixes site-gen uploads)"
+    }
+  ],
+  "summary": {
+    "total_affected_deployments": 14,
+    "versions_affected": [
+      "0.1.0",
+      "0.1.38",
+      "0.1.22",
+      "0.1.20",
+      "0.1.13",
+      "0.1.15",
+      "0.1.3",
+      "0.1.16",
+      "0.1.24",
+      "0.1.21",
+      "0.1.23",
+      "0.1.42",
+      "0.1.37",
+      "0.1.8"
+    ],
+    "earliest_deployment": "2026-03-28T09:10:52Z",
+    "latest_deployment": "2026-06-11T11:34:42Z"
+  }
+}

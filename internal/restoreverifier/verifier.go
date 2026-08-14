@@ -570,6 +570,19 @@ func New(
 	return v
 }
 
+// getBucketPrefix returns the prefix for a bucket, or empty string if not configured.
+func (v *Verifier) getBucketPrefix(bucket string) string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	for _, cfg := range v.bucketConfigs {
+		if cfg.Bucket == bucket {
+			return cfg.Prefix
+		}
+	}
+	return ""
+}
+
 // Start begins the verification loop.
 func (v *Verifier) Start(ctx context.Context) {
 	log.Printf("Starting restore verifier with %d buckets, interval %v",
@@ -1231,8 +1244,10 @@ func (v *Verifier) readMultipartCiphertext(ctx context.Context, bucket, key stri
 
 // getLatestObject returns the most recent backup object for a bucket.
 func (v *Verifier) getLatestObject(ctx context.Context, bucket string) (ObjectSample, error) {
+	prefix := v.getBucketPrefix(bucket)
+
 	// List objects in the bucket, sorted by last modified descending
-	listResult, err := v.backend.List(ctx, bucket, "", "", "", 100)
+	listResult, err := v.backend.List(ctx, bucket, prefix, "", "", 100)
 	if err != nil {
 		return ObjectSample{}, fmt.Errorf("list failed: %w", err)
 	}
@@ -1285,6 +1300,8 @@ func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampl
 		return nil, nil
 	}
 
+	prefix := v.getBucketPrefix(bucket)
+
 	// The reservoir holds at most sampleSize objects, so paginating a bucket
 	// with millions of objects never grows memory beyond the sample size.
 	reservoir := make([]ObjectSample, 0, sampleSize)
@@ -1296,7 +1313,7 @@ func (v *Verifier) getHistoricalSample(ctx context.Context, bucket string, sampl
 			return nil, fmt.Errorf("historical sample cancelled: %w", err)
 		}
 
-		listResult, err := v.backend.List(ctx, bucket, "", "", continuationToken, 1000)
+		listResult, err := v.backend.List(ctx, bucket, prefix, "", continuationToken, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("list failed: %w", err)
 		}

@@ -8,6 +8,7 @@ import (
 	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/logging"
 	"github.com/jedarden/armor/internal/metrics"
+	"github.com/jedarden/armor/internal/presign"
 )
 
 // NewWithBackend builds an ARMOR *Server whose full S3 request pipeline
@@ -48,4 +49,11 @@ func NewWithBackend(cfg *config.Config, be backend.Backend) (*Server, error) {
 		requestTracker: &metrics.RequestTracker{},
 		logger:         logging.New("armor-test"),
 	}, nil
+}
+
+// SetPresigner sets the presigner for share token generation. This is intended
+// for test use only, specifically the aws-cli compatibility suite which tests
+// the share endpoint round-trip.
+func (s *Server) SetPresigner(presigner *presign.Signer) {
+	s.presigner = presigner
 }

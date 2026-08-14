@@ -5,8 +5,12 @@ package replication
 
 import (
 	"context"
+	"log"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/jedarden/armor/internal/backend"
 )
 
 // Enqueuer is the interface for enqueuing replication tasks.
@@ -25,8 +29,8 @@ const DefaultQueueBufferSize = 4096
 // channel is full, items are dropped with a metric increment (replication is a cache
 // — the primary backend remains authoritative).
 //
-// This is infrastructure only — the worker goroutine is a stub that logs keys. The
-// actual replication logic will be implemented in a follow-up task.
+// The worker reads from the primary backend and writes to the secondary backend,
+// using backend.Copy() when available (B2-to-B2) or falling back to Get+Put.
 type ReplicationQueue struct {
 	// metrics holds the Prometheus metrics for this queue
 	metrics *Metrics
@@ -48,6 +52,19 @@ type ReplicationQueue struct {
 
 	// depth tracks the current queue depth for metrics
 	depth atomic.Int64
+
+	// primary is the primary backend (source for replication)
+	primary backend.Backend
+
+	// secondary is the secondary backend (target for replication)
+	secondary backend.Backend
+
+	// oldestTaskEnqueued tracks when the oldest task in the queue was enqueued
+	// for the replication_lag_seconds metric
+	oldestTaskEnqueued atomic.Int64
+
+	// logger is used for replication status logging
+	logger *log.Logger
 }
 
 // task represents a single replication task.
@@ -63,30 +80,63 @@ type Metrics struct {
 
 	// DroppedTotal is the count of items dropped due to full queue
 	DroppedTotal *atomic.Int64
+
+	// ErrorsTotal is the count of replication errors
+	ErrorsTotal *atomic.Int64
+
+	// CopyDurationSeconds tracks histogram of copy operation durations
+	CopyDurationSeconds *copyDurationHistogram
+
+	// LagSeconds is the age of the oldest unreplicated object in seconds
+	LagSeconds *atomic.Int64
+
+	// EnqueuedTotal is the count of items successfully enqueued
+	EnqueuedTotal *atomic.Int64
+
+	// RetriesTotal is the count of retry attempts
+	RetriesTotal *atomic.Int64
 }
 
 // NewMetrics creates a new Metrics instance.
 func NewMetrics() *Metrics {
 	return &Metrics{
-		QueueDepth:   &atomic.Int64{},
-		DroppedTotal: &atomic.Int64{},
+		QueueDepth:          &atomic.Int64{},
+		DroppedTotal:        &atomic.Int64{},
+		ErrorsTotal:         &atomic.Int64{},
+		CopyDurationSeconds: newCopyDurationHistogram(),
+		LagSeconds:          &atomic.Int64{},
+		EnqueuedTotal:       &atomic.Int64{},
+		RetriesTotal:        &atomic.Int64{},
 	}
 }
 
 // NewReplicationQueue creates a ReplicationQueue with the specified buffer size.
 // Pass 0 for bufSize to use DefaultQueueBufferSize. Call Start to launch the
 // background worker goroutine.
-func NewReplicationQueue(metrics *Metrics, bufSize int) *ReplicationQueue {
+//
+// Parameters:
+//   - metrics: Metrics instance for tracking replication operations
+//   - primary: Primary backend (source for replication)
+//   - secondary: Secondary backend (target for replication)
+//   - bufSize: Buffer size for the replication queue (0 uses DefaultQueueBufferSize)
+//   - logger: Logger for replication status (nil uses default stdout logger)
+func NewReplicationQueue(metrics *Metrics, primary, secondary backend.Backend, bufSize int, logger *log.Logger) *ReplicationQueue {
 	if bufSize <= 0 {
 		bufSize = DefaultQueueBufferSize
 	}
+	if logger == nil {
+		logger = log.New(log.Writer(), "[replication] ", log.LstdFlags|log.Lmsgprefix)
+	}
 	return &ReplicationQueue{
-		metrics:  metrics,
-		queueCh:  make(chan task, bufSize),
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
-		started:  atomic.Bool{},
-		depth:    atomic.Int64{},
+		metrics:   metrics,
+		queueCh:   make(chan task, bufSize),
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
+		started:   atomic.Bool{},
+		depth:     atomic.Int64{},
+		primary:   primary,
+		secondary: secondary,
+		logger:    logger,
 	}
 }
 
@@ -161,13 +211,135 @@ func (q *ReplicationQueue) drain() {
 	}
 }
 
-// processTask is the stub worker that processes a single replication task.
-// For now, this just logs the task. The actual replication logic will be
-// implemented in a follow-up task.
+// processTask performs the actual replication from primary to secondary backend.
+// It handles errors gracefully, implements retry logic with exponential backoff,
+// and updates metrics. The worker never blocks on errors — it logs, increments
+// the error metric, and continues to the next task.
 func (q *ReplicationQueue) processTask(t task) {
-	// TODO: Implement actual replication to secondary backend
-	// This is infrastructure only — we just acknowledge the task for now
-	// The key will be logged once replication logic is added
-	_ = t.bucket // Use in future implementation
-	_ = t.key     // Use in future implementation
+	// Track oldest task enqueue time for lag metric
+	q.updateLagMetric()
+
+	// Attempt replication with retries
+	const maxRetries = 3
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 100ms, 400ms, 900ms
+			backoffMs := int64(100 * attempt * attempt)
+			time.Sleep(time.Duration(backoffMs) * time.Millisecond)
+			q.metrics.RetriesTotal.Add(1)
+		}
+
+		// Time the copy operation for the duration histogram
+		start := time.Now()
+
+		// Try backend.Copy() first (most efficient for B2-to-B2)
+		err := q.secondary.Copy(context.Background(), t.bucket, t.key, t.bucket, t.key, nil, false)
+		if err == nil {
+			// Success! Record duration and return
+			duration := time.Since(start).Seconds()
+			q.metrics.CopyDurationSeconds.Observe(duration)
+			q.logger.Printf("replicated %s/%s (attempt %d, %.2fs)", t.bucket, t.key, attempt+1, duration)
+			return
+		}
+
+		// Copy failed, fall back to Get+Put pattern
+		// This handles cases where Copy() is not available or fails
+		lastErr = q.fallbackCopy(t.bucket, t.key)
+		if lastErr == nil {
+			duration := time.Since(start).Seconds()
+			q.metrics.CopyDurationSeconds.Observe(duration)
+			q.logger.Printf("replicated %s/%s via Get+Put (attempt %d, %.2fs)", t.bucket, t.key, attempt+1, duration)
+			return
+		}
+
+		// Log retry attempt
+		if attempt < maxRetries {
+			q.logger.Printf("replication attempt %d failed for %s/%s: %v (will retry)", attempt+1, t.bucket, t.key, lastErr)
+		}
+	}
+
+	// All retries exhausted
+	q.metrics.ErrorsTotal.Add(1)
+	q.logger.Printf("replication failed after %d attempts for %s/%s: %v", maxRetries+1, t.bucket, t.key, lastErr)
+}
+
+// fallbackCopy implements Get+Put pattern for backends that don't support Copy.
+func (q *ReplicationQueue) fallbackCopy(bucket, key string) error {
+	ctx := context.Background()
+
+	// Get object from primary backend
+	body, info, err := q.primary.Get(ctx, bucket, key)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+
+	// Put to secondary backend with same metadata
+	err = q.secondary.Put(ctx, bucket, key, body, info.Size, info.Metadata)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// updateLagMetric updates the replication_lag_seconds metric based on the oldest task.
+func (q *ReplicationQueue) updateLagMetric() {
+	// Calculate age of oldest task in the queue
+	// This is a simplified implementation — for production, we'd track enqueue time per task
+	// For now, we use a lag indicator based on queue depth
+	depth := q.depth.Load()
+	if depth > 0 {
+		// Rough estimate: assume tasks are processed in ~1 second each
+		// Lag is approximately the time to process all queued items
+		estimatedLag := int64(depth)
+		q.metrics.LagSeconds.Store(estimatedLag)
+	} else {
+		q.metrics.LagSeconds.Store(0)
+	}
+}
+
+// copyDurationHistogram tracks copy operation durations.
+// Thread-safe for concurrent observations from the worker goroutine.
+type copyDurationHistogram struct {
+	// Simple histogram with buckets: 0.1s, 0.5s, 1s, 5s, 10s, 30s, 60s, 300s
+	counts [8]atomic.Int64
+	sum    atomic.Int64 // Total duration in milliseconds
+}
+
+// newCopyDurationHistogram creates a new copy duration histogram.
+func newCopyDurationHistogram() *copyDurationHistogram {
+	h := &copyDurationHistogram{}
+	for i := range h.counts {
+		h.counts[i] = atomic.Int64{}
+	}
+	h.sum = atomic.Int64{}
+	return h
+}
+
+// Observe records a duration in seconds.
+func (h *copyDurationHistogram) Observe(durationSeconds float64) {
+	// Convert to milliseconds for sum tracking
+	durationMs := int64(durationSeconds * 1000)
+	h.sum.Add(durationMs)
+
+	// Find appropriate bucket
+	bucketIdx := h.bucketIndex(durationSeconds)
+	h.counts[bucketIdx].Add(1)
+}
+
+// bucketIndex maps a duration in seconds to a bucket index.
+func (h *copyDurationHistogram) bucketIndex(durationSeconds float64) int {
+	// Buckets: 0.1s, 0.5s, 1s, 5s, 10s, 30s, 60s, 300s
+	buckets := []float64{0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0}
+
+	for i, bucket := range buckets {
+		if durationSeconds <= bucket {
+			return i
+		}
+	}
+	// Exceeds max bucket, put in last bucket
+	return len(buckets) - 1
 }
