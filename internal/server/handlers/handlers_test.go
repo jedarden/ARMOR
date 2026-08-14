@@ -604,6 +604,53 @@ func TestGetObjectRange(t *testing.T) {
 	}
 }
 
+func TestGetObjectRangeCompressed(t *testing.T) {
+	cfg, mb, cache, footerCache, mek := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)
+
+	// Create content
+	plaintext := make([]byte, 200000)
+	for i := range plaintext {
+		plaintext[i] = byte(i % 256)
+	}
+
+	// PUT the object
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/range-compressed-test", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed with status %d", w.Code)
+	}
+
+	// Manually mark the object as compressed in the mock backend metadata
+	mb.mu.Lock()
+	objKey := "test-bucket/range-compressed-test"
+	if meta, ok := mb.meta[objKey]; ok {
+		meta["x-amz-meta-armor-compressed"] = "true"
+		meta["x-amz-meta-armor-compression-type"] = "gzip"
+	}
+	mb.mu.Unlock()
+
+	// GET with range request on compressed object should return 416
+	req = httptest.NewRequest(http.MethodGet, "/test-bucket/range-compressed-test", nil)
+	req.Header.Set("Range", "bytes=1000-1999")
+	w = httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Errorf("expected status 416 for range request on compressed object, got %d", w.Code)
+	}
+
+	// Verify error message mentions compression
+	body := w.Body.String()
+	if !strings.Contains(body, "Range reads unsupported on compressed objects") {
+		t.Errorf("expected error message about range reads on compressed objects, got: %s", body)
+	}
+}
+
 func TestHeadObject(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
 	h := handlers.New(cfg, mb, cache, footerCache, mek, nil)

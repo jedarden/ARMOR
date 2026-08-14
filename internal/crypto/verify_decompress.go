@@ -1620,6 +1620,278 @@ func (bs *ByteStats) TopMismatches(n int) []struct {
 	return result
 }
 
+// VerifyRangeDecompressionWithBounds verifies that a decompressed range matches the corresponding range in the original.
+//
+// This function is designed for HTTP range request verification where you have the full original
+// object and a decompressed range. It extracts the expected range from the original and performs
+// byte-for-byte comparison within the range bounds.
+//
+// **Function Signature:**
+//
+//	func VerifyRangeDecompressionWithBounds(original, decompressed []byte, rangeOffset, rangeLength int64) *VerifyResult
+//
+// **Conceptual Integration Signature (for HTTP range handlers):**
+//
+//	// In the context of an HTTP range request handler:
+//	// Range: bytes=1024-2047
+//	rangeOffset := int64(1024)
+//	rangeLength := int64(1024) // 2047 - 1024 + 1
+//
+//	// Retrieve and decrypt the range from encrypted storage
+//	encryptedRange, _ := backend.GetRange(ctx, bucket, key, rangeOffset, rangeLength)
+//	decryptedRange := decryptor.DecryptRange(encryptedRange, rangeOffset, rangeLength)
+//	decompressedRange := crypto.Decompress(decryptedRange)
+//
+//	// Verify against the original object (from metadata or reference copy)
+//	originalObject := getOriginalObject(objectID)
+//	result := crypto.VerifyRangeDecompressionWithBounds(
+//	    originalObject,
+//	    decompressedRange,
+//	    rangeOffset,
+//	    rangeLength,
+//	)
+//
+// **Parameters:**
+//   - original: The full original plaintext object (reference data for comparison)
+//   - decompressed: The decompressed range data to verify (typically from range-specific decompression)
+//   - rangeOffset: The absolute byte offset where the range starts in the full object
+//   - rangeLength: The length of the range in bytes
+//
+// **Return Type:**
+//   - *VerifyResult: Contains pass/fail status, diagnostic message, and error details
+//     - Byte offsets in errors are RELATIVE to the range start (not absolute object position)
+//     - Example error: "range mismatch at relative offset 512 (range: 1024-2047, absolute offset 1536)"
+//
+// **Constraints:**
+//   - rangeOffset must be >= 0 (negative offsets are invalid)
+//   - rangeLength must be >= 0 (zero-length ranges are valid but empty)
+//   - Range must be within bounds of original: rangeOffset + rangeLength <= len(original)
+//   - decompressed length must equal rangeLength for verification to pass
+//
+// **Validation:**
+//   - Validates range bounds are within original object
+//   - Extracts expected range: original[rangeOffset : rangeOffset+rangeLength]
+//   - Performs byte-for-byte comparison on the range data only
+//   - Mismatch offsets are reported relative to range start (0 = first byte of range)
+//   - Context windows are adjusted near range boundaries
+//
+// **Error Handling:**
+//   - Returns VerifyResult with Pass=false and appropriate VerificationError
+//   - Byte offset in VerificationError is RELATIVE to range start (0 = first byte of range)
+//   - Special offset values:
+//     - -3: Range out of bounds (rangeOffset + rangeLength exceeds original length)
+//     - -2: Length mismatch (decompressed length != rangeLength)
+//     - >= 0: Relative offset within range where first difference occurs
+//   - Never panics, even with nil or malformed input
+//
+// **Usage Example:**
+//
+//	// HTTP Range request: "Range: bytes=1024-2047"
+//	rangeOffset := int64(1024)
+//	rangeLength := int64(1024)
+//
+//	// Get the original object (e.g., from B2 metadata or reference copy)
+//	original := fetchOriginalObject(objectID)
+//
+//	// Decompress the range data from encrypted storage
+//	decompressedRange, err := decompressRangeFromStorage(objectID, rangeOffset, rangeLength)
+//	if err != nil {
+//	    return fmt.Errorf("decompression failed: %w", err)
+//	}
+//
+//	// Verify the range matches the original
+//	result := crypto.VerifyRangeDecompressionWithBounds(original, decompressedRange, rangeOffset, rangeLength)
+//	if !result.Pass {
+//	    // The error offset is relative to range start
+//	    relativeOffset := result.Error.Offset
+//	    absoluteOffset := rangeOffset + relativeOffset
+//	    return fmt.Errorf("range verification failed at relative offset %d (absolute %d): %s",
+//	        relativeOffset, absoluteOffset, result.Diagnostic)
+//	}
+//
+// **Edge Cases Handled:**
+//   - Empty range (rangeLength == 0): Passes if decompressed is also empty
+//   - Single-byte range (rangeLength == 1): Verifies exactly one byte
+//   - Range at end of object: Handles context window clipping correctly
+//   - Range at start of object (offset == 0): Handles context window clipping correctly
+//   - decompressed length mismatch: Returns VerificationError with Offset=-2
+//   - Range out of bounds: Returns VerificationError with Offset=-3
+//
+// **Performance:**
+//   - O(m) time complexity where m is the range length (not full object size)
+//   - O(1) additional memory (only stores mismatch offset and context)
+//   - Short-circuits on first mismatch for fast failure detection
+//
+// **Integration with Existing Range Helpers:**
+//   This function works seamlessly with data from existing range helpers:
+//   - crypto.RangeTranslation: Provides range metadata
+//   - backend.GetRange(): Retrieves encrypted range data
+//   - The range bounds validation ensures the requested range is valid
+//
+// **Example: Integration with RangeTranslation:**
+//
+//	// Translate plaintext range to encrypted ranges
+//	translation, err := crypto.TranslateRange(plaintextStart, plaintextEnd, totalSize, blockSize, headerSize)
+//	if err != nil {
+//	    return err
+//	}
+//
+//	// Retrieve and decrypt the encrypted range
+//	encryptedData, _ := backend.GetRange(ctx, bucket, key, translation.DataOffset, translation.DataLength)
+//	decryptedData := decryptor.Decrypt(encryptedData)
+//	decompressedRange := crypto.Decompress(decryptedData)
+//
+//	// Verify against original object at the plaintext range
+//	rangeLength := plaintextEnd - plaintextStart + 1
+//	result := crypto.VerifyRangeDecompressionWithBounds(
+//	    originalObject,
+//	    decompressedRange,
+//	    plaintextStart,
+//	    rangeLength,
+//	)
+func VerifyRangeDecompressionWithBounds(original, decompressed []byte, rangeOffset, rangeLength int64) *VerifyResult {
+	const contextBytes = 16 // show 16 bytes before and after mismatch
+
+	// Validate input parameters
+	if rangeOffset < 0 {
+		return &VerifyResult{
+			Pass: false,
+			Diagnostic: fmt.Sprintf("invalid range offset %d: offset cannot be negative", rangeOffset),
+			Error: &VerificationError{
+				Offset:        -3, // Special code for invalid range
+				ContextBytes:  0,
+				ContextBefore: 0,
+				ContextAfter:  0,
+				ExpectedLength: int(rangeLength),
+				ActualLength:   len(decompressed),
+			},
+		}
+	}
+
+	if rangeLength < 0 {
+		return &VerifyResult{
+			Pass: false,
+			Diagnostic: fmt.Sprintf("invalid range length %d: length cannot be negative", rangeLength),
+			Error: &VerificationError{
+				Offset:        -3,
+				ContextBytes:  0,
+				ContextBefore: 0,
+				ContextAfter:  0,
+				ExpectedLength: int(rangeLength),
+				ActualLength:   len(decompressed),
+			},
+		}
+	}
+
+	// Check range is within original object bounds
+	originalLen := int64(len(original))
+	if rangeOffset > originalLen {
+		return &VerifyResult{
+			Pass: false,
+			Diagnostic: fmt.Sprintf("range offset %d exceeds original object length %d", rangeOffset, originalLen),
+			Error: &VerificationError{
+				Offset:        -3, // Special code for out-of-bounds range
+				ContextBytes:  0,
+				ContextBefore: 0,
+				ContextAfter:  0,
+				ExpectedLength: int(rangeLength),
+				ActualLength:   len(decompressed),
+			},
+		}
+	}
+
+	rangeEnd := rangeOffset + rangeLength
+	if rangeEnd > originalLen {
+		return &VerifyResult{
+			Pass: false,
+			Diagnostic: fmt.Sprintf("range out of bounds: range %d-%d (length %d) exceeds original object length %d",
+				rangeOffset, rangeEnd-1, rangeLength, originalLen),
+			Error: &VerificationError{
+				Offset:        -3,
+				ContextBytes:  0,
+				ContextBefore: 0,
+				ContextAfter:  0,
+				ExpectedLength: int(rangeLength),
+				ActualLength:   len(decompressed),
+			},
+		}
+	}
+
+	// Handle empty range
+	if rangeLength == 0 {
+		if len(decompressed) == 0 {
+			return &VerifyResult{
+				Pass:       true,
+				Diagnostic: fmt.Sprintf("range verified: empty range (offset %d, length 0)", rangeOffset),
+			}
+		}
+		return &VerifyResult{
+			Pass: false,
+			Diagnostic: fmt.Sprintf("range length mismatch: expected empty range (length 0), got %d bytes (range starts at offset %d)",
+				len(decompressed), rangeOffset),
+			Error: &VerificationError{
+				Offset:         -2,
+				ContextBytes:   0,
+				ContextBefore:  0,
+				ContextAfter:  0,
+				ExpectedLength: 0,
+				ActualLength:   len(decompressed),
+			},
+		}
+	}
+
+	// Check if decompressed length matches expected range length
+	if int64(len(decompressed)) != rangeLength {
+		return &VerifyResult{
+			Pass: false,
+			Diagnostic: fmt.Sprintf("range length mismatch: got %d bytes, expected %d bytes (range offset %d)",
+				len(decompressed), rangeLength, rangeOffset),
+			Error: &VerificationError{
+				Offset:         -2,
+				ContextBytes:   0,
+				ContextBefore:  0,
+				ContextAfter:  0,
+				ExpectedLength: int(rangeLength),
+				ActualLength:   len(decompressed),
+			},
+		}
+	}
+
+	// Extract expected range from original
+	expectedStart := int(rangeOffset)
+	expectedEnd := int(rangeOffset + rangeLength)
+	expectedRange := original[expectedStart:expectedEnd]
+
+	// Perform byte-for-byte comparison
+	if bytes.Equal(decompressed, expectedRange) {
+		return &VerifyResult{
+			Pass:       true,
+			Diagnostic: fmt.Sprintf("range verified: %d bytes match exactly (range offset %d, length %d)",
+				rangeLength, rangeOffset, rangeLength),
+		}
+	}
+
+	// Find the first mismatching byte within the range (relative offset)
+	relativeOffset := findFirstMismatch(decompressed, expectedRange)
+	if relativeOffset < 0 {
+		// Should not happen since we already checked bytes.Equal, but handle gracefully
+		relativeOffset = 0
+	}
+
+	// Create mismatch result with relative offset (within range)
+	result := createMismatchResult(decompressed, expectedRange, relativeOffset, contextBytes)
+
+	// Update diagnostic to show both relative and absolute offset
+	if result.Error != nil {
+		absoluteOffset := rangeOffset + int64(relativeOffset)
+		result.Diagnostic = fmt.Sprintf("range mismatch at relative offset %d (range: %d-%d, absolute offset %d): %s",
+			relativeOffset, rangeOffset, rangeOffset+rangeLength-1, absoluteOffset, result.Error.Error())
+		// Keep the relative offset in the error (relative to range start)
+	}
+
+	return result
+}
+
 // abs returns the absolute value of an integer.
 func abs(x int) int {
 	if x < 0 {

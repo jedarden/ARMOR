@@ -205,18 +205,29 @@ type ListObjectVersionsResult struct {
 	CommonPrefixes      []string
 }
 
+// CompressionType specifies the compression algorithm used.
+type CompressionType string
+
+const (
+	CompressionNone  CompressionType = ""
+	CompressionZstd  CompressionType = "zstd"
+	CompressionGzip  CompressionType = "gzip"
+	CompressionZlib  CompressionType = "zlib"
+)
+
 // ARMORMetadata extracts ARMOR-specific metadata from object headers.
 type ARMORMetadata struct {
-	Version       int
-	BlockSize     int
-	PlaintextSize int64
-	ContentType   string
-	IV            []byte
-	WrappedDEK    []byte
-	PlaintextSHA  string
-	ETag          string
-	KeyID         string // Key identifier for multi-key support (empty = default)
-	Compressed    bool   // Object payload is compressed (e.g., zstd)
+	Version        int
+	BlockSize      int
+	PlaintextSize  int64
+	ContentType    string
+	IV             []byte
+	WrappedDEK     []byte
+	PlaintextSHA   string
+	ETag           string
+	KeyID          string // Key identifier for multi-key support (empty = default)
+	Compressed     bool   // Object payload is compressed (e.g., zstd, gzip, zlib)
+	CompressionType CompressionType // Type of compression (zstd, gzip, zlib)
 }
 
 // ParseARMORMetadata extracts ARMOR metadata from S3 headers.
@@ -275,6 +286,11 @@ func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
 		am.Compressed = compressed == "true"
 	}
 
+	// Parse compression type
+	if compressionType := meta["x-amz-meta-armor-compression-type"]; compressionType != "" {
+		am.CompressionType = CompressionType(compressionType)
+	}
+
 	return am, true
 }
 
@@ -296,6 +312,10 @@ func (am *ARMORMetadata) ToMetadata() map[string]string {
 	// Include compressed flag if set
 	if am.Compressed {
 		meta["x-amz-meta-armor-compressed"] = "true"
+	}
+	// Include compression type if compressed
+	if am.Compressed && am.CompressionType != "" {
+		meta["x-amz-meta-armor-compression-type"] = string(am.CompressionType)
 	}
 	return meta
 }
