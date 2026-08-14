@@ -109,7 +109,7 @@ func (b *bucketFlags) Set(value string) error {
 	cfg.Enabled = true // default enabled
 
 	if len(parts) > 1 && parts[1] != "" {
-		cfg.Prefix = parts[1]
+		cfg.Prefix = normalizePrefix(parts[1])
 	}
 	if len(parts) > 2 && parts[2] != "" {
 		cfg.ArtifactType = restoreverifier.ArtifactType(parts[2])
@@ -125,6 +125,30 @@ func (b *bucketFlags) Set(value string) error {
 
 	*b = append(*b, cfg)
 	return nil
+}
+
+// normalizePrefix normalizes a prefix string according to ADR-001.
+// - Removes leading slashes
+// - Ensures exactly one trailing slash
+// - Empty string stays empty (no prefix)
+// This mirrors the function in internal/config/config.go.
+func normalizePrefix(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+
+	// Remove leading slashes
+	prefix = strings.TrimLeft(prefix, "/")
+
+	// Remove all trailing slashes first
+	prefix = strings.TrimRight(prefix, "/")
+
+	// Add exactly one trailing slash if non-empty
+	if prefix != "" {
+		prefix += "/"
+	}
+
+	return prefix
 }
 
 func main() {
@@ -179,14 +203,21 @@ func main() {
 	// ARMOR_BUCKET for its server (via ConfigMap or ExternalSecret), so each
 	// per-cluster restore-verifier Deployment can stay uniform — the bucket name
 	// is sourced from the cluster's existing config rather than hardcoded here.
+	// This also reads ARMOR_PREFIX to handle prefixed buckets (ADR-001), using the
+	// same normalization as the main proxy (internal/config/config.go).
 	// (A prior revision listed all six logical buckets as a default; that was
 	// wrong, since a single instance holds one MEK and one B2 credential set
 	// and can only verify the bucket it has keys for.)
 	if len(bucketFlag) == 0 {
 		if envBucket := os.Getenv("ARMOR_BUCKET"); envBucket != "" {
+			envPrefix := normalizePrefix(os.Getenv("ARMOR_PREFIX"))
 			log.Printf("No -bucket flags; verifying ARMOR_BUCKET=%q from environment", envBucket)
+			if envPrefix != "" {
+				log.Printf("Using ARMOR_PREFIX=%q from environment", envPrefix)
+			}
 			bucketFlag = append(bucketFlag, restoreverifier.BucketConfig{
 				Bucket:               envBucket,
+				Prefix:               envPrefix,
 				ArtifactType:         restoreverifier.ArtifactGeneric,
 				Enabled:              true,
 				HistoricalSampleSize: *sampleSize,

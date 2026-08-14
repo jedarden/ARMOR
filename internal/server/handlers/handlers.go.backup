@@ -747,10 +747,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		w.Header().Set("ETag", fmt.Sprintf(`"%s"`, info.ETag))
 		w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
 		w.WriteHeader(http.StatusOK)
-		_, err = io.Copy(w, body)
-		if err != nil {
-			log.Printf("GET %s/%s: non-ARMOR streaming error: %v", bucket, key, err)
-		}
+		io.Copy(w, body)
 		return
 	}
 
@@ -1068,15 +1065,13 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			}
 		case backend.CompressionZstd:
 			// Create zstd decoder for streaming decompression
-			zstdDecoder, err := zstd.NewReader(pr)
+			decompressor, err = zstd.NewReader(pr)
 			if err != nil {
 				// Decompression setup failed - close pipe and return error
 				pr.Close()
 				h.writeError(w, "InternalError", fmt.Sprintf("Failed to create zstd decompression decoder: %v", err), 500)
 				return
 			}
-				// Wrap in zstdReadCloser to implement io.ReadCloser (zstd.Decoder.Close() doesn't return error)
-				decompressor = &zstdReadCloser{Decoder: zstdDecoder}
 		default:
 			// Unknown compression type - close pipe and return error
 			pr.Close()
@@ -1086,37 +1081,10 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		defer decompressor.Close()
 
 		// Stream decompressed data to client
-		_, err = io.Copy(w, decompressor)
-		if err != nil {
-			// Decompression failed during streaming
-			// Log the error with context for debugging
-			// Since headers are already sent, we can't change HTTP status,
-			// but we log meaningful error information
-			log.Printf("GET %s/%s: decompression streaming error: %v (compression type: %s)",
-				bucket, key, err, armorMeta.CompressionType)
-
-			// Classify the error to determine root cause
-			errMsg := err.Error()
-			if strings.Contains(errMsg, "unexpected EOF") || strings.Contains(errMsg, "EOF") {
-				log.Printf("GET %s/%s: likely cause: truncated or corrupted compressed data",
-					bucket, key)
-			} else if strings.Contains(errMsg, "corrupt") || strings.Contains(errMsg, "invalid") {
-				log.Printf("GET %s/%s: likely cause: data corruption in storage",
-					bucket, key)
-			} else {
-				log.Printf("GET %s/%s: likely cause: decompression infrastructure error",
-					bucket, key)
-			}
-			// Connection will be closed; client receives partial response
-			return
-		}
+		io.Copy(w, decompressor)
 	} else {
 		// Stream plaintext directly to client
-		_, err := io.Copy(w, pr)
-		if err != nil {
-			log.Printf("GET %s/%s: plaintext streaming error: %v", bucket, key, err)
-			return
-		}
+		io.Copy(w, pr)
 	}
 }
 

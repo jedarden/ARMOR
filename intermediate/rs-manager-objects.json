@@ -1,0 +1,8 @@
+Enumerating rs-manager bucket for objects > 5.0 MiB
+Enumerating rs-manager bucket (B2 backing bucket: nap-dashboard) for objects >5MiB...
+Error enumerating nap-dashboard: ERROR: Application key is restricted to buckets: ['armor-test-jedarden']
+
+
+Total large objects found: 0
+Saved to: rs-manager-objects.json
+[]
