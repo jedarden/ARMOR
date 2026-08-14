@@ -19,6 +19,7 @@ package awsclicompat
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -881,4 +882,288 @@ func assertGETMetadata(t *testing.T, resp *http.Response, expectedLength int64, 
 	if expectedContentType != "" && parsed.ContentType != expectedContentType {
 		t.Errorf("GET Content-Type mismatch: got %s, want %s", parsed.ContentType, expectedContentType)
 	}
+}
+
+// testSigner is a simple AWS SigV4 signer for testing ARMOR.
+// It implements AWS Signature Version 4 signing for HTTP requests.
+type testSigner struct {
+	accessKey     string
+	secretKey     string
+	region        string
+	secretKeyHash []byte // Precomputed SHA256("AWS4" + secretKey)
+}
+
+// newTestSigner creates a test signer with the test credentials.
+func newTestSigner(t *testing.T) *testSigner {
+	t.Helper()
+	secretKeyHash := sha256.Sum256([]byte("AWS4" + testSecretKey))
+	return &testSigner{
+		accessKey:     testAccessKey,
+		secretKey:     testSecretKey,
+		region:        testRegion,
+		secretKeyHash: secretKeyHash[:],
+	}
+}
+
+// Sign signs an HTTP request using AWS SigV4.
+func (s *testSigner) Sign(req *http.Request, service, operation, bucket, key string) {
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	dateStamp := now.Format("20060102")
+
+	// Set required headers
+	req.Header.Set("Host", req.URL.Host)
+	req.Header.Set("X-Amz-Date", amzDate)
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/octet-stream")
+	}
+
+	// Build canonical request
+	canonicalHeaders := s.buildCanonicalHeaders(req)
+	signedHeaders := s.signedHeadersStr(req)
+	canonicalURI := req.URL.Path
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+	canonicalQueryString := req.URL.Query().Encode()
+
+	payloadHash := sha256.Sum256([]byte{})
+	if req.Method != http.MethodGet && req.Method != http.MethodDelete && req.Body != nil {
+		// For PUT/POST with body, we'd need to read the body to hash it
+		// For simplicity in tests, we'll use UNSIGNED-PAYLOAD
+		req.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+		payloadHash = sha256.Sum256([]byte("UNSIGNED-PAYLOAD"))
+	}
+
+	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
+		req.Method,
+		canonicalURI,
+		canonicalQueryString,
+		canonicalHeaders,
+		signedHeaders,
+		hex.EncodeToString(payloadHash[:]))
+
+	// Create string to sign
+	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", dateStamp, s.region, service)
+	canonicalRequestHash := sha256.Sum256([]byte(canonicalRequest))
+	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s",
+		amzDate, credentialScope, hex.EncodeToString(canonicalRequestHash[:]))
+
+	// Calculate signature
+	signingKey := s.getSigningKey(dateStamp)
+	signature := hmacSHA256(signingKey, stringToSign)
+
+	// Set Authorization header
+	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		s.accessKey, credentialScope, signedHeaders, hex.EncodeToString(signature))
+	req.Header.Set("Authorization", authHeader)
+}
+
+// buildCanonicalHeaders builds the canonical headers string for SigV4.
+func (s *testSigner) buildCanonicalHeaders(req *http.Request) string {
+	var headers []string
+	for k, vv := range req.Header {
+		lowerK := strings.ToLower(k)
+		if strings.HasPrefix(lowerK, "x-amz-") || lowerK == "host" || lowerK == "content-type" {
+			for _, v := range vv {
+				headers = append(headers, fmt.Sprintf("%s:%s", lowerK, strings.TrimSpace(v)))
+			}
+		}
+	}
+	sort.Strings(headers)
+	return strings.Join(headers, "\n") + "\n"
+}
+
+// signedHeadersStr returns the signed headers string (lowercase, semicolon-separated).
+func (s *testSigner) signedHeadersStr(req *http.Request) string {
+	var headers []string
+	for k := range req.Header {
+		lowerK := strings.ToLower(k)
+		if strings.HasPrefix(lowerK, "x-amz-") || lowerK == "host" || lowerK == "content-type" {
+			headers = append(headers, lowerK)
+		}
+	}
+	sort.Strings(headers)
+	return strings.Join(headers, ";")
+}
+
+// getSigningKey derives the signing key for the given date stamp.
+func (s *testSigner) getSigningKey(dateStamp string) []byte {
+	kDate := hmacSHA256(s.secretKeyHash, dateStamp)
+	kRegion := hmacSHA256(kDate, s.region)
+	kService := hmacSHA256(kRegion, "s3")
+	kSigning := hmacSHA256(kService, "aws4_request")
+	return kSigning
+}
+
+// hmacSHA256 computes HMAC-SHA256.
+func hmacSHA256(key []byte, data string) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte(data))
+	return h.Sum(nil)
+}
+
+// TestHarness_GET_BasicUncompressedObject tests basic GET operation on an uncompressed object.
+// This test verifies that GET can be invoked from the test framework and returns expected results.
+func TestHarness_GET_BasicUncompressedObject(t *testing.T) {
+	endpoint := startArmorServer(t)
+	client := &http.Client{}
+
+	// Test data - small uncompressed object
+	testData := []byte("Basic uncompressed test object content")
+	key := "get-test/basic-uncompressed.txt"
+
+	// First, PUT the object using direct HTTP request
+	putURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, key)
+	putReq, err := http.NewRequest(http.MethodPut, putURL, bytes.NewReader(testData))
+	if err != nil {
+		t.Fatalf("Failed to create PUT request: %v", err)
+	}
+
+	// Sign the request with AWS SigV4
+	signer := newTestSigner(t)
+	signer.Sign(putReq, "s3", "PutObject", testBucket, key)
+
+	putResp, err := client.Do(putReq)
+	if err != nil {
+		t.Fatalf("PUT request failed: %v", err)
+	}
+	defer putResp.Body.Close()
+
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT failed with status %d", putResp.StatusCode)
+	}
+
+	t.Logf("PUT succeeded for %s", key)
+
+	// Now perform GET operation
+	getURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, key)
+	getReq, err := http.NewRequest(http.MethodGet, getURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create GET request: %v", err)
+	}
+
+	// Sign the GET request
+	signer.Sign(getReq, "s3", "GetObject", testBucket, key)
+
+	getResp, err := client.Do(getReq)
+	if err != nil {
+		t.Fatalf("GET request failed: %v", err)
+	}
+	defer getResp.Body.Close()
+
+	// Verify GET response using the harness helper
+	parsed := assertGETSuccess(t, getResp)
+
+	// Verify content matches
+	if !bytes.Equal(parsed.Body, testData) {
+		t.Fatalf("GET content mismatch: got %d bytes, want %d bytes", len(parsed.Body), len(testData))
+	}
+
+	// Verify Content-Length header
+	if parsed.ContentLength != int64(len(testData)) {
+		t.Errorf("GET Content-Length mismatch: got %d, want %d", parsed.ContentLength, len(testData))
+	}
+
+	t.Logf("GET basic uncompressed object test passed: %d bytes retrieved", len(parsed.Body))
+}
+
+// TestHarness_GET_MultipleUncompressedObjects tests GET operations on multiple
+// uncompressed objects with different sizes and content patterns.
+func TestHarness_GET_MultipleUncompressedObjects(t *testing.T) {
+	endpoint := startArmorServer(t)
+	client := &http.Client{}
+
+	testCases := []struct {
+		name string
+		key  string
+		data []byte
+	}{
+		{
+			name: "small-text",
+			key:  "get-multi/small.txt",
+			data: []byte("Small text object"),
+		},
+		{
+			name: "medium-binary",
+			key:  "get-multi/medium.bin",
+			data: bytes.Repeat([]byte{0xAB, 0xCD, 0xEF}, 1000),
+		},
+		{
+			name: "large-text",
+			key:  "get-multi/large.txt",
+			data: bytes.Repeat([]byte("Large text pattern "), 1000),
+		},
+	}
+
+	signer := newTestSigner(t)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// PUT the object
+			putURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, tc.key)
+			putReq, _ := http.NewRequest(http.MethodPut, putURL, bytes.NewReader(tc.data))
+			signer.Sign(putReq, "s3", "PutObject", testBucket, tc.key)
+
+			putResp, err := client.Do(putReq)
+			if err != nil {
+				t.Fatalf("PUT failed: %v", err)
+			}
+			putResp.Body.Close()
+
+			if putResp.StatusCode != http.StatusOK {
+				t.Fatalf("PUT failed with status %d", putResp.StatusCode)
+			}
+
+			// GET the object
+			getURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, tc.key)
+			getReq, _ := http.NewRequest(http.MethodGet, getURL, nil)
+			signer.Sign(getReq, "s3", "GetObject", testBucket, tc.key)
+
+			getResp, err := client.Do(getReq)
+			if err != nil {
+				t.Fatalf("GET failed: %v", err)
+			}
+			defer getResp.Body.Close()
+
+			// Verify GET response
+			parsed := assertGETSuccess(t, getResp)
+
+			if !bytes.Equal(parsed.Body, tc.data) {
+				t.Errorf("GET content mismatch for %s: got %d bytes, want %d bytes",
+					tc.key, len(parsed.Body), len(tc.data))
+			}
+
+			t.Logf("GET %s passed: %d bytes", tc.name, len(parsed.Body))
+		})
+	}
+}
+
+// TestHarness_GET_NonexistentObject verifies that GET returns 404 for
+// objects that don't exist.
+func TestHarness_GET_NonexistentObject(t *testing.T) {
+	endpoint := startArmorServer(t)
+	client := &http.Client{}
+
+	key := "get-test/does-not-exist.txt"
+
+	// Try to GET a non-existent object
+	getURL := fmt.Sprintf("%s/%s/%s", endpoint, testBucket, key)
+	getReq, err := http.NewRequest(http.MethodGet, getURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create GET request: %v", err)
+	}
+
+	signer := newTestSigner(t)
+	signer.Sign(getReq, "s3", "GetObject", testBucket, key)
+
+	resp, err := client.Do(getReq)
+	if err != nil {
+		t.Fatalf("GET request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	assertGET404(t, resp)
+
+	t.Logf("GET nonexistent object correctly returned 404")
 }
