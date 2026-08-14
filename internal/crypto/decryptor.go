@@ -1,6 +1,9 @@
 package crypto
 
 import (
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -289,25 +292,57 @@ func (d *Decryptor) IV() []byte {
 	return d.iv
 }
 
-// IsCompressed detects if the decrypted plaintext is compressed.
-// Currently checks for zstd magic bytes: 0x28B52FFD (zstd frame identifier).
-// Returns true if the data appears to be zstd-compressed.
-func IsCompressed(plaintext []byte) bool {
-	if len(plaintext) < 4 {
-		return false
+// DetectCompressionType detects the compression type from the data magic bytes.
+// Returns "zstd", "gzip", "zlib", or "" (uncompressed).
+func DetectCompressionType(data []byte) string {
+	// Handle nil or empty data
+	if len(data) < 2 {
+		return ""
 	}
-	// Zstandard frame magic number: 0x28 0xB5 0x2F 0xFD
-	zstdMagic := []byte{0x28, 0xB5, 0x2F, 0xFD}
-	return plaintext[0] == zstdMagic[0] &&
-		plaintext[1] == zstdMagic[1] &&
-		plaintext[2] == zstdMagic[2] &&
-		plaintext[3] == zstdMagic[3]
+
+	// Check for gzip magic bytes: 0x1F 0x8B
+	if len(data) >= 2 && data[0] == 0x1F && data[1] == 0x8B {
+		return "gzip"
+	}
+
+	// Check for zlib magic bytes: 0x78 (and second byte 0x01, 0x5E, 0x9C, 0xDA)
+	if len(data) >= 2 && data[0] == 0x78 {
+		second := data[1]
+		if second == 0x01 || second == 0x5E || second == 0x9C || second == 0xDA {
+			return "zlib"
+		}
+	}
+
+	// Check for zstd magic bytes: 0x28 0xB5 0x2F 0xFD
+	if len(data) >= 4 && data[0] == 0x28 && data[1] == 0xB5 &&
+		data[2] == 0x2F && data[3] == 0xFD {
+		return "zstd"
+	}
+
+	return ""
+}
+
+// IsCompressed detects if the decrypted plaintext is compressed.
+// Checks for zstd, gzip, and zlib magic bytes.
+// Returns true if the data appears to be compressed.
+func IsCompressed(plaintext []byte) bool {
+	return DetectCompressionType(plaintext) != ""
 }
 
 // Decompress decompresses zstd-compressed data.
 // Returns the decompressed data or an error if decompression fails.
 // If the data is not compressed (no zstd magic), returns the data unchanged.
 func Decompress(compressed []byte) ([]byte, error) {
+	// Handle nil data
+	if compressed == nil {
+		return nil, &DecompressionError{
+			Err:        fmt.Errorf("nil data provided"),
+			ErrType:    ErrTypeClient,
+			Cause:      "nil_data",
+		}
+	}
+
+	// Handle empty data or data too short to be compressed
 	if len(compressed) < 4 {
 		return compressed, nil
 	}
@@ -334,6 +369,91 @@ func Decompress(compressed []byte) ([]byte, error) {
 		return nil, &DecompressionError{
 			Err:        err,
 			ErrType:    errType,
+			Cause:      determineErrorCause(err),
+		}
+	}
+
+	return decompressed, nil
+}
+
+// DecompressGzip decompresses gzip-compressed data.
+// Returns the decompressed data or an error if decompression fails.
+func DecompressGzip(compressed []byte) ([]byte, error) {
+	// Handle nil data
+	if compressed == nil {
+		return nil, &DecompressionError{
+			Err:        fmt.Errorf("nil data provided"),
+			ErrType:    ErrTypeClient,
+			Cause:      "nil_data",
+		}
+	}
+
+	// Handle empty data or data too short to be compressed
+	if len(compressed) < 2 {
+		return compressed, nil
+	}
+
+	// Check for gzip magic bytes
+	if compressed[0] != 0x1F || compressed[1] != 0x8B {
+		return compressed, nil
+	}
+
+	reader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, &DecompressionError{
+			Err:        fmt.Errorf("failed to create gzip reader: %w", err),
+			ErrType:    classifyDecompressionError(err),
+			Cause:      "decoder_init_failed",
+		}
+	}
+	defer reader.Close()
+
+	decompressed, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, &DecompressionError{
+			Err:        err,
+			ErrType:    classifyDecompressionError(err),
+			Cause:      determineErrorCause(err),
+		}
+	}
+
+	return decompressed, nil
+}
+
+// DecompressZlib decompresses zlib-compressed data.
+// Returns the decompressed data or an error if decompression fails.
+func DecompressZlib(compressed []byte) ([]byte, error) {
+	// Handle nil data
+	if compressed == nil {
+		return nil, &DecompressionError{
+			Err:        fmt.Errorf("nil data provided"),
+			ErrType:    ErrTypeClient,
+			Cause:      "nil_data",
+		}
+	}
+
+	// Handle empty data or data too short to be compressed
+	if len(compressed) < 2 {
+		return compressed, nil
+	}
+
+	// Check for zlib magic bytes: 0x78 followed by valid second byte
+	if compressed[0] != 0x78 {
+		return compressed, nil
+	}
+	second := compressed[1]
+	if second != 0x01 && second != 0x5E && second != 0x9C && second != 0xDA {
+		return compressed, nil
+	}
+
+	reader := flate.NewReader(bytes.NewReader(compressed))
+	defer reader.Close()
+
+	decompressed, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, &DecompressionError{
+			Err:        err,
+			ErrType:    classifyDecompressionError(err),
 			Cause:      determineErrorCause(err),
 		}
 	}
@@ -377,19 +497,45 @@ func classifyDecompressionError(err error) ErrorType {
 	// Client-side errors: data integrity issues in stored data
 	//
 	// Truncated/incomplete data
-	if strings.Contains(errMsg, "unexpected EOF") || strings.Contains(errMsg, "EOF") {
+	if strings.Contains(errMsg, "unexpected EOF") || strings.Contains(errMsg, "EOF") ||
+		strings.Contains(errMsg, "truncated") || strings.Contains(errMsg, "incomplete") {
 		return ErrTypeClient
 	}
 
 	// Invalid format / corrupt data
 	if strings.Contains(errMsg, "magic") || strings.Contains(errMsg, "corrupt") ||
-		strings.Contains(errMsg, "invalid input") || strings.Contains(errMsg, "reserved block") {
+		strings.Contains(errMsg, "invalid input") || strings.Contains(errMsg, "reserved block") ||
+		strings.Contains(errMsg, "invalid header") || strings.Contains(errMsg, "invalid format") {
 		return ErrTypeClient
 	}
 
 	// Size violations
 	if strings.Contains(errMsg, "size too big") || strings.Contains(errMsg, "size exceeded") ||
-		strings.Contains(errMsg, "window size") {
+		strings.Contains(errMsg, "window size") || strings.Contains(errMsg, "size limit") {
+		return ErrTypeClient
+	}
+
+	// Checksum/digest errors indicate data corruption
+	if strings.Contains(errMsg, "checksum") || strings.Contains(errMsg, "digest") ||
+		strings.Contains(errMsg, "crc") || strings.Contains(errMsg, "validation") ||
+		strings.Contains(errMsg, "hash mismatch") {
+		return ErrTypeClient
+	}
+
+	// Dictionary/encoding errors suggest data integrity issues
+	if strings.Contains(errMsg, "dictionary") || strings.Contains(errMsg, "encoding") ||
+		strings.Contains(errMsg, "illegal state") {
+		return ErrTypeClient
+	}
+
+	// Block/frame errors indicate corruption
+	if strings.Contains(errMsg, "block") || strings.Contains(errMsg, "frame") {
+		return ErrTypeClient
+	}
+
+	// Decompression-specific errors that indicate data corruption
+	if strings.Contains(errMsg, "decompression") || strings.Contains(errMsg, "corrupted stream") ||
+		strings.Contains(errMsg, "data error") {
 		return ErrTypeClient
 	}
 
@@ -406,17 +552,20 @@ func determineErrorCause(err error) string {
 	errMsg := err.Error()
 
 	// Truncated data
-	if strings.Contains(errMsg, "unexpected EOF") || strings.Contains(errMsg, "EOF") {
+	if strings.Contains(errMsg, "unexpected EOF") || strings.Contains(errMsg, "EOF") ||
+		strings.Contains(errMsg, "truncated") || strings.Contains(errMsg, "incomplete") {
 		return "truncated_data"
 	}
 
 	// Invalid format
-	if strings.Contains(errMsg, "magic") {
+	if strings.Contains(errMsg, "magic") || strings.Contains(errMsg, "invalid header") ||
+		strings.Contains(errMsg, "invalid format") {
 		return "invalid_format"
 	}
 
 	// Corrupt data
-	if strings.Contains(errMsg, "corrupt") {
+	if strings.Contains(errMsg, "corrupt") || strings.Contains(errMsg, "corrupted stream") ||
+		strings.Contains(errMsg, "data error") {
 		return "corrupted_data"
 	}
 
@@ -426,7 +575,8 @@ func determineErrorCause(err error) string {
 	}
 
 	// Size issues
-	if strings.Contains(errMsg, "size too big") || strings.Contains(errMsg, "size exceeded") {
+	if strings.Contains(errMsg, "size too big") || strings.Contains(errMsg, "size exceeded") ||
+		strings.Contains(errMsg, "size limit") {
 		return "size_violation"
 	}
 
@@ -434,8 +584,44 @@ func determineErrorCause(err error) string {
 		return "size_violation"
 	}
 
+	// Checksum/digest errors
+	if strings.Contains(errMsg, "checksum") || strings.Contains(errMsg, "digest") ||
+		strings.Contains(errMsg, "crc") || strings.Contains(errMsg, "validation") ||
+		strings.Contains(errMsg, "hash mismatch") {
+		return "checksum_mismatch"
+	}
+
+	// Dictionary errors
+	if strings.Contains(errMsg, "dictionary") {
+		return "dictionary_error"
+	}
+
+	// Encoding errors
+	if strings.Contains(errMsg, "encoding") || strings.Contains(errMsg, "illegal state") {
+		return "encoding_error"
+	}
+
+	// Block/frame errors
+	if strings.Contains(errMsg, "block") {
+		return "block_error"
+	}
+
+	if strings.Contains(errMsg, "frame") {
+		return "frame_error"
+	}
+
+	// Header errors
+	if strings.Contains(errMsg, "header") {
+		return "header_error"
+	}
+
+	// Decompression-specific errors
+	if strings.Contains(errMsg, "decompression") {
+		return "decompression_failed"
+	}
+
 	// Default
-	return "decompression_failed"
+	return "decompression_error"
 }
 
 func min(a, b int64) int64 {
