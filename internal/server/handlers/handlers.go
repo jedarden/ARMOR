@@ -1917,6 +1917,9 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		})
 	}
 
+	// Sort common prefixes lexicographically per S3 spec
+	sort.Strings(result.CommonPrefixes)
+
 	for _, p := range result.CommonPrefixes {
 		// Strip the configured prefix from common prefixes before returning to client.
 		// Common prefixes are used for directory-like listings with delimiters.
@@ -3234,6 +3237,9 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 
 		resp.Versions = append(resp.Versions, v)
 	}
+
+	// Sort common prefixes lexicographically per S3 spec
+	sort.Strings(result.CommonPrefixes)
 
 	// Process common prefixes
 	for _, p := range result.CommonPrefixes {
