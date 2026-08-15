@@ -128,3 +128,106 @@ func extractRegionFromEndpoint(hostname string) (string, error) {
 
 	return region, nil
 }
+
+// ParseSecondaryBackendConfigString parses a secondary backend configuration
+// from a colon-separated string format. Supported formats:
+//
+//   - "filesystem:/path" - Filesystem backend at given path
+//   - "b2:bucket:key:id:secret" - B2 backend with credentials
+//
+// The filesystem format requires a non-empty path. The B2 format requires
+// exactly 5 colon-separated fields after the type prefix (bucket, key, id,
+// secret). Empty strings return (BackendConfig{}, nil) to represent the
+// disabled state. Unrecognized or malformed formats return an error.
+//
+// Examples:
+//
+//   "filesystem:/backup/armor" → BackendConfig{Type:"filesystem", Path:"/backup/armor"}
+//   "b2:mybucket:appKeyId:accountId:appKey" → BackendConfig{Type:"b2", Bucket:"mybucket", KeyID:"appKeyId", ID:"accountId", Key:"appKey"}
+//   "" → BackendConfig{}, nil (disabled)
+func ParseSecondaryBackendConfigString(configStr string) (BackendConfig, error) {
+	// Handle empty string gracefully (disabled backend)
+	if configStr == "" {
+		return BackendConfig{}, nil
+	}
+
+	// Split into type and params
+	parts := strings.SplitN(configStr, ":", 2)
+	if len(parts) != 2 {
+		return BackendConfig{}, fmt.Errorf("invalid config format: expected 'type:params', got %q", configStr)
+	}
+
+	backendType := strings.ToLower(strings.TrimSpace(parts[0]))
+	params := parts[1]
+
+	if params == "" {
+		return BackendConfig{}, fmt.Errorf("params cannot be empty for backend type %q", backendType)
+	}
+
+	switch backendType {
+	case "filesystem":
+		return parseFilesystemConfig(params)
+	case "b2":
+		return parseB2ConfigString(params)
+	default:
+		return BackendConfig{}, fmt.Errorf("unsupported backend type: %q (supported: filesystem, b2)", backendType)
+	}
+}
+
+// parseFilesystemConfig parses a filesystem backend path.
+// Format: "/path" - a non-empty filesystem path.
+func parseFilesystemConfig(path string) (BackendConfig, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return BackendConfig{}, fmt.Errorf("filesystem path cannot be empty")
+	}
+
+	return BackendConfig{
+		Type: "filesystem",
+		Path: path,
+	}, nil
+}
+
+// parseB2ConfigString parses a B2 backend configuration from a colon-separated string.
+// Format: "bucket:key:id:secret"
+//   - bucket: B2 bucket name
+//   - key: B2 application key ID
+//   - id: B2 account ID (not used by BackendConfig, accepted for format compatibility)
+//   - secret: B2 application key secret
+//
+// All four fields must be non-empty. Note that the 'id' field is accepted for format
+// compatibility but is not stored in BackendConfig (the B2 backend derives account
+// information from the credentials).
+func parseB2ConfigString(params string) (BackendConfig, error) {
+	// Split into exactly 4 parts: bucket:key:id:secret
+	parts := strings.Split(params, ":")
+	if len(parts) != 4 {
+		return BackendConfig{}, fmt.Errorf("invalid B2 format: expected 'bucket:key:id:secret' (4 fields), got %d fields: %q", len(parts), params)
+	}
+
+	bucket := strings.TrimSpace(parts[0])
+	keyID := strings.TrimSpace(parts[1])
+	id := strings.TrimSpace(parts[2])
+	secret := strings.TrimSpace(parts[3])
+
+	// Validate all fields are non-empty
+	if bucket == "" {
+		return BackendConfig{}, fmt.Errorf("B2 bucket cannot be empty")
+	}
+	if keyID == "" {
+		return BackendConfig{}, fmt.Errorf("B2 key (key ID) cannot be empty")
+	}
+	if id == "" {
+		return BackendConfig{}, fmt.Errorf("B2 id (account ID) cannot be empty")
+	}
+	if secret == "" {
+		return BackendConfig{}, fmt.Errorf("B2 secret (application key) cannot be empty")
+	}
+
+	return BackendConfig{
+		Type:        "b2",
+		Bucket:      bucket,
+		AccessKeyID: keyID,
+		SecretKey:   secret,
+	}, nil
+}
