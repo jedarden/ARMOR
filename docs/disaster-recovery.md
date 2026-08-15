@@ -186,9 +186,9 @@ kind: ConfigMap
 metadata:
   name: armor-config
 data:
-  ARMOR_B2_REGION: "us-east-005"
+  ARMOR_B2_REGION: "us-west-002"
   ARMOR_BUCKET: "your-bucket-name"
-  ARMOR_CF_DOMAIN: "armor-b2.example.com"
+  ARMOR_CF_DOMAIN: "b2-us-west-002.ardenone.com"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -253,11 +253,11 @@ kubectl wait --for=condition=available --timeout=60s deployment/armor
 docker run -d \
   -p 9000:9000 \
   -p 9001:9001 \
-  -e ARMOR_B2_REGION=us-east-005 \
+  -e ARMOR_B2_REGION=us-west-002 \
   -e ARMOR_B2_ACCESS_KEY_ID=your-key-id \
   -e ARMOR_B2_SECRET_ACCESS_KEY=your-key-secret \
   -e ARMOR_BUCKET=your-bucket \
-  -e ARMOR_CF_DOMAIN=your-cf-domain.example.com \
+  -e ARMOR_CF_DOMAIN=b2-us-west-002.ardenone.com \
   -e ARMOR_MEK=$(cat ~/mek-recovered.hex) \
   -e ARMOR_AUTH_ACCESS_KEY=my-access-key \
   -e ARMOR_AUTH_SECRET_KEY=my-secret-key \
