@@ -24,12 +24,17 @@ var (
 	mekFlag        string
 	mekFileFlag    string
 	mekEnvFallback bool
+	escrowFile     string // path to escrow JSON file containing MEK + B2 credentials
 
 	// Input sources
 	inputFlag      string
 	b2BucketFlag   string
 	b2KeyID        string
 	wrappedDEKFlag string
+
+	// B2 backend configuration (for break-glass recovery)
+	b2RegionFlag   string
+	b2EndpointFlag string
 
 	// Multipart local-file inputs (ADR-003 headerless layout)
 	sidecarFlag string // path to a JSON HMAC sidecar file (HMACTableSidecar wire format)
@@ -47,8 +52,11 @@ func init() {
 	flag.StringVar(&mekFlag, "mek", "", "Master encryption key (hex, 64 chars)")
 	flag.StringVar(&mekFileFlag, "mek-file", "", "Read MEK from file (hex, 64 chars)")
 	flag.BoolVar(&mekEnvFallback, "mek-env", true, "Fallback to ARMOR_MEK env var if flags not set")
+	flag.StringVar(&escrowFile, "escrow", "", "Path to escrow JSON file containing MEK and B2 credentials (self-contained recovery)")
 	flag.StringVar(&inputFlag, "input", "", "Input: B2 URL (b2://bucket/key) or local file path")
 	flag.StringVar(&b2BucketFlag, "b2-bucket", "", "B2 bucket (alternative to B2 URL)")
+	flag.StringVar(&b2RegionFlag, "b2-region", "", "B2 region (e.g., us-west-004); overrides ARMOR_B2_REGION env var")
+	flag.StringVar(&b2EndpointFlag, "b2-endpoint", "", "B2 S3 endpoint (e.g., https://s3.us-west-004.backblazeb2.com); overrides ARMOR_B2_ENDPOINT env var")
 	flag.StringVar(&b2KeyID, "key-id", "", "Key ID for multi-key MEK (from x-amz-meta-armor-key-id)")
 	flag.StringVar(&wrappedDEKFlag, "wrapped-dek", "", "Wrapped DEK (base64, for local files)")
 	flag.StringVar(&sidecarFlag, "sidecar", "", "Path to a JSON HMAC sidecar file for a local multipart object (ADR-003 headerless layout)")
@@ -70,11 +78,21 @@ func main() {
 
 	ctx := context.Background()
 
-	// Get MEK
-	mek, err := getMEK()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading MEK: %v\n", err)
-		os.Exit(1)
+	// Get MEK - try escrow file first, then fall back to other methods
+	var mek []byte
+	var err error
+	if escrowFile != "" {
+		mek, err = loadEscrow()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading escrow: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		mek, err = getMEK()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading MEK: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Determine input source
@@ -107,12 +125,15 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `armor-decrypt - Offline ARMOR decryption tool
 
 Usage:
-  armor-decrypt -mek HEX -input SOURCE [options]
+  armor-decrypt [MEK input] -input SOURCE [options]
 
 MEK Input (one required):
   -mek HEX           Master encryption key as hex string (64 chars)
   -mek-file FILE     Read MEK from file (hex, 64 chars)
   -mek-env           Allow ARMOR_MEK env var fallback (default: true)
+  -escrow FILE       Path to escrow JSON file containing MEK and complete B2
+                      configuration for self-contained break-glass recovery.
+                      This is the recommended method for disaster recovery.
 
 Input Source (required):
   -input SOURCE      B2 URL (b2://bucket/key) or local file path
@@ -130,6 +151,13 @@ Multipart local-file mode (ADR-003 headerless layout):
   -iv HEX            Object IV (hex, 16 bytes). Required with -sidecar because a
                      multipart object has no envelope header to read the IV from.
 
+B2 Configuration (for break-glass recovery; not needed when using -escrow):
+  -b2-region REGION     B2 region (e.g., us-west-004); overrides ARMOR_B2_REGION
+  -b2-endpoint URL     B2 S3 endpoint (e.g., https://s3.us-west-004.backblazeb2.com);
+                        overrides ARMOR_B2_ENDPOINT
+  Environment variables ARMOR_B2_REGION, ARMOR_B2_ENDPOINT, ARMOR_B2_ACCESS_KEY_ID,
+  ARMOR_B2_SECRET_ACCESS_KEY, and ARMOR_BUCKET can also be used instead of flags.
+
 B2 objects are dispatched automatically on the x-amz-meta-armor-multipart
 metadata marker, so no special flags are needed for multipart B2 objects.
 
@@ -141,6 +169,9 @@ Options:
   -read-concurrency N Maximum concurrent ranged reads (default: 16)
 
 Examples:
+  # Decrypt from B2 with escrow file (recommended for disaster recovery)
+  armor-decrypt -escrow escrow.json -input b2://my-bucket/path/to/file
+
   # Decrypt from B2 with MEK from flag
   armor-decrypt -mek 0123456789abcdef... -input b2://my-bucket/path/to/file
 
@@ -192,7 +223,7 @@ func getMEK() ([]byte, error) {
 	}
 
 	if mekHex == "" {
-		return nil, errors.New("no MEK provided: use -mek, -mek-file, or set ARMOR_MEK env var")
+		return nil, errors.New("no MEK provided: use -mek, -mek-file, -escrow, or set ARMOR_MEK env var")
 	}
 
 	// Decode hex
@@ -207,6 +238,68 @@ func getMEK() ([]byte, error) {
 
 	if verboseFlag {
 		fmt.Fprintf(os.Stderr, "Loaded MEK from %s\n", source)
+	}
+
+	return mek, nil
+}
+
+// escrowPackage represents the complete escrow package for break-glass recovery.
+type escrowPackage struct {
+	MEK string `json:"mek"`
+	B2  struct {
+		Region     string `json:"region"`
+		Endpoint   string `json:"endpoint"`
+		AccessKey  string `json:"access_key"`
+		SecretKey  string `json:"secret_key"`
+		Bucket     string `json:"bucket"`
+	} `json:"b2"`
+}
+
+// loadEscrow reads the escrow JSON file and sets environment variables for B2 credentials.
+// Returns the MEK as hex bytes.
+func loadEscrow() ([]byte, error) {
+	data, err := os.ReadFile(escrowFile)
+	if err != nil {
+		return nil, fmt.Errorf("read escrow file: %w", err)
+	}
+
+	var pkg escrowPackage
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return nil, fmt.Errorf("parse escrow JSON: %w", err)
+	}
+
+	// Validate MEK
+	if pkg.MEK == "" {
+		return nil, errors.New("escrow missing 'mek' field")
+	}
+	mek, err := hex.DecodeString(pkg.MEK)
+	if err != nil {
+		return nil, fmt.Errorf("decode MEK from escrow: %w", err)
+	}
+	if len(mek) != 32 {
+		return nil, fmt.Errorf("invalid MEK length in escrow: got %d bytes, expected 32", len(mek))
+	}
+
+	// Set environment variables for B2 credentials and config
+	// These will be picked up by initB2Backend()
+	if pkg.B2.Region != "" {
+		os.Setenv("ARMOR_B2_REGION", pkg.B2.Region)
+	}
+	if pkg.B2.Endpoint != "" {
+		os.Setenv("ARMOR_B2_ENDPOINT", pkg.B2.Endpoint)
+	}
+	if pkg.B2.AccessKey != "" {
+		os.Setenv("ARMOR_B2_ACCESS_KEY_ID", pkg.B2.AccessKey)
+	}
+	if pkg.B2.SecretKey != "" {
+		os.Setenv("ARMOR_B2_SECRET_ACCESS_KEY", pkg.B2.SecretKey)
+	}
+	if pkg.B2.Bucket != "" {
+		os.Setenv("ARMOR_BUCKET", pkg.B2.Bucket)
+	}
+
+	if verboseFlag {
+		fmt.Fprintf(os.Stderr, "Loaded escrow from %s (MEK + B2 config)\n", escrowFile)
 	}
 
 	return mek, nil
@@ -674,16 +767,25 @@ var b2BackendFactory = func(ctx context.Context) (backend.Backend, error) {
 	return initB2Backend()
 }
 
-// initB2Backend initializes a B2 backend from environment variables.
+// initB2Backend initializes a B2 backend from flags or environment variables.
+// Flags take precedence over environment variables for break-glass recovery.
 func initB2Backend() (*backend.B2Backend, error) {
-	region := os.Getenv("ARMOR_B2_REGION")
-	endpoint := os.Getenv("ARMOR_B2_ENDPOINT")
+	region := b2RegionFlag
+	if region == "" {
+		region = os.Getenv("ARMOR_B2_REGION")
+	}
+
+	endpoint := b2EndpointFlag
+	if endpoint == "" {
+		endpoint = os.Getenv("ARMOR_B2_ENDPOINT")
+	}
+
 	accessKey := os.Getenv("ARMOR_B2_ACCESS_KEY_ID")
 	secretKey := os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY")
 	cfDomain := os.Getenv("ARMOR_CF_DOMAIN")
 
 	if region == "" || endpoint == "" || accessKey == "" || secretKey == "" {
-		return nil, errors.New("B2 credentials not set: set ARMOR_B2_REGION, ARMOR_B2_ENDPOINT, ARMOR_B2_ACCESS_KEY_ID, ARMOR_B2_SECRET_ACCESS_KEY")
+		return nil, errors.New("B2 credentials not set: set ARMOR_B2_REGION, ARMOR_B2_ENDPOINT, ARMOR_B2_ACCESS_KEY_ID, ARMOR_B2_SECRET_ACCESS_KEY (or use -b2-region, -b2-endpoint flags)")
 	}
 
 	return backend.NewB2Backend(context.Background(), backend.B2Config{

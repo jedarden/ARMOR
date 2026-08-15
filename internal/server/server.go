@@ -624,7 +624,8 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// exportKey exports the current MEK.
+// exportKey exports the current MEK along with B2 credentials and configuration
+// for self-contained break-glass recovery.
 func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -638,13 +639,25 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 
 	// Export the default MEK as hex-encoded string
 	defaultKey := s.keyManager.DefaultKey()
+
+	// Export complete escrow package: MEK + B2 credentials + B2 config
+	// This ensures recovery is self-contained without relying on K8s ConfigMaps
+	escrowPackage := map[string]interface{}{
+		"mek": hex.EncodeToString(defaultKey.MEK),
+		"b2": map[string]string{
+			"region":       s.config.B2Region,
+			"endpoint":     s.config.B2Endpoint,
+			"access_key":   s.config.B2AccessKeyID,
+			"secret_key":   s.config.B2SecretAccessKey,
+			"bucket":       s.config.Bucket,
+		},
+		"format":  "hex",
+		"warning": "This package provides access to all encrypted data. Store securely.",
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"mek":     hex.EncodeToString(defaultKey.MEK),
-		"format":  "hex",
-		"warning": "This key provides access to all encrypted data. Store securely.",
-	})
+	json.NewEncoder(w).Encode(escrowPackage)
 }
 
 // canaryHandler returns the canary status.
