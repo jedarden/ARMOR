@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"testing"
 	"time"
 )
@@ -766,4 +767,162 @@ func (m *mockBackendForMultipart) ListObjectVersions(ctx context.Context, bucket
 
 func (m *mockBackendForMultipart) HeadVersion(ctx context.Context, bucket, key, versionID string) (*ObjectInfo, error) {
 	return nil, fmt.Errorf("not implemented")
+}
+
+// TestFilesystemBackendListMultipartUploadsPrefix tests that the filesystem backend
+// correctly filters multipart uploads by prefix. This exercises the prefix-filter
+// code path at internal/backend/filesystem.go:774 (strings.HasPrefix check).
+func TestFilesystemBackendListMultipartUploadsPrefix(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// Create temporary directory for filesystem backend
+	tmpDir, err := os.MkdirTemp("", "armor-fs-mpu-prefix-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create filesystem backend
+	fs, err := NewFSBackend(FSConfig{BasePath: tmpDir})
+	if err != nil {
+		t.Fatalf("Failed to create FS backend: %v", err)
+	}
+
+	ctx := context.Background()
+	bucket := "test-bucket"
+
+	// Create bucket
+	if err := fs.CreateBucket(ctx, bucket); err != nil {
+		t.Fatalf("Failed to create bucket: %v", err)
+	}
+
+	// Create multipart uploads with different key prefixes
+	// Prefix "docs-": 2 uploads
+	// Prefix "images-": 2 uploads
+	// Prefix "root-": 2 uploads
+	// Note: Using flat keys (no slashes) because the FS backend stores each key
+	// as a directory at .armor/multipart/{key}/{uploadID}/, and ListMultipartUploads
+	// only reads one level deep to enumerate keys.
+	testKeys := []string{
+		"docs-file1.txt",
+		"docs-file2.txt",
+		"images-photo1.jpg",
+		"images-photo2.jpg",
+		"root-file1.dat",
+		"root-file2.dat",
+	}
+
+	var uploadIDs []string
+	for i, key := range testKeys {
+		uploadID, err := fs.CreateMultipartUpload(ctx, bucket, key, map[string]string{
+			"Content-Type": "application/octet-stream",
+			"test-key":     fmt.Sprintf("test-%d", i),
+		})
+		if err != nil {
+			t.Fatalf("Failed to create multipart upload for key %s: %v", key, err)
+		}
+		if uploadID == "" {
+			t.Fatalf("Got empty upload ID for key %s", key)
+		}
+		uploadIDs = append(uploadIDs, uploadID)
+		t.Logf("Created upload %s for key %s", uploadID, key)
+	}
+
+	// Test 1: List with prefix "docs-" should return only 2 uploads
+	t.Run("prefix_docs", func(t *testing.T) {
+		result, err := fs.ListMultipartUploads(ctx, bucket, "docs-")
+		if err != nil {
+			t.Fatalf("Failed to list multipart uploads with prefix 'docs-': %v", err)
+		}
+
+		if len(result.Uploads) != 2 {
+			t.Errorf("Expected 2 uploads with prefix 'docs-', got %d", len(result.Uploads))
+		}
+
+		// Verify all returned keys have the correct prefix
+		for _, upload := range result.Uploads {
+			if upload.Key != "docs-file1.txt" && upload.Key != "docs-file2.txt" {
+				t.Errorf("Unexpected key in results: %s (expected only docs- prefix)", upload.Key)
+			}
+		}
+	})
+
+	// Test 2: List with prefix "images-" should return only 2 uploads
+	t.Run("prefix_images", func(t *testing.T) {
+		result, err := fs.ListMultipartUploads(ctx, bucket, "images-")
+		if err != nil {
+			t.Fatalf("Failed to list multipart uploads with prefix 'images-': %v", err)
+		}
+
+		if len(result.Uploads) != 2 {
+			t.Errorf("Expected 2 uploads with prefix 'images-', got %d", len(result.Uploads))
+		}
+
+		// Verify all returned keys have the correct prefix
+		for _, upload := range result.Uploads {
+			if upload.Key != "images-photo1.jpg" && upload.Key != "images-photo2.jpg" {
+				t.Errorf("Unexpected key in results: %s (expected only images- prefix)", upload.Key)
+			}
+		}
+	})
+
+	// Test 3: List with empty prefix should return all 6 uploads
+	t.Run("empty_prefix_all", func(t *testing.T) {
+		result, err := fs.ListMultipartUploads(ctx, bucket, "")
+		if err != nil {
+			t.Fatalf("Failed to list multipart uploads with empty prefix: %v", err)
+		}
+
+		if len(result.Uploads) != 6 {
+			t.Errorf("Expected 6 uploads with empty prefix, got %d", len(result.Uploads))
+		}
+
+		// Verify we got all our test keys
+		foundKeys := make(map[string]bool)
+		for _, upload := range result.Uploads {
+			foundKeys[upload.Key] = true
+		}
+
+		for _, expectedKey := range testKeys {
+			if !foundKeys[expectedKey] {
+				t.Errorf("Missing expected key in results: %s", expectedKey)
+			}
+		}
+	})
+
+	// Test 4: List with non-matching prefix should return 0 uploads
+	t.Run("prefix_no_match", func(t *testing.T) {
+		result, err := fs.ListMultipartUploads(ctx, bucket, "videos-")
+		if err != nil {
+			t.Fatalf("Failed to list multipart uploads with prefix 'videos-': %v", err)
+		}
+
+		if len(result.Uploads) != 0 {
+			t.Errorf("Expected 0 uploads with prefix 'videos-', got %d", len(result.Uploads))
+		}
+	})
+
+	// Test 5: Partial prefix should match all keys starting with that substring
+	t.Run("prefix_partial", func(t *testing.T) {
+		result, err := fs.ListMultipartUploads(ctx, bucket, "docs")
+		if err != nil {
+			t.Fatalf("Failed to list multipart uploads with prefix 'docs': %v", err)
+		}
+
+		// "docs" matches "docs-file1.txt" and "docs-file2.txt"
+		// because strings.HasPrefix("docs-file1.txt", "docs") == true
+		if len(result.Uploads) != 2 {
+			t.Errorf("Expected 2 uploads with prefix 'docs' (partial), got %d", len(result.Uploads))
+		}
+	})
+
+	// Cleanup: abort all multipart uploads
+	for i, uploadID := range uploadIDs {
+		key := testKeys[i]
+		if err := fs.AbortMultipartUpload(ctx, bucket, key, uploadID); err != nil {
+			t.Logf("Warning: failed to abort upload %s for key %s: %v", uploadID, key, err)
+		}
+	}
 }
