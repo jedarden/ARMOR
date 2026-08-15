@@ -1,6 +1,10 @@
 //go:build integration
 // +build integration
 
+// Recovered from git history on 2026-08-15
+// Originally added in commit db45bfb9 (2026-06-20)
+// Deleted in commit c8e0719a (2026-07-13)
+
 package integration
 
 import (
@@ -34,8 +38,6 @@ import (
 // ARMOR_MEK                             - Master encryption key (hex, 32 bytes)
 // ARMOR_AUTH_ACCESS_KEY                 - ARMOR access key for client auth
 // ARMOR_AUTH_SECRET_KEY                 - ARMOR secret key for client auth
-// ARMOR_PREFIX                          - Optional key prefix for namespaced buckets
-// ARMOR_ADMIN_TOKEN                     - Admin token for admin endpoints (required for health/canary tests)
 
 var (
 	b2AccessKeyID     string
@@ -46,8 +48,6 @@ var (
 	mek               string
 	armorAccessKey    string
 	armorSecretKey    string
-	armorPrefix       string
-	armorAdminToken   string
 )
 
 func TestMain(m *testing.M) {
@@ -66,8 +66,6 @@ func TestMain(m *testing.M) {
 	mek = os.Getenv("ARMOR_MEK")
 	armorAccessKey = os.Getenv("ARMOR_AUTH_ACCESS_KEY")
 	armorSecretKey = os.Getenv("ARMOR_AUTH_SECRET_KEY")
-	armorPrefix = os.Getenv("ARMOR_PREFIX")
-	armorAdminToken = os.Getenv("ARMOR_ADMIN_TOKEN")
 
 	missing := []string{}
 	if b2AccessKeyID == "" {
@@ -866,7 +864,6 @@ func TestHealthEndpoints(t *testing.T) {
 		armorEndpoint = "http://localhost:9000"
 	}
 
-	// Health endpoints are public - no token required
 	// Test /healthz
 	resp, err := http.Get(armorEndpoint + "/healthz")
 	if err != nil {
