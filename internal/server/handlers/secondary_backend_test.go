@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/jedarden/armor/internal/backend"
+	"github.com/jedarden/armor/internal/config"
+	"github.com/jedarden/armor/internal/keymanager"
 )
 
 // TestSecondaryBackendWiring verifies the ADR-006 secondary backend is exposed
@@ -43,6 +45,61 @@ func TestSecondaryBackendWiring(t *testing.T) {
 	h.WithSecondaryBackend(nil)
 	if h.secondaryBackend != nil {
 		t.Errorf("expected secondaryBackend to be nil after WithSecondaryBackend(nil), got %T", h.secondaryBackend)
+	}
+}
+
+// TestBasicWiring verifies the basic WithSecondaryBackend and New() wiring behavior.
+// This test ensures:
+// 1. New() leaves the secondary backend field nil by default
+// 2. WithSecondaryBackend correctly sets the secondary backend field (field becomes non-nil)
+// 3. Calling WithSecondaryBackend again replaces (overwrites) the previous backend, not appends
+func TestBasicWiring(t *testing.T) {
+	// Test 1: New() leaves secondary backend nil by default
+	cfg := &config.Config{}
+	be := &backend.FSBackend{} // dummy backend
+	cache := &backend.MetadataCache{}
+	footerCache := &backend.FooterCache{}
+	km := &keymanager.KeyManager{}
+	listCache := &backend.ListCache{}
+
+	h := New(cfg, be, cache, footerCache, km, listCache)
+	if h.secondaryBackend != nil {
+		t.Errorf("New() should leave secondaryBackend nil by default, got %T", h.secondaryBackend)
+	}
+
+	// Test 2: WithSecondaryBackend correctly sets the field (non-nil)
+	dir := t.TempDir()
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{BasePath: dir})
+	if err != nil {
+		t.Fatalf("failed to create filesystem secondary backend: %v", err)
+	}
+
+	h.WithSecondaryBackend(fsBackend)
+	if h.secondaryBackend == nil {
+		t.Error("WithSecondaryBackend should set secondaryBackend to non-nil, got nil")
+	}
+	if _, ok := h.secondaryBackend.(*backend.FSBackend); !ok {
+		t.Errorf("WithSecondaryBackend should set *backend.FSBackend, got %T", h.secondaryBackend)
+	}
+
+	// Test 3: Calling WithSecondaryBackend again replaces (overwrites) the previous backend
+	dir2 := t.TempDir()
+	fsBackend2, err := backend.NewFSBackend(backend.FSConfig{BasePath: dir2})
+	if err != nil {
+		t.Fatalf("failed to create second filesystem backend: %v", err)
+	}
+
+	h.WithSecondaryBackend(fsBackend2)
+	if h.secondaryBackend != fsBackend2 {
+		t.Error("WithSecondaryBackend should replace previous backend, but it didn't")
+	}
+	if h.secondaryBackend == fsBackend {
+		t.Error("WithSecondaryBackend should not append or keep the previous backend")
+	}
+
+	// Verify it's the correct type
+	if _, ok := h.secondaryBackend.(*backend.FSBackend); !ok {
+		t.Errorf("Expected *backend.FSBackend after replacement, got %T", h.secondaryBackend)
 	}
 }
 
