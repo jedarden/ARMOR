@@ -2,6 +2,12 @@
 
 These tests verify ARMOR's functionality against a real B2 bucket and Cloudflare CDN.
 
+## Git History Attribution
+
+Recovered from git history on 2026-08-15
+- Originally added in commit db45bfb9 (2026-06-20): "Add integration tests for B2 + Cloudflare"
+- Deleted in commit c8e0719a (2026-07-13): "chore: ignore Python build artifacts"
+
 ## Prerequisites
 
 1. A B2 bucket configured for ARMOR (see main README)
