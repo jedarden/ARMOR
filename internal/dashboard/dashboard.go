@@ -282,6 +282,10 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) Pag
 				info.KeyID = armorMeta.KeyID
 				info.BlockSize = armorMeta.BlockSize
 			}
+			// ARMOR omits the metadata key ID for the default key. Keep the
+			// dashboard's badge consistent with the JSON APIs by displaying the
+			// effective key name in that case.
+			info.KeyID = normalizedKeyID(info.KeyID)
 			if !info.IsFolder {
 				encCount++
 				keyID := info.KeyID
@@ -424,10 +428,11 @@ func (d *Dashboard) objectDetailHandlerImpl() http.HandlerFunc {
 		if info.IsARMOREncrypted {
 			armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
 			if ok {
+				keyID := normalizedKeyID(armorMeta.KeyID)
 				detail["armor"] = map[string]interface{}{
 					"plaintext_size": armorMeta.PlaintextSize,
 					"block_size":     armorMeta.BlockSize,
-					"key_id":         armorMeta.KeyID,
+					"key_id":         keyID,
 					"iv":             fmt.Sprintf("%x", armorMeta.IV),
 					"wrapped_dek":    fmt.Sprintf("%x", armorMeta.WrappedDEK),
 					"sha256":         armorMeta.PlaintextSHA,
@@ -596,10 +601,11 @@ func (d *Dashboard) encryptionStatsHandlerImpl() http.HandlerFunc {
 			if obj.IsARMOREncrypted {
 				stats.EncryptedCount++
 				stats.EncryptedBytes += obj.Size
-				keyID := "default"
-				if armorMeta, ok := backend.ParseARMORMetadata(obj.Metadata); ok && armorMeta.KeyID != "" {
+				keyID := ""
+				if armorMeta, ok := backend.ParseARMORMetadata(obj.Metadata); ok {
 					keyID = armorMeta.KeyID
 				}
+				keyID = normalizedKeyID(keyID)
 				stats.KeyUsage[keyID]++
 			} else {
 				stats.PlaintextCount++
@@ -681,10 +687,10 @@ func (d *Dashboard) listAPIHandlerImpl() http.HandlerFunc {
 			}
 			if obj.IsARMOREncrypted {
 				if armorMeta, ok := backend.ParseARMORMetadata(obj.Metadata); ok {
-					listObj.KeyID = armorMeta.KeyID
-					if listObj.KeyID == "" {
-						listObj.KeyID = "default"
-					}
+					listObj.KeyID = normalizedKeyID(armorMeta.KeyID)
+				}
+				if listObj.KeyID == "" {
+					listObj.KeyID = "default"
 				}
 			}
 			response.Objects = append(response.Objects, listObj)
@@ -700,6 +706,17 @@ func (d *Dashboard) listAPIHandlerImpl() http.HandlerFunc {
 func parseExpvarInt(s string) int64 {
 	n, _ := strconv.ParseInt(s, 10, 64)
 	return n
+}
+
+// normalizedKeyID returns the effective key name represented by ARMOR
+// metadata. The default key is intentionally omitted from object metadata, so
+// dashboard surfaces must render it explicitly rather than leaving the key
+// name ambiguous.
+func normalizedKeyID(keyID string) string {
+	if keyID == "" {
+		return "default"
+	}
+	return keyID
 }
 
 func formatBytes(n int64) string {
@@ -837,6 +854,16 @@ const dashboardHTML = `<!DOCTYPE html>
             display: inline-block;
             background: #10b981;
             color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .plain-badge {
+            display: inline-block;
+            background: #f3f4f6;
+            color: #4b5563;
+            border: 1px solid #d1d5db;
             padding: 2px 8px;
             border-radius: 4px;
             font-size: 11px;
@@ -1080,11 +1107,11 @@ const dashboardHTML = `<!DOCTYPE html>
                         <td class="date-cell">{{.LastModified}}</td>
                         <td>
                             {{if .IsARMOR}}
-                                <span class="armor-badge">ARMOR {{if .KeyID}}[{{.KeyID}}]{{end}}</span>
+                                <span class="armor-badge" aria-label="ARMOR encrypted with key {{.KeyID}}">ARMOR [{{.KeyID}}]</span>
                             {{else if .IsFolder}}
                                 —
                             {{else}}
-                                <span style="color:#999">plain</span>
+                                <span class="plain-badge" aria-label="Unencrypted object">plain</span>
                             {{end}}
                         </td>
                     </tr>

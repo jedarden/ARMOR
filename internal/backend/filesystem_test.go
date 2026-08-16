@@ -602,4 +602,20 @@ func TestFSBackend_ARMORMetadata(t *testing.T) {
 	if parsed.PlaintextSize != 1024 {
 		t.Errorf("PlaintextSize mismatch: got %d, want %d", parsed.PlaintextSize, 1024)
 	}
+
+	// List must expose the same encryption state and metadata as Head so
+	// consumers such as the dashboard can render accurate badges.
+	result, err := fs.List(ctx, bucket, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("Failed to list ARMOR object: %v", err)
+	}
+	if len(result.Objects) != 1 {
+		t.Fatalf("Expected one listed ARMOR object, got %d", len(result.Objects))
+	}
+	if !result.Objects[0].IsARMOREncrypted {
+		t.Error("Expected listed ARMOR object to be marked encrypted")
+	}
+	if _, ok := ParseARMORMetadata(result.Objects[0].Metadata); !ok {
+		t.Error("Expected listed ARMOR metadata to be preserved")
+	}
 }
