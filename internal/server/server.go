@@ -35,6 +35,7 @@ import (
 	"github.com/jedarden/armor/internal/presign"
 	"github.com/jedarden/armor/internal/provenance"
 	"github.com/jedarden/armor/internal/server/handlers"
+	"github.com/jedarden/armor/internal/server/middleware"
 )
 
 // Server represents the ARMOR server.
@@ -432,7 +433,8 @@ func (s *Server) Handler() http.Handler {
 	// Bucket operations
 	mux.HandleFunc("/", s.wrapHandler(h.HandleRoot))
 
-	return mux
+	// Apply request ID middleware to all S3 responses
+	return middleware.RequestID(mux)
 }
 
 // AdminHandler returns the admin API handler.
@@ -594,6 +596,28 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 	// Create key rotator with the default key. Pass the manifest index so
 	// rotateObject can skip per-object HeadObject calls when the entry is cached.
 	defaultKey := s.keyManager.DefaultKey()
+
+	// Compute MEK hashes for provenance tracking
+	oldMEKHashBytes := sha256.Sum256(defaultKey.MEK)
+	newMEKHashBytes := sha256.Sum256(newMEK)
+	oldMEKHash := hex.EncodeToString(oldMEKHashBytes[:8])
+	newMEKHash := hex.EncodeToString(newMEKHashBytes[:8])
+
+	// Generate rotation ID for provenance tracking
+	rotationID := fmt.Sprintf("%s-%s-%d", oldMEKHash, newMEKHash, time.Now().Unix())
+
+	// Record key rotation start in provenance chain
+	if err := s.provenance.RecordKeyEvent(r.Context(), "key-rotate-start", provenance.KeyEventOpts{
+		OldMEKHash: oldMEKHash,
+		NewMEKHash: newMEKHash,
+		RotationID: rotationID,
+	}); err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"error":       err.Error(),
+			"rotation_id": rotationID,
+		}).Warn("failed to record key rotation start event in provenance chain")
+	}
+
 	rotator := NewKeyRotator(s.backend, s.config.Bucket, defaultKey.MEK, newMEK, s.manifest)
 
 	// Perform rotation
@@ -617,6 +641,27 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		}
 		// Clear the metadata cache since DEKs are now wrapped with new MEK
 		s.cache.Clear()
+
+		// Record key rotation complete in provenance chain
+		rotationResult := &provenance.KeyRotationResult{
+			TotalObjects:     result.TotalObjects,
+			ProcessedObjects: result.ProcessedObjects,
+			SkippedObjects:   result.SkippedObjects,
+			Exceptions:       result.Exceptions,
+			DurationSec:      result.Duration.Seconds(),
+			Status:           result.Status,
+		}
+		if err := s.provenance.RecordKeyEvent(r.Context(), "key-rotate-complete", provenance.KeyEventOpts{
+			OldMEKHash:     oldMEKHash,
+			NewMEKHash:     newMEKHash,
+			RotationID:     rotationID,
+			RotationResult: rotationResult,
+		}); err != nil {
+			s.logger.WithFields(map[string]interface{}{
+				"error":       err.Error(),
+				"rotation_id": rotationID,
+			}).Warn("failed to record key rotation complete event in provenance chain")
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -639,6 +684,19 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 
 	// Export the default MEK as hex-encoded string
 	defaultKey := s.keyManager.DefaultKey()
+
+	// Compute MEK hash for provenance tracking
+	exportedMEKHashBytes := sha256.Sum256(defaultKey.MEK)
+	exportedMEKHash := hex.EncodeToString(exportedMEKHashBytes[:8])
+
+	// Record key export in provenance chain
+	if err := s.provenance.RecordKeyEvent(r.Context(), "key-export", provenance.KeyEventOpts{
+		ExportedMEKHash: exportedMEKHash,
+	}); err != nil {
+		s.logger.WithFields(map[string]interface{}{
+			"error": err.Error(),
+		}).Warn("failed to record key export event in provenance chain")
+	}
 
 	// Export complete escrow package: MEK + B2 credentials + B2 config
 	// This ensures recovery is self-contained without relying on K8s ConfigMaps
@@ -734,9 +792,9 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			cred, err := s.verifyAuthAndGetCredential(r)
 			if err != nil {
 				if authErr, ok := err.(*AuthError); ok {
-					s.writeError(w, authErr.Code, authErr.Message, 403)
+					s.writeError(w, r, authErr.Code, authErr.Message, 403)
 				} else {
-					s.writeError(w, "AccessDenied", "Invalid credentials", 403)
+					s.writeError(w, r, "AccessDenied", "Invalid credentials", 403)
 				}
 				s.metrics.IncRequestsTotal("auth", 403)
 				return
@@ -749,7 +807,7 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 				key = r.URL.Query().Get("prefix")
 			}
 			if err := CheckACL(cred, bucket, key, ActionForRequest(r)); err != nil {
-				s.writeError(w, "AccessDenied", "Access Denied", 403)
+				s.writeError(w, r, "AccessDenied", "Access Denied", 403)
 				s.metrics.IncRequestsTotal("acl", 403)
 				return
 			}
@@ -858,15 +916,37 @@ func (s *Server) extractBucketAndKey(r *http.Request) (bucket, key string) {
 	return bucket, key
 }
 
-// writeError writes an S3 error response.
-func (s *Server) writeError(w http.ResponseWriter, code, message string, statusCode int) {
+// writeError writes an S3 error response with request ID.
+// The request ID is extracted from the request context and included in both
+// the response headers (x-amz-request-id, x-amz-id-2) and the XML body (<RequestId>).
+func (s *Server) writeError(w http.ResponseWriter, r *http.Request, code, message string, statusCode int) {
+	// Extract request IDs from context
+	requestID := middleware.GetRequestID(r.Context())
+	extendedID := middleware.GetExtendedID(r.Context())
+
+	// Set headers
 	w.Header().Set("Content-Type", "application/xml")
+	if requestID != "" {
+		w.Header().Set("x-amz-request-id", requestID)
+	}
+	if extendedID != "" {
+		w.Header().Set("x-amz-id-2", extendedID)
+	}
 	w.WriteHeader(statusCode)
-	var codeBuf, msgBuf bytes.Buffer
+
+	// Build XML response
+	var codeBuf, msgBuf, ridBuf bytes.Buffer
 	xml.EscapeText(&codeBuf, []byte(code))
 	xml.EscapeText(&msgBuf, []byte(message))
-	fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
-		codeBuf.String(), msgBuf.String())
+	xml.EscapeText(&ridBuf, []byte(requestID))
+
+	if requestID != "" {
+		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n  <RequestId>%s</RequestId>\n</Error>",
+			codeBuf.String(), msgBuf.String(), ridBuf.String())
+	} else {
+		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
+			codeBuf.String(), msgBuf.String())
+	}
 }
 
 // GenerateDEK generates a new DEK (exposed for handlers).
@@ -903,9 +983,9 @@ func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Return specific authentication error code and message
 		if authErr, ok := err.(*AuthError); ok {
-			s.writeError(w, authErr.Code, authErr.Message, 403)
+			s.writeError(w, r, authErr.Code, authErr.Message, 403)
 		} else {
-			s.writeError(w, "AccessDenied", "Invalid credentials", 403)
+			s.writeError(w, r, "AccessDenied", "Invalid credentials", 403)
 		}
 		return
 	}
@@ -939,7 +1019,7 @@ func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
 	// Check ACL for the request. Presigning mints a download (GET) URL, so the
 	// action verb under test is "get" — the caller must be permitted to read.
 	if err := CheckACL(cred, bucket, req.Key, ActionGet); err != nil {
-		s.writeError(w, "AccessDenied", "Access Denied", 403)
+		s.writeError(w, r, "AccessDenied", "Access Denied", 403)
 		return
 	}
 
