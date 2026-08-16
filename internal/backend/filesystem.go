@@ -389,10 +389,13 @@ func (fs *FSBackend) List(ctx context.Context, bucket, prefix, delimiter, contin
 			ContentType:  meta.ContentType,
 			ETag:         meta.ETag,
 			LastModified: meta.LastModified,
+			Metadata:     meta.Metadata,
 		}
 
-		// Use plaintext size for ARMOR objects
-		if meta.PlaintextSize > 0 {
+		// ARMOR objects are identified by their version metadata rather than
+		// plaintext size, which is important for empty encrypted objects.
+		if _, ok := meta.Metadata["x-amz-meta-armor-version"]; ok {
+			objInfo.IsARMOREncrypted = true
 			objInfo.Size = meta.PlaintextSize
 		}
 
