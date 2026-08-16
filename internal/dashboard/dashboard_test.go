@@ -544,6 +544,58 @@ func TestARMORObjectDisplay(t *testing.T) {
 	}
 }
 
+// TestDefaultKeyAndPlaintextBadges verifies that the two object states remain
+// distinguishable when ARMOR's default key ID is omitted from metadata.
+func TestDefaultKeyAndPlaintextBadges(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["encrypted.bin"] = &backend.ObjectInfo{
+		Key:              "encrypted.bin",
+		Size:             500,
+		LastModified:     time.Now(),
+		IsARMOREncrypted: true,
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "500",
+			// The default key is intentionally not emitted by ToMetadata.
+		},
+	}
+	mb.objects["plain.txt"] = &backend.ObjectInfo{
+		Key:          "plain.txt",
+		Size:         100,
+		LastModified: time.Now(),
+	}
+
+	d := New(mb, "test-bucket", metrics.NewMetrics())
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="armor-badge" aria-label="ARMOR encrypted with key default">ARMOR [default]`) {
+		t.Error("expected default key name in ARMOR badge")
+	}
+	if !strings.Contains(body, `class="plain-badge" aria-label="Unencrypted object">plain`) {
+		t.Error("expected explicit plaintext badge")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/dashboard/object?key=encrypted.bin", nil)
+	rec = httptest.NewRecorder()
+	d.ObjectDetailHandler()(rec, req)
+
+	var detail struct {
+		Armor struct {
+			KeyID string `json:"key_id"`
+		} `json:"armor"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode object detail: %v", err)
+	}
+	if detail.Armor.KeyID != "default" {
+		t.Fatalf("object detail key_id = %q, want default", detail.Armor.KeyID)
+	}
+}
+
 func TestBreadcrumbs(t *testing.T) {
 	mb := newMockBackend()
 	mb.objects["data/2024/file.txt"] = &backend.ObjectInfo{
