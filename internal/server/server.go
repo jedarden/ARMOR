@@ -593,12 +593,23 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create key rotator with the default key. Pass the manifest index so
-	// rotateObject can skip per-object HeadObject calls when the entry is cached.
-	defaultKey := s.keyManager.DefaultKey()
+	// Select the key to rotate. The default key remains the backward-compatible
+	// choice when no key-id is supplied; named keys are rotated independently.
+	keyID := strings.TrimSpace(r.URL.Query().Get("key-id"))
+	key, err := s.keyManager.GetKeyByID(keyID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unknown key ID %q: %v", keyID, err), http.StatusBadRequest)
+		return
+	}
+	keyID = key.Name
+
+	// Pass the manifest index so the rotator can use cached metadata where
+	// possible. Per-key filtering still verifies the authoritative object
+	// metadata before selecting an object.
+	oldMEK := key.MEK
 
 	// Compute MEK hashes for provenance tracking
-	oldMEKHashBytes := sha256.Sum256(defaultKey.MEK)
+	oldMEKHashBytes := sha256.Sum256(oldMEK)
 	newMEKHashBytes := sha256.Sum256(newMEK)
 	oldMEKHash := hex.EncodeToString(oldMEKHashBytes[:8])
 	newMEKHash := hex.EncodeToString(newMEKHashBytes[:8])
@@ -618,7 +629,7 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		}).Warn("failed to record key rotation start event in provenance chain")
 	}
 
-	rotator := NewKeyRotator(s.backend, s.config.Bucket, defaultKey.MEK, newMEK, s.manifest)
+	rotator := NewKeyRotatorForKey(s.backend, s.config.Bucket, keyID, oldMEK, newMEK, s.manifest)
 
 	// Perform rotation
 	result, err := rotator.Rotate(r.Context())
@@ -634,7 +645,7 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 
 	// Update the server's MEK on success
 	if result.Status == "completed" {
-		if err := s.keyManager.UpdateDefaultKey(newMEK); err != nil {
+		if err := s.keyManager.UpdateKey(keyID, newMEK); err != nil {
 			s.logger.WithFields(map[string]interface{}{
 				"error": err.Error(),
 			}).Error("failed to update key manager after rotation")

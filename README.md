@@ -167,6 +167,12 @@ ARMOR_MEK_ARCHIVE=<hex>                   # named key
 ARMOR_KEY_ROUTES="data/pii/*=sensitive,archive/*=archive,*=default"
 ```
 
+Routes use longest-prefix matching; the trailing `/*` is shorthand for the
+path prefix (`data/pii/` and `archive/` above). Objects without a matching
+route use the default key. Rotate one key at a time with
+`POST /admin/key/rotate?key-id=sensitive`; omitting `key-id` rotates only the
+default key.
+
 ### Authentication
 
 ARMOR uses its own credential system for client authentication. **These ARMOR credentials are separate from your B2 credentials** — ARMOR validates clients locally, then uses its own B2 credentials to talk to the backend. This means:
@@ -327,7 +333,7 @@ Key management and monitoring endpoints on the admin listener (`127.0.0.1:9001`)
 | `/readyz` | GET | Readiness check (verifies B2 connectivity) |
 | `/metrics` | GET | Prometheus metrics |
 | `/admin/key/verify` | GET | Verify MEK can decrypt the canary object |
-| `/admin/key/rotate` | POST | Rotate MEK — re-wraps all DEKs, no file re-upload |
+| `/admin/key/rotate` | POST | Rotate one MEK (`?key-id=name`; default key when omitted) — re-wraps matching DEKs, no file re-upload |
 | `/admin/key/export` | GET | Export current MEK (`?confirm=yes`) |
 | `/armor/audit` | GET | Walk provenance chains, verify integrity |
 | `/admin/presign` | POST | Generate pre-signed share URL |

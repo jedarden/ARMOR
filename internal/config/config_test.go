@@ -217,8 +217,8 @@ func TestParseKeyRoutes(t *testing.T) {
 			routesStr:   "data/pii/*=sensitive,archive/*=archive,*=default",
 			expectCount: 3,
 			checkFunc: func(routes []KeyRoute) bool {
-				return routes[0].Prefix == "data/pii/*" && routes[0].KeyName == "sensitive" &&
-					routes[1].Prefix == "archive/*" && routes[1].KeyName == "archive" &&
+				return routes[0].Prefix == "data/pii/" && routes[0].KeyName == "sensitive" &&
+					routes[1].Prefix == "archive/" && routes[1].KeyName == "archive" &&
 					routes[2].Prefix == "" && routes[2].KeyName == "default"
 			},
 		},
@@ -258,6 +258,42 @@ func TestParseKeyRoutes(t *testing.T) {
 				t.Error("route check function failed")
 			}
 		})
+	}
+}
+
+func TestLoadMultiKeyConfiguration(t *testing.T) {
+	env := append(minimalEnv(),
+		"ARMOR_MEK_SENSITIVE", "1111111111111111111111111111111111111111111111111111111111111111",
+		"ARMOR_MEK_ARCHIVE", "2222222222222222222222222222222222222222222222222222222222222222",
+		"ARMOR_KEY_ROUTES", "data/pii/*=SENSITIVE,archive/*=archive,*=default",
+	)
+	setEnv(t, env...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(cfg.NamedKeys) != 2 {
+		t.Fatalf("NamedKeys count = %d, want 2", len(cfg.NamedKeys))
+	}
+	if _, ok := cfg.NamedKeys["sensitive"]; !ok {
+		t.Error("NamedKeys missing sensitive key")
+	}
+	if _, ok := cfg.NamedKeys["archive"]; !ok {
+		t.Error("NamedKeys missing archive key")
+	}
+	if len(cfg.KeyRoutes) != 3 {
+		t.Fatalf("KeyRoutes count = %d, want 3", len(cfg.KeyRoutes))
+	}
+	want := []KeyRoute{
+		{Prefix: "data/pii/", KeyName: "sensitive"},
+		{Prefix: "archive/", KeyName: "archive"},
+		{Prefix: "", KeyName: "default"},
+	}
+	for i, route := range cfg.KeyRoutes {
+		if route != want[i] {
+			t.Errorf("KeyRoutes[%d] = %+v, want %+v", i, route, want[i])
+		}
 	}
 }
 
