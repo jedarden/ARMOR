@@ -35,7 +35,7 @@ type KeyManager struct {
 func New(defaultMEK []byte, namedKeys map[string][]byte, routes []Route) (*KeyManager, error) {
 	km := &KeyManager{
 		keys:           make(map[string]*Key),
-		routes:         routes,
+		routes:         append([]Route(nil), routes...),
 		defaultKeyName: "default",
 	}
 
@@ -43,18 +43,35 @@ func New(defaultMEK []byte, namedKeys map[string][]byte, routes []Route) (*KeyMa
 	if len(defaultMEK) != 32 {
 		return nil, fmt.Errorf("default MEK must be 32 bytes, got %d", len(defaultMEK))
 	}
-	km.keys["default"] = &Key{Name: "default", MEK: defaultMEK}
+	km.keys["default"] = &Key{Name: "default", MEK: append([]byte(nil), defaultMEK...)}
 
 	// Add named keys
 	for name, mek := range namedKeys {
+		name = normalizeKeyName(name)
+		if name == "" || name == "default" {
+			return nil, fmt.Errorf("invalid named key %q", name)
+		}
 		if len(mek) != 32 {
 			return nil, fmt.Errorf("MEK for key %q must be 32 bytes, got %d", name, len(mek))
 		}
-		km.keys[name] = &Key{Name: name, MEK: mek}
+		if _, exists := km.keys[name]; exists {
+			return nil, fmt.Errorf("duplicate key name %q", name)
+		}
+		km.keys[name] = &Key{Name: name, MEK: append([]byte(nil), mek...)}
 	}
 
 	// Validate routes reference existing keys
-	for _, route := range routes {
+	for i := range km.routes {
+		km.routes[i].KeyName = normalizeKeyName(km.routes[i].KeyName)
+		if km.routes[i].Prefix == "*" {
+			km.routes[i].Prefix = ""
+		} else if strings.HasSuffix(km.routes[i].Prefix, "/*") {
+			km.routes[i].Prefix = strings.TrimSuffix(km.routes[i].Prefix, "*")
+		} else if strings.Contains(km.routes[i].Prefix, "*") {
+			return nil, fmt.Errorf("invalid route prefix %q (wildcard must be at the end)", km.routes[i].Prefix)
+		}
+	}
+	for _, route := range km.routes {
 		if _, ok := km.keys[route.KeyName]; !ok {
 			return nil, fmt.Errorf("route references unknown key %q", route.KeyName)
 		}
@@ -101,6 +118,7 @@ func (km *KeyManager) GetKeyByID(keyName string) (*Key, error) {
 	defer km.mu.RUnlock()
 
 	// Empty key name means default key
+	keyName = normalizeKeyName(keyName)
 	if keyName == "" || keyName == "default" {
 		key, ok := km.keys[km.defaultKeyName]
 		if !ok {
@@ -144,13 +162,28 @@ func (km *KeyManager) DefaultKey() *Key {
 
 // UpdateDefaultKey updates the default MEK (used for key rotation).
 func (km *KeyManager) UpdateDefaultKey(newMEK []byte) error {
+	return km.UpdateKey("default", newMEK)
+}
+
+// UpdateKey updates an existing named MEK. It is used after a successful
+// per-key rotation so new objects use the rotated key while existing objects
+// remain decryptable during the rotation operation itself.
+func (km *KeyManager) UpdateKey(keyName string, newMEK []byte) error {
 	if len(newMEK) != 32 {
 		return fmt.Errorf("MEK must be 32 bytes, got %d", len(newMEK))
 	}
 
+	keyName = normalizeKeyName(keyName)
+	if keyName == "" {
+		keyName = km.defaultKeyName
+	}
+
 	km.mu.Lock()
 	defer km.mu.Unlock()
-	km.keys[km.defaultKeyName] = &Key{Name: "default", MEK: newMEK}
+	if _, ok := km.keys[keyName]; !ok {
+		return fmt.Errorf("key %q not found", keyName)
+	}
+	km.keys[keyName] = &Key{Name: keyName, MEK: append([]byte(nil), newMEK...)}
 	return nil
 }
 
@@ -200,15 +233,20 @@ func ParseKeyRoutes(routesStr string) ([]Route, error) {
 		}
 
 		prefix := strings.TrimSpace(kv[0])
-		keyName := strings.TrimSpace(kv[1])
+		keyName := normalizeKeyName(kv[1])
 
 		if prefix == "" || keyName == "" {
 			return nil, fmt.Errorf("invalid route %q (empty prefix or key name)", part)
 		}
 
-		// Handle wildcard - it maps to default key
+		// A bare * is the catch-all route. A trailing /* is the documented
+		// path-prefix notation, so normalize it to the prefix before the '*'.
 		if prefix == "*" {
 			prefix = ""
+		} else if strings.HasSuffix(prefix, "/*") {
+			prefix = strings.TrimSuffix(prefix, "*")
+		} else if strings.Contains(prefix, "*") {
+			return nil, fmt.Errorf("invalid route %q (wildcard must be at the end of the prefix)", part)
 		}
 
 		routes = append(routes, Route{
@@ -234,8 +272,10 @@ func ParseNamedKeys(envVars map[string]string) (map[string][]byte, error) {
 		// Check for ARMOR_MEK_<NAME> pattern
 		if strings.HasPrefix(name, "ARMOR_MEK_") {
 			// Extract the key name (lowercase for consistency)
-			keyName := strings.TrimPrefix(name, "ARMOR_MEK_")
-			keyName = strings.ToLower(keyName)
+			keyName := normalizeKeyName(strings.TrimPrefix(name, "ARMOR_MEK_"))
+			if keyName == "" || keyName == "default" {
+				return nil, fmt.Errorf("invalid named key %q", name)
+			}
 
 			// Decode hex MEK
 			mek, err := hex.DecodeString(value)
@@ -252,4 +292,8 @@ func ParseNamedKeys(envVars map[string]string) (map[string][]byte, error) {
 	}
 
 	return namedKeys, nil
+}
+
+func normalizeKeyName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }

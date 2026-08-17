@@ -278,8 +278,8 @@ func TestParseKeyRoutes(t *testing.T) {
 		{
 			input: "data/pii/*=sensitive,data/*=default",
 			expected: []Route{
-				{Prefix: "data/pii/*", KeyName: "sensitive"},
-				{Prefix: "data/*", KeyName: "default"},
+				{Prefix: "data/pii/", KeyName: "sensitive"},
+				{Prefix: "data/", KeyName: "default"},
 			},
 		},
 		{
@@ -298,6 +298,10 @@ func TestParseKeyRoutes(t *testing.T) {
 		},
 		{
 			input:    "prefix=",
+			hasError: true,
+		},
+		{
+			input:    "data/*/file=sensitive",
 			hasError: true,
 		},
 	}
@@ -324,6 +328,84 @@ func TestParseKeyRoutes(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestParseRoutesSelectExpectedKeyForDocumentedPatterns(t *testing.T) {
+	defaultMEK := bytesOf(1)
+	sensitiveMEK := bytesOf(2)
+	archiveMEK := bytesOf(3)
+	routes, err := ParseKeyRoutes("data/pii/*=SENSITIVE,archive/*=archive,*=default")
+	if err != nil {
+		t.Fatalf("ParseKeyRoutes failed: %v", err)
+	}
+	km, err := New(defaultMEK, map[string][]byte{
+		"sensitive": sensitiveMEK,
+		"archive":   archiveMEK,
+	}, routes)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	tests := map[string]string{
+		"data/pii/customer.json":   "sensitive",
+		"data/public/report.json":  "default",
+		"archive/2026/report.json": "archive",
+		"other/report.json":        "default",
+	}
+	for objectKey, want := range tests {
+		key, err := km.GetKey(objectKey)
+		if err != nil {
+			t.Fatalf("GetKey(%q): %v", objectKey, err)
+		}
+		if key.Name != want {
+			t.Errorf("GetKey(%q) = %q, want %q", objectKey, key.Name, want)
+		}
+	}
+}
+
+func TestUpdateKeyRotatesOnlySelectedKey(t *testing.T) {
+	defaultMEK := bytesOf(1)
+	sensitiveMEK := bytesOf(2)
+	newSensitiveMEK := bytesOf(9)
+	archiveMEK := bytesOf(3)
+	km, err := New(defaultMEK, map[string][]byte{
+		"sensitive": sensitiveMEK,
+		"archive":   archiveMEK,
+	}, []Route{
+		{Prefix: "sensitive/", KeyName: "sensitive"},
+		{Prefix: "archive/", KeyName: "archive"},
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	if err := km.UpdateKey("SENSITIVE", newSensitiveMEK); err != nil {
+		t.Fatalf("UpdateKey: %v", err)
+	}
+	got, _, err := km.GetMEK("sensitive/file")
+	if err != nil || !equalBytes(got, newSensitiveMEK) {
+		t.Fatalf("sensitive key after update = %x, err %v; want new key", got, err)
+	}
+	got, _, err = km.GetMEK("archive/file")
+	if err != nil || !equalBytes(got, archiveMEK) {
+		t.Fatalf("archive key changed during sensitive rotation: %x, err %v", got, err)
+	}
+	got, _, err = km.GetMEK("public/file")
+	if err != nil || !equalBytes(got, defaultMEK) {
+		t.Fatalf("default key changed during sensitive rotation: %x, err %v", got, err)
+	}
+
+	if err := km.UpdateKey("missing", bytesOf(8)); err == nil {
+		t.Error("UpdateKey should reject an unknown key")
+	}
+}
+
+func bytesOf(value byte) []byte {
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = value
+	}
+	return mek
 }
 
 func TestParseNamedKeys(t *testing.T) {
