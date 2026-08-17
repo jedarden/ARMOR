@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +52,9 @@ type RotationState struct {
 	OldMEKHash string `json:"old_mek_hash"`
 	// NewMEKHash is the SHA-256 hash of the new MEK (first 16 hex chars for verification)
 	NewMEKHash string `json:"new_mek_hash"`
+	// TargetKeyID identifies the routed key being rotated. Empty means the
+	// legacy all-object rotation mode used by direct callers of NewKeyRotator.
+	TargetKeyID string `json:"target_key_id,omitempty"`
 	// StartTime is when the rotation began
 	StartTime time.Time `json:"start_time"`
 	// LastUpdated is when the state was last updated
@@ -90,6 +94,10 @@ type KeyRotator struct {
 	bucket  string
 	oldMEK  []byte
 	newMEK  []byte
+	// targetKeyID is the canonical key name to rotate. An empty value keeps
+	// the legacy behavior of rotating every ARMOR object for direct callers of
+	// NewKeyRotator.
+	targetKeyID string
 	// idx is the manifest index used to skip HeadObject calls during rotation.
 	// May be nil when the manifest is disabled or unavailable.
 	idx *manifest.Index
@@ -103,13 +111,29 @@ type KeyRotator struct {
 // NewKeyRotator creates a new key rotator. idx may be nil if the manifest
 // index is not available; rotation falls back to per-object HeadObject calls.
 func NewKeyRotator(b backend.Backend, bucket string, oldMEK, newMEK []byte, idx *manifest.Index) *KeyRotator {
+	return newKeyRotator(b, bucket, "", oldMEK, newMEK, idx)
+}
+
+// NewKeyRotatorForKey creates a rotator that only re-wraps objects encrypted
+// with keyID. The empty key ID selects the default key, including legacy
+// objects whose metadata omits x-amz-meta-armor-key-id.
+func NewKeyRotatorForKey(b backend.Backend, bucket, keyID string, oldMEK, newMEK []byte, idx *manifest.Index) *KeyRotator {
+	if keyID == "" {
+		keyID = "default"
+	}
+	keyID = strings.ToLower(strings.TrimSpace(keyID))
+	return newKeyRotator(b, bucket, keyID, oldMEK, newMEK, idx)
+}
+
+func newKeyRotator(b backend.Backend, bucket, targetKeyID string, oldMEK, newMEK []byte, idx *manifest.Index) *KeyRotator {
 	return &KeyRotator{
-		backend:   b,
-		bucket:    bucket,
-		oldMEK:    oldMEK,
-		newMEK:    newMEK,
-		idx:       idx,
-		statePath: ".armor/rotation-state.json",
+		backend:     b,
+		bucket:      bucket,
+		oldMEK:      oldMEK,
+		newMEK:      newMEK,
+		targetKeyID: targetKeyID,
+		idx:         idx,
+		statePath:   ".armor/rotation-state.json",
 	}
 }
 
@@ -177,8 +201,34 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 				continue
 			}
 
-			// Skip non-ARMOR encrypted objects (pass-through)
-			if !obj.IsARMOREncrypted {
+			var rawMeta map[string]string
+			if kr.targetKeyID != "" {
+				// ListObjectsV2 does not include user metadata on B2, so inspect
+				// the object before filtering. This also makes named-key rotation
+				// safe when a bucket contains objects owned by other MEKs.
+				var err error
+				rawMeta, err = kr.objectMetadata(ctx, obj)
+				if err != nil {
+					log.Printf("Warning: failed to inspect object %s: %v", obj.Key, err)
+					result.SkippedObjects++
+					continue
+				}
+				armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
+				if !ok {
+					result.SkippedObjects++
+					continue
+				}
+				effectiveKeyID := strings.ToLower(strings.TrimSpace(armorMeta.KeyID))
+				if effectiveKeyID == "" {
+					effectiveKeyID = "default"
+				}
+				if effectiveKeyID != kr.targetKeyID {
+					result.SkippedObjects++
+					continue
+				}
+			} else if !obj.IsARMOREncrypted {
+				// Legacy callers may provide a backend whose listing includes
+				// encryption metadata. Preserve the old fast skip in that case.
 				result.SkippedObjects++
 				continue
 			}
@@ -192,7 +242,7 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 			kr.stateMu.Unlock()
 
 			// Re-wrap the DEK for this object
-			if err := kr.rotateObject(ctx, obj); err != nil {
+			if err := kr.rotateObjectWithMetadata(ctx, obj, rawMeta); err != nil {
 				if errors.Is(err, ErrCopyObjectTooLarge) {
 					// Oversized objects cannot be re-wrapped via CopyObject.
 					// Enumerate them as exceptions (not silently skipped) and
@@ -262,6 +312,10 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 // envelope header. That is exactly the bf-24sxh7 failure mode reintroduced by
 // rotation; preserving the raw metadata here is what prevents it.
 func (kr *KeyRotator) rotateObject(ctx context.Context, obj backend.ObjectInfo) error {
+	return kr.rotateObjectWithMetadata(ctx, obj, nil)
+}
+
+func (kr *KeyRotator) rotateObjectWithMetadata(ctx context.Context, obj backend.ObjectInfo, rawMeta map[string]string) error {
 	// Enforce the B2 CopyObject size ceiling before attempting the copy. B2/S3
 	// CopyObject rejects objects above 5 GiB; surfacing it here yields a clear,
 	// typed error the loop reports as an exception instead of an opaque
@@ -274,7 +328,10 @@ func (kr *KeyRotator) rotateObject(ctx context.Context, obj backend.ObjectInfo) 
 	// Resolve the object's full raw metadata. ListObjectsV2 on B2/S3 does not
 	// return custom metadata, so when the List result lacks armor metadata we
 	// fall back to a HeadObject call.
-	rawMeta, err := kr.objectMetadata(ctx, obj)
+	var err error
+	if rawMeta == nil {
+		rawMeta, err = kr.objectMetadata(ctx, obj)
+	}
 	if err != nil {
 		return err
 	}
@@ -357,11 +414,19 @@ func (kr *KeyRotator) initOrLoadState(ctx context.Context) error {
 		hex.EncodeToString(oldMEKHash[:8]),
 		hex.EncodeToString(newMEKHash[:8]),
 		time.Now().Unix())
+	if kr.targetKeyID != "" {
+		rotationID = fmt.Sprintf("%s-%s-%s-%d",
+			hex.EncodeToString(oldMEKHash[:8]),
+			hex.EncodeToString(newMEKHash[:8]),
+			kr.targetKeyID,
+			time.Now().Unix())
+	}
 
 	kr.state = &RotationState{
 		ID:          rotationID,
 		OldMEKHash:  hex.EncodeToString(oldMEKHash[:8]),
 		NewMEKHash:  hex.EncodeToString(newMEKHash[:8]),
+		TargetKeyID: kr.targetKeyID,
 		StartTime:   time.Now(),
 		LastUpdated: time.Now(),
 		Status:      "initialized",
@@ -373,6 +438,7 @@ func (kr *KeyRotator) initOrLoadState(ctx context.Context) error {
 		// Check if this is a continuation of the same rotation
 		if existingState.OldMEKHash == kr.state.OldMEKHash &&
 			existingState.NewMEKHash == kr.state.NewMEKHash &&
+			existingState.TargetKeyID == kr.state.TargetKeyID &&
 			existingState.Status == "in_progress" {
 			kr.state = existingState
 			log.Printf("Resuming rotation from key: %s", existingState.LastKey)

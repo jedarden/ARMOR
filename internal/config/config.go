@@ -286,10 +286,12 @@ func Load() (*Config, error) {
 			if len(parts) != 2 {
 				continue
 			}
-			name := strings.TrimPrefix(parts[0], "ARMOR_MEK_")
-			name = strings.ToLower(name)
+			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(parts[0], "ARMOR_MEK_")))
 			if name == "" {
 				continue
+			}
+			if name == "default" {
+				return nil, fmt.Errorf("ARMOR_MEK_DEFAULT is reserved; use ARMOR_MEK for the default key")
 			}
 			// Decode hex MEK
 			mek, err := hex.DecodeString(parts[1])
@@ -418,15 +420,20 @@ func parseKeyRoutes(routesStr string) ([]KeyRoute, error) {
 		}
 
 		prefix := strings.TrimSpace(kv[0])
-		keyName := strings.TrimSpace(kv[1])
+		keyName := strings.ToLower(strings.TrimSpace(kv[1]))
 
 		if prefix == "" || keyName == "" {
 			return nil, fmt.Errorf("invalid route %q (empty prefix or key name)", part)
 		}
 
-		// Handle wildcard - it maps to default key
+		// A bare * is the catch-all route. A trailing /* is the documented
+		// path-prefix notation, so normalize it to the prefix before the '*'.
 		if prefix == "*" {
 			prefix = ""
+		} else if strings.HasSuffix(prefix, "/*") {
+			prefix = strings.TrimSuffix(prefix, "*")
+		} else if strings.Contains(prefix, "*") {
+			return nil, fmt.Errorf("invalid route %q (wildcard must be at the end of the prefix)", part)
 		}
 
 		routes = append(routes, KeyRoute{
