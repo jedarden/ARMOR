@@ -401,8 +401,12 @@ export ARMOR_MEK=0123456789abcdef...
 armor-decrypt -input b2://my-bucket/file -output recovered.txt
 
 # With verbose output
-armor-decrypt -mek HEX -input b2://bucket/file -v - output recovered.txt
+armor-decrypt -mek HEX -input b2://bucket/file -v -output recovered.txt
 ```
+
+Multipart objects (the usual shape for large backups) need no special flags
+here: the tool detects the `x-amz-meta-armor-multipart` marker in object
+metadata and switches to the headerless layout automatically.
 
 #### Decrypt from Local File
 
@@ -415,6 +419,25 @@ armor-decrypt \
   -wrapped-dek WWF...base64... \
   -output plaintext.bin
 ```
+
+For a local copy of a **multipart** object (headerless ciphertext — no envelope
+header), two extra inputs are required, since the multipart layout has no
+header to read them from:
+
+```bash
+armor-decrypt \
+  -mek 0123456789abcdef... \
+  -input /path/to/multipart-object.bin \
+  -wrapped-dek WWF...base64... \
+  -iv aabbccdd...00112233 \
+  -sidecar /path/to/object.hmac.json \
+  -output plaintext.bin
+```
+
+- `-iv` — the object IV, from the `x-amz-meta-armor-iv` metadata field (hex).
+- `-sidecar` — the JSON HMAC sidecar the server stores alongside every
+  multipart object at `.armor/hmac/<sha256-of-object-key>` (download it with
+  any S3 client; the hex key is `sha256sum` of the object key string).
 
 ### Key Requirements
 
@@ -440,9 +463,15 @@ The key ID comes from the `x-amz-meta-armor-key-id` metadata header.
 
 The decrypt tool automatically:
 
-- Verifies per-block HMAC-SHA256 integrity
-- Validates the plaintext SHA-256 checksum
+- Verifies per-block HMAC-SHA256 integrity on every object
+- Validates the plaintext SHA-256 checksum for single-PUT objects
 - Detects corrupted blocks or wrong MEK
+
+**Multipart caveat:** multipart objects store a placeholder plaintext SHA-256
+(the digest of the empty string) rather than the true whole-object digest, so
+for those the tool verifies integrity via per-block HMACs only and skips the
+SHA check. Do not compare `sha256sum` of a recovered multipart object against
+`x-amz-meta-armor-plaintext-sha256` — it will not match, by design.
 
 Exit codes:
 - `0`: Success
@@ -462,7 +491,10 @@ aws s3api head-object --endpoint-url http://localhost:9000 \
 armor-decrypt -mek $ARMOR_MEK -input b2://bucket/file -output recovered
 
 # 4. Verify the recovered file
-sha256sum recovered  # Should match x-amz-meta-armor-plaintext-sha256
+#    Single-PUT objects only: should match x-amz-meta-armor-plaintext-sha256.
+#    Multipart objects carry a placeholder SHA there — the decrypt tool's
+#    per-block HMAC verification (a non-zero exit on failure) is the check.
+sha256sum recovered
 ```
 
 ## License
