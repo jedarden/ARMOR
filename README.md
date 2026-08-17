@@ -329,7 +329,7 @@ Key management and monitoring endpoints on the admin listener (`127.0.0.1:9001`)
 | `/admin/key/verify` | GET | Verify MEK can decrypt the canary object |
 | `/admin/key/rotate` | POST | Rotate MEK — re-wraps all DEKs, no file re-upload |
 | `/admin/key/export` | GET | Export current MEK (`?confirm=yes`) |
-| `/admin/audit` | GET | Walk provenance chains, verify integrity |
+| `/armor/audit` | GET | Walk provenance chains, verify integrity |
 | `/admin/presign` | POST | Generate pre-signed share URL |
 | `/armor/canary` | GET | Canary integrity status |
 | `/dashboard` | GET | Web dashboard |
