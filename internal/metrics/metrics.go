@@ -112,6 +112,9 @@ type Metrics struct {
 	replicationEnqueuedPutStreaming     atomic.Int64 // Counter for "put-streaming" operations
 	replicationEnqueuedCompleteMultipart atomic.Int64 // Counter for "completemultipart" operations
 
+	// Manifest compaction metrics
+	CompactionErrorsTotal *expvar.Int // Total number of manifest compaction errors
+
 	// Internal state
 	startTime time.Time
 }
@@ -208,6 +211,9 @@ func NewMetrics() *Metrics {
 	m.ReplicationQueueDepth = new(expvar.Int)
 	m.ReplicationDroppedTotal = new(expvar.Int)
 	m.ReplicationEnqueuedTotal = new(expvar.Map).Init()
+
+	// Manifest compaction metrics
+	m.CompactionErrorsTotal = new(expvar.Int)
 
 	return m
 }
@@ -657,6 +663,9 @@ func (m *Metrics) PrometheusFormat() string {
 	writeMetric("replication_queue_depth", "Current number of items in the replication queue", "gauge", m.ReplicationQueueDepth)
 	writeMetric("replication_dropped_total", "Total number of items dropped due to full replication queue", "counter", m.ReplicationDroppedTotal)
 
+	// Manifest compaction metrics
+	writeMetric("manifest_compaction_errors_total", "Total number of manifest compaction errors", "counter", m.CompactionErrorsTotal)
+
 	sb.WriteString("\n# HELP armor_replication_enqueued_total Total number of items enqueued for replication by operation\n")
 	sb.WriteString("# TYPE armor_replication_enqueued_total counter\n")
 	// Read from atomic counters
@@ -780,6 +789,11 @@ func (m *Metrics) AddReplicationQueueDepth(delta int64) {
 // IncReplicationDropped increments the replication dropped counter.
 func (m *Metrics) IncReplicationDropped() {
 	m.ReplicationDroppedTotal.Add(1)
+}
+
+// IncCompactionErrors increments the manifest compaction error counter.
+func (m *Metrics) IncCompactionErrors() {
+	m.CompactionErrorsTotal.Add(1)
 }
 
 // RequestTracker tracks in-flight requests using a WaitGroup.

@@ -3,8 +3,11 @@ package manifest
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
+
+	"github.com/jedarden/armor/internal/metrics"
 )
 
 // Deleter batch-deletes B2 objects by key. Used to remove obsolete delta files
@@ -48,12 +51,19 @@ type Compactor struct {
 
 	mu          sync.Mutex
 	deltasSince int // deltas written since last compaction
+
+	// logger is used for compaction status logging (nil disables logging).
+	logger *log.Logger
+
+	// metrics holds the Prometheus metrics for compaction operations.
+	metrics *metrics.Metrics
 }
 
 // NewCompactor creates a Compactor. Call Start to launch the background goroutine.
 // interval controls how often compaction runs automatically; threshold is the
 // delta count that triggers an early compaction (0 disables threshold-based
-// compaction).
+// compaction). logger is used for compaction status logging (nil disables logging).
+// metrics is the Prometheus metrics instance (nil disables metrics).
 func NewCompactor(
 	idx *Index,
 	prefix, writerID string,
@@ -62,7 +72,12 @@ func NewCompactor(
 	del Deleter,
 	interval time.Duration,
 	threshold int,
+	logger *log.Logger,
+	metrics *metrics.Metrics,
 ) *Compactor {
+	if logger == nil {
+		logger = log.New(log.Writer(), "[manifest-compactor] ", log.LstdFlags|log.Lmsgprefix)
+	}
 	return &Compactor{
 		idx:       idx,
 		prefix:    prefix,
@@ -75,6 +90,8 @@ func NewCompactor(
 		triggerCh: make(chan struct{}, 1),
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
+		logger:    logger,
+		metrics:   metrics,
 	}
 }
 
@@ -130,7 +147,14 @@ func (c *Compactor) run(ctx context.Context) {
 // compact runs one compaction pass and resets the delta counter regardless of
 // whether the compaction succeeded (so we don't spin on repeated errors).
 func (c *Compactor) compact(ctx context.Context) {
-	_ = c.doCompact(ctx) // errors are silently tolerated
+	err := c.doCompact(ctx)
+	if err != nil {
+		// Log the error and increment the error metric
+		c.logger.Printf("compaction error: %v", err)
+		if c.metrics != nil {
+			c.metrics.IncCompactionErrors()
+		}
+	}
 	c.mu.Lock()
 	c.deltasSince = 0
 	c.mu.Unlock()
