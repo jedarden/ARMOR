@@ -1,11 +1,19 @@
 # Binary
 armor
 /armor
+/armor-decrypt
+/restore-verifier
 
 # Test artifacts
 *.test
 *.out
 coverage.txt
+
+# Scratch audit JSON files
+*-objects.json
+*_deployments.json
+drift-timeline.json
+candidate-objects.json
 
 # IDE
 .idea/
