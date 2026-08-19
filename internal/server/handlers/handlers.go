@@ -992,7 +992,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 
 			// Decrypt block (need to use CTR stream)
 			decrypted := make([]byte, n)
-			ctr := makeCounter(armorMeta.IV, uint32(blockIndex))
+			ctr := makeCounter(armorMeta.IV, uint32(blockIndex), armorMeta.Version, blockSize)
 			stream := cipher.NewCTR(decryptor.CipherBlock(), ctr)
 			stream.XORKeyStream(decrypted, encryptedBuf)
 
@@ -1121,10 +1121,25 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 }
 
 // makeCounter creates a 16-byte counter value from the IV and block index.
-func makeCounter(iv []byte, blockIndex uint32) []byte {
+// Version 1 (legacy, vulnerable): counter_value = blockIndex
+// Version 2 (fixed): counter_value = blockIndex * (blockSize / 16)
+//
+// The version must match the encryption version to decrypt correctly.
+func makeCounter(iv []byte, blockIndex uint32, version int, blockSize int) []byte {
 	counter := make([]byte, 16)
 	copy(counter[0:12], iv[0:12])
-	binary.BigEndian.PutUint32(counter[12:16], blockIndex)
+
+	var counterValue uint32
+	if version == 2 {
+		// Version2: stride by number of AES blocks per ARMOR block
+		aesBlocksPerArmorBlock := uint32(blockSize / 16)
+		counterValue = blockIndex * aesBlocksPerArmorBlock
+	} else {
+		// Version1: legacy (buggy) derivation for backward compatibility
+		counterValue = blockIndex
+	}
+
+	binary.BigEndian.PutUint32(counter[12:16], counterValue)
 	return counter
 }
 
