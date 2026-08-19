@@ -238,18 +238,32 @@ func TestListObjectsV2WithDelimiterAndPrefix(t *testing.T) {
 
 	// Should have common prefixes for subdirectories
 	// Common prefixes should NOT have the ARMOR_PREFIX
-	expectedCommonPrefixes := []string{"data/2024/", "data/2025/"}
-	if len(result.CommonPrefixes) != len(expectedCommonPrefixes) {
-		t.Errorf("expected %d common prefixes, got %d", len(expectedCommonPrefixes), len(result.CommonPrefixes))
+	expectedCommonPrefixesSet := map[string]bool{
+		"data/2024/": true,
+		"data/2025/": true,
 	}
 
-	for i, cp := range result.CommonPrefixes {
-		if cp.Prefix != expectedCommonPrefixes[i] {
-			t.Errorf("common prefix %d: expected %s, got %s", i, expectedCommonPrefixes[i], cp.Prefix)
-		}
+	if len(result.CommonPrefixes) != len(expectedCommonPrefixesSet) {
+		t.Errorf("expected %d common prefixes, got %d", len(expectedCommonPrefixesSet), len(result.CommonPrefixes))
+	}
+
+	// Verify each common prefix is in the expected set (order-independent)
+	actualPrefixesSet := make(map[string]bool)
+	for _, cp := range result.CommonPrefixes {
 		// Common prefix should NOT contain tenant-1/
 		if hasPrefix(cp.Prefix, "tenant-1/") {
 			t.Errorf("common prefix should not contain ARMOR_PREFIX: %s", cp.Prefix)
+		}
+		if !expectedCommonPrefixesSet[cp.Prefix] {
+			t.Errorf("unexpected common prefix: %s", cp.Prefix)
+		}
+		actualPrefixesSet[cp.Prefix] = true
+	}
+
+	// Verify all expected prefixes are present
+	for expectedPrefix := range expectedCommonPrefixesSet {
+		if !actualPrefixesSet[expectedPrefix] {
+			t.Errorf("missing expected common prefix: %s", expectedPrefix)
 		}
 	}
 }
