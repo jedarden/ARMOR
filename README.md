@@ -26,7 +26,7 @@ docker run -d \
   -e ARMOR_MEK=$(openssl rand -hex 32) \
   -e ARMOR_AUTH_ACCESS_KEY=my-access-key \
   -e ARMOR_AUTH_SECRET_KEY=my-secret-key \
-  ronaldraygun/armor:0.1.43
+  ronaldraygun/armor:0.1.1911
 ```
 
 > **Note:** The ARMOR CI pipeline auto-bumps the VERSION file on every build and publishes the container image as `ronaldraygun/armor:<version>` to Docker Hub. Always pin to a specific version tag in production deployments. Use the latest published tag from [Docker Hub](https://hub.docker.com/r/ronaldraygun/armor/tags).
