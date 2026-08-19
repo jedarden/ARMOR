@@ -22,16 +22,27 @@ type Decryptor struct {
 	hmacKey   []byte
 	iv        []byte
 	blockSize int
+	version   uint8
 	block     cipher.Block
 }
 
-// NewDecryptor creates a new decryptor.
+// NewDecryptor creates a new decryptor with Version1 (legacy) for backward compatibility.
 func NewDecryptor(dek, iv []byte, blockSize int) (*Decryptor, error) {
+	return NewDecryptorWithVersion(dek, iv, blockSize, Version1)
+}
+
+// NewDecryptorWithVersion creates a new decryptor with the specified version.
+// The version must match the version used during encryption.
+func NewDecryptorWithVersion(dek, iv []byte, blockSize int, version uint8) (*Decryptor, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("DEK must be 32 bytes")
 	}
 	if len(iv) != 16 {
 		return nil, fmt.Errorf("IV must be 16 bytes")
+	}
+
+	if version != Version1 && version != Version2 {
+		return nil, fmt.Errorf("unsupported version: %d", version)
 	}
 
 	block, err := aes.NewCipher(dek)
@@ -44,6 +55,7 @@ func NewDecryptor(dek, iv []byte, blockSize int) (*Decryptor, error) {
 		hmacKey:   DeriveHMACKey(dek),
 		iv:        iv,
 		blockSize: blockSize,
+		version:   version,
 		block:     block,
 	}, nil
 }
@@ -246,10 +258,27 @@ func (d *Decryptor) VerifyHMACs(encrypted []byte, hmacTable []byte) error {
 }
 
 // makeCounter creates a 16-byte counter value from the IV and block index.
+// Counter = IV[0:12] || uint32(counter_value) in big-endian
+//
+// Version1 (legacy, vulnerable): counter_value = blockIndex
+// Version2 (fixed): counter_value = blockIndex * (blockSize / 16)
+//
+// The version must match the encryption version.
 func (d *Decryptor) makeCounter(blockIndex uint32) []byte {
 	counter := make([]byte, 16)
 	copy(counter[0:12], d.iv[0:12])
-	binary.BigEndian.PutUint32(counter[12:16], blockIndex)
+
+	var counterValue uint32
+	if d.version == Version2 {
+		// Version2: stride by number of AES blocks per ARMOR block
+		aesBlocksPerArmorBlock := uint32(d.blockSize / 16)
+		counterValue = blockIndex * aesBlocksPerArmorBlock
+	} else {
+		// Version1: legacy (buggy) derivation for backward compatibility
+		counterValue = blockIndex
+	}
+
+	binary.BigEndian.PutUint32(counter[12:16], counterValue)
 	return counter
 }
 

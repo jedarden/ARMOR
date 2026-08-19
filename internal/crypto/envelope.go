@@ -23,8 +23,15 @@ const (
 	// HMACSize is the size of each HMAC-SHA256 entry.
 	HMACSize = 32
 
-	// Version1 is the current envelope format version.
+	// Version1 is the initial envelope format version.
+	// WARNING: Version1 has a CTR keystream reuse vulnerability - adjacent blocks share keystream.
+	// Version1 objects must use legacy counter derivation for backward compatibility.
 	Version1 = 0x01
+
+	// Version2 is the fixed envelope format version.
+	// Version2 strides the CTR counter by blockSize/16 to prevent keystream reuse.
+	// All new objects should use Version2.
+	Version2 = 0x02
 
 	// DefaultBlockSize is the default encryption block size.
 	DefaultBlockSize = 65536
@@ -103,7 +110,7 @@ func DecodeHeader(data []byte) (*EnvelopeHeader, error) {
 	h.Version = data[offset]
 	offset++
 
-	if h.Version != Version1 {
+	if h.Version != Version1 && h.Version != Version2 {
 		return nil, fmt.Errorf("%w: got %d", ErrInvalidVersion, h.Version)
 	}
 
