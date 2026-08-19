@@ -1246,6 +1246,12 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 		encryptedBuf = encryptedBuf[:actualBlockSize]
 		n, err := io.ReadFull(dataBody, encryptedBuf)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			s.logger.WithFields(map[string]interface{}{
+				"bucket": token.Bucket,
+				"key":    token.Key,
+				"error":  err.Error(),
+			}).Error("share full object: failed to read encrypted block")
+			http.Error(w, fmt.Sprintf("Failed to read encrypted block: %v", err), http.StatusInternalServerError)
 			return
 		}
 		if n == 0 {
@@ -1256,6 +1262,13 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 		// Verify HMAC
 		hmacOffset := blockIndex * crypto.HMACSize
 		if hmacOffset+crypto.HMACSize > len(hmacTable) {
+			s.logger.WithFields(map[string]interface{}{
+				"bucket":           token.Bucket,
+				"key":              token.Key,
+				"hmac_offset":      hmacOffset,
+				"hmac_table_size":  len(hmacTable),
+			}).Error("share full object: HMAC table bounds check failed")
+			http.Error(w, "HMAC table bounds check failed", http.StatusInternalServerError)
 			return
 		}
 		expectedHMAC := hmacTable[hmacOffset : hmacOffset+crypto.HMACSize]
@@ -1268,6 +1281,12 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 		computed := mac.Sum(nil)
 
 		if !hmac.Equal(computed, expectedHMAC) {
+			s.logger.WithFields(map[string]interface{}{
+				"bucket":     token.Bucket,
+				"key":        token.Key,
+				"blockIndex": blockIndex,
+			}).Warn("share full object: HMAC verification failed - data may be corrupted or tampered")
+			http.Error(w, "HMAC verification failed - data integrity check failed", http.StatusBadRequest)
 			return
 		}
 
