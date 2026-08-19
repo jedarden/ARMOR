@@ -5,7 +5,10 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"log"
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -211,6 +214,74 @@ func (q *ReplicationQueue) drain() {
 	}
 }
 
+// isTransientError determines if an error is transient (retryable) or permanent.
+// Transient errors include network issues, timeouts, rate limits, and temporary service unavailability.
+// Permanent errors include not found, permission denied, and invalid bucket names.
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errMsg := err.Error()
+
+	// Network and timeout errors (transient)
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+
+	// Check for network-related error strings
+	transientPatterns := []string{
+		"timeout",
+		"connection refused",
+		"connection reset",
+		"temporary failure",
+		"rate limit",
+		"too many requests",
+		"service unavailable",
+		"gateway timeout",
+		"bad gateway",
+		"network unreachable",
+		"connection timed out",
+		"read tcp",
+		"write tcp",
+	}
+
+	for _, pattern := range transientPatterns {
+		if strings.Contains(strings.ToLower(errMsg), strings.ToLower(pattern)) {
+			return true
+		}
+	}
+
+	// Check for specific error types
+	var netErr *net.OpError
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	// Permanent errors - these should not be retried
+	permanentPatterns := []string{
+		"not found",
+		"no such",
+		"does not exist",
+		"access denied",
+		"forbidden",
+		"unauthorized",
+		"invalid bucket",
+		"bucket not found",
+		"authentication failed",
+		"permission denied",
+	}
+
+	for _, pattern := range permanentPatterns {
+		if strings.Contains(strings.ToLower(errMsg), strings.ToLower(pattern)) {
+			return false
+		}
+	}
+
+	// Default: treat unknown errors as transient (better to retry than to skip)
+	return true
+}
+
 // processTask performs the actual replication from primary to secondary backend.
 // It handles errors gracefully, implements retry logic with exponential backoff,
 // and updates metrics. The worker never blocks on errors — it logs, increments
@@ -225,8 +296,15 @@ func (q *ReplicationQueue) processTask(t task) {
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			// Exponential backoff: 100ms, 400ms, 900ms
-			backoffMs := int64(100 * attempt * attempt)
+			// Check if error is permanent - if so, skip immediately
+			if !isTransientError(lastErr) {
+				q.logger.Printf("replication failed for %s/%s with permanent error (skipping retries): %v", t.bucket, t.key, lastErr)
+				q.metrics.ErrorsTotal.Add(1)
+				return
+			}
+
+			// Exponential backoff: 100ms, 200ms, 400ms
+			backoffMs := int64(100 * (1 << (attempt - 1)))
 			time.Sleep(time.Duration(backoffMs) * time.Millisecond)
 			q.metrics.RetriesTotal.Add(1)
 		}
