@@ -17,16 +17,34 @@ type Encryptor struct {
 	hmacKey   []byte
 	iv        []byte
 	blockSize int
+	version   uint8
 	block     cipher.Block
 }
 
 // NewEncryptor creates a new encryptor.
+// Defaults to Version1 for backward compatibility.
+// Use NewEncryptorV2 for new objects to get the fixed counter derivation.
 func NewEncryptor(dek, iv []byte, blockSize int) (*Encryptor, error) {
+	return NewEncryptorWithVersion(dek, iv, blockSize, Version1)
+}
+
+// NewEncryptorV2 creates a Version2 encryptor with fixed counter derivation.
+// Use this for all new objects to prevent keystream reuse.
+func NewEncryptorV2(dek, iv []byte, blockSize int) (*Encryptor, error) {
+	return NewEncryptorWithVersion(dek, iv, blockSize, Version2)
+}
+
+// NewEncryptorWithVersion creates a new encryptor with the specified version.
+func NewEncryptorWithVersion(dek, iv []byte, blockSize int, version uint8) (*Encryptor, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("DEK must be 32 bytes")
 	}
 	if len(iv) != 16 {
 		return nil, fmt.Errorf("IV must be 16 bytes")
+	}
+
+	if version != Version1 && version != Version2 {
+		return nil, fmt.Errorf("unsupported version: %d", version)
 	}
 
 	block, err := aes.NewCipher(dek)
@@ -39,6 +57,7 @@ func NewEncryptor(dek, iv []byte, blockSize int) (*Encryptor, error) {
 		hmacKey:   DeriveHMACKey(dek),
 		iv:        iv,
 		blockSize: blockSize,
+		version:   version,
 		block:     block,
 	}, nil
 }
@@ -156,11 +175,31 @@ func (e *Encryptor) EncryptWithStartingCounter(plaintext []byte, startBlockIndex
 }
 
 // makeCounter creates a 16-byte counter value from the IV and block index.
-// Counter = IV[0:12] || uint32(block_index) in big-endian
+// Counter = IV[0:12] || uint32(counter_value) in big-endian
+//
+// Version1 (legacy, vulnerable): counter_value = blockIndex
+//   - BUG: Only increments by 1 per block, but each block uses blockSize/16 AES blocks
+//   - This causes keystream reuse between adjacent blocks (two-time pad)
+//
+// Version2 (fixed): counter_value = blockIndex * (blockSize / 16)
+//   - Strides by the number of AES blocks per ARMOR block
+//   - Ensures no counter reuse across blocks
 func (e *Encryptor) makeCounter(blockIndex uint32) []byte {
 	counter := make([]byte, 16)
 	copy(counter[0:12], e.iv[0:12])
-	binary.BigEndian.PutUint32(counter[12:16], blockIndex)
+
+	var counterValue uint32
+	if e.version == Version2 {
+		// Version2: stride by number of AES blocks per ARMOR block
+		// This prevents counter reuse
+		aesBlocksPerArmorBlock := uint32(e.blockSize / 16)
+		counterValue = blockIndex * aesBlocksPerArmorBlock
+	} else {
+		// Version1: legacy (buggy) derivation for backward compatibility
+		counterValue = blockIndex
+	}
+
+	binary.BigEndian.PutUint32(counter[12:16], counterValue)
 	return counter
 }
 
@@ -185,8 +224,14 @@ func (e *Encryptor) BlockSize() int {
 // NewEncryptorWithCounter creates a new encryptor with a specific starting counter.
 // This is used for multipart uploads where each part needs to continue the CTR stream
 // from where the previous part left off.
+// Defaults to Version1 for backward compatibility.
 func NewEncryptorWithCounter(dek, iv []byte, blockSize int, startBlockIndex uint32) (*Encryptor, error) {
-	enc, err := NewEncryptor(dek, iv, blockSize)
+	return NewEncryptorWithCounterAndVersion(dek, iv, blockSize, startBlockIndex, Version1)
+}
+
+// NewEncryptorWithCounterAndVersion creates a new encryptor with a specific starting counter and version.
+func NewEncryptorWithCounterAndVersion(dek, iv []byte, blockSize int, startBlockIndex uint32, version uint8) (*Encryptor, error) {
+	enc, err := NewEncryptorWithVersion(dek, iv, blockSize, version)
 	if err != nil {
 		return nil, err
 	}
