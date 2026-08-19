@@ -1,12 +1,16 @@
 package manifest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jedarden/armor/internal/metrics"
 )
 
 // compactionStore is a simple in-memory object store for compaction tests.
@@ -92,10 +96,13 @@ func putDelta(s *compactionStore, seq uint64) {
 func TestCompact_NoOpWhenSeqZero(t *testing.T) {
 	idx := New()
 	store := newCompactionStore()
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), store.deleter(),
-		time.Hour, 0)
+		time.Hour, 0, logger, metrics)
 
 	if err := c.doCompact(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -125,10 +132,13 @@ func TestCompact_SnapshotUploadedAndDeltasDeleted(t *testing.T) {
 	}
 	// Delta 6 was written concurrently during compaction and must survive.
 	putDelta(store, 6)
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), store.deleter(),
-		time.Hour, 0)
+		time.Hour, 0, logger, metrics)
 
 	if err := c.doCompact(context.Background()); err != nil {
 		t.Fatalf("doCompact: %v", err)
@@ -173,10 +183,13 @@ func TestCompact_NoDeltasToDelete(t *testing.T) {
 	idx.SetSeq(3) // seq=3 but no files in store
 
 	store := newCompactionStore()
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), store.deleter(),
-		time.Hour, 0)
+		time.Hour, 0, logger, metrics)
 
 	if err := c.doCompact(context.Background()); err != nil {
 		t.Fatalf("doCompact: %v", err)
@@ -200,10 +213,13 @@ func TestCompact_SnapshotOverwritesPrevious(t *testing.T) {
 	store := newCompactionStore()
 	putDelta(store, 1)
 	putDelta(store, 2)
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), store.deleter(),
-		time.Hour, 0)
+		time.Hour, 0, logger, metrics)
 
 	// First compaction.
 	if err := c.doCompact(context.Background()); err != nil {
@@ -240,10 +256,13 @@ func TestCompact_UploadError(t *testing.T) {
 		return fmt.Errorf("simulated upload failure")
 	}
 	store := newCompactionStore()
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		failUpload, store.lister(), store.deleter(),
-		time.Hour, 0)
+		time.Hour, 0, logger, metrics)
 
 	err := c.doCompact(context.Background())
 	if err == nil {
@@ -262,10 +281,13 @@ func TestCompact_DeleteError(t *testing.T) {
 	failDelete := func(ctx context.Context, keys []string) error {
 		return fmt.Errorf("simulated delete failure")
 	}
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), failDelete,
-		time.Hour, 0)
+		time.Hour, 0, logger, metrics)
 
 	err := c.doCompact(context.Background())
 	if err == nil {
@@ -284,10 +306,13 @@ func TestCompactor_ThresholdTrigger(t *testing.T) {
 	for seq := uint64(1); seq <= 3; seq++ {
 		putDelta(store, seq)
 	}
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), store.deleter(),
-		time.Hour, 3) // threshold = 3
+		time.Hour, 3, logger, metrics) // threshold = 3
 
 	c.Start(context.Background())
 	defer c.Stop()
@@ -312,9 +337,12 @@ func TestCompactor_ThresholdTrigger(t *testing.T) {
 func TestCompactor_StopIsIdempotent(t *testing.T) {
 	idx := New()
 	store := newCompactionStore()
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), store.deleter(),
-		time.Hour, 0)
+		time.Hour, 0, logger, metrics)
 	c.Start(context.Background())
 	c.Stop()
 	c.Stop() // must not panic or deadlock
@@ -325,10 +353,13 @@ func TestCompactor_StopIsIdempotent(t *testing.T) {
 func TestCompactor_ContextCancellationStops(t *testing.T) {
 	idx := New()
 	store := newCompactionStore()
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 	ctx, cancel := context.WithCancel(context.Background())
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), store.deleter(),
-		time.Hour, 0)
+		time.Hour, 0, logger, metrics)
 	c.Start(ctx)
 	cancel()
 	c.Stop() // must return without deadlock
@@ -348,10 +379,13 @@ func TestCompact_Idempotency(t *testing.T) {
 	for seq := uint64(1); seq <= 4; seq++ {
 		putDelta(store, seq)
 	}
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), store.deleter(),
-		time.Hour, 0)
+		time.Hour, 0, logger, metrics)
 
 	// First compaction: snapshot written, deltas 1-4 deleted.
 	if err := c.doCompact(context.Background()); err != nil {
@@ -404,6 +438,54 @@ func TestCompact_Idempotency(t *testing.T) {
 	}
 }
 
+// TestCompact_ErrorLoggedAndCounted verifies that compaction errors are
+// logged and counted in metrics instead of being silently swallowed.
+func TestCompact_ErrorLoggedAndCounted(t *testing.T) {
+	idx := New()
+	idx.SetSeq(1)
+
+	failUpload := func(ctx context.Context, key string, data []byte) error {
+		return fmt.Errorf("simulated upload failure")
+	}
+	store := newCompactionStore()
+
+	// Create a buffer to capture log output
+	var logBuf bytes.Buffer
+	logger := log.New(&logBuf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
+
+	// Create metrics instance
+	metrics := metrics.NewMetrics()
+
+	c := NewCompactor(idx, compTestPrefix, compTestWriter,
+		failUpload, store.lister(), store.deleter(),
+		time.Hour, 0, logger, metrics)
+
+	// Trigger compaction via compact() (the production path)
+	c.compact(context.Background())
+
+	// Verify error was logged
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "compaction error") {
+		t.Errorf("expected log output to contain 'compaction error', got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "simulated upload failure") {
+		t.Errorf("expected log output to contain 'simulated upload failure', got: %s", logOutput)
+	}
+
+	// Verify error metric was incremented
+	if metrics.CompactionErrorsTotal.Value() != 1 {
+		t.Errorf("expected CompactionErrorsTotal=1, got %d", metrics.CompactionErrorsTotal.Value())
+	}
+
+	// Verify deltasSince was still reset despite the error
+	c.mu.Lock()
+	count := c.deltasSince
+	c.mu.Unlock()
+	if count != 0 {
+		t.Errorf("expected deltasSince to be reset to 0, got %d", count)
+	}
+}
+
 // TestCompactor_DeltaCountResetAfterCompaction verifies that the internal
 // delta counter is reset so that the next threshold trigger requires a full
 // threshold count of new deltas.
@@ -415,10 +497,13 @@ func TestCompactor_DeltaCountResetAfterCompaction(t *testing.T) {
 	store := newCompactionStore()
 	putDelta(store, 1)
 	putDelta(store, 2)
+	metrics := metrics.NewMetrics()
+	var buf bytes.Buffer
+	logger := log.New(&buf, "[test-compact] ", log.LstdFlags|log.Lmsgprefix)
 
 	c := NewCompactor(idx, compTestPrefix, compTestWriter,
 		store.uploader(), store.lister(), store.deleter(),
-		time.Hour, 2) // threshold = 2
+		time.Hour, 2, logger, metrics) // threshold = 2
 
 	c.Start(context.Background())
 	defer c.Stop()

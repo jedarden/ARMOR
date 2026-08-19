@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -37,6 +38,21 @@ import (
 	"github.com/jedarden/armor/internal/server/handlers"
 	"github.com/jedarden/armor/internal/server/middleware"
 )
+
+// loggerWriter adapts the structured logging.Logger to the io.Writer interface
+// expected by the standard library's log.Logger. This allows the manifest
+// compactor (which uses standard library logging) to write to the structured
+// logger configured in the server.
+type loggerWriter struct {
+	logger *logging.Logger
+}
+
+// Write implements io.Writer by forwarding the byte array to the structured
+// logger's Warn method (compaction errors are warnings, not fatal errors).
+func (w *loggerWriter) Write(p []byte) (n int, err error) {
+	w.logger.Warn(string(p))
+	return len(p), nil
+}
 
 // Server represents the ARMOR server.
 type Server struct {
@@ -273,6 +289,12 @@ func New(cfg *config.Config) (*Server, error) {
 			return b2Backend.DeleteObjects(ctx, cfg.Bucket, keys)
 		}
 		compactionInterval := time.Duration(cfg.ManifestCompactionInterval) * time.Second
+
+		// Create a logger writer adapter that bridges the structured logger to
+		// the standard library logger interface expected by the compactor.
+		loggerWriter := &loggerWriter{logger: logger}
+		compactorLogger := log.New(loggerWriter, "[manifest-compactor] ", log.LstdFlags|log.Lmsgprefix)
+
 		manifestCompactor = manifest.NewCompactor(
 			manifestIdx,
 			cfg.ManifestPrefix,
@@ -282,6 +304,8 @@ func New(cfg *config.Config) (*Server, error) {
 			deleter,
 			compactionInterval,
 			cfg.ManifestCompactionThreshold,
+			compactorLogger,
+			metrics.DefaultMetrics,
 		)
 
 		// Wire writer → compactor: after each delta flush, notify compactor.
