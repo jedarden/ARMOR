@@ -144,6 +144,7 @@ ARMOR is configured via environment variables:
 | `ARMOR_B2_ACCESS_KEY_ID` | Yes | — | B2 application key ID |
 | `ARMOR_B2_SECRET_ACCESS_KEY` | Yes | — | B2 application key |
 | `ARMOR_BUCKET` | Yes | — | B2 bucket name |
+| `ARMOR_PREFIX` | No | — | Key prefix for shared bucket deployments (e.g., `kalshi-tape/`). All keys are stored with this prefix in B2 but are transparent to S3 clients (see ADR-001) |
 | `ARMOR_CF_DOMAIN` | Yes | — | Cloudflare domain CNAME'd to B2 |
 | `ARMOR_MEK` | Yes | — | Master encryption key (hex, 32 bytes) |
 | `ARMOR_AUTH_ACCESS_KEY` | No | (random) | Client access key |
