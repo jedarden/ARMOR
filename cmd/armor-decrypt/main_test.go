@@ -876,3 +876,62 @@ func TestWriteOutputFile(t *testing.T) {
 		t.Errorf("file data mismatch: got %q, want %q", readData, data)
 	}
 }
+
+// TestLoadEscrowWithCFDomain verifies that escrow files can include a
+// cf_domain field for free Bandwidth Alliance egress during break-glass recovery.
+func TestLoadEscrowWithCFDomain(t *testing.T) {
+	// Create a temporary escrow file with cf_domain
+	tmpDir := t.TempDir()
+	testEscrowFile := filepath.Join(tmpDir, "escrow.json")
+
+	mekHex := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	escrowData := fmt.Sprintf(`{
+		"mek": %q,
+		"b2": {
+			"region": "us-west-004",
+			"endpoint": "https://s3.us-west-004.backblazeb2.com",
+			"access_key": "test-key-id",
+			"secret_key": "test-secret",
+			"bucket": "test-bucket",
+			"cf_domain": "cdn.example.com"
+		}
+	}`, mekHex)
+
+	if err := os.WriteFile(testEscrowFile, []byte(escrowData), 0644); err != nil {
+		t.Fatalf("write escrow file: %v", err)
+	}
+
+	// Save and restore original escrowFile global variable and cfDomain env var
+	origEscrowFile := escrowFile // This captures the current global value
+	origCFDomain := os.Getenv("ARMOR_CF_DOMAIN")
+	defer func() {
+		escrowFile = origEscrowFile // Restore global
+		if origCFDomain == "" {
+			os.Unsetenv("ARMOR_CF_DOMAIN")
+		} else {
+			os.Setenv("ARMOR_CF_DOMAIN", origCFDomain)
+		}
+	}()
+
+	// Clear env var to test loading from escrow
+	os.Unsetenv("ARMOR_CF_DOMAIN")
+
+	// Set the global escrowFile variable to point to our test file
+	escrowFile = testEscrowFile
+	mek, err := loadEscrow()
+	if err != nil {
+		t.Fatalf("loadEscrow: %v", err)
+	}
+
+	// Verify MEK was loaded
+	expectedMEK, _ := hex.DecodeString(mekHex)
+	if !bytes.Equal(mek, expectedMEK) {
+		t.Errorf("MEK mismatch: got %x, want %x", mek, expectedMEK)
+	}
+
+	// Verify ARMOR_CF_DOMAIN was set from escrow
+	cfDomain := os.Getenv("ARMOR_CF_DOMAIN")
+	if cfDomain != "cdn.example.com" {
+		t.Errorf("ARMOR_CF_DOMAIN not set from escrow: got %q, want %q", cfDomain, "cdn.example.com")
+	}
+}
