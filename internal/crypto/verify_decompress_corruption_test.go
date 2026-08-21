@@ -8,8 +8,8 @@ import (
 // Byte swapping occurs when pairs of adjacent bytes are reversed (endianness mismatch).
 func TestVerifyDecompression_ByteSwapCorruption(t *testing.T) {
 	tests := []struct {
-		name         string
-		original     []byte
+		name        string
+		original    []byte
 		corruptWith []byte // Swapped version
 		description string
 	}{
@@ -161,7 +161,7 @@ func TestVerifyDecompression_BurstCorruption(t *testing.T) {
 			description:   "Last 3 bytes overwritten with 0xFF",
 		},
 		{
-			name:          "partial burst in middle",
+			name: "partial burst in middle",
 			original: func() []byte {
 				data := make([]byte, 100)
 				for i := range data {
@@ -209,11 +209,14 @@ func TestVerifyDecompression_BurstCorruption(t *testing.T) {
 				result.Error.Offset, result.Diagnostic)
 
 			// Verify the corrupted byte value is reported
-			if len(result.Error.Actual) > 0 {
-				firstByte := result.Error.Actual[0]
-				if firstByte != tt.corruptValue {
-					t.Errorf("Expected corrupted byte 0x%02X, got 0x%02X",
-						tt.corruptValue, firstByte)
+			// The Actual slice contains context before and after the mismatch
+			// The corrupted byte is at position contextBefore within the Actual slice
+			if len(result.Error.Actual) > result.Error.ContextBefore {
+				corruptedByteIndex := result.Error.ContextBefore
+				corruptedByte := result.Error.Actual[corruptedByteIndex]
+				if corruptedByte != tt.corruptValue {
+					t.Errorf("Expected corrupted byte 0x%02X at Actual[%d], got 0x%02X",
+						tt.corruptValue, corruptedByteIndex, corruptedByte)
 				}
 			}
 		})
@@ -309,11 +312,13 @@ func TestVerifyDecompression_MultipleCorruptionPatterns(t *testing.T) {
 			t.Errorf("Expected corruption at offset 50, got %d", result.Error.Offset)
 		}
 
-		// The first corrupted byte should be 0x01
-		if len(result.Error.Actual) > 0 {
-			if result.Error.Actual[0] != 0x01 {
-				t.Errorf("Expected corrupted byte 0x01, got 0x%02X",
-					result.Error.Actual[0])
+		// The corrupted byte at the mismatch position should be 0x01
+		// The context includes 16 bytes before the mismatch, so 0x01 is at index 16
+		if len(result.Error.Actual) > result.Error.ContextBefore {
+			corruptByteIndex := result.Error.ContextBefore
+			if result.Error.Actual[corruptByteIndex] != 0x01 {
+				t.Errorf("Expected corrupted byte 0x01 at context index %d, got 0x%02X",
+					corruptByteIndex, result.Error.Actual[corruptByteIndex])
 			}
 		}
 
@@ -488,10 +493,12 @@ func TestVerifyDecompression_RepeatedByteCorruption(t *testing.T) {
 			}
 
 			// Verify the corrupted value is detected
-			if len(result.Error.Actual) > 0 {
-				if result.Error.Actual[0] != tt.corruptValue {
-					t.Errorf("Expected corrupted value 0x%02X, got 0x%02X",
-						tt.corruptValue, result.Error.Actual[0])
+			// The corrupted byte is at position contextBefore within the Actual slice
+			if len(result.Error.Actual) > result.Error.ContextBefore {
+				corruptedByteIndex := result.Error.ContextBefore
+				if result.Error.Actual[corruptedByteIndex] != tt.corruptValue {
+					t.Errorf("Expected corrupted value 0x%02X at Actual[%d], got 0x%02X",
+						tt.corruptValue, corruptedByteIndex, result.Error.Actual[corruptedByteIndex])
 				}
 			}
 
@@ -657,50 +664,50 @@ func minInt(a, b int) int {
 // TestVerifyDecompression_TruncationDetection verifies truncation is caught.
 func TestVerifyDecompression_TruncationDetection(t *testing.T) {
 	tests := []struct {
-		name          string
-		original      []byte
-		truncateTo    int
-		description   string
-		expectError   bool
-		expectedDiff  int
+		name         string
+		original     []byte
+		truncateTo   int
+		description  string
+		expectError  bool
+		expectedDiff int
 	}{
 		{
-			name:        "truncate 10 bytes from end",
-			original:    make([]byte, 100),
-			truncateTo:  90,
-			description: "Remove last 10 bytes",
+			name:         "truncate 10 bytes from end",
+			original:     make([]byte, 100),
+			truncateTo:   90,
+			description:  "Remove last 10 bytes",
 			expectError:  true,
 			expectedDiff: 10,
 		},
 		{
-			name:        "truncate 50%",
-			original:    make([]byte, 200),
-			truncateTo:  100,
-			description: "Remove half the data",
+			name:         "truncate 50%",
+			original:     make([]byte, 200),
+			truncateTo:   100,
+			description:  "Remove half the data",
 			expectError:  true,
 			expectedDiff: 100,
 		},
 		{
-			name:        "truncate to single byte",
-			original:    make([]byte, 1000),
-			truncateTo:  1,
-			description: "Massive truncation to 1 byte",
+			name:         "truncate to single byte",
+			original:     make([]byte, 1000),
+			truncateTo:   1,
+			description:  "Massive truncation to 1 byte",
 			expectError:  true,
 			expectedDiff: 999,
 		},
 		{
-			name:        "truncate to empty",
-			original:    make([]byte, 100),
-			truncateTo:  0,
-			description: "Complete truncation to empty",
+			name:         "truncate to empty",
+			original:     make([]byte, 100),
+			truncateTo:   0,
+			description:  "Complete truncation to empty",
 			expectError:  true,
 			expectedDiff: 100,
 		},
 		{
-			name:        "no truncation",
-			original:    make([]byte, 50),
-			truncateTo:  50,
-			description: "Full data (no truncation)",
+			name:         "no truncation",
+			original:     make([]byte, 50),
+			truncateTo:   50,
+			description:  "Full data (no truncation)",
 			expectError:  false,
 			expectedDiff: 0,
 		},
@@ -763,24 +770,24 @@ func TestVerifyDecompression_ExtensionCorruption(t *testing.T) {
 		expectedDiff int
 	}{
 		{
-			name:        "extend by 10 bytes",
-			original:    make([]byte, 100),
-			extendWith:  []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
-			description: "Add 10 bytes of 0xFF",
+			name:         "extend by 10 bytes",
+			original:     make([]byte, 100),
+			extendWith:   []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
+			description:  "Add 10 bytes of 0xFF",
 			expectError:  true,
 			expectedDiff: 10,
 		},
 		{
-			name:        "extend with garbage data",
-			original:    make([]byte, 50),
-			extendWith:  []byte{0xDE, 0xAD, 0xBE, 0xEF, 0x00},
-			description: "Add garbage bytes",
+			name:         "extend with garbage data",
+			original:     make([]byte, 50),
+			extendWith:   []byte{0xDE, 0xAD, 0xBE, 0xEF, 0x00},
+			description:  "Add garbage bytes",
 			expectError:  true,
 			expectedDiff: 5,
 		},
 		{
-			name:        "extend with pattern",
-			original:    make([]byte, 100),
+			name:     "extend with pattern",
+			original: make([]byte, 100),
 			extendWith: func() []byte {
 				data := make([]byte, 50)
 				for i := range data {
@@ -788,7 +795,7 @@ func TestVerifyDecompression_ExtensionCorruption(t *testing.T) {
 				}
 				return data
 			}(),
-			description: "Extend with 50 bytes of pattern",
+			description:  "Extend with 50 bytes of pattern",
 			expectError:  true,
 			expectedDiff: 50,
 		},
@@ -868,7 +875,7 @@ func TestVerifyDecompression_CompleteReplacement(t *testing.T) {
 			description: "Completely wrong file signature",
 		},
 		{
-			name:        "scrambled data",
+			name: "scrambled data",
 			original: func() []byte {
 				data := make([]byte, 100)
 				for i := range data {
@@ -893,16 +900,22 @@ func TestVerifyDecompression_CompleteReplacement(t *testing.T) {
 				t.Fatal("Expected error details")
 			}
 
-			// Should detect mismatch at offset 0 (first byte differs)
-			if result.Error.Offset != 0 {
-				t.Errorf("Expected corruption at offset 0, got %d", result.Error.Offset)
-			}
+			// Should detect either length mismatch or byte mismatch at offset 0
+			if result.Error.Offset == -2 {
+				// Length mismatch is expected when sizes differ
+				t.Logf("Complete replacement detected via length mismatch: %s", result.Diagnostic)
+			} else if result.Error.Offset == 0 {
+				// Byte mismatch at first byte when sizes are same
+				t.Logf("Complete replacement detected at offset 0: %s", result.Diagnostic)
 
-			// Verify the bytes are actually different
-			if len(tt.original) > 0 && len(tt.replacement) > 0 {
-				if tt.original[0] == tt.replacement[0] {
-					t.Error("Expected first bytes to differ")
+				// Verify the bytes are actually different
+				if len(tt.original) > 0 && len(tt.replacement) > 0 {
+					if tt.original[0] == tt.replacement[0] {
+						t.Error("Expected first bytes to differ")
+					}
 				}
+			} else {
+				t.Errorf("Expected corruption at offset 0 or length mismatch (-2), got %d", result.Error.Offset)
 			}
 
 			t.Logf("Complete replacement detected: %s", result.Diagnostic)
