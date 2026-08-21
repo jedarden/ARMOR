@@ -14,13 +14,22 @@ Environment variables:
 """
 
 import os
+import re
 import sys
+import uuid
 import boto3
 from botocore.exceptions import ClientError
 
 
 # Configuration
 BLOCK_SIZE = 65536  # 64KB alignment requirement
+RUN_ID = uuid.uuid4().hex[:12]
+
+
+def make_test_key(prefix, test_name):
+    """Return a unique, S3-safe key for one probe case."""
+    slug = re.sub(r'[^a-z0-9]+', '-', test_name.lower()).strip('-')
+    return f'{prefix}-{RUN_ID}-{slug}.bin'
 
 
 def create_s3_client():
@@ -52,7 +61,7 @@ def run_test(test_name, part_sizes, expected_result, s3, bucket):
     Returns:
         Tuple: (passed, actual_result, error_message)
     """
-    key = f"test-multipart-alignment-{test_name.replace(' ', '-').lower()}.bin"
+    key = make_test_key('test-multipart-alignment', test_name)
     upload_id = None
 
     try:
@@ -146,7 +155,7 @@ def run_putobject_test(test_name, object_size, expected_result, s3, bucket):
     Returns:
         Tuple: (passed, actual_result, error_message)
     """
-    key = f"test-putobject-{test_name.replace(' ', '-').lower()}.bin"
+    key = make_test_key('test-putobject', test_name)
 
     try:
         object_data = b'\x00' * object_size
