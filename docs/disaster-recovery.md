@@ -414,6 +414,11 @@ export ARMOR_B2_SECRET_ACCESS_KEY=<b2 application key>
 export ARMOR_B2_REGION=us-west-002
 export ARMOR_B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
 
+# Optional: route ciphertext reads through the B2 download URL proxied by
+# Cloudflare (free Bandwidth Alliance egress). Keep the S3 endpoint above:
+# armor-decrypt still uses it for authenticated metadata requests.
+export ARMOR_CF_DOMAIN=b2-us-west-002.ardenone.com
+
 ./armor-decrypt -v \
   -input  b2://<bucket>/<key> \
   -output /tmp/recovered.bin
@@ -462,17 +467,13 @@ Run on a host outside the protected cluster, with the MEK read from a
 | Cloudflare (`ARMOR_CF_DOMAIN`, e.g. `b2-us-west-002.ardenone.com`) | **~7.9 MB/s** | **free** (Bandwidth Alliance) |
 | Direct B2 S3 (`ARMOR_B2_ENDPOINT`) | **~38 MB/s** | billed |
 
-The ARMOR *service* reads via Cloudflare and falls back to direct S3 only when
-`ARMOR_CF_DOMAIN` is empty (`internal/backend/b2.go`, `GetRangeWithHeaders`).
-
-**`armor-decrypt` has no Cloudflare path.** It builds an S3 client from
-`ARMOR_B2_ENDPOINT` and nothing else, so offline recovery always uses the
-**billed** endpoint. That is a deliberate trade to accept in an emergency — at
-B2's rate a full multi-GB restore costs cents — but it is worth knowing you are
-spending egress, and it is a gap worth closing if offline restores become
-routine. The two are not trivially interchangeable: the CF domain fronts B2's
-*native* download API (`/file/<bucket>/<key>`) with a different auth scheme, not
-the S3 API.
+`armor-decrypt` uses the same B2 range-read path as the ARMOR service. Set
+`ARMOR_CF_DOMAIN` to fetch ciphertext through Cloudflare's native B2 download
+URL (`/file/<bucket>/<key>`) at free Bandwidth Alliance egress. Leave it empty
+to use the direct B2 S3 path instead, which is faster but billed. The S3
+endpoint and credentials remain required in both cases for authenticated
+metadata reads; the Cloudflare domain is not an S3 endpoint and is deliberately
+used only for object range reads.
 
 ### Why the service was slower than either raw path
 
