@@ -4,7 +4,9 @@ A reproducible test script that validates ARMOR's part-size alignment requiremen
 
 ## Background
 
-ARMOR appears to enforce non-standard part-size alignment rules for multipart uploads. This script tests various part size configurations to document exactly what ARMOR enforces.
+ARMOR uses a block-aligned uniform-part-size contract for parts that have a
+following part. This script verifies the ADR-005 exemptions for a lone part and
+the final part, including exact GET/HEAD readback without zero-padding.
 
 ## Prerequisites
 
@@ -48,20 +50,22 @@ python3 probe-armor-multipart-alignment.py
 
 The script tests the following scenarios:
 
-1. **Single misaligned part** - Part size not a multiple of 65536 (FAIL expected)
+1. **Single misaligned part** - A >5 MiB part not a multiple of 65536 (OK expected)
 2. **Single aligned part** - Part size is a multiple of 65536 (OK expected)
-3. **Aligned first part + short final part** - Final part not aligned (FAIL expected)
-4. **Misaligned first part + short final part** - Both parts invalid (FAIL expected)
+3. **Aligned first part + short final part** - Final part not aligned (OK expected)
+4. **Misaligned first part + short final part** - Upload is single-part-only (FAIL expected)
 5. **Exactly-one-block part** - Minimal aligned part (OK expected)
-6. **Zero-byte final part** - Invalid zero-byte part (FAIL expected)
+6. **Zero-byte final part** - Empty final part, no padding (OK expected)
 7. **PutObject with misaligned length** - Non-multipart upload (OK expected)
 
 ## Expected Behavior
 
-If ARMOR enforces strict 65536-byte alignment:
-- Parts not aligned to 65536-byte boundaries should fail with `InvalidPartSize`
-- Aligned parts should succeed
-- PutObject (non-multipart) should succeed regardless of alignment
+Under ADR-005:
+- A lone part may be any size, including non-aligned.
+- A short final part may be any size, including zero bytes.
+- Regular parts that have a following part must remain uniform and block-aligned.
+- Successful cases must return exactly the uploaded bytes on GET and report the
+  same length on HEAD; ARMOR does not zero-pad the final part.
 
 ## Interpretation of Results
 

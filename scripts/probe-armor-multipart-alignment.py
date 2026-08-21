@@ -81,7 +81,25 @@ def run_test(test_name, part_sizes, expected_result, s3, bucket):
             MultipartUpload={'Parts': parts}
         )
 
-        # If we get here, upload succeeded
+        # A successful completion must also round-trip exactly the bytes sent.
+        # This is important for the chosen option (a): ARMOR accepts a short
+        # final part without server-side zero-padding.
+        expected_body = b'\x00' * sum(part_sizes)
+        response = s3.get_object(Bucket=bucket, Key=key)
+        try:
+            downloaded = response['Body'].read()
+        finally:
+            response['Body'].close()
+        if downloaded != expected_body:
+            raise AssertionError(
+                f'GET returned {len(downloaded)} bytes, expected {len(expected_body)}'
+            )
+        head = s3.head_object(Bucket=bucket, Key=key)
+        if head.get('ContentLength') != len(expected_body):
+            raise AssertionError(
+                f'HEAD returned {head.get("ContentLength")} bytes, expected {len(expected_body)}'
+            )
+
         actual_result = 'OK'
         error_message = None
 
@@ -92,9 +110,7 @@ def run_test(test_name, part_sizes, expected_result, s3, bucket):
         error_code = e.response.get('Error', {}).get('Code', 'Unknown')
         error_message = f"{error_code}: {e.response.get('Error', {}).get('Message', 'No message')}"
 
-        if error_code == 'InvalidPartSize':
-            actual_result = 'FAIL'
-        elif error_code == 'EntityTooSmall':
+        if error_code in ('InvalidPartSize', 'InvalidPart', 'EntityTooSmall'):
             actual_result = 'FAIL'
         else:
             actual_result = f'UNEXPECTED({error_code})'
@@ -136,7 +152,19 @@ def run_putobject_test(test_name, object_size, expected_result, s3, bucket):
         object_data = b'\x00' * object_size
         s3.put_object(Bucket=bucket, Key=key, Body=object_data)
 
-        # If we get here, upload succeeded
+        response = s3.get_object(Bucket=bucket, Key=key)
+        try:
+            downloaded = response['Body'].read()
+        finally:
+            response['Body'].close()
+        expected_body = b'\x00' * object_size
+        if downloaded != expected_body:
+            raise AssertionError(
+                f'GET returned {len(downloaded)} bytes, expected {len(expected_body)}'
+            )
+        if s3.head_object(Bucket=bucket, Key=key).get('ContentLength') != object_size:
+            raise AssertionError(f'HEAD returned the wrong length for {key}')
+
         actual_result = 'OK'
         error_message = None
 
@@ -185,10 +213,10 @@ def main():
     # Define test cases
     test_cases = [
         {
-            'name': 'Single misaligned part (4837376 B = 65536*73 + 32768)',
-            'parts': [4837376],  # 73.8 blocks - NOT aligned
-            'expected': 'FAIL',
-            'reason': 'Part size not a multiple of block size'
+            'name': 'Single misaligned part (5275648 B = 5 MiB + 32768)',
+            'parts': [5 * 1024 * 1024 + 32768],  # > 5 MiB, NOT aligned
+            'expected': 'OK',
+            'reason': 'Part 1 starts at block 0, so a lone part may be non-aligned'
         },
         {
             'name': 'Single aligned part (4849664 B = 65536*74)',
@@ -198,15 +226,15 @@ def main():
         },
         {
             'name': 'Aligned first part + short final part (1000 B)',
-            'parts': [BLOCK_SIZE * 10, 1000],  # 10 blocks + 1000-byte tail
-            'expected': 'FAIL',
-            'reason': 'Final part size not a multiple of block size'
+            'parts': [5 * 1024 * 1024, 1000],  # valid regular part + 1000-byte tail
+            'expected': 'OK',
+            'reason': 'A short final part has no following part to misalign'
         },
         {
             'name': 'Misaligned first part + short final part',
-            'parts': [4837376, 1000],  # Misaligned first + short final
+            'parts': [5 * 1024 * 1024 + 32768, 1000],  # Misaligned first + short final
             'expected': 'FAIL',
-            'reason': 'First part misaligned, final part also invalid'
+            'reason': 'A non-aligned part 1 makes the upload single-part-only'
         },
         {
             'name': 'Exactly-one-block part (65536 B)',
@@ -216,9 +244,9 @@ def main():
         },
         {
             'name': 'Zero-byte final part',
-            'parts': [BLOCK_SIZE, 0],  # Aligned first + zero-byte final
-            'expected': 'FAIL',
-            'reason': 'Zero-byte part is invalid'
+            'parts': [5 * 1024 * 1024, 0],  # Aligned first + zero-byte final
+            'expected': 'OK',
+            'reason': 'An empty final part contributes no bytes and is accepted'
         },
     ]
 
