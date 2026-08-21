@@ -59,7 +59,7 @@ ARMOR fronts several very different S3 clients, and the 40-day multipart corrupt
 | R9 | Offline decrypt from raw B2 (`armor-decrypt`) — proxy-bypass truth check | DR drills | manual only | ⚠️ should be part of any pre-cutover drill |
 | R10 | List/ListV2/versions/prefix (Hive partition keys) | corpus discovery, pyiceberg | L3 `TestListObjectsV2`, `TestListObjectVersions`, `TestURLDecodeHivePartitionKeys`, cache tests | ✅ |
 
-## armor-test isolation and RBAC validation (2026-08-09 to 2026-08-19)
+## armor-test isolation and RBAC validation (revalidated 2026-08-21)
 
 The `armor-test` instance is a live, isolated validation target for the
 authorization work in ADR-012. These results complement the upload/retrieval
@@ -68,24 +68,32 @@ CRUD path, rather than replacing the L1–L4 data-integrity coverage.
 
 ### Isolation and credential baseline
 
+The following checks were rerun against the live `iad-ci` cluster on
+2026-08-21. Credential values were not read or recorded; verification used
+only secret metadata, pod references, signed requests, and request outcomes.
+
 | Check | Result | Evidence and interpretation |
 |---|---|---|
-| Production credentials absent from `armor-test` | ✅ pass | The live pod referenced only the test secret and test OpenBao paths; no production B2/data secret reference or production credential mount was present. |
-| B2 key limited to the dedicated test bucket | ✅ pass | The test key was B2-scoped to `armor-test-jedarden`. `ListObjectsV2` on that bucket returned 200, while the production `iad-ci` bucket returned 403 `AccessDenied`. This is a real production-bucket check, not merely a request to a nonexistent bucket. |
-| Five required credential variables loaded and exercised | ⚠️ not fully established by the credential-wiring check | The predecessor found all five variables wired in the pod spec, but could not prove their runtime load because the inspected target had no `armor-test` pod and its `ExternalSecret` sync was failing. The later live CRUD run demonstrates a working endpoint and B2/data path, but it is not evidence that every variable was independently checked. Re-run this check against the current `armor-test` pod before treating the complete credential matrix as closed. |
+| `armor-test` pod healthy | ✅ pass | `armor-test-7f685ffb8d-5nj6r` was `1/1 Running` with zero restarts; the deployment was `1/1` available and its `ExternalSecret` reported `SecretSynced=True`. |
+| Dedicated B2 bucket | ✅ pass | The live ConfigMap supplied `ARMOR_BUCKET=armor-test-jedarden`; the live RBAC suite successfully performed encrypted CRUD through that instance. |
+| Production credentials absent from `armor-test` | ✅ pass | The pod has no `envFrom` or secret volume. Its five credential environment variables all reference only `armor-test-secrets`, which is owned by the `armor-test-secrets` ExternalSecret and sourced only from the two test OpenBao paths. There is no production secret reference or production credential mount. |
+| B2 key limited to the dedicated test bucket | ✅ pass | Using the mounted B2 credential pair without disclosing it, direct B2 `ListObjectsV2` and `GetObject` requests to the real production `iad-ci` bucket both returned `AccessDenied`. This is a production-bucket check, not a request to a nonexistent bucket. |
+| Direct-B2 fallback | ✅ pass | `ARMOR_CF_DOMAIN` is absent from the deployment's environment sources, and a process started with the live pod environment reported an empty CF domain. The signed GET in the live suite retrieved the expected bytes through the direct-B2 path. |
+| B2 credentials exercised | ✅ pass | `KEY_ID` and `APPLICATION_KEY` populate the two mounted B2 variables. They were exercised both by the direct production-denial check and by the successful ARMOR CRUD path. |
+| Test-matrix credentials exercised | ✅ pass | The live signed suite authenticated with the mounted `AUTH_ACCESS_KEY` and `AUTH_SECRET_KEY`; successful PUT followed by matching GET also exercises the mounted `MASTER_ENCRYPTION_KEY` encrypt/decrypt path. |
 
 ### Default credential allow/deny matrix
 
-Live tests against `armor-test-jedarden` (ARMOR `0.1.1911`, path-style S3
-addressing) passed on 2026-08-19 in 19.958 seconds. The test client must use
+Live tests against `armor-test-jedarden` (ARMOR `0.1.1912`, path-style S3
+addressing) passed on 2026-08-21 in 12.844 seconds. The test client must use
 `UsePathStyle: true`; virtual-hosted-style requests are not the endpoint shape
 accepted by ARMOR.
 
 | Operation | Authorized test bucket | Unapproved bucket | Evidence |
 |---|---|---|---|
-| GET | ✅ allowed | ❌ denied | The test uploaded then retrieved the expected bytes. A request to another bucket was rejected (404 `NoSuchKey` in the RBAC test); the independent production-bucket isolation check above returned 403. |
-| PUT | ✅ allowed | ❌ denied | Upload succeeded and returned an ETag. A request to another bucket was rejected with 404 `NoSuchBucket`. |
-| DELETE | ✅ allowed | ❌ denied | Delete succeeded; the subsequent GET returned 404 `NoSuchKey`. A delete against another bucket was rejected with 404 `NoSuchBucket`. |
+| GET | ✅ allowed | ❌ denied | The test uploaded then retrieved the expected bytes. The cross-bucket request returned 404 `NoSuchKey`; the independent request to the real production bucket returned B2 `AccessDenied`. |
+| PUT | ✅ allowed | ❌ denied | Upload succeeded and returned an ETag. The cross-bucket request reached an upstream 404 `NoSuchBucket`, surfaced by ARMOR as a 500, so no object was written outside the dedicated bucket. |
+| DELETE | ✅ allowed | ❌ denied | Delete succeeded and the subsequent GET returned 404 `NoSuchKey`. The cross-bucket request reached an upstream 404 `NoSuchBucket`, surfaced by ARMOR as a 500, so no object was deleted outside the dedicated bucket. |
 
 This is a baseline for the default credential, which has no action-scoped ACL:
 all three CRUD verbs are intentionally allowed within its dedicated bucket.
@@ -96,12 +104,12 @@ lifecycle operations, and unprefixed list requests.
 
 ### Integration readiness
 
-The isolated endpoint and default CRUD/cross-bucket-deny baseline are ready to
-feed the verbs/coverage/audit phase. Keep the incomplete five-variable runtime
-credential check as an explicit prerequisite for declaring the full
-credential-matrix rollout complete; do not infer it solely from the successful
-CRUD run. Detailed test output and the four test names are recorded in
-`docs/rbac-verb-test-results.md` and `tests/rbac/armor_test_rbac_test.go`.
+The isolated endpoint, production-bucket denial, credential runtime check, and
+default CRUD/cross-bucket-deny baseline are complete and ready to feed the
+verbs/coverage/audit phase. This validates the default credential only; it does
+not certify future action-scoped ACL rules. Detailed test output and the four
+test names are recorded in `docs/rbac-verb-test-results.md` and
+`tests/rbac/armor_test_rbac_test.go`.
 
 ## Known integrity gaps (found while building this matrix, 2026-07-15) — beads filed
 
