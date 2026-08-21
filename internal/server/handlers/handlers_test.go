@@ -1881,6 +1881,141 @@ func TestListMultipartUploads_NoArmorPrefix(t *testing.T) {
 	}
 }
 
+// multipartUploadsListCaptureBackend wraps mockBackend and records the arguments passed
+// to ListMultipartUploads, so tests can assert the handler forwards the correct
+// (configured + client) prefix to the backend.
+type multipartUploadsListCaptureBackend struct {
+	*mockBackend
+	mu                      sync.Mutex
+	listMultipartCalls      int
+	gotPrefix               string
+}
+
+func (c *multipartUploadsListCaptureBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*backend.ListMultipartUploadsResult, error) {
+	c.mu.Lock()
+	c.listMultipartCalls++
+	c.gotPrefix = prefix
+	c.mu.Unlock()
+	return c.mockBackend.ListMultipartUploads(ctx, bucket, prefix)
+}
+
+// lastPrefix returns the prefix argument from the most recent ListMultipartUploads call.
+func (c *multipartUploadsListCaptureBackend) lastPrefix() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gotPrefix
+}
+
+// TestListMultipartUploads_PrefixEndToEnd verifies the full prefix round-trip when
+// a client supplies a prefix on top of a configured ARMOR_PREFIX:
+//  1. the client prefix is composed with the configured prefix and passed to the backend,
+//  2. the backend filters using that composed prefix,
+//  3. the configured prefix is stripped from the returned upload keys and NextKeyMarker,
+//  4. the client sees only its own unprefixed keys.
+//
+// This test must FAIL if applyPrefix() or stripPrefix() is removed — it is a regression
+// tripwire, not a vacuous assertion.
+func TestListMultipartUploads_PrefixEndToEnd(t *testing.T) {
+	mek := make([]byte, 32)
+	if _, err := rand.Read(mek); err != nil {
+		t.Fatalf("failed to generate MEK: %v", err)
+	}
+
+	cfg := &config.Config{
+		BlockSize:     65536,
+		Prefix:        "vault/",
+		AuthAccessKey: "test-access-key",
+		AuthSecretKey: "test-secret-key",
+	}
+
+	mb := newMockBackend()
+	cb := &multipartUploadsListCaptureBackend{mockBackend: mb}
+	cache := backend.NewMetadataCache(1000, 300)
+	footerCache := backend.NewFooterCache(1000, 300)
+	km, err := keymanager.New(mek, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create key manager: %v", err)
+	}
+
+	h := handlers.New(cfg, cb, cache, footerCache, km, nil)
+
+	// The mock backend returns uploads with keys constructed from whatever prefix it receives.
+	// When we pass a client prefix "uploads/", the backend should receive "vault/uploads/"
+	// (configured + client), and the response should have "vault/" stripped so the client
+	// sees only "uploads/test-multipart-upload.txt".
+
+	clientPrefix := "uploads/"
+
+	// List multipart uploads with prefix
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket?uploads=&prefix="+clientPrefix, nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListMultipartUploads failed: status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// Criterion 1: the composed prefix (configured + client) reached the backend.
+	if got, want := cb.lastPrefix(), "vault/uploads/"; got != want {
+		t.Errorf("backend received prefix %q, want %q (configured + client)", got, want)
+	}
+
+	// Parse the XML response.
+	var result struct {
+		Uploads       []struct {
+			Key string `xml:"Key"`
+		} `xml:"Upload"`
+		NextKeyMarker string `xml:"NextKeyMarker"`
+	}
+
+	body, err := io.ReadAll(w.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to parse XML: %v\nResponse: %s", err, string(body))
+	}
+
+	// Criterion 2: every returned upload key is unprefixed (no "vault/" in client-visible keys).
+	for _, upload := range result.Uploads {
+		if strings.HasPrefix(upload.Key, "vault/") {
+			t.Errorf("upload key %q still carries the configured prefix", upload.Key)
+		}
+		// The mock backend returns keys with the full backend prefix "vault/uploads/",
+		// so after stripping we should see "uploads/test-multipart-upload.txt"
+		if upload.Key == "vault/uploads/test-multipart-upload.txt" {
+			t.Errorf("upload key was not stripped: got %q, want %q", upload.Key, "uploads/test-multipart-upload.txt")
+		}
+	}
+
+	// Verify we got the expected unprefixed key
+	expectedKey := "uploads/test-multipart-upload.txt"
+	found := false
+	for _, upload := range result.Uploads {
+		if upload.Key == expectedKey {
+			found = true
+			break
+		}
+	}
+	if !found {
+		keys := make([]string, len(result.Uploads))
+		for i, u := range result.Uploads {
+			keys[i] = u.Key
+		}
+		t.Errorf("expected unprefixed key %q in response, got keys: %v", expectedKey, keys)
+	}
+
+	// Criterion 3: NextKeyMarker has the configured prefix stripped.
+	if result.NextKeyMarker != "" && strings.HasPrefix(result.NextKeyMarker, "vault/") {
+		t.Errorf("NextKeyMarker %q still carries the configured prefix", result.NextKeyMarker)
+	}
+	// The mock returns NextKeyMarker with the full backend prefix, so after stripping
+	// we should see "uploads/next-upload-marker.txt"
+	if result.NextKeyMarker != "" && result.NextKeyMarker == "vault/uploads/next-upload-marker.txt" {
+		t.Errorf("NextKeyMarker was not stripped: got %q, want %q", result.NextKeyMarker, "uploads/next-upload-marker.txt")
+	}
+}
+
 // TestAbortMultipartUploadNotFound tests aborting a non-existent upload
 func TestAbortMultipartUploadNotFound(t *testing.T) {
 	cfg, mb, cache, footerCache, mek := testSetup(t)
