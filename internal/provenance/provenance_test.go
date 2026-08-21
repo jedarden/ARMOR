@@ -423,3 +423,298 @@ func TestAuditUntrackedObjects(t *testing.T) {
 		t.Errorf("untracked object = %s, want data/untracked.txt", result.UntrackedObjects[0])
 	}
 }
+
+// TestAuditWithKeyEvent tests that the audit can handle chains containing
+// both Entry and KeyEvent objects (e.g., key rotation events).
+//
+// Verifies that:
+// 1. Key events are not counted as upload entries
+// 2. Key events are counted separately in KeyEvents field
+// 3. Chain integrity is maintained across mixed entry types
+func TestAuditWithKeyEvent(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+
+	// Record an upload
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("test content")))
+	err := m.RecordUpload(ctx, "data/file1.txt", plaintextSHA, "put")
+	if err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+
+	// Record a key event (simulating a key rotation)
+	err = m.RecordKeyEvent(ctx, "key-rotate-start", KeyEventOpts{
+		OldMEKHash: "aaaa1111bbbb2222",
+		NewMEKHash: "cccc3333dddd4444",
+		RotationID: "test-rotation-1",
+	})
+	if err != nil {
+		t.Fatalf("RecordKeyEvent failed: %v", err)
+	}
+
+	// Add ARMOR metadata to the tracked object
+	meta := map[string]string{
+		"x-amz-meta-armor-version": "1",
+	}
+	mb.metadata["test-bucket/data/file1.txt"] = meta
+
+	// Perform audit
+	auditor := NewAuditor(mb, "test-bucket")
+	result, err := auditor.Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+
+	// Verify overall status
+	if result.Status != "valid" {
+		t.Errorf("audit status = %s, want valid", result.Status)
+	}
+
+	if len(result.Writers) != 1 {
+		t.Fatalf("expected 1 writer, got %d", len(result.Writers))
+	}
+
+	// CRITICAL: Key events should NOT be counted as upload entries
+	if result.Writers[0].EntriesVerified != 1 {
+		t.Errorf("EntriesVerified = %d, want 1 (key events shouldn't count as uploads)",
+			result.Writers[0].EntriesVerified)
+	}
+
+	// CRITICAL: Key events should be counted separately
+	if result.Writers[0].KeyEvents != 1 {
+		t.Errorf("KeyEvents = %d, want 1", result.Writers[0].KeyEvents)
+	}
+
+	// Total entries should only count uploads, not key events
+	if result.TotalEntries != 1 {
+		t.Errorf("TotalEntries = %d, want 1 (key events shouldn't count)",
+			result.TotalEntries)
+	}
+
+	// Verify the chain is valid (hashes link correctly)
+	if !result.Writers[0].Valid {
+		t.Error("Writer chain should be valid even with key events")
+	}
+
+	// Verify head sequence is 2 (upload + key event)
+	if result.Writers[0].HeadSequence != 2 {
+		t.Errorf("HeadSequence = %d, want 2", result.Writers[0].HeadSequence)
+	}
+}
+
+// TestAuditBrokenChainHash tests that audit detects broken chain hash links.
+func TestAuditBrokenChainHash(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+
+	// Record two uploads
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("test content")))
+	err := m.RecordUpload(ctx, "data/file1.txt", plaintextSHA, "put")
+	if err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+
+	err = m.RecordUpload(ctx, "data/file2.txt", plaintextSHA, "put")
+	if err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+
+	// Tamper with the chain hash of entry 1
+	entryKey := fmt.Sprintf("%s%s/%d.json", ChainPrefix, "test-writer", 1)
+	entryData := mb.objects["test-bucket/"+entryKey]
+	var entry Entry
+	if err := json.Unmarshal(entryData, &entry); err != nil {
+		t.Fatalf("Failed to unmarshal entry: %v", err)
+	}
+	// Corrupt the chain hash
+	entry.ChainHash = "corruptedhash1234567890123456789012345678901234567890123456789012345678"
+	corruptedData, _ := json.Marshal(entry)
+	mb.objects["test-bucket/"+entryKey] = corruptedData
+
+	// Perform audit
+	auditor := NewAuditor(mb, "test-bucket")
+	result, err := auditor.Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+
+	if result.Status != "invalid" {
+		t.Errorf("audit status = %s, want invalid", result.Status)
+	}
+
+	if len(result.Writers) != 1 {
+		t.Fatalf("expected 1 writer, got %d", len(result.Writers))
+	}
+
+	if result.Writers[0].Valid {
+		t.Error("expected writer audit to be invalid due to broken chain hash")
+	}
+
+	if result.Writers[0].Error == "" {
+		t.Error("expected error message for broken chain hash")
+	}
+}
+
+// TestAuditMissingEntry tests that audit detects missing entries in the chain.
+func TestAuditMissingEntry(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+
+	// Record two uploads
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("test content")))
+	err := m.RecordUpload(ctx, "data/file1.txt", plaintextSHA, "put")
+	if err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+
+	err = m.RecordUpload(ctx, "data/file2.txt", plaintextSHA, "put")
+	if err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+
+	// Delete entry 1 to create a gap
+	entryKey := fmt.Sprintf("%s%s/%d.json", ChainPrefix, "test-writer", 1)
+	delete(mb.objects, "test-bucket/"+entryKey)
+
+	// Perform audit
+	auditor := NewAuditor(mb, "test-bucket")
+	result, err := auditor.Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+
+	if result.Status != "invalid" {
+		t.Errorf("audit status = %s, want invalid", result.Status)
+	}
+
+	if len(result.Writers) != 1 {
+		t.Fatalf("expected 1 writer, got %d", len(result.Writers))
+	}
+
+	if result.Writers[0].Valid {
+		t.Error("expected writer audit to be invalid due to missing entry")
+	}
+
+	if result.Writers[0].Error == "" {
+		t.Error("expected error message for missing entry")
+	}
+}
+
+// TestAuditGenesisLink tests that audit verifies chain links back to genesis.
+func TestAuditGenesisLink(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+
+	// Record an upload
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("test content")))
+	err := m.RecordUpload(ctx, "data/file1.txt", plaintextSHA, "put")
+	if err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+
+	// Tamper with the first entry's prev chain hash to break genesis link
+	entryKey := fmt.Sprintf("%s%s/%d.json", ChainPrefix, "test-writer", 1)
+	entryData := mb.objects["test-bucket/"+entryKey]
+	var entry Entry
+	if err := json.Unmarshal(entryData, &entry); err != nil {
+		t.Fatalf("Failed to unmarshal entry: %v", err)
+	}
+	// Set to non-initial hash
+	entry.PrevChainHash = "brokenlink123456789012345678901234567890123456789012345678901234"
+	corruptedData, _ := json.Marshal(entry)
+	mb.objects["test-bucket/"+entryKey] = corruptedData
+
+	// Perform audit
+	auditor := NewAuditor(mb, "test-bucket")
+	result, err := auditor.Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+
+	if result.Status != "invalid" {
+		t.Errorf("audit status = %s, want invalid", result.Status)
+	}
+
+	if len(result.Writers) != 1 {
+		t.Fatalf("expected 1 writer, got %d", len(result.Writers))
+	}
+
+	if result.Writers[0].Valid {
+		t.Error("expected writer audit to be invalid due to broken genesis link")
+	}
+
+	if result.Writers[0].Error == "" {
+		t.Error("expected error message for broken genesis link")
+	}
+}
+
+// TestAuditMultipleWriters tests audit with multiple independent writer chains.
+func TestAuditMultipleWriters(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+
+	// Create two writers
+	m1 := NewManager(mb, "test-bucket", "writer-1")
+	m2 := NewManager(mb, "test-bucket", "writer-2")
+
+	// Writer 1 records 3 uploads
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("content 1")))
+	for i := 0; i < 3; i++ {
+		key := fmt.Sprintf("data/writer1/file%d.txt", i)
+		err := m1.RecordUpload(ctx, key, plaintextSHA, "put")
+		if err != nil {
+			t.Fatalf("Writer-1 RecordUpload failed: %v", err)
+		}
+		// Add ARMOR metadata
+		meta := map[string]string{"x-amz-meta-armor-version": "1"}
+		mb.metadata["test-bucket/"+key] = meta
+	}
+
+	// Writer 2 records 2 uploads
+	for i := 0; i < 2; i++ {
+		key := fmt.Sprintf("data/writer2/file%d.txt", i)
+		err := m2.RecordUpload(ctx, key, plaintextSHA, "put")
+		if err != nil {
+			t.Fatalf("Writer-2 RecordUpload failed: %v", err)
+		}
+		meta := map[string]string{"x-amz-meta-armor-version": "1"}
+		mb.metadata["test-bucket/"+key] = meta
+	}
+
+	// Perform audit
+	auditor := NewAuditor(mb, "test-bucket")
+	result, err := auditor.Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+
+	if result.Status != "valid" {
+		t.Errorf("audit status = %s, want valid", result.Status)
+	}
+
+	if len(result.Writers) != 2 {
+		t.Errorf("expected 2 writers, got %d", len(result.Writers))
+	}
+
+	if result.TotalEntries != 5 {
+		t.Errorf("total entries = %d, want 5", result.TotalEntries)
+	}
+
+	// Verify each writer's counts
+	writerCounts := make(map[string]int)
+	for _, w := range result.Writers {
+		writerCounts[w.WriterID] = w.EntriesVerified
+	}
+
+	if writerCounts["writer-1"] != 3 {
+		t.Errorf("writer-1 entries = %d, want 3", writerCounts["writer-1"])
+	}
+
+	if writerCounts["writer-2"] != 2 {
+		t.Errorf("writer-2 entries = %d, want 2", writerCounts["writer-2"])
+	}
+}

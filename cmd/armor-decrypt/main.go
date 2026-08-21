@@ -132,7 +132,9 @@ MEK Input (one required):
   -mek-file FILE     Read MEK from file (hex, 64 chars)
   -mek-env           Allow ARMOR_MEK env var fallback (default: true)
   -escrow FILE       Path to escrow JSON file containing MEK and complete B2
-                      configuration for self-contained break-glass recovery.
+                      configuration (region, endpoint, credentials, bucket, and
+                      optional cf_domain for free Bandwidth Alliance egress)
+                      for self-contained break-glass recovery.
                       This is the recommended method for disaster recovery.
 
 Input Source (required):
@@ -252,6 +254,7 @@ type escrowPackage struct {
 		AccessKey  string `json:"access_key"`
 		SecretKey  string `json:"secret_key"`
 		Bucket     string `json:"bucket"`
+		CFDomain   string `json:"cf_domain"`
 	} `json:"b2"`
 }
 
@@ -296,6 +299,9 @@ func loadEscrow() ([]byte, error) {
 	}
 	if pkg.B2.Bucket != "" {
 		os.Setenv("ARMOR_BUCKET", pkg.B2.Bucket)
+	}
+	if pkg.B2.CFDomain != "" {
+		os.Setenv("ARMOR_CF_DOMAIN", pkg.B2.CFDomain)
 	}
 
 	if verboseFlag {

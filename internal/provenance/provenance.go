@@ -479,11 +479,12 @@ type AuditResult struct {
 
 // WriterAudit contains audit results for a single writer's chain.
 type WriterAudit struct {
-	WriterID        string `json:"writer_id"`
-	HeadSequence    int64  `json:"head_sequence"`
-	EntriesVerified int    `json:"entries_verified"`
-	Valid           bool   `json:"valid"`
-	Error           string `json:"error,omitempty"`
+	WriterID         string `json:"writer_id"`
+	HeadSequence     int64  `json:"head_sequence"`
+	EntriesVerified  int    `json:"entries_verified"`
+	KeyEvents        int    `json:"key_events"` // Number of key events in chain
+	Valid            bool   `json:"valid"`
+	Error            string `json:"error,omitempty"`
 }
 
 // GapInfo describes a gap in a chain.
@@ -585,6 +586,7 @@ func (a *Auditor) listChainHeads(ctx context.Context) ([]*ChainHead, error) {
 }
 
 // auditWriterChain verifies a single writer's chain integrity.
+// It handles both Entry (upload) and KeyEvent (key operations) objects.
 func (a *Auditor) auditWriterChain(ctx context.Context, head *ChainHead, trackedObjects map[string]bool) WriterAudit {
 	audit := WriterAudit{
 		WriterID:     head.WriterID,
@@ -614,33 +616,79 @@ func (a *Auditor) auditWriterChain(ctx context.Context, head *ChainHead, tracked
 			return audit
 		}
 
+		// Try to unmarshal as Entry first, then as KeyEvent
+		// We detect the type by checking for entry-specific fields
 		var entry Entry
-		if err := json.Unmarshal(data, &entry); err != nil {
+		var keyEvent KeyEvent
+
+		// First, try to detect if this is an Entry by checking for object_key field
+		// Entry has object_key, KeyEvent has event_type
+		var rawMap map[string]interface{}
+		if err := json.Unmarshal(data, &rawMap); err != nil {
 			audit.Valid = false
-			audit.Error = fmt.Sprintf("Failed to parse entry at sequence %d: %v", seq, err)
+			audit.Error = fmt.Sprintf("Failed to parse JSON at sequence %d: %v", seq, err)
 			return audit
 		}
 
-		// Verify sequence
-		if entry.Sequence != seq {
+		if _, hasObjectKey := rawMap["object_key"]; hasObjectKey {
+			// This is an Entry (upload)
+			if err := json.Unmarshal(data, &entry); err != nil {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("Failed to parse entry at sequence %d: %v", seq, err)
+				return audit
+			}
+
+			// Verify sequence
+			if entry.Sequence != seq {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("Sequence mismatch at %d: got %d", seq, entry.Sequence)
+				return audit
+			}
+
+			// Verify chain hash (for all but the first entry)
+			if seq < expectedSeq && entry.ChainHash != expectedChainHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("Chain hash mismatch at sequence %d", seq)
+				return audit
+			}
+
+			// Track the object (only for Entry types)
+			trackedObjects[entry.ObjectKey] = true
+
+			// Move to previous entry
+			expectedChainHash = entry.PrevChainHash
+			audit.EntriesVerified++
+		} else if _, hasEventType := rawMap["event_type"]; hasEventType {
+			// This is a KeyEvent (key operation)
+			if err := json.Unmarshal(data, &keyEvent); err != nil {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("Failed to parse key event at sequence %d: %v", seq, err)
+				return audit
+			}
+
+			// Verify sequence
+			if keyEvent.Sequence != seq {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("Sequence mismatch at %d: got %d", seq, keyEvent.Sequence)
+				return audit
+			}
+
+			// Verify chain hash (for all but the first entry)
+			if seq < expectedSeq && keyEvent.ChainHash != expectedChainHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("Chain hash mismatch at sequence %d", seq)
+				return audit
+			}
+
+			// Move to previous entry
+			expectedChainHash = keyEvent.PrevChainHash
+			audit.KeyEvents++
+		} else {
+			// Unknown type - neither Entry nor KeyEvent
 			audit.Valid = false
-			audit.Error = fmt.Sprintf("Sequence mismatch at %d: got %d", seq, entry.Sequence)
+			audit.Error = fmt.Sprintf("Unknown entry type at sequence %d: missing object_key and event_type", seq)
 			return audit
 		}
-
-		// Verify chain hash (for all but the first entry)
-		if seq < expectedSeq && entry.ChainHash != expectedChainHash {
-			audit.Valid = false
-			audit.Error = fmt.Sprintf("Chain hash mismatch at sequence %d", seq)
-			return audit
-		}
-
-		// Track the object
-		trackedObjects[entry.ObjectKey] = true
-
-		// Move to previous entry
-		expectedChainHash = entry.PrevChainHash
-		audit.EntriesVerified++
 	}
 
 	// Verify the chain links back to genesis
