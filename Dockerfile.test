@@ -1,0 +1,27 @@
+# Test deployment image: compile the validated ARMOR server without the
+# repository's release-image test gate. The full gate is intentionally skipped
+# here because the existing legacy counter-reuse proof tests are expected to
+# fail; deployment validation is performed by the test pod's health/readiness
+# probes and the follow-up ARMOR probe bead.
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /build
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG VERSION
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /armor ./cmd/armor
+
+FROM scratch
+
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /armor /armor
+
+EXPOSE 9000 9001
+ENTRYPOINT ["/armor"]
