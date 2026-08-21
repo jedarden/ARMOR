@@ -2794,7 +2794,13 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		info, headErr := h.backend.Head(ctx, bucket, h.applyPrefix(key))
-		if headErr != nil || info == nil || info.Size != totalPlaintextSize || info.LastModified.Before(state.Created) {
+		// B2 ObjectInfo timestamps have whole-second precision, while the
+		// multipart state Created timestamp includes nanoseconds. Truncate the
+		// upload timestamp before comparing so a valid completion in the same
+		// second is not rejected as stale.
+		createdAt := state.Created.UTC().Truncate(time.Second)
+		if headErr != nil || info == nil || info.Size != totalPlaintextSize ||
+			(!state.Created.IsZero() && info.LastModified.UTC().Before(createdAt)) {
 			h.writeError(w, "InternalError", fmt.Sprintf("Failed to recover ambiguous multipart completion: complete=%v head=%v", err, headErr), 500)
 			return
 		}

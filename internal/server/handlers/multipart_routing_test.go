@@ -352,9 +352,9 @@ func TestMultipartFullCycleByteVerification(t *testing.T) {
 	// bf-1v6skf (production litestream snapshot was 44,908,497 bytes and failed
 	// at block 256) while staying contract-valid. (The pre-ADR-005 version used
 	// a final part LARGER than P, which now correctly contradicts and poisons.)
-	const block = 65536              // encryption block size
-	partSize := 5 * 1024 * 1024      // 5MiB regular part (S3/B2 minimum, matches production)
-	finalPartSize := 4 * 1024 * 1024 // short final part (< P), block-aligned
+	const block = 65536                // encryption block size
+	partSize := 5 * 1024 * 1024        // 5MiB regular part (S3/B2 minimum, matches production)
+	finalPartSize := 4*1024*1024 + 123 // short final part (< P), non-block-aligned
 	sizes := []int{partSize, partSize, partSize, partSize, partSize, partSize, partSize, partSize, finalPartSize}
 	var plaintext []byte
 	var parts [][]byte
@@ -510,6 +510,65 @@ func TestMultipartLonePartByteVerification(t *testing.T) {
 	h.HandleRoot(w, req)
 	if cl := w.Header().Get("Content-Length"); cl != strconv.Itoa(size) {
 		t.Fatalf("HEAD Content-Length = %s, want %d", cl, size)
+	}
+}
+
+// TestMultipartZeroByteFinalPartByteVerification proves that the accepted
+// zero-byte final part contributes no stored bytes. In particular, this keeps
+// the option-(a) contract distinct from server-side zero-padding: GET, HEAD,
+// and Range must all report and return exactly the bytes from the non-empty
+// part.
+func TestMultipartZeroByteFinalPartByteVerification(t *testing.T) {
+	_, _, h := recordingTestSetup(t)
+	bucket, key := "test-bucket", "zero-byte-final-cycle.dat"
+
+	const partSize = 5 * 1024 * 1024 // aligned regular part, pins P
+	plaintext := make([]byte, partSize)
+	for i := range plaintext {
+		plaintext[i] = byte(i%251) ^ byte(i>>9)
+	}
+
+	uploadID := initiateMultipart(t, h, bucket, key)
+	etag1 := uploadPart(t, h, bucket, key, uploadID, 1, plaintext)
+	etag2 := uploadPart(t, h, bucket, key, uploadID, 2, nil) // empty final part
+	completeMultipart(t, h, bucket, key, uploadID, []string{etag1, etag2})
+
+	// Full GET must contain exactly part 1, with no zero-padding.
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET after zero-byte-final complete failed: status %d: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Equal(w.Body.Bytes(), plaintext) {
+		t.Fatalf("zero-byte-final GET mismatch: got %d bytes, want %d; first divergence at %d",
+			w.Body.Len(), len(plaintext), firstDivergence(w.Body.Bytes(), plaintext))
+	}
+
+	// HEAD must expose the unpadded plaintext length.
+	req = httptest.NewRequest(http.MethodHead, "/"+bucket+"/"+key, nil)
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("HEAD after zero-byte-final complete failed: status %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Length"); got != strconv.Itoa(len(plaintext)) {
+		t.Fatalf("zero-byte-final HEAD Content-Length = %s, want %d", got, len(plaintext))
+	}
+
+	// A range ending at the object boundary must not expose bytes from a
+	// padded block or from the empty final part.
+	const rangeLength = 257
+	lo := len(plaintext) - rangeLength
+	req = httptest.NewRequest(http.MethodGet, "/"+bucket+"/"+key, nil)
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", lo, len(plaintext)-1))
+	w = httptest.NewRecorder()
+	h.HandleRoot(w, req)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("zero-byte-final range GET failed: status %d: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Equal(w.Body.Bytes(), plaintext[lo:]) {
+		t.Fatalf("zero-byte-final range mismatch: got %d bytes, want %d", w.Body.Len(), rangeLength)
 	}
 }
 

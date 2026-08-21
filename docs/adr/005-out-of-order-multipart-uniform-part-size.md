@@ -162,6 +162,15 @@ Part 2:          0 bytes  (0 bytes) ✓ zero-byte final part
 
 The zero-byte part contributes no data but marks completion. This matches standard S3 behavior.
 
+### Read-back contract: no server-side padding
+
+The option-a implementation does not zero-pad a short or empty final part. The
+plaintext object length is the sum of the uploaded part sizes, so `GET` returns
+exactly those bytes, `HEAD` reports that exact `Content-Length`, and `Range`
+requests are bounded by that same length. In the zero-byte-final example above,
+the completed object is exactly the bytes from part 1; the empty part contributes
+no bytes and no padding.
+
 ### Minimum-size single part
 
 A single part at B2's 5 MiB minimum:

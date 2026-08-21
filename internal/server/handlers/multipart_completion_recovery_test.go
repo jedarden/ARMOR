@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
@@ -21,7 +23,8 @@ import (
 // NoSuchUpload even though the assembled object is already durable.
 type ambiguousCompleteBackend struct {
 	*recordingBackend
-	corruptFinal bool
+	corruptFinal         bool
+	recoveryLastModified time.Time
 }
 
 func (b *ambiguousCompleteBackend) CompleteMultipartUpload(
@@ -32,12 +35,33 @@ func (b *ambiguousCompleteBackend) CompleteMultipartUpload(
 	); err != nil {
 		return "", err
 	}
+	// Model B2's whole-second LastModified precision. The upload state is
+	// written before the part is completed, so this is a valid same-second
+	// completion even though it is earlier than state.Created by nanoseconds.
+	b.mu.Lock()
+	stateData := append([]byte(nil), b.objects[bucket+"/.armor/multipart/"+uploadID+".state"]...)
+	b.mu.Unlock()
+	var state backend.MultipartState
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		return "", err
+	}
+	b.recoveryLastModified = state.Created.UTC().Truncate(time.Second)
 	if b.corruptFinal {
 		b.mu.Lock()
 		b.objects[bucket+"/"+key] = append(b.objects[bucket+"/"+key], 0)
 		b.mu.Unlock()
 	}
 	return "", &types.NoSuchUpload{}
+}
+
+func (b *ambiguousCompleteBackend) Head(
+	ctx context.Context, bucket, key string,
+) (*backend.ObjectInfo, error) {
+	info, err := b.recordingBackend.Head(ctx, bucket, key)
+	if err == nil {
+		info.LastModified = b.recoveryLastModified
+	}
+	return info, err
 }
 
 func ambiguousCompletionTestHandler(
