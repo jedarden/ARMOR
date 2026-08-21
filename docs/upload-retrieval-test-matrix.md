@@ -59,6 +59,50 @@ ARMOR fronts several very different S3 clients, and the 40-day multipart corrupt
 | R9 | Offline decrypt from raw B2 (`armor-decrypt`) — proxy-bypass truth check | DR drills | manual only | ⚠️ should be part of any pre-cutover drill |
 | R10 | List/ListV2/versions/prefix (Hive partition keys) | corpus discovery, pyiceberg | L3 `TestListObjectsV2`, `TestListObjectVersions`, `TestURLDecodeHivePartitionKeys`, cache tests | ✅ |
 
+## armor-test isolation and RBAC validation (2026-08-09 to 2026-08-19)
+
+The `armor-test` instance is a live, isolated validation target for the
+authorization work in ADR-012. These results complement the upload/retrieval
+rows above: they validate the real B2 boundary and the default named-credential
+CRUD path, rather than replacing the L1–L4 data-integrity coverage.
+
+### Isolation and credential baseline
+
+| Check | Result | Evidence and interpretation |
+|---|---|---|
+| Production credentials absent from `armor-test` | ✅ pass | The live pod referenced only the test secret and test OpenBao paths; no production B2/data secret reference or production credential mount was present. |
+| B2 key limited to the dedicated test bucket | ✅ pass | The test key was B2-scoped to `armor-test-jedarden`. `ListObjectsV2` on that bucket returned 200, while the production `iad-ci` bucket returned 403 `AccessDenied`. This is a real production-bucket check, not merely a request to a nonexistent bucket. |
+| Five required credential variables loaded and exercised | ⚠️ not fully established by the credential-wiring check | The predecessor found all five variables wired in the pod spec, but could not prove their runtime load because the inspected target had no `armor-test` pod and its `ExternalSecret` sync was failing. The later live CRUD run demonstrates a working endpoint and B2/data path, but it is not evidence that every variable was independently checked. Re-run this check against the current `armor-test` pod before treating the complete credential matrix as closed. |
+
+### Default credential allow/deny matrix
+
+Live tests against `armor-test-jedarden` (ARMOR `0.1.1911`, path-style S3
+addressing) passed on 2026-08-19 in 19.958 seconds. The test client must use
+`UsePathStyle: true`; virtual-hosted-style requests are not the endpoint shape
+accepted by ARMOR.
+
+| Operation | Authorized test bucket | Unapproved bucket | Evidence |
+|---|---|---|---|
+| GET | ✅ allowed | ❌ denied | The test uploaded then retrieved the expected bytes. A request to another bucket was rejected (404 `NoSuchKey` in the RBAC test); the independent production-bucket isolation check above returned 403. |
+| PUT | ✅ allowed | ❌ denied | Upload succeeded and returned an ETag. A request to another bucket was rejected with 404 `NoSuchBucket`. |
+| DELETE | ✅ allowed | ❌ denied | Delete succeeded; the subsequent GET returned 404 `NoSuchKey`. A delete against another bucket was rejected with 404 `NoSuchBucket`. |
+
+This is a baseline for the default credential, which has no action-scoped ACL:
+all three CRUD verbs are intentionally allowed within its dedicated bucket.
+It does **not** certify the forthcoming verb-level ACL rules. Those rules still
+need their credential-by-verb allow/deny matrix, including the ADR-012 edge
+cases for copy source authorization, batch `DeleteObjects`, multipart
+lifecycle operations, and unprefixed list requests.
+
+### Integration readiness
+
+The isolated endpoint and default CRUD/cross-bucket-deny baseline are ready to
+feed the verbs/coverage/audit phase. Keep the incomplete five-variable runtime
+credential check as an explicit prerequisite for declaring the full
+credential-matrix rollout complete; do not infer it solely from the successful
+CRUD run. Detailed test output and the four test names are recorded in
+`docs/rbac-verb-test-results.md` and `tests/rbac/armor_test_rbac_test.go`.
+
 ## Known integrity gaps (found while building this matrix, 2026-07-15) — beads filed
 
 1. **`bf-24sxh7` (P0): multipart objects are unreadable through ARMOR's GET.** The read path (`handleFullObjectStream`, `handlers.go:720-727`, and the range path) assumes the single-PUT layout — 64-byte header + data + embedded HMAC table — and never checks the `armor-multipart` metadata flag. Multipart objects are raw concatenated part ciphertext with the HMAC table in a *sidecar*, so every GET 500s ("Failed to prefetch HMAC table: offset out of range"). Found by the new full-cycle test on its first run. Likely a second contributor to the ADR-002 "snapshot didn't decode" incident, independent of the routing bug.
