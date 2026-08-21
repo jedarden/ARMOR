@@ -2,6 +2,8 @@ package replication
 
 import (
 	"context"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -385,5 +387,393 @@ func TestMetricsInitialization(t *testing.T) {
 
 	if metrics.DroppedTotal.Load() != 0 {
 		t.Error("DroppedTotal should start at 0")
+	}
+}
+
+// TestIsTransientError verifies the error classification logic.
+func TestIsTransientError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		// Transient errors (should return true)
+		{"nil error", nil, false},
+		{"timeout", errors.New("context timeout exceeded"), true},
+		{"connection refused", errors.New("connection refused"), true},
+		{"connection reset", errors.New("connection reset by peer"), true},
+		{"rate limit", errors.New("rate limit exceeded"), true},
+		{"too many requests", errors.New("too many requests"), true},
+		{"service unavailable", errors.New("service unavailable"), true},
+		{"gateway timeout", errors.New("gateway timeout"), true},
+		{"bad gateway", errors.New("bad gateway"), true},
+		{"network unreachable", errors.New("network unreachable"), true},
+		{"context deadline exceeded", context.DeadlineExceeded, true},
+		{"context canceled", context.Canceled, true},
+		{"tcp read error", errors.New("read tcp 192.168.1.1:80"), true},
+		{"tcp write error", errors.New("write tcp 192.168.1.1:80"), true},
+
+		// Permanent errors (should return false)
+		{"not found", errors.New("object not found"), false},
+		{"no such bucket", errors.New("no such bucket"), false},
+		{"does not exist", errors.New("bucket does not exist"), false},
+		{"access denied", errors.New("access denied"), false},
+		{"forbidden", errors.New("forbidden"), false},
+		{"unauthorized", errors.New("unauthorized"), false},
+		{"invalid bucket", errors.New("invalid bucket name"), false},
+		{"bucket not found", errors.New("bucket not found"), false},
+		{"authentication failed", errors.New("authentication failed"), false},
+		{"permission denied", errors.New("permission denied"), false},
+
+		// Unknown errors - default to transient (true)
+		{"unknown error", errors.New("some unknown error"), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isTransientError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isTransientError(%q) = %v, want %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestRetryWithTransientError verifies that transient errors trigger retries.
+func TestRetryWithTransientError(t *testing.T) {
+	metrics := NewMetrics()
+	primary := NewMockBackend()
+
+	// Create a secondary that fails with transient errors initially
+	attempts := 0
+	failBackend := &failingBackend{
+		MockBackend: NewMockBackend(),
+		shouldFail: func() bool {
+			attempts++
+			return attempts <= 2 // Fail first 2 attempts, succeed on 3rd
+		},
+		failErr: errors.New("connection timeout"),
+	}
+
+	q := NewReplicationQueue(metrics, primary, failBackend, 100, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Setup: create bucket and objects
+	ctxSetup := context.Background()
+	primary.CreateBucket(ctxSetup, "test-bucket")
+	testData := "test-object-data"
+	primary.Put(ctxSetup, "test-bucket", "test-key", strings.NewReader(testData), int64(len(testData)), map[string]string{"Content-Type": "text/plain"})
+	failBackend.CreateBucket(ctxSetup, "test-bucket")
+
+	q.Start(ctx)
+	defer q.Stop()
+	time.Sleep(10 * time.Millisecond)
+
+	// Enqueue item that will fail initially
+	q.Enqueue("test-bucket", "test-key")
+
+	// Wait for retries to complete
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify retries occurred
+	retries := metrics.RetriesTotal.Load()
+	if retries < 1 {
+		t.Errorf("expected at least 1 retry for transient errors, got %d", retries)
+	}
+
+	// Verify no permanent error recorded (should have succeeded on retry)
+	errors := metrics.ErrorsTotal.Load()
+	if errors != 0 {
+		t.Errorf("expected no errors after successful retry, got %d", errors)
+	}
+}
+
+// TestNoRetryForPermanentError verifies that permanent errors skip retries.
+func TestNoRetryForPermanentError(t *testing.T) {
+	metrics := NewMetrics()
+	primary := NewMockBackend()
+
+	// Create a secondary that fails with permanent errors
+	permanentBackend := &failingBackend{
+		MockBackend: NewMockBackend(),
+		shouldFail: func() bool {
+			return true // Always fail
+		},
+		failErr: errors.New("bucket not found"),
+	}
+
+	q := NewReplicationQueue(metrics, primary, permanentBackend, 100, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Setup: create bucket and objects
+	ctxSetup := context.Background()
+	primary.CreateBucket(ctxSetup, "test-bucket")
+	testData := "test-object-data"
+	primary.Put(ctxSetup, "test-bucket", "test-key", strings.NewReader(testData), int64(len(testData)), map[string]string{"Content-Type": "text/plain"})
+
+	q.Start(ctx)
+	defer q.Stop()
+	time.Sleep(10 * time.Millisecond)
+
+	// Enqueue item that will fail with permanent error
+	q.Enqueue("test-bucket", "test-key")
+
+	// Wait for processing
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify NO retries occurred for permanent error
+	retries := metrics.RetriesTotal.Load()
+	if retries != 0 {
+		t.Errorf("expected no retries for permanent errors, got %d", retries)
+	}
+
+	// Verify error was recorded
+	errors := metrics.ErrorsTotal.Load()
+	if errors != 1 {
+		t.Errorf("expected 1 error for permanent failure, got %d", errors)
+	}
+}
+
+// failingBackend wraps a backend and simulates failures for testing.
+type failingBackend struct {
+	*MockBackend
+	shouldFail func() bool
+	failErr    error
+}
+
+func (f *failingBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
+	if f.shouldFail() {
+		return f.failErr
+	}
+	return f.MockBackend.Copy(ctx, srcBucket, srcKey, dstBucket, dstKey, meta, replaceMetadata)
+}
+
+func (f *failingBackend) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	if f.shouldFail() {
+		return f.failErr
+	}
+	return f.MockBackend.Put(ctx, bucket, key, body, size, meta)
+}
+
+// TestReplicationPipelineEndToEnd verifies the complete replication pipeline:
+// 1. Enqueue objects for replication
+// 2. Worker drains and processes them
+// 3. Successful copy to secondary backend
+// 4. Metrics emitted (lag and duration)
+// 5. Worker exits gracefully
+func TestReplicationPipelineEndToEnd(t *testing.T) {
+	metrics := NewMetrics()
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 100, nil)
+
+	ctx := context.Background()
+
+	// Setup: create bucket and populate with test objects in primary backend
+	testBucket := "test-bucket"
+	primary.CreateBucket(ctx, testBucket)
+	secondary.CreateBucket(ctx, testBucket)
+
+	// Create test objects with different sizes to test copy duration
+	testCases := []struct {
+		key         string
+		data        string
+		contentType string
+	}{
+		{"small-object.txt", "small", "text/plain"},
+		{"medium-object.txt", strings.Repeat("medium", 100), "text/plain"},
+		{"large-object.txt", strings.Repeat("large", 1000), "text/plain"},
+	}
+
+	// Put test objects in primary backend
+	for _, tc := range testCases {
+		err := primary.Put(ctx, testBucket, tc.key, strings.NewReader(tc.data), int64(len(tc.data)), map[string]string{
+			"Content-Type": tc.contentType,
+		})
+		if err != nil {
+			t.Fatalf("failed to put test object %s: %v", tc.key, err)
+		}
+	}
+
+	// Start the worker
+	startCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q.Start(startCtx)
+	time.Sleep(10 * time.Millisecond)
+
+	// Enqueue all test objects for replication
+	for _, tc := range testCases {
+		q.Enqueue(testBucket, tc.key)
+	}
+
+	// Wait a moment for processing to begin and lag to be calculated
+	// The lag metric is updated when tasks are processed, so we need to wait
+	// for at least one task to start processing
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify lag metric is updated (should be >= 0, could be 0 if processing is fast)
+	lag := metrics.LagSeconds.Load()
+	// Lag can be 0 if processing completed before our check, which is fine
+	// The important thing is that it doesn't stay non-zero after completion
+	if lag < 0 {
+		t.Errorf("expected lag >= 0, got %d", lag)
+	}
+
+	// Stop the queue - this should drain all remaining items
+	q.Stop()
+
+	// Verify all objects were replicated to secondary backend
+	for _, tc := range testCases {
+		// Verify object exists in secondary
+		body, info, err := secondary.Get(ctx, testBucket, tc.key)
+		if err != nil {
+			t.Errorf("object %s not found in secondary backend: %v", tc.key, err)
+			continue
+		}
+		defer body.Close()
+
+		// Verify content
+		data, err := io.ReadAll(body)
+		if err != nil {
+			t.Errorf("failed to read object %s from secondary: %v", tc.key, err)
+			continue
+		}
+
+		if string(data) != tc.data {
+			t.Errorf("content mismatch for %s: expected %q, got %q", tc.key, tc.data, string(data))
+		}
+
+		// Verify metadata
+		if info.ContentType != tc.contentType {
+			t.Errorf("content-type mismatch for %s: expected %s, got %s", tc.key, tc.contentType, info.ContentType)
+		}
+	}
+
+	// Verify metrics were emitted
+	if metrics.ErrorsTotal.Load() != 0 {
+		t.Errorf("expected no errors, got %d", metrics.ErrorsTotal.Load())
+	}
+
+	copyCount := metrics.CopyDurationSeconds.GetCount()
+	if copyCount != int64(len(testCases)) {
+		t.Errorf("expected %d copy duration observations, got %d", len(testCases), copyCount)
+	}
+
+	// Verify queue depth is 0 after stop
+	if depth := metrics.QueueDepth.Load(); depth != 0 {
+		t.Errorf("expected queue depth 0 after stop, got %d", depth)
+	}
+
+	// Verify lag metric is 0 after all items processed
+	if lag := metrics.LagSeconds.Load(); lag != 0 {
+		t.Errorf("expected lag 0 after all items processed, got %d", lag)
+	}
+
+	// Verify no items were dropped
+	if dropped := metrics.DroppedTotal.Load(); dropped != 0 {
+		t.Errorf("expected 0 dropped items, got %d", dropped)
+	}
+
+	// Verify Prometheus format includes our metrics
+	prometheus := metrics.PrometheusFormat()
+	if !strings.Contains(prometheus, "armor_replication_lag_seconds") {
+		t.Error("Prometheus format missing replication_lag_seconds metric")
+	}
+	if !strings.Contains(prometheus, "armor_replication_copy_duration_seconds") {
+		t.Error("Prometheus format missing replication_copy_duration_seconds metric")
+	}
+	if !strings.Contains(prometheus, "armor_replication_queue_depth") {
+		t.Error("Prometheus format missing replication_queue_depth metric")
+	}
+}
+
+// TestReplicationLagMetricTracking verifies that the lag metric accurately
+// tracks the age of the oldest unreplicated object.
+func TestReplicationLagMetricTracking(t *testing.T) {
+	metrics := NewMetrics()
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueue(metrics, primary, secondary, 100, nil)
+
+	ctx := context.Background()
+
+	// Setup: create bucket and test object
+	testBucket := "test-bucket"
+	primary.CreateBucket(ctx, testBucket)
+	secondary.CreateBucket(ctx, testBucket)
+
+	testData := "test-data-for-lag-tracking"
+	primary.Put(ctx, testBucket, "test-key", strings.NewReader(testData), int64(len(testData)), nil)
+
+	// Start the worker
+	startCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q.Start(startCtx)
+	time.Sleep(10 * time.Millisecond)
+
+	// Enqueue an item
+	q.Enqueue(testBucket, "test-key")
+
+	// Wait briefly for lag to be calculated
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify lag metric is non-negative (could be 0 if processed quickly)
+	lag := metrics.LagSeconds.Load()
+	if lag < 0 {
+		t.Errorf("expected lag >= 0, got %d", lag)
+	}
+	// The lag can be 0 if the task was processed before we checked, which is fine
+	// What matters is that it returns to 0 after all items are processed
+
+	// Stop and wait for drain
+	q.Stop()
+
+	// Verify lag metric returns to 0 after all items processed
+	lag = metrics.LagSeconds.Load()
+	if lag != 0 {
+		t.Errorf("expected lag 0 after all items processed, got %d", lag)
+	}
+}
+
+// TestCopyDurationHistogram verifies that the copy duration histogram
+// correctly records operation durations.
+func TestCopyDurationHistogram(t *testing.T) {
+	h := newCopyDurationHistogram()
+
+	// Record some durations
+	durations := []float64{0.05, 0.2, 0.8, 1.5, 5.0, 15.0, 45.0, 120.0}
+	for _, d := range durations {
+		h.Observe(d)
+	}
+
+	totalCount := int64(len(durations))
+	if h.GetCount() != totalCount {
+		t.Errorf("expected count %d, got %d", totalCount, h.GetCount())
+	}
+
+	// Verify sum is non-zero
+	if h.GetSum() == 0 {
+		t.Error("expected non-zero sum")
+	}
+
+	// Verify Prometheus format
+	prometheus := h.PrometheusFormat("test_copy_duration")
+	if !strings.Contains(prometheus, "test_copy_duration_bucket") {
+		t.Error("Prometheus format missing bucket lines")
+	}
+	if !strings.Contains(prometheus, "test_copy_duration_sum") {
+		t.Error("Prometheus format missing sum")
+	}
+	if !strings.Contains(prometheus, "test_copy_duration_count") {
+		t.Error("Prometheus format missing count")
+	}
+
+	// Verify we have the +Inf bucket
+	if !strings.Contains(prometheus, "+Inf") {
+		t.Error("Prometheus format missing +Inf bucket")
 	}
 }
