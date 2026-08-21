@@ -103,6 +103,8 @@ type Metrics struct {
 	// Replication queue metrics for async secondary backend replication
 	ReplicationQueueDepth   *expvar.Int // Current number of items in replication queue
 	ReplicationDroppedTotal *expvar.Int // Total number of items dropped due to full queue
+	ReplicationErrorsTotal  *expvar.Int // Total number of replication copy failures after all retries
+	ReplicationRetriesTotal *expvar.Int // Total number of replication retry attempts
 	// ReplicationEnqueuedTotal tracks total enqueued replication operations by operation type.
 	// Uses atomic operations for thread-safe increments without mutex contention.
 	// Operations are: "put" for standard uploads, "put-streaming" for streaming uploads.
@@ -210,6 +212,8 @@ func NewMetrics() *Metrics {
 	// Replication queue metrics
 	m.ReplicationQueueDepth = new(expvar.Int)
 	m.ReplicationDroppedTotal = new(expvar.Int)
+	m.ReplicationErrorsTotal = new(expvar.Int)
+	m.ReplicationRetriesTotal = new(expvar.Int)
 	m.ReplicationEnqueuedTotal = new(expvar.Map).Init()
 
 	// Manifest compaction metrics
@@ -662,6 +666,11 @@ func (m *Metrics) PrometheusFormat() string {
 	// Replication queue metrics
 	writeMetric("replication_queue_depth", "Current number of items in the replication queue", "gauge", m.ReplicationQueueDepth)
 	writeMetric("replication_dropped_total", "Total number of items dropped due to full replication queue", "counter", m.ReplicationDroppedTotal)
+	writeMetric("replication_errors_total", "Total number of replication copy failures after all retries", "counter", m.ReplicationErrorsTotal)
+	writeMetric("replication_retries_total", "Total number of replication retry attempts", "counter", m.ReplicationRetriesTotal)
+
+	// Replication lag and duration metrics will be exported from the replication package's Metrics struct
+	// These are accessed through the replication queue's metrics instance
 
 	// Manifest compaction metrics
 	writeMetric("manifest_compaction_errors_total", "Total number of manifest compaction errors", "counter", m.CompactionErrorsTotal)
@@ -789,6 +798,16 @@ func (m *Metrics) AddReplicationQueueDepth(delta int64) {
 // IncReplicationDropped increments the replication dropped counter.
 func (m *Metrics) IncReplicationDropped() {
 	m.ReplicationDroppedTotal.Add(1)
+}
+
+// IncReplicationErrors increments the replication errors counter.
+func (m *Metrics) IncReplicationErrors() {
+	m.ReplicationErrorsTotal.Add(1)
+}
+
+// IncReplicationRetries increments the replication retries counter.
+func (m *Metrics) IncReplicationRetries() {
+	m.ReplicationRetriesTotal.Add(1)
 }
 
 // IncCompactionErrors increments the manifest compaction error counter.

@@ -17,7 +17,7 @@ import (
 type MockBackend struct {
 	mu      sync.RWMutex
 	objects map[string]map[string]*mockObject // bucket -> key -> object
-	copyErr bool                               // Force Copy() to fail for testing fallback
+	copyErr bool                              // Force Copy() to fail for testing fallback
 }
 
 // mockObject represents an object stored in the mock backend.
