@@ -8,9 +8,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -128,6 +132,11 @@ type Manager struct {
 	bucket   string
 	writerID string
 
+	// appendMu serializes the read-head/write-entry/write-head transaction.
+	// A writer serves concurrent HTTP requests, so protecting only the cached
+	// head would allow two uploads to claim the same sequence number.
+	appendMu sync.Mutex
+
 	// In-memory cache of the current chain head
 	mu   sync.RWMutex
 	head *ChainHead
@@ -166,6 +175,9 @@ func (m *Manager) RecordUpload(ctx context.Context, objectKey, plaintextSHA256, 
 	if !m.ShouldRecord(objectKey) {
 		return nil
 	}
+
+	m.appendMu.Lock()
+	defer m.appendMu.Unlock()
 
 	// Get or load the current chain head
 	head, err := m.getOrCreateHead(ctx)
@@ -224,6 +236,9 @@ func (m *Manager) RecordKeyEvent(ctx context.Context, eventType string, opts Key
 	default:
 		return fmt.Errorf("invalid event type: %s", eventType)
 	}
+
+	m.appendMu.Lock()
+	defer m.appendMu.Unlock()
 
 	// Get or load the current chain head
 	head, err := m.getOrCreateHead(ctx)
@@ -455,7 +470,8 @@ func (m *Manager) loadHead(ctx context.Context) (*ChainHead, error) {
 
 // AuditResult contains the result of a provenance chain audit.
 type AuditResult struct {
-	// Status is overall audit status: "valid", "invalid", "incomplete"
+	// Status is overall audit status: "valid", "invalid", or "incomplete".
+	// Incomplete takes precedence when a backend failure prevents a full audit.
 	Status string `json:"status"`
 
 	// Writers audited
@@ -479,12 +495,12 @@ type AuditResult struct {
 
 // WriterAudit contains audit results for a single writer's chain.
 type WriterAudit struct {
-	WriterID         string `json:"writer_id"`
-	HeadSequence     int64  `json:"head_sequence"`
-	EntriesVerified  int    `json:"entries_verified"`
-	KeyEvents        int    `json:"key_events"` // Number of key events in chain
-	Valid            bool   `json:"valid"`
-	Error            string `json:"error,omitempty"`
+	WriterID        string `json:"writer_id"`
+	HeadSequence    int64  `json:"head_sequence"`
+	EntriesVerified int    `json:"entries_verified"`
+	KeyEvents       int    `json:"key_events"` // Number of key events in chain
+	Valid           bool   `json:"valid"`
+	Error           string `json:"error,omitempty"`
 }
 
 // GapInfo describes a gap in a chain.
@@ -498,13 +514,23 @@ type GapInfo struct {
 type Auditor struct {
 	backend backend.Backend
 	bucket  string
+	prefix  string
 }
 
 // NewAuditor creates a new provenance auditor.
 func NewAuditor(be backend.Backend, bucket string) *Auditor {
+	return NewAuditorWithPrefix(be, bucket, "")
+}
+
+// NewAuditorWithPrefix creates a provenance auditor for one logical ARMOR
+// namespace. Provenance records live at the bucket-level .armor/ prefix, while
+// data objects may live below ARMOR_PREFIX and are reported with that prefix
+// removed, matching the keys stored in provenance entries.
+func NewAuditorWithPrefix(be backend.Backend, bucket, prefix string) *Auditor {
 	return &Auditor{
 		backend: be,
 		bucket:  bucket,
+		prefix:  prefix,
 	}
 }
 
@@ -512,86 +538,225 @@ func NewAuditor(be backend.Backend, bucket string) *Auditor {
 // It walks all writer chains, verifies integrity, and checks for untracked objects.
 func (a *Auditor) Audit(ctx context.Context) (*AuditResult, error) {
 	result := &AuditResult{
-		Status: "valid",
+		Status:  "valid",
+		Writers: make([]WriterAudit, 0),
 	}
 
-	// 1. Find all chain heads
-	heads, err := a.listChainHeads(ctx)
+	// Discover both sides of the chain namespace. Listing entries as well as
+	// heads detects a deleted head, an entry beyond the advertised head, and
+	// malformed objects in the reserved namespace.
+	headKeys, err := a.listInternalKeys(ctx, ChainHeadPrefix)
 	if err != nil {
-		result.Status = "incomplete"
-		result.Errors = append(result.Errors, fmt.Sprintf("Failed to list chain heads: %v", err))
+		markIncomplete(result)
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to list chain heads: %v", err))
+		return result, nil
+	}
+	entryKeys, err := a.listInternalKeys(ctx, ChainPrefix)
+	if err != nil {
+		markIncomplete(result)
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to list chain entries: %v", err))
 		return result, nil
 	}
 
-	// 2. Verify each writer's chain
-	trackedObjects := make(map[string]bool)
+	entriesByWriter := make(map[string]map[int64]string)
+	for _, key := range entryKeys {
+		writerID, sequence, parseErr := parseChainEntryKey(key)
+		if parseErr != nil {
+			markInvalid(result)
+			result.Errors = append(result.Errors, parseErr.Error())
+			continue
+		}
+		if entriesByWriter[writerID] == nil {
+			entriesByWriter[writerID] = make(map[int64]string)
+		}
+		entriesByWriter[writerID][sequence] = key
+	}
 
-	for _, head := range heads {
-		writerAudit := a.auditWriterChain(ctx, head, trackedObjects)
+	trackedObjects := make(map[string]bool)
+	headWriters := make(map[string]bool)
+
+	for _, headKey := range headKeys {
+		writerID, parseErr := parseChainHeadKey(headKey)
+		if parseErr != nil {
+			markInvalid(result)
+			result.Errors = append(result.Errors, parseErr.Error())
+			continue
+		}
+		headWriters[writerID] = true
+
+		body, _, getErr := a.backend.GetDirect(ctx, a.bucket, headKey)
+		if getErr != nil {
+			errText := fmt.Sprintf("failed to load chain head for writer %q: %v", writerID, getErr)
+			result.Writers = append(result.Writers, WriterAudit{WriterID: writerID, Valid: false, Error: errText})
+			result.Errors = append(result.Errors, errText)
+			markIncomplete(result)
+			continue
+		}
+		if body == nil {
+			errText := fmt.Sprintf("failed to load chain head for writer %q: backend returned a nil body", writerID)
+			result.Writers = append(result.Writers, WriterAudit{WriterID: writerID, Valid: false, Error: errText})
+			result.Errors = append(result.Errors, errText)
+			markIncomplete(result)
+			continue
+		}
+
+		data, readErr := io.ReadAll(body)
+		closeErr := body.Close()
+		if readErr != nil || closeErr != nil {
+			if readErr == nil {
+				readErr = closeErr
+			}
+			errText := fmt.Sprintf("failed to read chain head for writer %q: %v", writerID, readErr)
+			result.Writers = append(result.Writers, WriterAudit{WriterID: writerID, Valid: false, Error: errText})
+			result.Errors = append(result.Errors, errText)
+			markIncomplete(result)
+			continue
+		}
+
+		var head ChainHead
+		if unmarshalErr := json.Unmarshal(data, &head); unmarshalErr != nil {
+			errText := fmt.Sprintf("invalid chain head for writer %q: %v", writerID, unmarshalErr)
+			result.Writers = append(result.Writers, WriterAudit{WriterID: writerID, Valid: false, Error: errText})
+			result.Errors = append(result.Errors, errText)
+			markInvalid(result)
+			continue
+		}
+
+		writerTracked := make(map[string]bool)
+		writerAudit, gap, incomplete := a.auditWriterChain(ctx, &head, writerID, entriesByWriter[writerID], writerTracked)
 		result.Writers = append(result.Writers, writerAudit)
 		result.TotalEntries += int64(writerAudit.EntriesVerified)
+		if gap != nil {
+			result.Gaps = append(result.Gaps, *gap)
+		}
 
-		if !writerAudit.Valid {
-			result.Status = "invalid"
+		if writerAudit.Valid {
+			for objectKey := range writerTracked {
+				trackedObjects[objectKey] = true
+			}
+		} else if incomplete {
+			markIncomplete(result)
+		} else {
+			markInvalid(result)
 		}
 	}
 
-	// 3. List all objects in bucket and find untracked ones
-	if err := a.findUntrackedObjects(ctx, trackedObjects, result); err != nil {
-		result.Errors = append(result.Errors, fmt.Sprintf("Failed to find untracked objects: %v", err))
+	// An entry namespace with no corresponding head cannot be walked from a
+	// trusted tip. This can be a deleted head or an append observed between its
+	// entry and head writes, so report an incomplete audit rather than claiming
+	// that the cryptographic contents themselves are invalid.
+	orphanWriters := make([]string, 0)
+	for writerID := range entriesByWriter {
+		if !headWriters[writerID] {
+			orphanWriters = append(orphanWriters, writerID)
+		}
 	}
+	sort.Strings(orphanWriters)
+	for _, writerID := range orphanWriters {
+		errText := "chain entries exist without a chain head"
+		result.Writers = append(result.Writers, WriterAudit{
+			WriterID:        writerID,
+			EntriesVerified: 0,
+			Valid:           false,
+			Error:           errText,
+		})
+		markIncomplete(result)
+	}
+
+	// Cross-reference the current object namespace. Backend listings do not
+	// necessarily include metadata (B2's intentionally does not), so the helper
+	// performs authoritative HEAD requests before deciding an object is ARMOR-
+	// encrypted.
+	if err := a.findUntrackedObjects(ctx, trackedObjects, result); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to find untracked objects: %v", err))
+		markIncomplete(result)
+	}
+	if len(result.UntrackedObjects) > 0 {
+		markInvalid(result)
+	}
+
+	sort.Slice(result.Writers, func(i, j int) bool {
+		return result.Writers[i].WriterID < result.Writers[j].WriterID
+	})
+	sort.Strings(result.UntrackedObjects)
 
 	return result, nil
 }
 
-// listChainHeads lists all chain head objects in the bucket.
-func (a *Auditor) listChainHeads(ctx context.Context) ([]*ChainHead, error) {
-	var heads []*ChainHead
+// rawObjectLister is implemented by backends that intentionally hide .armor/
+// objects from their public List method. Keeping it as a narrow optional
+// interface avoids changing every Backend implementation and test double.
+type rawObjectLister interface {
+	ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error)
+}
 
+// listInternalKeys lists a reserved .armor/ namespace without the public S3
+// filtering applied by production backends.
+func (a *Auditor) listInternalKeys(ctx context.Context, prefix string) ([]string, error) {
+	keys := make([]string, 0)
 	continuationToken := ""
 	for {
-		result, err := a.backend.List(ctx, a.bucket, ChainHeadPrefix, "", continuationToken, 1000)
+		var (
+			result *backend.ListResult
+			err    error
+		)
+		if raw, ok := a.backend.(rawObjectLister); ok {
+			result, err = raw.ListRaw(ctx, a.bucket, prefix, "", continuationToken, 1000)
+		} else {
+			result, err = a.backend.List(ctx, a.bucket, prefix, "", continuationToken, 1000)
+		}
 		if err != nil {
 			return nil, err
 		}
-
+		if result == nil {
+			return nil, fmt.Errorf("backend returned a nil listing for prefix %q", prefix)
+		}
 		for _, obj := range result.Objects {
-			// Load the head
-			body, _, err := a.backend.GetDirect(ctx, a.bucket, obj.Key)
-			if err != nil {
-				continue
-			}
-
-			data, err := io.ReadAll(body)
-			body.Close()
-			if err != nil {
-				continue
-			}
-
-			var head ChainHead
-			if err := json.Unmarshal(data, &head); err != nil {
-				continue
-			}
-
-			heads = append(heads, &head)
+			keys = append(keys, obj.Key)
 		}
 
 		if !result.IsTruncated {
 			break
 		}
+		if result.NextToken == "" || result.NextToken == continuationToken {
+			return nil, fmt.Errorf("backend returned a truncated listing without a usable continuation token")
+		}
 		continuationToken = result.NextToken
 	}
 
-	return heads, nil
+	sort.Strings(keys)
+	return keys, nil
 }
 
 // auditWriterChain verifies a single writer's chain integrity.
 // It handles both Entry (upload) and KeyEvent (key operations) objects.
-func (a *Auditor) auditWriterChain(ctx context.Context, head *ChainHead, trackedObjects map[string]bool) WriterAudit {
+func (a *Auditor) auditWriterChain(
+	ctx context.Context,
+	head *ChainHead,
+	expectedWriterID string,
+	entryKeys map[int64]string,
+	trackedObjects map[string]bool,
+) (WriterAudit, *GapInfo, bool) {
 	audit := WriterAudit{
-		WriterID:     head.WriterID,
+		WriterID:     expectedWriterID,
 		HeadSequence: head.Sequence,
 		Valid:        true,
+	}
+
+	if head.WriterID != expectedWriterID {
+		audit.Valid = false
+		audit.Error = fmt.Sprintf("writer ID mismatch: head object is %q, content names %q", expectedWriterID, head.WriterID)
+		return audit, nil, false
+	}
+	if head.Sequence < 0 {
+		audit.Valid = false
+		audit.Error = fmt.Sprintf("invalid negative head sequence %d", head.Sequence)
+		return audit, nil, false
+	}
+	if !isSHA256(head.ChainHash) {
+		audit.Valid = false
+		audit.Error = "chain head hash is not a canonical SHA-256 value"
+		return audit, nil, false
 	}
 
 	// Walk the chain from head to genesis
@@ -599,105 +764,153 @@ func (a *Auditor) auditWriterChain(ctx context.Context, head *ChainHead, tracked
 	expectedChainHash := head.ChainHash
 
 	for seq := expectedSeq; seq > 0; seq-- {
-		key := fmt.Sprintf("%s%s/%d.json", ChainPrefix, head.WriterID, seq)
+		key, wasListed := entryKeys[seq]
+		if !wasListed {
+			// The head may have advanced after the entry listing completed. Fetch
+			// the canonical key directly before deciding that a gap exists.
+			key = fmt.Sprintf("%s%s/%d.json", ChainPrefix, expectedWriterID, seq)
+		}
 
 		body, _, err := a.backend.GetDirect(ctx, a.bucket, key)
 		if err != nil {
 			audit.Valid = false
-			audit.Error = fmt.Sprintf("Missing entry at sequence %d: %v", seq, err)
-			return audit
+			if wasListed {
+				audit.Error = fmt.Sprintf("failed to load listed entry at sequence %d: %v", seq, err)
+				return audit, nil, true
+			}
+			audit.Error = fmt.Sprintf("missing entry at sequence %d: %v", seq, err)
+			return audit, &GapInfo{WriterID: expectedWriterID, AfterSeq: seq - 1, MissingSeq: seq}, false
+		}
+		if body == nil {
+			audit.Valid = false
+			audit.Error = fmt.Sprintf("failed to load entry at sequence %d: backend returned a nil body", seq)
+			return audit, nil, true
 		}
 
 		data, err := io.ReadAll(body)
-		body.Close()
+		closeErr := body.Close()
+		if err == nil {
+			err = closeErr
+		}
 		if err != nil {
 			audit.Valid = false
-			audit.Error = fmt.Sprintf("Failed to read entry at sequence %d: %v", seq, err)
-			return audit
+			audit.Error = fmt.Sprintf("failed to read entry at sequence %d: %v", seq, err)
+			return audit, nil, true
 		}
 
-		// Try to unmarshal as Entry first, then as KeyEvent
-		// We detect the type by checking for entry-specific fields
-		var entry Entry
-		var keyEvent KeyEvent
-
-		// First, try to detect if this is an Entry by checking for object_key field
-		// Entry has object_key, KeyEvent has event_type
-		var rawMap map[string]interface{}
+		var rawMap map[string]json.RawMessage
 		if err := json.Unmarshal(data, &rawMap); err != nil {
 			audit.Valid = false
-			audit.Error = fmt.Sprintf("Failed to parse JSON at sequence %d: %v", seq, err)
-			return audit
+			audit.Error = fmt.Sprintf("failed to parse JSON at sequence %d: %v", seq, err)
+			return audit, nil, false
 		}
 
-		if _, hasObjectKey := rawMap["object_key"]; hasObjectKey {
-			// This is an Entry (upload)
+		_, hasObjectKey := rawMap["object_key"]
+		_, hasEventType := rawMap["event_type"]
+		if hasObjectKey == hasEventType {
+			audit.Valid = false
+			audit.Error = fmt.Sprintf("ambiguous or unknown entry type at sequence %d", seq)
+			return audit, nil, false
+		}
+
+		if hasObjectKey {
+			var entry Entry
 			if err := json.Unmarshal(data, &entry); err != nil {
 				audit.Valid = false
-				audit.Error = fmt.Sprintf("Failed to parse entry at sequence %d: %v", seq, err)
-				return audit
+				audit.Error = fmt.Sprintf("failed to parse entry at sequence %d: %v", seq, err)
+				return audit, nil, false
 			}
 
-			// Verify sequence
 			if entry.Sequence != seq {
 				audit.Valid = false
-				audit.Error = fmt.Sprintf("Sequence mismatch at %d: got %d", seq, entry.Sequence)
-				return audit
+				audit.Error = fmt.Sprintf("sequence mismatch at %d: got %d", seq, entry.Sequence)
+				return audit, nil, false
 			}
-
-			// Verify chain hash (for all but the first entry)
-			if seq < expectedSeq && entry.ChainHash != expectedChainHash {
+			if entry.WriterID != expectedWriterID {
 				audit.Valid = false
-				audit.Error = fmt.Sprintf("Chain hash mismatch at sequence %d", seq)
-				return audit
+				audit.Error = fmt.Sprintf("writer ID mismatch at sequence %d: got %q", seq, entry.WriterID)
+				return audit, nil, false
+			}
+			if entry.ObjectKey == "" || !isSHA256(entry.PlaintextSHA256) || !isSHA256(entry.ChainHash) || !isSHA256(entry.PrevChainHash) {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("invalid cryptographic fields at sequence %d", seq)
+				return audit, nil, false
+			}
+			if entry.ChainHash != expectedChainHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("chain link mismatch at sequence %d", seq)
+				return audit, nil, false
+			}
+			computedHash := computeChainHash(&entry, entry.PrevChainHash)
+			if entry.ChainHash != computedHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("entry hash mismatch at sequence %d", seq)
+				return audit, nil, false
 			}
 
-			// Track the object (only for Entry types)
 			trackedObjects[entry.ObjectKey] = true
-
-			// Move to previous entry
 			expectedChainHash = entry.PrevChainHash
 			audit.EntriesVerified++
-		} else if _, hasEventType := rawMap["event_type"]; hasEventType {
-			// This is a KeyEvent (key operation)
+		} else {
+			var keyEvent KeyEvent
 			if err := json.Unmarshal(data, &keyEvent); err != nil {
 				audit.Valid = false
-				audit.Error = fmt.Sprintf("Failed to parse key event at sequence %d: %v", seq, err)
-				return audit
+				audit.Error = fmt.Sprintf("failed to parse key event at sequence %d: %v", seq, err)
+				return audit, nil, false
 			}
 
-			// Verify sequence
 			if keyEvent.Sequence != seq {
 				audit.Valid = false
-				audit.Error = fmt.Sprintf("Sequence mismatch at %d: got %d", seq, keyEvent.Sequence)
-				return audit
+				audit.Error = fmt.Sprintf("sequence mismatch at %d: got %d", seq, keyEvent.Sequence)
+				return audit, nil, false
 			}
-
-			// Verify chain hash (for all but the first entry)
-			if seq < expectedSeq && keyEvent.ChainHash != expectedChainHash {
+			if keyEvent.WriterID != expectedWriterID {
 				audit.Valid = false
-				audit.Error = fmt.Sprintf("Chain hash mismatch at sequence %d", seq)
-				return audit
+				audit.Error = fmt.Sprintf("writer ID mismatch at sequence %d: got %q", seq, keyEvent.WriterID)
+				return audit, nil, false
+			}
+			if !validKeyEventType(keyEvent.EventType) {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("unknown key event type %q at sequence %d", keyEvent.EventType, seq)
+				return audit, nil, false
+			}
+			if !isSHA256(keyEvent.ChainHash) || !isSHA256(keyEvent.PrevChainHash) {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("invalid cryptographic fields at sequence %d", seq)
+				return audit, nil, false
+			}
+			if keyEvent.ChainHash != expectedChainHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("chain link mismatch at sequence %d", seq)
+				return audit, nil, false
+			}
+			computedHash := computeKeyEventHash(&keyEvent, keyEvent.PrevChainHash)
+			if keyEvent.ChainHash != computedHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("key event hash mismatch at sequence %d", seq)
+				return audit, nil, false
 			}
 
-			// Move to previous entry
 			expectedChainHash = keyEvent.PrevChainHash
 			audit.KeyEvents++
-		} else {
-			// Unknown type - neither Entry nor KeyEvent
-			audit.Valid = false
-			audit.Error = fmt.Sprintf("Unknown entry type at sequence %d: missing object_key and event_type", seq)
-			return audit
 		}
 	}
 
-	// Verify the chain links back to genesis
 	if expectedChainHash != InitialChainHash {
 		audit.Valid = false
-		audit.Error = "Chain does not link back to genesis"
+		audit.Error = "chain does not link back to genesis"
+		return audit, nil, false
 	}
 
-	return audit
+	for sequence := range entryKeys {
+		if sequence > head.Sequence {
+			audit.Valid = false
+			audit.Error = fmt.Sprintf("chain entry %d exists beyond head sequence %d", sequence, head.Sequence)
+			return audit, nil, true
+		}
+	}
+
+	return audit, nil, false
 }
 
 // findUntrackedObjects lists all objects and finds those not in any chain.
@@ -705,41 +918,113 @@ func (a *Auditor) findUntrackedObjects(ctx context.Context, tracked map[string]b
 	continuationToken := ""
 
 	for {
-		listResult, err := a.backend.List(ctx, a.bucket, "", "", continuationToken, 1000)
+		listResult, err := a.backend.List(ctx, a.bucket, a.prefix, "", continuationToken, 1000)
 		if err != nil {
 			return err
 		}
+		if listResult == nil {
+			return fmt.Errorf("backend returned a nil object listing")
+		}
 
 		for _, obj := range listResult.Objects {
-			// Skip internal objects
-			if len(obj.Key) >= 7 && obj.Key[:7] == ".armor/" {
+			logicalKey := obj.Key
+			if a.prefix != "" {
+				if !strings.HasPrefix(logicalKey, a.prefix) {
+					return fmt.Errorf("backend returned key %q outside configured prefix %q", logicalKey, a.prefix)
+				}
+				logicalKey = strings.TrimPrefix(logicalKey, a.prefix)
+			}
+
+			if strings.HasPrefix(logicalKey, ".armor/") {
 				continue
 			}
 
 			result.TotalObjects++
 
-			// Check if it's an ARMOR-encrypted object
-			if !obj.IsARMOREncrypted {
-				// Non-ARMOR objects are expected to be untracked
+			// B2's List deliberately avoids a HEAD per object, so its ObjectInfo
+			// cannot identify ARMOR metadata. Resolve metadata authoritatively here.
+			isARMOREncrypted := obj.IsARMOREncrypted
+			if !isARMOREncrypted {
+				info, headErr := a.backend.Head(ctx, a.bucket, obj.Key)
+				if headErr != nil {
+					return fmt.Errorf("head object %q: %w", logicalKey, headErr)
+				}
+				if info == nil {
+					return fmt.Errorf("head object %q: backend returned nil metadata", logicalKey)
+				}
+				isARMOREncrypted = info.IsARMOREncrypted
+			}
+			if !isARMOREncrypted {
 				continue
 			}
 
-			// Check if tracked
-			if !tracked[obj.Key] {
-				result.UntrackedObjects = append(result.UntrackedObjects, obj.Key)
+			if !tracked[logicalKey] {
+				result.UntrackedObjects = append(result.UntrackedObjects, logicalKey)
 			}
 		}
 
 		if !listResult.IsTruncated {
 			break
 		}
+		if listResult.NextToken == "" || listResult.NextToken == continuationToken {
+			return fmt.Errorf("backend returned a truncated object listing without a usable continuation token")
+		}
 		continuationToken = listResult.NextToken
 	}
 
-	// If there are untracked objects, the audit is invalid
-	if len(result.UntrackedObjects) > 0 {
+	return nil
+}
+
+func parseChainHeadKey(key string) (string, error) {
+	if !strings.HasPrefix(key, ChainHeadPrefix) {
+		return "", fmt.Errorf("invalid chain head key %q", key)
+	}
+	writerID := strings.TrimPrefix(key, ChainHeadPrefix)
+	if writerID == "" || strings.Contains(writerID, "/") {
+		return "", fmt.Errorf("invalid chain head key %q", key)
+	}
+	return writerID, nil
+}
+
+func parseChainEntryKey(key string) (string, int64, error) {
+	if !strings.HasPrefix(key, ChainPrefix) {
+		return "", 0, fmt.Errorf("invalid chain entry key %q", key)
+	}
+	relative := strings.TrimPrefix(key, ChainPrefix)
+	parts := strings.Split(relative, "/")
+	if len(parts) != 2 || parts[0] == "" || !strings.HasSuffix(parts[1], ".json") {
+		return "", 0, fmt.Errorf("invalid chain entry key %q", key)
+	}
+	sequence, err := strconv.ParseInt(strings.TrimSuffix(parts[1], ".json"), 10, 64)
+	if err != nil || sequence <= 0 || parts[1] != strconv.FormatInt(sequence, 10)+".json" {
+		return "", 0, fmt.Errorf("invalid chain entry key %q", key)
+	}
+	return parts[0], sequence, nil
+}
+
+func isSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func validKeyEventType(eventType string) bool {
+	switch eventType {
+	case "key-rotate-start", "key-rotate-complete", "key-export":
+		return true
+	default:
+		return false
+	}
+}
+
+func markInvalid(result *AuditResult) {
+	if result.Status == "valid" {
 		result.Status = "invalid"
 	}
+}
 
-	return nil
+func markIncomplete(result *AuditResult) {
+	result.Status = "incomplete"
 }

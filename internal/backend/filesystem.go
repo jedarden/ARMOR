@@ -312,6 +312,17 @@ func (fs *FSBackend) DeleteObjects(ctx context.Context, bucket string, keys []st
 
 // List objects in a bucket with optional prefix.
 func (fs *FSBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error) {
+	return fs.list(ctx, bucket, prefix, delimiter, continuationToken, maxKeys, false)
+}
+
+// ListRaw lists objects without hiding the reserved .armor/ namespace. It is
+// used by internal services such as provenance auditing; public S3 listings
+// continue to use List and cannot observe these objects.
+func (fs *FSBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error) {
+	return fs.list(ctx, bucket, prefix, delimiter, continuationToken, maxKeys, true)
+}
+
+func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int, includeInternal bool) (*ListResult, error) {
 	bucketPath := fs.bucketPath(bucket)
 
 	var objects []ObjectInfo
@@ -326,7 +337,7 @@ func (fs *FSBackend) List(ctx context.Context, bucket, prefix, delimiter, contin
 		// Skip directories and metadata files
 		if info.IsDir() {
 			// Skip .armor directory
-			if filepath.Base(path) == ".armor" {
+			if !includeInternal && filepath.Base(path) == ".armor" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -349,7 +360,7 @@ func (fs *FSBackend) List(ctx context.Context, bucket, prefix, delimiter, contin
 		}
 
 		// Skip .armor/ prefixed keys
-		if strings.HasPrefix(key, ".armor/") {
+		if !includeInternal && strings.HasPrefix(key, ".armor/") {
 			return nil
 		}
 
