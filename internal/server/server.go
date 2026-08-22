@@ -779,8 +779,10 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
+
 	// Create auditor and perform audit
-	auditor := provenance.NewAuditor(s.backend, s.config.Bucket)
+	auditor := provenance.NewAuditorWithPrefix(s.backend, s.config.Bucket, s.config.Prefix)
 	result, err := auditor.Audit(r.Context())
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -791,7 +793,6 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(result)
 }
