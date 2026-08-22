@@ -233,12 +233,16 @@ type PageData struct {
 	EncryptedCount   int
 	PlaintextCount   int
 	TotalObjectCount int // EncryptedCount + PlaintextCount (excludes folders)
+	FolderCount      int
 	KeyIDs           []string
 	EncryptedPct     string // e.g. "75.0" — used as CSS width and display value
 	// Additional metrics exposed in the stats grid
-	RangeBytesSaved string
-	KeyWrapOps      string
-	KeyUnwrapOps    string
+	RangeBytesSaved    string
+	KeyWrapOps         string
+	KeyUnwrapOps       string
+	RequestsInFlight   string
+	ReplicationQueue   string
+	ReplicationDropped string
 }
 
 // Breadcrumb represents a navigation breadcrumb.
@@ -249,11 +253,12 @@ type Breadcrumb struct {
 
 func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) PageData {
 	objects := make([]ObjectInfo, 0, len(result.CommonPrefixes)+len(result.Objects))
-	var encCount, plainCount int
+	var encCount, plainCount, folderCount int
 	keyIDSet := make(map[string]struct{})
 
 	// Add common prefixes (virtual folders) first so they appear at the top.
 	for _, cp := range result.CommonPrefixes {
+		folderCount++
 		objects = append(objects, ObjectInfo{
 			Key:            cp,
 			IsFolder:       true,
@@ -269,6 +274,9 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) Pag
 			ContentType:  obj.ContentType,
 			ETag:         obj.ETag,
 			IsFolder:     strings.HasSuffix(obj.Key, "/"),
+		}
+		if info.IsFolder {
+			folderCount++
 		}
 
 		// Check if ARMOR-encrypted
@@ -343,27 +351,31 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) Pag
 
 	canaryStatus, canaryCardClass := d.getCanaryStatus()
 	return PageData{
-		Bucket:           d.bucket,
-		Prefix:           prefix,
-		Objects:          objects,
-		CacheHits:        cacheHits,
-		CacheMisses:      cacheMisses,
-		CacheHitRate:     hitRate,
-		Uptime:           formatUptime(time.Since(d.metrics.StartTime())),
-		Requests:         d.metrics.RequestsTotal.String(),
-		BytesUp:          formatBytes(parseExpvarInt(d.metrics.BytesUploaded.String())),
-		BytesDown:        formatBytes(parseExpvarInt(d.metrics.BytesDownloaded.String())),
-		CanaryStatus:     canaryStatus,
-		CanaryCardClass:  canaryCardClass,
-		Breadcrumbs:      breadcrumbs,
-		EncryptedCount:   encCount,
-		PlaintextCount:   plainCount,
-		TotalObjectCount: totalObjCount,
-		KeyIDs:           keyIDs,
-		EncryptedPct:     encPct,
-		RangeBytesSaved:  formatBytes(parseExpvarInt(d.metrics.RangeBytesSavedTotal.String())),
-		KeyWrapOps:       d.metrics.KeyWrapOpsTotal.String(),
-		KeyUnwrapOps:     d.metrics.KeyUnwrapOpsTotal.String(),
+		Bucket:             d.bucket,
+		Prefix:             prefix,
+		Objects:            objects,
+		CacheHits:          cacheHits,
+		CacheMisses:        cacheMisses,
+		CacheHitRate:       hitRate,
+		Uptime:             formatUptime(time.Since(d.metrics.StartTime())),
+		Requests:           d.metrics.RequestsTotal.String(),
+		BytesUp:            formatBytes(parseExpvarInt(d.metrics.BytesUploaded.String())),
+		BytesDown:          formatBytes(parseExpvarInt(d.metrics.BytesDownloaded.String())),
+		CanaryStatus:       canaryStatus,
+		CanaryCardClass:    canaryCardClass,
+		Breadcrumbs:        breadcrumbs,
+		EncryptedCount:     encCount,
+		PlaintextCount:     plainCount,
+		TotalObjectCount:   totalObjCount,
+		FolderCount:        folderCount,
+		KeyIDs:             keyIDs,
+		EncryptedPct:       encPct,
+		RangeBytesSaved:    formatBytes(parseExpvarInt(d.metrics.RangeBytesSavedTotal.String())),
+		KeyWrapOps:         d.metrics.KeyWrapOpsTotal.String(),
+		KeyUnwrapOps:       d.metrics.KeyUnwrapOpsTotal.String(),
+		RequestsInFlight:   d.metrics.RequestsInFlight.String(),
+		ReplicationQueue:   d.metrics.ReplicationQueueDepth.String(),
+		ReplicationDropped: d.metrics.ReplicationDroppedTotal.String(),
 	}
 }
 
@@ -465,25 +477,32 @@ func (d *Dashboard) metricsHandlerImpl() http.HandlerFunc {
 		if cacheHits+cacheMisses > 0 {
 			cacheHitRatePct = float64(cacheHits) / float64(cacheHits+cacheMisses) * 100
 		}
+		canaryStatus, canaryCardClass := d.getCanaryStatus()
 		data := map[string]interface{}{
-			"requests_total":        parseExpvarInt(m.RequestsTotal.String()),
-			"requests_in_flight":    parseExpvarInt(m.RequestsInFlight.String()),
-			"bytes_uploaded":        parseExpvarInt(m.BytesUploaded.String()),
-			"bytes_downloaded":      parseExpvarInt(m.BytesDownloaded.String()),
-			"bytes_fetched_from_b2": parseExpvarInt(m.BytesFetchedFromB2.String()),
-			"range_reads_total":     parseExpvarInt(m.RangeReadsTotal.String()),
-			"range_bytes_saved":     parseExpvarInt(m.RangeBytesSavedTotal.String()),
-			"cache_hits":            cacheHits,
-			"cache_misses":          cacheMisses,
-			"cache_hit_rate_pct":    cacheHitRatePct,
-			"key_wrap_ops":          parseExpvarInt(m.KeyWrapOpsTotal.String()),
-			"key_unwrap_ops":        parseExpvarInt(m.KeyUnwrapOpsTotal.String()),
-			"canary_checks":         parseExpvarInt(m.CanaryChecksTotal.String()),
-			"canary_failures":       parseExpvarInt(m.CanaryCheckFailures.String()),
-			"active_multipart":      parseExpvarInt(m.ActiveMultipartUploads.String()),
-			"provenance_entries":    parseExpvarInt(m.ProvenanceEntriesTotal.String()),
-			"uptime_seconds":        time.Since(m.StartTime()).Seconds(),
-			"uptime_formatted":      formatUptime(time.Since(m.StartTime())),
+			"requests_total":          parseExpvarInt(m.RequestsTotal.String()),
+			"requests_in_flight":      parseExpvarInt(m.RequestsInFlight.String()),
+			"bytes_uploaded":          parseExpvarInt(m.BytesUploaded.String()),
+			"bytes_downloaded":        parseExpvarInt(m.BytesDownloaded.String()),
+			"bytes_fetched_from_b2":   parseExpvarInt(m.BytesFetchedFromB2.String()),
+			"range_reads_total":       parseExpvarInt(m.RangeReadsTotal.String()),
+			"range_bytes_saved":       parseExpvarInt(m.RangeBytesSavedTotal.String()),
+			"cache_hits":              cacheHits,
+			"cache_misses":            cacheMisses,
+			"cache_hit_rate_pct":      cacheHitRatePct,
+			"key_wrap_ops":            parseExpvarInt(m.KeyWrapOpsTotal.String()),
+			"key_unwrap_ops":          parseExpvarInt(m.KeyUnwrapOpsTotal.String()),
+			"canary_checks":           parseExpvarInt(m.CanaryChecksTotal.String()),
+			"canary_failures":         parseExpvarInt(m.CanaryCheckFailures.String()),
+			"canary_status":           canaryStatus,
+			"canary_card_class":       canaryCardClass,
+			"active_multipart":        parseExpvarInt(m.ActiveMultipartUploads.String()),
+			"provenance_entries":      parseExpvarInt(m.ProvenanceEntriesTotal.String()),
+			"replication_queue_depth": parseExpvarInt(m.ReplicationQueueDepth.String()),
+			"replication_dropped":     parseExpvarInt(m.ReplicationDroppedTotal.String()),
+			"replication_errors":      parseExpvarInt(m.ReplicationErrorsTotal.String()),
+			"replication_retries":     parseExpvarInt(m.ReplicationRetriesTotal.String()),
+			"uptime_seconds":          time.Since(m.StartTime()).Seconds(),
+			"uptime_formatted":        formatUptime(time.Since(m.StartTime())),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(data)
@@ -770,6 +789,8 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         header h1 { font-size: 24px; margin-bottom: 5px; }
         header .subtitle { opacity: 0.8; font-size: 14px; }
+        .header-context { margin-top: 10px; font-size: 12px; color: #cbd5e1; }
+        .header-context code { color: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
         .rotate-btn {
             background: #f59e0b;
             color: white;
@@ -821,6 +842,22 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         .breadcrumbs a:hover { text-decoration: underline; }
         .breadcrumbs span { color: #666; margin: 0 5px; }
+        .browser-toolbar {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+        }
+        .browser-toolbar h2 { font-size: 18px; color: #1a1a2e; }
+        .browser-toolbar p { color: #64748b; font-size: 13px; margin-top: 2px; }
+        .browser-summary { color: #64748b; font-size: 13px; text-align: right; white-space: nowrap; }
+        .browser-summary strong { color: #1e293b; }
+        .refresh-link { color: #2563eb; margin-left: 12px; text-decoration: none; }
+        .refresh-link:hover { text-decoration: underline; }
         .objects-table {
             background: white;
             border-radius: 8px;
@@ -850,6 +887,16 @@ const dashboardHTML = `<!DOCTYPE html>
             text-decoration: none;
         }
         .key-cell a:hover { text-decoration: underline; }
+        .object-link {
+            background: none;
+            border: 0;
+            color: #3b82f6;
+            cursor: pointer;
+            font: inherit;
+            padding: 0;
+            text-align: left;
+        }
+        .object-link:hover { text-decoration: underline; }
         .armor-badge {
             display: inline-block;
             background: #10b981;
@@ -1004,6 +1051,26 @@ const dashboardHTML = `<!DOCTYPE html>
             font-weight: 500;
             margin-left: 4px;
         }
+        .empty-state { color: #64748b; padding: 42px 20px; text-align: center; }
+        .empty-state strong { color: #334155; display: block; font-size: 16px; margin-bottom: 4px; }
+        .metrics-updated { color: #94a3b8; font-size: 11px; margin-left: 8px; }
+        .visually-hidden {
+            clip: rect(0 0 0 0);
+            clip-path: inset(50%);
+            height: 1px;
+            overflow: hidden;
+            position: absolute;
+            white-space: nowrap;
+            width: 1px;
+        }
+        @media (max-width: 720px) {
+            .container { padding: 10px; }
+            header { align-items: flex-start; flex-direction: column; gap: 15px; }
+            .browser-toolbar { align-items: flex-start; flex-direction: column; }
+            .browser-summary { text-align: left; white-space: normal; }
+            .objects-table { overflow-x: auto; }
+            table { min-width: 680px; }
+        }
     </style>
 </head>
 <body>
@@ -1012,6 +1079,7 @@ const dashboardHTML = `<!DOCTYPE html>
             <div>
                 <h1>ARMOR Dashboard</h1>
                 <div class="subtitle">S3-compatible transparent encryption proxy</div>
+                <div class="header-context">Bucket: <code>{{.Bucket}}</code></div>
             </div>
             <button class="rotate-btn" onclick="startKeyRotation()">Rotate Key</button>
         </header>
@@ -1057,6 +1125,18 @@ const dashboardHTML = `<!DOCTYPE html>
                 <h3>Key Ops (W/U)</h3>
                 <div class="value" id="stat-key-ops">{{.KeyWrapOps}} / {{.KeyUnwrapOps}}</div>
             </div>
+            <div class="stat-card">
+                <h3>Requests In Flight</h3>
+                <div class="value" id="stat-in-flight">{{.RequestsInFlight}}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Replication Queue</h3>
+                <div class="value" id="stat-replication-queue">{{.ReplicationQueue}}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Replication Dropped</h3>
+                <div class="value" id="stat-replication-dropped">{{.ReplicationDropped}}</div>
+            </div>
         </div>
 
         {{if gt .TotalObjectCount 0}}
@@ -1076,12 +1156,24 @@ const dashboardHTML = `<!DOCTYPE html>
         </div>
         {{end}}
 
-        <div class="breadcrumbs">
+        <nav class="breadcrumbs" aria-label="Bucket path">
             {{range $i, $crumb := .Breadcrumbs}}{{if $i}}<span>›</span>{{end}}<a href="?prefix={{$crumb.Path}}">{{$crumb.Name}}</a>{{end}}
-        </div>
+        </nav>
 
+        <section aria-labelledby="browser-title">
+        <div class="browser-toolbar">
+            <div>
+                <h2 id="browser-title">Bucket browser</h2>
+                <p id="current-prefix">{{if .Prefix}}/{{.Prefix}}{{else}}Root prefix{{end}}</p>
+            </div>
+            <div class="browser-summary" aria-live="polite">
+                <strong>{{.TotalObjectCount}}</strong> objects · <strong>{{.FolderCount}}</strong> folders
+                <a class="refresh-link" href="?prefix={{.Prefix}}" aria-label="Refresh current prefix">Refresh</a>
+            </div>
+        </div>
         <div class="objects-table">
             <table>
+                <caption class="visually-hidden">Objects in {{.Bucket}} under {{.Prefix}}</caption>
                 <thead>
                     <tr>
                         <th>Key</th>
@@ -1092,14 +1184,24 @@ const dashboardHTML = `<!DOCTYPE html>
                     </tr>
                 </thead>
                 <tbody>
+                    {{if not .Objects}}
+                    <tr>
+                        <td colspan="5">
+                            <div class="empty-state">
+                                <strong>This prefix is empty</strong>
+                                There are no objects or folders to display here.
+                            </div>
+                        </td>
+                    </tr>
+                    {{end}}
                     {{range .Objects}}
                     <tr>
                         <td class="key-cell">
                             {{if .IsFolder}}
                                 <span class="folder-icon">📁</span>
-                                <a href="?prefix={{.Key}}">{{.Key}}</a>
+                                <a class="folder-link" href="?prefix={{.Key}}" aria-label="Open folder {{.Key}}">{{.Key}}</a>
                             {{else}}
-                                <a href="#" onclick="showDetail('{{.Key}}')">{{.Key}}</a>
+                                <a class="object-link" href="#object-detail" data-object-key="{{.Key}}" onclick="showDetail(this.dataset.objectKey); return false;">{{.Key}}</a>
                             {{end}}
                         </td>
                         <td class="size-cell">{{.PlaintextSizeH}}</td>
@@ -1119,9 +1221,11 @@ const dashboardHTML = `<!DOCTYPE html>
                 </tbody>
             </table>
         </div>
+        </section>
 
         <footer>
             ARMOR — Transparent S3 Encryption • <a href="/metrics">Metrics</a> • <a href="/admin/key/verify">Key Status</a>
+            <span class="metrics-updated" id="metrics-updated" aria-live="polite">Live metrics enabled</span>
         </footer>
     </div>
 
@@ -1161,13 +1265,23 @@ const dashboardHTML = `<!DOCTYPE html>
         return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
+    function fetchJSON(url, options) {
+        return fetch(url, options).then(function(response) {
+            if (!response.ok) {
+                return response.text().then(function(body) {
+                    throw new Error(body || ('Request failed (' + response.status + ')'));
+                });
+            }
+            return response.json();
+        });
+    }
+
     function closeDetailModal() {
         document.getElementById('objectDetailModal').classList.remove('active');
     }
 
     function showDetail(key) {
-        fetch('/dashboard/object?key=' + encodeURIComponent(key))
-            .then(r => r.json())
+        fetchJSON('/dashboard/object?key=' + encodeURIComponent(key))
             .then(data => {
                 let html = row('Key', data.key)
                          + row('Size', data.size + ' bytes')
@@ -1298,8 +1412,7 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     function refreshMetrics() {
-        fetch('/dashboard/metrics')
-            .then(function(r) { return r.json(); })
+        fetchJSON('/dashboard/metrics')
             .then(function(data) {
                 var hits = parseInt(data.cache_hits) || 0;
                 var misses = parseInt(data.cache_misses) || 0;
@@ -1312,10 +1425,28 @@ const dashboardHTML = `<!DOCTYPE html>
                 if (data.uptime_formatted) setText('stat-uptime', data.uptime_formatted);
                 setText('stat-range-saved', fmtBytes(data.range_bytes_saved || 0));
                 setText('stat-key-ops', (data.key_wrap_ops || 0) + ' / ' + (data.key_unwrap_ops || 0));
+                setText('stat-in-flight', data.requests_in_flight || 0);
+                setText('stat-replication-queue', data.replication_queue_depth || 0);
+                setText('stat-replication-dropped', data.replication_dropped || 0);
+                if (data.canary_status) {
+                    setText('stat-canary', data.canary_status);
+                    var canaryCard = document.getElementById('stat-canary-card');
+                    if (canaryCard) {
+                        canaryCard.classList.remove('healthy', 'unhealthy');
+                        if (data.canary_card_class) canaryCard.classList.add(data.canary_card_class);
+                    }
+                }
+                var updated = document.getElementById('metrics-updated');
+                if (updated) updated.textContent = 'Updated ' + new Date().toLocaleTimeString();
             })
-            .catch(function(err) { console.warn('Metrics refresh failed:', err); });
+            .catch(function(err) {
+                var updated = document.getElementById('metrics-updated');
+                if (updated) updated.textContent = 'Metrics unavailable';
+                console.warn('Metrics refresh failed:', err);
+            });
     }
 
+    refreshMetrics();
     // Auto-refresh metrics stats every 30 seconds without a full page reload
     setInterval(refreshMetrics, 30000);
     </script>
