@@ -1278,6 +1278,87 @@ func TestNewStatCardsInHTML(t *testing.T) {
 	}
 }
 
+// TestBucketBrowserControls verifies the rendered UI exposes the information
+// needed to navigate a prefix and distinguish folders from objects.
+func TestBucketBrowserControls(t *testing.T) {
+	mb := newMockBackend()
+	mb.commonPrefixes = []string{"reports/"}
+	mb.objects["readme.txt"] = &backend.ObjectInfo{
+		Key:          "readme.txt",
+		Size:         100,
+		LastModified: time.Now(),
+	}
+
+	d := New(mb, "test-bucket", metrics.NewMetrics())
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Bucket browser",
+		"Root prefix",
+		"<strong>1</strong> objects · <strong>1</strong> folders",
+		`class="folder-link"`,
+		`class="object-link"`,
+		`data-object-key="readme.txt"`,
+		"Encryption",
+		"Refresh",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard browser missing %q", want)
+		}
+	}
+}
+
+// TestEmptyPrefixState verifies that an empty prefix has a useful accessible
+// state instead of rendering a blank table body.
+func TestEmptyPrefixState(t *testing.T) {
+	d := New(newMockBackend(), "test-bucket", metrics.NewMetrics())
+	req := httptest.NewRequest(http.MethodGet, "/dashboard?prefix=missing/", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "This prefix is empty") {
+		t.Error("expected empty-prefix message")
+	}
+	if !strings.Contains(body, `colspan="5"`) {
+		t.Error("expected empty-prefix row to span the object table")
+	}
+}
+
+// TestMetricsHandlerLiveDashboardFields verifies fields consumed by the
+// dashboard's live refresh loop are present in the JSON response.
+func TestMetricsHandlerLiveDashboardFields(t *testing.T) {
+	m := metrics.NewMetrics()
+	m.SetReplicationQueueDepth(7)
+	m.IncReplicationDropped()
+	m.SetCanaryLastCheck(time.Now())
+	d := New(newMockBackend(), "test-bucket", m)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/metrics", nil)
+	rec := httptest.NewRecorder()
+	d.MetricsHandler()(rec, req)
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&data); err != nil {
+		t.Fatalf("decode live metrics: %v", err)
+	}
+	if got, ok := data["replication_queue_depth"].(float64); !ok || got != 7 {
+		t.Errorf("replication_queue_depth = %v, want 7", data["replication_queue_depth"])
+	}
+	if got, ok := data["replication_dropped"].(float64); !ok || got != 1 {
+		t.Errorf("replication_dropped = %v, want 1", data["replication_dropped"])
+	}
+	if got, ok := data["canary_status"].(string); !ok || !strings.HasPrefix(got, "Healthy") {
+		t.Errorf("canary_status = %v, want Healthy status", data["canary_status"])
+	}
+	if got := data["canary_card_class"]; got != "healthy" {
+		t.Errorf("canary_card_class = %v, want healthy", got)
+	}
+}
+
 // Benchmark dashboard handler
 func BenchmarkDashboardHandler(b *testing.B) {
 	mb := newMockBackend()
