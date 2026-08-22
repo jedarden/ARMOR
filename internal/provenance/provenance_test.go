@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,10 +49,12 @@ func (m *mockBackend) Get(ctx context.Context, bucket, key string) (io.ReadClose
 	if meta == nil {
 		meta = make(map[string]string)
 	}
+	_, isARMOR := meta["x-amz-meta-armor-version"]
 	return io.NopCloser(bytes.NewReader(data)), &backend.ObjectInfo{
-		Key:      key,
-		Size:     int64(len(data)),
-		Metadata: meta,
+		Key:              key,
+		Size:             int64(len(data)),
+		Metadata:         meta,
+		IsARMOREncrypted: isARMOR,
 	}, nil
 }
 
@@ -86,10 +89,12 @@ func (m *mockBackend) Head(ctx context.Context, bucket, key string) (*backend.Ob
 	if meta == nil {
 		meta = make(map[string]string)
 	}
+	_, isARMOR := meta["x-amz-meta-armor-version"]
 	return &backend.ObjectInfo{
-		Key:      key,
-		Size:     int64(len(data)),
-		Metadata: meta,
+		Key:              key,
+		Size:             int64(len(data)),
+		Metadata:         meta,
+		IsARMOREncrypted: isARMOR,
 	}, nil
 }
 
@@ -233,6 +238,59 @@ func (m *mockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, de
 
 func (m *mockBackend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*backend.ObjectInfo, error) {
 	return nil, fmt.Errorf("not implemented")
+}
+
+// productionLikeBackend reproduces the two relevant B2 listing contracts:
+// public List hides .armor/ objects and does not perform per-object HEAD calls,
+// while ListRaw exposes internal objects to trusted subsystems.
+type productionLikeBackend struct {
+	*mockBackend
+}
+
+func (m *productionLikeBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	result, err := m.mockBackend.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+	if err != nil {
+		return nil, err
+	}
+	filtered := result.Objects[:0]
+	for _, object := range result.Objects {
+		if strings.HasPrefix(object.Key, ".armor/") {
+			continue
+		}
+		object.Metadata = nil
+		object.IsARMOREncrypted = false
+		filtered = append(filtered, object)
+	}
+	result.Objects = filtered
+	return result, nil
+}
+
+func (m *productionLikeBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	return m.mockBackend.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
+type failingListBackend struct {
+	*mockBackend
+	failPrefix string
+}
+
+func (m *failingListBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	if prefix == m.failPrefix {
+		return nil, fmt.Errorf("injected listing failure for %q", prefix)
+	}
+	return m.mockBackend.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
+type omittingEntryListBackend struct {
+	*mockBackend
+}
+
+func (m *omittingEntryListBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	result, err := m.mockBackend.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+	if err == nil && prefix == ChainPrefix {
+		result.Objects = nil
+	}
+	return result, err
 }
 
 func TestShouldRecord(t *testing.T) {
@@ -601,6 +659,10 @@ func TestAuditMissingEntry(t *testing.T) {
 	if result.Writers[0].Error == "" {
 		t.Error("expected error message for missing entry")
 	}
+
+	if len(result.Gaps) != 1 || result.Gaps[0].WriterID != "test-writer" || result.Gaps[0].MissingSeq != 1 {
+		t.Fatalf("expected sequence 1 gap, got %+v", result.Gaps)
+	}
 }
 
 // TestAuditGenesisLink tests that audit verifies chain links back to genesis.
@@ -716,5 +778,274 @@ func TestAuditMultipleWriters(t *testing.T) {
 
 	if writerCounts["writer-2"] != 2 {
 		t.Errorf("writer-2 entries = %d, want 2", writerCounts["writer-2"])
+	}
+}
+
+func TestAuditUsesInternalListingAndAuthoritativeMetadata(t *testing.T) {
+	ctx := context.Background()
+	mb := &productionLikeBackend{mockBackend: newMockBackend()}
+	m := NewManager(mb, "test-bucket", "test-writer")
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("content")))
+
+	if err := m.RecordUpload(ctx, "data/file.txt", plaintextSHA, "put"); err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+	mb.objects["test-bucket/data/file.txt"] = []byte("encrypted content")
+	mb.metadata["test-bucket/data/file.txt"] = map[string]string{
+		"x-amz-meta-armor-version": "1",
+	}
+
+	result, err := NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+	if result.Status != "valid" {
+		t.Fatalf("audit status = %s, want valid: %+v", result.Status, result)
+	}
+	if len(result.Writers) != 1 || result.Writers[0].EntriesVerified != 1 {
+		t.Fatalf("audit did not discover and verify internal chain: %+v", result.Writers)
+	}
+	if result.TotalObjects != 1 {
+		t.Fatalf("total objects = %d, want 1", result.TotalObjects)
+	}
+
+	// Public B2-style listings do not identify encryption metadata. Confirm the
+	// auditor's authoritative HEAD detects an encrypted object with no entry.
+	mb.objects["test-bucket/data/untracked.txt"] = []byte("encrypted content")
+	mb.metadata["test-bucket/data/untracked.txt"] = map[string]string{
+		"x-amz-meta-armor-version": "1",
+	}
+	result, err = NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit with untracked object failed: %v", err)
+	}
+	if result.Status != "invalid" || len(result.UntrackedObjects) != 1 || result.UntrackedObjects[0] != "data/untracked.txt" {
+		t.Fatalf("metadata-free listing hid untracked object: %+v", result)
+	}
+}
+
+func TestAuditRecomputesHeadEntryHash(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("content")))
+
+	if err := m.RecordUpload(ctx, "data/file.txt", plaintextSHA, "put"); err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+	entryKey := "test-bucket/" + ChainPrefix + "test-writer/1.json"
+	var entry Entry
+	if err := json.Unmarshal(mb.objects[entryKey], &entry); err != nil {
+		t.Fatalf("unmarshal entry: %v", err)
+	}
+	entry.PlaintextSHA256 = strings.Repeat("a", sha256.Size*2)
+	mb.objects[entryKey], _ = json.Marshal(entry)
+
+	result, err := NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+	if result.Status != "invalid" || len(result.Writers) != 1 || result.Writers[0].Valid {
+		t.Fatalf("tampered head entry passed audit: %+v", result)
+	}
+	if !strings.Contains(result.Writers[0].Error, "entry hash mismatch") {
+		t.Fatalf("unexpected audit error: %q", result.Writers[0].Error)
+	}
+}
+
+func TestAuditVerifiesHeadHashAgainstTip(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("content")))
+
+	if err := m.RecordUpload(ctx, "data/file.txt", plaintextSHA, "put"); err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+	headKey := "test-bucket/" + ChainHeadPrefix + "test-writer"
+	var head ChainHead
+	if err := json.Unmarshal(mb.objects[headKey], &head); err != nil {
+		t.Fatalf("unmarshal head: %v", err)
+	}
+	head.ChainHash = strings.Repeat("b", sha256.Size*2)
+	mb.objects[headKey], _ = json.Marshal(head)
+
+	result, err := NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+	if result.Status != "invalid" || result.Writers[0].Valid {
+		t.Fatalf("head hash mismatch passed audit: %+v", result)
+	}
+	if !strings.Contains(result.Writers[0].Error, "chain link mismatch") {
+		t.Fatalf("unexpected audit error: %q", result.Writers[0].Error)
+	}
+}
+
+func TestAuditRecomputesKeyEventHash(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+
+	if err := m.RecordKeyEvent(ctx, "key-rotate-start", KeyEventOpts{
+		OldMEKHash: "aaaa1111bbbb2222",
+		NewMEKHash: "cccc3333dddd4444",
+		RotationID: "rotation-1",
+	}); err != nil {
+		t.Fatalf("RecordKeyEvent failed: %v", err)
+	}
+	eventKey := "test-bucket/" + ChainPrefix + "test-writer/1.json"
+	var event KeyEvent
+	if err := json.Unmarshal(mb.objects[eventKey], &event); err != nil {
+		t.Fatalf("unmarshal key event: %v", err)
+	}
+	event.RotationID = "tampered-rotation"
+	mb.objects[eventKey], _ = json.Marshal(event)
+
+	result, err := NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+	if result.Status != "invalid" || result.Writers[0].Valid {
+		t.Fatalf("tampered key event passed audit: %+v", result)
+	}
+	if !strings.Contains(result.Writers[0].Error, "key event hash mismatch") {
+		t.Fatalf("unexpected audit error: %q", result.Writers[0].Error)
+	}
+}
+
+func TestAuditRejectsMalformedHeadInsteadOfSkippingIt(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	mb.objects["test-bucket/"+ChainHeadPrefix+"test-writer"] = []byte("not-json")
+
+	result, err := NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+	if result.Status != "invalid" || len(result.Writers) != 1 || result.Writers[0].Valid {
+		t.Fatalf("malformed head was silently skipped: %+v", result)
+	}
+}
+
+func TestAuditDetectsEntriesWithoutHead(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("content")))
+
+	if err := m.RecordUpload(ctx, "data/file.txt", plaintextSHA, "put"); err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+	delete(mb.objects, "test-bucket/"+ChainHeadPrefix+"test-writer")
+
+	result, err := NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+	if result.Status != "incomplete" || len(result.Writers) != 1 || result.Writers[0].Valid {
+		t.Fatalf("orphan chain entries did not make the audit incomplete: %+v", result)
+	}
+	if !strings.Contains(result.Writers[0].Error, "without a chain head") {
+		t.Fatalf("unexpected audit error: %q", result.Writers[0].Error)
+	}
+}
+
+func TestAuditReportsIncompleteWhenListingsFail(t *testing.T) {
+	for _, failPrefix := range []string{ChainHeadPrefix, ChainPrefix, ""} {
+		t.Run(fmt.Sprintf("prefix_%q", failPrefix), func(t *testing.T) {
+			mb := &failingListBackend{mockBackend: newMockBackend(), failPrefix: failPrefix}
+			result, err := NewAuditor(mb, "test-bucket").Audit(context.Background())
+			if err != nil {
+				t.Fatalf("Audit failed: %v", err)
+			}
+			if result.Status != "incomplete" {
+				t.Fatalf("audit status = %q, want incomplete: %+v", result.Status, result)
+			}
+			if len(result.Errors) == 0 {
+				t.Fatal("incomplete audit did not report its error")
+			}
+		})
+	}
+}
+
+func TestAuditFetchesEntriesAddedAfterListingSnapshot(t *testing.T) {
+	ctx := context.Background()
+	mb := &omittingEntryListBackend{mockBackend: newMockBackend()}
+	m := NewManager(mb, "test-bucket", "test-writer")
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("content")))
+	if err := m.RecordUpload(ctx, "data/file.txt", plaintextSHA, "put"); err != nil {
+		t.Fatalf("RecordUpload failed: %v", err)
+	}
+
+	result, err := NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+	if result.Status != "valid" || len(result.Writers) != 1 || !result.Writers[0].Valid {
+		t.Fatalf("entry omitted from listing but reachable from head did not verify: %+v", result)
+	}
+}
+
+func TestAuditReportsEntryBeyondHeadAsIncomplete(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+	plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("content")))
+	if err := m.RecordUpload(ctx, "data/file-1.txt", plaintextSHA, "put"); err != nil {
+		t.Fatalf("first RecordUpload failed: %v", err)
+	}
+	firstHead := append([]byte(nil), mb.objects["test-bucket/"+ChainHeadPrefix+"test-writer"]...)
+	if err := m.RecordUpload(ctx, "data/file-2.txt", plaintextSHA, "put"); err != nil {
+		t.Fatalf("second RecordUpload failed: %v", err)
+	}
+	mb.objects["test-bucket/"+ChainHeadPrefix+"test-writer"] = firstHead
+
+	result, err := NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+	if result.Status != "incomplete" || len(result.Writers) != 1 || result.Writers[0].Valid {
+		t.Fatalf("entry beyond head did not make audit incomplete: %+v", result)
+	}
+	if !strings.Contains(result.Writers[0].Error, "beyond head sequence") {
+		t.Fatalf("unexpected audit error: %q", result.Writers[0].Error)
+	}
+}
+
+func TestManagerSerializesConcurrentAppends(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	m := NewManager(mb, "test-bucket", "test-writer")
+	const uploads = 64
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, uploads)
+	for i := 0; i < uploads; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			key := fmt.Sprintf("data/file-%d.txt", i)
+			plaintextSHA := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
+			if err := m.RecordUpload(ctx, key, plaintextSHA, "put"); err != nil {
+				errCh <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("concurrent RecordUpload failed: %v", err)
+	}
+
+	result, err := NewAuditor(mb, "test-bucket").Audit(ctx)
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+	if result.Status != "valid" || len(result.Writers) != 1 {
+		t.Fatalf("concurrent chain is invalid: %+v", result)
+	}
+	if result.Writers[0].HeadSequence != uploads || result.Writers[0].EntriesVerified != uploads {
+		t.Fatalf("concurrent chain lost entries: %+v", result.Writers[0])
 	}
 }
