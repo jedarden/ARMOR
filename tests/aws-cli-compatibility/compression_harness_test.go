@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,13 @@ import (
 	"github.com/jedarden/armor/internal/presign"
 	"github.com/jedarden/armor/internal/server"
 )
+
+// S3Error represents an S3 XML error response
+type S3Error struct {
+	XMLName xml.Name `xml:"Error"`
+	Code    string   `xml:"Code"`
+	Message string   `xml:"Message"`
+}
 
 const compressionHarnessBucket = "compression-harness-bucket"
 
@@ -227,6 +235,43 @@ func verifyByteIdenticalRange(t *testing.T, original, actual []byte, offset, len
 	}
 }
 
+// parseS3Error parses an S3 XML error response from an HTTP response body
+func parseS3Error(body []byte) (*S3Error, error) {
+	var errResp S3Error
+	if err := xml.Unmarshal(body, &errResp); err != nil {
+		return nil, fmt.Errorf("failed to parse S3 error XML: %w", err)
+	}
+	return &errResp, nil
+}
+
+// assertRangeRequestRejected verifies that a range request on a compressed object
+// is rejected. Compressed objects reject all range requests with either:
+// - 416 (RequestedRangeNotSatisfiable) for valid ranges that are rejected due to compression
+// - 400 (BadRequest) for syntactically invalid ranges
+func assertRangeRequestRejected(t *testing.T, resp *http.Response) {
+	t.Helper()
+
+	parsed, err := parseGETResponse(resp)
+	if err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Share endpoint returns either 400 (invalid range syntax) or 416 (compressed object)
+	// Both are acceptable fail-closed behaviors
+	if parsed.StatusCode != http.StatusBadRequest && parsed.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("expected status 400 or 416 for compressed object range request, got %d", parsed.StatusCode)
+	}
+
+	// For 416 responses, verify the error message is clear
+	if parsed.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		errorBody := string(parsed.Body)
+		// The share endpoint uses plain text error (http.Error), not XML
+		if !bytes.Contains(parsed.Body, []byte("Range reads unsupported on compressed objects")) {
+			t.Errorf("416 response should mention compressed objects, got: %s", errorBody)
+		}
+	}
+}
+
 func TestCompressionRoundTripHarness_ShareGET(t *testing.T) {
 	harness := newCompressionRoundTripHarness(t)
 	content := armorcrypto.GeneratePatternContent("share compression harness payload ", 1024)
@@ -313,6 +358,61 @@ func TestCompressionRoundTripHarness_RangeRequests(t *testing.T) {
 			verifyByteIdenticalRange(t, object.OriginalContent, parsed.Body, simulated.Spec.Start, simulated.ContentLength)
 			if got := parsed.Headers["Content-Range"]; got != simulated.ContentRange {
 				t.Fatalf("share Content-Range = %q, want %q", got, simulated.ContentRange)
+			}
+		})
+	}
+}
+
+// TestCompressionRangeRequestFailClosed verifies that range requests against
+// compressed objects are rejected with proper error messages, demonstrating
+// fail-closed behavior
+func TestCompressionRangeRequestFailClosed(t *testing.T) {
+	harness := newCompressionRoundTripHarness(t)
+	content := armorcrypto.GeneratePatternContent("fail-closed range test payload ", 2048)
+	compressed, uncompressed, err := harness.objects.CreateTestObjectPair(
+		harness.ctx,
+		harness.bucket,
+		"rangefail/compressed-object",
+		"rangefail/uncompressed-object",
+		content,
+		"application/octet-stream",
+	)
+	if err != nil {
+		t.Fatalf("create fail-closed test object pair: %v", err)
+	}
+
+	// Test various range request patterns against compressed objects
+	rangePatterns := []string{
+		"bytes=0-0",           // First byte
+		"bytes=0-1023",        // First kilobyte
+		"bytes=512-1535",      // Middle range
+		"bytes=-512",          // Last 512 bytes
+		"bytes=1024-",         // From offset to end
+	}
+
+	for _, pattern := range rangePatterns {
+		t.Run("compressed_rejects_"+pattern, func(t *testing.T) {
+			response := harness.shareGET(t, compressed.Key, pattern)
+			assertRangeRequestRejected(t, response)
+		})
+
+		t.Run("uncompressed_accepts_"+pattern, func(t *testing.T) {
+			response := harness.shareGET(t, uncompressed.Key, pattern)
+			parsed, err := parseGETResponse(response)
+			if err != nil {
+				t.Fatalf("parse uncompressed range response: %v", err)
+			}
+
+			// Uncompressed objects should accept range requests
+			if parsed.StatusCode != http.StatusPartialContent && parsed.StatusCode != http.StatusOK {
+				t.Fatalf("uncompressed object rejected range request: status %d, body %s", parsed.StatusCode, string(parsed.Body))
+			}
+
+			// Verify Content-Range header is present for partial content
+			if parsed.StatusCode == http.StatusPartialContent {
+				if _, ok := parsed.Headers["Content-Range"]; !ok {
+					t.Errorf("uncompressed range request missing Content-Range header")
+				}
 			}
 		})
 	}
