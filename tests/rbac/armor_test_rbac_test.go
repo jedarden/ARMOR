@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 // Package rbac tests RBAC verb coverage against B2 objects using armor-test credentials.
 // This test suite verifies GET, PUT, and DELETE operations against the armor-test-jedarden
 // bucket and documents allow/deny outcomes per ADR-012.
