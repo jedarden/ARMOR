@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 // Package server provides comprehensive end-to-end tests for named credentials
 // and ACL enforcement per ADR-012.
 //
