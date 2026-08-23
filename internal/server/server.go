@@ -167,21 +167,6 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to create key manager: %w", err)
 	}
 
-	// Create canary monitor
-	canaryMonitor := canary.NewMonitor(canary.Config{
-		Backend:           b2Backend,
-		Bucket:            cfg.Bucket,
-		MEK:               cfg.MEK,
-		BlockSize:         cfg.BlockSize,
-		InstanceID:        cfg.WriterID,
-		Interval:          5 * time.Minute,
-		CanarySize:        1024,
-		MaxRetries:        3,
-		RetryDelay:        10 * time.Second,
-		MultipartInterval: 1 * time.Hour,
-		MultipartSize:     10*1024*1024 + 512*1024, // 10.5 MiB — two 5.25 MiB parts (B2 requires non-final parts >= 5 MiB)
-	})
-
 	// Create provenance manager
 	provenanceMgr := provenance.NewManager(b2Backend, cfg.Bucket, cfg.WriterID)
 
@@ -334,6 +319,24 @@ func New(cfg *config.Config) (*Server, error) {
 		)
 		logger.Info("replication queue initialized")
 	}
+
+	// Create canary monitor (after replicationQueue is available)
+	canaryMonitor := canary.NewMonitor(canary.Config{
+		Backend:           b2Backend,
+		SecondaryBackend:  secondaryBackend,
+		ReplicationQueue:  replicationQueue,
+		Bucket:            cfg.Bucket,
+		MEK:               cfg.MEK,
+		BlockSize:         cfg.BlockSize,
+		InstanceID:        cfg.WriterID,
+		Interval:          5 * time.Minute,
+		CanarySize:        1024,
+		MaxRetries:        3,
+		RetryDelay:        10 * time.Second,
+		MultipartInterval: 1 * time.Hour,
+		MultipartSize:     10*1024*1024 + 512*1024, // 10.5 MiB — two 5.25 MiB parts (B2 requires non-final parts >= 5 MiB)
+		SecondaryInterval: 5 * time.Minute,
+	})
 
 	return &Server{
 		config:            cfg,
