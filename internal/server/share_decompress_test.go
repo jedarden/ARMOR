@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1379,4 +1380,354 @@ func TestSmallCompressedObjectGet(t *testing.T) {
 	t.Logf("  - Input: %d bytes with Compressed=true", len(smallData))
 	t.Logf("  - Output: %d bytes unchanged", len(retrievedData))
 	t.Logf("  - HTTP Status: %d", resp.StatusCode)
+}
+
+// ============================================================================
+// UNCOMPRESSED OBJECT BASELINE TESTS - EDGE CASES AND BOUNDARY CONDITIONS
+// ============================================================================
+
+// TestShareGET_UncompressedObject_RangeEdgeCases tests various range request
+// edge cases for uncompressed objects including boundary conditions.
+func TestShareGET_UncompressedObject_RangeEdgeCases(t *testing.T) {
+	tmpDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
+	cfg := loadTestConfig(t, tmpDir)
+	srv, err := NewWithBackend(cfg, fsBackend)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
+
+	// Create test data (NOT compressed) - large enough for various range tests
+	originalData := generateRandomData(100 * 1024) // 100KB
+
+	// Encrypt and store WITHOUT compression
+	encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, originalData, false)
+	ctx := context.Background()
+	storeTestObject(t, srv.backend, ctx, "test-bucket", "test-key-range-edge", encryptedData, hmacTable, armorMeta)
+
+	// Generate token
+	token := generateTestToken(t, srv, "test-bucket", "test-key-range-edge", time.Hour)
+
+	// Test cases for range edge cases
+	testCases := []struct {
+		name           string
+		rangeHeader    string
+		wantStatus     int
+		wantStart      int64
+		wantEnd        int64
+		wantLength     int
+		description    string
+	}{
+		{
+			name:        "first_byte",
+			rangeHeader: "bytes=0-0",
+			wantStatus:  http.StatusPartialContent,
+			wantStart:   0,
+			wantEnd:     0,
+			wantLength:  1,
+			description: "request only the first byte",
+		},
+		{
+			name:        "last_byte",
+			rangeHeader: fmt.Sprintf("bytes=%d-%d", len(originalData)-1, len(originalData)-1),
+			wantStatus:  http.StatusPartialContent,
+			wantStart:   int64(len(originalData) - 1),
+			wantEnd:     int64(len(originalData) - 1),
+			wantLength:  1,
+			description: "request only the last byte",
+		},
+		{
+			name:        "middle_range",
+			rangeHeader: "bytes=5000-5999",
+			wantStatus:  http.StatusPartialContent,
+			wantStart:   5000,
+			wantEnd:     5999,
+			wantLength:  1000,
+			description: "request range from middle of object",
+		},
+		{
+			name:        "open_ended_start",
+			rangeHeader: "bytes=50000-",
+			wantStatus:  http.StatusPartialContent,
+			wantStart:   50000,
+			wantEnd:     int64(len(originalData) - 1),
+			wantLength:  len(originalData) - 50000,
+			description: "request from offset to end of object",
+		},
+		{
+			name:        "suffix_range",
+			rangeHeader: "bytes=-1024",
+			wantStatus:  http.StatusPartialContent,
+			wantStart:   int64(len(originalData) - 1024),
+			wantEnd:     int64(len(originalData) - 1),
+			wantLength:  1024,
+			description: "request last 1024 bytes using suffix notation",
+		},
+		{
+			name:        "large_range",
+			rangeHeader: "bytes=0-49999",
+			wantStatus:  http.StatusPartialContent,
+			wantStart:   0,
+			wantEnd:     49999,
+			wantLength:  50000,
+			description: "request large range from beginning",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Make range request
+			req := httptest.NewRequest("GET", "/share/"+token, nil)
+			req.Header.Set("Range", tc.rangeHeader)
+			w := httptest.NewRecorder()
+			srv.handleShare(w, req)
+
+			// Check response status
+			resp := w.Result()
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("%s: expected status %d, got %d", tc.description, tc.wantStatus, resp.StatusCode)
+			}
+
+			// Verify Content-Range header for partial content
+			if tc.wantStatus == http.StatusPartialContent {
+				contentRange := resp.Header.Get("Content-Range")
+				expectedContentRange := fmt.Sprintf("bytes %d-%d/%d", tc.wantStart, tc.wantEnd, len(originalData))
+				if contentRange != expectedContentRange {
+					t.Errorf("%s: Content-Range mismatch.\nGot: %s\nWant: %s",
+						tc.description, contentRange, expectedContentRange)
+				}
+
+				// Read and verify response body
+				retrievedData, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("Failed to read response body: %v", err)
+				}
+
+				// Verify length
+				if len(retrievedData) != tc.wantLength {
+					t.Errorf("%s: expected %d bytes, got %d", tc.description, tc.wantLength, len(retrievedData))
+				}
+
+				// Verify data matches the expected range
+				expectedData := originalData[tc.wantStart : tc.wantEnd+1]
+				if !bytes.Equal(retrievedData, expectedData) {
+					t.Errorf("%s: data mismatch in range %s", tc.description, tc.rangeHeader)
+				}
+			}
+		})
+	}
+}
+
+// TestShareGET_UncompressedObject_LargeObject tests GET requests on large
+// uncompressed objects to verify no performance or correctness issues.
+func TestShareGET_UncompressedObject_LargeObject(t *testing.T) {
+	tmpDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
+	cfg := loadTestConfig(t, tmpDir)
+	srv, err := NewWithBackend(cfg, fsBackend)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
+
+	// Create large test data (2MB) - tests streaming and boundary handling
+	originalData := generateRandomData(2 * 1024 * 1024) // 2MB
+
+	// Encrypt and store WITHOUT compression
+	encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, originalData, false)
+	ctx := context.Background()
+	storeTestObject(t, srv.backend, ctx, "test-bucket", "test-key-large", encryptedData, hmacTable, armorMeta)
+
+	// Generate token
+	token := generateTestToken(t, srv, "test-bucket", "test-key-large", time.Hour)
+
+	// Test 1: Full object GET
+	t.Run("full_object_get", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/share/"+token, nil)
+		w := httptest.NewRecorder()
+		srv.handleShare(w, req)
+
+		resp := w.Result()
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200 for large object, got %d", resp.StatusCode)
+		}
+
+		// Verify Content-Length
+		contentLength := resp.Header.Get("Content-Length")
+		expectedLength := fmt.Sprintf("%d", len(originalData))
+		if contentLength != expectedLength {
+			t.Errorf("Content-Length mismatch: got %s, want %s", contentLength, expectedLength)
+		}
+
+		// Read and verify data
+		retrievedData, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+
+		if len(retrievedData) != len(originalData) {
+			t.Errorf("Data length mismatch: got %d, want %d", len(retrievedData), len(originalData))
+		}
+
+		if !bytes.Equal(retrievedData, originalData) {
+			t.Errorf("Large object data mismatch")
+		}
+	})
+
+	// Test 2: Range request on large object
+	t.Run("large_object_range", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/share/"+token, nil)
+		req.Header.Set("Range", "bytes=1048576-1572863") // Second MB (1MB offset to 1.5MB)
+		w := httptest.NewRecorder()
+		srv.handleShare(w, req)
+
+		resp := w.Result()
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusPartialContent {
+			t.Errorf("Expected status 206 for range request on large object, got %d", resp.StatusCode)
+		}
+
+		// Verify range
+		retrievedData, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+
+		expectedLength := 524288 // 512KB
+		if len(retrievedData) != expectedLength {
+			t.Errorf("Range data length mismatch: got %d, want %d", len(retrievedData), expectedLength)
+		}
+
+		// Verify data matches the expected range
+		expectedData := originalData[1048576:1572864]
+		if !bytes.Equal(retrievedData, expectedData) {
+			t.Errorf("Range data mismatch on large object")
+		}
+	})
+}
+
+// TestShareGET_UncompressedObject_InvalidRanges tests that invalid range
+// requests are properly rejected for uncompressed objects.
+func TestShareGET_UncompressedObject_InvalidRanges(t *testing.T) {
+	tmpDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	// Create filesystem backend
+	fsBackend, err := backend.NewFSBackend(backend.FSConfig{
+		BasePath: tmpDir,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create filesystem backend: %v", err)
+	}
+
+	cfg := loadTestConfig(t, tmpDir)
+	srv, err := NewWithBackend(cfg, fsBackend)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	// Initialize presigner for token generation
+	srv.presigner = presign.NewSigner(cfg.PresignSecret, "")
+
+	// Create test data (NOT compressed)
+	originalData := generateRandomData(10 * 1024) // 10KB
+
+	// Encrypt and store WITHOUT compression
+	encryptedData, hmacTable, armorMeta := encryptTestData(t, srv, originalData, false)
+	ctx := context.Background()
+	storeTestObject(t, srv.backend, ctx, "test-bucket", "test-key-invalid-range", encryptedData, hmacTable, armorMeta)
+
+	// Generate token
+	token := generateTestToken(t, srv, "test-bucket", "test-key-invalid-range", time.Hour)
+
+	// Test cases for invalid ranges
+	testCases := []struct {
+		name        string
+		rangeHeader string
+		wantStatus  int
+		description string
+	}{
+		{
+			name:        "start_after_end",
+			rangeHeader: "bytes=5000-4000",
+			wantStatus:  http.StatusBadRequest,
+			description: "range start greater than end",
+		},
+		{
+			name:        "start_beyond_file",
+			rangeHeader: fmt.Sprintf("bytes=%d-%d", len(originalData)+1000, len(originalData)+2000),
+			wantStatus:  http.StatusBadRequest,
+			description: "range start beyond file size",
+		},
+		{
+			name:        "end_beyond_file",
+			rangeHeader: fmt.Sprintf("bytes=0-%d", len(originalData)+1000),
+			wantStatus:  http.StatusBadRequest,
+			description: "range end beyond file size",
+		},
+		{
+			name:        "invalid_format",
+			rangeHeader: "bytes=abc",
+			wantStatus:  http.StatusBadRequest,
+			description: "non-numeric range values",
+		},
+		{
+			name:        "negative_start",
+			rangeHeader: "bytes=-100-500",
+			wantStatus:  http.StatusBadRequest,
+			description: "negative start offset",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/share/"+token, nil)
+			req.Header.Set("Range", tc.rangeHeader)
+			w := httptest.NewRecorder()
+			srv.handleShare(w, req)
+
+			resp := w.Result()
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("%s: expected status %d, got %d", tc.description, tc.wantStatus, resp.StatusCode)
+			}
+
+			// Verify error response body for bad requests
+			if tc.wantStatus == http.StatusBadRequest {
+				body, _ := io.ReadAll(resp.Body)
+				if len(body) == 0 {
+					t.Errorf("%s: expected error response body for 400 response", tc.description)
+				}
+			}
+		})
+	}
 }
