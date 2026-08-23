@@ -35,6 +35,7 @@ import (
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/presign"
 	"github.com/jedarden/armor/internal/provenance"
+	"github.com/jedarden/armor/internal/replication"
 	"github.com/jedarden/armor/internal/server/handlers"
 	"github.com/jedarden/armor/internal/server/middleware"
 )
@@ -71,6 +72,7 @@ type Server struct {
 	manifest          *manifest.Index     // in-memory metadata index (nil when disabled)
 	manifestWriter    *manifest.Writer    // async delta writer (nil when disabled)
 	manifestCompactor *manifest.Compactor // background compaction goroutine (nil when disabled)
+	replicationQueue  *replication.ReplicationQueue // async replication worker (nil when secondary backend not configured)
 
 	// canaryStarted tracks whether the canary monitor has been started
 	canaryStarted bool
@@ -316,6 +318,23 @@ func New(cfg *config.Config) (*Server, error) {
 		logger.Info("manifest writer and compactor started")
 	}
 
+	// Create and start the replication queue if secondary backend is configured (ADR-006)
+	var replicationQueue *replication.ReplicationQueue
+	if secondaryBackend != nil {
+		replicationMetrics := replication.NewMetrics()
+		// Use the same loggerWriter adapter for the replication queue
+		replicationLoggerWriter := &loggerWriter{logger: logger}
+		replicationLogger := log.New(replicationLoggerWriter, "[replication] ", log.LstdFlags|log.Lmsgprefix)
+		replicationQueue = replication.NewReplicationQueue(
+			replicationMetrics,
+			b2Backend,
+			secondaryBackend,
+			0, // Use default buffer size
+			replicationLogger,
+		)
+		logger.Info("replication queue initialized")
+	}
+
 	return &Server{
 		config:            cfg,
 		backend:           b2Backend,
@@ -333,6 +352,7 @@ func New(cfg *config.Config) (*Server, error) {
 		manifest:          manifestIdx,
 		manifestWriter:    manifestWriter,
 		manifestCompactor: manifestCompactor,
+		replicationQueue:  replicationQueue,
 		metrics:           metrics.DefaultMetrics,
 		requestTracker:    metrics.DefaultRequestTracker,
 		logger:            logger,
@@ -424,6 +444,24 @@ func (s *Server) StopCanary() {
 	}
 }
 
+// StartReplicationQueue starts the replication queue worker goroutine (ADR-006).
+// It should be called after the server is created if a secondary backend is configured.
+func (s *Server) StartReplicationQueue(ctx context.Context) {
+	if s.replicationQueue != nil {
+		s.replicationQueue.Start(ctx)
+		s.logger.Info("Replication queue started")
+	}
+}
+
+// StopReplicationQueue stops the replication queue worker goroutine (ADR-006).
+// It drains the queue before shutdown, with a timeout for graceful shutdown.
+func (s *Server) StopReplicationQueue() {
+	if s.replicationQueue != nil {
+		s.replicationQueue.Stop()
+		s.logger.Info("Replication queue stopped")
+	}
+}
+
 // Handler returns the main S3 API handler.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -452,6 +490,12 @@ func (s *Server) Handler() http.Handler {
 	// When unset, secondaryBackend is nil and replication is a no-op.
 	if s.secondaryBackend != nil {
 		h.WithSecondaryBackend(s.secondaryBackend)
+	}
+
+	// Wire up replication queue if configured (ADR-006).
+	// When unset, replicationQueue is nil and replication is a no-op.
+	if s.replicationQueue != nil {
+		h.WithReplicationQueue(s.replicationQueue)
 	}
 
 	// Bucket operations
