@@ -547,3 +547,9 @@ func (m *Metrics) PrometheusFormat() string {
 
 	return sb.String()
 }
+
+// GetMetrics returns the metrics for the replication queue.
+// This allows the canary to access lag metrics without importing the replication package.
+func (q *ReplicationQueue) GetMetrics() *Metrics {
+	return q.metrics
+}

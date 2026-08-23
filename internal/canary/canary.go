@@ -20,6 +20,7 @@ import (
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/metrics"
+	"github.com/jedarden/armor/internal/replication"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -57,6 +58,15 @@ type CanaryState struct {
 	MultipartConsecutiveFails int       `json:"multipart_consecutive_fails"`
 	MultipartLastError        string    `json:"multipart_last_error,omitempty"`
 
+	// Secondary backend canary state (ADR-006)
+	SecondaryHealthy          Status    `json:"secondary_healthy"`
+	SecondaryLastCheck        time.Time `json:"secondary_last_check"`
+	SecondaryLastSuccess      time.Time `json:"secondary_last_success"`
+	SecondaryConsecutiveFails int       `json:"secondary_consecutive_fails"`
+	SecondaryLastError        string    `json:"secondary_last_error,omitempty"`
+	SecondaryReplicationLagMs int64     `json:"secondary_replication_lag_ms"`
+	SecondaryQueueDepth       int64     `json:"secondary_queue_depth"`
+
 	// Instance identification
 	InstanceID string `json:"instance_id"`
 }
@@ -78,25 +88,37 @@ type Result struct {
 	MultipartLastCheck        time.Time `json:"multipart_last_check"`
 	MultipartConsecutiveFails int       `json:"multipart_consecutive_fails"`
 	MultipartLastError        string    `json:"multipart_last_error,omitempty"`
+
+	// Secondary backend canary result (ADR-006)
+	SecondaryHealthy          Status    `json:"secondary_healthy_status"`
+	SecondaryHealthyBool      bool      `json:"secondary_healthy"`
+	SecondaryLastCheck        time.Time `json:"secondary_last_check"`
+	SecondaryConsecutiveFails int       `json:"secondary_consecutive_fails"`
+	SecondaryLastError        string    `json:"secondary_last_error,omitempty"`
+	SecondaryReplicationLagMs int64     `json:"secondary_replication_lag_ms"`
+	SecondaryQueueDepth       int64     `json:"secondary_queue_depth"`
 }
 
 // Monitor manages the canary integrity checks.
 type Monitor struct {
-	backend    backend.Backend
-	bucket     string
-	mek        []byte
-	blockSize  int
-	instanceID string
+	backend          backend.Backend
+	secondaryBackend backend.Backend // Secondary backend for replication check (ADR-006)
+	replicationQueue interface{}      // Replication queue for lag metrics (interface{} to avoid import cycle)
+	bucket           string
+	mek              []byte
+	blockSize        int
+	instanceID       string
 
 	state CanaryState
 
 	// Configuration
-	interval          time.Duration
-	canarySize        int
-	maxRetries        int
-	retryDelay        time.Duration
-	multipartInterval time.Duration
-	multipartSize     int
+	interval           time.Duration
+	canarySize         int
+	maxRetries         int
+	retryDelay         time.Duration
+	multipartInterval  time.Duration
+	multipartSize      int
+	secondaryInterval  time.Duration
 
 	// Control
 	stopCh chan struct{}
@@ -105,17 +127,20 @@ type Monitor struct {
 
 // Config holds configuration for the canary monitor.
 type Config struct {
-	Backend           backend.Backend
-	Bucket            string
-	MEK               []byte
-	BlockSize         int
-	InstanceID        string
-	Interval          time.Duration // Check interval (default 5 minutes)
-	CanarySize        int           // Size of canary content (default 1024 bytes)
-	MaxRetries        int           // Max retries on failure (default 3)
-	RetryDelay        time.Duration // Delay between retries (default 10s)
-	MultipartInterval time.Duration // Multipart check interval (default 1 hour)
-	MultipartSize     int           // Size of multipart canary (default 6MB)
+	Backend            backend.Backend
+	SecondaryBackend   backend.Backend // Secondary backend for replication health check (ADR-006)
+	ReplicationQueue   interface{}     // Replication queue for lag metrics (interface{} to avoid import cycle)
+	Bucket             string
+	MEK                []byte
+	BlockSize          int
+	InstanceID         string
+	Interval           time.Duration // Check interval (default 5 minutes)
+	CanarySize         int           // Size of canary content (default 1024 bytes)
+	MaxRetries         int           // Max retries on failure (default 3)
+	RetryDelay         time.Duration // Delay between retries (default 10s)
+	MultipartInterval  time.Duration // Multipart check interval (default 1 hour)
+	MultipartSize      int           // Size of multipart canary (default 6MB)
+	SecondaryInterval  time.Duration // Secondary backend check interval (default 5 minutes)
 }
 
 // NewMonitor creates a new canary monitor.
@@ -141,6 +166,9 @@ func NewMonitor(cfg Config) *Monitor {
 		// block this is 2 * 5.25 MiB = 10.5 MiB.
 		cfg.MultipartSize = 2 * canaryMultipartPartSize(crypto.DefaultBlockSize)
 	}
+	if cfg.SecondaryInterval == 0 {
+		cfg.SecondaryInterval = 5 * time.Minute
+	}
 
 	instanceID := cfg.InstanceID
 	if instanceID == "" {
@@ -154,22 +182,26 @@ func NewMonitor(cfg Config) *Monitor {
 	}
 
 	return &Monitor{
-		backend:           cfg.Backend,
-		bucket:            cfg.Bucket,
-		mek:               cfg.MEK,
-		blockSize:         cfg.BlockSize,
-		instanceID:        instanceID,
-		interval:          cfg.Interval,
-		canarySize:        cfg.CanarySize,
-		maxRetries:        cfg.MaxRetries,
-		retryDelay:        cfg.RetryDelay,
-		multipartInterval: cfg.MultipartInterval,
-		multipartSize:     cfg.MultipartSize,
-		stopCh:            make(chan struct{}),
-		doneCh:            make(chan struct{}),
+		backend:            cfg.Backend,
+		secondaryBackend:   cfg.SecondaryBackend,
+		replicationQueue:   cfg.ReplicationQueue,
+		bucket:             cfg.Bucket,
+		mek:                cfg.MEK,
+		blockSize:          cfg.BlockSize,
+		instanceID:         instanceID,
+		interval:           cfg.Interval,
+		canarySize:         cfg.CanarySize,
+		maxRetries:         cfg.MaxRetries,
+		retryDelay:         cfg.RetryDelay,
+		multipartInterval:  cfg.MultipartInterval,
+		multipartSize:      cfg.MultipartSize,
+		secondaryInterval:  cfg.SecondaryInterval,
+		stopCh:             make(chan struct{}),
+		doneCh:             make(chan struct{}),
 		state: CanaryState{
 			Status:           StatusUnknown,
 			MultipartHealthy: StatusUnknown,
+			SecondaryHealthy: StatusUnknown,
 			InstanceID:       instanceID,
 		},
 	}
@@ -184,11 +216,21 @@ func (m *Monitor) Start(ctx context.Context) {
 		// Initial checks
 		m.runCheck(ctx)
 		m.runMultipartCheck(ctx)
+		if m.secondaryBackend != nil {
+			m.runSecondaryBackendCheck(ctx)
+		}
 
 		ticker := time.NewTicker(m.interval)
 		multipartTicker := time.NewTicker(m.multipartInterval)
+		var secondaryTicker *time.Ticker
+		if m.secondaryBackend != nil {
+			secondaryTicker = time.NewTicker(m.secondaryInterval)
+		}
 		defer ticker.Stop()
 		defer multipartTicker.Stop()
+		if secondaryTicker != nil {
+			defer secondaryTicker.Stop()
+		}
 
 		for {
 			select {
@@ -200,6 +242,15 @@ func (m *Monitor) Start(ctx context.Context) {
 				m.runCheck(ctx)
 			case <-multipartTicker.C:
 				m.runMultipartCheck(ctx)
+			case <-func() <-chan time.Time {
+				if secondaryTicker != nil {
+					return secondaryTicker.C
+				}
+				return nil
+			}():
+				if m.secondaryBackend != nil {
+					m.runSecondaryBackendCheck(ctx)
+				}
 			}
 		}
 	}()
@@ -829,6 +880,296 @@ func (m *Monitor) updateMultipartStateFailure(err error) {
 	m.state.MultipartLastError = err.Error()
 }
 
+// runSecondaryBackendCheck performs a single secondary backend canary check with retries.
+func (m *Monitor) runSecondaryBackendCheck(ctx context.Context) {
+	var lastErr error
+
+	metrics.DefaultMetrics.IncSecondaryCanaryChecks()
+	metrics.DefaultMetrics.SetSecondaryCanaryLastCheck(time.Now())
+
+	// Get replication lag from queue if available
+	var queueDepth int64
+	var replicationLag int64
+	if m.replicationQueue != nil {
+		// Type assertion to access replication queue methods
+		if rq, ok := m.replicationQueue.(interface {
+			GetMetrics() *replication.Metrics
+		}); ok {
+			qm := rq.GetMetrics()
+			if qm != nil {
+				queueDepth = qm.QueueDepth.Load()
+				replicationLag = qm.LagSeconds.Load()
+			}
+		}
+	}
+
+	for attempt := 0; attempt < m.maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(m.retryDelay):
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		result, err := m.checkSecondaryBackend(ctx)
+		if err == nil {
+			m.updateSecondaryStateSuccess(result, queueDepth, replicationLag)
+			metrics.DefaultMetrics.SetSecondaryCanaryLastError("")
+			metrics.DefaultMetrics.SetSecondaryCanaryHealthy(true)
+			return
+		}
+		lastErr = err
+	}
+
+	metrics.DefaultMetrics.IncSecondaryCanaryFailures()
+	metrics.DefaultMetrics.SetSecondaryCanaryLastError(lastErr.Error())
+	metrics.DefaultMetrics.SetSecondaryCanaryHealthy(false)
+	m.updateSecondaryStateFailure(lastErr, queueDepth, replicationLag)
+}
+
+// checkSecondaryBackend performs a secondary backend canary check.
+// It writes the canary to both backends, verifies both read back correctly,
+// and reports replication lag metrics (ADR-006).
+func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
+	result := &Result{
+		LastCheck: time.Now(),
+	}
+
+	if m.secondaryBackend == nil {
+		return nil, fmt.Errorf("secondary backend not configured")
+	}
+
+	// Generate unique canary content with timestamp
+	timestamp := time.Now().UnixNano()
+	canaryContent := make([]byte, m.canarySize)
+	if _, err := rand.Read(canaryContent); err != nil {
+		return nil, fmt.Errorf("failed to generate secondary canary content: %w", err)
+	}
+
+	// Embed timestamp for verification
+	binary.LittleEndian.PutUint64(canaryContent[:8], uint64(timestamp))
+
+	// Generate unique key for this canary
+	key := fmt.Sprintf(".armor/canary-secondary/%s/%d", m.instanceID, timestamp)
+
+	// Generate DEK and IV
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate DEK: %w", err)
+	}
+
+	iv, err := crypto.GenerateIV()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate IV: %w", err)
+	}
+
+	// Wrap DEK with MEK
+	wrappedDEK, err := crypto.WrapDEK(m.mek, dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to wrap DEK: %w", err)
+	}
+
+	// Compute plaintext SHA-256
+	plaintextSHA := crypto.ComputePlaintextSHA256(canaryContent)
+
+	// Create envelope header
+	header, err := crypto.NewEnvelopeHeader(iv, int64(len(canaryContent)), m.blockSize, plaintextSHA)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create header: %w", err)
+	}
+
+	headerBytes, err := header.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode header: %w", err)
+	}
+
+	// Encrypt
+	encryptor, err := crypto.NewEncryptor(dek, iv, m.blockSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create encryptor: %w", err)
+	}
+
+	encrypted, hmacTable, err := encryptor.Encrypt(canaryContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt: %w", err)
+	}
+
+	// Build envelope
+	envelope := make([]byte, 0, len(headerBytes)+len(encrypted)+len(hmacTable))
+	envelope = append(envelope, headerBytes...)
+	envelope = append(envelope, encrypted...)
+	envelope = append(envelope, hmacTable...)
+
+	// Compute ETag
+	etag := backend.ComputeETag(canaryContent)
+
+	// Build metadata
+	meta := (&backend.ARMORMetadata{
+		Version:       1,
+		BlockSize:     m.blockSize,
+		PlaintextSize: int64(len(canaryContent)),
+		ContentType:   "application/octet-stream",
+		IV:            iv,
+		WrappedDEK:    wrappedDEK,
+		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
+		ETag:          etag,
+	}).ToMetadata()
+
+	// Upload to primary backend
+	uploadStart := time.Now()
+	if err := m.backend.Put(ctx, m.bucket, key, bytes.NewReader(envelope), int64(len(envelope)), meta); err != nil {
+		return nil, fmt.Errorf("failed to upload secondary canary to primary: %w", err)
+	}
+
+	// Upload to secondary backend
+	if err := m.secondaryBackend.Put(ctx, m.bucket, key, bytes.NewReader(envelope), int64(len(envelope)), meta); err != nil {
+		return nil, fmt.Errorf("failed to upload secondary canary to secondary backend: %w", err)
+	}
+	result.UploadLatencyMs = time.Since(uploadStart).Milliseconds()
+
+	// Download and verify from primary backend
+	downloadStart := time.Now()
+	primaryBody, primaryInfo, err := m.backend.Get(ctx, m.bucket, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download secondary canary from primary: %w", err)
+	}
+	primaryEnvelope, err := io.ReadAll(primaryBody)
+	primaryBody.Close()
+	_ = primaryInfo // Not used but required by Get signature
+	if err != nil {
+		return nil, fmt.Errorf("failed to read secondary canary from primary: %w", err)
+	}
+
+	// Download and verify from secondary backend
+	secondaryBody, secondaryInfo, err := m.secondaryBackend.Get(ctx, m.bucket, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download secondary canary from secondary backend: %w", err)
+	}
+	secondaryEnvelope, err := io.ReadAll(secondaryBody)
+	secondaryBody.Close()
+	_ = secondaryInfo // Not used but required by Get signature
+	if err != nil {
+		return nil, fmt.Errorf("failed to read secondary canary from secondary backend: %w", err)
+	}
+	result.DownloadLatencyMs = time.Since(downloadStart).Milliseconds()
+
+	// Verify both envelopes match
+	if !bytes.Equal(primaryEnvelope, secondaryEnvelope) {
+		return nil, fmt.Errorf("secondary backend envelope does not match primary")
+	}
+
+	// Parse header from secondary envelope
+	downloadedHeader, err := crypto.DecodeHeader(secondaryEnvelope)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode secondary header: %w", err)
+	}
+
+	// Extract encrypted blocks and HMAC table
+	dataStart := int64(crypto.HeaderSize)
+	dataEnd := dataStart + int64(len(canaryContent))
+	hmacStart := downloadedHeader.HMACTableOffset()
+	hmacEnd := hmacStart + int64(downloadedHeader.BlockCount())*crypto.HMACSize
+
+	if hmacEnd > int64(len(secondaryEnvelope)) {
+		return nil, fmt.Errorf("downloaded envelope too short for HMAC table")
+	}
+
+	downloadedEncrypted := secondaryEnvelope[dataStart:dataEnd]
+	downloadedHMAC := secondaryEnvelope[hmacStart:hmacEnd]
+
+	// Unwrap DEK
+	unwrappedDEK, err := crypto.UnwrapDEK(m.mek, wrappedDEK)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unwrap DEK: %w", err)
+	}
+
+	// Create decryptor
+	decryptor, err := crypto.NewDecryptor(unwrappedDEK, iv, m.blockSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create decryptor: %w", err)
+	}
+
+	// Verify HMACs
+	if err := decryptor.VerifyHMACs(downloadedEncrypted, downloadedHMAC); err != nil {
+		result.HMACVerified = false
+		return nil, fmt.Errorf("secondary HMAC verification failed: %w", err)
+	}
+	result.HMACVerified = true
+
+	// Decrypt
+	decrypted, err := decryptor.Decrypt(downloadedEncrypted, downloadedHMAC)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt secondary canary: %w", err)
+	}
+
+	// Verify decrypted content matches original
+	if !bytes.Equal(decrypted, canaryContent) {
+		result.DecryptVerified = false
+		return nil, fmt.Errorf("secondary decrypted content does not match original")
+	}
+	result.DecryptVerified = true
+
+	// Verify plaintext SHA
+	if err := downloadedHeader.VerifyPlaintextSHA(decrypted); err != nil {
+		return nil, fmt.Errorf("secondary plaintext SHA verification failed: %w", err)
+	}
+
+	// Get replication lag metrics
+	if m.replicationQueue != nil {
+		if rq, ok := m.replicationQueue.(interface {
+			GetMetrics() *replication.Metrics
+		}); ok {
+			qm := rq.GetMetrics()
+			if qm != nil {
+				result.SecondaryQueueDepth = qm.QueueDepth.Load()
+				result.SecondaryReplicationLagMs = qm.LagSeconds.Load() * 1000 // Convert seconds to ms
+			}
+		}
+	}
+
+	// Clean up canary from both backends (best effort)
+	go func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		m.backend.Delete(cleanupCtx, m.bucket, key)
+		m.secondaryBackend.Delete(cleanupCtx, m.bucket, key)
+	}()
+
+	result.Status = StatusHealthy
+	result.SecondaryHealthy = StatusHealthy
+	result.SecondaryHealthyBool = true
+
+	return result, nil
+}
+
+// updateSecondaryStateSuccess updates secondary state after a successful check.
+func (m *Monitor) updateSecondaryStateSuccess(result *Result, queueDepth, replicationLag int64) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+
+	m.state.SecondaryHealthy = StatusHealthy
+	m.state.SecondaryLastCheck = result.LastCheck
+	m.state.SecondaryLastSuccess = result.LastCheck
+	m.state.SecondaryConsecutiveFails = 0
+	m.state.SecondaryLastError = ""
+	m.state.SecondaryQueueDepth = queueDepth
+	m.state.SecondaryReplicationLagMs = replicationLag * 1000 // Convert seconds to ms
+}
+
+// updateSecondaryStateFailure updates secondary state after a failed check.
+func (m *Monitor) updateSecondaryStateFailure(err error, queueDepth, replicationLag int64) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+
+	m.state.SecondaryHealthy = StatusUnhealthy
+	m.state.SecondaryLastCheck = time.Now()
+	m.state.SecondaryConsecutiveFails++
+	m.state.SecondaryLastError = err.Error()
+	m.state.SecondaryQueueDepth = queueDepth
+	m.state.SecondaryReplicationLagMs = replicationLag * 1000 // Convert seconds to ms
+}
+
 // GetStatus returns the current canary status.
 func (m *Monitor) GetStatus() Result {
 	m.state.mu.RLock()
@@ -848,6 +1189,13 @@ func (m *Monitor) GetStatus() Result {
 		MultipartLastCheck:        m.state.MultipartLastCheck,
 		MultipartConsecutiveFails: m.state.MultipartConsecutiveFails,
 		MultipartLastError:        m.state.MultipartLastError,
+		SecondaryHealthy:          m.state.SecondaryHealthy,
+		SecondaryHealthyBool:      m.state.SecondaryHealthy == StatusHealthy,
+		SecondaryLastCheck:        m.state.SecondaryLastCheck,
+		SecondaryConsecutiveFails: m.state.SecondaryConsecutiveFails,
+		SecondaryLastError:        m.state.SecondaryLastError,
+		SecondaryReplicationLagMs: m.state.SecondaryReplicationLagMs,
+		SecondaryQueueDepth:       m.state.SecondaryQueueDepth,
 	}
 }
 

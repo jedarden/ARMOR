@@ -48,6 +48,13 @@ type Metrics struct {
 	MultipartCanaryLastCheckError *expvar.String
 	MultipartCanaryHealthy        *expvar.Int
 
+	// Secondary backend canary metrics (ADR-006)
+	SecondaryCanaryChecksTotal    *expvar.Int
+	SecondaryCanaryCheckFailures  *expvar.Int
+	SecondaryCanaryLastCheckTime  *expvar.String
+	SecondaryCanaryLastCheckError *expvar.String
+	SecondaryCanaryHealthy        *expvar.Int
+
 	// Multipart histogram metrics (bucketed by operation and status)
 	MultipartUploadBuckets       *expvar.Map // Histogram buckets: upload operation, keyed by latency
 	MultipartVerificationBuckets *expvar.Map // Histogram buckets: verification operation, keyed by latency
@@ -164,6 +171,13 @@ func NewMetrics() *Metrics {
 	m.MultipartCanaryLastCheckTime = new(expvar.String)
 	m.MultipartCanaryLastCheckError = new(expvar.String)
 	m.MultipartCanaryHealthy = new(expvar.Int)
+
+	// Secondary backend canary metrics
+	m.SecondaryCanaryChecksTotal = new(expvar.Int)
+	m.SecondaryCanaryCheckFailures = new(expvar.Int)
+	m.SecondaryCanaryLastCheckTime = new(expvar.String)
+	m.SecondaryCanaryLastCheckError = new(expvar.String)
+	m.SecondaryCanaryHealthy = new(expvar.Int)
 
 	// Multipart histogram metrics
 	m.MultipartUploadBuckets = new(expvar.Map).Init()
@@ -361,6 +375,35 @@ func (m *Metrics) SetMultipartCanaryHealthy(healthy bool) {
 	}
 }
 
+// IncSecondaryCanaryChecks increments the secondary canary check counter.
+func (m *Metrics) IncSecondaryCanaryChecks() {
+	m.SecondaryCanaryChecksTotal.Add(1)
+}
+
+// IncSecondaryCanaryFailures increments the secondary canary failure counter.
+func (m *Metrics) IncSecondaryCanaryFailures() {
+	m.SecondaryCanaryCheckFailures.Add(1)
+}
+
+// SetSecondaryCanaryLastCheck sets the last secondary canary check time.
+func (m *Metrics) SetSecondaryCanaryLastCheck(t time.Time) {
+	m.SecondaryCanaryLastCheckTime.Set(t.UTC().Format(time.RFC3339))
+}
+
+// SetSecondaryCanaryLastError sets the last secondary canary error.
+func (m *Metrics) SetSecondaryCanaryLastError(err string) {
+	m.SecondaryCanaryLastCheckError.Set(err)
+}
+
+// SetSecondaryCanaryHealthy sets the secondary canary health status (1 = healthy, 0 = unhealthy).
+func (m *Metrics) SetSecondaryCanaryHealthy(healthy bool) {
+	if healthy {
+		m.SecondaryCanaryHealthy.Set(1)
+	} else {
+		m.SecondaryCanaryHealthy.Set(0)
+	}
+}
+
 // RecordMultipartUpload records the completion time of a multipart upload operation.
 // operation should be "upload" or "verify"
 // status should be "success" or "failure"
@@ -551,6 +594,13 @@ func (m *Metrics) PrometheusFormat() string {
 	writeMetric("multipart_canary_last_check_time", "Time of last multipart canary check", "gauge", m.MultipartCanaryLastCheckTime)
 	writeMetric("multipart_canary_last_check_error", "Error from last failed multipart canary check", "gauge", m.MultipartCanaryLastCheckError)
 	writeMetric("multipart_canary_healthy", "Multipart canary health status (1=healthy, 0=unhealthy)", "gauge", m.MultipartCanaryHealthy)
+
+	// Secondary backend canary metrics (ADR-006)
+	writeMetric("secondary_canary_checks_total", "Total number of secondary backend canary checks", "counter", m.SecondaryCanaryChecksTotal)
+	writeMetric("secondary_canary_check_failures_total", "Total number of secondary backend canary check failures", "counter", m.SecondaryCanaryCheckFailures)
+	writeMetric("secondary_canary_last_check_time", "Time of last secondary backend canary check", "gauge", m.SecondaryCanaryLastCheckTime)
+	writeMetric("secondary_canary_last_check_error", "Error from last failed secondary backend canary check", "gauge", m.SecondaryCanaryLastCheckError)
+	writeMetric("secondary_canary_healthy", "Secondary backend canary health status (1=healthy, 0=unhealthy)", "gauge", m.SecondaryCanaryHealthy)
 
 	// Multipart metrics
 	writeMetric("active_multipart_uploads", "Number of in-progress multipart uploads", "gauge", m.ActiveMultipartUploads)
