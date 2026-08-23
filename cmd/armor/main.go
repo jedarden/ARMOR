@@ -60,6 +60,9 @@ func main() {
 	// Start canary monitor
 	srv.StartCanary(context.Background())
 
+	// Start replication queue if secondary backend is configured (ADR-006)
+	srv.StartReplicationQueue(context.Background())
+
 	// Start servers in goroutines
 	go func() {
 		logger.Infof("S3 API listening on %s", cfg.Listen)
@@ -127,6 +130,7 @@ func main() {
 	// Phase 3: Stop background tasks
 	logger.Info("phase 3: stopping background tasks")
 	srv.StopCanary()
+	srv.StopReplicationQueue()
 	srv.StopManifestCompactor()
 	srv.StopManifestWriter()
 
