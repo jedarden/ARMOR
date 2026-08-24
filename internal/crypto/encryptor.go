@@ -221,6 +221,86 @@ func (e *Encryptor) BlockSize() int {
 	return e.blockSize
 }
 
+// EncryptAndCompress encrypts plaintext with optional compression.
+// If compress is true, plaintext is compressed with zstd before encryption.
+// Opportunistic pass-through: if compression doesn't shrink the data, original is used.
+//
+// Returns:
+// - encrypted: The encrypted (and optionally compressed) data
+// - hmacTable: The HMAC table for integrity verification
+// - wasCompressed: true if data was compressed, false otherwise
+// - compressionType: The type of compression used (or CompressionNone if not compressed)
+// - plaintextSize: The size of the plaintext BEFORE compression (for envelope header)
+// - plaintextSHA: SHA-256 of the plaintext BEFORE compression (for envelope header)
+// - err: Error if encryption/compression fails
+func (e *Encryptor) EncryptAndCompress(plaintext []byte, compress bool) (encrypted []byte, hmacTable []byte, wasCompressed bool, compressionType CompressionType, plaintextSize int64, plaintextSHA [32]byte, err error) {
+	// Compute SHA-256 of original plaintext (before compression)
+	plaintextSHA = ComputePlaintextSHA256(plaintext)
+	plaintextSize = int64(len(plaintext))
+
+	// Compress if requested
+	dataToEncrypt := plaintext
+	if compress {
+		compressedData, compressed, compType, compErr := Compress(plaintext)
+		if compErr != nil {
+			return nil, nil, false, CompressionNone, 0, plaintextSHA, fmt.Errorf("compression failed: %w", compErr)
+		}
+		wasCompressed = compressed
+		compressionType = compType
+		if compressed {
+			dataToEncrypt = compressedData
+		}
+	}
+
+	// Encrypt the (possibly compressed) data
+	encrypted, hmacTable, err = e.Encrypt(dataToEncrypt)
+	if err != nil {
+		return nil, nil, false, CompressionNone, 0, plaintextSHA, fmt.Errorf("encryption failed: %w", err)
+	}
+
+	return encrypted, hmacTable, wasCompressed, compressionType, plaintextSize, plaintextSHA, nil
+}
+
+// EncryptStreamWithCompress encrypts a stream with optional compression.
+// NOTE: This function requires the caller to handle SHA-256 computation separately
+// for compressed data, as the stream is consumed during compression.
+// For most use cases, buffer the data and use EncryptAndCompress instead.
+func (e *Encryptor) EncryptStreamWithCompress(plaintext io.Reader, ciphertext io.Writer, compress bool, plaintextSHA [32]byte, plaintextSize int64) (hmacTable []byte, wasCompressed bool, compressionType CompressionType, err error) {
+	if !compress {
+		// No compression - encrypt directly
+		hmacTable, err := e.EncryptStream(plaintext, ciphertext, plaintextSize)
+		return hmacTable, false, CompressionNone, err
+	}
+
+	// For compressed data, we need to buffer, compress, then encrypt
+	// This is a limitation of the streaming approach with compression
+	compressedData, compressed, compType, _, compErr := CompressStream(plaintext)
+	if compErr != nil {
+		return nil, false, CompressionNone, fmt.Errorf("compression failed: %w", compErr)
+	}
+
+	wasCompressed = compressed
+	compressionType = compType
+
+	// Encrypt the (possibly compressed) data
+	encrypted, encHmacTable, encErr := e.Encrypt(compressedData)
+	if encErr != nil {
+		return nil, false, CompressionNone, fmt.Errorf("encryption failed: %w", encErr)
+	}
+
+	// Write to the ciphertext writer
+	if _, err := ciphertext.Write(encrypted); err != nil {
+		return nil, false, CompressionNone, fmt.Errorf("failed to write encrypted data: %w", err)
+	}
+
+	// Write HMAC table
+	if _, err := ciphertext.Write(encHmacTable); err != nil {
+		return nil, false, CompressionNone, fmt.Errorf("failed to write HMAC table: %w", err)
+	}
+
+	return encHmacTable, wasCompressed, compressionType, nil
+}
+
 // NewEncryptorWithCounter creates a new encryptor with a specific starting counter.
 // This is used for multipart uploads where each part needs to continue the CTR stream
 // from where the previous part left off.

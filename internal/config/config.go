@@ -76,6 +76,11 @@ type Config struct {
 	MEK       []byte
 	BlockSize int
 
+	// Compress enables zstd compression for single-PUT uploads.
+	// When enabled, multipart uploads are rejected and range reads are unsupported.
+	// See ADR-007.
+	Compress bool
+
 	// Read path configuration
 	ReadConcurrency int // Maximum concurrent ranged GETs (default 16)
 
@@ -200,6 +205,9 @@ func Load() (*Config, error) {
 	if cfg.BlockSize < 4096 || (cfg.BlockSize&(cfg.BlockSize-1)) != 0 {
 		return nil, fmt.Errorf("ARMOR_BLOCK_SIZE must be a power of 2 >= 4096")
 	}
+
+	// Compression (default disabled per ADR-007)
+	cfg.Compress = os.Getenv("ARMOR_COMPRESS") == "true"
 
 	// Number of ranged reads allowed in flight for a backend read.
 	cfg.ReadConcurrency = getEnvInt("ARMOR_READ_CONCURRENCY", 16)

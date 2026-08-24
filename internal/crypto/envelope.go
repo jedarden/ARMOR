@@ -35,6 +35,11 @@ const (
 
 	// DefaultBlockSize is the default encryption block size.
 	DefaultBlockSize = 65536
+
+	// Compression flag values (stored in Reserved[0])
+	CompressionFlagNone    = 0x00 // Uncompressed (default, backward compatible)
+	CompressionFlagZstd    = 0x01 // zstd compressed
+	CompressionFlagReservedStart = 0x02 // Start of reserved range for future compression types
 )
 
 var (
@@ -234,4 +239,34 @@ func (h *EnvelopeHeader) VerifyPlaintextSHA(plaintext []byte) error {
 		return ErrPlaintextMismatch
 	}
 	return nil
+}
+
+// SetCompressionFlag sets the compression flag in the Reserved field.
+// Per ADR-007, Reserved[0] stores the compression type:
+// - 0x00: Uncompressed (default)
+// - 0x01: zstd compressed
+// - 0x02-0xFF: Reserved for future compression types
+func (h *EnvelopeHeader) SetCompressionFlag(flag uint8) {
+	h.Reserved[0] = flag
+	// Reserved[1] remains reserved for future use
+}
+
+// GetCompressionFlag returns the compression flag from the Reserved field.
+func (h *EnvelopeHeader) GetCompressionFlag() uint8 {
+	return h.Reserved[0]
+}
+
+// IsCompressed returns true if the envelope header indicates the data is compressed.
+func (h *EnvelopeHeader) IsCompressed() bool {
+	return h.Reserved[0] != CompressionFlagNone
+}
+
+// CompressionType returns the compression type as a string.
+func (h *EnvelopeHeader) CompressionType() string {
+	switch h.Reserved[0] {
+	case CompressionFlagZstd:
+		return "zstd"
+	default:
+		return ""
+	}
 }

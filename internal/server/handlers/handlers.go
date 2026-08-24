@@ -330,8 +330,9 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	contentLength := r.ContentLength
 	streamingThreshold := int64(10 * 1024 * 1024) // 10MB threshold
 
-	// Use streaming for large files or unknown size
-	useStreaming := contentLength < 0 || contentLength > streamingThreshold
+	// Use streaming for large files or unknown size, but NOT when compression is enabled
+	// Compression requires buffering the entire file anyway (to compress), so disable streaming
+	useStreaming := !h.config.Compress && (contentLength < 0 || contentLength > streamingThreshold)
 
 	if useStreaming {
 		h.putObjectStreaming(ctx, w, r, bucket, key)
@@ -374,14 +375,42 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	// Compute plaintext SHA-256
+	// Compute plaintext SHA-256 BEFORE compression (ADR-007)
 	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
 
-	// Create envelope header
+	// Compress if enabled (ADR-007: compress-before-encrypt)
+	var compressed bool
+	var compressionType crypto.CompressionType
+	var dataToEncrypt []byte = plaintext
+
+	if h.config.Compress {
+		compressedData, wasCompressed, compType, err := crypto.Compress(plaintext)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Compression failed: %v", err), 500)
+			return
+		}
+		compressed = wasCompressed
+		compressionType = compType
+		if compressed {
+			dataToEncrypt = compressedData
+		}
+	}
+
+	// Create envelope header with ORIGINAL plaintext size (before compression)
 	header, err := crypto.NewEnvelopeHeader(iv, plaintextSize, h.config.BlockSize, plaintextSHA)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
 		return
+	}
+
+	// Set compression flag in envelope header (ADR-007)
+	if compressed {
+		switch compressionType {
+		case crypto.CompressionZstd:
+			header.SetCompressionFlag(crypto.CompressionFlagZstd)
+		default:
+			header.SetCompressionFlag(crypto.CompressionFlagNone)
+		}
 	}
 
 	headerBytes, err := header.Encode()
@@ -390,14 +419,14 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	// Encrypt data
+	// Encrypt data (possibly compressed)
 	encryptor, err := crypto.NewEncryptor(dek, iv, h.config.BlockSize)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
 		return
 	}
 
-	encrypted, hmacTable, err := encryptor.Encrypt(plaintext)
+	encrypted, hmacTable, err := encryptor.Encrypt(dataToEncrypt)
 	if err != nil {
 		h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
 		return
@@ -410,7 +439,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	envelope = append(envelope, encrypted...)
 	envelope = append(envelope, hmacTable...)
 
-	// Compute plaintext ETag (MD5)
+	// Compute plaintext ETag (MD5) on ORIGINAL plaintext
 	etag := backend.ComputeETag(plaintext)
 
 	// Build metadata
@@ -420,15 +449,17 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	meta := (&backend.ARMORMetadata{
-		Version:       1,
-		BlockSize:     h.config.BlockSize,
-		PlaintextSize: plaintextSize,
-		ContentType:   contentType,
-		IV:            iv,
-		WrappedDEK:    wrappedDEK,
-		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
-		ETag:          etag,
-		KeyID:         keyID,
+		Version:         1,
+		BlockSize:       h.config.BlockSize,
+		PlaintextSize:   plaintextSize,
+		ContentType:     contentType,
+		IV:              iv,
+		WrappedDEK:      wrappedDEK,
+		PlaintextSHA:    hex.EncodeToString(plaintextSHA[:]),
+		ETag:            etag,
+		KeyID:           keyID,
+		Compressed:      compressed,
+		CompressionType: backend.CompressionType(compressionType),
 	}).ToMetadata()
 
 	// Upload to B2 with prefix applied
@@ -2207,6 +2238,12 @@ func (h *Handlers) ListBuckets(w http.ResponseWriter, r *http.Request) {
 // It generates a DEK and IV, wraps the DEK, and stores the state in B2.
 func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
+
+	// Reject multipart uploads when compression is enabled (ADR-007)
+	if h.config.Compress {
+		h.writeError(w, "InvalidArgument", "Compression is not supported for multipart uploads. Use single-PUT uploads for compressed objects or disable compression (ARMOR_COMPRESS=false).", 400)
+		return
+	}
 
 	// Get the appropriate MEK for this object key
 	mek, keyID, err := h.keyManager.GetMEK(key)
