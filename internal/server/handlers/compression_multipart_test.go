@@ -83,7 +83,18 @@ func TestCreateMultipartUpload_CompressionDisabled(t *testing.T) {
 	}
 
 	// Initialize key manager
-	km := keymanager.New(cfg.MEK, cfg.NamedKeys, cfg.KeyRoutes)
+	// Convert config.KeyRoutes to keymanager.Route format
+	var routes []keymanager.Route
+	for _, r := range cfg.KeyRoutes {
+		routes = append(routes, keymanager.Route{
+			Prefix:  r.Prefix,
+			KeyName: r.KeyName,
+		})
+	}
+	km, err := keymanager.New(cfg.MEK, cfg.NamedKeys, routes)
+	if err != nil {
+		t.Fatalf("create key manager: %v", err)
+	}
 	server.SetKeyManager(km)
 
 	ctx := context.Background()
@@ -107,19 +118,6 @@ func TestCreateMultipartUpload_CompressionDisabled(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && containsSubstring(s, substr)))
-}
-
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
 
 func setupTestEnvironment(t *testing.T) (string, func()) {
 	// This should be defined in the test utilities
