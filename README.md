@@ -61,10 +61,11 @@ SELECT * FROM read_parquet('s3://bucket/data.parquet');
 | Component | Cost |
 |-----------|------|
 | Storage | ~$6–7/TB/month |
+| Compression savings (optional) | Varies by data type — Optional zstd via `ARMOR_COMPRESS=true` reduces storage for compressible data: manifests (2–5×), WAL (3–5×), JSON logs (2–4×). Parquet/columnar: minimal additional benefit (already compressed internally). See ADR-007. |
 | Egress (via Cloudflare Bandwidth Alliance) | $0 |
 | B2 API calls | $0 |
 | Cloudflare (free plan) | $0 |
-| **Total** | **~$6–7/TB/month** |
+| **Total** | **~$6–7/TB/month** (base), lower with compression for compressible workloads |
 
 ## Architecture
 
@@ -150,6 +151,7 @@ ARMOR is configured via environment variables:
 | `ARMOR_AUTH_ACCESS_KEY` | No | (random) | Client access key |
 | `ARMOR_AUTH_SECRET_KEY` | No | (random) | Client secret key |
 | `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size (bytes) |
+| `ARMOR_COMPRESS` | No | `false` | Enable zstd compression for single-PUT uploads. Multipart uploads are rejected when enabled. Compressed objects do not support byte-range reads. See ADR-007. |
 | `ARMOR_READ_CONCURRENCY` | No | `16` | Maximum concurrent ranged reads |
 | `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID |
 | `ARMOR_READYZ_CACHE_TTL` | No | `30` | Seconds to cache backend connectivity in `/readyz` |
