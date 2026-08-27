@@ -1061,20 +1061,121 @@ func (v *Verifier) verifyObjectDual(ctx context.Context, obj ObjectSample, resul
 	return result
 }
 
-// restoreViaARMOR restores an object through the normal ARMOR read path.
+// restoreViaARMOR restores an object through the ARMOR read path.
+// It uses internal/crypto to decrypt directly from B2 ciphertext, keeping
+// restore-verifier fully standalone (no ARMOR proxy dependency required).
+// Per ADR-009, this provides a second independent decrypt implementation
+// that must agree with restoreViaDirectDecrypt for known-good data.
+//
+// This is a separate implementation from restoreViaDirectDecrypt: it reads
+// the full ciphertext object in one operation and decrypts it, whereas the
+// direct path reads envelope header, ciphertext, and HMAC table separately
+// via multiple GetRange calls. This independence ensures that a single bug
+// cannot produce a false "restorable" reading in both paths (ADR-004).
 func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]byte, error) {
-	// Use the normal backend GetObject which will decrypt through ARMOR
-	reader, _, err := v.backend.Get(ctx, bucket, key)
+	// Step 1: get object metadata to determine encryption parameters and raw size
+	info, err := v.backend.Head(ctx, bucket, key)
 	if err != nil {
-		return nil, fmt.Errorf("ARMOR GetObject failed: %w", err)
+		return nil, fmt.Errorf("ARMOR path: HeadObject failed: %w", err)
 	}
-	defer reader.Close()
-
-	plaintext, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read ARMOR response: %w", err)
+	armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
+	if !ok {
+		return nil, errors.New("ARMOR path: object is not ARMOR-encrypted")
 	}
 
+	// Step 2: unwrap the DEK with the escrowed MEK (same crypto operation as direct path)
+	dek, err := crypto.UnwrapDEK(v.mek, armorMeta.WrappedDEK)
+	if err != nil {
+		return nil, fmt.Errorf("ARMOR path: failed to unwrap DEK: %w", err)
+	}
+
+	// Step 3: determine the object layout and raw size
+	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
+	var rawCiphertextSize int64
+	var iv []byte
+
+	if isMultipart {
+		// Multipart: raw ciphertext size == plaintext size (no envelope header)
+		// IV comes from metadata
+		rawCiphertextSize = armorMeta.PlaintextSize
+		iv = armorMeta.IV
+	} else {
+		// Single-PUT: raw object is [header][ciphertext][HMAC table]
+		// Need to read header to get IV
+		headerReader, err := v.backend.GetRange(ctx, bucket, key, 0, crypto.HeaderSize)
+		if err != nil {
+			return nil, fmt.Errorf("ARMOR path: failed to read envelope header: %w", err)
+		}
+		defer headerReader.Close()
+
+		headerBuf := make([]byte, crypto.HeaderSize)
+		if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+			return nil, fmt.Errorf("ARMOR path: failed to read header bytes: %w", err)
+		}
+
+		header, err := crypto.DecodeHeader(headerBuf)
+		if err != nil {
+			return nil, fmt.Errorf("ARMOR path: failed to decode envelope header: %w", err)
+		}
+
+		iv = header.IV[:]
+		// Raw size = header + ciphertext + HMAC table
+		// Raw size = header + ciphertext + HMAC table
+		blockCount := crypto.ComputeBlockCount(armorMeta.PlaintextSize, armorMeta.BlockSize)
+		hmacTableSize := int64(blockCount) * crypto.HMACSize
+		rawCiphertextSize = crypto.HeaderSize + armorMeta.PlaintextSize + hmacTableSize
+	}
+
+	// Step 4: read the full raw ciphertext object in one operation
+	// This is different from restoreViaDirectDecrypt which makes multiple GetRange calls
+	fullReader, err := v.backend.GetRange(ctx, bucket, key, 0, rawCiphertextSize)
+	if err != nil {
+		return nil, fmt.Errorf("ARMOR path: failed to read full ciphertext object: %w", err)
+	}
+	defer fullReader.Close()
+
+	fullCiphertext, err := io.ReadAll(fullReader)
+	if err != nil {
+		return nil, fmt.Errorf("ARMOR path: failed to read ciphertext bytes: %w", err)
+	}
+
+	// Step 5: extract the encrypted data and HMAC table from the full ciphertext
+	var encryptedData []byte
+	var hmacTable []byte
+
+	if isMultipart {
+		// Multipart: full ciphertext is just the encrypted blocks (no header)
+		// HMAC table is in a sidecar file - load it through MultipartStateManager
+		encryptedData = fullCiphertext
+		sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTable(ctx, key)
+		if err != nil {
+			return nil, fmt.Errorf("ARMOR path: failed to load HMAC sidecar: %w", err)
+		}
+		// Flatten the sidecar's per-block HMACs into the contiguous table the Decryptor consumes
+		hmacTable = make([]byte, 0, len(sidecar.BlockHMACs)*crypto.HMACSize)
+		for _, h := range sidecar.BlockHMACs {
+			hmacTable = append(hmacTable, h...)
+		}
+	} else {
+		// Single-PUT: extract ciphertext and HMAC from the full envelope
+		// Layout: [64-byte header][plaintextSize ciphertext][HMAC table]
+		encryptedData = fullCiphertext[crypto.HeaderSize : crypto.HeaderSize+armorMeta.PlaintextSize]
+		hmacTable = fullCiphertext[crypto.HeaderSize+armorMeta.PlaintextSize:]
+	}
+
+	// Step 6: decrypt using the same crypto package as the direct path
+	decryptor, err := crypto.NewDecryptor(dek, iv, armorMeta.BlockSize)
+	if err != nil {
+		return nil, fmt.Errorf("ARMOR path: failed to create decryptor: %w", err)
+	}
+
+	plaintext, err := decryptor.Decrypt(encryptedData, hmacTable)
+	if err != nil {
+		return nil, fmt.Errorf("ARMOR path: decryption failed: %w (possible data corruption or wrong MEK)", err)
+	}
+
+	// Step 7: compute SHA-256 of the decrypted plaintext for comparison
+	// This digest must match the direct path's digest for known-good data
 	return plaintext, nil
 }
 
