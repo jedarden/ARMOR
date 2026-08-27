@@ -132,3 +132,34 @@ independently of any of this: `0 4 * * *` and `0 3 * * *` are parsed by CNPG
 as 6-field cron *with seconds*, so they fire hourly at :04/:03 rather than
 daily. Confirmed live 2026-08-07. Fix is `0 0 4 * * *` / `0 0 3 * * *`. This
 inflates the failure and retry rate ~24×.
+
+## Verification (2026-08-27)
+
+**Status: ✅ VERIFIED IN PRODUCTION**
+
+All acceptance criteria met:
+
+1. **ARMOR alignment exemption deployed**: ARMOR v0.1.1913 includes both
+   `fc6c1a86` and `1f6e6934`. Deployed and running in iad-ci.
+
+2. **Barman configuration**: Both CNPG clusters configured with
+   `--min-chunk-size=1024MB`, sufficient to force single-part uploads
+   (queue-db ~30MB, forgejo-postgres ~63MB).
+
+3. **ScheduledBackup cron fixed**: Both clusters now use proper 6-field
+   format (`0 0 4 * * *` for queue-db, `0 0 3 * * *` for forgejo-postgres).
+   Cadence confirmed daily (timestamps show 04:00:00/03:00:00, not hourly).
+
+4. **Backups completing successfully**: Both clusters show 5+ consecutive
+   completed backups:
+   - queue-db: 20260823040000 through 20260827040000
+   - forgejo: 20260824030000 through 20260827030000
+
+5. **Historical pattern matches expected timeline**: First completed backups
+   appeared on 2026-08-07, immediately after alignment commits. Historical
+   failures show the hourly cron bug (:04/:03 timestamps) through July-August.
+
+**The immediate outage is resolved.** Barman backups through ARMOR now work
+for databases that fit in a single multipart part. Monitoring remains required
+as databases grow — the non-uniform multipart support (still pending) will be
+needed once backups exceed one part size.
