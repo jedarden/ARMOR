@@ -870,18 +870,29 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// Track authorization outcome for audit logging (ADR-012)
+		var authzResult string
+		var accessKeyID string
+		var verb string
+		var objectKey string
+
 		// Verify auth for non-public endpoints
 		if !s.isPublicPath(r.URL.Path) {
 			cred, err := s.verifyAuthAndGetCredential(r)
 			if err != nil {
+				authzResult = "deny-auth"
+				s.metrics.IncRequestsTotal("auth", 403)
 				if authErr, ok := err.(*AuthError); ok {
 					s.writeError(w, r, authErr.Code, authErr.Message, 403)
 				} else {
 					s.writeError(w, r, "AccessDenied", "Invalid credentials", 403)
 				}
-				s.metrics.IncRequestsTotal("auth", 403)
+				// Log denied request with identity (ADR-012)
+				s.logCompletedRequest(r, start, 403, authzResult, accessKeyID, verb, objectKey)
 				return
 			}
+			accessKeyID = cred.AccessKey
+
 			// Check ACL for the request. For list operations the URL path has no
 			// key component, so fall back to the ?prefix query param so that ACL
 			// prefix restrictions are enforced correctly against the listed prefix.
@@ -889,11 +900,18 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			if key == "" {
 				key = r.URL.Query().Get("prefix")
 			}
-			if err := CheckACL(cred, bucket, key, ActionForRequest(r)); err != nil {
+			objectKey = key
+			verb = ActionForRequest(r)
+
+			if err := CheckACL(cred, bucket, key, verb); err != nil {
+				authzResult = "deny-acl"
 				s.writeError(w, r, "AccessDenied", "Access Denied", 403)
 				s.metrics.IncRequestsTotal("acl", 403)
+				// Log denied request with identity (ADR-012)
+				s.logCompletedRequest(r, start, 403, authzResult, accessKeyID, verb, objectKey)
 				return
 			}
+			authzResult = "allow"
 		}
 
 		// Decode aws-chunked body when MinIO streaming signature is used.
@@ -918,17 +936,8 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 		s.metrics.IncRequestsTotal(r.Method, rw.statusCode)
 		s.metrics.RecordRequestDuration(r.Method, duration)
 
-		// Log completed request
-		fields := map[string]interface{}{
-			"method":      r.Method,
-			"path":        r.URL.Path,
-			"status":      rw.statusCode,
-			"duration_ms": duration.Milliseconds(),
-		}
-		if rng := r.Header.Get("Range"); rng != "" {
-			fields["range"] = rng
-		}
-		s.logger.WithFields(fields).Info("request completed")
+		// Log completed request with identity audit fields (ADR-012)
+		s.logCompletedRequest(r, start, rw.statusCode, authzResult, accessKeyID, verb, objectKey)
 	}
 }
 
@@ -997,6 +1006,41 @@ func (s *Server) extractBucketAndKey(r *http.Request) (bucket, key string) {
 	}
 
 	return bucket, key
+}
+
+// logCompletedRequest logs a completed request with identity audit fields (ADR-012).
+// This provides per-request visibility into who (access_key_id), did what (verb),
+// to which object (key), and whether it was authorized (authz_result).
+func (s *Server) logCompletedRequest(r *http.Request, start time.Time, statusCode int, authzResult, accessKeyID, verb, objectKey string) {
+	duration := time.Since(start)
+	fields := map[string]interface{}{
+		"method":       r.Method,
+		"path":         r.URL.Path,
+		"status":       statusCode,
+		"duration_ms":  duration.Milliseconds(),
+		"authz_result": authzResult,
+	}
+
+	// Add identity fields when available
+	if accessKeyID != "" {
+		fields["access_key_id"] = accessKeyID
+	}
+	if verb != "" {
+		fields["verb"] = verb
+	}
+	if objectKey != "" {
+		fields["key"] = objectKey
+	}
+	if rng := r.Header.Get("Range"); rng != "" {
+		fields["range"] = rng
+	}
+
+	// Log at appropriate level: denials at Warn, allows at Info
+	if authzResult == "deny-auth" || authzResult == "deny-acl" {
+		s.logger.WithFields(fields).Warn("request completed")
+	} else {
+		s.logger.WithFields(fields).Info("request completed")
+	}
 }
 
 // writeError writes an S3 error response with request ID.
