@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -430,13 +431,196 @@ func TestFormatMigrationResumable(t *testing.T) {
 		t.Errorf("Expected completed status, got: %s", result.Status)
 	}
 
-	// Verify only remaining objects were processed
-	// (This is a simplified test - real implementation would handle resume logic)
-}
 
 // TestFormatMigrationEndpoint tests the HTTP endpoint for format migration.
 func TestFormatMigrationEndpoint(t *testing.T) {
 	// This would require setting up a full server with admin auth
 	// For now, we'll test the handler logic in isolation
 	t.Skip("HTTP endpoint test requires full server setup")
+}
+// TestFormatMigrationMultipartToSingle tests migrating a V1 multipart object to V2 single-PUT.
+func TestFormatMigrationMultipartToSingle(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(i + 1)
+	}
+
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("Failed to wrap DEK: %v", err)
+	}
+
+	// Create V1 encryptor
+	iv := make([]byte, 16)
+	blockSize := 4096
+	encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, blockSize, crypto.Version1)
+	if err != nil {
+		t.Fatalf("Failed to create encryptor: %v", err)
+	}
+
+	// Small plaintext that will be migrated to single-PUT (< 5MB threshold)
+	plaintext := []byte("multipart data for migration test")
+	ciphertext, err := encryptor.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("Failed to encrypt: %v", err)
+	}
+
+	// Store as multipart object (simulate assembled multipart)
+	metadata := map[string]string{
+		"x-amz-meta-armor-version":        "1",
+		"x-amz-meta-armor-wrapped-dek":     base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-iv":              base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-block-size":      "4096",
+		"x-amz-meta-armor-plaintext-size":  "29",
+		"x-amz-meta-armor-sha256":          "test-sha256",
+		"x-amz-meta-armor-multipart":       "true",
+	}
+
+	mockBackend.objects["multipart-test.dat"] = &MockObject{
+		Data:     ciphertext,
+		Metadata: metadata,
+	}
+
+	// Create HMAC sidecar
+	keySHA := sha256.Sum256([]byte("multipart-test.dat"))
+	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
+	mockBackend.objects[sidecarPath] = &MockObject{
+		Data: []byte("mock-hmac-data"),
+	}
+
+	// Create migrator
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	// Run migration - should handle multipart properly
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Fatalf("Migration failed: %v", err)
+	}
+
+	// Verify migration completed
+	if result.ProcessedObjects != 1 {
+		t.Errorf("Expected 1 processed object, got %d", result.ProcessedObjects)
+	}
+
+	// Verify object was migrated
+	obj, ok := mockBackend.objects["multipart-test.dat"]
+	if !ok {
+		t.Fatal("Object was deleted during migration")
+	}
+
+	if obj.Metadata["x-amz-meta-armor-version"] != "2" {
+		t.Errorf("Object version was not migrated to V2, got: %s", obj.Metadata["x-amz-meta-armor-version"])
+	}
+}
+
+// TestFormatMigrationFailureRecording tests that failed objects are recorded and not retried.
+func TestFormatMigrationFailureRecording(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	// Create a corrupted object that will fail migration
+	metadata := map[string]string{
+		"x-amz-meta-armor-version":    "1",
+		"x-amz-meta-armor-wrapped-dek": "invalid-dek",
+		"x-amz-meta-armor-iv":         "invalid-iv",
+	}
+
+	mockBackend.objects["corrupted.dat"] = &MockObject{
+		Data:     []byte("corrupted data"),
+		Metadata: metadata,
+	}
+
+	// Create migrator
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	// Run migration - should record failure and continue
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		// Migration completes even with failures
+		t.Logf("Migration completed with errors (expected): %v", err)
+	}
+
+	// Verify failure was recorded
+	if result.FailedObjects != 1 {
+		t.Errorf("Expected 1 failed object, got %d", result.FailedObjects)
+	}
+
+	if len(result.Failures) != 1 {
+		t.Errorf("Expected 1 failure record, got %d", len(result.Failures))
+	}
+
+	if result.Failures[0].Key != "corrupted.dat" {
+		t.Errorf("Expected failure for 'corrupted.dat', got: %s", result.Failures[0].Key)
+	}
+
+	if result.Failures[0].Reason == "" {
+		t.Error("Expected failure reason to be recorded")
+	}
+}
+
+// TestFormatMigrationV2SkippedByDefault tests that V2 objects are skipped when include=v1 (default).
+func TestFormatMigrationV2SkippedByDefault(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	// Create V2 objects
+	for i := 1; i <= 3; i++ {
+		metadata := map[string]string{
+			"x-amz-meta-armor-version":    "2",
+			"x-amz-meta-armor-wrapped-dek": "test-dek",
+			"x-amz-meta-armor-iv":         "test-iv",
+		}
+		mockBackend.objects[fmt.Sprintf("v2-object-%d.txt", i)] = &MockObject{
+			Data:     []byte(fmt.Sprintf("v2 data %d", i)),
+			Metadata: metadata,
+		}
+	}
+
+	// Create migrator with default include (v1 only)
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	// Run migration
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Fatalf("Migration failed: %v", err)
+	}
+
+	// Verify all V2 objects were skipped
+	if result.ProcessedObjects != 0 {
+		t.Errorf("Expected 0 processed objects (V2 should be skipped), got %d", result.ProcessedObjects)
+	}
+
+	if result.SkippedObjects != 3 {
+		t.Errorf("Expected 3 skipped objects, got %d", result.SkippedObjects)
+	}
+}
+
+	// Verify only remaining objects were processed
+	// After resume, only object-3 should be processed (objects 1-2 already done)
+	if result.ProcessedObjects != 1 {
+		t.Errorf("Expected 1 processed object after resume, got %d", result.ProcessedObjects)
+	}
+
+	// Verify total objects counted matches initial state
+	if result.TotalObjects != 3 {
+		t.Errorf("Expected 3 total objects, got %d", result.TotalObjects)
+	}
 }

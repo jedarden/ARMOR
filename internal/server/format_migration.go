@@ -287,14 +287,16 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	}
 	defer reader.Close()
 
-	// For now, skip multipart objects as they require complex HMAC sidecar handling
-	// TODO: Implement multipart migration
+	// Decrypt the object using the appropriate read path
+	var plaintext []byte
+	var err error
 	if armorMeta.Multipart {
-		return fmt.Errorf("multipart migration not yet implemented")
+		// Multipart objects: load HMAC table from sidecar and decrypt
+		plaintext, err = fm.decryptMultipartObject(armorMeta, obj.Key, reader)
+	} else {
+		// Single-PUT objects: envelope header embedded in object
+		plaintext, err = fm.decryptSingleObject(armorMeta, reader)
 	}
-
-	// Decrypt the object using the normal read path
-	plaintext, err := fm.decryptSingleObject(armorMeta, reader)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt object: %w", err)
 	}
@@ -307,19 +309,29 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 		return nil
 	}
 
-	// Re-encrypt as single-PUT with current write format
-	ciphertext, newIV, newWrappedDEK, blockSize, err := fm.encryptAsSingle(plaintext)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt as single: %w", err)
-	}
+	// Check if we should use multipart upload for the re-encrypted object
+	plaintextSize := len(plaintext)
+	if plaintextSize > fm.multipartThreshold() {
+		// Use multipart upload for large objects
+		err := fm.uploadAsMultipart(ctx, obj.Key, plaintext, plaintextSHA[:], rawMeta)
+		if err != nil {
+			return fmt.Errorf("failed to upload as multipart: %w", err)
+		}
+	} else {
+		// Re-encrypt as single-PUT with current write format
+		ciphertext, newIV, newWrappedDEK, blockSize, err := fm.encryptAsSingle(plaintext)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt as single: %w", err)
+		}
 
-	// Build new metadata
-	newMeta := fm.buildNewMetadata(rawMeta, newIV, newWrappedDEK, blockSize, len(plaintext), plaintextSHA[:])
+		// Build new metadata
+		newMeta := fm.buildNewMetadata(rawMeta, newIV, newWrappedDEK, blockSize, plaintextSize, plaintextSHA[:])
 
-	// Put the re-encrypted object back
-	size := int64(len(ciphertext))
-	if err := fm.backend.Put(ctx, fm.bucket, obj.Key, bytesReader(ciphertext), size, newMeta); err != nil {
-		return fmt.Errorf("failed to put migrated object: %w", err)
+		// Put the re-encrypted object back
+		size := int64(len(ciphertext))
+		if err := fm.backend.Put(ctx, fm.bucket, obj.Key, bytesReader(ciphertext), size, newMeta); err != nil {
+			return fmt.Errorf("failed to put migrated object: %w", err)
+		}
 	}
 
 	// Read back and verify
@@ -404,6 +416,67 @@ func (fm *FormatMigrator) decryptSingleObject(armorMeta *backend.ARMORMetadata, 
 	return plaintext, nil
 }
 
+// decryptMultipartObject decrypts a multipart object.
+// Multipart objects have no embedded envelope header; the HMAC table is stored
+// in a sidecar at .armor/hmac/<sha256(key)>.
+func (fm *FormatMigrator) decryptMultipartObject(armorMeta *backend.ARMORMetadata, key string, reader io.Reader) ([]byte, error) {
+	// Unwrap DEK
+	dek, err := crypto.UnwrapDEK(fm.mek, armorMeta.WrappedDEK)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unwrap DEK: %w", err)
+	}
+
+	// Load HMAC table from sidecar
+	hmacTable, err := fm.loadHMCTableFromSidecar(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load HMAC table from sidecar: %w", err)
+	}
+
+	// Create decryptor with appropriate version
+	// For multipart objects, IV is from metadata (not envelope header)
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create decryptor: %w", err)
+	}
+
+	// Read the entire assembled ciphertext (all parts concatenated by B2)
+	ciphertext, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ciphertext: %w", err)
+	}
+
+	// Decrypt with HMAC verification
+	plaintext, err := decryptor.Decrypt(ciphertext, hmacTable)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt with HMAC: %w", err)
+	}
+
+	return plaintext, nil
+}
+
+// loadHMCTableFromSidecar loads the HMAC table for a multipart object from its sidecar.
+// The sidecar is stored at .armor/hmac/<sha256(key)>.
+func (fm *FormatMigrator) loadHMCTableFromSidecar(key string) ([]byte, error) {
+	// Compute SHA-256 of the key to get the sidecar path
+	keySHA := sha256.Sum256([]byte(key))
+	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
+
+	// Read the sidecar
+	reader, _, err := fm.backend.GetDirect(context.Background(), fm.bucket, sidecarPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read HMAC sidecar: %w", err)
+	}
+	defer reader.Close()
+
+	// Read the entire HMAC table
+	hmacTable, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read HMAC table: %w", err)
+	}
+
+	return hmacTable, nil
+}
+
 // encryptAsSingle encrypts plaintext as a single-PUT object with the current write format.
 func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wrappedDEK []byte, blockSize int, err error) {
 	// Generate new DEK
@@ -437,6 +510,114 @@ func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wra
 	}
 
 	return ciphertext, iv, wrappedDEK, blockSize, nil
+}
+
+// uploadAsMultipart uploads the plaintext as a multipart object with encryption.
+// This is used for large objects that exceed the multipart threshold.
+func (fm *FormatMigrator) uploadAsMultipart(ctx context.Context, key string, plaintext []byte, plaintextSHA []byte, oldMeta map[string]string) error {
+	// Generate new DEK for this upload
+	dek := make([]byte, 32)
+	if _, err := io.ReadFull(cryptoRand.Reader, dek); err != nil {
+		return fmt.Errorf("failed to generate DEK: %w", err)
+	}
+
+	// Wrap DEK with MEK
+	wrappedDEK, err := crypto.WrapDEK(fm.mek, dek)
+	if err != nil {
+		return fmt.Errorf("failed to wrap DEK: %w", err)
+	}
+
+	// Create encryptor with current write version
+	blockSize := 65536 // 64KB default block size for multipart
+	iv := make([]byte, 16)
+	if _, err := io.ReadFull(cryptoRand.Reader, iv); err != nil {
+		return fmt.Errorf("failed to generate IV: %w", err)
+	}
+
+	encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, blockSize, fm.currentWriteVersion)
+	if err != nil {
+		return fmt.Errorf("failed to create encryptor: %w", err)
+	}
+
+	// Create multipart upload
+	uploadID, err := fm.backend.CreateMultipartUpload(ctx, fm.bucket, key, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create multipart upload: %w", err)
+	}
+
+	// Split plaintext into parts (default 5MB parts)
+	partSize := 5 * 1024 * 1024 // 5MB
+	totalSize := len(plaintext)
+	var parts []backend.CompletedPart
+
+	for partNumber := 1; partNumber*partSize <= totalSize; partNumber++ {
+		start := (partNumber - 1) * partSize
+		end := partNumber * partSize
+		if end > totalSize {
+			end = totalSize
+		}
+		partPlaintext := plaintext[start:end]
+
+		// Encrypt this part
+		partCiphertext, err := encryptor.Encrypt(partPlaintext)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt part %d: %w", partNumber, err)
+		}
+
+		// Upload the part
+		etag, err := fm.backend.UploadPart(ctx, fm.bucket, key, uploadID, int32(partNumber), bytesReader(partCiphertext), int64(len(partCiphertext)))
+		if err != nil {
+			return fmt.Errorf("failed to upload part %d: %w", partNumber, err)
+		}
+
+		parts = append(parts, backend.CompletedPart{
+			PartNumber: int32(partNumber),
+			ETag:       etag,
+		})
+	}
+
+	// Handle remaining data if any
+	if totalSize % partSize != 0 {
+		partNumber := totalSize/partSize + 1
+		start := (totalSize / partSize) * partSize
+		partPlaintext := plaintext[start:]
+
+		// Encrypt this part
+		partCiphertext, err := encryptor.Encrypt(partPlaintext)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt final part: %w", err)
+		}
+
+		// Upload the part
+		etag, err := fm.backend.UploadPart(ctx, fm.bucket, key, uploadID, int32(partNumber), bytesReader(partCiphertext), int64(len(partCiphertext)))
+		if err != nil {
+			return fmt.Errorf("failed to upload final part: %w", err)
+		}
+
+		parts = append(parts, backend.CompletedPart{
+			PartNumber: int32(partNumber),
+			ETag:       etag,
+		})
+	}
+
+	// Build metadata for the completed multipart upload
+	newMeta := fm.buildNewMetadata(oldMeta, iv, wrappedDEK, blockSize, totalSize, plaintextSHA)
+	newMeta[armorMetaMultipart] = "true"
+	newMeta[armorMetaPartSize] = fmt.Sprintf("%d", partSize)
+
+	// Complete the multipart upload
+	_, err = fm.backend.CompleteMultipartUpload(ctx, fm.bucket, key, uploadID, parts)
+	if err != nil {
+		return fmt.Errorf("failed to complete multipart upload: %w", err)
+	}
+
+	// Update the object metadata with a CopyObject call to set the metadata
+	// (B2 CompleteMultipartUpload doesn't support custom metadata)
+	if err := fm.backend.Copy(ctx, fm.bucket, key, fm.bucket, key, newMeta, true); err != nil {
+		return fmt.Errorf("failed to update object metadata: %w", err)
+	}
+
+	return nil
 }
 
 // buildNewMetadata constructs new metadata for the migrated object.

@@ -838,8 +838,19 @@ func (s *Server) handleMigrationProgress(w http.ResponseWriter, r *http.Request)
 	currentWriteVersion := uint8(2) // TODO: Get from server config
 	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, currentWriteVersion, []string{"1"}, s.manifest)
 
-	// Try to load existing state
-	state := migrator.GetState()
+	// Try to load existing state from backend
+	state, err := migrator.loadState(r.Context())
+	if err != nil {
+		// No migration state found
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "no_migration",
+			"message": "No migration in progress",
+		})
+		return
+	}
+
 	if state == nil {
 		// No migration in progress
 		w.Header().Set("Content-Type", "application/json")
