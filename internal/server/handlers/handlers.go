@@ -3144,6 +3144,18 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		allBlockHMACs[blockIdx] = allBlockHMACsMap[blockIdx]
 	}
 
+	// Check Version 2 counter space won't overflow before completing the upload
+	// Version 2 stores blockIndex * (blockSize / 16) in a uint32, which wraps at
+	// 2^32 / (blockSize / 16) blocks. At 64 KiB blocks, this is 2^20 blocks = 64 GiB.
+	// All new multipart uploads use Version 2 (see line 2861), so we check unconditionally.
+	const maxCounterValue = 1 << 32
+	aesBlocksPerArmorBlock := uint64(state.BlockSize / 16)
+	finalCounterValue := uint64(totalBlocks) * aesBlocksPerArmorBlock
+	if finalCounterValue >= maxCounterValue {
+		h.writeError(w, "InternalError", "object exceeds the Version 2 counter space; envelope v3 removes this limit", 500)
+		return
+	}
+
 	// Complete the multipart upload in B2, under the same prefixed storage key
 	// the upload was created and its parts uploaded under.
 	etag, err := h.backend.CompleteMultipartUpload(ctx, bucket, h.applyPrefix(key), uploadID, parts)
