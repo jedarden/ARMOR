@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jedarden/armor/internal/acl"
 	"github.com/jedarden/armor/internal/config"
 )
 

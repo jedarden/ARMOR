@@ -559,7 +559,8 @@ func parseACL(aclStr string) ([]acl.ACLEntry, error) {
 			prefix = ""
 		} else if strings.HasSuffix(prefix, "/*") {
 			prefix = strings.TrimSuffix(prefix, "/*") + "/"
-		} else if strings.Contains(prefix, "*") {
+		}
+		if strings.Contains(prefix, "*") {
 			return nil, fmt.Errorf("invalid ACL entry %q (wildcard must be a bare * or trailing /*)", part)
 		}
 
