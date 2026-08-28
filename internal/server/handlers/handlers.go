@@ -3198,8 +3198,8 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// placeholder HMACs for partial blocks, so we don't need to backfill them.
 	// The decryption code handles non-uniform parts by using offset-aware decryption.
 
-	// Store HMAC table as sidecar
-	if err := manager.SaveHMACTable(ctx, key, allBlockHMACs, state.BlockSize); err != nil {
+	// Store HMAC table as sidecar with version (all new multipart uploads use Version 2)
+	if err := manager.SaveHMACTable(ctx, key, allBlockHMACs, state.BlockSize, 2); err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save HMAC table: %v", err), 500)
 		return
 	}

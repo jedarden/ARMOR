@@ -164,10 +164,11 @@ type HMACTableSidecar struct {
 	Key        string   `json:"key"`         // Object key
 	BlockHMACs [][]byte `json:"block_hmacs"` // HMAC for each block
 	BlockSize  int      `json:"block_size"`
+	Version    int      `json:"version"`     // Envelope version (1 or 2)
 }
 
 // SaveHMACTable saves the HMAC table as a sidecar object.
-func (m *MultipartStateManager) SaveHMACTable(ctx context.Context, key string, hmacs [][]byte, blockSize int) error {
+func (m *MultipartStateManager) SaveHMACTable(ctx context.Context, key string, hmacs [][]byte, blockSize int, version int) error {
 	// Compute SHA-256 of the key for the sidecar name
 	keyHash := sha256.Sum256([]byte(key))
 	sidecarKey := fmt.Sprintf(".armor/hmac/%x", keyHash)
@@ -176,6 +177,7 @@ func (m *MultipartStateManager) SaveHMACTable(ctx context.Context, key string, h
 		Key:        key,
 		BlockHMACs: hmacs,
 		BlockSize:  blockSize,
+		Version:    version,
 	}
 
 	data, err := json.Marshal(sidecar)
