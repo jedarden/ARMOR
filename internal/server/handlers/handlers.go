@@ -35,8 +35,10 @@ import (
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/keymanager"
+	"github.com/jedarden/armor/internal/logging"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/replication"
+	"github.com/jedarden/armor/internal/server/middleware"
 )
 
 // ProvenanceRecorder records uploads in the provenance chain.
@@ -85,6 +87,7 @@ type Handlers struct {
 	manifest         ManifestRecorder
 	metrics          *metrics.Metrics
 	replicationQueue replication.Enqueuer
+	logger           *logging.Logger // Structured logger for S3 error events
 
 	// multipartLocks serializes per-upload state updates. ADR-005 removes the
 	// sequential-only rejection, so parts of one upload may now arrive
@@ -154,6 +157,11 @@ func (h *Handlers) WithReplicationQueue(q replication.Enqueuer) {
 	h.replicationQueue = q
 }
 
+// WithLogger wires the structured logger into the handlers.
+func (h *Handlers) WithLogger(logger *logging.Logger) {
+	h.logger = logger
+}
+
 // HandleRoot routes S3 operations based on the request.
 func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
@@ -179,7 +187,7 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	// Protect the .armor/ reserved namespace
 	// Client operations targeting keys with this prefix return 403 AccessDenied
 	if strings.HasPrefix(key, ".armor/") {
-		h.writeError(w, "AccessDenied", "Access to .armor/ reserved namespace is denied", 403)
+		h.writeError(w, r, "AccessDenied", "Access to .armor/ reserved namespace is denied", 403)
 		return
 	}
 
@@ -315,10 +323,10 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			// DeleteObjects (bulk delete) - uses POST with ?delete query param
 			h.DeleteObjects(w, r, bucket)
 		} else {
-			h.writeError(w, "InvalidRequest", "Unsupported POST operation", 400)
+			h.writeError(w, r, "InvalidRequest", "Unsupported POST operation", 400)
 		}
 	default:
-		h.writeError(w, "MethodNotAllowed", fmt.Sprintf("Method %s not allowed", r.Method), 405)
+		h.writeError(w, r, "MethodNotAllowed", fmt.Sprintf("Method %s not allowed", r.Method), 405)
 	}
 }
 
@@ -345,7 +353,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Small file: buffer in memory
 	plaintext, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
 
@@ -354,27 +362,27 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Get the appropriate MEK for this object key
 	mek, keyID, err := h.keyManager.GetMEK(key)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get encryption key: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get encryption key: %v", err), 500)
 		return
 	}
 
 	// Generate DEK and IV
 	dek, err := crypto.GenerateDEK()
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to generate DEK: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to generate DEK: %v", err), 500)
 		return
 	}
 
 	iv, err := crypto.GenerateIV()
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to generate IV: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to generate IV: %v", err), 500)
 		return
 	}
 
 	// Wrap DEK with MEK
 	wrappedDEK, err := crypto.WrapDEK(mek, dek)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
 		return
 	}
 
@@ -389,7 +397,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	if h.config.Compress {
 		compressedData, wasCompressed, compType, err := crypto.Compress(plaintext)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Compression failed: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Compression failed: %v", err), 500)
 			return
 		}
 		compressed = wasCompressed
@@ -402,7 +410,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Create envelope header with ORIGINAL plaintext size (before compression)
 	header, err := crypto.NewEnvelopeHeader(iv, plaintextSize, h.config.BlockSize, plaintextSHA)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
 		return
 	}
 
@@ -418,20 +426,20 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	headerBytes, err := header.Encode()
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to encode header: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encode header: %v", err), 500)
 		return
 	}
 
 	// Encrypt data (possibly compressed)
 	encryptor, err := crypto.NewEncryptor(dek, iv, h.config.BlockSize)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
 		return
 	}
 
 	encrypted, hmacTable, err := encryptor.Encrypt(dataToEncrypt)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
 		return
 	}
 
@@ -468,7 +476,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Upload to B2 with prefix applied
 	prefixedKey := h.applyPrefix(key)
 	if err := h.backend.Put(ctx, bucket, prefixedKey, bytes.NewReader(envelope), int64(len(envelope)), meta); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to upload: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to upload: %v", err), 500)
 		return
 	}
 
@@ -529,7 +537,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// Phase 1: Stream to temp file and compute SHA-256
 	tmpFile, err := os.CreateTemp("", "armor-upload-*.tmp")
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create temp file: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create temp file: %v", err), 500)
 		return
 	}
 	tmpPath := tmpFile.Name()
@@ -542,7 +550,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	plaintextSize, err := io.Copy(tmpFile, teeReader)
 	if err != nil {
 		tmpFile.Close()
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
 
@@ -553,7 +561,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// Seek back to beginning of temp file for reading
 	if _, err := tmpFile.Seek(0, 0); err != nil {
 		tmpFile.Close()
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to seek temp file: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to seek temp file: %v", err), 500)
 		return
 	}
 
@@ -561,28 +569,28 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	mek, keyID, err := h.keyManager.GetMEK(key)
 	if err != nil {
 		tmpFile.Close()
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get encryption key: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get encryption key: %v", err), 500)
 		return
 	}
 
 	dek, err := crypto.GenerateDEK()
 	if err != nil {
 		tmpFile.Close()
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to generate DEK: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to generate DEK: %v", err), 500)
 		return
 	}
 
 	iv, err := crypto.GenerateIV()
 	if err != nil {
 		tmpFile.Close()
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to generate IV: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to generate IV: %v", err), 500)
 		return
 	}
 
 	wrappedDEK, err := crypto.WrapDEK(mek, dek)
 	if err != nil {
 		tmpFile.Close()
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
 		return
 	}
 
@@ -590,14 +598,14 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	header, err := crypto.NewEnvelopeHeader(iv, plaintextSize, h.config.BlockSize, plaintextSHA)
 	if err != nil {
 		tmpFile.Close()
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
 		return
 	}
 
 	headerBytes, err := header.Encode()
 	if err != nil {
 		tmpFile.Close()
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to encode header: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encode header: %v", err), 500)
 		return
 	}
 
@@ -605,7 +613,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	encryptor, err := crypto.NewEncryptor(dek, iv, h.config.BlockSize)
 	if err != nil {
 		tmpFile.Close()
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
 		return
 	}
 
@@ -676,12 +684,12 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		select {
 		case encErrVal := <-encErr:
 			if encErrVal != nil {
-				h.writeError(w, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
 				return
 			}
 		default:
 		}
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to upload: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to upload: %v", err), 500)
 		return
 	}
 
@@ -690,7 +698,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 
 	// Check for encryption errors
 	if encErrVal := <-encErr; encErrVal != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
 		return
 	}
 
@@ -751,7 +759,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Get metadata first
 	info, err := h.backend.Head(ctx, bucket, prefixedKey)
 	if err != nil {
-		h.writeError(w, "NoSuchKey", fmt.Sprintf("Object not found: %v", err), 404)
+		h.writeError(w, r, "NoSuchKey", fmt.Sprintf("Object not found: %v", err), 404)
 		return
 	}
 
@@ -763,7 +771,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 				w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
 				w.WriteHeader(status)
 			} else {
-				h.writeError(w, "PreconditionFailed", "Precondition failed", status)
+				h.writeError(w, r, "PreconditionFailed", "Precondition failed", status)
 			}
 			return
 		}
@@ -771,7 +779,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// Passthrough for non-ARMOR objects
 		body, _, err := h.backend.Get(ctx, bucket, prefixedKey)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object: %v", err), 500)
 			return
 		}
 		defer body.Close()
@@ -791,21 +799,21 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Parse ARMOR metadata
 	armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
 	if !ok {
-		h.writeError(w, "InternalError", "Failed to parse ARMOR metadata", 500)
+		h.writeError(w, r, "InternalError", "Failed to parse ARMOR metadata", 500)
 		return
 	}
 
 	// Get the MEK for this object using the key ID from metadata
 	mek, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get decryption key: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get decryption key: %v", err), 500)
 		return
 	}
 
 	// Unwrap DEK
 	dek, err := crypto.UnwrapDEK(mek, armorMeta.WrappedDEK)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
 		return
 	}
 
@@ -822,7 +830,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// Multipart objects have no envelope header - trust metadata version
 		decryptor, err = crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
 			return
 		}
 	} else {
@@ -830,27 +838,27 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		prefixedKey := h.applyPrefix(key)
 		headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to read envelope header: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read envelope header: %v", err), 500)
 			return
 		}
 		defer headerReader.Close()
 
 		headerBuf := make([]byte, crypto.HeaderSize)
 		if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
 			return
 		}
 
 		header, err := crypto.DecodeHeader(headerBuf)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
 			return
 		}
 
 		// Create decryptor with the version from the envelope header
 		decryptor, err = crypto.NewDecryptorWithVersion(dek, header.IV[:], header.BlockSize(), header.Version)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
 			return
 		}
 	}
@@ -864,7 +872,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			w.WriteHeader(status)
 		} else {
 			// 412 Precondition Failed
-			h.writeError(w, "PreconditionFailed", "Precondition failed", status)
+			h.writeError(w, r, "PreconditionFailed", "Precondition failed", status)
 		}
 		return
 	}
@@ -905,7 +913,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// Compression destroys fixed-offset seeking (zstd/gzip/zlib are variable-length encodings),
 		// so byte ranges into compressed ciphertext would return corrupt data.
 		if armorMeta.Compressed {
-			h.writeError(w, "InvalidRange", "Range reads unsupported on compressed objects", 416)
+			h.writeError(w, r, "InvalidRange", "Range reads unsupported on compressed objects", 416)
 			return
 		}
 		h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart)
@@ -938,7 +946,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		manager := backend.NewMultipartStateManager(h.backend, bucket)
 		sidecar, err := manager.LoadHMACTable(ctx, key)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to load HMAC table from sidecar: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load HMAC table from sidecar: %v", err), 500)
 			return
 		}
 
@@ -951,7 +959,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		streamSize = plaintextSize
 		dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
 			return
 		}
 		defer dataBody.Close()
@@ -964,13 +972,13 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		// 1. Prefetch HMAC table (small range read)
 		hmacBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, hmacTableOffset, hmacTableSize)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
 			return
 		}
 		hmacTable, err = io.ReadAll(hmacBody)
 		hmacBody.Close()
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
 			return
 		}
 
@@ -978,7 +986,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		streamSize = crypto.HeaderSize + dataSize
 		dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
 			return
 		}
 		defer dataBody.Close()
@@ -986,14 +994,14 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		// 3. Read and discard the 64-byte header (single-PUT only)
 		headerBuf := make([]byte, crypto.HeaderSize)
 		if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
 			return
 		}
 
 		// Parse header to get plaintext SHA for verification
 		header, err = crypto.DecodeHeader(headerBuf)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
 			return
 		}
 	}
@@ -1156,7 +1164,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			if err != nil {
 				// Decompression setup failed - close pipe and return error
 				pr.Close()
-				h.writeError(w, "InternalError", fmt.Sprintf("Failed to create gzip decompression decoder: %v", err), 500)
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create gzip decompression decoder: %v", err), 500)
 				return
 			}
 		case backend.CompressionZlib:
@@ -1165,7 +1173,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			if err != nil {
 				// Decompression setup failed - close pipe and return error
 				pr.Close()
-				h.writeError(w, "InternalError", fmt.Sprintf("Failed to create zlib decompression decoder: %v", err), 500)
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create zlib decompression decoder: %v", err), 500)
 				return
 			}
 		case backend.CompressionZstd:
@@ -1174,7 +1182,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			if err != nil {
 				// Decompression setup failed - close pipe and return error
 				pr.Close()
-				h.writeError(w, "InternalError", fmt.Sprintf("Failed to create zstd decompression decoder: %v", err), 500)
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create zstd decompression decoder: %v", err), 500)
 				return
 			}
 				// Wrap in zstdReadCloser to implement io.ReadCloser (zstd.Decoder.Close() doesn't return error)
@@ -1182,7 +1190,7 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		default:
 			// Unknown compression type - close pipe and return error
 			pr.Close()
-			h.writeError(w, "InternalError", fmt.Sprintf("Unknown compression type: %s", armorMeta.CompressionType), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Unknown compression type: %s", armorMeta.CompressionType), 500)
 			return
 		}
 		defer decompressor.Close()
@@ -1377,7 +1385,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	rangeHeader := r.Header.Get("Range")
 	start, end, err := parseRangeHeader(rangeHeader, plaintextSize)
 	if err != nil {
-		h.writeError(w, "InvalidRange", fmt.Sprintf("Invalid range: %v", err), 400)
+		h.writeError(w, r, "InvalidRange", fmt.Sprintf("Invalid range: %v", err), 400)
 		return
 	}
 
@@ -1417,7 +1425,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		manager := backend.NewMultipartStateManager(h.backend, bucket)
 		sidecar, err := manager.LoadHMACTable(ctx, key)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to load HMAC table from sidecar: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load HMAC table from sidecar: %v", err), 500)
 			return
 		}
 
@@ -1448,14 +1456,14 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		// Fetch encrypted blocks
 		encryptedBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, dataOffset, dataLength)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("failed to fetch encrypted blocks: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("failed to fetch encrypted blocks: %v", err), 500)
 			return
 		}
 		defer encryptedBody.Close()
 
 		encrypted, err = io.ReadAll(encryptedBody)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("failed to read encrypted blocks: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("failed to read encrypted blocks: %v", err), 500)
 			return
 		}
 	} else {
@@ -1463,7 +1471,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		// Translate range to encrypted blocks
 		translation, err := crypto.TranslateRange(start, end, plaintextSize, armorMeta.BlockSize, crypto.HeaderSize)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to translate range: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to translate range: %v", err), 500)
 			return
 		}
 
@@ -1500,7 +1508,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 		})
 
 		if err := g.Wait(); err != nil {
-			h.writeError(w, "InternalError", err.Error(), 500)
+			h.writeError(w, r, "InternalError", err.Error(), 500)
 			return
 		}
 	}
@@ -1510,7 +1518,7 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 	// For single-PUT objects, hmacTableIsFull=false (only range HMACs from embedded table).
 	plaintext, err := decryptor.DecryptRange(encrypted, hmacTable, start, end, plaintextSize, isMultipart)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to decrypt range: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decrypt range: %v", err), 500)
 		return
 	}
 
@@ -1712,7 +1720,7 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 					w.Header().Set("Last-Modified", entry.LastModified.UTC().Format(http.TimeFormat))
 					w.WriteHeader(status)
 				} else {
-					h.writeError(w, "PreconditionFailed", "Precondition failed", status)
+					h.writeError(w, r, "PreconditionFailed", "Precondition failed", status)
 				}
 				return
 			}
@@ -1730,7 +1738,7 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 	prefixedKey := h.applyPrefix(key)
 	info, err := h.backend.Head(ctx, bucket, prefixedKey)
 	if err != nil {
-		h.writeError(w, "NoSuchKey", "Object not found", 404)
+		h.writeError(w, r, "NoSuchKey", "Object not found", 404)
 		return
 	}
 
@@ -1761,7 +1769,7 @@ func (h *Handlers) HeadObject(w http.ResponseWriter, r *http.Request, bucket, ke
 			w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
 			w.WriteHeader(status)
 		} else {
-			h.writeError(w, "PreconditionFailed", "Precondition failed", status)
+			h.writeError(w, r, "PreconditionFailed", "Precondition failed", status)
 		}
 		return
 	}
@@ -1781,7 +1789,7 @@ func (h *Handlers) DeleteObject(w http.ResponseWriter, r *http.Request, bucket, 
 
 	prefixedKey := h.applyPrefix(key)
 	if err := h.backend.Delete(ctx, bucket, prefixedKey); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to delete: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to delete: %v", err), 500)
 		return
 	}
 
@@ -1810,7 +1818,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 	// Parse copy source header
 	copySource := r.Header.Get("x-amz-copy-source")
 	if copySource == "" {
-		h.writeError(w, "InvalidRequest", "Missing x-amz-copy-source header", 400)
+		h.writeError(w, r, "InvalidRequest", "Missing x-amz-copy-source header", 400)
 		return
 	}
 
@@ -1818,7 +1826,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 	// Format: /bucket/key or bucket/key
 	srcBucket, srcKey := parseCopySource(copySource)
 	if srcBucket == "" || srcKey == "" {
-		h.writeError(w, "InvalidCopySource", "Invalid copy source format", 400)
+		h.writeError(w, r, "InvalidCopySource", "Invalid copy source format", 400)
 		return
 	}
 
@@ -1829,7 +1837,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 	// Get source object metadata
 	srcInfo, err := h.backend.Head(ctx, srcBucket, srcPrefixedKey)
 	if err != nil {
-		h.writeError(w, "NoSuchKey", fmt.Sprintf("Source object not found: %v", err), 404)
+		h.writeError(w, r, "NoSuchKey", fmt.Sprintf("Source object not found: %v", err), 404)
 		return
 	}
 
@@ -1849,35 +1857,35 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 		// Parse ARMOR metadata
 		armorMeta, ok := backend.ParseARMORMetadata(srcInfo.Metadata)
 		if !ok {
-			h.writeError(w, "InternalError", "Failed to parse ARMOR metadata", 500)
+			h.writeError(w, r, "InternalError", "Failed to parse ARMOR metadata", 500)
 			return
 		}
 
 		// Get the source MEK using the key ID from metadata
 		srcMEK, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get source decryption key: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get source decryption key: %v", err), 500)
 			return
 		}
 
 		// Unwrap DEK with source MEK
 		dek, err := crypto.UnwrapDEK(srcMEK, armorMeta.WrappedDEK)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
 			return
 		}
 
 		// Get the destination MEK for the target key
 		dstMEK, dstKeyID, err := h.keyManager.GetMEK(dstKey)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to get destination encryption key: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get destination encryption key: %v", err), 500)
 			return
 		}
 
 		// Re-wrap DEK with destination MEK (handles key rotation and cross-prefix copy)
 		wrappedDEK, err := crypto.WrapDEK(dstMEK, dek)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to re-wrap DEK: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to re-wrap DEK: %v", err), 500)
 			return
 		}
 
@@ -1910,7 +1918,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 		// Perform server-side copy with updated metadata
 		if err := h.backend.Copy(ctx, srcBucket, srcPrefixedKey, dstBucket, dstPrefixedKey, newMeta, true); err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
 			return
 		}
 
@@ -1931,7 +1939,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 		output, err := xml.Marshal(result)
 		if err != nil {
-			h.writeError(w, "InternalError", "Failed to marshal response", 500)
+			h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 			return
 		}
 
@@ -1957,14 +1965,14 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 	}
 
 	if err := h.backend.Copy(ctx, srcBucket, srcPrefixedKey, dstBucket, dstPrefixedKey, meta, replaceMetadata); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Copy failed: %v", err), 500)
 		return
 	}
 
 	// Get the destination object info for ETag
 	dstInfo, err := h.backend.Head(ctx, dstBucket, dstPrefixedKey)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to get destination info", 500)
+		h.writeError(w, r, "InternalError", "Failed to get destination info", 500)
 		return
 	}
 
@@ -1976,7 +1984,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 	output, err := xml.Marshal(result)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 		return
 	}
 
@@ -2066,7 +2074,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 		var err error
 		result, err = h.backend.List(ctx, bucket, backendPrefix, delimiter, contToken, maxKeys)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to list: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list: %v", err), 500)
 			return
 		}
 		// Resolve plaintext sizes for ARMOR-encrypted objects before caching.
@@ -2145,7 +2153,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 
 	output, err := xml.Marshal(resp)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 		return
 	}
 
@@ -2162,7 +2170,7 @@ func (h *Handlers) HeadBucket(w http.ResponseWriter, r *http.Request, bucket str
 	ctx := r.Context()
 
 	if err := h.backend.HeadBucket(ctx, bucket); err != nil {
-		h.writeError(w, "NoSuchBucket", fmt.Sprintf("Bucket not found: %v", err), 404)
+		h.writeError(w, r, "NoSuchBucket", fmt.Sprintf("Bucket not found: %v", err), 404)
 		return
 	}
 
@@ -2176,7 +2184,7 @@ func (h *Handlers) GetBucketLocation(w http.ResponseWriter, r *http.Request, buc
 	ctx := r.Context()
 
 	if err := h.backend.HeadBucket(ctx, bucket); err != nil {
-		h.writeError(w, "NoSuchBucket", fmt.Sprintf("Bucket not found: %v", err), 404)
+		h.writeError(w, r, "NoSuchBucket", fmt.Sprintf("Bucket not found: %v", err), 404)
 		return
 	}
 
@@ -2205,7 +2213,7 @@ func (h *Handlers) GetBucketVersioning(w http.ResponseWriter, r *http.Request, b
 	ctx := r.Context()
 
 	if err := h.backend.HeadBucket(ctx, bucket); err != nil {
-		h.writeError(w, "NoSuchBucket", fmt.Sprintf("Bucket not found: %v", err), 404)
+		h.writeError(w, r, "NoSuchBucket", fmt.Sprintf("Bucket not found: %v", err), 404)
 		return
 	}
 
@@ -2231,7 +2239,7 @@ func (h *Handlers) CreateBucket(w http.ResponseWriter, r *http.Request, bucket s
 	ctx := r.Context()
 
 	if err := h.backend.CreateBucket(ctx, bucket); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create bucket: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create bucket: %v", err), 500)
 		return
 	}
 
@@ -2244,7 +2252,7 @@ func (h *Handlers) DeleteBucket(w http.ResponseWriter, r *http.Request, bucket s
 	ctx := r.Context()
 
 	if err := h.backend.DeleteBucket(ctx, bucket); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to delete bucket: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to delete bucket: %v", err), 500)
 		return
 	}
 
@@ -2277,17 +2285,17 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
 
 	if err := xml.Unmarshal(body, &deleteReq); err != nil {
-		h.writeError(w, "MalformedXML", fmt.Sprintf("Failed to parse XML: %v", err), 400)
+		h.writeError(w, r, "MalformedXML", fmt.Sprintf("Failed to parse XML: %v", err), 400)
 		return
 	}
 
 	if len(deleteReq.Objects) == 0 {
-		h.writeError(w, "MalformedXML", "No objects specified for deletion", 400)
+		h.writeError(w, r, "MalformedXML", "No objects specified for deletion", 400)
 		return
 	}
 
@@ -2327,7 +2335,7 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 	// Perform bulk delete with prefixed keys (only allowed keys)
 	if len(allowedKeys) > 0 {
 		if err := h.backend.DeleteObjects(ctx, bucket, prefixedKeys); err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("DeleteObjects failed: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("DeleteObjects failed: %v", err), 500)
 			return
 		}
 	}
@@ -2399,7 +2407,7 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 
 	output, err := xml.Marshal(result)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 		return
 	}
 
@@ -2415,7 +2423,7 @@ func (h *Handlers) ListBuckets(w http.ResponseWriter, r *http.Request) {
 
 	buckets, err := h.backend.ListBuckets(ctx)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list buckets: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list buckets: %v", err), 500)
 		return
 	}
 
@@ -2452,7 +2460,7 @@ func (h *Handlers) ListBuckets(w http.ResponseWriter, r *http.Request) {
 
 	output, err := xml.Marshal(result)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 		return
 	}
 
@@ -2469,34 +2477,34 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 
 	// Reject multipart uploads when compression is enabled (ADR-007)
 	if h.config.Compress {
-		h.writeError(w, "InvalidArgument", "Compression is not supported for multipart uploads. Use single-PUT uploads for compressed objects or disable compression (ARMOR_COMPRESS=false).", 400)
+		h.writeError(w, r, "InvalidArgument", "Compression is not supported for multipart uploads. Use single-PUT uploads for compressed objects or disable compression (ARMOR_COMPRESS=false).", 400)
 		return
 	}
 
 	// Get the appropriate MEK for this object key
 	mek, keyID, err := h.keyManager.GetMEK(key)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get encryption key: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get encryption key: %v", err), 500)
 		return
 	}
 
 	// Generate DEK and IV for this upload
 	dek, err := crypto.GenerateDEK()
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to generate DEK: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to generate DEK: %v", err), 500)
 		return
 	}
 
 	iv, err := crypto.GenerateIV()
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to generate IV: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to generate IV: %v", err), 500)
 		return
 	}
 
 	// Wrap DEK with MEK
 	wrappedDEK, err := crypto.WrapDEK(mek, dek)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
 		return
 	}
 
@@ -2520,7 +2528,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 	// commitgraph/postgres/cnpg/..., making the backup unrestorable.
 	uploadID, err := h.backend.CreateMultipartUpload(ctx, bucket, h.applyPrefix(key), nil)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create multipart upload: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create multipart upload: %v", err), 500)
 		return
 	}
 
@@ -2543,7 +2551,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 	if err := manager.SaveState(ctx, state); err != nil {
 		// Try to abort the upload on state save failure
 		h.backend.AbortMultipartUpload(ctx, bucket, key, uploadID)
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to save multipart state: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save multipart state: %v", err), 500)
 		return
 	}
 
@@ -2565,7 +2573,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 
 	output, err := xml.Marshal(result)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 		return
 	}
 
@@ -2635,12 +2643,12 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// Parse part number
 	partNumberStr := r.URL.Query().Get("partNumber")
 	if partNumberStr == "" {
-		h.writeError(w, "InvalidRequest", "Missing partNumber", 400)
+		h.writeError(w, r, "InvalidRequest", "Missing partNumber", 400)
 		return
 	}
 	partNumber, err := strconv.ParseInt(partNumberStr, 10, 32)
 	if err != nil || partNumber < 1 || partNumber > 10000 {
-		h.writeError(w, "InvalidRequest", "Invalid partNumber", 400)
+		h.writeError(w, r, "InvalidRequest", "Invalid partNumber", 400)
 		return
 	}
 
@@ -2648,20 +2656,20 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
 	state, err := manager.LoadState(ctx, uploadID)
 	if err != nil {
-		h.writeError(w, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+		h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
 		return
 	}
 
 	// Verify bucket and key match
 	if state.Bucket != bucket || state.Key != key {
-		h.writeError(w, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
+		h.writeError(w, r, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
 		return
 	}
 
 	// If a prior contradiction poisoned this upload (ADR-005 rule 4), every
 	// further part fails the same way — the client must abort and retry.
 	if state.Poisoned {
-		h.writeError(w, "InvalidPart",
+		h.writeError(w, r, "InvalidPart",
 			fmt.Sprintf("This multipart upload has been invalidated and cannot be completed: %s. Abort and retry the upload from the beginning.", state.PoisonReason), 400)
 		return
 	}
@@ -2680,7 +2688,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// large) part costs no server memory.
 	if state.PartSize == 0 && partNumber != 1 {
 		w.Header().Set("Retry-After", "1")
-		h.writeError(w, "SlowDown",
+		h.writeError(w, r, "SlowDown",
 			"Part 1 for this multipart upload has not been received yet, so the uniform part size is not established. Retry this part after uploading part 1.",
 			http.StatusServiceUnavailable)
 		return
@@ -2689,7 +2697,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// Read plaintext part
 	plaintext, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
 	plaintextSize := int64(len(plaintext))
@@ -2744,7 +2752,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// ADR-011: Non-uniform parts are exempt from block alignment requirements.
 	// When state.NonUniformParts is true, parts may end at any byte offset.
 	if plaintextSize > 0 && !pinningP && !presumedFinal && !state.NonUniformParts && plaintextSize%int64(state.BlockSize) != 0 {
-		h.writeError(w, "InvalidPartSize",
+		h.writeError(w, r, "InvalidPartSize",
 			fmt.Sprintf("Part size %d is not a multiple of the block size (%d bytes). ARMOR's uniform-part-size contract (ADR-005) requires block-aligned parts. Use a part size that's a multiple of %d (e.g., 5,242,880 for 5MiB, 16,777,216 for 16MiB).", plaintextSize, state.BlockSize, state.BlockSize), 400)
 		return
 	}
@@ -2755,7 +2763,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			// A retry with a different size contradicts the contract — poison.
 			reason := fmt.Sprintf("part %d was already uploaded with size %d but re-uploaded with size %d", partNumber, existingSize, plaintextSize)
 			h.poisonUpload(ctx, manager, state, reason)
-			h.writeError(w, "InvalidPart",
+			h.writeError(w, r, "InvalidPart",
 				fmt.Sprintf("Part %d was already uploaded with size %d but re-uploaded with size %d. %s", partNumber, existingSize, plaintextSize, multipartRetryMessage), 400)
 			return
 		}
@@ -2778,7 +2786,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 
 	if P == 0 {
 		if plaintextSize == 0 {
-			h.writeError(w, "InvalidPartSize", "Cannot establish the uniform part size from an empty first part. Upload a non-empty first part.", 400)
+			h.writeError(w, r, "InvalidPartSize", "Cannot establish the uniform part size from an empty first part. Upload a non-empty first part.", 400)
 			return
 		}
 		P = plaintextSize
@@ -2798,7 +2806,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		case plaintextSize > P:
 			reason := fmt.Sprintf("part %d size %d exceeds the uniform part size %d pinned by part 1", partNumber, plaintextSize, P)
 			h.poisonUpload(ctx, manager, state, reason)
-			h.writeError(w, "InvalidPartSize",
+			h.writeError(w, r, "InvalidPartSize",
 				fmt.Sprintf("Part %d size %d is larger than the uniform part size %d established for this upload by part 1. %s", partNumber, plaintextSize, P, multipartRetryMessage), 400)
 			return
 		case plaintextSize < P:
@@ -2809,7 +2817,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 				if sz < P {
 					reason := fmt.Sprintf("multiple short (presumed-final) parts seen (sizes %d and %d); the uniform-part-size contract allows at most one short final part of size %d", sz, plaintextSize, P)
 					h.poisonUpload(ctx, manager, state, reason)
-					h.writeError(w, "InvalidPartSize",
+					h.writeError(w, r, "InvalidPartSize",
 						fmt.Sprintf("Part %d (size %d) is a second short part; only one short final part is allowed (uniform part size is %d). %s", partNumber, plaintextSize, P, multipartRetryMessage), 400)
 					return
 				}
@@ -2820,14 +2828,14 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// Get the MEK for this upload using the key ID from state
 	mek, err := h.keyManager.GetMEKByID(state.KeyID)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get decryption key: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get decryption key: %v", err), 500)
 		return
 	}
 
 	// Unwrap DEK
 	dek, err := crypto.UnwrapDEK(mek, state.WrappedDEK)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
 		return
 	}
 
@@ -2844,7 +2852,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			} else {
 				// A previous part is missing - defer with SlowDown
 				w.Header().Set("Retry-After", "1")
-				h.writeError(w, "SlowDown",
+				h.writeError(w, r, "SlowDown",
 					fmt.Sprintf("Part %d has not been received yet, so the cumulative offset for part %d cannot be computed. Retry this part after uploading part %d.", i, partNumber, i),
 					http.StatusServiceUnavailable)
 				return
@@ -2860,14 +2868,14 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		// Create offset encryptor
 		offsetEncryptor, err := crypto.NewOffsetEncryptor(dek, state.IV, state.BlockSize, crypto.Version2)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to create offset encryptor: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create offset encryptor: %v", err), 500)
 			return
 		}
 
 		// Encrypt with cumulative byte offset
 		encrypted, blockHMACsRaw, err = offsetEncryptor.EncryptFromOffset(plaintext, cumulativeOffset)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt with offset: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt with offset: %v", err), 500)
 			return
 		}
 	} else {
@@ -2883,7 +2891,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		// Create encryptor
 		encryptor, err := crypto.NewEncryptor(dek, state.IV, state.BlockSize)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
 			return
 		}
 
@@ -2891,7 +2899,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		// so an idempotent retry (same N, same size) produces byte-identical ciphertext.
 		encrypted, blockHMACsRaw, err = encryptor.EncryptWithStartingCounter(plaintext, startBlockIndex)
 		if err != nil {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
 			return
 		}
 	}
@@ -2901,7 +2909,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// storage key the upload was created under.
 	etag, err := h.backend.UploadPart(ctx, bucket, h.applyPrefix(key), uploadID, int32(partNumber), bytes.NewReader(encrypted), int64(len(encrypted)))
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to upload part: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to upload part: %v", err), 500)
 		return
 	}
 
@@ -2928,7 +2936,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	state.PartPlaintextSHAs[int(partNumber)] = hex.EncodeToString(partSHA[:])
 
 	if err := manager.SaveState(ctx, state); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to update multipart state: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to update multipart state: %v", err), 500)
 		return
 	}
 
@@ -2965,13 +2973,13 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
 	state, err := manager.LoadState(ctx, uploadID)
 	if err != nil {
-		h.writeError(w, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+		h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
 		return
 	}
 
 	// Verify bucket and key match
 	if state.Bucket != bucket || state.Key != key {
-		h.writeError(w, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
+		h.writeError(w, r, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
 		return
 	}
 
@@ -2979,7 +2987,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// contract, the upload id was poisoned and persisted. Fail clearly here,
 	// before assembling or storing anything — the client must abort and retry.
 	if state.Poisoned {
-		h.writeError(w, "InvalidPart",
+		h.writeError(w, r, "InvalidPart",
 			fmt.Sprintf("This multipart upload has been invalidated and cannot be completed: %s. %s", state.PoisonReason, multipartRetryMessage), 400)
 		return
 	}
@@ -2998,17 +3006,17 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	var completeReq CompleteMultipartUploadReq
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
 
 	if err := xml.Unmarshal(body, &completeReq); err != nil {
-		h.writeError(w, "MalformedXML", fmt.Sprintf("Failed to parse XML: %v", err), 400)
+		h.writeError(w, r, "MalformedXML", fmt.Sprintf("Failed to parse XML: %v", err), 400)
 		return
 	}
 
 	if len(completeReq.Parts) == 0 {
-		h.writeError(w, "InvalidRequest", "No parts specified", 400)
+		h.writeError(w, r, "InvalidRequest", "No parts specified", 400)
 		return
 	}
 
@@ -3033,7 +3041,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// assembly/storage so a violating object is never stored.
 	P := state.PartSize
 	if P == 0 {
-		h.writeError(w, "InvalidPart",
+		h.writeError(w, r, "InvalidPart",
 			fmt.Sprintf("Part 1 was never uploaded for this multipart upload, so the uniform part size is unknown (every other part would have been deferred with SlowDown until part 1 arrived). Upload part 1 and retry. %s", multipartRetryMessage), 400)
 		return
 	}
@@ -3041,7 +3049,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	for _, p := range completeReq.Parts {
 		size, ok := state.PartSizes[p.PartNumber]
 		if !ok {
-			h.writeError(w, "InvalidPart",
+			h.writeError(w, r, "InvalidPart",
 				fmt.Sprintf("Part %d was not uploaded and cannot be completed. %s", p.PartNumber, multipartRetryMessage), 400)
 			return
 		}
@@ -3051,7 +3059,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 			// The highest-numbered part may be the short final part (< P); every other
 			// part must match P exactly.
 			if p.PartNumber != highestPartNumber && size != P {
-				h.writeError(w, "InvalidPartSize",
+				h.writeError(w, r, "InvalidPartSize",
 					fmt.Sprintf("Part %d has size %d but the uniform part size for this upload is %d (only the final part may differ). The uniform-part-size contract (ADR-005) was violated. %s", p.PartNumber, size, P, multipartRetryMessage), 400)
 				return
 			}
@@ -3063,7 +3071,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// the short-final-part-arriving-first case can still be detected and poisoned
 	// by rule 4 instead of being rejected outright at the first part.
 	if len(completeReq.Parts) > 1 && P < multipartMinPartSize {
-		h.writeError(w, "InvalidPartSize",
+		h.writeError(w, r, "InvalidPartSize",
 			fmt.Sprintf("Uniform part size %d is smaller than the 5 MiB minimum for a multipart object (ADR-005). Use a part size of at least %d bytes. %s", P, multipartMinPartSize, multipartRetryMessage), 400)
 		return
 	}
@@ -3077,7 +3085,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// before anything is assembled or stored.
 	// ADR-011: Non-uniform parts are exempt from block alignment validation.
 	if !state.NonUniformParts && len(completeReq.Parts) > 1 && P%int64(state.BlockSize) != 0 {
-		h.writeError(w, "InvalidPartSize",
+		h.writeError(w, r, "InvalidPartSize",
 			fmt.Sprintf("Uniform part size %d is not a multiple of the block size (%d bytes), which is only valid for a single-part upload, but this upload has %d parts. %s", P, state.BlockSize, len(completeReq.Parts), multipartRetryMessage), 400)
 		return
 	}
@@ -3119,7 +3127,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		if hmacsBase64, ok := state.PartHMACs[p.PartNumber]; ok {
 			hmacs, err := backend.DecodeHMACFromBase64(hmacsBase64)
 			if err != nil {
-				h.writeError(w, "InternalError", fmt.Sprintf("Failed to decode HMACs for part %d: %v", p.PartNumber, err), 500)
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode HMACs for part %d: %v", p.PartNumber, err), 500)
 				return
 			}
 
@@ -3152,7 +3160,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	aesBlocksPerArmorBlock := uint64(state.BlockSize / 16)
 	finalCounterValue := uint64(totalBlocks) * aesBlocksPerArmorBlock
 	if finalCounterValue >= maxCounterValue {
-		h.writeError(w, "InternalError", "object exceeds the Version 2 counter space; envelope v3 removes this limit", 500)
+		h.writeError(w, r, "InternalError", "object exceeds the Version 2 counter space; envelope v3 removes this limit", 500)
 		return
 	}
 
@@ -3168,7 +3176,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		// this upload began. This rejects a stale same-key object instead of
 		// blessing it as the result of the timed-out upload.
 		if !backend.IsNoSuchUpload(err) {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to complete multipart upload: %v", err), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to complete multipart upload: %v", err), 500)
 			return
 		}
 		info, headErr := h.backend.Head(ctx, bucket, h.applyPrefix(key))
@@ -3179,7 +3187,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		createdAt := state.Created.UTC().Truncate(time.Second)
 		if headErr != nil || info == nil || info.Size != totalCiphertextSize ||
 			(!state.Created.IsZero() && info.LastModified.UTC().Before(createdAt)) {
-			h.writeError(w, "InternalError", fmt.Sprintf("Failed to recover ambiguous multipart completion: complete=%v head=%v", err, headErr), 500)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to recover ambiguous multipart completion: complete=%v head=%v", err, headErr), 500)
 			return
 		}
 		etag = info.ETag
@@ -3192,7 +3200,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Store HMAC table as sidecar
 	if err := manager.SaveHMACTable(ctx, key, allBlockHMACs, state.BlockSize); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to save HMAC table: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save HMAC table: %v", err), 500)
 		return
 	}
 
@@ -3210,7 +3218,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	}
 	plaintextSHAHex, err := backend.CombinePartPlaintextSHAs(state.PartPlaintextSHAs, partNumbers)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to assemble plaintext SHA-256: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to assemble plaintext SHA-256: %v", err), 500)
 		return
 	}
 
@@ -3246,7 +3254,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 			// Convert to JSON for storage
 			cumulativeJSON, err := json.Marshal(state.CumulativePartSizes)
 			if err != nil {
-				h.writeError(w, "InternalError", fmt.Sprintf("Failed to marshal cumulative part sizes: %v", err), 500)
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to marshal cumulative part sizes: %v", err), 500)
 				return
 			}
 			meta["x-amz-meta-armor-cumulative-sizes"] = string(cumulativeJSON)
@@ -3257,7 +3265,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// prefixed storage key — copying raw->raw here would silently resurrect the
 	// unprefixed object this fix exists to eliminate.
 	if err := h.backend.Copy(ctx, bucket, h.applyPrefix(key), bucket, h.applyPrefix(key), meta, true); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to update metadata: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to update metadata: %v", err), 500)
 		return
 	}
 
@@ -3294,7 +3302,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	output, err := xml.Marshal(result)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 		return
 	}
 
@@ -3338,19 +3346,19 @@ func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, 
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
 	state, err := manager.LoadState(ctx, uploadID)
 	if err != nil {
-		h.writeError(w, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+		h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
 		return
 	}
 
 	// Verify bucket and key match
 	if state.Bucket != bucket || state.Key != key {
-		h.writeError(w, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
+		h.writeError(w, r, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
 		return
 	}
 
 	// Forward abort to B2
 	if err := h.backend.AbortMultipartUpload(ctx, bucket, key, uploadID); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to abort multipart upload: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to abort multipart upload: %v", err), 500)
 		return
 	}
 
@@ -3369,20 +3377,20 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
 	state, err := manager.LoadState(ctx, uploadID)
 	if err != nil {
-		h.writeError(w, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+		h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
 		return
 	}
 
 	// Verify bucket and key match
 	if state.Bucket != bucket || state.Key != key {
-		h.writeError(w, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
+		h.writeError(w, r, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
 		return
 	}
 
 	// Forward to B2
 	result, err := h.backend.ListParts(ctx, bucket, key, uploadID)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list parts: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list parts: %v", err), 500)
 		return
 	}
 
@@ -3436,7 +3444,7 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 
 	output, err := xml.Marshal(resp)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 		return
 	}
 
@@ -3469,7 +3477,7 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 
 	result, err := h.backend.ListMultipartUploads(ctx, bucket, backendPrefix)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list multipart uploads: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list multipart uploads: %v", err), 500)
 		return
 	}
 
@@ -3521,7 +3529,7 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 
 	output, err := xml.Marshal(resp)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 		return
 	}
 
@@ -3565,7 +3573,7 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 
 	result, err := h.backend.ListObjectVersions(ctx, bucket, backendPrefix, delimiter, backendKeyMarker, versionIDMarker, maxKeys)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to list object versions: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list object versions: %v", err), 500)
 		return
 	}
 
@@ -3673,7 +3681,7 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 
 	output, err := xml.Marshal(resp)
 	if err != nil {
-		h.writeError(w, "InternalError", "Failed to marshal response", 500)
+		h.writeError(w, r, "InternalError", "Failed to marshal response", 500)
 		return
 	}
 
@@ -3690,7 +3698,7 @@ func (h *Handlers) GetBucketLifecycleConfiguration(w http.ResponseWriter, r *htt
 
 	config, err := h.backend.GetBucketLifecycleConfiguration(ctx, bucket)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get lifecycle configuration: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get lifecycle configuration: %v", err), 500)
 		return
 	}
 
@@ -3708,12 +3716,12 @@ func (h *Handlers) PutBucketLifecycleConfiguration(w http.ResponseWriter, r *htt
 	// Read the lifecycle configuration XML
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
 
 	if err := h.backend.PutBucketLifecycleConfiguration(ctx, bucket, body); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to put lifecycle configuration: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to put lifecycle configuration: %v", err), 500)
 		return
 	}
 
@@ -3726,7 +3734,7 @@ func (h *Handlers) DeleteBucketLifecycleConfiguration(w http.ResponseWriter, r *
 	ctx := r.Context()
 
 	if err := h.backend.DeleteBucketLifecycleConfiguration(ctx, bucket); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to delete lifecycle configuration: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to delete lifecycle configuration: %v", err), 500)
 		return
 	}
 
@@ -3740,7 +3748,7 @@ func (h *Handlers) GetObjectLockConfiguration(w http.ResponseWriter, r *http.Req
 
 	config, err := h.backend.GetObjectLockConfiguration(ctx, bucket)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object lock configuration: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object lock configuration: %v", err), 500)
 		return
 	}
 
@@ -3757,12 +3765,12 @@ func (h *Handlers) PutObjectLockConfiguration(w http.ResponseWriter, r *http.Req
 	// Read the object lock configuration XML
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
 
 	if err := h.backend.PutObjectLockConfiguration(ctx, bucket, body); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to put object lock configuration: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to put object lock configuration: %v", err), 500)
 		return
 	}
 
@@ -3776,7 +3784,7 @@ func (h *Handlers) GetObjectRetention(w http.ResponseWriter, r *http.Request, bu
 
 	retention, err := h.backend.GetObjectRetention(ctx, bucket, key)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object retention: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object retention: %v", err), 500)
 		return
 	}
 
@@ -3793,12 +3801,12 @@ func (h *Handlers) PutObjectRetention(w http.ResponseWriter, r *http.Request, bu
 	// Read the retention XML
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
 
 	if err := h.backend.PutObjectRetention(ctx, bucket, key, body); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to put object retention: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to put object retention: %v", err), 500)
 		return
 	}
 
@@ -3812,7 +3820,7 @@ func (h *Handlers) GetObjectLegalHold(w http.ResponseWriter, r *http.Request, bu
 
 	legalHold, err := h.backend.GetObjectLegalHold(ctx, bucket, key)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to get object legal hold: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object legal hold: %v", err), 500)
 		return
 	}
 
@@ -3829,12 +3837,12 @@ func (h *Handlers) PutObjectLegalHold(w http.ResponseWriter, r *http.Request, bu
 	// Read the legal hold XML
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read body: %v", err), 500)
 		return
 	}
 
 	if err := h.backend.PutObjectLegalHold(ctx, bucket, key, body); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to put object legal hold: %v", err), 500)
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to put object legal hold: %v", err), 500)
 		return
 	}
 
@@ -3874,8 +3882,13 @@ func (h *Handlers) stripPrefixFromCommonPrefix(commonPrefix string) string {
 	return commonPrefix
 }
 
-// writeError writes an S3 error response.
-func (h *Handlers) writeError(w http.ResponseWriter, code, message string, statusCode int) {
+// writeError writes an S3 error response and logs a structured s3_error event.
+func (h *Handlers) writeError(w http.ResponseWriter, r *http.Request, code, message string, statusCode int) {
+	// Log structured S3 error event before writing response
+	if h.logger != nil {
+		h.logS3Error(r, code, message, statusCode)
+	}
+
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(statusCode)
 	var codeBuf, msgBuf bytes.Buffer
@@ -3883,6 +3896,87 @@ func (h *Handlers) writeError(w http.ResponseWriter, code, message string, statu
 	xml.EscapeText(&msgBuf, []byte(message))
 	fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
 		codeBuf.String(), msgBuf.String())
+}
+
+// logS3Error emits a structured log line for S3 errors with request context.
+func (h *Handlers) logS3Error(r *http.Request, code, message string, statusCode int) {
+	// Extract request ID from middleware context
+	requestID := middleware.GetRequestID(r.Context())
+
+	// Extract operation (verb) from request
+	operation := acl.ActionForRequest(r)
+
+	// Extract bucket and key from request URL
+	bucket, key := h.extractBucketAndKey(r)
+
+	// Extract access_key_id from credential context
+	var accessKeyID string
+	if cred := h.credentialFromContext(r.Context()); cred != nil {
+		accessKeyID = cred.AccessKey
+	}
+
+	// Build log fields
+	fields := map[string]interface{}{
+		"event":       "s3_error",
+		"error_code":  code,
+		"operation":   operation,
+		"bucket":      bucket,
+		"key":         key,
+		"request_id":  requestID,
+		"status":      statusCode,
+		"message":     message,
+	}
+
+	// Add access_key_id only when present (no empty fields)
+	if accessKeyID != "" {
+		fields["access_key_id"] = accessKeyID
+	}
+
+	// Log at appropriate level: WARN for 4xx, ERROR for 5xx
+	if statusCode >= 400 && statusCode < 500 {
+		h.logger.WithFields(fields).Warn("S3 operation failed")
+	} else if statusCode >= 500 {
+		h.logger.WithFields(fields).Error("S3 operation failed")
+	} else {
+		// Unexpected: non-error status codes should not use error logging path
+		h.logger.WithFields(fields).Info("S3 operation error logged with non-error status")
+	}
+}
+
+// extractBucketAndKey extracts bucket and key from the request URL.
+func (h *Handlers) extractBucketAndKey(r *http.Request) (bucket, key string) {
+	path := r.URL.Path
+	// Remove leading slash
+	path = strings.TrimPrefix(path, "/")
+
+	// For path-style: /bucket/key
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) >= 1 && parts[0] != "" {
+		bucket = parts[0]
+	}
+	if len(parts) >= 2 {
+		key = parts[1]
+		// URL decode the key
+		if decoded, err := url.PathUnescape(key); err == nil {
+			key = decoded
+		}
+	}
+
+	// Use configured bucket if empty
+	if bucket == "" && h.config != nil {
+		bucket = h.config.Bucket
+	}
+
+	return bucket, key
+}
+
+// credentialFromContext retrieves the credential from the request context.
+// Returns nil if no credential is present (e.g., for public endpoints).
+func (h *Handlers) credentialFromContext(ctx context.Context) *config.Credential {
+	if cred, ok := acl.CredentialFromContext(ctx).(*config.Credential); ok {
+		return cred
+	}
+	return nil
 }
 
 // isPlaceholderHMAC checks if an HMAC is a placeholder (all zeros).

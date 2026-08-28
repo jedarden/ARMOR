@@ -480,6 +480,9 @@ func (s *Server) Handler() http.Handler {
 	// S3 operations
 	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.keyManager, s.listCache)
 
+	// Wire up logger for structured S3 error logging
+	h.WithLogger(s.logger)
+
 	// Wire up provenance if available
 	if s.provenance != nil {
 		h.WithProvenance(s.provenance)
@@ -1144,10 +1147,14 @@ func (s *Server) logCompletedRequest(r *http.Request, start time.Time, statusCod
 // writeError writes an S3 error response with request ID.
 // The request ID is extracted from the request context and included in both
 // the response headers (x-amz-request-id, x-amz-id-2) and the XML body (<RequestId>).
+// This function also logs a structured s3_error event with all request context.
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, code, message string, statusCode int) {
 	// Extract request IDs from context
 	requestID := middleware.GetRequestID(r.Context())
 	extendedID := middleware.GetExtendedID(r.Context())
+
+	// Log structured S3 error event before writing response
+	logS3Error(s.logger, r, code, message, statusCode)
 
 	// Set headers
 	w.Header().Set("Content-Type", "application/xml")
