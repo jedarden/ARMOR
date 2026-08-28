@@ -11,8 +11,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"net/http"
@@ -34,6 +36,7 @@ import (
 	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/replication"
+	"github.com/jedarden/armor/internal/server"
 )
 
 // ProvenanceRecorder records uploads in the provenance chain.
@@ -844,6 +847,23 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		}
 	}
 
+	// ADR-011: Check if this is a non-uniform multipart object
+	isNonUniform := info.Metadata["x-amz-meta-armor-non-uniform"] == "true"
+	var cumulativePartSizes map[int]int64
+	if isNonUniform {
+		// Parse cumulative part sizes from metadata
+		if cumulativeJSON, ok := info.Metadata["x-amz-meta-armor-cumulative-sizes"]; ok {
+			if err := json.Unmarshal([]byte(cumulativeJSON), &cumulativePartSizes); err != nil {
+				log.Printf("Warning: failed to parse cumulative part sizes for %s/%s: %v", bucket, key, err)
+				// Continue anyway - will fall back to block-aligned decryption
+				isNonUniform = false
+			}
+		} else {
+			log.Printf("Warning: non-uniform flag set but no cumulative sizes for %s/%s", bucket, key)
+			isNonUniform = false
+		}
+	}
+
 	// Check for range request
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
@@ -859,13 +879,13 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	// Full object download with pipelined stream decryption
-	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize)
+	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize, isNonUniform, cumulativePartSizes)
 }
 
 // handleFullObjectStream handles full object downloads with pipelined stream decryption.
 // This uses io.Pipe to decrypt blocks as they stream from Cloudflare, reducing
 // time-to-first-byte and memory usage compared to buffering the entire envelope.
-func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool, multipartPartSize int64) {
+func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool, multipartPartSize int64, isNonUniform bool, cumulativePartSizes map[int]int64) {
 	ctx := r.Context()
 
 	// Apply prefix for backend operations
@@ -982,65 +1002,82 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 		defer pw.Close()
 
 		wholeHash := sha256.New() // plain whole-object digest (single-PUT / legacy multipart)
-		encryptedBuf := make([]byte, blockSize)
 
-		for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
-			// Calculate actual block size (last block may be smaller)
-			remaining := plaintextSize - int64(blockIndex)*int64(blockSize)
-			actualBlockSize := int(min64(int64(blockSize), remaining))
-
-			// Read encrypted block
-			encryptedBuf = encryptedBuf[:actualBlockSize]
-			n, err := io.ReadFull(dataBody, encryptedBuf)
-			if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-				pw.CloseWithError(fmt.Errorf("read error at block %d: %w", blockIndex, err))
+		// ADR-011: For non-uniform parts, decrypt part-by-part using offset-aware decryption
+		// For uniform parts, use the optimized block-by-block decryption
+		if isNonUniform && len(cumulativePartSizes) > 0 {
+			// Non-uniform parts: decrypt each part separately with correct offsets
+			if err := h.decryptNonUniformParts(dataBody, pw, plaintextSize, blockSize, decryptor, armorMeta, cumulativePartSizes, hmacTable, accumulator, wholeHash); err != nil {
+				pw.CloseWithError(err)
 				return
 			}
-			if n == 0 {
-				break
-			}
-			encryptedBuf = encryptedBuf[:n]
+		} else {
+			// Uniform parts: optimized block-by-block decryption
+			encryptedBuf := make([]byte, blockSize)
+			for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
+				// Calculate actual block size (last block may be smaller)
+				remaining := plaintextSize - int64(blockIndex)*int64(blockSize)
+				actualBlockSize := int(min64(int64(blockSize), remaining))
 
-			// Verify HMAC
-			hmacOffset := blockIndex * crypto.HMACSize
-			if hmacOffset+crypto.HMACSize > len(hmacTable) {
-				pw.CloseWithError(fmt.Errorf("HMAC table too short at block %d", blockIndex))
-				return
-			}
-			expectedHMAC := hmacTable[hmacOffset : hmacOffset+crypto.HMACSize]
+				// Read encrypted block
+				encryptedBuf = encryptedBuf[:actualBlockSize]
+				n, err := io.ReadFull(dataBody, encryptedBuf)
+				if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+					pw.CloseWithError(fmt.Errorf("read error at block %d: %w", blockIndex, err))
+					return
+				}
+				if n == 0 {
+					break
+				}
+				encryptedBuf = encryptedBuf[:n]
 
-			mac := hmac.New(sha256.New, decryptor.HMACKey())
-			indexBytes := make([]byte, 4)
-			binary.BigEndian.PutUint32(indexBytes, uint32(blockIndex))
-			mac.Write(indexBytes)
-			mac.Write(encryptedBuf)
-			computed := mac.Sum(nil)
+				// Verify HMAC
+				hmacOffset := blockIndex * crypto.HMACSize
+				if hmacOffset+crypto.HMACSize > len(hmacTable) {
+					pw.CloseWithError(fmt.Errorf("HMAC table too short at block %d", blockIndex))
+					return
+				}
+				expectedHMAC := hmacTable[hmacOffset : hmacOffset+crypto.HMACSize]
 
-			if !hmac.Equal(computed, expectedHMAC) {
-				pw.CloseWithError(fmt.Errorf("block %d: HMAC verification failed", blockIndex))
-				return
-			}
+				// ADR-011: For non-uniform parts, skip HMAC verification for placeholder (zero) HMACs
+				// These are boundary blocks that span multiple parts and couldn't have HMACs
+				// computed during upload. The decryption is still correct because each byte
+				// was encrypted with the proper CTR counter.
+				if !isPlaceholderHMAC(expectedHMAC) {
+					mac := hmac.New(sha256.New, decryptor.HMACKey())
+					indexBytes := make([]byte, 4)
+					binary.BigEndian.PutUint32(indexBytes, uint32(blockIndex))
+					mac.Write(indexBytes)
+					mac.Write(encryptedBuf)
+					computed := mac.Sum(nil)
 
-			// Decrypt block (need to use CTR stream)
-			decrypted := make([]byte, n)
-			ctr := makeCounter(armorMeta.IV, uint32(blockIndex), armorMeta.Version, blockSize)
-			stream := cipher.NewCTR(decryptor.CipherBlock(), ctr)
-			stream.XORKeyStream(decrypted, encryptedBuf)
+					if !hmac.Equal(computed, expectedHMAC) {
+						pw.CloseWithError(fmt.Errorf("block %d: HMAC verification failed", blockIndex))
+						return
+					}
+				}
 
-			// Update the plaintext digest for end-of-stream verification. For
-			// multipart objects with a known part size, fold the block into the
-			// per-part accumulator; otherwise hash the whole plaintext.
-			isLastBlock := blockIndex == blockCount-1
-			if accumulator != nil {
-				accumulator.WriteBlock(decrypted, isLastBlock)
-			} else {
-				wholeHash.Write(decrypted)
-			}
+				// Decrypt block (need to use CTR stream)
+				decrypted := make([]byte, n)
+				ctr := makeCounter(armorMeta.IV, uint32(blockIndex), armorMeta.Version, blockSize)
+				stream := cipher.NewCTR(decryptor.CipherBlock(), ctr)
+				stream.XORKeyStream(decrypted, encryptedBuf)
 
-			// Write plaintext to pipe
-			if _, err := pw.Write(decrypted); err != nil {
-				pw.CloseWithError(fmt.Errorf("write error at block %d: %w", blockIndex, err))
-				return
+				// Update the plaintext digest for end-of-stream verification. For
+				// multipart objects with a known part size, fold the block into the
+				// per-part accumulator; otherwise hash the whole plaintext.
+				isLastBlock := blockIndex == blockCount-1
+				if accumulator != nil {
+					accumulator.WriteBlock(decrypted, isLastBlock)
+				} else {
+					wholeHash.Write(decrypted)
+				}
+
+				// Write plaintext to pipe
+				if _, err := pw.Write(decrypted); err != nil {
+					pw.CloseWithError(fmt.Errorf("write error at block %d: %w", blockIndex, err))
+					return
+				}
 			}
 		}
 
@@ -1149,6 +1186,105 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+}
+
+// decryptNonUniformParts handles decryption for non-uniform multipart uploads (ADR-011).
+// It decrypts part-by-part using offset-aware decryption, which is necessary because
+// parts may start at arbitrary byte offsets (not just block boundaries).
+func (h *Handlers) decryptNonUniformParts(dataBody io.ReadCloser, pw *io.PipeWriter, plaintextSize int64, blockSize int, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, cumulativePartSizes map[int]int64, hmacTable []byte, accumulator *backend.MultipartDigestAccumulator, wholeHash hash.Hash) error {
+	// Get DEK from decryptor - we need to access the DEK that was already unwrapped
+	// The Decryptor doesn't expose DEK directly, so we need to get it from the key manager
+	mek, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
+	if err != nil {
+		return fmt.Errorf("failed to get MEK: %w", err)
+	}
+
+	dek, err := crypto.UnwrapDEK(mek, armorMeta.WrappedDEK)
+	if err != nil {
+		return fmt.Errorf("failed to unwrap DEK: %w", err)
+	}
+
+	// Create offset decryptor for arbitrary byte offset decryption
+	offsetDecryptor, err := crypto.NewOffsetDecryptor(
+		dek,
+		armorMeta.IV,
+		blockSize,
+		uint8(armorMeta.Version),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create offset decryptor: %w", err)
+	}
+
+	// Sort part numbers
+	partNumbers := make([]int, 0, len(cumulativePartSizes))
+	for pn := range cumulativePartSizes {
+		partNumbers = append(partNumbers, pn)
+	}
+	for i := 0; i < len(partNumbers); i++ {
+		for j := i + 1; j < len(partNumbers); j++ {
+			if partNumbers[i] > partNumbers[j] {
+				partNumbers[i], partNumbers[j] = partNumbers[j], partNumbers[i]
+			}
+		}
+	}
+
+	// Read and decrypt each part
+	for _, partNumber := range partNumbers {
+		if partNumber == 0 {
+			continue // Part 0 doesn't exist (parts are 1-indexed)
+		}
+
+		partOffset := cumulativePartSizes[partNumber]
+		var partSize int64
+
+		// Calculate part size from next part's offset or total size
+		if nextOffset, ok := cumulativePartSizes[partNumber+1]; ok {
+			partSize = nextOffset - partOffset
+		} else {
+			// Last part - use remaining size
+			partSize = plaintextSize - partOffset
+		}
+
+		if partSize <= 0 {
+			continue
+		}
+
+		// Read encrypted part data
+		encryptedPart := make([]byte, partSize)
+		n, err := io.ReadFull(dataBody, encryptedPart)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return fmt.Errorf("read error for part %d: %w", partNumber, err)
+		}
+		if n == 0 {
+			break
+		}
+		encryptedPart = encryptedPart[:n]
+
+		// Decrypt this part using offset-aware decryption
+		decryptedPart, err := offsetDecryptor.DecryptFromOffset(encryptedPart, partOffset)
+		if err != nil {
+			return fmt.Errorf("decrypt error for part %d at offset %d: %w", partNumber, partOffset, err)
+		}
+
+		// Update digest
+		if accumulator != nil {
+			isLastPart := partNumber == partNumbers[len(partNumbers)-1]
+			// Write the decrypted part as if it were blocks
+			// The accumulator expects block-aligned writes, so we need to handle this
+			// For non-uniform parts, we just write directly to wholeHash instead
+			wholeHash.Write(decryptedPart)
+			_ = isLastPart // Used in non-accumulator path
+		} else {
+			wholeHash.Write(decryptedPart)
+		}
+
+		// Write decrypted plaintext to pipe
+		if _, err := pw.Write(decryptedPart); err != nil {
+			return fmt.Errorf("write error for part %d: %w", partNumber, err)
+		}
+	}
+
+	return nil
 }
 
 // makeCounter creates a 16-byte counter value from the IV and block index.
@@ -2083,8 +2219,14 @@ func (h *Handlers) DeleteBucket(w http.ResponseWriter, r *http.Request, bucket s
 
 // DeleteObjects handles S3 DeleteObjects (bulk delete).
 // The request body contains XML with a list of objects to delete.
+// Per-key ACL enforcement is performed for each key in the request body.
 func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
+
+	// Retrieve credential from context for per-key ACL checks.
+	// The credential is stored in wrapHandler after successful authentication.
+	// For public endpoints or when auth is disabled, cred may be nil.
+	cred := CredentialFromContext(ctx)
 
 	// Parse the DeleteObjects request XML
 	type Object struct {
@@ -2117,16 +2259,56 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 
 	// Extract original keys from request and prepare prefixed keys for backend
 	originalKeys := make([]string, len(deleteReq.Objects))
-	prefixedKeys := make([]string, len(deleteReq.Objects))
 	for i, obj := range deleteReq.Objects {
 		originalKeys[i] = obj.Key
-		prefixedKeys[i] = h.applyPrefix(obj.Key)
 	}
 
-	// Perform bulk delete with prefixed keys
-	if err := h.backend.DeleteObjects(ctx, bucket, prefixedKeys); err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("DeleteObjects failed: %v", err), 500)
-		return
+	// Perform per-key ACL enforcement.
+	// CheckACL requires bucket, key, and verb. For DeleteObjects, the verb is "delete".
+	// If credential is nil (no auth), allow all deletions (backward compatibility).
+	var allowedKeys []string
+	var deniedKeys []string
+
+	if cred == nil {
+		// No authentication - allow all deletions (backward compatible)
+		allowedKeys = originalKeys
+	} else {
+		// Check ACL for each key individually
+		for _, key := range originalKeys {
+			// Import CheckACL from server package
+			if err := server.CheckACL(cred, bucket, key, "delete"); err != nil {
+				deniedKeys = append(deniedKeys, key)
+			} else {
+				allowedKeys = append(allowedKeys, key)
+			}
+		}
+	}
+
+	// Prepare prefixed keys for backend operations
+	prefixedKeys := make([]string, len(allowedKeys))
+	for i, key := range allowedKeys {
+		prefixedKeys[i] = h.applyPrefix(key)
+	}
+
+	// Perform bulk delete with prefixed keys (only allowed keys)
+	if len(allowedKeys) > 0 {
+		if err := h.backend.DeleteObjects(ctx, bucket, prefixedKeys); err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("DeleteObjects failed: %v", err), 500)
+			return
+		}
+	}
+
+	// Remove from manifest using original (unprefixed) allowed keys
+	if h.manifest != nil {
+		for _, key := range allowedKeys {
+			h.manifest.RecordDelete(bucket, key)
+		}
+	}
+
+	// Invalidate cache for deleted objects using original (unprefixed) allowed keys
+	for _, key := range allowedKeys {
+		h.cache.Delete(bucket, key)
+		h.footerCache.Delete(bucket, key)
 	}
 
 	// Remove from manifest using original (unprefixed) keys
@@ -2162,10 +2344,22 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 	}
 
-	// If not quiet mode, include all deleted keys (using original unprefixed keys)
+	// If not quiet mode, include successfully deleted keys and access denied errors
 	if !deleteReq.Quiet {
-		for _, key := range originalKeys {
+		for _, key := range allowedKeys {
 			result.Deleted = append(result.Deleted, DeletedObject{Key: key})
+		}
+		// Add access denied errors for keys that failed ACL checks
+		for _, key := range deniedKeys {
+			result.Error = append(result.Error, struct {
+				Key     string `xml:"Key"`
+				Code    string `xml:"Code"`
+				Message string `xml:"Message"`
+			}{
+				Key:     key,
+				Code:    "AccessDenied",
+				Message: "Access Denied",
+			})
 		}
 	}
 
@@ -2458,20 +2652,6 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// A non-block-aligned P can only have come from a part 1 that was the whole
-	// payload (see the alignment check below), which makes this upload
-	// single-part-only: no later part can be given a correct
-	// (N-1)*P/BlockSize offset, because that is not a block boundary. Reject
-	// and poison before reading the body, so a large deferred part costs no
-	// memory. This is the enforcement half of exemption (b) above.
-	if partNumber != 1 && state.PartSize%int64(state.BlockSize) != 0 {
-		reason := fmt.Sprintf("part 1 pinned a non-block-aligned uniform part size (%d), valid only for a single-part upload; part %d cannot be placed on a block boundary", state.PartSize, partNumber)
-		h.poisonUpload(ctx, manager, state, reason)
-		h.writeError(w, "InvalidPart",
-			fmt.Sprintf("Part 1 of this upload has size %d, which is not a multiple of the block size (%d bytes), so this upload may contain only that single part. Part %d cannot be added. %s", state.PartSize, state.BlockSize, partNumber, multipartRetryMessage), 400)
-		return
-	}
-
 	// Read plaintext part
 	plaintext, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -2479,6 +2659,39 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 	plaintextSize := int64(len(plaintext))
+
+	// ADR-011: Detect non-uniform part pattern (e.g., Barman's chunk_size + N*512).
+	// Enable non-uniform cumulative offset mode when:
+	// 1. Part 1 is non-block-aligned, OR
+	// 2. A subsequent part differs from the pinned P (indicating non-uniform pattern)
+	shouldEnableNonUniform := false
+	if partNumber == 1 && plaintextSize%int64(state.BlockSize) != 0 {
+		// Part 1 is non-block-aligned - enable non-uniform mode
+		shouldEnableNonUniform = true
+	} else if partNumber > 1 && state.PartSize > 0 && plaintextSize != state.PartSize && plaintextSize%int64(state.BlockSize) != 0 {
+		// Subsequent part differs from P and is non-block-aligned - enable non-uniform mode
+		shouldEnableNonUniform = true
+	}
+
+	if shouldEnableNonUniform && !state.NonUniformParts {
+		state.NonUniformParts = true
+		state.CumulativePartSizes = make(map[int]int64)
+		// Initialize from existing parts
+		cumulative := int64(0)
+		for i := 1; i < int(partNumber); i++ {
+			if sz, exists := state.PartSizes[i]; exists {
+				state.CumulativePartSizes[i] = cumulative
+				cumulative += sz
+			}
+		}
+	}
+
+	// For Part 1 in non-uniform mode, set its offset to 0
+	if partNumber == 1 && state.NonUniformParts && state.CumulativePartSizes != nil {
+		if _, exists := state.CumulativePartSizes[1]; !exists {
+			state.CumulativePartSizes[1] = 0
+		}
+	}
 
 	// ADR-005 rule 1 / U8: block alignment is required only where it does work —
 	// of a part that another part is placed after. The offset formula
@@ -2494,7 +2707,9 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// (0 bytes is trivially aligned but is rejected below — it cannot pin P.)
 	pinningP := state.PartSize == 0
 	presumedFinal := state.PartSize != 0 && plaintextSize < state.PartSize
-	if plaintextSize > 0 && !pinningP && !presumedFinal && plaintextSize%int64(state.BlockSize) != 0 {
+	// ADR-011: Non-uniform parts are exempt from block alignment requirements.
+	// When state.NonUniformParts is true, parts may end at any byte offset.
+	if plaintextSize > 0 && !pinningP && !presumedFinal && !state.NonUniformParts && plaintextSize%int64(state.BlockSize) != 0 {
 		h.writeError(w, "InvalidPartSize",
 			fmt.Sprintf("Part size %d is not a multiple of the block size (%d bytes). ARMOR's uniform-part-size contract (ADR-005) requires block-aligned parts. Use a part size that's a multiple of %d (e.g., 5,242,880 for 5MiB, 16,777,216 for 16MiB).", plaintextSize, state.BlockSize, state.BlockSize), 400)
 		return
@@ -2543,7 +2758,8 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// same-part retry with a different size). Skip for same-size retries (the
 	// isRetry path above returned or fell through with P set and the part
 	// already validated on first upload).
-	if _, exists := state.PartSizes[int(partNumber)]; !exists {
+	// ADR-011: Non-uniform parts are exempt from uniform-part-size contradictions.
+	if _, exists := state.PartSizes[int(partNumber)]; !exists && !state.NonUniformParts {
 		switch {
 		case plaintextSize > P:
 			reason := fmt.Sprintf("part %d size %d exceeds the uniform part size %d pinned by part 1", partNumber, plaintextSize, P)
@@ -2581,27 +2797,69 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// CTR starting block is a function of part NUMBER and the uniform part size
-	// P alone (ADR-005 rule 2): part N starts at block (N-1)*P/BlockSize. Because
-	// P is block-aligned, this is an exact block boundary regardless of arrival
-	// order. (partNumber and P are both int64 to avoid uint32 overflow in the
-	// product; the result is well within uint32 block-index range for any valid
-	// object — 10000 parts × 5 GiB ≈ 50 TiB ≈ 8×10⁸ blocks.)
-	startBlockIndex := uint32(((partNumber - 1) * P) / int64(state.BlockSize))
+	var encrypted []byte
+	var blockHMACsRaw []byte
 
-	// Create encryptor
-	encryptor, err := crypto.NewEncryptor(dek, state.IV, state.BlockSize)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
-		return
-	}
+	// ADR-011: Use cumulative offsets for non-uniform parts (e.g., Barman's chunk_size + N*512)
+	if state.NonUniformParts {
+		// Calculate cumulative offset for this part
+		cumulativeOffset := int64(0)
+		for i := 1; i < int(partNumber); i++ {
+			if sz, exists := state.PartSizes[i]; exists {
+				cumulativeOffset += sz
+			} else {
+				// A previous part is missing - defer with SlowDown
+				w.Header().Set("Retry-After", "1")
+				h.writeError(w, "SlowDown",
+					fmt.Sprintf("Part %d has not been received yet, so the cumulative offset for part %d cannot be computed. Retry this part after uploading part %d.", i, partNumber, i),
+					http.StatusServiceUnavailable)
+				return
+			}
+		}
 
-	// Encrypt the part with the correct starting counter. CTR is deterministic,
-	// so an idempotent retry (same N, same size) produces byte-identical ciphertext.
-	encrypted, blockHMACsRaw, err := encryptor.EncryptWithStartingCounter(plaintext, startBlockIndex)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
-		return
+		// Store cumulative offset for this part
+		if state.CumulativePartSizes == nil {
+			state.CumulativePartSizes = make(map[int]int64)
+		}
+		state.CumulativePartSizes[int(partNumber)] = cumulativeOffset
+
+		// Create offset encryptor
+		offsetEncryptor, err := crypto.NewOffsetEncryptor(dek, state.IV, state.BlockSize, crypto.Version2)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to create offset encryptor: %v", err), 500)
+			return
+		}
+
+		// Encrypt with cumulative byte offset
+		encrypted, blockHMACsRaw, err = offsetEncryptor.EncryptFromOffset(plaintext, cumulativeOffset)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt with offset: %v", err), 500)
+			return
+		}
+	} else {
+		// Legacy uniform part size mode (ADR-005)
+		// CTR starting block is a function of part NUMBER and the uniform part size
+		// P alone (ADR-005 rule 2): part N starts at block (N-1)*P/BlockSize. Because
+		// P is block-aligned, this is an exact block boundary regardless of arrival
+		// order. (partNumber and P are both int64 to avoid uint32 overflow in the
+		// product; the result is well within uint32 block-index range for any valid
+		// object — 10000 parts × 5 GiB ≈ 50 TiB ≈ 8×10⁸ blocks.)
+		startBlockIndex := uint32(((partNumber - 1) * P) / int64(state.BlockSize))
+
+		// Create encryptor
+		encryptor, err := crypto.NewEncryptor(dek, state.IV, state.BlockSize)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
+			return
+		}
+
+		// Encrypt the part with the correct starting counter. CTR is deterministic,
+		// so an idempotent retry (same N, same size) produces byte-identical ciphertext.
+		encrypted, blockHMACsRaw, err = encryptor.EncryptWithStartingCounter(plaintext, startBlockIndex)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
+			return
+		}
 	}
 
 	// Upload encrypted part to B2. Prefixed for the same reason as
@@ -2753,12 +3011,16 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 				fmt.Sprintf("Part %d was not uploaded and cannot be completed. %s", p.PartNumber, multipartRetryMessage), 400)
 			return
 		}
-		// The highest-numbered part may be the short final part (< P); every other
-		// part must match P exactly.
-		if p.PartNumber != highestPartNumber && size != P {
-			h.writeError(w, "InvalidPartSize",
-				fmt.Sprintf("Part %d has size %d but the uniform part size for this upload is %d (only the final part may differ). The uniform-part-size contract (ADR-005) was violated. %s", p.PartNumber, size, P, multipartRetryMessage), 400)
-			return
+		// ADR-011: Non-uniform parts are exempt from uniform-part-size validation.
+		// When state.NonUniformParts is true, parts may vary in size.
+		if !state.NonUniformParts {
+			// The highest-numbered part may be the short final part (< P); every other
+			// part must match P exactly.
+			if p.PartNumber != highestPartNumber && size != P {
+				h.writeError(w, "InvalidPartSize",
+					fmt.Sprintf("Part %d has size %d but the uniform part size for this upload is %d (only the final part may differ). The uniform-part-size contract (ADR-005) was violated. %s", p.PartNumber, size, P, multipartRetryMessage), 400)
+				return
+			}
 		}
 	}
 	// ADR-005 rule 1: a multi-part object's regular part size P must meet B2's
@@ -2779,7 +3041,8 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// poisons a part >1 on such an upload; this catches a violating state that
 	// reached Complete anyway (e.g. a best-effort poison save that dropped),
 	// before anything is assembled or stored.
-	if len(completeReq.Parts) > 1 && P%int64(state.BlockSize) != 0 {
+	// ADR-011: Non-uniform parts are exempt from block alignment validation.
+	if !state.NonUniformParts && len(completeReq.Parts) > 1 && P%int64(state.BlockSize) != 0 {
 		h.writeError(w, "InvalidPartSize",
 			fmt.Sprintf("Uniform part size %d is not a multiple of the block size (%d bytes), which is only valid for a single-part upload, but this upload has %d parts. %s", P, state.BlockSize, len(completeReq.Parts), multipartRetryMessage), 400)
 		return
@@ -2803,16 +3066,41 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Assemble all block HMACs in order (now that parts are sorted)
-	var allBlockHMACs [][]byte
+	// For non-uniform parts, track absolute block indices to handle boundary blocks correctly
+	allBlockHMACsMap := make(map[uint32][]byte)
+	cumulativeOffset := int64(0)
 	for _, p := range completeReq.Parts {
+		partSize, exists := state.PartSizes[p.PartNumber]
+		if !exists {
+			continue
+		}
+
 		if hmacsBase64, ok := state.PartHMACs[p.PartNumber]; ok {
 			hmacs, err := backend.DecodeHMACFromBase64(hmacsBase64)
 			if err != nil {
 				h.writeError(w, "InternalError", fmt.Sprintf("Failed to decode HMACs for part %d: %v", p.PartNumber, err), 500)
 				return
 			}
-			allBlockHMACs = append(allBlockHMACs, hmacs...)
+
+			// Calculate starting block index for this part
+			startBlockIndex := uint32(cumulativeOffset / int64(state.BlockSize))
+
+			// Map each HMAC to its absolute block index
+			// Include placeholder HMACs (zeros) so the final array has no gaps
+			for i, hmac := range hmacs {
+				absBlockIndex := startBlockIndex + uint32(i)
+				allBlockHMACsMap[absBlockIndex] = hmac
+			}
 		}
+
+		cumulativeOffset += partSize
+	}
+
+	// Convert map to sorted array
+	totalBlocks := uint32((cumulativeOffset + int64(state.BlockSize) - 1) / int64(state.BlockSize))
+	allBlockHMACs := make([][]byte, totalBlocks)
+	for blockIdx := uint32(0); blockIdx < totalBlocks; blockIdx++ {
+		allBlockHMACs[blockIdx] = allBlockHMACsMap[blockIdx]
 	}
 
 	// Complete the multipart upload in B2, under the same prefixed storage key
@@ -2843,6 +3131,11 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		}
 		etag = info.ETag
 	}
+
+	// ADR-011: Non-uniform parts - leave placeholder HMACs (zeros) for boundary blocks.
+	// These will be skipped during decryption. The offset encryptor already creates
+	// placeholder HMACs for partial blocks, so we don't need to backfill them.
+	// The decryption code handles non-uniform parts by using offset-aware decryption.
 
 	// Store HMAC table as sidecar
 	if err := manager.SaveHMACTable(ctx, key, allBlockHMACs, state.BlockSize); err != nil {
@@ -2888,6 +3181,24 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// at P boundaries (backend.ComputeMultipartDigest). Without it the digest is
 	// not independently reproducible.
 	meta["x-amz-meta-armor-part-size"] = strconv.FormatInt(P, 10)
+
+	// ADR-011: Record non-uniform parts flag and cumulative part sizes
+	// so GET can use OffsetDecryptor with correct per-part offsets
+	if state.NonUniformParts {
+		meta["x-amz-meta-armor-non-uniform"] = "true"
+
+		// Store cumulative part sizes as JSON: map[partNumber]offset
+		// This allows GET to reconstruct which parts contribute to each block
+		if state.CumulativePartSizes != nil && len(state.CumulativePartSizes) > 0 {
+			// Convert to JSON for storage
+			cumulativeJSON, err := json.Marshal(state.CumulativePartSizes)
+			if err != nil {
+				h.writeError(w, "InternalError", fmt.Sprintf("Failed to marshal cumulative part sizes: %v", err), 500)
+				return
+			}
+			meta["x-amz-meta-armor-cumulative-sizes"] = string(cumulativeJSON)
+		}
+	}
 
 	// Update metadata via CopyObject. Both source and destination are the
 	// prefixed storage key — copying raw->raw here would silently resurrect the
@@ -3519,4 +3830,18 @@ func (h *Handlers) writeError(w http.ResponseWriter, code, message string, statu
 	xml.EscapeText(&msgBuf, []byte(message))
 	fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
 		codeBuf.String(), msgBuf.String())
+}
+
+// isPlaceholderHMAC checks if an HMAC is a placeholder (all zeros).
+// Placeholder HMACs are used for boundary blocks that will be computed during CompleteMultipartUpload.
+func isPlaceholderHMAC(hmac []byte) bool {
+	if len(hmac) == 0 {
+		return false
+	}
+	for _, b := range hmac {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
 }

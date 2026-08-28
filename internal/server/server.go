@@ -893,6 +893,11 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			}
 			accessKeyID = cred.AccessKey
 
+				// Store credential in request context for handler-level ACL checks
+				// This enables per-key ACL enforcement for operations like DeleteObjects
+				// where the keys to operate on are in the request body, not the URL.
+				r = r.WithContext(WithCredential(r.Context(), cred))
+
 			// Check ACL for the request. For list operations the URL path has no
 			// key component, so fall back to the ?prefix query param so that ACL
 			// prefix restrictions are enforced correctly against the listed prefix.
