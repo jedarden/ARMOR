@@ -1344,29 +1344,49 @@ func (v *Verifier) readMultipartCiphertext(ctx context.Context, bucket, key stri
 }
 
 // getLatestObject returns the most recent backup object for a bucket.
+// It paginates through all objects (honoring IsTruncated / NextToken) until it
+// finds a non-.armor/ object, so .armor/* bookkeeping cannot swamp discovery.
+// This mirrors the pagination pattern used by getHistoricalSample.
 func (v *Verifier) getLatestObject(ctx context.Context, bucket string) (ObjectSample, error) {
 	prefix := v.getBucketPrefix(bucket)
 
-	// List objects in the bucket, sorted by last modified descending
-	listResult, err := v.backend.List(ctx, bucket, prefix, "", "", 100)
-	if err != nil {
-		return ObjectSample{}, fmt.Errorf("list failed: %w", err)
-	}
-
-	if len(listResult.Objects) == 0 {
-		return ObjectSample{}, errors.New("no objects found")
-	}
-
-	// Find the most recent object (skip .armor/ internal objects)
+	var continuationToken string
 	var latest *backend.ObjectInfo
-	for i := range listResult.Objects {
-		obj := &listResult.Objects[i]
-		if strings.HasPrefix(obj.Key, ".armor/") {
-			continue
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return ObjectSample{}, fmt.Errorf("get latest object cancelled: %w", err)
 		}
-		if latest == nil || obj.LastModified.After(latest.LastModified) {
-			latest = obj
+
+		listResult, err := v.backend.List(ctx, bucket, prefix, "", continuationToken, 100)
+		if err != nil {
+			return ObjectSample{}, fmt.Errorf("list failed: %w", err)
 		}
+
+		if len(listResult.Objects) == 0 {
+			break
+		}
+
+		// Find the most recent non-.armor/ object in this page
+		for i := range listResult.Objects {
+			obj := &listResult.Objects[i]
+			if strings.HasPrefix(obj.Key, ".armor/") {
+				continue
+			}
+			if latest == nil || obj.LastModified.After(latest.LastModified) {
+				latest = obj
+			}
+		}
+
+		if !listResult.IsTruncated {
+			break
+		}
+		// Guard against a backend that reports truncated without advancing the
+		// continuation token — stop rather than loop forever.
+		if listResult.NextToken == continuationToken {
+			break
+		}
+		continuationToken = listResult.NextToken
 	}
 
 	if latest == nil {
