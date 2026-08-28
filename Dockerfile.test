@@ -1,8 +1,5 @@
-# Test deployment image: compile the validated ARMOR server without the
-# repository's release-image test gate. The full gate is intentionally skipped
-# here because the existing legacy counter-reuse proof tests are expected to
-# fail; deployment validation is performed by the test pod's health/readiness
-# probes and the follow-up ARMOR probe bead.
+# Test deployment image: compile the validated ARMOR server with the
+# repository's release-image test gate.
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
@@ -13,6 +10,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+
+# Test gate: run go vet and unit tests before building
+# Integration tests (tests/integration/) require build tags and credentials,
+# and are automatically skipped by this gate.
+RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short
 
 ARG VERSION
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /armor ./cmd/armor
