@@ -215,7 +215,7 @@ ARMOR_AUTH_WRITER_ACL="mybucket:*,otherbucket:uploads/*"
 
 An ACL string grants scoped access to specific bucket and prefix combinations:
 
-- **Syntax:** `bucket:[:actions]`
+- **Syntax:** `bucket:prefix[:actions]`
 - **Multiple rules:** Comma-separated (`bucket1:prefix1,bucket2:prefix2`)
 - **Wildcard bucket:** Use `*` to match all buckets
 - **Wildcard prefix:** Use `*` or empty string to match all keys
