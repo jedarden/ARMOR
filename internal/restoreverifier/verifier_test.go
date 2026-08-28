@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
@@ -705,35 +706,112 @@ func TestVerifyObject_DRDrill_MultipartDigestEnforced(t *testing.T) {
 	})
 }
 
-// TestVerifyObject_DualPathExercisesARMORReadPath is the contrast to the drill
-// tests above: ModeDual MUST call the ARMOR read path (Get). It proves armorGet
-// is a real counter and that the drill's zero is a genuine mode-specific
-// exclusion, not a broken probe.
-func TestVerifyObject_DualPathExercisesARMORReadPath(t *testing.T) {
+// TestVerifyObject_DualPathAgreeOnKnownGoodData is a regression test for ADR-009.
+// It verifies that both restore paths (ARMOR and direct) agree on the SHA-256
+// digest for known-good ARMOR-encrypted data. Before the ADR-009 fix, the ARMOR
+// path returned meaningless truncated ciphertext (header + partial ciphertext)
+// and always produced a SHA-256 mismatch with the correctly-decrypted direct path,
+// causing false-positive conflicts on every real ARMOR-encrypted object.
+//
+// This test reproduces the scenario from docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md:
+// a real ARMOR-encrypted object run through verifyObjectDual must yield
+// ARMORSHA256 == DirectSHA256 for known-good data.
+func TestVerifyObject_DualPathAgreeOnKnownGoodData(t *testing.T) {
 	const blockSize = 4096
 	mek := bytes.Repeat([]byte{0xA5}, 32)
-	plaintext := fixture(t, "valid.sqlite")
-	ct, meta := armorEncrypt(t, mek, blockSize, plaintext)
-	key := "valid.sqlite"
-	fb := &fakeBackend{
-		ciphertext: ct, plaintext: plaintext,
-		info: &backend.ObjectInfo{Key: key, Size: int64(len(plaintext)), Metadata: meta},
-	}
-	v := New(fb, mek, blockSize, nil, Config{})
 
-	result := v.verifyObject(context.Background(), ObjectSample{
-		Key: key, Bucket: "b", ArtifactType: ArtifactSQLite, Metadata: meta,
-	}, ModeDual)
+	// Test with both single-PUT and multipart layouts to cover both ADR-003 formats
+	testCases := []struct {
+		name    string
+		setup   func(t *testing.T, mek []byte) ([]byte, []byte, *backend.ObjectInfo, map[string]string, map[string][]byte)
+		atype   ArtifactType
+		wantPass bool
+	}{
+		{
+			name: "single_put_encrypted_object",
+			setup: func(t *testing.T, mek []byte) ([]byte, []byte, *backend.ObjectInfo, map[string]string, map[string][]byte) {
+				plaintext := fixture(t, "valid.sqlite")
+				ciphertext, meta := armorEncrypt(t, mek, blockSize, plaintext)
+				info := &backend.ObjectInfo{
+					Key:      "single-put.sqlite",
+					Size:     int64(len(plaintext)),
+					Metadata: meta,
+				}
+				return plaintext, ciphertext, info, meta, make(map[string][]byte)
+			},
+			atype:   ArtifactSQLite,
+			wantPass: true,
+		},
+		{
+			name: "multipart_encrypted_object",
+			setup: func(t *testing.T, mek []byte) ([]byte, []byte, *backend.ObjectInfo, map[string]string, map[string][]byte) {
+				plaintext := fixture(t, "valid.sqlite")
+				key := "multipart.sqlite"
+				ciphertext, sidecar, meta := armorEncryptMultipart(t, mek, blockSize, key, plaintext)
+				info := &backend.ObjectInfo{
+					Key:      key,
+					Size:     int64(len(plaintext)),
+					Metadata: meta,
+				}
+				sidecars := map[string][]byte{sidecarKeyFor(key): sidecar}
+				return plaintext, ciphertext, info, meta, sidecars
+			},
+			atype:   ArtifactSQLite,
+			wantPass: true,
+		},
+	}
 
-	if fb.armorGet == 0 {
-		t.Fatalf("dual-path run never called the ARMOR read path (Get); expected at least one call")
-	}
-	if result.Path != PathDualMatch {
-		t.Fatalf("result.Path = %q, want %q (status=%q, error=%q)",
-			result.Path, PathDualMatch, result.Status, result.Error)
-	}
-	if result.Status != StatusPass {
-		t.Fatalf("status = %q, want %q (error=%q)", result.Status, StatusPass, result.Error)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			plaintext, ciphertext, info, meta, sidecars := tc.setup(t, mek)
+			key := info.Key
+
+			// Build fake backend with realistic ciphertext
+			fb := &fakeBackend{
+				ciphertext: ciphertext,
+				plaintext:  plaintext,
+				info:       info,
+				sidecars:   sidecars,
+			}
+
+			v := New(fb, mek, blockSize, nil, Config{})
+
+			result := v.verifyObject(context.Background(), ObjectSample{
+				Key:          key,
+				Bucket:       "test-bucket",
+				ArtifactType: tc.atype,
+				Metadata:     meta,
+			}, ModeDual)
+
+			// The critical assertion: both paths must agree on the SHA-256
+			if result.ARMORSHA256 == "" {
+				t.Fatalf("ARMORSHA256 is empty (ARMOR path failed to compute digest)")
+			}
+			if result.DirectSHA256 == "" {
+				t.Fatalf("DirectSHA256 is empty (direct path failed to compute digest)")
+			}
+			if result.ARMORSHA256 != result.DirectSHA256 {
+				t.Fatalf("dual-path SHA-256 mismatch: ARMOR=%s, Direct=%s — "+
+					"this is the ADR-009 bug: restoreViaARMOR is not decrypting correctly",
+					result.ARMORSHA256, result.DirectSHA256)
+			}
+
+			// Both paths must have succeeded and agreed (PathDualMatch)
+			if result.Path != PathDualMatch {
+				t.Fatalf("expected PathDualMatch, got %q (status=%q, error=%q)",
+					result.Path, result.Status, result.Error)
+			}
+
+			// Known-good data must pass all checks
+			if result.Status != StatusPass {
+				t.Fatalf("expected StatusPass for known-good data, got %q (error=%q)",
+					result.Status, result.Error)
+			}
+
+			if result.AssertionPassed != tc.wantPass {
+				t.Fatalf("assertion_passed = %v, want %v", result.AssertionPassed, tc.wantPass)
+			}
+		})
 	}
 }
 
@@ -946,5 +1024,153 @@ func TestGetHistoricalSample_ZeroSampleSize(t *testing.T) {
 	}
 	if mb.listCalls != 0 {
 		t.Fatalf("List calls = %d, want 0 for sampleSize=0", mb.listCalls)
+	}
+}
+
+// TestGetLatestObject_PaginatesPastArmorObjects is the core acceptance test for
+// ADR-014 Bug B: getLatestObject must paginate through ALL objects (honoring
+// IsTruncated / NextToken) until it finds a non-.armor/ object, so .armor/*
+// bookkeeping objects cannot swamp discovery. This test proves that when the
+// first two pages are entirely .armor/* objects, getLatestObject correctly
+// paginates past them and finds the real data object on the third page.
+func TestGetLatestObject_PaginatesPastArmorObjects(t *testing.T) {
+	const pageSize = 100
+
+	// Build a synthetic bucket where the first two pages (200 objects) are all
+	// .armor/* bookkeeping, and a real data object lives on page 3.
+	objects := make([]backend.ObjectInfo, 0, 250)
+
+	// Page 1: entirely .armor/* objects
+	for i := 0; i < pageSize; i++ {
+		objects = append(objects, backend.ObjectInfo{
+			Key:          fmt.Sprintf(".armor/hmac/%08x", i),
+			LastModified: time.Now().Add(-time.Duration(i) * time.Second),
+		})
+	}
+
+	// Page 2: entirely .armor/* objects
+	for i := 0; i < pageSize; i++ {
+		objects = append(objects, backend.ObjectInfo{
+			Key:          fmt.Sprintf(".armor/state/%08x", i+pageSize),
+			LastModified: time.Now().Add(-time.Duration(pageSize+i) * time.Second),
+		})
+	}
+
+	// Page 3: real data object (the most recent)
+	dataKey := "database.sqlite"
+	dataTime := time.Now().Add(5 * time.Second)
+	objects = append(objects, backend.ObjectInfo{
+		Key:          dataKey,
+		LastModified: dataTime,
+		Size:         8192,
+		Metadata:     map[string]string{"x-amz-meta-armor-plaintext-sha256": "abc123"},
+	})
+
+	// Additional real objects (older)
+	objects = append(objects, backend.ObjectInfo{
+		Key:          "database-older.sqlite",
+		LastModified: dataTime.Add(-time.Hour),
+		Size:         8192,
+	})
+
+	mb := &paginatingBackend{objects: objects, pageSize: pageSize}
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+
+	callsBefore := mb.listCalls
+	latest, err := v.getLatestObject(context.Background(), "test-bucket")
+	if err != nil {
+		t.Fatalf("getLatestObject failed: %v", err)
+	}
+
+	pagesUsed := mb.listCalls - callsBefore
+
+	// Verify pagination: must paginate through 3 pages to find the real object
+	if pagesUsed != 3 {
+		t.Fatalf("pagination: %d List calls, want 3 (must paginate past .armor/* pages)", pagesUsed)
+	}
+
+	// Verify the found object is the real data, not a .armor/* object
+	if latest.Key != dataKey {
+		t.Fatalf("got key %q, want %q (found wrong object)", latest.Key, dataKey)
+	}
+
+	if !latest.LastModified.Equal(dataTime) {
+		t.Fatalf("got time %v, want %v (timestamp mismatch)", latest.LastModified, dataTime)
+	}
+
+	if strings.HasPrefix(latest.Key, ".armor/") {
+		t.Fatalf("getLatestObject returned a .armor/* bookkeeping object instead of a real data object")
+	}
+}
+
+// TestGetLatestObject_FindsLatestAcrossMultiplePages confirms that when
+// real data objects span multiple pages, getLatestObject correctly identifies
+// the most recent one — not the first non-.armor/ object it encounters.
+func TestGetLatestObject_FindsLatestAcrossMultiplePages(t *testing.T) {
+	const pageSize = 50
+
+	objects := make([]backend.ObjectInfo, 0, 150)
+
+	// Page 1: .armor/* + one old data object
+	objects = append(objects, backend.ObjectInfo{
+		Key:          ".armor/hmac/abc",
+		LastModified: time.Now(),
+	})
+	oldData := backend.ObjectInfo{
+		Key:          "old-backup.sqlite",
+		LastModified: time.Now().Add(-2 * time.Hour),
+		Size:         4096,
+		Metadata:     map[string]string{"x-amz-meta-armor-plaintext-sha256": "old123"},
+	}
+	objects = append(objects, oldData)
+
+	// Fill page 1 with .armor/* objects
+	for i := 0; i < pageSize-2; i++ {
+		objects = append(objects, backend.ObjectInfo{
+			Key:          fmt.Sprintf(".armor/book/%04d", i),
+			LastModified: time.Now(),
+		})
+	}
+
+	// Page 2: .armor/* + newest data object
+	objects = append(objects, backend.ObjectInfo{
+		Key:          ".armor/state/xyz",
+		LastModified: time.Now(),
+	})
+	newData := backend.ObjectInfo{
+		Key:          "new-backup.sqlite",
+		LastModified: time.Now().Add(-30 * time.Minute),
+		Size:         8192,
+		Metadata:     map[string]string{"x-amz-meta-armor-plaintext-sha256": "new123"},
+	}
+	objects = append(objects, newData)
+
+	// Fill page 2 with .armor/* objects
+	for i := 0; i < pageSize-2; i++ {
+		objects = append(objects, backend.ObjectInfo{
+			Key:          fmt.Sprintf(".armor/log/%04d", i),
+			LastModified: time.Now(),
+		})
+	}
+
+	mb := &paginatingBackend{objects: objects, pageSize: pageSize}
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+
+	latest, err := v.getLatestObject(context.Background(), "test-bucket")
+	if err != nil {
+		t.Fatalf("getLatestObject failed: %v", err)
+	}
+
+	// Must return the newest data object, not the first one encountered
+	if latest.Key != newData.Key {
+		t.Fatalf("got key %q, want %q (did not find the most recent object)", latest.Key, newData.Key)
+	}
+
+	if !latest.LastModified.Equal(newData.LastModified) {
+		t.Fatalf("got time %v, want %v (did not find the most recent object)", latest.LastModified, newData.LastModified)
+	}
+
+	if latest.Size != newData.Size {
+		t.Fatalf("got size %d, want %d", latest.Size, newData.Size)
 	}
 }
