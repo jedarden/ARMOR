@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jedarden/armor/internal/acl"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/logging"
+	"github.com/jedarden/armor/internal/server/middleware"
 )
 
 // TestS3ErrorLoggingInvalidPartSize verifies that InvalidPartSize errors
@@ -85,8 +85,8 @@ func TestS3ErrorLoggingInvalidPartSize(t *testing.T) {
 
 		// Check XML response
 		var errResp struct {
-			Code    string `xml:"Code"`
-			Message string `xml:"Message"`
+			Code      string `xml:"Code"`
+			Message   string `xml:"Message"`
 			RequestID string `xml:"RequestId"`
 		}
 		if err := xml.Unmarshal(w.Body.Bytes(), &errResp); err != nil {

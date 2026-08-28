@@ -3,19 +3,17 @@ package crypto_test
 import (
 	"bytes"
 	"crypto/aes"
-	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/orestesga/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/crypto"
 	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +39,7 @@ type V3TestVector struct {
 	Description string            `json:"description"`
 	Input       InputData         `json:"input"`
 	Keys        KeyMaterial       `json:"keys"`
-	Header      string            `json:"header"`           // hex-encoded
+	Header      string            `json:"header"` // hex-encoded
 	Blocks      []BlockInfo       `json:"blocks"`
 	Sidecar     SidecarV3         `json:"sidecar"`
 	Metadata    map[string]string `json:"metadata"`
@@ -61,27 +59,27 @@ type KeyMaterial struct {
 }
 
 type BlockInfo struct {
-	Index          int    `json:"index"`
-	Part           int    `json:"part"`
-	Plaintext      string `json:"plaintext"`       // base64-encoded
-	Ciphertext     string `json:"ciphertext"`      // hex-encoded
-	HMAC           string `json:"hmac"`           // hex-encoded
-	CLen           uint32 `json:"clen"`            // encoded with compression flag
-	Compressed     bool   `json:"compressed"`
-	CounterBlock   string `json:"counter_block"`   // hex-encoded (for reference)
+	Index        int    `json:"index"`
+	Part         int    `json:"part"`
+	Plaintext    string `json:"plaintext"`  // base64-encoded
+	Ciphertext   string `json:"ciphertext"` // hex-encoded
+	HMAC         string `json:"hmac"`       // hex-encoded
+	CLen         uint32 `json:"clen"`       // encoded with compression flag
+	Compressed   bool   `json:"compressed"`
+	CounterBlock string `json:"counter_block"` // hex-encoded (for reference)
 }
 
 type SidecarV3 struct {
-	Version   int           `json:"version"`
-	BlockSize int           `json:"block_size"`
-	Parts     []PartInfoV3  `json:"parts"`
+	Version   int          `json:"version"`
+	BlockSize int          `json:"block_size"`
+	Parts     []PartInfoV3 `json:"parts"`
 }
 
 type PartInfoV3 struct {
-	N              int         `json:"n"`
-	PlaintextLen   int         `json:"plaintext_len"`
-	CiphertextLen  int         `json:"ciphertext_len"`
-	Blocks         [][]string  `json:"blocks"` // [[hmac_b64, clen], ...]
+	N             int        `json:"n"`
+	PlaintextLen  int        `json:"plaintext_len"`
+	CiphertextLen int        `json:"ciphertext_len"`
+	Blocks        [][]string `json:"blocks"` // [[hmac_b64, clen], ...]
 }
 
 // TestGenerateV3Vectors generates the normative test vectors for envelope v3
@@ -99,9 +97,6 @@ func TestGenerateV3Vectors(t *testing.T) {
 	if update {
 		require.NoError(t, os.MkdirAll(testDir, 0755))
 	}
-
-	// Derive HMAC key from DEK
-	hmacKey := deriveHMACKey(fixedDEK)
 
 	vectors := []V3TestVector{
 		generateOneBlockSinglePUT(),
@@ -134,7 +129,7 @@ func TestGenerateV3Vectors(t *testing.T) {
 
 // generateOneBlockSinglePUT creates a minimal single-PUT object with 1 block (uncompressed)
 func generateOneBlockSinglePUT() V3TestVector {
-	blockSize := 65536 // 64 KiB
+	blockSize := 65536                                // 64 KiB
 	plaintext := bytes.Repeat([]byte("A"), blockSize) // All 'A's - incompressible
 
 	dekHex := fmt.Sprintf("%x", fixedDEK)
@@ -151,10 +146,10 @@ func generateOneBlockSinglePUT() V3TestVector {
 		BlockSize: blockSize,
 		Parts: []PartInfoV3{
 			{
-				N:              0,
-				PlaintextLen:   len(plaintext),
-				CiphertextLen:  totalCiphertextLen(blocks),
-				Blocks:         blocksToSidecarFormat(blocks),
+				N:             0,
+				PlaintextLen:  len(plaintext),
+				CiphertextLen: totalCiphertextLen(blocks),
+				Blocks:        blocksToSidecarFormat(blocks),
 			},
 		},
 	}
@@ -221,10 +216,10 @@ func generateThreeBlockCompressed() V3TestVector {
 		BlockSize: blockSize,
 		Parts: []PartInfoV3{
 			{
-				N:              0,
-				PlaintextLen:   len(plaintext),
-				CiphertextLen:  totalCiphertextLen(blocks),
-				Blocks:         blocksToSidecarFormat(blocks),
+				N:             0,
+				PlaintextLen:  len(plaintext),
+				CiphertextLen: totalCiphertextLen(blocks),
+				Blocks:        blocksToSidecarFormat(blocks),
 			},
 		},
 	}
@@ -285,16 +280,16 @@ func generateTwoPartMultipart() V3TestVector {
 		BlockSize: blockSize,
 		Parts: []PartInfoV3{
 			{
-				N:              1,
-				PlaintextLen:   len(plaintextPart1),
-				CiphertextLen:  totalCiphertextLen(blocks1),
-				Blocks:         blocksToSidecarFormat(blocks1),
+				N:             1,
+				PlaintextLen:  len(plaintextPart1),
+				CiphertextLen: totalCiphertextLen(blocks1),
+				Blocks:        blocksToSidecarFormat(blocks1),
 			},
 			{
-				N:              2,
-				PlaintextLen:   len(plaintextPart2),
-				CiphertextLen:  totalCiphertextLen(blocks2),
-				Blocks:         blocksToSidecarFormat(blocks2),
+				N:             2,
+				PlaintextLen:  len(plaintextPart2),
+				CiphertextLen: totalCiphertextLen(blocks2),
+				Blocks:        blocksToSidecarFormat(blocks2),
 			},
 		},
 	}
@@ -318,9 +313,9 @@ func generateTwoPartMultipart() V3TestVector {
 			HMACKey:  hmacKeyHex,
 			FileName: sidecarKey,
 		},
-		Header:   fmt.Sprintf("%x", header),
-		Blocks:   allBlocks,
-		Sidecar:  sidecar,
+		Header:  fmt.Sprintf("%x", header),
+		Blocks:  allBlocks,
+		Sidecar: sidecar,
 		Metadata: map[string]string{
 			"x-amz-meta-armor-version":  "3",
 			"x-amz-meta-armor-compress": "false",
@@ -378,13 +373,14 @@ func encryptBlocksV3(plaintext, dek, iv []byte, part int, blockSize int, compres
 		var ciphertext []byte
 
 		if compress {
-			compressed = encoder.Encode(blockPlaintext)
-			if len(compressed) >= len(blockPlaintext) {
+			compressedData := encoder.EncodeAll(blockPlaintext, nil)
+			if len(compressedData) >= len(blockPlaintext) {
 				// No benefit, use raw
 				compressed = false
 				ciphertext = encryptBlockV3(blockPlaintext, dek, iv, part, blockIdx)
 			} else {
-				ciphertext = encryptBlockV3(compressed, dek, iv, part, blockIdx)
+				compressed = true
+				ciphertext = encryptBlockV3(compressedData, dek, iv, part, blockIdx)
 			}
 		} else {
 			ciphertext = encryptBlockV3(blockPlaintext, dek, iv, part, blockIdx)

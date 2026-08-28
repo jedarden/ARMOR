@@ -21,6 +21,7 @@ import (
 	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/replication"
 	"github.com/jedarden/armor/internal/server/handlers"
+	"github.com/jedarden/armor/internal/server/middleware"
 )
 
 // mockBackend implements backend.Backend for testing.
@@ -1886,9 +1887,9 @@ func TestListMultipartUploads_NoArmorPrefix(t *testing.T) {
 // (configured + client) prefix to the backend.
 type multipartUploadsListCaptureBackend struct {
 	*mockBackend
-	mu                      sync.Mutex
-	listMultipartCalls      int
-	gotPrefix               string
+	mu                 sync.Mutex
+	listMultipartCalls int
+	gotPrefix          string
 }
 
 func (c *multipartUploadsListCaptureBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*backend.ListMultipartUploadsResult, error) {
@@ -1962,7 +1963,7 @@ func TestListMultipartUploads_PrefixEndToEnd(t *testing.T) {
 
 	// Parse the XML response.
 	var result struct {
-		Uploads       []struct {
+		Uploads []struct {
 			Key string `xml:"Key"`
 		} `xml:"Upload"`
 		NextKeyMarker string `xml:"NextKeyMarker"`
@@ -4238,7 +4239,7 @@ func TestPutObjectAsyncEnqueueDoesNotBlockResponse(t *testing.T) {
 
 	// Response should be MUCH faster than the enqueue delay
 	// We allow a generous margin (50ms) for test execution overhead
-	maxExpectedResponseTime := enqueueDelay/2 // Response should be at most half the enqueue delay
+	maxExpectedResponseTime := enqueueDelay / 2 // Response should be at most half the enqueue delay
 	marginOfError := 50 * time.Millisecond
 
 	if responseTime > maxExpectedResponseTime+marginOfError {
