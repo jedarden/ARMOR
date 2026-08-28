@@ -203,10 +203,14 @@ func ReadEnvelopeHeader(r io.Reader) (*EnvelopeHeader, error) {
 	return DecodeHeader(headerBuf)
 }
 
-// NewEnvelopeHeader creates a new envelope header.
-func NewEnvelopeHeader(iv []byte, plaintextSize int64, blockSize int, plaintextSHA [32]byte) (*EnvelopeHeader, error) {
+// NewEnvelopeHeader creates a new envelope header with the specified version.
+func NewEnvelopeHeaderWithVersion(iv []byte, plaintextSize int64, blockSize int, plaintextSHA [32]byte, version uint8) (*EnvelopeHeader, error) {
 	if len(iv) != 16 {
 		return nil, errors.New("IV must be 16 bytes")
+	}
+
+	if version != Version1 && version != Version2 {
+		return nil, fmt.Errorf("unsupported version: %d", version)
 	}
 
 	// Validate block size is power of 2
@@ -221,7 +225,7 @@ func NewEnvelopeHeader(iv []byte, plaintextSize int64, blockSize int, plaintextS
 	}
 
 	h := &EnvelopeHeader{
-		Version:       Version1,
+		Version:       version,
 		BlockSizeLog2: blockSizeLog2,
 		PlaintextSize: uint64(plaintextSize),
 		PlaintextSHA:  plaintextSHA,
@@ -230,6 +234,12 @@ func NewEnvelopeHeader(iv []byte, plaintextSize int64, blockSize int, plaintextS
 	copy(h.IV[:], iv)
 
 	return h, nil
+}
+
+// NewEnvelopeHeader creates a new envelope header.
+// Defaults to Version2 for security.
+func NewEnvelopeHeader(iv []byte, plaintextSize int64, blockSize int, plaintextSHA [32]byte) (*EnvelopeHeader, error) {
+	return NewEnvelopeHeaderWithVersion(iv, plaintextSize, blockSize, plaintextSHA, Version2)
 }
 
 // VerifyPlaintextSHA verifies the plaintext against the stored SHA-256.

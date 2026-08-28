@@ -452,7 +452,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	meta := (&backend.ARMORMetadata{
-		Version:         1,
+		Version:         2,
 		BlockSize:       h.config.BlockSize,
 		PlaintextSize:   plaintextSize,
 		ContentType:     contentType,
@@ -657,7 +657,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	etag := hex.EncodeToString(plaintextSHA[:16])
 
 	meta := (&backend.ARMORMetadata{
-		Version:       1,
+		Version:       2,
 		BlockSize:     h.config.BlockSize,
 		PlaintextSize: plaintextSize,
 		ContentType:   contentType,
@@ -3204,7 +3204,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Build ARMOR metadata and update via CopyObject
 	meta := (&backend.ARMORMetadata{
-		Version:       1,
+		Version:       2,
 		BlockSize:     state.BlockSize,
 		PlaintextSize: totalPlaintextSize,
 		ContentType:   state.ContentType,

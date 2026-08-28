@@ -22,10 +22,10 @@ type Encryptor struct {
 }
 
 // NewEncryptor creates a new encryptor.
-// Defaults to Version1 for backward compatibility.
-// Use NewEncryptorV2 for new objects to get the fixed counter derivation.
+// Defaults to Version2 (fixed counter derivation) for security.
+// Version1 is only available via build tag for legacy testing.
 func NewEncryptor(dek, iv []byte, blockSize int) (*Encryptor, error) {
-	return NewEncryptorWithVersion(dek, iv, blockSize, Version1)
+	return NewEncryptorWithVersion(dek, iv, blockSize, Version2)
 }
 
 // NewEncryptorV2 creates a Version2 encryptor with fixed counter derivation.
@@ -304,9 +304,9 @@ func (e *Encryptor) EncryptStreamWithCompress(plaintext io.Reader, ciphertext io
 // NewEncryptorWithCounter creates a new encryptor with a specific starting counter.
 // This is used for multipart uploads where each part needs to continue the CTR stream
 // from where the previous part left off.
-// Defaults to Version1 for backward compatibility.
+// Defaults to Version2 for security.
 func NewEncryptorWithCounter(dek, iv []byte, blockSize int, startBlockIndex uint32) (*Encryptor, error) {
-	return NewEncryptorWithCounterAndVersion(dek, iv, blockSize, startBlockIndex, Version1)
+	return NewEncryptorWithCounterAndVersion(dek, iv, blockSize, startBlockIndex, Version2)
 }
 
 // NewEncryptorWithCounterAndVersion creates a new encryptor with a specific starting counter and version.
