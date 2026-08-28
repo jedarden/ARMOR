@@ -30,13 +30,13 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/jedarden/armor/internal/acl"
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/replication"
-	"github.com/jedarden/armor/internal/server"
 )
 
 // ProvenanceRecorder records uploads in the provenance chain.
@@ -2276,7 +2276,7 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 		// Check ACL for each key individually
 		for _, key := range originalKeys {
 			// Import CheckACL from server package
-			if err := server.CheckACL(cred, bucket, key, "delete"); err != nil {
+			if err := acl.CheckACL(cred, bucket, key, "delete"); err != nil {
 				deniedKeys = append(deniedKeys, key)
 			} else {
 				allowedKeys = append(allowedKeys, key)

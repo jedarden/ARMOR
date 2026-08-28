@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jedarden/armor/internal/acl"
 	"github.com/jedarden/armor/internal/config"
 )
 
@@ -290,43 +291,6 @@ func (a *SigV4Auth) getSigningKeyForCredential(cred *config.Credential, date, re
 	return kSigning
 }
 
-// CheckACL verifies that the credential is allowed to perform the given action
-// verb on the bucket and key. The verb is an ADR-012 action verb
-// (get/put/delete/list) — typically derived via ActionForRequest(r). If the
-// credential has no ACLs (nil), it has full access.
-//
-// An entry whose Actions set is nil permits every verb — this keeps existing
-// two-segment "bucket:prefix" ACL strings backward compatible. A non-empty
-// Actions set restricts the entry to the listed verbs, so the verb must be a
-// member for the entry to grant access.
-func CheckACL(cred *config.Credential, bucket, key, verb string) error {
-	// No ACLs means full access
-	if len(cred.ACLs) == 0 {
-		return nil
-	}
-
-	for _, acl := range cred.ACLs {
-		// Check bucket match
-		if acl.Bucket != "*" && acl.Bucket != bucket {
-			continue
-		}
-
-		// Check prefix match — an empty prefix means any key in the bucket.
-		if acl.Prefix != "" && !strings.HasPrefix(key, acl.Prefix) {
-			continue
-		}
-
-		// Bucket and prefix matched. Check the action verb: a nil Actions
-		// set means all verbs are permitted (backward compatibility); a
-		// non-empty set requires the verb to be a member.
-		if len(acl.Actions) == 0 || acl.Actions[verb] {
-			return nil
-		}
-	}
-
-	return ErrAccessDenied
-}
-
 // hmacSHA256 computes HMAC-SHA256.
 func (a *SigV4Auth) hmacSHA256(key []byte, data string) []byte {
 	h := hmac.New(sha256.New, key)
@@ -356,7 +320,6 @@ var (
 	ErrInvalidDateFormat = &AuthError{Code: "InvalidDateFormat", Message: "Invalid date format in X-Amz-Date header"}
 	ErrRequestExpired    = &AuthError{Code: "RequestExpired", Message: "Request has expired"}
 	ErrSignatureMismatch = &AuthError{Code: "SignatureDoesNotMatch", Message: "The request signature we calculated does not match the signature you provided"}
-	ErrAccessDenied      = &AuthError{Code: "AccessDenied", Message: "Access Denied"}
 )
 
 // AuthError represents an authentication error.
