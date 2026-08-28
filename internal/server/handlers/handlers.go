@@ -809,14 +809,51 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	// Create decryptor
-	decryptor, err := crypto.NewDecryptor(dek, armorMeta.IV, armorMeta.BlockSize)
-	if err != nil {
-		h.writeError(w, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
-		return
-	}
-
 	plaintextSize := armorMeta.PlaintextSize
+
+	// Check if this is a multipart object (HMAC table in sidecar, no embedded header)
+	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
+
+	// Determine the version and create decryptor
+	// For single-PUT objects: read envelope header to get version
+	// For multipart objects: trust the metadata version (no envelope header exists)
+	var decryptor *crypto.Decryptor
+	if isMultipart {
+		// Multipart objects have no envelope header - trust metadata version
+		decryptor, err = crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
+			return
+		}
+	} else {
+		// Single-PUT objects: read envelope header to get the actual version
+		prefixedKey := h.applyPrefix(key)
+		headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to read envelope header: %v", err), 500)
+			return
+		}
+		defer headerReader.Close()
+
+		headerBuf := make([]byte, crypto.HeaderSize)
+		if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+			return
+		}
+
+		header, err := crypto.DecodeHeader(headerBuf)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+			return
+		}
+
+		// Create decryptor with the version from the envelope header
+		decryptor, err = crypto.NewDecryptorWithVersion(dek, header.IV[:], header.BlockSize(), header.Version)
+		if err != nil {
+			h.writeError(w, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
+			return
+		}
+	}
 
 	// Check conditional request headers
 	if status := checkConditionalRequest(r, armorMeta.ETag, info.LastModified); status != 0 {
@@ -831,9 +868,6 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		}
 		return
 	}
-
-	// Check if this is a multipart object (HMAC table in sidecar, no embedded header)
-	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
 
 	// Uniform part size P for multipart objects written since bf-1v2ehf
 	// (x-amz-meta-armor-part-size). The full-object stream path needs it to
@@ -3058,18 +3092,17 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Calculate total plaintext size and expected ciphertext size
-	// For encrypted multipart uploads, each part's ciphertext includes:
-	// - The encrypted part data (same size as plaintext)
-	// - HMAC table: one SHA256 HMAC (32 bytes) per block
+	// For encrypted multipart uploads, B2 assembles just the encrypted part data
+	// (same size as plaintext). The HMAC table is stored separately as a sidecar
+	// file at .armor/hmac/<sha256(key)> and is NOT included in the assembled object.
 	var totalPlaintextSize int64
 	var totalCiphertextSize int64
 	for _, p := range completeReq.Parts {
 		if size, ok := state.PartSizes[p.PartNumber]; ok {
 			totalPlaintextSize += size
-			// Calculate HMAC overhead for this part
-			blockCount := (size + int64(state.BlockSize) - 1) / int64(state.BlockSize)
-			hmacOverhead := blockCount * 32 // SHA256 HMAC size
-			totalCiphertextSize += size + hmacOverhead
+			// Each part's encrypted data is the same size as its plaintext
+			// (HMACs are stored separately in the sidecar, not in the assembled object)
+			totalCiphertextSize += size
 		}
 	}
 
