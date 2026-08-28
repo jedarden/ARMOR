@@ -1093,7 +1093,13 @@ Decisions:
   default (with the paginated restore-verifier discovery riding along), the
   format-migration endpoint, the CLI/demo/credential-file release, and the
   v3 default. Each cut is blocked on the previous cut; each bump on its cut
-  and on the previous bump.
+  and on the previous bump. A cut is also blocked on `go test -short ./...`
+  being green — `Dockerfile` runs `go vet ./... && go test ./... -short`
+  before the build, so a red suite cannot produce an image. Consequently the
+  existing restore-verifier images cannot be "bumped to the current VERSION"
+  ahead of the Version-2 cut: CI builds only on `VERSION`-changing commits and
+  the last such commit (`de48da20`, 0.1.1913) predates the ADR-009 and
+  discovery fixes; those fixes ship with the Version-2 bump.
 
 #### 8.2 Plan/bead truth-up leftovers
 
@@ -1267,10 +1273,13 @@ compares `armor-restore-verifier` tags.
 Decisions: `/dashboard/api/list` and the UI paginate with continuation
 tokens (today silently capped at 1000); write actions (upload, download,
 delete) execute as the named credential in `ARMOR_DASHBOARD_CREDENTIAL` and
-are hidden when it is unset (browse-only remains the default); presign
-requires `ARMOR_PRESIGN_BASE_URL` to be absolute and `ARMOR_PRESIGN_SECRET`
-to be set whenever the endpoint is enabled (startup error otherwise — the
-current fallback to the auth secret produces links that die on restart); a
+are hidden when it is unset (browse-only remains the default); presign gains
+an explicit toggle, `ARMOR_PRESIGN_ENABLED` (default `false`; `/admin/presign`
+returns 404 and `/share/` is not registered when off — today presign is
+always on with a fallback secret, and no production consumer uses it), and
+when enabled requires `ARMOR_PRESIGN_BASE_URL` to be absolute and
+`ARMOR_PRESIGN_SECRET` to be set (startup error otherwise — the current
+fallback to the auth secret produces links that die on restart); a
 "Share" action calls presign; a per-credential activity panel reads
 `armor_requests_by_credential_total{access_key_id,verb,result}`.
 
@@ -1376,7 +1385,7 @@ test vectors from these):
 
 Decisions: a `Makefile` (`build`, `test`, `test-integration`, `lint`,
 `docker`, `compat`); `docs/README.md` index; the ~28 investigation/test-
-analysis documents move to `docs/archive/` (list in the bead), the six
+analysis documents move to `docs/archive/` (list in the bead), the seven
 error-header documents collapse into `docs/error-responses.md`, the three
 version-drift documents into `docs/drift-check.md`, and the five
 error-format/severity documents into `docs/error-format.md`; the duplicate
