@@ -1,4 +1,4 @@
-# ADR-005: Out-of-order multipart parts via a uniform-part-size contract
+# ADR-015: Out-of-order multipart parts via a uniform-part-size contract
 
 **Status:** Implemented (design decided 2026-07-19; shipped on main 2026-07-19; amended 2026-08-07 for the single-part alignment exemption — bf-5tol4d core uniform-part-size contract, bf-4oi87m part-1 pinning + `503 SlowDown` deferral of earlier arrivals; amends ADR-003 §4)
 **Date:** 2026-07-19
