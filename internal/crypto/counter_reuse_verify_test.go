@@ -10,14 +10,152 @@ import (
 	"testing"
 )
 
-// TestProveCounterReuseDirectly directly proves the counter reuse vulnerability.
-// This test shows EXACTLY what counters are used and demonstrates the overlap.
-// SKIPPED: This documents a known out-of-scope vulnerability for bead armor-51d3ad2d.
+// TestProveCounterReuseDirectly documents the Version1 counter reuse vulnerability
+// as a permanent tripwire. It validates that:
+// 1. Version1 DOES reuse keystream between adjacent blocks (the documented bug)
+// 2. Version2 does NOT reuse keystream (the fix)
+// This test must never be skipped or removed - it documents why V1 is deprecated.
 func TestProveCounterReuseDirectly(t *testing.T) {
-	t.Skip("CTR counter reuse vulnerability is out of scope for bead armor-51d3ad2d - tracked separately")
-	// Generate test DEK and IV
+	// Test Version1: PROVE it reuses keystream
+	t.Run("Version1_reuses_keystream", func(t *testing.T) {
+		// Generate test DEK and IV
+		dek := make([]byte, 32)
+		iv := make([]byte, 16)
+		if _, err := io.ReadFull(rand.Reader, dek); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+			t.Fatal(err)
+		}
+
+		blockSize := DefaultBlockSize // 65536 bytes
+		aesBlocksPerArmorBlock := blockSize / 16 // 4096 AES blocks
+
+		// Create AES cipher
+		block, err := aes.NewCipher(dek)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Create counters for block 0 and block 1 using makeCounter (Version1)
+		enc, err := NewEncryptorWithVersion(dek, iv, blockSize, Version1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counter0 := enc.makeCounter(0)
+		counter1 := enc.makeCounter(1)
+
+		t.Logf("Version1 - Block 0 starting counter: %x", counter0)
+		t.Logf("Version1 - Block 1 starting counter: %x", counter1)
+
+		// Generate keystream for both blocks by simulating cipher.NewCTR behavior
+		// cipher.NewCTR increments the FULL 16-byte counter for each 16-byte block
+		keystream0 := generateCTRKeystream(t, block, counter0, aesBlocksPerArmorBlock)
+		keystream1 := generateCTRKeystream(t, block, counter1, aesBlocksPerArmorBlock)
+
+		// The bug: block 1's counter starts only 1 increment ahead
+		// After 4096 AES blocks, block 0 used counters [counter0+0 ... counter0+4095]
+		// Block 1 starts at counter1 = counter0+1, so it uses [counter0+1 ... counter0+4096]
+		// Overlap: [counter0+1 ... counter0+4095] = 4095 out of 4096 counters!
+
+		// Check for overlap in keystream
+		// Block 0 keystream at AES block offset 1..4095 should match block 1 keystream at offset 0..4094
+		overlapCount := 0
+		for i := 1; i < aesBlocksPerArmorBlock; i++ {
+			// Block 0's keystream at AES block i
+			ks0Offset := (i) * 16
+			ks1Offset := (i - 1) * 16
+
+			ks0 := keystream0[ks0Offset : ks0Offset+16]
+			ks1 := keystream1[ks1Offset : ks1Offset+16]
+
+			if bytes.Equal(ks0, ks1) {
+				overlapCount++
+			} else {
+				t.Logf("Mismatch at offset %d: ks0=%x ks1=%x", i, ks0, ks1)
+			}
+		}
+
+		overlapBytes := overlapCount * 16
+
+		// ASSERT: Version1 MUST reuse keystream (this is the documented bug)
+		if overlapCount != aesBlocksPerArmorBlock-1 {
+			t.Errorf("Version1 TRIPWIRE FAILED: Expected keystream reuse (%d overlapping blocks), got %d",
+				aesBlocksPerArmorBlock-1, overlapCount)
+			t.Errorf("Version1 may have been accidentally fixed - update this test if V1 is no longer legacy")
+		} else {
+			t.Logf("Version1 TRIPWIRE PASS: Keystream reuse confirmed (%d AES blocks, %d bytes)",
+				overlapCount, overlapBytes)
+			t.Logf("This is the documented TWO-TIME PAD vulnerability in Version1")
+		}
+	})
+
+	// Test Version2: PROVE it does NOT reuse keystream
+	t.Run("Version2_no_keystream_reuse", func(t *testing.T) {
+		// Generate test DEK and IV
+		dek := make([]byte, 32)
+		iv := make([]byte, 16)
+		if _, err := io.ReadFull(rand.Reader, dek); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+			t.Fatal(err)
+		}
+
+		blockSize := DefaultBlockSize // 65536 bytes
+		aesBlocksPerArmorBlock := blockSize / 16 // 4096 AES blocks
+
+		// Create AES cipher
+		block, err := aes.NewCipher(dek)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Create counters for block 0 and block 1 using makeCounter (Version2)
+		enc, err := NewEncryptorWithVersion(dek, iv, blockSize, Version2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counter0 := enc.makeCounter(0)
+		counter1 := enc.makeCounter(1)
+
+		t.Logf("Version2 - Block 0 starting counter: %x", counter0)
+		t.Logf("Version2 - Block 1 starting counter: %x", counter1)
+
+		// Generate keystream for both blocks
+		keystream0 := generateCTRKeystream(t, block, counter0, aesBlocksPerArmorBlock)
+		keystream1 := generateCTRKeystream(t, block, counter1, aesBlocksPerArmorBlock)
+
+		// Check for overlap in keystream
+		overlapCount := 0
+		for i := 1; i < aesBlocksPerArmorBlock; i++ {
+			ks0Offset := (i) * 16
+			ks1Offset := (i - 1) * 16
+
+			ks0 := keystream0[ks0Offset : ks0Offset+16]
+			ks1 := keystream1[ks1Offset : ks1Offset+16]
+
+			if bytes.Equal(ks0, ks1) {
+				overlapCount++
+			}
+		}
+
+		// ASSERT: Version2 MUST NOT reuse keystream (this is the fix)
+		if overlapCount > 0 {
+			t.Errorf("Version2 TRIPWIRE FAILED: Keystream reuse detected (%d overlapping blocks)!", overlapCount)
+			t.Errorf("Version2 fix is broken - this is a critical security issue")
+		} else {
+			t.Logf("Version2 TRIPWIRE PASS: No keystream reuse (fix is working)")
+		}
+	})
+}
+
+// TestDefaultEncryptorIsVersion2 validates that NewEncryptor() returns Version2.
+func TestDefaultEncryptorIsVersion2(t *testing.T) {
 	dek := make([]byte, 32)
 	iv := make([]byte, 16)
+	blockSize := DefaultBlockSize
+
 	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
 		t.Fatal(err)
 	}
@@ -25,63 +163,18 @@ func TestProveCounterReuseDirectly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	blockSize := DefaultBlockSize // 65536 bytes
-	aesBlocksPerArmorBlock := blockSize / 16 // 4096 AES blocks
-
-	// Create AES cipher
-	block, err := aes.NewCipher(dek)
+	enc, err := NewEncryptor(dek, iv, blockSize)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Create counters for block 0 and block 1 using makeCounter
-	enc := &Encryptor{iv: iv, blockSize: blockSize}
-	counter0 := enc.makeCounter(0)
-	counter1 := enc.makeCounter(1)
-
-	t.Logf("Block 0 starting counter: %x", counter0)
-	t.Logf("Block 1 starting counter: %x", counter1)
-
-	// Generate keystream for both blocks by simulating cipher.NewCTR behavior
-	// cipher.NewCTR increments the FULL 16-byte counter for each 16-byte block
-	keystream0 := generateCTRKeystream(t, block, counter0, aesBlocksPerArmorBlock)
-	keystream1 := generateCTRKeystream(t, block, counter1, aesBlocksPerArmorBlock)
-
-	// The bug: block 1's counter starts only 1 increment ahead
-	// After 4096 AES blocks, block 0 used counters [counter0+0 ... counter0+4095]
-	// Block 1 starts at counter1 = counter0+1, so it uses [counter0+1 ... counter0+4096]
-	// Overlap: [counter0+1 ... counter0+4095] = 4095 out of 4096 counters!
-
-	// Check for overlap in keystream
-	// Block 0 keystream at AES block offset 1..4095 should match block 1 keystream at offset 0..4094
-	overlapCount := 0
-	for i := 1; i < aesBlocksPerArmorBlock; i++ {
-		// Block 0's keystream at AES block i
-		ks0Offset := (i) * 16
-		ks1Offset := (i - 1) * 16
-
-		ks0 := keystream0[ks0Offset : ks0Offset+16]
-		ks1 := keystream1[ks1Offset : ks1Offset+16]
-
-		if bytes.Equal(ks0, ks1) {
-			overlapCount++
-		} else {
-			t.Logf("Mismatch at offset %d: ks0=%x ks1=%x", i, ks0, ks1)
-		}
-	}
-
-	overlapBytes := overlapCount * 16
-
-	if overlapCount == aesBlocksPerArmorBlock-1 {
-		t.Errorf("PROVEN BUG: Keystream reuse detected!")
-		t.Errorf("Block 1 reuses %d AES blocks (%d bytes) of keystream from block 0", overlapCount, overlapBytes)
-		t.Errorf("This is a TWO-TIME PAD - plaintext XOR can be recovered from ciphertext alone")
-		t.Errorf("Block 0 uses AES counters: [IV+0 ... IV+%d]", aesBlocksPerArmorBlock-1)
-		t.Errorf("Block 1 uses AES counters: [IV+1 ... IV+%d]", aesBlocksPerArmorBlock)
-		t.Errorf("Overlap: [IV+1 ... IV+%d] = %d counters reused",
-			aesBlocksPerArmorBlock-1, aesBlocksPerArmorBlock-1)
+	// ASSERT: Default encryptor MUST be Version2
+	if enc.version != Version2 {
+		t.Errorf("TRIPWIRE FAILED: NewEncryptor() returned version %d, expected Version2 (%d)",
+			enc.version, Version2)
+		t.Errorf("All new objects MUST use Version2 by default - this is a security requirement")
 	} else {
-		t.Logf("No keystream reuse detected (bug may be fixed)")
+		t.Logf("TRIPWIRE PASS: NewEncryptor() correctly returns Version2")
 	}
 }
 
@@ -115,80 +208,6 @@ func incrementCounter(counter []byte) {
 		}
 		// Carry to next byte
 	}
-}
-
-// TestProveCounterWithExplicitValues uses known values to prove the bug.
-// SKIPPED: This documents a known out-of-scope vulnerability for bead armor-51d3ad2d.
-func TestProveCounterWithExplicitValues(t *testing.T) {
-	t.Skip("CTR counter reuse vulnerability is out of scope for bead armor-51d3ad2d - tracked separately")
-	// Use fixed values for reproducibility
-	iv := make([]byte, 16)
-	for i := range iv {
-		iv[i] = 0xAA
-	}
-
-	enc := &Encryptor{iv: iv, blockSize: DefaultBlockSize}
-
-	counter0 := enc.makeCounter(0)
-	counter1 := enc.makeCounter(1)
-
-	// Counter structure: IV[0:12] || uint32(blockIndex)
-	// Expected: counter0 = AAAA... || 0x00000000
-	// Expected: counter1 = AAAA... || 0x00000001
-
-	if !bytes.Equal(counter0[0:12], iv[0:12]) {
-		t.Errorf("counter0[0:12] != iv[0:12]")
-	}
-
-	if !bytes.Equal(counter1[0:12], iv[0:12]) {
-		t.Errorf("counter1[0:12] != iv[0:12]")
-	}
-
-	blockIndex0 := binary.BigEndian.Uint32(counter0[12:16])
-	blockIndex1 := binary.BigEndian.Uint32(counter1[12:16])
-
-	if blockIndex0 != 0 {
-		t.Errorf("blockIndex0 = %d, want 0", blockIndex0)
-	}
-
-	if blockIndex1 != 1 {
-		t.Errorf("blockIndex1 = %d, want 1", blockIndex1)
-	}
-
-	t.Logf("counter0 = %x (block index = %d)", counter0, blockIndex0)
-	t.Logf("counter1 = %x (block index = %d)", counter1, blockIndex1)
-
-	// Simulate counter increment for 4096 AES blocks
-	// Block 0 will use counters 0 through 4095
-	// Block 1 starts at 1, so it uses 1 through 4096
-	// Overlap: 1 through 4095 = 4095 counters
-
-	// After 4096 increments from counter0, we should be at:
-	expectedCounterAfterBlock0 := make([]byte, 16)
-	copy(expectedCounterAfterBlock0, counter0)
-	incrementCounterN(expectedCounterAfterBlock0, 4096)
-
-	// counter1 should equal what we'd get after 1 increment from counter0
-	expectedCounter1 := make([]byte, 16)
-	copy(expectedCounter1, counter0)
-	incrementCounter(expectedCounter1)
-
-	if !bytes.Equal(counter1, expectedCounter1) {
-		t.Errorf("counter1 mismatch")
-	}
-
-	t.Logf("After 4096 increments from counter0: %x", expectedCounterAfterBlock0)
-	t.Logf("counter1 (start of block 1): %x", counter1)
-
-	// Check if counter1 would be within the range used by block 0
-	// Block 0 uses: counter0+0, counter0+1, ..., counter0+4095
-	// counter1 = counter0+1, so it REUSES counter0+1 through counter0+4095
-
-	t.Errorf("DEMONSTRATED: counter1 = counter0 + 1")
-	t.Errorf("After 4096 AES blocks, counter will be at counter0 + 4096")
-	t.Errorf("Block 1 reuses counters counter0+1 through counter0+4095")
-	t.Errorf("This is %d out of %d possible counter values - a TWO-TIME PAD vulnerability",
-		4095, 4096)
 }
 
 // incrementCounterN increments a counter n times.
