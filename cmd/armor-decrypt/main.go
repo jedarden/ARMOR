@@ -39,6 +39,7 @@ var (
 	// Multipart local-file inputs (ADR-003 headerless layout)
 	sidecarFlag string // path to a JSON HMAC sidecar file (HMACTableSidecar wire format)
 	ivFlag      string // object IV (hex), required for local multipart — no header to read it from
+	versionFlag  int   // envelope version (1 or 2), for local multipart files (default: 1)
 
 	// Output
 	outputFlag string
@@ -61,6 +62,7 @@ func init() {
 	flag.StringVar(&wrappedDEKFlag, "wrapped-dek", "", "Wrapped DEK (base64, for local files)")
 	flag.StringVar(&sidecarFlag, "sidecar", "", "Path to a JSON HMAC sidecar file for a local multipart object (ADR-003 headerless layout)")
 	flag.StringVar(&ivFlag, "iv", "", "Object IV (hex, 16 bytes) for a local multipart object (required with -sidecar)")
+	flag.IntVar(&versionFlag, "version", 1, "Envelope version (1 or 2), for local multipart files without envelope header (default: 1)")
 	flag.StringVar(&outputFlag, "output", "", "Output file path (default: stdout)")
 	flag.BoolVar(&verboseFlag, "v", false, "Verbose output")
 	flag.IntVar(&readConcurrency, "read-concurrency", envInt("ARMOR_READ_CONCURRENCY", 16), "Maximum concurrent ranged reads")
@@ -468,8 +470,8 @@ func decryptLocalEnvelope(src *inputSource, dek []byte) ([]byte, error) {
 		return nil, fmt.Errorf("read HMAC table: %w", err)
 	}
 
-	// Create decryptor
-	decryptor, err := crypto.NewDecryptor(dek, header.IV[:], blockSize)
+	// Create decryptor with version from envelope header
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, header.IV[:], blockSize, header.Version)
 	if err != nil {
 		return nil, fmt.Errorf("create decryptor: %w", err)
 	}
@@ -549,7 +551,8 @@ func decryptLocalMultipart(src *inputSource, dek []byte) ([]byte, error) {
 	// Create decryptor. Absolute block indices: the full-object Decrypt walks
 	// block 0..N, which for a headerless multipart object are the absolute
 	// indices the HMACs were keyed on during upload.
-	decryptor, err := crypto.NewDecryptor(dek, iv, sidecar.BlockSize)
+	// For local multipart files, use the version from command-line flag (default: 1).
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, sidecar.BlockSize, uint8(versionFlag))
 	if err != nil {
 		return nil, fmt.Errorf("create decryptor: %w", err)
 	}
@@ -649,8 +652,8 @@ func decryptB2(ctx context.Context, src *inputSource, mek []byte, keyID string) 
 		fmt.Fprintf(os.Stderr, "Read %d encrypted bytes and %d HMAC entries\n", len(encryptedData), len(hmacTable)/crypto.HMACSize)
 	}
 
-	// Create decryptor
-	decryptor, err := crypto.NewDecryptor(dek, iv, armorMeta.BlockSize)
+	// Create decryptor with version from metadata
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, armorMeta.BlockSize, uint8(armorMeta.Version))
 	if err != nil {
 		return nil, fmt.Errorf("create decryptor: %w", err)
 	}
