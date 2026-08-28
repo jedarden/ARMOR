@@ -4287,3 +4287,56 @@ func TestPutObjectAsyncEnqueueDoesNotBlockResponse(t *testing.T) {
 	t.Logf("✓ Enqueue completed after response (response returned %v before enqueue finished)",
 		totalTime-responseTime)
 }
+
+// TestHandlerErrorResponseIncludesRequestIdAndResource verifies that handler error
+// responses include both <RequestId> and <Resource> elements in the XML body.
+// This ensures consistency with server.writeError which already includes RequestId,
+// and provides clients that parse RequestId from the body with a consistent format.
+func TestHandlerErrorResponseIncludesRequestIdAndResource(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	// Test a scenario that triggers a handler error (e.g., getting a non-existent object)
+	// We'll use an invalid request that causes an InternalError from handlers
+	req := httptest.NewRequest(http.MethodGet, "/test-bucket/nonexistent-key", nil)
+
+	// Add request ID to context using middleware helper
+	ctx := middleware.WithRequestID(req.Context(), "test-request-id-12345")
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	h.HandleRoot(w, req)
+
+	// We expect a 404 or error response
+	// The important thing is that if we get an error, it includes RequestId and Resource
+	if w.Code != http.StatusOK {
+		// Parse the XML error response
+		var errorResponse struct {
+			Code      string `xml:"Code"`
+			Message   string `xml:"Message"`
+			RequestID string `xml:"RequestId"`
+			Resource  string `xml:"Resource"`
+		}
+
+		body := w.Body.String()
+		if err := xml.Unmarshal([]byte(body), &errorResponse); err != nil {
+			t.Fatalf("Failed to parse error response XML: %v\nBody: %s", err, body)
+		}
+
+		// Verify RequestId is present and matches the context value
+		if errorResponse.RequestID == "" {
+			t.Errorf("Error response missing <RequestId> element\nBody: %s", body)
+		}
+		if errorResponse.RequestID != "test-request-id-12345" {
+			t.Errorf("RequestId mismatch: got %s, want test-request-id-12345\nBody: %s", errorResponse.RequestID, body)
+		}
+
+		// Verify Resource is present and matches the request path
+		if errorResponse.Resource == "" {
+			t.Errorf("Error response missing <Resource> element\nBody: %s", body)
+		}
+		if errorResponse.Resource != "/test-bucket/nonexistent-key" {
+			t.Errorf("Resource mismatch: got %s, want /test-bucket/nonexistent-key\nBody: %s", errorResponse.Resource, body)
+		}
+	}
+}
