@@ -1164,7 +1164,8 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 	}
 
 	// Step 6: decrypt using the same crypto package as the direct path
-	decryptor, err := crypto.NewDecryptor(dek, iv, armorMeta.BlockSize)
+	// Pass explicit version from metadata (never rely on defaults)
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, armorMeta.BlockSize, uint8(armorMeta.Version))
 	if err != nil {
 		return nil, fmt.Errorf("ARMOR path: failed to create decryptor: %w", err)
 	}
@@ -1234,7 +1235,8 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 
 	// Step 4: decrypt with per-block HMAC verification (CTR mode: ciphertext
 	// length equals plaintext length).
-	decryptor, err := crypto.NewDecryptor(dek, iv, armorMeta.BlockSize)
+	// Pass explicit version from metadata (never rely on defaults)
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, armorMeta.BlockSize, uint8(armorMeta.Version))
 	if err != nil {
 		return nil, fmt.Errorf("direct path: failed to create decryptor: %w", err)
 	}

@@ -147,8 +147,8 @@ func TestCTRKeystreamReuseFix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Decrypt and verify
-	dec, err := NewDecryptor(dek, iv, blockSize)
+	// Decrypt and verify (explicitly use Version2 to match NewEncryptor's default)
+	dec, err := NewDecryptorWithVersion(dek, iv, blockSize, Version2)
 	if err != nil {
 		t.Fatal(err)
 	}

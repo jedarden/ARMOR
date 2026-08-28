@@ -479,8 +479,8 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to unwrap DEK: %w", err)
 	}
 
-	// Create decryptor
-	decryptor, err := crypto.NewDecryptor(unwrappedDEK, iv, m.blockSize)
+	// Create decryptor (explicitly use Version1 to match the canary's metadata)
+	decryptor, err := crypto.NewDecryptorWithVersion(unwrappedDEK, iv, m.blockSize, crypto.Version1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decryptor: %w", err)
 	}
@@ -782,8 +782,8 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to unwrap DEK: %w", err)
 	}
 
-	// Create decryptor
-	decryptor, err := crypto.NewDecryptor(unwrappedDEK, iv, m.blockSize)
+	// Create decryptor (explicitly use Version1 to match the canary's metadata)
+	decryptor, err := crypto.NewDecryptorWithVersion(unwrappedDEK, iv, m.blockSize, crypto.Version1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decryptor: %w", err)
 	}
@@ -1084,8 +1084,8 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to unwrap DEK: %w", err)
 	}
 
-	// Create decryptor
-	decryptor, err := crypto.NewDecryptor(unwrappedDEK, iv, m.blockSize)
+	// Create decryptor (explicitly use Version1 to match the canary's metadata)
+	decryptor, err := crypto.NewDecryptorWithVersion(unwrappedDEK, iv, m.blockSize, crypto.Version1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decryptor: %w", err)
 	}
