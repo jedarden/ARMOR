@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jedarden/armor/internal/logging"
+	"github.com/jedarden/armor/internal/server/middleware"
 )
 
 // TestAuditLogFields verifies that the audit logging captures all required
@@ -31,7 +32,7 @@ func TestAuditLogFields(t *testing.T) {
 		logBuf.Reset()
 		start := time.Now()
 
-		s.logCompletedRequest(req, start, 200, "allow", "test-key-id", "get", "testbucket/testkey")
+		s.logCompletedRequest(req, start, 200, "allow", "test-key-id", "get", "testbucket/testkey", 0)
 
 		logOutput := logBuf.String()
 
@@ -180,5 +181,74 @@ func TestAuditLogPublicPaths(t *testing.T) {
 		if strings.Contains(logOutput, `"`+field+`":`) {
 			t.Errorf("public path log should not contain %s field, got: %s", field, logOutput)
 		}
+	}
+}
+
+// TestAuditLogMultipartFields verifies that multipart upload fields
+// (upload_id, part_number) are logged when present in the request.
+func TestAuditLogMultipartFields(t *testing.T) {
+	var logBuf strings.Builder
+	testLogger := logging.New("armor-test")
+	testLogger.SetOutput(&logBuf)
+
+	s := &Server{
+		logger: testLogger,
+	}
+
+	// Create a multipart UploadPart request
+	req := httptest.NewRequest("PUT", "/test-bucket/test-key?uploadId=test-upload-id&partNumber=3", strings.NewReader("test body"))
+	req.Header.Set("User-Agent", "aws-sdk-rust/1.0")
+	req.Header.Set("Content-Length", "9")
+
+	logBuf.Reset()
+	start := time.Now()
+
+	// Simulate a failed UploadPart with error code in context
+	ctx := middleware.SetErrorCode(req.Context(), "InvalidPart")
+	*req = *req.WithContext(ctx)
+
+	s.logCompletedRequest(req, start, 400, "allow", "test-key-id", "put", "test-bucket/test-key", 9)
+
+	logOutput := logBuf.String()
+
+	// Verify all new fields are present
+	newFields := []string{
+		`"upload_id":"test-upload-id"`,
+		`"part_number":"3"`,
+		`"error_code":"InvalidPart"`,
+		`"request_id":"`,
+		`"bytes_in":9`,
+		`"bytes_out":9`,
+		`"user_agent":"aws-sdk-rust/1.0"`,
+		`"bucket":"test-bucket"`,
+	}
+
+	for _, field := range newFields {
+		if !strings.Contains(logOutput, field) {
+			t.Errorf("multipart log missing field %q\nGot: %s", field, logOutput)
+		}
+	}
+
+	// Verify existing fields still present
+	existingFields := []string{
+		`"method":"PUT"`,
+		`"path":"/test-bucket/test-key"`,
+		`"status":400`,
+		`"authz_result":"allow"`,
+		`"access_key_id":"test-key-id"`,
+		`"verb":"put"`,
+		`"key":"test-bucket/test-key"`,
+	}
+
+	for _, field := range existingFields {
+		if !strings.Contains(logOutput, field) {
+			t.Errorf("multipart log missing existing field %q\nGot: %s", field, logOutput)
+		}
+	}
+
+	// Verify it's still a single log line (not multiple lines per request)
+	lineCount := strings.Count(logOutput, "\n") - strings.Count(logOutput, "\\n")
+	if lineCount > 1 {
+		t.Errorf("expected single log line, got %d lines\nOutput: %s", lineCount, logOutput)
 	}
 }

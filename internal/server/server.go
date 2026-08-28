@@ -520,6 +520,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/key/verify", s.verifyKey)
 	mux.HandleFunc("/admin/key/rotate", s.rotateKey)
 	mux.HandleFunc("/admin/key/export", s.exportKey)
+	mux.HandleFunc("/admin/format/migrate", s.migrateFormat)      // POST=start migration, GET=progress
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
 	mux.HandleFunc("/admin/presign", s.handlePresign)
@@ -755,6 +756,106 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// migrateFormat handles format migration requests.
+// POST starts a new migration (or resumes an in-progress one).
+// GET returns the current migration progress.
+func (s *Server) migrateFormat(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s.handleMigrationProgress(w, r)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse query parameters
+	dryRun := r.URL.Query().Get("dry_run") == "true"
+	includeStr := r.URL.Query().Get("include")
+	concurrencyStr := r.URL.Query().Get("concurrency")
+
+	// Default to migrating V1 objects only
+	includeVersions := []string{"1"}
+	if includeStr != "" {
+		includeVersions = strings.Split(includeStr, ",")
+		for i, v := range includeVersions {
+			includeVersions[i] = strings.TrimSpace(v)
+		}
+	}
+
+	// Parse concurrency (default 4)
+	concurrency := 4
+	if concurrencyStr != "" {
+		if _, err := fmt.Sscanf(concurrencyStr, "%d", &concurrency); err != nil {
+			http.Error(w, "Invalid concurrency value", http.StatusBadRequest)
+			return
+		}
+		if concurrency < 1 || concurrency > 50 {
+			http.Error(w, "Concurrency must be between 1 and 50", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Get the default key for encryption/decryption
+	key := s.keyManager.DefaultKey()
+	if key == nil {
+		http.Error(w, "No encryption key available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get current write version from config
+	currentWriteVersion := uint8(2) // TODO: Get from server config
+	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, currentWriteVersion, includeVersions, s.manifest)
+
+	// Perform migration
+	result, err := migrator.Migrate(r.Context(), dryRun, concurrency)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "failed",
+			"error":  err.Error(),
+			"result": result,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(result)
+}
+
+// handleMigrationProgress returns the current migration progress.
+func (s *Server) handleMigrationProgress(w http.ResponseWriter, r *http.Request) {
+	// Get the default key for encryption/decryption
+	key := s.keyManager.DefaultKey()
+	if key == nil {
+		http.Error(w, "No encryption key available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get current write version from config
+	currentWriteVersion := uint8(2) // TODO: Get from server config
+	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, currentWriteVersion, []string{"1"}, s.manifest)
+
+	// Try to load existing state
+	state := migrator.GetState()
+	if state == nil {
+		// No migration in progress
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "no_migration",
+			"message": "No migration in progress",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(state)
+}
+
 // exportKey exports the current MEK along with B2 credentials and configuration
 // for self-contained break-glass recovery.
 func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
@@ -892,7 +993,7 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 					s.writeError(w, r, "AccessDenied", "Invalid credentials", 403)
 				}
 				// Log denied request with identity (ADR-012)
-				s.logCompletedRequest(r, start, 403, authzResult, accessKeyID, verb, objectKey)
+				s.logCompletedRequest(r, start, 403, authzResult, accessKeyID, verb, objectKey, 0)
 				return
 			}
 			accessKeyID = cred.AccessKey
@@ -917,7 +1018,7 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 				s.writeError(w, r, "AccessDenied", "Access Denied", 403)
 				s.metrics.IncRequestsTotal("acl", 403)
 				// Log denied request with identity (ADR-012)
-				s.logCompletedRequest(r, start, 403, authzResult, accessKeyID, verb, objectKey)
+				s.logCompletedRequest(r, start, 403, authzResult, accessKeyID, verb, objectKey, 0)
 				return
 			}
 			authzResult = "allow"
@@ -946,7 +1047,7 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 		s.metrics.RecordRequestDuration(r.Method, duration)
 
 		// Log completed request with identity audit fields (ADR-012)
-		s.logCompletedRequest(r, start, rw.statusCode, authzResult, accessKeyID, verb, objectKey)
+		s.logCompletedRequest(r, start, rw.statusCode, authzResult, accessKeyID, verb, objectKey, rw.bytesOut)
 	}
 }
 
@@ -954,12 +1055,20 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
+	bytesOut   int64
 }
 
 // WriteHeader captures the status code.
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Write captures bytes written.
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	n, err := rw.ResponseWriter.Write(b)
+	rw.bytesOut += int64(n)
+	return n, err
 }
 
 // isPublicPath checks if a path is public (no auth required).
@@ -1020,7 +1129,9 @@ func (s *Server) extractBucketAndKey(r *http.Request) (bucket, key string) {
 // logCompletedRequest logs a completed request with identity audit fields (ADR-012).
 // This provides per-request visibility into who (access_key_id), did what (verb),
 // to which object (key), and whether it was authorized (authz_result).
-func (s *Server) logCompletedRequest(r *http.Request, start time.Time, statusCode int, authzResult, accessKeyID, verb, objectKey string) {
+// Additional fields: error_code (from s3_error context), request_id, bytes_in, bytes_out,
+// user_agent, bucket, upload_id, part_number (for multipart operations).
+func (s *Server) logCompletedRequest(r *http.Request, start time.Time, statusCode int, authzResult, accessKeyID, verb, objectKey string, bytesOut int64) {
 	duration := time.Since(start)
 	fields := map[string]interface{}{
 		"method":       r.Method,
@@ -1044,6 +1155,45 @@ func (s *Server) logCompletedRequest(r *http.Request, start time.Time, statusCod
 		fields["range"] = rng
 	}
 
+	// Add request_id from context
+	if requestID := middleware.GetRequestID(r.Context()); requestID != "" {
+		fields["request_id"] = requestID
+	}
+
+	// Add error_code from context (set by writeError)
+	if errorCode := middleware.GetErrorCode(r.Context()); errorCode != "" {
+		fields["error_code"] = errorCode
+	}
+
+	// Add bytes_in (request body size)
+	if r.ContentLength > 0 {
+		fields["bytes_in"] = r.ContentLength
+	}
+
+	// Add bytes_out (response body size)
+	if bytesOut > 0 {
+		fields["bytes_out"] = bytesOut
+	}
+
+	// Add user_agent
+	if userAgent := r.Header.Get("User-Agent"); userAgent != "" {
+		fields["user_agent"] = userAgent
+	}
+
+	// Add bucket (extracted from path)
+	bucket, _ := s.extractBucketAndKey(r)
+	if bucket != "" {
+		fields["bucket"] = bucket
+	}
+
+	// Add multipart fields (upload_id, part_number) for multipart operations
+	if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
+		fields["upload_id"] = uploadID
+	}
+	if partNumber := r.URL.Query().Get("partNumber"); partNumber != "" {
+		fields["part_number"] = partNumber
+	}
+
 	// Log at appropriate level: denials at Warn, allows at Info
 	if authzResult == "deny-auth" || authzResult == "deny-acl" {
 		s.logger.WithFields(fields).Warn("request completed")
@@ -1060,6 +1210,10 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, code, messag
 	// Extract request IDs from context
 	requestID := middleware.GetRequestID(r.Context())
 	extendedID := middleware.GetExtendedID(r.Context())
+
+	// Store error code in context for access in logCompletedRequest
+	ctx := middleware.SetErrorCode(r.Context(), code)
+	*r = *r.WithContext(ctx)
 
 	// Log structured S3 error event before writing response
 	logS3Error(s.logger, r, code, message, statusCode)
