@@ -18,34 +18,17 @@ type KeyRoute struct {
 	KeyName string
 }
 
-// ACLEntry represents a single ACL rule for a credential.
-type ACLEntry struct {
-	Bucket string // Bucket name, "*" for all buckets
-	Prefix string // Key prefix, "*" or "" for any prefix
-
-	// Actions is the set of action verbs this rule permits, drawn from
-	// {get, put, delete, list} per ADR-012 (one verb per S3 operation:
-	// GetObject/HeadObject → get; PutObject and multipart create/upload-part/
-	// complete and CopyObject destination → put; DeleteObject(s) and
-	// AbortMultipartUpload → delete; ListObjectsV2/ListMultipartUploads →
-	// list). Membership is tested with a map lookup, e.g. entry.Actions["get"].
-	//
-	// The zero value is a nil map, which reads as an empty set (it holds no
-	// verbs). An empty set means ALL verbs are permitted: this keeps existing
-	// "bucket:prefix" ACL strings — which specify no verbs — backward
-	// compatible. Restricting a credential's verbs requires a non-empty set.
-	//
-	// parseACL populates this from the optional third ACL segment
-	// ("bucket:prefix:get+list"); an entry whose ACL string omits the segment
-	// leaves Actions nil (all verbs permitted).
-	Actions map[string]bool
-}
-
 // Credential represents an ARMOR client credential with optional ACLs.
 type Credential struct {
 	AccessKey string
 	SecretKey string
-	ACLs      []ACLEntry // Empty means full access to configured bucket
+	ACLs      []acl.ACLEntry // Empty means full access to configured bucket
+}
+
+// GetACLs returns the ACLs for this credential, implementing the interface
+// expected by acl.CheckACL to avoid import cycles.
+func (c *Credential) GetACLs() []acl.ACLEntry {
+	return c.ACLs
 }
 
 // Config holds all ARMOR configuration.
@@ -541,12 +524,12 @@ func loadNamedCredentials(cfg *Config) error {
 // verb is a parse error. When the segment is absent (or empty) the entry
 // permits all verbs — its Actions map stays nil — so existing two-segment
 // "bucket:prefix" ACL strings keep their meaning.
-func parseACL(aclStr string) ([]ACLEntry, error) {
+func parseACL(aclStr string) ([]acl.ACLEntry, error) {
 	if aclStr == "" {
 		return nil, nil
 	}
 
-	var entries []ACLEntry
+	var entries []acl.ACLEntry
 	parts := strings.Split(aclStr, ",")
 
 	for _, part := range parts {
@@ -580,7 +563,7 @@ func parseACL(aclStr string) ([]ACLEntry, error) {
 			return nil, fmt.Errorf("invalid ACL entry %q (wildcard must be a bare * or trailing /*)", part)
 		}
 
-		entry := ACLEntry{
+		entry := acl.ACLEntry{
 			Bucket: bucket,
 			Prefix: prefix,
 		}
