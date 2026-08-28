@@ -2,7 +2,6 @@
 package acl
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -114,6 +113,17 @@ var operationAction = map[string]string{
 	"ListObjectVersions":   ActionList, // ARMOR extension — object listing (GET ?versions)
 	"ListParts":            ActionList, // ARMOR extension — part listing (GET ?uploadId on object)
 	"ListBuckets":          ActionList, // ARMOR extension — bucket listing (GET /)
+}
+
+// OperationActions returns a copy of the operation -> ADR-012 verb table so
+// callers (and tests that pin the contract) can inspect it without being able
+// to mutate the package's map.
+func OperationActions() map[string]string {
+	out := make(map[string]string, len(operationAction))
+	for k, v := range operationAction {
+		out[k] = v
+	}
+	return out
 }
 
 // CopyObject verb note (ADR-012 decision 5): the PUT request itself is a Put on

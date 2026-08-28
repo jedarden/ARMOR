@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/xml"
+	"github.com/jedarden/armor/internal/acl"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,7 +61,7 @@ func NewTestServer(t *testing.T) *TestServerFixture {
 		"RESTRICTEDKEY": {
 			AccessKey: "RESTRICTEDKEY",
 			SecretKey: "RESTRICTEDSECRET1234567890123456789",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{
 					Bucket: "test-bucket",
 					Prefix: "allowed/",

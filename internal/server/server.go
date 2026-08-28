@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/jedarden/armor/internal/b2keys"
+	"github.com/jedarden/armor/internal/acl"
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
@@ -908,7 +909,7 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			objectKey = key
 			verb = ActionForRequest(r)
 
-			if err := CheckACL(cred, bucket, key, verb); err != nil {
+			if err := acl.CheckACL(cred, bucket, key, verb); err != nil {
 				authzResult = "deny-acl"
 				s.writeError(w, r, "AccessDenied", "Access Denied", 403)
 				s.metrics.IncRequestsTotal("acl", 403)
@@ -1150,7 +1151,7 @@ func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
 
 	// Check ACL for the request. Presigning mints a download (GET) URL, so the
 	// action verb under test is "get" — the caller must be permitted to read.
-	if err := CheckACL(cred, bucket, req.Key, ActionGet); err != nil {
+	if err := acl.CheckACL(cred, bucket, req.Key, acl.ActionGet); err != nil {
 		s.writeError(w, r, "AccessDenied", "Access Denied", 403)
 		return
 	}

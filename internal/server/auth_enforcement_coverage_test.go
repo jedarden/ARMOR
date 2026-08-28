@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/jedarden/armor/internal/acl"
 	"net/url"
 	"strings"
 	"testing"
@@ -38,7 +39,7 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 	sourceReadableCred := &config.Credential{
 		AccessKey: "SRCREADABLE",
 		SecretKey: "SRCREADABLESECRET1234567890123456789",
-		ACLs: []config.ACLEntry{{
+		ACLs: []acl.ACLEntry{{
 			Bucket:  "test-bucket",
 			Prefix:  "logs/",
 			Actions: map[string]bool{ActionGet: true},
@@ -49,7 +50,7 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 	destinationWritableCred := &config.Credential{
 		AccessKey: "DSTWRITABLE",
 		SecretKey: "DSTWRITABLESECRET1234567890123456789",
-		ACLs: []config.ACLEntry{{
+		ACLs: []acl.ACLEntry{{
 			Bucket:  "test-bucket",
 			Prefix:  "backups/",
 			Actions: map[string]bool{ActionPut: true},
@@ -60,13 +61,13 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 	fullAccessCred := &config.Credential{
 		AccessKey: "FULLACCESS",
 		SecretKey: "FULLACCESSSECRET123456789012345678901",
-		ACLs: nil, // Full access
+		ACLs:      nil, // Full access
 	}
 
 	credentials := map[string]*config.Credential{
-		"SRCREADABLE":   sourceReadableCred,
-		"DSTWRITABLE":   destinationWritableCred,
-		"FULLACCESS":    fullAccessCred,
+		"SRCREADABLE": sourceReadableCred,
+		"DSTWRITABLE": destinationWritableCred,
+		"FULLACCESS":  fullAccessCred,
 	}
 	auth := NewSigV4AuthWithCredentials(credentials, "us-east-005")
 
@@ -90,11 +91,11 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 		}
 
 		// Check destination ACL (Put on destination key - what wrapHandler does)
-		dstErr = CheckACL(cred, "test-bucket", dstKey, ActionPut)
+		dstErr = acl.CheckACL(cred, "test-bucket", dstKey, ActionPut)
 		dstAllowed = (dstErr == nil)
 
 		// Check source ACL (Get on source key - ADR-012 decision 5 requirement)
-		srcErr = CheckACL(cred, "test-bucket", srcKey, ActionGet)
+		srcErr = acl.CheckACL(cred, "test-bucket", srcKey, ActionGet)
 		srcAllowed = (srcErr == nil)
 
 		return
@@ -114,8 +115,8 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 		if srcAllowed {
 			t.Errorf("Source Get should be denied (credential has no Get permission), got no error")
 		}
-		if srcErr != ErrAccessDenied {
-			t.Errorf("Source Get check should return ErrAccessDenied, got: %v", srcErr)
+		if srcErr != acl.ErrAccessDenied {
+			t.Errorf("Source Get check should return acl.ErrAccessDenied, got: %v", srcErr)
 		}
 	})
 
@@ -133,8 +134,8 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 		if dstAllowed {
 			t.Errorf("Destination Put should be denied (credential has no Put permission), got no error")
 		}
-		if dstErr != ErrAccessDenied {
-			t.Errorf("Destination Put check should return ErrAccessDenied, got: %v", dstErr)
+		if dstErr != acl.ErrAccessDenied {
+			t.Errorf("Destination Put check should return acl.ErrAccessDenied, got: %v", dstErr)
 		}
 	})
 
@@ -160,7 +161,7 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 		backupsOnlyCred := &config.Credential{
 			AccessKey: "BACKUPSONLY",
 			SecretKey: "BACKUPSONLYSECRET1234567890123456",
-			ACLs: []config.ACLEntry{{
+			ACLs: []acl.ACLEntry{{
 				Bucket:  "test-bucket",
 				Prefix:  "backups/",
 				Actions: map[string]bool{ActionGet: true, ActionPut: true},
@@ -175,14 +176,14 @@ func TestCopyObjectSourceKeyAuthorization(t *testing.T) {
 		cred, _ := auth.VerifyRequest(req, nil)
 
 		// Destination Put is allowed
-		dstErr := CheckACL(cred, "test-bucket", "backups/from-logs.txt", ActionPut)
+		dstErr := acl.CheckACL(cred, "test-bucket", "backups/from-logs.txt", ActionPut)
 		if dstErr != nil {
 			t.Errorf("Destination Put on backups/ should be allowed, got: %v", dstErr)
 		}
 
 		// Source Get on logs/ must be denied
-		srcErr := CheckACL(cred, "test-bucket", "logs/source.txt", ActionGet)
-		if srcErr != ErrAccessDenied {
+		srcErr := acl.CheckACL(cred, "test-bucket", "logs/source.txt", ActionGet)
+		if srcErr != acl.ErrAccessDenied {
 			t.Errorf("Source Get on logs/ should be denied for backups/-only credential, got: %v", srcErr)
 		}
 	})
@@ -201,7 +202,7 @@ func TestDeleteObjectsBatchAuthorization(t *testing.T) {
 	backupsDeleteCred := &config.Credential{
 		AccessKey: "BACKUPSDELETE",
 		SecretKey: "BACKUPSDELETESECRET12345678901234",
-		ACLs: []config.ACLEntry{{
+		ACLs: []acl.ACLEntry{{
 			Bucket:  "test-bucket",
 			Prefix:  "backups/",
 			Actions: map[string]bool{ActionDelete: true},
@@ -212,7 +213,7 @@ func TestDeleteObjectsBatchAuthorization(t *testing.T) {
 	fullAccessCred := &config.Credential{
 		AccessKey: "FULLACCESS",
 		SecretKey: "FULLACCESSSECRET123456789012345678901",
-		ACLs: nil, // Full access
+		ACLs:      nil, // Full access
 	}
 
 	credentials := map[string]*config.Credential{
@@ -235,7 +236,7 @@ func TestDeleteObjectsBatchAuthorization(t *testing.T) {
 		}
 
 		// Check ACL for this specific key with Delete action
-		return CheckACL(cred, "test-bucket", key, ActionDelete)
+		return acl.CheckACL(cred, "test-bucket", key, ActionDelete)
 	}
 
 	t.Run("DeleteObjects allows deletion within prefix scope", func(t *testing.T) {
@@ -261,8 +262,8 @@ func TestDeleteObjectsBatchAuthorization(t *testing.T) {
 
 		for _, key := range outsideKeys {
 			err := checkDeleteObjectsKeyAuth(t, key, "BACKUPSDELETE")
-			if err != ErrAccessDenied {
-				t.Errorf("Delete permission should be denied for key %s outside backups/ scope, got: %v (want ErrAccessDenied)", key, err)
+			if err != acl.ErrAccessDenied {
+				t.Errorf("Delete permission should be denied for key %s outside backups/ scope, got: %v (want acl.ErrAccessDenied)", key, err)
 			}
 		}
 	})
@@ -286,8 +287,8 @@ func TestDeleteObjectsBatchAuthorization(t *testing.T) {
 		// Verify denied keys fail auth
 		for _, key := range deniedKeys {
 			err := checkDeleteObjectsKeyAuth(t, key, "BACKUPSDELETE")
-			if err != ErrAccessDenied {
-				t.Errorf("Denied key %s should return ErrAccessDenied, got: %v", key, err)
+			if err != acl.ErrAccessDenied {
+				t.Errorf("Denied key %s should return acl.ErrAccessDenied, got: %v", key, err)
 			}
 		}
 	})
@@ -326,7 +327,7 @@ func TestDeleteObjectsBatchAuthorization(t *testing.T) {
 		// Yet authorization must still check individual keys from the body
 		// This test pins that requirement
 		err := checkDeleteObjectsKeyAuth(t, "logs/app.log", "BACKUPSDELETE")
-		if err != ErrAccessDenied {
+		if err != acl.ErrAccessDenied {
 			t.Errorf("Even though URL is bucket-level, individual keys must be checked - logs/app.log should be denied, got: %v", err)
 		}
 	})
@@ -347,7 +348,7 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 	appendOnlyCred := &config.Credential{
 		AccessKey: "APPENDONLY",
 		SecretKey: "APPENDONLYSECRET123456789012345678",
-		ACLs: []config.ACLEntry{{
+		ACLs: []acl.ACLEntry{{
 			Bucket:  "test-bucket",
 			Prefix:  "uploads/",
 			Actions: map[string]bool{ActionPut: true, ActionList: true},
@@ -358,7 +359,7 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 	deleteOnlyCred := &config.Credential{
 		AccessKey: "DELETEONLY",
 		SecretKey: "DELETEONLYSECRET1234567890123456789",
-		ACLs: []config.ACLEntry{{
+		ACLs: []acl.ACLEntry{{
 			Bucket:  "test-bucket",
 			Prefix:  "uploads/",
 			Actions: map[string]bool{ActionDelete: true},
@@ -366,8 +367,8 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 	}
 
 	credentials := map[string]*config.Credential{
-		"APPENDONLY":  appendOnlyCred,
-		"DELETEONLY":  deleteOnlyCred,
+		"APPENDONLY": appendOnlyCred,
+		"DELETEONLY": deleteOnlyCred,
 	}
 	auth := NewSigV4AuthWithCredentials(credentials, "us-east-005")
 
@@ -389,7 +390,7 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 		}
 
 		verb := ActionForRequest(req)
-		err = CheckACL(cred, "test-bucket", key, verb)
+		err = acl.CheckACL(cred, "test-bucket", key, verb)
 		allowed = (err == nil)
 		return
 	}
@@ -409,8 +410,8 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 		if allowed {
 			t.Errorf("CreateMultipartUpload should be denied for Delete-only credential, got no error")
 		}
-		if err != ErrAccessDenied {
-			t.Errorf("Expected ErrAccessDenied, got: %v", err)
+		if err != acl.ErrAccessDenied {
+			t.Errorf("Expected acl.ErrAccessDenied, got: %v", err)
 		}
 	})
 
@@ -431,7 +432,7 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 			t.Errorf("UploadPart should map to Put verb, got: %s", verb)
 		}
 
-		aclErr := CheckACL(cred, "test-bucket", "uploads/large-file.bin", verb)
+		aclErr := acl.CheckACL(cred, "test-bucket", "uploads/large-file.bin", verb)
 		if aclErr != nil {
 			t.Errorf("UploadPart should be allowed for Put+List credential, got: %v", aclErr)
 		}
@@ -454,7 +455,7 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 			t.Errorf("CompleteMultipartUpload should map to Put verb, got: %s", verb)
 		}
 
-		aclErr := CheckACL(cred, "test-bucket", "uploads/large-file.bin", verb)
+		aclErr := acl.CheckACL(cred, "test-bucket", "uploads/large-file.bin", verb)
 		if aclErr != nil {
 			t.Errorf("CompleteMultipartUpload should be allowed for Put+List credential, got: %v", aclErr)
 		}
@@ -478,8 +479,8 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 		}
 
 		// Append-only credential (Put+List, no Delete) must be denied
-		aclErr := CheckACL(cred, "test-bucket", "uploads/large-file.bin", verb)
-		if aclErr != ErrAccessDenied {
+		aclErr := acl.CheckACL(cred, "test-bucket", "uploads/large-file.bin", verb)
+		if aclErr != acl.ErrAccessDenied {
 			t.Errorf("AbortMultipartUpload should be denied for Put+List credential (no Delete), got: %v", aclErr)
 		}
 	})
@@ -508,7 +509,7 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 		}
 
 		// ListMultipartUploads is bucket-level (no key), so ACL check uses prefix
-		aclErr := CheckACL(cred, "test-bucket", "uploads/", verb)
+		aclErr := acl.CheckACL(cred, "test-bucket", "uploads/", verb)
 		if aclErr != nil {
 			t.Errorf("ListMultipartUploads should be allowed for Put+List credential, got: %v", aclErr)
 		}
@@ -531,7 +532,7 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 			t.Errorf("ListParts should map to List verb, got: %s", verb)
 		}
 
-		aclErr := CheckACL(cred, "test-bucket", "uploads/large-file.bin", verb)
+		aclErr := acl.CheckACL(cred, "test-bucket", "uploads/large-file.bin", verb)
 		if aclErr != nil {
 			t.Errorf("ListParts should be allowed for Put+List credential, got: %v", aclErr)
 		}
@@ -551,7 +552,7 @@ func TestScopedCredentialBroadListDenial(t *testing.T) {
 	backupsListCred := &config.Credential{
 		AccessKey: "BACKUPSLIST",
 		SecretKey: "BACKUPSLISTSECRET12345678901234567",
-		ACLs: []config.ACLEntry{{
+		ACLs: []acl.ACLEntry{{
 			Bucket:  "test-bucket",
 			Prefix:  "backups/",
 			Actions: map[string]bool{ActionList: true},
@@ -562,7 +563,7 @@ func TestScopedCredentialBroadListDenial(t *testing.T) {
 	fullAccessCred := &config.Credential{
 		AccessKey: "FULLACCESS",
 		SecretKey: "FULLACCESSSECRET123456789012345678901",
-		ACLs: nil, // Full access
+		ACLs:      nil, // Full access
 	}
 
 	credentials := map[string]*config.Credential{
@@ -603,15 +604,15 @@ func TestScopedCredentialBroadListDenial(t *testing.T) {
 			// No prefix means broad list - empty key checks bucket-level access
 			key = ""
 		}
-		return CheckACL(cred, "test-bucket", key, ActionList)
+		return acl.CheckACL(cred, "test-bucket", key, ActionList)
 	}
 
 	t.Run("Broad list (no ?prefix) denied for prefix-scoped credential", func(t *testing.T) {
 		// Credential scoped to "backups/" tries to list entire bucket with no ?prefix
 		err := checkListAuth(t, "", "BACKUPSLIST")
 
-		if err != ErrAccessDenied {
-			t.Errorf("Broad list without ?prefix should be denied for prefix-scoped credential, got: %v (want ErrAccessDenied)", err)
+		if err != acl.ErrAccessDenied {
+			t.Errorf("Broad list without ?prefix should be denied for prefix-scoped credential, got: %v (want acl.ErrAccessDenied)", err)
 		}
 	})
 
@@ -637,8 +638,8 @@ func TestScopedCredentialBroadListDenial(t *testing.T) {
 		// Credential scoped to "backups/" tries to list with ?prefix=logs/
 		err := checkListAuth(t, "logs/", "BACKUPSLIST")
 
-		if err != ErrAccessDenied {
-			t.Errorf("Scoped list with ?prefix=logs/ should be denied for backups/-scoped credential, got: %v (want ErrAccessDenied)", err)
+		if err != acl.ErrAccessDenied {
+			t.Errorf("Scoped list with ?prefix=logs/ should be denied for backups/-scoped credential, got: %v (want acl.ErrAccessDenied)", err)
 		}
 	})
 
@@ -693,7 +694,7 @@ func TestScopedCredentialBroadListDenial(t *testing.T) {
 		wildcardCred := &config.Credential{
 			AccessKey: "WILDCARDLIST",
 			SecretKey: "WILDCARDLISTSECRET1234567890123456",
-			ACLs: []config.ACLEntry{{
+			ACLs: []acl.ACLEntry{{
 				Bucket:  "*",
 				Prefix:  "backups/",
 				Actions: map[string]bool{ActionList: true},
@@ -711,13 +712,13 @@ func TestScopedCredentialBroadListDenial(t *testing.T) {
 		}
 
 		// Check with empty key (broad list)
-		err = CheckACL(cred, "any-bucket", "", ActionList)
-		if err != ErrAccessDenied {
+		err = acl.CheckACL(cred, "any-bucket", "", ActionList)
+		if err != acl.ErrAccessDenied {
 			t.Errorf("Wildcard bucket credential with prefix ACL should still deny broad-list, got: %v", err)
 		}
 
 		// Scoped list should be allowed
-		err = CheckACL(cred, "any-bucket", "backups/", ActionList)
+		err = acl.CheckACL(cred, "any-bucket", "backups/", ActionList)
 		if err != nil {
 			t.Errorf("Wildcard bucket credential with prefix ACL should allow scoped list, got: %v", err)
 		}

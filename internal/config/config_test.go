@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/jedarden/armor/internal/acl"
 	"os"
 	"reflect"
 	"testing"
@@ -12,7 +13,7 @@ func TestParseACL(t *testing.T) {
 		aclStr      string
 		expectCount int
 		expectError bool
-		checkFunc   func([]ACLEntry) bool
+		checkFunc   func([]acl.ACLEntry) bool
 	}{
 		{
 			name:        "empty string - returns nil",
@@ -23,7 +24,7 @@ func TestParseACL(t *testing.T) {
 			name:        "single bucket with wildcard prefix",
 			aclStr:      "my-bucket:*",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == ""
 			},
 		},
@@ -31,7 +32,7 @@ func TestParseACL(t *testing.T) {
 			name:        "single bucket with specific prefix",
 			aclStr:      "my-bucket:data/",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == "data/"
 			},
 		},
@@ -39,7 +40,7 @@ func TestParseACL(t *testing.T) {
 			name:        "multiple entries",
 			aclStr:      "bucket-a:prefix-a/,bucket-b:prefix-b/",
 			expectCount: 2,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "bucket-a" && acls[0].Prefix == "prefix-a/" &&
 					acls[1].Bucket == "bucket-b" && acls[1].Prefix == "prefix-b/"
 			},
@@ -48,7 +49,7 @@ func TestParseACL(t *testing.T) {
 			name:        "wildcard bucket",
 			aclStr:      "*:public/",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "*" && acls[0].Prefix == "public/"
 			},
 		},
@@ -58,7 +59,7 @@ func TestParseACL(t *testing.T) {
 			name:        "two-segment defaults to all actions (nil map)",
 			aclStr:      "my-bucket:data/",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == "data/" && acls[0].Actions == nil
 			},
 		},
@@ -66,7 +67,7 @@ func TestParseACL(t *testing.T) {
 			name:        "three-segment single verb",
 			aclStr:      "mybucket:foo/:get",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "mybucket" && acls[0].Prefix == "foo/" &&
 					actionsEqual(acls[0].Actions, "get")
 			},
@@ -75,7 +76,7 @@ func TestParseACL(t *testing.T) {
 			name:        "three-segment multiple verbs plus-separated",
 			aclStr:      "mybucket:foo/:get+list",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "mybucket" && acls[0].Prefix == "foo/" &&
 					actionsEqual(acls[0].Actions, "get", "list")
 			},
@@ -84,7 +85,7 @@ func TestParseACL(t *testing.T) {
 			name:        "three-segment multiple verbs space-separated",
 			aclStr:      "mybucket:foo/:put delete",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "mybucket" && acls[0].Prefix == "foo/" &&
 					actionsEqual(acls[0].Actions, "put", "delete")
 			},
@@ -93,7 +94,7 @@ func TestParseACL(t *testing.T) {
 			name:        "three-segment mixed separators and whitespace",
 			aclStr:      "mybucket:foo/:get + list",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "mybucket" && acls[0].Prefix == "foo/" &&
 					actionsEqual(acls[0].Actions, "get", "list")
 			},
@@ -102,7 +103,7 @@ func TestParseACL(t *testing.T) {
 			name:        "three-segment all four verbs",
 			aclStr:      "bucket:/:get+put+delete+list",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "bucket" && acls[0].Prefix == "/" &&
 					actionsEqual(acls[0].Actions, "get", "put", "delete", "list")
 			},
@@ -113,7 +114,7 @@ func TestParseACL(t *testing.T) {
 			name:        "trailing empty segment defaults to all actions",
 			aclStr:      "bucket:prefix/:",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "bucket" && acls[0].Prefix == "prefix/" && acls[0].Actions == nil
 			},
 		},
@@ -122,7 +123,7 @@ func TestParseACL(t *testing.T) {
 			name:        "mixed scoped and unscoped entries",
 			aclStr:      "bucket-a:data/:get+list,bucket-b:other/",
 			expectCount: 2,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "bucket-a" && acls[0].Prefix == "data/" &&
 					actionsEqual(acls[0].Actions, "get", "list") &&
 					acls[1].Bucket == "bucket-b" && acls[1].Prefix == "other/" && acls[1].Actions == nil
@@ -158,7 +159,7 @@ func TestParseACL(t *testing.T) {
 			name:        "trailing wildcard normalized to prefix",
 			aclStr:      "my-bucket:data/*",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == "data/"
 			},
 		},
@@ -166,7 +167,7 @@ func TestParseACL(t *testing.T) {
 			name:        "trailing wildcard with actions",
 			aclStr:      "my-bucket:data/*:get+list",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == "data/" &&
 					actionsEqual(acls[0].Actions, "get", "list")
 			},
@@ -175,7 +176,7 @@ func TestParseACL(t *testing.T) {
 			name:        "explicit prefix with trailing slash unchanged",
 			aclStr:      "my-bucket:data/",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == "data/"
 			},
 		},
@@ -183,7 +184,7 @@ func TestParseACL(t *testing.T) {
 			name:        "bare wildcard normalized to empty prefix",
 			aclStr:      "my-bucket:*",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == ""
 			},
 		},
@@ -211,7 +212,7 @@ func TestParseACL(t *testing.T) {
 			name:        "wildcard only in bucket (valid)",
 			aclStr:      "*:data/",
 			expectCount: 1,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "*" && acls[0].Prefix == "data/"
 			},
 		},
@@ -219,7 +220,7 @@ func TestParseACL(t *testing.T) {
 			name:        "mixed wildcard and explicit prefix entries",
 			aclStr:      "bucket:*:get,bucket:data/*:list,bucket:specific/",
 			expectCount: 3,
-			checkFunc: func(acls []ACLEntry) bool {
+			checkFunc: func(acls []acl.ACLEntry) bool {
 				return acls[0].Bucket == "bucket" && acls[0].Prefix == "" &&
 					actionsEqual(acls[0].Actions, "get") &&
 					acls[1].Bucket == "bucket" && acls[1].Prefix == "data/" &&

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/xml"
+	"github.com/jedarden/armor/internal/acl"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +39,7 @@ func SetupTestServer(t *testing.T) *TestServer {
 		"LIMITEDKEY": {
 			AccessKey: "LIMITEDKEY",
 			SecretKey: "LIMITEDSECRET123456789012345678901",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "test-bucket", Prefix: "limited/"},
 			},
 		},

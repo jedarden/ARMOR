@@ -1,18 +1,17 @@
-// Package handlers tests S3 operation handlers.
-package handlers
+// Package handlers_test tests S3 operation handlers.
+package handlers_test
 
 import (
 	"bytes"
 	"context"
 	"encoding/xml"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/jedarden/armor/internal/backend"
+	"github.com/jedarden/armor/internal/acl"
 	"github.com/jedarden/armor/internal/config"
-	"github.com/jedarden/armor/internal/server"
+	"github.com/jedarden/armor/internal/server/handlers"
 )
 
 // TestDeleteObjects_PerKeyACLAEnforcement verifies that DeleteObjects enforces
@@ -20,14 +19,14 @@ import (
 func TestDeleteObjects_PerKeyACLAEnforcement(t *testing.T) {
 	// Create test backend
 	be := &mockDeleteBackend{
+		mockBackend: newMockBackend(),
 		deletedKeys: make(map[string]bool),
 	}
 
-	// Create handlers
-	h := &Handlers{
-		backend: be,
-		config:  &config.Config{},
-	}
+	// Create handlers through the exported constructor, reusing the shared
+	// test setup for caches and key manager.
+	cfg, _, cache, footerCache, km := testSetup(t)
+	h := handlers.New(cfg, be, cache, footerCache, km, nil)
 
 	// Test credentials with different ACL scopes
 	credFullAccess := &config.Credential{
@@ -39,7 +38,7 @@ func TestDeleteObjects_PerKeyACLAEnforcement(t *testing.T) {
 	credPrefixOnly := &config.Credential{
 		AccessKey: "prefix_key",
 		SecretKey: "prefix_secret",
-		ACLs: []config.ACLEntry{
+		ACLs: []acl.ACLEntry{
 			{
 				Bucket: "test-bucket",
 				Prefix: "allowed/",
@@ -50,7 +49,7 @@ func TestDeleteObjects_PerKeyACLAEnforcement(t *testing.T) {
 	credNoAccess := &config.Credential{
 		AccessKey: "no_access_key",
 		SecretKey: "no_secret",
-		ACLs: []config.ACLEntry{
+		ACLs: []acl.ACLEntry{
 			{
 				Bucket: "other-bucket",
 				Prefix: "",
@@ -59,11 +58,11 @@ func TestDeleteObjects_PerKeyACLAEnforcement(t *testing.T) {
 	}
 
 	tests := []struct {
-		name               string
-		credential         *config.Credential
-		keysToDelete       []string
-		expectedAllowed    []string
-		expectedDenied     []string
+		name            string
+		credential      *config.Credential
+		keysToDelete    []string
+		expectedAllowed []string
+		expectedDenied  []string
 	}{
 		{
 			name:       "Full access allows all keys",
@@ -161,7 +160,7 @@ func TestDeleteObjects_PerKeyACLAEnforcement(t *testing.T) {
 
 			// Store credential in context
 			if tt.credential != nil {
-				req = req.WithContext(server.WithCredential(req.Context(), tt.credential))
+				req = req.WithContext(acl.WithCredential(req.Context(), tt.credential))
 			}
 
 			w := httptest.NewRecorder()
@@ -240,65 +239,26 @@ func TestDeleteObjects_PerKeyACLAEnforcement(t *testing.T) {
 	}
 }
 
-// mockDeleteBackend is a mock backend that tracks which keys were deleted.
+// mockDeleteBackend embeds the package's full mock backend and records
+// which keys DeleteObjects actually removed, so the test can assert per-key
+// ACL enforcement without re-implementing the whole Backend interface.
 type mockDeleteBackend struct {
+	*mockBackend
 	deletedKeys map[string]bool
-}
-
-func (m *mockDeleteBackend) Get(ctx context.Context, bucket, key string) (io.ReadCloser, int64, error) {
-	return nil, 0, backend.ErrNotFound
-}
-
-func (m *mockDeleteBackend) Put(ctx context.Context, bucket, key string, data io.Reader, size int64, meta map[string]string) error {
-	return nil
 }
 
 func (m *mockDeleteBackend) Delete(ctx context.Context, bucket, key string) error {
 	m.deletedKeys[key] = true
-	return nil
+	return m.mockBackend.Delete(ctx, bucket, key)
 }
 
 func (m *mockDeleteBackend) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
 	for _, key := range keys {
 		m.deletedKeys[key] = true
 	}
-	return nil
+	return m.mockBackend.DeleteObjects(ctx, bucket, keys)
 }
 
-// Implement other backend interface methods as stubs
-func (m *mockDeleteBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {
-	return nil, backend.ErrNotFound
-}
-
-func (m *mockDeleteBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
-	return nil
-}
-
-func (m *mockDeleteBackend) List(ctx context.Context, bucket, prefix, delimiter, token string, maxKeys int) (*backend.ListResult, error) {
-	return &backend.ListResult{}, nil
-}
-
-func (m *mockDeleteBackend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
-	return nil, backend.ErrNotFound
-}
-
-func (m *mockDeleteBackend) ListBuckets(ctx context.Context) ([]string, error) {
-	return nil, nil
-}
-
-func (m *mockDeleteBackend) HeadBucket(ctx context.Context, bucket string) error {
-	return nil
-}
-
-func (m *mockDeleteBackend) CreateBucket(ctx context.Context, bucket string) error {
-	return nil
-}
-
-func (m *mockDeleteBackend) DeleteBucket(ctx context.Context, bucket string) error {
-	return nil
-}
-
-// stringSlicesEqual compares two string slices for equality.
 func stringSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/xml"
+	"github.com/jedarden/armor/internal/acl"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,7 +28,7 @@ func TestComprehensiveErrorVerification(t *testing.T) {
 		"RESTRICTEDKEY": {
 			AccessKey: "RESTRICTEDKEY",
 			SecretKey: "RESTRICTEDSECRET1234567890123456789",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{
 					Bucket: "test-bucket",
 					Prefix: "allowed/",

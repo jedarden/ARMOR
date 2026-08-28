@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
+	"github.com/jedarden/armor/internal/acl"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,7 +38,7 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 		name        string
 		aclStr      string
 		expectError bool
-		validateACL func(t *testing.T, acls []config.ACLEntry)
+		validateACL func(t *testing.T, acls []acl.ACLEntry)
 	}{
 		{
 			name:        "empty ACL string",
@@ -45,10 +46,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:   "single entry no verbs (backward compat)",
-			aclStr: "mybucket:logs/*",
+			name:        "single entry no verbs (backward compat)",
+			aclStr:      "mybucket:logs/*",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 1 {
 					t.Fatalf("expected 1 ACL entry, got %d", len(acls))
 				}
@@ -65,10 +66,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			},
 		},
 		{
-			name:   "single entry with get verb",
-			aclStr: "mybucket:readonly/*:get",
+			name:        "single entry with get verb",
+			aclStr:      "mybucket:readonly/*:get",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 1 {
 					t.Fatalf("expected 1 ACL entry, got %d", len(acls))
 				}
@@ -88,10 +89,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			},
 		},
 		{
-			name:   "single entry with put+list verbs (append-only)",
-			aclStr: "mybucket:backups/*:put+list",
+			name:        "single entry with put+list verbs (append-only)",
+			aclStr:      "mybucket:backups/*:put+list",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 1 {
 					t.Fatalf("expected 1 ACL entry, got %d", len(acls))
 				}
@@ -111,10 +112,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			},
 		},
 		{
-			name:   "single entry with space-separated verbs",
-			aclStr: "mybucket:data/*:get list",
+			name:        "single entry with space-separated verbs",
+			aclStr:      "mybucket:data/*:get list",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 1 {
 					t.Fatalf("expected 1 ACL entry, got %d", len(acls))
 				}
@@ -128,10 +129,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			},
 		},
 		{
-			name:   "single entry with all four verbs",
-			aclStr: "mybucket:admin/*:get+put+delete+list",
+			name:        "single entry with all four verbs",
+			aclStr:      "mybucket:admin/*:get+put+delete+list",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 1 {
 					t.Fatalf("expected 1 ACL entry, got %d", len(acls))
 				}
@@ -142,10 +143,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			},
 		},
 		{
-			name:   "multiple entries with different verbs",
-			aclStr: "bucket-a:data/*:get,bucket-b:logs/*:put+list",
+			name:        "multiple entries with different verbs",
+			aclStr:      "bucket-a:data/*:get,bucket-b:logs/*:put+list",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 2 {
 					t.Fatalf("expected 2 ACL entries, got %d", len(acls))
 				}
@@ -167,10 +168,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			},
 		},
 		{
-			name:   "wildcard bucket with verbs",
-			aclStr: "*:public/*:get+list",
+			name:        "wildcard bucket with verbs",
+			aclStr:      "*:public/*:get+list",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 1 {
 					t.Fatalf("expected 1 ACL entry, got %d", len(acls))
 				}
@@ -187,10 +188,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			},
 		},
 		{
-			name:   "empty prefix with verbs",
-			aclStr: "mybucket::get",
+			name:        "empty prefix with verbs",
+			aclStr:      "mybucket::get",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 1 {
 					t.Fatalf("expected 1 ACL entry, got %d", len(acls))
 				}
@@ -207,10 +208,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			},
 		},
 		{
-			name:   "wildcard prefix with verbs",
-			aclStr: "mybucket:*:put+delete",
+			name:        "wildcard prefix with verbs",
+			aclStr:      "mybucket:*:put+delete",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 1 {
 					t.Fatalf("expected 1 ACL entry, got %d", len(acls))
 				}
@@ -242,10 +243,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:   "mixed separators (plus and space)",
-			aclStr: "mybucket:backups/*:put+list get",
+			name:        "mixed separators (plus and space)",
+			aclStr:      "mybucket:backups/*:put+list get",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 1 {
 					t.Fatalf("expected 1 ACL entry, got %d", len(acls))
 				}
@@ -256,10 +257,10 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 			},
 		},
 		{
-			name:   "multi-bucket ACL with different scopes",
-			aclStr: "bucket-primary:*:get+put+delete+list,bucket-audit:logs/*:get+list",
+			name:        "multi-bucket ACL with different scopes",
+			aclStr:      "bucket-primary:*:get+put+delete+list,bucket-audit:logs/*:get+list",
 			expectError: false,
-			validateACL: func(t *testing.T, acls []config.ACLEntry) {
+			validateACL: func(t *testing.T, acls []acl.ACLEntry) {
 				if len(acls) != 2 {
 					t.Fatalf("expected 2 ACL entries, got %d", len(acls))
 				}
@@ -313,12 +314,12 @@ func TestNamedCredentialsACLParsing(t *testing.T) {
 }
 
 // parseACL is exported from internal/config for testing - this mirrors that implementation
-func parseACL(aclStr string) ([]config.ACLEntry, error) {
+func parseACL(aclStr string) ([]acl.ACLEntry, error) {
 	if aclStr == "" {
 		return nil, fmt.Errorf("ACL string contains no valid entries")
 	}
 
-	var entries []config.ACLEntry
+	var entries []acl.ACLEntry
 	parts := strings.Split(aclStr, ",")
 
 	for _, part := range parts {
@@ -344,7 +345,7 @@ func parseACL(aclStr string) ([]config.ACLEntry, error) {
 			prefix = ""
 		}
 
-		entry := config.ACLEntry{
+		entry := acl.ACLEntry{
 			Bucket: bucket,
 			Prefix: prefix,
 		}
@@ -401,7 +402,7 @@ func TestAppendOnlyWriterPattern(t *testing.T) {
 		"BACKUPWRITER": {
 			AccessKey: "BACKUPWRITER",
 			SecretKey: "BACKUPSECRET1234567890123456789012",
-			ACLs: []config.ACLEntry{{
+			ACLs: []acl.ACLEntry{{
 				Bucket:  "test-bucket",
 				Prefix:  "backups/",
 				Actions: map[string]bool{ActionPut: true, ActionList: true},
@@ -449,13 +450,13 @@ func TestAppendOnlyWriterPattern(t *testing.T) {
 			}
 
 			verb := ActionForRequest(req)
-			err = CheckACL(cred, "test-bucket", tt.key, verb)
+			err = acl.CheckACL(cred, "test-bucket", tt.key, verb)
 
 			if tt.expectAllow && err != nil {
 				t.Errorf("expected ACL allow, got denial: %v (verb=%s)", err, verb)
 			}
-			if !tt.expectAllow && err != ErrAccessDenied {
-				t.Errorf("expected ACL denial (ErrAccessDenied), got: %v (verb=%s)", err, verb)
+			if !tt.expectAllow && err != acl.ErrAccessDenied {
+				t.Errorf("expected ACL denial (acl.ErrAccessDenied), got: %v (verb=%s)", err, verb)
 			}
 		})
 	}
@@ -469,7 +470,7 @@ func TestAppendOnlyWriterPattern(t *testing.T) {
 		}
 
 		verb := ActionForRequest(req)
-		err = CheckACL(cred, "test-bucket", "backups/db.dump", verb)
+		err = acl.CheckACL(cred, "test-bucket", "backups/db.dump", verb)
 
 		// In v1, PutObject overwrites are permitted (accepted residual risk)
 		if err != nil {
@@ -484,7 +485,7 @@ func TestReadOnlyWriterPattern(t *testing.T) {
 		"READONLY": {
 			AccessKey: "READONLY",
 			SecretKey: "READONLYSECRET123456789012345678",
-			ACLs: []config.ACLEntry{{
+			ACLs: []acl.ACLEntry{{
 				Bucket:  "test-bucket",
 				Prefix:  "public/",
 				Actions: map[string]bool{ActionGet: true, ActionList: true},
@@ -523,12 +524,12 @@ func TestReadOnlyWriterPattern(t *testing.T) {
 			}
 
 			verb := ActionForRequest(req)
-			err = CheckACL(cred, "test-bucket", tt.key, verb)
+			err = acl.CheckACL(cred, "test-bucket", tt.key, verb)
 
 			if tt.expectAllow && err != nil {
 				t.Errorf("expected ACL allow, got denial: %v", err)
 			}
-			if !tt.expectAllow && err != ErrAccessDenied {
+			if !tt.expectAllow && err != acl.ErrAccessDenied {
 				t.Errorf("expected ACL denial, got: %v", err)
 			}
 		})
@@ -541,7 +542,7 @@ func TestDeleteOnlyWriterPattern(t *testing.T) {
 		"CLEANUP": {
 			AccessKey: "CLEANUP",
 			SecretKey: "CLEANUPSECRET1234567890123456789",
-			ACLs: []config.ACLEntry{{
+			ACLs: []acl.ACLEntry{{
 				Bucket:  "test-bucket",
 				Prefix:  "temp/",
 				Actions: map[string]bool{ActionDelete: true},
@@ -582,12 +583,12 @@ func TestDeleteOnlyWriterPattern(t *testing.T) {
 			}
 
 			verb := ActionForRequest(req)
-			err = CheckACL(cred, "test-bucket", tt.key, verb)
+			err = acl.CheckACL(cred, "test-bucket", tt.key, verb)
 
 			if tt.expectAllow && err != nil {
 				t.Errorf("expected ACL allow, got denial: %v", err)
 			}
-			if !tt.expectAllow && err != ErrAccessDenied {
+			if !tt.expectAllow && err != acl.ErrAccessDenied {
 				t.Errorf("expected ACL denial, got: %v", err)
 			}
 		})
@@ -601,7 +602,7 @@ func TestMultiBucketACLScope(t *testing.T) {
 		"CROSSBUCKET": {
 			AccessKey: "CROSSBUCKET",
 			SecretKey: "CROSSSECRET12345678901234567890123",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "bucket-primary", Prefix: "", Actions: map[string]bool{ActionGet: true, ActionPut: true, ActionDelete: true, ActionList: true}},
 				{Bucket: "bucket-audit", Prefix: "logs/", Actions: map[string]bool{ActionGet: true, ActionList: true}},
 				{Bucket: "*", Prefix: "public/", Actions: map[string]bool{ActionGet: true}},
@@ -644,12 +645,12 @@ func TestMultiBucketACLScope(t *testing.T) {
 			}
 
 			verb := ActionForRequest(req)
-			err = CheckACL(cred, tt.bucket, tt.key, verb)
+			err = acl.CheckACL(cred, tt.bucket, tt.key, verb)
 
 			if tt.expectAllow && err != nil {
 				t.Errorf("expected ACL allow, got denial: %v", err)
 			}
-			if !tt.expectAllow && err != ErrAccessDenied {
+			if !tt.expectAllow && err != acl.ErrAccessDenied {
 				t.Errorf("expected ACL denial, got: %v", err)
 			}
 		})
@@ -662,7 +663,7 @@ func TestWildcardBucketWithPrefix(t *testing.T) {
 		"PUBLICREADER": {
 			AccessKey: "PUBLICREADER",
 			SecretKey: "PUBLICSECRET123456789012345678901",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "*", Prefix: "public/", Actions: map[string]bool{ActionGet: true, ActionList: true}},
 			},
 		},
@@ -693,12 +694,12 @@ func TestWildcardBucketWithPrefix(t *testing.T) {
 			}
 
 			verb := ActionForRequest(req)
-			err = CheckACL(cred, tt.bucket, tt.key, verb)
+			err = acl.CheckACL(cred, tt.bucket, tt.key, verb)
 
 			if tt.expectAllow && err != nil {
 				t.Errorf("expected ACL allow, got denial: %v", err)
 			}
-			if !tt.expectAllow && err != ErrAccessDenied {
+			if !tt.expectAllow && err != acl.ErrAccessDenied {
 				t.Errorf("expected ACL denial, got: %v", err)
 			}
 		})
@@ -712,7 +713,7 @@ func TestBackwardCompatibleACLs(t *testing.T) {
 		"LEGACY": {
 			AccessKey: "LEGACY",
 			SecretKey: "LEGACYSECRET12345678901234567890",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "test-bucket", Prefix: "legacy/"}, // No Actions = all verbs permitted
 			},
 		},
@@ -741,7 +742,7 @@ func TestBackwardCompatibleACLs(t *testing.T) {
 			}
 
 			verb := ActionForRequest(req)
-			err = CheckACL(cred, "test-bucket", tt.key, verb)
+			err = acl.CheckACL(cred, "test-bucket", tt.key, verb)
 
 			if err != nil {
 				t.Errorf("backward-compatible ACL (no verbs) should allow %s, got denial: %v", tt.name, err)
@@ -784,7 +785,7 @@ func TestEmptyACLGrantsFullAccess(t *testing.T) {
 			}
 
 			verb := ActionForRequest(req)
-			err = CheckACL(cred, "any-bucket", tt.key, verb)
+			err = acl.CheckACL(cred, "any-bucket", tt.key, verb)
 
 			if err != nil {
 				t.Errorf("empty ACL (nil) should grant full access for %s, got denial: %v", tt.name, err)
@@ -792,7 +793,6 @@ func TestEmptyACLGrantsFullAccess(t *testing.T) {
 		})
 	}
 }
-
 
 // TestACLEndToEndIntegration tests ACL enforcement through a full HTTP server.
 func TestACLEndToEndIntegration(t *testing.T) {
@@ -806,7 +806,7 @@ func TestACLEndToEndIntegration(t *testing.T) {
 		"BACKUPWRITER": {
 			AccessKey: "BACKUPWRITER",
 			SecretKey: "BACKUPSECRET1234567890123456789012",
-			ACLs: []config.ACLEntry{{
+			ACLs: []acl.ACLEntry{{
 				Bucket:  "test-bucket",
 				Prefix:  "backups/",
 				Actions: map[string]bool{ActionPut: true, ActionList: true},
@@ -815,7 +815,7 @@ func TestACLEndToEndIntegration(t *testing.T) {
 		"READONLY": {
 			AccessKey: "READONLY",
 			SecretKey: "READONLYSECRET123456789012345678",
-			ACLs: []config.ACLEntry{{
+			ACLs: []acl.ACLEntry{{
 				Bucket:  "test-bucket",
 				Prefix:  "readonly/",
 				Actions: map[string]bool{ActionGet: true, ActionList: true},
@@ -890,13 +890,13 @@ func TestACLEndToEndIntegration(t *testing.T) {
 	// Test read-only pattern
 	t.Run("read-only pattern end-to-end", func(t *testing.T) {
 		tests := []struct {
-			name        string
-			accessKey   string
-			secretKey   string
-			method      string
-			path        string
-			body        []byte
-			expectCode  int
+			name       string
+			accessKey  string
+			secretKey  string
+			method     string
+			path       string
+			body       []byte
+			expectCode int
 		}{
 			{"readonly can LIST", "READONLY", "READONLYSECRET123456789012345678", "GET", "/test-bucket?prefix=readonly/", nil, 200},
 			{"readonly cannot PUT", "READONLY", "READONLYSECRET123456789012345678", "PUT", "/test-bucket/readonly/file", []byte("data"), 403},
@@ -1004,4 +1004,3 @@ func makeRequestForE2E(t *testing.T, ts *httptest.Server, req *http.Request) *ht
 
 	return resp
 }
-

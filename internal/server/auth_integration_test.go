@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/jedarden/armor/internal/acl"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,7 +30,7 @@ func TestAuthIntegration(t *testing.T) {
 		"LIMITEDKEY": {
 			AccessKey: "LIMITEDKEY",
 			SecretKey: "LIMITEDSECRET123456789012345678901",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "test-bucket", Prefix: "limited/"},
 			},
 		},
@@ -129,7 +130,7 @@ func TestAuthIntegration(t *testing.T) {
 			t.Fatalf("Authentication failed: %v", err)
 		}
 
-		err = CheckACL(cred, "test-bucket", "limited/test-key", ActionGet)
+		err = acl.CheckACL(cred, "test-bucket", "limited/test-key", ActionGet)
 		if err != nil {
 			t.Errorf("ACL check failed for allowed path: %v", err)
 		}
@@ -142,9 +143,9 @@ func TestAuthIntegration(t *testing.T) {
 			t.Fatalf("Authentication failed: %v", err)
 		}
 
-		err = CheckACL(cred, "test-bucket", "other-key", ActionGet)
-		if err != ErrAccessDenied {
-			t.Errorf("Expected ErrAccessDenied, got %v", err)
+		err = acl.CheckACL(cred, "test-bucket", "other-key", ActionGet)
+		if err != acl.ErrAccessDenied {
+			t.Errorf("Expected acl.ErrAccessDenied, got %v", err)
 		}
 	})
 
@@ -154,7 +155,7 @@ func TestAuthIntegration(t *testing.T) {
 			"STARKEY": {
 				AccessKey: "STARKEY",
 				SecretKey: "STARSECRET1234567890123456789012345",
-				ACLs: []config.ACLEntry{
+				ACLs: []acl.ACLEntry{
 					{Bucket: "*", Prefix: ""},
 				},
 			},
@@ -167,7 +168,7 @@ func TestAuthIntegration(t *testing.T) {
 			t.Fatalf("Authentication failed: %v", err)
 		}
 
-		err = CheckACL(cred, "any-bucket", "any-key", ActionGet)
+		err = acl.CheckACL(cred, "any-bucket", "any-key", ActionGet)
 		if err != nil {
 			t.Errorf("Wildcard ACL check failed: %v", err)
 		}
@@ -258,7 +259,7 @@ func TestACLActionVerbEnforcement(t *testing.T) {
 		"BACKUPKEY": {
 			AccessKey: "BACKUPKEY",
 			SecretKey: "BACKUPSECRET1234567890123456789012",
-			ACLs: []config.ACLEntry{{
+			ACLs: []acl.ACLEntry{{
 				Bucket:  "test-bucket",
 				Prefix:  "backups/",
 				Actions: map[string]bool{ActionPut: true, ActionList: true},
@@ -278,7 +279,7 @@ func TestACLActionVerbEnforcement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("SigV4 verification failed: %v", err)
 		}
-		return CheckACL(cred, "test-bucket", key, ActionForRequest(req))
+		return acl.CheckACL(cred, "test-bucket", key, ActionForRequest(req))
 	}
 
 	// Append-only role permits writes and listings.
@@ -297,7 +298,7 @@ func TestACLActionVerbEnforcement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("SigV4 verification failed: %v", err)
 		}
-		if err := CheckACL(cred, "test-bucket", "backups/", ActionList); err != nil {
+		if err := acl.CheckACL(cred, "test-bucket", "backups/", ActionList); err != nil {
 			t.Errorf("ListObjectsV2 should be allowed for append-only role, got: %v", err)
 		}
 	})
@@ -306,14 +307,14 @@ func TestACLActionVerbEnforcement(t *testing.T) {
 	// prefix but cannot exfiltrate or destroy what it wrote.
 	t.Run("append-only denies exfiltration (GetObject)", func(t *testing.T) {
 		err := checkSigned(t, "GET", "/test-bucket/backups/db.dump", "backups/db.dump")
-		if err != ErrAccessDenied {
+		if err != acl.ErrAccessDenied {
 			t.Errorf("GetObject should be denied for append-only role, got: %v", err)
 		}
 	})
 
 	t.Run("append-only denies destruction (DeleteObject)", func(t *testing.T) {
 		err := checkSigned(t, "DELETE", "/test-bucket/backups/db.dump", "backups/db.dump")
-		if err != ErrAccessDenied {
+		if err != acl.ErrAccessDenied {
 			t.Errorf("DeleteObject should be denied for append-only role, got: %v", err)
 		}
 	})

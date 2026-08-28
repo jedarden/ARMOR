@@ -2226,7 +2226,7 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 	// Retrieve credential from context for per-key ACL checks.
 	// The credential is stored in wrapHandler after successful authentication.
 	// For public endpoints or when auth is disabled, cred may be nil.
-	cred := CredentialFromContext(ctx)
+	cred := acl.CredentialFromContext(ctx)
 
 	// Parse the DeleteObjects request XML
 	type Object struct {

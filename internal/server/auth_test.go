@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"fmt"
+	"github.com/jedarden/armor/internal/acl"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -568,7 +569,7 @@ func TestVerifyRequest_WrongSecretAnyRegion(t *testing.T) {
 func TestCheckACL(t *testing.T) {
 	tests := []struct {
 		name        string
-		acl         []config.ACLEntry
+		acl         []acl.ACLEntry
 		bucket      string
 		key         string
 		verb        string // ADR-012 verb under test; "" defaults to ActionGet below
@@ -583,7 +584,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "exact bucket match",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: ""},
 			},
 			bucket:      "my-bucket",
@@ -592,7 +593,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "bucket with prefix match",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: "data/"},
 			},
 			bucket:      "my-bucket",
@@ -601,7 +602,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "bucket with prefix no match",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: "data/"},
 			},
 			bucket:      "my-bucket",
@@ -610,7 +611,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "wildcard bucket",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "*", Prefix: "public/"},
 			},
 			bucket:      "any-bucket",
@@ -619,7 +620,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "multiple ACLs - first matches",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "bucket-a", Prefix: "data/"},
 				{Bucket: "bucket-b", Prefix: "logs/"},
 			},
@@ -629,7 +630,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "multiple ACLs - second matches",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "bucket-a", Prefix: "data/"},
 				{Bucket: "bucket-b", Prefix: "logs/"},
 			},
@@ -639,7 +640,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "multiple ACLs - none match",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "bucket-a", Prefix: "data/"},
 				{Bucket: "bucket-b", Prefix: "logs/"},
 			},
@@ -649,7 +650,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "empty prefix allows any key",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: ""},
 			},
 			bucket:      "my-bucket",
@@ -658,7 +659,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "wrong bucket",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: ""},
 			},
 			bucket:      "other-bucket",
@@ -668,7 +669,7 @@ func TestCheckACL(t *testing.T) {
 		// --- verb-specific enforcement (ADR-012 action verbs) ---
 		{
 			name: "verb granted by Actions set",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: "", Actions: map[string]bool{"get": true}},
 			},
 			bucket: "my-bucket", key: "any/key", verb: ActionGet,
@@ -676,7 +677,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "verb denied by Actions set",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: "", Actions: map[string]bool{"get": true}},
 			},
 			bucket: "my-bucket", key: "any/key", verb: ActionPut,
@@ -684,7 +685,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "multiple verbs granted",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: "", Actions: map[string]bool{"get": true, "list": true}},
 			},
 			bucket: "my-bucket", key: "any/key", verb: ActionList,
@@ -692,7 +693,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "multiple verbs denied",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: "", Actions: map[string]bool{"get": true, "list": true}},
 			},
 			bucket: "my-bucket", key: "any/key", verb: ActionDelete,
@@ -700,7 +701,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "nil Actions permits any verb (backward compat)",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: ""},
 			},
 			bucket: "my-bucket", key: "any/key", verb: ActionDelete,
@@ -708,7 +709,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "verb scoping is per entry — unscoped entry covers other buckets",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "bucket-a", Prefix: "", Actions: map[string]bool{"get": true}},
 				{Bucket: "bucket-b", Prefix: ""},
 			},
@@ -717,7 +718,7 @@ func TestCheckACL(t *testing.T) {
 		},
 		{
 			name: "prefix mismatch denies before verb is considered",
-			acl: []config.ACLEntry{
+			acl: []acl.ACLEntry{
 				{Bucket: "my-bucket", Prefix: "data/", Actions: map[string]bool{"get": true}},
 			},
 			bucket: "my-bucket", key: "other/file.txt", verb: ActionGet,
@@ -737,7 +738,7 @@ func TestCheckACL(t *testing.T) {
 			if verb == "" {
 				verb = ActionGet
 			}
-			err := CheckACL(cred, tt.bucket, tt.key, verb)
+			err := acl.CheckACL(cred, tt.bucket, tt.key, verb)
 			if tt.expectError && err == nil {
 				t.Error("expected error, got nil")
 			}

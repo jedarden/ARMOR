@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/jedarden/armor/internal/acl"
 )
 
 // TestDocumentationACLs verifies that every ACL example in README.md and
@@ -18,13 +20,13 @@ func TestDocumentationACLs(t *testing.T) {
 		name        string
 		aclString   string
 		description string // What the prose claims this grants
-		validator   func([]ACLEntry) bool
+		validator   func([]acl.ACLEntry) bool
 	}{
 		{
 			name:        "README line 206 - readonly credential",
 			aclString:   "mybucket:readonly/*",
 			description: "Grants read-only access to mybucket:readonly/ prefix (all verbs when no action segment)",
-			validator: func(acls []ACLEntry) bool {
+			validator: func(acls []acl.ACLEntry) bool {
 				if len(acls) != 1 {
 					return false
 				}
@@ -37,7 +39,7 @@ func TestDocumentationACLs(t *testing.T) {
 			name:        "README line 211 - writer credential with two buckets",
 			aclString:   "mybucket:*,otherbucket:uploads/*",
 			description: "Grants full access to mybucket (all keys) and otherbucket:uploads/ prefix",
-			validator: func(acls []ACLEntry) bool {
+			validator: func(acls []acl.ACLEntry) bool {
 				if len(acls) != 2 {
 					return false
 				}
@@ -54,7 +56,7 @@ func TestDocumentationACLs(t *testing.T) {
 			name:        "README line 238 - logs credential",
 			aclString:   "mybucket:logs/*",
 			description: "Grants all verbs on mybucket:logs/ prefix",
-			validator: func(acls []ACLEntry) bool {
+			validator: func(acls []acl.ACLEntry) bool {
 				if len(acls) != 1 {
 					return false
 				}
@@ -67,7 +69,7 @@ func TestDocumentationACLs(t *testing.T) {
 			name:        "README line 241 - readonly with explicit get+list verbs",
 			aclString:   "mybucket:readonly/*:get+list",
 			description: "Grants only GET and LIST on mybucket:readonly/ prefix",
-			validator: func(acls []ACLEntry) bool {
+			validator: func(acls []acl.ACLEntry) bool {
 				if len(acls) != 1 {
 					return false
 				}
@@ -84,7 +86,7 @@ func TestDocumentationACLs(t *testing.T) {
 			name:        "README line 244 - backup append-only writer",
 			aclString:   "mybucket:backups/*:put+list",
 			description: "Grants only PUT and LIST on mybucket:backups/ (append-only backup writer)",
-			validator: func(acls []ACLEntry) bool {
+			validator: func(acls []acl.ACLEntry) bool {
 				if len(acls) != 1 {
 					return false
 				}
@@ -101,7 +103,7 @@ func TestDocumentationACLs(t *testing.T) {
 			name:        "README line 254 - backup writer credential",
 			aclString:   "mybucket:backups/*:put+list",
 			description: "Grants only PUT and LIST on mybucket:backups/ (append-only backup writer)",
-			validator: func(acls []ACLEntry) bool {
+			validator: func(acls []acl.ACLEntry) bool {
 				if len(acls) != 1 {
 					return false
 				}
@@ -118,7 +120,7 @@ func TestDocumentationACLs(t *testing.T) {
 			name:        "README line 263 - cross-bucket with mixed verbs",
 			aclString:   "bucket-primary:*:get+put+delete+list,bucket-audit:logs/*:get+list",
 			description: "Grants all verbs on bucket-primary (all keys) and only GET+LIST on bucket-audit:logs/",
-			validator: func(acls []ACLEntry) bool {
+			validator: func(acls []acl.ACLEntry) bool {
 				if len(acls) != 2 {
 					return false
 				}
@@ -150,7 +152,7 @@ func TestDocumentationACLs(t *testing.T) {
 			name:        "connection-guide line 347 - readonly credential",
 			aclString:   "mybucket:readonly/*",
 			description: "Grants all verbs on mybucket:readonly/ prefix (no action segment = all permitted)",
-			validator: func(acls []ACLEntry) bool {
+			validator: func(acls []acl.ACLEntry) bool {
 				if len(acls) != 1 {
 					return false
 				}
@@ -163,7 +165,7 @@ func TestDocumentationACLs(t *testing.T) {
 			name:        "connection-guide line 351 - writer credential",
 			aclString:   "mybucket:*",
 			description: "Grants all verbs on mybucket (all keys)",
-			validator: func(acls []ACLEntry) bool {
+			validator: func(acls []acl.ACLEntry) bool {
 				if len(acls) != 1 {
 					return false
 				}
@@ -199,7 +201,7 @@ func TestDocumentationACLs(t *testing.T) {
 // as documented: trailing /* becomes a literal / prefix, bare * becomes empty string.
 func TestACLPrefixNormalization(t *testing.T) {
 	tests := []struct {
-		input       string
+		input      string
 		wantBucket string
 		wantPrefix string
 	}{
@@ -263,8 +265,8 @@ func TestACLActionVerbs(t *testing.T) {
 			name:      "mixed separators (README documents +, but spaces work)",
 			aclString: "mybucket:data/:get+put list",
 			wantActions: map[string]bool{
-				"get": true,
-				"put": true,
+				"get":  true,
+				"put":  true,
 				"list": true,
 			},
 		},
@@ -290,7 +292,7 @@ func TestACLActionVerbs(t *testing.T) {
 				t.Fatalf("parseACL(%q) returned %d entries, want 1", tt.aclString, len(acls))
 			}
 			if acls[0].Actions == nil {
-				t.Fatal("parseACL(%q).Actions is nil, want non-nil", tt.aclString)
+				t.Fatalf("parseACL(%q).Actions is nil, want non-nil", tt.aclString)
 			}
 			for verb, want := range tt.wantActions {
 				if got := acls[0].Actions[verb]; got != want {
@@ -304,19 +306,19 @@ func TestACLActionVerbs(t *testing.T) {
 // TestACLInvalidVerbs verifies that unknown action verbs are rejected (README line 225).
 func TestACLInvalidVerbs(t *testing.T) {
 	tests := []struct {
-		name     string
+		name      string
 		aclString string
 	}{
 		{
-			name:     "unknown verb",
+			name:      "unknown verb",
 			aclString: "mybucket:data/:read",
 		},
 		{
-			name:     "mixed valid and invalid",
+			name:      "mixed valid and invalid",
 			aclString: "mybucket:data/:get+write",
 		},
 		{
-			name:     "uppercase verb (must be lowercase)",
+			name:      "uppercase verb (must be lowercase)",
 			aclString: "mybucket:data/:GET",
 		},
 	}
@@ -338,19 +340,19 @@ func TestACLInvalidVerbs(t *testing.T) {
 // of the prefix (config.go line 562).
 func TestACLInvalidWildcardPositions(t *testing.T) {
 	tests := []struct {
-		name     string
+		name      string
 		aclString string
 	}{
 		{
-			name:     "wildcard in middle of prefix",
+			name:      "wildcard in middle of prefix",
 			aclString: "mybucket:*/data/",
 		},
 		{
-			name:     "wildcard at start of prefix",
+			name:      "wildcard at start of prefix",
 			aclString: "mybucket:*/logs",
 		},
 		{
-			name:     "multiple wildcards",
+			name:      "multiple wildcards",
 			aclString: "mybucket:data*/*",
 		},
 	}

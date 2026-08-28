@@ -46,3 +46,7 @@ const (
 func ActionForRequest(r *http.Request) string {
 	return acl.ActionForRequest(r)
 }
+
+// operationAction mirrors the acl package's operation -> verb table for the
+// contract tests in actions_test.go; the authoritative map lives in internal/acl.
+var operationAction = acl.OperationActions()

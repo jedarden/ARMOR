@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/jedarden/armor/internal/acl"
 	"net/http"
 	"testing"
 
@@ -168,7 +169,7 @@ func TestADR012AnchorMappings(t *testing.T) {
 }
 
 // TestActionConstantsMatchConfigVerbs guards the contract between the server
-// classifier's verb strings and config.ACLEntry.Actions, which is indexed by
+// classifier's verb strings and acl.ACLEntry.Actions, which is indexed by
 // the same lowercase verb names (config.validActions). A drift here would make
 // entry.Actions[ActionForRequest(r)] silently always miss. We verify by building
 // real ACL entries and indexing them with the Action* constants.
@@ -177,7 +178,7 @@ func TestActionConstantsMatchConfigVerbs(t *testing.T) {
 		// A credential permitting only verb v: indexing with v must allow, any
 		// other verb must deny (map zero value).
 		cred := &config.Credential{
-			ACLs: []config.ACLEntry{{
+			ACLs: []acl.ACLEntry{{
 				Bucket:  "*",
 				Prefix:  "", // any key
 				Actions: map[string]bool{v: true},
@@ -203,7 +204,7 @@ func TestActionConstantsMatchConfigVerbs(t *testing.T) {
 // Put+List credential can write and list but cannot get or delete.
 func TestAppendOnlyBackupRoleAllowedDenied(t *testing.T) {
 	cred := &config.Credential{
-		ACLs: []config.ACLEntry{{
+		ACLs: []acl.ACLEntry{{
 			Bucket: "*",
 			Prefix: "", // any key
 			// Append-only backup role per ADR-012 decision 3.

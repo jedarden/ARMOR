@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/xml"
+	"github.com/jedarden/armor/internal/acl"
 	"io"
 	"net/http/httptest"
 	"os"
@@ -27,21 +28,21 @@ func TestMultipleCredentialSets(t *testing.T) {
 		"READONLYKEY": {
 			AccessKey: "READONLYKEY",
 			SecretKey: "READONLYSECRET1234567890123456789",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "test-bucket", Prefix: "readonly/"},
 			},
 		},
 		"WRITEONLYKEY": {
 			AccessKey: "WRITEONLYKEY",
 			SecretKey: "WRITEONLYSECRET1234567890123456789",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "test-bucket", Prefix: "writeonly/"},
 			},
 		},
 		"LIMITEDKEY": {
 			AccessKey: "LIMITEDKEY",
 			SecretKey: "LIMITEDSECRET123456789012345678901",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "test-bucket", Prefix: "limited/"},
 			},
 		},
@@ -115,14 +116,14 @@ func TestCredentialIsolation(t *testing.T) {
 		"RESTRICTED1": {
 			AccessKey: "RESTRICTED1",
 			SecretKey: "RESTRICTED1_SECRET1234567890123456",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "test-bucket", Prefix: "area1/"},
 			},
 		},
 		"RESTRICTED2": {
 			AccessKey: "RESTRICTED2",
 			SecretKey: "RESTRICTED2_SECRET1234567890123456",
-			ACLs: []config.ACLEntry{
+			ACLs: []acl.ACLEntry{
 				{Bucket: "test-bucket", Prefix: "area2/"},
 			},
 		},
@@ -376,7 +377,7 @@ func TestCredentialEdgeCases(t *testing.T) {
 			manyCredentials[accessKey] = &config.Credential{
 				AccessKey: accessKey,
 				SecretKey: secretKey,
-				ACLs: []config.ACLEntry{
+				ACLs: []acl.ACLEntry{
 					{Bucket: "test-bucket", Prefix: string(rune('a'+i)) + "/"},
 				},
 			}
@@ -407,7 +408,7 @@ func TestCredentialEdgeCases(t *testing.T) {
 			"COMPLEX": {
 				AccessKey: "COMPLEX",
 				SecretKey: "COMPLEX_SECRET1234567890123456789",
-				ACLs: []config.ACLEntry{
+				ACLs: []acl.ACLEntry{
 					{Bucket: "test-bucket", Prefix: "path1/"},
 					{Bucket: "test-bucket", Prefix: "path2/"},
 					{Bucket: "other-bucket", Prefix: ""},
@@ -440,7 +441,7 @@ func TestCredentialEdgeCases(t *testing.T) {
 			"STARKEY": {
 				AccessKey: "STARKEY",
 				SecretKey: "STAR_SECRET123456789012345678901234",
-				ACLs: []config.ACLEntry{
+				ACLs: []acl.ACLEntry{
 					{Bucket: "*", Prefix: "public/"},
 				},
 			},
