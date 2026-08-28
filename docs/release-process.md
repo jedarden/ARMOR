@@ -516,3 +516,32 @@ This section records the declarative-config commit SHAs for ARMOR fleet-wide ima
 - [Deployment Config](https://github.com/jedarden/declarative-config) — All ARMOR manifests
 - [ArgoCD API](https://argocd-ro-ardenone-manager-ts.ardenone.com:8444) — Application status
 - [ARMOR Build Workflow](https://github.com/jedarden/ARMOR/blob/main/.beads/traces/bf-build/armor-workflowtemplate.yml) — CI/CD pipeline
+
+---
+
+## CI/CD Troubleshooting
+
+### armor-build Workflow Failures
+
+**Issue (2026-08-28):** armor-build workflow failed on every run, exiting at the resolve-version step with "VERSION must change in the release commit; CI never auto-bumps or pushes."
+
+**Root Cause:** The `armor-sensor` Argo Events sensor was configured to trigger on **every push to main**, not just VERSION-changing commits. This caused the workflow to run on non-release commits, where the resolve-version guard correctly rejected them (as intended).
+
+**Fix:** Added a CEL expression filter to `armor-sensor` (commit `db840e7` in declarative-config) that checks if `VERSION` appears in any commit's `modified`, `added`, or `removed` file lists:
+
+```yaml
+filters:
+  data:
+    # ... existing filters ...
+  expr:
+    - expr: 'any(commit, "VERSION" in commit.modified || "VERSION" in commit.added || "VERSION" in commit.removed, data.commits)'
+```
+
+**Impact:** The sensor now only triggers armor-build when VERSION actually changes, eliminating unnecessary workflow runs and reducing CI resource consumption.
+
+**Verification:** After ArgoCD syncs the change, subsequent non-VERSION commits to main should not trigger armor-build workflows. The next VERSION-changing commit should successfully pass resolve-version and proceed to build.
+
+**Related Files:**
+- `declarative-config/k8s/iad-ci/argo-events/armor-sensor.yml` — Sensor configuration
+- `declarative-config/k8s/iad-ci/argo-workflows/armor-workflowtemplate.yml` — Workflow template
+- Bead `armor-4d10cd48` — Fix investigation bead
