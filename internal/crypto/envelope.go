@@ -33,6 +33,13 @@ const (
 	// All new objects should use Version2.
 	Version2 = 0x02
 
+	// Version3 is the multipart-safe envelope format version.
+	// Version3 adds per-part counter construction and per-(part,block) HMAC.
+	// Counter = IV[0:8] || uint16(part) || uint32(block) || uint16(aesBlock).
+	// HMAC = HMAC-SHA256(hmacKey, uint16(part)||uint32(block)||ciphertext).
+	// blockSize must be <= 1 MiB (BlockSizeLog2 <= 20).
+	Version3 = 0x03
+
 	// DefaultBlockSize is the default encryption block size.
 	DefaultBlockSize = 65536
 
@@ -115,7 +122,7 @@ func DecodeHeader(data []byte) (*EnvelopeHeader, error) {
 	h.Version = data[offset]
 	offset++
 
-	if h.Version != Version1 && h.Version != Version2 {
+	if h.Version != Version1 && h.Version != Version2 && h.Version != Version3 {
 		return nil, fmt.Errorf("%w: got %d", ErrInvalidVersion, h.Version)
 	}
 
@@ -209,8 +216,13 @@ func NewEnvelopeHeaderWithVersion(iv []byte, plaintextSize int64, blockSize int,
 		return nil, errors.New("IV must be 16 bytes")
 	}
 
-	if version != Version1 && version != Version2 {
+	if version != Version1 && version != Version2 && version != Version3 {
 		return nil, fmt.Errorf("unsupported version: %d", version)
+	}
+
+	// Version3 enforces blockSize <= 1 MiB (BlockSizeLog2 <= 20)
+	if version == Version3 && blockSize > 1024*1024 {
+		return nil, fmt.Errorf("Version3 block size must be <= 1 MiB, got %d", blockSize)
 	}
 
 	// Validate block size is power of 2

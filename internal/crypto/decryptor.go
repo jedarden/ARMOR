@@ -42,7 +42,7 @@ func NewDecryptorWithVersion(dek, iv []byte, blockSize int, version uint8) (*Dec
 		return nil, fmt.Errorf("IV must be 16 bytes")
 	}
 
-	if version != Version1 && version != Version2 {
+	if version != Version1 && version != Version2 && version != Version3 {
 		return nil, fmt.Errorf("unsupported version: %d", version)
 	}
 

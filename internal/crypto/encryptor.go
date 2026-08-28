@@ -43,8 +43,13 @@ func NewEncryptorWithVersion(dek, iv []byte, blockSize int, version uint8) (*Enc
 		return nil, fmt.Errorf("IV must be 16 bytes")
 	}
 
-	if version != Version1 && version != Version2 {
+	if version != Version1 && version != Version2 && version != Version3 {
 		return nil, fmt.Errorf("unsupported version: %d", version)
+	}
+
+	// Version3 enforces blockSize <= 1 MiB
+	if version == Version3 && blockSize > V3MaxBlockSize {
+		return nil, fmt.Errorf("Version3 block size must be <= 1 MiB, got %d", blockSize)
 	}
 
 	block, err := aes.NewCipher(dek)
