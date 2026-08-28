@@ -217,7 +217,7 @@ const (
 
 // ARMORMetadata extracts ARMOR-specific metadata from object headers.
 type ARMORMetadata struct {
-	Version        int
+	Version        int    // Envelope version (1 or 2)
 	BlockSize      int
 	PlaintextSize  int64
 	ContentType    string
@@ -232,9 +232,11 @@ type ARMORMetadata struct {
 
 // ParseARMORMetadata extracts ARMOR metadata from S3 headers.
 func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
-	version := meta["x-amz-meta-armor-version"]
-	if version == "" {
-		return nil, false
+	versionStr := meta["x-amz-meta-armor-version"]
+	if versionStr == "" {
+		// Missing version is not an error - treat as Version 1 for backward compatibility
+		// This allows old objects without the header to still be readable
+		versionStr = "1"
 	}
 
 	am := &ARMORMetadata{
@@ -243,8 +245,17 @@ func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
 		ETag:         meta["x-amz-meta-armor-etag"],
 	}
 
-	// Parse version (expecting "1")
-	if version == "1" {
+	// Parse version (expecting "1" or "2")
+	var version int
+	if _, err := fmt.Sscanf(versionStr, "%d", &version); err == nil {
+		if version == 1 || version == 2 {
+			am.Version = version
+		} else {
+			// Unknown version - default to 1 for backward compatibility
+			am.Version = 1
+		}
+	} else {
+		// Parse failed - default to 1
 		am.Version = 1
 	}
 
@@ -291,13 +302,20 @@ func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
 		am.CompressionType = CompressionType(compressionType)
 	}
 
+	// An object is only ARMOR-encrypted if it has a wrapped DEK.
+	// Without a wrapped DEK, there is no encryption key material, so the object
+	// is not ARMOR-encrypted (even if it happens to have other x-amz-meta-armor-* headers).
+	if am.WrappedDEK == nil {
+		return nil, false
+	}
+
 	return am, true
 }
 
 // ToMetadata converts ARMORMetadata to S3 metadata headers.
 func (am *ARMORMetadata) ToMetadata() map[string]string {
 	meta := make(map[string]string)
-	meta["x-amz-meta-armor-version"] = "1"
+	meta["x-amz-meta-armor-version"] = fmt.Sprintf("%d", am.Version)
 	meta["x-amz-meta-armor-block-size"] = fmt.Sprintf("%d", am.BlockSize)
 	meta["x-amz-meta-armor-plaintext-size"] = fmt.Sprintf("%d", am.PlaintextSize)
 	meta["x-amz-meta-armor-content-type"] = am.ContentType
