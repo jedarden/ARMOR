@@ -144,3 +144,114 @@ old-wrapped. See [Key Rotation Failure Recovery](disaster-recovery.md#key-rotati
 > The `new MEK` submitted on resume must match the SHA-256 recorded as
 > `new_mek_hash` in the state file, and must match the OpenBao value. A
 > different new MEK starts a fresh rotation from the beginning.
+
+## Format Migration
+
+Format migration re-encrypts objects to the current write format (e.g., V1 → V2).
+Unlike key rotation (which only re-wraps DEKs), format migration performs a full
+decrypt → re-encrypt cycle, updating the object's ciphertext and encryption format.
+
+### When to migrate formats
+
+Migrate when:
+- A new encryption format version is released (e.g., V1 → V2)
+- Security vulnerabilities are discovered in the old format
+- Compliance requirements mandate stronger encryption
+
+### Migration endpoint
+
+```bash
+# Start a migration (dry run by default - counts objects without re-encrypting)
+curl -s -X POST "http://localhost:9001/admin/format/migrate?dry_run=true&include=1&concurrency=4" \
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
+
+# Actual migration (re-encrypts V1 objects to V2)
+curl -s -X POST "http://localhost:9001/admin/format/migrate?dry_run=false&include=1&concurrency=4" \
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
+
+# Check migration progress
+curl -s -X GET "http://localhost:9001/admin/format/migrate" \
+  -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
+```
+
+### Query parameters
+
+- `dry_run`: `true` (count only) or `false` (actual migration). Default: `false`
+- `include`: Comma-separated list of source versions to migrate (e.g., `1` or `1,2`). Default: `1`
+- `concurrency`: Number of concurrent workers (1-50). Default: `4`
+
+### Migration state
+
+Migration progress is tracked in `.armor/migration-state.json`:
+```jsonc
+{
+  "id": "format-migration-1693123456",
+  "start_time": "2024-08-28T12:34:56Z",
+  "last_updated": "2024-08-28T12:45:12Z",
+  "status": "in_progress",
+  "total_objects": 1234,
+  "processed_objects": 567,
+  "skipped_objects": 89,
+  "failed_objects": 2,
+  "last_key": "data/warehouse/object-567.parquet",
+  "include_versions": ["1"],
+  "current_write_version": 2,
+  "dry_run": false,
+  "concurrency": 4,
+  "failures": [
+    {
+      "key": "data/corrupted/object.dat",
+      "reason": "decryption failed: invalid ciphertext",
+      "time": "2024-08-28T12:42:30Z"
+    }
+  ]
+}
+```
+
+### Resume after interruption
+
+Like key rotation, format migration is resumable. If interrupted:
+- State file persists with `status: "in_progress"` and `last_key`
+- Re-POST to `/admin/format/migrate` resumes from `last_key`
+- Already-processed objects are skipped (based on key ordering)
+- Failed objects are recorded and never retried automatically
+
+### Failure handling
+
+Failed objects are recorded in the `failures` array with:
+- Object key
+- Failure reason
+- Timestamp
+
+Failures are **not retried automatically** to avoid infinite loops. Operators should:
+1. Review failure reasons
+2. Fix underlying issues (corruption, permission problems)
+3. Re-run migration for specific failed objects if needed
+
+### Verification
+
+Migration verifies each re-encrypted object:
+1. Calculates SHA-256 of pre-migration plaintext
+2. Re-encrypts with current write format
+3. Reads back the migrated object
+4. Verifies SHA-256 matches pre-migration digest
+
+If verification fails, the object is marked as failed and skipped.
+
+### Limitations
+
+- **Multipart objects**: Not yet supported (complex HMAC sidecar handling required)
+- **Large objects**: Objects exceeding multipart threshold (5 MB default) require special handling
+- **Concurrent migrations**: Only one migration can run at a time per bucket
+
+### Differences from key rotation
+
+| Aspect | Key Rotation | Format Migration |
+|--------|--------------|------------------|
+| Operation | Re-wrap DEK only | Full decrypt → re-encrypt |
+| Object body | Untouched | Re-encrypted |
+| Metadata | Wrapped DEK only | Version, IV, block size, wrapped DEK |
+| Copy method | CopyObject (REPLACE) | Full read → PUT cycle |
+| Verification | None required | SHA-256 verification required |
+| Multipart | Supported (preserves markers) | Not yet supported |
+| State file | `.armor/rotation-state.json` | `.armor/migration-state.json` |
