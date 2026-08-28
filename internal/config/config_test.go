@@ -154,6 +154,80 @@ func TestParseACL(t *testing.T) {
 			aclStr:      ":prefix/",
 			expectError: true,
 		},
+		{
+			name:        "trailing wildcard normalized to prefix",
+			aclStr:      "my-bucket:data/*",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == "data/"
+			},
+		},
+		{
+			name:        "trailing wildcard with actions",
+			aclStr:      "my-bucket:data/*:get+list",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == "data/" &&
+					actionsEqual(acls[0].Actions, "get", "list")
+			},
+		},
+		{
+			name:        "explicit prefix with trailing slash unchanged",
+			aclStr:      "my-bucket:data/",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == "data/"
+			},
+		},
+		{
+			name:        "bare wildcard normalized to empty prefix",
+			aclStr:      "my-bucket:*",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "my-bucket" && acls[0].Prefix == ""
+			},
+		},
+		{
+			name:        "interior wildcard rejected",
+			aclStr:      "my-bucket:data*",
+			expectError: true,
+		},
+		{
+			name:        "interior wildcard with suffix rejected",
+			aclStr:      "my-bucket:data*x",
+			expectError: true,
+		},
+		{
+			name:        "multiple wildcards rejected",
+			aclStr:      "my-bucket:data*test*",
+			expectError: true,
+		},
+		{
+			name:        "wildcard in middle of prefix rejected",
+			aclStr:      "my-bucket:da*ta/",
+			expectError: true,
+		},
+		{
+			name:        "wildcard only in bucket (valid)",
+			aclStr:      "*:data/",
+			expectCount: 1,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "*" && acls[0].Prefix == "data/"
+			},
+		},
+		{
+			name:        "mixed wildcard and explicit prefix entries",
+			aclStr:      "bucket:*:get,bucket:data/*:list,bucket:specific/",
+			expectCount: 3,
+			checkFunc: func(acls []ACLEntry) bool {
+				return acls[0].Bucket == "bucket" && acls[0].Prefix == "" &&
+					actionsEqual(acls[0].Actions, "get") &&
+					acls[1].Bucket == "bucket" && acls[1].Prefix == "data/" &&
+					actionsEqual(acls[1].Actions, "list") &&
+					acls[2].Bucket == "bucket" && acls[2].Prefix == "specific/" &&
+					acls[2].Actions == nil
+			},
+		},
 	}
 
 	for _, tt := range tests {
