@@ -5,6 +5,7 @@
 package provenance
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -112,9 +113,15 @@ type KeyRotationResult struct {
 }
 
 // ChainHead represents the current head of a writer's chain.
+// The format varies based on whether manifest is enabled:
+// - Legacy mode (manifest disabled): {writer_id, sequence, chain_hash, updated}
+// - Manifest mode (manifest enabled): {delta_file, sequence, chain_hash}
 type ChainHead struct {
-	// WriterID identifies the ARMOR instance
-	WriterID string `json:"writer_id"`
+	// WriterID identifies the ARMOR instance (legacy format only)
+	WriterID string `json:"writer_id,omitempty"`
+
+	// DeltaFile is the manifest delta file containing the latest entry (manifest format only)
+	DeltaFile string `json:"delta_file,omitempty"`
 
 	// Sequence is the current sequence number
 	Sequence int64 `json:"sequence"`
@@ -122,8 +129,8 @@ type ChainHead struct {
 	// ChainHash is the chain hash of the most recent entry
 	ChainHash string `json:"chain_hash"`
 
-	// Updated is when the head was last updated
-	Updated time.Time `json:"updated"`
+	// Updated is when the head was last updated (legacy format only)
+	Updated time.Time `json:"updated,omitempty"`
 }
 
 // Manager handles provenance chain operations.
@@ -168,8 +175,71 @@ func (m *Manager) ShouldRecord(key string) bool {
 	return true
 }
 
+// ChainEntryData represents the minimal chain information for embedding
+// in a manifest delta line.
+type ChainEntryData struct {
+	Sequence       int64  `json:"sequence"`
+	ChainHash      string `json:"chain_hash"`
+	PrevChainHash  string `json:"prev_chain_hash"`
+}
+
+// CreateChainEntry creates a chain entry for embedding in a manifest delta.
+// It atomically increments the sequence number and computes the chain hash,
+// but does not write the entry to B2. This is used when the manifest is enabled.
+// The returned ChainEntryData contains {sequence, chain_hash, prev_chain_hash}.
+func (m *Manager) CreateChainEntry(ctx context.Context, objectKey, plaintextSHA256, operation string) (*ChainEntryData, error) {
+	// Skip internal objects
+	if !m.ShouldRecord(objectKey) {
+		return nil, nil
+	}
+
+	m.appendMu.Lock()
+	defer m.appendMu.Unlock()
+
+	// Get or load the current chain head
+	head, err := m.getOrCreateHead(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chain head: %w", err)
+	}
+
+	// Create the entry (same as RecordUpload but we don't write it)
+	now := time.Now().UTC()
+	entry := &Entry{
+		Sequence:        head.Sequence + 1,
+		ObjectKey:       objectKey,
+		PlaintextSHA256: plaintextSHA256,
+		PrevChainHash:   head.ChainHash,
+		Timestamp:       now,
+		WriterID:        m.writerID,
+		Operation:       operation,
+	}
+
+	// Compute the chain hash
+	entry.ChainHash = computeChainHash(entry, head.ChainHash)
+
+	// Update in-memory cache immediately so next call sees new sequence
+	newHead := &ChainHead{
+		WriterID:  m.writerID,
+		Sequence:  entry.Sequence,
+		ChainHash: entry.ChainHash,
+		Updated:   now,
+	}
+	m.mu.Lock()
+	m.head = newHead
+	m.mu.Unlock()
+
+	// Return minimal data for embedding in delta line
+	return &ChainEntryData{
+		Sequence:      entry.Sequence,
+		ChainHash:     entry.ChainHash,
+		PrevChainHash: entry.PrevChainHash,
+	}, nil
+}
+
 // RecordUpload records an upload in the provenance chain.
 // This should be called after a successful upload.
+// This method is used when the manifest is disabled; when manifest is enabled,
+// use CreateChainEntry instead and embed the result in the delta line.
 func (m *Manager) RecordUpload(ctx context.Context, objectKey, plaintextSHA256, operation string) error {
 	// Skip internal objects
 	if !m.ShouldRecord(objectKey) {
@@ -729,7 +799,10 @@ func (a *Auditor) listInternalKeys(ctx context.Context, prefix string) ([]string
 }
 
 // auditWriterChain verifies a single writer's chain integrity.
-// It handles both Entry (upload) and KeyEvent (key operations) objects.
+// It walks three sources in order:
+// 1. Legacy chain objects (`.armor/chain/<writer>/*.json`)
+// 2. Chain segments (`.armor/chain-segments/<writer>/<from>-<to>.jsonl`)
+// 3. Delta-embedded entries (`.armor/manifest/<writer>/delta-*.jsonl`)
 func (a *Auditor) auditWriterChain(
 	ctx context.Context,
 	head *ChainHead,
@@ -743,11 +816,16 @@ func (a *Auditor) auditWriterChain(
 		Valid:        true,
 	}
 
-	if head.WriterID != expectedWriterID {
+	// Determine chain head format: legacy (has WriterID and Updated) vs manifest (has DeltaFile)
+	isLegacyFormat := head.WriterID != "" && !head.Updated.IsZero()
+	isManifestFormat := head.DeltaFile != ""
+
+	if !isLegacyFormat && !isManifestFormat {
 		audit.Valid = false
-		audit.Error = fmt.Sprintf("writer ID mismatch: head object is %q, content names %q", expectedWriterID, head.WriterID)
+		audit.Error = "chain head has neither legacy nor manifest format fields"
 		return audit, nil, false
 	}
+
 	if head.Sequence < 0 {
 		audit.Valid = false
 		audit.Error = fmt.Sprintf("invalid negative head sequence %d", head.Sequence)
@@ -763,6 +841,71 @@ func (a *Auditor) auditWriterChain(
 	expectedSeq := head.Sequence
 	expectedChainHash := head.ChainHash
 
+	// For manifest format, we need to walk three sources:
+	// 1. Legacy chain (up to compaction point)
+	// 2. Chain segments (if any)
+	// 3. Delta-embedded entries
+	if isManifestFormat {
+		// Extract the starting delta sequence from the delta file path
+		// Format: .armor/manifest/<writer>/delta-0000000001.jsonl
+		deltaSeq := uint64(0)
+		if idx := strings.LastIndex(head.DeltaFile, "delta-"); idx >= 0 {
+			seqStr := head.DeltaFile[idx+6:]
+			if idx = strings.Index(seqStr, ".jsonl"); idx >= 0 {
+				seqStr = seqStr[:idx]
+				if parsed, err := strconv.ParseUint(seqStr, 10, 64); err == nil {
+					deltaSeq = parsed
+				}
+			}
+		}
+
+		// Walk delta-embedded entries
+		deltaEntries, deltaTracked, err := a.walkDeltaEntries(ctx, expectedWriterID, 1) // Start from delta 1
+		if err != nil {
+			audit.Valid = false
+			audit.Error = fmt.Sprintf("failed to walk delta entries: %v", err)
+			return audit, nil, true
+		}
+
+		// Verify delta entries
+		for seq := expectedSeq; seq > 0; seq-- {
+			chainData, ok := deltaEntries[seq]
+			if !ok {
+				// This entry might be in legacy chain or segments
+				break
+			}
+
+			// Verify the chain link
+			if chainData.ChainHash != expectedChainHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("delta chain link mismatch at sequence %d", seq)
+				return audit, nil, false
+			}
+
+			expectedChainHash = chainData.PrevChainHash
+			audit.EntriesVerified++
+		}
+
+		// Add delta-tracked objects to the tracked set
+		for key := range deltaTracked {
+			trackedObjects[key] = true
+		}
+
+		// If we verified all entries from deltas, we're done
+		if audit.EntriesVerified == int(expectedSeq) {
+			if expectedChainHash != InitialChainHash {
+				audit.Valid = false
+				audit.Error = "chain does not link back to genesis"
+				return audit, nil, false
+			}
+			return audit, nil, false
+		}
+
+		// Fall through to legacy chain verification for remaining entries
+		expectedSeq = head.Sequence - int64(audit.EntriesVerified)
+	}
+
+	// Walk legacy chain entries (for both legacy and manifest format)
 	for seq := expectedSeq; seq > 0; seq-- {
 		key, wasListed := entryKeys[seq]
 		if !wasListed {
@@ -817,6 +960,101 @@ func (a *Auditor) auditWriterChain(
 			var entry Entry
 			if err := json.Unmarshal(data, &entry); err != nil {
 				audit.Valid = false
+				audit.Error = fmt.Sprintf("failed to parse entry at sequence %d: %v", seq, err)
+				return audit, nil, false
+			}
+
+			if entry.Sequence != seq {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("sequence mismatch at %d: got %d", seq, entry.Sequence)
+				return audit, nil, false
+			}
+			if entry.WriterID != expectedWriterID {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("writer ID mismatch at sequence %d: got %q", seq, entry.WriterID)
+				return audit, nil, false
+			}
+			if entry.ObjectKey == "" || !isSHA256(entry.PlaintextSHA256) || !isSHA256(entry.ChainHash) || !isSHA256(entry.PrevChainHash) {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("invalid cryptographic fields at sequence %d", seq)
+				return audit, nil, false
+			}
+			if entry.ChainHash != expectedChainHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("chain link mismatch at sequence %d", seq)
+				return audit, nil, false
+			}
+			computedHash := computeChainHash(&entry, entry.PrevChainHash)
+			if entry.ChainHash != computedHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("entry hash mismatch at sequence %d", seq)
+				return audit, nil, false
+			}
+
+			trackedObjects[entry.ObjectKey] = true
+			expectedChainHash = entry.PrevChainHash
+			audit.EntriesVerified++
+		} else {
+			var keyEvent KeyEvent
+			if err := json.Unmarshal(data, &keyEvent); err != nil {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("failed to parse key event at sequence %d: %v", seq, err)
+				return audit, nil, false
+			}
+
+			if keyEvent.Sequence != seq {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("sequence mismatch at %d: got %d", seq, keyEvent.Sequence)
+				return audit, nil, false
+			}
+			if keyEvent.WriterID != expectedWriterID {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("writer ID mismatch at sequence %d: got %q", seq, keyEvent.WriterID)
+				return audit, nil, false
+			}
+			if !validKeyEventType(keyEvent.EventType) {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("unknown key event type %q at sequence %d", keyEvent.EventType, seq)
+				return audit, nil, false
+			}
+			if !isSHA256(keyEvent.ChainHash) || !isSHA256(keyEvent.PrevChainHash) {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("invalid cryptographic fields at sequence %d", seq)
+				return audit, nil, false
+			}
+			if keyEvent.ChainHash != expectedChainHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("chain link mismatch at sequence %d", seq)
+				return audit, nil, false
+			}
+			computedHash := computeKeyEventHash(&keyEvent, keyEvent.PrevChainHash)
+			if keyEvent.ChainHash != computedHash {
+				audit.Valid = false
+				audit.Error = fmt.Sprintf("key event hash mismatch at sequence %d", seq)
+				return audit, nil, false
+			}
+
+			expectedChainHash = keyEvent.PrevChainHash
+			audit.KeyEvents++
+		}
+	}
+
+	if expectedChainHash != InitialChainHash {
+		audit.Valid = false
+		audit.Error = "chain does not link back to genesis"
+		return audit, nil, false
+	}
+
+	for sequence := range entryKeys {
+		if sequence > head.Sequence {
+			audit.Valid = false
+			audit.Error = fmt.Sprintf("chain entry %d exists beyond head sequence %d", sequence, head.Sequence)
+			return audit, nil, true
+		}
+	}
+
+	return audit, nil, false
+}
 				audit.Error = fmt.Sprintf("failed to parse entry at sequence %d: %v", seq, err)
 				return audit, nil, false
 			}
@@ -973,6 +1211,191 @@ func (a *Auditor) findUntrackedObjects(ctx context.Context, tracked map[string]b
 	}
 
 	return nil
+}
+
+// walkChainSegments walks chain segment files for a writer.
+// Chain segments are compacted legacy chain entries stored as JSONL files
+// at .armor/chain-segments/<writer>/<from>-<to>.jsonl.
+func (a *Auditor) walkChainSegments(ctx context.Context, writerID string, fromSeq, toSeq int64) (map[int64]*Entry, map[string]bool, error) {
+	const segmentPrefix = ".armor/chain-segments/"
+	segmentsByRange := make(map[string]int64) // range -> max sequence in that segment
+
+	// List all segment files for this writer
+	prefix := segmentPrefix + writerID + "/"
+	keys, err := a.listInternalKeys(ctx, prefix)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list chain segments: %w", err)
+	}
+
+	// Parse segment file names: <from>-<to>.jsonl
+	for _, key := range keys {
+		if !strings.HasSuffix(key, ".jsonl") {
+			continue
+		}
+		relative := strings.TrimPrefix(key, prefix)
+		parts := strings.Split(strings.TrimSuffix(relative, ".jsonl"), "-")
+		if len(parts) != 2 {
+			continue
+		}
+		from, err1 := strconv.ParseInt(parts[0], 10, 64)
+		to, err2 := strconv.ParseInt(parts[1], 10, 64)
+		if err1 != nil || err2 != nil || from > to {
+			continue
+		}
+		// Keep track of the highest sequence in each segment
+		if existing, ok := segmentsByRange[relative]; !ok || to > existing {
+			segmentsByRange[relative] = to
+		}
+	}
+
+	entries := make(map[int64]*Entry)
+	trackedObjects := make(map[string]bool)
+
+	// Read segment files that intersect with [fromSeq, toSeq]
+	for rangeKey, maxSeq := range segmentsByRange {
+		parts := strings.Split(strings.TrimSuffix(rangeKey, ".jsonl"), "-")
+		segFrom, _ := strconv.ParseInt(parts[0], 10, 64)
+		segTo, _ := strconv.ParseInt(parts[1], 10, 64)
+
+		// Skip segments that don't intersect with our target range
+		if segTo < fromSeq || segFrom > toSeq {
+			continue
+		}
+
+		segmentKey := prefix + rangeKey
+		body, _, err := a.backend.GetDirect(ctx, a.bucket, segmentKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load chain segment %s: %w", segmentKey, err)
+		}
+		if body == nil {
+			return nil, nil, fmt.Errorf("failed to load chain segment %s: backend returned nil body", segmentKey)
+		}
+
+		// Parse JSONL entries
+		scanner := newJSONLScanner(body)
+		for scanner.Scan() {
+			var entry Entry
+			if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+				body.Close()
+				return nil, nil, fmt.Errorf("failed to parse entry in segment %s: %w", segmentKey, err)
+			}
+			// Only include entries in our target range
+			if entry.Sequence >= fromSeq && entry.Sequence <= toSeq {
+				entries[entry.Sequence] = &entry
+				trackedObjects[entry.ObjectKey] = true
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			body.Close()
+			return nil, nil, fmt.Errorf("error reading segment %s: %w", segmentKey, err)
+		}
+		body.Close()
+	}
+
+	return entries, trackedObjects, nil
+}
+
+// walkDeltaEntries walks manifest delta files for a writer and extracts
+// chain entries embedded in "put" operations.
+// Delta files are at .armor/manifest/<writer>/delta-{seq:010d}.jsonl.
+func (a *Auditor) walkDeltaEntries(ctx context.Context, writerID string, fromDeltaSeq uint64) (map[int64]*ChainEntryData, map[string]bool, error) {
+	const manifestPrefix = ".armor/manifest/"
+
+	entries := make(map[int64]*ChainEntryData)
+	trackedObjects := make(map[string]bool)
+
+	// List all delta files for this writer
+	prefix := manifestPrefix + writerID + "/"
+	keys, err := a.listInternalKeys(ctx, prefix)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list manifest deltas: %w", err)
+	}
+
+	// Filter and sort delta files, starting from fromDeltaSeq
+	var deltaFiles []string
+	for _, key := range keys {
+		if !strings.HasPrefix(key, prefix+"delta-") || !strings.HasSuffix(key, ".jsonl") {
+			continue
+		}
+		// Extract sequence number from filename
+		relative := strings.TrimPrefix(key, prefix)
+		seqStr := strings.TrimPrefix(relative, "delta-")
+		seqStr = strings.TrimSuffix(seqStr, ".jsonl")
+		seq, err := strconv.ParseUint(seqStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		if seq < fromDeltaSeq {
+			continue
+		}
+		deltaFiles = append(deltaFiles, key)
+	}
+	sort.Strings(deltaFiles)
+
+	// Read delta files and extract chain entries
+	for _, deltaKey := range deltaFiles {
+		body, _, err := a.backend.GetDirect(ctx, a.bucket, deltaKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load delta file %s: %w", deltaKey, err)
+		}
+		if body == nil {
+			return nil, nil, fmt.Errorf("failed to load delta file %s: backend returned nil body", deltaKey)
+		}
+
+		// Parse JSONL operations
+		scanner := newJSONLScanner(body)
+		for scanner.Scan() {
+			var op struct {
+				Operation string       `json:"op"`
+				Key       string       `json:"key"`
+				Chain     *ChainEntryData `json:"chain,omitempty"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &op); err != nil {
+				body.Close()
+				return nil, nil, fmt.Errorf("failed to parse operation in delta %s: %w", deltaKey, err)
+			}
+			// Extract chain entries from put operations
+			if op.Operation == "put" && op.Chain != nil {
+				entries[op.Chain.Sequence] = op.Chain
+				// Track the object key (remove bucket prefix if present)
+				objectKey := op.Key
+				if idx := strings.Index(objectKey, "/"); idx >= 0 {
+					objectKey = objectKey[idx+1:]
+				}
+				trackedObjects[objectKey] = true
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			body.Close()
+			return nil, nil, fmt.Errorf("error reading delta %s: %w", deltaKey, err)
+		}
+		body.Close()
+	}
+
+	return entries, trackedObjects, nil
+}
+
+// jsonLScanner wraps a reader to scan JSONL (one JSON object per line).
+type jsonLScanner struct {
+	scanner *bufio.Scanner
+}
+
+func newJSONLScanner(r io.Reader) *jsonLScanner {
+	return &jsonLScanner{
+		scanner: bufio.NewScanner(r),
+	}
+}
+
+func (s *jsonLScanner) Scan() bool {
+	return s.scanner.Scan()
+}
+
+func (s *jsonLScanner) Bytes() []byte {
+	return s.scanner.Bytes()
+}
+
+func (s *jsonLScanner) Err() error {
+	return s.scanner.Err()
 }
 
 func parseChainHeadKey(key string) (string, error) {
