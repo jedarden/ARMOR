@@ -1270,11 +1270,47 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create decryptor
-	decryptor, err := crypto.NewDecryptor(dek, armorMeta.IV, armorMeta.BlockSize)
-	if err != nil {
-		http.Error(w, "Failed to create decryptor", http.StatusInternalServerError)
-		return
+	// Check if this is a multipart object (HMAC table in sidecar, no embedded header)
+	isMultipart := info.Metadata["x-amz-meta-armor-multipart"] == "true"
+
+	// Determine the version and create decryptor
+	// For single-PUT objects: read envelope header to get version
+	// For multipart objects: trust the metadata version (no envelope header exists)
+	var decryptor *crypto.Decryptor
+	if isMultipart {
+		// Multipart objects have no envelope header - trust metadata version
+		decryptor, err = crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
+		if err != nil {
+			http.Error(w, "Failed to create decryptor", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// Single-PUT objects: read envelope header to get the actual version
+		headerReader, err := s.backend.GetRange(ctx, token.Bucket, token.Key, 0, crypto.HeaderSize)
+		if err != nil {
+			http.Error(w, "Failed to read envelope header", http.StatusInternalServerError)
+			return
+		}
+		defer headerReader.Close()
+
+		headerBuf := make([]byte, crypto.HeaderSize)
+		if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+			http.Error(w, "Failed to read header", http.StatusInternalServerError)
+			return
+		}
+
+		header, err := crypto.DecodeHeader(headerBuf)
+		if err != nil {
+			http.Error(w, "Failed to decode header", http.StatusInternalServerError)
+			return
+		}
+
+		// Create decryptor with the version from the envelope header
+		decryptor, err = crypto.NewDecryptorWithVersion(dek, header.IV[:], header.BlockSize(), header.Version)
+		if err != nil {
+			http.Error(w, "Failed to create decryptor", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Detect and log compression status
