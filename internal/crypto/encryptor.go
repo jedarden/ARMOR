@@ -316,6 +316,75 @@ func (e *Encryptor) EncryptAndCompress(plaintext []byte, compress bool) (encrypt
 	return encrypted, hmacTable, wasCompressed, compressionType, plaintextSize, plaintextSHA, nil
 }
 
+// EncryptWithBlockCompression encrypts plaintext with per-block zstd compression.
+// Each block is compressed independently before encryption; if compression doesn't
+// reduce size, the raw block is used. This allows mixed compressed/uncompressed blocks.
+//
+// Returns:
+// - encrypted: Variable-length encrypted data (blocks may be different sizes)
+// - blockTable: Block table with compression flags set appropriately
+// - err: Error if encryption/compression fails
+func (e *Encryptor) EncryptWithBlockCompression(plaintext []byte) (encrypted []byte, blockTable *BlockTable, err error) {
+	blockCount := ComputeBlockCount(int64(len(plaintext)), e.blockSize)
+
+	// Check Version 2 counter space won't overflow
+	if e.version == Version2 {
+		if err := e.checkCounterSpace(blockCount); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// Create block table to track compressed blocks
+	blockTable = NewBlockTable(e.blockSize, int(blockCount))
+
+	// Pre-allocate encrypted buffer with estimated size (will be trimmed)
+	estimatedSize := len(plaintext)
+	encrypted = make([]byte, 0, estimatedSize)
+
+	// Encrypt each block independently with compression
+	for i := uint32(0); i < blockCount; i++ {
+		start := int(i) * e.blockSize
+		end := start + e.blockSize
+		if end > len(plaintext) {
+			end = len(plaintext)
+		}
+
+		plaintextBlock := plaintext[start:end]
+
+		// Compress the block with opportunistic pass-through
+		compressedBlock, wasCompressed, _, err := CompressBlock(plaintextBlock)
+		if err != nil {
+			return nil, nil, fmt.Errorf("block %d compression failed: %w", i, err)
+		}
+
+		// Determine what to encrypt (compressed or original)
+		dataToEncrypt := compressedBlock
+		if !wasCompressed {
+			dataToEncrypt = plaintextBlock
+		}
+
+		// Encrypt the (possibly compressed) block
+		encryptedBlock := make([]byte, len(dataToEncrypt))
+		ctr := e.makeCounter(i)
+		stream := cipher.NewCTR(e.block, ctr)
+		stream.XORKeyStream(encryptedBlock, dataToEncrypt)
+
+		// Compute HMAC for encrypted block
+		hmacValue := e.computeBlockHMAC(encryptedBlock, i)
+
+		// Create block table entry with compression flag
+		entry := NewBlockTableEntry(hmacValue, uint32(len(encryptedBlock)), wasCompressed)
+		if err := blockTable.AddEntry(entry); err != nil {
+			return nil, nil, fmt.Errorf("block %d table entry failed: %w", i, err)
+		}
+
+		// Append encrypted block to output
+		encrypted = append(encrypted, encryptedBlock...)
+	}
+
+	return encrypted, blockTable, nil
+}
+
 // EncryptStreamWithCompress encrypts a stream with optional compression.
 // NOTE: This function requires the caller to handle SHA-256 computation separately
 // for compressed data, as the stream is consumed during compression.

@@ -103,3 +103,39 @@ func (w *readCloserWrapper) Close() error {
 	w.Decoder.Close()
 	return nil
 }
+
+// CompressBlock compresses a single plaintext block with opportunistic pass-through.
+// This is a convenience wrapper around Compress for per-block compression operations.
+// Returns:
+// - compressedData: The compressed data (or original if compression didn't help)
+// - compressed: true if the data was compressed, false if original was returned
+// - compressionType: The type of compression used (or CompressionNone if not compressed)
+func CompressBlock(plaintextBlock []byte) ([]byte, bool, CompressionType, error) {
+	return Compress(plaintextBlock)
+}
+
+// DecompressBlock decompresses a single decrypted block based on the compression flag.
+// If isCompressed is false, returns the data unchanged.
+// If isCompressed is true, attempts zstd decompression.
+// Returns:
+// - decompressedData: The decompressed data (or original if not compressed)
+// - err: Error if decompression fails when isCompressed is true
+func DecompressBlock(decryptedBlock []byte, isCompressed bool) ([]byte, error) {
+	if !isCompressed {
+		return decryptedBlock, nil
+	}
+
+	// Attempt decompression
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd decoder for block: %w", err)
+	}
+	defer decoder.Close()
+
+	decompressed, err := decoder.DecodeAll(decryptedBlock, nil)
+	if err != nil {
+		return nil, fmt.Errorf("block decompression failed: %w", err)
+	}
+
+	return decompressed, nil
+}
