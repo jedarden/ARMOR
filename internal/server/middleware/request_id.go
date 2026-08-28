@@ -79,3 +79,13 @@ func GetExtendedID(ctx context.Context) string {
 	}
 	return ""
 }
+
+// WithRequestID sets the request ID in the context for testing.
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, RequestIDKey, id)
+}
+
+// WithExtendedID sets the extended ID in the context for testing.
+func WithExtendedID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, ExtendedIDKey, id)
+}
