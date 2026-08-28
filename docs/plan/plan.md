@@ -1058,9 +1058,10 @@ Decisions:
 - `crypto.NewEncryptor` becomes Version 2. Version 1 *encryption* is reachable
   only via `NewEncryptorWithVersion(…, Version1)` under a `//go:build
   legacyv1test` tag; production code cannot produce a V1 object.
-- `ToMetadata()` writes the real version; the read paths (single-PUT: header;
-  multipart: metadata, since there is no header) trust
-  `x-amz-meta-armor-version`, falling back to the header, then to `1`.
+- `ToMetadata()` writes the real version. Precedence on read: single-PUT
+  objects trust the envelope header (it is authenticated by the format);
+  multipart objects, which have no header, trust `x-amz-meta-armor-version`;
+  when neither is present the version is `1`.
 - V2 writes refuse objects whose block count would wrap the 32-bit counter
   (`blockCount × blockSize/16 ≥ 2³²`) with an explicit `InternalError`
   message naming the v3 format as the fix; this is a guard, not a feature.
@@ -1076,7 +1077,17 @@ Decisions:
   `armor migrate` (8.4) is a thin client of this endpoint.
 - After V2 is deployed and migration has run on a bucket, the bucket's MEK is
   rotated (existing runbook) — the V1 ciphertext that was public is treated as
-  disclosed.
+  disclosed. **Rotation is an operator action and is deliberately not a
+  bead**: a MEK mismatch between OpenBao and the rotate call makes every
+  rotated object unreadable, which is the irreversible class of change this
+  environment reserves for a human.
+- **Releases are explicit beads.** CI never bumps `VERSION`; every rollout
+  below is two beads — "cut the release" (VERSION bump, both images on Docker
+  Hub) and "bump the deployments" (five ARMOR Deployments plus six
+  restore-verifier Deployments in `declarative-config`). Cut points: the
+  Version-2 default (with the paginated restore-verifier discovery riding
+  along), the format-migration endpoint, the CLI/demo/credential-file
+  release, and the v3 default.
 
 #### 8.2 Plan/bead truth-up leftovers
 
@@ -1086,7 +1097,12 @@ open and beaded: restore-verifier discovery Bug B (paginate
 29,303 bookkeeping objects vs 26,219 real ones); enable the periodic DR drill
 (`VERIFIER_DR_DRILL_INTERVAL`) in every restore-verifier Deployment; run the
 multipart-era corruption audit on the four unaudited buckets with
-`verify-objects` and commit the inventory under `docs/notes/`.
+`cmd/verify-objects` (or `armor verify`, whichever is on `main` at the time)
+and commit the inventory under `docs/notes/`; and the periodic DR drill is
+verified by the scheduler's log line plus one on-demand
+`POST /trigger?mode=dr-drill`, not by waiting a day. The kalshi-tape
+client-side workaround removal is tracked in **kalshi-tape's own bead
+store** (deferred until the v3 rollout), not here.
 
 #### 8.3 ACL syntax that matches the docs (P1)
 
@@ -1142,9 +1158,12 @@ backend as **primary**; `ARMOR_B2_*` and `ARMOR_CF_DOMAIN` become optional in
 that mode; the canary runs against it. `armor demo [--dir D] [--listen A]`
 = filesystem backend in a temp dir, fixed credentials `armor` /
 `armor-demo-secret` (documented, not secret), MEK generated in memory, and
-`client-config` output printed at start. CI runs the aws-cli-compat suite
-against the real binary in demo mode. The README Quick Start leads with
-`docker run ronaldraygun/armor:<v> demo`.
+`client-config` output printed at start. The aws-cli-compat suite gains an
+`ARMOR_COMPAT_ENDPOINT` mode that targets an already-running server, and CI
+runs it against the freshly built binary in demo mode with `aws` and
+`rclone` installed in the builder image — the step **fails** when either
+tool is missing; there is no "skip with a notice" path. The README Quick
+Start leads with `docker run ronaldraygun/armor:<v> demo`.
 
 #### 8.6 Credentials as a hot-reloaded file (P2)
 
@@ -1168,11 +1187,26 @@ Decisions:
   the previous set and logs at ERROR; the swap is atomic.
 - `GET /admin/creds` (admin token) lists `name`, `acl`, `source`, `loaded_at`
   — never key material.
-- Rollout: `armor-test` first, then one production instance at a time
-  (rs-manager, iad-ci, iad-kalshi, ord-devimprint), each as its own bead;
-  the OpenBao document is `secret/<cluster>/armor/credentials` with a single
-  key `credentials.yaml`, delivered by one ExternalSecret mounted as a file.
-  Env triplets remain supported indefinitely.
+- Rollout: `armor-test` first, then one production instance at a time, in
+  the order rs-manager → iad-ci → iad-kalshi → ord-devimprint, each as its
+  own bead and each blocked on the previous one. The OpenBao document lives
+  on the **rs-manager instance** (`http://traefik-rs-manager:8200`, which
+  owns every `secret/rs-manager/*` path the ARMOR ExternalSecrets already
+  use) at `secret/rs-manager/<cluster>/armor/credentials` with a single key
+  `credentials.yaml`, delivered by one ExternalSecret mounted as a file. It is
+  assembled **without any value entering an agent's context**: a mode-600
+  temp file built only from `bao kv get -field=…` redirects of the existing
+  per-consumer documents, written with `bao kv put … credentials.yaml=@file`,
+  then deleted; verification is `bao kv metadata get` and `/admin/creds`.
+  Credential names per instance: iad-ci keeps its five (FORGEJO_BACKUP,
+  FORGEJO, CNPG_BACKUPS, CI_CACHE, RESTORE_VERIFIER); iad-kalshi READER and
+  VPSBACKUP; ord-devimprint READONLY and QUEUEAPI; **rs-manager gets exactly
+  one named credential, RESTORE_VERIFIER (`rs-manager:*:get+list`)** — its
+  other consumers stay on the default credential until they are named in a
+  later plan revision. While moving iad-ci, delete the unused
+  `ARMOR_PREFIX: ""` key from `k8s/iad-ci/armor/armor-configmap.yaml` (the
+  Deployment sources the prefix from the Secret). Env triplets remain
+  supported indefinitely.
 
 #### 8.7 Errors visible in both directions — implements ADR-008 (P2)
 
@@ -1204,8 +1238,13 @@ Decisions: `cmd/armor-fleet` polls each target's `/version`, `/armor/canary`
 and `/metrics` through SEAM's read-only Kubernetes API proxy
 (`/k8s/<cluster>/api/v1/namespaces/<ns>/services/<svc>:9001/proxy/...`) on a
 60 s loop, serves `/fleet.json` and a single-page HTML view; targets come from
-a mounted YAML; it is deployed on rs-manager and exposed on Traefik's `vpn`
-entrypoint as `armor-fleet.ardenone.com:8444`. Integration into
+a mounted YAML; CI builds it as `ronaldraygun/armor-fleet:<VERSION>` next to
+the other two images; it is deployed on rs-manager and exposed on Traefik's
+`vpn` entrypoint as `armor-fleet.ardenone.com:8444`. Its SEAM read-only
+token is **pre-provisioned by the operator** at
+`secret/rs-manager/armor-fleet/seam-token` (minting a SEAM token is not a
+fleet-worker action); the deployment bead gates on that path's
+`current_version ≥ 1`. Integration into
 `dashboard.ardenone.com` is an open question. CI propagates each new tag to
 `k8s/iad-ci/armor-test` automatically (same mechanism `news-trader-build`
 uses); production bumps stay explicit commits. The existing drift check also
@@ -1235,7 +1274,8 @@ instead of one per PUT; `.armor/chain-head/<writer>` is updated once per
 batch and points at `{delta_file, seq, hash}`; `GET /armor/audit` walks
 legacy `.armor/chain/<writer>/*` objects up to the last legacy head, then
 delta-embedded entries. Legacy chain objects are additionally compacted into
-`.armor/chain-segments/<writer>/<from>-<to>.jsonl`; **deleting the originals
+`.armor/chain-segments/<writer>/<from>-<to>.jsonl` (plain JSON lines, not
+gzip — the reader lands before the writer and both must agree); **deleting the originals
 after compaction is an open question** (it is a deletion). Moving all
 bookkeeping to a sibling prefix is also an open question.
 
@@ -1306,11 +1346,17 @@ test vectors from these):
   plaintext offset to a part by cumulative `plaintext_len`, to a block by
   `(offset − part_start) / blockSize`, to a ciphertext offset by the cached
   prefix sums. Full GETs stream part by part.
-- **Rollout:** write format is selected by `ARMOR_FORMAT_VERSION` (default
-  `2` until the v3 read/write paths, `armor decrypt`, `verify` and the
-  restore-verifier all support v3 and the multipart canary passes with random
-  unaligned part sizes uploaded concurrently); a later bead flips the default
-  to `3` and deletes the uniform-part-size code path. Consumer workarounds
+- **Rollout:** write format is selected by `ARMOR_FORMAT_VERSION` (a config
+  setting, `Config.FormatWriteVersion`, default `2`, `3` allowed — its own
+  bead, consumed by the v3 write paths, `/version` and `client-config`);
+  the per-part multipart state layout applies **only** under format 3 (v2
+  uploads keep the `.state` file until the flip). The default becomes `3`
+  once the v3 read/write paths, `armor decrypt`, `verify`, the
+  restore-verifier, compression rules and `client-config` all support v3 and
+  the multipart canary passes with random unaligned part sizes uploaded
+  concurrently; that bead also deletes the uniform-part-size code path. The
+  format-migration endpoint is *not* a precondition of the flip (v2→v3
+  migration is optional). Consumer workarounds
   are removed one manifest at a time after the fleet runs a v3-default
   release. Migration of v2 objects to v3 is optional (`?include=v1,v2`).
 
@@ -1320,7 +1366,10 @@ Decisions: a `Makefile` (`build`, `test`, `test-integration`, `lint`,
 `docker`, `compat`); `docs/README.md` index; the ~28 investigation/test-
 analysis documents move to `docs/archive/` (list in the bead), the six
 error-header documents collapse into `docs/error-responses.md`, the three
-version-drift documents into `docs/drift-check.md`; README's security table
+version-drift documents into `docs/drift-check.md`, and the five
+error-format/severity documents into `docs/error-format.md`; the duplicate
+`samples/pytest_outputs/` vs `samples/pytest-output/` trees are reduced to
+one (or deleted if nothing references them); README's security table
 row "Private bucket + Cloudflare Worker auth" is corrected to the actual
 model (public bucket, ciphertext-only, ARMOR-side SigV4 + ACLs); the DR
 runbook and connection guide drop the `0.1.43` pin for a `<version>`
