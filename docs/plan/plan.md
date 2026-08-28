@@ -1083,11 +1083,17 @@ Decisions:
   environment reserves for a human.
 - **Releases are explicit beads.** CI never bumps `VERSION`; every rollout
   below is two beads — "cut the release" (VERSION bump, both images on Docker
-  Hub) and "bump the deployments" (five ARMOR Deployments plus six
-  restore-verifier Deployments in `declarative-config`). Cut points: the
-  Version-2 default (with the paginated restore-verifier discovery riding
-  along), the format-migration endpoint, the CLI/demo/credential-file
-  release, and the v3 default.
+  Hub) and "bump the deployments". **The bump list** is: the five ARMOR
+  Deployments (rs-manager, iad-ci, iad-ci/armor-test, iad-kalshi,
+  ord-devimprint), the `ronaldraygun/armor` sidecar pin in
+  `k8s/ardenone-cluster/commitgraph-dashboard/parquet-mirror-deployment.yml`,
+  and the **five** restore-verifier Deployments (rs-manager ×2 incl. acb,
+  iad-ci, iad-kalshi, ord-devimprint — iad-native-ads is gone). Cut points,
+  in this order because `VERSION` bumps on `main` are linear: the Version-2
+  default (with the paginated restore-verifier discovery riding along), the
+  format-migration endpoint, the CLI/demo/credential-file release, and the
+  v3 default. Each cut is blocked on the previous cut; each bump on its cut
+  and on the previous bump.
 
 #### 8.2 Plan/bead truth-up leftovers
 
@@ -1121,9 +1127,14 @@ random default credentials are generated but never surfaced, so a server with
 no `ARMOR_AUTH_*` boots healthy and unusable.
 
 Decisions:
-- Subcommands via stdlib `flag` + a switch (no cobra): `serve` (default when
-  argv is empty — container entrypoint unchanged), `version`, `check`,
-  `client-config`, `decrypt`, `verify`, `migrate`, `demo`. `armor-decrypt`
+- Subcommands via stdlib `flag` (no cobra): `serve` (default when argv is
+  empty — container entrypoint unchanged), `version`, `check`,
+  `client-config`, `decrypt`, `verify`, `migrate`, `demo`. Registration is a
+  map populated by **per-file `init()`** (`cmd/armor/cmd_<name>.go`), so
+  each subcommand bead adds one file and never edits a shared switch. The
+  `armor-decrypt` compatibility symlink and wrapper are dropped in the
+  release after the CLI release ships; the deprecated `B2_*` secondary
+  names are dropped at the same point. `armor-decrypt`
   and `verify-objects` become `armor decrypt` / `armor verify`; the image
   keeps `armor-decrypt` as a symlink for one release, then drops it.
 - Version: `-X main.version=$(cat VERSION)` in `Dockerfile`, `Dockerfile.test`
@@ -1203,7 +1214,8 @@ Decisions:
   VPSBACKUP; ord-devimprint READONLY and QUEUEAPI; **rs-manager gets exactly
   one named credential, RESTORE_VERIFIER (`rs-manager:*:get+list`)** — its
   other consumers stay on the default credential until they are named in a
-  later plan revision. While moving iad-ci, delete the unused
+  later plan revision, and re-pointing the rs-manager/acb restore-verifiers
+  at that credential waits for Open question 5 (today they bypass ARMOR). While moving iad-ci, delete the unused
   `ARMOR_PREFIX: ""` key from `k8s/iad-ci/armor/armor-configmap.yaml` (the
   Deployment sources the prefix from the Secret). Env triplets remain
   supported indefinitely.
@@ -1427,6 +1439,15 @@ work that depends on one waits.
    `.git` is 471 MB).** Touching `.beads/` is an operator-only action here.
    Proposed: `git rm --cached` plus a `.beads/.gitignore` entry, done by the
    operator, never by a fleet worker.
+8. **Migrating the `armor-apexalgo` bucket (8.1).** It holds V1 ciphertext
+   on a public bucket but has no ARMOR instance to serve
+   `POST /admin/format/migrate` — only the rs-manager `restore-verifier-acb`
+   reads it. Forces: a temporary ARMOR instance (throwaway, `armor migrate`
+   then delete) vs. an offline `armor migrate --direct` mode vs. accepting
+   the disclosure for that bucket. Proposed: a temporary instance on
+   rs-manager, since it reuses the endpoint and its verification exactly;
+   until decided, the four migration beads cover the four served buckets
+   only.
 
 ---
 
