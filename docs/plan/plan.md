@@ -1,8 +1,10 @@
 # ARMOR Implementation Plan
 
-> **Status: Phases 1–4 complete; Phase 5 code-complete, deployment remediation outstanding; Phase 6 in progress, two restore-verifier reliability regressions found — one false-negative, one false-positive** (updated 2026-08-06)
+> **Status (updated 2026-08-28): Phases 1–5 complete and deployed (fleet on 0.1.1913); Phase 6 deployed with one discovery bug still open; Phase 7 shipped in code and rolled out to 3 of 4 production instances; Phase 8 (correctness, usability & convenience) opened 2026-08-28 after a full review — it starts with two P0 defects: `main` does not compile (import cycle + sources referenced by HEAD that were never committed) and every production PUT still writes the Version 1 envelope whose CTR derivation reuses keystream between adjacent blocks (ADR-005, reproduced 2026-08-28). See Phase 8 for the decided remediation and the bead graph.**
 >
-> Phases 1–4 (core proxy, production hardening, advanced features, manifest index) are implemented and shipped. Phase 5 (integrity detection hardening, ADR-002) is complete in code — multipart canary, byte-verifying multipart tests, version-drift check, fix-propagation checklist — but the remediation deploy has NOT happened: as of 2026-07-16 every production deployment (0.1.13–0.1.42) predates the July multipart read-path and out-of-order-part fixes (repo HEAD ≈ 0.1.1861). Phase 6 (restore verification) is deployed with a working dual-path harness and real artifact-class assertions (SQLite/Parquet/tar.gz, bf-1tzyle), plus failure-escalation-to-bead, restorability alerting manifests, and DR-drill automation; remaining: the multipart-era corruption audit (bf-1ebnuz, partially unblocked — see below), a Prometheus to actually scrape the gauges (the ARMOR clusters run VictoriaLogs today, so the PrometheusRules are inert), enabling the periodic DR-drill cadence, and two reliability regressions found in live fleet investigation 2026-08-06: **(1) restore-verifier's discovery step is unreliable fleet-wide** — blind to `ARMOR_PREFIX`-namespaced buckets, and its latest-object listing is unpaginated and gets swamped by accumulated `.armor/*` bookkeeping objects, giving a false "no objects found" reading on 3 of 5 production deployments checked (see [ADR-007](../adr/007-restore-verifier-discovery-reliability.md), bf-5ba6q6, bf-5ybldh); **(2) restore-verifier's "ARMOR path" never actually decrypts anything** — it's wired to a raw B2 backend with no crypto client, so every `ModeDual` run reports every real ARMOR-encrypted object as a checksum conflict, a false *positive* worse than (1)'s false negative (see [ADR-009](../adr/009-restore-verifier-armor-path-never-decrypts.md), `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md`). `ModeDRDrill` (the actual disaster-recovery path) is unaffected by (2). See the phase sections below for exact state.
+> The paragraph below is the 2026-08-06 status, kept for history; where it disagrees with Phase 8, Phase 8 wins.
+>
+> Phases 1–4 (core proxy, production hardening, advanced features, manifest index) are implemented and shipped. Phase 5 (integrity detection hardening, ADR-002) is complete in code — multipart canary, byte-verifying multipart tests, version-drift check, fix-propagation checklist — but the remediation deploy has NOT happened: as of 2026-07-16 every production deployment (0.1.13–0.1.42) predates the July multipart read-path and out-of-order-part fixes (repo HEAD ≈ 0.1.1861). Phase 6 (restore verification) is deployed with a working dual-path harness and real artifact-class assertions (SQLite/Parquet/tar.gz, bf-1tzyle), plus failure-escalation-to-bead, restorability alerting manifests, and DR-drill automation; remaining: the multipart-era corruption audit (bf-1ebnuz, partially unblocked — see below), a Prometheus to actually scrape the gauges (the ARMOR clusters run VictoriaLogs today, so the PrometheusRules are inert), enabling the periodic DR-drill cadence, and two reliability regressions found in live fleet investigation 2026-08-06: **(1) restore-verifier's discovery step is unreliable fleet-wide** — blind to `ARMOR_PREFIX`-namespaced buckets, and its latest-object listing is unpaginated and gets swamped by accumulated `.armor/*` bookkeeping objects, giving a false "no objects found" reading on 3 of 5 production deployments checked (see [ADR-014](../adr/014-restore-verifier-discovery-reliability.md), bf-5ba6q6, bf-5ybldh); **(2) restore-verifier's "ARMOR path" never actually decrypts anything** — it's wired to a raw B2 backend with no crypto client, so every `ModeDual` run reports every real ARMOR-encrypted object as a checksum conflict, a false *positive* worse than (1)'s false negative (see [ADR-009](../adr/009-restore-verifier-armor-path-never-decrypts.md), `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md`). `ModeDRDrill` (the actual disaster-recovery path) is unaffected by (2). See the phase sections below for exact state.
 
 ## Goal
 
@@ -362,7 +364,7 @@ B2's multipart assembly concatenates parts byte-for-byte — there is no opportu
 - The stored object is raw concatenated part ciphertext — **no 64-byte envelope header, no embedded HMAC table**.
 - The HMAC table lives in a **sidecar object** at `.armor/hmac/<sha256-of-key>` (JSON, per-block HMACs).
 - The marker `x-amz-meta-armor-multipart: true` is set in object metadata at CompleteMultipartUpload. **The read path dispatches on this metadata marker** — not on an envelope flag — for both full GETs and range reads. (An earlier revision of this plan described a reserved-byte envelope flag; that was never what shipped, and the assumption that multipart objects have an embedded header caused every multipart GET to 500 until fixed in July 2026 — bf-24sxh7.)
-- **Out-of-order and concurrent part uploads are supported via a uniform-part-size contract** (see [ADR-005](../adr/005-out-of-order-multipart-uniform-part-size.md), incl. its 2026-07-19 amendment): part size `P` is pinned **from part number 1** (never the short final part — the amendment's fix after live testing showed the smallest part reliably *completes* first under default client concurrency); parts arriving before part 1 has pinned `P` get a retryable `503 SlowDown` (standard clients retry transparently, no server-side buffering). Part `N`'s CTR start block is `(N−1) × P / blockSize` — a function of the part *number*, not arrival order — and the final part is the only one allowed to be smaller than `P` (uniformity validated at CompleteMultipartUpload; violations hard-fail, never store). Retried parts are idempotent. This is what lets unmodified concurrent clients (aws cli defaults, SDK uploaders, litestream) work. *Implementation status: shipped on main 2026-07-19 — core uniform-part-size contract (bf-5tol4d) plus part-1 pinning + `503 SlowDown` deferral of earlier arrivals (bf-4oi87m); shuffled/concurrent and sequential orders both round-trip byte-identically, and the multipart canary uploads its parts concurrently to continuously exercise this path (bf-7k79m7). The deployed fleet still needs a version bump to pick this up.*
+- **Out-of-order and concurrent part uploads are supported via a uniform-part-size contract** (see [ADR-015](../adr/015-out-of-order-multipart-uniform-part-size.md), incl. its 2026-07-19 amendment): part size `P` is pinned **from part number 1** (never the short final part — the amendment's fix after live testing showed the smallest part reliably *completes* first under default client concurrency); parts arriving before part 1 has pinned `P` get a retryable `503 SlowDown` (standard clients retry transparently, no server-side buffering). Part `N`'s CTR start block is `(N−1) × P / blockSize` — a function of the part *number*, not arrival order — and the final part is the only one allowed to be smaller than `P` (uniformity validated at CompleteMultipartUpload; violations hard-fail, never store). Retried parts are idempotent. This is what lets unmodified concurrent clients (aws cli defaults, SDK uploaders, litestream) work. *Implementation status: shipped on main 2026-07-19 — core uniform-part-size contract (bf-5tol4d) plus part-1 pinning + `503 SlowDown` deferral of earlier arrivals (bf-4oi87m); shuffled/concurrent and sequential orders both round-trip byte-identically, and the multipart canary uploads its parts concurrently to continuously exercise this path (bf-7k79m7). The deployed fleet still needs a version bump to pick this up.*
 - **Alignment is required only of parts that another part is placed after** (see [ADR-011](../adr/011-barman-stays-on-armor-non-uniform-multipart.md)). Part 1 always starts at block 0, so `(1-1)×P/BlockSize` is 0 at any size; a part smaller than an already-pinned `P` is presumed final and nothing follows it. Both are exempt, which makes **single-part uploads of arbitrary size work** — previously every such upload failed with `InvalidPartSize`, which is what barman-cloud-backup of a small Postgres produces. Shipped `fc6c1a86`.
 - **Non-uniform parts are not yet supported.** Barman emits parts of `chunk_size + N×512`, so part 2 contradicts the uniform `P` pinned by part 1. Until per-part cumulative offsets land (ADR-011), barman through ARMOR has a **silent size ceiling**: it works while a backup fits in one part and reverts to `InvalidPartSize` once it does not.
 - Part patterns ARMOR cannot encrypt correctly are **rejected with a hard failure** rather than stored corrupted: intermediate parts whose size is not a multiple of the block size get `InvalidPartSize` (400), invalid part references get `InvalidPart`/`InvalidPartOrder`. Clients must use block-aligned part sizes (e.g. 16 MiB). Verified 2026-07-18: a sequential 50 MB multipart round-trip through HEAD is byte-identical; objects written by the deployed pre-fix fleet (0.1.42) with concurrent parts are corrupt at rest and unrecoverable by any read path.
@@ -931,12 +933,12 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 
 **Scope:** every ARMOR deployment and bucket — `armor-apexalgo` (live ACB content), `ord-devimprint`, and the three deployments never audited after the multipart bug (`iad-ci`, `iad-kalshi`, `rs-manager`).
 
-**Architecture decision:** [ADR-004](../adr/004-continuous-restore-verification.md) records the dual-path design and its rationale. [ADR-007](../adr/007-restore-verifier-discovery-reliability.md) records two discovery-layer bugs (false negatives) and [ADR-009](../adr/009-restore-verifier-armor-path-never-decrypts.md) records a comparison-layer bug (false positives) found in live fleet investigation (2026-08-06) that currently undermine that design fleet-wide — see the two new task lines below.
+**Architecture decision:** [ADR-004](../adr/004-continuous-restore-verification.md) records the dual-path design and its rationale. [ADR-014](../adr/014-restore-verifier-discovery-reliability.md) records two discovery-layer bugs (false negatives) and [ADR-009](../adr/009-restore-verifier-armor-path-never-decrypts.md) records a comparison-layer bug (false positives) found in live fleet investigation (2026-08-06) that currently undermine that design fleet-wide — see the two new task lines below.
 
 #### Implementation tasks
 
-- [ ] **Discovery reliability — currently undermining the whole phase fleet-wide.** Two independent bugs in `restore-verifier`'s discovery step (finding what to verify, before either verification path even runs) cause false "no objects found" readings: **(A)** discovery never applies `ARMOR_PREFIX` — `BucketConfig.Prefix` is parsed from the `-bucket` flag but never read by either `List()` call, and the env-driven fallback path every deployed instance actually uses never reads `ARMOR_PREFIX` at all, so no instance can currently discover objects in a prefixed bucket (bf-5ba6q6); **(B)** `getLatestObject` makes one unpaginated 100-object `List()` call and filters `.armor/` bookkeeping objects from that single page — since `.armor/*` keys sort first and accumulate monotonically on every bucket, any sufficiently old bucket eventually gets a page that's 100% bookkeeping noise after filtering (bf-5ybldh; `getHistoricalSample` in the same file already paginates correctly and doesn't have this bug). Live 2026-08-06 fleet check: **3 of 5 production deployments gave a false-negative discovery result** — `iad-kalshi` (Bug A: `ARMOR_PREFIX: "iad-kalshi/"` actively receiving hourly writes, restore-verifier reports empty every cycle), `iad-ci` (Bug B: 26,219 real objects vs. 29,303 `.armor/*` objects, unpaginated page is 100% noise), `rs-manager` (empty despite the ARMOR proxy manifest logging 13 tracked objects at startup — root cause unconfirmed but consistent with Bug B). Only 2 of 5 gave a trustworthy signal. See [ADR-007](../adr/007-restore-verifier-discovery-reliability.md) for full investigation, evidence, and remediation direction. Tracked: bf-5ba6q6 (Bug A), bf-5ybldh (Bug B). Priority P1 — this silently defeats Phase 6's purpose on affected buckets (discovery never finds anything to verify, so no failure is ever recorded — worse than an honest red signal for anyone reading the metrics without also checking object counts), but nothing is on fire.
-- [ ] **"ARMOR path" false-positive — worse than the discovery bug above, currently undermining the phase fleet-wide.** `restoreViaARMOR` (verifier.go:1052), the dual-path check's second leg, is wired to a raw `B2Backend` with no crypto client — it never decrypts anything (`B2Backend.Get()`, `internal/backend/b2.go:112`, never touches `internal/crypto`). Combined with `B2Backend.Head()`'s deliberate plaintext-size override for its other, legitimate callers, `restoreViaARMOR` ends up hashing a meaningless truncated ciphertext blob and comparing it against the correctly-decrypted `restoreViaDirectDecrypt` result — a guaranteed mismatch for every real ARMOR-encrypted object, on every scheduled `ModeDual` run (the only mode the default periodic loop calls), on every fleet instance, regardless of actual data integrity. Confirmed via live investigation of `armor-apexalgo` (a bucket with no other monitoring at the time): 10/10 real objects reported as SHA-256 conflicts by `restore-verifier-acb`, all 10 independently verified fully intact via a standalone rebuild of `cmd/armor-decrypt` and byte-for-byte reproduction of the exact false-positive hashes via a standalone program exercising the same buggy code path. `ModeDRDrill` (the actual disaster-recovery path) does not call `restoreViaARMOR` and is unaffected. See [ADR-009](../adr/009-restore-verifier-armor-path-never-decrypts.md) and `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md` for full investigation, evidence, and remediation direction. Any historical `armor_restore_verification_failures_total`/near-zero `runRatio` reading predating this fix is uninformative, not evidence of corruption. Tracked: bf-5hq08c. Priority P1 — same fleet-wide-undermining rationale as the discovery bug, and arguably higher operational risk since it produces active-looking false alarms rather than silent absence.
+- [~] **Discovery reliability — Bug A fixed, Bug B still open (2026-08-28 truth-up).** Bug A (`ARMOR_PREFIX` never applied) is fixed: `cmd/restore-verifier/main.go:206-220` now reads `ARMOR_PREFIX` on the env-driven path. Bug B (unpaginated 100-object `List()` in `getLatestObject`, `internal/restoreverifier/verifier.go`) is **still present** and is re-tracked as a Phase 8 bead. Original description follows. Two independent bugs in `restore-verifier`'s discovery step (finding what to verify, before either verification path even runs) cause false "no objects found" readings: **(A)** discovery never applies `ARMOR_PREFIX` — `BucketConfig.Prefix` is parsed from the `-bucket` flag but never read by either `List()` call, and the env-driven fallback path every deployed instance actually uses never reads `ARMOR_PREFIX` at all, so no instance can currently discover objects in a prefixed bucket (bf-5ba6q6); **(B)** `getLatestObject` makes one unpaginated 100-object `List()` call and filters `.armor/` bookkeeping objects from that single page — since `.armor/*` keys sort first and accumulate monotonically on every bucket, any sufficiently old bucket eventually gets a page that's 100% bookkeeping noise after filtering (bf-5ybldh; `getHistoricalSample` in the same file already paginates correctly and doesn't have this bug). Live 2026-08-06 fleet check: **3 of 5 production deployments gave a false-negative discovery result** — `iad-kalshi` (Bug A: `ARMOR_PREFIX: "iad-kalshi/"` actively receiving hourly writes, restore-verifier reports empty every cycle), `iad-ci` (Bug B: 26,219 real objects vs. 29,303 `.armor/*` objects, unpaginated page is 100% noise), `rs-manager` (empty despite the ARMOR proxy manifest logging 13 tracked objects at startup — root cause unconfirmed but consistent with Bug B). Only 2 of 5 gave a trustworthy signal. See [ADR-014](../adr/014-restore-verifier-discovery-reliability.md) for full investigation, evidence, and remediation direction. Tracked: bf-5ba6q6 (Bug A), bf-5ybldh (Bug B). Priority P1 — this silently defeats Phase 6's purpose on affected buckets (discovery never finds anything to verify, so no failure is ever recorded — worse than an honest red signal for anyone reading the metrics without also checking object counts), but nothing is on fire.
+- [x] **"ARMOR path" false-positive — FIXED** in `ab75bfc0` (2026-08-28, "fix(restore-verifier): implement independent ARMOR path decryption (ADR-009)"); not yet in a deployed restore-verifier image (fleet runs `armor-restore-verifier:0.1.1906`). Original description follows. `restoreViaARMOR` (verifier.go:1052), the dual-path check's second leg, is wired to a raw `B2Backend` with no crypto client — it never decrypts anything (`B2Backend.Get()`, `internal/backend/b2.go:112`, never touches `internal/crypto`). Combined with `B2Backend.Head()`'s deliberate plaintext-size override for its other, legitimate callers, `restoreViaARMOR` ends up hashing a meaningless truncated ciphertext blob and comparing it against the correctly-decrypted `restoreViaDirectDecrypt` result — a guaranteed mismatch for every real ARMOR-encrypted object, on every scheduled `ModeDual` run (the only mode the default periodic loop calls), on every fleet instance, regardless of actual data integrity. Confirmed via live investigation of `armor-apexalgo` (a bucket with no other monitoring at the time): 10/10 real objects reported as SHA-256 conflicts by `restore-verifier-acb`, all 10 independently verified fully intact via a standalone rebuild of `cmd/armor-decrypt` and byte-for-byte reproduction of the exact false-positive hashes via a standalone program exercising the same buggy code path. `ModeDRDrill` (the actual disaster-recovery path) does not call `restoreViaARMOR` and is unaffected. See [ADR-009](../adr/009-restore-verifier-armor-path-never-decrypts.md) and `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md` for full investigation, evidence, and remediation direction. Any historical `armor_restore_verification_failures_total`/near-zero `runRatio` reading predating this fix is uninformative, not evidence of corruption. Tracked: bf-5hq08c. Priority P1 — same fleet-wide-undermining rationale as the discovery bug, and arguably higher operational risk since it produces active-looking false alarms rather than silent absence.
 - [x] **Restore-verification harness** — **built** (`cmd/restore-verifier`, `internal/restoreverifier`): long-running verifier with internal scheduling loop (per the no-CronJobs convention), dual independent paths — the ARMOR read path and direct-to-ciphertext decryption with the MEK — with SHA-256 comparison, per-bucket state, status/trigger HTTP handlers, and metrics wiring. **Now deployed** to every ARMOR bucket via `declarative-config` (bf-1pphhz; see the deploy task below) — restore-verifier pods confirmed `Running` (iad-kalshi, rs-manager, iad-ci spot-checked).
 - [x] **Application-level validity assertions** per artifact class — **implemented** (`internal/restoreverifier/verifier.go`, bf-1tzyle): `SQLiteAssertion` writes the restored plaintext to a temp DB and runs `PRAGMA integrity_check` through a pure-Go SQLite driver (`modernc.org/sqlite`), plus an optional metadata-declared row-count probe (`x-amz-meta-armor-sqlite-table`); `ParquetAssertion` validates leading/trailing `PAR1` magic and parses the footer (`parquet-go`) for row-count sanity; `TarGzAssertion` walks every tar entry end-to-end and fully extracts a sampled subset, checking each against its header-declared size. Corrupt + valid fixtures under `internal/restoreverifier/testdata/` gate both the dual-path and DR-drill assertion calls. (The original plan called for a DuckDB row-count query; the shipped implementation uses `parquet-go` footer parsing instead — same row-count sanity, no extra dependency.)
 - [x] **Deploy the restore-verifier** against every ARMOR bucket via declarative-config, as a Deployment with an internal scheduler — **done** (bf-1pphhz): a `restore-verifier` Deployment + Service + ServiceMonitor + PrometheusRule exists per bucket in `declarative-config` (`armor-apexalgo`→`iad-acb`, `ord-devimprint`, `iad-ci`, `iad-kalshi`, `rs-manager`, `iad-native-ads`), each connecting directly to B2 with its own MEK/credentials and an internal scheduler (no CronJob); restore-verifier pods confirmed `Running` (iad-kalshi, rs-manager, iad-ci spot-checked).
@@ -965,14 +967,15 @@ MEKs (cryptographic blast radius) are adjacent layers, not substitutes.
 
 #### Implementation tasks
 
-- [ ] **P0 consumer split (zero code):** named credentials + prefix ACLs for
-      every iad-ci consumer (Forgejo, CNPG/barman, restore-verifier, CI
-      cache) via declarative-config env + OpenBao. Converts "any client can
-      destroy everything" into per-prefix blast radius immediately.
-- [ ] **Test instance:** a second ARMOR Deployment (`armor-test`) isolated by
-      `ARMOR_PREFIX=armor-test/` in the existing bucket (ADR-001), throwaway
-      MEK, named-credential matrix — the validation target for everything
-      below, never the production backup path.
+- [x] **P0 consumer split (zero code)** — done for iad-ci (5 named credentials:
+      FORGEJO_BACKUP, FORGEJO, CNPG_BACKUPS, CI_CACHE, RESTORE_VERIFIER),
+      iad-kalshi (READER, VPSBACKUP) and ord-devimprint (READONLY, QUEUEAPI);
+      **rs-manager still runs the single default credential**, and Forgejo's
+      MINIO storage/LFS cannot use a named credential at all
+      (`docs/default-credential-retirement-analysis.md`). (2026-08-28 truth-up.)
+- [x] **Test instance:** `armor-test` exists in iad-ci
+      (`declarative-config/k8s/iad-ci/armor-test/`) — on a dedicated bucket
+      rather than a prefix, which is fine for its purpose.
 - [x] **Action verbs** in `ACLEntry` (`{Get, Put, Delete, List}`),
       backward-compatible `_ACL` parse extension (`bucket:prefix:get+list`),
       verb threading through both `CheckACL` call sites (`wrapHandler` via
@@ -983,15 +986,398 @@ MEKs (cryptographic blast radius) are adjacent layers, not substitutes.
       verb + append-only tests (`auth_test.go`, `actions_test.go`,
       `auth_integration_test.go`). Overwrite-as-destruction remains accepted v1
       residual risk (no bucket versioning); pinned by an integration test.
-- [ ] **Enforcement coverage tests:** CopyObject source-key, DeleteObjects
-      batch body, multipart lifecycle verbs, scoped-credential broad-list
-      denial (pin existing behavior).
-- [ ] **Identity audit logging:** access-key ID + verb + key + allow/deny on
-      the per-request log line (complements ADR-008's error-code
-      observability; never logs secrets).
-- [ ] **Documentation:** README authentication section covering named
-      credentials and verbs (the mechanism's invisibility is itself the
-      defect that triggered this phase).
+- [x] **Enforcement coverage tests** — `9a130b1b` (Phase 7 authorization
+      enforcement coverage) and `dcbef91f` (DeleteObjects per-key ACL; note
+      this commit also introduced the import cycle fixed in Phase 8.0).
+- [x] **Identity audit logging** — `89639557`; the per-request line carries
+      `access_key_id`, `verb`, `key`, `authz_result`
+      (`internal/server/server.go` `logCompletedRequest`).
+- [x] **Documentation** — README §Authentication covers named credentials and
+      verbs, **but its `prefix/*` ACL examples do not match the parser**
+      (`parseACL` keeps the `*` literal; `CheckACL` is a literal
+      `strings.HasPrefix`) — fixed in Phase 8.3.
+
+---
+
+### Phase 8: Correctness, Usability & Convenience (opened 2026-08-28)
+
+**Goal:** make ARMOR's two promises true — *ciphertext on the public bucket is
+opaque* and *any S3 client works unmodified* — and make it convenient to run,
+consume, verify and recover. This phase is the decision record for a full
+review performed 2026-08-28 (code, every consumer manifest in
+`declarative-config`, docs, scripts, bead state). Everything below is decided;
+the genuine forks are in [Open questions](#open-questions) and are **not** beads.
+
+**Tracking:** genesis bead `Genesis: ARMOR Phase 8 — Correctness, Usability &
+Convenience`; its live blocker list (`bead why --id <genesis>`) is the source
+of truth for the graph, not any ID list in this document.
+
+**Ordering rule for the fleet:** 8.0 and 8.1 are P0 and block nothing else
+structurally, but nothing merges to `main` until 8.0 is done because `main`
+does not build. 8.11 (format v3) is the largest item and is sequenced after
+the 8.4 CLI skeleton only where it needs a subcommand.
+
+#### 8.0 Unblock `main` (P0)
+
+Findings (2026-08-28): `dcbef91f` made `internal/server/handlers/handlers.go`
+import `internal/server` for `CheckACL` → **import cycle**, `go build ./...`
+fails at HEAD. The same commit references `crypto.NewOffsetEncryptor`
+(ADR-011 non-uniform multipart) whose sources
+(`internal/crypto/offset_encryptor.go`, `offset_decryptor.go`,
+`boundary_hmac.go`) were **never committed** — they existed only in the ex44
+working tree (committed by the review on 2026-08-28; the crypto package passes
+`go test` with them). CI run `armor-build-mlwtz` failed the same day.
+
+Decisions:
+- `CheckACL`, `ACLEntry`, `ActionForRequest` and the verb constants move to a
+  new leaf package `internal/acl` imported by both `internal/server` and
+  `internal/server/handlers`. No other package layout change.
+- `internal/server/handlers/bytes_reader.go` and
+  `handlers/multipart_adr011_test.go` (untracked) are committed if they
+  compile against the fixed tree, otherwise deleted — a worker decides by
+  compiling, not by reading.
+- CI's `test` step is the gate that `go build ./...` from a clean clone passes;
+  the `Dockerfile.test` exemption for "expected-to-fail counter-reuse tests" is
+  removed once 8.1 lands (the tests then pass).
+
+#### 8.1 Cipher correctness — Version 2 by default, then migrate (P0)
+
+Findings: ADR-005's keystream-reuse defect is real and **reproduced
+2026-08-28** against the live encryptor: with `crypto.NewEncryptor` (the
+default, `Version1`), `c0[16+i] ^ c1[i] == p0 ^ p1` for 65,520/65,520 bytes of
+two adjacent 64 KiB blocks. Every production PUT path uses that default
+(`handlers.go:426`, `:605`, `:2850`), `ToMetadata()` hard-codes
+`x-amz-meta-armor-version: "1"` (`internal/backend/backend.go:300`), and the
+proving test `TestProveCounterReuseDirectly` is skipped. Because the bucket is
+`allPublic` by design, every adjacent-block plaintext XOR of every object is
+currently downloadable from the Cloudflare URL. Version 2's counter field is
+also only 32 bits wide: `blockIndex × (blockSize/16)` wraps at 2²⁰ blocks
+(64 GiB at 64 KiB), after which keystream repeats again.
+
+Decisions:
+- `crypto.NewEncryptor` becomes Version 2. Version 1 *encryption* is reachable
+  only via `NewEncryptorWithVersion(…, Version1)` under a `//go:build
+  legacyv1test` tag; production code cannot produce a V1 object.
+- `ToMetadata()` writes the real version; the read paths (single-PUT: header;
+  multipart: metadata, since there is no header) trust
+  `x-amz-meta-armor-version`, falling back to the header, then to `1`.
+- V2 writes refuse objects whose block count would wrap the 32-bit counter
+  (`blockCount × blockSize/16 ≥ 2³²`) with an explicit `InternalError`
+  message naming the v3 format as the fix; this is a guard, not a feature.
+- Migration is an **admin endpoint**, `POST /admin/format/migrate`
+  (`?dry_run=true`, `?include=v1` default, `?include=v1,v2` optional,
+  `?concurrency=4` default), following the key-rotation pattern: resumable
+  state in `.armor/migration-state.json`, idempotent, any instance can resume.
+  Per object: decrypt through the normal read path → re-encrypt with the
+  server's *current* write format → write to the **same key** (single PUT ≤
+  the multipart threshold, otherwise multipart through the normal handlers) →
+  read back and compare SHA-256 with the pre-migration plaintext digest →
+  advance cursor. Failures are recorded and skipped, never retried in a loop.
+  `armor migrate` (8.4) is a thin client of this endpoint.
+- After V2 is deployed and migration has run on a bucket, the bucket's MEK is
+  rotated (existing runbook) — the V1 ciphertext that was public is treated as
+  disclosed.
+
+#### 8.2 Plan/bead truth-up leftovers
+
+Handled in-document on 2026-08-28 (ADR links, Phase 6/7 checkboxes). Still
+open and beaded: restore-verifier discovery Bug B (paginate
+`getLatestObject`; `.armor/*` sorts first and swamps a single page — iad-ci has
+29,303 bookkeeping objects vs 26,219 real ones); enable the periodic DR drill
+(`VERIFIER_DR_DRILL_INTERVAL`) in every restore-verifier Deployment; run the
+multipart-era corruption audit on the four unaudited buckets with
+`verify-objects` and commit the inventory under `docs/notes/`.
+
+#### 8.3 ACL syntax that matches the docs (P1)
+
+Decision: `parseACL` normalizes a trailing `/*` (and a bare `*`) exactly as
+the key-routes parser does (`config.go:448-456`), and rejects any interior
+`*` with an error naming the entry. A test asserts every ACL example in
+`README.md` and `docs/connection-guide.md` parses to the entries the prose
+claims. Semantics stay prefix-match; no glob engine.
+
+#### 8.4 One `armor` binary with a real CLI (P2)
+
+Findings: `cmd/armor` has no flags, no `--version`, no dry-run; `VERSION` is
+never embedded (`-ldflags="-s -w"` only) so three drift scripts exist to
+infer versions from image tags; config errors are reported one at a time;
+random default credentials are generated but never surfaced, so a server with
+no `ARMOR_AUTH_*` boots healthy and unusable.
+
+Decisions:
+- Subcommands via stdlib `flag` + a switch (no cobra): `serve` (default when
+  argv is empty — container entrypoint unchanged), `version`, `check`,
+  `client-config`, `decrypt`, `verify`, `migrate`, `demo`. `armor-decrypt`
+  and `verify-objects` become `armor decrypt` / `armor verify`; the image
+  keeps `armor-decrypt` as a symlink for one release, then drops it.
+- Version: `-X main.version=$(cat VERSION)` in `Dockerfile`, `Dockerfile.test`
+  and the CI template; `armor version` / `--version` print it; every HTTP
+  response carries `Server: ARMOR/<version>`; `GET /version` (both listeners,
+  no auth) returns `{"version","format_write_version","go"}`.
+- `config.Load` collects **all** errors and reports them in one fatal message.
+- **No configured client credential is a startup error** (`ARMOR_AUTH_*` env
+  or `ARMOR_AUTH_FILE`) except in `demo` mode; the random-pair behaviour is
+  removed from code and README. Nothing ever logs a secret.
+- `armor check`: loads config, prints the effective configuration with
+  secrets redacted (also logged once at `serve` start), then `HeadBucket`,
+  one Cloudflare-path GET of a probe object, MEK verification against the
+  canary object, and a credential-file parse; exit 0/1/2 (ok / config error /
+  connectivity error). It replaces `scripts/armor-connectivity-check.sh` and
+  the manual half of `scripts/validate-deployment.sh`.
+- `armor client-config --for aws-cli|rclone|boto3|duckdb|litestream|barman
+  --endpoint URL [--credential NAME]` prints a known-good client config for
+  that tool (endpoint, path style, and — until v3 is the fleet default — the
+  multipart settings the current contract needs). The table of consumer
+  workarounds in 8.11 is the acceptance list.
+
+#### 8.5 Zero-credential local mode (P2)
+
+Findings: `FSBackend` is production-grade but `config.go:351` allows it only
+as the ADR-006 secondary; `cmd/armor` cannot start without B2 credentials; the
+aws-cli-compat suite therefore runs in-process against a mock, never against
+the binary.
+
+Decisions: `ARMOR_BACKEND=filesystem` + `ARMOR_FS_PATH` selects the filesystem
+backend as **primary**; `ARMOR_B2_*` and `ARMOR_CF_DOMAIN` become optional in
+that mode; the canary runs against it. `armor demo [--dir D] [--listen A]`
+= filesystem backend in a temp dir, fixed credentials `armor` /
+`armor-demo-secret` (documented, not secret), MEK generated in memory, and
+`client-config` output printed at start. CI runs the aws-cli-compat suite
+against the real binary in demo mode. The README Quick Start leads with
+`docker run ronaldraygun/armor:<v> demo`.
+
+#### 8.6 Credentials as a hot-reloaded file (P2)
+
+Findings: onboarding a consumer is 8 manual steps across 2–3 namespaces and
+ends with a pod restart; the OpenBao secret shape differs per cluster
+(`prefix`/`PREFIX`, `key_id`/`KEY_ID`); iad-ci's ARMOR crash-looped for 7
+days over a missing optional `PREFIX` key.
+
+Decisions:
+- `ARMOR_AUTH_FILE=/etc/armor/credentials.yaml`:
+  ```yaml
+  credentials:
+    - name: FORGEJO_BACKUP
+      access_key: "..."
+      secret_key: "..."
+      acl: "iad-ci:forgejo-backup/*:put+list"
+  ```
+  merged with env-defined credentials (env wins on name collision; a
+  collision is logged at WARN).
+- Reload by **mtime poll every 10 s** (no new dependency); a parse error keeps
+  the previous set and logs at ERROR; the swap is atomic.
+- `GET /admin/creds` (admin token) lists `name`, `acl`, `source`, `loaded_at`
+  — never key material.
+- Rollout: `armor-test` first, then one production instance at a time
+  (rs-manager, iad-ci, iad-kalshi, ord-devimprint), each as its own bead;
+  the OpenBao document is `secret/<cluster>/armor/credentials` with a single
+  key `credentials.yaml`, delivered by one ExternalSecret mounted as a file.
+  Env triplets remain supported indefinitely.
+
+#### 8.7 Errors visible in both directions — implements ADR-008 (P2)
+
+Findings: 159 `writeError` sites in `handlers`, zero log calls; the
+per-request log line has no S3 error `Code`; `<RequestId>` is absent from
+handler XML bodies; `IncRequestsTotal` (`metrics.go:239`) creates a fresh
+counter per call (per-op/status counts are permanently 1) and writes it into
+`RequestDurationMillis`, whose keys grow without bound; latency and
+encryption-op metrics are never exported.
+
+Decisions: every handler error emits one structured log line
+`{event:"s3_error", error_code, operation, bucket, key, access_key_id,
+request_id, status, message}` (WARN for 4xx, ERROR for 5xx) and increments
+`armor_errors_total{code,operation}`; the completion line gains `error_code`,
+`request_id`, `bytes_in`, `bytes_out`, `user_agent`; XML bodies carry
+`<RequestId>` and `<Resource>`; `armor_requests_total{operation,status_class}`
+becomes a real counter; latency is exported as fixed-bucket
+`armor_request_duration_ms_bucket{operation,le}` with buckets
+5,10,25,50,100,250,500,1000,2500,5000,10000; the unbounded map is deleted.
+
+#### 8.8 Fleet console (P2)
+
+Findings: on 2026-08-27 the operator could not answer "is ARMOR healthy?" on
+4 of 4 target clusters (expired kubeconfig, proxy down, no deployment found);
+restore-verifier images (`0.1.1906`) trail ARMOR (`0.1.1913`) although the
+same workflow builds both.
+
+Decisions: `cmd/armor-fleet` polls each target's `/version`, `/armor/canary`
+and `/metrics` through SEAM's read-only Kubernetes API proxy
+(`/k8s/<cluster>/api/v1/namespaces/<ns>/services/<svc>:9001/proxy/...`) on a
+60 s loop, serves `/fleet.json` and a single-page HTML view; targets come from
+a mounted YAML; it is deployed on rs-manager and exposed on Traefik's `vpn`
+entrypoint as `armor-fleet.ardenone.com:8444`. Integration into
+`dashboard.ardenone.com` is an open question. CI propagates each new tag to
+`k8s/iad-ci/armor-test` automatically (same mechanism `news-trader-build`
+uses); production bumps stay explicit commits. The existing drift check also
+compares `armor-restore-verifier` tags.
+
+#### 8.9 Dashboard as a workbench (P3)
+
+Decisions: `/dashboard/api/list` and the UI paginate with continuation
+tokens (today silently capped at 1000); write actions (upload, download,
+delete) execute as the named credential in `ARMOR_DASHBOARD_CREDENTIAL` and
+are hidden when it is unset (browse-only remains the default); presign
+requires `ARMOR_PRESIGN_BASE_URL` to be absolute and `ARMOR_PRESIGN_SECRET`
+to be set whenever the endpoint is enabled (startup error otherwise — the
+current fallback to the auth secret produces links that die on restart); a
+"Share" action calls presign; a per-credential activity panel reads
+`armor_requests_by_credential_total{access_key_id,verb,result}`.
+
+#### 8.10 `.armor/` bookkeeping diet (P2)
+
+Findings: one provenance object per PUT means bookkeeping outnumbers data on
+long-lived buckets; it is what defeated restore-verifier discovery and it is
+paid for in Class-C calls.
+
+Decisions: provenance entries ride inside the manifest delta lines
+(`{"op":"put",…,"chain":{"seq","hash","prev"}}`) — one object per batch
+instead of one per PUT; `.armor/chain-head/<writer>` is updated once per
+batch and points at `{delta_file, seq, hash}`; `GET /armor/audit` walks
+legacy `.armor/chain/<writer>/*` objects up to the last legacy head, then
+delta-embedded entries. Legacy chain objects are additionally compacted into
+`.armor/chain-segments/<writer>/<from>-<to>.jsonl`; **deleting the originals
+after compaction is an open question** (it is a deletion). Moving all
+bookkeeping to a sibling prefix is also an open question.
+
+#### 8.11 Envelope format v3 — self-describing parts, per-block compression (P2)
+
+Findings: every writing consumer carries a defensive client config because a
+part's CTR offset is a function of its cumulative plaintext position (uniform
+part size, part 1 first, `503 SlowDown`, block alignment): forgejo-backup
+(`max_concurrent_requests 1`, an earlier variant of which left a repo with no
+backup on 2026-08-08), three CNPG clusters (`jobs: 1`,
+`--min-chunk-size=1024MB`; queue-db backups were broken 2026-05-26 →
+2026-08-06), kalshi-tape (5 GiB single-PUT `TransferConfig`), the devimprint
+Service (`sessionAffinity: ClientIP`, 3 h timeout — multipart state is
+process-local), and parquet-mirror (runs a whole ARMOR sidecar to read one
+file). Global `ARMOR_COMPRESS` rejects multipart and disables range reads.
+
+Decisions (normative; the spec bead writes `docs/format/envelope-v3.md` with
+test vectors from these):
+- **Versioning:** header version byte `0x03` for single-PUT objects;
+  `x-amz-meta-armor-version: 3` on every v3 object (both layouts). The 64-byte
+  header layout is unchanged except `Reserved[0]` bit 0 = "per-block zstd
+  enabled for this object" and `Reserved[1] = 0`. v1/v2 readers are kept
+  forever.
+- **Keys:** per-object DEK (32 B) and IV (16 B) as today; `hmacKey =
+  HKDF-SHA256(DEK, info="armor-hmac-v1")` unchanged.
+- **Counter block** for AES block `j` inside ARMOR block `b` of part `p`:
+  `IV[0:8] ‖ uint16(p) ‖ uint32(b) ‖ uint16(j)`, big-endian. Single-PUT
+  objects are `p = 0`; multipart parts use their S3 part number (1..10000).
+  Distinct `(p, b)` never share keystream by construction; nothing depends on
+  cumulative byte offsets. Constraint: `blockSize ≤ 1 MiB` (`j < 2¹⁶`);
+  the encryptor is instantiated per ARMOR block so `j` never carries.
+- **Per-block HMAC:** `HMAC-SHA256(hmacKey, uint16(p) ‖ uint32(b) ‖
+  ciphertext_block)`.
+- **Block table entry:** `hmac[32] ‖ uint32 clen` where the high bit of
+  `clen` marks zstd-compressed and the low 31 bits are the ciphertext length
+  of that block (≤ blockSize when raw).
+- **Per-block compression:** each plaintext block is zstd-compressed before
+  encryption if the result is shorter, else stored raw with the flag clear.
+  Compression is selected per object by `ARMOR_COMPRESS_RULES` (comma list
+  of `suffix|content-type=zstd|none`, e.g. `.jsonl=zstd,.wal=zstd,
+  application/json=zstd,*=none`) and overridden per request by
+  `x-amz-meta-armor-compress: true|false`. `ARMOR_COMPRESS=true` becomes an
+  alias for `*=zstd`. **Multipart parts are never compressed** (B2's 5 MiB
+  minimum applies to the ciphertext part and the server cannot know which
+  part is last). Range reads work on compressed objects.
+- **Single-PUT layout:** `header(64) ‖ block_0 … block_n ‖ block_table`. The
+  table offset is not stored: `table = ciphertext_length − 36 × blockCount`,
+  where `blockCount = ceil(plaintextSize / blockSize)` from the header and
+  `ciphertext_length` from HeadObject / the manifest (the manifest entry gains
+  `CiphertextSize`). The read path fetches the table first (one ranged GET),
+  then blocks by prefix sums of `clen`.
+- **Multipart layout:** each part's ciphertext is its blocks concatenated;
+  B2 concatenates parts. Multipart state is **one object per part**,
+  `.armor/multipart/<upload-id>/part-<n>.json` (block table + plaintext/
+  ciphertext lengths), so two replicas handling parts of the same upload
+  never read-modify-write a shared state object — `sessionAffinity` becomes
+  unnecessary and is removed from the devimprint manifest after rollout.
+  `CreateMultipartUpload` writes `.armor/multipart/<upload-id>/meta.json`
+  (IV, wrapped DEK, key-id, content-type). Any part size ≥ 5 MiB (S3 rule,
+  except the last), any order, any concurrency, no alignment, no `SlowDown`.
+- **Sidecar v3** at `.armor/hmac/<sha256-of-key>`: gzip-compressed JSON
+  `{"version":3,"block_size":…,"parts":[{"n","plaintext_len",
+  "ciphertext_len","blocks":[[hmac_b64, clen],…]},…]}`, written at Complete
+  from the per-part objects, which are then deleted with the upload's
+  `meta.json`. `CompleteMultipartUpload` order: B2 Complete → sidecar →
+  metadata `CopyObject` (`REPLACE`), as today.
+- **Reads:** dispatch on metadata version; multipart range read maps a
+  plaintext offset to a part by cumulative `plaintext_len`, to a block by
+  `(offset − part_start) / blockSize`, to a ciphertext offset by the cached
+  prefix sums. Full GETs stream part by part.
+- **Rollout:** write format is selected by `ARMOR_FORMAT_VERSION` (default
+  `2` until the v3 read/write paths, `armor decrypt`, `verify` and the
+  restore-verifier all support v3 and the multipart canary passes with random
+  unaligned part sizes uploaded concurrently); a later bead flips the default
+  to `3` and deletes the uniform-part-size code path. Consumer workarounds
+  are removed one manifest at a time after the fleet runs a v3-default
+  release. Migration of v2 objects to v3 is optional (`?include=v1,v2`).
+
+#### 8.12 Repo, docs and scripts reset (P3)
+
+Decisions: a `Makefile` (`build`, `test`, `test-integration`, `lint`,
+`docker`, `compat`); `docs/README.md` index; the ~28 investigation/test-
+analysis documents move to `docs/archive/` (list in the bead), the six
+error-header documents collapse into `docs/error-responses.md`, the three
+version-drift documents into `docs/drift-check.md`; README's security table
+row "Private bucket + Cloudflare Worker auth" is corrected to the actual
+model (public bucket, ciphertext-only, ARMOR-side SigV4 + ACLs); the DR
+runbook and connection guide drop the `0.1.43` pin for a `<version>`
+placeholder with a pointer to `VERSION`; `PROGRESS.md` (March, superseded by
+this file) is archived; `handlers.go.backup`, `deleteobjects_fix.md` and
+`.claude/error_test_manifest.md` (which describes a package this repo does
+not have) are deleted; example/stub code compiled into non-test packages
+(`internal/server/error_test_infrastructure.go`,
+`error_pattern_usage_example.go`) moves under `_test.go`; one-off
+investigation scripts move to `scripts/archive/` and `scripts/README.md`
+documents every remaining script; `/readyz` returns JSON
+`{ready, canary_age_s, multipart_canary_healthy, manifest_flushed_s}` and
+the dead `ARMOR_READYZ_CACHE_TTL` is removed from config and docs; the
+second credential scheme in `internal/backend/secondary_config.go`
+(`B2_ENDPOINT`/`B2_KEY_ID`/`B2_KEY`/`B2_BUCKET`) is renamed under
+`ARMOR_SECONDARY_B2_*`; `internal/crypto/hkdf.go` returns an error instead of
+panicking.
+
+---
+
+## Open questions
+
+Forks the plan has deliberately **not** decided. None of these is a bead;
+work that depends on one waits.
+
+1. **Deleting legacy `.armor/chain/<writer>/*` objects after segment
+   compaction (8.10).** Forces the question: the compaction is only a diet if
+   the originals go, but it is a bulk deletion of provenance evidence.
+   Proposed: delete only after the segment file has been read back and every
+   entry's `chain_hash` re-verified, one writer at a time, with the operator
+   triggering it per bucket.
+2. **Moving all bookkeeping to a sibling prefix (`.armor-meta/<prefix>/`)
+   (8.10).** Forces: existing buckets would need a one-time move and every
+   reader (server, `armor decrypt`, restore-verifier) must look in both
+   places during the transition. Proposed: defer until 8.10's batching has
+   shrunk the object count and re-measure.
+3. **Prometheus for the ARMOR clusters (Phase 6).** The `ServiceMonitor`/
+   `PrometheusRule` objects are inert because the clusters run VictoriaLogs.
+   Proposed: a single VictoriaMetrics `vmagent` per cluster scraping
+   `armor`/`restore-verifier` and remote-writing to rs-manager — an estate
+   decision outside this repo.
+4. **Fleet console placement (8.8).** Whether `armor-fleet`'s page is folded
+   into `dashboard.ardenone.com` (and via which publisher) or stays on its own
+   Traefik route. Proposed: keep its own route until the dashboard's
+   publishing mechanism is settled by the argo-workflows-exporter work.
+5. **Restore-verifier topology.** iad-ci's verifier reaches ARMOR through the
+   proxy; the other four hold the MEK and raw B2 keys and bypass ARMOR. ADR-004
+   intends both paths in every instance. Proposed: every verifier gets both
+   `ARMOR_ENDPOINT_URL` and direct B2 access, consistently.
+6. **Binary vs. gzip-JSON sidecar for v3 (8.11).** Gzip-JSON is decided for
+   compatibility with the existing tooling; a 100 GiB object yields a ~60 MB
+   sidecar that must be fetched before the first byte. Proposed: revisit only
+   if a real workload shows the first-byte cost.
+7. **Un-tracking `.beads/*.db.backup.*` from git (~40 MB across 58 files,
+   `.git` is 471 MB).** Touching `.beads/` is an operator-only action here.
+   Proposed: `git rm --cached` plus a `.beads/.gitignore` entry, done by the
+   operator, never by a fleet worker.
 
 ---
 
@@ -1377,7 +1763,7 @@ Kubernetes liveness and readiness probes point at `/healthz`, which incorporates
 | Provenance | Per-writer chains | Tamper-evident audit trail without coordination between concurrent writers |
 | Bucket sharing | `ARMOR_PREFIX` per deployment | Multiple ARMOR instances share one public bucket for free Cloudflare egress; prefix enforced at proxy layer, not by consumers; empty prefix = zero behavior change (see ADR-001) |
 | Multipart layout | Headerless ciphertext + sidecar HMAC table + metadata marker | B2 concatenates parts byte-for-byte, so no envelope header is possible; read path dispatches on `x-amz-meta-armor-multipart`; unsupported part patterns hard-fail instead of corrupting (see ADR-003) |
-| Multipart ordering | Uniform-part-size contract | Part N's CTR offset = (N−1)×P, order-independent — unmodified concurrent clients (aws cli, SDKs, litestream) work; contract violations hard-fail at UploadPart/Complete (see ADR-005) |
+| Multipart ordering | Uniform-part-size contract | Part N's CTR offset = (N−1)×P, order-independent — unmodified concurrent clients (aws cli, SDKs, litestream) work; contract violations hard-fail at UploadPart/Complete (see ADR-015; superseded by the Phase 8 v3 format) |
 | Multipart alignment scope | Required only of parts something is placed after | Alignment exists solely to keep `(N-1)×P/BlockSize` on a block boundary; part 1 (offset 0) and a short final part never needed it. Correcting the over-broad check unblocked single-part uploads of any size without weakening the contract (see ADR-011) |
 | Barman backend | Stays on ARMOR | ADR-010 proposed rerouting CNPG/barman base backups to Garage; reversed by operator direction. Immediate fix is the part-1/final-part exemption plus a single-flush barman config; non-uniform multipart support is the durable answer (see ADR-011, supersedes ADR-010) |
 | Restore proof | Continuous dual-path restore verification | Object presence and canary health don't prove restorability (2026-06 incident); verify through both the ARMOR read path and `armor-decrypt` direct-to-ciphertext, with application-level assertions (see ADR-004) |

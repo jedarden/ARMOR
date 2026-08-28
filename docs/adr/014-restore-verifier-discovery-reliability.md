@@ -1,4 +1,4 @@
-# ADR-007: Restore-Verifier Discovery Reliability
+# ADR-014: Restore-Verifier Discovery Reliability
 
 **Status:** Accepted
 **Date:** 2026-08-06
