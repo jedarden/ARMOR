@@ -70,7 +70,22 @@ type MultipartState struct {
 	// starts at block (N-1)*P/BlockSize — computable regardless of arrival
 	// order. 0 means part 1 has not arrived yet; any part >1 arriving while 0
 	// is deferred by the handler with a retryable 503 SlowDown (nothing stored).
+	//
+	// ADR-011: When non-uniform parts are enabled, this field is used for
+	// backward compatibility but offsets are calculated from cumulative part
+	// sizes instead.
 	PartSize int64 `json:"part_size"`
+
+	// CumulativePartSizes tracks the cumulative byte offset where each part starts.
+	// For part N, CumulativePartSizes[N] = sum of sizes of parts 1..(N-1).
+	// This is used for ADR-011 non-uniform multipart uploads.
+	// A nil map means the upload uses uniform part sizes (legacy mode).
+	CumulativePartSizes map[int]int64 `json:"cumulative_part_sizes,omitempty"`
+
+	// NonUniformParts indicates whether this upload uses non-uniform part sizes.
+	// When true, parts may vary in size and offsets are calculated from
+	// CumulativePartSizes rather than (N-1)*PartSize.
+	NonUniformParts bool `json:"non_uniform_parts,omitempty"`
 
 	// Poisoned marks an upload id as permanently failed (ADR-005 rule 4). When
 	// the optimistic-P contract is contradicted (a part larger than P, two
