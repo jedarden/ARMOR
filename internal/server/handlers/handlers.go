@@ -3057,11 +3057,19 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Calculate total plaintext size
+	// Calculate total plaintext size and expected ciphertext size
+	// For encrypted multipart uploads, each part's ciphertext includes:
+	// - The encrypted part data (same size as plaintext)
+	// - HMAC table: one SHA256 HMAC (32 bytes) per block
 	var totalPlaintextSize int64
+	var totalCiphertextSize int64
 	for _, p := range completeReq.Parts {
 		if size, ok := state.PartSizes[p.PartNumber]; ok {
 			totalPlaintextSize += size
+			// Calculate HMAC overhead for this part
+			blockCount := (size + int64(state.BlockSize) - 1) / int64(state.BlockSize)
+			hmacOverhead := blockCount * 32 // SHA256 HMAC size
+			totalCiphertextSize += size + hmacOverhead
 		}
 	}
 
@@ -3124,7 +3132,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		// upload timestamp before comparing so a valid completion in the same
 		// second is not rejected as stale.
 		createdAt := state.Created.UTC().Truncate(time.Second)
-		if headErr != nil || info == nil || info.Size != totalPlaintextSize ||
+		if headErr != nil || info == nil || info.Size != totalCiphertextSize ||
 			(!state.Created.IsZero() && info.LastModified.UTC().Before(createdAt)) {
 			h.writeError(w, "InternalError", fmt.Sprintf("Failed to recover ambiguous multipart completion: complete=%v head=%v", err, headErr), 500)
 			return
