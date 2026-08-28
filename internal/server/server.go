@@ -520,7 +520,6 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/key/verify", s.verifyKey)
 	mux.HandleFunc("/admin/key/rotate", s.rotateKey)
 	mux.HandleFunc("/admin/key/export", s.exportKey)
-	mux.HandleFunc("/admin/format/migrate", s.handleFormatMigrate) // GET=status, POST=start
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
 	mux.HandleFunc("/admin/presign", s.handlePresign)
@@ -803,97 +802,6 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(escrowPackage)
-}
-
-// handleFormatMigrate handles GET/POST requests for format migration.
-// GET returns current migration status, POST starts a new migration.
-func (s *Server) handleFormatMigrate(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.getFormatMigrationStatus(w, r)
-	case http.MethodPost:
-		s.startFormatMigration(w, r)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// getFormatMigrationStatus returns the current format migration status.
-func (s *Server) getFormatMigrationStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	// Try to load existing migration state
-	migrator := NewFormatMigrator(
-		s.backend,
-		s.config.Bucket,
-		s.keyManager,
-		s.manifest,
-		s.provenance,
-		"v1",     // placeholder for loading state
-		2,        // placeholder for loading state
-		4,        // placeholder for loading state
-		false,    // placeholder for loading state
-	)
-
-	state, err := migrator.loadState(r.Context())
-	if err != nil {
-		// No migration state exists
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": "no_migration",
-		})
-		return
-	}
-
-	// Return the migration state
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(state)
-}
-
-// startFormatMigration starts a new format migration operation.
-func (s *Server) startFormatMigration(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	// Parse query parameters
-	dryRun := r.URL.Query().Get("dry_run") == "true"
-	include := r.URL.Query().Get("include")
-	if include == "" {
-		include = "v1"
-	}
-	concurrency := 4
-	if c := r.URL.Query().Get("concurrency"); c != "" {
-		if n, err := strconv.Atoi(c); err == nil && n > 0 && n <= 32 {
-			concurrency = n
-		}
-	}
-
-	// Create migrator
-	migrator := NewFormatMigrator(
-		s.backend,
-		s.config.Bucket,
-		s.keyManager,
-		s.manifest,
-		s.provenance,
-		include,
-		2, // Always write Version2 (current format)
-		concurrency,
-		dryRun,
-	)
-
-	// Run migration
-	result, err := migrator.Migrate(r.Context())
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":  "error",
-			"error":   err.Error(),
-			"result":  result,
-		})
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(result)
 }
 
 // canaryHandler returns the canary status.
