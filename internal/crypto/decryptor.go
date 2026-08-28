@@ -26,9 +26,10 @@ type Decryptor struct {
 	block     cipher.Block
 }
 
-// NewDecryptor creates a new decryptor with Version1 (legacy) for backward compatibility.
+// NewDecryptor creates a new decryptor with Version2 (fixed counter derivation) for security.
+// Version1 is only available via NewDecryptorWithVersion for legacy data.
 func NewDecryptor(dek, iv []byte, blockSize int) (*Decryptor, error) {
-	return NewDecryptorWithVersion(dek, iv, blockSize, Version1)
+	return NewDecryptorWithVersion(dek, iv, blockSize, Version2)
 }
 
 // NewDecryptorWithVersion creates a new decryptor with the specified version.
