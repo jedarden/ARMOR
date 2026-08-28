@@ -313,7 +313,7 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	plaintextSize := len(plaintext)
 	if plaintextSize > fm.multipartThreshold() {
 		// Use multipart upload for large objects
-		err := fm.uploadAsMultipart(ctx, obj.Key, plaintext, plaintextSHA[:], rawMeta)
+		err = fm.uploadAsMultipart(ctx, obj.Key, plaintext, plaintextSHA[:], rawMeta)
 		if err != nil {
 			return fmt.Errorf("failed to upload as multipart: %w", err)
 		}
