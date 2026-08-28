@@ -509,6 +509,8 @@ func TestARMORObjectDisplay(t *testing.T) {
 			"x-amz-meta-armor-block-size":     "65536",
 			"x-amz-meta-armor-plaintext-size": "500",
 			"x-amz-meta-armor-key-id":         "sensitive",
+			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
 		},
 	}
 	mb.objects["plain.txt"] = &backend.ObjectInfo{
@@ -557,6 +559,8 @@ func TestDefaultKeyAndPlaintextBadges(t *testing.T) {
 			"x-amz-meta-armor-version":        "1",
 			"x-amz-meta-armor-block-size":     "65536",
 			"x-amz-meta-armor-plaintext-size": "500",
+			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
 			// The default key is intentionally not emitted by ToMetadata.
 		},
 	}
@@ -962,6 +966,8 @@ func TestEncryptionStatsHandler(t *testing.T) {
 			"x-amz-meta-armor-block-size":     "65536",
 			"x-amz-meta-armor-plaintext-size": "500",
 			"x-amz-meta-armor-key-id":         "keyA",
+			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
 		},
 	}
 	mb.objects["enc2.bin"] = &backend.ObjectInfo{
@@ -974,6 +980,8 @@ func TestEncryptionStatsHandler(t *testing.T) {
 			"x-amz-meta-armor-block-size":     "65536",
 			"x-amz-meta-armor-plaintext-size": "300",
 			"x-amz-meta-armor-key-id":         "keyB",
+			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
 		},
 	}
 	mb.objects["plain.txt"] = &backend.ObjectInfo{
