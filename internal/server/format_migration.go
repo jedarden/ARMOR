@@ -289,7 +289,6 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 
 	// Decrypt the object using the appropriate read path
 	var plaintext []byte
-	var err error
 	if armorMeta.Multipart {
 		// Multipart objects: load HMAC table from sidecar and decrypt
 		plaintext, err = fm.decryptMultipartObject(armorMeta, obj.Key, reader)
