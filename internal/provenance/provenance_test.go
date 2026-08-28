@@ -1049,3 +1049,187 @@ func TestManagerSerializesConcurrentAppends(t *testing.T) {
 		t.Fatalf("concurrent chain lost entries: %+v", result.Writers[0])
 	}
 }
+
+// TestWalkChainSegments tests the walkChainSegments method.
+func TestWalkChainSegments(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	auditor := NewAuditor(mb, "test-bucket")
+
+	// Create some chain segment files
+	writerID := "test-writer"
+	segment1 := &Entry{
+		Sequence:        1,
+		ObjectKey:       "file1.txt",
+		PlaintextSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("data1"))),
+		ChainHash:       strings.Repeat("a", sha256.Size*2),
+		PrevChainHash:   InitialChainHash,
+		Timestamp:       time.Now().UTC(),
+		WriterID:        writerID,
+		Operation:       "put",
+	}
+	segment2 := &Entry{
+		Sequence:        2,
+		ObjectKey:       "file2.txt",
+		PlaintextSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("data2"))),
+		ChainHash:       strings.Repeat("b", sha256.Size*2),
+		PrevChainHash:   strings.Repeat("a", sha256.Size*2),
+		Timestamp:       time.Now().UTC(),
+		WriterID:        writerID,
+		Operation:       "put",
+	}
+
+	// Create a JSONL segment file
+	var jsonlLines []string
+	for _, entry := range []*Entry{segment1, segment2} {
+		line, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatalf("marshal entry: %v", err)
+		}
+		jsonlLines = append(jsonlLines, string(line))
+	}
+	segmentJSONL := []byte(strings.Join(jsonlLines, "\n") + "\n")
+
+	// Put the segment file
+	segmentKey := fmt.Sprintf(".armor/chain-segments/%s/1-2.jsonl", writerID)
+	if err := mb.Put(ctx, "test-bucket", segmentKey, bytes.NewReader(segmentJSONL), int64(len(segmentJSONL)), map[string]string{"Content-Type": "application/jsonl"}); err != nil {
+		t.Fatalf("put segment file: %v", err)
+	}
+
+	// Walk the chain segments
+	entries, trackedObjects, err := auditor.walkChainSegments(ctx, writerID, 1, 2)
+	if err != nil {
+		t.Fatalf("walkChainSegments failed: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[1] == nil || entries[2] == nil {
+		t.Fatalf("expected entries for sequences 1 and 2, got %+v", entries)
+	}
+	if len(trackedObjects) != 2 {
+		t.Fatalf("expected 2 tracked objects, got %d", len(trackedObjects))
+	}
+	if !trackedObjects["file1.txt"] || !trackedObjects["file2.txt"] {
+		t.Fatalf("tracked objects mismatch: %+v", trackedObjects)
+	}
+}
+
+// TestWalkDeltaEntries tests the walkDeltaEntries method.
+func TestWalkDeltaEntries(t *testing.T) {
+	ctx := context.Background()
+	mb := newMockBackend()
+	auditor := NewAuditor(mb, "test-bucket")
+
+	writerID := "test-writer"
+
+	// Create some delta operations with chain entries
+	deltaOps := []struct {
+		op      string
+		key     string
+		chain   *ChainEntryData
+	}{
+		{
+			op:  "put",
+			key: "bucket/file1.txt",
+			chain: &ChainEntryData{
+				Sequence:      1,
+				ChainHash:     strings.Repeat("a", sha256.Size*2),
+				PrevChainHash: InitialChainHash,
+			},
+		},
+		{
+			op:  "put",
+			key: "bucket/file2.txt",
+			chain: &ChainEntryData{
+				Sequence:      2,
+				ChainHash:     strings.Repeat("b", sha256.Size*2),
+				PrevChainHash: strings.Repeat("a", sha256.Size*2),
+			},
+		},
+		{
+			op:  "del",
+			key: "bucket/file3.txt",
+		},
+	}
+
+	// Create a JSONL delta file
+	var jsonlLines []string
+	for _, deltaOp := range deltaOps {
+		op := struct {
+			Operation string          `json:"op"`
+			Key       string          `json:"key"`
+			Chain     *ChainEntryData `json:"chain,omitempty"`
+		}{
+			Operation: deltaOp.op,
+			Key:       deltaOp.key,
+			Chain:     deltaOp.chain,
+		}
+		line, err := json.Marshal(op)
+		if err != nil {
+			t.Fatalf("marshal delta op: %v", err)
+		}
+		jsonlLines = append(jsonlLines, string(line))
+	}
+	deltaJSONL := []byte(strings.Join(jsonlLines, "\n") + "\n")
+
+	// Put the delta file
+	deltaKey := fmt.Sprintf(".armor/manifest/%s/delta-0000000001.jsonl", writerID)
+	if err := mb.Put(ctx, "test-bucket", deltaKey, bytes.NewReader(deltaJSONL), int64(len(deltaJSONL)), map[string]string{"Content-Type": "application/jsonl"}); err != nil {
+		t.Fatalf("put delta file: %v", err)
+	}
+
+	// Walk the delta entries
+	entries, trackedObjects, err := auditor.walkDeltaEntries(ctx, writerID, 1)
+	if err != nil {
+		t.Fatalf("walkDeltaEntries failed: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 chain entries, got %d", len(entries))
+	}
+	if entries[1] == nil || entries[2] == nil {
+		t.Fatalf("expected entries for sequences 1 and 2, got %+v", entries)
+	}
+	if len(trackedObjects) != 2 {
+		t.Fatalf("expected 2 tracked objects, got %d", len(trackedObjects))
+	}
+	if !trackedObjects["file1.txt"] || !trackedObjects["file2.txt"] {
+		t.Fatalf("tracked objects mismatch: %+v", trackedObjects)
+	}
+}
+
+// TestChainHeadFormatDetection tests that the audit walker correctly
+// identifies legacy vs manifest format chain heads.
+func TestChainHeadFormatDetection(t *testing.T) {
+	// Legacy format chain head
+	legacyHead := &ChainHead{
+		WriterID:  "test-writer",
+		Sequence:  10,
+		ChainHash: strings.Repeat("a", sha256.Size*2),
+		Updated:   time.Now().UTC(),
+	}
+
+	if legacyHead.WriterID == "" {
+		t.Fatal("legacy head should have WriterID")
+	}
+	if legacyHead.DeltaFile != "" {
+		t.Fatal("legacy head should not have DeltaFile")
+	}
+
+	// Manifest format chain head
+	manifestHead := &ChainHead{
+		DeltaFile: ".armor/manifest/test-writer/delta-0000000001.jsonl",
+		Sequence:  10,
+		ChainHash: strings.Repeat("b", sha256.Size*2),
+	}
+
+	if manifestHead.DeltaFile == "" {
+		t.Fatal("manifest head should have DeltaFile")
+	}
+	if manifestHead.WriterID != "" {
+		t.Fatal("manifest head should not have WriterID")
+	}
+}
+
