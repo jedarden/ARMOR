@@ -3882,20 +3882,39 @@ func (h *Handlers) stripPrefixFromCommonPrefix(commonPrefix string) string {
 	return commonPrefix
 }
 
-// writeError writes an S3 error response and logs a structured s3_error event.
+// writeError writes an S3 error response with request ID and resource.
+// The request ID is extracted from the request context and included in the XML body.
+// The resource is the request path. This function also logs a structured s3_error event.
 func (h *Handlers) writeError(w http.ResponseWriter, r *http.Request, code, message string, statusCode int) {
 	// Log structured S3 error event before writing response
 	if h.logger != nil {
 		h.logS3Error(r, code, message, statusCode)
 	}
 
+	// Extract request ID from middleware context
+	requestID := middleware.GetRequestID(r.Context())
+
+	// Build resource path from request URL
+	resource := r.URL.Path
+
+	// Set headers
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(statusCode)
-	var codeBuf, msgBuf bytes.Buffer
+
+	// Build XML response
+	var codeBuf, msgBuf, ridBuf, resBuf bytes.Buffer
 	xml.EscapeText(&codeBuf, []byte(code))
 	xml.EscapeText(&msgBuf, []byte(message))
-	fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
-		codeBuf.String(), msgBuf.String())
+	xml.EscapeText(&ridBuf, []byte(requestID))
+	xml.EscapeText(&resBuf, []byte(resource))
+
+	if requestID != "" {
+		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n  <RequestId>%s</RequestId>\n  <Resource>%s</Resource>\n</Error>",
+			codeBuf.String(), msgBuf.String(), ridBuf.String(), resBuf.String())
+	} else {
+		fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n  <Resource>%s</Resource>\n</Error>",
+			codeBuf.String(), msgBuf.String(), resBuf.String())
+	}
 }
 
 // logS3Error emits a structured log line for S3 errors with request context.
