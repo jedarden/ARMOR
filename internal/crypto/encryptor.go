@@ -66,6 +66,13 @@ func NewEncryptorWithVersion(dek, iv []byte, blockSize int, version uint8) (*Enc
 func (e *Encryptor) Encrypt(plaintext []byte) (encrypted []byte, hmacTable []byte, err error) {
 	blockCount := ComputeBlockCount(int64(len(plaintext)), e.blockSize)
 
+	// Check Version 2 counter space won't overflow
+	if e.version == Version2 {
+		if err := e.checkCounterSpace(blockCount); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	// Allocate output buffers
 	encrypted = make([]byte, blockCount*uint32(e.blockSize))
 	hmacTable = make([]byte, blockCount*HMACSize)
@@ -101,6 +108,14 @@ func (e *Encryptor) Encrypt(plaintext []byte) (encrypted []byte, hmacTable []byt
 // Returns the HMAC table after all data is written.
 func (e *Encryptor) EncryptStream(plaintext io.Reader, ciphertext io.Writer, plaintextSize int64) ([]byte, error) {
 	blockCount := ComputeBlockCount(plaintextSize, e.blockSize)
+
+	// Check Version 2 counter space won't overflow
+	if e.version == Version2 {
+		if err := e.checkCounterSpace(blockCount); err != nil {
+			return nil, err
+		}
+	}
+
 	hmacTable := make([]byte, blockCount*HMACSize)
 
 	buf := make([]byte, e.blockSize)
@@ -142,6 +157,13 @@ func (e *Encryptor) EncryptStream(plaintext io.Reader, ciphertext io.Writer, pla
 // from where the previous part left off.
 func (e *Encryptor) EncryptWithStartingCounter(plaintext []byte, startBlockIndex uint32) (encrypted []byte, hmacTable []byte, err error) {
 	blockCount := ComputeBlockCount(int64(len(plaintext)), e.blockSize)
+
+	// Check Version 2 counter space won't overflow
+	if e.version == Version2 {
+		if err := e.checkCounterSpaceWithStart(blockCount, startBlockIndex); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	// Allocate output buffers
 	encrypted = make([]byte, blockCount*uint32(e.blockSize))
@@ -201,6 +223,34 @@ func (e *Encryptor) makeCounter(blockIndex uint32) []byte {
 
 	binary.BigEndian.PutUint32(counter[12:16], counterValue)
 	return counter
+}
+
+// checkCounterSpace validates that the block count won't overflow the Version 2
+// counter space. Version 2 stores blockIndex * (blockSize / 16) in a uint32, so
+// the maximum block index is 2^32 / (blockSize / 16). At 64 KiB blocks, this is
+// 2^20 blocks = 64 GiB.
+func (e *Encryptor) checkCounterSpace(blockCount uint32) error {
+	const maxCounterValue = 1 << 32
+	aesBlocksPerArmorBlock := uint64(e.blockSize / 16)
+	finalCounterValue := uint64(blockCount) * aesBlocksPerArmorBlock
+	if finalCounterValue >= maxCounterValue {
+		return fmt.Errorf("object exceeds the Version 2 counter space; envelope v3 removes this limit")
+	}
+	return nil
+}
+
+// checkCounterSpaceWithStart validates that the final block index (start + count)
+// won't overflow the Version 2 counter space. Used for multipart uploads where
+// each part continues from a previous part's counter.
+func (e *Encryptor) checkCounterSpaceWithStart(blockCount uint32, startBlockIndex uint32) error {
+	const maxCounterValue = 1 << 32
+	aesBlocksPerArmorBlock := uint64(e.blockSize / 16)
+	finalBlockIndex := uint64(startBlockIndex) + uint64(blockCount)
+	finalCounterValue := finalBlockIndex * aesBlocksPerArmorBlock
+	if finalCounterValue >= maxCounterValue {
+		return fmt.Errorf("object exceeds the Version 2 counter space; envelope v3 removes this limit")
+	}
+	return nil
 }
 
 // computeBlockHMAC computes HMAC-SHA256 for an encrypted block.
