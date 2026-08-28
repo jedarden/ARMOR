@@ -307,6 +307,60 @@ func (d *Decryptor) BlockSize() int {
 	return d.blockSize
 }
 
+// DecryptWithBlockDecompression decrypts encrypted data with per-block decompression.
+// Uses the block table to determine which blocks are compressed and decompresses them
+// after decryption. Handles mixed compressed/uncompressed blocks in the same object.
+//
+// Returns:
+// - plaintext: The decompressed plaintext data
+// - err: Error if decryption/decompression fails
+func (d *Decryptor) DecryptWithBlockDecompression(encrypted []byte, blockTable *BlockTable) ([]byte, error) {
+	blockCount := blockTable.EntryCount()
+	plaintext := make([]byte, 0)
+	encryptedOffset := 0
+
+	for i := 0; i < blockCount; i++ {
+		entry := blockTable.Entries[i]
+		blockLength := entry.RawLength()
+
+		// Validate block boundaries
+		if encryptedOffset+int(blockLength) > len(encrypted) {
+			return nil, fmt.Errorf("block %d exceeds encrypted data bounds", i)
+		}
+
+		encryptedBlock := encrypted[encryptedOffset : encryptedOffset+int(blockLength)]
+
+		// Verify HMAC first
+		if err := d.verifyBlockHMAC(encryptedBlock, uint32(i), entry.HMAC); err != nil {
+			return nil, fmt.Errorf("block %d HMAC verification failed: %w", i, err)
+		}
+
+		// Decrypt the block
+		ctr := d.makeCounter(uint32(i))
+		stream := cipher.NewCTR(d.block, ctr)
+		decryptedBlock := make([]byte, len(encryptedBlock))
+		stream.XORKeyStream(decryptedBlock, encryptedBlock)
+
+		// Decompress if the compression flag is set
+		var plaintextBlock []byte
+		if entry.IsCompressed() {
+			var err error
+			plaintextBlock, err = DecompressBlock(decryptedBlock, true)
+			if err != nil {
+				return nil, fmt.Errorf("block %d decompression failed: %w", i, err)
+			}
+		} else {
+			plaintextBlock = decryptedBlock
+		}
+
+		// Append to plaintext
+		plaintext = append(plaintext, plaintextBlock...)
+		encryptedOffset += int(blockLength)
+	}
+
+	return plaintext, nil
+}
+
 // HMACKey returns the HMAC key derived from the DEK.
 func (d *Decryptor) HMACKey() []byte {
 	return d.hmacKey
