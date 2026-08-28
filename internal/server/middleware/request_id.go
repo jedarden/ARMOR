@@ -19,6 +19,8 @@ const (
 	RequestIDKey contextKey = "requestID"
 	// ExtendedIDKey holds the context key for the extended S3 ID (x-amz-id-2).
 	ExtendedIDKey contextKey = "extendedID"
+	// ErrorCodeKey holds the context key for the S3 error code from s3_error logging.
+	ErrorCodeKey contextKey = "errorCode"
 )
 
 // generateExtendedID generates an opaque S3-style extended ID for x-amz-id-2.
@@ -88,4 +90,19 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 // WithExtendedID sets the extended ID in the context for testing.
 func WithExtendedID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, ExtendedIDKey, id)
+}
+
+// SetErrorCode sets the S3 error code in the context.
+// This is called by writeError when an S3 error occurs.
+func SetErrorCode(ctx context.Context, code string) context.Context {
+	return context.WithValue(ctx, ErrorCodeKey, code)
+}
+
+// GetErrorCode extracts the S3 error code from the request context.
+// Returns empty string if not found.
+func GetErrorCode(ctx context.Context) string {
+	if code, ok := ctx.Value(ErrorCodeKey).(string); ok {
+		return code
+	}
+	return ""
 }
