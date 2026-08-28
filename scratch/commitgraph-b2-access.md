@@ -4,40 +4,44 @@
 generations, run restore) reads to reach the `commitgraph` Litestream/B2 backup
 **without** re-deriving cluster, kubeconfig, or credential steps.
 
-**Last re-confirmed:** 2026-08-09 (live pod + kubeconfig mtimes + OIDC cache
-re-checked). Source beads: bf-3hbw6f (recon), bf-3hvieu (kubeconfig probe),
-bf-3bdye7 (Path A re-verify), bf-3e5ktj (Path B re-verify), bf-1k77wu (§1+§2
-re-verify via observer kubeconfig), bf-3xv6g7 (§4 finalize + CLI/config re-verify),
-bf-5owyzi (§5+§6+Appendix finalize + live re-verify), this doc bf-53li0z;
-§0+§5 RECOMMENDED/validation reconciliation bf-25j9d8.
+**Last re-confirmed:** 2026-08-28 (admin kubeconfig refresh Aug 27 tested; litestream
+logs show B2 403 errors). Original recon: 2026-08-09 (live pod + kubeconfig mtimes
++ OIDC cache re-checked). Source beads: bf-3hbw6f (recon), bf-3hvieu (kubeconfig
+probe), bf-3bdye7 (Path A re-verify), bf-3e5ktj (Path B re-verify), bf-1k77wu
+(§1+§2 re-verify via observer kubeconfig), bf-3xv6g7 (§4 finalize + CLI/config
+re-verify), bf-5owyzi (§5+§6+Appendix finalize + live re-verify), this doc
+bf-53li0z; §0+§5 RECOMMENDED/validation reconciliation bf-25j9d8; 2026-08-28
+status update armor-d734f558.
 
 ---
 
-## 0. STATUS — BLOCKED on operator action (read this first)
+## 0. STATUS — BLOCKED on B2 credentials (read this first)
 
 > **Neither access path works today.** Both Path A (in-pod exec) and Path B
-> (local secret-read) are blocked by the **same** gate: no live kubeconfig
-> authenticates against `ord-devimprint`. The read-only observer works, but it
-> grants neither `exec` nor `secret get`. **Unblock = operator refreshes the
-> ord-devimprint admin kubeconfig via the Rackspace Spot dashboard** (see §6).
-> Do **not** re-probe the kubeconfigs — all candidates were exhaustively tested
-> on 2026-08-09 (evidence in Appendix). The recipes below fire verbatim the
-> moment a single refreshed `ord-devimprint-admin` kubeconfig authenticates; that
-> one kubeconfig grants **both** operations (same cluster-admin OIDC identity).
+> (local secret-read) are blocked by **B2 credential expiration**, not just
+> kubeconfig auth. The `ord-devimprint-admin` kubeconfig was refreshed on
+> 2026-08-27 but **still returns "Unauthorized"** when tested (token shows
+> expired from 2026-08-24). More critically, the **in-pod litestream sidecar is
+> actively failing** with B2 403 errors:
+> ```
+> api error AccessDenied: not entitled
+> failed to get rate limit token, retry quota exceeded, 0 available, 5 requested
+> ```
+> This means **even if kubectl exec worked, the B2 credentials themselves are
+> dead**. The read-only observer works for pod/describe/logs but grants neither
+> `exec` nor `secret get`. **Unblock requires BOTH:**
+> 1. Refresh `ord-devimprint-admin` kubeconfig (current one expired 2026-08-24)
+> 2. Refresh B2 credentials in `commitgraph-b2-workers` secret (currently 403 from B2)
+>
+> Do **not** re-probe the kubeconfigs or run the recipes below until §6 unblock
+> completes — both will fail with auth errors.
 
-**Recommended path — designation, NOT a validation claim.** **Path A (in-pod
-exec) is the designated primary / RECOMMENDED path** — chosen for *structural*
-soundness, not because it has run live. It sidesteps the local IMDS-credential
-failure mode entirely (the B2 keys are in-pod at exec time; see §3 "Why
-recommended"). That label only signals "run this one first once unblocked"; it
-does **not** mean Path A is validated. **Neither path is live-validated today.**
-Both carry `Status: BLOCKED-pending-validation`, and the live-validated qualifier
-is explicitly **provisional-pending-operator-unblock**: §3 (Path A) and §4 (Path
-B) flip from `BLOCKED-pending-validation` to **live-validated** the moment §6
-lands and the expected outputs below are captured (tracker beads bf-5ju7f7 /
-bf-2hzix5). So the doc satisfies "a recommended path is marked" in prose, while
-honestly deferring the live run to the operator gate — nothing here is
-overclaimed as validated.
+**Current state (2026-08-28):** The document is **complete and self-contained**
+— all bucket facts, kubeconfig paths, access recipes, and verify commands are
+present. Downstream agents can use it **once the operator unblocks** (see §6).
+Neither path is validated today; both fail at auth. The RECOMMENDED label
+(Path A) signals structural soundness (in-pod creds → no local IMDS issues),
+**not** a claim it works.
 
 This doc records the exact commands to run once unblocked. It is deliberately
 self-contained: bucket facts, cluster, kubeconfigs, both paths, and the verify
@@ -279,10 +283,30 @@ Once one refreshed `ord-devimprint-admin` kubeconfig authenticates, it grants
 
 ## Appendix — probe evidence (why not to re-probe)
 
-Every ord-devimprint kubeconfig was exhaustively tested for both operations on
-2026-08-09 (each with a 30–45s timeout — stale Spot OIDC tokens HANG rather than
-fail fast). Auth fails at the API layer, so it blocks **both** operations
-identically.
+**2026-08-28 update:** Admin kubeconfig regenerated 2026-08-27 12:00, tested
+2026-08-28 — **still returns "Unauthorized"**. Additionally, litestream logs
+from `queue-api-6b57bdc468-nc747` show active B2 failures:
+
+```bash
+kubectl --server=http://traefik-ord-devimprint:8001 \
+  logs -n commitgraph -l app=queue-api -c litestream --tail=5
+```
+
+Shows repeated errors (2026-08-28 04:23-04:26 UTC):
+```
+api error AccessDenied: not entitled
+failed to get rate limit token, retry quota exceeded, 0 available, 5 requested
+```
+
+**This means the B2 credentials in `commitgraph-b2-workers` secret are themselves
+expired or revoked — the blocker is now B2-side, not just kubeconfig auth.**
+
+---
+
+**Original probe (2026-08-09):** Every ord-devimprint kubeconfig was
+exhaustively tested for both operations (each with a 30–45s timeout — stale
+Spot OIDC tokens HANG rather than fail fast). Auth fails at the API layer, so it
+blocks **both** operations identically.
 
 | Kubeconfig | Context (user) | secret-read | exec | Root cause |
 |---|---|---|---|---|
@@ -297,6 +321,10 @@ on ord-devimprint); cross-cluster RBAC is not a thing here. Direct API server
 reachability was confirmed independently (unauth curl returns `http_code=403`,
 i.e. the control plane answers — this is an auth failure, not DNS/network).
 
-**Bottom line:** there is no working secret-read OR exec path today. The
-read-only observer is the only working kubeconfig and grants neither. Re-probing
-is wasted effort until §6 unblock.
+**Bottom line (2026-08-28):** TWO blockers exist:
+1. Kubeconfig auth — admin kubeconfig refreshed 2026-08-27 but still returns
+   `Unauthorized` (token expired 2026-08-24 despite file mtime)
+2. B2 credentials — even if kubectl worked, the B2 keys in the pod are getting
+   403 `AccessDenied: not entitled` from Backblaze
+
+**Unblocking requires BOTH kubeconfig refresh AND B2 secret re-provisioning.**
