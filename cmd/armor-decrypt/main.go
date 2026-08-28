@@ -545,14 +545,25 @@ func decryptLocalMultipart(src *inputSource, dek []byte) ([]byte, error) {
 	}
 
 	if verboseFlag {
-		fmt.Fprintf(os.Stderr, "Sidecar: block_size=%d, %d block HMACs\n", sidecar.BlockSize, len(sidecar.BlockHMACs))
+		fmt.Fprintf(os.Stderr, "Sidecar: block_size=%d, %d block HMACs, version=%d\n", sidecar.BlockSize, len(sidecar.BlockHMACs), sidecar.Version)
+	}
+
+	// Determine the envelope version to use. Prefer the version from the sidecar
+	// (written by the server on CompleteMultipartUpload), falling back to the
+	// CLI flag for old sidecars that don't have the version field.
+	version := sidecar.Version
+	if version == 0 {
+		// Old sidecar without version field - use CLI flag (default: 1)
+		version = versionFlag
+		if verboseFlag {
+			fmt.Fprintf(os.Stderr, "Sidecar missing version field, using CLI flag: %d\n", versionFlag)
+		}
 	}
 
 	// Create decryptor. Absolute block indices: the full-object Decrypt walks
 	// block 0..N, which for a headerless multipart object are the absolute
 	// indices the HMACs were keyed on during upload.
-	// For local multipart files, use the version from command-line flag (default: 1).
-	decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, sidecar.BlockSize, uint8(versionFlag))
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, sidecar.BlockSize, uint8(version))
 	if err != nil {
 		return nil, fmt.Errorf("create decryptor: %w", err)
 	}
