@@ -666,7 +666,11 @@ Key management operations are exposed as HTTP API endpoints on the admin listene
 
 In Kubernetes, operators interact via:
 ```bash
-kubectl exec deploy/armor -- curl -s localhost:9001/admin/key/verify
+# The runtime image is FROM scratch (no shell, no curl); reach the admin
+# listener through the API server's service proxy instead (Phase 8 decision):
+kubectl proxy --port=8001 &
+curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+  http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/key/verify
 ```
 
 ### Key Rotation
@@ -1067,7 +1071,11 @@ Decisions:
   message naming the v3 format as the fix; this is a guard, not a feature.
 - Migration is an **admin endpoint**, `POST /admin/format/migrate`
   (`?dry_run=true`, `?include=v1` default, `?include=v1,v2` optional,
-  `?concurrency=4` default), following the key-rotation pattern: resumable
+  `?concurrency=4` default; **admin token required**, provisioned per
+  instance at `secret/rs-manager/<cluster>/armor/admin` key `admin_token` on
+  the rs-manager OpenBao instance, delivered by ExternalSecret into
+  `ARMOR_ADMIN_TOKEN` — today no deployment sets it and the admin API is
+  fail-closed 403 everywhere), following the key-rotation pattern: resumable
   state in `.armor/migration-state.json`, idempotent, any instance can resume.
   Per object: decrypt through the normal read path → re-encrypt with the
   server's *current* write format → write to the **same key** (single PUT ≤
@@ -1202,6 +1210,20 @@ Decisions:
   collision is logged at WARN).
 - Reload by **mtime poll every 10 s** (no new dependency); a parse error keeps
   the previous set and logs at ERROR; the swap is atomic.
+- **Operating the admin API from outside the pod.** The runtime images are
+  `FROM scratch` — no shell, no `curl` — so `kubectl exec … curl` is not a
+  procedure. The decided route is the API server's service proxy:
+  `kubectl proxy` on localhost, then
+  `http://127.0.0.1:8001/api/v1/namespaces/<ns>/services/<svc>:9001/proxy/<path>`
+  with the bearer token from `bao kv get -field=admin_token …` in the
+  environment (never argv). Every production Deployment already binds
+  `ARMOR_ADMIN_LISTEN=0.0.0.0:9001` with the Service exposing 9001;
+  `armor-test` binds `127.0.0.1:9001` and is flipped to `0.0.0.0:9001` plus
+  a Service port as part of its credential-file bead. The restore-verifier's
+  `POST /trigger` is reached the same way on its own Service port (9002).
+  Once the CLI ships, `kubectl exec deploy/armor -- armor migrate --watch`
+  (static binary, token from the pod's own env) is the equivalent for
+  migration.
 - `GET /admin/creds` (admin token) lists `name`, `acl`, `source`, `loaded_at`
   — never key material.
 - Rollout: `armor-test` first, then one production instance at a time, in
