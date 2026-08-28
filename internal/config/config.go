@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/jedarden/armor/internal/acl"
 )
 
 // KeyRoute represents a prefix-to-key mapping for multi-key support.
@@ -135,6 +137,11 @@ type Config struct {
 	// /metrics, and /dashboard* (which carry their own auth) are unaffected.
 	// See bead bf-5m9nde.
 	AdminToken string
+
+	// LogLevel controls the verbosity of application logging.
+	// Valid values: "debug", "info", "warn", "error". Default: "info"
+	// When set to "debug", HTTP request/response headers and bodies are logged.
+	LogLevel string
 
 	// Secondary backend configuration (ADR-006)
 	// When set, enables async replication to a secondary backend
@@ -330,6 +337,12 @@ func Load() (*Config, error) {
 	// Admin API bearer token. When set, all /admin/* routes (and /armor/audit)
 	// require it; when unset, gated admin routes are disabled (fail-closed).
 	cfg.AdminToken = os.Getenv("ARMOR_ADMIN_TOKEN")
+
+	// Log level configuration (default: info)
+	cfg.LogLevel = getEnv("ARMOR_LOG_LEVEL", "info")
+	if cfg.LogLevel == "" {
+		cfg.LogLevel = "info"
+	}
 
 	// Secondary backend configuration (ADR-006)
 	// Only enabled if ARMOR_SECONDARY_BACKEND_TYPE is set
@@ -556,9 +569,15 @@ func parseACL(aclStr string) ([]ACLEntry, error) {
 			return nil, fmt.Errorf("invalid ACL entry %q (empty bucket)", part)
 		}
 
-		// Normalize wildcard prefix
+		// Normalize wildcard prefix: a bare * is the catch-all (empty prefix),
+		// a trailing /* is the documented path-prefix notation, and any other *
+		// position is invalid (wildcard must be at the end).
 		if prefix == "*" {
 			prefix = ""
+		} else if strings.HasSuffix(prefix, "/*") {
+			prefix = strings.TrimSuffix(prefix, "/*") + "/"
+		} else if strings.Contains(prefix, "*") {
+			return nil, fmt.Errorf("invalid ACL entry %q (wildcard must be a bare * or trailing /*)", part)
 		}
 
 		entry := ACLEntry{
