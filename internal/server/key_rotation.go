@@ -206,7 +206,6 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 				// ListObjectsV2 does not include user metadata on B2, so inspect
 				// the object before filtering. This also makes named-key rotation
 				// safe when a bucket contains objects owned by other MEKs.
-				var err error
 				rawMeta, err = kr.objectMetadata(ctx, obj)
 				if err != nil {
 					log.Printf("Warning: failed to inspect object %s: %v", obj.Key, err)
