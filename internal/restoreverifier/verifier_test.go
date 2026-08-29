@@ -1174,3 +1174,157 @@ func TestGetLatestObject_FindsLatestAcrossMultiplePages(t *testing.T) {
 		t.Fatalf("got size %d, want %d", latest.Size, newData.Size)
 	}
 }
+
+// TestVerifyObject_MEKRing_MultiKeyBucket verifies that the restore-verifier
+// can successfully decrypt and verify objects wrapped under different MEKs when
+// a MEK ring is configured. This tests the key rotation scenario where a bucket
+// contains objects encrypted with both the active key and retired keys.
+func TestVerifyObject_MEKRing_MultiKeyBucket(t *testing.T) {
+	const blockSize = 4096
+
+	// Create two distinct MEKs: the "active" key and a "retired" key
+	activeMEK := bytes.Repeat([]byte{0xA5}, 32)
+	retiredMEK := bytes.Repeat([]byte{0x5A}, 32)
+
+	// Create the ring with the retired key
+	retiredFP := crypto.MEKFingerprint(retiredMEK)
+	mekRing := []crypto.RingKeyEntry{
+		{
+			MEK:         retiredMEK,
+			Fingerprint: retiredFP,
+		},
+	}
+
+	// Test plaintext
+	plaintext := []byte("multi-key test data for ring verification")
+	ciphertextActive, metaActive := armorEncryptWithMEK(t, activeMEK, blockSize, plaintext)
+	ciphertextRetired, metaRetired := armorEncryptWithMEK(t, retiredMEK, blockSize, plaintext)
+
+	tests := []struct {
+		name       string
+		mek        []byte
+		mekRing    []crypto.RingKeyEntry
+		ciphertext []byte
+		meta       map[string]string
+		wantStatus VerificationStatus
+	}{
+		{
+			name:       "object_wrapped_with_active_key",
+			mek:        activeMEK,
+			mekRing:    mekRing,
+			ciphertext: ciphertextActive,
+			meta:       metaActive,
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "object_wrapped_with_retired_key_in_ring",
+			mek:        activeMEK,
+			mekRing:    mekRing,
+			ciphertext: ciphertextRetired,
+			meta:       metaRetired,
+			wantStatus: StatusPass,
+		},
+		{
+			name:       "object_wrapped_with_retired_key_no_ring_fails",
+			mek:        activeMEK,
+			mekRing:    nil, // No ring configured
+			ciphertext: ciphertextRetired,
+			meta:       metaRetired,
+			wantStatus: StatusRestoreError, // Should fail to unwrap
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fb := &fakeBackend{
+				ciphertext: tt.ciphertext,
+				plaintext:  plaintext,
+				info: &backend.ObjectInfo{
+					Key:      "test-key",
+					Size:     int64(len(plaintext)),
+					Metadata: tt.meta,
+				},
+			}
+
+			v := New(fb, tt.mek, tt.mekRing, blockSize, nil, Config{})
+
+			result := v.verifyObject(context.Background(), ObjectSample{
+				Key:          "test-key",
+				Bucket:       "test-bucket",
+				ArtifactType: ArtifactGeneric,
+				Metadata:     tt.meta,
+			}, ModeDual)
+
+			if result.Status != tt.wantStatus {
+				t.Fatalf("status = %q, want %q (error=%q)", result.Status, tt.wantStatus, result.Error)
+			}
+
+			// For successful cases, both paths should agree
+			if tt.wantStatus == StatusPass {
+				if result.Path != PathDualMatch {
+					t.Fatalf("expected both paths to agree (PathDualMatch), got %q", result.Path)
+				}
+				if result.AssertionPassed != true {
+					t.Fatalf("assertion_passed = false, want true for successful verification")
+				}
+			}
+		})
+	}
+}
+
+// armorEncryptWithMEK encrypts plaintext using a specific MEK, returning
+// ciphertext and ARMOR metadata. Helper for testing multi-key scenarios.
+func armorEncryptWithMEK(t *testing.T, mek []byte, blockSize int, plaintext []byte) ([]byte, map[string]string) {
+	t.Helper()
+
+	// Generate DEK and wrap with the specified MEK
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		t.Fatalf("generate DEK: %v", err)
+	}
+
+	// Wrap DEK with fingerprint (v2 format)
+	wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(mek, dek)
+	if err != nil {
+		t.Fatalf("wrap DEK with fingerprint: %v", err)
+	}
+
+	// Encrypt plaintext
+	iv, err := crypto.GenerateIV()
+	if err != nil {
+		t.Fatalf("generate IV: %v", err)
+	}
+
+	ciphertext, err := crypto.EncryptCTR(plaintext, dek, iv, blockSize)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	// Build metadata
+	plaintextSHA := sha256.Sum256(plaintext)
+	meta := map[string]string{
+		"x-amz-meta-armor-version":        "2",
+		"x-amz-meta-armor-block-size":     strconv.Itoa(blockSize),
+		"x-amz-meta-armor-iv":             hex.EncodeToString(iv),
+		"x-amz-meta-armor-wrapped-dek":    wrappedDEKStr,
+		"x-amz-meta-armor-plaintext-sha":   hex.EncodeToString(plaintextSHA[:]),
+		"x-amz-meta-armor-multipart":      "false",
+		"x-amz-meta-armor-compressed":     "false",
+		"x-amz-meta-armor-mek-fingerprint": crypto.MEKFingerprint(mek),
+	}
+
+	// Prepend envelope header (v2 format: [version:1 byte][plaintext_size:8 bytes][hmac_len:4 bytes])
+	header := crypto.EnvelopeHeader{
+		Version:       2,
+		PlaintextSize: int64(len(plaintext)),
+		HMACLen:       0, // No HMAC in single-PUT v2
+	}
+	headerBytes, err := header.Marshal()
+	if err != nil {
+		t.Fatalf("marshal header: %v", err)
+	}
+
+	ciphertext = append(headerBytes, ciphertext...)
+
+	return ciphertext, meta
+}
