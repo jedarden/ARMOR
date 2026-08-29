@@ -226,8 +226,23 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create dashboard with optional authentication
+	// If dashboard credential is configured, pass it for S3 operations
+	var dashboardCred *dashboard.DashboardCredential
+	if cfg.DashboardCredential != "" {
+		if cred, exists := cfg.Credentials[cfg.DashboardCredential]; exists {
+			dashboardCred = &dashboard.DashboardCredential{
+				Name:      cfg.DashboardCredential,
+				AccessKey: cred.AccessKey,
+				SecretKey: cred.SecretKey,
+			}
+		}
+	}
+
+	// Server base URL for S3 proxy (dashboard uses this to make signed requests)
+	serverBaseURL := "http://" + cfg.Listen
+
 	dash := dashboard.NewWithAuth(primaryBackend, cfg.Bucket, metrics.DefaultMetrics,
-		cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardToken)
+		cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardToken, dashboardCred, serverBaseURL)
 
 	// Load manifest index from B2 (startup load).
 	// The manifest is a performance optimisation — errors are logged as warnings
@@ -602,6 +617,12 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/metrics", s.dashboard.MetricsHandlerWithAuth())
 		mux.HandleFunc("/dashboard/encryption-stats", s.dashboard.EncryptionStatsHandlerWithAuth())
 		mux.HandleFunc("/dashboard/api/list", s.dashboard.ListAPIHandlerWithAuth())
+
+			// Dashboard S3 operations (upload, download, delete)
+			// These use the dashboard credential for S3 signing
+			mux.HandleFunc("/dashboard/upload", s.dashboard.UploadHandlerWithAuth())
+			mux.HandleFunc("/dashboard/download", s.dashboard.DownloadHandlerWithAuth())
+			mux.HandleFunc("/dashboard/delete", s.dashboard.DeleteHandlerWithAuth())
 
 		// Key rotation proxy handler (authenticated).
 		// The dashboard proxies rotation to the admin API over loopback; it must

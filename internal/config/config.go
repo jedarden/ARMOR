@@ -141,6 +141,12 @@ type Config struct {
 	DashboardPass  string
 	DashboardToken string
 
+	// Dashboard credential for S3 operations
+	// When set, dashboard actions (upload, download, delete) are executed
+	// through S3 handlers signed as this named credential
+	// When unset, dashboard is browse-only (current behavior)
+	DashboardCredential string
+
 	// AdminToken gates the admin API (all /admin/* routes and /armor/audit).
 	// When set, every gated request must carry "Authorization: Bearer <token>"
 	// and is compared in constant time. When unset, gated admin routes are
@@ -455,6 +461,9 @@ func Load() (*Config, error) {
 	cfg.DashboardPass = os.Getenv("ARMOR_DASHBOARD_PASS")
 	cfg.DashboardToken = os.Getenv("ARMOR_DASHBOARD_TOKEN")
 
+	// Dashboard credential for S3 operations
+	cfg.DashboardCredential = os.Getenv("ARMOR_DASHBOARD_CREDENTIAL")
+
 	// Admin API bearer token. When set, all /admin/* routes (and /armor/audit)
 	// require it; when unset, gated admin routes are disabled (fail-closed).
 	cfg.AdminToken = os.Getenv("ARMOR_ADMIN_TOKEN")
@@ -501,6 +510,13 @@ func Load() (*Config, error) {
 	// Check that at least one client credential is configured (unless demo mode)
 	if !cfg.AllowNoCredentials && len(cfg.Credentials) == 0 {
 		errs = append(errs, fmt.Errorf("no client credential configured: set ARMOR_AUTH_ACCESS_KEY/ARMOR_AUTH_SECRET_KEY, a named ARMOR_AUTH_<NAME>_* triplet, or ARMOR_AUTH_FILE"))
+	}
+
+	// Validate dashboard credential references an existing named credential
+	if cfg.DashboardCredential != "" {
+		if _, exists := cfg.Credentials[cfg.DashboardCredential]; !exists {
+			errs = append(errs, fmt.Errorf("ARMOR_DASHBOARD_CREDENTIAL '%s' does not match any configured credential", cfg.DashboardCredential))
+		}
 	}
 
 	// Return all errors collected during validation

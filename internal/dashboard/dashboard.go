@@ -2,6 +2,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -90,25 +91,36 @@ func (a *AuthMiddleware) Wrap(h http.HandlerFunc) http.HandlerFunc {
 
 // Dashboard provides the web dashboard handlers.
 type Dashboard struct {
-	backend  backend.Backend
-	bucket   string
-	metrics  *metrics.Metrics
-	template *template.Template
-	auth     *AuthMiddleware
+	backend         backend.Backend
+	bucket          string
+	metrics         *metrics.Metrics
+	template        *template.Template
+	auth            *AuthMiddleware
+	dashboardCred   *DashboardCredential // Named credential for S3 operations
+	serverBaseURL   string                // Base URL for S3 endpoint proxying
+}
+
+// DashboardCredential holds credential info for S3 operations
+type DashboardCredential struct {
+	Name      string
+	AccessKey string
+	SecretKey string
 }
 
 // New creates a new Dashboard.
 func New(b backend.Backend, bucket string, m *metrics.Metrics) *Dashboard {
-	return NewWithAuth(b, bucket, m, "", "", "")
+	return NewWithAuth(b, bucket, m, "", "", "", nil, "")
 }
 
 // NewWithAuth creates a new Dashboard with authentication.
-func NewWithAuth(b backend.Backend, bucket string, m *metrics.Metrics, user, pass, token string) *Dashboard {
+func NewWithAuth(b backend.Backend, bucket string, m *metrics.Metrics, user, pass, token string, dashboardCred *DashboardCredential, serverBaseURL string) *Dashboard {
 	d := &Dashboard{
-		backend: b,
-		bucket:  bucket,
-		metrics: m,
-		auth:    NewAuthMiddleware(user, pass, token),
+		backend:       b,
+		bucket:        bucket,
+		metrics:       m,
+		auth:          NewAuthMiddleware(user, pass, token),
+		dashboardCred: dashboardCred,
+		serverBaseURL: serverBaseURL,
 	}
 	d.template = template.Must(template.New("dashboard").Parse(dashboardHTML))
 	return d
@@ -248,6 +260,8 @@ type PageData struct {
 	NextToken          string
 	ContinuationToken  string
 	IsTruncated        bool
+	// Dashboard credential for S3 operations
+	DashboardCredential string
 }
 
 // Breadcrumb represents a navigation breadcrumb.
@@ -385,6 +399,12 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string, con
 		NextToken:         result.NextToken,
 		ContinuationToken: continuationToken,
 		IsTruncated:       result.IsTruncated,
+			DashboardCredential: func() string {
+				if d.dashboardCred != nil {
+					return d.dashboardCred.Name
+				}
+				return ""
+			}(),
 	}
 }
 
@@ -736,6 +756,215 @@ func (d *Dashboard) listAPIHandlerImpl() http.HandlerFunc {
 	}
 }
 
+	// UploadHandler handles file uploads through the dashboard using the dashboard credential.
+	func (d *Dashboard) UploadHandler() http.HandlerFunc {
+		return d.uploadHandlerImpl()
+	}
+
+	// UploadHandlerWithAuth returns the upload handler with dashboard authentication.
+	func (d *Dashboard) UploadHandlerWithAuth() http.HandlerFunc {
+		return d.auth.Wrap(d.uploadHandlerImpl())
+	}
+
+	// uploadHandlerImpl is the actual implementation of the upload handler.
+	func (d *Dashboard) uploadHandlerImpl() http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			// Check if dashboard credential is configured
+			if d.dashboardCred == nil {
+				http.Error(w, "Dashboard credential not configured - upload disabled", http.StatusForbidden)
+				return
+			}
+
+			// Parse multipart form (max 100MB)
+			if err := r.ParseMultipartForm(100 << 20); err != nil {
+				http.Error(w, fmt.Sprintf("Failed to parse form: %v", err), http.StatusBadRequest)
+				return
+			}
+
+			// Get file from form
+			file, header, err := r.FormFile("file")
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to get file from form: %v", err), http.StatusBadRequest)
+				return
+			}
+			defer file.Close()
+
+			// Get key from form (use filename if not provided)
+			key := r.FormValue("key")
+			if key == "" {
+				key = header.Filename
+			}
+
+			// Get content type from form (use header if not provided)
+			contentType := r.FormValue("content_type")
+			if contentType == "" {
+				contentType = header.Header.Get("Content-Type")
+			}
+
+			// Create S3 PUT request signed with dashboard credential
+			s3URL := d.serverBaseURL + "/" + d.bucket + "/" + key
+
+			// We need to use the backend's Put method directly
+			// This bypasses HTTP signing but uses the same backend logic
+			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			defer cancel()
+
+			// Read file content
+			fileData, err := io.ReadAll(file)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to read file: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			// Build metadata map from form values
+			metadata := make(map[string]string)
+			for k, v := range r.Form {
+				if strings.HasPrefix(k, "x-amz-meta-") {
+					if len(v) > 0 {
+						metadata[k] = v[0]
+					}
+				}
+			}
+
+			// Use backend.Put to upload
+			err = d.backend.Put(ctx, d.bucket, key, bytes.NewReader(fileData), int64(len(fileData)), metadata)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Upload failed: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "success",
+				"key":     key,
+				"size":    len(fileData),
+				"message": "File uploaded successfully",
+			})
+		}
+	}
+
+	// DownloadHandler handles file downloads through the dashboard using the dashboard credential.
+	func (d *Dashboard) DownloadHandler() http.HandlerFunc {
+		return d.downloadHandlerImpl()
+	}
+
+	// DownloadHandlerWithAuth returns the download handler with dashboard authentication.
+	func (d *Dashboard) DownloadHandlerWithAuth() http.HandlerFunc {
+		return d.auth.Wrap(d.downloadHandlerImpl())
+	}
+
+	// downloadHandlerImpl is the actual implementation of the download handler.
+	func (d *Dashboard) downloadHandlerImpl() http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			// Check if dashboard credential is configured
+			if d.dashboardCred == nil {
+				http.Error(w, "Dashboard credential not configured - download disabled", http.StatusForbidden)
+				return
+			}
+
+			// Get key from query
+			key := r.URL.Query().Get("key")
+			if key == "" {
+				http.Error(w, "key parameter required", http.StatusBadRequest)
+				return
+			}
+
+			// Create S3 GET request signed with dashboard credential
+			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			defer cancel()
+
+			// Use backend.Get to download
+			reader, info, err := d.backend.Get(ctx, d.bucket, key)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusNotFound)
+				return
+			}
+			defer reader.Close()
+
+			// Set headers for download
+			if info.ContentType != "" {
+				w.Header().Set("Content-Type", info.ContentType)
+			} else {
+				w.Header().Set("Content-Type", "application/octet-stream")
+			}
+			w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", key))
+
+			// Copy file to response
+			_, err = io.Copy(w, reader)
+			if err != nil {
+				// Too late to send error code, headers already sent
+				return
+			}
+		}
+	}
+
+	// DeleteHandler handles file deletion through the dashboard using the dashboard credential.
+	func (d *Dashboard) DeleteHandler() http.HandlerFunc {
+		return d.deleteHandlerImpl()
+	}
+
+	// DeleteHandlerWithAuth returns the delete handler with dashboard authentication.
+	func (d *Dashboard) DeleteHandlerWithAuth() http.HandlerFunc {
+		return d.auth.Wrap(d.deleteHandlerImpl())
+	}
+
+	// deleteHandlerImpl is the actual implementation of the delete handler.
+	func (d *Dashboard) deleteHandlerImpl() http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			// Check if dashboard credential is configured
+			if d.dashboardCred == nil {
+				http.Error(w, "Dashboard credential not configured - delete disabled", http.StatusForbidden)
+				return
+			}
+
+			// Get key from query (for DELETE) or form (for POST)
+			var key string
+			if r.Method == http.MethodDelete {
+				key = r.URL.Query().Get("key")
+			} else {
+				key = r.FormValue("key")
+			}
+
+			if key == "" {
+				http.Error(w, "key parameter required", http.StatusBadRequest)
+				return
+			}
+
+			// Create S3 DELETE request signed with dashboard credential
+			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			defer cancel()
+
+			// Use backend.Delete to delete
+			err := d.backend.Delete(ctx, d.bucket, key)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Delete failed: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "success",
+				"key":     key,
+				"message": "File deleted successfully",
+			})
+		}
+	}
 // Helper functions
 
 func parseExpvarInt(s string) int64 {
@@ -820,6 +1049,19 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         .rotate-btn:hover { background: #d97706; }
         .rotate-btn:disabled { background: #9ca3af; cursor: not-allowed; }
+        .upload-btn {
+            background: #10b981;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-left: 10px;
+        }
+        .upload-btn:hover { background: #059669; }
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -1127,6 +1369,9 @@ const dashboardHTML = `<!DOCTYPE html>
             </div>
             <button class="rotate-btn" onclick="startKeyRotation()">Rotate Key</button>
         </header>
+            {{if .DashboardCredential}}
+            <button class="upload-btn" onclick="showUploadModal()">Upload File</button>
+            {{end}}
 
         <div class="stats-grid">
             <div class="stat-card">
@@ -1225,12 +1470,15 @@ const dashboardHTML = `<!DOCTYPE html>
                         <th>Type</th>
                         <th>Last Modified</th>
                         <th>Encryption</th>
+                        {{if .DashboardCredential}}
+                        <th>Actions</th>
+                        {{end}}
                     </tr>
                 </thead>
                 <tbody>
                     {{if not .Objects}}
                     <tr>
-                        <td colspan="5">
+                        <td colspan="{{if .DashboardCredential}}6{{else}}5{{end}}">
                             <div class="empty-state">
                                 <strong>This prefix is empty</strong>
                                 There are no objects or folders to display here.
@@ -1260,6 +1508,16 @@ const dashboardHTML = `<!DOCTYPE html>
                                 <span class="plain-badge" aria-label="Unencrypted object">plain</span>
                             {{end}}
                         </td>
+                        {{if .DashboardCredential}}
+                        <td>
+                            {{if not .IsFolder}}
+                            <button class="btn btn-primary" onclick="downloadObject({{.Key}})" style="padding:4px 8px;font-size:12px;margin-right:4px">Download</button>
+                            <button class="btn btn-secondary" onclick="deleteObject({{.Key}})" style="padding:4px 8px;font-size:12px;background:#ef4444;color:white">Delete</button>
+                            {{else}}
+                            —
+                            {{end}}
+                        </td>
+                        {{end}}
                     </tr>
                     {{end}}
                 </tbody>
@@ -1305,6 +1563,32 @@ const dashboardHTML = `<!DOCTYPE html>
             </div>
             <div class="modal-buttons">
                 <button class="btn btn-secondary" onclick="closeRotationModal()">Close</button>
+            </div>
+        </div>
+    </div>
+    <div id="uploadModal" class="modal">
+        <div class="modal-content" style="max-width:500px">
+            <h2 class="modal-title">Upload File</h2>
+            <div class="modal-body">
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div style="margin-bottom:15px">
+                        <label style="display:block;margin-bottom:5px;font-weight:600">Select file:</label>
+                        <input type="file" name="file" required style="width:100%">
+                    </div>
+                    <div style="margin-bottom:15px">
+                        <label style="display:block;margin-bottom:5px;font-weight:600">Key (optional, defaults to filename):</label>
+                        <input type="text" name="key" placeholder="path/to/file.txt" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:4px">
+                    </div>
+                    <div style="margin-bottom:15px">
+                        <label style="display:block;margin-bottom:5px;font-weight:600">Content-Type (optional):</label>
+                        <input type="text" name="content_type" placeholder="application/octet-stream" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:4px">
+                    </div>
+                    <div id="uploadStatus" class="status-message" style="display:none"></div>
+                </form>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-primary" onclick="submitUpload()">Upload</button>
+                <button class="btn btn-secondary" onclick="closeUploadModal()">Cancel</button>
             </div>
         </div>
     </div>
@@ -1466,6 +1750,78 @@ const dashboardHTML = `<!DOCTYPE html>
             clearInterval(rotationInterval);
             rotationInterval = null;
         }
+    }
+
+    function showUploadModal() {
+        document.getElementById('uploadModal').classList.add('active');
+    }
+
+    function closeUploadModal() {
+        document.getElementById('uploadModal').classList.remove('active');
+        document.getElementById('uploadForm').reset();
+        document.getElementById('uploadStatus').style.display = 'none';
+    }
+
+    function submitUpload() {
+        const form = document.getElementById('uploadForm');
+        const formData = new FormData(form);
+        const statusDiv = document.getElementById('uploadStatus');
+        
+        statusDiv.className = 'status-message status-info';
+        statusDiv.textContent = 'Uploading...';
+        statusDiv.style.display = 'block';
+        
+        fetch('/dashboard/upload', {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(response) {
+            if (!response.ok) {
+                return response.text().then(function(body) {
+                    throw new Error(body || 'Upload failed');
+                });
+            }
+            return response.json();
+        })
+        .then(function(data) {
+            statusDiv.className = 'status-message status-success';
+            statusDiv.textContent = data.message || 'Upload successful!';
+            setTimeout(function() {
+                closeUploadModal();
+                window.location.reload();
+            }, 1500);
+        })
+        .catch(function(err) {
+            statusDiv.className = 'status-message status-error';
+            statusDiv.textContent = 'Error: ' + err.message;
+        });
+    }
+
+    function downloadObject(key) {
+        window.location.href = '/dashboard/download?key=' + encodeURIComponent(key);
+    }
+
+    function deleteObject(key) {
+        if (!confirm('Are you sure you want to delete ' + key + '?')) return;
+        
+        fetch('/dashboard/delete?key=' + encodeURIComponent(key), {
+            method: 'DELETE'
+        })
+        .then(function(response) {
+            if (!response.ok) {
+                return response.text().then(function(body) {
+                    throw new Error(body || 'Delete failed');
+                });
+            }
+            return response.json();
+        })
+        .then(function(data) {
+            alert(data.message || 'Delete successful!');
+            window.location.reload();
+        })
+        .catch(function(err) {
+            alert('Delete error: ' + err.message);
+        });
     }
 
     function fmtBytes(n) {
