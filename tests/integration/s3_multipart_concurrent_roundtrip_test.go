@@ -544,20 +544,3 @@ func verifyRoundtrip(t *testing.T, client *s3.Client, ctx context.Context, bucke
 		}
 	})
 }
-
-// readFull reads all data from reader, handling EOF correctly
-func readFull(r io.Reader) ([]byte, error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-// getEnvOr returns environment variable value or default
-func getEnvOr(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultVal
-}
