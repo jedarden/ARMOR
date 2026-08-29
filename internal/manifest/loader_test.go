@@ -352,5 +352,6 @@ func sampleEntryAt(size int64, ts time.Time) *manifest.Entry {
 		ContentType:     "application/octet-stream",
 		ETag:            "etag",
 		LastModified:    ts,
+		CiphertextSize:  size + 64, // header + plaintext, placeholder value for tests
 	}
 }

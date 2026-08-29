@@ -35,15 +35,25 @@ type Entry struct {
 	ContentType     string    `json:"content_type"`
 	ETag            string    `json:"etag"`
 	LastModified    time.Time `json:"last_modified"`
+	CiphertextSize  int64     `json:"ciphertext_size,omitempty"` // v3 single-PUT readers need this to locate trailer block table
+}
+
+// ChainEntry represents a provenance chain entry embedded in a manifest delta.
+// It contains the minimal chain information needed for verification.
+type ChainEntry struct {
+	Sequence       int64  `json:"sequence"`
+	ChainHash      string `json:"chain_hash"`
+	PrevChainHash  string `json:"prev_chain_hash"`
 }
 
 // Op is a single delta log entry. The field name "op" matches the wire format
 // documented in the plan.
 type Op struct {
-	Operation string    `json:"op"`              // "put" or "del"
-	Key       string    `json:"key"`             // "bucket/object-key"
-	Entry     *Entry    `json:"entry,omitempty"` // nil for "del"
-	Ts        time.Time `json:"ts"`
+	Operation string       `json:"op"`              // "put" or "del"
+	Key       string       `json:"key"`             // "bucket/object-key"
+	Entry     *Entry       `json:"entry,omitempty"` // nil for "del"
+	Chain     *ChainEntry `json:"chain,omitempty"` // provenance entry for "put"
+	Ts        time.Time    `json:"ts"`
 }
 
 // Index is a concurrent in-memory map from "bucket/object-key" to Entry.

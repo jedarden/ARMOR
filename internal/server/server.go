@@ -259,7 +259,11 @@ func New(cfg *config.Config) (*Server, error) {
 		uploader := func(ctx context.Context, key string, data []byte) error {
 			return b2Backend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
 		}
-		manifestWriter = manifest.NewWriter(manifestIdx, cfg.ManifestPrefix, cfg.WriterID, uploader, 0)
+		// Chain-head writer uploads .armor/chain-head/<writer> after each batch
+		chainHeadWriter := func(ctx context.Context, key string, data []byte) error {
+			return b2Backend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
+		}
+		manifestWriter = manifest.NewWriterWithChain(manifestIdx, cfg.ManifestPrefix, cfg.WriterID, uploader, chainHeadWriter, 0)
 
 		// Create compactor that lists and batch-deletes via the B2 backend.
 		listerForCompactor := func(ctx context.Context, prefix, token string) ([]string, string, error) {
@@ -371,7 +375,7 @@ type manifestRecorder struct {
 	writer *manifest.Writer
 }
 
-func (m *manifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, blockSize int, contentType, etag string) {
+func (m *manifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64) {
 	entry := &manifest.Entry{
 		PlaintextSize:   size,
 		PlaintextSHA256: sha256Hex,
@@ -381,9 +385,10 @@ func (m *manifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex s
 		ContentType:     contentType,
 		ETag:            etag,
 		LastModified:    time.Now().UTC(),
+		CiphertextSize:  ciphertextSize,
 	}
 	m.idx.Put(bucket, key, entry)
-	m.writer.EnqueuePut(bucket, key, entry)
+	m.writer.EnqueuePut(bucket, key, entry, chainEntry)
 }
 
 func (m *manifestRecorder) RecordDelete(bucket, key string) {
@@ -397,13 +402,14 @@ func (m *manifestRecorder) Lookup(bucket, key string) (*handlers.ManifestEntry, 
 		return nil, false
 	}
 	return &handlers.ManifestEntry{
-		PlaintextSize: entry.PlaintextSize,
-		ContentType:   entry.ContentType,
-		ETag:          entry.ETag,
-		LastModified:  entry.LastModified,
-		IV:            entry.IV,
-		WrappedDEK:    entry.WrappedDEK,
-		BlockSize:     entry.BlockSize,
+		PlaintextSize:  entry.PlaintextSize,
+		ContentType:    entry.ContentType,
+		ETag:           entry.ETag,
+		LastModified:   entry.LastModified,
+		IV:             entry.IV,
+		WrappedDEK:     entry.WrappedDEK,
+		BlockSize:      entry.BlockSize,
+		CiphertextSize: entry.CiphertextSize,
 	}, true
 }
 
