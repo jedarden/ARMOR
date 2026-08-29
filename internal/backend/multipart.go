@@ -2,6 +2,7 @@ package backend
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -386,9 +387,26 @@ func (m *MultipartStateManager) ListPartsV3(ctx context.Context, uploadID string
 // For multipart uploads, the HMAC table is stored at .armor/hmac/<sha256(key)>
 type HMACTableSidecar struct {
 	Key        string   `json:"key"`         // Object key
-	BlockHMACs [][]byte `json:"block_hmacs"` // HMAC for each block
+	BlockHMACs [][]byte `json:"block_hmacs"` // HMAC for each block (v1/v2 format)
 	BlockSize  int      `json:"block_size"`
 	Version    int      `json:"version"`     // Envelope version (1 or 2)
+}
+
+// HMACTableSidecarV3 represents the v3 HMAC table stored as a gzip-compressed JSON sidecar.
+// For v3 multipart uploads, the sidecar contains per-part block information with HMACs and
+// ciphertext lengths, stored at .armor/hmac/<sha256(key)>.
+type HMACTableSidecarV3 struct {
+	Version  int                `json:"version"`             // Always 3 for v3 format
+	BlockSize int               `json:"block_size"`           // Block size in bytes
+	Parts    []HMACPartV3       `json:"parts"`                // Array of part information
+}
+
+// HMACPartV3 represents a single part's HMAC and length information in the v3 sidecar.
+type HMACPartV3 struct {
+	N               int            `json:"n"`                   // Part number (1-based)
+	PlaintextLen    int64          `json:"plaintext_len"`       // Length of plaintext part
+	CiphertextLen   int64          `json:"ciphertext_len"`      // Length of encrypted part
+	Blocks          [][]string     `json:"blocks"`              // Array of [hmac_base64, clen] for each block
 }
 
 // SaveHMACTable saves the HMAC table as a sidecar object.
@@ -416,6 +434,43 @@ func (m *MultipartStateManager) SaveHMACTable(ctx context.Context, key string, h
 	return nil
 }
 
+// SaveHMACTableV3 saves the v3 HMAC table as a gzip-compressed JSON sidecar object.
+// The sidecar format is: {"version":3,"block_size":...,"parts":[{"n","plaintext_len","ciphertext_len","blocks":[[hmac_b64, clen],...]}]}
+func (m *MultipartStateManager) SaveHMACTableV3(ctx context.Context, key string, blockSize int, parts []HMACPartV3) error {
+	// Compute SHA-256 of the key for the sidecar name
+	keyHash := sha256.Sum256([]byte(key))
+	sidecarKey := fmt.Sprintf(".armor/hmac/%x", keyHash)
+
+	sidecar := HMACTableSidecarV3{
+		Version:  3,
+		BlockSize: blockSize,
+		Parts:    parts,
+	}
+
+	// Marshal to JSON
+	jsonData, err := json.Marshal(sidecar)
+	if err != nil {
+		return fmt.Errorf("failed to marshal v3 HMAC table: %w", err)
+	}
+
+	// Compress with gzip
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(jsonData); err != nil {
+		return fmt.Errorf("failed to compress v3 HMAC table: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+
+	// Save the compressed data
+	if err := m.backend.Put(ctx, m.bucket, sidecarKey, bytes.NewReader(buf.Bytes()), int64(buf.Len()), nil); err != nil {
+		return fmt.Errorf("failed to save v3 HMAC table: %w", err)
+	}
+
+	return nil
+}
+
 // LoadHMACTable loads the HMAC table from a sidecar object.
 func (m *MultipartStateManager) LoadHMACTable(ctx context.Context, key string) (*HMACTableSidecar, error) {
 	keyHash := sha256.Sum256([]byte(key))
@@ -435,6 +490,37 @@ func (m *MultipartStateManager) LoadHMACTable(ctx context.Context, key string) (
 	var sidecar HMACTableSidecar
 	if err := json.Unmarshal(data, &sidecar); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal HMAC table: %w", err)
+	}
+
+	return &sidecar, nil
+}
+
+// LoadHMACTableV3 loads the v3 HMAC table from a gzip-compressed JSON sidecar object.
+func (m *MultipartStateManager) LoadHMACTableV3(ctx context.Context, key string) (*HMACTableSidecarV3, error) {
+	keyHash := sha256.Sum256([]byte(key))
+	sidecarKey := fmt.Sprintf(".armor/hmac/%x", keyHash)
+
+	body, _, err := m.backend.GetDirect(ctx, m.bucket, sidecarKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load v3 HMAC table: %w", err)
+	}
+	defer body.Close()
+
+	// Try to decompress with gzip (v3 format)
+	gz, err := gzip.NewReader(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open gzip stream: %w", err)
+	}
+	defer gz.Close()
+
+	data, err := io.ReadAll(gz)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read v3 HMAC table: %w", err)
+	}
+
+	var sidecar HMACTableSidecarV3
+	if err := json.Unmarshal(data, &sidecar); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal v3 HMAC table: %w", err)
 	}
 
 	return &sidecar, nil
