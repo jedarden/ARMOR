@@ -228,7 +228,7 @@ func Load() (*Config, error) {
 
 	// Load additional named credentials (ARMOR_AUTH_<NAME>_ACCESS_KEY, _SECRET_KEY, _ACL)
 	if err := loadNamedCredentials(cfg); err != nil {
-		return nil, err
+		errs = append(errs, err)
 	}
 
 	// Writer ID (default to hostname)
@@ -464,6 +464,7 @@ func parseKeyRoutes(routesStr string) ([]KeyRoute, error) {
 // loadNamedCredentials loads additional named credentials from environment variables.
 // Format: ARMOR_AUTH_<NAME>_ACCESS_KEY, ARMOR_AUTH_<NAME>_SECRET_KEY, ARMOR_AUTH_<NAME>_ACL
 // Named credentials must have a non-empty NAME that doesn't conflict with default credential names.
+// Returns an error joining all validation failures; nil on success.
 func loadNamedCredentials(cfg *Config) error {
 	// Collect all credential names
 	credNames := make(map[string]bool)
@@ -490,6 +491,8 @@ func loadNamedCredentials(cfg *Config) error {
 		}
 	}
 
+	var errs []error
+
 	// Load each credential
 	for name := range credNames {
 		accessKey := os.Getenv("ARMOR_AUTH_" + name + "_ACCESS_KEY")
@@ -497,7 +500,14 @@ func loadNamedCredentials(cfg *Config) error {
 		aclStr := os.Getenv("ARMOR_AUTH_" + name + "_ACL")
 
 		if accessKey == "" || secretKey == "" {
-			return fmt.Errorf("ARMOR_AUTH_%s_ACCESS_KEY and ARMOR_AUTH_%s_SECRET_KEY are both required", name, name)
+			errs = append(errs, fmt.Errorf("ARMOR_AUTH_%s_ACCESS_KEY and ARMOR_AUTH_%s_SECRET_KEY are both required", name, name))
+			continue
+		}
+
+		// Check for duplicate access key
+		if _, exists := cfg.Credentials[accessKey]; exists {
+			errs = append(errs, fmt.Errorf("duplicate access key in ARMOR_AUTH_%s", name))
+			continue
 		}
 
 		cred := &Credential{
@@ -509,17 +519,17 @@ func loadNamedCredentials(cfg *Config) error {
 		if aclStr != "" {
 			acls, err := parseACL(aclStr)
 			if err != nil {
-				return fmt.Errorf("ARMOR_AUTH_%s_ACL: %w", name, err)
+				errs = append(errs, fmt.Errorf("ARMOR_AUTH_%s_ACL: %w", name, err))
+				continue
 			}
 			cred.ACLs = acls
 		}
 
-		// Check for duplicate access key
-		if _, exists := cfg.Credentials[accessKey]; exists {
-			return fmt.Errorf("duplicate access key in ARMOR_AUTH_%s", name)
-		}
-
 		cfg.Credentials[accessKey] = cred
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 
 	return nil

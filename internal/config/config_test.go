@@ -709,6 +709,53 @@ func TestLoadWithThreeMissingRequiredVars(t *testing.T) {
 
 // actionsEqual reports whether got matches the expected set of verbs (a nil
 // got is treated as the empty set). A nil expected asserts the set is empty.
+func TestLoadWithMultipleCredentialErrors(t *testing.T) {
+	// Set minimal required env vars
+	setEnv(t, minimalEnv()...)
+
+	// Set up multiple named credentials with errors:
+	// - "CRED1": missing secret key
+	// - "CRED2": has both keys but invalid ACL
+	// - "CRED3": duplicate access key (same as CRED2)
+	os.Setenv("ARMOR_AUTH_CRED1_ACCESS_KEY", "cred1key")
+	// Missing: ARMOR_AUTH_CRED1_SECRET_KEY
+
+	os.Setenv("ARMOR_AUTH_CRED2_ACCESS_KEY", "cred2key")
+	os.Setenv("ARMOR_AUTH_CRED2_SECRET_KEY", "cred2secret")
+	os.Setenv("ARMOR_AUTH_CRED2_ACL", "invalid acl format") // Invalid ACL
+
+	os.Setenv("ARMOR_AUTH_CRED3_ACCESS_KEY", "cred2key") // Duplicate of CRED2
+	os.Setenv("ARMOR_AUTH_CRED3_SECRET_KEY", "cred3secret")
+
+	defer func() {
+		os.Unsetenv("ARMOR_AUTH_CRED1_ACCESS_KEY")
+		os.Unsetenv("ARMOR_AUTH_CRED2_ACCESS_KEY")
+		os.Unsetenv("ARMOR_AUTH_CRED2_SECRET_KEY")
+		os.Unsetenv("ARMOR_AUTH_CRED2_ACL")
+		os.Unsetenv("ARMOR_AUTH_CRED3_ACCESS_KEY")
+		os.Unsetenv("ARMOR_AUTH_CRED3_SECRET_KEY")
+	}()
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should return error when credentials have validation failures")
+	}
+
+	// Verify all three credential errors are reported in the error
+	errMsg := err.Error()
+	expectedErrors := []string{
+		"ARMOR_AUTH_CRED1",
+		"ARMOR_AUTH_CRED2",
+		"ARMOR_AUTH_CRED3",
+	}
+
+	for _, expected := range expectedErrors {
+		if !strings.Contains(errMsg, expected) {
+			t.Errorf("Error message should mention %s, got: %v", expected, errMsg)
+		}
+	}
+}
+
 func actionsEqual(got map[string]bool, expected ...string) bool {
 	want := make(map[string]bool, len(expected))
 	for _, v := range expected {
