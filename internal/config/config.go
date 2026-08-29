@@ -121,8 +121,9 @@ type Config struct {
 	ListCacheTTL        int
 
 	// Pre-signed URL configuration
-	PresignSecret  []byte // Secret key for signing pre-signed URLs
-	PresignBaseURL string // Base URL for pre-signed URLs (e.g., "https://armor.example.com/share")
+	PresignEnabled  bool   // Enable pre-signed URL feature (default false)
+	PresignSecret   []byte // Secret key for signing pre-signed URLs
+	PresignBaseURL  string // Base URL for pre-signed URLs (e.g., "https://armor.example.com/share")
 
 	// Manifest index configuration (Phase 4)
 	ManifestEnabled             bool
@@ -347,23 +348,36 @@ func Load() (*Config, error) {
 	cfg.ManifestCompactionThreshold = getEnvInt("ARMOR_MANIFEST_COMPACTION_THRESHOLD", 1000)
 
 	// Pre-signed URL configuration
-	presignSecretHex := os.Getenv("ARMOR_PRESIGN_SECRET")
-	if presignSecretHex != "" {
-		var err error
-		cfg.PresignSecret, err = hex.DecodeString(presignSecretHex)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("ARMOR_PRESIGN_SECRET must be hex-encoded: %w", err))
-		} else if len(cfg.PresignSecret) < 32 {
-			errs = append(errs, fmt.Errorf("ARMOR_PRESIGN_SECRET must be at least 32 bytes (64 hex chars)"))
+	// ARMOR_PRESIGN_ENABLED must be explicitly set to "true" to enable presign functionality
+	presignEnabledStr := os.Getenv("ARMOR_PRESIGN_ENABLED")
+	cfg.PresignEnabled = presignEnabledStr == "true" || presignEnabledStr == "1"
+
+	if cfg.PresignEnabled {
+		// Require a dedicated presign secret when enabled
+		presignSecretHex := os.Getenv("ARMOR_PRESIGN_SECRET")
+		if presignSecretHex == "" {
+			errs = append(errs, fmt.Errorf("ARMOR_PRESIGN_SECRET is required when ARMOR_PRESIGN_ENABLED=true"))
+		} else {
+			var err error
+			cfg.PresignSecret, err = hex.DecodeString(presignSecretHex)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("ARMOR_PRESIGN_SECRET must be hex-encoded: %w", err))
+			} else if len(cfg.PresignSecret) < 32 {
+				errs = append(errs, fmt.Errorf("ARMOR_PRESIGN_SECRET must be at least 32 bytes (64 hex chars)"))
+			}
+		}
+
+		// Require an absolute base URL when enabled
+		cfg.PresignBaseURL = os.Getenv("ARMOR_PRESIGN_BASE_URL")
+		if cfg.PresignBaseURL == "" {
+			errs = append(errs, fmt.Errorf("ARMOR_PRESIGN_BASE_URL is required when ARMOR_PRESIGN_ENABLED=true"))
+		} else if !strings.HasPrefix(cfg.PresignBaseURL, "http://") && !strings.HasPrefix(cfg.PresignBaseURL, "https://") {
+			errs = append(errs, fmt.Errorf("ARMOR_PRESIGN_BASE_URL must be an absolute URL (starting with http:// or https://), got '%s'", cfg.PresignBaseURL))
 		}
 	} else {
-		// Use the auth secret key as the presign secret if not specified
-		cfg.PresignSecret = []byte(cfg.AuthSecretKey)
-	}
-	cfg.PresignBaseURL = os.Getenv("ARMOR_PRESIGN_BASE_URL")
-	if cfg.PresignBaseURL == "" {
-		// Default to /share path on the main listener
-		cfg.PresignBaseURL = "/share"
+		// When disabled, leave fields empty (presign will return 404)
+		cfg.PresignSecret = nil
+		cfg.PresignBaseURL = ""
 	}
 
 	// Load named keys (ARMOR_MEK_<NAME>)
@@ -929,8 +943,9 @@ type RedactedConfig struct {
 	ListCacheTTL        int `json:"list_cache_ttl"`
 
 	// Pre-signed URL configuration
-	PresignSecret  string `json:"presign_secret"` // "<set>" or "<unset>"
-	PresignBaseURL string `json:"presign_base_url"`
+	PresignEnabled  bool   `json:"presign_enabled"`
+	PresignSecret   string `json:"presign_secret"` // "<set>" or "<unset>"
+	PresignBaseURL  string `json:"presign_base_url"`
 
 	// Manifest index configuration (Phase 4)
 	ManifestEnabled             bool   `json:"manifest_enabled"`
@@ -993,6 +1008,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		CacheTTL:                    c.CacheTTL,
 		ListCacheMaxEntries:         c.ListCacheMaxEntries,
 		ListCacheTTL:                c.ListCacheTTL,
+		PresignEnabled:              c.PresignEnabled,
 		PresignBaseURL:              c.PresignBaseURL,
 		ManifestEnabled:             c.ManifestEnabled,
 		ManifestPrefix:              c.ManifestPrefix,
