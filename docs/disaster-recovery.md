@@ -8,6 +8,7 @@ This document covers disaster recovery procedures for ARMOR deployments, includi
 2. **All operational state lives in B2** — a fresh ARMOR instance with the same config (MEK + B2 creds + Cloudflare domain) can recover all data.
 3. **The `.armor/` prefix is reserved and must be preserved** — losing sidecar files (`.armor/hmac/*`, `.armor/rotation-state.json`, `.armor/multipart/*.state`) makes corresponding objects unrecoverable.
 4. **Per-file DEKs are wrapped by the MEK** — if you lose the MEK, every object's wrapped DEK becomes useless, even though the ciphertext is intact.
+5. **The MEK key ring (v0.1.1922+) makes rotation safer** — multiple MEKs can coexist, eliminating the strict ordering and byte-identical value requirements of the old rotation procedure.
 
 ## Table of Contents
 
@@ -39,6 +40,42 @@ curl -s "http://localhost:9001/admin/key/export?confirm=yes"
   "mek": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "format": "hex",
   "warning": "This key is the single point of failure for all encrypted data. Store it securely and never lose it."
+}
+```
+
+### Exporting the MEK Ring (v0.1.1922+)
+
+For deployments using the MEK key ring, you must export **both** the active key and the ring as a unit.
+
+```bash
+# Export the active MEK and ring
+kubectl exec deploy/armor -n <namespace> -- \
+  curl -s "http://localhost:9001/admin/key/ring?confirm=yes" \
+    -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
+```
+
+**Response:**
+```json
+{
+  "active_key_fingerprint": "a1b2c3d4e5f6a7b8",
+  "active_mek": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "ring_keys": [
+    {
+      "fingerprint": "f1e2d3c4b5a69788",
+      "mek": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    }
+  ],
+  "warning": "This key ring is the single point of failure for all encrypted data. Store it securely and never lose it."
+}
+```
+
+**Escrow format:** Store the entire JSON response as the escrow unit. The `mek_ring` field
+is the canonical source — if you need a flat file format, use:
+
+```json
+{
+  "active_mek": "0123456789abcdef...",
+  "mek_ring": ["fedcba9876543210...", "9876543210abcdef..."]
 }
 ```
 
@@ -76,32 +113,44 @@ Escrow copies must satisfy these properties:
 - Shared documents without access controls
 - Environment variables in CI/CD systems
 
-### MEK Rotation Pre-Flight Checklist
+### MEK Rotation Pre-Flight Checklist (v0.1.1922+)
 
 Before rotating the MEK, you MUST:
 
-1. **Export the current MEK** and verify the export completes successfully:
+1. **Export the current MEK and ring** and verify the export completes successfully:
    ```bash
-   curl -s "http://localhost:9001/admin/key/export?confirm=yes" | jq -r '.mek' > /secure/path/mek-backup-$(date +%Y%m%d).hex
-   sha256sum /secure/path/mek-backup-*.hex  # Verify checksum
+   # Export the ring as a unit
+   kubectl exec deploy/armor -n <namespace> -- \
+     curl -s "http://localhost:9001/admin/key/ring?confirm=yes" \
+       -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq . > /secure/path/mek-ring-backup-$(date +%Y%m%d).json
+
+   # Verify the export is valid JSON
+   jq . /secure/path/mek-ring-backup-*.json
+
+   # Verify checksums
+   sha256sum /secure/path/mek-ring-backup-*.json
    ```
 
-2. **Escrow the current MEK** in your secure location of choice.
+2. **Escrow the MEK ring as a unit** in your secure location of choice.
+   The escrow must include both the active MEK and all ring keys.
 
 3. **Verify the escrow** by retrieving it and comparing checksums:
    ```bash
    # After escrow, retrieve and verify
-   escrowed_mek=$(retrieve-from-escrow)
-   current_mek=$(curl -s "http://localhost:9001/admin/key/export?confirm=yes" | jq -r '.mek')
-   if [ "$escrowed_mek" != "$current_mek" ]; then
-     echo "ERROR: Escrowed MEK does not match current MEK"
+   escrowed_ring=$(retrieve-from-escrow)
+   current_ring=$(kubectl exec deploy/armor -n <namespace> -- \
+     curl -s "http://localhost:9001/admin/key/ring?confirm=yes" \
+       -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN")
+   if [ "$escrowed_ring" != "$current_ring" ]; then
+     echo "ERROR: Escrowed ring does not match current ring"
      exit 1
    fi
    ```
 
 4. **Verify canary health** to ensure current MEK is valid:
    ```bash
-   curl -s http://localhost:9001/admin/key/verify | jq .
+   kubectl exec deploy/armor -n <namespace> -- \
+     curl -s http://localhost:9001/admin/key/verify | jq .
    ```
 
 **Only proceed with rotation after all four steps complete successfully.**
@@ -116,6 +165,22 @@ Per-file DEKs are wrapped with the MEK. If you rotate the MEK without escrowing 
 - Without the old MEK escrowed, those objects become permanently unreadable
 
 **Rule:** A MEK must never be rotated without first verifying escrow of the old MEK.
+
+### Key Ring Failure Modes: Then vs. Now (v0.1.1922)
+
+The MEK key ring eliminates several critical failure modes that existed in the pre-ring rotation procedure:
+
+| Failure Mode | Pre-Ring (v0.1.1921) | With Ring (v0.1.1922+) |
+|--------------|---------------------|----------------------|
+| **MEK mismatch between rotate call and OpenBao** | Every rotated object becomes permanently unreadable | **Impossible** — rotate endpoint reads active key from config, not request body |
+| **Restart mid-rotation** | Data loss — mixed MEKs serving, some replicas can't decrypt re-wrapped objects | **Non-event** — all replicas load the ring, can decrypt any object |
+| **Operator error in rotate request** | Wrong MEK in request body → unreadable objects | **Impossible** — no secret in request body |
+| **Interrupted rotation** | Partially re-wrapped objects, old MEK may be lost | **Safe** — old key remains in ring, all objects remain readable |
+| **Missed ESO sync** | Pods boot with wrong MEK → unreadable objects | **Impossible** — ESO syncs both active key and ring atomically |
+
+**The key insight:** The ring makes rotation a **read-only operation** from the perspective of
+running pods. Adding a key to the ring never makes existing objects unreadable, because
+all replicas always have all valid keys loaded.
 
 ---
 
@@ -133,21 +198,26 @@ You've lost:
 
 You still have:
 - B2 bucket (all encrypted objects intact)
-- Escrowed MEK
+- Escrowed MEK (or MEK ring, for v0.1.1922+)
 - B2 credentials
 - Cloudflare domain
 
-### Step 1: Retrieve Escrowed MEK
+### Step 1: Retrieve Escrowed MEK (or Ring)
 
-Retrieve the MEK from your escrow location. Example patterns:
+Retrieve the MEK from your escrow location. For v0.1.1922+ deployments, retrieve the entire ring as a unit.
 
 ```bash
-# From a secret manager
+# From a secret manager (single MEK)
 aws secretsmanager get-secret-value --secret-id armor-mek-prod | jq -r '.SecretString'
+
+# From a secret manager (MEK ring - v0.1.1922+)
+aws secretsmanager get-secret-value --secret-id armor-mek-ring-prod | jq -r '.SecretString'
 
 # From a file on encrypted media
 cryptsetup open /dev/sdX encrypted_backup
 cp /mnt/backup/mek.hex ~/mek-recovered.hex
+# Or for ring:
+cp /mnt/backup/mek-ring.json ~/mek-ring-recovered.json
 cryptsetup close encrypted_backup
 
 # From a paper backup
@@ -157,18 +227,22 @@ cryptsetup close encrypted_backup
 Verify the retrieved MEK is 64 hex characters (32 bytes):
 
 ```bash
+# Single MEK
 mek=$(cat ~/mek-recovered.hex)
 if [ ${#mek} -ne 64 ] || ! [[ $mek =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "ERROR: Invalid MEK format (must be 64 hex chars)"
   exit 1
 fi
+
+# MEK ring - verify JSON structure
+jq -e '.active_mek and .mek_ring' ~/mek-ring-recovered.json
 ```
 
 ### Step 2: Deploy Fresh ARMOR Instance
 
-Create a new ARMOR deployment with the recovered MEK and original B2 credentials.
+Create a new ARMOR deployment with the recovered MEK (or ring) and original B2 credentials.
 
-#### Kubernetes Deployment
+#### Kubernetes Deployment (Single MEK)
 
 ```yaml
 apiVersion: v1
@@ -242,12 +316,34 @@ spec:
               key: ARMOR_CF_DOMAIN
 ```
 
+#### Kubernetes Deployment (MEK Ring - v0.1.1922+)
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: armor-secrets
+type: Opaque
+stringData:
+  b2-access-key-id: "your-b2-key-id"
+  b2-secret-access-key: "your-b2-secret-key"
+  master-encryption-key: "0123456789abcdef..." # Active key from escrow
+  mek_ring: "fedcba9876543210...,9876543210abcdef..." # Ring keys (comma-separated)
+---
+# Rest of deployment same as above, with ARMOR_MEK_RING env var added:
+        - name: ARMOR_MEK_RING
+          valueFrom:
+            secretKeyRef:
+              name: armor-secrets
+              key: mek_ring
+```
+
 ```bash
 kubectl apply -f armor-recovery.yaml
 kubectl wait --for=condition=available --timeout=60s deployment/armor
 ```
 
-#### Docker Deployment
+#### Docker Deployment (Single MEK)
 
 ```bash
 docker run -d \
@@ -262,6 +358,24 @@ docker run -d \
   -e ARMOR_AUTH_ACCESS_KEY=my-access-key \
   -e ARMOR_AUTH_SECRET_KEY=my-secret-key \
   ronaldraygun/armor:<version>  # Use tag from VERSION file or Docker Hub
+```
+
+#### Docker Deployment (MEK Ring - v0.1.1922+)
+
+```bash
+docker run -d \
+  -p 9000:9000 \
+  -p 9001:9001 \
+  -e ARMOR_B2_REGION=us-west-002 \
+  -e ARMOR_B2_ACCESS_KEY_ID=your-key-id \
+  -e ARMOR_B2_SECRET_ACCESS_KEY=your-key-secret \
+  -e ARMOR_BUCKET=your-bucket \
+  -e ARMOR_CF_DOMAIN=b2-us-west-002.ardenone.com \
+  -e ARMOR_MEK=$(jq -r '.active_mek' ~/mek-ring-recovered.json) \
+  -e ARMOR_MEK_RING=$(jq -r '.mek_ring | join(",")' ~/mek-ring-recovered.json) \
+  -e ARMOR_AUTH_ACCESS_KEY=my-access-key \
+  -e ARMOR_AUTH_SECRET_KEY=my-secret-key \
+  ronaldraygun/armor:<version>
 ```
 
 ### Step 3: Verify MEK Against Canary
@@ -338,27 +452,7 @@ ducksql -c "SELECT COUNT(*) FROM '/tmp/test-recovery.parquet';"
 parquet-tools schema /tmp/test-recovery.parquet
 ```
 
-For a more thorough validation, use the offline decrypt CLI to verify a few objects directly from B2:
-
-```bash
-# Decrypt a specific object from B2
-# B2 reads REQUIRE these four (AWS_* names are ignored) — see
-# "Offline Decryption Without ARMOR" for the full, verified procedure.
-export ARMOR_B2_ACCESS_KEY_ID=<b2 key id>
-export ARMOR_B2_SECRET_ACCESS_KEY=<b2 application key>
-export ARMOR_B2_REGION=us-west-002
-export ARMOR_B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
-
-armor decrypt \
-  -mek $(cat ~/mek-recovered.hex) \
-  -input b2://your-bucket/data/sensor-readings.parquet \
-  -output /tmp/verify-decrypt.parquet
-
-# Verify checksum matches
-sha256sum /tmp/verify-decrypt.parquet
-```
-
-**Note:** The decrypt command is available as `armor decrypt`. For backward compatibility, the standalone `armor-decrypt` binary remains available for one release cycle and delegates to `armor decrypt`.
+For a more thorough validation, use the offline decrypt CLI to verify a few objects directly from B2.
 
 ### Step 6: Verify Metadata Cache and Manifest (if enabled)
 
@@ -421,6 +515,23 @@ export ARMOR_CF_DOMAIN=b2-us-west-002.ardenone.com
 armor decrypt -v \
   -input  b2://<bucket>/<key> \
   -output /tmp/recovered.bin
+```
+
+**MEK Ring support (v0.1.1922+):** For deployments using the key ring, provide the ring
+via the `--mek-ring` flag or a JSON escrow file:
+
+```bash
+# From JSON escrow file
+armor decrypt -v \
+  -input  b2://<bucket>/<key> \
+  -output /tmp/recovered.bin \
+  --mek-ring-file ~/mek-ring-recovered.json
+
+# From command-line (comma-separated)
+armor decrypt -v \
+  -input  b2://<bucket>/<key> \
+  -output /tmp/recovered.bin \
+  --mek-ring fedcba9876543210...,9876543210abcdef...
 ```
 
 **If you do not know the region or endpoint**, B2 will tell you — they are not
@@ -490,7 +601,7 @@ configuration because it bypasses the Cloudflare path, at billed egress.
 
 ## Key Rotation Failure Recovery
 
-> For the planned rotation procedure and required ordering (OpenBao → ESO sync → rotate endpoint → pod restart), see [key-rotation-runbook.md](key-rotation-runbook.md). This section covers recovering from an interrupted or failed rotation.
+> For the planned rotation procedure with the MEK key ring (v0.1.1922+), see [key-rotation-runbook.md](key-rotation-runbook.md). This section covers recovering from an interrupted or failed rotation.
 
 ARMOR tracks key rotation progress in `.armor/rotation-state.json` in the B2 bucket. This allows rotation to resume safely if interrupted.
 
@@ -525,29 +636,32 @@ aws s3 cp --endpoint-url http://localhost:9000 s3://your-bucket/.armor/rotation-
 
 If `status` is `"in_progress"`, rotation was interrupted.
 
-### Rotation Failure Modes
+### Rotation Failure Modes (v0.1.1922+)
 
 | Failure Mode | Detection | Recovery Action |
 |--------------|-----------|-----------------|
-| ARMOR pod crashed during rotation | `.armor/rotation-state.json` exists with `status: in_progress` | Restart rotation via `/admin/key/rotate` — it will resume automatically |
+| ARMOR pod crashed during rotation | `.armor/rotation-state.json` exists with `status: in_progress` | Restart rotation via `/admin/key/rotate` — it will resume automatically. **Safe** — all replicas load the ring, so all objects remain readable. |
 | B2 API rate limit | Rotation endpoint returns error with retry-after | Wait and retry — rotation is idempotent, already-processed objects are skipped |
 | Network timeout on CopyObject | Failed objects listed in rotation state | Retry rotation — only failed objects are reprocessed |
-| Old MEK lost before rotation completed | `old_mek_sha256` in state doesn't match any escrowed MEK | **Data loss for objects not yet re-wrapped** — restore old MEK from backup or use offline decrypt with old MEK |
+| Old MEK lost before rotation completed | Old MEK not in escrow | **Data loss for objects not yet re-wrapped** — restore old MEK from escrow. **With ring:** safer because old key remains in ring until explicitly retired. |
 
 ### Resuming an Interrupted Rotation
 
-To resume rotation, simply POST to the `/admin/key/rotate` endpoint again with the same new MEK:
+To resume rotation, simply POST to the `/admin/key/rotate` endpoint again:
 
 ```bash
 # Rotation will automatically resume from .armor/rotation-state.json
-curl -s -X POST http://localhost:9001/admin/key/rotate \
-  -H "Content-Type: application/json" \
-  -d '{"new_mek": "0123456789abcdef..."}' | jq .
+kubectl exec deploy/armor -n <namespace> -- \
+  curl -s -X POST http://localhost:9001/admin/key/rotate \
+    -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 ```
 
 ARMOR reads `.armor/rotation-state.json`, determines which objects were successfully processed, and continues from where it left off.
 
-**Important:** The `new_mek` in the request body must match the SHA256 hash in `rotation-state.json.new_mek_sha256`. If you submit a different new MEK, rotation will fail with an error.
+**With the ring:** Resuming is safer because all replicas load the ring. Even if rotation
+stopped partway through, all objects remain readable:
+- Already-re-wrapped objects use the new active key
+- Not-yet-re-wrapped objects use the old key (still in the ring)
 
 ### Bucket Versioning Implications
 
@@ -684,7 +798,7 @@ If the B2 bucket itself is deleted, all objects are gone. B2 does not provide un
 
 ### Testing MEK Escrow Retrieval
 
-Regularly test that you can retrieve and use the escrowed MEK:
+Regularly test that you can retrieve and use the escrowed MEK (or MEK ring, for v0.1.1922+):
 
 ```bash
 # 1. Retrieve from escrow
@@ -728,10 +842,10 @@ for i in {1..100}; do
   aws s3 cp --endpoint-url http://localhost:9000 test-file.bin s3://test-bucket/file-$i.bin
 done
 
-# 2. Start rotation
-curl -X POST http://localhost:9001/admin/key/rotate \
-  -H "Content-Type: application/json" \
-  -d '{"new_mek": "fedcba9876543210..."}' &
+# 2. Start rotation (v0.1.1922+ - no request body needed)
+kubectl exec deploy/armor -- \
+  curl -X POST http://localhost:9001/admin/key/rotate \
+    -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" &
 
 # 3. Kill ARMOR after 5 seconds (simulating crash)
 sleep 5
@@ -739,11 +853,11 @@ kubectl delete pod armor-xxx-yyy
 
 # 4. Restart ARMOR and verify rotation resumes
 kubectl wait --for=condition=available deployment/armor
-curl -s http://localhost:9001/admin/key/rotate \
-  -H "Content-Type: application/json" \
-  -d '{"new_mek": "fedcba9876543210..."}' | jq .
+kubectl exec deploy/armor -- \
+  curl -s -X POST http://localhost:9001/admin/key/rotate \
+    -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 
-# 5. Verify all files still decrypt
+# 5. Verify all files still decrypt (they should - ring makes this safe)
 for i in {1..100}; do
   aws s3 cp --endpoint-url http://localhost:9000 s3://test-bucket/file-$i.bin - | wc -c
 done
@@ -753,7 +867,7 @@ done
 
 ## Appendix: Quick Reference Commands
 
-### Export and Escrow MEK
+### Export and Escrow MEK (Single MEK)
 
 ```bash
 # Export MEK
@@ -768,29 +882,49 @@ aws secretsmanager create-secret \
   --secret-string file://mek-backup-$(date +%Y%m%d).hex
 ```
 
+### Export and Escrow MEK Ring (v0.1.1922+)
+
+```bash
+# Export ring (includes active key and all ring keys)
+kubectl exec deploy/armor -n <namespace> -- \
+  curl -s "http://localhost:9001/admin/key/ring?confirm=yes" \
+    -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq . > mek-ring-backup-$(date +%Y%m%d).json
+
+# Verify export
+jq . mek-ring-backup-*.json
+sha256sum mek-ring-backup-*.json
+
+# Escrow (example: AWS Secrets Manager)
+aws secretsmanager create-secret \
+  --name armor-mek-ring-prod-$(date +%Y%m%d) \
+  --secret-string file://mek-ring-backup-$(date +%Y%m%d).json
+```
+
 ### Verify MEK
 
 ```bash
 # Via admin API
-curl -s http://localhost:9001/admin/key/verify | jq .
+kubectl exec deploy/armor -- curl -s http://localhost:9001/admin/key/verify | jq .
 
 # Via canary status
-curl -s http://localhost:9001/armor/canary | jq .
+kubectl exec deploy/armor -- curl -s http://localhost:9001/armor/canary | jq .
 ```
 
-### Check Rotation Status
+### Check Rotation Status (v0.1.1922+)
 
 ```bash
-# Download rotation state
-aws s3 cp --endpoint-url http://localhost:9000 s3://bucket/.armor/rotation-state.json - | jq .
+# Get ring status (includes object count histogram by key fingerprint)
+kubectl exec deploy/armor -n <namespace> -- \
+  curl -s http://localhost:9001/admin/key/ring \
+    -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 
 # Resume rotation (if interrupted)
-curl -X POST http://localhost:9001/admin/key/rotate \
-  -H "Content-Type: application/json" \
-  -d '{"new_mek": "..."}' | jq .
+kubectl exec deploy/armor -n <namespace> -- \
+  curl -s -X POST http://localhost:9001/admin/key/rotate \
+    -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 ```
 
-### Offline Decrypt
+### Offline Decrypt (Single MEK)
 
 ```bash
 # Build decrypt tool
@@ -807,13 +941,28 @@ armor-decrypt \
   -mek $(cat mek-backup.hex) \
   -input b2://bucket/object-key \
   -output recovered-file.bin
+```
 
-# Decrypt from local file with wrapped DEK (no B2 vars needed)
-armor-decrypt \
-  -mek $(cat mek-backup.hex) \
-  -input encrypted.bin \
-  -wrapped-dek WWF...base64... \
-  -output plaintext.bin
+### Offline Decrypt (MEK Ring - v0.1.1922+)
+
+```bash
+# Decrypt from B2 with ring support
+export ARMOR_B2_ACCESS_KEY_ID=<b2 key id>
+export ARMOR_B2_SECRET_ACCESS_KEY=<b2 application key>
+export ARMOR_B2_REGION=us-west-002
+export ARMOR_B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
+
+# From JSON escrow file
+armor decrypt \
+  -input b2://bucket/object-key \
+  -output recovered-file.bin \
+  --mek-ring-file ~/mek-ring-backup-20260829.json
+
+# From command-line (comma-separated ring keys)
+armor decrypt \
+  -input b2://bucket/object-key \
+  -output recovered-file.bin \
+  --mek-ring fedcba9876543210...,9876543210abcdef...
 ```
 
 ---
@@ -821,7 +970,8 @@ armor-decrypt \
 ## References
 
 - [ARMOR README](../README.md) — Project overview and quick start
-- [ARMOR Plan](plan/plan.md) — Comprehensive implementation details
+- [ARMOR Plan](plan/plan.md) — Comprehensive implementation details (see §8.13 for MEK key ring)
 - [Admin API Endpoints](../README.md#admin-api) — Full admin API reference
 - [Offline Decrypt CLI](../README.md#disaster-recovery--offline-decryption) — Decrypt tool documentation
 - [Envelope Encryption Format](plan/plan.md#encryption-scheme) — Cryptographic design
+- [Key Rotation Runbook](key-rotation-runbook.md) — Rotation procedure with MEK key ring (v0.1.1922+)
