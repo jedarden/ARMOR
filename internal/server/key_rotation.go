@@ -17,6 +17,7 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/manifest"
 )
 
@@ -33,6 +34,10 @@ const B2CopyObjectSizeCeiling int64 = 5 * 1024 * 1024 * 1024 // 5 GiB
 // (RotationResult.Exceptions / ExceptionKeys) instead of attempting a copy
 // that the B2 API would reject, and instead of silently skipping the object.
 var ErrCopyObjectTooLarge = errors.New("object exceeds B2 CopyObject size ceiling")
+
+// ErrAlreadyUsingActiveKey is returned when an object is already wrapped with
+// the target key's fingerprint. The rotation loop skips these objects.
+var ErrAlreadyUsingActiveKey = errors.New("object already using active key fingerprint")
 
 // armor metadata header keys used by rotation. Defined here as constants so the
 // merge-and-overwrite logic in rotateObject can never drift from the keys the
@@ -94,6 +99,13 @@ type KeyRotator struct {
 	bucket  string
 	oldMEK  []byte
 	newMEK  []byte
+	// oldRing is the retired key ring for the old MEK, used for unwrapping
+	// objects encrypted with retired keys during rotation.
+	oldRing []keymanager.RingKeyEntry
+	// targetFingerprint is the fingerprint of the new MEK. Objects whose
+	// wrapped DEK carries this fingerprint are skipped (already using the
+	// active key).
+	targetFingerprint string
 	// targetKeyID is the canonical key name to rotate. An empty value keeps
 	// the legacy behavior of rotating every ARMOR object for direct callers of
 	// NewKeyRotator.
@@ -111,26 +123,48 @@ type KeyRotator struct {
 // NewKeyRotator creates a new key rotator. idx may be nil if the manifest
 // index is not available; rotation falls back to per-object HeadObject calls.
 func NewKeyRotator(b backend.Backend, bucket string, oldMEK, newMEK []byte, idx *manifest.Index) *KeyRotator {
-	return newKeyRotator(b, bucket, "", oldMEK, newMEK, idx)
+	return newKeyRotator(b, bucket, "", oldMEK, newMEK, nil, idx)
 }
 
 // NewKeyRotatorForKey creates a rotator that only re-wraps objects encrypted
 // with keyID. The empty key ID selects the default key, including legacy
 // objects whose metadata omits x-amz-meta-armor-key-id.
-func NewKeyRotatorForKey(b backend.Backend, bucket, keyID string, oldMEK, newMEK []byte, idx *manifest.Index) *KeyRotator {
+func NewKeyRotatorForKey(b backend.Backend, bucket, keyID string, oldMEK, newMEK []byte, oldRing []keymanager.RingKeyEntry, idx *manifest.Index) *KeyRotator {
 	if keyID == "" {
 		keyID = "default"
 	}
 	keyID = strings.ToLower(strings.TrimSpace(keyID))
-	return newKeyRotator(b, bucket, keyID, oldMEK, newMEK, idx)
+	return newKeyRotator(b, bucket, keyID, oldMEK, newMEK, oldRing, idx)
 }
 
-func newKeyRotator(b backend.Backend, bucket, targetKeyID string, oldMEK, newMEK []byte, idx *manifest.Index) *KeyRotator {
+// NewFingerprintRotator creates a rotator that re-wraps objects to the active
+// key's fingerprint. It walks the bucket (manifest first, HeadObject fallback)
+// and re-wraps only objects whose fingerprint ≠ the active key's fingerprint.
+// This is the new recommended rotation method.
+func NewFingerprintRotator(b backend.Backend, bucket, keyID string, activeMEK []byte, oldRing []keymanager.RingKeyEntry, idx *manifest.Index) *KeyRotator {
+	if keyID == "" {
+		keyID = "default"
+	}
+	keyID = strings.ToLower(strings.TrimSpace(keyID))
+	return &KeyRotator{
+		backend:           b,
+		bucket:            bucket,
+		newMEK:            activeMEK,
+		oldRing:           oldRing,
+		targetFingerprint: crypto.MEKFingerprint(activeMEK),
+		targetKeyID:       keyID,
+		idx:               idx,
+		statePath:         ".armor/rotation-state.json",
+	}
+}
+
+func newKeyRotator(b backend.Backend, bucket, targetKeyID string, oldMEK, newMEK []byte, oldRing []keymanager.RingKeyEntry, idx *manifest.Index) *KeyRotator {
 	return &KeyRotator{
 		backend:     b,
 		bucket:      bucket,
 		oldMEK:      oldMEK,
 		newMEK:      newMEK,
+		oldRing:     oldRing,
 		targetKeyID: targetKeyID,
 		idx:         idx,
 		statePath:   ".armor/rotation-state.json",
@@ -242,6 +276,15 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 
 			// Re-wrap the DEK for this object
 			if err := kr.rotateObjectWithMetadata(ctx, obj, rawMeta); err != nil {
+				if errors.Is(err, ErrAlreadyUsingActiveKey) {
+					// Object is already using the active key fingerprint
+					result.SkippedObjects++
+					kr.stateMu.Lock()
+					kr.state.LastKey = obj.Key
+					kr.state.LastUpdated = time.Now()
+					kr.stateMu.Unlock()
+					continue
+				}
 				if errors.Is(err, ErrCopyObjectTooLarge) {
 					// Oversized objects cannot be re-wrapped via CopyObject.
 					// Enumerate them as exceptions (not silently skipped) and
@@ -335,24 +378,28 @@ func (kr *KeyRotator) rotateObjectWithMetadata(ctx context.Context, obj backend.
 		return err
 	}
 
+	// Parse ARMOR metadata to get the current fingerprint
+	armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
+	if !ok {
+		return fmt.Errorf("object %s is not ARMOR-encrypted", obj.Key)
+	}
+
+	// If targetFingerprint is set, skip objects already using that fingerprint
+	// (they're already wrapped with the active key)
+	if kr.targetFingerprint != "" && armorMeta.MEKFingerprint == kr.targetFingerprint {
+		return ErrAlreadyUsingActiveKey
+	}
+
 	// Resolve the current wrapped DEK. Prefer the manifest fast-path (avoids
 	// re-parsing headers); fall back to parsing the raw metadata.
 	oldWrappedDEK := kr.wrappedDEKFromManifest(obj.Key)
 	if oldWrappedDEK == nil {
-		armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
-		if !ok {
-			return fmt.Errorf("object %s is not ARMOR-encrypted", obj.Key)
-		}
 		oldWrappedDEK = armorMeta.WrappedDEK
 	}
 
-	// Unwrap DEK with old MEK using fingerprint with ring fallback
-	// For key rotation, we need to try the old active key first, then old ring keys
+	// Unwrap DEK with fingerprint-based lookup
+	// For fingerprint-based rotation, we use the ring keys to unwrap
 	lookupMEK := func(keyID, fingerprint string) ([]byte, bool) {
-		// For key rotation, we're using old keys
-		if fingerprint == crypto.MEKFingerprint(kr.oldMEK) {
-			return kr.oldMEK, true
-		}
 		// Check old ring keys
 		if kr.oldRing != nil {
 			for _, ringEntry := range kr.oldRing {
@@ -361,22 +408,28 @@ func (kr *KeyRotator) rotateObjectWithMetadata(ctx context.Context, obj backend.
 				}
 			}
 		}
+		// For legacy rotation, try oldMEK
+		if kr.oldMEK != nil && fingerprint == crypto.MEKFingerprint(kr.oldMEK) {
+			return kr.oldMEK, true
+		}
 		return nil, false
 	}
 
 	legacyFallback := func(wrappedDEK []byte) ([]byte, error) {
-		// Try old active key first
-		dek, err := crypto.UnwrapDEK(kr.oldMEK, wrappedDEK)
-		if err == nil {
-			return dek, nil
-		}
-		// Try old ring keys
+		// Try old ring keys first
 		if kr.oldRing != nil {
 			for _, ringEntry := range kr.oldRing {
 				dek, err := crypto.UnwrapDEK(ringEntry.MEK, wrappedDEK)
 				if err == nil {
 					return dek, nil
 				}
+			}
+		}
+		// For legacy rotation, try oldMEK
+		if kr.oldMEK != nil {
+			dek, err := crypto.UnwrapDEK(kr.oldMEK, wrappedDEK)
+			if err == nil {
+				return dek, nil
 			}
 		}
 		return nil, fmt.Errorf("no old key can unwrap DEK")

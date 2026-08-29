@@ -583,6 +583,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/version", middleware.VersionHandler(s.config)) // Public, no auth required
 	mux.HandleFunc("/admin/key/verify", s.verifyKey)
 	mux.HandleFunc("/admin/key/rotate", s.rotateKey)
+	mux.HandleFunc("/admin/key/ring", s.keyRing)
 	mux.HandleFunc("/admin/key/export", s.exportKey)
 	mux.HandleFunc("/admin/format/migrate", s.migrateFormat)      // POST=start migration, GET=progress
 	mux.HandleFunc("/admin/creds", s.handleListCreds)              // GET=list credentials
@@ -708,32 +709,6 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the new MEK from the request body
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	// The new MEK should be a 32-byte hex-encoded string (64 hex chars)
-	// or raw 32 bytes
-	var newMEK []byte
-	if len(body) == 64 {
-		// Hex-encoded
-		newMEK, err = hex.DecodeString(string(body))
-		if err != nil {
-			http.Error(w, "Invalid hex-encoded MEK", http.StatusBadRequest)
-			return
-		}
-	} else if len(body) == 32 {
-		// Raw bytes
-		newMEK = body
-	} else {
-		http.Error(w, fmt.Sprintf("Invalid MEK length: expected 32 bytes or 64 hex chars, got %d", len(body)), http.StatusBadRequest)
-		return
-	}
-
 	// Select the key to rotate. The default key remains the backward-compatible
 	// choice when no key-id is supplied; named keys are rotated independently.
 	keyID := strings.TrimSpace(r.URL.Query().Get("key-id"))
@@ -744,19 +719,65 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	keyID = key.Name
 
-	// Pass the manifest index so the rotator can use cached metadata where
-	// possible. Per-key filtering still verifies the authoritative object
-	// metadata before selecting an object.
-	oldMEK := key.MEK
+	// Read the request body to detect legacy rotation mode
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
 
-	// Compute MEK hashes for provenance tracking
-	oldMEKHashBytes := sha256.Sum256(oldMEK)
-	newMEKHashBytes := sha256.Sum256(newMEK)
-	oldMEKHash := hex.EncodeToString(oldMEKHashBytes[:8])
-	newMEKHash := hex.EncodeToString(newMEKHashBytes[:8])
+	var rotator *server.KeyRotator
+	var oldMEKHash, newMEKHash, rotationID string
 
-	// Generate rotation ID for provenance tracking
-	rotationID := fmt.Sprintf("%s-%s-%d", oldMEKHash, newMEKHash, time.Now().Unix())
+	if len(body) > 0 {
+		// LEGACY MODE: Request body contains the new MEK (32 bytes or 64 hex chars)
+		s.logger.WithFields(map[string]interface{}{
+			"key_id": keyID,
+		}).Warn("Using legacy key rotation mode (request-body MEK). This form is deprecated and will be removed in a future release. Use fingerprint-based rotation instead (omit request body).")
+
+		var newMEK []byte
+		if len(body) == 64 {
+			newMEK, err = hex.DecodeString(string(body))
+			if err != nil {
+				http.Error(w, "Invalid hex-encoded MEK", http.StatusBadRequest)
+				return
+			}
+		} else if len(body) == 32 {
+			newMEK = body
+		} else {
+			http.Error(w, fmt.Sprintf("Invalid MEK length: expected 32 bytes or 64 hex chars, got %d", len(body)), http.StatusBadRequest)
+			return
+		}
+
+		oldMEK := key.MEK
+
+		// Compute MEK hashes for provenance tracking
+		oldMEKHashBytes := sha256.Sum256(oldMEK)
+		newMEKHashBytes := sha256.Sum256(newMEK)
+		oldMEKHash = hex.EncodeToString(oldMEKHashBytes[:8])
+		newMEKHash = hex.EncodeToString(newMEKHashBytes[:8])
+		rotationID = fmt.Sprintf("%s-%s-%d", oldMEKHash, newMEKHash, time.Now().Unix())
+
+		// Get old ring keys for this key ID
+		oldRing := s.keyManager.Ring(keyID)
+
+		rotator = server.NewKeyRotatorForKey(s.backend, s.config.Bucket, keyID, oldMEK, newMEK, oldRing, s.manifest)
+	} else {
+		// NEW MODE: Fingerprint-based rotation (no request body)
+		// Re-wraps objects whose fingerprint ≠ active key's fingerprint
+		activeMEK := key.MEK
+
+		// Compute MEK hash for provenance tracking
+		newMEKHashBytes := sha256.Sum256(activeMEK)
+		newMEKHash = hex.EncodeToString(newMEKHashBytes[:8])
+		rotationID = fmt.Sprintf("fingerprint-%s-%d", newMEKHash, time.Now().Unix())
+
+		// Get old ring keys for this key ID (for unwrapping objects encrypted with retired keys)
+		oldRing := s.keyManager.Ring(keyID)
+
+		rotator = server.NewFingerprintRotator(s.backend, s.config.Bucket, keyID, activeMEK, oldRing, s.manifest)
+	}
 
 	// Record key rotation start in provenance chain
 	if err := s.provenance.RecordKeyEvent(r.Context(), "key-rotate-start", provenance.KeyEventOpts{
@@ -770,8 +791,6 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		}).Warn("failed to record key rotation start event in provenance chain")
 	}
 
-	rotator := NewKeyRotatorForKey(s.backend, s.config.Bucket, keyID, oldMEK, newMEK, s.manifest)
-
 	// Perform rotation
 	result, err := rotator.Rotate(r.Context())
 	if err != nil {
@@ -784,39 +803,114 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update the server's MEK on success
-	if result.Status == "completed" {
-		if err := s.keyManager.UpdateKey(keyID, newMEK); err != nil {
-			s.logger.WithFields(map[string]interface{}{
-				"error": err.Error(),
-			}).Error("failed to update key manager after rotation")
-		}
-		// Clear the metadata cache since DEKs are now wrapped with new MEK
-		s.cache.Clear()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(result)
+}
 
-		// Record key rotation complete in provenance chain
-		rotationResult := &provenance.KeyRotationResult{
-			TotalObjects:     result.TotalObjects,
-			ProcessedObjects: result.ProcessedObjects,
-			SkippedObjects:   result.SkippedObjects,
-			Exceptions:       result.Exceptions,
-			DurationSec:      result.Duration.Seconds(),
-			Status:           result.Status,
+// keyRing returns the key ring information with object histogram.
+// GET /admin/key/ring returns per key-id {active_fp, ring_fps[], objects_by_fp{fp:count}}.
+func (s *Server) keyRing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get all configured keys
+	keyIDs := s.keyManager.ListKeys()
+
+	// Build response with per-key-id information
+	type KeyRingInfo struct {
+		ActiveFingerprint string            `json:"active_fp"`
+		RingFingerprints  []string          `json:"ring_fps"`
+		ObjectsByFingerprint map[string]int `json:"objects_by_fp"`
+	}
+
+	response := make(map[string]KeyRingInfo)
+	manifestDisabled := false
+
+	// Check if manifest is available
+	if s.manifest == nil {
+		manifestDisabled = true
+	}
+
+	// For each key, get its active fingerprint, ring, and object histogram
+	for _, keyID := range keyIDs {
+		key, err := s.keyManager.GetKeyByID(keyID)
+		if err != nil {
+			continue
 		}
-		if err := s.provenance.RecordKeyEvent(r.Context(), "key-rotate-complete", provenance.KeyEventOpts{
-			OldMEKHash:     oldMEKHash,
-			NewMEKHash:     newMEKHash,
-			RotationID:     rotationID,
-			RotationResult: rotationResult,
-		}); err != nil {
-			s.logger.WithFields(map[string]interface{}{
-				"error":       err.Error(),
-				"rotation_id": rotationID,
-			}).Warn("failed to record key rotation complete event in provenance chain")
+
+		activeFingerprint := crypto.MEKFingerprint(key.MEK)
+		ringEntries := s.keyManager.Ring(keyID)
+
+		var ringFingerprints []string
+		for _, entry := range ringEntries {
+			ringFingerprints = append(ringFingerprints, entry.Fingerprint)
+		}
+
+		objectsByFingerprint := make(map[string]int)
+
+		if !manifestDisabled {
+			// Build histogram from manifest
+			// Walk through all manifest entries and count by fingerprint for this key
+			allEntries := s.manifest.All()
+
+			for manifestKey, entry := range allEntries {
+				// Parse bucket and key from manifestKey ("bucket/object-key")
+				parts := strings.SplitN(manifestKey, "/", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				bucket := parts[0]
+				objectKey := parts[1]
+
+				// Check if this object belongs to the current key
+				// We need to check the object metadata to determine the key ID
+				info, err := s.backend.Head(r.Context(), bucket, objectKey)
+				if err != nil {
+					continue
+				}
+
+				armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
+				if !ok {
+					continue
+				}
+
+				effectiveKeyID := strings.ToLower(strings.TrimSpace(armorMeta.KeyID))
+				if effectiveKeyID == "" {
+					effectiveKeyID = "default"
+				}
+
+				if effectiveKeyID == keyID {
+					fingerprint := armorMeta.MEKFingerprint
+					if fingerprint == "" {
+						fingerprint = "legacy"
+					}
+					objectsByFingerprint[fingerprint]++
+				}
+			}
+		}
+
+		response[keyID] = KeyRingInfo{
+			ActiveFingerprint:      activeFingerprint,
+			RingFingerprints:       ringFingerprints,
+			ObjectsByFingerprint:   objectsByFingerprint,
 		}
 	}
 
+	// Add metadata about the response
 	w.Header().Set("Content-Type", "application/json")
+
+	result := map[string]interface{}{
+		"keys": response,
+	}
+
+	if manifestDisabled {
+		result["approximate"] = true
+		result["note"] = "Manifest is disabled. Object counts are not available."
+	}
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(result)
 }
