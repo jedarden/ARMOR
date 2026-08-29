@@ -140,6 +140,12 @@ type Metrics struct {
 	BackendRequestsTotal   *labelledCounter
 	BackendRequestDuration *labelledCounter
 
+	// Request duration histogram (fixed buckets)
+	requestDurationBuckets []int64
+	requestDurationSum      *expvar.Map // operation -> sum of durations
+	requestDurationCount   *expvar.Map // operation -> count of observations
+	requestDurationBucketsMap *expvar.Map // operation_bucket_le -> cumulative count
+
 	// Restore verifier metrics (Phase 6)
 	RestoreVerifierLastCheckTime   *expvar.String
 	RestoreVerifierLastCheckError  *expvar.String
@@ -264,6 +270,12 @@ func NewMetrics() *Metrics {
 	m.BackendRequestsTotal = newLabelledCounter()
 	m.BackendRequestDuration = newLabelledCounter()
 
+	// Request duration histogram (fixed buckets in milliseconds)
+	m.requestDurationBuckets = []int64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
+	m.requestDurationSum = new(expvar.Map).Init()
+	m.requestDurationCount = new(expvar.Map).Init()
+	m.requestDurationBucketsMap = new(expvar.Map).Init()
+
 	// Restore verifier metrics
 	m.RestoreVerifierLastCheckTime = new(expvar.String)
 	m.RestoreVerifierLastCheckError = new(expvar.String)
@@ -316,13 +328,53 @@ func (m *Metrics) DecRequestsInFlight() {
 	m.RequestsInFlight.Add(-1)
 }
 
-// RecordRequestDuration records the duration of a request.
+// RecordRequestDuration records the duration of a request as a histogram with fixed buckets.
 func (m *Metrics) RecordRequestDuration(operation string, duration time.Duration) {
-	key := operation
 	millis := duration.Milliseconds()
-	// Store as a histogram bucket approximation
-	bucket := fmt.Sprintf("%s_bucket_le_%d", key, millis)
-	m.requestsByLabel.Add(bucket, 1)
+
+	// Update sum for this operation
+	sumKey := operation
+	var currentSum expvar.Int
+	if existingSum := m.requestDurationSum.Get(sumKey); existingSum != nil {
+		currentSum.Set(existingSum.(*expvar.Int).Value() + millis)
+	} else {
+		currentSum.Set(millis)
+	}
+	m.requestDurationSum.Set(sumKey, &currentSum)
+
+	// Update count for this operation
+	countKey := operation
+	var currentCount expvar.Int
+	if existingCount := m.requestDurationCount.Get(countKey); existingCount != nil {
+		currentCount.Set(existingCount.(*expvar.Int).Value() + 1)
+	} else {
+		currentCount.Set(1)
+	}
+	m.requestDurationCount.Set(countKey, &currentCount)
+
+	// Update bucket counters (cumulative histogram)
+	for _, bucketLe := range m.requestDurationBuckets {
+		if millis <= bucketLe {
+			bucketKey := fmt.Sprintf("%s_bucket_le_%d", operation, bucketLe)
+			var bucketVal expvar.Int
+			if existingBucket := m.requestDurationBucketsMap.Get(bucketKey); existingBucket != nil {
+				bucketVal.Set(existingBucket.(*expvar.Int).Value() + 1)
+			} else {
+				bucketVal.Set(1)
+			}
+			m.requestDurationBucketsMap.Set(bucketKey, &bucketVal)
+		}
+	}
+
+	// Also track in +Inf bucket (all observations)
+	infBucketKey := fmt.Sprintf("%s_bucket_le_Inf", operation)
+	var infBucketVal expvar.Int
+	if existingInf := m.requestDurationBucketsMap.Get(infBucketKey); existingInf != nil {
+		infBucketVal.Set(existingInf.(*expvar.Int).Value() + 1)
+	} else {
+		infBucketVal.Set(1)
+	}
+	m.requestDurationBucketsMap.Set(infBucketKey, &infBucketVal)
 }
 
 // AddBytesUploaded adds to the uploaded bytes counter.
@@ -651,6 +703,42 @@ func (m *Metrics) PrometheusFormat() string {
 	sb.WriteString("# TYPE armor_requests_by_label counter\n")
 	m.requestsByLabel.Do(func(kv expvar.KeyValue) {
 		fmt.Fprintf(&sb, "armor_requests_by_label{key=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	// Request duration histogram (fixed buckets)
+	sb.WriteString("\n# HELP armor_request_duration_ms Request duration in milliseconds\n")
+	sb.WriteString("# TYPE armor_request_duration_ms histogram\n")
+
+	// Export histogram for each operation we've seen
+	m.requestDurationCount.Do(func(kv expvar.KeyValue) {
+		operation := kv.Key
+		countVal := kv.Value.(*expvar.Int).Value()
+
+		// Get sum
+		var sumVal int64
+		if sum := m.requestDurationSum.Get(operation); sum != nil {
+			sumVal = sum.(*expvar.Int).Value()
+		}
+
+		// Export _sum and _count
+		fmt.Fprintf(&sb, "armor_request_duration_ms_sum{operation=%q} %d\n", operation, sumVal)
+		fmt.Fprintf(&sb, "armor_request_duration_ms_count{operation=%q} %d\n", operation, countVal)
+
+		// Export bucket counters (cumulative)
+		for _, bucketLe := range m.requestDurationBuckets {
+			bucketKey := fmt.Sprintf("%s_bucket_le_%d", operation, bucketLe)
+			if bucket := m.requestDurationBucketsMap.Get(bucketKey); bucket != nil {
+				fmt.Fprintf(&sb, "armor_request_duration_ms_bucket{operation=%q,le=%q} %s\n", operation, fmt.Sprintf("%d", bucketLe), bucket.(*expvar.Int).String())
+			} else {
+				// Bucket exists but has no observations yet (shouldn't happen with cumulative, but be defensive)
+				fmt.Fprintf(&sb, "armor_request_duration_ms_bucket{operation=%q,le=%q} 0\n", operation, fmt.Sprintf("%d", bucketLe))
+			}
+		}
+		// Export +Inf bucket
+		infBucketKey := fmt.Sprintf("%s_bucket_le_Inf", operation)
+		if infBucket := m.requestDurationBucketsMap.Get(infBucketKey); infBucket != nil {
+			fmt.Fprintf(&sb, "armor_request_duration_ms_bucket{operation=%q,le=\"+Inf\"} %s\n", operation, infBucket.(*expvar.Int).String())
+		}
 	})
 
 	// Canary metrics

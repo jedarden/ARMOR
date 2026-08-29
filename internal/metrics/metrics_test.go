@@ -1,8 +1,11 @@
 package metrics
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -667,5 +670,266 @@ func TestLabelledCounterAccumulation(t *testing.T) {
 
 	if !strings.Contains(output, `armor_restore_verifier_objects_verified{bucket="bucket2"} 4`) {
 		t.Errorf("expected bucket2 verified counter to be 4, got stuck at 1")
+	}
+}
+
+// TestRequestDurationHistogram verifies the fixed-bucket histogram implementation
+func TestRequestDurationHistogram(t *testing.T) {
+	m := NewMetrics()
+
+	// Record some durations across different operations
+	durations := []struct {
+		operation string
+		duration  time.Duration
+	}{
+		{"PutObject", 7 * time.Millisecond},   // falls in 10ms bucket
+		{"PutObject", 45 * time.Millisecond},  // falls in 50ms bucket
+		{"PutObject", 150 * time.Millisecond}, // falls in 250ms bucket
+		{"PutObject", 3000 * time.Millisecond}, // falls in 5000ms bucket
+		{"GetObject", 20 * time.Millisecond},   // falls in 25ms bucket
+		{"GetObject", 800 * time.Millisecond},   // falls in 1000ms bucket
+		{"GetObject", 1500 * time.Millisecond}, // falls in 2500ms bucket
+	}
+
+	for _, d := range durations {
+		m.RecordRequestDuration(d.operation, d.duration)
+	}
+
+	output := m.PrometheusFormat()
+
+	// Verify histogram structure is present
+	expectedMetricBases := []string{
+		"armor_request_duration_ms_bucket{operation=\"PutObject\",le=",
+		"armor_request_duration_ms_bucket{operation=\"GetObject\",le=",
+		"armor_request_duration_ms_sum{operation=",
+		"armor_request_duration_ms_count{operation=",
+	}
+
+	for _, base := range expectedMetricBases {
+		if !strings.Contains(output, base) {
+			t.Errorf("expected histogram metric base %q in Prometheus output", base)
+		}
+	}
+
+	// Verify HELP and TYPE comments
+	if !strings.Contains(output, "# HELP armor_request_duration_ms") {
+		t.Error("expected HELP comment for request duration histogram")
+	}
+	if !strings.Contains(output, "# TYPE armor_request_duration_ms histogram") {
+		t.Error("expected TYPE histogram for request duration")
+	}
+}
+
+// TestRequestDurationHistogramBucketMonotonicity verifies that histogram bucket
+// values are monotonically increasing (cumulative histogram property).
+// This is critical for Prometheus histograms to work correctly.
+func TestRequestDurationHistogramBucketMonotonicity(t *testing.T) {
+	m := NewMetrics()
+
+	// Record multiple observations for the same operation
+	observations := []time.Duration{
+		5 * time.Millisecond,
+		15 * time.Millisecond,
+		30 * time.Millisecond,
+		75 * time.Millisecond,
+		200 * time.Millisecond,
+		600 * time.Millisecond,
+		1500 * time.Millisecond,
+		3500 * time.Millisecond,
+		8000 * time.Millisecond,
+	}
+
+	for _, obs := range observations {
+		m.RecordRequestDuration("PutObject", obs)
+	}
+
+	output := m.PrometheusFormat()
+
+	// Extract bucket values for PutObject operation using string parsing
+	// instead of complex regex
+	lines := strings.Split(output, "\n")
+
+	bucketValues := make(map[string]int64)
+	for _, line := range lines {
+		if strings.HasPrefix(line, "armor_request_duration_ms_bucket{operation=\"PutObject\"") {
+			// Extract the le value and count
+			// Format: armor_request_duration_ms_bucket{operation="PutObject",le="5"} 0
+			parts := strings.Split(line, `le="`)
+			if len(parts) == 2 {
+				lePart := strings.Split(parts[1], `"} `)
+				if len(lePart) == 2 {
+					le := lePart[0]
+					countStr := lePart[1]
+					count, err := strconv.ParseInt(countStr, 10, 64)
+					if err == nil {
+						bucketValues[le] = count
+					}
+				}
+			}
+		}
+	}
+
+	// Expected buckets in order
+	orderedBuckets := []string{"5", "10", "25", "50", "100", "250", "500", "1000", "2500", "5000", "10000", "+Inf"}
+	var values []int64
+	for _, le := range orderedBuckets {
+		val, ok := bucketValues[le]
+		if !ok {
+			t.Errorf("missing bucket value for le=%s", le)
+			continue
+		}
+		values = append(values, val)
+	}
+
+	// Verify monotonicity: each bucket should be >= the previous
+	for i := 1; i < len(values); i++ {
+		if values[i] < values[i-1] {
+			t.Errorf("bucket monotonicity violated: bucket[%d]=%d < bucket[%d]=%d",
+				i, values[i], i-1, values[i-1])
+		}
+	}
+
+	// Verify +Inf bucket equals total count
+	countPattern := `armor_request_duration_ms_count{operation="PutObject"}`
+	for _, line := range lines {
+		if strings.Contains(line, countPattern) {
+			parts := strings.Split(line, " ")
+			if len(parts) >= 2 {
+				expectedCount, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
+				if err == nil && len(values) > 0 {
+					infCount := values[len(values)-1]
+					if infCount != expectedCount {
+						t.Errorf("+Inf bucket count (%d) should equal total count (%d)", infCount, expectedCount)
+					}
+				}
+			}
+			break
+		}
+	}
+}
+
+// TestRequestDurationHistogramNoUnboundedKeys verifies that the old
+// unbounded bucket pattern (operation_bucket_le_<exact_millis>) is not
+// present in the exported metrics.
+func TestRequestDurationHistogramNoUnboundedKeys(t *testing.T) {
+	m := NewMetrics()
+
+	// Record some durations with specific millis values that would have
+	// created unbounded keys in the old implementation
+	m.RecordRequestDuration("PutObject", 123*time.Millisecond)  // would create "PutObject_bucket_le_123"
+	m.RecordRequestDuration("GetObject", 456*time.Millisecond) // would create "GetObject_bucket_le_456"
+
+	output := m.PrometheusFormat()
+
+	// Verify that requestsByLabel does NOT contain unbounded bucket keys
+	hasUnboundedKeys := false
+	m.requestsByLabel.Do(func(kv expvar.KeyValue) {
+		key := kv.Key
+		// Check if key matches the old pattern: <operation>_bucket_le_<number>
+		if strings.Contains(key, "_bucket_le_") {
+			// Extract the part after _bucket_le_
+			parts := strings.Split(key, "_bucket_le_")
+			if len(parts) == 2 {
+				// Try to parse as number - if it succeeds, it's an unbounded key
+				if _, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					hasUnboundedKeys = true
+				}
+			}
+		}
+	})
+
+	if hasUnboundedKeys {
+		t.Error("found unbounded bucket keys in requestsByLabel - old pattern should be removed")
+	}
+
+	// Verify the new histogram format is used instead
+	if !strings.Contains(output, "armor_request_duration_ms_bucket") {
+		t.Error("expected new histogram bucket format in Prometheus output")
+	}
+	if !strings.Contains(output, "armor_request_duration_ms_sum") {
+		t.Error("expected new histogram sum metric in Prometheus output")
+	}
+	if !strings.Contains(output, "armor_request_duration_ms_count") {
+		t.Error("expected new histogram count metric in Prometheus output")
+	}
+}
+
+// TestRequestDurationHistogramAccuracy verifies that sum and count are accurate
+func TestRequestDurationHistogramAccuracy(t *testing.T) {
+	m := NewMetrics()
+
+	// Record specific durations
+	durations := []time.Duration{
+		100 * time.Millisecond,
+		200 * time.Millisecond,
+		300 * time.Millisecond,
+	}
+
+	expectedSum := int64(0)
+	for _, d := range durations {
+		m.RecordRequestDuration("TestOp", d)
+		expectedSum += d.Milliseconds()
+	}
+
+	output := m.PrometheusFormat()
+
+	// Verify count
+	countPattern := `armor_request_duration_ms_count{operation="TestOp"} (\d+)`
+	countRe := regexp.MustCompile(countPattern)
+	countMatches := countRe.FindStringSubmatch(output)
+	if len(countMatches) < 2 {
+		t.Fatal("could not find count metric for TestOp")
+	}
+	actualCount, _ := strconv.ParseInt(countMatches[1], 10, 64)
+	expectedCount := int64(len(durations))
+	if actualCount != expectedCount {
+		t.Errorf("count mismatch: got %d, want %d", actualCount, expectedCount)
+	}
+
+	// Verify sum
+	sumPattern := `armor_request_duration_ms_sum{operation="TestOp"} (\d+)`
+	sumRe := regexp.MustCompile(sumPattern)
+	sumMatches := sumRe.FindStringSubmatch(output)
+	if len(countMatches) < 2 {
+		t.Fatal("could not find sum metric for TestOp")
+	}
+	actualSum, _ := strconv.ParseInt(sumMatches[1], 10, 64)
+	if actualSum != expectedSum {
+		t.Errorf("sum mismatch: got %d, want %d", actualSum, expectedSum)
+	}
+}
+
+// TestRequestDurationHistogramMultipleOperations verifies that multiple
+// operations are tracked independently
+func TestRequestDurationHistogramMultipleOperations(t *testing.T) {
+	m := NewMetrics()
+
+	// Record durations for different operations
+	operations := []string{"PutObject", "GetObject", "DeleteObject", "ListObjectsV2"}
+	for _, op := range operations {
+		m.RecordRequestDuration(op, 100*time.Millisecond)
+	}
+
+	output := m.PrometheusFormat()
+
+	// Verify each operation has its own histogram
+	for _, op := range operations {
+		// Check for sum metric
+		sumPattern := fmt.Sprintf(`armor_request_duration_ms_sum{operation=%q}`, op)
+		if !strings.Contains(output, sumPattern) {
+			t.Errorf("missing sum metric for operation %s", op)
+		}
+
+		// Check for count metric
+		countPattern := fmt.Sprintf(`armor_request_duration_ms_count{operation=%q}`, op)
+		if !strings.Contains(output, countPattern) {
+			t.Errorf("missing count metric for operation %s", op)
+		}
+
+		// Check for bucket metrics
+		bucketPattern := fmt.Sprintf(`armor_request_duration_ms_bucket{operation=%q,le=`, op)
+		if !strings.Contains(output, bucketPattern) {
+			t.Errorf("missing bucket metrics for operation %s", op)
+		}
 	}
 }
