@@ -160,8 +160,14 @@ func TestHMACKeyDerivation(t *testing.T) {
 	dek := make([]byte, 32)
 	rand.Read(dek)
 
-	hmacKey1 := DeriveHMACKey(dek)
-	hmacKey2 := DeriveHMACKey(dek)
+	hmacKey1, err := DeriveHMACKey(dek)
+	if err != nil {
+		t.Fatalf("Failed to derive HMAC key: %v", err)
+	}
+	hmacKey2, err := DeriveHMACKey(dek)
+	if err != nil {
+		t.Fatalf("Failed to derive HMAC key: %v", err)
+	}
 
 	if !bytes.Equal(hmacKey1, hmacKey2) {
 		t.Error("Same DEK should produce same HMAC key")
@@ -170,7 +176,10 @@ func TestHMACKeyDerivation(t *testing.T) {
 	// Different DEK should produce different HMAC key
 	dek2 := make([]byte, 32)
 	rand.Read(dek2)
-	hmacKey3 := DeriveHMACKey(dek2)
+	hmacKey3, err := DeriveHMACKey(dek2)
+	if err != nil {
+		t.Fatalf("Failed to derive HMAC key: %v", err)
+	}
 
 	if bytes.Equal(hmacKey1, hmacKey3) {
 		t.Error("Different DEK should produce different HMAC key")
