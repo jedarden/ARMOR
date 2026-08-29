@@ -31,6 +31,7 @@ type Entry struct {
 	PlaintextSHA256 string    `json:"plaintext_sha256"`
 	IV              []byte    `json:"iv"`
 	WrappedDEK      []byte    `json:"wrapped_dek"`
+	MEKFingerprint  string    `json:"mek_fingerprint,omitempty"` // 16-char hex fingerprint of MEK used (v2 format)
 	BlockSize       int       `json:"block_size"`
 	ContentType     string    `json:"content_type"`
 	ETag            string    `json:"etag"`

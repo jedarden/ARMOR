@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,9 @@ import (
 // Uploader uploads a manifest delta file directly to B2 (free ingress, no Cloudflare).
 // key is the full B2 object key; data is the JSONL content.
 type Uploader func(ctx context.Context, key string, data []byte) error
+
+// ChainHeadWriter writes a chain-head file to B2.
+type ChainHeadWriter func(ctx context.Context, key string, data []byte) error
 
 // DefaultOpsBufferSize is the default buffered channel capacity for Writer.
 const DefaultOpsBufferSize = 4096
@@ -22,6 +26,9 @@ const DefaultOpsBufferSize = 4096
 // The writer is a performance aid: losing a delta (crash before flush) is
 // acceptable because B2 object headers remain the authoritative source of
 // truth, and startup replay catches up from whatever deltas reached B2.
+//
+// When provenance is enabled, the writer also updates .armor/chain-head/<writer>
+// once per batch with {delta_file, seq, hash}.
 type Writer struct {
 	idx      *Index
 	prefix   string
@@ -38,23 +45,34 @@ type Writer struct {
 	// as UnixNano, accessed atomically (flush goroutine writes, readyz reads).
 	// Zero indicates no successful flush has occurred since startup.
 	lastFlush atomic.Int64
+	// writeChainHead is called after each successful delta upload to update
+	// the chain-head file. May be nil if provenance is disabled.
+	writeChainHead ChainHeadWriter
 }
 
 // NewWriter creates a Writer backed by idx. bufSize controls the ops channel
 // capacity; pass 0 to use DefaultOpsBufferSize. Call Start to launch the
 // background flush goroutine.
 func NewWriter(idx *Index, prefix, writerID string, upload Uploader, bufSize int) *Writer {
+	return NewWriterWithChain(idx, prefix, writerID, upload, nil, bufSize)
+}
+
+// NewWriterWithChain creates a Writer with chain-head writing support.
+// writeChainHead is called after each successful delta upload to update
+// .armor/chain-head/<writer>. Pass nil if provenance is disabled.
+func NewWriterWithChain(idx *Index, prefix, writerID string, upload Uploader, writeChainHead ChainHeadWriter, bufSize int) *Writer {
 	if bufSize <= 0 {
 		bufSize = DefaultOpsBufferSize
 	}
 	return &Writer{
-		idx:      idx,
-		prefix:   prefix,
-		writerID: writerID,
-		upload:   upload,
-		opsCh:    make(chan Op, bufSize),
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
+		idx:             idx,
+		prefix:          prefix,
+		writerID:        writerID,
+		upload:          upload,
+		writeChainHead:  writeChainHead,
+		opsCh:           make(chan Op, bufSize),
+		stop:            make(chan struct{}),
+		done:            make(chan struct{}),
 	}
 }
 
@@ -81,9 +99,9 @@ func (w *Writer) SetOnFlush(fn func()) {
 // EnqueuePut enqueues a "put" operation for async delta persistence.
 // Non-blocking: ops are silently dropped when the channel is full (manifest
 // is a cache — B2 headers remain authoritative for any missed entry).
-func (w *Writer) EnqueuePut(bucket, objectKey string, entry *Entry) {
+func (w *Writer) EnqueuePut(bucket, objectKey string, entry *Entry, chain *ChainEntry) {
 	select {
-	case w.opsCh <- Op{Operation: "put", Key: bucket + "/" + objectKey, Entry: entry, Ts: time.Now().UTC()}:
+	case w.opsCh <- Op{Operation: "put", Key: bucket + "/" + objectKey, Entry: entry, Chain: chain, Ts: time.Now().UTC()}:
 	default:
 	}
 }
@@ -148,6 +166,8 @@ func (w *Writer) drainAndFlush() {
 // uploads the delta file directly to B2. The sequence is zero-padded to 10
 // digits so lexicographic filename sort equals numeric sort on startup.
 // Upload errors are silently tolerated — the manifest is a cache.
+// If provenance is enabled (writeChainHead is set), it also writes the
+// chain-head file with the latest chain entry from this batch.
 func (w *Writer) flush(ops []Op) {
 	if len(ops) == 0 {
 		return
@@ -165,7 +185,42 @@ func (w *Writer) flush(ops []Op) {
 		if w.onFlush != nil {
 			w.onFlush()
 		}
+		// Write chain-head for this batch if provenance is enabled
+		if w.writeChainHead != nil {
+			w.flushChainHead(ctx, ops, key)
+		}
 	}
+}
+
+// flushChainHead writes the chain-head file with the latest chain entry
+// from the batch. It finds the highest sequence number and corresponding
+// chain hash from the ops, then writes {delta_file, seq, hash}.
+func (w *Writer) flushChainHead(ctx context.Context, ops []Op, deltaKey string) {
+	var latestChain *ChainEntry
+	for i := range ops {
+		if ops[i].Chain != nil && (latestChain == nil || ops[i].Chain.Sequence > latestChain.Sequence) {
+			latestChain = ops[i].Chain
+		}
+	}
+	if latestChain == nil {
+		return
+	}
+	// ChainHead is {delta_file, seq, hash}
+	chainHead := struct {
+		DeltaFile string `json:"delta_file"`
+		Sequence  int64  `json:"sequence"`
+		ChainHash string `json:"chain_hash"`
+	}{
+		DeltaFile: deltaKey,
+		Sequence:  latestChain.Sequence,
+		ChainHash: latestChain.ChainHash,
+	}
+	data, err := json.Marshal(chainHead)
+	if err != nil {
+		return
+	}
+	chainHeadKey := ".armor/chain-head/" + w.writerID
+	_ = w.writeChainHead(ctx, chainHeadKey, data)
 }
 
 // LastFlush returns the timestamp of the most recent successful delta upload.

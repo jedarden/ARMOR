@@ -376,7 +376,8 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to generate IV: %w", err)
 	}
 
-	// Wrap DEK with MEK
+	// Wrap DEK with MEK and fingerprint
+	mekFingerprint := crypto.MEKFingerprint(m.mek)
 	wrappedDEK, err := crypto.WrapDEK(m.mek, dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap DEK: %w", err)
@@ -583,7 +584,8 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to generate IV: %w", err)
 	}
 
-	// Wrap DEK with MEK
+	// Wrap DEK with MEK and fingerprint
+	mekFingerprint := crypto.MEKFingerprint(m.mek)
 	wrappedDEK, err := crypto.WrapDEK(m.mek, dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap DEK: %w", err)
@@ -964,7 +966,8 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to generate IV: %w", err)
 	}
 
-	// Wrap DEK with MEK
+	// Wrap DEK with MEK and fingerprint
+	mekFingerprint := crypto.MEKFingerprint(m.mek)
 	wrappedDEK, err := crypto.WrapDEK(m.mek, dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap DEK: %w", err)

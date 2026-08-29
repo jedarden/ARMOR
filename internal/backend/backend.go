@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -223,6 +224,7 @@ type ARMORMetadata struct {
 	ContentType    string
 	IV             []byte
 	WrappedDEK     []byte
+	MEKFingerprint string // 16-char hex fingerprint of MEK used to wrap DEK (v2 format only)
 	PlaintextSHA   string
 	ETag           string
 	KeyID          string // Key identifier for multi-key support (empty = default)
@@ -282,10 +284,22 @@ func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
 		}
 	}
 
-	// Parse wrapped DEK (base64)
+	// Parse wrapped DEK (base64 or v2:<fp16>:<base64>)
 	if dek := meta["x-amz-meta-armor-wrapped-dek"]; dek != "" {
-		if decoded, err := base64.StdEncoding.DecodeString(dek); err == nil {
-			am.WrappedDEK = decoded
+		// Check for v2 format: v2:<fp16>:<base64>
+		if len(dek) > 4 && dek[:3] == "v2:" {
+			parts := strings.SplitN(dek, ":", 3)
+			if len(parts) == 3 && parts[0] == "v2" {
+				am.MEKFingerprint = parts[1]
+				if decoded, err := base64.StdEncoding.DecodeString(parts[2]); err == nil {
+					am.WrappedDEK = decoded
+				}
+			}
+		} else {
+			// Legacy format: plain base64
+			if decoded, err := base64.StdEncoding.DecodeString(dek); err == nil {
+				am.WrappedDEK = decoded
+			}
 		}
 	}
 
@@ -320,7 +334,13 @@ func (am *ARMORMetadata) ToMetadata() map[string]string {
 	meta["x-amz-meta-armor-plaintext-size"] = fmt.Sprintf("%d", am.PlaintextSize)
 	meta["x-amz-meta-armor-content-type"] = am.ContentType
 	meta["x-amz-meta-armor-iv"] = base64.StdEncoding.EncodeToString(am.IV)
-	meta["x-amz-meta-armor-wrapped-dek"] = base64.StdEncoding.EncodeToString(am.WrappedDEK)
+	// Emit v2 format if MEKFingerprint is set, otherwise legacy base64
+	if am.MEKFingerprint != "" {
+		base64Wrapped := base64.StdEncoding.EncodeToString(am.WrappedDEK)
+		meta["x-amz-meta-armor-wrapped-dek"] = fmt.Sprintf("v2:%s:%s", am.MEKFingerprint, base64Wrapped)
+	} else {
+		meta["x-amz-meta-armor-wrapped-dek"] = base64.StdEncoding.EncodeToString(am.WrappedDEK)
+	}
 	meta["x-amz-meta-armor-plaintext-sha256"] = am.PlaintextSHA
 	meta["x-amz-meta-armor-etag"] = am.ETag
 	// Only include key-id if set (non-default key)

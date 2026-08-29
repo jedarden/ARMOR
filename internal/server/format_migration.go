@@ -318,13 +318,13 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 		}
 	} else {
 		// Re-encrypt as single-PUT with current write format
-		ciphertext, newIV, newWrappedDEK, blockSize, err := fm.encryptAsSingle(plaintext)
+		ciphertext, newIV, newWrappedDEK, blockSize, mekFingerprint, err := fm.encryptAsSingle(plaintext)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt as single: %w", err)
 		}
 
 		// Build new metadata
-		newMeta := fm.buildNewMetadata(rawMeta, newIV, newWrappedDEK, blockSize, plaintextSize, plaintextSHA[:])
+		newMeta := fm.buildNewMetadata(rawMeta, newIV, newWrappedDEK, blockSize, plaintextSize, plaintextSHA[:], mekFingerprint)
 
 		// Put the re-encrypted object back
 		size := int64(len(ciphertext))
@@ -477,14 +477,15 @@ func (fm *FormatMigrator) loadHMCTableFromSidecar(key string) ([]byte, error) {
 }
 
 // encryptAsSingle encrypts plaintext as a single-PUT object with the current write format.
-func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wrappedDEK []byte, blockSize int, err error) {
+func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wrappedDEK []byte, blockSize int, mekFingerprint string, err error) {
 	// Generate new DEK
 	dek := make([]byte, 32) // 256-bit DEK
 	if _, err := io.ReadFull(cryptoRand.Reader, dek); err != nil {
 		return nil, nil, nil, 0, fmt.Errorf("failed to generate DEK: %w", err)
 	}
 
-	// Wrap DEK with MEK
+	// Wrap DEK with MEK and fingerprint
+	mekFingerprint := crypto.MEKFingerprint(fm.mek)
 	wrappedDEK, err = crypto.WrapDEK(fm.mek, dek)
 	if err != nil {
 		return nil, nil, nil, 0, fmt.Errorf("failed to wrap DEK: %w", err)
@@ -508,7 +509,7 @@ func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wra
 		return nil, nil, nil, 0, fmt.Errorf("failed to encrypt: %w", err)
 	}
 
-	return ciphertext, iv, wrappedDEK, blockSize, nil
+	return ciphertext, iv, wrappedDEK, blockSize, mekFingerprint, nil
 }
 
 // uploadAsMultipart uploads the plaintext as a multipart object with encryption.
@@ -520,7 +521,8 @@ func (fm *FormatMigrator) uploadAsMultipart(ctx context.Context, key string, pla
 		return fmt.Errorf("failed to generate DEK: %w", err)
 	}
 
-	// Wrap DEK with MEK
+	// Wrap DEK with MEK and fingerprint
+	mekFingerprint := crypto.MEKFingerprint(fm.mek)
 	wrappedDEK, err := crypto.WrapDEK(fm.mek, dek)
 	if err != nil {
 		return fmt.Errorf("failed to wrap DEK: %w", err)
@@ -600,7 +602,7 @@ func (fm *FormatMigrator) uploadAsMultipart(ctx context.Context, key string, pla
 	}
 
 	// Build metadata for the completed multipart upload
-	newMeta := fm.buildNewMetadata(oldMeta, iv, wrappedDEK, blockSize, totalSize, plaintextSHA)
+	newMeta := fm.buildNewMetadata(oldMeta, iv, wrappedDEK, blockSize, totalSize, plaintextSHA, mekFingerprint)
 	newMeta[armorMetaMultipart] = "true"
 	newMeta[armorMetaPartSize] = fmt.Sprintf("%d", partSize)
 
@@ -620,7 +622,7 @@ func (fm *FormatMigrator) uploadAsMultipart(ctx context.Context, key string, pla
 }
 
 // buildNewMetadata constructs new metadata for the migrated object.
-func (fm *FormatMigrator) buildNewMetadata(oldMeta map[string]string, iv, wrappedDEK []byte, blockSize, plaintextSize int, plaintextSHA []byte) map[string]string {
+func (fm *FormatMigrator) buildNewMetadata(oldMeta map[string]string, iv, wrappedDEK []byte, blockSize, plaintextSize int, plaintextSHA []byte, mekFingerprint string) map[string]string {
 	newMeta := make(map[string]string)
 
 	// Copy all non-ARMOR metadata
@@ -632,7 +634,13 @@ func (fm *FormatMigrator) buildNewMetadata(oldMeta map[string]string, iv, wrappe
 
 	// Set ARMOR metadata with new version
 	newMeta[armorMetaVersion] = fmt.Sprintf("%d", fm.currentWriteVersion)
-	newMeta[armorMetaWrappedDEK] = base64.StdEncoding.EncodeToString(wrappedDEK)
+	// Emit v2 format if MEK fingerprint is provided, otherwise legacy base64
+	if mekFingerprint != "" {
+		base64Wrapped := base64.StdEncoding.EncodeToString(wrappedDEK)
+		newMeta[armorMetaWrappedDEK] = fmt.Sprintf("v2:%s:%s", mekFingerprint, base64Wrapped)
+	} else {
+		newMeta[armorMetaWrappedDEK] = base64.StdEncoding.EncodeToString(wrappedDEK)
+	}
 	newMeta[armorMetaIV] = base64.StdEncoding.EncodeToString(iv)
 	newMeta[armorMetaBlockSize] = fmt.Sprintf("%d", blockSize)
 	newMeta[armorMetaPlaintextSize] = fmt.Sprintf("%d", plaintextSize)
