@@ -33,6 +33,7 @@ class Release:
 class Deployment:
     """ARMOR deployment information."""
     cluster: str
+    image_type: str
     image_tag: str
     filepath: str
 
@@ -41,6 +42,7 @@ class Deployment:
 class DriftReport:
     """Drift comparison report for a single deployment."""
     cluster: str
+    image_type: str
     deployed_tag: str
     latest_tag: str
     releases_behind: Optional[int]
@@ -183,6 +185,7 @@ def compare_drift(
 
         report = DriftReport(
             cluster=deployment.cluster,
+            image_type=deployment.image_type,
             deployed_tag=deployment.image_tag,
             latest_tag=latest_tag,
             releases_behind=releases_behind,
@@ -302,6 +305,7 @@ def output_json(reports: List[DriftReport], releases_threshold: int, days_thresh
     for report in reports:
         deployment_dict = {
             "cluster": report.cluster,
+            "image_type": report.image_type,
             "deployed_tag": report.deployed_tag,
             "latest_tag": report.latest_tag,
             "releases_behind": report.releases_behind,
@@ -330,7 +334,7 @@ def output_human_readable(reports: List[DriftReport], releases_threshold: int, d
     for report in reports:
         status_icon = "🔴" if report.is_correctness_drift else ("🟡" if report.is_drift else "✅")
 
-        print(f"{status_icon} {report.cluster}")
+        print(f"{status_icon} {report.cluster} ({report.image_type})")
         print(f"   Deployed: {report.deployed_tag}")
         print(f"   Latest:   {report.latest_tag}")
 

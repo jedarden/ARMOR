@@ -126,9 +126,11 @@ def get_current_version_from_repo() -> Dict:
                 except ValueError:
                     pass
 
+            # Ensure we always have a timezone-aware ISO timestamp
+            published_at = commit_date or datetime.now().astimezone().isoformat()
             return {
                 'tag': version_str,
-                'published_at': commit_date or datetime.now().isoformat(),
+                'published_at': published_at,
                 'is_correctness': False,  # Will be determined later
                 'url': ''
             }
@@ -217,7 +219,8 @@ def format_report(drift_result: Dict, config: Dict) -> str:
         else:
             icon = "✅"
 
-        lines.append(f"{icon} {deployment.get('cluster', 'unknown')}")
+        image_type = deployment.get('image_type', 'armor')
+        lines.append(f"{icon} {deployment.get('cluster', 'unknown')} ({image_type})")
         lines.append(f"   Deployed: {deployment.get('deployed_tag', 'N/A')}")
         lines.append(f"   Latest:   {deployment.get('latest_tag', 'N/A')}")
 
