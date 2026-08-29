@@ -1854,7 +1854,38 @@ func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bu
 			return
 		}
 	} else {
-		// Single-PUT object: embedded HMAC table at end of file
+		// Single-PUT object: check version for HMAC/block table format
+		// Read header to determine version
+		headerBuf := make([]byte, crypto.HeaderSize)
+		headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+			return
+		}
+		if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+			headerReader.Close()
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header bytes: %v", err), 500)
+			return
+		}
+		headerReader.Close()
+
+		header, err := crypto.DecodeHeader(headerBuf)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+			return
+		}
+
+		if header.Version == crypto.Version3 {
+			// v3: use dedicated v3 range handler
+			if armorMeta.CiphertextSize == 0 {
+				h.writeError(w, r, "InternalError", "v3 object missing ciphertext size for range request", 500)
+				return
+			}
+			h.handleV3RangeRequest(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, armorMeta.CiphertextSize, lastModified, start, end)
+			return
+		}
+
+		// v1/v2: inline HMAC table at end of file
 		// Translate range to encrypted blocks
 		translation, err := crypto.TranslateRange(start, end, plaintextSize, armorMeta.BlockSize, crypto.HeaderSize)
 		if err != nil {
