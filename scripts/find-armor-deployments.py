@@ -11,12 +11,20 @@ import sys
 from pathlib import Path
 
 
-def extract_image_tag(yaml_content: str) -> str | None:
-    """Extract image tag from a Kubernetes deployment YAML."""
-    match = re.search(r'image:\s+ronaldraygun/armor:([^\s]+)', yaml_content)
+def extract_image_info(yaml_content: str) -> tuple[str | None, str | None]:
+    """Extract image name and tag from a Kubernetes deployment YAML.
+
+    Returns:
+        tuple: (image_type, tag) where image_type is like 'armor', 'armor-restore-verifier', etc.
+               Returns (None, None) if no armor* image found.
+    """
+    # Match any ronaldraygun/armor* image (armor, armor-restore-verifier, armor-fleet, etc.)
+    match = re.search(r'image:\s+ronaldraygun/(armor[^\s:]*):([^\s]+)', yaml_content)
     if match:
-        return match.group(1)
-    return None
+        image_type = match.group(1)
+        tag = match.group(2)
+        return (image_type, tag)
+    return (None, None)
 
 
 def extract_cluster_from_path(filepath: str) -> str:
@@ -56,14 +64,15 @@ def find_armor_deployments(declarative_config_path: str) -> list[dict]:
                     content = f.read()
 
                 # Check if this is an ARMOR deployment
-                if 'kind: Deployment' not in content or 'ronaldraygun/armor:' not in content:
+                if 'ronaldraygun/armor' not in content:
                     continue
 
-                image_tag = extract_image_tag(content)
-                if image_tag:
+                image_type, image_tag = extract_image_info(content)
+                if image_type and image_tag:
                     cluster = extract_cluster_from_path(filepath)
                     deployments.append({
                         'cluster': cluster,
+                        'image_type': image_type,
                         'image_tag': image_tag,
                         'filepath': filepath
                     })
