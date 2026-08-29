@@ -1,0 +1,28 @@
+# DuckDB configuration for ARMOR
+# SQL commands for httpfs extension
+
+INSTALL httpfs;
+LOAD httpfs;
+
+# Set S3 endpoint and region
+SET s3_endpoint = 'http://localhost:9000';
+SET region = 'us-east-1';  -- Required but unused by ARMOR
+
+# Configure credentials
+# Set these to your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY
+SET s3_access_key_id = 'YOUR_ACCESS_KEY_ID';
+SET s3_secret_access_key = 'YOUR_SECRET_ACCESS_KEY';
+
+-- Enable path-style addressing (required for B2/ARMOR)
+SET s3_use_ssl = true;
+SET s3_url_style = 'path';  -- or 'virtual' for path-style
+
+-- Example: Read a Parquet file
+-- SELECT * FROM read_parquet('s3://parquet-bucket/path/to/file.parquet');
+
+-- ARMOR format version 2: Large file exports
+-- DuckDB's COPY TO exports large files as single PUTs or multipart uploads
+-- For very large files (>64 MB), DuckDB may use multipart uploads
+-- ARMOR format version 2 requires block-aligned part sizes (multiple of 64 KB)
+-- DuckDB's default part sizes may need adjustment for optimal compatibility
+-- Consider exporting smaller chunks or using format version 3 for large exports

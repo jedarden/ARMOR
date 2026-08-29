@@ -1,0 +1,20 @@
+# Rclone configuration for ARMOR
+# Add this section to ~/.config/rclone/rclone.conf
+
+[my-bucket-armor]
+type = s3
+endpoint = http://localhost:9000
+provider = Other
+s3_force_path_style = true
+region = us-east-1
+location_constraint =
+acl = private
+
+# Credentials
+# Set these to your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY values:
+access_key_id = YOUR_ACCESS_KEY_ID
+secret_access_key = YOUR_SECRET_ACCESS_KEY
+
+# Test the configuration:
+# rclone lsd my-bucket-armor:
+# rclone ls my-bucket-armor:my-bucket

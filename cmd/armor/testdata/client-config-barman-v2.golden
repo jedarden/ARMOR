@@ -1,0 +1,37 @@
+# Barman Cloud configuration for ARMOR
+# For PostgreSQL backup via barman-cloud-backup / barman-cloud-wal-archive
+
+# Environment variables for Barman Cloud
+export AWS_ENDPOINT_URL=http://localhost:9000
+export AWS_REGION=us-east-1  # Required but unused by ARMOR
+
+# Credentials
+# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY
+export AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID
+export AWS_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY
+
+# Barman cloud commands
+# barman-cloud-backup list <server> <bucket>
+# barman-cloud-backup backup <server> <bucket> <postgres_data_dir>
+# barman-cloud-wal-archive --endpoint-url $AWS_ENDPOINT_URL <bucket> <server>
+# barman-cloud-wal-restore --endpoint-url $AWS_ENDPOINT_URL <bucket> <server> <wal_file> <dest_dir>
+
+# ARMOR format version 2: Multipart upload constraints for Barman
+#
+# Barman's chunk size + 512-byte metadata pattern breaks uniform-part-size contract
+# This causes InvalidPartSize errors when backups exceed the single-part threshold
+#
+# WORKAROUND (format version 2):
+# 1. Use large chunk size to keep backups in single-part uploads:
+#    barman-cloud-backup-backup ...
+#      --endpoint-url=http://localhost:9000
+#      --chunk-size=1024  # 1024 MB (1 GB), block-aligned (1024 * 1024 * 1024 is multiple of 64 KB)
+#
+# 2. Limit backup size to stay below single-part threshold (~5 GB)
+# 3. Or upgrade to ARMOR format version 3 which supports non-uniform part sizes
+#
+# Minimum chunk size: 5 MB (S3 requirement)
+# Recommended: 1024 MB (1 GB) - block-aligned and keeps most backups in one part
+
+# For WAL archive (small files), default settings work fine:
+# barman-cloud-wal-archive ... --jobs 1  # Sequential uploads avoid part-order issues

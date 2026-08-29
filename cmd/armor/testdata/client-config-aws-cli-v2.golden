@@ -1,0 +1,29 @@
+# AWS CLI configuration for ARMOR
+# Run: aws configure --profile armor
+# Then paste the appropriate values below
+
+[profile armor]
+endpoint_url = http://localhost:9000
+s3 =
+    addressing_style = path
+
+region = us-east-1
+
+# Credentials (set these via 'aws configure set ...' or environment variables)
+# ARMOR_AUTH_ACCESS_KEY_ID
+# ARMOR_AUTH_SECRET_KEY
+
+# Test the configuration:
+# aws --profile armor s3 ls s3://my-bucket
+
+# ARMOR format version 2: multipart upload constraints
+# Minimum part size: 5 MB (S3 requirement)
+# Part size must be a multiple of ARMOR block size (64 KB)
+# Recommended configuration for multipart uploads:
+aws configure set default.s3.max_bandwidth 104857600  # 100 MB/s throttle (optional)
+aws configure set default.s3.multipart_threshold 67108864  # 64 MB (block-aligned: 64 * 1024 * 1024 bytes)
+aws configure set default.s3.multipart_chunksize 67108864  # 64 MB (block-aligned)
+
+# Or via environment variables:
+# export AWS_DEFAULT_S3_MULTIPART_THRESHOLD=67108864
+# export AWS_DEFAULT_S3_MULTIPART_CHUNKSIZE=67108864
