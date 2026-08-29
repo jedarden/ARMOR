@@ -930,6 +930,9 @@ type RedactedConfig struct {
 	SecondaryBackend     string `json:"secondary_backend"`
 	SecondaryBackendType string `json:"secondary_backend_type"`
 	SecondaryBackendPath string `json:"secondary_backend_path"`
+
+	// Format version configuration
+	FormatWriteVersion int `json:"format_write_version"`
 }
 
 // RedactedCredential represents a credential with secret key redacted.
@@ -975,6 +978,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		SecondaryBackend:            c.SecondaryBackend,
 		SecondaryBackendType:        c.SecondaryBackendType,
 		SecondaryBackendPath:        c.SecondaryBackendPath,
+		FormatWriteVersion:          c.FormatWriteVersion,
 	}
 
 	// Redact B2 secret key

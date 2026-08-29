@@ -1264,3 +1264,136 @@ func TestRedactedWithKeyRings(t *testing.T) {
 		t.Error("Ring MEKs should not appear in redacted output")
 	}
 }
+
+func TestFormatWriteVersion(t *testing.T) {
+	tests := []struct {
+		name          string
+		envValue      string
+		expectVersion int
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:          "unset defaults to 2",
+			envValue:      "",
+			expectVersion: 2,
+			expectError:   false,
+		},
+		{
+			name:          "explicit 2",
+			envValue:      "2",
+			expectVersion: 2,
+			expectError:   false,
+		},
+		{
+			name:          "explicit 3",
+			envValue:      "3",
+			expectVersion: 3,
+			expectError:   false,
+		},
+		{
+			name:          "invalid value 1",
+			envValue:      "1",
+			expectError:   true,
+			errorContains: "ARMOR_FORMAT_VERSION must be 2 or 3, got 1",
+		},
+		{
+			name:          "invalid value 4",
+			envValue:      "4",
+			expectError:   true,
+			errorContains: "ARMOR_FORMAT_VERSION must be 2 or 3, got 4",
+		},
+		{
+			name:          "invalid value 0",
+			envValue:      "0",
+			expectError:   true,
+			errorContains: "ARMOR_FORMAT_VERSION must be 2 or 3, got 0",
+		},
+		{
+			name:          "invalid non-numeric",
+			envValue:      "abc",
+			expectError:   true,
+			errorContains: "ARMOR_FORMAT_VERSION must be an integer (2 or 3), got \"abc\"",
+		},
+		{
+			name:          "invalid negative",
+			envValue:      "-1",
+			expectError:   true,
+			errorContains: "ARMOR_FORMAT_VERSION must be 2 or 3, got -1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up environment
+			env := minimalEnv()
+			if tt.envValue != "" {
+				env = append(env, "ARMOR_FORMAT_VERSION", tt.envValue)
+			}
+			setEnv(t, env...)
+
+			cfg, err := Load()
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Load() should return error for ARMOR_FORMAT_VERSION=%q", tt.envValue)
+				}
+				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
+					t.Errorf("Error should contain %q, got: %v", tt.errorContains, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Load() unexpected error: %v", err)
+				}
+				if cfg.FormatWriteVersion != tt.expectVersion {
+					t.Errorf("FormatWriteVersion = %d, want %d", cfg.FormatWriteVersion, tt.expectVersion)
+				}
+			}
+		})
+	}
+}
+
+func TestFormatWriteVersionInRedacted(t *testing.T) {
+	tests := []struct {
+		name          string
+		envValue      string
+		expectVersion int
+	}{
+		{
+			name:          "default version 2",
+			envValue:      "",
+			expectVersion: 2,
+		},
+		{
+			name:          "explicit version 2",
+			envValue:      "2",
+			expectVersion: 2,
+		},
+		{
+			name:          "explicit version 3",
+			envValue:      "3",
+			expectVersion: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up environment
+			env := minimalEnv()
+			if tt.envValue != "" {
+				env = append(env, "ARMOR_FORMAT_VERSION", tt.envValue)
+			}
+			setEnv(t, env...)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() unexpected error: %v", err)
+			}
+
+			rc := cfg.Redacted()
+			if rc.FormatWriteVersion != tt.expectVersion {
+				t.Errorf("Redacted FormatWriteVersion = %d, want %d", rc.FormatWriteVersion, tt.expectVersion)
+			}
+		})
+	}
+}
