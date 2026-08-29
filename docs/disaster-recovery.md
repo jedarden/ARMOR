@@ -560,6 +560,61 @@ Every object carries its own wrapped DEK, IV, block size, plaintext size and
 plaintext SHA-256 as S3 object metadata, plus per-block HMACs — so decryption is
 self-verifying. No external manifest is required for a single object.
 
+### V3 Format Support
+
+ARMOR v3 introduces several enhancements to the encryption format while maintaining
+backward compatibility with v1 and v2:
+
+**V3 Single-PUT Format:**
+- Block table trailer replaces inline HMAC table (per-block HMACs + ciphertext lengths)
+- Per-block compression with zstd (compression flag in block table entry)
+- Counter format: `IV[0:8] || uint16(part) || uint32(block) || uint16(aesBlock)`
+- Header byte `0x03` identifies v3 objects
+
+**V3 Multipart Format:**
+- Gzip-compressed JSON sidecar at `.armor/hmac/<sha256(key)>`
+- Per-part block tables with independent part counters (no uniform part size constraint)
+- Same per-block compression as single-PUT
+
+**Automatic format detection:**
+`armor decrypt` automatically detects v3 format from object metadata and handles:
+- Block table trailer parsing for single-PUT objects
+- Gzip-compressed sidecar loading for multipart objects  
+- Per-block decompression (transparent to the caller)
+- Part-aware counter construction (multipart only)
+
+No special flags are required — v3 decryption works the same as v1/v2:
+
+```bash
+# V3 objects decrypt identically to v1/v2
+armor decrypt -v \
+  -input  b2://<bucket>/<v3-key> \
+  -output /tmp/recovered-v3.bin
+```
+
+**Expected output for v3 objects:**
+```
+ARMOR version: 3, Block size: 65536, Plaintext size: 12225178
+V3 envelope: 187 blocks, ciphertext size 12225178, trailer 6732 bytes
+Decrypted with block table (187 blocks)
+Verified plaintext SHA-256: 5328674abb1558b8…
+```
+
+**Local file recovery with v3 sidecars:**
+For v3 multipart objects downloaded locally, use the `-sidecar` flag with the
+gzip-compressed sidecar file:
+
+```bash
+armor decrypt -v \
+  -input  /tmp/downloaded-object.bin \
+  -sidecar /tmp/object.hmac.json.gz \
+  -iv <hex-iv-from-metadata> \
+  -output /tmp/recovered.bin
+```
+
+The sidecar file is the gzip-compressed JSON stored at `.armor/hmac/<sha256(key)>`
+in B2. Download it separately and provide it to `armor decrypt`.
+
 ### Verification performed
 
 Run on a host outside the protected cluster, with the MEK read from a
