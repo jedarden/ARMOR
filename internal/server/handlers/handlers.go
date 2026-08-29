@@ -1188,48 +1188,105 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			return
 		}
 		defer dataBody.Close()
-	} else {
-		// Single-PUT object: embedded HMAC table at end of file
-		hmacTableOffset := crypto.HeaderSize + plaintextSize
-		hmacTableSize := int64(blockCount) * crypto.HMACSize
-		dataSize := plaintextSize
+		} else {
+			// Single-PUT object: dispatch on version for HMAC/block table format
+			// v1/v2: inline HMAC table at HeaderSize + plaintextSize
+			// v3: trailer block table at ciphertext_length - 36*blockCount
 
-		// 1. Prefetch HMAC table (small range read)
-		hmacBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, hmacTableOffset, hmacTableSize)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
-			return
-		}
-		hmacTable, err = io.ReadAll(hmacBody)
-		hmacBody.Close()
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
-			return
-		}
+			// Read header to determine version
+			headerBuf := make([]byte, crypto.HeaderSize)
+			headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+				return
+			}
+			if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+				headerReader.Close()
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header bytes: %v", err), 500)
+				return
+			}
+			headerReader.Close()
 
-		// 2. Start streaming data from Cloudflare (header + encrypted blocks, stop before HMAC)
-		streamSize = crypto.HeaderSize + dataSize
-		dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
-			return
-		}
-		defer dataBody.Close()
+			header, err = crypto.DecodeHeader(headerBuf)
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+				return
+			}
 
-		// 3. Read and discard the 64-byte header (single-PUT only)
-		headerBuf := make([]byte, crypto.HeaderSize)
-		if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
-			return
-		}
+			if header.Version == crypto.Version3 {
+				// v3: fetch trailer block table and use prefix sums for block offsets
+				if armorMeta.CiphertextSize == 0 {
+					h.writeError(w, r, "InternalError", "v3 object missing ciphertext size", 500)
+					return
+				}
 
-		// Parse header to get plaintext SHA for verification
-		header, err = crypto.DecodeHeader(headerBuf)
-		if err != nil {
-			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
-			return
+				blockTable, err := h.readV3BlockTable(ctx, bucket, prefixedKey, armorMeta.CiphertextSize, blockCount)
+				if err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block table: %v", err), 500)
+					return
+				}
+
+				// Stream data from the start (header + blocks)
+				streamSize = crypto.HeaderSize + blockTable.TotalCiphertextLength()
+				dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
+				if err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+					return
+				}
+				defer dataBody.Close()
+
+				// Read and discard the 64-byte header
+				discardBuf := make([]byte, crypto.HeaderSize)
+				if _, err := io.ReadFull(dataBody, discardBuf); err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to discard header: %v", err), 500)
+					return
+				}
+
+				// Encode block table for transport to decryption goroutine
+				hmacTable = encodeV3BlockTableForTransport(blockTable)
+			} else {
+				// v1/v2: inline HMAC table at end of file
+				hmacTableOffset := crypto.HeaderSize + plaintextSize
+				hmacTableSize := int64(blockCount) * crypto.HMACSize
+				dataSize := plaintextSize
+
+				// 1. Prefetch HMAC table (small range read)
+				hmacBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, hmacTableOffset, hmacTableSize)
+				if err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
+					return
+				}
+				hmacTable, err = io.ReadAll(hmacBody)
+				hmacBody.Close()
+				if err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
+					return
+				}
+
+				// 2. Start streaming data from Cloudflare (header + encrypted blocks, stop before HMAC)
+				streamSize = crypto.HeaderSize + dataSize
+				dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
+				if err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+					return
+				}
+				defer dataBody.Close()
+
+				// 3. Read and discard the 64-byte header (single-PUT only)
+				headerBuf := make([]byte, crypto.HeaderSize)
+				if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+					return
+				}
+
+				// Parse header to get plaintext SHA for verification
+				header, err = crypto.DecodeHeader(headerBuf)
+				if err != nil {
+					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+					return
+				}
+			}
 		}
-	}
 
 	// 4. Set response headers before streaming
 	// Note: Content-Length is not set for compressed objects because decompression
@@ -1278,8 +1335,88 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 				pw.CloseWithError(err)
 				return
 			}
-		} else {
-			// Uniform parts: optimized block-by-block decryption
+			// Check if this is a v3 object (block table format)
+			v3BlockTable, isV3 := decodeV3BlockTableFromTransport(hmacTable)
+
+			if isV3 {
+				// v3: read blocks by range using prefix sums from block table
+				for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
+					if blockIndex >= v3BlockTable.EntryCount() {
+						pw.CloseWithError(fmt.Errorf("block index %d out of range (v3 table has %d entries)", blockIndex, v3BlockTable.EntryCount()))
+						return
+					}
+
+					entry := v3BlockTable.Entries[blockIndex]
+					isCompressed := entry.IsCompressed()
+					ciphertextLen := entry.RawLength()
+
+					// Read encrypted block of exact size from block table
+					encryptedBuf := make([]byte, ciphertextLen)
+					n, err := io.ReadFull(dataBody, encryptedBuf)
+					if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+						pw.CloseWithError(fmt.Errorf("read error at v3 block %d: %w", blockIndex, err))
+						return
+					}
+					if n == 0 {
+						break
+					}
+					encryptedBuf = encryptedBuf[:n]
+
+					// Verify HMAC using v3 format: HMAC-SHA256(hmacKey, uint16(0) || uint32(block) || ciphertext)
+					// For single-PUT, part number is 0
+					hmacKey := decryptor.HMACKey()
+					expectedHMAC := entry.HMAC[:]
+
+					// Compute v3 HMAC
+					mac := hmac.New(sha256.New, hmacKey)
+					partBytes := make([]byte, 2)
+					binary.BigEndian.PutUint16(partBytes, 0) // part=0 for single-PUT
+					mac.Write(partBytes)
+					blockBytes := make([]byte, 4)
+					binary.BigEndian.PutUint32(blockBytes, uint32(blockIndex))
+					mac.Write(blockBytes)
+					mac.Write(encryptedBuf)
+					computed := mac.Sum(nil)
+
+					if !hmac.Equal(computed, expectedHMAC) {
+						pw.CloseWithError(fmt.Errorf("v3 block %d: HMAC verification failed", blockIndex))
+						return
+					}
+
+					// Decrypt block using v3 counter construction
+					decrypted, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, 0, uint32(blockIndex), encryptedBuf, expectedHMAC, blockSize)
+					if err != nil {
+						pw.CloseWithError(fmt.Errorf("v3 block %d decryption failed: %w", blockIndex, err))
+						return
+					}
+
+					// Decompress if flagged
+					if isCompressed {
+						decrypted, err = crypto.DecompressBlock(decrypted, true)
+						if err != nil {
+							pw.CloseWithError(fmt.Errorf("v3 block %d decompression failed: %w", blockIndex, err))
+							return
+						}
+					}
+
+					// Update plaintext digest
+					isLastBlock := blockIndex == blockCount-1
+					if accumulator != nil {
+						accumulator.WriteBlock(decrypted, isLastBlock)
+					} else {
+						wholeHash.Write(decrypted)
+					}
+				}
+
+			}
+					// Write plaintext to pipe
+					if _, err := pw.Write(decrypted); err != nil {
+						pw.CloseWithError(fmt.Errorf("write error at v3 block %d: %w", blockIndex, err))
+						return
+					}
+				}
+			} else {
+				// v1/v2: optimized block-by-block decryption with inline HMAC table
 			encryptedBuf := make([]byte, blockSize)
 			for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
 				// Calculate actual block size (last block may be smaller)
@@ -1623,37 +1760,6 @@ func (z *zstdReadCloser) Close() error {
 	return nil
 }
 
-// readV3BlockTable fetches and parses the v3 trailer block table.
-// For v3 single-PUT objects, the block table is at the end:
-// tableOffset = ciphertext_length - 36 * blockCount
-func (h *Handlers) readV3BlockTable(ctx context.Context, bucket, prefixedKey string, ciphertextSize int64, blockCount int) (*crypto.BlockTable, error) {
-	tableSize := int64(blockCount) * crypto.BlockTableEntrySize
-	if tableSize <= 0 || ciphertextSize < tableSize {
-		return nil, fmt.Errorf("invalid v3 block table parameters: ciphertextSize=%d, blockCount=%d", ciphertextSize, blockCount)
-	}
-
-	tableOffset := ciphertextSize - tableSize
-
-	// Fetch the trailer block table
-	tableReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, tableOffset, tableSize)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch v3 block table at offset %d: %w", tableOffset, err)
-	}
-	defer tableReader.Close()
-
-	tableData, err := io.ReadAll(tableReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read v3 block table: %w", err)
-	}
-
-	// Parse the block table
-	blockTable, err := crypto.DecodeBlockTable(tableData, 65536, uint32(blockCount))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode v3 block table: %w", err)
-	}
-
-	return blockTable, nil
-}
 
 // handleRangeRequest handles range read requests.
 func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool) {
@@ -3374,8 +3480,9 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		}
 
 		// For v3, update metadata when part size is pinned (part 1 arrives)
+			// Use pinningP (set before P was modified) to detect when part 1 just pinned P
 		// This needs to happen atomically with the part save for consistency
-		if P == 0 && partNumber == 1 {
+		if pinningP && partNumber == 1 {
 			// Part 1 pins the uniform part size P
 			if err := h.updateMetadataPartSize(ctx, manager, uploadID, plaintextSize, partNumber, state.NonUniformParts); err != nil {
 				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to update metadata: %v", err), 500)
@@ -4632,4 +4739,74 @@ func isPlaceholderHMAC(hmac []byte) bool {
 		}
 	}
 	return true
+}
+
+// readV3BlockTable fetches the trailer block table for a v3 object.
+// The trailer block table is located at ciphertext_length - 36*blockCount.
+// Returns a decoded BlockTable.
+func (h *Handlers) readV3BlockTable(ctx context.Context, bucket, key string, ciphertextSize int64, blockCount int) (*crypto.BlockTable, error) {
+	// Calculate trailer offset and size
+	// Trailer is at the end: [header][blocks][trailer table]
+	// Trailer size = blockCount * BlockTableEntrySize (36 bytes per entry)
+	trailerSize := int64(blockCount) * crypto.BlockTableEntrySize
+	trailerOffset := ciphertextSize - trailerSize
+
+	if trailerOffset < 0 {
+		return nil, fmt.Errorf("invalid v3 trailer offset: ciphertextSize %d, trailerSize %d", ciphertextSize, trailerSize)
+	}
+
+	// Fetch the trailer block table
+	trailerBody, err := h.backend.GetRange(ctx, bucket, key, trailerOffset, trailerSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch v3 trailer block table: %w", err)
+	}
+	defer trailerBody.Close()
+
+	trailerData, err := io.ReadAll(trailerBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read v3 trailer block table: %w", err)
+	}
+
+	// Decode the block table
+	// We need the block size for validation - use default for now (will be validated against entry data)
+	blockSize := 65536 // Default block size, validated per-entry
+	table, err := crypto.DecodeBlockTable(trailerData, blockSize, uint32(blockCount))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode v3 block table: %w", err)
+	}
+
+	return table, nil
+}
+
+// encodeV3BlockTableForTransport encodes a BlockTable for transport to the decryption goroutine.
+// The transport format is the serialized block table bytes.
+func encodeV3BlockTableForTransport(table *crypto.BlockTable) []byte {
+	encoded, err := table.Encode()
+	if err != nil {
+		// This should never fail if the table was successfully decoded
+		panic(fmt.Sprintf("failed to encode v3 block table for transport: %v", err))
+	}
+	return encoded
+}
+
+// decodeV3BlockTableFromTransport decodes a BlockTable from the transport format.
+// Returns (table, true) if the data is a v3 block table, (nil, false) otherwise.
+func decodeV3BlockTableFromTransport(data []byte) (*crypto.BlockTable, bool) {
+	// Try to decode as a v3 block table
+	// We need to determine block count from the data length
+	entryCount := len(data) / crypto.BlockTableEntrySize
+	if entryCount == 0 || len(data)%crypto.BlockTableEntrySize != 0 {
+		// Not a valid block table format
+		return nil, false
+	}
+
+	// Try to decode - use default block size for validation (will be checked per-entry)
+	blockSize := 65536
+	table, err := crypto.DecodeBlockTable(data, blockSize, uint32(entryCount))
+	if err != nil {
+		// Not a valid block table
+		return nil, false
+	}
+
+	return table, true
 }
