@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,13 +37,15 @@ func IsPlaceholderPlaintextSHA(s string) bool {
 }
 
 // MultipartState represents the state of an in-progress multipart upload.
-// This is stored in B2 at .armor/multipart/<upload-id>.state
+// This is stored in B2 at .armor/multipart/<upload-id>.state for format version 2,
+// or at .armor/multipart/<upload-id>/meta.json for format version 3.
 type MultipartState struct {
 	UploadID    string    `json:"upload_id"`
 	Bucket      string    `json:"bucket"`
 	Key         string    `json:"key"`
 	IV          []byte    `json:"iv"`
 	WrappedDEK  []byte    `json:"wrapped_dek"`
+	MEKFingerprint string `json:"mek_fingerprint,omitempty"` // 16-char hex fingerprint of MEK used (v2 format)
 	BlockSize   int       `json:"block_size"`
 	Created     time.Time `json:"created"`
 	ContentType string    `json:"content_type"`
@@ -95,6 +99,56 @@ type MultipartState struct {
 	// never storing a violating object.
 	Poisoned     bool   `json:"poisoned"`
 	PoisonReason string `json:"poison_reason"`
+
+	// FormatVersion is the ARMOR manifest format version (2 or 3). This determines
+	// how the state is persisted: v2 uses a single .state file, v3 uses per-part
+	// objects under a directory. The format version is fixed at CreateMultipartUpload
+	// time based on the server's ARMOR_FORMAT_VERSION configuration and does not
+	// change during the upload's lifetime.
+	FormatVersion int `json:"format_version,omitempty"`
+}
+
+// MultipartMetadataV3 represents the metadata stored in .armor/multipart/<id>/meta.json
+// for format version 3. This contains only the upload-level cryptographic material and
+// configuration, not per-part data (which lives in part-<n>.json files).
+type MultipartMetadataV3 struct {
+	UploadID       string    `json:"upload_id"`
+	Bucket         string    `json:"bucket"`
+	Key            string    `json:"key"`
+	IV             []byte    `json:"iv"`
+	WrappedDEK     []byte    `json:"wrapped_dek"`
+	MEKFingerprint string    `json:"mek_fingerprint,omitempty"` // 16-char hex fingerprint of MEK used (v2 format)
+	BlockSize      int       `json:"block_size"`
+	Created        time.Time `json:"created"`
+	ContentType    string    `json:"content_type"`
+	KeyID          string    `json:"key_id"` // Key identifier for multi-key support
+	FormatVersion  int       `json:"format_version"` // Always 3 for this structure
+
+	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-005).
+	// This field is set when part 1 arrives and is used to validate subsequent
+	// parts. For v3, this is stored in meta.json so it's available without
+	// reading any part files.
+	PartSize int64 `json:"part_size,omitempty"`
+
+	// NonUniformParts indicates whether this upload uses non-uniform part sizes.
+	// When true, parts may vary in size and offsets are calculated from
+	// cumulative part sizes instead of (N-1)*PartSize.
+	NonUniformParts bool `json:"non_uniform_parts,omitempty"`
+
+	// Poisoned marks an upload id as permanently failed (ADR-005 rule 4).
+	Poisoned     bool   `json:"poisoned"`
+	PoisonReason string `json:"poison_reason,omitempty"`
+}
+
+// PartDataV3 represents the data stored in .armor/multipart/<id>/part-<n>.json
+// for format version 3. Each part is stored as a separate object, allowing
+// concurrent UploadPart operations to proceed without touching the same file.
+type PartDataV3 struct {
+	PartNumber       int    `json:"part_number"`       // Part number (1-based)
+	PlaintextLen     int64  `json:"plaintext_len"`     // Length of plaintext part
+	CiphertextLen    int64  `json:"ciphertext_len"`    // Length of encrypted part
+	BlockHMACsBase64 string `json:"block_hmacs_b64"`   // Base64-encoded concatenated HMACs for each block
+	PlaintextSHAHex  string `json:"plaintext_sha_hex"` // SHA-256 of plaintext part (hex)
 }
 
 // MultipartStateManager manages multipart upload state persistence.
@@ -150,12 +204,182 @@ func (m *MultipartStateManager) LoadState(ctx context.Context, uploadID string) 
 }
 
 // DeleteState deletes the multipart upload state from B2.
+// For v2 uploads, deletes .armor/multipart/<id>.state
+// For v3 uploads, deletes the entire .armor/multipart/<id>/ directory
 func (m *MultipartStateManager) DeleteState(ctx context.Context, uploadID string) error {
+	// Try v3 format first (directory)
+	prefix := fmt.Sprintf(".armor/multipart/%s/", uploadID)
+	listResult, err := m.backend.List(ctx, m.bucket, prefix, "", "", 1000)
+	if err == nil && len(listResult.Objects) > 0 {
+		// V3 format: delete all objects in the directory
+		var keys []string
+		for _, obj := range listResult.Objects {
+			keys = append(keys, obj.Key)
+		}
+		// Also check if there are more objects
+		for listResult.IsTruncated {
+			listResult, err = m.backend.List(ctx, m.bucket, prefix, "", listResult.NextToken, 1000)
+			if err != nil {
+				break
+			}
+			for _, obj := range listResult.Objects {
+				keys = append(keys, obj.Key)
+			}
+		}
+		if len(keys) > 0 {
+			if err := m.backend.DeleteObjects(ctx, m.bucket, keys); err != nil {
+				return fmt.Errorf("failed to delete multipart v3 state directory: %w", err)
+			}
+		}
+		return nil
+	}
+
+	// Fall back to v2 format (single .state file)
 	key := fmt.Sprintf(".armor/multipart/%s.state", uploadID)
 	if err := m.backend.Delete(ctx, m.bucket, key); err != nil {
 		return fmt.Errorf("failed to delete multipart state: %w", err)
 	}
 	return nil
+}
+
+// SaveMetadataV3 saves the multipart upload metadata to .armor/multipart/<id>/meta.json
+// for format version 3.
+func (m *MultipartStateManager) SaveMetadataV3(ctx context.Context, metadata *MultipartMetadataV3) error {
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal multipart metadata: %w", err)
+	}
+
+	key := fmt.Sprintf(".armor/multipart/%s/meta.json", metadata.UploadID)
+	if err := m.backend.Put(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), nil); err != nil {
+		return fmt.Errorf("failed to save multipart metadata: %w", err)
+	}
+
+	return nil
+}
+
+// LoadMetadataV3 loads the multipart upload metadata from .armor/multipart/<id>/meta.json
+// for format version 3.
+func (m *MultipartStateManager) LoadMetadataV3(ctx context.Context, uploadID string) (*MultipartMetadataV3, error) {
+	key := fmt.Sprintf(".armor/multipart/%s/meta.json", uploadID)
+
+	body, _, err := m.backend.GetDirect(ctx, m.bucket, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load multipart metadata: %w", err)
+	}
+	defer body.Close()
+
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read multipart metadata: %w", err)
+	}
+
+	var metadata MultipartMetadataV3
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal multipart metadata: %w", err)
+	}
+
+	return &metadata, nil
+}
+
+// SavePartV3 saves a single part's data to .armor/multipart/<id>/part-<n>.json
+// for format version 3.
+func (m *MultipartStateManager) SavePartV3(ctx context.Context, uploadID string, partData *PartDataV3) error {
+	data, err := json.Marshal(partData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal part data: %w", err)
+	}
+
+	key := fmt.Sprintf(".armor/multipart/%s/part-%d.json", uploadID, partData.PartNumber)
+	if err := m.backend.Put(ctx, m.bucket, key, bytes.NewReader(data), int64(len(data)), nil); err != nil {
+		return fmt.Errorf("failed to save part data: %w", err)
+	}
+
+	return nil
+}
+
+// LoadPartV3 loads a single part's data from .armor/multipart/<id>/part-<n>.json
+// for format version 3.
+func (m *MultipartStateManager) LoadPartV3(ctx context.Context, uploadID string, partNumber int) (*PartDataV3, error) {
+	key := fmt.Sprintf(".armor/multipart/%s/part-%d.json", uploadID, partNumber)
+
+	body, _, err := m.backend.GetDirect(ctx, m.bucket, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load part data: %w", err)
+	}
+	defer body.Close()
+
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read part data: %w", err)
+	}
+
+	var partData PartDataV3
+	if err := json.Unmarshal(data, &partData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal part data: %w", err)
+	}
+
+	return &partData, nil
+}
+
+// ListPartsV3 lists all parts for a v3 multipart upload by reading the part-<n>.json files.
+func (m *MultipartStateManager) ListPartsV3(ctx context.Context, uploadID string) (map[int]*PartDataV3, error) {
+	prefix := fmt.Sprintf(".armor/multipart/%s/part-", uploadID)
+
+	listResult, err := m.backend.List(ctx, m.bucket, prefix, "", "", 1000)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list parts: %w", err)
+	}
+
+	parts := make(map[int]*PartDataV3)
+
+	// Load each part file
+	for _, obj := range listResult.Objects {
+		// Extract part number from key: .armor/multipart/<id>/part-<n>.json
+		// Key format: .armor/multipart/{uploadID}/part-{partNumber}.json
+		partStr := obj.Key[len(prefix):]
+		if idx := strings.LastIndex(partStr, ".json"); idx != -1 {
+			partStr = partStr[:idx]
+		}
+		partNumber, err := strconv.Atoi(partStr)
+		if err != nil {
+			continue // Skip malformed keys
+		}
+
+		partData, err := m.LoadPartV3(ctx, uploadID, partNumber)
+		if err != nil {
+			continue // Skip parts that fail to load
+		}
+
+		parts[partNumber] = partData
+	}
+
+	// Also check if there are more objects
+	for listResult.IsTruncated {
+		listResult, err = m.backend.List(ctx, m.bucket, prefix, "", listResult.NextToken, 1000)
+		if err != nil {
+			break
+		}
+		for _, obj := range listResult.Objects {
+			partStr := obj.Key[len(prefix):]
+			if idx := strings.LastIndex(partStr, ".json"); idx != -1 {
+				partStr = partStr[:idx]
+			}
+			partNumber, err := strconv.Atoi(partStr)
+			if err != nil {
+				continue
+			}
+
+			partData, err := m.LoadPartV3(ctx, uploadID, partNumber)
+			if err != nil {
+				continue
+			}
+
+			parts[partNumber] = partData
+		}
+	}
+
+	return parts, nil
 }
 
 // HMACTableSidecar represents the HMAC table stored as a sidecar object.
