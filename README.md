@@ -492,16 +492,10 @@ ARMOR/
 
 ## Disaster Recovery / Offline Decryption
 
-ARMOR includes a standalone CLI tool `armor-decrypt` for recovering encrypted objects without a running ARMOR server. This enables disaster recovery scenarios where you have:
+ARMOR includes a `decrypt` subcommand for recovering encrypted objects without a running ARMOR server. This enables disaster recovery scenarios where you have:
 
 - The Master Encryption Key (MEK)
 - Access to B2 (or a local copy of an encrypted object)
-
-### Building the Decrypt Tool
-
-```bash
-go build -o armor-decrypt ./cmd/armor-decrypt
-```
 
 ### Usage
 
@@ -509,17 +503,17 @@ go build -o armor-decrypt ./cmd/armor-decrypt
 
 ```bash
 # Decrypt directly from B2 (requires B2 credentials)
-armor-decrypt \
+armor decrypt \
   -mek 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   -input b2://my-bucket/path/to/file.encrypted \
   -output recovered-file.txt
 
 # Using MEK from environment
 export ARMOR_MEK=0123456789abcdef...
-armor-decrypt -input b2://my-bucket/file -output recovered.txt
+armor decrypt -input b2://my-bucket/file -output recovered.txt
 
 # With verbose output
-armor-decrypt -mek HEX -input b2://bucket/file -v -output recovered.txt
+armor decrypt -mek HEX -input b2://bucket/file -v -output recovered.txt
 ```
 
 Multipart objects (the usual shape for large backups) need no special flags
@@ -531,7 +525,7 @@ metadata and switches to the headerless layout automatically.
 For local files, you need the wrapped DEK (from `x-amz-meta-armor-wrapped-dek` metadata):
 
 ```bash
-armor-decrypt \
+armor decrypt \
   -mek 0123456789abcdef... \
   -input /path/to/encrypted.bin \
   -wrapped-dek WWF...base64... \
@@ -543,7 +537,7 @@ header), two extra inputs are required, since the multipart layout has no
 header to read them from:
 
 ```bash
-armor-decrypt \
+armor decrypt \
   -mek 0123456789abcdef... \
   -input /path/to/multipart-object.bin \
   -wrapped-dek WWF...base64... \
@@ -568,7 +562,7 @@ armor-decrypt \
 If your ARMOR deployment uses named keys (via `ARMOR_KEY_ROUTES`), specify the key ID:
 
 ```bash
-armor-decrypt \
+armor decrypt \
   -mek <hex-for-specific-key> \
   -input b2://bucket/file \
   -key-id sensitive \
@@ -606,7 +600,7 @@ aws s3api head-object --endpoint-url http://localhost:9000 \
   --bucket bucket --key file
 
 # 3. Decrypt with the correct MEK
-armor-decrypt -mek $ARMOR_MEK -input b2://bucket/file -output recovered
+armor decrypt -mek $ARMOR_MEK -input b2://bucket/file -output recovered
 
 # 4. Verify the recovered file
 #    Single-PUT objects only: should match x-amz-meta-armor-plaintext-sha256.
@@ -614,6 +608,10 @@ armor-decrypt -mek $ARMOR_MEK -input b2://bucket/file -output recovered
 #    per-block HMAC verification (a non-zero exit on failure) is the check.
 sha256sum recovered
 ```
+
+### Backward Compatibility
+
+For backward compatibility during the transition period, the standalone `armor-decrypt` binary remains available. It delegates to `armor decrypt` internally and can be used interchangeably. New deployments should prefer `armor decrypt` directly.
 
 ## License
 
