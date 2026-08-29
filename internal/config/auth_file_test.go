@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jedarden/armor/internal/acl"
 )
 
 // TestLoadAuthFile_Unset tests that LoadAuthFile returns nil when ARMOR_AUTH_FILE is unset.

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jedarden/armor/internal/acl"
 )
@@ -19,11 +20,23 @@ type KeyRoute struct {
 	KeyName string
 }
 
+// CredentialSource represents where a credential was loaded from.
+type CredentialSource string
+
+const (
+	// CredentialSourceEnv indicates the credential was loaded from environment variables.
+	CredentialSourceEnv CredentialSource = "env"
+	// CredentialSourceFile indicates the credential was loaded from ARMOR_AUTH_FILE.
+	CredentialSourceFile CredentialSource = "file"
+)
+
 // Credential represents an ARMOR client credential with optional ACLs.
 type Credential struct {
 	AccessKey string
 	SecretKey string
 	ACLs      []acl.ACLEntry // Empty means full access to configured bucket
+	Source    CredentialSource
+	LoadedAt  time.Time // When the credential was loaded
 }
 
 // GetACLs returns the ACLs for this credential, implementing the interface
@@ -137,6 +150,12 @@ type Config struct {
 	SecondaryBackend     string // Backend identifier (e.g., "filesystem", "s3", "wasabi")
 	SecondaryBackendType string // Type: "filesystem" (future: "s3", "wasabi")
 	SecondaryBackendPath string // Path for filesystem backend (required when Type=filesystem)
+
+	// AllowNoCredentials disables the credential requirement check.
+	// When true, the server starts without client credentials.
+	// This is an escape hatch for the demo subcommand only.
+	// Production deployments should always configure credentials.
+	AllowNoCredentials bool
 }
 
 // Load reads configuration from environment variables.
@@ -243,11 +262,14 @@ func Load() (*Config, error) {
 	}
 
 	// Initialize credentials map with default credential
+	now := time.Now()
 	cfg.Credentials = make(map[string]*Credential)
 	cfg.Credentials[cfg.AuthAccessKey] = &Credential{
 		AccessKey: cfg.AuthAccessKey,
 		SecretKey: cfg.AuthSecretKey,
 		ACLs:      nil, // nil means full access to configured bucket
+		Source:    CredentialSourceEnv,
+		LoadedAt:  now,
 	}
 
 	// Load additional named credentials (ARMOR_AUTH_<NAME>_ACCESS_KEY, _SECRET_KEY, _ACL)
@@ -527,6 +549,7 @@ func loadNamedCredentials(cfg *Config) error {
 	}
 
 	var errs []error
+	now := time.Now()
 
 	// Load each credential
 	for name := range credNames {
@@ -548,6 +571,8 @@ func loadNamedCredentials(cfg *Config) error {
 		cred := &Credential{
 			AccessKey: accessKey,
 			SecretKey: secretKey,
+			Source:    CredentialSourceEnv,
+			LoadedAt:  now,
 		}
 
 		// Parse ACL if provided

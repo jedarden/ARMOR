@@ -55,15 +55,8 @@ func serve() {
 	logger := logging.New("armor")
 	logging.SetDefault(logger)
 
-	// Log startup info
-	logger.WithFields(map[string]interface{}{
-		"listen":       cfg.Listen,
-		"admin_listen": cfg.AdminListen,
-		"bucket":       cfg.Bucket,
-		"cf_domain":    cfg.CFDomain,
-		"block_size":   cfg.BlockSize,
-		"writer_id":    cfg.WriterID,
-	}).Info("ARMOR starting")
+	// Log startup info with full redacted configuration
+	logger.WithField("config", cfg.Redacted()).Info("ARMOR starting")
 
 	// Create server
 	srv, err := server.New(cfg)

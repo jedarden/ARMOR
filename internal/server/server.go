@@ -551,6 +551,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/key/rotate", s.rotateKey)
 	mux.HandleFunc("/admin/key/export", s.exportKey)
 	mux.HandleFunc("/admin/format/migrate", s.migrateFormat)      // POST=start migration, GET=progress
+	mux.HandleFunc("/admin/creds", s.handleListCreds)              // GET=list credentials
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
 	mux.HandleFunc("/admin/presign", s.handlePresign)
@@ -944,6 +945,37 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(escrowPackage)
+}
+
+// handleListCreds returns a list of all configured credentials with their
+// names, ACLs, sources (env|file), and loaded timestamps. Never returns
+// secret_key values; access_key IDs are returned as identifiers.
+func (s *Server) handleListCreds(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	type CredInfo struct {
+		Name     string              `json:"name"`
+		ACLs     []acl.ACLEntry      `json:"acls"`
+		Source   string              `json:"source"`
+		LoadedAt time.Time           `json:"loaded_at"`
+	}
+
+	creds := make([]CredInfo, 0, len(s.config.Credentials))
+	for _, cred := range s.config.Credentials {
+		creds = append(creds, CredInfo{
+			Name:     cred.AccessKey,
+			ACLs:     cred.ACLs,
+			Source:   string(cred.Source),
+			LoadedAt: cred.LoadedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(creds)
 }
 
 // canaryHandler returns the canary status.
