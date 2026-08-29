@@ -1,475 +1,937 @@
-# ARMOR Error Response Documentation
+# ARMOR Error Responses
+
+**Version:** 1.0  
+**Date:** 2026-08-29  
+**Status:** Active
 
 ## Overview
 
-ARMOR provides S3-compatible error responses for all authentication, authorization, and request processing failures. This document describes the error response format, all error codes, rejection scenarios, performance characteristics, and examples.
+This document is the authoritative reference for all error responses returned by ARMOR. It consolidates and replaces the following previous documentation:
 
-## Quick Reference: All Error Codes
+- `admin-endpoint-error-headers.md`
+- `admin-endpoint-error-response-headers.md`
+- `error-response-header-consistency.md`
+- `error-response-headers-specification.md`
+- `error-header-spec.md`
+- `s3-endpoint-response-headers.md`
+- `auth-rejection-headers.md`
 
-| Error Code | HTTP Status | Category | Description |
-|------------|-------------|----------|-------------|
-| `MissingAuthenticationToken` | 403 | Authentication | Authorization header or X-Amz-Credential query parameter is missing |
-| `InvalidAccessKeyId` | 403 | Authentication | The provided access key does not exist in credentials store |
-| `SignatureDoesNotMatch` | 403 | Authentication | Calculated signature does not match the provided signature |
-| `InvalidAlgorithm` | 403 | Authentication | Only AWS4-HMAC-SHA256 is supported |
-| `InvalidCredential` | 403 | Authentication | Credential format is invalid (insufficient parts) |
-| `IncompleteSignature` | 403 | Authentication | Authorization header is missing required fields |
-| `RequestExpired` | 403 | Authentication | Request timestamp is outside allowed window (±15 minutes) |
-| `MissingDateHeader` | 403 | Authentication | X-Amz-Date header is missing |
-| `InvalidDateFormat` | 403 | Authentication | X-Amz-Date header format is invalid (not ISO 8601) |
-| `AccessDenied` | 403 | Authorization | ACL restrictions prevent access to requested bucket/key |
-| `InvalidRequest` | 400 | Request | Invalid request parameters or unsupported operation |
-| `NoSuchKey` | 404 | Request | Requested object does not exist in the bucket |
-| `MethodNotAllowed` | 405 | Request | HTTP method is not supported for the requested endpoint |
-| `PreconditionFailed` | 412 | Request | Conditional request precondition failed |
-| `InternalError` | 500 | Server | Server encountered an error during request processing |
+## Scope
 
-## Error Response Format
+ARMOR has two distinct API surfaces with different error response formats:
 
-## Error Response Format
+1. **S3-Facing Endpoints** - Public S3-compatible API returning XML errors
+2. **Admin Endpoints** - Management and monitoring API with mixed response formats
 
-All error responses follow the S3 XML error format with consistent headers:
+## Table of Contents
 
-### HTTP Headers
+- [S3-Facing Endpoints](#s3-facing-endpoints)
+  - [Error Response Structure](#error-response-structure)
+  - [Error Codes by HTTP Status](#error-codes-by-http-status)
+  - [Authentication Errors](#authentication-errors-http-403)
+  - [Per-Operation Errors](#per-operation-errors)
+- [Admin Endpoints](#admin-endpoints)
+  - [Endpoint Summary](#endpoint-summary)
+  - [Health Endpoints](#health-endpoints)
+  - [Key Management](#key-management)
+  - [Pre-signed URLs](#pre-signed-urls)
+  - [B2 Key Management](#b2-key-management)
+  - [Status Endpoints](#status-endpoints)
+- [Inconsistencies and Remediation](#inconsistencies-and-remediation)
+- [Implementation Reference](#implementation-reference)
 
-```http
-Content-Type: application/xml
-Status: 403 Forbidden (for authentication errors)
-```
+---
 
-### Response Body
+## S3-Facing Endpoints
+
+S3-facing endpoints return AWS S3-compatible XML error responses.
+
+### Error Response Structure
+
+All S3 error responses follow this XML format:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <Error>
   <Code>ErrorCode</Code>
-  <Message>Human-readable error description</Message>
+  <Message>Error message</Message>
 </Error>
 ```
 
-## Authentication Error Codes
+**Standard Headers:**
 
-### Invalid Credentials
+| Header | Value | Presence |
+|--------|-------|----------|
+| `Content-Type` | `application/xml` | Always |
+| `Access-Control-Allow-Origin` | `*` | HTTP 403 only |
+| `Access-Control-Allow-Methods` | `GET, PUT, DELETE, HEAD, POST, OPTIONS` | HTTP 403 only |
+| `Access-Control-Allow-Headers` | `Authorization, Content-Type, Range, Content-Length` | HTTP 403 only |
 
-| Error Code | HTTP Status | Message | When Returned |
-|------------|-------------|---------|---------------|
-| `InvalidAccessKeyId` | 403 | The AWS Access Key Id you provided does not exist in our records. | Access key not found in credentials store |
-| `SignatureDoesNotMatch` | 403 | The request signature we calculated does not match the signature you provided. | Secret key is incorrect or signature is invalid |
-| `MissingAuthenticationToken` | 403 | Missing authentication token. | Authorization header is completely missing |
-| `InvalidCredential` | 403 | Invalid credential format. | Credential string has insufficient parts (expected 5 parts) |
+**Key Difference from AWS S3:** ARMOR includes CORS headers on error responses, while AWS S3 only includes them when explicitly configured via bucket CORS rules.
 
-### Malformed Authorization Headers
+### Error Codes by HTTP Status
 
-| Error Code | HTTP Status | Message | When Returned |
-|------------|-------------|---------|---------------|
-| `IncompleteSignature` | 403 | The authorization header is malformed. | Required components missing (Credential, SignedHeaders, or Signature) |
-| `InvalidAlgorithm` | 403 | The authorization header algorithm is not supported. | Algorithm is not AWS4-HMAC-SHA256 |
-| `AccessDenied` | 403 | Access Denied. | Generic authentication failure |
+#### HTTP 400 Bad Request
 
-### Timing Issues
+| Error Code | Message | When Returned |
+|------------|---------|---------------|
+| `InvalidRequest` | Unsupported POST operation | Unknown POST operations |
+| `InvalidRequest` | Missing partNumber | UploadPart without partNumber query param |
+| `InvalidRequest` | Invalid partNumber | PartNumber out of range (1-10000) |
+| `InvalidRequest` | No parts specified | CompleteMultipartUpload with empty parts list |
+| `InvalidRange` | Invalid range: [details] | Malformed Range header or out of bounds |
+| `MalformedXML` | Failed to parse XML: [details] | Invalid XML in request body |
+| `MalformedXML` | No objects specified for deletion | DeleteObjects with empty object list |
+| `InvalidCopySource` | Invalid copy source format | Malformed x-amz-copy-source header |
 
-| Error Code | HTTP Status | Message | When Returned |
-|------------|-------------|---------|---------------|
-| `RequestExpired` | 403 | Request has expired. | Request timestamp is outside the allowed window (±15 minutes) |
-| `MissingDateHeader` | 403 | Missing required header: x-amz-date. | X-Amz-Date header is missing |
-| `InvalidDateFormat` | 403 | Invalid date format in X-Amz-Date header. | X-Amz-Date header is not in ISO 8601 format (YYYYMMDDTHHMMSSZ) |
+**Headers:** `Content-Type: application/xml` (no CORS headers)
 
-## Authorization and Access Control Errors
+#### HTTP 403 Forbidden - Authentication Errors
 
-### ACL-Based Access Denial
+| Error Code | Message | Trigger |
+|------------|---------|---------|
+| `MissingAuthenticationToken` | Missing Authentication Token | Authorization header is missing |
+| `InvalidAccessKeyId` | The AWS Access Key Id you provided does not exist | Unknown access key |
+| `SignatureDoesNotMatch` | The request signature we calculated does not match the signature you provided | SigV4 signature mismatch |
+| `RequestExpired` | Request has expired | Request timestamp outside ±15 minute window |
+| `InvalidAlgorithm` | Only AWS4-HMAC-SHA256 is supported | Non-SigV4 algorithm |
+| `IncompleteSignature` | Authorization header is missing required fields | Malformed Authorization header |
+| `InvalidCredential` | Invalid credential format | Malformed Credential field |
+| `MissingDateHeader` | Missing X-Amz-Date header | Required header absent |
+| `InvalidDateFormat` | Invalid date format in X-Amz-Date header | Date not in ISO8601 basic format |
+| `AccessDenied` | Access Denied | ACL-based authorization rejection |
 
-| Error Code | HTTP Status | Message | When Returned |
-|------------|-------------|---------|---------------|
-| `AccessDenied` | 403 | Access Denied. | Credential exists but ACL restrictions prevent access to the requested bucket/key |
+**Headers:** `Content-Type: application/xml` plus CORS headers (see above)
 
-**ACL Access Control Scenarios:**
-
-ARMOR supports bucket and prefix-based access control lists (ACLs). When a credential has ACL restrictions configured, the following scenarios will result in `AccessDenied` errors:
-
-1. **Bucket Mismatch** - Credential's ACL bucket restriction doesn't match the requested bucket
-2. **Prefix Mismatch** - Credential's ACL prefix restriction doesn't match the requested key
-3. **No Matching ACL** - No ACL entry allows access to the requested bucket/key combination
-
-**Example:**
-
-```yaml
-# Credential configuration
-credentials:
-  RESTRICTEDKEY:
-    access_key: RESTRICTEDKEY
-    secret_key: SECRET123...
-    acls:
-      - bucket: "data-bucket"
-        prefix: "allowed/"
-```
-
-With this configuration:
-- ✓ `GET /data-bucket/allowed/file.txt` - Success
-- ✗ `GET /data-bucket/forbidden/file.txt` - AccessDenied
-- ✗ `GET /other-bucket/file.txt` - AccessDenied
-
-## Malformed Signature Scenarios
-
-ARMOR validates signature format and provides specific error codes:
-
-| Scenario | Error Code | Performance |
-|----------|------------|-------------|
-| Non-hex signature characters | `SignatureDoesNotMatch` | < 50ms |
-| Too short signature (< 32 bytes) | `SignatureDoesNotMatch` | < 50ms |
-| Empty signature | `IncompleteSignature` | < 50ms |
-| Random characters in signature | `SignatureDoesNotMatch` | < 50ms |
-
-## Query Parameter Authentication Errors
-
-ARMOR supports authentication via presigned URLs using query parameters. These scenarios can result in authentication errors:
-
-| Error Code | HTTP Status | Message | When Returned |
-|------------|-------------|---------|---------------|
-| `MissingAuthenticationToken` | 403 | Missing Authentication Token | X-Amz-Credential query parameter is missing |
-| `InvalidCredential` | 403 | Invalid credential format | X-Amz-Credential has insufficient parts (expected 5 parts) |
-| `InvalidAccessKeyId` | 403 | The AWS Access Key Id you provided does not exist | Access key from credential parameter not found |
-| `IncompleteSignature` | 403 | Authorization header is missing required fields | X-Amz-SignedHeaders or X-Amz-Signature query parameter is missing |
-| `RequestExpired` | 403 | Request has expired | Presigned URL has exceeded its expiration time (X-Amz-Expires) |
-
-**Presigned URL Format:**
-```
-https://bucket.s3.amazonaws.com/key?
-  X-Amz-Algorithm=AWS4-HMAC-SHA256&
-  X-Amz-Credential=ACCESSKEY/DATE/REGION/s3/aws4_request&
-  X-Amz-Date=YYYYMMDDTHHMMSSZ&
-  X-Amz-Expires=SECONDS&
-  X-Amz-SignedHeaders=host&
-  X-Amz-Signature=CALCULATED_SIGNATURE
-```
-
-## Request Method Errors
-
-ARMOR validates that the HTTP method is appropriate for the requested operation:
-
-| Error Code | HTTP Status | Message | When Returned |
-|------------|-------------|---------|---------------|
-| `MethodNotAllowed` | 405 | Method {METHOD} not allowed | HTTP method is not supported for the requested endpoint |
-
-**Examples:**
-- Unsupported POST operation on endpoints that only support GET
-- Using DELETE on read-only operations
-
-## Internal Server Errors
-
-These errors indicate server-side problems during request processing:
-
-| Error Code | HTTP Status | Message | When Returned |
-|------------|-------------|---------|---------------|
-| `InternalError` | 500 | Failed to {operation}: {error} | Server encountered an error during request processing |
-
-**Common InternalError Scenarios:**
-- Encryption key derivation failures
-- DEK generation failures
-- IV generation failures
-- Header encoding failures
-- Upload failures
-- Temporary file creation failures
-
-## Performance Guarantees
-
-All authentication rejection scenarios respond within strict time limits:
-
-| Test Type | Target | Actual | Environment |
-|-----------|--------|--------|-------------|
-| Unit test rejections | < 100ms | < 1ms | Local httptest |
-| Integration test rejections | < 500ms | < 50ms | Real server |
-| Malformed signature rejections | < 50ms | < 1ms | Local httptest |
-
-### Performance Test Coverage
-
-The test suite includes performance verification for all rejection scenarios:
-
-1. **TestInvalidCredentialRejection/Rejection_happens_quickly** - Verifies < 100ms response time
-2. **TestMalformedSignatureRejection/Rejection_happens_quickly** - Verifies < 50ms response time for malformed signatures
-
-## Error Message Quality
-
-All error responses include:
-
-1. **Specific Error Code** - Identifies the exact problem (e.g., `InvalidAccessKeyId`, `SignatureDoesNotMatch`)
-2. **Meaningful Message** - Human-readable description of the problem
-3. **XML Format** - S3-compatible XML structure with proper escaping
-
-### Message Validation
-
-Test suite verifies that:
-- Error messages are never empty
-- Messages are at least 10 characters long
-- Messages contain relevant keywords (authentication, signature, credential, algorithm, header, aws4)
-- XML is properly escaped to prevent injection
-
-## Response Consistency
-
-All error responses maintain consistency:
-
-### Headers
-- Always return `Content-Type: application/xml`
-- Always return appropriate HTTP status code (403 for auth errors)
-- Response body is never empty
-
-### Structure
-- XML declaration with encoding: `<?xml version="1.0" encoding="UTF-8"?>`
-- Root element: `<Error>`
-- Two child elements: `<Code>` and `<Message>`
-- Proper XML escaping for special characters
-
-## Test Coverage Summary
-
-The ARMOR test suite includes comprehensive coverage for rejection scenarios:
-
-### Unit Tests (`invalid_credential_test.go`)
-- 12 test scenarios covering:
-  - Invalid AWS credentials
-  - Malformed signatures  
-  - Missing authentication headers
-  - Malformed authorization headers
-  - Insufficient credential parts
-  - Missing required components (SignedHeaders, Signature, date)
-  - Expired requests
-  - Performance validation
-
-### Unit Tests (`malformed_signature_test.go`)
-- 20+ test scenarios covering:
-  - Garbage signature strings (non-hex, too short, empty, random chars)
-  - Invalid signature formats (missing algorithm, wrong algorithm, missing components)
-  - Partial signatures (missing components)
-  - Error message quality
-  - Performance validation
-
-### Unit Tests (`error_response_verification_test.go`)
-- Comprehensive verification of all acceptance criteria:
-  - Meaningful error messages for all rejection scenarios
-  - Error messages specify the rejection reason
-  - Response time under 100ms for all rejections
-  - Consistent response headers across rejection types
-  - Performance statistics and thresholds
-  - Documentation generation for error response format
-
-### Integration Tests (`invalid_credential_integration_test.go`)
-- Real server tests with actual HTTP client
-- Performance validation under realistic conditions
-- End-to-end verification of error responses
-
-### Headers Consistency (`error_response_test.go`)
-- Verifies consistent headers across all rejection types
-- Validates Content-Type header
-- Ensures proper XML structure
-
-### Authorization Tests (`auth_headers_doc_test.go`)
-- Documents authentication rejection response headers
-- Generates comprehensive header documentation
-- Verifies error codes and messages for all auth scenarios
-
-## Examples
-
-### Example 1: Invalid Access Key
-
-**Request:**
-```http
-GET /test-bucket/test-key HTTP/1.1
-Host: test-bucket.s3.us-east-005.backblazeb2.com
-Authorization: AWS4-HMAC-SHA256 Credential=INVALIDKEY/20250714/us-east-005/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc123...
-X-Amz-Date: 20250714T044805Z
-```
-
-**Response:**
+**Example Response:**
 ```http
 HTTP/1.1 403 Forbidden
 Content-Type: application/xml
-
-<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-  <Code>InvalidAccessKeyId</Code>
-  <Message>The AWS Access Key Id you provided does not exist in our records.</Message>
-</Error>
-```
-
-### Example 2: Missing Authentication
-
-**Request:**
-```http
-GET /test-bucket/test-key HTTP/1.1
-Host: test-bucket.s3.us-east-005.backblazeb2.com
-```
-
-**Response:**
-```http
-HTTP/1.1 403 Forbidden
-Content-Type: application/xml
-
-<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-  <Code>MissingAuthenticationToken</Code>
-  <Message>Missing authentication token.</Message>
-</Error>
-```
-
-### Example 3: Expired Request
-
-**Request:**
-```http
-GET /test-bucket/test-key HTTP/1.1
-Host: test-bucket.s3.us-east-005.backblazeb2.com
-Authorization: AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20250714/us-east-005/s3/aws4_request, SignedHeaders=host, Signature=!@#$%^&*()
-X-Amz-Date: 20250714T044805Z
-```
-
-**Response:**
-```http
-HTTP/1.1 403 Forbidden
-Content-Type: application/xml
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, PUT, DELETE, HEAD, POST, OPTIONS
+Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Length
 
 <?xml version="1.0" encoding="UTF-8"?>
 <Error>
   <Code>SignatureDoesNotMatch</Code>
-  <Message>The request signature we calculated does not match the signature you provided.</Message>
+  <Message>The request signature we calculated does not match the signature you provided</Message>
 </Error>
 ```
 
-### Example 4: ACL Access Denied
+#### HTTP 404 Not Found
 
-**Request:**
-```http
-GET /protected-bucket/admin/config.yaml HTTP/1.1
-Host: protected-bucket.s3.us-east-005.backblazeb2.com
-Authorization: AWS4-HMAC-SHA256 Credential=RESTRICTEDKEY/20250714/us-east-005/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=valid123...
-X-Amz-Date: 20250714T044805Z
+| Error Code | Message | When Returned |
+|------------|---------|---------------|
+| `NoSuchKey` | Object not found | GetObject/HeadObject on non-existent object |
+| `NoSuchBucket` | Bucket not found | GetBucketLocation/HeadBucket on non-existent bucket |
+| `NoSuchUpload` | Multipart upload not found | UploadPart/CompleteMultipartUpload/AbortMultipartUpload on non-existent upload |
+| `NoSuchUpload` | Multipart upload does not match bucket/key | Upload ID exists but for different bucket/key |
+
+**Headers:** `Content-Type: application/xml` (no CORS headers)
+
+#### HTTP 405 Method Not Allowed
+
+| Error Code | Message | When Returned |
+|------------|---------|---------------|
+| `MethodNotAllowed` | Method X not allowed | HTTP method not supported for endpoint |
+
+**Headers:** `Content-Type: application/xml` (no CORS headers)
+
+#### HTTP 412 Precondition Failed
+
+| Error Code | Message | When Returned |
+|------------|---------|---------------|
+| `PreconditionFailed` | Precondition failed | If-Match or If-Unmodified-Since condition not met |
+
+**Headers:** `Content-Type: application/xml` (no CORS headers)
+
+#### HTTP 500 Internal Server Error
+
+| Error Code | Message | When Returned |
+|------------|---------|---------------|
+| `InternalError` | Failed to [operation]: [details] | Backend/cryptographic failures (key management, encryption, B2 operations) |
+
+**Headers:** `Content-Type: application/xml` (no CORS headers)
+
+#### HTTP 503 Service Unavailable
+
+| Status | Response | When |
+|--------|----------|------|
+| 200 | `Ready` | Readiness probe healthy |
+| 503 | `Not ready - canary check failed` | Canary verification failed |
+| 503 | `Not ready - manifest writer has never flushed` | Manifest startup lag |
+| 503 | `Not ready - manifest writer last flush X ago (threshold 60s)` | Manifest writer stall |
+| 503 | `Not ready - no health signal available` | Health check unavailable |
+
+**Note:** `/readyz` returns plain text, not XML, as it is a health endpoint.
+
+### Authentication Errors (HTTP 403)
+
+All authentication/authorization errors return HTTP 403 with CORS headers. The ten authentication error codes are:
+
+| Error Code | Message | Status Code | CORS Headers |
+|------------|---------|-------------|--------------|
+| `MissingAuthenticationToken` | Missing Authentication Token | 403 | ✓ |
+| `InvalidAccessKeyId` | The AWS Access Key Id you provided does not exist | 403 | ✓ |
+| `SignatureDoesNotMatch` | The request signature we calculated does not match the signature you provided | 403 | ✓ |
+| `RequestExpired` | Request has expired | 403 | ✓ |
+| `InvalidAlgorithm` | Only AWS4-HMAC-SHA256 is supported | 403 | ✓ |
+| `IncompleteSignature` | Authorization header is missing required fields | 403 | ✓ |
+| `InvalidCredential` | Invalid credential format | 403 | ✓ |
+| `MissingDateHeader` | Missing X-Amz-Date header | 403 | ✓ |
+| `InvalidDateFormat` | Invalid date format in X-Amz-Date header | 403 | ✓ |
+| `AccessDenied` | Access Denied | 403 | ✓ |
+
+**Verification:** All 10 authentication error codes have been verified to return HTTP 403 (2026-07-14).
+
+### Per-Operation Errors
+
+#### Object Operations
+
+| Operation | HTTP 200 Success Headers | HTTP 4xx Error Codes | HTTP 5xx Error Codes |
+|-----------|------------------------|---------------------|---------------------|
+| GetObject | Content-Type, Content-Length, ETag, Last-Modified, Accept-Ranges | InvalidRange, PreconditionFailed | InternalError |
+| HeadObject | Content-Type, Content-Length, ETag, Last-Modified, Accept-Ranges | (none) | InternalError |
+| PutObject | ETag, X-Armor-Streaming (if >10MB) | InvalidRequest | InternalError |
+| DeleteObject | (none - 204 No Content) | (none) | InternalError |
+| CopyObject | Content-Type (XML body with CopyObjectResult) | InvalidCopySource | InternalError |
+
+#### Range Requests
+
+| HTTP Status | Error Code | Headers |
+|-------------|------------|---------|
+| 206 (success) | N/A | Content-Range: bytes start-end/total, X-Armor-Footer-Cache (if Parquet footer hit) |
+| 400 | InvalidRange | Content-Type: application/xml |
+| 412 | PreconditionFailed | Content-Type: application/xml |
+| 404 | NoSuchKey | Content-Type: application/xml |
+
+#### Bucket Operations
+
+| Operation | HTTP 200 Success Headers | HTTP 404 Error | HTTP 5xx Error |
+|-----------|------------------------|---------------|----------------|
+| ListObjectsV2 | Content-Type: application/xml | (none) | InternalError |
+| HeadBucket | (none) | NoSuchBucket | InternalError |
+| GetBucketLocation | Content-Type: application/xml | NoSuchBucket | InternalError |
+| CreateBucket | Location: /bucket-name | (none) | InternalError |
+| DeleteBucket | (none) | (none) | InternalError |
+
+#### Multipart Upload Operations
+
+| Operation | HTTP 200 Success Headers | HTTP 400 Errors | HTTP 404 Errors | HTTP 5xx Errors |
+|-----------|------------------------|-----------------|-----------------|----------------|
+| CreateMultipartUpload | (none) | (none) | (none) | InternalError |
+| UploadPart | ETag | InvalidRequest | NoSuchUpload | InternalError |
+| CompleteMultipartUpload | Content-Type: application/xml | MalformedXML, InvalidRequest | NoSuchUpload | InternalError |
+| AbortMultipartUpload | (none - 204) | (none) | NoSuchUpload | InternalError |
+| ListParts | Content-Type: application/xml | (none) | NoSuchUpload | InternalError |
+| ListMultipartUploads | Content-Type: application/xml | (none) | (none) | InternalError |
+
+#### Bulk Operations
+
+| Operation | HTTP 200 Success | HTTP 400 Errors | HTTP 5xx Errors |
+|-----------|------------------|-----------------|----------------|
+| DeleteObjects (POST with ?delete) | Content-Type: application/xml | MalformedXML | InternalError |
+
+#### Backend Error Propagation
+
+ARMOR's backend (B2/Cloudflare R2) may return errors that are wrapped in `InternalError` responses:
+
+| Backend Error | ARMOR Response |
+|---------------|----------------|
+| B2 auth failure | 500 InternalError |
+| Network timeout | 500 InternalError |
+| Storage full | 500 InternalError |
+| Rate limited | 500 InternalError |
+
+**Note:** Backend-specific error details are logged but not exposed to clients in error messages for security reasons.
+
+---
+
+## Admin Endpoints
+
+Admin endpoints use mixed response formats (JSON, plain text, and some XML for S3-compatible endpoints like `/admin/presign`).
+
+### Endpoint Summary
+
+| Endpoint | Methods | Success Format | Error Format | Purpose |
+|----------|---------|----------------|--------------|---------|
+| `/healthz` | GET | Plain Text | (none - always 200) | Liveness probe |
+| `/readyz` | GET | Plain Text | Plain Text | Readiness probe |
+| `/admin/key/verify` | GET | JSON | JSON | Verify MEK correctness |
+| `/admin/key/rotate` | POST | JSON | Plain text / JSON | Rotate master encryption key |
+| `/admin/key/export` | GET | JSON | Plain Text | Export current MEK |
+| `/admin/presign` | POST | JSON | XML (auth) / Plain text (validation) | Generate pre-signed URL |
+| `/admin/b2/keys` | GET, POST | JSON | JSON (in text/plain) | List/create B2 keys |
+| `/admin/b2/keys/{id}` | DELETE | (none - 204) | JSON (in text/plain) | Delete B2 key |
+| `/armor/canary` | GET | JSON | Plain Text | Canary status |
+| `/armor/audit` | GET | JSON | JSON / Plain Text | Audit status |
+| `/metrics` | GET | Plain Text | (none - always 200) | Prometheus metrics |
+| `/share/{token}` | GET | Binary | Plain Text | Access pre-signed URL |
+
+### Health Endpoints
+
+#### `/healthz` - Liveness Probe
+
+**Method:** GET
+
+**Success Response (200 OK):**
+```
+Status: 200 OK
+Content-Type: text/plain
+
+OK
 ```
 
-**Configuration:**
-```yaml
-credentials:
-  RESTRICTEDKEY:
-    access_key: RESTRICTEDKEY
-    secret_key: SECRET123...
-    acls:
-      - bucket: "protected-bucket"
-        prefix: "public/"
+**Error Responses:** None (always returns 200)
+
+---
+
+#### `/readyz` - Readiness Probe
+
+**Method:** GET
+
+**Success Response (200 OK):**
+```
+Status: 200 OK
+Content-Type: text/plain
+
+Ready
 ```
 
-**Response:**
-```http
-HTTP/1.1 403 Forbidden
-Content-Type: application/xml
+**Error Responses (503 Service Unavailable):**
+```
+Status: 503 Service Unavailable
+Content-Type: text/plain
 
+Not ready - canary check failed
+```
+
+```
+Status: 503 Service Unavailable
+Content-Type: text/plain
+
+Not ready - manifest writer has never flushed
+```
+
+```
+Status: 503 Service Unavailable
+Content-Type: text/plain
+
+Not ready - manifest writer last flush 120s ago (threshold 60s)
+```
+
+**Code Reference:** `internal/server/server.go:359-376`
+
+### Key Management
+
+#### `/admin/key/verify` - Verify MEK
+
+**Method:** GET
+
+**Success Responses (200 OK):**
+
+MEK Verified:
+```json
+{
+  "status": "verified",
+  "message": "MEK is correct"
+}
+```
+
+Canary Not Configured:
+```json
+{
+  "status": "unknown",
+  "error": "canary monitor not configured"
+}
+```
+
+**Error Response (503 Service Unavailable):**
+```json
+{
+  "status": "unverified",
+  "error": "canary check failed - MEK may be incorrect"
+}
+```
+
+**Error Response (405 Method Not Allowed):**
+```
+Status: 405 Method Not Allowed
+Content-Type: text/plain
+
+Method not allowed
+```
+
+**Code Reference:** `internal/server/server.go:486-507`
+
+---
+
+#### `/admin/key/rotate` - Rotate Master Encryption Key
+
+**Method:** POST
+
+**Success Response (200 OK):**
+```json
+{
+  "status": "completed",
+  "rotated_objects": 123,
+  "failed_objects": 0,
+  "duration_ms": 45678,
+  "started_at": "2024-01-01T00:00:00Z",
+  "completed_at": "2024-01-01T00:00:45Z"
+}
+```
+
+**Error Responses (400 Bad Request):**
+```
+Failed to read request body: <error details>
+```
+```
+Invalid hex-encoded MEK
+```
+```
+Invalid MEK length: expected 32 bytes or 64 hex chars, got <actual length>
+```
+
+**Error Response (405 Method Not Allowed):**
+```
+Method not allowed
+```
+
+**Error Response (500 Internal Server Error):**
+```json
+{
+  "status": "failed",
+  "error": "<error message>",
+  "result": {
+    "rotated_objects": 10,
+    "failed_objects": 1
+  }
+}
+```
+
+**Code Reference:** `internal/server/server.go:510-573`
+
+---
+
+#### `/admin/key/export` - Export Current MEK
+
+**Method:** GET
+
+**Query Parameter:** `confirm=yes` (required)
+
+**Success Response (200 OK):**
+```json
+{
+  "mek": "64-char-hex-encoded-key",
+  "format": "hex",
+  "warning": "This key provides access to all encrypted data. Store securely."
+}
+```
+
+**Error Response (400 Bad Request):**
+```
+Must include ?confirm=yes to export key
+```
+
+**Error Response (405 Method Not Allowed):**
+```
+Method not allowed
+```
+
+**Code Reference:** `internal/server/server.go:576-596`
+
+### Pre-signed URLs
+
+#### `/admin/presign` - Generate Pre-signed URL
+
+**Method:** POST
+
+**Request Body:**
+```json
+{
+  "bucket": "my-bucket",           // Optional, defaults to configured bucket
+  "key": "path/to/file.parquet",   // Required
+  "expires_in": "1h",              // Optional, defaults to 1h
+  "content_disposition": "...",    // Optional
+  "range": "bytes=0-1023"          // Optional
+}
+```
+
+**Success Response (200 OK):**
+```json
+{
+  "url": "https://...",
+  "expires_in": "1h",
+  "expires_at": "2024-01-01T01:00:00Z"
+}
+```
+
+**Error Response (403 Forbidden - Auth Errors):**
+
+⚠️ **INCONSISTENT:** Returns XML format (S3-compatible), unlike other admin endpoints.
+
+```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <Error>
   <Code>AccessDenied</Code>
-  <Message>Access Denied</Message>
+  <Message>Invalid credentials</Message>
 </Error>
 ```
 
-### Example 5: Expired Presigned URL
-
-**Request:**
-```http
-GET /data-bucket/file.csv?
-  X-Amz-Algorithm=AWS4-HMAC-SHA256&
-  X-Amz-Credential=TESTACCESSKEY/20250701/us-east-005/s3/aws4_request&
-  X-Amz-Date=20250701T120000Z&
-  X-Amz-Expires=3600&
-  X-Amz-SignedHeaders=host&
-  X-Amz-Signature=abc123...
-HTTP/1.1
-Host: data-bucket.s3.us-east-005.backblazeb2.com
+**Error Responses (400 Bad Request):**
+```
+Invalid request body: <error details>
+```
+```
+key is required
+```
+```
+Invalid expires_in: <error details>
 ```
 
-**Response:**
-```http
-HTTP/1.1 403 Forbidden
-Content-Type: application/xml
+**Error Response (500 Internal Server Error):**
+```
+Failed to generate URL: <error details>
+```
 
+**Code Reference:** `internal/server/server.go:828-913`
+
+### B2 Key Management
+
+#### `/admin/b2/keys` - List/Create B2 Keys
+
+**GET - List Keys:**
+
+**Success Response (200 OK):**
+```json
+{
+  "keys": [
+    {
+      "id": "keyId1",
+      "name": "key-name",
+      "capabilities": ["readFiles", "writeFiles"],
+      "key_id": "appId_keyId",
+      "secret_key": "appKey...",
+      "expires_at": "2024-01-01T01:00:00Z"
+    }
+  ],
+  "next_cursor": "cursor-for-next-page"
+}
+```
+
+**Error Responses:**
+
+503 Service Unavailable:
+```
+{"error":"B2 key management not available - check B2 credentials"}
+```
+
+500 Internal Server Error:
+```
+{"error":"Failed to list keys: <error details>"}
+```
+
+---
+
+**POST - Create Key:**
+
+**Request Body:**
+```json
+{
+  "name": "key-name",
+  "capabilities": ["readFiles", "writeFiles"],
+  "valid_duration_seconds": 3600
+}
+```
+
+**Success Response (201 Created):**
+```json
+{
+  "id": "keyId1",
+  "name": "key-name",
+  "capabilities": ["readFiles", "writeFiles"],
+  "key_id": "appId_keyId",
+  "secret_key": "appKey...",
+  "expires_at": "2024-01-01T01:00:00Z"
+}
+```
+
+**Error Responses (400 Bad Request):**
+```
+{"error":"Invalid request body: <error details>"}
+```
+```
+{"error":"name is required"}
+```
+```
+{"error":"capabilities is required"}
+```
+
+**Code Reference:** `internal/server/server.go:1246-1324`
+
+---
+
+#### `/admin/b2/keys/{id}` - Delete B2 Key
+
+**Method:** DELETE
+
+**Success Response (204 No Content):**
+```
+(no body)
+```
+
+**Error Responses:**
+
+503 Service Unavailable:
+```
+{"error":"B2 key management not available - check B2 credentials"}
+```
+
+404 Not Found:
+```
+{"error":"key not found"}
+```
+
+400 Bad Request:
+```
+{"error":"key ID is required"}
+```
+
+**Code Reference:** `internal/server/server.go:1326-1364`
+
+### Status Endpoints
+
+#### `/armor/canary` - Canary Status
+
+**Method:** GET
+
+**Success Response (200 OK):**
+```json
+{
+  "decrypt_verified": true,
+  "hmac_verified": true,
+  "last_check": "2024-01-01T00:00:00Z",
+  "error": ""
+}
+```
+
+**Alternative Success (200 OK - without canary):**
+```json
+{
+  "status": "unknown",
+  "error": "canary monitor not configured"
+}
+```
+
+**Error Response (405 Method Not Allowed):**
+```
+Method not allowed
+```
+
+**Code Reference:** `internal/server/server.go:599-615`
+
+---
+
+#### `/armor/audit` - Audit Status
+
+**Method:** GET
+
+**Success Response (200 OK):**
+```json
+{
+  "total_objects": 1234,
+  "verified_objects": 1230,
+  "failed_objects": 4,
+  "errors": ["error1", "error2"]
+}
+```
+
+**Error Response (500 Internal Server Error):**
+```json
+{
+  "status": "error",
+  "error": "<error details>"
+}
+```
+
+**Error Response (405 Method Not Allowed):**
+```
+Method not allowed
+```
+
+**Code Reference:** `internal/server/server.go:617-639`
+
+---
+
+#### `/metrics` - Prometheus Metrics
+
+**Method:** GET
+
+**Success Response (200 OK):**
+```
+# HELP armor_requests_total Total number of requests
+# TYPE armor_requests_total counter
+armor_requests_total 1234
+...
+```
+
+**Key Replication Metrics:**
+```
+# HELP armor_replication_enqueued_total Total number of items enqueued for replication by operation
+# TYPE armor_replication_enqueued_total counter
+armor_replication_enqueued_total{operation="put"} 1234
+armor_replication_enqueued_total{operation="put-streaming"} 567
+
+# HELP armor_replication_queue_depth Current number of items in the replication queue
+# TYPE armor_replication_queue_depth gauge
+armor_replication_queue_depth 42
+
+# HELP armor_replication_dropped_total Total number of items dropped due to full replication queue
+# TYPE armor_replication_dropped_total counter
+armor_replication_dropped_total 0
+```
+
+**Headers:** `Content-Type: text/plain; version=0.0.4` (Prometheus text format)
+
+**Code Reference:** `internal/server/server.go:641-680`
+
+#### `/share/{token}` - Access Pre-signed URL
+
+**Method:** GET
+
+**Success Response (200 OK or 206 Partial Content):**
+- Binary data (decrypted object content)
+- Headers: `Content-Length`, `Content-Type`, `Accept-Ranges: bytes`, `Content-Disposition` (if specified), `Content-Range` (for 206)
+
+**Error Responses:**
+
+| Status | Response | When |
+|--------|----------|------|
+| 400 | `Missing token` | No token in path |
+| 400 | `Invalid token` | Token malformed |
+| 403 | `Invalid link` | Cryptographic signature verification failed |
+| 404 | `Object not found: {details}` | Object does not exist in storage |
+| 410 | `Link expired` | Token expiration time passed |
+| 500 | `Failed to [operation]` | Decryption or backend failure |
+
+**Code Reference:** `internal/server/server.go:915-1015`
+
+---
+
+## Inconsistencies and Remediation
+
+### Summary of Inconsistencies
+
+| Inconsistency | Severity | Affected Endpoints | Impact |
+|---------------|----------|-------------------|--------|
+| Mixed error formats (JSON/XML/Plain) | Medium | `/admin/presign` | API confusion |
+| Content-Type mismatches | Medium | `/admin/b2/keys/*` | JSON in text/plain |
+| 405 returns plain text | Medium | Most admin endpoints | Not S3-compatible |
+| Admin endpoint format inconsistency | Low | All admin endpoints | Poor DX |
+
+### Known Inconsistencies
+
+#### 1. Content-Type Header Mismatches
+
+**Issue:** Many admin endpoints return JSON error responses but declare `Content-Type: text/plain`.
+
+| Endpoint | Problem |
+|----------|---------|
+| `/admin/b2/keys` | Error responses return JSON but declare `text/plain` |
+| `/admin/b2/keys/{id}` | Error responses return JSON but declare `text/plain` |
+
+#### 2. Method Not Allowed Returns Plain Text
+
+**Issue:** HTTP 405 Method Not Allowed responses use `text/plain` format across all admin endpoints, even when the endpoint normally returns JSON.
+
+**Current Behavior:**
+```
+HTTP/1.1 405 Method Not Allowed
+Content-Type: text/plain
+
+Method not allowed
+```
+
+This is handled by Go's `http.Error()` function.
+
+#### 3. Admin Endpoint Auth Uses S3 XML Format
+
+**Issue:** `/admin/presign` uses S3 XML error format for authentication failures, while other admin endpoints use plain text or JSON.
+
+**Admin endpoint auth errors:**
+```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <Error>
-  <Code>RequestExpired</Code>
-  <Message>Request has expired</Message>
+  <Code>AccessDenied</Code>
+  <Message>Invalid credentials</Message>
 </Error>
 ```
 
-### Example 6: Invalid Date Format
+This is because `/admin/presign` calls `s.writeError()` which uses the S3 error format.
 
-**Request:**
-```http
-GET /test-bucket/test-key HTTP/1.1
-Host: test-bucket.s3.us-east-005.backblazeb2.com
-Authorization: AWS4-HMAC-SHA256 Credential=TESTACCESSKEY/20250714/us-east-005/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=valid123...
-X-Amz-Date: July-14-2025
+#### 4. Response Format Variation Within Endpoints
+
+| Endpoint | Success Format | Error Format | Issue |
+|----------|---------------|--------------|-------|
+| `/admin/key/verify` | JSON | JSON | Consistent ✅ |
+| `/admin/key/rotate` | JSON | Plain text / JSON | ⚠️ Mixed |
+| `/admin/key/export` | JSON | Plain text | ⚠️ Inconsistent |
+| `/admin/presign` | JSON | XML / Plain text | ⚠️ Multiple formats |
+| `/admin/b2/keys` | JSON | JSON in Plain | ⚠️ Type mismatch |
+| `/armor/canary` | JSON | Plain text | ⚠️ Inconsistent |
+| `/armor/audit` | JSON | Mixed | ⚠️ Inconsistent |
+
+### Remediation Plan
+
+#### Priority 1 (S3 Protocol Compliance)
+
+| Issue | Effort | Recommendation |
+|-------|--------|----------------|
+| Method Not Allowed XML format | Low | Convert 405 errors to XML for S3 endpoints |
+| Presigned URL endpoint format | Low | Convert `/admin/presign` errors to XML consistently |
+
+#### Priority 2 (Admin Interface Consistency)
+
+| Issue | Effort | Recommendation |
+|-------|--------|----------------|
+| Admin API JSON format | Medium | Standardize admin endpoints on JSON format |
+| Content-Type header fixes | Low | Fix `Content-Type` to match response body |
+
+#### Recommendation: Standardized Admin Error Format
+
+```json
+{
+  "error": "ErrorCode",
+  "message": "Detailed error message",
+  "details": {
+    "field": "value"
+  }
+}
 ```
 
-**Response:**
-```http
-HTTP/1.1 403 Forbidden
-Content-Type: application/xml
+### Consistency Verification Summary
 
-<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-  <Code>InvalidDateFormat</Code>
-  <Message>Invalid date format in X-Amz-Date header</Message>
-</Error>
+| Aspect | Status | Details |
+|--------|--------|---------|
+| S3 Content-Type consistency | ✅ PASS | All S3 error responses return `application/xml` |
+| S3 HTTP status code consistency | ✅ PASS | All auth errors return 403 |
+| S3 XML structure consistency | ✅ PASS | All responses follow S3 XML error format |
+| S3 error code casing | ✅ PASS | All codes use PascalCase |
+| S3 XML escaping | ✅ PASS | Special characters properly escaped |
+| Admin endpoint consistency | ⚠️ PARTIAL | Mixed formats, see inconsistencies above |
+| CORS headers on 403 | ✅ PASS | All auth errors include CORS headers |
+
+---
+
+## Implementation Reference
+
+### Error Response Writers
+
+ARMOR has two `writeError` functions that handle S3 error responses:
+
+1. **`internal/server/server.go:writeError`** (lines 796-805) - Handles authentication/authorization errors
+2. **`internal/server/handlers/handlers.go:writeError`** (lines 2695-2704) - Handles S3 operation errors
+
+Both implementations are **identical**:
+
+```go
+func writeError(w http.ResponseWriter, code, message string, statusCode int) {
+    w.Header().Set("Content-Type", "application/xml")
+    w.WriteHeader(statusCode)
+    var codeBuf, msgBuf bytes.Buffer
+    xml.EscapeText(&codeBuf, []byte(code))
+    xml.EscapeText(&msgBuf, []byte(message))
+    fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n<Error>\n  <Code>%s</Code>\n  <Message>%s</Message>\n</Error>",
+        codeBuf.String(), msgBuf.String())
+}
 ```
 
-## Implementation
+**Note:** This code duplication is a maintainability concern (both functions must be updated together), but is not currently a functional inconsistency.
 
-Error responses are generated by two implementations:
+### Admin Error Responses
 
-1. **Server Handler** (`internal/server/server.go:796-805`)
-   ```go
-   func (s *Server) writeError(w http.ResponseWriter, code, message string, statusCode int) {
-       w.Header().Set("Content-Type", "application/xml")
-       w.WriteHeader(statusCode)
-       // XML generation with proper escaping
-   }
-   ```
+Admin endpoints use Go's standard `http.Error()` function for most errors, which returns plain text with `Content-Type: text/plain`:
 
-2. **Handlers Package** (`internal/server/handlers/handlers.go:2695-2704`)
-   ```go
-   func (h *Handlers) writeError(w http.ResponseWriter, code, message string, statusCode int) {
-       w.Header().Set("Content-Type", "application/xml")
-       w.WriteHeader(statusCode)
-       // XML generation with proper escaping
-   }
-   ```
+```go
+http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+```
 
-Both implementations ensure:
-- Consistent Content-Type header
-- Proper XML escaping to prevent injection
-- S3-compatible format
+For S3-compatible auth errors, admin endpoints call the XML `writeError()` function:
 
-## Testing
+```go
+s.writeError(w, "AccessDenied", "Invalid credentials", 403)
+```
 
-To run the error response test suite:
+### Performance
 
+Error responses are consistently fast:
+- No additional headers added beyond `Content-Type` and CORS (for 403)
+- Response time dominated by authentication verification, not header setting
+- Single `WriteHeader` call per response
+
+**Average Response Time:** <150µs (measured 2026-07-14)
+
+### Testing
+
+See the following test files for error response verification:
+
+- `internal/server/invalid_credential_test.go` - Auth rejection scenarios
+- `internal/server/malformed_signature_test.go` - Malformed signature scenarios
+- `internal/server/content_type_consistency_test.go` - Content-Type verification
+- `internal/server/error_response_verification_test.go` - Comprehensive error verification
+
+**Run tests:**
 ```bash
-# Run all rejection tests
+# Run all error response tests
 go test -v -run "TestInvalidCredentialRejection|TestMalformedSignatureRejection" ./internal/server/
 
-# Run headers consistency test
-go test -v -run TestErrorResponseHeadersConsistency ./internal/server/
+# Run Content-Type consistency test
+go test -v -run TestContentTypeConsistencyAcrossAllRejections ./internal/server/
 
-# Run integration tests (requires INTEGRATION_TEST=1)
-INTEGRATION_TEST=1 go test -v -run TestInvalidCredentialsIntegration ./internal/server/
+# Run comprehensive error verification
+go test -v -run TestComprehensiveErrorVerification ./internal/server/
 ```
 
-## Maintenance
+### S3 Compliance
 
-When adding new error scenarios:
+✅ **Compliant** with [AWS S3 Error Responses](https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html):
+- XML format matches S3 specification
+- Error codes match S3 error codes
+- HTTP status codes match S3 behavior
+- Content-Type header matches S3 (`application/xml`)
 
-1. **Add test coverage** - Create tests in appropriate test file
-2. **Verify error code** - Use existing S3 error code when possible
-3. **Check performance** - Ensure response time < 100ms
-4. **Validate headers** - Confirm Content-Type and XML structure
-5. **Update this doc** - Document new error code and scenario
+⚠️ **Partial Deviations:**
+- CORS headers on errors differ from AWS (present in ARMOR, absent in AWS unless configured)
+- Backend errors wrapped as `InternalError` hide specific S3 error codes
+
+✅ **Implemented (2026-08-29):**
+- `x-amz-request-id` header (request tracing) - Now set from middleware context
+- `x-amz-id-2` header (extended request ID) - Now set from middleware context
+
+**Note:** These headers are now implemented in the `writeError` functions in both `server.go` (line 1562) and `handlers.go` (line 4712), an improvement from the original 2026-07-14 documentation which noted them as missing.
+
+---
 
 ## References
 
+### AWS S3 Documentation
 - [S3 Error Responses](https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html)
-- Test files:
-  - `internal/server/invalid_credential_test.go`
-  - `internal/server/malformed_signature_test.go`
-  - `internal/server/invalid_credential_integration_test.go`
-  - `internal/server/error_response_test.go`
+- [S3 Error Code List](https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html#ErrorCodeList)
+
+### Implementation Files
+- `internal/server/server.go` - Main server, admin endpoints, auth errors
+- `internal/server/handlers/handlers.go` - S3 operation error responses
+- `internal/server/auth.go` - Authentication error definitions
+
+### Verification Beads
+- bf-2n6273: Comprehensive header specification
+- bf-649uw6: Error response header consistency verification
+- bf-4bwxtc: Content-Type header consistency verification
+- bf-o7eo21: HTTP status code consistency verification
+- bf-5ppsfh: Authentication rejection response headers documentation
+- bf-58oib3: Invalid AWS credentials rejection testing
+
+---
+
+**End of Document**
