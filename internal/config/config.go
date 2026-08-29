@@ -124,9 +124,6 @@ type Config struct {
 	PresignSecret  []byte // Secret key for signing pre-signed URLs
 	PresignBaseURL string // Base URL for pre-signed URLs (e.g., "https://armor.example.com/share")
 
-	// Readiness probe configuration
-	ReadyzCacheTTL int // Seconds to cache backend connectivity check (default 30)
-
 	// Manifest index configuration (Phase 4)
 	ManifestEnabled             bool
 	ManifestPrefix              string
@@ -341,9 +338,6 @@ func Load() (*Config, error) {
 	// List cache configuration
 	cfg.ListCacheMaxEntries = getEnvInt("ARMOR_LIST_CACHE_MAX_ENTRIES", 1000)
 	cfg.ListCacheTTL = getEnvInt("ARMOR_LIST_CACHE_TTL", 60)
-
-	// Readiness probe configuration
-	cfg.ReadyzCacheTTL = getEnvInt("ARMOR_READYZ_CACHE_TTL", 30)
 
 	// Manifest index configuration
 	manifestEnabledStr := os.Getenv("ARMOR_MANIFEST_ENABLED")
@@ -938,9 +932,6 @@ type RedactedConfig struct {
 	PresignSecret  string `json:"presign_secret"` // "<set>" or "<unset>"
 	PresignBaseURL string `json:"presign_base_url"`
 
-	// Readiness probe configuration
-	ReadyzCacheTTL int `json:"readyz_cache_ttl"`
-
 	// Manifest index configuration (Phase 4)
 	ManifestEnabled             bool   `json:"manifest_enabled"`
 	ManifestPrefix              string `json:"manifest_prefix"`
@@ -1003,7 +994,6 @@ func (c *Config) Redacted() *RedactedConfig {
 		ListCacheMaxEntries:         c.ListCacheMaxEntries,
 		ListCacheTTL:                c.ListCacheTTL,
 		PresignBaseURL:              c.PresignBaseURL,
-		ReadyzCacheTTL:              c.ReadyzCacheTTL,
 		ManifestEnabled:             c.ManifestEnabled,
 		ManifestPrefix:              c.ManifestPrefix,
 		ManifestCompactionInterval:  c.ManifestCompactionInterval,

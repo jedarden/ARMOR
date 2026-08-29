@@ -23,8 +23,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/jedarden/armor/internal/b2keys"
 	"github.com/jedarden/armor/internal/acl"
+	"github.com/jedarden/armor/internal/b2keys"
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/canary"
 	"github.com/jedarden/armor/internal/config"
@@ -70,9 +70,9 @@ type Server struct {
 	presigner         *presign.Signer
 	b2keys            *b2keys.Client // B2 native API key management
 	dashboard         *dashboard.Dashboard
-	manifest          *manifest.Index     // in-memory metadata index (nil when disabled)
-	manifestWriter    *manifest.Writer    // async delta writer (nil when disabled)
-	manifestCompactor *manifest.Compactor // background compaction goroutine (nil when disabled)
+	manifest          *manifest.Index               // in-memory metadata index (nil when disabled)
+	manifestWriter    *manifest.Writer              // async delta writer (nil when disabled)
+	manifestCompactor *manifest.Compactor           // background compaction goroutine (nil when disabled)
 	replicationQueue  *replication.ReplicationQueue // async replication worker (nil when secondary backend not configured)
 
 	// canaryStarted tracks whether the canary monitor has been started
@@ -600,8 +600,8 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/key/rotate", s.rotateKey)
 	mux.HandleFunc("/admin/key/ring", s.keyRing)
 	mux.HandleFunc("/admin/key/export", s.exportKey)
-	mux.HandleFunc("/admin/format/migrate", s.migrateFormat)      // POST=start migration, GET=progress
-	mux.HandleFunc("/admin/creds", s.handleListCreds)              // GET=list credentials
+	mux.HandleFunc("/admin/format/migrate", s.migrateFormat) // POST=start migration, GET=progress
+	mux.HandleFunc("/admin/creds", s.handleListCreds)        // GET=list credentials
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
 	mux.HandleFunc("/admin/presign", s.handlePresign)
@@ -618,18 +618,18 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/encryption-stats", s.dashboard.EncryptionStatsHandlerWithAuth())
 		mux.HandleFunc("/dashboard/api/list", s.dashboard.ListAPIHandlerWithAuth())
 
-			// Credential activity handler (proxies to admin API for credential list)
-			adminCredsClient := &http.Client{
-				Timeout: 10 * time.Second,
-			}
-			adminCredsURL := "http://" + s.config.AdminListen + "/admin/creds"
-			mux.HandleFunc("/dashboard/credential-activity", s.dashboard.CredentialActivityHandlerWithAuth(adminCredsClient, adminCredsURL))
+		// Credential activity handler (proxies to admin API for credential list)
+		adminCredsClient := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+		adminCredsURL := "http://" + s.config.AdminListen + "/admin/creds"
+		mux.HandleFunc("/dashboard/credential-activity", s.dashboard.CredentialActivityHandlerWithAuth(adminCredsClient, adminCredsURL))
 
-			// Dashboard S3 operations (upload, download, delete)
-			// These use the dashboard credential for S3 signing
-			mux.HandleFunc("/dashboard/upload", s.dashboard.UploadHandlerWithAuth())
-			mux.HandleFunc("/dashboard/download", s.dashboard.DownloadHandlerWithAuth())
-			mux.HandleFunc("/dashboard/delete", s.dashboard.DeleteHandlerWithAuth())
+		// Dashboard S3 operations (upload, download, delete)
+		// These use the dashboard credential for S3 signing
+		mux.HandleFunc("/dashboard/upload", s.dashboard.UploadHandlerWithAuth())
+		mux.HandleFunc("/dashboard/download", s.dashboard.DownloadHandlerWithAuth())
+		mux.HandleFunc("/dashboard/delete", s.dashboard.DeleteHandlerWithAuth())
 
 		// Key rotation proxy handler (authenticated).
 		// The dashboard proxies rotation to the admin API over loopback; it must
@@ -655,29 +655,69 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-// readyz returns the readiness status.
+// readyz returns the readiness status as JSON.
 // When the canary monitor is running and not disabled, its in-memory health
 // state is the sole signal — no backend call is made. When the canary is
 // disabled (ARMOR_CANARY_DISABLED=true), /readyz always returns 200 and the
 // liveness probe (/healthz) is the sole health guard. When the canary is not
 // configured, the manifest writer's last flush is used as the health signal.
+//
+// Response JSON fields:
+//   - ready (bool): true if service is ready
+//   - canary_age_s (int): seconds since last canary check (0 if canary disabled/not running)
+//   - multipart_canary_healthy (bool): true if multipart canary is healthy (false if canary disabled/not running)
+//   - manifest_flushed_s (int): seconds since last manifest flush (0 if no manifest writer)
+//   - reason (string): human-readable status explanation
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	// Set JSON content type
+	w.Header().Set("Content-Type", "application/json")
+
+	type readyzResponse struct {
+		Ready                  bool   `json:"ready"`
+		CanaryAgeS             int    `json:"canary_age_s"`
+		MultipartCanaryHealthy bool   `json:"multipart_canary_healthy"`
+		ManifestFlushedS       int    `json:"manifest_flushed_s"`
+		Reason                 string `json:"reason"`
+	}
+
 	// When canary is explicitly disabled, skip all backend checks.
 	if s.canaryDisabled {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Ready"))
+		json.NewEncoder(w).Encode(readyzResponse{
+			Ready:                  true,
+			CanaryAgeS:             0,
+			MultipartCanaryHealthy: false,
+			ManifestFlushedS:       0,
+			Reason:                 "Ready - canary disabled",
+		})
 		return
 	}
 
 	// Canary monitor is authoritative when running.
 	if s.canary != nil && s.canaryStarted {
+		status := s.canary.GetStatus()
+		canaryAge := int(time.Since(status.LastCheck).Seconds())
+		multipartHealthy := status.MultipartHealthy == "healthy"
+
 		if !s.canary.IsHealthy() {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("Not ready - canary check failed"))
+			json.NewEncoder(w).Encode(readyzResponse{
+				Ready:                  false,
+				CanaryAgeS:             canaryAge,
+				MultipartCanaryHealthy: multipartHealthy,
+				ManifestFlushedS:       0,
+				Reason:                 "Not ready - canary check failed",
+			})
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Ready"))
+		json.NewEncoder(w).Encode(readyzResponse{
+			Ready:                  true,
+			CanaryAgeS:             canaryAge,
+			MultipartCanaryHealthy: multipartHealthy,
+			ManifestFlushedS:       0,
+			Reason:                 "Ready",
+		})
 		return
 	}
 
@@ -686,24 +726,53 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	const flushThreshold = 60 * time.Second
 	if s.manifestWriter != nil {
 		lastFlush := s.manifestWriter.LastFlush()
+		manifestFlushedS := 0
+		if !lastFlush.IsZero() {
+			manifestFlushedS = int(time.Since(lastFlush).Seconds())
+		}
+
 		if !lastFlush.IsZero() && time.Since(lastFlush) < flushThreshold {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("Ready"))
+			json.NewEncoder(w).Encode(readyzResponse{
+				Ready:                  true,
+				CanaryAgeS:             0,
+				MultipartCanaryHealthy: false,
+				ManifestFlushedS:       manifestFlushedS,
+				Reason:                 "Ready - manifest writer recently flushed",
+			})
 			return
 		}
 		// No recent flush — report unhealthy
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if lastFlush.IsZero() {
-			w.Write([]byte("Not ready - manifest writer has never flushed"))
+			json.NewEncoder(w).Encode(readyzResponse{
+				Ready:                  false,
+				CanaryAgeS:             0,
+				MultipartCanaryHealthy: false,
+				ManifestFlushedS:       0,
+				Reason:                 "Not ready - manifest writer has never flushed",
+			})
 		} else {
-			fmt.Fprintf(w, "Not ready - manifest writer last flush %v ago (threshold %v)", time.Since(lastFlush).Round(time.Second), flushThreshold)
+			json.NewEncoder(w).Encode(readyzResponse{
+				Ready:                  false,
+				CanaryAgeS:             0,
+				MultipartCanaryHealthy: false,
+				ManifestFlushedS:       manifestFlushedS,
+				Reason:                 fmt.Sprintf("Not ready - manifest writer last flush %v ago (threshold %v)", time.Since(lastFlush).Round(time.Second), flushThreshold),
+			})
 		}
 		return
 	}
 
 	// Neither canary nor manifest writer available — report unhealthy.
 	w.WriteHeader(http.StatusServiceUnavailable)
-	w.Write([]byte("Not ready - no health signal available"))
+	json.NewEncoder(w).Encode(readyzResponse{
+		Ready:                  false,
+		CanaryAgeS:             0,
+		MultipartCanaryHealthy: false,
+		ManifestFlushedS:       0,
+		Reason:                 "Not ready - no health signal available",
+	})
 }
 
 // verifyKey verifies the MEK is correct.
@@ -849,8 +918,8 @@ func (s *Server) keyRing(w http.ResponseWriter, r *http.Request) {
 
 	// Build response with per-key-id information
 	type KeyRingInfo struct {
-		ActiveFingerprint string            `json:"active_fp"`
-		RingFingerprints  []string          `json:"ring_fps"`
+		ActiveFingerprint    string         `json:"active_fp"`
+		RingFingerprints     []string       `json:"ring_fps"`
 		ObjectsByFingerprint map[string]int `json:"objects_by_fp"`
 	}
 
@@ -921,9 +990,9 @@ func (s *Server) keyRing(w http.ResponseWriter, r *http.Request) {
 		}
 
 		response[keyID] = KeyRingInfo{
-			ActiveFingerprint:      activeFingerprint,
-			RingFingerprints:       ringFingerprints,
-			ObjectsByFingerprint:   objectsByFingerprint,
+			ActiveFingerprint:    activeFingerprint,
+			RingFingerprints:     ringFingerprints,
+			ObjectsByFingerprint: objectsByFingerprint,
 		}
 	}
 
@@ -1088,11 +1157,11 @@ func (s *Server) exportKey(w http.ResponseWriter, r *http.Request) {
 	escrowPackage := map[string]interface{}{
 		"mek": hex.EncodeToString(defaultKey.MEK),
 		"b2": map[string]string{
-			"region":       s.config.B2Region,
-			"endpoint":     s.config.B2Endpoint,
-			"access_key":   s.config.B2AccessKeyID,
-			"secret_key":   s.config.B2SecretAccessKey,
-			"bucket":       s.config.Bucket,
+			"region":     s.config.B2Region,
+			"endpoint":   s.config.B2Endpoint,
+			"access_key": s.config.B2AccessKeyID,
+			"secret_key": s.config.B2SecretAccessKey,
+			"bucket":     s.config.Bucket,
 		},
 		"format":  "hex",
 		"warning": "This package provides access to all encrypted data. Store securely.",
@@ -1113,10 +1182,10 @@ func (s *Server) handleListCreds(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type CredInfo struct {
-		Name     string              `json:"name"`
-		ACLs     []acl.ACLEntry      `json:"acls"`
-		Source   string              `json:"source"`
-		LoadedAt time.Time           `json:"loaded_at"`
+		Name     string         `json:"name"`
+		ACLs     []acl.ACLEntry `json:"acls"`
+		Source   string         `json:"source"`
+		LoadedAt time.Time      `json:"loaded_at"`
 	}
 
 	creds := make([]CredInfo, 0, len(s.config.Credentials))
@@ -1229,10 +1298,10 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			}
 			accessKeyID = cred.AccessKey
 
-				// Store credential in request context for handler-level ACL checks
-				// This enables per-key ACL enforcement for operations like DeleteObjects
-				// where the keys to operate on are in the request body, not the URL.
-				r = r.WithContext(WithCredential(r.Context(), cred))
+			// Store credential in request context for handler-level ACL checks
+			// This enables per-key ACL enforcement for operations like DeleteObjects
+			// where the keys to operate on are in the request body, not the URL.
+			r = r.WithContext(WithCredential(r.Context(), cred))
 
 			// Check ACL for the request. For list operations the URL path has no
 			// key component, so fall back to the ?prefix query param so that ACL
@@ -1254,7 +1323,7 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 			authzResult = "allow"
-				s.metrics.IncRequestsByCredential(accessKeyID, verb, "allow")
+			s.metrics.IncRequestsByCredential(accessKeyID, verb, "allow")
 		}
 
 		// Decode aws-chunked body when MinIO streaming signature is used.
@@ -1823,10 +1892,10 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 		hmacOffset := blockIndex * crypto.HMACSize
 		if hmacOffset+crypto.HMACSize > len(hmacTable) {
 			s.logger.WithFields(map[string]interface{}{
-				"bucket":           token.Bucket,
-				"key":              token.Key,
-				"hmac_offset":      hmacOffset,
-				"hmac_table_size":  len(hmacTable),
+				"bucket":          token.Bucket,
+				"key":             token.Key,
+				"hmac_offset":     hmacOffset,
+				"hmac_table_size": len(hmacTable),
 			}).Error("share full object: HMAC table bounds check failed")
 			http.Error(w, "HMAC table bounds check failed", http.StatusInternalServerError)
 			return
@@ -1887,10 +1956,10 @@ func (s *Server) handleShareFullObject(w http.ResponseWriter, r *http.Request, t
 			if errors.As(err, &decompErr) {
 				// Log the corruption with metadata
 				s.logger.WithFields(map[string]interface{}{
-					"bucket":         token.Bucket,
-					"key":            token.Key,
+					"bucket":          token.Bucket,
+					"key":             token.Key,
 					"corruption_type": decompErr.Cause,
-					"error_type":     "client",
+					"error_type":      "client",
 				}).Warn("share full object: corrupted compressed data detected")
 
 				// Client-side data integrity issue: 400 Bad Request
@@ -2000,10 +2069,10 @@ func (s *Server) handleShareRangeRequest(w http.ResponseWriter, r *http.Request,
 
 	// Detect and log compression status
 	s.logger.WithFields(map[string]interface{}{
-		"bucket":            token.Bucket,
-		"key":               token.Key,
-		"range":             rangeHeader,
-		"compressed_meta":   armorMeta.Compressed,
+		"bucket":              token.Bucket,
+		"key":                 token.Key,
+		"range":               rangeHeader,
+		"compressed_meta":     armorMeta.Compressed,
 		"compressed_detected": isCompressed,
 	}).Debug("share/range request: compression status detected (post-decrypt)")
 

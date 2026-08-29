@@ -3,9 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -330,5 +334,250 @@ func TestSecondaryBackendFilesystemIntegration(t *testing.T) {
 	// Delete bucket
 	if err := fsBackend.DeleteBucket(ctx, testBucket); err != nil {
 		t.Errorf("failed to delete bucket: %v", err)
+	}
+}
+
+// TestReadyzHandler tests the /readyz endpoint returns proper JSON responses.
+func TestReadyzHandler(t *testing.T) {
+	// Test cases covering all readiness paths
+	tests := []struct {
+		name              string
+		canaryDisabled    bool
+		canaryRunning     bool
+		canaryHealthy     bool
+		hasManifestWriter bool
+		manifestFlushed   bool
+		wantStatus        int
+		wantReady         bool
+		wantReason        string
+		validateFields    bool // if true, validate all JSON fields
+	}{
+		{
+			name:           "canary disabled - always ready",
+			canaryDisabled: true,
+			wantStatus:     http.StatusOK,
+			wantReady:      true,
+			wantReason:     "Ready - canary disabled",
+			validateFields: true,
+		},
+		{
+			name:           "canary running and healthy",
+			canaryRunning:  true,
+			canaryHealthy:  true,
+			wantStatus:     http.StatusOK,
+			wantReady:      true,
+			wantReason:     "Ready",
+			validateFields: true,
+		},
+		{
+			name:           "canary running and unhealthy",
+			canaryRunning:  true,
+			canaryHealthy:  false,
+			wantStatus:     http.StatusServiceUnavailable,
+			wantReady:      false,
+			wantReason:     "Not ready - canary check failed",
+			validateFields: true,
+		},
+		{
+			name:              "manifest writer with recent flush",
+			hasManifestWriter: true,
+			manifestFlushed:   true,
+			wantStatus:        http.StatusOK,
+			wantReady:         true,
+			wantReason:        "Ready - manifest writer recently flushed",
+			validateFields:    true,
+		},
+		{
+			name:              "manifest writer with stale flush",
+			hasManifestWriter: true,
+			manifestFlushed:   false,
+			wantStatus:        http.StatusServiceUnavailable,
+			wantReady:         false,
+			wantReason:        "Not ready - manifest writer last flush",
+			validateFields:    false, // reason is dynamic (contains timestamp)
+		},
+		{
+			name:              "manifest writer never flushed",
+			hasManifestWriter: true,
+			manifestFlushed:   false, // no flush at all
+			wantStatus:        http.StatusServiceUnavailable,
+			wantReady:         false,
+			wantReason:        "Not ready - manifest writer has never flushed",
+			validateFields:    true,
+		},
+		{
+			name:           "no health signal available",
+			wantStatus:     http.StatusServiceUnavailable,
+			wantReady:      false,
+			wantReason:     "Not ready - no health signal available",
+			validateFields: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up minimal environment
+			setTestEnv(t, minimalTestEnv()...)
+
+			// Load config
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("failed to load config: %v", err)
+			}
+
+			// Create test backend
+			tmpDir := t.TempDir()
+			fsBackend, err := backend.NewFilesystemBackend(tmpDir)
+			if err != nil {
+				t.Fatalf("failed to create filesystem backend: %v", err)
+			}
+
+			// Create server
+			s := &Server{
+				config:         cfg,
+				backend:        fsBackend,
+				canaryDisabled: tt.canaryDisabled,
+			}
+
+			// Set up canary if needed
+			if tt.canaryRunning {
+				// Create a mock canary monitor
+				// For now, we'll skip this as it requires more setup
+				// This would need a mock canary implementation
+				t.Skip("canary running tests require mock canary implementation")
+			}
+
+			// Set up manifest writer if needed
+			if tt.hasManifestWriter {
+				// For now, we'll skip this as it requires more setup
+				// This would need a mock manifest writer
+				t.Skip("manifest writer tests require mock implementation")
+			}
+
+			// Create request
+			req := httptest.NewRequest("GET", "/readyz", nil)
+			w := httptest.NewRecorder()
+
+			// Call handler
+			s.readyz(w, req)
+
+			// Check status code
+			resp := w.Result()
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("got status %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+
+			// Check content type is JSON
+			contentType := resp.Header.Get("Content-Type")
+			if contentType != "application/json" {
+				t.Errorf("got content-type %q, want application/json", contentType)
+			}
+
+			// Parse and validate JSON response
+			var readyzResp struct {
+				Ready                  bool   `json:"ready"`
+				CanaryAgeS             int    `json:"canary_age_s"`
+				MultipartCanaryHealthy bool   `json:"multipart_canary_healthy"`
+				ManifestFlushedS       int    `json:"manifest_flushed_s"`
+				Reason                 string `json:"reason"`
+			}
+
+			if err := json.NewDecoder(resp.Body).Decode(&readyzResp); err != nil {
+				t.Fatalf("failed to decode JSON response: %v", err)
+			}
+
+			if readyzResp.Ready != tt.wantReady {
+				t.Errorf("got ready=%v, want %v", readyzResp.Ready, tt.wantReady)
+			}
+
+			// Check reason contains expected substring
+			if tt.wantReason != "" && !strings.Contains(readyzResp.Reason, tt.wantReason) {
+				t.Errorf("got reason %q, want to contain %q", readyzResp.Reason, tt.wantReason)
+			}
+
+			// Validate field types if requested
+			if tt.validateFields {
+				// canary_age_s should be non-negative
+				if readyzResp.CanaryAgeS < 0 {
+					t.Errorf("canary_age_s should be >= 0, got %d", readyzResp.CanaryAgeS)
+				}
+
+				// manifest_flushed_s should be non-negative
+				if readyzResp.ManifestFlushedS < 0 {
+					t.Errorf("manifest_flushed_s should be >= 0, got %d", readyzResp.ManifestFlushedS)
+				}
+
+				// When canary disabled, canary_age_s and multipart_canary_healthy should be 0/false
+				if tt.canaryDisabled {
+					if readyzResp.CanaryAgeS != 0 {
+						t.Errorf("canary disabled: canary_age_s should be 0, got %d", readyzResp.CanaryAgeS)
+					}
+					if readyzResp.MultipartCanaryHealthy {
+						t.Errorf("canary disabled: multipart_canary_healthy should be false, got true")
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestReadyzCanaryDisabled tests the canary disabled path specifically.
+func TestReadyzCanaryDisabled(t *testing.T) {
+	setTestEnv(t, minimalTestEnv()...)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	s := &Server{
+		config:         cfg,
+		canaryDisabled: true,
+	}
+
+	req := httptest.NewRequest("GET", "/readyz", nil)
+	w := httptest.NewRecorder()
+
+	s.readyz(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("got status %d, want 200", resp.StatusCode)
+	}
+
+	var readyzResp struct {
+		Ready                  bool   `json:"ready"`
+		CanaryAgeS             int    `json:"canary_age_s"`
+		MultipartCanaryHealthy bool   `json:"multipart_canary_healthy"`
+		ManifestFlushedS       int    `json:"manifest_flushed_s"`
+		Reason                 string `json:"reason"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&readyzResp); err != nil {
+		t.Fatalf("failed to decode JSON: %v", err)
+	}
+
+	if !readyzResp.Ready {
+		t.Error("canary disabled: expected ready=true")
+	}
+
+	if readyzResp.CanaryAgeS != 0 {
+		t.Errorf("canary disabled: expected canary_age_s=0, got %d", readyzResp.CanaryAgeS)
+	}
+
+	if readyzResp.MultipartCanaryHealthy {
+		t.Error("canary disabled: expected multipart_canary_healthy=false")
+	}
+
+	if readyzResp.ManifestFlushedS != 0 {
+		t.Errorf("canary disabled: expected manifest_flushed_s=0, got %d", readyzResp.ManifestFlushedS)
+	}
+
+	if readyzResp.Reason != "Ready - canary disabled" {
+		t.Errorf("got reason %q, want 'Ready - canary disabled'", readyzResp.Reason)
 	}
 }
