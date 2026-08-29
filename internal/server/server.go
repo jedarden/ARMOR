@@ -242,7 +242,7 @@ func New(cfg *config.Config) (*Server, error) {
 	serverBaseURL := "http://" + cfg.Listen
 
 	dash := dashboard.NewWithAuth(primaryBackend, cfg.Bucket, metrics.DefaultMetrics,
-		cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardToken, dashboardCred, serverBaseURL)
+		cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardToken, dashboardCred, serverBaseURL, cfg.PresignEnabled)
 
 	// Load manifest index from B2 (startup load).
 	// The manifest is a performance optimisation — errors are logged as warnings
@@ -634,6 +634,7 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/upload", s.dashboard.UploadHandlerWithAuth())
 		mux.HandleFunc("/dashboard/download", s.dashboard.DownloadHandlerWithAuth())
 		mux.HandleFunc("/dashboard/delete", s.dashboard.DeleteHandlerWithAuth())
+		mux.HandleFunc("/dashboard/presign", s.dashboard.PresignHandlerWithAuth(adminClient, adminURL))
 
 		// Key rotation proxy handler (authenticated).
 		// The dashboard proxies rotation to the admin API over loopback; it must

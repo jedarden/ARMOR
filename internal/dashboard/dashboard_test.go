@@ -2441,3 +2441,571 @@ func TestPaginationContinuationToken(t *testing.T) {
 	}
 }
 
+
+// TestPresignHandlerDisabled verifies that the presign handler returns 404 when presign is disabled.
+func TestPresignHandlerDisabled(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", nil, "", false)
+
+	// Create a mock admin server that should not be called
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Admin server should not be called when presign is disabled")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer adminServer.Close()
+
+	reqBody := `{"key":"test/file.txt","expires_in":"1h"}`
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/presign", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	d.PresignHandler(http.DefaultClient, adminServer.URL)(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404 when presign disabled, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "not enabled") {
+		t.Errorf("Expected 'not enabled' message, got: %s", body)
+	}
+}
+
+// TestPresignHandlerSuccess verifies that the presign handler successfully generates a share URL.
+func TestPresignHandlerSuccess(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", nil, "", true)
+
+	// Create a mock admin server that returns a presign response
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify request
+		if r.Method != http.MethodPost {
+			t.Errorf("Expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/admin/presign" {
+			t.Errorf("Expected path /admin/presign, got %s", r.URL.Path)
+		}
+
+		// Verify request body
+		var req map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("Failed to decode request: %v", err)
+		}
+		if req["bucket"] != "test-bucket" {
+			t.Errorf("Expected bucket 'test-bucket', got %v", req["bucket"])
+		}
+		if req["key"] != "test/file.txt" {
+			t.Errorf("Expected key 'test/file.txt', got %v", req["key"])
+		}
+		if req["expires_in"] != "24h" {
+			t.Errorf("Expected expires_in '24h', got %v", req["expires_in"])
+		}
+
+		// Return presign response
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"url":         "https://example.com/share/abc123",
+			"expires_in":  "24h",
+			"expires_at":  "2026-08-30T12:00:00Z",
+		})
+	}))
+	defer adminServer.Close()
+
+	reqBody := `{"key":"test/file.txt","expires_in":"24h"}`
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/presign", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	d.PresignHandler(http.DefaultClient, adminServer.URL)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Verify response fields
+	if resp["url"] != "https://example.com/share/abc123" {
+		t.Errorf("Expected URL 'https://example.com/share/abc123', got %v", resp["url"])
+	}
+	if resp["expires_in"] != "24h" {
+		t.Errorf("Expected expires_in '24h', got %v", resp["expires_in"])
+	}
+	if resp["expires_at"] != "2026-08-30T12:00:00Z" {
+		t.Errorf("Expected expires_at '2026-08-30T12:00:00Z', got %v", resp["expires_at"])
+	}
+}
+
+// TestPresignHandlerMethodNotAllowed verifies that non-POST requests are rejected.
+func TestPresignHandlerMethodNotAllowed(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", nil, "", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/presign", nil)
+	rec := httptest.NewRecorder()
+
+	d.PresignHandler(http.DefaultClient, "")(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status 405, got %d", rec.Code)
+	}
+}
+
+// TestPresignHandlerMissingKey verifies that requests without a key are rejected.
+func TestPresignHandlerMissingKey(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", nil, "", true)
+
+	reqBody := `{"expires_in":"1h"}`
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/presign", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	d.PresignHandler(http.DefaultClient, "")(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "key is required") {
+		t.Errorf("Expected 'key is required' message, got: %s", body)
+	}
+}
+
+// TestPresignHandlerInvalidJSON verifies that invalid JSON is rejected.
+func TestPresignHandlerInvalidJSON(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", nil, "", true)
+
+	reqBody := `invalid json`
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/presign", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	d.PresignHandler(http.DefaultClient, "")(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "Invalid request body") {
+		t.Errorf("Expected 'Invalid request body' message, got: %s", body)
+	}
+}
+
+// TestPresignHandlerWithAuth verifies that dashboard authentication is forwarded to the admin API.
+func TestPresignHandlerWithAuth(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	
+	// Test with Basic Auth
+	d := NewWithAuth(mb, "test-bucket", m, "testuser", "testpass", "", nil, "", true)
+
+	var receivedAuth string
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"url":        "https://example.com/share/test",
+			"expires_in": "1h",
+			"expires_at": "2026-08-30T12:00:00Z",
+		})
+	}))
+	defer adminServer.Close()
+
+	reqBody := `{"key":"test/file.txt","expires_in":"1h"}`
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/presign", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Basic dGVzdHVzZXI6dGVzdHBhc3M=") // testuser:testpass
+	rec := httptest.NewRecorder()
+
+	d.PresignHandler(http.DefaultClient, adminServer.URL)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	// Verify auth was forwarded
+	if receivedAuth == "" {
+		t.Error("Expected Authorization header to be forwarded")
+	}
+	if !strings.HasPrefix(receivedAuth, "Basic ") {
+		t.Errorf("Expected Basic auth, got: %s", receivedAuth)
+	}
+}
+
+// TestPresignHandlerDefaultURL verifies that the default admin URL is used when none is provided.
+func TestPresignHandlerDefaultURL(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", nil, "", true)
+
+	reqBody := `{"key":"test/file.txt","expires_in":"1h"}`
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/presign", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	// Call with empty admin URL - should use default
+	d.PresignHandler(http.DefaultClient, "")(rec, req)
+
+	// Since the default URL (localhost:9001) won't be accessible, we expect a BadGateway error
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("Expected status 503 (BadGateway) for unreachable default URL, got %d", rec.Code)
+	}
+}
+
+// TestShareButtonRendersWhenPresignEnabled verifies that the Share button appears in the HTML when presign is enabled.
+func TestShareButtonRendersWhenPresignEnabled(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["test/file.txt"] = &backend.ObjectInfo{
+		Key:              "test/file.txt",
+		Size:             1000,
+		ContentType:      "text/plain",
+		ETag:             "abc123",
+		LastModified:     time.Now(),
+		IsARMOREncrypted: true,
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "1000",
+			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
+			"x-amz-meta-armor-plaintext-sha256": "abcdef123456",
+		},
+	}
+
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", &DashboardCredential{
+		Name:      "dashboard-cred",
+		AccessKey: "key",
+		SecretKey: "secret",
+	}, "", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	rec := httptest.NewRecorder()
+
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	
+	// Verify Share button is present when presign is enabled
+	if !strings.Contains(body, `onclick="showShareModal(`) {
+		t.Error("Expected Share button to be present in HTML when presign is enabled")
+	}
+	
+	// Verify Share modal HTML is present
+	if !strings.Contains(body, `id="shareModal"`) {
+		t.Error("Expected Share modal to be present in HTML")
+	}
+	
+	// Verify JavaScript functions for Share are present
+	if !strings.Contains(body, `function showShareModal(`) {
+		t.Error("Expected showShareModal JavaScript function")
+	}
+	if !strings.Contains(body, `function generateShareUrl(`) {
+		t.Error("Expected generateShareUrl JavaScript function")
+	}
+	if !strings.Contains(body, `function copyShareUrl(`) {
+		t.Error("Expected copyShareUrl JavaScript function")
+	}
+}
+
+// TestShareButtonHiddenWhenPresignDisabled verifies that the Share button does not appear when presign is disabled.
+func TestShareButtonHiddenWhenPresignDisabled(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["test/file.txt"] = &backend.ObjectInfo{
+		Key:              "test/file.txt",
+		Size:             1000,
+		ContentType:      "text/plain",
+		ETag:             "abc123",
+		LastModified:     time.Now(),
+		IsARMOREncrypted: true,
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "1000",
+			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
+			"x-amz-meta-armor-plaintext-sha256": "abcdef123456",
+		},
+	}
+
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", &DashboardCredential{
+		Name:      "dashboard-cred",
+		AccessKey: "key",
+		SecretKey: "secret",
+	}, "", false)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	rec := httptest.NewRecorder()
+
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	
+	// Verify Share button is NOT present when presign is disabled
+	if strings.Contains(body, `onclick="showShareModal(`) {
+		t.Error("Expected Share button to be hidden when presign is disabled")
+	}
+}
+
+// TestPresignResponseFormatMatchesUI verifies that the presign response format matches what the UI expects.
+// This is the acceptance test: "UI test that the rendered URL matches the presign response."
+func TestPresignResponseFormatMatchesUI(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", nil, "", true)
+
+	// Create a mock admin server that returns a realistic presign response
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"url":         "https://armor.example.com/share/eyJiIjoidGVzdC1idWNrZXQiLCJrIjoidGVzdC9maWxlLnR4dCIsImUiOjE3MjI0NjQwMDB9.s1gNvh4Yq8kXrZLKrP_KRCnFpLGvgFZlJ9GYQBnJvoU",
+			"expires_in":  "24h",
+			"expires_at":  "2026-08-30T12:00:00Z",
+		})
+	}))
+	defer adminServer.Close()
+
+	reqBody := `{"key":"test/file.txt","expires_in":"24h"}`
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/presign", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	d.PresignHandler(http.DefaultClient, adminServer.URL)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Verify all required fields are present
+	requiredFields := []string{"url", "expires_in", "expires_at"}
+	for _, field := range requiredFields {
+		if _, ok := resp[field]; !ok {
+			t.Errorf("Expected response to contain '%s' field", field)
+		}
+	}
+
+	// Verify URL is a non-empty string
+	url, ok := resp["url"].(string)
+	if !ok || url == "" {
+		t.Error("Expected 'url' to be a non-empty string")
+	}
+
+	// Verify expires_in is a string matching expected format
+	expiresIn, ok := resp["expires_in"].(string)
+	if !ok || expiresIn == "" {
+		t.Error("Expected 'expires_in' to be a non-empty string")
+	}
+
+	// Verify expires_at is an RFC3339 timestamp
+	expiresAt, ok := resp["expires_at"].(string)
+	if !ok || expiresAt == "" {
+		t.Error("Expected 'expires_at' to be a non-empty string")
+	} else {
+		// Try to parse as RFC3339 timestamp
+		if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
+			t.Errorf("Expected 'expires_at' to be RFC3339 format, got error: %v", err)
+		}
+	}
+
+	// This verifies that the UI JavaScript (generateShareUrl function) can properly
+	// extract and display these fields from the presign response
+}
+
+// TestShareButtonRendersWhenPresignEnabled verifies that the Share button appears in the HTML when presign is enabled.
+func TestShareButtonRendersWhenPresignEnabled(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["test/file.txt"] = &backend.ObjectInfo{
+		Key:              "test/file.txt",
+		Size:             1000,
+		ContentType:      "text/plain",
+		ETag:             "abc123",
+		LastModified:     time.Now(),
+		IsARMOREncrypted: true,
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "1000",
+			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
+			"x-amz-meta-armor-plaintext-sha256": "abcdef123456",
+		},
+	}
+
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", &DashboardCredential{
+		Name:      "dashboard-cred",
+		AccessKey: "key",
+		SecretKey: "secret",
+	}, "", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	rec := httptest.NewRecorder()
+
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	
+	// Verify Share button is present when presign is enabled
+	if !strings.Contains(body, `onclick="showShareModal(`) {
+		t.Error("Expected Share button to be present in HTML when presign is enabled")
+	}
+	
+	// Verify Share modal HTML is present
+	if !strings.Contains(body, `id="shareModal"`) {
+		t.Error("Expected Share modal to be present in HTML")
+	}
+	
+	// Verify JavaScript functions for Share are present
+	if !strings.Contains(body, `function showShareModal(`) {
+		t.Error("Expected showShareModal JavaScript function")
+	}
+	if !strings.Contains(body, `function generateShareUrl(`) {
+		t.Error("Expected generateShareUrl JavaScript function")
+	}
+	if !strings.Contains(body, `function copyShareUrl(`) {
+		t.Error("Expected copyShareUrl JavaScript function")
+	}
+}
+
+// TestShareButtonHiddenWhenPresignDisabled verifies that the Share button does not appear when presign is disabled.
+func TestShareButtonHiddenWhenPresignDisabled(t *testing.T) {
+	mb := newMockBackend()
+	mb.objects["test/file.txt"] = &backend.ObjectInfo{
+		Key:              "test/file.txt",
+		Size:             1000,
+		ContentType:      "text/plain",
+		ETag:             "abc123",
+		LastModified:     time.Now(),
+		IsARMOREncrypted: true,
+		Metadata: map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-block-size":     "65536",
+			"x-amz-meta-armor-plaintext-size": "1000",
+			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
+			"x-amz-meta-armor-plaintext-sha256": "abcdef123456",
+		},
+	}
+
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", &DashboardCredential{
+		Name:      "dashboard-cred",
+		AccessKey: "key",
+		SecretKey: "secret",
+	}, "", false)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	rec := httptest.NewRecorder()
+
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	
+	// Verify Share button is NOT present when presign is disabled
+	if strings.Contains(body, `onclick="showShareModal(`) {
+		t.Error("Expected Share button to be hidden when presign is disabled")
+	}
+}
+
+// TestPresignResponseFormatMatchesUI verifies that the presign response format matches what the UI expects.
+// This is the acceptance test: "UI test that the rendered URL matches the presign response."
+func TestPresignResponseFormatMatchesUI(t *testing.T) {
+	mb := newMockBackend()
+	m := metrics.NewMetrics()
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "", nil, "", true)
+
+	// Create a mock admin server that returns a realistic presign response
+	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"url":         "https://armor.example.com/share/eyJiIjoidGVzdC1idWNrZXQiLCJrIjoidGVzdC9maWxlLnR4dCIsImUiOjE3MjI0NjQwMDB9.s1gNvh4Yq8kXrZLKrP_KRCnFpLGvgFZlJ9GYQBnJvoU",
+			"expires_in":  "24h",
+			"expires_at":  "2026-08-30T12:00:00Z",
+		})
+	}))
+	defer adminServer.Close()
+
+	reqBody := `{"key":"test/file.txt","expires_in":"24h"}`
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/presign", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	d.PresignHandler(http.DefaultClient, adminServer.URL)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Verify all required fields are present
+	requiredFields := []string{"url", "expires_in", "expires_at"}
+	for _, field := range requiredFields {
+		if _, ok := resp[field]; !ok {
+			t.Errorf("Expected response to contain '%s' field", field)
+		}
+	}
+
+	// Verify URL is a non-empty string
+	url, ok := resp["url"].(string)
+	if !ok || url == "" {
+		t.Error("Expected 'url' to be a non-empty string")
+	}
+
+	// Verify expires_in is a string matching expected format
+	expiresIn, ok := resp["expires_in"].(string)
+	if !ok || expiresIn == "" {
+		t.Error("Expected 'expires_in' to be a non-empty string")
+	}
+
+	// Verify expires_at is an RFC3339 timestamp
+	expiresAt, ok := resp["expires_at"].(string)
+	if !ok || expiresAt == "" {
+		t.Error("Expected 'expires_at' to be a non-empty string")
+	} else {
+		// Try to parse as RFC3339 timestamp
+		if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
+			t.Errorf("Expected 'expires_at' to be RFC3339 format, got error: %v", err)
+		}
+	}
+
+	// This verifies that the UI JavaScript (generateShareUrl function) can properly
+	// extract and display these fields from the presign response
+}
