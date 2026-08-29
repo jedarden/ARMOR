@@ -181,7 +181,6 @@ ARMOR is configured via environment variables:
 | `ARMOR_COMPRESS_RULES` | No | — | Comma-separated compression rules: `<suffix>|<content-type>=zstd|none`. First match wins. Examples: `.jsonl=zstd,.wal=zstd,application/json=zstd,*=none`. Per-request override via `x-amz-meta-armor-compress: true|false` header. Only applies to v3 single-PUT format. See ADR-007. |
 | `ARMOR_READ_CONCURRENCY` | No | `16` | Maximum concurrent ranged reads |
 | `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID |
-| `ARMOR_READYZ_CACHE_TTL` | No | `30` | Seconds to cache backend connectivity in `/readyz` |
 | `ARMOR_DASHBOARD_USER` | No | — | Dashboard HTTP Basic Auth username |
 | `ARMOR_DASHBOARD_PASS` | No | — | Dashboard HTTP Basic Auth password |
 | `ARMOR_DASHBOARD_TOKEN` | No | — | Dashboard Bearer token |

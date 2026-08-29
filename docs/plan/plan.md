@@ -1429,7 +1429,7 @@ not have) are deleted; example/stub code compiled into non-test packages
 `error_pattern_usage_example.go`) moves under `_test.go`; one-off
 investigation scripts move to `scripts/archive/` and `scripts/README.md`
 documents every remaining script; `/readyz` returns JSON
-`{ready, canary_age_s, multipart_canary_healthy, manifest_flushed_s}` and
+`{ready, canary_age_s, multipart_canary_healthy, manifest_flushed_s, reason}` and
 the dead `ARMOR_READYZ_CACHE_TTL` is removed from config and docs; the
 second credential scheme in `internal/backend/secondary_config.go`
 (`B2_ENDPOINT`/`B2_KEY_ID`/`B2_KEY`/`B2_BUCKET`) is renamed under
