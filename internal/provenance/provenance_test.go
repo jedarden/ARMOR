@@ -1233,3 +1233,146 @@ func TestChainHeadFormatDetection(t *testing.T) {
 	}
 }
 
+// TestCompactLegacyChain tests compaction of legacy chain entries into segments.
+// This test creates 1,000 entries, compacts them, and verifies the audit can read from the segment.
+func TestCompactLegacyChain(t *testing.T) {
+	ctx := context.Background()
+	backend := newMockBackend()
+	manager := NewManager(backend, "test-bucket", "test-writer")
+
+	// Create 1,000 legacy chain entries
+	const numEntries = 1000
+	prevHash := InitialChainHash
+
+	for i := int64(1); i <= numEntries; i++ {
+		// Create and save a chain entry
+		entry := &Entry{
+			Sequence:        i,
+			ObjectKey:       fmt.Sprintf("object-%04d.txt", i),
+			PlaintextSHA256: fmt.Sprintf("%064x", i),
+			PrevChainHash:   prevHash,
+			Timestamp:       time.Now().UTC(),
+			WriterID:        "test-writer",
+			Operation:       "put",
+		}
+
+		// Compute chain hash
+		entry.ChainHash = computeChainHash(entry, prevHash)
+		prevHash = entry.ChainHash
+
+		// Save as a legacy entry (individual JSON file)
+		key := fmt.Sprintf("%s%s/%d.json", ChainPrefix, "test-writer", i)
+		data, err := json.MarshalIndent(entry, "", "  ")
+		if err != nil {
+			t.Fatalf("failed to marshal entry %d: %v", i, err)
+		}
+
+		if err := backend.Put(ctx, "test-bucket", key, bytes.NewReader(data), int64(len(data)), map[string]string{
+			"Content-Type": "application/json",
+		}); err != nil {
+			t.Fatalf("failed to save entry %d: %v", i, err)
+		}
+	}
+
+	// Create chain head
+	head := &ChainHead{
+		WriterID:  "test-writer",
+		Sequence:  numEntries,
+		ChainHash: prevHash,
+		Updated:   time.Now().UTC(),
+	}
+	headKey := fmt.Sprintf("%s%s", ChainHeadPrefix, "test-writer")
+	headData, err := json.MarshalIndent(head, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal head: %v", err)
+	}
+	if err := backend.Put(ctx, "test-bucket", headKey, bytes.NewReader(headData), int64(len(headData)), map[string]string{
+		"Content-Type": "application/json",
+	}); err != nil {
+		t.Fatalf("failed to save head: %v", err)
+	}
+
+	// Perform compaction
+	result, err := manager.CompactLegacyChain(ctx, "test-writer")
+	if err != nil {
+		t.Fatalf("CompactLegacyChain failed: %v", err)
+	}
+
+	// Verify compaction result
+	if result.EntryCount != numEntries {
+		t.Errorf("expected %d entries, got %d", numEntries, result.EntryCount)
+	}
+	if result.FromSequence != 1 {
+		t.Errorf("expected FromSequence 1, got %d", result.FromSequence)
+	}
+	if result.ToSequence != numEntries {
+		t.Errorf("expected ToSequence %d, got %d", numEntries, result.ToSequence)
+	}
+	expectedPath := fmt.Sprintf("%s%s/%010d-%010d.jsonl", ChainSegmentPrefix, "test-writer", 1, numEntries)
+	if result.SegmentPath != expectedPath {
+		t.Errorf("expected segment path %s, got %s", expectedPath, result.SegmentPath)
+	}
+
+	// Verify the segment file exists
+	segmentData, ok := backend.objects["test-bucket/"+result.SegmentPath]
+	if !ok {
+		t.Fatalf("segment file not found at %s", result.SegmentPath)
+	}
+
+	// Parse the segment and verify it's valid JSONL
+	lines := strings.Split(string(segmentData), "\n")
+	if len(lines) != numEntries+1 { // +1 because of trailing newline
+		t.Errorf("expected %d lines in segment, got %d", numEntries+1, len(lines))
+	}
+
+	// Verify each line can be parsed as a valid Entry
+	for i, line := range lines[:numEntries] {
+		var entry Entry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Errorf("failed to parse line %d: %v", i, err)
+		}
+		if entry.Sequence != int64(i+1) {
+			t.Errorf("expected sequence %d at line %d, got %d", i+1, i, entry.Sequence)
+		}
+	}
+
+	// Run audit and verify it can read from the segment
+	auditor := NewAuditor(backend, "test-bucket")
+	auditResult, err := auditor.Audit(ctx)
+	if err != nil {
+		t.Fatalf("audit failed: %v", err)
+	}
+
+	if auditResult.Status != "valid" {
+		t.Errorf("expected valid audit, got %s: %+v", auditResult.Status, auditResult.Errors)
+	}
+
+	if len(auditResult.Writers) != 1 {
+		t.Fatalf("expected 1 writer, got %d", len(auditResult.Writers))
+	}
+
+	writerAudit := auditResult.Writers[0]
+	if writerAudit.WriterID != "test-writer" {
+		t.Errorf("expected writer ID test-writer, got %s", writerAudit.WriterID)
+	}
+	if writerAudit.EntriesVerified != numEntries {
+		t.Errorf("expected %d entries verified, got %d", numEntries, writerAudit.EntriesVerified)
+	}
+	if !writerAudit.Valid {
+		t.Errorf("expected valid audit for writer, got error: %s", writerAudit.Error)
+	}
+
+	// Verify the audit correctly tracked all objects
+	if auditResult.TotalEntries != numEntries {
+		t.Errorf("expected %d total entries, got %d", numEntries, auditResult.TotalEntries)
+	}
+
+	// Verify that the original chain entries still exist (compaction should NOT delete)
+	for i := int64(1); i <= numEntries; i++ {
+		key := fmt.Sprintf("%s%s/%d.json", ChainPrefix, "test-writer", i)
+		if _, ok := backend.objects["test-bucket/"+key]; !ok {
+			t.Errorf("original chain entry %s was deleted (should be preserved)", key)
+		}
+	}
+}
+

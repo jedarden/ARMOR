@@ -602,6 +602,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/key/export", s.exportKey)
 	mux.HandleFunc("/admin/format/migrate", s.migrateFormat) // POST=start migration, GET=progress
 	mux.HandleFunc("/admin/creds", s.handleListCreds)        // GET=list credentials
+	mux.HandleFunc("/admin/provenance/compact", s.handleProvenanceCompact)
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
 	mux.HandleFunc("/admin/presign", s.handlePresign)
@@ -1245,6 +1246,48 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(result)
+}
+
+// handleProvenanceCompact handles legacy chain compaction requests.
+// POST /admin/provenance/compact?writer=<writer-id>
+func (s *Server) handleProvenanceCompact(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Extract writer ID from query parameter
+	writerID := r.URL.Query().Get("writer")
+	if writerID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "error",
+			"error":  "writer parameter is required",
+		})
+		return
+	}
+
+	// Create a provenance manager for this writer
+	provMgr := provenance.NewManager(s.backend, s.config.Bucket, writerID)
+
+	// Perform compaction
+	result, err := provMgr.CompactLegacyChain(r.Context(), writerID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "success",
+		"result": result,
+	})
 }
 
 // wrapHandler wraps a handler with common middleware.

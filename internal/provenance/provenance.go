@@ -29,6 +29,9 @@ const (
 	// ChainHeadPrefix is the prefix for chain head objects in B2
 	ChainHeadPrefix = ".armor/chain-head/"
 
+	// ChainSegmentPrefix is the prefix for chain segment files
+	ChainSegmentPrefix = ".armor/chain-segments/"
+
 	// InitialChainHash is the zero value for the first chain entry
 	InitialChainHash = "0000000000000000000000000000000000000000000000000000000000000000"
 )
@@ -131,6 +134,24 @@ type ChainHead struct {
 
 	// Updated is when the head was last updated (legacy format only)
 	Updated time.Time `json:"updated,omitempty"`
+}
+
+// CompactResult represents the result of a chain compaction operation.
+type CompactResult struct {
+	// SegmentPath is the path to the created segment file
+	SegmentPath string `json:"segment_path"`
+
+	// FromSequence is the first sequence in the segment
+	FromSequence int64 `json:"from_sequence"`
+
+	// ToSequence is the last sequence in the segment
+	ToSequence int64 `json:"to_sequence"`
+
+	// EntryCount is the number of entries in the segment
+	EntryCount int `json:"entry_count"`
+
+	// KeyEventCount is the number of key events in the segment
+	KeyEventCount int `json:"key_event_count"`
 }
 
 // Manager handles provenance chain operations.
@@ -536,6 +557,257 @@ func (m *Manager) loadHead(ctx context.Context) (*ChainHead, error) {
 	}
 
 	return &head, nil
+}
+
+// CompactLegacyChain compacts legacy chain entries into a segment file.
+// It reads all .armor/chain/<writer>/*.json entries in sequence order,
+// writes them to .armor/chain-segments/<writer>/<from>-<to>.jsonl,
+// verifies the segment, and returns the result. Original entries are NOT deleted.
+func (m *Manager) CompactLegacyChain(ctx context.Context, writerID string) (*CompactResult, error) {
+	// List all legacy chain entries for this writer
+	prefix := ChainPrefix + writerID + "/"
+	keys, err := m.listChainEntries(ctx, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list chain entries: %w", err)
+	}
+
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no legacy chain entries found for writer %s", writerID)
+	}
+
+	// Parse sequence numbers and sort
+	sequences := make([]int64, 0, len(keys))
+	keyBySeq := make(map[int64]string)
+	for _, key := range keys {
+		_, seq, err := parseChainEntryKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse entry key %s: %w", key, err)
+		}
+		sequences = append(sequences, seq)
+		keyBySeq[seq] = key
+	}
+	sort.Slice(sequences, func(i, j int) bool {
+		return sequences[i] < sequences[j]
+	})
+
+	fromSeq := sequences[0]
+	toSeq := sequences[len(sequences)-1]
+
+	// Read all entries in sequence order
+	entries := make([]interface{}, len(sequences))
+	keyEventCount := 0
+	for i, seq := range sequences {
+		key := keyBySeq[seq]
+		entry, isKeyEvent, err := m.readChainEntry(ctx, key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read entry %s: %w", key, err)
+		}
+		entries[i] = entry
+		if isKeyEvent {
+			keyEventCount++
+		}
+	}
+
+	// Write segment file
+	segmentPath := fmt.Sprintf("%s%s/%010d-%010d.jsonl", ChainSegmentPrefix, writerID, fromSeq, toSeq)
+	if err := m.writeSegmentFile(ctx, segmentPath, entries); err != nil {
+		return nil, fmt.Errorf("failed to write segment file: %w", err)
+	}
+
+	// Verify the segment by re-reading it
+	if err := m.verifySegmentFile(ctx, segmentPath, entries); err != nil {
+		return nil, fmt.Errorf("segment verification failed: %w", err)
+	}
+
+	return &CompactResult{
+		SegmentPath:    segmentPath,
+		FromSequence:   fromSeq,
+		ToSequence:     toSeq,
+		EntryCount:     len(entries),
+		KeyEventCount:  keyEventCount,
+	}, nil
+}
+
+// listChainEntries lists all legacy chain entry keys for a writer.
+func (m *Manager) listChainEntries(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	continuationToken := ""
+
+	for {
+		result, err := m.backend.List(ctx, m.bucket, prefix, "", continuationToken, 1000)
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			return nil, fmt.Errorf("backend returned a nil listing for prefix %q", prefix)
+		}
+
+		for _, obj := range result.Objects {
+			if strings.HasSuffix(obj.Key, ".json") {
+				keys = append(keys, obj.Key)
+			}
+		}
+
+		if !result.IsTruncated {
+			break
+		}
+		if result.NextToken == "" || result.NextToken == continuationToken {
+			return nil, fmt.Errorf("backend returned a truncated listing without a usable continuation token")
+		}
+		continuationToken = result.NextToken
+	}
+
+	sort.Strings(keys)
+	return keys, nil
+}
+
+// readChainEntry reads a single chain entry and returns it as an interface{}.
+// Returns (entry, isKeyEvent, error).
+func (m *Manager) readChainEntry(ctx context.Context, key string) (interface{}, bool, error) {
+	body, _, err := m.backend.GetDirect(ctx, m.bucket, key)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get entry: %w", err)
+	}
+	defer body.Close()
+
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to read entry: %w", err)
+	}
+
+	// Try to determine the type by checking for specific fields
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err != nil {
+		return nil, false, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	_, hasObjectKey := rawMap["object_key"]
+	_, hasEventType := rawMap["event_type"]
+
+	if hasObjectKey && !hasEventType {
+		// Regular Entry
+		var entry Entry
+		if err := json.Unmarshal(data, &entry); err != nil {
+			return nil, false, fmt.Errorf("failed to parse entry: %w", err)
+		}
+		return &entry, false, nil
+	} else if hasEventType && !hasObjectKey {
+		// KeyEvent
+		var event KeyEvent
+		if err := json.Unmarshal(data, &event); err != nil {
+			return nil, false, fmt.Errorf("failed to parse key event: %w", err)
+		}
+		return &event, true, nil
+	}
+
+	return nil, false, fmt.Errorf("ambiguous or unknown entry type")
+}
+
+// writeSegmentFile writes entries to a segment file as JSONL.
+func (m *Manager) writeSegmentFile(ctx context.Context, path string, entries []interface{}) error {
+	var buf bytes.Buffer
+
+	for _, entry := range entries {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			return fmt.Errorf("failed to marshal entry: %w", err)
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+
+	data := buf.Bytes()
+	if err := m.backend.Put(ctx, m.bucket, path, bytes.NewReader(data), int64(len(data)), map[string]string{
+		"Content-Type": "application/jsonl",
+	}); err != nil {
+		return fmt.Errorf("failed to put segment file: %w", err)
+	}
+
+	return nil
+}
+
+// verifySegmentFile re-reads a segment file and verifies all hash links.
+func (m *Manager) verifySegmentFile(ctx context.Context, path string, expectedEntries []interface{}) error {
+	body, _, err := m.backend.GetDirect(ctx, m.bucket, path)
+	if err != nil {
+		return fmt.Errorf("failed to get segment file: %w", err)
+	}
+	defer body.Close()
+
+	// Read and parse all entries from the segment
+	var entries []interface{}
+	scanner := newJSONLScanner(body)
+	for scanner.Scan() {
+		var rawMap map[string]json.RawMessage
+		if err := json.Unmarshal(scanner.Bytes(), &rawMap); err != nil {
+			return fmt.Errorf("failed to parse JSON: %w", err)
+		}
+
+		_, hasObjectKey := rawMap["object_key"]
+		_, hasEventType := rawMap["event_type"]
+
+		if hasObjectKey && !hasEventType {
+			var entry Entry
+			if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+				return fmt.Errorf("failed to parse entry: %w", err)
+			}
+			entries = append(entries, &entry)
+		} else if hasEventType && !hasObjectKey {
+			var event KeyEvent
+			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+				return fmt.Errorf("failed to parse key event: %w", err)
+			}
+			entries = append(entries, &event)
+		} else {
+			return fmt.Errorf("ambiguous or unknown entry type")
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading segment: %w", err)
+	}
+
+	// Verify we have the same number of entries
+	if len(entries) != len(expectedEntries) {
+		return fmt.Errorf("entry count mismatch: got %d, expected %d", len(entries), len(expectedEntries))
+	}
+
+	// Verify each entry matches
+	for i, entry := range entries {
+		expectedEntry := expectedEntries[i]
+
+		switch e := entry.(type) {
+		case *Entry:
+			expected, ok := expectedEntry.(*Entry)
+			if !ok {
+				return fmt.Errorf("type mismatch at entry %d", i)
+			}
+			if e.Sequence != expected.Sequence ||
+				e.ObjectKey != expected.ObjectKey ||
+				e.PlaintextSHA256 != expected.PlaintextSHA256 ||
+				e.ChainHash != expected.ChainHash ||
+				e.PrevChainHash != expected.PrevChainHash ||
+				e.WriterID != expected.WriterID ||
+				e.Operation != expected.Operation {
+				return fmt.Errorf("entry mismatch at sequence %d", e.Sequence)
+			}
+
+		case *KeyEvent:
+			expected, ok := expectedEntry.(*KeyEvent)
+			if !ok {
+				return fmt.Errorf("type mismatch at entry %d", i)
+			}
+			if e.Sequence != expected.Sequence ||
+				e.EventType != expected.EventType ||
+				e.ChainHash != expected.ChainHash ||
+				e.PrevChainHash != expected.PrevChainHash ||
+				e.WriterID != expected.WriterID {
+				return fmt.Errorf("key event mismatch at sequence %d", e.Sequence)
+			}
+		}
+	}
+
+	return nil
 }
 
 // AuditResult contains the result of a provenance chain audit.
