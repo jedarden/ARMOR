@@ -138,8 +138,8 @@ armor_replication_dropped_total 0
 
 ### `armor_requests_by_label`
 
-**Type:** Counter  
-**Description:** Total number of requests by operation and status class  
+**Type:** Counter
+**Description:** Total number of requests by operation and status class
 **Labels:** `key` — Combined operation and status class (e.g., "GET_2xx", "PUT_4xx")
 
 **Example Output:**
@@ -150,6 +150,58 @@ armor_requests_by_label{key="GET_2xx"} 1234
 armor_requests_by_label{key="PUT_2xx"} 567
 armor_requests_by_label{key="GET_4xx"} 12
 armor_requests_by_label{key="DELETE_5xx"} 3
+```
+
+### `armor_request_duration_ms`
+
+**Type:** Histogram
+**Description:** Request duration in milliseconds
+**Labels:** `operation` — S3 operation name (e.g., "PutObject", "GetObject", "ListObjectsV2")
+
+**Buckets:** Fixed buckets at `[5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]` milliseconds, plus `+Inf`
+
+**Example Output:**
+```
+# HELP armor_request_duration_ms Request duration in milliseconds
+# TYPE armor_request_duration_ms histogram
+armor_request_duration_ms_bucket{operation="PutObject",le="5"} 0
+armor_request_duration_ms_bucket{operation="PutObject",le="10"} 2
+armor_request_duration_ms_bucket{operation="PutObject",le="25"} 5
+armor_request_duration_ms_bucket{operation="PutObject",le="50"} 8
+armor_request_duration_ms_bucket{operation="PutObject",le="100"} 12
+armor_request_duration_ms_bucket{operation="PutObject",le="250"} 15
+armor_request_duration_ms_bucket{operation="PutObject",le="500"} 17
+armor_request_duration_ms_bucket{operation="PutObject",le="1000"} 19
+armor_request_duration_ms_bucket{operation="PutObject",le="2500"} 20
+armor_request_duration_ms_bucket{operation="PutObject",le="5000"} 20
+armor_request_duration_ms_bucket{operation="PutObject",le="10000"} 20
+armor_request_duration_ms_bucket{operation="PutObject",le="+Inf"} 20
+armor_request_duration_ms_sum{operation="PutObject"} 4500
+armor_request_duration_ms_count{operation="PutObject"} 20
+```
+
+**Grafana Dashboard Query:**
+```promql
+# 95th percentile latency by operation
+histogram_quantile(0.95, sum(rate(armor_request_duration_ms_bucket[5m])) by (le, operation))
+
+# Average latency by operation
+sum(rate(armor_request_duration_ms_sum[5m])) by (operation) / sum(rate(armor_request_duration_ms_count[5m])) by (operation)
+
+# Request rate by operation
+sum(rate(armor_request_duration_ms_count[5m])) by (operation)
+```
+
+**Alerting Example (Prometheus):**
+```yaml
+- alert: ARMORHighLatency
+  expr: histogram_quantile(0.95, sum(rate(armor_request_duration_ms_bucket[5m])) by (le, operation)) > 1000
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "ARMOR high latency detected"
+    description: "95th percentile latency for {{ $labels.operation }} is {{ $value }}ms"
 ```
 
 ### `armor_bytes_uploaded_total`
