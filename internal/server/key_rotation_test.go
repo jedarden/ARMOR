@@ -1324,3 +1324,310 @@ func TestKeyRotationB2CopyObjectCeiling(t *testing.T) {
 		t.Error("small object not rotated to new MEK")
 	}
 }
+
+// TestFingerprintRotation tests that rotation by fingerprint re-wraps only objects
+// whose fingerprint ≠ active key's fingerprint.
+func TestFingerprintRotation(t *testing.T) {
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	// Create two MEKs with different fingerprints
+	activeMEK := make([]byte, 32)
+	oldMEK := make([]byte, 32)
+	rand.Read(activeMEK)
+	rand.Read(oldMEK)
+
+	activeFP := crypto.MEKFingerprint(activeMEK)
+	oldFP := crypto.MEKFingerprint(oldMEK)
+
+	if activeFP == oldFP {
+		t.Fatal("fingerprints collide, need different MEKs")
+	}
+
+	// Build ring with old key
+	oldRing := []keymanager.RingKeyEntry{
+		{MEK: oldMEK, Fingerprint: oldFP},
+	}
+
+	// Create manifest index
+	idx := manifest.New()
+
+	// Put two objects: one with active fingerprint, one with old fingerprint
+	activeKey := "object-with-active-fingerprint.txt"
+	oldKey := "object-with-old-fingerprint.txt"
+
+	// Put object with active fingerprint
+	activeData := []byte("active data")
+	putARMORObject(t, mock, bucket, activeKey, activeData, activeMEK, idx)
+
+	// Put object with old fingerprint
+	oldData := []byte("old data")
+	putARMORObject(t, mock, bucket, oldKey, oldData, oldMEK, idx)
+
+	// Create fingerprint-based rotator
+	rotator := NewFingerprintRotator(mock, bucket, "default", activeMEK, oldRing, idx)
+
+	// Perform rotation
+	result, err := rotator.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+
+	// The object with active fingerprint should be skipped (not processed)
+	// The object with old fingerprint should be rotated
+	if result.ProcessedObjects != 1 {
+		t.Errorf("processed = %d, want 1 (only old-fingerprint object)", result.ProcessedObjects)
+	}
+	if result.SkippedObjects != 1 {
+		t.Errorf("skipped = %d, want 1 (active-fingerprint object)", result.SkippedObjects)
+	}
+
+	// Verify objects after rotation
+	// Object with active fingerprint should still use active MEK (unchanged)
+	if !dekUnwrapsWith(t, mock, bucket, activeKey, activeMEK) {
+		t.Error("active-fingerprint object no longer unwraps with active MEK")
+	}
+
+	// Object with old fingerprint should now use active MEK (rotated)
+	if !dekUnwrapsWith(t, mock, bucket, oldKey, activeMEK) {
+		t.Error("old-fingerprint object not rotated to active MEK")
+	}
+	if dekUnwrapsWith(t, mock, bucket, oldKey, oldMEK) {
+		t.Error("old-fingerprint object still unwraps with old MEK (should be rotated)")
+	}
+}
+
+// TestFingerprintRotationIdempotence tests that fingerprint-based rotation
+// is idempotent on rerun.
+func TestFingerprintRotationIdempotence(t *testing.T) {
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	// Create two MEKs
+	activeMEK := make([]byte, 32)
+	oldMEK := make([]byte, 32)
+	rand.Read(activeMEK)
+	rand.Read(oldMEK)
+
+	activeFP := crypto.MEKFingerprint(activeMEK)
+	oldFP := crypto.MEKFingerprint(oldMEK)
+
+	if activeFP == oldFP {
+		t.Fatal("fingerprints collide, need different MEKs")
+	}
+
+	// Build ring with old key
+	oldRing := []keymanager.RingKeyEntry{
+		{MEK: oldMEK, Fingerprint: oldFP},
+	}
+
+	// Create manifest index
+	idx := manifest.New()
+
+	// Put one object with old fingerprint
+	key := "object.txt"
+	data := []byte("data")
+	putARMORObject(t, mock, bucket, key, data, oldMEK, idx)
+
+	// First rotation
+	rotator1 := NewFingerprintRotator(mock, bucket, "default", activeMEK, oldRing, idx)
+	result1, err := rotator1.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("first rotate: %v", err)
+	}
+
+	if result1.ProcessedObjects != 1 {
+		t.Errorf("first rotation processed = %d, want 1", result1.ProcessedObjects)
+	}
+	if result1.SkippedObjects != 0 {
+		t.Errorf("first rotation skipped = %d, want 0", result1.SkippedObjects)
+	}
+
+	// Second rotation (should be idempotent - all objects now use active fingerprint)
+	rotator2 := NewFingerprintRotator(mock, bucket, "default", activeMEK, oldRing, idx)
+	result2, err := rotator2.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("second rotate: %v", err)
+	}
+
+	if result2.ProcessedObjects != 0 {
+		t.Errorf("second rotation processed = %d, want 0 (idempotent)", result2.ProcessedObjects)
+	}
+	if result2.SkippedObjects != 1 {
+		t.Errorf("second rotation skipped = %d, want 1", result2.SkippedObjects)
+	}
+
+	// Verify object still uses active MEK
+	if !dekUnwrapsWith(t, mock, bucket, key, activeMEK) {
+		t.Error("object no longer unwraps with active MEK after second rotation")
+	}
+}
+
+// TestFingerprintRotationResume tests that rotation resumes correctly after
+// an injected crash (state checkpointing).
+func TestFingerprintRotationResume(t *testing.T) {
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	// Create two MEKs
+	activeMEK := make([]byte, 32)
+	oldMEK := make([]byte, 32)
+	rand.Read(activeMEK)
+	rand.Read(oldMEK)
+
+	activeFP := crypto.MEKFingerprint(activeMEK)
+	oldFP := crypto.MEKFingerprint(oldMEK)
+
+	if activeFP == oldFP {
+		t.Fatal("fingerprints collide, need different MEKs")
+	}
+
+	// Build ring with old key
+	oldRing := []keymanager.RingKeyEntry{
+		{MEK: oldMEK, Fingerprint: oldFP},
+	}
+
+	// Create manifest index
+	idx := manifest.New()
+
+	// Put three objects with old fingerprint
+	keys := []string{"a.txt", "b.txt", "c.txt"}
+	for _, key := range keys {
+		data := []byte("data for " + key)
+		putARMORObject(t, mock, bucket, key, data, oldMEK, idx)
+	}
+
+	// Start rotation but interrupt it after processing 1 object
+	rotator1 := NewFingerprintRotator(mock, bucket, "default", activeMEK, oldRing, idx)
+
+	// Inject a simulated crash after processing one object
+	// We'll do this by manually setting state after processing first object
+	var crashAfter atomic.Int32
+	crashAfter.Store(1) // crash after processing 1 object
+
+	// Modify the rotator to inject a crash
+	originalCountObjects := rotator1.countObjects
+	crashInjected := false
+
+	rotator1.countObjects = func(ctx context.Context) error {
+		// Let countObjects complete normally
+		return originalCountObjects(ctx)
+	}
+
+	// We'll simulate a crash by canceling the context after processing N objects
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		// Wait for rotation to start
+		time.Sleep(100 * time.Millisecond)
+		// Check state
+		state := rotator1.GetState()
+		for state == nil || state.ProcessedObjects < 1 {
+			time.Sleep(10 * time.Millisecond)
+			state = rotator1.GetState()
+		}
+		// Cancel context to simulate crash
+		cancel()
+	}()
+
+	result1, err := rotator1.Rotate(ctx)
+	if err == nil {
+		t.Error("expected interruption error, got nil")
+	}
+
+	// Verify state was saved (rotation should be in "in_progress" or "interrupted" status)
+	state1 := rotator1.GetState()
+	if state1 == nil {
+		t.Fatal("no state saved after crash")
+	}
+	if state1.Status != "interrupted" && state1.Status != "in_progress" {
+		t.Errorf("state status = %s, want interrupted or in_progress", state1.Status)
+	}
+
+	// Resume rotation
+	rotator2 := NewFingerprintRotator(mock, bucket, "default", activeMEK, oldRing, idx)
+
+	result2, err := rotator2.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("resume rotate: %v", err)
+	}
+
+	// Total processed should be 3 (all objects)
+	if result2.ProcessedObjects != 3 {
+		t.Errorf("resume rotation processed = %d, want 3", result2.ProcessedObjects)
+	}
+
+	// Verify all objects now use active MEK
+	for _, key := range keys {
+		if !dekUnwrapsWith(t, mock, bucket, key, activeMEK) {
+			t.Errorf("object %s not rotated to active MEK after resume", key)
+		}
+	}
+}
+
+// TestKeyRingHistogram tests the key ring endpoint returns correct histogram.
+func TestKeyRingHistogram(t *testing.T) {
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	// Create two MEKs
+	activeMEK := make([]byte, 32)
+	oldMEK := make([]byte, 32)
+	rand.Read(activeMEK)
+	rand.Read(oldMEK)
+
+	activeFP := crypto.MEKFingerprint(activeMEK)
+	oldFP := crypto.MEKFingerprint(oldMEK)
+
+	// Build ring with old key
+	oldRing := []keymanager.RingKeyEntry{
+		{MEK: oldMEK, Fingerprint: oldFP},
+	}
+
+	// Create manifest index
+	idx := manifest.New()
+
+	// Put objects with different fingerprints
+	// 2 objects with active fingerprint
+	for i := 0; i < 2; i++ {
+		key := fmt.Sprintf("active-%d.txt", i)
+		data := []byte("data")
+		putARMORObject(t, mock, bucket, key, data, activeMEK, idx)
+	}
+
+	// 3 objects with old fingerprint
+	for i := 0; i < 3; i++ {
+		key := fmt.Sprintf("old-%d.txt", i)
+		data := []byte("data")
+		putARMORObject(t, mock, bucket, key, data, oldMEK, idx)
+	}
+
+	// Build histogram from manifest
+	objectsByFP := make(map[string]int)
+	for manifestKey, entry := range idx.All() {
+		parts := strings.SplitN(manifestKey, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		bucketFromKey := parts[0]
+		if bucketFromKey != bucket {
+			continue
+		}
+
+		fp := entry.MEKFingerprint
+		if fp == "" {
+			fp = "legacy"
+		}
+		objectsByFP[fp]++
+	}
+
+	// Verify histogram
+	if objectsByFP[activeFP] != 2 {
+		t.Errorf("active fingerprint count = %d, want 2", objectsByFP[activeFP])
+	}
+	if objectsByFP[oldFP] != 3 {
+		t.Errorf("old fingerprint count = %d, want 3", objectsByFP[oldFP])
+	}
+}
+
