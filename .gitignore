@@ -1,5 +1,4 @@
-# Binary
-armor
+# Binary (root-level only)
 /armor
 /armor-decrypt
 /restore-verifier

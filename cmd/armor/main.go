@@ -2,137 +2,64 @@
 package main
 
 import (
-	"context"
-	"net/http"
+	"flag"
+	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"github.com/jedarden/armor/internal/config"
-	"github.com/jedarden/armor/internal/logging"
-	"github.com/jedarden/armor/internal/server"
+	"sort"
+	"strings"
 )
 
+// Command represents a subcommand that can be registered and executed.
+type Command struct {
+	Name        string
+	Description string
+	Func        func() // The function to execute for this command
+}
+
+// commands registry - populated by init() functions in cmd_*.go files
+var commands = make(map[string]Command)
+
+// registerCommand adds a command to the registry. Called by init() functions.
+func registerCommand(cmd Command) {
+	commands[cmd.Name] = cmd
+}
+
 func main() {
-	// Load configuration
-	cfg, err := config.Load()
-	if err != nil {
-		logging.Fatalf("failed to load configuration: %v", err)
+	// Parse flags - we only care about subcommand name
+	flag.Parse()
+
+	args := flag.Args()
+
+	// Default to "serve" if no subcommand provided
+	subcommand := "serve"
+	if len(args) > 0 {
+		subcommand = args[0]
 	}
 
-	// Create logger with configuration
-	logger := logging.New("armor")
-	logging.SetDefault(logger)
-
-	// Log startup info
-	logger.WithFields(map[string]interface{}{
-		"listen":       cfg.Listen,
-		"admin_listen": cfg.AdminListen,
-		"bucket":       cfg.Bucket,
-		"cf_domain":    cfg.CFDomain,
-		"block_size":   cfg.BlockSize,
-		"writer_id":    cfg.WriterID,
-	}).Info("ARMOR starting")
-
-	// Create server
-	srv, err := server.New(cfg)
-	if err != nil {
-		logger.Fatalf("failed to create server: %v", err)
+	// Look up the command
+	cmd, exists := commands[subcommand]
+	if !exists {
+		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n", subcommand)
+		fmt.Fprintf(os.Stderr, "\nAvailable subcommands:\n")
+		listCommands(os.Stderr)
+		os.Exit(2)
 	}
 
-	// Create HTTP server
-	httpServer := &http.Server{
-		Addr:         cfg.Listen,
-		Handler:      srv.Handler(),
-		ReadTimeout:  30 * time.Minute, // Long timeout for large uploads
-		WriteTimeout: 30 * time.Minute, // Long timeout for large downloads
+	// Execute the command
+	cmd.Func()
+}
+
+// listCommands prints all registered commands to the given writer.
+func listCommands(w *os.File) {
+	// Sort commands by name for consistent output
+	names := make([]string, 0, len(commands))
+	for name := range commands {
+		names = append(names, name)
 	}
+	sort.Strings(names)
 
-	// Create admin HTTP server
-	adminServer := &http.Server{
-		Addr:         cfg.AdminListen,
-		Handler:      srv.AdminHandler(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+	for _, name := range names {
+		cmd := commands[name]
+		fmt.Fprintf(w, "  %-12s %s\n", name, cmd.Description)
 	}
-
-	// Start canary monitor
-	srv.StartCanary(context.Background())
-
-	// Start replication queue if secondary backend is configured (ADR-006)
-	srv.StartReplicationQueue(context.Background())
-
-	// Start servers in goroutines
-	go func() {
-		logger.Infof("S3 API listening on %s", cfg.Listen)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatalf("S3 server error: %v", err)
-		}
-	}()
-
-	go func() {
-		logger.Infof("Admin API listening on %s", cfg.AdminListen)
-		if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatalf("Admin server error: %v", err)
-		}
-	}()
-
-	// Wait for interrupt signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
-
-	logger.WithFields(map[string]interface{}{
-		"signal": sig.String(),
-	}).Info("shutdown signal received")
-
-	// Phase 1: Stop accepting new connections
-	logger.Info("phase 1: stopping HTTP servers")
-
-	// Graceful shutdown with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	// Shutdown HTTP servers (stops accepting new connections)
-	if err := httpServer.Shutdown(ctx); err != nil {
-		logger.WithField("error", err.Error()).Error("S3 server shutdown error")
-	}
-	logger.Info("S3 server stopped accepting connections")
-
-	if err := adminServer.Shutdown(ctx); err != nil {
-		logger.WithField("error", err.Error()).Error("Admin server shutdown error")
-	}
-	logger.Info("Admin server stopped accepting connections")
-
-	// Phase 2: Wait for in-flight requests to complete
-	inFlight := srv.InFlightRequestCount()
-	if inFlight > 0 {
-		logger.WithField("in_flight", inFlight).Info("phase 2: waiting for in-flight requests")
-
-		// Wait for in-flight requests with a timeout
-		done := make(chan struct{})
-		go func() {
-			srv.WaitForInFlightRequests()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			logger.Info("all in-flight requests completed")
-		case <-ctx.Done():
-			logger.Warn("timeout waiting for in-flight requests, proceeding with shutdown")
-		}
-	} else {
-		logger.Info("phase 2: no in-flight requests")
-	}
-
-	// Phase 3: Stop background tasks
-	logger.Info("phase 3: stopping background tasks")
-	srv.StopCanary()
-	srv.StopReplicationQueue()
-	srv.StopManifestCompactor()
-	srv.StopManifestWriter()
-
-	logger.Info("ARMOR shutdown complete")
 }
