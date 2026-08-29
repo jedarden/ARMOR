@@ -372,8 +372,12 @@ func (e *Encryptor) EncryptWithBlockCompression(plaintext []byte) (encrypted []b
 		// Compute HMAC for encrypted block
 		hmacValue := e.computeBlockHMAC(encryptedBlock, i)
 
+		// Convert slice to array for block table entry
+		var hmacArray [32]byte
+		copy(hmacArray[:], hmacValue)
+
 		// Create block table entry with compression flag
-		entry := NewBlockTableEntry(hmacValue, uint32(len(encryptedBlock)), wasCompressed)
+		entry := NewBlockTableEntry(hmacArray, uint32(len(encryptedBlock)), wasCompressed)
 		if err := blockTable.AddEntry(entry); err != nil {
 			return nil, nil, fmt.Errorf("block %d table entry failed: %w", i, err)
 		}
