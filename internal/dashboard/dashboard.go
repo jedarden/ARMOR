@@ -19,6 +19,7 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/metrics"
+	"expvar"
 )
 
 // AuthMiddleware handles authentication for dashboard routes.
@@ -496,6 +497,151 @@ func (d *Dashboard) MetricsHandlerWithAuth() http.HandlerFunc {
 	return d.auth.Wrap(d.metricsHandlerImpl())
 }
 
+// CredentialActivityHandler returns per-credential request activity.
+// Combines credential list from /admin/creds with request counts from metrics.
+func (d *Dashboard) CredentialActivityHandler(adminClient *http.Client, adminURL string) http.HandlerFunc {
+	return d.credentialActivityHandlerImpl(adminClient, adminURL)
+}
+
+// CredentialActivityHandlerWithAuth returns the credential activity handler with authentication.
+func (d *Dashboard) CredentialActivityHandlerWithAuth(adminClient *http.Client, adminURL string) http.HandlerFunc {
+	return d.auth.Wrap(d.credentialActivityHandlerImpl(adminClient, adminURL))
+}
+
+// credentialActivityHandlerImpl is the actual implementation of the credential activity handler.
+func (d *Dashboard) credentialActivityHandlerImpl(adminClient *http.Client, adminURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Fetch credentials from admin API
+		credsURL := adminURL
+		if credsURL == "" {
+			credsURL = "http://127.0.0.1:9001/admin/creds"
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, credsURL, nil)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		resp, err := adminClient.Do(req)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to fetch credentials: %v", err), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, fmt.Sprintf("Admin API returned status %d", resp.StatusCode), http.StatusBadGateway)
+			return
+		}
+
+		var creds []struct {
+			Name     string `json:"name"`
+			ACLs     []struct {
+				Prefix   string `json:"prefix"`
+				ReadOnly bool   `json:"read_only"`
+			} `json:"acls"`
+			Source   string `json:"source"`
+			LoadedAt string `json:"loaded_at"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&creds); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decode credentials: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Build credential activity data
+		type CredentialActivity struct {
+			Name        string `json:"name"`
+			Source      string `json:"source"`
+			TotalReqs   int64   `json:"total_requests"`
+			AllowCount  int64   `json:"allow_count"`
+			DenyAuth    int64   `json:"deny_auth_count"`
+			DenyACL     int64   `json:"deny_acl_count"`
+		}
+
+		activities := make([]CredentialActivity, 0, len(creds))
+
+		// Collect credential names we know about
+		credNames := make(map[string]bool, len(creds))
+		for _, cred := range creds {
+			credNames[cred.Name] = true
+		}
+
+		// Also include "unknown" for auth failures
+		credNames["unknown"] = true
+
+		// Aggregate metrics per credential
+		for credName := range credNames {
+			var totalReqs, allowCount, denyAuth, denyACL int64
+
+			d.metrics.RequestsByCredentialTotal().Do(func(kv expvar.KeyValue) {
+				// Parse the "access_key_id:verb:result" key format
+				parts := strings.SplitN(kv.Key, ":", 3)
+				if len(parts) == 3 {
+					keyID := parts[0]
+					result := parts[2]
+
+					if keyID == credName {
+						count := parseExpvarInt(kv.Value.String())
+						totalReqs += count
+
+						switch result {
+						case "allow":
+							allowCount += count
+						case "deny-auth":
+							denyAuth += count
+						case "deny-acl":
+							denyACL += count
+						}
+					}
+				}
+			})
+
+			activity := CredentialActivity{
+				Name:       credName,
+				TotalReqs:  totalReqs,
+				AllowCount: allowCount,
+				DenyAuth:   denyAuth,
+				DenyACL:    denyACL,
+			}
+
+			// Add source info for known credentials
+			if credName != "unknown" {
+				for _, cred := range creds {
+					if cred.Name == credName {
+						activity.Source = cred.Source
+						break
+					}
+				}
+			} else {
+				activity.Source = "auth-failures"
+			}
+
+			activities = append(activities, activity)
+		}
+
+		// Sort by total requests descending, then by name
+		sort.Slice(activities, func(i, j int) bool {
+			if activities[i].TotalReqs != activities[j].TotalReqs {
+				return activities[i].TotalReqs > activities[j].TotalReqs
+			}
+			return activities[i].Name < activities[j].Name
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(activities)
+	}
+}
+
 // metricsHandlerImpl is the actual implementation of the metrics handler.
 func (d *Dashboard) metricsHandlerImpl() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -805,9 +951,6 @@ func (d *Dashboard) listAPIHandlerImpl() http.HandlerFunc {
 			if contentType == "" {
 				contentType = header.Header.Get("Content-Type")
 			}
-
-			// Create S3 PUT request signed with dashboard credential
-			s3URL := d.serverBaseURL + "/" + d.bucket + "/" + key
 
 			// We need to use the backend's Put method directly
 			// This bypasses HTTP signing but uses the same backend logic
@@ -1337,6 +1480,59 @@ const dashboardHTML = `<!DOCTYPE html>
             font-weight: 500;
             margin-left: 4px;
         }
+        .credential-panel {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
+        }
+        .credential-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .credential-panel-title {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: #666;
+        }
+        .credential-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .credential-table th, .credential-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .credential-table th {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #666;
+            font-weight: 600;
+        }
+        .credential-table td {
+            font-size: 13px;
+        }
+        .credential-table tr:last-child td {
+            border-bottom: none;
+        }
+        .credential-name {
+            font-family: monospace;
+            font-weight: 500;
+            color: #1a1a2e;
+        }
+        .credential-source {
+            font-size: 12px;
+            color: #64748b;
+        }
+        .credential-counts {
+            font-family: monospace;
+            color: #334155;
+        }
         .empty-state { color: #64748b; padding: 42px 20px; text-align: center; }
         .empty-state strong { color: #334155; display: block; font-size: 16px; margin-bottom: 4px; }
         .metrics-updated { color: #94a3b8; font-size: 11px; margin-left: 8px; }
@@ -1444,6 +1640,30 @@ const dashboardHTML = `<!DOCTYPE html>
             </div>
         </div>
         {{end}}
+
+        <div class="credential-panel">
+            <div class="credential-panel-header">
+                <span class="credential-panel-title">Credential Activity (requests by access key)</span>
+                <span style="font-size: 12px; color: #64748b;" id="credential-updated">Loading...</span>
+            </div>
+            <table class="credential-table">
+                <thead>
+                    <tr>
+                        <th>Credential</th>
+                        <th>Source</th>
+                        <th>Total Requests</th>
+                        <th>Allowed</th>
+                        <th>Denied (Auth)</th>
+                        <th>Denied (ACL)</th>
+                    </tr>
+                </thead>
+                <tbody id="credential-table-body">
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: #64748b; padding: 20px;">Loading credential activity...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
 
         <nav class="breadcrumbs" aria-label="Bucket path">
             {{range $i, $crumb := .Breadcrumbs}}{{if $i}}<span>›</span>{{end}}<a href="?prefix={{$crumb.Path}}">{{$crumb.Name}}</a>{{end}}
@@ -1872,9 +2092,48 @@ const dashboardHTML = `<!DOCTYPE html>
             });
     }
 
+    function refreshCredentialActivity() {
+        fetchJSON('/dashboard/credential-activity')
+            .then(function(data) {
+                var tbody = document.getElementById('credential-table-body');
+                if (!tbody) return;
+
+                if (!data || data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #64748b; padding: 20px;">No credential data available</td></tr>';
+                    return;
+                }
+
+                var html = '';
+                data.forEach(function(cred) {
+                    html += '<tr>';
+                    html += '<td class="credential-name">' + escHtml(cred.name || 'unknown') + '</td>';
+                    html += '<td class="credential-source">' + escHtml(cred.source || '—') + '</td>';
+                    html += '<td class="credential-counts">' + (cred.total_requests || 0) + '</td>';
+                    html += '<td class="credential-counts" style="color: #10b981;">' + (cred.allow_count || 0) + '</td>';
+                    html += '<td class="credential-counts" style="color: #f59e0b;">' + (cred.deny_auth_count || 0) + '</td>';
+                    html += '<td class="credential-counts" style="color: #ef4444;">' + (cred.deny_acl_count || 0) + '</td>';
+                    html += '</tr>';
+                });
+
+                tbody.innerHTML = html;
+
+                var updated = document.getElementById('credential-updated');
+                if (updated) updated.textContent = 'Updated ' + new Date().toLocaleTimeString();
+            })
+            .catch(function(err) {
+                var tbody = document.getElementById('credential-table-body');
+                if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #ef4444; padding: 20px;">Failed to load credential activity</td></tr>';
+                var updated = document.getElementById('credential-updated');
+                if (updated) updated.textContent = 'Error loading data';
+                console.warn('Credential activity refresh failed:', err);
+            });
+    }
+
     refreshMetrics();
+    refreshCredentialActivity();
     // Auto-refresh metrics stats every 30 seconds without a full page reload
     setInterval(refreshMetrics, 30000);
+    setInterval(refreshCredentialActivity, 30000);
     </script>
 </body>
 </html>

@@ -863,7 +863,7 @@ func TestAuthMiddlewareNoAuth(t *testing.T) {
 func TestDashboardHandlerWithAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "")
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "", nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	rec := httptest.NewRecorder()
@@ -889,7 +889,7 @@ func TestDashboardHandlerWithAuth(t *testing.T) {
 func TestDashboardHandlerWithBearerToken(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123")
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123", nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	rec := httptest.NewRecorder()
@@ -915,7 +915,7 @@ func TestDashboardHandlerWithBearerToken(t *testing.T) {
 func TestMetricsHandlerWithAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "admin", "pass", "")
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "pass", "", nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/metrics", nil)
 	rec := httptest.NewRecorder()
@@ -946,7 +946,7 @@ func TestObjectDetailHandlerWithAuth(t *testing.T) {
 		LastModified: time.Now(),
 	}
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "token")
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token", nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/object?key=test.txt", nil)
 	rec := httptest.NewRecorder()
@@ -1086,7 +1086,7 @@ func TestEncryptionStatsHandlerFolderExclusion(t *testing.T) {
 func TestEncryptionStatsHandlerAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123")
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123", nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/encryption-stats", nil)
 	rec := httptest.NewRecorder()
@@ -1930,7 +1930,7 @@ func TestListAPIHandlerWithAuth(t *testing.T) {
 	m := metrics.NewMetrics()
 
 	// Test with Basic Auth
-	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret123", "")
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret123", "", nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
 	rec := httptest.NewRecorder()
@@ -1954,7 +1954,7 @@ func TestListAPIHandlerWithAuth(t *testing.T) {
 	}
 
 	// Test with Bearer token
-	d2 := NewWithAuth(mb, "test-bucket", m, "", "", "my-token")
+	d2 := NewWithAuth(mb, "test-bucket", m, "", "", "my-token", nil, "")
 
 	req = httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
 	rec = httptest.NewRecorder()
@@ -2044,7 +2044,7 @@ func TestKeyRotateStatusHandlerNoRotation(t *testing.T) {
 func TestKeyRotateStatusHandlerWithAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123")
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123", nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/admin/key/status", nil)
 	rec := httptest.NewRecorder()
@@ -2167,7 +2167,7 @@ func TestKeyRotateHandlerOmitsAuthHeaderWhenTokenUnset(t *testing.T) {
 func TestKeyRotateHandlerWithAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "")
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "", nil, "")
 
 	// Mock admin API server
 	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
