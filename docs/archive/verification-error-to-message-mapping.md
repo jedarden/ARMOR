@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes how the `VerificationError` type in ARMOR's crypto package maps to the standardized error message format defined in `error-message-structure.md`. This mapping is critical for the restore verification pipeline (ADR-004), ensuring that all verification errors are consistently formatted and include required diagnostic information.
+This document describes how the `VerificationError` type in ARMOR's crypto package maps to the standardized error message format defined in `../error-format.md`. This mapping is critical for the restore verification pipeline (ADR-004), ensuring that all verification errors are consistently formatted and include required diagnostic information.
 
 ## Type Structure vs Message Format
 
@@ -502,8 +502,8 @@ func TestVerificationErrorMapping(t *testing.T) {
 ## References
 
 - **Core type definition**: `internal/crypto/verify_decompress.go`
-- **Message format specification**: `docs/error-message-structure.md`
-- **Optional context fields**: `docs/verification-error-optional-context.md`
+- **Message format specification**: `../error-format.md`
+- **Optional context fields**: `verification-error-optional-context.md`
 - **Verification pipeline**: `internal/restoreverifier/verifier.go`
 - **ADR-004**: Restore Verification Pipeline design document
 
