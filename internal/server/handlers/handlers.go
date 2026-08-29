@@ -1080,6 +1080,12 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create decryptor: %v", err), 500)
 			return
 		}
+
+		// For v3 single-PUT objects, we need the ciphertext size to locate the trailer block table
+		// Store it in a local variable for use in the streaming path
+		if header.Version == crypto.Version3 {
+			armorMeta.CiphertextSize = info.Size
+		}
 	}
 
 	// Check conditional request headers
@@ -1615,6 +1621,38 @@ func (z *zstdReadCloser) Read(p []byte) (n int, err error) {
 func (z *zstdReadCloser) Close() error {
 	z.Decoder.Close()
 	return nil
+}
+
+// readV3BlockTable fetches and parses the v3 trailer block table.
+// For v3 single-PUT objects, the block table is at the end:
+// tableOffset = ciphertext_length - 36 * blockCount
+func (h *Handlers) readV3BlockTable(ctx context.Context, bucket, prefixedKey string, ciphertextSize int64, blockCount int) (*crypto.BlockTable, error) {
+	tableSize := int64(blockCount) * crypto.BlockTableEntrySize
+	if tableSize <= 0 || ciphertextSize < tableSize {
+		return nil, fmt.Errorf("invalid v3 block table parameters: ciphertextSize=%d, blockCount=%d", ciphertextSize, blockCount)
+	}
+
+	tableOffset := ciphertextSize - tableSize
+
+	// Fetch the trailer block table
+	tableReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, tableOffset, tableSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch v3 block table at offset %d: %w", tableOffset, err)
+	}
+	defer tableReader.Close()
+
+	tableData, err := io.ReadAll(tableReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read v3 block table: %w", err)
+	}
+
+	// Parse the block table
+	blockTable, err := crypto.DecodeBlockTable(tableData, 65536, uint32(blockCount))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode v3 block table: %w", err)
+	}
+
+	return blockTable, nil
 }
 
 // handleRangeRequest handles range read requests.

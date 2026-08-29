@@ -346,16 +346,68 @@ func (kr *KeyRotator) rotateObjectWithMetadata(ctx context.Context, obj backend.
 		oldWrappedDEK = armorMeta.WrappedDEK
 	}
 
-	// Unwrap DEK with old MEK
-	dek, err := crypto.UnwrapDEK(kr.oldMEK, oldWrappedDEK)
+	// Unwrap DEK with old MEK using fingerprint with ring fallback
+	// For key rotation, we need to try the old active key first, then old ring keys
+	lookupMEK := func(keyID, fingerprint string) ([]byte, bool) {
+		// For key rotation, we're using old keys
+		if fingerprint == crypto.MEKFingerprint(kr.oldMEK) {
+			return kr.oldMEK, true
+		}
+		// Check old ring keys
+		if kr.oldRing != nil {
+			for _, ringEntry := range kr.oldRing {
+				if ringEntry.Fingerprint == fingerprint {
+					return ringEntry.MEK, true
+				}
+			}
+		}
+		return nil, false
+	}
+
+	legacyFallback := func(wrappedDEK []byte) ([]byte, error) {
+		// Try old active key first
+		dek, err := crypto.UnwrapDEK(kr.oldMEK, wrappedDEK)
+		if err == nil {
+			return dek, nil
+		}
+		// Try old ring keys
+		if kr.oldRing != nil {
+			for _, ringEntry := range kr.oldRing {
+				dek, err := crypto.UnwrapDEK(ringEntry.MEK, wrappedDEK)
+				if err == nil {
+					return dek, nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("no old key can unwrap DEK")
+	}
+
+	wrappedDEKStr := base64.StdEncoding.EncodeToString(oldWrappedDEK)
+	if armorMeta.MEKFingerprint != "" {
+		wrappedDEKStr = fmt.Sprintf("v2:%s:%s", armorMeta.MEKFingerprint, wrappedDEKStr)
+	}
+
+	dek, _, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, lookupMEK, legacyFallback)
 	if err != nil {
 		return fmt.Errorf("failed to unwrap DEK with old MEK: %w", err)
 	}
 
 	// Re-wrap DEK with new MEK
-	newWrappedDEK, err := crypto.WrapDEK(kr.newMEK, dek)
+	// Wrap with new MEK and encode fingerprint in v2 format
+	newWrappedDEKStr, err := crypto.WrapDEKWithFingerprint(kr.newMEK, dek)
 	if err != nil {
 		return fmt.Errorf("failed to wrap DEK with new MEK: %w", err)
+	}
+
+	// Parse v2 format to extract fingerprint and wrapped DEK bytes
+	parts := strings.SplitN(newWrappedDEKStr, ":", 3)
+	if len(parts) != 3 || parts[0] != "v2" {
+		return fmt.Errorf("invalid wrapped DEK format from WrapDEKWithFingerprint")
+	}
+	newMekFingerprint := parts[1]
+	newWrappedDEK, err := base64.StdEncoding.DecodeString(parts[2])
+	if err != nil {
+		return fmt.Errorf("failed to decode wrapped DEK: %w", err)
 	}
 
 	// Clone the full raw metadata and overwrite ONLY the wrapped-DEK. This
@@ -366,7 +418,9 @@ func (kr *KeyRotator) rotateObjectWithMetadata(ctx context.Context, obj backend.
 	for k, v := range rawMeta {
 		newMeta[k] = v
 	}
-	newMeta[armorMetaWrappedDEK] = base64.StdEncoding.EncodeToString(newWrappedDEK)
+	// Update wrapped DEK with new MEK fingerprint in v2 format
+	base64Wrapped := base64.StdEncoding.EncodeToString(newWrappedDEK)
+	newMeta[armorMetaWrappedDEK] = fmt.Sprintf("v2:%s:%s", newMekFingerprint, base64Wrapped)
 
 	// Copy object in place with updated metadata (B2 server-side copy).
 	// For in-place copy, src and dst bucket/key are the same. The object body
