@@ -582,3 +582,90 @@ func TestMultipartCanaryMetricsDistinctFromSmallObject(t *testing.T) {
 		t.Error("expected multipart canary duration histogram in output")
 	}
 }
+
+// TestLabelledCounterAccumulation verifies that labelled counters accumulate
+// properly instead of being stuck at 1 (the "Set-a-new-counter" bug).
+func TestLabelledCounterAccumulation(t *testing.T) {
+	m := NewMetrics()
+
+	// Test requests by label - increment 5 times for GET_2xx
+	for i := 0; i < 5; i++ {
+		m.IncRequestsTotal("GET", 200)
+	}
+
+	// Increment 3 times for PUT_2xx
+	for i := 0; i < 3; i++ {
+		m.IncRequestsTotal("PUT", 201)
+	}
+
+	// Verify the labelled counters accumulated properly
+	output := m.PrometheusFormat()
+
+	// Should have GET_2xx with value 5, not 1
+	if !strings.Contains(output, `armor_requests_by_label{key="GET_2xx"} 5`) {
+		t.Errorf("expected GET_2xx counter to be 5, got stuck at 1")
+	}
+
+	// Should have PUT_2xx with value 3, not 1
+	if !strings.Contains(output, `armor_requests_by_label{key="PUT_2xx"} 3`) {
+		t.Errorf("expected PUT_2xx counter to be 3, got stuck at 1")
+	}
+
+	// Test encryption ops - increment 4 times for encrypt
+	for i := 0; i < 4; i++ {
+		m.IncEncryptionOps("encrypt")
+	}
+
+	// Test decryption ops - increment 2 times for decrypt
+	for i := 0; i < 2; i++ {
+		m.IncDecryptionOps("decrypt")
+	}
+
+	// Verify in Prometheus output
+	output = m.PrometheusFormat()
+
+	if !strings.Contains(output, `armor_encryption_ops_total{operation="encrypt"} 4`) {
+		t.Errorf("expected encrypt counter to be 4, got stuck at 1")
+	}
+
+	if !strings.Contains(output, `armor_decryption_ops_total{operation="decrypt"} 2`) {
+		t.Errorf("expected decrypt counter to be 2, got stuck at 1")
+	}
+
+	// Test backend requests - increment 3 times
+	for i := 0; i < 3; i++ {
+		m.IncBackendRequests("get_object")
+	}
+
+	output = m.PrometheusFormat()
+
+	if !strings.Contains(output, `armor_backend_requests_total{operation="get_object"} 3`) {
+		t.Errorf("expected get_object counter to be 3, got stuck at 1")
+	}
+
+	// Test restore verifier checks - increment 6 times for bucket1, 4 times for bucket2
+	for i := 0; i < 6; i++ {
+		m.RecordRestoreVerifierCheck("bucket1", 100*time.Millisecond, true)
+	}
+	for i := 0; i < 4; i++ {
+		m.RecordRestoreVerifierCheck("bucket2", 150*time.Millisecond, true)
+	}
+
+	output = m.PrometheusFormat()
+
+	if !strings.Contains(output, `armor_restore_verifier_checks_total{bucket="bucket1"} 6`) {
+		t.Errorf("expected bucket1 checks counter to be 6, got stuck at 1")
+	}
+
+	if !strings.Contains(output, `armor_restore_verifier_checks_total{bucket="bucket2"} 4`) {
+		t.Errorf("expected bucket2 checks counter to be 4, got stuck at 1")
+	}
+
+	if !strings.Contains(output, `armor_restore_verifier_objects_verified{bucket="bucket1"} 6`) {
+		t.Errorf("expected bucket1 verified counter to be 6, got stuck at 1")
+	}
+
+	if !strings.Contains(output, `armor_restore_verifier_objects_verified{bucket="bucket2"} 4`) {
+		t.Errorf("expected bucket2 verified counter to be 4, got stuck at 1")
+	}
+}

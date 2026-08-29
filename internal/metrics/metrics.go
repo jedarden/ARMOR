@@ -11,12 +11,74 @@ import (
 	"time"
 )
 
+// labelledCounter manages per-label counters with proper increment semantics.
+// Unlike expvar.Map's Set() which replaces values, this ensures counters accumulate.
+type labelledCounter struct {
+	mu sync.Mutex
+	m  *expvar.Map
+}
+
+func newLabelledCounter() *labelledCounter {
+	return &labelledCounter{
+		m: new(expvar.Map).Init(),
+	}
+}
+
+// Add increments the counter for a given label set by delta.
+func (lc *labelledCounter) Add(key string, delta int64) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+
+	// Get existing counter or create new one
+	if v := lc.m.Get(key); v != nil {
+		if iv, ok := v.(*expvar.Int); ok {
+			iv.Add(delta)
+			return
+		}
+	}
+
+	// First time seeing this key - create new counter
+	var iv expvar.Int
+	iv.Add(delta)
+	lc.m.Set(key, &iv)
+}
+
+// Set sets the counter for a given label set to a specific value.
+func (lc *labelledCounter) Set(key string, value int64) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+
+	var iv expvar.Int
+	iv.Set(value)
+	lc.m.Set(key, &iv)
+}
+
+// Get returns the counter value for a given label set.
+func (lc *labelledCounter) Get(key string) int64 {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+
+	if v := lc.m.Get(key); v != nil {
+		if iv, ok := v.(*expvar.Int); ok {
+			return iv.Value()
+		}
+	}
+	return 0
+}
+
+// Do iterates over all key-value pairs in the counter.
+func (lc *labelledCounter) Do(f func(expvar.KeyValue)) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	lc.m.Do(f)
+}
+
 // Metrics holds all ARMOR metrics.
 type Metrics struct {
 	// Request metrics
 	RequestsTotal         *expvar.Int
 	RequestsInFlight      *expvar.Int
-	RequestDurationMillis *expvar.Map
+	requestsByLabel       *labelledCounter // per-operation, status-class counters
 
 	// Data transfer metrics
 	BytesUploaded        *expvar.Int
@@ -30,8 +92,8 @@ type Metrics struct {
 	CacheMissesTotal *expvar.Int
 
 	// Encryption metrics
-	EncryptionOpsTotal *expvar.Map
-	DecryptionOpsTotal *expvar.Map
+	EncryptionOpsTotal *labelledCounter
+	DecryptionOpsTotal *labelledCounter
 	KeyWrapOpsTotal    *expvar.Int
 	KeyUnwrapOpsTotal  *expvar.Int
 
@@ -75,17 +137,17 @@ type Metrics struct {
 	ProvenanceChainLength  *expvar.Int
 
 	// Backend metrics
-	BackendRequestsTotal   *expvar.Map
-	BackendRequestDuration *expvar.Map
+	BackendRequestsTotal   *labelledCounter
+	BackendRequestDuration *labelledCounter
 
 	// Restore verifier metrics (Phase 6)
 	RestoreVerifierLastCheckTime   *expvar.String
 	RestoreVerifierLastCheckError  *expvar.String
-	RestoreVerifierChecksTotal     *expvar.Map
-	RestoreVerifierFailuresTotal   *expvar.Map
-	RestoreVerifierObjectsVerified *expvar.Map
-	RestoreVerifierObjectsFailed   *expvar.Map
-	RestoreVerifierLatencyMillis   *expvar.Map
+	restoreVerifierChecksTotal     *labelledCounter
+	restoreVerifierFailuresTotal   *labelledCounter
+	restoreVerifierObjectsVerified *labelledCounter
+	restoreVerifierObjectsFailed   *labelledCounter
+	restoreVerifierLatencyMillis   *labelledCounter
 
 	// Restore verifier per-bucket gauges (Phase 6a — restorability alerting).
 	// Each map is keyed by bucket name so PrometheusFormat can emit one labeled
@@ -140,7 +202,7 @@ func NewMetrics() *Metrics {
 	// Request metrics
 	m.RequestsTotal = new(expvar.Int)
 	m.RequestsInFlight = new(expvar.Int)
-	m.RequestDurationMillis = new(expvar.Map).Init()
+	m.requestsByLabel = newLabelledCounter()
 
 	// Data transfer metrics
 	m.BytesUploaded = new(expvar.Int)
@@ -154,8 +216,8 @@ func NewMetrics() *Metrics {
 	m.CacheMissesTotal = new(expvar.Int)
 
 	// Encryption metrics
-	m.EncryptionOpsTotal = new(expvar.Map).Init()
-	m.DecryptionOpsTotal = new(expvar.Map).Init()
+	m.EncryptionOpsTotal = newLabelledCounter()
+	m.DecryptionOpsTotal = newLabelledCounter()
 	m.KeyWrapOpsTotal = new(expvar.Int)
 	m.KeyUnwrapOpsTotal = new(expvar.Int)
 
@@ -199,17 +261,17 @@ func NewMetrics() *Metrics {
 	m.ProvenanceChainLength = new(expvar.Int)
 
 	// Backend metrics
-	m.BackendRequestsTotal = new(expvar.Map).Init()
-	m.BackendRequestDuration = new(expvar.Map).Init()
+	m.BackendRequestsTotal = newLabelledCounter()
+	m.BackendRequestDuration = newLabelledCounter()
 
 	// Restore verifier metrics
 	m.RestoreVerifierLastCheckTime = new(expvar.String)
 	m.RestoreVerifierLastCheckError = new(expvar.String)
-	m.RestoreVerifierChecksTotal = new(expvar.Map).Init()
-	m.RestoreVerifierFailuresTotal = new(expvar.Map).Init()
-	m.RestoreVerifierObjectsVerified = new(expvar.Map).Init()
-	m.RestoreVerifierObjectsFailed = new(expvar.Map).Init()
-	m.RestoreVerifierLatencyMillis = new(expvar.Map).Init()
+	m.restoreVerifierChecksTotal = newLabelledCounter()
+	m.restoreVerifierFailuresTotal = newLabelledCounter()
+	m.restoreVerifierObjectsVerified = newLabelledCounter()
+	m.restoreVerifierObjectsFailed = newLabelledCounter()
+	m.restoreVerifierLatencyMillis = newLabelledCounter()
 
 	// Restore verifier per-bucket gauges (Phase 6a)
 	m.RestoreVerifierLastVerifiedTs = new(expvar.Map).Init()
@@ -238,12 +300,10 @@ func NewMetrics() *Metrics {
 
 // IncRequestsTotal increments the request counter for an operation and status.
 func (m *Metrics) IncRequestsTotal(operation string, status int) {
-	key := fmt.Sprintf("%s_%dxx", operation, status/100)
 	m.RequestsTotal.Add(1)
 	// Track by operation and status class
-	var counter expvar.Int
-	counter.Add(1)
-	m.RequestDurationMillis.Set(key, &counter)
+	key := fmt.Sprintf("%s_%dxx", operation, status/100)
+	m.requestsByLabel.Add(key, 1)
 }
 
 // IncRequestsInFlight increments the in-flight request counter.
@@ -262,9 +322,7 @@ func (m *Metrics) RecordRequestDuration(operation string, duration time.Duration
 	millis := duration.Milliseconds()
 	// Store as a histogram bucket approximation
 	bucket := fmt.Sprintf("%s_bucket_le_%d", key, millis)
-	var counter expvar.Int
-	counter.Add(1)
-	m.RequestDurationMillis.Set(bucket, &counter)
+	m.requestsByLabel.Add(bucket, 1)
 }
 
 // AddBytesUploaded adds to the uploaded bytes counter.
@@ -304,16 +362,12 @@ func (m *Metrics) IncCacheMisses() {
 
 // IncEncryptionOps increments the encryption operations counter.
 func (m *Metrics) IncEncryptionOps(opType string) {
-	var counter expvar.Int
-	counter.Add(1)
-	m.EncryptionOpsTotal.Set(opType, &counter)
+	m.EncryptionOpsTotal.Add(opType, 1)
 }
 
 // IncDecryptionOps increments the decryption operations counter.
 func (m *Metrics) IncDecryptionOps(opType string) {
-	var counter expvar.Int
-	counter.Add(1)
-	m.DecryptionOpsTotal.Set(opType, &counter)
+	m.DecryptionOpsTotal.Add(opType, 1)
 }
 
 // IncKeyWrap increments the key wrap counter.
@@ -503,9 +557,7 @@ func (m *Metrics) SetProvenanceChainLength(n int64) {
 
 // IncBackendRequests increments the backend request counter.
 func (m *Metrics) IncBackendRequests(operation string) {
-	var counter expvar.Int
-	counter.Add(1)
-	m.BackendRequestsTotal.Set(operation, &counter)
+	m.BackendRequestsTotal.Add(operation, 1)
 }
 
 // RecordBackendRequestDuration records the duration of a backend request.
@@ -513,9 +565,7 @@ func (m *Metrics) RecordBackendRequestDuration(operation string, duration time.D
 	key := operation
 	millis := duration.Milliseconds()
 	bucket := fmt.Sprintf("%s_duration_%d", key, millis)
-	var counter expvar.Int
-	counter.Add(1)
-	m.BackendRequestDuration.Set(bucket, &counter)
+	m.BackendRequestDuration.Add(bucket, 1)
 }
 
 // IncReplicationEnqueued increments the replication enqueued counter for an operation.
@@ -582,6 +632,27 @@ func (m *Metrics) PrometheusFormat() string {
 	writeMetric("key_wrap_ops_total", "Total number of key wrap operations", "counter", m.KeyWrapOpsTotal)
 	writeMetric("key_unwrap_ops_total", "Total number of key unwrap operations", "counter", m.KeyUnwrapOpsTotal)
 
+	// Labelled counter: encryption operations by type
+	sb.WriteString("\n# HELP armor_encryption_ops_total Total number of encryption operations by type\n")
+	sb.WriteString("# TYPE armor_encryption_ops_total counter\n")
+	m.EncryptionOpsTotal.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_encryption_ops_total{operation=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	// Labelled counter: decryption operations by type
+	sb.WriteString("# HELP armor_decryption_ops_total Total number of decryption operations by type\n")
+	sb.WriteString("# TYPE armor_decryption_ops_total counter\n")
+	m.DecryptionOpsTotal.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_decryption_ops_total{operation=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	// Labelled counter: requests by operation and status class
+	sb.WriteString("# HELP armor_requests_by_label Total number of requests by operation and status class\n")
+	sb.WriteString("# TYPE armor_requests_by_label counter\n")
+	m.requestsByLabel.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_requests_by_label{key=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
 	// Canary metrics
 	writeMetric("canary_checks_total", "Total number of canary checks", "counter", m.CanaryChecksTotal)
 	writeMetric("canary_check_failures_total", "Total number of canary check failures", "counter", m.CanaryCheckFailures)
@@ -615,6 +686,51 @@ func (m *Metrics) PrometheusFormat() string {
 	// Provenance metrics
 	writeMetric("provenance_entries_total", "Total number of provenance entries recorded", "counter", m.ProvenanceEntriesTotal)
 	writeMetric("provenance_chain_length", "Length of the provenance chain for this writer", "gauge", m.ProvenanceChainLength)
+
+	// Backend request metrics
+	sb.WriteString("\n# HELP armor_backend_requests_total Total number of backend requests by operation\n")
+	sb.WriteString("# TYPE armor_backend_requests_total counter\n")
+	m.BackendRequestsTotal.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_backend_requests_total{operation=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	// Backend request duration metrics
+	sb.WriteString("# HELP armor_backend_request_duration_total Backend request duration in milliseconds\n")
+	sb.WriteString("# TYPE armor_backend_request_duration_total counter\n")
+	m.BackendRequestDuration.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_backend_request_duration_total{key=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	// Restore verifier metrics
+	sb.WriteString("\n# HELP armor_restore_verifier_checks_total Total number of restore verifier checks per bucket\n")
+	sb.WriteString("# TYPE armor_restore_verifier_checks_total counter\n")
+	m.restoreVerifierChecksTotal.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_restore_verifier_checks_total{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	sb.WriteString("# HELP armor_restore_verifier_failures_total Total number of restore verifier failures per bucket\n")
+	sb.WriteString("# TYPE armor_restore_verifier_failures_total counter\n")
+	m.restoreVerifierFailuresTotal.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_restore_verifier_failures_total{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	sb.WriteString("# HELP armor_restore_verifier_objects_verified Total number of objects verified per bucket\n")
+	sb.WriteString("# TYPE armor_restore_verifier_objects_verified counter\n")
+	m.restoreVerifierObjectsVerified.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_restore_verifier_objects_verified{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	sb.WriteString("# HELP armor_restore_verifier_objects_failed Total number of objects that failed verification per bucket\n")
+	sb.WriteString("# TYPE armor_restore_verifier_objects_failed counter\n")
+	m.restoreVerifierObjectsFailed.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_restore_verifier_objects_failed{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
+
+	sb.WriteString("# HELP armor_restore_verifier_latency_millis Restore verifier latency in milliseconds per bucket\n")
+	sb.WriteString("# TYPE armor_restore_verifier_latency_millis gauge\n")
+	m.restoreVerifierLatencyMillis.Do(func(kv expvar.KeyValue) {
+		fmt.Fprintf(&sb, "armor_restore_verifier_latency_millis{bucket=%q} %s\n", kv.Key, kv.Value.String())
+	})
 
 	// Multipart canary histogram metrics
 	// Export multipart upload duration histogram
@@ -752,21 +868,17 @@ func (m *Metrics) Handler() http.HandlerFunc {
 
 // RecordRestoreVerifierCheck records a restore verifier check completion.
 func (m *Metrics) RecordRestoreVerifierCheck(bucket string, duration time.Duration, success bool) {
-	var counter expvar.Int
-	counter.Add(1)
-	m.RestoreVerifierChecksTotal.Set(bucket, &counter)
+	m.restoreVerifierChecksTotal.Add(bucket, 1)
 
 	if success {
-		m.RestoreVerifierObjectsVerified.Set(bucket, &counter)
+		m.restoreVerifierObjectsVerified.Add(bucket, 1)
 	} else {
-		m.RestoreVerifierFailuresTotal.Set(bucket, &counter)
-		m.RestoreVerifierObjectsFailed.Set(bucket, &counter)
+		m.restoreVerifierFailuresTotal.Add(bucket, 1)
+		m.restoreVerifierObjectsFailed.Add(bucket, 1)
 	}
 
 	latencyKey := fmt.Sprintf("%s_latency", bucket)
-	var latency expvar.Int
-	latency.Set(int64(duration.Milliseconds()))
-	m.RestoreVerifierLatencyMillis.Set(latencyKey, &latency)
+	m.restoreVerifierLatencyMillis.Set(latencyKey, int64(duration.Milliseconds()))
 }
 
 // SetRestoreVerifierLastCheckTime sets the last check time for restore verifier.

@@ -136,6 +136,22 @@ armor_replication_dropped_total 0
 **Description:** Number of requests currently being processed  
 **Labels:** None
 
+### `armor_requests_by_label`
+
+**Type:** Counter  
+**Description:** Total number of requests by operation and status class  
+**Labels:** `key` — Combined operation and status class (e.g., "GET_2xx", "PUT_4xx")
+
+**Example Output:**
+```
+# HELP armor_requests_by_label Total number of requests by operation and status class
+# TYPE armor_requests_by_label counter
+armor_requests_by_label{key="GET_2xx"} 1234
+armor_requests_by_label{key="PUT_2xx"} 567
+armor_requests_by_label{key="GET_4xx"} 12
+armor_requests_by_label{key="DELETE_5xx"} 3
+```
+
 ### `armor_bytes_uploaded_total`
 
 **Type:** Counter  
@@ -164,6 +180,34 @@ armor_replication_dropped_total 0
 
 ## Encryption Metrics
 
+### `armor_encryption_ops_total`
+
+**Type:** Counter  
+**Description:** Total number of encryption operations by type  
+**Labels:** `operation` — Type of encryption operation (e.g., "encrypt", "encrypt-stream")
+
+**Example Output:**
+```
+# HELP armor_encryption_ops_total Total number of encryption operations by type
+# TYPE armor_encryption_ops_total counter
+armor_encryption_ops_total{operation="encrypt"} 1234
+armor_encryption_ops_total{operation="encrypt-stream"} 567
+```
+
+### `armor_decryption_ops_total`
+
+**Type:** Counter  
+**Description:** Total number of decryption operations by type  
+**Labels:** `operation` — Type of decryption operation (e.g., "decrypt", "decrypt-range")
+
+**Example Output:**
+```
+# HELP armor_decryption_ops_total Total number of decryption operations by type
+# TYPE armor_decryption_ops_total counter
+armor_decryption_ops_total{operation="decrypt"} 1234
+armor_decryption_ops_total{operation="decrypt-range"} 567
+```
+
 ### `armor_key_wrap_ops_total`
 
 **Type:** Counter  
@@ -175,6 +219,109 @@ armor_replication_dropped_total 0
 **Type:** Counter  
 **Description:** Total number of key unwrap operations  
 **Labels:** None
+
+## Backend Metrics
+
+### `armor_backend_requests_total`
+
+**Type:** Counter  
+**Description:** Total number of backend requests by operation  
+**Labels:** `operation` — Type of backend operation (e.g., "get_object", "put_object", "head_object")
+
+**Example Output:**
+```
+# HELP armor_backend_requests_total Total number of backend requests by operation
+# TYPE armor_backend_requests_total counter
+armor_backend_requests_total{operation="get_object"} 1234
+armor_backend_requests_total{operation="put_object"} 567
+armor_backend_requests_total{operation="head_object"} 890
+```
+
+### `armor_backend_request_duration_total`
+
+**Type:** Counter  
+**Description:** Backend request duration in milliseconds  
+**Labels:** `key` — Operation and duration key (e.g., "get_object_duration_50")
+
+**Example Output:**
+```
+# HELP armor_backend_request_duration_total Backend request duration in milliseconds
+# TYPE armor_backend_request_duration_total counter
+armor_backend_request_duration_total{key="get_object_duration_50"} 1
+armor_backend_request_duration_total{key="put_object_duration_100"} 1
+```
+
+## Restore Verifier Metrics
+
+### `armor_restore_verifier_checks_total`
+
+**Type:** Counter  
+**Description:** Total number of restore verifier checks per bucket  
+**Labels:** `bucket` — Bucket name
+
+**Example Output:**
+```
+# HELP armor_restore_verifier_checks_total Total number of restore verifier checks per bucket
+# TYPE armor_restore_verifier_checks_total counter
+armor_restore_verifier_checks_total{bucket="armor-apexalgo"} 1234
+armor_restore_verifier_checks_total{bucket="iad-kalshi"} 567
+```
+
+### `armor_restore_verifier_failures_total`
+
+**Type:** Counter  
+**Description:** Total number of restore verifier failures per bucket  
+**Labels:** `bucket` — Bucket name
+
+**Example Output:**
+```
+# HELP armor_restore_verifier_failures_total Total number of restore verifier failures per bucket
+# TYPE armor_restore_verifier_failures_total counter
+armor_restore_verifier_failures_total{bucket="armor-apexalgo"} 12
+armor_restore_verifier_failures_total{bucket="iad-kalshi"} 5
+```
+
+### `armor_restore_verifier_objects_verified`
+
+**Type:** Counter  
+**Description:** Total number of objects verified per bucket  
+**Labels:** `bucket` — Bucket name
+
+**Example Output:**
+```
+# HELP armor_restore_verifier_objects_verified Total number of objects verified per bucket
+# TYPE armor_restore_verifier_objects_verified counter
+armor_restore_verifier_objects_verified{bucket="armor-apexalgo"} 1200
+armor_restore_verifier_objects_verified{bucket="iad-kalshi"} 550
+```
+
+### `armor_restore_verifier_objects_failed`
+
+**Type:** Counter  
+**Description:** Total number of objects that failed verification per bucket  
+**Labels:** `bucket` — Bucket name
+
+**Example Output:**
+```
+# HELP armor_restore_verifier_objects_failed Total number of objects that failed verification per bucket
+# TYPE armor_restore_verifier_objects_failed counter
+armor_restore_verifier_objects_failed{bucket="armor-apexalgo"} 34
+armor_restore_verifier_objects_failed{bucket="iad-kalshi"} 17
+```
+
+### `armor_restore_verifier_latency_millis`
+
+**Type:** Gauge  
+**Description:** Restore verifier latency in milliseconds per bucket  
+**Labels:** `bucket` — Bucket name
+
+**Example Output:**
+```
+# HELP armor_restore_verifier_latency_millis Restore verifier latency in milliseconds per bucket
+# TYPE armor_restore_verifier_latency_millis gauge
+armor_restore_verifier_latency_millis{bucket="armor-apexalgo"} 250
+armor_restore_verifier_latency_millis{bucket="iad-kalshi"} 180
+```
 
 ## Canary Metrics
 
