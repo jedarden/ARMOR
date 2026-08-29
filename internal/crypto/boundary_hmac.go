@@ -31,8 +31,13 @@ func NewBoundaryHMACComputer(dek []byte, blockSize int) (*BoundaryHMACComputer, 
 		return nil, fmt.Errorf("DEK must be 32 bytes")
 	}
 
+	hmacKey, err := DeriveHMACKey(dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+	}
+
 	return &BoundaryHMACComputer{
-		hmacKey:   DeriveHMACKey(dek),
+		hmacKey:   hmacKey,
 		blockSize: blockSize,
 	}, nil
 }

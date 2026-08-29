@@ -14,11 +14,11 @@ const (
 
 // DeriveHMACKey derives the HMAC key from a DEK using HKDF-SHA256.
 // The HMAC key is used for per-block HMAC-SHA256 authentication.
-func DeriveHMACKey(dek []byte) []byte {
+func DeriveHMACKey(dek []byte) ([]byte, error) {
 	hkdf := hkdf.New(sha256.New, dek, nil, []byte(HMACKeyInfo))
 	hmacKey := make([]byte, 32)
 	if _, err := io.ReadFull(hkdf, hmacKey); err != nil {
-		panic("HKDF derivation failed: " + err.Error())
+		return nil, err
 	}
-	return hmacKey
+	return hmacKey, nil
 }

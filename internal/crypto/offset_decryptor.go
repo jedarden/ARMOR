@@ -39,9 +39,14 @@ func NewOffsetDecryptor(dek, iv []byte, blockSize int, version uint8) (*OffsetDe
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
 
+	hmacKey, err := DeriveHMACKey(dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+	}
+
 	return &OffsetDecryptor{
 		dek:       dek,
-		hmacKey:   DeriveHMACKey(dek),
+		hmacKey:   hmacKey,
 		iv:        iv,
 		blockSize: blockSize,
 		version:   version,

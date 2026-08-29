@@ -160,7 +160,10 @@ func EncryptBlockV3(dek, iv []byte, part uint16, block uint32, plaintext []byte,
 	}
 
 	// Compute HMAC
-	hmacKey := DeriveHMACKey(dek)
+	hmacKey, err := DeriveHMACKey(dek)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+	}
 	hmacValue = ComputeV3BlockHMAC(hmacKey, part, block, ciphertext)
 
 	return ciphertext, hmacValue, nil
@@ -192,7 +195,10 @@ func DecryptBlockV3(dek, iv []byte, part uint16, block uint32, ciphertext []byte
 	}
 
 	// Verify HMAC first
-	hmacKey := DeriveHMACKey(dek)
+	hmacKey, err := DeriveHMACKey(dek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+	}
 	if err := VerifyV3BlockHMAC(hmacKey, part, block, ciphertext, expectedHMAC); err != nil {
 		return nil, fmt.Errorf("HMAC verification failed for part %d block %d: %w", part, block, err)
 	}

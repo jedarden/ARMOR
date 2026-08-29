@@ -196,7 +196,10 @@ func TestV3BlockHMACKeys(t *testing.T) {
 	for i := range dek {
 		dek[i] = byte(i)
 	}
-	hmacKey := DeriveHMACKey(dek)
+	hmacKey, err := DeriveHMACKey(dek)
+	if err != nil {
+		t.Fatalf("Failed to derive HMAC key: %v", err)
+	}
 
 	ciphertext := []byte{0x01, 0x02, 0x03, 0x04}
 
