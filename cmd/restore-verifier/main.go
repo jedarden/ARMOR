@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/jedarden/armor/internal/backend"
+	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/manifest"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/restoreverifier"
@@ -55,6 +56,7 @@ var (
 	b2SecretKey     = flag.String("b2-secret-key", os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY"), "B2 secret key")
 	cfDomain        = flag.String("cf-domain", os.Getenv("ARMOR_CF_DOMAIN"), "Cloudflare domain")
 	mekHex          = flag.String("mek", os.Getenv("ARMOR_MEK"), "Master encryption key (hex)")
+	mekRingHex      = flag.String("mek-ring", os.Getenv("VERIFIER_MEK_RING"), "Comma-separated list of retired MEKs (hex, 64 chars each)")
 	blockSize       = flag.Int("block-size", 65536, "Encryption block size")
 	readConcurrency = flag.Int("read-concurrency", parseInt(os.Getenv("ARMOR_READ_CONCURRENCY"), 16), "Maximum concurrent ranged reads")
 
@@ -189,6 +191,34 @@ func main() {
 		log.Fatalf("Invalid MEK length: got %d bytes, expected 32", len(mek))
 	}
 
+	// Parse MEK ring (comma-separated hex MEKs)
+	var mekRing []crypto.RingKeyEntry
+	if *mekRingHex != "" {
+		ringMEKs := strings.Split(*mekRingHex, ",")
+		for i, mekStr := range ringMEKs {
+			mekStr = strings.TrimSpace(mekStr)
+			if mekStr == "" {
+				continue
+			}
+			ringMEK, err := hex.DecodeString(mekStr)
+			if err != nil {
+				log.Fatalf("Invalid MEK ring entry %d: invalid hex: %v", i, err)
+			}
+			if len(ringMEK) != 32 {
+				log.Fatalf("Invalid MEK ring entry %d: got %d bytes, expected 32", i, len(ringMEK))
+			}
+			fp := crypto.MEKFingerprint(ringMEK)
+			mekRing = append(mekRing, crypto.RingKeyEntry{
+				MEK:         ringMEK,
+				Fingerprint: fp,
+			})
+			log.Printf("Loaded ring key %d: fingerprint %s", i, fp)
+		}
+		if len(mekRing) > 0 {
+			log.Printf("Loaded %d ring keys for verification", len(mekRing))
+		}
+	}
+
 	log.Printf("Starting restore-verifier with block size %d, check interval %v, sample size %d",
 		*blockSize, *checkInterval, *sampleSize)
 
@@ -278,6 +308,7 @@ func main() {
 	verifier := restoreverifier.New(
 		b2Backend,
 		mek,
+		mekRing,
 		*blockSize,
 		manifestIndex,
 		cfg,
@@ -350,6 +381,7 @@ Environment Variables:
   ARMOR_B2_SECRET_ACCESS_KEY   B2 application key
   ARMOR_CF_DOMAIN              Cloudflare domain (optional)
   ARMOR_MEK                    Master encryption key (hex, 64 chars)
+  VERIFIER_MEK_RING            Comma-separated list of retired MEKs (hex, 64 chars each) for key rotation support
   VERIFIER_CHECK_INTERVAL      Verification check interval (default: 6h)
   VERIFIER_SAMPLE_SIZE         Historical sample size (default: 10)
   VERIFIER_HTTP_LISTEN         HTTP listen address (default: :9002)
@@ -391,6 +423,10 @@ Examples:
   export ARMOR_B2_SECRET_ACCESS_KEY=your-secret
   export ARMOR_MEK=0123456789abcdef...
   restore-verifier -bucket mybucket -check-interval 1h
+
+  # Run with MEK ring (for buckets mid-rotation)
+  export VERIFIER_MEK_RING=oldkey0123456789abcdef,anotherkeyfedcba9876543210
+  restore-verifier -bucket mybucket
 
   # Specify multiple buckets
   restore-verifier \

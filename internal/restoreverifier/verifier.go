@@ -474,6 +474,7 @@ type Verifier struct {
 
 	backend   backend.Backend
 	mek       []byte
+	mekRing   []crypto.RingKeyEntry // retired-but-valid MEKs with fingerprints
 	blockSize int
 	manifest  *manifest.Index
 	metrics   *metrics.Metrics // optional; receives per-bucket restorability gauges
@@ -534,6 +535,7 @@ type Config struct {
 func New(
 	backend backend.Backend,
 	mek []byte,
+	mekRing []crypto.RingKeyEntry,
 	blockSize int,
 	manifest *manifest.Index,
 	cfg Config,
@@ -541,6 +543,7 @@ func New(
 	v := &Verifier{
 		backend:       backend,
 		mek:           mek,
+		mekRing:       mekRing,
 		blockSize:     blockSize,
 		manifest:      manifest,
 		metrics:       cfg.Metrics,
@@ -581,6 +584,44 @@ func (v *Verifier) getBucketPrefix(bucket string) string {
 		}
 	}
 	return ""
+}
+
+// lookupMEKByFingerprint looks up a MEK by fingerprint in the active key and ring.
+// Returns the MEK and true if found, nil and false otherwise.
+func (v *Verifier) lookupMEKByFingerprint(keyID, fingerprint string) ([]byte, bool) {
+	// Check active key first
+	if keyID == "" && crypto.MEKFingerprint(v.mek) == fingerprint {
+		return v.mek, true
+	}
+
+	// Check ring keys
+	for _, ringEntry := range v.mekRing {
+		if ringEntry.Fingerprint == fingerprint {
+			return ringEntry.MEK, true
+		}
+	}
+
+	return nil, false
+}
+
+// legacyFallback unwraps a DEK using trial decryption with active key, then ring keys.
+// For legacy format (no v2: prefix), we try each key in order.
+func (v *Verifier) legacyFallback(wrappedDEK []byte) ([]byte, error) {
+	// Try active key first
+	dek, err := crypto.UnwrapDEK(v.mek, wrappedDEK)
+	if err == nil {
+		return dek, nil
+	}
+
+	// Try ring keys
+	for _, ringEntry := range v.mekRing {
+		dek, err := crypto.UnwrapDEK(ringEntry.MEK, wrappedDEK)
+		if err == nil {
+			return dek, nil
+		}
+	}
+
+	return nil, errors.New("no key in active or ring can unwrap DEK")
 }
 
 // Start begins the verification loop.
@@ -1084,7 +1125,9 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 	}
 
 	// Step 2: unwrap the DEK with the escrowed MEK (same crypto operation as direct path)
-	dek, err := crypto.UnwrapDEK(v.mek, armorMeta.WrappedDEK)
+	// Use ring-based key selection with fingerprint matching
+	wrappedDEKStr := string(armorMeta.WrappedDEK) // Convert []byte to string for v2 format parsing
+	dek, _, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, v.lookupMEKByFingerprint, v.legacyFallback)
 	if err != nil {
 		return nil, fmt.Errorf("ARMOR path: failed to unwrap DEK: %w", err)
 	}
@@ -1211,7 +1254,9 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 	}
 
 	// Step 2: unwrap the DEK with the escrowed MEK.
-	dek, err := crypto.UnwrapDEK(v.mek, armorMeta.WrappedDEK)
+	// Use ring-based key selection with fingerprint matching
+	wrappedDEKStr := string(armorMeta.WrappedDEK) // Convert []byte to string for v2 format parsing
+	dek, _, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, v.lookupMEKByFingerprint, v.legacyFallback)
 	if err != nil {
 		return nil, fmt.Errorf("direct path: failed to unwrap DEK: %w", err)
 	}

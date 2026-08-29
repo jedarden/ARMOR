@@ -4,16 +4,25 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
-	ErrInvalidKeyLength = errors.New("invalid key length")
-	ErrWrapFailed       = errors.New("key wrap failed")
-	ErrUnwrapFailed     = errors.New("key unwrap failed")
+	ErrInvalidKeyLength     = errors.New("invalid key length")
+	ErrWrapFailed           = errors.New("key wrap failed")
+	ErrUnwrapFailed         = errors.New("key unwrap failed")
+	ErrFingerprintNotFound  = errors.New("MEK fingerprint not found in active or ring keys")
 )
+
+// RingKeyEntry represents a retired-but-valid MEK with its fingerprint.
+type RingKeyEntry struct {
+	MEK         []byte // The retired MEK (32 bytes)
+	Fingerprint string // 16 hex chars (first 8 bytes of SHA-256(MEK))
+}
 
 // AES-KWP constants (RFC 5649)
 const (
@@ -221,4 +230,82 @@ func xorUint64(a []byte, t uint64) {
 	a[5] ^= byte(t >> 16)
 	a[6] ^= byte(t >> 8)
 	a[7] ^= byte(t)
+}
+
+// WrapDEKWithFingerprint wraps a DEK using the MEK with AES-KWP (RFC 5649)
+// and returns the result in the v2:<fp16>:<base64> format, where fp16 is the
+// 16-character hex fingerprint of the MEK. The fingerprint enables direct
+// key selection during unwrapping without trial decryption.
+//
+// Returns the formatted string ready for storage in x-amz-meta-armor-wrapped-dek.
+func WrapDEKWithFingerprint(mek, dek []byte) (string, error) {
+	wrapped, err := WrapDEK(mek, dek)
+	if err != nil {
+		return "", err
+	}
+	fp := MEKFingerprint(mek)
+	base64Wrapped := base64.StdEncoding.EncodeToString(wrapped)
+	return fmt.Sprintf("v2:%s:%s", fp, base64Wrapped), nil
+}
+
+// UnwrapDEKByFingerprint unwraps a DEK from the v2:<fp16>:<base64> format
+// using the provided key lookup function. The lookup function takes a key ID
+// (empty string for the default key) and a 16-character hex fingerprint,
+// and returns the MEK if found (along with true), or (nil, false) if not found.
+//
+// For legacy format (base64 without v2: prefix), returns a legacyFallback
+// function that should try keys in order: first the active key, then each
+// ring key. Each attempt should call the standard UnwrapDEK function and
+// return the unwrapped DEK if successful, or ErrUnwrapFailed if not.
+//
+// Returns the unwrapped 32-byte DEK, the actual fingerprint used (or empty
+// for legacy format), and an error if unwrapping fails.
+func UnwrapDEKByFingerprint(wrappedDEKStr string, lookupMEK func(keyID, fingerprint string) ([]byte, bool), legacyFallback func(mek []byte) ([]byte, error)) ([]byte, string, error) {
+	// Check for v2: prefix
+	if len(wrappedDEKStr) > 4 && wrappedDEKStr[:3] == "v2:" {
+		// Parse v2:<fp16>:<base64>
+		parts := strings.SplitN(wrappedDEKStr, ":", 3)
+		if len(parts) != 3 || parts[0] != "v2" {
+			return nil, "", fmt.Errorf("%w: invalid v2 format", ErrUnwrapFailed)
+		}
+		fingerprint := parts[1]
+		if len(fingerprint) != 16 {
+			return nil, "", fmt.Errorf("%w: fingerprint must be 16 hex chars", ErrUnwrapFailed)
+		}
+		base64Wrapped := parts[2]
+
+		// Decode base64 to get actual wrapped DEK bytes
+		wrappedBytes, err := base64.StdEncoding.DecodeString(base64Wrapped)
+		if err != nil {
+			return nil, "", fmt.Errorf("%w: base64 decode failed: %v", ErrUnwrapFailed, err)
+		}
+
+		// Look up MEK by fingerprint (keyID is empty for default key)
+		mek, found := lookupMEK("", fingerprint)
+		if !found {
+			// Check if fingerprint exists in any ring for better error message
+			return nil, "", ErrFingerprintNotFound
+		}
+
+		// Unwrap with the found MEK
+		dek, err := UnwrapDEK(mek, wrappedBytes)
+		if err != nil {
+			return nil, "", fmt.Errorf("%w: unwrap with fingerprint %s failed: %v", ErrUnwrapFailed, fingerprint, err)
+		}
+		return dek, fingerprint, nil
+	}
+
+	// Legacy format: plain base64, no prefix
+	// Try legacy fallback: active key first, then ring keys in order
+	wrappedBytes, err := base64.StdEncoding.DecodeString(wrappedDEKStr)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: legacy base64 decode failed: %v", ErrUnwrapFailed, err)
+	}
+
+	// Call legacy fallback function which tries each key
+	dek, err := legacyFallback(wrappedBytes)
+	if err != nil {
+		return nil, "", err
+	}
+	return dek, "", nil
 }
