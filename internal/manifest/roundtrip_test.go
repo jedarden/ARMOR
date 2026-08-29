@@ -49,6 +49,7 @@ func TestWriterLoadRoundtrip(t *testing.T) {
 		ContentType:     "application/octet-stream",
 		ETag:            "etag-e1",
 		LastModified:    now,
+		CiphertextSize:  1064, // 64-byte header + 1000 bytes plaintext
 	}
 	e2 := &manifest.Entry{
 		PlaintextSize:   2000,
@@ -59,12 +60,13 @@ func TestWriterLoadRoundtrip(t *testing.T) {
 		ContentType:     "application/json",
 		ETag:            "etag-e2",
 		LastModified:    now,
+		CiphertextSize:  2064, // 64-byte header + 2000 bytes plaintext
 	}
 
 	// Enqueue two puts and a put-then-delete for a third key.
-	w.EnqueuePut(roundtripBucket, "data/file1.parquet", e1)
-	w.EnqueuePut(roundtripBucket, "data/file2.json", e2)
-	w.EnqueuePut(roundtripBucket, "data/ephemeral.txt", sampleEntry(5))
+	w.EnqueuePut(roundtripBucket, "data/file1.parquet", e1, nil)
+	w.EnqueuePut(roundtripBucket, "data/file2.json", e2, nil)
+	w.EnqueuePut(roundtripBucket, "data/ephemeral.txt", sampleEntry(5), nil)
 	w.EnqueueDelete(roundtripBucket, "data/ephemeral.txt")
 
 	w.Stop() // flush all pending ops before Load
@@ -101,6 +103,9 @@ func TestWriterLoadRoundtrip(t *testing.T) {
 	}
 	if fmt.Sprintf("%x", got1.WrappedDEK) != fmt.Sprintf("%x", e1.WrappedDEK) {
 		t.Error("file1 WrappedDEK does not match")
+	}
+	if got1.CiphertextSize != e1.CiphertextSize {
+		t.Errorf("file1 CiphertextSize: got %d, want %d", got1.CiphertextSize, e1.CiphertextSize)
 	}
 
 	got2, ok := restored.Get(roundtripBucket, "data/file2.json")
@@ -306,3 +311,63 @@ func TestDeltaReplayDeleteThenPut(t *testing.T) {
 		t.Errorf("seq: want 2, got %d", idx.Seq())
 	}
 }
+
+// TestBackwardCompatibilityMissingCiphertextSize verifies that entries
+// without CiphertextSize (from old deltas/snapshots) are still readable
+// and CiphertextSize defaults to 0.
+func TestBackwardCompatibilityMissingCiphertextSize(t *testing.T) {
+	const (
+		bcPrefix     = ".armor/manifest"
+		bcWriter     = "bc-writer"
+		bcBucket     = "bucket"
+		bcTimestamp  = "2026-08-28T12:00:00Z"
+	)
+
+	// Create a delta JSON entry without CiphertextSize (old format)
+	oldFormatDelta := `{"op":"put","key":"bucket/old-file.parquet","entry":{"plaintext_size":5000,"plaintext_sha256":"abc123","iv":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"wrapped_dek":[20,21,22,23],"block_size":65536,"content_type":"application/octet-stream","etag":"old-etag","last_modified":"` + bcTimestamp + `"},"ts":"` + bcTimestamp + `Z"}
+`
+
+	store := newMockStore()
+	store.put(manifest.DeltaKey(bcPrefix, bcWriter, 1), []byte(oldFormatDelta))
+
+	restored := manifest.New()
+	if err := manifest.Load(context.Background(), restored, bcPrefix, bcWriter, store.lister(), store.fetcher()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if restored.Len() != 1 {
+		t.Fatalf("expected 1 entry, got %d", restored.Len())
+	}
+
+	entry, ok := restored.Get(bcBucket, "old-file.parquet")
+	if !ok {
+		t.Fatal("old-file.parquet missing from restored index")
+	}
+
+	// Verify all fields except CiphertextSize (which should be 0/missing)
+	if entry.PlaintextSize != 5000 {
+		t.Errorf("PlaintextSize: got %d, want 5000", entry.PlaintextSize)
+	}
+	if entry.PlaintextSHA256 != "abc123" {
+		t.Errorf("PlaintextSHA256: got %q, want abc123", entry.PlaintextSHA256)
+	}
+	if entry.ETag != "old-etag" {
+		t.Errorf("ETag: got %q, want old-etag", entry.ETag)
+	}
+	if entry.ContentType != "application/octet-stream" {
+		t.Errorf("ContentType: got %q, want application/octet-stream", entry.ContentType)
+	}
+	if entry.BlockSize != 65536 {
+		t.Errorf("BlockSize: got %d, want 65536", entry.BlockSize)
+	}
+
+	// CiphertextSize should be 0 when absent (backward compatible default)
+	if entry.CiphertextSize != 0 {
+		t.Errorf("CiphertextSize: got %d, want 0 (backward compatible default)", entry.CiphertextSize)
+	}
+
+	if restored.Seq() != 1 {
+		t.Errorf("seq: want 1, got %d", restored.Seq())
+	}
+}
+

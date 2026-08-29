@@ -45,19 +45,25 @@ import (
 type ProvenanceRecorder interface {
 	RecordUpload(ctx context.Context, objectKey, plaintextSHA256, operation string) error
 	ShouldRecord(key string) bool
+	// CreateChainEntry creates a chain entry for embedding in a manifest delta.
+	// It atomically increments the sequence number and computes the chain hash,
+	// but does not write the entry to B2. Returns (nil, nil) if the key should
+	// not have provenance recorded (e.g., internal objects).
+	CreateChainEntry(ctx context.Context, objectKey, plaintextSHA256, operation string) (*provenance.ChainEntryData, error)
 }
 
 // ManifestEntry holds the decryption metadata for a tracked object as exposed
 // to handlers. It mirrors manifest.Entry but is defined here to avoid an
 // import cycle between the handlers and manifest packages.
 type ManifestEntry struct {
-	PlaintextSize int64
-	ContentType   string
-	ETag          string
-	LastModified  time.Time
-	IV            []byte
-	WrappedDEK    []byte
-	BlockSize     int
+	PlaintextSize  int64
+	ContentType    string
+	ETag           string
+	LastModified   time.Time
+	IV             []byte
+	WrappedDEK     []byte
+	BlockSize      int
+	CiphertextSize int64 // v3 single-PUT readers need this to locate trailer block table
 }
 
 // ManifestRecorder records successful S3 write operations in the manifest
@@ -65,7 +71,9 @@ type ManifestEntry struct {
 // as delta files. Implementations must be safe for concurrent use.
 type ManifestRecorder interface {
 	// RecordPut records a successful PutObject or CompleteMultipartUpload.
-	RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, blockSize int, contentType, etag string)
+	// chainEntry is the provenance chain entry to embed in the delta line.
+	// May be nil if provenance is disabled for this key.
+	RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64)
 	// RecordDelete records a successful DeleteObject.
 	RecordDelete(bucket, key string)
 	// Lookup returns manifest metadata for bucket/key, or (nil, false) if not
@@ -481,12 +489,28 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	// Record in manifest for fast metadata lookup (async B2 persistence)
+	// When manifest is enabled, provenance is embedded in delta lines.
+	// When manifest is disabled, provenance uses per-object entries.
+	var chainEntry *manifest.ChainEntry
+	if h.manifest != nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
+		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
+		entryData, err := h.provenance.CreateChainEntry(ctx, key, plaintextSHAHex, "put")
+		if err == nil && entryData != nil {
+			chainEntry = &manifest.ChainEntry{
+				Sequence:      entryData.Sequence,
+				ChainHash:     entryData.ChainHash,
+				PrevChainHash: entryData.PrevChainHash,
+			}
+		}
+		// If CreateChainEntry fails, we still record the manifest entry
+		// without provenance data — this is acceptable as a degradation mode.
+	}
 	if h.manifest != nil {
-		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag)
+		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag, chainEntry, int64(len(envelope)))
 	}
 
-	// Record provenance
-	if h.provenance != nil && h.provenance.ShouldRecord(key) {
+	// Record provenance (fallback when manifest is disabled)
+	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
 		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put")
 	}
@@ -703,12 +727,26 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	}
 
 	// Record in manifest for fast metadata lookup (async B2 persistence)
+	// When manifest is enabled, provenance is embedded in delta lines.
+	// When manifest is disabled, provenance uses per-object entries.
+	var chainEntry *manifest.ChainEntry
+	if h.manifest != nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
+		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
+		entryData, err := h.provenance.CreateChainEntry(ctx, key, plaintextSHAHex, "put-streaming")
+		if err == nil && entryData != nil {
+			chainEntry = &manifest.ChainEntry{
+				Sequence:      entryData.Sequence,
+				ChainHash:     entryData.ChainHash,
+				PrevChainHash: entryData.PrevChainHash,
+			}
+		}
+	}
 	if h.manifest != nil {
-		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag)
+		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag, chainEntry, envelopeSize)
 	}
 
-	// Record provenance
-	if h.provenance != nil && h.provenance.ShouldRecord(key) {
+	// Record provenance (fallback when manifest is disabled)
+	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
 		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "put-streaming")
 	}
@@ -3273,12 +3311,25 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	manager.DeleteState(ctx, uploadID)
 
 	// Record in manifest for fast metadata lookup (async B2 persistence)
+	// When manifest is enabled, provenance is embedded in delta lines.
+	// When manifest is disabled, provenance uses per-object entries.
+	var chainEntry *manifest.ChainEntry
+	if h.manifest != nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
+		entryData, err := h.provenance.CreateChainEntry(ctx, key, plaintextSHAHex, "multipart")
+		if err == nil && entryData != nil {
+			chainEntry = &manifest.ChainEntry{
+				Sequence:      entryData.Sequence,
+				ChainHash:     entryData.ChainHash,
+				PrevChainHash: entryData.PrevChainHash,
+			}
+		}
+	}
 	if h.manifest != nil {
-		h.manifest.RecordPut(bucket, key, totalPlaintextSize, plaintextSHAHex, state.IV, state.WrappedDEK, state.BlockSize, state.ContentType, etag)
+		h.manifest.RecordPut(bucket, key, totalPlaintextSize, plaintextSHAHex, state.IV, state.WrappedDEK, state.BlockSize, state.ContentType, etag, chainEntry, totalCiphertextSize)
 	}
 
-	// Record provenance for the multipart upload
-	if h.provenance != nil && h.provenance.ShouldRecord(key) {
+	// Record provenance (fallback when manifest is disabled)
+	if h.manifest == nil && h.provenance != nil && h.provenance.ShouldRecord(key) {
 		_ = h.provenance.RecordUpload(ctx, key, plaintextSHAHex, "multipart")
 	}
 
