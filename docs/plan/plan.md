@@ -524,8 +524,8 @@ ARMOR is configured exclusively via environment variables. No config files.
 | `ARMOR_PREFIX` | No | (none) | Optional key prefix applied to all S3 operations before they reach B2. Enables multiple ARMOR deployments to share a single bucket without key collisions. Normalized to a single trailing slash with no leading slash (e.g. `kalshi-tape` → `kalshi-tape/`). When unset or empty, no prefix is applied and behavior is identical to previous versions. See ADR-001. |
 | `ARMOR_CF_DOMAIN` | No | (none) | Cloudflare domain CNAME'd to B2 bucket (e.g., `armor-b2.example.com`). When unset, downloads fall back to direct B2 reads — the zero-egress path is skipped, which is fine for test instances. |
 | `ARMOR_MEK` | Yes | — | Master encryption key, hex-encoded 32 bytes. Generate with `openssl rand -hex 32`. |
-| `ARMOR_AUTH_ACCESS_KEY` | No | (random on startup) | S3 access key ID for client auth to ARMOR (the default credential) |
-| `ARMOR_AUTH_SECRET_KEY` | No | (random on startup) | S3 secret access key for client auth to ARMOR (the default credential) |
+| `ARMOR_AUTH_ACCESS_KEY` | Yes* | — | S3 access key ID for client auth to ARMOR (the default credential). Required unless using named credentials or `ARMOR_AUTH_FILE`. |
+| `ARMOR_AUTH_SECRET_KEY` | Yes* | — | S3 secret access key for client auth to ARMOR (the default credential). Required unless using named credentials or `ARMOR_AUTH_FILE`. |
 | `ARMOR_AUTH_<NAME>_ACCESS_KEY` | No | — | Access key ID for an additional named credential. Any number of named credentials may be defined. |
 | `ARMOR_AUTH_<NAME>_SECRET_KEY` | No | — | Secret key for the named credential (required with its access key) |
 | `ARMOR_AUTH_<NAME>_ACL` | No | (full access) | Prefix ACL for the named credential (see `parseACL`). Empty means full access to the configured bucket. Action verbs: ADR-012, Phase 7. |
@@ -1139,8 +1139,10 @@ claims. Semantics stay prefix-match; no glob engine.
 Findings: `cmd/armor` has no flags, no `--version`, no dry-run; `VERSION` is
 never embedded (`-ldflags="-s -w"` only) so three drift scripts exist to
 infer versions from image tags; config errors are reported one at a time;
-random default credentials are generated but never surfaced, so a server with
-no `ARMOR_AUTH_*` boots healthy and unusable.
+**fixed 2026-08-28**: random default credentials are no longer generated —
+startup fails with a clear error when no client credential is configured
+(ARMOR_AUTH_* env vars or ARMOR_AUTH_FILE), except in `demo` mode which
+explicitly sets `ARMOR_ALLOW_NO_CREDENTIALS=true`.
 
 Decisions:
 - Subcommands via stdlib `flag` (no cobra): `serve` (default when argv is

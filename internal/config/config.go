@@ -286,6 +286,10 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// AllowNoCredentials escape hatch (for demo mode only)
+	// This environment variable should only be set by the demo subcommand
+	cfg.AllowNoCredentials = os.Getenv("ARMOR_ALLOW_NO_CREDENTIALS") == "true"
+
 	// Writer ID (default to hostname)
 	cfg.WriterID = os.Getenv("ARMOR_WRITER_ID")
 	if cfg.WriterID == "" {
@@ -403,6 +407,11 @@ func Load() (*Config, error) {
 				errs = append(errs, fmt.Errorf("ARMOR_SECONDARY_BACKEND_PATH is required when ARMOR_SECONDARY_BACKEND_TYPE=filesystem"))
 			}
 		}
+	}
+
+	// Check that at least one client credential is configured (unless demo mode)
+	if !cfg.AllowNoCredentials && len(cfg.Credentials) == 0 {
+		errs = append(errs, fmt.Errorf("no client credential configured: set ARMOR_AUTH_ACCESS_KEY/ARMOR_AUTH_SECRET_KEY, a named ARMOR_AUTH_<NAME>_* triplet, or ARMOR_AUTH_FILE"))
 	}
 
 	// Return all errors collected during validation

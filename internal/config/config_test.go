@@ -765,6 +765,131 @@ func actionsEqual(got map[string]bool, expected ...string) bool {
 	return reflect.DeepEqual(got, want)
 }
 
+func TestLoadFailsWithoutCredentials(t *testing.T) {
+	// Set minimal required env vars but NO auth credentials
+	setEnv(t, minimalEnv()...)
+
+	// Explicitly unset auth credential env vars
+	os.Unsetenv("ARMOR_AUTH_ACCESS_KEY")
+	os.Unsetenv("ARMOR_AUTH_SECRET_KEY")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should fail when no credentials are configured")
+	}
+
+	// Verify the error message mentions credential requirement
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "no client credential configured") {
+		t.Errorf("Error message should mention credential requirement, got: %v", errMsg)
+	}
+	// Verify it lists all credential sources
+	if !strings.Contains(errMsg, "ARMOR_AUTH_ACCESS_KEY") {
+		t.Errorf("Error message should mention ARMOR_AUTH_ACCESS_KEY, got: %v", errMsg)
+	}
+	if !strings.Contains(errMsg, "ARMOR_AUTH_SECRET_KEY") {
+		t.Errorf("Error message should mention ARMOR_AUTH_SECRET_KEY, got: %v", errMsg)
+	}
+	if !strings.Contains(errMsg, "ARMOR_AUTH_FILE") {
+		t.Errorf("Error message should mention ARMOR_AUTH_FILE, got: %v", errMsg)
+	}
+}
+
+func TestLoadSucceedsWithAllowNoCredentials(t *testing.T) {
+	// Set minimal required env vars but NO auth credentials
+	env := append(minimalEnv(), "ARMOR_ALLOW_NO_CREDENTIALS", "true")
+	setEnv(t, env...)
+
+	// Explicitly unset auth credential env vars
+	os.Unsetenv("ARMOR_AUTH_ACCESS_KEY")
+	os.Unsetenv("ARMOR_AUTH_SECRET_KEY")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() should succeed with ARMOR_ALLOW_NO_CREDENTIALS=true: %v", err)
+	}
+
+	// Verify AllowNoCredentials is set
+	if !cfg.AllowNoCredentials {
+		t.Error("AllowNoCredentials should be true when ARMOR_ALLOW_NO_CREDENTIALS=true")
+	}
+
+	// Verify no credentials were loaded
+	if len(cfg.Credentials) != 0 {
+		t.Errorf("Credentials map should be empty, got %d credentials", len(cfg.Credentials))
+	}
+}
+
+func TestLoadSucceedsWithDefaultCredentials(t *testing.T) {
+	// Set minimal required env vars including default credentials
+	env := append(minimalEnv(),
+		"ARMOR_AUTH_ACCESS_KEY", "test-access-key",
+		"ARMOR_AUTH_SECRET_KEY", "test-secret-key",
+	)
+	setEnv(t, env...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	// Verify default credential was loaded
+	if len(cfg.Credentials) != 1 {
+		t.Fatalf("Expected 1 credential, got %d", len(cfg.Credentials))
+	}
+
+	cred, exists := cfg.Credentials["test-access-key"]
+	if !exists {
+		t.Fatal("Default credential not found in credentials map")
+	}
+
+	if cred.AccessKey != "test-access-key" {
+		t.Errorf("AccessKey = %q, want test-access-key", cred.AccessKey)
+	}
+
+	if cred.SecretKey != "test-secret-key" {
+		t.Errorf("SecretKey = %q, want test-secret-key", cred.SecretKey)
+	}
+
+	// Verify credential source is env
+	if cred.Source != CredentialSourceEnv {
+		t.Errorf("Source = %q, want env", cred.Source)
+	}
+}
+
+func TestLoadSucceedsWithNamedCredentialsOnly(t *testing.T) {
+	// Set minimal required env vars but NO default credentials
+	// Only set named credentials
+	env := append(minimalEnv(),
+		"ARMOR_AUTH_READONLY_ACCESS_KEY", "readonly-key",
+		"ARMOR_AUTH_READONLY_SECRET_KEY", "readonly-secret",
+	)
+	setEnv(t, env...)
+
+	// Explicitly unset default credential env vars
+	os.Unsetenv("ARMOR_AUTH_ACCESS_KEY")
+	os.Unsetenv("ARMOR_AUTH_SECRET_KEY")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() should succeed with named credentials: %v", err)
+	}
+
+	// Verify named credential was loaded
+	if len(cfg.Credentials) != 1 {
+		t.Fatalf("Expected 1 credential, got %d", len(cfg.Credentials))
+	}
+
+	cred, exists := cfg.Credentials["readonly-key"]
+	if !exists {
+		t.Fatal("Named credential not found in credentials map")
+	}
+
+	if cred.AccessKey != "readonly-key" {
+		t.Errorf("AccessKey = %q, want readonly-key", cred.AccessKey)
+	}
+}
+
 func TestRedacted(t *testing.T) {
 	// Create a config with all secrets set
 	testMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
