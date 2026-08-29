@@ -92,7 +92,9 @@ type Config struct {
 	AuthSecretKey string
 
 	// Multi-credential support
-	Credentials map[string]*Credential // Access key -> Credential
+	Credentials     map[string]*Credential // Access key -> Credential
+	EnvCredentials  map[string]*Credential // Env-only credentials (for hot-reload re-merge)
+	AuthFilePath    string                  // Path to ARMOR_AUTH_FILE (if configured)
 
 	// Writer ID for provenance chain
 	WriterID string
@@ -251,25 +253,21 @@ func Load() (*Config, error) {
 		errs = append(errs, fmt.Errorf("ARMOR_READ_CONCURRENCY must be at least 1"))
 	}
 
-	// Auth credentials (generate random if not provided)
+	// Auth credentials
 	cfg.AuthAccessKey = os.Getenv("ARMOR_AUTH_ACCESS_KEY")
-	if cfg.AuthAccessKey == "" {
-		cfg.AuthAccessKey = generateRandomKey(16)
-	}
 	cfg.AuthSecretKey = os.Getenv("ARMOR_AUTH_SECRET_KEY")
-	if cfg.AuthSecretKey == "" {
-		cfg.AuthSecretKey = generateRandomKey(32)
-	}
 
-	// Initialize credentials map with default credential
+	// Initialize credentials map with default credential (if provided)
 	now := time.Now()
 	cfg.Credentials = make(map[string]*Credential)
-	cfg.Credentials[cfg.AuthAccessKey] = &Credential{
-		AccessKey: cfg.AuthAccessKey,
-		SecretKey: cfg.AuthSecretKey,
-		ACLs:      nil, // nil means full access to configured bucket
-		Source:    CredentialSourceEnv,
-		LoadedAt:  now,
+	if cfg.AuthAccessKey != "" && cfg.AuthSecretKey != "" {
+		cfg.Credentials[cfg.AuthAccessKey] = &Credential{
+			AccessKey: cfg.AuthAccessKey,
+			SecretKey: cfg.AuthSecretKey,
+			ACLs:      nil, // nil means full access to configured bucket
+			Source:    CredentialSourceEnv,
+			LoadedAt:  now,
+		}
 	}
 
 	// Load additional named credentials (ARMOR_AUTH_<NAME>_ACCESS_KEY, _SECRET_KEY, _ACL)
