@@ -1,0 +1,20 @@
+# Test targets configuration for armor-fleet
+# Each target represents an ARMOR instance to monitor through SEAM's read-only proxy
+
+- name: armor-prod-01
+  cluster: ardenone-cluster
+  namespace: armor-production
+  service: armor
+  admin_port: 9001
+
+- name: armor-staging-01
+  cluster: ardenone-cluster
+  namespace: armor-staging
+  service: armor-staging
+  admin_port: 9001
+
+- name: armor-test-01
+  cluster: iad-ci
+  namespace: armor-test
+  service: armor-test
+  admin_port: 9001
