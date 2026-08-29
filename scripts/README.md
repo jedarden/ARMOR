@@ -6,6 +6,8 @@ This directory contains utility scripts for ARMOR operations and monitoring.
 
 Automated version drift monitoring across ARMOR deployments.
 
+**Full documentation:** [docs/drift-check.md](../docs/drift-check.md)
+
 ### Files
 
 - `check-version-drift.sh` - **Main orchestrator script** (recommended)
