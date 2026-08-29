@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/binary"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,7 +52,7 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 		}
 
 		// Decrypt
-		decryptedBlock, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, partNum, uint32(blockReq.BlockIdx), blockCiphertext, blockReq.ExpectedHMAC, blockSize)
+		decryptedBlock, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, uint16(partNum), uint32(blockReq.BlockIdx), blockCiphertext, blockReq.ExpectedHMAC, blockSize)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Decryption failed (part %d, block %d): %v", blockReq.PartIdx, blockReq.BlockIdx, err), 500)
 			return
@@ -100,15 +98,15 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 
 // V3MultipartRangeInfo describes how to fetch a plaintext range from a v3 multipart object.
 type V3MultipartRangeInfo struct {
-	BlockRequests     []V3BlockRequest // Blocks to fetch (in order)
-	FirstBlockOffset  int64             // Offset within the first block's plaintext where the range starts
+	BlockRequests    []V3BlockRequest // Blocks to fetch (in order)
+	FirstBlockOffset int64            // Offset within the first block's plaintext where the range starts
 }
 
 // V3BlockRequest describes a single block to fetch for a range request.
 type V3BlockRequest struct {
-	PartIdx       int    // Part index (0-based)
-	BlockIdx      int    // Block index within part (0-based)
-	ExpectedHMAC  []byte // HMAC for this block
+	PartIdx      int    // Part index (0-based)
+	BlockIdx     int    // Block index within part (0-based)
+	ExpectedHMAC []byte // HMAC for this block
 }
 
 // mapV3MultipartRange maps a plaintext byte range to the parts and blocks needed.
@@ -122,7 +120,7 @@ func (h *Handlers) mapV3MultipartRange(sidecar *backend.MultipartSidecarEntry, r
 
 	// Process each part that intersects the range
 	for partIdx := 0; partIdx < sidecar.PartCount(); partIdx++ {
-		part := sidecar.Parts[partIdx]
+		part := sidecar.Sidecar.Parts[partIdx]
 
 		// Get the byte range of this part in the overall plaintext
 		partStart := sidecar.PartPrefixSums[partIdx]
@@ -194,7 +192,7 @@ func (h *Handlers) fetchV3MultipartBlock(ctx context.Context, bucket, prefixedKe
 		return nil, fmt.Errorf("invalid part index: %d", partIdx)
 	}
 
-	part := sidecar.Parts[partIdx]
+	part := sidecar.Sidecar.Parts[partIdx]
 	if blockIdx < 0 || blockIdx >= len(part.Blocks) {
 		return nil, fmt.Errorf("invalid block index: %d for part %d", blockIdx, partIdx)
 	}
@@ -203,7 +201,7 @@ func (h *Handlers) fetchV3MultipartBlock(ctx context.Context, bucket, prefixedKe
 	// First, sum all previous parts' ciphertext lengths
 	var partOffset uint32
 	for i := 0; i < partIdx; i++ {
-		prevPart := sidecar.Parts[i]
+		prevPart := sidecar.Sidecar.Parts[i]
 		partOffset += uint32(prevPart.CiphertextLen)
 	}
 

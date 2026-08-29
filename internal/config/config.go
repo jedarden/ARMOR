@@ -13,7 +13,6 @@ import (
 
 	"github.com/jedarden/armor/internal/acl"
 	"github.com/jedarden/armor/internal/crypto"
-	"github.com/jedarden/armor/internal/server"
 )
 
 // KeyRoute represents a prefix-to-key mapping for multi-key support.
@@ -86,7 +85,7 @@ type Config struct {
 	// Format: "<suffix>|<content-type>=zstd|none,..." (first match wins).
 	// ARMOR_COMPRESS=true is an alias for "*=zstd".
 	// Overrides the global Compress flag when set.
-	CompressRules *server.CompressRules
+	CompressRules *CompressRules
 
 	// Read path configuration
 	ReadConcurrency int // Maximum concurrent ranged GETs (default 16)
@@ -121,9 +120,9 @@ type Config struct {
 	ListCacheTTL        int
 
 	// Pre-signed URL configuration
-	PresignEnabled  bool   // Enable pre-signed URL feature (default false)
-	PresignSecret   []byte // Secret key for signing pre-signed URLs
-	PresignBaseURL  string // Base URL for pre-signed URLs (e.g., "https://armor.example.com/share")
+	PresignEnabled bool   // Enable pre-signed URL feature (default false)
+	PresignSecret  []byte // Secret key for signing pre-signed URLs
+	PresignBaseURL string // Base URL for pre-signed URLs (e.g., "https://armor.example.com/share")
 
 	// Manifest index configuration (Phase 4)
 	ManifestEnabled             bool
@@ -272,7 +271,7 @@ func Load() (*Config, error) {
 
 	// Parse compress rules with alias support
 	var err error
-	cfg.CompressRules, err = server.ParseCompressRulesWithAlias(compressRulesStr, compressAlias)
+	cfg.CompressRules, err = ParseCompressRulesWithAlias(compressRulesStr, compressAlias)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("ARMOR_COMPRESS_RULES: %w", err))
 	}
@@ -911,7 +910,7 @@ type RedactedConfig struct {
 	BlockSize int    `json:"block_size"`
 
 	// Compress configuration
-	Compress     bool   `json:"compress"`
+	Compress      bool   `json:"compress"`
 	CompressRules string `json:"compress_rules"` // String representation for debugging
 
 	// Read path configuration
@@ -943,9 +942,9 @@ type RedactedConfig struct {
 	ListCacheTTL        int `json:"list_cache_ttl"`
 
 	// Pre-signed URL configuration
-	PresignEnabled  bool   `json:"presign_enabled"`
-	PresignSecret   string `json:"presign_secret"` // "<set>" or "<unset>"
-	PresignBaseURL  string `json:"presign_base_url"`
+	PresignEnabled bool   `json:"presign_enabled"`
+	PresignSecret  string `json:"presign_secret"` // "<set>" or "<unset>"
+	PresignBaseURL string `json:"presign_base_url"`
 
 	// Manifest index configuration (Phase 4)
 	ManifestEnabled             bool   `json:"manifest_enabled"`

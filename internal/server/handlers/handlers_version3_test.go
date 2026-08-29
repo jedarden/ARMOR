@@ -4,17 +4,13 @@ package handlers_test
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/xml"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/crypto"
-	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/manifest"
 	"github.com/jedarden/armor/internal/server/handlers"
 )
@@ -466,7 +462,7 @@ func TestV3GetObjectRangeStraddlingBlocks(t *testing.T) {
 	getReq.Header.Set("Range", "bytes=32768-98303") // From middle of block 0 to middle of block 1
 	getW := httptest.NewRecorder()
 
-	h.HandleRoot(getW, getW)
+	h.HandleRoot(getW, getReq)
 
 	if getW.Code != http.StatusPartialContent {
 		t.Fatalf("GET range failed: got status %d, body: %s", getW.Code, getW.Body.String())
@@ -519,7 +515,7 @@ func TestV3GetObjectRangeLastShortBlock(t *testing.T) {
 	getReq.Header.Set("Range", "bytes=71680-") // From 70KB to end
 	getW := httptest.NewRecorder()
 
-	h.HandleRoot(getW, getW)
+	h.HandleRoot(getW, getReq)
 
 	if getW.Code != http.StatusPartialContent {
 		t.Fatalf("GET range failed: got status %d, body: %s", getW.Code, getW.Body.String())
@@ -572,7 +568,7 @@ func TestV3GetObjectRangeSingleBlock(t *testing.T) {
 	getReq.Header.Set("Range", "bytes=10240-20479")
 	getW := httptest.NewRecorder()
 
-	h.HandleRoot(getW, getW)
+	h.HandleRoot(getW, getReq)
 
 	if getW.Code != http.StatusPartialContent {
 		t.Fatalf("GET range failed: got status %d, body: %s", getW.Code, getW.Body.String())

@@ -163,7 +163,7 @@ func TestGetKeyByID(t *testing.T) {
 		"sensitive": sensitiveMEK,
 	}
 
-	km, _ := New(defaultMEK, namedKeys, nil)
+	km, _ := New(defaultMEK, namedKeys, nil, nil)
 
 	// Test getting default key
 	key, err := km.GetKeyByID("")
@@ -244,7 +244,7 @@ func TestGetMEKByID(t *testing.T) {
 		"sensitive": sensitiveMEK,
 	}
 
-	km, _ := New(defaultMEK, namedKeys, nil)
+	km, _ := New(defaultMEK, namedKeys, nil, nil)
 
 	// Test default key
 	mek, err := km.GetMEKByID("")
@@ -341,7 +341,7 @@ func TestParseRoutesSelectExpectedKeyForDocumentedPatterns(t *testing.T) {
 	km, err := New(defaultMEK, map[string][]byte{
 		"sensitive": sensitiveMEK,
 		"archive":   archiveMEK,
-	}, routes)
+	}, routes, nil)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestUpdateKeyRotatesOnlySelectedKey(t *testing.T) {
 	}, []Route{
 		{Prefix: "sensitive/", KeyName: "sensitive"},
 		{Prefix: "archive/", KeyName: "archive"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestListKeys(t *testing.T) {
 		"alpha": key2,
 	}
 
-	km, _ := New(defaultMEK, namedKeys, nil)
+	km, _ := New(defaultMEK, namedKeys, nil, nil)
 
 	keys := km.ListKeys()
 	if len(keys) != 3 {

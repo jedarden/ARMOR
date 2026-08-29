@@ -39,15 +39,8 @@ var ErrCopyObjectTooLarge = errors.New("object exceeds B2 CopyObject size ceilin
 // the target key's fingerprint. The rotation loop skips these objects.
 var ErrAlreadyUsingActiveKey = errors.New("object already using active key fingerprint")
 
-// armor metadata header keys used by rotation. Defined here as constants so the
-// merge-and-overwrite logic in rotateObject can never drift from the keys the
-// encrypt/decrypt paths read and write.
-const (
-	armorMetaVersion    = "x-amz-meta-armor-version"
-	armorMetaWrappedDEK = "x-amz-meta-armor-wrapped-dek"
-	armorMetaMultipart  = "x-amz-meta-armor-multipart"
-	armorMetaPartSize   = "x-amz-meta-armor-part-size"
-)
+// armor metadata header keys are defined in format_migration.go as package-level
+// constants. This comment documents that rotateObject depends on those constants.
 
 // RotationState tracks the progress of a key rotation operation.
 type RotationState struct {

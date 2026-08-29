@@ -210,26 +210,27 @@ type ListObjectVersionsResult struct {
 type CompressionType string
 
 const (
-	CompressionNone  CompressionType = ""
-	CompressionZstd  CompressionType = "zstd"
-	CompressionGzip  CompressionType = "gzip"
-	CompressionZlib  CompressionType = "zlib"
+	CompressionNone CompressionType = ""
+	CompressionZstd CompressionType = "zstd"
+	CompressionGzip CompressionType = "gzip"
+	CompressionZlib CompressionType = "zlib"
 )
 
 // ARMORMetadata extracts ARMOR-specific metadata from object headers.
 type ARMORMetadata struct {
-	Version        int    // Envelope version (1 or 2)
-	BlockSize      int
-	PlaintextSize  int64
-	ContentType    string
-	IV             []byte
-	WrappedDEK     []byte
-	MEKFingerprint string // 16-char hex fingerprint of MEK used to wrap DEK (v2 format only)
-	PlaintextSHA   string
-	ETag           string
-	KeyID          string // Key identifier for multi-key support (empty = default)
-	Compressed     bool   // Object payload is compressed (e.g., zstd, gzip, zlib)
+	Version         int // Envelope version (1 or 2)
+	BlockSize       int
+	PlaintextSize   int64
+	ContentType     string
+	IV              []byte
+	WrappedDEK      []byte
+	MEKFingerprint  string // 16-char hex fingerprint of MEK used to wrap DEK (v2 format only)
+	PlaintextSHA    string
+	ETag            string
+	KeyID           string          // Key identifier for multi-key support (empty = default)
+	Compressed      bool            // Object payload is compressed (e.g., zstd, gzip, zlib)
 	CompressionType CompressionType // Type of compression (zstd, gzip, zlib)
+	CiphertextSize  int64           // Raw stored size, populated from ObjectInfo by readers
 }
 
 // ParseARMORMetadata extracts ARMOR metadata from S3 headers.
@@ -250,7 +251,7 @@ func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
 	// Parse version (expecting "1" or "2")
 	var version int
 	if _, err := fmt.Sscanf(versionStr, "%d", &version); err == nil {
-		if version == 1 || version == 2 {
+		if version == 1 || version == 2 || version == 3 {
 			am.Version = version
 		} else {
 			// Unknown version - default to 1 for backward compatibility

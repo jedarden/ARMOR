@@ -21,15 +21,21 @@ type MultipartSidecarCache struct {
 
 // MultipartSidecarEntry represents a cached v3 multipart sidecar.
 type MultipartSidecarEntry struct {
-	Sidecar      *HMACTableSidecarV3
-	ETag         string                // ETag of the object when cached
-	PartPrefixSums []int64            // Cumulative plaintext lengths per part: [0, len(part1), len(part1)+len(part2), ...]
-	BlockPrefixSums [][]uint32        // Per-part cumulative ciphertext lengths per block
-	ExpiresAt    time.Time
+	Sidecar         *HMACTableSidecarV3
+	ETag            string     // ETag of the object when cached
+	PartPrefixSums  []int64    // Cumulative plaintext lengths per part: [0, len(part1), len(part1)+len(part2), ...]
+	BlockPrefixSums [][]uint32 // Per-part cumulative ciphertext lengths per block
+	ExpiresAt       time.Time
 }
 
 // NewMultipartSidecarCache creates a new v3 multipart sidecar cache.
 func NewMultipartSidecarCache(maxEntries int, ttlSeconds int) *MultipartSidecarCache {
+	if maxEntries <= 0 {
+		maxEntries = 1000
+	}
+	if ttlSeconds <= 0 {
+		ttlSeconds = 300
+	}
 	return &MultipartSidecarCache{
 		entries:    make(map[string]*MultipartSidecarEntry),
 		maxEntries: maxEntries,
@@ -78,11 +84,11 @@ func (c *MultipartSidecarCache) Set(bucket, key, etag string, sidecar *HMACTable
 	}
 
 	c.entries[cacheKey(bucket, key)] = &MultipartSidecarEntry{
-		Sidecar:        sidecar,
-		ETag:           etag,
-		PartPrefixSums: partPrefixSums,
+		Sidecar:         sidecar,
+		ETag:            etag,
+		PartPrefixSums:  partPrefixSums,
 		BlockPrefixSums: blockPrefixSums,
-		ExpiresAt:      time.Now().Add(c.ttl),
+		ExpiresAt:       time.Now().Add(c.ttl),
 	}
 
 	return nil

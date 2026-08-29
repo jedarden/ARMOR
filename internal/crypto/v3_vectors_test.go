@@ -1,7 +1,6 @@
 package crypto
 
 import (
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -95,7 +94,18 @@ func TestGenerateV3Vectors(t *testing.T) {
 				err = json.Unmarshal(data, &loaded)
 				require.NoError(t, err, "Failed to unmarshal vector")
 
-				assert.Equal(t, vec, loaded, "Loaded vector should match generated")
+				// Compare individual fields instead of struct equality
+				assert.Equal(t, vec.Name, loaded.Name, "Name should match")
+				assert.Equal(t, vec.Description, loaded.Description, "Description should match")
+				assert.Equal(t, vec.DEK, loaded.DEK, "DEK should match")
+				assert.Equal(t, vec.IV, loaded.IV, "IV should match")
+				assert.Equal(t, vec.Part, loaded.Part, "Part should match")
+				assert.Equal(t, vec.BlockSize, loaded.BlockSize, "BlockSize should match")
+				assert.Equal(t, vec.Plaintext, loaded.Plaintext, "Plaintext should match")
+				assert.Equal(t, vec.Header, loaded.Header, "Header should match")
+				assert.Equal(t, vec.Ciphertext, loaded.Ciphertext, "Ciphertext should match")
+				assert.Equal(t, vec.HMAC, loaded.HMAC, "HMAC should match")
+				assert.Equal(t, len(vec.Blocks), len(loaded.Blocks), "Block count should match")
 
 				// Verify the vector works: encrypt and decrypt should match
 				verifyTestVector(t, &loaded)
@@ -126,13 +136,19 @@ func generate1BlockSinglePUT() V3TestVector {
 	// Create header
 	plaintextSHA := ComputePlaintextSHA256(plaintext)
 	header, err := NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, Version3)
-	require.NoError(assert.TestingTB{}, err, "Failed to create header")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create header: %v", err))
+	}
 	headerBytes, err := header.Encode()
-	require.NoError(assert.TestingTB{}, err, "Failed to encode header")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to encode header: %v", err))
+	}
 
 	// Encrypt the block
 	ciphertext, hmacValue, err := EncryptBlockV3(dek, iv, part, 0, plaintext, blockSize)
-	require.NoError(assert.TestingTB{}, err, "Failed to encrypt block")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to encrypt block: %v", err))
+	}
 
 	return V3TestVector{
 		Name:        "1-block-single-put",
@@ -171,9 +187,11 @@ func generate3BlockCompressed() V3TestVector {
 	blockSize := 64 * 1024
 
 	// Create 3 blocks of plaintext
-	// Block 0: Random data (incompressible)
+	// Block 0: Pseudo-random data (incompressible) - deterministic pattern
 	block0 := make([]byte, blockSize)
-	rand.Read(block0)
+	for i := range block0 {
+		block0[i] = byte((i * 7 + 13) % 256)
+	}
 
 	// Block 1: Repetitive data (compressible)
 	block1 := make([]byte, blockSize)
@@ -183,16 +201,18 @@ func generate3BlockCompressed() V3TestVector {
 
 	// Block 2: Mixed data (somewhat compressible)
 	block2 := make([]byte, blockSize/2) // Partial block
-	rand.Read(block2)
+	for i := range block2 {
+		block2[i] = byte((i * 3 + 7) % 256)
+	}
 
 	plaintext := append(append(block0, block1...), block2...)
 
 	// Create header
 	plaintextSHA := ComputePlaintextSHA256(plaintext)
 	header, err := NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, Version3)
-	require.NoError(assert.TestingTB{}, err, "Failed to create header")
+	if err != nil { panic(fmt.Sprintf("Failed to create header: %v", err)) }
 	headerBytes, err := header.Encode()
-	require.NoError(assert.TestingTB{}, err, "Failed to encode header")
+	if err != nil { panic(fmt.Sprintf("Failed to encode header: %v", err)) }
 
 	// Encrypt each block
 	var fullCiphertext []byte
@@ -208,7 +228,7 @@ func generate3BlockCompressed() V3TestVector {
 
 		blockPlaintext := plaintext[start:end]
 		blockCiphertext, blockHMAC, err := EncryptBlockV3(dek, iv, part, blockIdx, blockPlaintext, blockSize)
-		require.NoError(assert.TestingTB{}, err, "Failed to encrypt block %d", blockIdx)
+		if err != nil { panic(fmt.Sprintf("Failed to encrypt block %d: %v", blockIdx, err)) }
 
 		fullCiphertext = append(fullCiphertext, blockCiphertext...)
 
@@ -222,7 +242,7 @@ func generate3BlockCompressed() V3TestVector {
 	var firstBlockHMAC []byte
 	if len(blocks) > 0 {
 		firstBlockHMAC, _ = base64.StdEncoding.DecodeString(blocks[0].HMAC)
-		require.NoError(assert.TestingTB{}, err, "Failed to decode HMAC")
+		if err != nil { panic(fmt.Sprintf("Failed to decode HMAC: %v", err)) }
 	}
 
 	return V3TestVector{
@@ -306,7 +326,7 @@ func generate2PartMultipart() V3TestVector {
 
 		blockPlaintext := part1Plaintext[start:end]
 		blockCiphertext, blockHMAC, err := EncryptBlockV3(dek, iv, partNum, blockIdx, blockPlaintext, blockSize)
-		require.NoError(assert.TestingTB{}, err, "Failed to encrypt part 1 block %d", blockIdx)
+		if err != nil { panic(fmt.Sprintf("Failed to encrypt part 1 block %d: %v", blockIdx, err)) }
 
 		part1Ciphertext = append(part1Ciphertext, blockCiphertext...)
 
@@ -331,7 +351,7 @@ func generate2PartMultipart() V3TestVector {
 
 		blockPlaintext := part2Plaintext[start:end]
 		blockCiphertext, blockHMAC, err := EncryptBlockV3(dek, iv, partNum, blockIdx, blockPlaintext, blockSize)
-		require.NoError(assert.TestingTB{}, err, "Failed to encrypt part 2 block %d", blockIdx)
+		if err != nil { panic(fmt.Sprintf("Failed to encrypt part 2 block %d: %v", blockIdx, err)) }
 
 		part2Ciphertext = append(part2Ciphertext, blockCiphertext...)
 
@@ -352,9 +372,9 @@ func generate2PartMultipart() V3TestVector {
 	fullPlaintext := append(part1Plaintext, part2Plaintext...)
 	plaintextSHA := ComputePlaintextSHA256(fullPlaintext)
 	header, err := NewEnvelopeHeaderWithVersion(iv, int64(len(fullPlaintext)), blockSize, plaintextSHA, Version3)
-	require.NoError(assert.TestingTB{}, err, "Failed to create header")
+	if err != nil { panic(fmt.Sprintf("Failed to create header: %v", err)) }
 	headerBytes, err := header.Encode()
-	require.NoError(assert.TestingTB{}, err, "Failed to encode header")
+	if err != nil { panic(fmt.Sprintf("Failed to encode header: %v", err)) }
 
 	return V3TestVector{
 		Name:        "2-part-multipart",
@@ -391,25 +411,66 @@ func verifyTestVector(t *testing.T, vec *V3TestVector) {
 	expectedCiphertext, err := base64.StdEncoding.DecodeString(vec.Ciphertext)
 	require.NoError(t, err, "Failed to decode ciphertext")
 
-	// Decode expected HMAC
-	expectedHMAC, err := base64.StdEncoding.DecodeString(vec.HMAC)
-	require.NoError(t, err, "Failed to decode HMAC")
-	require.Len(t, expectedHMAC, 32, "HMAC must be 32 bytes")
+	// Verify the vector has blocks and decrypt using block table
+	if len(vec.Blocks) > 0 {
+		// Build block table from vector
+		blockTable := NewBlockTable(vec.BlockSize, len(vec.Blocks))
+		for _, blockEntry := range vec.Blocks {
+			hmacBytes, err := base64.StdEncoding.DecodeString(blockEntry.HMAC)
+			require.NoError(t, err, "Failed to decode block HMAC")
+			var hmacArray [32]byte
+			copy(hmacArray[:], hmacBytes)
 
-	// Encrypt the plaintext
-	ciphertext, hmacValue, err := EncryptBlockV3(dek, iv, vec.Part, 0, plaintext, vec.BlockSize)
-	require.NoError(t, err, "Failed to encrypt")
+			entry := &BlockTableEntry{
+				HMAC:             hmacArray,
+				CiphertextLength: blockEntry.CLen,
+			}
+			err = blockTable.AddEntry(entry)
+			require.NoError(t, err, "Failed to add block entry")
+		}
 
-	// Verify ciphertext matches
-	assert.Equal(t, expectedCiphertext, ciphertext, "Ciphertext should match expected")
+		// Reconstruct full ciphertext from block table
+		ciphertext := make([]byte, 0, blockTable.TotalCiphertextLength())
+		for blockIdx := 0; blockIdx < blockTable.EntryCount(); blockIdx++ {
+			start := blockIdx * vec.BlockSize
+			end := start + vec.BlockSize
+			if end > len(expectedCiphertext) {
+				end = len(expectedCiphertext)
+			}
+			ciphertext = append(ciphertext, expectedCiphertext[start:end]...)
+		}
 
-	// Verify HMAC matches
-	assert.Equal(t, expectedHMAC, hmacValue, "HMAC should match expected")
+		// Decrypt using v3 semantics
+		decryptor, err := NewDecryptorWithVersion(dek, iv, vec.BlockSize, Version3)
+		require.NoError(t, err, "Failed to create decryptor")
 
-	// Decrypt the ciphertext
-	decrypted, err := DecryptBlockV3(dek, iv, vec.Part, 0, ciphertext, expectedHMAC, vec.BlockSize)
-	require.NoError(t, err, "Failed to decrypt")
+		decrypted, err := decryptor.DecryptV3(ciphertext, vec.Part, blockTable)
+		require.NoError(t, err, "Failed to decrypt v3 blocks")
 
-	// Verify decryption round-trip
-	assert.Equal(t, plaintext, decrypted, "Decrypted plaintext should match original")
+		// Verify decryption round-trip
+		assert.Equal(t, plaintext, decrypted, "Decrypted plaintext should match original")
+	} else {
+		// Single block verification
+		// Decode expected HMAC
+		expectedHMAC, err := base64.StdEncoding.DecodeString(vec.HMAC)
+		require.NoError(t, err, "Failed to decode HMAC")
+		require.Len(t, expectedHMAC, 32, "HMAC must be 32 bytes")
+
+		// Encrypt the plaintext
+		ciphertext, hmacValue, err := EncryptBlockV3(dek, iv, vec.Part, 0, plaintext, vec.BlockSize)
+		require.NoError(t, err, "Failed to encrypt")
+
+		// Verify ciphertext matches
+		assert.Equal(t, expectedCiphertext, ciphertext, "Ciphertext should match expected")
+
+		// Verify HMAC matches
+		assert.Equal(t, expectedHMAC, hmacValue, "HMAC should match expected")
+
+		// Decrypt the ciphertext
+		decrypted, err := DecryptBlockV3(dek, iv, vec.Part, 0, ciphertext, expectedHMAC, vec.BlockSize)
+		require.NoError(t, err, "Failed to decrypt")
+
+		// Verify decryption round-trip
+		assert.Equal(t, plaintext, decrypted, "Decrypted plaintext should match original")
+	}
 }

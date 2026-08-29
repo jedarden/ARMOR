@@ -208,7 +208,7 @@ func TestMultipartV2Format(t *testing.T) {
 	uploadID := "test-upload-v2"
 
 	// Initialize the bucket
-	backend.buckets[bucket] = make(map[string)*mockObject)
+	backend.buckets[bucket] = make(map[string]*mockObject)
 	manager := NewMultipartStateManager(backend, bucket)
 
 	// Create v2 state

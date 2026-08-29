@@ -1,7 +1,6 @@
 package crypto
 
 import (
-	"bytes"
 	"crypto/rand"
 	"testing"
 )

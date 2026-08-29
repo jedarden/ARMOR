@@ -199,9 +199,9 @@ func (m *Manager) ShouldRecord(key string) bool {
 // ChainEntryData represents the minimal chain information for embedding
 // in a manifest delta line.
 type ChainEntryData struct {
-	Sequence       int64  `json:"sequence"`
-	ChainHash      string `json:"chain_hash"`
-	PrevChainHash  string `json:"prev_chain_hash"`
+	Sequence      int64  `json:"sequence"`
+	ChainHash     string `json:"chain_hash"`
+	PrevChainHash string `json:"prev_chain_hash"`
 }
 
 // CreateChainEntry creates a chain entry for embedding in a manifest delta.
@@ -620,11 +620,11 @@ func (m *Manager) CompactLegacyChain(ctx context.Context, writerID string) (*Com
 	}
 
 	return &CompactResult{
-		SegmentPath:    segmentPath,
-		FromSequence:   fromSeq,
-		ToSequence:     toSeq,
-		EntryCount:     len(entries),
-		KeyEventCount:  keyEventCount,
+		SegmentPath:   segmentPath,
+		FromSequence:  fromSeq,
+		ToSequence:    toSeq,
+		EntryCount:    len(entries),
+		KeyEventCount: keyEventCount,
 	}, nil
 }
 
@@ -1130,6 +1130,7 @@ func (a *Auditor) auditWriterChain(
 				}
 			}
 		}
+		_ = deltaSeq // retained for the manifest-head format validation above
 
 		// Walk delta-embedded entries
 		deltaEntries, deltaTracked, err := a.walkDeltaEntries(ctx, expectedWriterID, 1) // Start from delta 1
@@ -1327,101 +1328,6 @@ func (a *Auditor) auditWriterChain(
 
 	return audit, nil, false
 }
-				audit.Error = fmt.Sprintf("failed to parse entry at sequence %d: %v", seq, err)
-				return audit, nil, false
-			}
-
-			if entry.Sequence != seq {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("sequence mismatch at %d: got %d", seq, entry.Sequence)
-				return audit, nil, false
-			}
-			if entry.WriterID != expectedWriterID {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("writer ID mismatch at sequence %d: got %q", seq, entry.WriterID)
-				return audit, nil, false
-			}
-			if entry.ObjectKey == "" || !isSHA256(entry.PlaintextSHA256) || !isSHA256(entry.ChainHash) || !isSHA256(entry.PrevChainHash) {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("invalid cryptographic fields at sequence %d", seq)
-				return audit, nil, false
-			}
-			if entry.ChainHash != expectedChainHash {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("chain link mismatch at sequence %d", seq)
-				return audit, nil, false
-			}
-			computedHash := computeChainHash(&entry, entry.PrevChainHash)
-			if entry.ChainHash != computedHash {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("entry hash mismatch at sequence %d", seq)
-				return audit, nil, false
-			}
-
-			trackedObjects[entry.ObjectKey] = true
-			expectedChainHash = entry.PrevChainHash
-			audit.EntriesVerified++
-		} else {
-			var keyEvent KeyEvent
-			if err := json.Unmarshal(data, &keyEvent); err != nil {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("failed to parse key event at sequence %d: %v", seq, err)
-				return audit, nil, false
-			}
-
-			if keyEvent.Sequence != seq {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("sequence mismatch at %d: got %d", seq, keyEvent.Sequence)
-				return audit, nil, false
-			}
-			if keyEvent.WriterID != expectedWriterID {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("writer ID mismatch at sequence %d: got %q", seq, keyEvent.WriterID)
-				return audit, nil, false
-			}
-			if !validKeyEventType(keyEvent.EventType) {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("unknown key event type %q at sequence %d", keyEvent.EventType, seq)
-				return audit, nil, false
-			}
-			if !isSHA256(keyEvent.ChainHash) || !isSHA256(keyEvent.PrevChainHash) {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("invalid cryptographic fields at sequence %d", seq)
-				return audit, nil, false
-			}
-			if keyEvent.ChainHash != expectedChainHash {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("chain link mismatch at sequence %d", seq)
-				return audit, nil, false
-			}
-			computedHash := computeKeyEventHash(&keyEvent, keyEvent.PrevChainHash)
-			if keyEvent.ChainHash != computedHash {
-				audit.Valid = false
-				audit.Error = fmt.Sprintf("key event hash mismatch at sequence %d", seq)
-				return audit, nil, false
-			}
-
-			expectedChainHash = keyEvent.PrevChainHash
-			audit.KeyEvents++
-		}
-	}
-
-	if expectedChainHash != InitialChainHash {
-		audit.Valid = false
-		audit.Error = "chain does not link back to genesis"
-		return audit, nil, false
-	}
-
-	for sequence := range entryKeys {
-		if sequence > head.Sequence {
-			audit.Valid = false
-			audit.Error = fmt.Sprintf("chain entry %d exists beyond head sequence %d", sequence, head.Sequence)
-			return audit, nil, true
-		}
-	}
-
-	return audit, nil, false
-}
 
 // findUntrackedObjects lists all objects and finds those not in any chain.
 func (a *Auditor) findUntrackedObjects(ctx context.Context, tracked map[string]bool, result *AuditResult) error {
@@ -1524,7 +1430,7 @@ func (a *Auditor) walkChainSegments(ctx context.Context, writerID string, fromSe
 	trackedObjects := make(map[string]bool)
 
 	// Read segment files that intersect with [fromSeq, toSeq]
-	for rangeKey, maxSeq := range segmentsByRange {
+	for rangeKey := range segmentsByRange {
 		parts := strings.Split(strings.TrimSuffix(rangeKey, ".jsonl"), "-")
 		segFrom, _ := strconv.ParseInt(parts[0], 10, 64)
 		segTo, _ := strconv.ParseInt(parts[1], 10, 64)
@@ -1618,8 +1524,8 @@ func (a *Auditor) walkDeltaEntries(ctx context.Context, writerID string, fromDel
 		scanner := newJSONLScanner(body)
 		for scanner.Scan() {
 			var op struct {
-				Operation string       `json:"op"`
-				Key       string       `json:"key"`
+				Operation string          `json:"op"`
+				Key       string          `json:"key"`
 				Chain     *ChainEntryData `json:"chain,omitempty"`
 			}
 			if err := json.Unmarshal(scanner.Bytes(), &op); err != nil {

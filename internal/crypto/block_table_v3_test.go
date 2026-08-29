@@ -273,7 +273,7 @@ func TestBlockTable_InvalidEntryDuringDecode(t *testing.T) {
 	// because the zero HMAC will pass, but we need to test validation failures
 
 	// Create data that would fail validation (ciphertext > blockSize for raw block)
-	table := NewBlockTable(blockSize, 1)
+	_ = NewBlockTable(blockSize, 1) // Unused but required for test setup
 	var hmac [32]byte
 	badEntry := NewBlockTableEntry(hmac, uint32(blockSize+1), false)
 	badData, _ := badEntry.Encode()
@@ -337,7 +337,7 @@ func TestBlockTable_PrefixSums(t *testing.T) {
 	}
 
 	// Test BlockRange
-	for i, length := range lengths {
+	for i, _ := range lengths {
 		var wantOffset uint32
 		for j := 0; j < i; j++ {
 			wantOffset += lengths[j]

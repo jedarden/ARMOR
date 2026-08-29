@@ -220,7 +220,7 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			}
 
 			// Check if object version is in the include list
-			if !fm.shouldMigrateVersion(armorMeta.Version) {
+			if !fm.shouldMigrateVersion(uint8(armorMeta.Version)) {
 				result.SkippedObjects++
 				fm.advanceCursor(obj.Key)
 				continue
