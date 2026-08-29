@@ -1,2 +1,0 @@
-Error: database path or replica URL required
-Try: litestream restore -o /path/to/db s3://bucket/prefix

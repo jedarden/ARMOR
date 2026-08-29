@@ -30,3 +30,7 @@ candidate-objects.json
 # Python build artifacts
 __pycache__/
 *.pyc
+
+# Working directories (local only)
+scratch/
+intermediate/
