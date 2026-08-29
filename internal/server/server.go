@@ -553,7 +553,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/version", middleware.VersionHandler(s.config))
 
 	// Share endpoint for pre-signed URLs (public, no auth required)
-	mux.HandleFunc("/share/", s.handleShare)
+	// Only registered when ARMOR_PRESIGN_ENABLED=true
+	if s.config.PresignEnabled {
+		mux.HandleFunc("/share/", s.handleShare)
+	}
 
 	// S3 operations
 	h := handlers.New(s.config, s.backend, s.cache, s.footerCache, s.keyManager, s.listCache)
@@ -1620,6 +1623,12 @@ func (s *Server) InFlightRequestCount() int64 {
 // POST /admin/presign
 // Body: {"bucket": "my-bucket", "key": "path/to/file.parquet", "expires_in": "1h", "content_disposition": "attachment; filename=\"file.parquet\""}
 func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
+	// Return 404 when presign is disabled
+	if !s.config.PresignEnabled {
+		http.Error(w, "Pre-signing is not enabled", http.StatusNotFound)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return

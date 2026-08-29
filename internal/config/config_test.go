@@ -1397,3 +1397,198 @@ func TestFormatWriteVersionInRedacted(t *testing.T) {
 		})
 	}
 }
+
+func TestPresignDisabledByDefault(t *testing.T) {
+	// Set minimal required environment variables
+	setenv(t, "ARMOR_BACKEND", "filesystem")
+	setenv(t, "ARMOR_FS_PATH", t.TempDir())
+	setenv(t, "ARMOR_BUCKET", "test-bucket")
+	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	if cfg.PresignEnabled {
+		t.Error("PresignEnabled should be false by default")
+	}
+	if len(cfg.PresignSecret) > 0 {
+		t.Error("PresignSecret should be empty when disabled")
+	}
+	if cfg.PresignBaseURL != "" {
+		t.Errorf("PresignBaseURL should be empty when disabled, got '%s'", cfg.PresignBaseURL)
+	}
+}
+
+func TestPresignEnabledWithValidConfig(t *testing.T) {
+	// Set minimal required environment variables
+	setenv(t, "ARMOR_BACKEND", "filesystem")
+	setenv(t, "ARMOR_FS_PATH", t.TempDir())
+	setenv(t, "ARMOR_BUCKET", "test-bucket")
+	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+
+	// Enable presign with valid configuration
+	secretHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")) // 32 bytes
+	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setenv(t, "ARMOR_PRESIGN_SECRET", secretHex)
+	setenv(t, "ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	if !cfg.PresignEnabled {
+		t.Error("PresignEnabled should be true when ARMOR_PRESIGN_ENABLED=true")
+	}
+	if len(cfg.PresignSecret) != 32 {
+		t.Errorf("PresignSecret should be 32 bytes, got %d", len(cfg.PresignSecret))
+	}
+	if cfg.PresignBaseURL != "https://armor.example.com/share" {
+		t.Errorf("PresignBaseURL = '%s', want 'https://armor.example.com/share'", cfg.PresignBaseURL)
+	}
+}
+
+func TestPresignEnabledWithoutSecret(t *testing.T) {
+	// Set minimal required environment variables
+	setenv(t, "ARMOR_BACKEND", "filesystem")
+	setenv(t, "ARMOR_FS_PATH", t.TempDir())
+	setenv(t, "ARMOR_BUCKET", "test-bucket")
+	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+
+	// Enable presign without secret
+	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setenv(t, "ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should error when ARMOR_PRESIGN_SECRET is missing")
+	}
+	if !strings.Contains(err.Error(), "ARMOR_PRESIGN_SECRET is required") {
+		t.Errorf("Error should mention ARMOR_PRESIGN_SECRET is required, got: %v", err)
+	}
+}
+
+func TestPresignEnabledWithoutBaseURL(t *testing.T) {
+	// Set minimal required environment variables
+	setenv(t, "ARMOR_BACKEND", "filesystem")
+	setenv(t, "ARMOR_FS_PATH", t.TempDir())
+	setenv(t, "ARMOR_BUCKET", "test-bucket")
+	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+
+	// Enable presign without base URL
+	secretHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")) // 32 bytes
+	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setenv(t, "ARMOR_PRESIGN_SECRET", secretHex)
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should error when ARMOR_PRESIGN_BASE_URL is missing")
+	}
+	if !strings.Contains(err.Error(), "ARMOR_PRESIGN_BASE_URL is required") {
+		t.Errorf("Error should mention ARMOR_PRESIGN_BASE_URL is required, got: %v", err)
+	}
+}
+
+func TestPresignEnabledWithRelativeBaseURL(t *testing.T) {
+	// Set minimal required environment variables
+	setenv(t, "ARMOR_BACKEND", "filesystem")
+	setenv(t, "ARMOR_FS_PATH", t.TempDir())
+	setenv(t, "ARMOR_BUCKET", "test-bucket")
+	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+
+	// Enable presign with relative base URL
+	secretHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")) // 32 bytes
+	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setenv(t, "ARMOR_PRESIGN_SECRET", secretHex)
+	setenv(t, "ARMOR_PRESIGN_BASE_URL", "/share")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should error when ARMOR_PRESIGN_BASE_URL is relative")
+	}
+	if !strings.Contains(err.Error(), "must be an absolute URL") {
+		t.Errorf("Error should mention absolute URL requirement, got: %v", err)
+	}
+}
+
+func TestPresignDisabledFieldsAreEmpty(t *testing.T) {
+	// Set minimal required environment variables
+	setenv(t, "ARMOR_BACKEND", "filesystem")
+	setenv(t, "ARMOR_FS_PATH", t.TempDir())
+	setenv(t, "ARMOR_BUCKET", "test-bucket")
+	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+
+	// Explicitly disable presign
+	setenv(t, "ARMOR_PRESIGN_ENABLED", "false")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	if cfg.PresignEnabled {
+		t.Error("PresignEnabled should be false when ARMOR_PRESIGN_ENABLED=false")
+	}
+	if len(cfg.PresignSecret) > 0 {
+		t.Error("PresignSecret should be empty when disabled")
+	}
+	if cfg.PresignBaseURL != "" {
+		t.Errorf("PresignBaseURL should be empty when disabled, got '%s'", cfg.PresignBaseURL)
+	}
+}
+
+func TestPresignRedactedConfig(t *testing.T) {
+	// Set minimal required environment variables
+	setenv(t, "ARMOR_BACKEND", "filesystem")
+	setenv(t, "ARMOR_FS_PATH", t.TempDir())
+	setenv(t, "ARMOR_BUCKET", "test-bucket")
+	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+
+	// Test disabled state
+	setenv(t, "ARMOR_PRESIGN_ENABLED", "false")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	rc := cfg.Redacted()
+	if rc.PresignEnabled {
+		t.Error("Redacted PresignEnabled should be false")
+	}
+
+	// Test enabled state
+	secretHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setenv(t, "ARMOR_PRESIGN_SECRET", secretHex)
+	setenv(t, "ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share")
+
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	rc = cfg.Redacted()
+	if !rc.PresignEnabled {
+		t.Error("Redacted PresignEnabled should be true")
+	}
+	if rc.PresignSecret != "<set>" {
+		t.Errorf("Redacted PresignSecret = '%s', want '<set>'", rc.PresignSecret)
+	}
+	if rc.PresignBaseURL != "https://armor.example.com/share" {
+		t.Errorf("Redacted PresignBaseURL = '%s', want 'https://armor.example.com/share'", rc.PresignBaseURL)
+	}
+}

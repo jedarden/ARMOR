@@ -184,6 +184,9 @@ ARMOR is configured via environment variables:
 | `ARMOR_DASHBOARD_USER` | No | — | Dashboard HTTP Basic Auth username |
 | `ARMOR_DASHBOARD_PASS` | No | — | Dashboard HTTP Basic Auth password |
 | `ARMOR_DASHBOARD_TOKEN` | No | — | Dashboard Bearer token |
+| `ARMOR_PRESIGN_ENABLED` | No | `false` | Enable pre-signed URL feature (required for `/admin/presign` and `/share/` routes) |
+| `ARMOR_PRESIGN_SECRET` | Yes\* | — | Secret key for signing pre-signed URLs (hex, 32+ bytes, required when `ARMOR_PRESIGN_ENABLED=true`) |
+| `ARMOR_PRESIGN_BASE_URL` | Yes\* | — | Base URL for pre-signed URLs (must be absolute URL starting with `http://` or `https://`, required when `ARMOR_PRESIGN_ENABLED=true`) |
 
 ### Multi-Key Routing
 
@@ -493,9 +496,10 @@ Key management and monitoring endpoints on the admin listener (`127.0.0.1:9001`)
 | `/admin/key/rotate` | POST | Rotate one MEK (`?key-id=name`; default key when omitted) — re-wraps matching DEKs, no file re-upload |
 | `/admin/key/export` | GET | Export current MEK (`?confirm=yes`) |
 | `/armor/audit` | GET | Walk provenance chains, verify integrity |
-| `/admin/presign` | POST | Generate pre-signed share URL |
+| `/admin/presign` | POST | Generate pre-signed share URL (requires `ARMOR_PRESIGN_ENABLED=true`) |
 | `/armor/canary` | GET | Canary integrity status |
 | `/dashboard` | GET | Web dashboard |
+| `/share/` | GET | Serve decrypted content from pre-signed URL token (requires `ARMOR_PRESIGN_ENABLED=true`) |
 
 ## Repository Structure
 
