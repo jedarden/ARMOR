@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/jedarden/armor/internal/acl"
 	"gopkg.in/yaml.v3"
@@ -88,6 +89,7 @@ func MergeFileCredentials(cfg *Config, authFile *AuthFile) error {
 	// Create a temporary map to validate all file credentials before merging
 	tempCreds := make(map[string]*Credential)
 	var duplicateNames []string
+	now := time.Now()
 
 	for _, fileCred := range authFile.Credentials {
 		// Check for name collision with existing credential
@@ -120,6 +122,8 @@ func MergeFileCredentials(cfg *Config, authFile *AuthFile) error {
 			AccessKey: fileCred.AccessKey,
 			SecretKey: fileCred.SecretKey,
 			ACLs:      acls,
+			Source:    CredentialSourceFile,
+			LoadedAt:  now,
 		}
 	}
 

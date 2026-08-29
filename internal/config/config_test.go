@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"github.com/jedarden/armor/internal/acl"
 	"os"
 	"reflect"
@@ -762,4 +763,113 @@ func actionsEqual(got map[string]bool, expected ...string) bool {
 		want[v] = true
 	}
 	return reflect.DeepEqual(got, want)
+}
+
+func TestRedacted(t *testing.T) {
+	// Create a config with all secrets set
+	testMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	testB2Secret := "b2secretkey1234567890abcdefghijklmn"
+	testAuthSecret := "authsecretkey1234567890abcdefghijklmn"
+	testPresignSecret := "7072657369676e736563726574313233343536373839306162636465666768696a6b6c6d6e" // hex of "presignsecret1234567890abcdefghijklmn"
+	testDashboardPass := "dashboardpass123"
+	testDashboardToken := "admintoken1234567890abcdefghijklmn"
+	testAdminToken := "admintoken1234567890abcdefghijklmn"
+	testNamedKey1 := "1111111111111111111111111111111111111111111111111111111111111111"
+	testNamedKey2 := "2222222222222222222222222222222222222222222222222222222222222222"
+	testCredSecret := "credentialsecret1234567890abcdefghijklmn"
+
+	setEnv(t, append(minimalEnv(),
+		"ARMOR_B2_SECRET_ACCESS_KEY", testB2Secret,
+		"ARMOR_MEK", testMEK,
+		"ARMOR_AUTH_SECRET_KEY", testAuthSecret,
+		"ARMOR_PRESIGN_SECRET", testPresignSecret,
+		"ARMOR_DASHBOARD_PASS", testDashboardPass,
+		"ARMOR_DASHBOARD_TOKEN", testDashboardToken,
+		"ARMOR_ADMIN_TOKEN", testAdminToken,
+		"ARMOR_MEK_SENSITIVE", testNamedKey1,
+		"ARMOR_MEK_ARCHIVE", testNamedKey2,
+		"ARMOR_AUTH_APP_ACCESS_KEY", "appkey",
+		"ARMOR_AUTH_APP_SECRET_KEY", testCredSecret,
+		"ARMOR_AUTH_APP_ACL", "app-bucket:app-prefix/",
+	)...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Get redacted config
+	rc := cfg.Redacted()
+
+	// Verify no secret material appears in the redacted output
+	output := fmt.Sprintf("%+v", rc)
+
+	// Check that none of the secret values appear in the output
+	secrets := []string{
+		testMEK,
+		testB2Secret,
+		testAuthSecret,
+		// Note: testPresignSecret is hex-encoded, so the original plaintext won't appear
+		// The hex-encoded version is what's actually stored
+		"presignsecret1234567890abcdefghijklmn", // Check plaintext doesn't appear
+		testDashboardPass,
+		testDashboardToken,
+		testAdminToken,
+		testNamedKey1,
+		testNamedKey2,
+		testCredSecret,
+	}
+
+	for _, secret := range secrets {
+		if strings.Contains(output, secret) {
+			t.Errorf("Secret material appears in redacted output: %s", secret)
+		}
+	}
+
+	// Verify all secret fields show "<set>"
+	if rc.B2SecretAccessKey != "<set>" {
+		t.Errorf("B2SecretAccessKey = %q, want <set>", rc.B2SecretAccessKey)
+	}
+	if rc.MEK != "<set>" {
+		t.Errorf("MEK = %q, want <set>", rc.MEK)
+	}
+	if rc.AuthSecretKey != "<set>" {
+		t.Errorf("AuthSecretKey = %q, want <set>", rc.AuthSecretKey)
+	}
+	if rc.PresignSecret != "<set>" {
+		t.Errorf("PresignSecret = %q, want <set>", rc.PresignSecret)
+	}
+	if rc.DashboardPass != "<set>" {
+		t.Errorf("DashboardPass = %q, want <set>", rc.DashboardPass)
+	}
+	if rc.DashboardToken != "<set>" {
+		t.Errorf("DashboardToken = %q, want <set>", rc.DashboardToken)
+	}
+	if rc.AdminToken != "<set>" {
+		t.Errorf("AdminToken = %q, want <set>", rc.AdminToken)
+	}
+
+	// Verify named keys are redacted
+	if len(rc.NamedKeys) != 2 {
+		t.Errorf("NamedKeys count = %d, want 2", len(rc.NamedKeys))
+	}
+	for name, status := range rc.NamedKeys {
+		if status != "<set>" {
+			t.Errorf("NamedKeys[%s] = %q, want <set>", name, status)
+		}
+	}
+
+	// Verify credentials are redacted
+	if len(rc.Credentials) != 2 { // default + APP
+		t.Errorf("Credentials count = %d, want 2", len(rc.Credentials))
+	}
+	for accessKey, redactedCred := range rc.Credentials {
+		if redactedCred.SecretKey != "<set>" {
+			t.Errorf("Credentials[%s].SecretKey = %q, want <set>", accessKey, redactedCred.SecretKey)
+		}
+		// Verify ACLs are preserved (not redacted)
+		if accessKey == "appkey" && len(redactedCred.ACLs) == 0 {
+			t.Error("Credentials[appkey].ACLs should be preserved")
+		}
+	}
 }
