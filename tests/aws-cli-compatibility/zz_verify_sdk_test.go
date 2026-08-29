@@ -29,9 +29,22 @@ import (
 
 func newSDKClient(t *testing.T, endpoint string) *s3.Client {
 	t.Helper()
+
+	// Use credentials from environment when in endpoint mode
+	accessKey := testAccessKey
+	secretKey := testSecretKey
+	if isCompatEndpointMode() {
+		_, ak, sk := compatEndpointConfig()
+		if ak == "" || sk == "" {
+			t.Fatalf("ARMOR_COMPAT_ENDPOINT requires ARMOR_COMPAT_ACCESS_KEY and ARMOR_COMPAT_SECRET_KEY")
+		}
+		accessKey = ak
+		secretKey = sk
+	}
+
 	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
 		awsconfig.WithRegion(testRegion),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(testAccessKey, testSecretKey, "")),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 	)
 	if err != nil {
 		t.Fatalf("load sdk config: %v", err)
@@ -46,7 +59,7 @@ func TestVerify_MultipartRoundTrip(t *testing.T) {
 	endpoint := startArmorServer(t)
 	client := newSDKClient(t, endpoint)
 	ctx := context.Background()
-	bucket := testBucket
+	bucket := compatBucket(t)
 	key := "verify/multipart.bin"
 
 	// 9 MiB total in two parts: 8 MiB + 1 MiB (matches the CLI test's split).
@@ -108,7 +121,7 @@ func TestVerify_ConcurrentTransfers(t *testing.T) {
 	endpoint := startArmorServer(t)
 	client := newSDKClient(t, endpoint)
 	ctx := context.Background()
-	bucket := testBucket
+	bucket := compatBucket(t)
 
 	const n = 16
 	var wg sync.WaitGroup

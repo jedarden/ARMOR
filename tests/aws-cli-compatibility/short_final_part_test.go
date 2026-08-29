@@ -65,7 +65,7 @@ func TestShortFinalPart_AfterAlignedParts(t *testing.T) {
 	// Create multipart upload
 	createOut := mustRun(t, "aws", env, append([]string{
 		"s3api", "create-multipart-upload",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 	}, endpointFlag(endpoint)...)...)
 	uploadID := extractXMLField(createOut, "UploadId")
@@ -73,7 +73,7 @@ func TestShortFinalPart_AfterAlignedParts(t *testing.T) {
 	// Upload parts
 	mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "1",
 		"--upload-id", uploadID,
@@ -82,7 +82,7 @@ func TestShortFinalPart_AfterAlignedParts(t *testing.T) {
 
 	mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "2",
 		"--upload-id", uploadID,
@@ -91,7 +91,7 @@ func TestShortFinalPart_AfterAlignedParts(t *testing.T) {
 
 	part3ETag := mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "3",
 		"--upload-id", uploadID,
@@ -100,7 +100,7 @@ func TestShortFinalPart_AfterAlignedParts(t *testing.T) {
 	part3ETag = strings.TrimSpace(part3ETag)
 
 	// Complete multipart upload
-	completeMultipartUpload(t, env, endpoint, testBucket, key, uploadID, []struct {
+	completeMultipartUpload(t, env, endpoint, compatBucket(t), key, uploadID, []struct {
 		number int
 		etag   string
 	}{
@@ -166,7 +166,7 @@ func TestShortFinalPart_SingleShortPart(t *testing.T) {
 	// Verify HEAD object returns correct metadata
 	headOut := mustRun(t, "aws", env, append([]string{
 		"s3api", "head-object",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 	}, endpointFlag(endpoint)...)...)
 	if !strings.Contains(headOut, "ContentLength: "+strconv.Itoa(shortPartSize)) {
@@ -199,7 +199,7 @@ func TestShortFinalPart_RangeRequests(t *testing.T) {
 	// Create multipart upload
 	createOut := mustRun(t, "aws", env, append([]string{
 		"s3api", "create-multipart-upload",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 	}, endpointFlag(endpoint)...)...)
 	uploadID := extractXMLField(createOut, "UploadId")
@@ -207,7 +207,7 @@ func TestShortFinalPart_RangeRequests(t *testing.T) {
 	// Upload parts
 	mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "1",
 		"--upload-id", uploadID,
@@ -216,7 +216,7 @@ func TestShortFinalPart_RangeRequests(t *testing.T) {
 
 	part2ETag := mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "2",
 		"--upload-id", uploadID,
@@ -225,7 +225,7 @@ func TestShortFinalPart_RangeRequests(t *testing.T) {
 	part2ETag = strings.TrimSpace(part2ETag)
 
 	// Complete multipart upload
-	completeMultipartUpload(t, env, endpoint, testBucket, key, uploadID, []struct {
+	completeMultipartUpload(t, env, endpoint, compatBucket(t), key, uploadID, []struct {
 		number int
 		etag   string
 	}{
@@ -253,7 +253,7 @@ func TestShortFinalPart_RangeRequests(t *testing.T) {
 		rangeSpec := fmt.Sprintf("bytes=%d-%d", tr.start, tr.end)
 		mustRun(t, "aws", env, append([]string{
 			"s3api", "get-object",
-			"--bucket", testBucket,
+			"--bucket", compatBucket(t),
 			"--key", key,
 			"--range", rangeSpec,
 			rangeFile,
@@ -291,7 +291,7 @@ func TestShortFinalPart_AlignedRegression(t *testing.T) {
 	// Create multipart upload
 	createOut := mustRun(t, "aws", env, append([]string{
 		"s3api", "create-multipart-upload",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 	}, endpointFlag(endpoint)...)...)
 	uploadID := extractXMLField(createOut, "UploadId")
@@ -299,7 +299,7 @@ func TestShortFinalPart_AlignedRegression(t *testing.T) {
 	// Upload parts
 	mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "1",
 		"--upload-id", uploadID,
@@ -308,7 +308,7 @@ func TestShortFinalPart_AlignedRegression(t *testing.T) {
 
 	mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "2",
 		"--upload-id", uploadID,
@@ -317,7 +317,7 @@ func TestShortFinalPart_AlignedRegression(t *testing.T) {
 
 	part3ETag := mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "3",
 		"--upload-id", uploadID,
@@ -326,7 +326,7 @@ func TestShortFinalPart_AlignedRegression(t *testing.T) {
 	part3ETag = strings.TrimSpace(part3ETag)
 
 	// Complete multipart upload
-	completeMultipartUpload(t, env, endpoint, testBucket, key, uploadID, []struct {
+	completeMultipartUpload(t, env, endpoint, compatBucket(t), key, uploadID, []struct {
 		number int
 		etag   string
 	}{
@@ -378,7 +378,7 @@ func TestShortFinalPart_SubBlockSizeShort(t *testing.T) {
 	// Create multipart upload
 	createOut := mustRun(t, "aws", env, append([]string{
 		"s3api", "create-multipart-upload",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 	}, endpointFlag(endpoint)...)...)
 	uploadID := extractXMLField(createOut, "UploadId")
@@ -386,7 +386,7 @@ func TestShortFinalPart_SubBlockSizeShort(t *testing.T) {
 	// Upload parts
 	mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "1",
 		"--upload-id", uploadID,
@@ -395,7 +395,7 @@ func TestShortFinalPart_SubBlockSizeShort(t *testing.T) {
 
 	part2ETag := mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "2",
 		"--upload-id", uploadID,
@@ -404,7 +404,7 @@ func TestShortFinalPart_SubBlockSizeShort(t *testing.T) {
 	part2ETag = strings.TrimSpace(part2ETag)
 
 	// Complete multipart upload
-	completeMultipartUpload(t, env, endpoint, testBucket, key, uploadID, []struct {
+	completeMultipartUpload(t, env, endpoint, compatBucket(t), key, uploadID, []struct {
 		number int
 		etag   string
 	}{
@@ -453,7 +453,7 @@ func TestShortFinalPart_ZeroByteFinalPart(t *testing.T) {
 	// Create multipart upload
 	createOut := mustRun(t, "aws", env, append([]string{
 		"s3api", "create-multipart-upload",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 	}, endpointFlag(endpoint)...)...)
 	uploadID := extractXMLField(createOut, "UploadId")
@@ -461,7 +461,7 @@ func TestShortFinalPart_ZeroByteFinalPart(t *testing.T) {
 	// Upload parts
 	mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "1",
 		"--upload-id", uploadID,
@@ -470,7 +470,7 @@ func TestShortFinalPart_ZeroByteFinalPart(t *testing.T) {
 
 	part2ETag := mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "2",
 		"--upload-id", uploadID,
@@ -479,7 +479,7 @@ func TestShortFinalPart_ZeroByteFinalPart(t *testing.T) {
 	part2ETag = strings.TrimSpace(part2ETag)
 
 	// Complete multipart upload
-	completeMultipartUpload(t, env, endpoint, testBucket, key, uploadID, []struct {
+	completeMultipartUpload(t, env, endpoint, compatBucket(t), key, uploadID, []struct {
 		number int
 		etag   string
 	}{
@@ -505,7 +505,7 @@ func TestShortFinalPart_ZeroByteFinalPart(t *testing.T) {
 	// Verify HEAD object returns correct metadata
 	headOut := mustRun(t, "aws", env, append([]string{
 		"s3api", "head-object",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 	}, endpointFlag(endpoint)...)...)
 	if !strings.Contains(headOut, "ContentLength: "+strconv.Itoa(expectedSize)) {
@@ -540,7 +540,7 @@ func TestShortFinalPart_AllShortParts(t *testing.T) {
 	// Create multipart upload
 	createOut := mustRun(t, "aws", env, append([]string{
 		"s3api", "create-multipart-upload",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 	}, endpointFlag(endpoint)...)...)
 	uploadID := extractXMLField(createOut, "UploadId")
@@ -548,7 +548,7 @@ func TestShortFinalPart_AllShortParts(t *testing.T) {
 	// Upload parts
 	mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "1",
 		"--upload-id", uploadID,
@@ -557,7 +557,7 @@ func TestShortFinalPart_AllShortParts(t *testing.T) {
 
 	mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "2",
 		"--upload-id", uploadID,
@@ -566,7 +566,7 @@ func TestShortFinalPart_AllShortParts(t *testing.T) {
 
 	part3ETag := mustRun(t, "aws", env, append([]string{
 		"s3api", "upload-part",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 		"--part-number", "3",
 		"--upload-id", uploadID,
@@ -575,7 +575,7 @@ func TestShortFinalPart_AllShortParts(t *testing.T) {
 	part3ETag = strings.TrimSpace(part3ETag)
 
 	// Complete multipart upload
-	completeMultipartUpload(t, env, endpoint, testBucket, key, uploadID, []struct {
+	completeMultipartUpload(t, env, endpoint, compatBucket(t), key, uploadID, []struct {
 		number int
 		etag   string
 	}{
@@ -604,7 +604,7 @@ func TestShortFinalPart_AllShortParts(t *testing.T) {
 	// Verify HEAD object returns correct metadata
 	headOut := mustRun(t, "aws", env, append([]string{
 		"s3api", "head-object",
-		"--bucket", testBucket,
+		"--bucket", compatBucket(t),
 		"--key", key,
 	}, endpointFlag(endpoint)...)...)
 	if !strings.Contains(headOut, "ContentLength: "+strconv.Itoa(expectedSize)) {
