@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jedarden/armor/internal/crypto"
 )
 
 // EmptyPlaintextSHA256Hex is the SHA-256 of the empty byte sequence. Before
