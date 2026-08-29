@@ -99,6 +99,7 @@ type Dashboard struct {
 	auth            *AuthMiddleware
 	dashboardCred   *DashboardCredential // Named credential for S3 operations
 	serverBaseURL   string                // Base URL for S3 endpoint proxying
+	presignEnabled  bool                  // Whether presign feature is enabled
 }
 
 // DashboardCredential holds credential info for S3 operations
@@ -110,18 +111,19 @@ type DashboardCredential struct {
 
 // New creates a new Dashboard.
 func New(b backend.Backend, bucket string, m *metrics.Metrics) *Dashboard {
-	return NewWithAuth(b, bucket, m, "", "", "", nil, "")
+	return NewWithAuth(b, bucket, m, "", "", "", nil, "", false)
 }
 
 // NewWithAuth creates a new Dashboard with authentication.
-func NewWithAuth(b backend.Backend, bucket string, m *metrics.Metrics, user, pass, token string, dashboardCred *DashboardCredential, serverBaseURL string) *Dashboard {
+func NewWithAuth(b backend.Backend, bucket string, m *metrics.Metrics, user, pass, token string, dashboardCred *DashboardCredential, serverBaseURL string, presignEnabled bool) *Dashboard {
 	d := &Dashboard{
-		backend:       b,
-		bucket:        bucket,
-		metrics:       m,
-		auth:          NewAuthMiddleware(user, pass, token),
-		dashboardCred: dashboardCred,
-		serverBaseURL: serverBaseURL,
+		backend:        b,
+		bucket:         bucket,
+		metrics:        m,
+		auth:           NewAuthMiddleware(user, pass, token),
+		dashboardCred:  dashboardCred,
+		serverBaseURL:  serverBaseURL,
+		presignEnabled: presignEnabled,
 	}
 	d.template = template.Must(template.New("dashboard").Parse(dashboardHTML))
 	return d
@@ -263,6 +265,8 @@ type PageData struct {
 	IsTruncated        bool
 	// Dashboard credential for S3 operations
 	DashboardCredential string
+	// Presign feature flag
+	PresignEnabled bool
 }
 
 // Breadcrumb represents a navigation breadcrumb.
@@ -406,6 +410,7 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string, con
 				}
 				return ""
 			}(),
+		PresignEnabled: d.presignEnabled,
 	}
 }
 
@@ -1108,6 +1113,105 @@ func (d *Dashboard) listAPIHandlerImpl() http.HandlerFunc {
 			})
 		}
 	}
+// PresignHandler handles presign requests through the dashboard.
+// It forwards the request to the admin presign endpoint using dashboard authentication.
+func (d *Dashboard) PresignHandler(adminClient *http.Client, adminURL string) http.HandlerFunc {
+	return d.presignHandlerImpl(adminClient, adminURL)
+}
+
+// PresignHandlerWithAuth returns the presign handler with dashboard authentication.
+func (d *Dashboard) PresignHandlerWithAuth(adminClient *http.Client, adminURL string) http.HandlerFunc {
+	return d.auth.Wrap(d.presignHandlerImpl(adminClient, adminURL))
+}
+
+// presignHandlerImpl is the actual implementation of the presign handler.
+func (d *Dashboard) presignHandlerImpl(adminClient *http.Client, adminURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Check if presign is enabled
+		if !d.presignEnabled {
+			http.Error(w, "Presign feature is not enabled", http.StatusNotFound)
+			return
+		}
+
+		// Parse request body
+		var req struct {
+			Key       string `json:"key"`
+			ExpiresIn string `json:"expires_in"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Validate required fields
+		if req.Key == "" {
+			http.Error(w, "key is required", http.StatusBadRequest)
+			return
+		}
+
+		// Build presign request
+		presignReq := map[string]interface{}{
+			"bucket":     d.bucket,
+			"key":        req.Key,
+			"expires_in": req.ExpiresIn,
+		}
+
+		reqBody, err := json.Marshal(presignReq)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to marshal request: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Determine presign URL
+		presignURL := adminURL
+		if presignURL == "" {
+			presignURL = "http://127.0.0.1:9001/admin/presign"
+		}
+
+		// Create request
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, presignURL, bytes.NewReader(reqBody))
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+			return
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		// Forward dashboard authentication
+		if d.auth.user != "" && d.auth.pass != "" {
+			// Use HTTP Basic Auth
+			auth := d.auth.user + ":" + d.auth.pass
+			basicAuth := base64.StdEncoding.EncodeToString([]byte(auth))
+			httpReq.Header.Set("Authorization", "Basic "+basicAuth)
+		} else if d.auth.token != "" {
+			// Use Bearer token
+			httpReq.Header.Set("Authorization", "Bearer "+d.auth.token)
+		}
+
+		// Make request
+		resp, err := adminClient.Do(httpReq)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to call presign API: %v", err), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		// Copy response headers and body
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	}
+}
 // Helper functions
 
 func parseExpvarInt(s string) int64 {
@@ -1732,7 +1836,10 @@ const dashboardHTML = `<!DOCTYPE html>
                         <td>
                             {{if not .IsFolder}}
                             <button class="btn btn-primary" onclick="downloadObject({{.Key}})" style="padding:4px 8px;font-size:12px;margin-right:4px">Download</button>
-                            <button class="btn btn-secondary" onclick="deleteObject({{.Key}})" style="padding:4px 8px;font-size:12px;background:#ef4444;color:white">Delete</button>
+                            <button class="btn btn-secondary" onclick="deleteObject({{.Key}})" style="padding:4px 8px;font-size:12px;background:#ef4444;color:white;margin-right:4px">Delete</button>
+                            {{if $.PresignEnabled}}
+                            <button class="btn btn-primary" onclick="showShareModal({{.Key}})" style="padding:4px 8px;font-size:12px;background:#8b5cf6">Share</button>
+                            {{end}}
                             {{else}}
                             —
                             {{end}}
@@ -1813,6 +1920,38 @@ const dashboardHTML = `<!DOCTYPE html>
         </div>
     </div>
 
+    <div id="shareModal" class="modal">
+        <div class="modal-content" style="max-width:600px">
+            <h2 class="modal-title">Share Object</h2>
+            <div class="modal-body">
+                <div style="margin-bottom:20px">
+                    <label style="display:block;margin-bottom:8px;font-weight:600">Object:</label>
+                    <div id="shareObjectKey" style="font-family:monospace;font-size:13px;color:#334155;padding:8px;background:#f8fafc;border-radius:4px"></div>
+                </div>
+                <div style="margin-bottom:20px">
+                    <label style="display:block;margin-bottom:8px;font-weight:600">Expiration:</label>
+                    <select id="shareExpiration" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:4px;font-size:14px">
+                        <option value="1h">1 hour</option>
+                        <option value="24h">24 hours (1 day)</option>
+                        <option value="168h">7 days</option>
+                    </select>
+                </div>
+                <div id="shareResult" style="display:none">
+                    <label style="display:block;margin-bottom:8px;font-weight:600">Share URL:</label>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <input type="text" id="shareUrl" readonly style="flex:1;padding:8px;border:1px solid #d1d5db;border-radius:4px;font-family:monospace;font-size:12px;background:#f8fafc">
+                        <button class="btn btn-primary" onclick="copyShareUrl()" style="padding:8px 16px;font-size:13px">Copy</button>
+                    </div>
+                    <div id="shareExpiry" style="margin-top:8px;font-size:12px;color:#64748b"></div>
+                </div>
+                <div id="shareStatus" class="status-message" style="display:none"></div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-primary" onclick="generateShareUrl()" id="generateShareBtn">Generate URL</button>
+                <button class="btn btn-secondary" onclick="closeShareModal()">Close</button>
+            </div>
+        </div>
+    </div>
     <script>
     // Pagination state
     const currentPrefix = {{if .Prefix}}'{{.Prefix}}'{{else}}''{{end}};
@@ -2134,6 +2273,90 @@ const dashboardHTML = `<!DOCTYPE html>
     // Auto-refresh metrics stats every 30 seconds without a full page reload
     setInterval(refreshMetrics, 30000);
     setInterval(refreshCredentialActivity, 30000);
+
+    let currentShareKey = null;
+
+    function showShareModal(key) {
+        currentShareKey = key;
+        document.getElementById('shareObjectKey').textContent = key;
+        document.getElementById('shareExpiration').value = '1h';
+        document.getElementById('shareResult').style.display = 'none';
+        document.getElementById('shareStatus').style.display = 'none';
+        document.getElementById('shareUrl').value = '';
+        document.getElementById('generateShareBtn').disabled = false;
+        document.getElementById('shareModal').classList.add('active');
+    }
+
+    function closeShareModal() {
+        document.getElementById('shareModal').classList.remove('active');
+        currentShareKey = null;
+    }
+
+    function generateShareUrl() {
+        if (!currentShareKey) return;
+
+        const expiration = document.getElementById('shareExpiration').value;
+        const statusDiv = document.getElementById('shareStatus');
+        const resultDiv = document.getElementById('shareResult');
+        const generateBtn = document.getElementById('generateShareBtn');
+
+        statusDiv.className = 'status-message status-info';
+        statusDiv.textContent = 'Generating share URL...';
+        statusDiv.style.display = 'block';
+        resultDiv.style.display = 'none';
+        generateBtn.disabled = true;
+
+        const payload = {
+            key: currentShareKey,
+            expires_in: expiration
+        };
+
+        fetch('/dashboard/presign', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(function(response) {
+            if (!response.ok) {
+                return response.text().then(function(body) {
+                    throw new Error(body || 'Failed to generate share URL');
+                });
+            }
+            return response.json();
+        })
+        .then(function(data) {
+            statusDiv.style.display = 'none';
+            resultDiv.style.display = 'block';
+            document.getElementById('shareUrl').value = data.url;
+            document.getElementById('shareExpiry').textContent = 'Expires: ' + (data.expires_at || 'unknown');
+            generateBtn.disabled = false;
+        })
+        .catch(function(err) {
+            statusDiv.className = 'status-message status-error';
+            statusDiv.textContent = 'Error: ' + err.message;
+            generateBtn.disabled = false;
+        });
+    }
+
+    function copyShareUrl() {
+        const urlField = document.getElementById('shareUrl');
+        urlField.select();
+        urlField.setSelectionRange(0, 99999); // For mobile devices
+
+        try {
+            document.execCommand('copy');
+            // Show brief feedback
+            const originalValue = urlField.value;
+            urlField.value = 'Copied!';
+            setTimeout(function() {
+                urlField.value = originalValue;
+            }, 1000);
+        } catch (err) {
+            alert('Failed to copy URL');
+        }
+    }
     </script>
 </body>
 </html>
