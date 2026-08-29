@@ -53,7 +53,6 @@ func (m *MockB2Backend) Head(ctx context.Context, bucket, key string) (*backend.
 	}
 
 	return &backend.ObjectInfo{
-		Bucket:          bucket,
 		Key:             key,
 		Size:            int64(len(obj.data)),
 		LastModified:    obj.lastModified,
@@ -90,32 +89,17 @@ func (m *MockB2Backend) GetRange(ctx context.Context, bucket, key string, offset
 	return io.NopCloser(bytes.NewReader(data[offset:end])), nil
 }
 
-func (m *MockB2Backend) List(ctx context.Context, bucket, prefix, continuation string) (backend.ObjectLister, error) {
-	var keys []string
+func (m *MockB2Backend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	var objects []backend.ObjectInfo
 	for key := range m.objects {
 		if prefix == "" || strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
+			objects = append(objects, backend.ObjectInfo{Key: key})
 		}
 	}
-	return &mockLister{keys: keys, idx: 0}, nil
-}
-
-type mockLister struct {
-	keys []string
-	idx  int
-}
-
-func (m *mockLister) Next() (*backend.ObjectInfo, error) {
-	if m.idx >= len(m.keys) {
-		return nil, io.EOF
-	}
-	key := m.keys[m.idx]
-	m.idx++
-	return &backend.ObjectInfo{Key: key}, nil
-}
-
-func (m *mockLister) Close() error {
-	return nil
+	return &backend.ListResult{
+		Objects:     objects,
+		IsTruncated: false,
+	}, nil
 }
 
 // TestVerifyValidObject tests verification of a valid ARMOR object
