@@ -117,21 +117,89 @@ Clients that need range access must use uncompressed objects (disable compressio
 
 ## Configuration
 
-### Environment Variable
+### Environment Variables
 
 ```bash
-ARMOR_COMPRESS=true  # Enable zstd compression for single-PUT uploads
+# Legacy global compression (alias for *=zstd)
+ARMOR_COMPRESS=true  # Enable zstd compression for all single-PUT uploads
+
+# Fine-grained compression rules (recommended)
+ARMOR_COMPRESS_RULES=".jsonl=zstd,.wal=zstd,application/json=zstd,text/plain=zstd,*=none"
+
+# Rules: comma-separated <suffix>|<content-type>=zstd|none
+# First match wins. Wildcard *=none should be last to catch unmatched objects.
+# Examples:
+#   .jsonl=zstd                    # Compress files ending in .jsonl
+#   .wal=zstd                     # Compress WAL files
+#   application/json=zstd         # Compress JSON content-type
+#   text/plain=zstd               # Compress plain text
+#   application/octet-stream=none  # Don't compress binary data
+#   *=none                        # Catch-all: don't compress anything else
 ```
 
 **Default:** `false` (compression disabled)
 
 **Scope:** Single-PUT uploads only (rejected for multipart)
 
+**Per-Request Override:**
+
+Clients can override compression rules per-request using the `x-amz-meta-armor-compress` metadata header:
+
+```bash
+# Force compression for this request (overrides rules)
+curl -X PUT http://armor:9000/bucket/key \
+  -H "x-amz-meta-armor-compress: true" \
+  --data-binary @file.jsonl
+
+# Force no compression for this request
+curl -X PUT http://armor:9000/bucket/key \
+  -H "x-amz-meta-armor-compress: false" \
+  --data-binary @file.jsonl
+```
+
+Valid values: `true` (compress), `false` (don't compress). Invalid values return HTTP 400.
+
 ### README Configuration Table Entry
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ARMOR_COMPRESS` | No | `false` | Enable zstd compression for single-PUT uploads. Multipart uploads are rejected when enabled. Compressed objects do not support byte-range reads. |
+| `ARMOR_COMPRESS` | No | `false` | Legacy alias for `ARMOR_COMPRESS_RULES="*=zstd"` (all files compressed). Prefer `ARMOR_COMPRESS_RULES` for fine-grained control. Multipart uploads are rejected when compression is enabled. Compressed objects do not support byte-range reads. |
+| `ARMOR_COMPRESS_RULES` | No | — | Comma-separated compression rules: `<suffix>|<content-type>=zstd|none`. First match wins. Examples: `.jsonl=zstd,.wal=zstd,application/json=zstd,*=none`. Per-request override via `x-amz-meta-armor-compress: true|false` header. Only applies to v3 single-PUT format. |
+
+## Multipart Uploads and Compression
+
+**Multipart uploads do NOT support compression.** When `ARMOR_COMPRESS_RULES` or `ARMOR_COMPRESS=true` is configured, `CreateMultipartUpload` returns HTTP 400 `InvalidArgument` with the message:
+
+```
+Compression is not supported for multipart uploads. Use single-PUT uploads for compressed objects or disable compression (ARMOR_COMPRESS=false or ARMOR_COMPRESS_RULES empty).
+```
+
+**Why multipart parts are never compressed:**
+
+1. **ADR-005 Contract Violation:** Multipart uploads require uniform part sizes for out-of-order upload support. Per-part compression produces variable-sized parts, breaking the uniform-part-size invariant.
+
+2. **CTR Block Alignment:** AES-CTR encryption requires block-aligned ciphertext. Compression changes part sizes, making CTR block offsets unpredictable without cumulative size tracking.
+
+3. **Idempotent Retries:** zstd compression is not deterministic — the same input can produce different compressed outputs. This breaks idempotent upload retries, a key design goal.
+
+4. **No Compression Format Supports Block-Aligned Seeking:** zstd, gzip, and zlib are stream formats. No mainstream format supports seeking within compressed streams without decompressing from the start.
+
+5. **Design Simplicity:** Single-PUT compression provides the core benefit (storage cost reduction) for compressible workloads without the complexity of per-part compressed size tracking and custom compression formats.
+
+**For multipart use cases:** Use single-PUT uploads for objects that benefit from compression (manifests, WAL segments, JSON logs). Multipart remains available for large files that don't compress well (media files, encrypted data, already-compressed formats).
+
+## v3 Format Relationship
+
+Compression rules apply **only to v3 single-PUT format** (`ARMOR_FORMAT_VERSION=3`). The v3 format (see `internal/crypto/v3.go`) stores the block table in a trailer rather than inline, enabling cleaner integration with compression:
+
+- **v2 format:** Header → Encrypted Blocks → Inline HMAC Table (within the stream)
+- **v3 format:** Header → Encrypted Blocks → Trailer Block Table (after all blocks)
+
+Compression operates on plaintext before encryption, producing a compressed plaintext stream that is then encrypted with v3 semantics. The compression flag is stored in the envelope header's reserved bytes (see ADR-007 Reserved-Byte Flag Mechanism).
+
+**Why v3-only:** v2's inline HMAC table is embedded within the encrypted block stream, making the format less suitable for compression integration. v3's trailer design separates concerns: compression operates on plaintext, encryption on the result, and the trailer block table follows cleanly.
+
+**Configuration:** Set `ARMOR_FORMAT_VERSION=3` to enable v3 writes. v3 reads are always supported regardless of write version.
 
 ## Cost Model Impact
 
@@ -195,13 +263,17 @@ ARMOR_COMPRESS=true  # Enable zstd compression for single-PUT uploads
 
 ## Consequences
 
-- **Storage cost reduction** for compressible data types when `ARMOR_COMPRESS=true`
-- **Multipart uploads rejected** when compression enabled — operators must choose one or the other per workload
+- **Storage cost reduction** for compressible data types when `ARMOR_COMPRESS_RULES` or `ARMOR_COMPRESS=true` is configured
+- **Fine-grained compression control** via suffix and content-type rules (e.g., compress `.jsonl` and `application/json` but not `.mp4`)
+- **Per-request override** via `x-amz-meta-armor-compress` header for client-side control
+- **Multipart uploads rejected** when compression rules exist — operators must choose single-PUT for compressed objects or disable compression
 - **Range reads unsupported** for compressed objects — full-object download required
 - **CPU overhead** on uploads for compression work (zstd is fast; ~100-300 MB/s/core)
 - **No format-version bump** — reserved-byte mechanism backward compatible with legacy objects
-- **Opt-in only** — existing deployments unaffected unless explicitly enabled
-- **Clear error surface** — multipart creation and range reads return helpful errors
+- **Opt-in only** — existing deployments unaffected unless explicitly configured
+- **Clear error surface** — multipart creation, range reads, and invalid override values return helpful errors
+- **v3 format required** for compression rules (v3 trailer block table design; set `ARMOR_FORMAT_VERSION=3`)
+- **Streaming disabled** when compression rules are configured (requires buffering for rule evaluation and compression)
 
 ## Future Work
 
@@ -213,9 +285,15 @@ If multipart compression becomes a strong requirement, a future ADR could design
 
 All require significant design work and should not be undertaken without clear use case and cost-benefit analysis.
 
+**v3 Format Evolution:** The current compression rules system is tied to v3 format (`ARMOR_FORMAT_VERSION=3`). Future format versions could explore:
+- Block-level compression (compress individual 64KB blocks independently)
+- Compression metadata in trailer (compressed sizes per block for seeking)
+- Hybrid approaches (compress some blocks, not others based on compressibility detection)
+
 ## Related Documentation
 
 - ADR-005: Out-of-order multipart uploads with uniform part sizes
 - ADR-006: Dual-backend async replication (opt-in pattern reference)
 - ADR-007 (multipart): Multipart uploads do not support compression
 - ADR-012: Authorization action verbs and consumer separation
+- **v3 Format Specification:** `internal/crypto/v3.go` — v3 single-PUT format with trailer block table

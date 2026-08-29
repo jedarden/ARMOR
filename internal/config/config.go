@@ -13,6 +13,7 @@ import (
 
 	"github.com/jedarden/armor/internal/acl"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/server"
 )
 
 // KeyRoute represents a prefix-to-key mapping for multi-key support.
@@ -80,6 +81,12 @@ type Config struct {
 	// When enabled, multipart uploads are rejected and range reads are unsupported.
 	// See ADR-007.
 	Compress bool
+
+	// CompressRules defines content-type and suffix-based compression rules.
+	// Format: "<suffix>|<content-type>=zstd|none,..." (first match wins).
+	// ARMOR_COMPRESS=true is an alias for "*=zstd".
+	// Overrides the global Compress flag when set.
+	CompressRules *server.CompressRules
 
 	// Read path configuration
 	ReadConcurrency int // Maximum concurrent ranged GETs (default 16)
@@ -255,7 +262,19 @@ func Load() (*Config, error) {
 	}
 
 	// Compression (default disabled per ADR-007)
-	cfg.Compress = os.Getenv("ARMOR_COMPRESS") == "true"
+	// ARMOR_COMPRESS=true is a legacy alias for "*=zstd" in ARMOR_COMPRESS_RULES
+	compressRulesStr := os.Getenv("ARMOR_COMPRESS_RULES")
+	compressAlias := os.Getenv("ARMOR_COMPRESS") == "true"
+
+	// Parse compress rules with alias support
+	var err error
+	cfg.CompressRules, err = server.ParseCompressRulesWithAlias(compressRulesStr, compressAlias)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("ARMOR_COMPRESS_RULES: %w", err))
+	}
+
+	// Set legacy Compress flag for backward compatibility
+	cfg.Compress = compressAlias
 
 	// Number of ranged reads allowed in flight for a backend read.
 	cfg.ReadConcurrency = getEnvInt("ARMOR_READ_CONCURRENCY", 16)
@@ -868,7 +887,8 @@ type RedactedConfig struct {
 	BlockSize int    `json:"block_size"`
 
 	// Compress configuration
-	Compress bool `json:"compress"`
+	Compress     bool   `json:"compress"`
+	CompressRules string `json:"compress_rules"` // String representation for debugging
 
 	// Read path configuration
 	ReadConcurrency int `json:"read_concurrency"`
@@ -958,6 +978,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		CanaryDisabled:              c.CanaryDisabled,
 		BlockSize:                   c.BlockSize,
 		Compress:                    c.Compress,
+		CompressRules:               c.CompressRules.String(),
 		ReadConcurrency:             c.ReadConcurrency,
 		AuthAccessKey:               c.AuthAccessKey,
 		WriterID:                    c.WriterID,

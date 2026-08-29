@@ -73,7 +73,7 @@ type ManifestRecorder interface {
 	// RecordPut records a successful PutObject or CompleteMultipartUpload.
 	// chainEntry is the provenance chain entry to embed in the delta line.
 	// May be nil if provenance is disabled for this key.
-	RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64)
+	RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64)
 	// RecordDelete records a successful DeleteObject.
 	RecordDelete(bucket, key string)
 	// Lookup returns manifest metadata for bucket/key, or (nil, false) if not
@@ -351,7 +351,8 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Use streaming for large files or unknown size, but NOT when compression is enabled
 	// Compression requires buffering the entire file anyway (to compress), so disable streaming
-	useStreaming := !h.config.Compress && (contentLength < 0 || contentLength > streamingThreshold)
+	// Also disable streaming when compress rules are configured (may require evaluation)
+	useStreaming := !h.config.Compress && !h.config.CompressRules.HasRules() && (contentLength < 0 || contentLength > streamingThreshold)
 
 	if useStreaming {
 		h.putObjectStreaming(ctx, w, r, bucket, key)
@@ -411,12 +412,32 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Compute plaintext SHA-256 BEFORE compression (ADR-007)
 	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
 
-	// Compress if enabled (ADR-007: compress-before-encrypt)
+	// Extract content-type for compression rules (before compression decision)
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	contentType = server.ExtractContentType(contentType)
+
+	// Get compression override header (highest priority)
+	compressOverride := r.Header.Get("x-amz-meta-armor-compress")
+
+	// Compress based on rules (ADR-007: compress-before-encrypt)
+	// Rules support: suffix matching (.jsonl), content-type matching (application/json),
+	// wildcard (*), and per-request override (x-amz-meta-armor-compress header).
+	// ARMOR_COMPRESS=true is an alias for "*=zstd".
 	var compressed bool
 	var compressionType crypto.CompressionType
 	var dataToEncrypt []byte = plaintext
 
-	if h.config.Compress {
+	// Evaluate compression decision (rules + override)
+	shouldCompress, err := server.EvaluateCompression(key, contentType, h.config.CompressRules, compressOverride)
+	if err != nil {
+		h.writeError(w, r, "InvalidArgument", fmt.Sprintf("Invalid compression override: %v", err), 400)
+		return
+	}
+
+	if shouldCompress {
 		compressedData, wasCompressed, compType, err := crypto.Compress(plaintext)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Compression failed: %v", err), 500)
@@ -516,11 +537,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	etag := backend.ComputeETag(plaintext)
 
 	// Build metadata with version matching envelope format
-	contentType := r.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
+	// contentType was already extracted above for compression rules
 	metaVersion := 2
 	if envelopeVersion == crypto.Version3 {
 		metaVersion = 3
@@ -873,7 +890,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		if envelopeVersion == crypto.Version3 {
 			ciphertextSize = envelopeSize
 		}
-		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag, chainEntry, ciphertextSize)
+		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, mekFingerprint, h.config.BlockSize, contentType, etag, chainEntry, ciphertextSize)
 	}
 
 	// Record provenance (fallback when manifest is disabled)
@@ -2747,8 +2764,9 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 	ctx := r.Context()
 
 	// Reject multipart uploads when compression is enabled (ADR-007)
-	if h.config.Compress {
-		h.writeError(w, r, "InvalidArgument", "Compression is not supported for multipart uploads. Use single-PUT uploads for compressed objects or disable compression (ARMOR_COMPRESS=false).", 400)
+	// Check both legacy Compress flag and CompressRules
+	if h.config.Compress || h.config.CompressRules.HasRules() {
+		h.writeError(w, r, "InvalidArgument", "Compression is not supported for multipart uploads. Use single-PUT uploads for compressed objects or disable compression (ARMOR_COMPRESS=false or ARMOR_COMPRESS_RULES empty).", 400)
 		return
 	}
 
