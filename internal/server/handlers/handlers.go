@@ -105,6 +105,12 @@ type Handlers struct {
 	// HMAC/size entries. Cross-upload parallelism is unaffected — one mutex
 	// per uploadID. The zero value is a usable sync.Map.
 	multipartLocks sync.Map // uploadID -> *sync.Mutex
+
+	// multipartManager manages multipart upload state operations
+	multipartManager *backend.MultipartStateManager
+
+	// multipartSidecarCache caches v3 multipart sidecar data
+	multipartSidecarCache *backend.MultipartSidecarCache
 }
 
 // multipartLock returns the mutex serializing state updates for one upload id.
@@ -113,17 +119,27 @@ func (h *Handlers) multipartLock(uploadID string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
+// getMultipartManager returns the multipart state manager for a given bucket.
+// The manager is created on first use per bucket.
+func (h *Handlers) getMultipartManager(bucket string) *backend.MultipartStateManager {
+	if h.multipartManager == nil || h.multipartManager.Bucket() != bucket {
+		h.multipartManager = backend.NewMultipartStateManager(h.backend, bucket)
+	}
+	return h.multipartManager
+}
+
 // New creates a new Handlers instance.
 func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, footerCache *backend.FooterCache, km *keymanager.KeyManager, listCache *backend.ListCache) *Handlers {
 	return &Handlers{
-		config:      cfg,
-		backend:     be,
-		cache:       cache,
-		footerCache: footerCache,
-		listCache:   listCache,
-		keyManager:  km,
-		provenance:  nil,
-		manifest:    nil,
+		config:                 cfg,
+		backend:                be,
+		cache:                  cache,
+		footerCache:            footerCache,
+		listCache:              listCache,
+		keyManager:             km,
+		provenance:             nil,
+		manifest:               nil,
+		multipartSidecarCache:   backend.NewMultipartSidecarCache(cfg.CacheMaxEntries, cfg.CacheTTL),
 	}
 }
 
@@ -1141,12 +1157,29 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 			h.writeError(w, r, "InvalidRange", "Range reads unsupported on compressed objects", 416)
 			return
 		}
-		h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart)
+
+		// Dispatch to appropriate range handler based on version and multipart status
+		if isMultipart && armorMeta.Version == 3 {
+			prefixedKey := h.applyPrefix(key)
+			start, end, err := parseRangeHeader(rangeHeader, plaintextSize)
+			if err != nil {
+				h.writeError(w, r, "InvalidRange", fmt.Sprintf("Invalid range: %v", err), 416)
+				return
+			}
+			h.handleV3MultipartRangeRequest(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified, start, end)
+		} else {
+			h.handleRangeRequest(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart)
+		}
 		return
 	}
 
-	// Full object download with pipelined stream decryption
-	h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize, isNonUniform, cumulativePartSizes)
+	// Full object download - dispatch based on version and multipart status
+	if isMultipart && armorMeta.Version == 3 {
+		prefixedKey := h.applyPrefix(key)
+		h.handleV3MultipartGet(w, r, bucket, key, prefixedKey, decryptor, armorMeta, plaintextSize, info.LastModified)
+	} else {
+		h.handleFullObjectStream(w, r, bucket, key, decryptor, armorMeta, plaintextSize, info.LastModified, isMultipart, multipartPartSize, isNonUniform, cumulativePartSizes)
+	}
 }
 
 // handleFullObjectStream handles full object downloads with pipelined stream decryption.
