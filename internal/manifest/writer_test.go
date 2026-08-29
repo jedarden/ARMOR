@@ -88,7 +88,7 @@ func TestWriter_SinglePutFlushedOnStop(t *testing.T) {
 	w := NewWriter(idx, ".armor/manifest", "writer-1", up.Upload, 64)
 	w.Start(context.Background())
 
-	w.EnqueuePut("bucket", "path/file.txt", sampleEntry(1))
+	w.EnqueuePut("bucket", "path/file.txt", sampleEntry(1), nil)
 	w.Stop()
 
 	if up.Count() != 1 {
@@ -139,7 +139,7 @@ func TestWriter_PutOpContents(t *testing.T) {
 	w.Start(context.Background())
 
 	entry := sampleEntry(42)
-	w.EnqueuePut("mybucket", "dir/obj.parquet", entry)
+	w.EnqueuePut("mybucket", "dir/obj.parquet", entry, nil)
 	w.Stop()
 
 	data := up.Content(up.Keys()[0])
@@ -172,7 +172,7 @@ func TestWriter_MultipleOpsBatched(t *testing.T) {
 
 	const n = 20
 	for i := 0; i < n; i++ {
-		w.EnqueuePut("b", fmt.Sprintf("k%d", i), sampleEntry(i))
+		w.EnqueuePut("b", fmt.Sprintf("k%d", i), sampleEntry(i), nil)
 	}
 	w.Stop()
 
@@ -192,7 +192,7 @@ func TestWriter_SequenceIncrementsPerFlush(t *testing.T) {
 	w.Start(context.Background())
 
 	for i := 0; i < 3; i++ {
-		w.EnqueuePut("b", fmt.Sprintf("k%d", i), sampleEntry(i))
+		w.EnqueuePut("b", fmt.Sprintf("k%d", i), sampleEntry(i), nil)
 		// Small sleep so the goroutine can drain between enqueues.
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -213,7 +213,7 @@ func TestWriter_PaddedFilename(t *testing.T) {
 	w := NewWriter(idx, ".armor/manifest", "writer-1", up.Upload, 64)
 	w.Start(context.Background())
 
-	w.EnqueuePut("b", "k", sampleEntry(1))
+	w.EnqueuePut("b", "k", sampleEntry(1), nil)
 	w.Stop()
 
 	keys := up.Keys()
@@ -253,7 +253,7 @@ func TestWriter_ContextCancellationStops(t *testing.T) {
 	w := NewWriter(idx, ".armor/manifest", "writer-1", up.Upload, 64)
 	w.Start(ctx)
 
-	w.EnqueuePut("b", "k", sampleEntry(1))
+	w.EnqueuePut("b", "k", sampleEntry(1), nil)
 	cancel() // trigger stop via context
 	// Wait for done by calling Stop (which will just wait on <-done)
 	w.Stop()
@@ -270,7 +270,7 @@ func TestWriter_WriterIDInKey(t *testing.T) {
 	w := NewWriter(idx, ".armor/manifest", "my-cluster-node-3", up.Upload, 64)
 	w.Start(context.Background())
 
-	w.EnqueuePut("b", "k", sampleEntry(1))
+	w.EnqueuePut("b", "k", sampleEntry(1), nil)
 	w.Stop()
 
 	for _, k := range up.Keys() {
@@ -286,7 +286,7 @@ func TestWriter_CustomPrefix(t *testing.T) {
 	w := NewWriter(idx, "custom/prefix", "w1", up.Upload, 64)
 	w.Start(context.Background())
 
-	w.EnqueuePut("b", "k", sampleEntry(1))
+	w.EnqueuePut("b", "k", sampleEntry(1), nil)
 	w.Stop()
 
 	for _, k := range up.Keys() {
