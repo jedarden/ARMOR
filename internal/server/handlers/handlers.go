@@ -3411,8 +3411,17 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	var encrypted []byte
 	var blockHMACsRaw []byte
 
-	// ADR-011: Use cumulative offsets for non-uniform parts (e.g., Barman's chunk_size + N*512)
-	if state.NonUniformParts {
+	// V3 format: encrypt each part independently using (part n, block b) counter
+	if formatVersion == 3 {
+		// V3 encrypts each part as an independent stream starting from block 0
+		// No ordering constraints, no size pinning, no cumulative offsets
+		encrypted, blockHMACsRaw, err = crypto.EncryptPartV3(dek, state.IV, uint16(partNumber), state.BlockSize, plaintext)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt part with v3: %v", err), 500)
+			return
+		}
+	} else if state.NonUniformParts {
+		// ADR-011: Use cumulative offsets for non-uniform parts (e.g., Barman's chunk_size + N*512)
 		// Calculate cumulative offset for this part
 		cumulativeOffset := int64(0)
 		for i := 1; i < int(partNumber); i++ {
@@ -3510,16 +3519,8 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			return
 		}
 
-		// For v3, update metadata when part size is pinned (part 1 arrives)
-			// Use pinningP (set before P was modified) to detect when part 1 just pinned P
-		// This needs to happen atomically with the part save for consistency
-		if pinningP && partNumber == 1 {
-			// Part 1 pins the uniform part size P
-			if err := h.updateMetadataPartSize(ctx, manager, uploadID, plaintextSize, partNumber, state.NonUniformParts); err != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to update metadata: %v", err), 500)
-				return
-			}
-		}
+		// V3 format: no uniform size pinning, no part-1-first requirement
+		// Parts can be uploaded in any order with any size (subject only to S3 limits)
 	} else {
 		// V2 format: update the shared state object (legacy)
 		state.PartHMACs[int(partNumber)] = backend.EncodeHMACToBase64(blockHMACs)

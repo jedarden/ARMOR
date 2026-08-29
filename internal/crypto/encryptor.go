@@ -571,3 +571,64 @@ func (e *Encryptor) EncryptV3Stream(plaintext io.Reader, ciphertext io.Writer, p
 
 	return blockTable, nil
 }
+
+// EncryptPartV3 encrypts a single part of a multipart upload using Version3 semantics.
+//
+// Each part is encrypted as an independent stream starting from block 0 within its
+// part namespace, using the v3 counter construction: IV[0:8] || uint16(part) || uint32(block) || uint16(aesBlock).
+//
+// This allows parts to be uploaded in any order with no size or alignment constraints.
+//
+// Parameters:
+//   - dek: 32-byte data encryption key
+//   - iv: 16-byte initialization vector
+//   - partNumber: Part number (1..10000)
+//   - blockSize: ARMOR block size (must be <= V3MaxBlockSize)
+//   - plaintext: Part plaintext data
+//
+// Returns:
+//   - encrypted: Concatenated encrypted blocks
+//   - hmacs: Concatenated HMACs for each block (32 bytes per block)
+//   - err: Error if encryption fails
+func EncryptPartV3(dek, iv []byte, partNumber uint16, blockSize int, plaintext []byte) (encrypted []byte, hmacs []byte, err error) {
+	if len(dek) != 32 {
+		return nil, nil, fmt.Errorf("DEK must be 32 bytes")
+	}
+	if len(iv) != 16 {
+		return nil, nil, fmt.Errorf("IV must be 16 bytes")
+	}
+	if blockSize > V3MaxBlockSize {
+		return nil, nil, fmt.Errorf("block size %d exceeds Version3 maximum %d", blockSize, V3MaxBlockSize)
+	}
+
+	blockCount := ComputeBlockCount(int64(len(plaintext)), blockSize)
+
+	// Pre-allocate encrypted buffer with exact size (same as plaintext for AES-CTR)
+	encrypted = make([]byte, 0, len(plaintext))
+
+	// Pre-allocate HMAC buffer (32 bytes per block)
+	hmacs = make([]byte, 0, blockCount*HMACSize)
+
+	// Encrypt each block independently
+	for blockIndex := uint32(0); blockIndex < blockCount; blockIndex++ {
+		start := int(blockIndex) * blockSize
+		end := start + blockSize
+		if end > len(plaintext) {
+			end = len(plaintext)
+		}
+
+		plaintextBlock := plaintext[start:end]
+
+		// Encrypt the block using v3 counter construction
+		encryptedBlock, blockHMAC, err := EncryptBlockV3(dek, iv, partNumber, blockIndex, plaintextBlock, blockSize)
+		if err != nil {
+			return nil, nil, fmt.Errorf("block %d encryption failed: %w", blockIndex, err)
+		}
+
+		// Append encrypted block and HMAC
+		encrypted = append(encrypted, encryptedBlock...)
+		hmacs = append(hmacs, blockHMAC...)
+	}
+
+	return encrypted, hmacs, nil
+}
