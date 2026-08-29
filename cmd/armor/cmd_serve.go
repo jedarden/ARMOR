@@ -156,6 +156,7 @@ func serve() {
 	srv.StopReplicationQueue()
 	srv.StopManifestCompactor()
 	srv.StopManifestWriter()
+	srv.StopAuthFileWatcher()
 
 	logger.Info("ARMOR shutdown complete")
 }

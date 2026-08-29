@@ -81,6 +81,9 @@ type Server struct {
 	// canaryDisabled skips the canary check in /readyz when true
 	canaryDisabled bool
 
+	// authFileWatcher provides hot-reload of ARMOR_AUTH_FILE credentials
+	authFileWatcher *config.AuthFileWatcher
+
 	// Metrics and request tracking
 	metrics        *metrics.Metrics
 	requestTracker *metrics.RequestTracker
@@ -367,6 +370,23 @@ func New(cfg *config.Config) (*Server, error) {
 		SecondaryInterval: 5 * time.Minute,
 	})
 
+	// Create and start auth file watcher for hot-reload
+	var watcher *config.AuthFileWatcher
+	if cfg.AuthFilePath != "" {
+		// Extract env credentials (those with Source = CredentialSourceEnv)
+		envCreds := make(map[string]*config.Credential)
+		for ak, cred := range cfg.Credentials {
+			if cred.Source == config.CredentialSourceEnv {
+				envCreds[ak] = cred
+			}
+		}
+		watcher = config.NewAuthFileWatcher(cfg.AuthFilePath, cfg.Credentials, envCreds)
+		if watcher != nil {
+			watcher.Start()
+			logger.Info("ARMOR auth file watcher started", "path", cfg.AuthFilePath)
+		}
+	}
+
 	return &Server{
 		config:            cfg,
 		backend:           primaryBackend,
@@ -385,6 +405,7 @@ func New(cfg *config.Config) (*Server, error) {
 		manifestWriter:    manifestWriter,
 		manifestCompactor: manifestCompactor,
 		replicationQueue:  replicationQueue,
+		authFileWatcher:   watcher,
 		metrics:           metrics.DefaultMetrics,
 		requestTracker:    metrics.DefaultRequestTracker,
 		logger:            logger,
@@ -493,6 +514,14 @@ func (s *Server) StopReplicationQueue() {
 	if s.replicationQueue != nil {
 		s.replicationQueue.Stop()
 		s.logger.Info("Replication queue stopped")
+	}
+}
+
+// StopAuthFileWatcher stops the hot-reload watcher for ARMOR_AUTH_FILE.
+func (s *Server) StopAuthFileWatcher() {
+	if s.authFileWatcher != nil {
+		s.authFileWatcher.Stop()
+		s.logger.Info("Auth file watcher stopped")
 	}
 }
 
@@ -1151,8 +1180,16 @@ func (s *Server) isPublicPath(path string) bool {
 
 // verifyAuthAndGetCredential validates AWS SigV4 authentication and returns the credential.
 func (s *Server) verifyAuthAndGetCredential(r *http.Request) (*config.Credential, error) {
+	// Get credentials from watcher (or config if watcher not enabled)
+	var creds map[string]*config.Credential
+	if s.authFileWatcher != nil {
+		creds = s.authFileWatcher.GetCredentials()
+	} else {
+		creds = s.config.Credentials
+	}
+
 	// Create auth with all credentials
-	auth := NewSigV4AuthWithCredentials(s.config.Credentials, s.config.B2Region)
+	auth := NewSigV4AuthWithCredentials(creds, s.config.B2Region)
 
 	// Check for query-based auth (presigned URLs)
 	if r.URL.Query().Get("X-Amz-Credential") != "" {
