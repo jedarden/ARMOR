@@ -248,7 +248,7 @@ func (s *Server) writeError(w http.ResponseWriter, code, message string, statusC
 
 **Status:** ❌ **NOT APPLICABLE** (admin endpoints are not S3 API)
 
-**Note:** Admin endpoint inconsistencies are documented separately in [Admin Endpoint Error Response Headers](./admin-endpoint-error-response-headers.md).
+**Note:** Admin endpoint inconsistencies are documented in [ARMOR Error Responses](./error-responses.md#admin-endpoints).
 
 **Relevant Deviations for S3-Facing Endpoints:**
 
@@ -518,10 +518,7 @@ x-amz-id-2: abcdefghijk...
 - [X-Amz-Id-2 Header](https://http.dev/x-amz-id-2)
 
 ### Internal Documentation
-- [ARMOR Error Responses](./error-responses.md)
-- [ARMOR Error Header Specification](./error-header-spec.md)
-- [S3 Endpoint Response Headers](./s3-endpoint-response-headers.md)
-- [Admin Endpoint Error Response Headers](./admin-endpoint-error-response-headers.md)
+- [ARMOR Error Responses](./error-responses.md) - Consolidated error response documentation
 
 ### Beads Referenced
 - bf-2n6273: Comprehensive header specification

@@ -712,5 +712,5 @@ The replication metrics use `expvar.Map.Add()` which is thread-safe. If you see 
 
 - [Internal Metrics Implementation](../internal/metrics/metrics.go)
 - [Replication Metric Tests](../internal/metrics/replication_metric_test.go)
-- [Admin Endpoints Documentation](admin-endpoint-error-response-headers.md)
+- [ARMOR Error Responses](error-responses.md) - Admin endpoint error responses
 - [Dashboard Documentation](dashboard.md)
