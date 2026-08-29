@@ -1087,7 +1087,6 @@ func TestKeyRingParsing(t *testing.T) {
 }
 
 func TestLoadWithKeyRing(t *testing.T) {
-	activeMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 	retired1 := "1111111111111111111111111111111111111111111111111111111111111111"
 	retired2 := "2222222222222222222222222222222222222222222222222222222222222222"
 
@@ -1118,7 +1117,6 @@ func TestLoadWithKeyRing(t *testing.T) {
 }
 
 func TestLoadWithNamedKeyRing(t *testing.T) {
-	activeMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 	namedMEK := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	retired1 := "1111111111111111111111111111111111111111111111111111111111111111"
 	retired2 := "2222222222222222222222222222222222222222222222222222222222222222"
@@ -1156,8 +1154,6 @@ func TestLoadWithNamedKeyRing(t *testing.T) {
 }
 
 func TestLoadWithRingValidationErrors(t *testing.T) {
-	activeMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-
 	tests := []struct {
 		name        string
 		envVars     []string
@@ -1215,7 +1211,6 @@ func TestLoadWithRingValidationErrors(t *testing.T) {
 }
 
 func TestRedactedWithKeyRings(t *testing.T) {
-	activeMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 	retired1 := "1111111111111111111111111111111111111111111111111111111111111111"
 	retired2 := "2222222222222222222222222222222222222222222222222222222222222222"
 
@@ -1400,12 +1395,12 @@ func TestFormatWriteVersionInRedacted(t *testing.T) {
 
 func TestPresignDisabledByDefault(t *testing.T) {
 	// Set minimal required environment variables
-	setenv(t, "ARMOR_BACKEND", "filesystem")
-	setenv(t, "ARMOR_FS_PATH", t.TempDir())
-	setenv(t, "ARMOR_BUCKET", "test-bucket")
-	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
-	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+	setEnv(t, "ARMOR_BACKEND", "filesystem")
+	setEnv(t, "ARMOR_FS_PATH", t.TempDir())
+	setEnv(t, "ARMOR_BUCKET", "test-bucket")
+	setEnv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setEnv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setEnv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
 
 	cfg, err := Load()
 	if err != nil {
@@ -1425,18 +1420,18 @@ func TestPresignDisabledByDefault(t *testing.T) {
 
 func TestPresignEnabledWithValidConfig(t *testing.T) {
 	// Set minimal required environment variables
-	setenv(t, "ARMOR_BACKEND", "filesystem")
-	setenv(t, "ARMOR_FS_PATH", t.TempDir())
-	setenv(t, "ARMOR_BUCKET", "test-bucket")
-	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
-	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+	setEnv(t, "ARMOR_BACKEND", "filesystem")
+	setEnv(t, "ARMOR_FS_PATH", t.TempDir())
+	setEnv(t, "ARMOR_BUCKET", "test-bucket")
+	setEnv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setEnv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setEnv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
 
 	// Enable presign with valid configuration
 	secretHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")) // 32 bytes
-	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
-	setenv(t, "ARMOR_PRESIGN_SECRET", secretHex)
-	setenv(t, "ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share")
+	setEnv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setEnv(t, "ARMOR_PRESIGN_SECRET", secretHex)
+	setEnv(t, "ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share")
 
 	cfg, err := Load()
 	if err != nil {
@@ -1456,16 +1451,16 @@ func TestPresignEnabledWithValidConfig(t *testing.T) {
 
 func TestPresignEnabledWithoutSecret(t *testing.T) {
 	// Set minimal required environment variables
-	setenv(t, "ARMOR_BACKEND", "filesystem")
-	setenv(t, "ARMOR_FS_PATH", t.TempDir())
-	setenv(t, "ARMOR_BUCKET", "test-bucket")
-	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
-	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+	setEnv(t, "ARMOR_BACKEND", "filesystem")
+	setEnv(t, "ARMOR_FS_PATH", t.TempDir())
+	setEnv(t, "ARMOR_BUCKET", "test-bucket")
+	setEnv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setEnv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setEnv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
 
 	// Enable presign without secret
-	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
-	setenv(t, "ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share")
+	setEnv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setEnv(t, "ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share")
 
 	_, err := Load()
 	if err == nil {
@@ -1478,17 +1473,17 @@ func TestPresignEnabledWithoutSecret(t *testing.T) {
 
 func TestPresignEnabledWithoutBaseURL(t *testing.T) {
 	// Set minimal required environment variables
-	setenv(t, "ARMOR_BACKEND", "filesystem")
-	setenv(t, "ARMOR_FS_PATH", t.TempDir())
-	setenv(t, "ARMOR_BUCKET", "test-bucket")
-	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
-	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+	setEnv(t, "ARMOR_BACKEND", "filesystem")
+	setEnv(t, "ARMOR_FS_PATH", t.TempDir())
+	setEnv(t, "ARMOR_BUCKET", "test-bucket")
+	setEnv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setEnv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setEnv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
 
 	// Enable presign without base URL
 	secretHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")) // 32 bytes
-	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
-	setenv(t, "ARMOR_PRESIGN_SECRET", secretHex)
+	setEnv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setEnv(t, "ARMOR_PRESIGN_SECRET", secretHex)
 
 	_, err := Load()
 	if err == nil {
@@ -1501,18 +1496,18 @@ func TestPresignEnabledWithoutBaseURL(t *testing.T) {
 
 func TestPresignEnabledWithRelativeBaseURL(t *testing.T) {
 	// Set minimal required environment variables
-	setenv(t, "ARMOR_BACKEND", "filesystem")
-	setenv(t, "ARMOR_FS_PATH", t.TempDir())
-	setenv(t, "ARMOR_BUCKET", "test-bucket")
-	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
-	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+	setEnv(t, "ARMOR_BACKEND", "filesystem")
+	setEnv(t, "ARMOR_FS_PATH", t.TempDir())
+	setEnv(t, "ARMOR_BUCKET", "test-bucket")
+	setEnv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setEnv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setEnv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
 
 	// Enable presign with relative base URL
 	secretHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")) // 32 bytes
-	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
-	setenv(t, "ARMOR_PRESIGN_SECRET", secretHex)
-	setenv(t, "ARMOR_PRESIGN_BASE_URL", "/share")
+	setEnv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setEnv(t, "ARMOR_PRESIGN_SECRET", secretHex)
+	setEnv(t, "ARMOR_PRESIGN_BASE_URL", "/share")
 
 	_, err := Load()
 	if err == nil {
@@ -1525,15 +1520,15 @@ func TestPresignEnabledWithRelativeBaseURL(t *testing.T) {
 
 func TestPresignDisabledFieldsAreEmpty(t *testing.T) {
 	// Set minimal required environment variables
-	setenv(t, "ARMOR_BACKEND", "filesystem")
-	setenv(t, "ARMOR_FS_PATH", t.TempDir())
-	setenv(t, "ARMOR_BUCKET", "test-bucket")
-	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
-	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+	setEnv(t, "ARMOR_BACKEND", "filesystem")
+	setEnv(t, "ARMOR_FS_PATH", t.TempDir())
+	setEnv(t, "ARMOR_BUCKET", "test-bucket")
+	setEnv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setEnv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setEnv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
 
 	// Explicitly disable presign
-	setenv(t, "ARMOR_PRESIGN_ENABLED", "false")
+	setEnv(t, "ARMOR_PRESIGN_ENABLED", "false")
 
 	cfg, err := Load()
 	if err != nil {
@@ -1553,15 +1548,15 @@ func TestPresignDisabledFieldsAreEmpty(t *testing.T) {
 
 func TestPresignRedactedConfig(t *testing.T) {
 	// Set minimal required environment variables
-	setenv(t, "ARMOR_BACKEND", "filesystem")
-	setenv(t, "ARMOR_FS_PATH", t.TempDir())
-	setenv(t, "ARMOR_BUCKET", "test-bucket")
-	setenv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	setenv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
-	setenv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
+	setEnv(t, "ARMOR_BACKEND", "filesystem")
+	setEnv(t, "ARMOR_FS_PATH", t.TempDir())
+	setEnv(t, "ARMOR_BUCKET", "test-bucket")
+	setEnv(t, "ARMOR_MEK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	setEnv(t, "ARMOR_AUTH_ACCESS_KEY", "test-key")
+	setEnv(t, "ARMOR_AUTH_SECRET_KEY", "test-secret")
 
 	// Test disabled state
-	setenv(t, "ARMOR_PRESIGN_ENABLED", "false")
+	setEnv(t, "ARMOR_PRESIGN_ENABLED", "false")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() unexpected error: %v", err)
@@ -1573,9 +1568,9 @@ func TestPresignRedactedConfig(t *testing.T) {
 
 	// Test enabled state
 	secretHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
-	setenv(t, "ARMOR_PRESIGN_ENABLED", "true")
-	setenv(t, "ARMOR_PRESIGN_SECRET", secretHex)
-	setenv(t, "ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share")
+	setEnv(t, "ARMOR_PRESIGN_ENABLED", "true")
+	setEnv(t, "ARMOR_PRESIGN_SECRET", secretHex)
+	setEnv(t, "ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share")
 
 	cfg, err = Load()
 	if err != nil {

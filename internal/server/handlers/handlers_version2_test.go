@@ -6,14 +6,11 @@ import (
 	"crypto/rand"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/jedarden/armor/internal/config"
-	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/server/handlers"
 )
 
@@ -224,8 +221,8 @@ func TestNoVersion1ProductionPaths(t *testing.T) {
 	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
 
 	testCases := []struct {
-		name      string
-		setupReq  func() *http.Request
+		name     string
+		setupReq func() *http.Request
 	}{
 		{
 			name: "PutObject",

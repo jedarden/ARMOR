@@ -1,9 +1,8 @@
-// Package server provides compress rules parsing and matching for ARMOR.
-package server
+// Package config provides compression-rule parsing and matching for ARMOR.
+package config
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 )
 
@@ -127,11 +126,17 @@ func (r *CompressRules) ShouldCompress(key, contentType string) (bool, bool) {
 
 // HasRules returns true if any rules are configured.
 func (r *CompressRules) HasRules() bool {
+	if r == nil {
+		return false
+	}
 	return len(r.Rules) > 0
 }
 
 // String returns a string representation of the rules (for debugging).
 func (r *CompressRules) String() string {
+	if r == nil {
+		return "<no rules>"
+	}
 	if len(r.Rules) == 0 {
 		return "<no rules>"
 	}
@@ -223,7 +228,7 @@ func ExtractContentType(contentTypeStr string) string {
 	}
 
 	// Split on semicolon and take the first part (mime type)
- parts := strings.SplitN(contentTypeStr, ";", 2)
+	parts := strings.SplitN(contentTypeStr, ";", 2)
 	return strings.TrimSpace(parts[0])
 }
 

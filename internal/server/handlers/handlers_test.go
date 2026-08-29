@@ -19,6 +19,7 @@ import (
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
 	"github.com/jedarden/armor/internal/keymanager"
+	"github.com/jedarden/armor/internal/manifest"
 	"github.com/jedarden/armor/internal/replication"
 	"github.com/jedarden/armor/internal/server/handlers"
 	"github.com/jedarden/armor/internal/server/middleware"

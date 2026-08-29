@@ -42,7 +42,11 @@ type KeyManager struct {
 
 // New creates a new KeyManager with the given keys, routes, and retired key rings.
 // ringKeys is a map from key name to concatenated ring MEKs (each 32 bytes).
-func New(defaultMEK []byte, namedKeys map[string][]byte, routes []Route, ringKeys map[string][]byte) (*KeyManager, error) {
+func New(defaultMEK []byte, namedKeys map[string][]byte, routes []Route, ringKeySets ...map[string][]byte) (*KeyManager, error) {
+	ringKeys := map[string][]byte(nil)
+	if len(ringKeySets) > 0 {
+		ringKeys = ringKeySets[0]
+	}
 	km := &KeyManager{
 		keys:           make(map[string]*Key),
 		rings:          make(map[string][]RingKeyEntry),

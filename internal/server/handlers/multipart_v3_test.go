@@ -14,9 +14,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jedarden/armor/internal/config"
-	"github.com/jedarden/armor/internal/crypto"
-	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/server/handlers"
 )
 
@@ -39,7 +36,7 @@ func TestMultipartV3ConcurrentOutOfOrder(t *testing.T) {
 	createReq := createUploadRequest(ctx, bucket, key, contentType)
 	createResp := httptest.NewRecorder()
 
-	h.CreateMultipartUpload(createResp, createReq)
+	h.CreateMultipartUpload(createResp, createReq, bucket, key)
 
 	if createResp.Code != 200 {
 		t.Fatalf("CreateMultipartUpload failed: %d %s", createResp.Code, createResp.Body.String())
@@ -60,9 +57,9 @@ func TestMultipartV3ConcurrentOutOfOrder(t *testing.T) {
 
 	// Create three parts with different unaligned sizes
 	partSizes := map[int]int{
-		1: 5*1024*1024,           // 5 MiB (minimum part size)
-		2: 7*1024*1024 + 100,    // 7 MiB + 100 bytes (unaligned)
-		3: 6*1024*1024 - 50,     // 6 MiB - 50 bytes (unaligned)
+		1: 5 * 1024 * 1024,   // 5 MiB (minimum part size)
+		2: 7*1024*1024 + 100, // 7 MiB + 100 bytes (unaligned)
+		3: 6*1024*1024 - 50,  // 6 MiB - 50 bytes (unaligned)
 	}
 
 	// Track results from concurrent uploads
@@ -93,7 +90,7 @@ func TestMultipartV3ConcurrentOutOfOrder(t *testing.T) {
 			uploadReq := createUploadPartRequest(ctx, bucket, key, uploadID, pn, contentType, plaintext)
 			uploadResp := httptest.NewRecorder()
 
-			h.UploadPart(uploadResp, uploadReq)
+			h.UploadPart(uploadResp, uploadReq, bucket, key, uploadID)
 
 			if uploadResp.Code != 200 {
 				results <- partResult{partNumber: pn, err: fmt.Errorf("UploadPart failed: %d %s", uploadResp.Code, uploadResp.Body.String())}
@@ -151,7 +148,7 @@ func TestMultipartV3Determinism(t *testing.T) {
 	// Create multipart upload
 	createReq := createUploadRequest(ctx, bucket, key, contentType)
 	createResp := httptest.NewRecorder()
-	h.CreateMultipartUpload(createResp, createReq)
+	h.CreateMultipartUpload(createResp, createReq, bucket, key)
 
 	if createResp.Code != 200 {
 		t.Fatalf("CreateMultipartUpload failed: %d %s", createResp.Code, createResp.Body.String())
@@ -177,7 +174,7 @@ func TestMultipartV3Determinism(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		uploadReq := createUploadPartRequest(ctx, bucket, key, uploadID, partNumber, contentType, plaintext)
 		uploadResp := httptest.NewRecorder()
-		h.UploadPart(uploadResp, uploadReq)
+		h.UploadPart(uploadResp, uploadReq, bucket, key, uploadID)
 
 		if uploadResp.Code != 200 {
 			t.Fatalf("UploadPart attempt %d failed: %d %s", i+1, uploadResp.Code, uploadResp.Body.String())
@@ -185,12 +182,13 @@ func TestMultipartV3Determinism(t *testing.T) {
 
 		// Get the encrypted data from the backend
 		partKey := fmt.Sprintf(".armor/multipart/%s/part-%d.json", uploadID, partNumber)
-		obj, err := mb.Get(ctx, bucket, partKey)
+		obj, _, err := mb.Get(ctx, bucket, partKey)
 		if err != nil {
 			t.Fatalf("Failed to get part data from backend (attempt %d): %v", i+1, err)
 		}
 
-		data, err := io.ReadAll(obj.Data)
+		data, err := io.ReadAll(obj)
+		obj.Close()
 		if err != nil {
 			t.Fatalf("Failed to read part data (attempt %d): %v", i+1, err)
 		}
@@ -222,7 +220,7 @@ func TestMultipartV3NoSlowDown(t *testing.T) {
 	// Create multipart upload
 	createReq := createUploadRequest(ctx, bucket, key, contentType)
 	createResp := httptest.NewRecorder()
-	h.CreateMultipartUpload(createResp, createReq)
+	h.CreateMultipartUpload(createResp, createReq, bucket, key)
 
 	if createResp.Code != 200 {
 		t.Fatalf("CreateMultipartUpload failed: %d %s", createResp.Code, createResp.Body.String())
@@ -245,7 +243,7 @@ func TestMultipartV3NoSlowDown(t *testing.T) {
 
 	uploadReq := createUploadPartRequest(ctx, bucket, key, uploadID, partNumber, contentType, plaintext)
 	uploadResp := httptest.NewRecorder()
-	h.UploadPart(uploadResp, uploadReq)
+	h.UploadPart(uploadResp, uploadReq, bucket, key, uploadID)
 
 	// Should succeed, not return SlowDown (503)
 	if uploadResp.Code == 503 {
@@ -278,7 +276,7 @@ func TestMultipartV3IndependentPartCounter(t *testing.T) {
 	// Create multipart upload
 	createReq := createUploadRequest(ctx, bucket, key, contentType)
 	createResp := httptest.NewRecorder()
-	h.CreateMultipartUpload(createResp, createReq)
+	h.CreateMultipartUpload(createResp, createReq, bucket, key)
 
 	if createResp.Code != 200 {
 		t.Fatalf("CreateMultipartUpload failed: %d %s", createResp.Code, createResp.Body.String())
@@ -302,7 +300,7 @@ func TestMultipartV3IndependentPartCounter(t *testing.T) {
 	for _, partNum := range []int{1, 2} {
 		uploadReq := createUploadPartRequest(ctx, bucket, key, uploadID, partNum, contentType, identicalContent)
 		uploadResp := httptest.NewRecorder()
-		h.UploadPart(uploadResp, uploadReq)
+		h.UploadPart(uploadResp, uploadReq, bucket, key, uploadID)
 
 		if uploadResp.Code != 200 {
 			t.Fatalf("UploadPart for part %d failed: %d %s", partNum, uploadResp.Code, uploadResp.Body.String())
@@ -310,12 +308,13 @@ func TestMultipartV3IndependentPartCounter(t *testing.T) {
 
 		// Get the part data
 		partKey := fmt.Sprintf(".armor/multipart/%s/part-%d.json", uploadID, partNum)
-		obj, err := mb.Get(ctx, bucket, partKey)
+		obj, _, err := mb.Get(ctx, bucket, partKey)
 		if err != nil {
 			t.Fatalf("Failed to get part %d data: %v", partNum, err)
 		}
 
-		data, err := io.ReadAll(obj.Data)
+		data, err := io.ReadAll(obj)
+		obj.Close()
 		if err != nil {
 			t.Fatalf("Failed to read part %d data: %v", partNum, err)
 		}

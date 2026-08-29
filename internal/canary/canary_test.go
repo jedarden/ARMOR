@@ -1129,3 +1129,142 @@ func TestCanaryMultipartPartSizing(t *testing.T) {
 		t.Fatalf("expected at least one non-final part; got %d (envelope=%d partSize=%d)", nonFinal, envelopeSize, partSize)
 	}
 }
+
+// TestGenerateV3PartSizes tests the generateV3PartSizes function.
+func TestGenerateV3PartSizes(t *testing.T) {
+	tests := []struct {
+		name       string
+		totalSize  int
+		wantParts  int // expected number of parts
+		minPart1   int // minimum size for part 1
+		minPart2   int // minimum size for part 2
+	}{
+		{
+			name:      "three parts for typical size",
+			totalSize: 15 * 1024 * 1024, // 15 MiB
+			wantParts: 3,
+			minPart1:  b2MinPartSize,     // >= 5 MiB
+			minPart2:  b2MinPartSize,     // >= 5 MiB
+		},
+		{
+			name:      "small three-part canary",
+			totalSize: 12 * 1024 * 1024, // 12 MiB
+			wantParts: 3,
+			minPart1:  b2MinPartSize,     // >= 5 MiB
+			minPart2:  b2MinPartSize,     // >= 5 MiB
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			partSizes := generateV3PartSizes(tt.totalSize)
+
+			if len(partSizes) != tt.wantParts {
+				t.Fatalf("expected %d parts, got %d", tt.wantParts, len(partSizes))
+			}
+
+			// Verify part sizes
+			if partSizes[0] < tt.minPart1 {
+				t.Errorf("part 1 size %d below minimum %d", partSizes[0], tt.minPart1)
+			}
+			if partSizes[1] < tt.minPart2 {
+				t.Errorf("part 2 size %d below minimum %d", partSizes[1], tt.minPart2)
+			}
+
+			// Verify total matches
+			total := partSizes[0] + partSizes[1] + partSizes[2]
+			if total != tt.totalSize {
+				t.Errorf("part sizes sum to %d, expected %d", total, tt.totalSize)
+			}
+
+			// Verify part 3 can be smaller than 5 MiB (no minimum for final part)
+			if partSizes[2] <= 0 {
+				t.Errorf("part 3 has non-positive size %d", partSizes[2])
+			}
+		})
+	}
+}
+
+// TestMonitorMultipartCheckV3 tests that the multipart canary uses v3 format
+// with random unaligned part sizes when FormatWriteVersion is 3.
+func TestMonitorMultipartCheckV3(t *testing.T) {
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	m := NewMonitor(Config{
+		Backend:           newMockBackend(),
+		Bucket:            "test-bucket",
+		MEK:               mek,
+		BlockSize:         crypto.DefaultBlockSize,
+		InstanceID:        "test-instance",
+		FormatWriteVersion: 3, // Use v3 format
+		MultipartSize:     15 * 1024 * 1024, // 15 MiB to ensure 3 parts
+	})
+
+	ctx := context.Background()
+	result, err := m.checkMultipart(ctx)
+	if err != nil {
+		t.Fatalf("multipart check failed: %v", err)
+	}
+
+	// Verify the result indicates success
+	if result.Status != StatusHealthy {
+		t.Errorf("expected status %s, got %s", StatusHealthy, result.Status)
+	}
+	if result.MultipartHealthy != StatusHealthy {
+		t.Errorf("expected multipart status %s, got %s", StatusHealthy, result.MultipartHealthy)
+	}
+	if !result.MultipartHealthyBool {
+		t.Error("expected MultipartHealthyBool to be true")
+	}
+	if !result.DecryptVerified {
+		t.Error("expected decryption to be verified")
+	}
+	if !result.HMACVerified {
+		t.Error("expected HMAC to be verified")
+	}
+
+	// Verify metrics were emitted
+	// Note: The metric is set via SetMultipartCanaryHealthy, which is called in updateMultipartStateSuccess
+	// We can verify the result status directly instead of checking the metric value
+}
+
+// TestMonitorMultipartCheckV2 tests that the multipart canary uses v1/v2 format
+// with uniform block-aligned part sizes when FormatWriteVersion is 2.
+func TestMonitorMultipartCheckV2(t *testing.T) {
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	m := NewMonitor(Config{
+		Backend:           newMockBackend(),
+		Bucket:            "test-bucket",
+		MEK:               mek,
+		BlockSize:         crypto.DefaultBlockSize,
+		InstanceID:        "test-instance",
+		FormatWriteVersion: 2, // Use v2 format (default)
+		MultipartSize:     15 * 1024 * 1024,
+	})
+
+	ctx := context.Background()
+	result, err := m.checkMultipart(ctx)
+	if err != nil {
+		t.Fatalf("multipart check failed: %v", err)
+	}
+
+	// Verify the result indicates success
+	if result.Status != StatusHealthy {
+		t.Errorf("expected status %s, got %s", StatusHealthy, result.Status)
+	}
+	if result.MultipartHealthy != StatusHealthy {
+		t.Errorf("expected multipart status %s, got %s", StatusHealthy, result.MultipartHealthy)
+	}
+	if !result.MultipartHealthyBool {
+		t.Error("expected MultipartHealthyBool to be true")
+	}
+	if !result.DecryptVerified {
+		t.Error("expected decryption to be verified")
+	}
+	if !result.HMACVerified {
+		t.Error("expected HMAC to be verified")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -36,7 +37,9 @@ import (
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/logging"
+	"github.com/jedarden/armor/internal/manifest"
 	"github.com/jedarden/armor/internal/metrics"
+	"github.com/jedarden/armor/internal/provenance"
 	"github.com/jedarden/armor/internal/replication"
 	"github.com/jedarden/armor/internal/server/middleware"
 )
@@ -122,24 +125,21 @@ func (h *Handlers) multipartLock(uploadID string) *sync.Mutex {
 // getMultipartManager returns the multipart state manager for a given bucket.
 // The manager is created on first use per bucket.
 func (h *Handlers) getMultipartManager(bucket string) *backend.MultipartStateManager {
-	if h.multipartManager == nil || h.multipartManager.Bucket() != bucket {
-		h.multipartManager = backend.NewMultipartStateManager(h.backend, bucket)
-	}
-	return h.multipartManager
+	return backend.NewMultipartStateManager(h.backend, bucket)
 }
 
 // New creates a new Handlers instance.
 func New(cfg *config.Config, be backend.Backend, cache *backend.MetadataCache, footerCache *backend.FooterCache, km *keymanager.KeyManager, listCache *backend.ListCache) *Handlers {
 	return &Handlers{
-		config:                 cfg,
-		backend:                be,
-		cache:                  cache,
-		footerCache:            footerCache,
-		listCache:              listCache,
-		keyManager:             km,
-		provenance:             nil,
-		manifest:               nil,
-		multipartSidecarCache:   backend.NewMultipartSidecarCache(cfg.CacheMaxEntries, cfg.CacheTTL),
+		config:                cfg,
+		backend:               be,
+		cache:                 cache,
+		footerCache:           footerCache,
+		listCache:             listCache,
+		keyManager:            km,
+		provenance:            nil,
+		manifest:              nil,
+		multipartSidecarCache: backend.NewMultipartSidecarCache(cfg.CacheMaxEntries, cfg.CacheTTL),
 	}
 }
 
@@ -433,7 +433,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	contentType = server.ExtractContentType(contentType)
+	contentType = config.ExtractContentType(contentType)
 
 	// Get compression override header (highest priority)
 	compressOverride := r.Header.Get("x-amz-meta-armor-compress")
@@ -447,7 +447,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	var dataToEncrypt []byte = plaintext
 
 	// Evaluate compression decision (rules + override)
-	shouldCompress, err := server.EvaluateCompression(key, contentType, h.config.CompressRules, compressOverride)
+	shouldCompress, err := config.EvaluateCompression(key, contentType, h.config.CompressRules, compressOverride)
 	if err != nil {
 		h.writeError(w, r, "InvalidArgument", fmt.Sprintf("Invalid compression override: %v", err), 400)
 		return
@@ -473,7 +473,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		envelopeVersion = crypto.Version3
 	}
 
-	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, plaintextSize, h.config.BlockSize, plaintextSHA, envelopeVersion)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, plaintextSize, h.config.BlockSize, plaintextSHA, uint8(envelopeVersion))
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
 		return
@@ -739,7 +739,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		envelopeVersion = crypto.Version3
 	}
 
-	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, plaintextSize, h.config.BlockSize, plaintextSHA, envelopeVersion)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, plaintextSize, h.config.BlockSize, plaintextSHA, uint8(envelopeVersion))
 	if err != nil {
 		tmpFile.Close()
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
@@ -1221,105 +1221,105 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 			return
 		}
 		defer dataBody.Close()
-		} else {
-			// Single-PUT object: dispatch on version for HMAC/block table format
-			// v1/v2: inline HMAC table at HeaderSize + plaintextSize
-			// v3: trailer block table at ciphertext_length - 36*blockCount
+	} else {
+		// Single-PUT object: dispatch on version for HMAC/block table format
+		// v1/v2: inline HMAC table at HeaderSize + plaintextSize
+		// v3: trailer block table at ciphertext_length - 36*blockCount
 
-			// Read header to determine version
-			headerBuf := make([]byte, crypto.HeaderSize)
-			headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
+		// Read header to determine version
+		headerBuf := make([]byte, crypto.HeaderSize)
+		headerReader, err := h.backend.GetRange(ctx, bucket, prefixedKey, 0, crypto.HeaderSize)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
+			return
+		}
+		if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+			headerReader.Close()
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header bytes: %v", err), 500)
+			return
+		}
+		headerReader.Close()
+
+		header, err = crypto.DecodeHeader(headerBuf)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
+			return
+		}
+
+		if header.Version == crypto.Version3 {
+			// v3: fetch trailer block table and use prefix sums for block offsets
+			if armorMeta.CiphertextSize == 0 {
+				h.writeError(w, r, "InternalError", "v3 object missing ciphertext size", 500)
+				return
+			}
+
+			blockTable, err := h.readV3BlockTable(ctx, bucket, prefixedKey, armorMeta.CiphertextSize, blockCount)
 			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block table: %v", err), 500)
+				return
+			}
+
+			// Stream data from the start (header + blocks)
+			streamSize = int64(crypto.HeaderSize) + int64(blockTable.TotalCiphertextLength())
+			dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+				return
+			}
+			defer dataBody.Close()
+
+			// Read and discard the 64-byte header
+			discardBuf := make([]byte, crypto.HeaderSize)
+			if _, err := io.ReadFull(dataBody, discardBuf); err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to discard header: %v", err), 500)
+				return
+			}
+
+			// Encode block table for transport to decryption goroutine
+			hmacTable = encodeV3BlockTableForTransport(blockTable)
+		} else {
+			// v1/v2: inline HMAC table at end of file
+			hmacTableOffset := crypto.HeaderSize + plaintextSize
+			hmacTableSize := int64(blockCount) * crypto.HMACSize
+			dataSize := plaintextSize
+
+			// 1. Prefetch HMAC table (small range read)
+			hmacBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, hmacTableOffset, hmacTableSize)
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
+				return
+			}
+			hmacTable, err = io.ReadAll(hmacBody)
+			hmacBody.Close()
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
+				return
+			}
+
+			// 2. Start streaming data from Cloudflare (header + encrypted blocks, stop before HMAC)
+			streamSize = crypto.HeaderSize + dataSize
+			dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
+				return
+			}
+			defer dataBody.Close()
+
+			// 3. Read and discard the 64-byte header (single-PUT only)
+			headerBuf := make([]byte, crypto.HeaderSize)
+			if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
 				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
 				return
 			}
-			if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
-				headerReader.Close()
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header bytes: %v", err), 500)
-				return
-			}
-			headerReader.Close()
 
+			// Parse header to get plaintext SHA for verification
 			header, err = crypto.DecodeHeader(headerBuf)
 			if err != nil {
 				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
 				return
 			}
-
-			if header.Version == crypto.Version3 {
-				// v3: fetch trailer block table and use prefix sums for block offsets
-				if armorMeta.CiphertextSize == 0 {
-					h.writeError(w, r, "InternalError", "v3 object missing ciphertext size", 500)
-					return
-				}
-
-				blockTable, err := h.readV3BlockTable(ctx, bucket, prefixedKey, armorMeta.CiphertextSize, blockCount)
-				if err != nil {
-					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read v3 block table: %v", err), 500)
-					return
-				}
-
-				// Stream data from the start (header + blocks)
-				streamSize = crypto.HeaderSize + blockTable.TotalCiphertextLength()
-				dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
-				if err != nil {
-					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
-					return
-				}
-				defer dataBody.Close()
-
-				// Read and discard the 64-byte header
-				discardBuf := make([]byte, crypto.HeaderSize)
-				if _, err := io.ReadFull(dataBody, discardBuf); err != nil {
-					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to discard header: %v", err), 500)
-					return
-				}
-
-				// Encode block table for transport to decryption goroutine
-				hmacTable = encodeV3BlockTableForTransport(blockTable)
-			} else {
-				// v1/v2: inline HMAC table at end of file
-				hmacTableOffset := crypto.HeaderSize + plaintextSize
-				hmacTableSize := int64(blockCount) * crypto.HMACSize
-				dataSize := plaintextSize
-
-				// 1. Prefetch HMAC table (small range read)
-				hmacBody, err := h.backend.GetRange(ctx, bucket, prefixedKey, hmacTableOffset, hmacTableSize)
-				if err != nil {
-					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to prefetch HMAC table: %v", err), 500)
-					return
-				}
-				hmacTable, err = io.ReadAll(hmacBody)
-				hmacBody.Close()
-				if err != nil {
-					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read HMAC table: %v", err), 500)
-					return
-				}
-
-				// 2. Start streaming data from Cloudflare (header + encrypted blocks, stop before HMAC)
-				streamSize = crypto.HeaderSize + dataSize
-				dataBody, err = h.backend.GetRange(ctx, bucket, prefixedKey, 0, streamSize)
-				if err != nil {
-					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get object stream: %v", err), 500)
-					return
-				}
-				defer dataBody.Close()
-
-				// 3. Read and discard the 64-byte header (single-PUT only)
-				headerBuf := make([]byte, crypto.HeaderSize)
-				if _, err := io.ReadFull(dataBody, headerBuf); err != nil {
-					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to read header: %v", err), 500)
-					return
-				}
-
-				// Parse header to get plaintext SHA for verification
-				header, err = crypto.DecodeHeader(headerBuf)
-				if err != nil {
-					h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode header: %v", err), 500)
-					return
-				}
-			}
 		}
+	}
 
 	// 4. Set response headers before streaming
 	// Note: Content-Length is not set for compressed objects because decompression
@@ -1360,96 +1360,72 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 
 		wholeHash := sha256.New() // plain whole-object digest (single-PUT / legacy multipart)
 
-		// ADR-011: For non-uniform parts, decrypt part-by-part using offset-aware decryption
-		// For uniform parts, use the optimized block-by-block decryption
+		// ADR-011: Non-uniform multipart objects need offset-aware decryption.
+		// Other objects retain the v3 single-PUT and v1/v2 block readers.
 		if isNonUniform && len(cumulativePartSizes) > 0 {
-			// Non-uniform parts: decrypt each part separately with correct offsets
 			if err := h.decryptNonUniformParts(dataBody, pw, plaintextSize, blockSize, decryptor, armorMeta, cumulativePartSizes, hmacTable, accumulator, wholeHash); err != nil {
 				pw.CloseWithError(err)
 				return
 			}
-			// Check if this is a v3 object (block table format)
-			v3BlockTable, isV3 := decodeV3BlockTableFromTransport(hmacTable)
+		} else if v3BlockTable, isV3 := decodeV3BlockTableFromTransport(hmacTable); isV3 {
+			// v3 single-PUT: read blocks using the trailer's prefix sums.
+			for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
+				if blockIndex >= v3BlockTable.EntryCount() {
+					pw.CloseWithError(fmt.Errorf("block index %d out of range (v3 table has %d entries)", blockIndex, v3BlockTable.EntryCount()))
+					return
+				}
 
-			if isV3 {
-				// v3: read blocks by range using prefix sums from block table
-				for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
-					if blockIndex >= v3BlockTable.EntryCount() {
-						pw.CloseWithError(fmt.Errorf("block index %d out of range (v3 table has %d entries)", blockIndex, v3BlockTable.EntryCount()))
-						return
-					}
+				entry := v3BlockTable.Entries[blockIndex]
+				encryptedBuf := make([]byte, entry.RawLength())
+				n, err := io.ReadFull(dataBody, encryptedBuf)
+				if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+					pw.CloseWithError(fmt.Errorf("read error at v3 block %d: %w", blockIndex, err))
+					return
+				}
+				if n == 0 {
+					break
+				}
+				encryptedBuf = encryptedBuf[:n]
 
-					entry := v3BlockTable.Entries[blockIndex]
-					isCompressed := entry.IsCompressed()
-					ciphertextLen := entry.RawLength()
+				expectedHMAC := entry.HMAC[:]
+				mac := hmac.New(sha256.New, decryptor.HMACKey())
+				partBytes := make([]byte, 2)
+				binary.BigEndian.PutUint16(partBytes, 0) // part=0 for single-PUT
+				mac.Write(partBytes)
+				blockBytes := make([]byte, 4)
+				binary.BigEndian.PutUint32(blockBytes, uint32(blockIndex))
+				mac.Write(blockBytes)
+				mac.Write(encryptedBuf)
+				if !hmac.Equal(mac.Sum(nil), expectedHMAC) {
+					pw.CloseWithError(fmt.Errorf("v3 block %d: HMAC verification failed", blockIndex))
+					return
+				}
 
-					// Read encrypted block of exact size from block table
-					encryptedBuf := make([]byte, ciphertextLen)
-					n, err := io.ReadFull(dataBody, encryptedBuf)
-					if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-						pw.CloseWithError(fmt.Errorf("read error at v3 block %d: %w", blockIndex, err))
-						return
-					}
-					if n == 0 {
-						break
-					}
-					encryptedBuf = encryptedBuf[:n]
-
-					// Verify HMAC using v3 format: HMAC-SHA256(hmacKey, uint16(0) || uint32(block) || ciphertext)
-					// For single-PUT, part number is 0
-					hmacKey := decryptor.HMACKey()
-					expectedHMAC := entry.HMAC[:]
-
-					// Compute v3 HMAC
-					mac := hmac.New(sha256.New, hmacKey)
-					partBytes := make([]byte, 2)
-					binary.BigEndian.PutUint16(partBytes, 0) // part=0 for single-PUT
-					mac.Write(partBytes)
-					blockBytes := make([]byte, 4)
-					binary.BigEndian.PutUint32(blockBytes, uint32(blockIndex))
-					mac.Write(blockBytes)
-					mac.Write(encryptedBuf)
-					computed := mac.Sum(nil)
-
-					if !hmac.Equal(computed, expectedHMAC) {
-						pw.CloseWithError(fmt.Errorf("v3 block %d: HMAC verification failed", blockIndex))
-						return
-					}
-
-					// Decrypt block using v3 counter construction
-					decrypted, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, 0, uint32(blockIndex), encryptedBuf, expectedHMAC, blockSize)
+				decrypted, err := crypto.DecryptBlockV3(decryptor.DEK(), armorMeta.IV, 0, uint32(blockIndex), encryptedBuf, expectedHMAC, blockSize)
+				if err != nil {
+					pw.CloseWithError(fmt.Errorf("v3 block %d decryption failed: %w", blockIndex, err))
+					return
+				}
+				if entry.IsCompressed() {
+					decrypted, err = crypto.DecompressBlock(decrypted, true)
 					if err != nil {
-						pw.CloseWithError(fmt.Errorf("v3 block %d decryption failed: %w", blockIndex, err))
+						pw.CloseWithError(fmt.Errorf("v3 block %d decompression failed: %w", blockIndex, err))
 						return
-					}
-
-					// Decompress if flagged
-					if isCompressed {
-						decrypted, err = crypto.DecompressBlock(decrypted, true)
-						if err != nil {
-							pw.CloseWithError(fmt.Errorf("v3 block %d decompression failed: %w", blockIndex, err))
-							return
-						}
-					}
-
-					// Update plaintext digest
-					isLastBlock := blockIndex == blockCount-1
-					if accumulator != nil {
-						accumulator.WriteBlock(decrypted, isLastBlock)
-					} else {
-						wholeHash.Write(decrypted)
 					}
 				}
 
+				if accumulator != nil {
+					accumulator.WriteBlock(decrypted, blockIndex == blockCount-1)
+				} else {
+					wholeHash.Write(decrypted)
+				}
+				if _, err := pw.Write(decrypted); err != nil {
+					pw.CloseWithError(fmt.Errorf("write error at v3 block %d: %w", blockIndex, err))
+					return
+				}
 			}
-					// Write plaintext to pipe
-					if _, err := pw.Write(decrypted); err != nil {
-						pw.CloseWithError(fmt.Errorf("write error at v3 block %d: %w", blockIndex, err))
-						return
-					}
-				}
-			} else {
-				// v1/v2: optimized block-by-block decryption with inline HMAC table
+		} else {
+			// v1/v2: optimized block-by-block decryption with inline HMAC table
 			encryptedBuf := make([]byte, blockSize)
 			for blockIndex := 0; blockIndex < blockCount; blockIndex++ {
 				// Calculate actual block size (last block may be smaller)
@@ -1580,8 +1556,8 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create zstd decompression decoder: %v", err), 500)
 				return
 			}
-				// Wrap in zstdReadCloser to implement io.ReadCloser (zstd.Decoder.Close() doesn't return error)
-				decompressor = &zstdReadCloser{Decoder: zstdDecoder}
+			// Wrap in zstdReadCloser to implement io.ReadCloser (zstd.Decoder.Close() doesn't return error)
+			decompressor = &zstdReadCloser{Decoder: zstdDecoder}
 		default:
 			// Unknown compression type - close pipe and return error
 			pr.Close()
@@ -1792,7 +1768,6 @@ func (z *zstdReadCloser) Close() error {
 	z.Decoder.Close()
 	return nil
 }
-
 
 // handleRangeRequest handles range read requests.
 func (h *Handlers) handleRangeRequest(w http.ResponseWriter, r *http.Request, bucket, key string, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, plaintextSize int64, lastModified time.Time, isMultipart bool) {
@@ -2313,8 +2288,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 		}
 
 		// Get the source MEK using the key ID from metadata
-		srcMEK, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
-		if err != nil {
+		if _, err := h.keyManager.GetMEKByID(armorMeta.KeyID); err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get source decryption key: %v", err), 500)
 			return
 		}
@@ -2365,7 +2339,7 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 
 		// Re-wrap DEK with destination MEK (handles key rotation and cross-prefix copy)
 		// Wrap with destination MEK and encode fingerprint in v2 format
-		wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(dstMEK, dek)
+		wrappedDEKStr, err = crypto.WrapDEKWithFingerprint(dstMEK, dek)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to re-wrap DEK: %v", err), 500)
 			return
@@ -3222,9 +3196,9 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			Poisoned:          metadata.Poisoned,
 			PoisonReason:      metadata.PoisonReason,
 			FormatVersion:     3,
-			PartSizes:         make(map[int]int64),    // Will be loaded from part files as needed
-			PartHMACs:         make(map[int]string),   // Will be loaded from part files as needed
-			PartPlaintextSHAs: make(map[int]string),   // Will be loaded from part files as needed
+			PartSizes:         make(map[int]int64),  // Will be loaded from part files as needed
+			PartHMACs:         make(map[int]string), // Will be loaded from part files as needed
+			PartPlaintextSHAs: make(map[int]string), // Will be loaded from part files as needed
 		}
 	} else {
 		// Fall back to v2 format
@@ -3265,7 +3239,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	// pins P, and the deferred part then succeeds at its correct
 	// (N-1)*P/BlockSize offset. The body is left unread so a deferred (potentially
 	// large) part costs no server memory.
-	if state.PartSize == 0 && partNumber != 1 {
+	if formatVersion != 3 && state.PartSize == 0 && partNumber != 1 {
 		w.Header().Set("Retry-After", "1")
 		h.writeError(w, r, "SlowDown",
 			"Part 1 for this multipart upload has not been received yet, so the uniform part size is not established. Retry this part after uploading part 1.",
@@ -3637,6 +3611,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// Try v3 format
 	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)
 	var state *backend.MultipartState
+	var err error
 	formatVersion := 2 // Default to v2
 
 	if errV3 == nil && metadata != nil {
@@ -3645,22 +3620,22 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		// For v3, we'll load part data on-demand below
 		// Create a minimal state structure for compatibility
 		state = &backend.MultipartState{
-			UploadID:        metadata.UploadID,
-			Bucket:          metadata.Bucket,
-			Key:             metadata.Key,
-			IV:              metadata.IV,
-			WrappedDEK:      metadata.WrappedDEK,
-			MEKFingerprint:  metadata.MEKFingerprint,
-			BlockSize:       metadata.BlockSize,
-			ContentType:     metadata.ContentType,
-			KeyID:           metadata.KeyID,
-			PartSize:        metadata.PartSize,
-			NonUniformParts: metadata.NonUniformParts,
-			Poisoned:        metadata.Poisoned,
-			PoisonReason:    metadata.PoisonReason,
-			FormatVersion:   3,
-			PartSizes:       make(map[int]int64),
-			PartHMACs:       make(map[int]string),
+			UploadID:          metadata.UploadID,
+			Bucket:            metadata.Bucket,
+			Key:               metadata.Key,
+			IV:                metadata.IV,
+			WrappedDEK:        metadata.WrappedDEK,
+			MEKFingerprint:    metadata.MEKFingerprint,
+			BlockSize:         metadata.BlockSize,
+			ContentType:       metadata.ContentType,
+			KeyID:             metadata.KeyID,
+			PartSize:          metadata.PartSize,
+			NonUniformParts:   metadata.NonUniformParts,
+			Poisoned:          metadata.Poisoned,
+			PoisonReason:      metadata.PoisonReason,
+			FormatVersion:     3,
+			PartSizes:         make(map[int]int64),
+			PartHMACs:         make(map[int]string),
 			PartPlaintextSHAs: make(map[int]string),
 		}
 	} else {
@@ -3714,6 +3689,15 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 			}
 			state.PartPlaintextSHAs[partNum] = partData.PlaintextSHAHex
 		}
+
+		// Version 3 encrypts every part in its own counter namespace, so part
+		// sizes are intentionally unconstrained.  Preserve part 1's size only
+		// for legacy metadata consumers; mark the temporary state non-uniform so
+		// the v2 uniform-size validation below does not reject valid v3 uploads.
+		if partOne, ok := state.PartSizes[1]; ok {
+			state.PartSize = partOne
+		}
+		state.NonUniformParts = true
 	}
 
 	// Parse the CompleteMultipartUpload request XML
@@ -3812,6 +3796,12 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, r, "InvalidPartSize",
 			fmt.Sprintf("Uniform part size %d is not a multiple of the block size (%d bytes), which is only valid for a single-part upload, but this upload has %d parts. %s", P, state.BlockSize, len(completeReq.Parts), multipartRetryMessage), 400)
 		return
+	}
+	// The v3 multipart layout carries its part boundaries in its sidecar, so
+	// its temporary non-uniform marker is only for bypassing the legacy v2
+	// validation above. Do not persist v2 cumulative-offset metadata for it.
+	if formatVersion == 3 {
+		state.NonUniformParts = false
 	}
 
 	// Convert to backend.CompletedPart
@@ -3964,9 +3954,11 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 				blockPlaintextLen := blockEnd - blockStart
 				blockCiphertextLen = int(blockPlaintextLen)
 
+				lengthBytes := make([]byte, 4)
+				binary.BigEndian.PutUint32(lengthBytes, uint32(blockCiphertextLen))
 				blocks[i] = []string{
 					base64.StdEncoding.EncodeToString(hmac),
-					strconv.Itoa(blockCiphertextLen),
+					base64.StdEncoding.EncodeToString(lengthBytes),
 				}
 			}
 
@@ -4199,6 +4191,7 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 	// Try v3 format
 	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)
 	var state *backend.MultipartState
+	var err error
 	formatVersion := 2 // Default to v2
 
 	if errV3 == nil && metadata != nil {
@@ -4793,14 +4786,14 @@ func (h *Handlers) logS3Error(r *http.Request, code, message string, statusCode 
 
 	// Build log fields
 	fields := map[string]interface{}{
-		"event":       "s3_error",
-		"error_code":  code,
-		"operation":   operation,
-		"bucket":      bucket,
-		"key":         key,
-		"request_id":  requestID,
-		"status":      statusCode,
-		"message":     message,
+		"event":      "s3_error",
+		"error_code": code,
+		"operation":  operation,
+		"bucket":     bucket,
+		"key":        key,
+		"request_id": requestID,
+		"status":     statusCode,
+		"message":    message,
 	}
 
 	// Add access_key_id only when present (no empty fields)

@@ -727,6 +727,124 @@ func max(a, b int64) int64 {
 	return b
 }
 
+// DecryptV3 decrypts version 3 encrypted data with per-(part, block) HMAC verification and optional block decompression.
+// Version 3 uses (part, block) counter construction and per-(part, block) HMACs.
+//
+// Parameters:
+//   - encrypted: Concatenated ciphertext for all blocks in the part
+//   - part: Part number (0 for single-PUT, 1..N for multipart)
+//   - blockTable: Block table with HMACs and compression flags
+//
+// Returns:
+//   - plaintext: Decrypted and decompressed plaintext
+//   - err: Error if decryption, HMAC verification, or decompression fails
+func (d *Decryptor) DecryptV3(encrypted []byte, part uint16, blockTable *BlockTable) ([]byte, error) {
+	if d.version != Version3 {
+		return nil, fmt.Errorf("DecryptV3 requires version 3, got version %d", d.version)
+	}
+
+	blockCount := blockTable.EntryCount()
+	plaintext := make([]byte, 0)
+	encryptedOffset := 0
+
+	for blockIdx := 0; blockIdx < blockCount; blockIdx++ {
+		entry := blockTable.Entries[blockIdx]
+		blockLength := entry.RawLength()
+
+		// Validate block boundaries
+		if encryptedOffset+int(blockLength) > len(encrypted) {
+			return nil, fmt.Errorf("block %d exceeds encrypted data bounds", blockIdx)
+		}
+
+		encryptedBlock := encrypted[encryptedOffset : encryptedOffset+int(blockLength)]
+
+		// Verify HMAC with v3 (part, block) semantics
+		if err := d.verifyV3BlockHMAC(encryptedBlock, part, uint32(blockIdx), entry.HMAC[:]); err != nil {
+			return nil, fmt.Errorf("block %d HMAC verification failed: %w", blockIdx, err)
+		}
+
+		// Decrypt the block using v3 (part, block, aesBlock) counter
+		decryptedBlock, err := d.decryptBlockV3(encryptedBlock, part, uint32(blockIdx))
+		if err != nil {
+			return nil, fmt.Errorf("block %d decryption failed: %w", blockIdx, err)
+		}
+
+		// Decompress if the compression flag is set
+		var plaintextBlock []byte
+		if entry.IsCompressed() {
+			var err error
+			plaintextBlock, err = DecompressBlock(decryptedBlock, true)
+			if err != nil {
+				return nil, fmt.Errorf("block %d decompression failed: %w", blockIdx, err)
+			}
+		} else {
+			plaintextBlock = decryptedBlock
+		}
+
+		// Append to plaintext
+		plaintext = append(plaintext, plaintextBlock...)
+		encryptedOffset += int(blockLength)
+	}
+
+	return plaintext, nil
+}
+
+// verifyV3BlockHMAC verifies the HMAC for a v3 encrypted block using (part, block) semantics.
+func (d *Decryptor) verifyV3BlockHMAC(encryptedBlock []byte, part uint16, block uint32, expected []byte) error {
+	mac := hmac.New(sha256.New, d.hmacKey)
+
+	// Include part number (big-endian)
+	partBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(partBytes, part)
+	mac.Write(partBytes)
+
+	// Include block index (big-endian)
+	blockBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(blockBytes, block)
+	mac.Write(blockBytes)
+
+	// Include ciphertext
+	mac.Write(encryptedBlock)
+
+	computed := mac.Sum(nil)
+
+	if !hmac.Equal(computed, expected) {
+		return ErrHMACMismatch
+	}
+
+	return nil
+}
+
+// decryptBlockV3 decrypts a single block using v3 (part, block, aesBlock) counter semantics.
+func (d *Decryptor) decryptBlockV3(encryptedBlock []byte, part uint16, block uint32) ([]byte, error) {
+	decryptedBlock := make([]byte, len(encryptedBlock))
+
+	// Decrypt each 16-byte AES block within the ARMOR block
+	numAESBlocks := (len(encryptedBlock) + 15) / 16
+	for aesBlockIdx := 0; aesBlockIdx < numAESBlocks; aesBlockIdx++ {
+		// Create v3 counter for this AES block
+		counter := make([]byte, 16)
+		copy(counter[0:8], d.iv[0:8])                  // IV[0:8]
+		binary.BigEndian.PutUint16(counter[8:10], part) // uint16(part)
+		binary.BigEndian.PutUint32(counter[10:14], block) // uint32(block)
+		binary.BigEndian.PutUint16(counter[14:16], uint16(aesBlockIdx)) // uint16(aesBlock)
+
+		stream := cipher.NewCTR(d.block, counter)
+
+		// Decrypt this AES block's worth of data
+		start := aesBlockIdx * 16
+		end := start + 16
+		if end > len(encryptedBlock) {
+			end = len(encryptedBlock)
+		}
+		if end > start {
+			stream.XORKeyStream(decryptedBlock[start:end], encryptedBlock[start:end])
+		}
+	}
+
+	return decryptedBlock, nil
+}
+
 // DEK returns the data encryption key.
 func (d *Decryptor) DEK() []byte {
 	return d.dek

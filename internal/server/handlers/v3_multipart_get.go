@@ -1,14 +1,13 @@
 package handlers
 
 import (
-	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/jedarden/armor/internal/backend"
@@ -65,10 +64,10 @@ func (h *Handlers) loadV3MultipartSidecar(ctx context.Context, bucket, prefixedK
 		return cached, nil
 	}
 
-	// Load from B2
-	sidecarKey := backend.GetSidecarKey(prefixedKey)
+	// LoadHMACTableV3 derives the sidecar key from the object key itself.
+	// Passing an already-derived sidecar key would hash it a second time.
 	manager := h.getMultipartManager(bucket)
-	sidecar, err := manager.LoadHMACTableV3(ctx, sidecarKey)
+	sidecar, err := manager.LoadHMACTableV3(ctx, prefixedKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load v3 sidecar from B2: %w", err)
 	}
@@ -153,7 +152,7 @@ func (h *Handlers) decryptV3Part(ctx context.Context, partCiphertext []byte, sid
 		}
 
 		// Decrypt this block using v3 counter construction
-		decryptedBlock, err := crypto.DecryptBlockV3(decryptor.DEK(), iv, partNum, uint32(blockIdx), blockCiphertext, expectedHMAC, blockSize)
+		decryptedBlock, err := crypto.DecryptBlockV3(decryptor.DEK(), iv, uint16(partNum), uint32(blockIdx), blockCiphertext, expectedHMAC, blockSize)
 		if err != nil {
 			return nil, fmt.Errorf("block %d decryption failed: %w", blockIdx, err)
 		}

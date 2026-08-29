@@ -6,12 +6,13 @@ package canary
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
+	cryptoRand "crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	mathRand "math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -108,6 +109,7 @@ type Monitor struct {
 	mek              []byte
 	blockSize        int
 	instanceID       string
+	formatWriteVersion int            // Format version to write (2 or 3)
 
 	state CanaryState
 
@@ -134,6 +136,7 @@ type Config struct {
 	MEK                []byte
 	BlockSize          int
 	InstanceID         string
+	FormatWriteVersion int            // Format version to write (2 or 3)
 	Interval           time.Duration // Check interval (default 5 minutes)
 	CanarySize         int           // Size of canary content (default 1024 bytes)
 	MaxRetries         int           // Max retries on failure (default 3)
@@ -169,6 +172,9 @@ func NewMonitor(cfg Config) *Monitor {
 	if cfg.SecondaryInterval == 0 {
 		cfg.SecondaryInterval = 5 * time.Minute
 	}
+	if cfg.FormatWriteVersion == 0 {
+		cfg.FormatWriteVersion = 2 // Default to version 2
+	}
 
 	instanceID := cfg.InstanceID
 	if instanceID == "" {
@@ -176,28 +182,29 @@ func NewMonitor(cfg Config) *Monitor {
 		if instanceID == "" {
 			// Generate random ID
 			b := make([]byte, 8)
-			rand.Read(b)
+			cryptoRand.Read(b)
 			instanceID = hex.EncodeToString(b)
 		}
 	}
 
 	return &Monitor{
-		backend:            cfg.Backend,
-		secondaryBackend:   cfg.SecondaryBackend,
-		replicationQueue:   cfg.ReplicationQueue,
-		bucket:             cfg.Bucket,
-		mek:                cfg.MEK,
-		blockSize:          cfg.BlockSize,
-		instanceID:         instanceID,
-		interval:           cfg.Interval,
-		canarySize:         cfg.CanarySize,
-		maxRetries:         cfg.MaxRetries,
-		retryDelay:         cfg.RetryDelay,
-		multipartInterval:  cfg.MultipartInterval,
-		multipartSize:      cfg.MultipartSize,
-		secondaryInterval:  cfg.SecondaryInterval,
-		stopCh:             make(chan struct{}),
-		doneCh:             make(chan struct{}),
+		backend:             cfg.Backend,
+		secondaryBackend:    cfg.SecondaryBackend,
+		replicationQueue:    cfg.ReplicationQueue,
+		bucket:              cfg.Bucket,
+		mek:                 cfg.MEK,
+		blockSize:           cfg.BlockSize,
+		instanceID:          instanceID,
+		formatWriteVersion:  cfg.FormatWriteVersion,
+		interval:            cfg.Interval,
+		canarySize:          cfg.CanarySize,
+		maxRetries:          cfg.MaxRetries,
+		retryDelay:          cfg.RetryDelay,
+		multipartInterval:   cfg.MultipartInterval,
+		multipartSize:       cfg.MultipartSize,
+		secondaryInterval:   cfg.SecondaryInterval,
+		stopCh:              make(chan struct{}),
+		doneCh:              make(chan struct{}),
 		state: CanaryState{
 			Status:           StatusUnknown,
 			MultipartHealthy: StatusUnknown,
@@ -355,7 +362,7 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 	// Generate unique canary content with timestamp
 	timestamp := time.Now().UnixNano()
 	canaryContent := make([]byte, m.canarySize)
-	if _, err := rand.Read(canaryContent); err != nil {
+	if _, err := cryptoRand.Read(canaryContent); err != nil {
 		return nil, fmt.Errorf("failed to generate canary content: %w", err)
 	}
 
@@ -531,6 +538,51 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 // minimum.
 const b2MinPartSize = 5 * 1024 * 1024 // 5 MiB
 
+// generateV3PartSizes generates random part sizes for v3 multipart upload.
+// It generates exactly 3 parts with random sizes >= b2MinPartSize (except the last,
+// which may be smaller). The total of all parts will approximately equal totalSize.
+func generateV3PartSizes(totalSize int) []int {
+	// For v3, we want exactly 3 parts with random sizes
+	// Part 1 and Part 2 must be >= 5 MiB (B2 requirement)
+	// Part 3 can be any size (including smaller than 5 MiB)
+
+	// Ensure we have enough space for 2 parts at minimum + something for part 3
+	minTotalSize := 2*b2MinPartSize + 1
+	if totalSize < minTotalSize {
+		totalSize = minTotalSize
+	}
+
+	// Generate random size for part 1 (between b2MinPartSize and roughly 1/3 of total)
+	maxPart1Size := totalSize/3 + b2MinPartSize/2
+	if maxPart1Size < b2MinPartSize {
+		maxPart1Size = b2MinPartSize
+	}
+	part1Size := b2MinPartSize + mathRand.Intn(maxPart1Size-b2MinPartSize+1)
+
+	// Calculate remaining space after part 1
+	remaining := totalSize - part1Size
+
+	// Generate random size for part 2 (between b2MinPartSize and roughly half of remaining)
+	maxPart2Size := remaining/2 + b2MinPartSize/2
+	if maxPart2Size < b2MinPartSize {
+		maxPart2Size = b2MinPartSize
+	}
+	if maxPart2Size > remaining-b2MinPartSize {
+		maxPart2Size = remaining - b2MinPartSize
+	}
+	part2Size := b2MinPartSize + mathRand.Intn(maxPart2Size-b2MinPartSize+1)
+
+	// Part 3 gets whatever remains
+	part3Size := totalSize - part1Size - part2Size
+
+	// Ensure part 3 has at least 1 byte
+	if part3Size < 1 {
+		part3Size = 1
+	}
+
+	return []int{part1Size, part2Size, part3Size}
+}
+
 // canaryMultipartPartSize returns the size to use for each non-final part of the
 // multipart canary, chosen to satisfy two constraints:
 //   - at least b2MinPartSize (5 MiB), so B2 does not reject the non-final parts,
@@ -564,7 +616,7 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// Generate unique canary content with timestamp
 	timestamp := time.Now().UnixNano()
 	canaryContent := make([]byte, m.multipartSize)
-	if _, err := rand.Read(canaryContent); err != nil {
+	if _, err := cryptoRand.Read(canaryContent); err != nil {
 		return nil, fmt.Errorf("failed to generate multipart canary content: %w", err)
 	}
 
@@ -572,7 +624,12 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	binary.LittleEndian.PutUint64(canaryContent[:8], uint64(timestamp))
 
 	// Generate unique key for this canary
-	key := fmt.Sprintf(".armor/canary-multipart/%s/%d", m.instanceID, timestamp)
+	var key string
+	if m.formatWriteVersion == 3 {
+		key = fmt.Sprintf(".armor/canary-multipart-v3/%s/%d", m.instanceID, timestamp)
+	} else {
+		key = fmt.Sprintf(".armor/canary-multipart/%s/%d", m.instanceID, timestamp)
+	}
 
 	// Generate DEK and IV
 	dek, err := crypto.GenerateDEK()
@@ -595,8 +652,19 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// Compute plaintext SHA-256
 	plaintextSHA := crypto.ComputePlaintextSHA256(canaryContent)
 
+	// Determine envelope version based on formatWriteVersion
+	var envelopeVersion int
+	switch m.formatWriteVersion {
+	case 3:
+		envelopeVersion = crypto.Version3
+	case 2:
+		envelopeVersion = crypto.Version2
+	default:
+		envelopeVersion = crypto.Version2 // Default to Version2 for security
+	}
+
 	// Create envelope header
-	header, err := crypto.NewEnvelopeHeader(iv, int64(len(canaryContent)), m.blockSize, plaintextSHA)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(canaryContent)), m.blockSize, plaintextSHA, uint8(envelopeVersion))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create header: %w", err)
 	}
@@ -606,8 +674,17 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to encode header: %w", err)
 	}
 
-	// Encrypt
-	encryptor, err := crypto.NewEncryptor(dek, iv, m.blockSize)
+	// Encrypt with the appropriate version
+	var encryptor crypto.Encryptor
+	if envelopeVersion == crypto.Version3 {
+		var enc *crypto.Encryptor
+		enc, err = crypto.NewEncryptorWithVersion(dek, iv, m.blockSize, crypto.Version3)
+		encryptor = *enc
+	} else {
+		var enc *crypto.Encryptor
+		enc, err = crypto.NewEncryptor(dek, iv, m.blockSize)
+		encryptor = *enc
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encryptor: %w", err)
 	}
@@ -626,9 +703,18 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// Compute ETag
 	etag := backend.ComputeETag(canaryContent)
 
-	// Build metadata
+	// Build metadata with appropriate version
+	var metaVersion int
+	switch envelopeVersion {
+	case crypto.Version3:
+		metaVersion = 3
+	case crypto.Version2:
+		metaVersion = 2
+	default:
+		metaVersion = 2 // Default to Version2
+	}
 	meta := (&backend.ARMORMetadata{
-		Version:        1,
+		Version:        metaVersion,
 		BlockSize:      m.blockSize,
 		PlaintextSize:  int64(len(canaryContent)),
 		ContentType:    "application/octet-stream",
@@ -657,32 +743,50 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// ("shuffled") order and the ETags are reassembled in ascending part-number
 	// order below, as CompleteMultipartUpload requires.
 	//
-	// B2 still rejects CompleteMultipartUpload with EntityTooSmall when any
-	// non-final part is smaller than 5 MiB, so each part except the last is at
-	// least b2MinPartSize and a multiple of the block size so a part boundary
-	// never splits an encryption block. For the default 64 KiB block this is
-	// 5.25 MiB (84 blocks).
-	partSize := canaryMultipartPartSize(m.blockSize)
-
-	// Pre-compute the disjoint part slices so each goroutine reads its own range
-	// of the envelope with no shared cursor. (partData aliases envelope, which is
-	// never mutated after this point, so concurrent reads are safe.)
+	// For v3 format, use exactly 3 parts with random sizes (>= 5 MiB except the last).
+	// For v1/v2, use uniform block-aligned parts as before.
 	type canaryPart struct {
 		num  int32
 		data []byte
 	}
 	var canaryParts []canaryPart
-	partNum := int32(1)
-	for offset := 0; offset < len(envelope); offset += partSize {
-		end := offset + partSize
-		if end > len(envelope) {
-			end = len(envelope)
+
+	if m.formatWriteVersion == 3 {
+		// V3: Use exactly 3 parts with random sizes
+		partSizes := generateV3PartSizes(len(envelope))
+
+		for i, partSize := range partSizes {
+			partNum := int32(i + 1)
+			// Calculate offset based on previous part sizes
+			offset := 0
+			for j := 0; j < i; j++ {
+				offset += partSizes[j]
+			}
+			end := offset + partSize
+			if end > len(envelope) {
+				end = len(envelope)
+			}
+			canaryParts = append(canaryParts, canaryPart{
+				num:  partNum,
+				data: envelope[offset:end],
+			})
 		}
-		canaryParts = append(canaryParts, canaryPart{
-			num:  partNum,
-			data: envelope[offset:end],
-		})
-		partNum++
+	} else {
+		// V1/V2: Use uniform block-aligned parts
+		partSize := canaryMultipartPartSize(m.blockSize)
+
+		partNum := int32(1)
+		for offset := 0; offset < len(envelope); offset += partSize {
+			end := offset + partSize
+			if end > len(envelope) {
+				end = len(envelope)
+			}
+			canaryParts = append(canaryParts, canaryPart{
+				num:  partNum,
+				data: envelope[offset:end],
+			})
+			partNum++
+		}
 	}
 
 	// ETags indexed by part number (position num-1); each goroutine writes a
@@ -751,6 +855,44 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		result.CFCacheHit = (cfStatus == "HIT" || cfStatus == "STALE" || cfStatus == "REVALIDATED")
 	}
 
+	// For v3, verify a range straddling a part boundary
+	if m.formatWriteVersion == 3 && len(canaryParts) >= 2 {
+		// Pick a boundary between part 1 and part 2
+		// Read a range that starts before the boundary and ends after it
+		part1EndOffset := int64(len(canaryParts[0].data))
+		// Read a 1 MiB range centered on the boundary
+		rangeSize := int64(1024 * 1024) // 1 MiB
+		rangeOffset := part1EndOffset - rangeSize/2
+		if rangeOffset < 0 {
+			rangeOffset = 0
+		}
+		rangeEnd := rangeOffset + rangeSize
+		if rangeEnd > int64(len(envelope)) {
+			rangeEnd = int64(len(envelope))
+			rangeOffset = rangeEnd - rangeSize
+			if rangeOffset < 0 {
+				rangeOffset = 0
+			}
+		}
+
+		// Read the range
+		rangeBody, _, err := m.backend.GetRangeWithHeaders(ctx, m.bucket, key, rangeOffset, rangeEnd-rangeOffset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to download range for boundary verification: %w", err)
+		}
+		downloadedRange, err := io.ReadAll(rangeBody)
+		rangeBody.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read downloaded range: %w", err)
+		}
+
+		// Verify the range matches the original envelope
+		expectedRange := envelope[rangeOffset:rangeEnd]
+		if !bytes.Equal(downloadedRange, expectedRange) {
+			return nil, fmt.Errorf("range verification failed: boundary range does not match")
+		}
+	}
+
 	// Verify size matches
 	if len(downloadedEnvelope) != len(envelope) {
 		return nil, fmt.Errorf("multipart download size mismatch: got %d, expected %d", len(downloadedEnvelope), len(envelope))
@@ -786,8 +928,8 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to unwrap DEK: %w", err)
 	}
 
-	// Create decryptor (explicitly use Version1 to match the canary's metadata)
-	decryptor, err := crypto.NewDecryptorWithVersion(unwrappedDEK, iv, m.blockSize, crypto.Version1)
+	// Create decryptor with the appropriate version (matching the envelope version used during upload)
+	decryptor, err := crypto.NewDecryptorWithVersion(unwrappedDEK, iv, m.blockSize, uint8(envelopeVersion))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decryptor: %w", err)
 	}
@@ -947,7 +1089,7 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 	// Generate unique canary content with timestamp
 	timestamp := time.Now().UnixNano()
 	canaryContent := make([]byte, m.canarySize)
-	if _, err := rand.Read(canaryContent); err != nil {
+	if _, err := cryptoRand.Read(canaryContent); err != nil {
 		return nil, fmt.Errorf("failed to generate secondary canary content: %w", err)
 	}
 

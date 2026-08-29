@@ -863,7 +863,7 @@ func TestAuthMiddlewareNoAuth(t *testing.T) {
 func TestDashboardHandlerWithAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "", nil, "")
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "", nil, "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	rec := httptest.NewRecorder()
@@ -889,7 +889,7 @@ func TestDashboardHandlerWithAuth(t *testing.T) {
 func TestDashboardHandlerWithBearerToken(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123", nil, "")
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123", nil, "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	rec := httptest.NewRecorder()
@@ -915,7 +915,7 @@ func TestDashboardHandlerWithBearerToken(t *testing.T) {
 func TestMetricsHandlerWithAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "admin", "pass", "", nil, "")
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "pass", "", nil, "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/metrics", nil)
 	rec := httptest.NewRecorder()
@@ -946,7 +946,7 @@ func TestObjectDetailHandlerWithAuth(t *testing.T) {
 		LastModified: time.Now(),
 	}
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "token", nil, "")
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token", nil, "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/object?key=test.txt", nil)
 	rec := httptest.NewRecorder()
@@ -1086,7 +1086,7 @@ func TestEncryptionStatsHandlerFolderExclusion(t *testing.T) {
 func TestEncryptionStatsHandlerAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123", nil, "")
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123", nil, "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/encryption-stats", nil)
 	rec := httptest.NewRecorder()
@@ -1930,7 +1930,7 @@ func TestListAPIHandlerWithAuth(t *testing.T) {
 	m := metrics.NewMetrics()
 
 	// Test with Basic Auth
-	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret123", "", nil, "")
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret123", "", nil, "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
 	rec := httptest.NewRecorder()
@@ -1954,7 +1954,7 @@ func TestListAPIHandlerWithAuth(t *testing.T) {
 	}
 
 	// Test with Bearer token
-	d2 := NewWithAuth(mb, "test-bucket", m, "", "", "my-token", nil, "")
+	d2 := NewWithAuth(mb, "test-bucket", m, "", "", "my-token", nil, "", false)
 
 	req = httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
 	rec = httptest.NewRecorder()
@@ -2044,7 +2044,7 @@ func TestKeyRotateStatusHandlerNoRotation(t *testing.T) {
 func TestKeyRotateStatusHandlerWithAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123", nil, "")
+	d := NewWithAuth(mb, "test-bucket", m, "", "", "token123", nil, "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/admin/key/status", nil)
 	rec := httptest.NewRecorder()
@@ -2167,7 +2167,7 @@ func TestKeyRotateHandlerOmitsAuthHeaderWhenTokenUnset(t *testing.T) {
 func TestKeyRotateHandlerWithAuth(t *testing.T) {
 	mb := newMockBackend()
 	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "", nil, "")
+	d := NewWithAuth(mb, "test-bucket", m, "admin", "secret", "", nil, "", false)
 
 	// Mock admin API server
 	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2838,174 +2838,3 @@ func TestPresignResponseFormatMatchesUI(t *testing.T) {
 }
 
 // TestShareButtonRendersWhenPresignEnabled verifies that the Share button appears in the HTML when presign is enabled.
-func TestShareButtonRendersWhenPresignEnabled(t *testing.T) {
-	mb := newMockBackend()
-	mb.objects["test/file.txt"] = &backend.ObjectInfo{
-		Key:              "test/file.txt",
-		Size:             1000,
-		ContentType:      "text/plain",
-		ETag:             "abc123",
-		LastModified:     time.Now(),
-		IsARMOREncrypted: true,
-		Metadata: map[string]string{
-			"x-amz-meta-armor-version":        "1",
-			"x-amz-meta-armor-block-size":     "65536",
-			"x-amz-meta-armor-plaintext-size": "1000",
-			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
-			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
-			"x-amz-meta-armor-plaintext-sha256": "abcdef123456",
-		},
-	}
-
-	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "", &DashboardCredential{
-		Name:      "dashboard-cred",
-		AccessKey: "key",
-		SecretKey: "secret",
-	}, "", true)
-
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
-	rec := httptest.NewRecorder()
-
-	d.Handler()(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", rec.Code)
-	}
-
-	body := rec.Body.String()
-	
-	// Verify Share button is present when presign is enabled
-	if !strings.Contains(body, `onclick="showShareModal(`) {
-		t.Error("Expected Share button to be present in HTML when presign is enabled")
-	}
-	
-	// Verify Share modal HTML is present
-	if !strings.Contains(body, `id="shareModal"`) {
-		t.Error("Expected Share modal to be present in HTML")
-	}
-	
-	// Verify JavaScript functions for Share are present
-	if !strings.Contains(body, `function showShareModal(`) {
-		t.Error("Expected showShareModal JavaScript function")
-	}
-	if !strings.Contains(body, `function generateShareUrl(`) {
-		t.Error("Expected generateShareUrl JavaScript function")
-	}
-	if !strings.Contains(body, `function copyShareUrl(`) {
-		t.Error("Expected copyShareUrl JavaScript function")
-	}
-}
-
-// TestShareButtonHiddenWhenPresignDisabled verifies that the Share button does not appear when presign is disabled.
-func TestShareButtonHiddenWhenPresignDisabled(t *testing.T) {
-	mb := newMockBackend()
-	mb.objects["test/file.txt"] = &backend.ObjectInfo{
-		Key:              "test/file.txt",
-		Size:             1000,
-		ContentType:      "text/plain",
-		ETag:             "abc123",
-		LastModified:     time.Now(),
-		IsARMOREncrypted: true,
-		Metadata: map[string]string{
-			"x-amz-meta-armor-version":        "1",
-			"x-amz-meta-armor-block-size":     "65536",
-			"x-amz-meta-armor-plaintext-size": "1000",
-			"x-amz-meta-armor-iv":             "dGVzdGl2MTIzNDU2Nzg5MA==",
-			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
-			"x-amz-meta-armor-plaintext-sha256": "abcdef123456",
-		},
-	}
-
-	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "", &DashboardCredential{
-		Name:      "dashboard-cred",
-		AccessKey: "key",
-		SecretKey: "secret",
-	}, "", false)
-
-	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
-	rec := httptest.NewRecorder()
-
-	d.Handler()(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", rec.Code)
-	}
-
-	body := rec.Body.String()
-	
-	// Verify Share button is NOT present when presign is disabled
-	if strings.Contains(body, `onclick="showShareModal(`) {
-		t.Error("Expected Share button to be hidden when presign is disabled")
-	}
-}
-
-// TestPresignResponseFormatMatchesUI verifies that the presign response format matches what the UI expects.
-// This is the acceptance test: "UI test that the rendered URL matches the presign response."
-func TestPresignResponseFormatMatchesUI(t *testing.T) {
-	mb := newMockBackend()
-	m := metrics.NewMetrics()
-	d := NewWithAuth(mb, "test-bucket", m, "", "", "", nil, "", true)
-
-	// Create a mock admin server that returns a realistic presign response
-	adminServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"url":         "https://armor.example.com/share/eyJiIjoidGVzdC1idWNrZXQiLCJrIjoidGVzdC9maWxlLnR4dCIsImUiOjE3MjI0NjQwMDB9.s1gNvh4Yq8kXrZLKrP_KRCnFpLGvgFZlJ9GYQBnJvoU",
-			"expires_in":  "24h",
-			"expires_at":  "2026-08-30T12:00:00Z",
-		})
-	}))
-	defer adminServer.Close()
-
-	reqBody := `{"key":"test/file.txt","expires_in":"24h"}`
-	req := httptest.NewRequest(http.MethodPost, "/dashboard/presign", strings.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	d.PresignHandler(http.DefaultClient, adminServer.URL)(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d", rec.Code)
-	}
-
-	var resp map[string]interface{}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("Failed to decode response: %v", err)
-	}
-
-	// Verify all required fields are present
-	requiredFields := []string{"url", "expires_in", "expires_at"}
-	for _, field := range requiredFields {
-		if _, ok := resp[field]; !ok {
-			t.Errorf("Expected response to contain '%s' field", field)
-		}
-	}
-
-	// Verify URL is a non-empty string
-	url, ok := resp["url"].(string)
-	if !ok || url == "" {
-		t.Error("Expected 'url' to be a non-empty string")
-	}
-
-	// Verify expires_in is a string matching expected format
-	expiresIn, ok := resp["expires_in"].(string)
-	if !ok || expiresIn == "" {
-		t.Error("Expected 'expires_in' to be a non-empty string")
-	}
-
-	// Verify expires_at is an RFC3339 timestamp
-	expiresAt, ok := resp["expires_at"].(string)
-	if !ok || expiresAt == "" {
-		t.Error("Expected 'expires_at' to be a non-empty string")
-	} else {
-		// Try to parse as RFC3339 timestamp
-		if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
-			t.Errorf("Expected 'expires_at' to be RFC3339 format, got error: %v", err)
-		}
-	}
-
-	// This verifies that the UI JavaScript (generateShareUrl function) can properly
-	// extract and display these fields from the presign response
-}

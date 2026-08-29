@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"encoding/binary"
 	"testing"
 	"testing/quick"
 
@@ -16,9 +17,6 @@ func TestV3CounterUniquenessProperty(t *testing.T) {
 	for i := range iv {
 		iv[i] = byte(i)
 	}
-
-	// Track seen counters
-	seen := make(map[string]bool)
 
 	// Property: different triples should produce different counters
 	property := func(part1 uint16, block1 uint32, aesBlock1 uint16,
@@ -92,7 +90,7 @@ func TestV3CounterUniquenessExhaustive(t *testing.T) {
 	}
 
 	// Verify we got the expected number of unique counters
-	expectedCount := (maxPart + 1) * (maxBlock + 1) * (maxAESBlock + 1)
+	expectedCount := uint32(maxPart+1) * (maxBlock + 1) * uint32(maxAESBlock+1)
 	assert.Equal(t, expectedCount, uint32(len(counters)),
 		"Should have exactly %d unique counters", expectedCount)
 }
