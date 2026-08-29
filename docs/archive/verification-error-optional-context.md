@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines the optional context fields for verification error messages. These fields provide additional debugging and diagnostic information beyond the core required fields (offset, expected, actual) defined in `error-message-structure.md`.
+This document defines the optional context fields for verification error messages. These fields provide additional debugging and diagnostic information beyond the core required fields (offset, expected, actual) defined in `error-format.md`.
 
 Optional fields are **not required** for basic error reporting but **must be included** when the relevant context is available during verification. They help operators and automated systems understand the full circumstances of a verification failure.
 
@@ -542,7 +542,7 @@ func TestOptionalContextFields(t *testing.T) {
 
 ## References
 
-- Core error message structure: `error-message-structure.md`
+- Core error message structure: `../error-format.md`
 - ADR-004: Restore Verification Pipeline
 - `internal/crypto/verify_decompress.go`: Core verification implementation
 - `internal/restoreverifier/verifier.go`: Restore verifier integration

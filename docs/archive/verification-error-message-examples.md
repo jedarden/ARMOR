@@ -790,7 +790,7 @@ All examples conform to this JSON schema:
 
 ## References
 
-- Core error message structure: `error-message-structure.md`
+- Core error message structure: `../error-format.md`
 - Optional context fields: `verification-error-optional-context.md`
 - Error-to-message mapping: `verification-error-to-message-mapping.md`
 - ADR-004: Restore Verification Pipeline
