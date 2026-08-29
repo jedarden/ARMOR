@@ -190,7 +190,7 @@ func New(cfg *config.Config) (*Server, error) {
 			KeyName: r.KeyName,
 		})
 	}
-	keyMgr, err := keymanager.New(cfg.MEK, cfg.NamedKeys, routes)
+	keyMgr, err := keymanager.New(cfg.MEK, cfg.NamedKeys, routes, cfg.KeyRings)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create key manager: %w", err)
 	}

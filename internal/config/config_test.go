@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"github.com/jedarden/armor/internal/acl"
 	"os"
@@ -997,5 +998,269 @@ func TestRedacted(t *testing.T) {
 		if accessKey == "appkey" && len(redactedCred.ACLs) == 0 {
 			t.Error("Credentials[appkey].ACLs should be preserved")
 		}
+	}
+}
+
+func TestKeyRingParsing(t *testing.T) {
+	tests := []struct {
+		name        string
+		ringStr     string
+		activeMEK   string
+		expectCount int
+		expectError bool
+	}{
+		{
+			name:        "empty ring",
+			ringStr:     "",
+			activeMEK:   "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			expectCount: 0,
+		},
+		{
+			name:    "single retired key",
+			ringStr: "1111111111111111111111111111111111111111111111111111111111111111",
+			activeMEK: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			expectCount: 1,
+		},
+		{
+			name: "two-key ring",
+			ringStr: "1111111111111111111111111111111111111111111111111111111111111111," +
+				"2222222222222222222222222222222222222222222222222222222222222222",
+			activeMEK:   "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			expectCount: 2,
+		},
+		{
+			name:        "invalid hex",
+			ringStr:     "invalidhex1234,2222222222222222222222222222222222222222222222222222222222222222",
+			activeMEK:   "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			expectError: true,
+		},
+		{
+			name:        "wrong length - too short",
+			ringStr:     "1111,2222222222222222222222222222222222222222222222222222222222222222",
+			activeMEK:   "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			expectError: true,
+		},
+		{
+			name:        "duplicate of active key",
+			ringStr:     "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			activeMEK:   "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			expectError: true,
+		},
+		{
+			name:    "empty entry in ring",
+			ringStr: "1111111111111111111111111111111111111111111111111111111111111111,,",
+			activeMEK: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			expectError: true,
+		},
+		{
+			name: "mixed valid and invalid",
+			ringStr: "1111111111111111111111111111111111111111111111111111111111111111," +
+				"invalid," +
+				"2222222222222222222222222222222222222222222222222222222222222222",
+			activeMEK:   "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			activeMEK, _ := hex.DecodeString(tt.activeMEK)
+			ringMEKs, errs := parseKeyRing(tt.ringStr, "TEST_RING", activeMEK)
+
+			if tt.expectError {
+				if len(errs) == 0 {
+					t.Error("Expected error, got none")
+				}
+				return
+			}
+
+			if len(errs) > 0 {
+				t.Errorf("Unexpected errors: %v", errs)
+			}
+
+			expectBytes := tt.expectCount * 32
+			if len(ringMEKs) != expectBytes {
+				t.Errorf("Ring MEKs length = %d, want %d", len(ringMEKs), expectBytes)
+			}
+		})
+	}
+}
+
+func TestLoadWithKeyRing(t *testing.T) {
+	activeMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	retired1 := "1111111111111111111111111111111111111111111111111111111111111111"
+	retired2 := "2222222222222222222222222222222222222222222222222222222222222222"
+
+	env := append(minimalEnv(),
+		"ARMOR_MEK_RING", retired1+","+retired2,
+	)
+	setEnv(t, env...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Verify ring was loaded
+	if len(cfg.KeyRings) != 1 {
+		t.Fatalf("KeyRings count = %d, want 1", len(cfg.KeyRings))
+	}
+
+	ringMEKs, exists := cfg.KeyRings["default"]
+	if !exists {
+		t.Fatal("Default key ring not found")
+	}
+
+	// Should have 2 retired keys (64 bytes total)
+	if len(ringMEKs) != 64 {
+		t.Errorf("Ring MEKs length = %d, want 64", len(ringMEKs))
+	}
+}
+
+func TestLoadWithNamedKeyRing(t *testing.T) {
+	activeMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	namedMEK := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	retired1 := "1111111111111111111111111111111111111111111111111111111111111111"
+	retired2 := "2222222222222222222222222222222222222222222222222222222222222222"
+
+	env := append(minimalEnv(),
+		"ARMOR_MEK_ARCHIVE", namedMEK,
+		"ARMOR_MEK_ARCHIVE_RING", retired1+","+retired2,
+	)
+	setEnv(t, env...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Verify named key was loaded
+	if len(cfg.NamedKeys) != 1 {
+		t.Fatalf("NamedKeys count = %d, want 1", len(cfg.NamedKeys))
+	}
+
+	// Verify ring was loaded
+	if len(cfg.KeyRings) != 1 {
+		t.Fatalf("KeyRings count = %d, want 1", len(cfg.KeyRings))
+	}
+
+	ringMEKs, exists := cfg.KeyRings["archive"]
+	if !exists {
+		t.Fatal("Archive key ring not found")
+	}
+
+	// Should have 2 retired keys (64 bytes total)
+	if len(ringMEKs) != 64 {
+		t.Errorf("Ring MEKs length = %d, want 64", len(ringMEKs))
+	}
+}
+
+func TestLoadWithRingValidationErrors(t *testing.T) {
+	activeMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+
+	tests := []struct {
+		name        string
+		envVars     []string
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "ring without named key",
+			envVars: []string{
+				"ARMOR_MEK_ARCHIVE_RING", "1111111111111111111111111111111111111111111111111111111111111111",
+			},
+			expectError: true,
+			errorMsg:    "ARMOR_MEK_ARCHIVE_RING specified without ARMOR_MEK_ARCHIVE",
+		},
+		{
+			name: "invalid hex in ring",
+			envVars: []string{
+				"ARMOR_MEK_RING", "invalidhex,2222222222222222222222222222222222222222222222222222222222222222",
+			},
+			expectError: true,
+			errorMsg:    "invalid hex",
+		},
+		{
+			name: "duplicate active key in ring",
+			envVars: []string{
+				"ARMOR_MEK_RING", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			},
+			expectError: true,
+			errorMsg:    "duplicates the active key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := append(minimalEnv(), tt.envVars...)
+			setEnv(t, env...)
+
+			_, err := Load()
+			if !tt.expectError {
+				if err != nil {
+					t.Fatalf("Load() unexpected error: %v", err)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatal("Load() should have returned error")
+			}
+
+			if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+				t.Errorf("Error message should contain %q, got: %v", tt.errorMsg, err)
+			}
+		})
+	}
+}
+
+func TestRedactedWithKeyRings(t *testing.T) {
+	activeMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	retired1 := "1111111111111111111111111111111111111111111111111111111111111111"
+	retired2 := "2222222222222222222222222222222222222222222222222222222222222222"
+
+	env := append(minimalEnv(),
+		"ARMOR_MEK_RING", retired1+","+retired2,
+	)
+	setEnv(t, env...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	rc := cfg.Redacted()
+
+	// Verify fingerprints are present
+	if len(rc.KeyRingFingerprints) != 1 {
+		t.Fatalf("KeyRingFingerprints count = %d, want 1", len(rc.KeyRingFingerprints))
+	}
+
+	fingerprints, exists := rc.KeyRingFingerprints["default"]
+	if !exists {
+		t.Fatal("Default key ring fingerprints not found")
+	}
+
+	// Should have 2 fingerprints
+	if len(fingerprints) != 2 {
+		t.Errorf("Fingerprints count = %d, want 2", len(fingerprints))
+	}
+
+	// Verify each fingerprint is 16 hex characters
+	for _, fp := range fingerprints {
+		if len(fp) != 16 {
+			t.Errorf("Fingerprint length = %d, want 16", len(fp))
+		}
+		// Verify it's valid hex
+		_, err := hex.DecodeString(fp)
+		if err != nil {
+			t.Errorf("Fingerprint should be valid hex: %v", err)
+		}
+	}
+
+	// Verify actual MEKs don't appear in redacted output
+	output := fmt.Sprintf("%+v", rc)
+	if strings.Contains(output, retired1) || strings.Contains(output, retired2) {
+		t.Error("Ring MEKs should not appear in redacted output")
 	}
 }
