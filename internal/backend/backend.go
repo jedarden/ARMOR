@@ -63,6 +63,10 @@ type Backend interface {
 	// List objects in a bucket with optional prefix.
 	List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error)
 
+	// ListRaw lists objects without filtering .armor/ internal objects.
+	// Used by manifest and other internal components that need to see .armor/ keys.
+	ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error)
+
 	// Copy copies an object, optionally replacing metadata.
 	// Supports cross-bucket copy (srcBucket and dstBucket can be different).
 	Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error

@@ -62,6 +62,16 @@ func (b *NilBackend) List(ctx context.Context, bucket, prefix, delimiter, contin
 	}, nil
 }
 
+// ListRaw returns an empty result with no truncation (same as List for NilBackend).
+func (b *NilBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error) {
+	return &ListResult{
+		Objects:        []ObjectInfo{},
+		IsTruncated:    false,
+		NextToken:      "",
+		CommonPrefixes: []string{},
+	}, nil
+}
+
 // Copy is a no-op that returns nil (success).
 func (b *NilBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
 	return nil

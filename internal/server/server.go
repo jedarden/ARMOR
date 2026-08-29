@@ -97,6 +97,7 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// Create primary backend based on ARMOR_BACKEND setting
 	var primaryBackend backend.Backend
+	var err error
 	switch cfg.Backend {
 	case "filesystem":
 		// Filesystem backend as primary
@@ -398,7 +399,9 @@ func New(cfg *config.Config) (*Server, error) {
 		watcher = config.NewAuthFileWatcher(cfg.AuthFilePath, cfg.Credentials, envCreds)
 		if watcher != nil {
 			watcher.Start()
-			logger.Info("ARMOR auth file watcher started", "path", cfg.AuthFilePath)
+			logger.WithFields(map[string]interface{}{
+				"path": cfg.AuthFilePath,
+			}).Info("ARMOR auth file watcher started")
 		}
 	}
 
@@ -634,7 +637,6 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/upload", s.dashboard.UploadHandlerWithAuth())
 		mux.HandleFunc("/dashboard/download", s.dashboard.DownloadHandlerWithAuth())
 		mux.HandleFunc("/dashboard/delete", s.dashboard.DeleteHandlerWithAuth())
-		mux.HandleFunc("/dashboard/presign", s.dashboard.PresignHandlerWithAuth(adminClient, adminURL))
 
 		// Key rotation proxy handler (authenticated).
 		// The dashboard proxies rotation to the admin API over loopback; it must
@@ -643,6 +645,7 @@ func (s *Server) AdminHandler() http.Handler {
 			Timeout: 30 * time.Minute, // Key rotation can take a long time
 		}
 		adminURL := "http://" + s.config.AdminListen + "/admin/key/rotate"
+		mux.HandleFunc("/dashboard/presign", s.dashboard.PresignHandlerWithAuth(adminClient, adminURL))
 		mux.HandleFunc("/dashboard/admin/key/rotate", s.dashboard.KeyRotateHandlerWithAuth(adminClient, adminURL, s.config.AdminToken))
 		mux.HandleFunc("/dashboard/admin/key/status", s.dashboard.KeyRotateStatusHandlerWithAuth())
 	}
