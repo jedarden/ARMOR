@@ -7,61 +7,129 @@ import (
 )
 
 // TestParseSecondaryBackendConfigValid tests that when all required environment
-// variables are set correctly, a valid BackendConfig is returned.
+// variables are set correctly (using new names), a valid BackendConfig is returned.
 func TestParseSecondaryBackendConfigValid(t *testing.T) {
 	tests := []struct {
-		name     string
-		endpoint string
-		keyID    string
-		key      string
-		bucket   string
-		wantType    string
-		wantRegion string
+		name         string
+		endpoint     string
+		keyID        string
+		key          string
+		bucket       string
+		wantType     string
+		wantRegion   string
 		wantEndpoint string
-		wantKeyID  string
-		wantBucket string
+		wantKeyID    string
+		wantBucket   string
 	}{
 		{
-			name:     "standard us-east-005 config",
-			endpoint: "https://s3.us-east-005.backblazeb2.com",
-			keyID:    "keyId123",
-			key:      "secretKey456",
-			bucket:   "test-bucket",
-			wantType:    "b2",
-			wantRegion:  "us-east-005",
+			name:         "standard us-east-005 config",
+			endpoint:     "https://s3.us-east-005.backblazeb2.com",
+			keyID:        "keyId123",
+			key:          "secretKey456",
+			bucket:       "test-bucket",
+			wantType:     "b2",
+			wantRegion:   "us-east-005",
 			wantEndpoint: "https://s3.us-east-005.backblazeb2.com",
-			wantKeyID:   "keyId123",
-			wantBucket:  "test-bucket",
+			wantKeyID:    "keyId123",
+			wantBucket:   "test-bucket",
 		},
 		{
-			name:     "standard us-west-002 config",
-			endpoint: "https://s3.us-west-002.backblazeb2.com",
-			keyID:    "keyId789",
-			key:      "secretKey012",
-			bucket:   "my-bucket",
-			wantType:    "b2",
-			wantRegion:  "us-west-002",
+			name:         "standard us-west-002 config",
+			endpoint:     "https://s3.us-west-002.backblazeb2.com",
+			keyID:        "keyId789",
+			key:          "secretKey012",
+			bucket:       "my-bucket",
+			wantType:     "b2",
+			wantRegion:   "us-west-002",
 			wantEndpoint: "https://s3.us-west-002.backblazeb2.com",
-			wantKeyID:   "keyId789",
-			wantBucket:  "my-bucket",
+			wantKeyID:    "keyId789",
+			wantBucket:   "my-bucket",
 		},
 		{
-			name:     "http scheme",
-			endpoint: "http://s3.eu-central-003.backblazeb2.com",
-			keyID:    "keyIdABC",
-			key:      "secretKeyDEF",
-			bucket:   "http-bucket",
-			wantType:    "b2",
-			wantRegion:  "eu-central-003",
+			name:         "http scheme",
+			endpoint:     "http://s3.eu-central-003.backblazeb2.com",
+			keyID:        "keyIdABC",
+			key:          "secretKeyDEF",
+			bucket:       "http-bucket",
+			wantType:     "b2",
+			wantRegion:   "eu-central-003",
 			wantEndpoint: "http://s3.eu-central-003.backblazeb2.com",
-			wantKeyID:   "keyIdABC",
-			wantBucket:  "http-bucket",
+			wantKeyID:    "keyIdABC",
+			wantBucket:   "http-bucket",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set environment variables
+			// Set environment variables (use new names)
+			setEnv(t, "ARMOR_SECONDARY_B2_ENDPOINT", tt.endpoint)
+			setEnv(t, "ARMOR_SECONDARY_B2_KEY_ID", tt.keyID)
+			setEnv(t, "ARMOR_SECONDARY_B2_KEY", tt.key)
+			setEnv(t, "ARMOR_SECONDARY_B2_BUCKET", tt.bucket)
+
+			cfg, err := ParseSecondaryBackendConfig()
+
+			if err != nil {
+				t.Fatalf("ParseSecondaryBackendConfig() error: %v", err)
+			}
+
+			if cfg.Type != tt.wantType {
+				t.Errorf("Type = %q, want %q", cfg.Type, tt.wantType)
+			}
+			if cfg.Region != tt.wantRegion {
+				t.Errorf("Region = %q, want %q", cfg.Region, tt.wantRegion)
+			}
+			if cfg.Endpoint != tt.wantEndpoint {
+				t.Errorf("Endpoint = %q, want %q", cfg.Endpoint, tt.wantEndpoint)
+			}
+			if cfg.AccessKeyID != tt.wantKeyID {
+				t.Errorf("AccessKeyID = %q, want %q", cfg.AccessKeyID, tt.wantKeyID)
+			}
+			if cfg.SecretKey != tt.key {
+				t.Errorf("SecretKey mismatch (value should be %q)", tt.key)
+			}
+			if cfg.Bucket != tt.wantBucket {
+				t.Errorf("Bucket = %q, want %q", cfg.Bucket, tt.wantBucket)
+			}
+		})
+	}
+}
+
+// TestParseSecondaryBackendConfigDeprecatedNames tests that the old environment
+// variable names still work but trigger deprecation warnings.
+func TestParseSecondaryBackendConfigDeprecatedNames(t *testing.T) {
+	tests := []struct {
+		name         string
+		endpoint     string
+		keyID        string
+		key          string
+		bucket       string
+		wantType     string
+		wantRegion   string
+		wantEndpoint string
+		wantKeyID    string
+		wantBucket   string
+	}{
+		{
+			name:         "deprecated names - us-east-005",
+			endpoint:     "https://s3.us-east-005.backblazeb2.com",
+			keyID:        "deprecatedKeyId",
+			key:          "deprecatedSecret",
+			bucket:       "deprecated-bucket",
+			wantType:     "b2",
+			wantRegion:   "us-east-005",
+			wantEndpoint: "https://s3.us-east-005.backblazeb2.com",
+			wantKeyID:    "deprecatedKeyId",
+			wantBucket:   "deprecated-bucket",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear any new names that might be set
+			unsetEnv(t, "ARMOR_SECONDARY_B2_ENDPOINT", "ARMOR_SECONDARY_B2_KEY_ID", "ARMOR_SECONDARY_B2_KEY", "ARMOR_SECONDARY_B2_BUCKET")
+
+			// Set environment variables using old deprecated names
 			setEnv(t, "B2_ENDPOINT", tt.endpoint)
 			setEnv(t, "B2_KEY_ID", tt.keyID)
 			setEnv(t, "B2_KEY", tt.key)
@@ -95,11 +163,49 @@ func TestParseSecondaryBackendConfigValid(t *testing.T) {
 	}
 }
 
+// TestParseSecondaryBackendConfigNewNamesTakePrecedence tests that new variable
+// names take precedence over old names when both are set.
+func TestParseSecondaryBackendConfigNewNamesTakePrecedence(t *testing.T) {
+	// Set both old and new environment variables with different values
+	setEnv(t, "B2_ENDPOINT", "https://s3.old-backblazeb2.com")
+	setEnv(t, "B2_KEY_ID", "oldKeyId")
+	setEnv(t, "B2_KEY", "oldSecret")
+	setEnv(t, "B2_BUCKET", "old-bucket")
+
+	setEnv(t, "ARMOR_SECONDARY_B2_ENDPOINT", "https://s3.us-east-005.backblazeb2.com")
+	setEnv(t, "ARMOR_SECONDARY_B2_KEY_ID", "newKeyId")
+	setEnv(t, "ARMOR_SECONDARY_B2_KEY", "newSecret")
+	setEnv(t, "ARMOR_SECONDARY_B2_BUCKET", "new-bucket")
+
+	cfg, err := ParseSecondaryBackendConfig()
+
+	if err != nil {
+		t.Fatalf("ParseSecondaryBackendConfig() error: %v", err)
+	}
+
+	// Verify that new values were used, not old ones
+	if cfg.Endpoint != "https://s3.us-east-005.backblazeb2.com" {
+		t.Errorf("Endpoint = %q, want new value (https://s3.us-east-005.backblazeb2.com)", cfg.Endpoint)
+	}
+	if cfg.AccessKeyID != "newKeyId" {
+		t.Errorf("AccessKeyID = %q, want new value (newKeyId)", cfg.AccessKeyID)
+	}
+	if cfg.SecretKey != "newSecret" {
+		t.Errorf("SecretKey = %q, want new value (newSecret)", cfg.SecretKey)
+	}
+	if cfg.Bucket != "new-bucket" {
+		t.Errorf("Bucket = %q, want new value (new-bucket)", cfg.Bucket)
+	}
+}
+
 // TestParseSecondaryBackendConfigDisabled tests that when all environment
 // variables are unset, a zero BackendConfig is returned (no error).
 func TestParseSecondaryBackendConfigDisabled(t *testing.T) {
-	// Ensure all env vars are unset
-	unsetEnv(t, "B2_ENDPOINT", "B2_KEY_ID", "B2_KEY", "B2_BUCKET")
+	// Ensure all env vars are unset (both new and old names)
+	unsetEnv(t,
+		"ARMOR_SECONDARY_B2_ENDPOINT", "ARMOR_SECONDARY_B2_KEY_ID", "ARMOR_SECONDARY_B2_KEY", "ARMOR_SECONDARY_B2_BUCKET",
+		"B2_ENDPOINT", "B2_KEY_ID", "B2_KEY", "B2_BUCKET",
+	)
 
 	cfg, err := ParseSecondaryBackendConfig()
 
@@ -140,60 +246,63 @@ func TestParseSecondaryBackendConfigPartialConfig(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name:          "only endpoint set",
+			name:          "only endpoint set (new names)",
 			endpoint:      "https://s3.us-east-005.backblazeb2.com",
-			errorContains: "B2_KEY_ID is required",
+			errorContains: "ARMOR_SECONDARY_B2_KEY_ID is required",
 		},
 		{
-			name:          "endpoint and keyID set",
+			name:          "endpoint and keyID set (new names)",
 			endpoint:      "https://s3.us-east-005.backblazeb2.com",
 			keyID:         "keyId123",
-			errorContains: "B2_KEY is required",
+			errorContains: "ARMOR_SECONDARY_B2_KEY is required",
 		},
 		{
-			name:          "endpoint, keyID, key set",
+			name:          "endpoint, keyID, key set (new names)",
 			endpoint:      "https://s3.us-east-005.backblazeb2.com",
 			keyID:         "keyId123",
 			key:           "secretKey456",
-			errorContains: "B2_BUCKET is required",
+			errorContains: "ARMOR_SECONDARY_B2_BUCKET is required",
 		},
 		{
-			name:          "only keyID set",
+			name:          "only keyID set (new names)",
 			keyID:         "keyId123",
-			errorContains: "B2_ENDPOINT is required",
+			errorContains: "ARMOR_SECONDARY_B2_ENDPOINT is required",
 		},
 		{
-			name:          "keyID and key set",
+			name:          "keyID and key set (new names)",
 			keyID:         "keyId123",
 			key:           "secretKey456",
-			errorContains: "B2_ENDPOINT is required",
+			errorContains: "ARMOR_SECONDARY_B2_ENDPOINT is required",
 		},
 		{
-			name:          "keyID, key, bucket set",
+			name:          "keyID, key, bucket set (new names)",
 			keyID:         "keyId123",
 			key:           "secretKey456",
 			bucket:        "test-bucket",
-			errorContains: "B2_ENDPOINT is required",
+			errorContains: "ARMOR_SECONDARY_B2_ENDPOINT is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear all env vars first
-			unsetEnv(t, "B2_ENDPOINT", "B2_KEY_ID", "B2_KEY", "B2_BUCKET")
+			// Clear all env vars first (both new and old names)
+			unsetEnv(t,
+				"ARMOR_SECONDARY_B2_ENDPOINT", "ARMOR_SECONDARY_B2_KEY_ID", "ARMOR_SECONDARY_B2_KEY", "ARMOR_SECONDARY_B2_BUCKET",
+				"B2_ENDPOINT", "B2_KEY_ID", "B2_KEY", "B2_BUCKET",
+			)
 
-			// Set only the specified vars
+			// Set only the specified vars (use new names)
 			if tt.endpoint != "" {
-				setEnv(t, "B2_ENDPOINT", tt.endpoint)
+				setEnv(t, "ARMOR_SECONDARY_B2_ENDPOINT", tt.endpoint)
 			}
 			if tt.keyID != "" {
-				setEnv(t, "B2_KEY_ID", tt.keyID)
+				setEnv(t, "ARMOR_SECONDARY_B2_KEY_ID", tt.keyID)
 			}
 			if tt.key != "" {
-				setEnv(t, "B2_KEY", tt.key)
+				setEnv(t, "ARMOR_SECONDARY_B2_KEY", tt.key)
 			}
 			if tt.bucket != "" {
-				setEnv(t, "B2_BUCKET", tt.bucket)
+				setEnv(t, "ARMOR_SECONDARY_B2_BUCKET", tt.bucket)
 			}
 
 			_, err := ParseSecondaryBackendConfig()
@@ -220,39 +329,39 @@ func TestParseSecondaryBackendConfigEmptyStrings(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name:          "empty endpoint string",
+			name:          "empty endpoint string (new names)",
 			endpoint:      "",
 			keyID:         "keyId123",
 			key:           "secretKey456",
 			bucket:        "test-bucket",
-			errorContains: "B2_ENDPOINT is required",
+			errorContains: "ARMOR_SECONDARY_B2_ENDPOINT is required",
 		},
 		{
-			name:          "empty keyID string",
+			name:          "empty keyID string (new names)",
 			endpoint:      "https://s3.us-east-005.backblazeb2.com",
 			keyID:         "",
 			key:           "secretKey456",
 			bucket:        "test-bucket",
-			errorContains: "B2_KEY_ID is required",
+			errorContains: "ARMOR_SECONDARY_B2_KEY_ID is required",
 		},
 		{
-			name:          "empty key string",
+			name:          "empty key string (new names)",
 			endpoint:      "https://s3.us-east-005.backblazeb2.com",
 			keyID:         "keyId123",
 			key:           "",
 			bucket:        "test-bucket",
-			errorContains: "B2_KEY is required",
+			errorContains: "ARMOR_SECONDARY_B2_KEY is required",
 		},
 		{
-			name:          "empty bucket string",
+			name:          "empty bucket string (new names)",
 			endpoint:      "https://s3.us-east-005.backblazeb2.com",
 			keyID:         "keyId123",
 			key:           "secretKey456",
 			bucket:        "",
-			errorContains: "B2_BUCKET is required",
+			errorContains: "ARMOR_SECONDARY_B2_BUCKET is required",
 		},
 		{
-			name:          "all empty strings",
+			name:          "all empty strings (new names)",
 			endpoint:      "",
 			keyID:         "",
 			key:           "",
@@ -263,14 +372,17 @@ func TestParseSecondaryBackendConfigEmptyStrings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear all env vars first
-			unsetEnv(t, "B2_ENDPOINT", "B2_KEY_ID", "B2_KEY", "B2_BUCKET")
+			// Clear all env vars first (both new and old names)
+			unsetEnv(t,
+				"ARMOR_SECONDARY_B2_ENDPOINT", "ARMOR_SECONDARY_B2_KEY_ID", "ARMOR_SECONDARY_B2_KEY", "ARMOR_SECONDARY_B2_BUCKET",
+				"B2_ENDPOINT", "B2_KEY_ID", "B2_KEY", "B2_BUCKET",
+			)
 
-			// Set the vars (including empty strings)
-			setEnv(t, "B2_ENDPOINT", tt.endpoint)
-			setEnv(t, "B2_KEY_ID", tt.keyID)
-			setEnv(t, "B2_KEY", tt.key)
-			setEnv(t, "B2_BUCKET", tt.bucket)
+			// Set the vars (including empty strings) - use new names
+			setEnv(t, "ARMOR_SECONDARY_B2_ENDPOINT", tt.endpoint)
+			setEnv(t, "ARMOR_SECONDARY_B2_KEY_ID", tt.keyID)
+			setEnv(t, "ARMOR_SECONDARY_B2_KEY", tt.key)
+			setEnv(t, "ARMOR_SECONDARY_B2_BUCKET", tt.bucket)
 
 			cfg, err := ParseSecondaryBackendConfig()
 
@@ -296,7 +408,7 @@ func TestParseSecondaryBackendConfigEmptyStrings(t *testing.T) {
 }
 
 // TestParseSecondaryBackendConfigMalformedEndpoint tests various malformed
-// endpoint URL formats.
+// endpoint URL formats (using new names).
 func TestParseSecondaryBackendConfigMalformedEndpoint(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -352,10 +464,10 @@ func TestParseSecondaryBackendConfigMalformedEndpoint(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setEnv(t, "B2_ENDPOINT", tt.endpoint)
-			setEnv(t, "B2_KEY_ID", "keyId123")
-			setEnv(t, "B2_KEY", "secretKey456")
-			setEnv(t, "B2_BUCKET", "test-bucket")
+			setEnv(t, "ARMOR_SECONDARY_B2_ENDPOINT", tt.endpoint)
+			setEnv(t, "ARMOR_SECONDARY_B2_KEY_ID", "keyId123")
+			setEnv(t, "ARMOR_SECONDARY_B2_KEY", "secretKey456")
+			setEnv(t, "ARMOR_SECONDARY_B2_BUCKET", "test-bucket")
 
 			_, err := ParseSecondaryBackendConfig()
 
@@ -378,7 +490,7 @@ func TestParseSecondaryBackendConfigMalformedEndpoint(t *testing.T) {
 }
 
 // TestParseSecondaryBackendConfigEdgeCases tests edge cases and unusual
-// but valid configurations.
+// but valid configurations (using new names).
 func TestParseSecondaryBackendConfigEdgeCases(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -484,10 +596,10 @@ func TestParseSecondaryBackendConfigEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setEnv(t, "B2_ENDPOINT", tt.endpoint)
-			setEnv(t, "B2_KEY_ID", tt.keyID)
-			setEnv(t, "B2_KEY", tt.key)
-			setEnv(t, "B2_BUCKET", tt.bucket)
+			setEnv(t, "ARMOR_SECONDARY_B2_ENDPOINT", tt.endpoint)
+			setEnv(t, "ARMOR_SECONDARY_B2_KEY_ID", tt.keyID)
+			setEnv(t, "ARMOR_SECONDARY_B2_KEY", tt.key)
+			setEnv(t, "ARMOR_SECONDARY_B2_BUCKET", tt.bucket)
 
 			cfg, err := ParseSecondaryBackendConfig()
 
@@ -518,9 +630,9 @@ func TestParseSecondaryBackendConfigEdgeCases(t *testing.T) {
 // TestExtractRegionFromEndpoint tests the region extraction logic directly.
 func TestExtractRegionFromEndpoint(t *testing.T) {
 	tests := []struct {
-		hostname string
-		want     string
-		wantErr  bool
+		hostname    string
+		want        string
+		wantErr     bool
 		errContains string
 	}{
 		{
@@ -539,33 +651,33 @@ func TestExtractRegionFromEndpoint(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			hostname: "s3.backblazeb2.com",
-			want:     "",
-			wantErr:  true,
+			hostname:    "s3.backblazeb2.com",
+			want:        "",
+			wantErr:     true,
 			errContains: "match format",
 		},
 		{
-			hostname: "api.backblazeb2.com",
-			want:     "",
-			wantErr:  true,
+			hostname:    "api.backblazeb2.com",
+			want:        "",
+			wantErr:     true,
 			errContains: "match format",
 		},
 		{
-			hostname: "s3.us-east-005.example.com",
-			want:     "",
-			wantErr:  true,
+			hostname:    "s3.us-east-005.example.com",
+			want:        "",
+			wantErr:     true,
 			errContains: "must end with '.backblazeb2.com'",
 		},
 		{
-			hostname: "s3..backblazeb2.com",
-			want:     "",
-			wantErr:  true,
+			hostname:    "s3..backblazeb2.com",
+			want:        "",
+			wantErr:     true,
 			errContains: "region is empty",
 		},
 		{
-			hostname: "s3.us-east-005.backblazeb2.net",
-			want:     "",
-			wantErr:  true,
+			hostname:    "s3.us-east-005.backblazeb2.net",
+			want:        "",
+			wantErr:     true,
 			errContains: "must end with '.backblazeb2.com'",
 		},
 	}

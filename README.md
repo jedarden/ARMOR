@@ -335,6 +335,46 @@ credentials:
 - External secret systems: sync credentials from a central source
 - Hot reloading: change credentials without pod restart (future feature)
 
+### Secondary Backend
+
+ARMOR supports an optional secondary backend for disaster recovery, backup, or multi-region replication. Secondary backends are configured via environment variables in one of two formats:
+
+#### Colon-Separated Format (ARMOR_SECONDARY_BACKEND)
+
+The secondary backend can be configured via a single colon-separated environment variable:
+
+```bash
+ARMOR_SECONDARY_BACKEND="filesystem:/backup/armor"
+ARMOR_SECONDARY_BACKEND="b2:us-east-005:https://s3.us-east-005.backblazeb2.com:KEYID:SECRET:mybucket"
+```
+
+- **Filesystem format:** `filesystem:/path` - local filesystem backend at the given path
+- **B2 format:** `b2:region:endpoint:accessKeyId:secretKey:bucket` - B2 S3 backend
+
+When `ARMOR_SECONDARY_BACKEND` is unset or empty, the secondary backend is disabled.
+
+#### Individual Variable Format (ARMOR_SECONDARY_B2_*)
+
+For B2 secondary backends, individual environment variables can be used instead of the colon-separated format:
+
+```bash
+ARMOR_SECONDARY_B2_ENDPOINT=https://s3.us-east-005.backblazeb2.com
+ARMOR_SECONDARY_B2_KEY_ID=your-key-id
+ARMOR_SECONDARY_B2_KEY=your-key-secret
+ARMOR_SECONDARY_B2_BUCKET=your-bucket
+```
+
+**Deprecated variable names:** The following old variable names are still supported for backward compatibility but will be removed in a future release:
+
+- `B2_ENDPOINT` → Use `ARMOR_SECONDARY_B2_ENDPOINT` instead
+- `B2_KEY_ID` → Use `ARMOR_SECONDARY_B2_KEY_ID` instead
+- `B2_KEY` → Use `ARMOR_SECONDARY_B2_KEY` instead
+- `B2_BUCKET` → Use `ARMOR_SECONDARY_B2_BUCKET` instead
+
+When old variable names are used, ARMOR logs a deprecation warning at startup. New deployments should use the `ARMOR_SECONDARY_B2_*` names.
+
+**Precedence:** If both new and old variable names are set, the new names take precedence. The colon-separated `ARMOR_SECONDARY_BACKEND` format takes precedence over individual variables when both are configured.
+
 ## S3 API Coverage
 
 ### Transforming Operations (encryption/decryption applied)
