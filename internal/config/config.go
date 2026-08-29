@@ -255,6 +255,17 @@ func Load() (*Config, error) {
 		errs = append(errs, err)
 	}
 
+	// Load credentials from ARMOR_AUTH_FILE (YAML) and merge with env credentials
+	// Env credentials win on name collision (logged at WARN)
+	authFile, err := LoadAuthFile()
+	if err != nil {
+		errs = append(errs, err)
+	} else if authFile != nil {
+		if err := MergeFileCredentials(cfg, authFile); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	// Writer ID (default to hostname)
 	cfg.WriterID = os.Getenv("ARMOR_WRITER_ID")
 	if cfg.WriterID == "" {
@@ -666,4 +677,221 @@ func parseActions(verbStr string) (map[string]bool, error) {
 		actions[v] = true
 	}
 	return actions, nil
+}
+
+// RedactedConfig represents a configuration with all secret values redacted.
+// Secret fields are replaced with "<set>" or "<unset>" indicators.
+type RedactedConfig struct {
+	// Server configuration
+	Listen      string `json:"listen"`
+	AdminListen string `json:"admin_listen"`
+
+	// B2 backend configuration
+	B2Region          string `json:"b2_region"`
+	B2Endpoint        string `json:"b2_endpoint"`
+	B2AccessKeyID     string `json:"b2_access_key_id"`
+	B2SecretAccessKey string `json:"b2_secret_access_key"`
+	Bucket            string `json:"bucket"`
+
+	// Prefix for all keys (shared bucket support via ADR-001)
+	Prefix string `json:"prefix"`
+
+	// Cloudflare download configuration
+	CFDomain string `json:"cf_domain"`
+
+	// Canary configuration
+	CanaryDisabled bool `json:"canary_disabled"`
+
+	// Encryption configuration
+	MEK       string `json:"mek"` // "<set>" or "<unset>"
+	BlockSize int    `json:"block_size"`
+
+	// Compress configuration
+	Compress bool `json:"compress"`
+
+	// Read path configuration
+	ReadConcurrency int `json:"read_concurrency"`
+
+	// Multi-key configuration
+	NamedKeys map[string]string `json:"named_keys"` // key name -> "<set>" or "<unset>"
+	KeyRoutes []KeyRoute        `json:"key_routes"`
+
+	// Authentication credentials for ARMOR clients
+	AuthAccessKey string `json:"auth_access_key"`
+	AuthSecretKey string `json:"auth_secret_key"` // "<set>" or "<unset>"
+
+	// Multi-credential support
+	Credentials map[string]RedactedCredential `json:"credentials"`
+
+	// Writer ID for provenance chain
+	WriterID string `json:"writer_id"`
+
+	// Cache configuration
+	CacheMaxEntries int `json:"cache_max_entries"`
+	CacheTTL        int `json:"cache_ttl"`
+
+	// List cache configuration
+	ListCacheMaxEntries int `json:"list_cache_max_entries"`
+	ListCacheTTL        int `json:"list_cache_ttl"`
+
+	// Pre-signed URL configuration
+	PresignSecret  string `json:"presign_secret"`  // "<set>" or "<unset>"
+	PresignBaseURL string `json:"presign_base_url"`
+
+	// Readiness probe configuration
+	ReadyzCacheTTL int `json:"readyz_cache_ttl"`
+
+	// Manifest index configuration (Phase 4)
+	ManifestEnabled             bool   `json:"manifest_enabled"`
+	ManifestPrefix              string `json:"manifest_prefix"`
+	ManifestCompactionInterval  int    `json:"manifest_compaction_interval"`
+	ManifestCompactionThreshold int    `json:"manifest_compaction_threshold"`
+
+	// Dashboard authentication configuration
+	DashboardUser  string `json:"dashboard_user"`
+	DashboardPass  string `json:"dashboard_pass"`  // "<set>" or "<unset>"
+	DashboardToken string `json:"dashboard_token"` // "<set>" or "<unset>"
+
+	// Admin API bearer token
+	AdminToken string `json:"admin_token"` // "<set>" or "<unset>"
+
+	// Log level configuration
+	LogLevel string `json:"log_level"`
+
+	// Primary backend configuration
+	Backend string `json:"backend"` // "b2" or "filesystem"
+	FSPath  string `json:"fs_path"`
+
+	// Secondary backend configuration (ADR-006)
+	SecondaryBackend     string `json:"secondary_backend"`
+	SecondaryBackendType  string `json:"secondary_backend_type"`
+	SecondaryBackendPath string `json:"secondary_backend_path"`
+}
+
+// RedactedCredential represents a credential with secret key redacted.
+type RedactedCredential struct {
+	AccessKey string         `json:"access_key"`
+	SecretKey string         `json:"secret_key"` // "<set>" or "<unset>"
+	ACLs      []acl.ACLEntry `json:"acls"`
+}
+
+// Redacted returns a configuration with all secret values replaced with
+// "<set>" or "<unset>" indicators. This is safe to log without exposing
+// sensitive material.
+func (c *Config) Redacted() *RedactedConfig {
+	rc := &RedactedConfig{
+		Listen:       c.Listen,
+		AdminListen:  c.AdminListen,
+		B2Region:     c.B2Region,
+		B2Endpoint:   c.B2Endpoint,
+		B2AccessKeyID: c.B2AccessKeyID,
+		Bucket:       c.Bucket,
+		Prefix:       c.Prefix,
+		CFDomain:     c.CFDomain,
+		CanaryDisabled: c.CanaryDisabled,
+		BlockSize:    c.BlockSize,
+		Compress:     c.Compress,
+		ReadConcurrency: c.ReadConcurrency,
+		AuthAccessKey: c.AuthAccessKey,
+		WriterID:     c.WriterID,
+		CacheMaxEntries: c.CacheMaxEntries,
+		CacheTTL:        c.CacheTTL,
+		ListCacheMaxEntries: c.ListCacheMaxEntries,
+		ListCacheTTL:        c.ListCacheTTL,
+		PresignBaseURL: c.PresignBaseURL,
+		ReadyzCacheTTL: c.ReadyzCacheTTL,
+		ManifestEnabled:             c.ManifestEnabled,
+		ManifestPrefix:              c.ManifestPrefix,
+		ManifestCompactionInterval:  c.ManifestCompactionInterval,
+		ManifestCompactionThreshold: c.ManifestCompactionThreshold,
+		DashboardUser:  c.DashboardUser,
+		LogLevel:       c.LogLevel,
+		Backend:        c.Backend,
+		FSPath:         c.FSPath,
+		SecondaryBackend:     c.SecondaryBackend,
+		SecondaryBackendType:  c.SecondaryBackendType,
+		SecondaryBackendPath:  c.SecondaryBackendPath,
+	}
+
+	// Redact B2 secret key
+	if c.B2SecretAccessKey != "" {
+		rc.B2SecretAccessKey = "<set>"
+	} else {
+		rc.B2SecretAccessKey = "<unset>"
+	}
+
+	// Redact MEK
+	if len(c.MEK) > 0 {
+		rc.MEK = "<set>"
+	} else {
+		rc.MEK = "<unset>"
+	}
+
+	// Redact auth secret key
+	if c.AuthSecretKey != "" {
+		rc.AuthSecretKey = "<set>"
+	} else {
+		rc.AuthSecretKey = "<unset>"
+	}
+
+	// Redact presign secret
+	if len(c.PresignSecret) > 0 {
+		rc.PresignSecret = "<set>"
+	} else {
+		rc.PresignSecret = "<unset>"
+	}
+
+	// Redact dashboard credentials
+	if c.DashboardPass != "" {
+		rc.DashboardPass = "<set>"
+	} else {
+		rc.DashboardPass = "<unset>"
+	}
+
+	if c.DashboardToken != "" {
+		rc.DashboardToken = "<set>"
+	} else {
+		rc.DashboardToken = "<unset>"
+	}
+
+	// Redact admin token
+	if c.AdminToken != "" {
+		rc.AdminToken = "<set>"
+	} else {
+		rc.AdminToken = "<unset>"
+	}
+
+	// Redact named keys
+	rc.NamedKeys = make(map[string]string)
+	for name, mek := range c.NamedKeys {
+		if len(mek) > 0 {
+			rc.NamedKeys[name] = "<set>"
+		} else {
+			rc.NamedKeys[name] = "<unset>"
+		}
+	}
+
+	// Copy key routes (no secrets in routes)
+	rc.KeyRoutes = make([]KeyRoute, len(c.KeyRoutes))
+	copy(rc.KeyRoutes, c.KeyRoutes)
+
+	// Redact credentials
+	rc.Credentials = make(map[string]RedactedCredential)
+	for accessKey, cred := range c.Credentials {
+		rc.Credentials[accessKey] = RedactedCredential{
+			AccessKey: cred.AccessKey,
+			SecretKey: boolToSetUnset(cred.SecretKey != ""),
+			ACLs:      cred.ACLs,
+		}
+	}
+
+	return rc
+}
+
+// boolToSetUnset converts a boolean to "<set>" or "<unset>".
+func boolToSetUnset(set bool) string {
+	if set {
+		return "<set>"
+	}
+	return "<unset>"
 }

@@ -267,6 +267,48 @@ ARMOR_AUTH_CROSSBUCKET_ACL="bucket-primary:*:get+put+delete+list,bucket-audit:lo
 
 If a credential has no `ACL` defined, it has full access to the configured `ARMOR_BUCKET`. This is the default for the unnamed `ARMOR_AUTH_*` pair.
 
+#### Credentials from a YAML File
+
+For deployments managed by Kubernetes or external secret systems, credentials can be loaded from a YAML file:
+
+```bash
+ARMOR_AUTH_FILE=/etc/armor/credentials.yaml
+```
+
+The YAML file uses the same schema and ACL parser as environment triplets:
+
+```yaml
+credentials:
+  - name: FORGEJO_BACKUP
+    access_key: "forgejo-backup-key"
+    secret_key: "forgejo-backup-secret"
+    acl: "iad-ci:forgejo-backup/*:put+list"
+
+  - name: READONLY_USER
+    access_key: "readonly-key"
+    secret_key: "readonly-secret"
+    acl: "mybucket:readonly/*:get+list"
+
+  - name: FULL_ACCESS
+    access_key: "full-key"
+    secret_key: "full-secret"
+    # No ACL means full access to configured bucket
+```
+
+**File Loading Behavior**
+
+- File credentials are **merged** with environment-defined credentials
+- **Environment credentials win** on access key collision (logged at WARN)
+- Duplicate access keys within the file are skipped (first wins)
+- File permissions are not checked (Kubernetes mounts manage this)
+- Validation errors name the entry index and field, never the values
+
+**Why Use a File?**
+
+- Kubernetes deployments: mount a single Secret/ConfigMap instead of many env vars
+- External secret systems: sync credentials from a central source
+- Hot reloading: change credentials without pod restart (future feature)
+
 ## S3 API Coverage
 
 ### Transforming Operations (encryption/decryption applied)
