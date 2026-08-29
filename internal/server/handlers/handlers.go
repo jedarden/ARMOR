@@ -387,10 +387,24 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	// Wrap DEK with MEK
-	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	// Wrap DEK with MEK and encode fingerprint in v2 format
+	wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(mek, dek)
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
+		return
+	}
+
+	// Parse v2 format to extract fingerprint and wrapped DEK bytes
+	// Format: v2:<fp16>:<base64>
+	parts := strings.SplitN(wrappedDEKStr, ":", 3)
+	if len(parts) != 3 || parts[0] != "v2" {
+		h.writeError(w, r, "InternalError", "Invalid wrapped DEK format from WrapDEKWithFingerprint", 500)
+		return
+	}
+	mekFingerprint := parts[1]
+	wrappedDEK, err := base64.StdEncoding.DecodeString(parts[2])
+	if err != nil {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode wrapped DEK: %v", err), 500)
 		return
 	}
 
@@ -416,7 +430,13 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	// Create envelope header with ORIGINAL plaintext size (before compression)
-	header, err := crypto.NewEnvelopeHeader(iv, plaintextSize, h.config.BlockSize, plaintextSHA)
+	// Use v3 format when Config.FormatWriteVersion is 3
+	envelopeVersion := crypto.Version2
+	if h.config.FormatWriteVersion == 3 {
+		envelopeVersion = crypto.Version3
+	}
+
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, plaintextSize, h.config.BlockSize, plaintextSHA, envelopeVersion)
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
 		return
@@ -438,42 +458,82 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	// Encrypt data (possibly compressed)
-	encryptor, err := crypto.NewEncryptor(dek, iv, h.config.BlockSize)
-	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
-		return
-	}
+	// Build envelope based on version
+	var envelope []byte
+	var envelopeSize int64
 
-	encrypted, hmacTable, err := encryptor.Encrypt(dataToEncrypt)
-	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
-		return
-	}
+	if envelopeVersion == crypto.Version3 {
+		// v3 format: header || blocks || trailer block table
+		encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, h.config.BlockSize, crypto.Version3)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
+			return
+		}
 
-	// Build envelope: header + encrypted blocks + HMAC table
-	envelopeSize := int64(len(headerBytes)) + int64(len(encrypted)) + int64(len(hmacTable))
-	envelope := make([]byte, 0, envelopeSize)
-	envelope = append(envelope, headerBytes...)
-	envelope = append(envelope, encrypted...)
-	envelope = append(envelope, hmacTable...)
+		// Encrypt with v3 and produce trailer block table
+		encrypted, blockTable, err := encryptor.EncryptV3(dataToEncrypt, false) // Compression off per compress-rules bead
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt v3: %v", err), 500)
+			return
+		}
+
+		// Encode trailer block table
+		trailerTable, err := blockTable.Encode()
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encode block table: %v", err), 500)
+			return
+		}
+
+		// Build v3 envelope: header + encrypted blocks + trailer block table
+		envelopeSize = int64(len(headerBytes)) + int64(len(encrypted)) + int64(len(trailerTable))
+		envelope = make([]byte, 0, envelopeSize)
+		envelope = append(envelope, headerBytes...)
+		envelope = append(envelope, encrypted...)
+		envelope = append(envelope, trailerTable...)
+	} else {
+		// v2 format: header || blocks || inline HMAC table
+		encryptor, err := crypto.NewEncryptor(dek, iv, h.config.BlockSize)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
+			return
+		}
+
+		encrypted, hmacTable, err := encryptor.Encrypt(dataToEncrypt)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to encrypt: %v", err), 500)
+			return
+		}
+
+		// Build v2 envelope: header + encrypted blocks + HMAC table
+		envelopeSize = int64(len(headerBytes)) + int64(len(encrypted)) + int64(len(hmacTable))
+		envelope = make([]byte, 0, envelopeSize)
+		envelope = append(envelope, headerBytes...)
+		envelope = append(envelope, encrypted...)
+		envelope = append(envelope, hmacTable...)
+	}
 
 	// Compute plaintext ETag (MD5) on ORIGINAL plaintext
 	etag := backend.ComputeETag(plaintext)
 
-	// Build metadata
+	// Build metadata with version matching envelope format
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
+	metaVersion := 2
+	if envelopeVersion == crypto.Version3 {
+		metaVersion = 3
+	}
+
 	meta := (&backend.ARMORMetadata{
-		Version:         2,
+		Version:         metaVersion,
 		BlockSize:       h.config.BlockSize,
 		PlaintextSize:   plaintextSize,
 		ContentType:     contentType,
 		IV:              iv,
 		WrappedDEK:      wrappedDEK,
+		MEKFingerprint:  mekFingerprint,
 		PlaintextSHA:    hex.EncodeToString(plaintextSHA[:]),
 		ETag:            etag,
 		KeyID:           keyID,
@@ -506,7 +566,12 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// without provenance data — this is acceptable as a degradation mode.
 	}
 	if h.manifest != nil {
-		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag, chainEntry, int64(len(envelope)))
+		// For v3 objects, pass CiphertextSize for trailer block table location
+		var ciphertextSize int64
+		if envelopeVersion == crypto.Version3 {
+			ciphertextSize = int64(len(envelope))
+		}
+		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, mekFingerprint, h.config.BlockSize, contentType, etag, chainEntry, ciphertextSize)
 	}
 
 	// Record provenance (fallback when manifest is disabled)
@@ -611,15 +676,37 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		return
 	}
 
-	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	// Wrap DEK with MEK and encode fingerprint in v2 format
+	wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(mek, dek)
 	if err != nil {
 		tmpFile.Close()
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
 		return
 	}
 
-	// Create envelope header
-	header, err := crypto.NewEnvelopeHeader(iv, plaintextSize, h.config.BlockSize, plaintextSHA)
+	// Parse v2 format to extract fingerprint and wrapped DEK bytes
+	// Format: v2:<fp16>:<base64>
+	parts := strings.SplitN(wrappedDEKStr, ":", 3)
+	if len(parts) != 3 || parts[0] != "v2" {
+		tmpFile.Close()
+		h.writeError(w, r, "InternalError", "Invalid wrapped DEK format from WrapDEKWithFingerprint", 500)
+		return
+	}
+	mekFingerprint := parts[1]
+	wrappedDEK, err := base64.StdEncoding.DecodeString(parts[2])
+	if err != nil {
+		tmpFile.Close()
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode wrapped DEK: %v", err), 500)
+		return
+	}
+
+	// Create envelope header with version based on FormatWriteVersion
+	envelopeVersion := crypto.Version2
+	if h.config.FormatWriteVersion == 3 {
+		envelopeVersion = crypto.Version3
+	}
+
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, plaintextSize, h.config.BlockSize, plaintextSHA, envelopeVersion)
 	if err != nil {
 		tmpFile.Close()
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create header: %v", err), 500)
@@ -633,18 +720,19 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		return
 	}
 
-	// Create encryptor
-	encryptor, err := crypto.NewEncryptor(dek, iv, h.config.BlockSize)
-	if err != nil {
-		tmpFile.Close()
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to create encryptor: %v", err), 500)
-		return
-	}
-
-	// Calculate envelope size
+	// Calculate envelope size based on version
 	blockCount := crypto.ComputeBlockCount(plaintextSize, h.config.BlockSize)
-	hmacTableSize := int64(blockCount) * crypto.HMACSize
-	envelopeSize := int64(len(headerBytes)) + plaintextSize + hmacTableSize
+	var envelopeSize int64
+
+	if envelopeVersion == crypto.Version3 {
+		// v3: header + blocks + trailer block table (36 bytes per block)
+		trailerTableSize := int64(blockCount) * crypto.BlockTableEntrySize
+		envelopeSize = int64(len(headerBytes)) + plaintextSize + trailerTableSize
+	} else {
+		// v2: header + blocks + inline HMAC table (32 bytes per block)
+		hmacTableSize := int64(blockCount) * crypto.HMACSize
+		envelopeSize = int64(len(headerBytes)) + plaintextSize + hmacTableSize
+	}
 
 	// Phase 3: Stream encrypt via io.Pipe
 	pr, pw := io.Pipe()
@@ -661,23 +749,56 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 			return
 		}
 
-		// Stream encrypt the plaintext
-		hmacTable, err := encryptor.EncryptStream(tmpFile, pw, plaintextSize)
-		if err != nil {
-			encErr <- fmt.Errorf("encryption failed: %w", err)
-			return
-		}
+		if envelopeVersion == crypto.Version3 {
+			// Stream encrypt with v3 and produce trailer block table
+			encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, h.config.BlockSize, crypto.Version3)
+			if err != nil {
+				encErr <- fmt.Errorf("failed to create v3 encryptor: %w", err)
+				return
+			}
 
-		// Write HMAC table
-		if _, err := pw.Write(hmacTable); err != nil {
-			encErr <- fmt.Errorf("failed to write HMAC table: %w", err)
-			return
+			blockTable, err := encryptor.EncryptV3Stream(tmpFile, pw, plaintextSize, false) // Compression off per compress-rules bead
+			if err != nil {
+				encErr <- fmt.Errorf("v3 encryption failed: %w", err)
+				return
+			}
+
+			// Write trailer block table
+			trailerTable, err := blockTable.Encode()
+			if err != nil {
+				encErr <- fmt.Errorf("failed to encode block table: %w", err)
+				return
+			}
+
+			if _, err := pw.Write(trailerTable); err != nil {
+				encErr <- fmt.Errorf("failed to write trailer block table: %w", err)
+				return
+			}
+		} else {
+			// Stream encrypt with v2 (inline HMAC table)
+			encryptor, err := crypto.NewEncryptor(dek, iv, h.config.BlockSize)
+			if err != nil {
+				encErr <- fmt.Errorf("failed to create encryptor: %w", err)
+				return
+			}
+
+			hmacTable, err := encryptor.EncryptStream(tmpFile, pw, plaintextSize)
+			if err != nil {
+				encErr <- fmt.Errorf("encryption failed: %w", err)
+				return
+			}
+
+			// Write HMAC table
+			if _, err := pw.Write(hmacTable); err != nil {
+				encErr <- fmt.Errorf("failed to write HMAC table: %w", err)
+				return
+			}
 		}
 
 		encErr <- nil
 	}()
 
-	// Build metadata
+	// Build metadata with version matching envelope format
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -688,8 +809,13 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 	// Use SHA-256 truncated to 16 bytes as ETag for streaming (non-standard but works)
 	etag := hex.EncodeToString(plaintextSHA[:16])
 
+	metaVersion := 2
+	if envelopeVersion == crypto.Version3 {
+		metaVersion = 3
+	}
+
 	meta := (&backend.ARMORMetadata{
-		Version:       2,
+		Version:       metaVersion,
 		BlockSize:     h.config.BlockSize,
 		PlaintextSize: plaintextSize,
 		ContentType:   contentType,
@@ -742,7 +868,12 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 		}
 	}
 	if h.manifest != nil {
-		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag, chainEntry, envelopeSize)
+		// For v3 objects, pass CiphertextSize for trailer block table location
+		var ciphertextSize int64
+		if envelopeVersion == crypto.Version3 {
+			ciphertextSize = envelopeSize
+		}
+		h.manifest.RecordPut(bucket, key, plaintextSize, hex.EncodeToString(plaintextSHA[:]), iv, wrappedDEK, h.config.BlockSize, contentType, etag, chainEntry, ciphertextSize)
 	}
 
 	// Record provenance (fallback when manifest is disabled)
@@ -841,19 +972,52 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	// Get the MEK for this object using the key ID from metadata
-	mek, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
-	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get decryption key: %v", err), 500)
-		return
+	// Unwrap DEK using fingerprint with ring fallback
+	// Build a lookup function for the keymanager to find MEK by fingerprint
+	lookupMEK := func(keyID, fingerprint string) ([]byte, bool) {
+		return h.keyManager.GetMEKByFingerprint(keyID, fingerprint)
 	}
 
-	// Unwrap DEK
-	dek, err := crypto.UnwrapDEK(mek, armorMeta.WrappedDEK)
+	// Build a legacy fallback that tries the active key then ring keys
+	legacyFallback := func(wrappedDEK []byte) ([]byte, error) {
+		// Try active key first
+		mek, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get active key: %w", err)
+		}
+		dek, err := crypto.UnwrapDEK(mek, wrappedDEK)
+		if err == nil {
+			return dek, nil
+		}
+
+		// Try ring keys in order
+		ring := h.keyManager.Ring(armorMeta.KeyID)
+		for _, ringEntry := range ring {
+			dek, err := crypto.UnwrapDEK(ringEntry.MEK, wrappedDEK)
+			if err == nil {
+				return dek, nil
+			}
+		}
+
+		return nil, fmt.Errorf("no key in active or ring can unwrap DEK")
+	}
+
+	wrappedDEKStr := base64.StdEncoding.EncodeToString(armorMeta.WrappedDEK)
+	if armorMeta.MEKFingerprint != "" {
+		// Already have fingerprint from metadata, build v2 format
+		wrappedDEKStr = fmt.Sprintf("v2:%s:%s", armorMeta.MEKFingerprint, wrappedDEKStr)
+	}
+
+	dek, usedFingerprint, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, lookupMEK, legacyFallback)
 	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
+		if err == crypto.ErrFingerprintNotFound {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to unwrap DEK: MEK fingerprint %s not found in active or ring keys", armorMeta.MEKFingerprint), 500)
+		} else {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
+		}
 		return
 	}
+	_ = usedFingerprint // Currently unused, but available for logging/auditing
 
 	plaintextSize := armorMeta.PlaintextSize
 
@@ -1272,14 +1436,38 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 // It decrypts part-by-part using offset-aware decryption, which is necessary because
 // parts may start at arbitrary byte offsets (not just block boundaries).
 func (h *Handlers) decryptNonUniformParts(dataBody io.ReadCloser, pw *io.PipeWriter, plaintextSize int64, blockSize int, decryptor *crypto.Decryptor, armorMeta *backend.ARMORMetadata, cumulativePartSizes map[int]int64, hmacTable []byte, accumulator *backend.MultipartDigestAccumulator, wholeHash hash.Hash) error {
-	// Get DEK from decryptor - we need to access the DEK that was already unwrapped
-	// The Decryptor doesn't expose DEK directly, so we need to get it from the key manager
-	mek, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
-	if err != nil {
-		return fmt.Errorf("failed to get MEK: %w", err)
+	// Unwrap DEK using fingerprint with ring fallback
+	lookupMEK := func(keyID, fingerprint string) ([]byte, bool) {
+		return h.keyManager.GetMEKByFingerprint(keyID, fingerprint)
 	}
 
-	dek, err := crypto.UnwrapDEK(mek, armorMeta.WrappedDEK)
+	legacyFallback := func(wrappedDEK []byte) ([]byte, error) {
+		mek, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get active key: %w", err)
+		}
+		dek, err := crypto.UnwrapDEK(mek, wrappedDEK)
+		if err == nil {
+			return dek, nil
+		}
+
+		ring := h.keyManager.Ring(armorMeta.KeyID)
+		for _, ringEntry := range ring {
+			dek, err := crypto.UnwrapDEK(ringEntry.MEK, wrappedDEK)
+			if err == nil {
+				return dek, nil
+			}
+		}
+
+		return nil, fmt.Errorf("no key in active or ring can unwrap DEK")
+	}
+
+	wrappedDEKStr := base64.StdEncoding.EncodeToString(armorMeta.WrappedDEK)
+	if armorMeta.MEKFingerprint != "" {
+		wrappedDEKStr = fmt.Sprintf("v2:%s:%s", armorMeta.MEKFingerprint, wrappedDEKStr)
+	}
+
+	dek, _, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, lookupMEK, legacyFallback)
 	if err != nil {
 		return fmt.Errorf("failed to unwrap DEK: %w", err)
 	}
@@ -1906,8 +2094,38 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 			return
 		}
 
-		// Unwrap DEK with source MEK
-		dek, err := crypto.UnwrapDEK(srcMEK, armorMeta.WrappedDEK)
+		// Unwrap DEK with source MEK using fingerprint with ring fallback
+		lookupMEK := func(keyID, fingerprint string) ([]byte, bool) {
+			return h.keyManager.GetMEKByFingerprint(keyID, fingerprint)
+		}
+
+		legacyFallback := func(wrappedDEK []byte) ([]byte, error) {
+			mek, err := h.keyManager.GetMEKByID(armorMeta.KeyID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get active key: %w", err)
+			}
+			dek, err := crypto.UnwrapDEK(mek, wrappedDEK)
+			if err == nil {
+				return dek, nil
+			}
+
+			ring := h.keyManager.Ring(armorMeta.KeyID)
+			for _, ringEntry := range ring {
+				dek, err := crypto.UnwrapDEK(ringEntry.MEK, wrappedDEK)
+				if err == nil {
+					return dek, nil
+				}
+			}
+
+			return nil, fmt.Errorf("no key in active or ring can unwrap DEK")
+		}
+
+		wrappedDEKStr := base64.StdEncoding.EncodeToString(armorMeta.WrappedDEK)
+		if armorMeta.MEKFingerprint != "" {
+			wrappedDEKStr = fmt.Sprintf("v2:%s:%s", armorMeta.MEKFingerprint, wrappedDEKStr)
+		}
+
+		dek, _, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, lookupMEK, legacyFallback)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
 			return
@@ -1921,23 +2139,38 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 		}
 
 		// Re-wrap DEK with destination MEK (handles key rotation and cross-prefix copy)
-		wrappedDEK, err := crypto.WrapDEK(dstMEK, dek)
+		// Wrap with destination MEK and encode fingerprint in v2 format
+		wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(dstMEK, dek)
 		if err != nil {
 			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to re-wrap DEK: %v", err), 500)
 			return
 		}
 
+		// Parse v2 format to extract fingerprint and wrapped DEK bytes
+		parts := strings.SplitN(wrappedDEKStr, ":", 3)
+		if len(parts) != 3 || parts[0] != "v2" {
+			h.writeError(w, r, "InternalError", "Invalid wrapped DEK format from WrapDEKWithFingerprint", 500)
+			return
+		}
+		dstMekFingerprint := parts[1]
+		wrappedDEK, err := base64.StdEncoding.DecodeString(parts[2])
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode wrapped DEK: %v", err), 500)
+			return
+		}
+
 		// Build new metadata with re-wrapped DEK and destination key ID
 		newMeta := (&backend.ARMORMetadata{
-			Version:       armorMeta.Version,
-			BlockSize:     armorMeta.BlockSize,
-			PlaintextSize: armorMeta.PlaintextSize,
-			ContentType:   armorMeta.ContentType,
-			IV:            armorMeta.IV,
-			WrappedDEK:    wrappedDEK,
-			PlaintextSHA:  armorMeta.PlaintextSHA,
-			ETag:          armorMeta.ETag,
-			KeyID:         dstKeyID,
+			Version:        armorMeta.Version,
+			BlockSize:      armorMeta.BlockSize,
+			PlaintextSize:  armorMeta.PlaintextSize,
+			ContentType:    armorMeta.ContentType,
+			IV:             armorMeta.IV,
+			WrappedDEK:     wrappedDEK,
+			MEKFingerprint: dstMekFingerprint,
+			PlaintextSHA:   armorMeta.PlaintextSHA,
+			ETag:           armorMeta.ETag,
+			KeyID:          dstKeyID,
 		}).ToMetadata()
 
 		// Handle REPLACE directive - copy custom metadata headers from request
@@ -2539,10 +2772,24 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Wrap DEK with MEK
-	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	// Wrap DEK with MEK and encode fingerprint in v2 format
+	wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(mek, dek)
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to wrap DEK: %v", err), 500)
+		return
+	}
+
+	// Parse v2 format to extract fingerprint and wrapped DEK bytes
+	// Format: v2:<fp16>:<base64>
+	parts := strings.SplitN(wrappedDEKStr, ":", 3)
+	if len(parts) != 3 || parts[0] != "v2" {
+		h.writeError(w, r, "InternalError", "Invalid wrapped DEK format from WrapDEKWithFingerprint", 500)
+		return
+	}
+	mekFingerprint := parts[1]
+	wrappedDEK, err := base64.StdEncoding.DecodeString(parts[2])
+	if err != nil {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode wrapped DEK: %v", err), 500)
 		return
 	}
 
@@ -2571,26 +2818,56 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Save multipart state to B2
-	state := &backend.MultipartState{
-		UploadID:    uploadID,
-		Bucket:      bucket,
-		Key:         key,
-		IV:          iv,
-		WrappedDEK:  wrappedDEK,
-		BlockSize:   h.config.BlockSize,
-		Created:     time.Now(),
-		ContentType: contentType,
-		KeyID:       keyID,
-		PartHMACs:   make(map[int]string),
-		PartSizes:   make(map[int]int64),
-	}
-
+	// The format version is fixed at CreateMultipartUpload time based on the server's
+	// ARMOR_FORMAT_VERSION configuration and does not change during the upload's lifetime.
+	formatVersion := h.config.FormatWriteVersion
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
-	if err := manager.SaveState(ctx, state); err != nil {
-		// Try to abort the upload on state save failure
-		h.backend.AbortMultipartUpload(ctx, bucket, key, uploadID)
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save multipart state: %v", err), 500)
-		return
+
+	if formatVersion == 3 {
+		// V3 format: save metadata to .armor/multipart/<id>/meta.json
+		// No per-part state yet — that's written by each UploadPart
+		metadata := &backend.MultipartMetadataV3{
+			UploadID:       uploadID,
+			Bucket:         bucket,
+			Key:            key,
+			IV:             iv,
+			WrappedDEK:     wrappedDEK,
+			MEKFingerprint: mekFingerprint,
+			BlockSize:      h.config.BlockSize,
+			Created:        time.Now(),
+			ContentType:    contentType,
+			KeyID:          keyID,
+			FormatVersion:  3,
+		}
+		if err := manager.SaveMetadataV3(ctx, metadata); err != nil {
+			// Try to abort the upload on metadata save failure
+			h.backend.AbortMultipartUpload(ctx, bucket, key, uploadID)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save multipart metadata: %v", err), 500)
+			return
+		}
+	} else {
+		// V2 format: save state to .armor/multipart/<id>.state (legacy)
+		state := &backend.MultipartState{
+			UploadID:       uploadID,
+			Bucket:         bucket,
+			Key:            key,
+			IV:             iv,
+			WrappedDEK:     wrappedDEK,
+			MEKFingerprint: mekFingerprint,
+			BlockSize:      h.config.BlockSize,
+			Created:        time.Now(),
+			ContentType:    contentType,
+			KeyID:          keyID,
+			PartHMACs:      make(map[int]string),
+			PartSizes:      make(map[int]int64),
+			FormatVersion:  2,
+		}
+		if err := manager.SaveState(ctx, state); err != nil {
+			// Try to abort the upload on state save failure
+			h.backend.AbortMultipartUpload(ctx, bucket, key, uploadID)
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save multipart state: %v", err), 500)
+			return
+		}
 	}
 
 	// Build XML response
@@ -2690,12 +2967,50 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// Load multipart state
+	// Load multipart state/metadata
+	// Try v3 format first (meta.json), fall back to v2 format (.state file)
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
-	state, err := manager.LoadState(ctx, uploadID)
-	if err != nil {
-		h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
-		return
+
+	// Try v3 format
+	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)
+	var state *backend.MultipartState
+	formatVersion := 2 // Default to v2
+
+	if errV3 == nil && metadata != nil {
+		// V3 format loaded successfully
+		formatVersion = 3
+		// Convert v3 metadata to a minimal state structure for the existing logic
+		// The state is used read-only for most of the function
+		state = &backend.MultipartState{
+			UploadID:          metadata.UploadID,
+			Bucket:            metadata.Bucket,
+			Key:               metadata.Key,
+			IV:                metadata.IV,
+			WrappedDEK:        metadata.WrappedDEK,
+			MEKFingerprint:    metadata.MEKFingerprint,
+			BlockSize:         metadata.BlockSize,
+			ContentType:       metadata.ContentType,
+			KeyID:             metadata.KeyID,
+			PartSize:          metadata.PartSize,
+			NonUniformParts:   metadata.NonUniformParts,
+			Poisoned:          metadata.Poisoned,
+			PoisonReason:      metadata.PoisonReason,
+			FormatVersion:     3,
+			PartSizes:         make(map[int]int64),    // Will be loaded from part files as needed
+			PartHMACs:         make(map[int]string),   // Will be loaded from part files as needed
+			PartPlaintextSHAs: make(map[int]string),   // Will be loaded from part files as needed
+		}
+	} else {
+		// Fall back to v2 format
+		state, err = manager.LoadState(ctx, uploadID)
+		if err != nil {
+			h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+			return
+		}
+		formatVersion = state.FormatVersion
+		if formatVersion == 0 {
+			formatVersion = 2 // Old state files without format version are v2
+		}
 	}
 
 	// Verify bucket and key match
@@ -2800,7 +3115,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		if existingSize != plaintextSize {
 			// A retry with a different size contradicts the contract — poison.
 			reason := fmt.Sprintf("part %d was already uploaded with size %d but re-uploaded with size %d", partNumber, existingSize, plaintextSize)
-			h.poisonUpload(ctx, manager, state, reason)
+			h.poisonUpload(ctx, manager, state, reason, formatVersion)
 			h.writeError(w, r, "InvalidPart",
 				fmt.Sprintf("Part %d was already uploaded with size %d but re-uploaded with size %d. %s", partNumber, existingSize, plaintextSize, multipartRetryMessage), 400)
 			return
@@ -2843,7 +3158,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		switch {
 		case plaintextSize > P:
 			reason := fmt.Sprintf("part %d size %d exceeds the uniform part size %d pinned by part 1", partNumber, plaintextSize, P)
-			h.poisonUpload(ctx, manager, state, reason)
+			h.poisonUpload(ctx, manager, state, reason, formatVersion)
 			h.writeError(w, r, "InvalidPartSize",
 				fmt.Sprintf("Part %d size %d is larger than the uniform part size %d established for this upload by part 1. %s", partNumber, plaintextSize, P, multipartRetryMessage), 400)
 			return
@@ -2854,7 +3169,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			for _, sz := range state.PartSizes {
 				if sz < P {
 					reason := fmt.Sprintf("multiple short (presumed-final) parts seen (sizes %d and %d); the uniform-part-size contract allows at most one short final part of size %d", sz, plaintextSize, P)
-					h.poisonUpload(ctx, manager, state, reason)
+					h.poisonUpload(ctx, manager, state, reason, formatVersion)
 					h.writeError(w, r, "InvalidPartSize",
 						fmt.Sprintf("Part %d (size %d) is a second short part; only one short final part is allowed (uniform part size is %d). %s", partNumber, plaintextSize, P, multipartRetryMessage), 400)
 					return
@@ -2863,15 +3178,38 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		}
 	}
 
-	// Get the MEK for this upload using the key ID from state
-	mek, err := h.keyManager.GetMEKByID(state.KeyID)
-	if err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to get decryption key: %v", err), 500)
-		return
+	// Unwrap DEK using fingerprint with ring fallback
+	lookupMEK := func(keyID, fingerprint string) ([]byte, bool) {
+		return h.keyManager.GetMEKByFingerprint(keyID, fingerprint)
 	}
 
-	// Unwrap DEK
-	dek, err := crypto.UnwrapDEK(mek, state.WrappedDEK)
+	legacyFallback := func(wrappedDEK []byte) ([]byte, error) {
+		mek, err := h.keyManager.GetMEKByID(state.KeyID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get active key: %w", err)
+		}
+		dek, err := crypto.UnwrapDEK(mek, wrappedDEK)
+		if err == nil {
+			return dek, nil
+		}
+
+		ring := h.keyManager.Ring(state.KeyID)
+		for _, ringEntry := range ring {
+			dek, err := crypto.UnwrapDEK(ringEntry.MEK, wrappedDEK)
+			if err == nil {
+				return dek, nil
+			}
+		}
+
+		return nil, fmt.Errorf("no key in active or ring can unwrap DEK")
+	}
+
+	wrappedDEKStr := base64.StdEncoding.EncodeToString(state.WrappedDEK)
+	if state.MEKFingerprint != "" {
+		wrappedDEKStr = fmt.Sprintf("v2:%s:%s", state.MEKFingerprint, wrappedDEKStr)
+	}
+
+	dek, _, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, lookupMEK, legacyFallback)
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to unwrap DEK: %v", err), 500)
 		return
@@ -2959,27 +3297,72 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		blockHMACs[i] = blockHMACsRaw[i*crypto.HMACSize : (i+1)*crypto.HMACSize]
 	}
 
-	// Record per-part HMACs and plaintext size. PartSizes is retained for the
-	// Complete-time uniformity check; it no longer drives CTR derivation — P does.
-	// PartPlaintextSHAs accumulates each part's plaintext SHA-256 so Complete can
-	// assemble a real whole-object digest instead of the empty-string placeholder
-	// (bf-1v2ehf). An idempotent same-size retry re-uploads identical plaintext,
-	// so this overwrite is a no-op on the digest.
+	// Compute plaintext SHA-256 for this part
 	partSHA := sha256.Sum256(plaintext)
-	state.PartHMACs[int(partNumber)] = backend.EncodeHMACToBase64(blockHMACs)
-	state.PartSizes[int(partNumber)] = plaintextSize
-	if state.PartPlaintextSHAs == nil {
-		state.PartPlaintextSHAs = make(map[int]string)
-	}
-	state.PartPlaintextSHAs[int(partNumber)] = hex.EncodeToString(partSHA[:])
+	partSHAHex := hex.EncodeToString(partSHA[:])
 
-	if err := manager.SaveState(ctx, state); err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to update multipart state: %v", err), 500)
-		return
+	if formatVersion == 3 {
+		// V3 format: save part data to a separate part-<n>.json file
+		// This allows concurrent UploadPart operations to proceed without touching the same file
+		partData := &backend.PartDataV3{
+			PartNumber:       int(partNumber),
+			PlaintextLen:     plaintextSize,
+			CiphertextLen:    int64(len(encrypted)),
+			BlockHMACsBase64: backend.EncodeHMACToBase64(blockHMACs),
+			PlaintextSHAHex:  partSHAHex,
+		}
+
+		if err := manager.SavePartV3(ctx, uploadID, partData); err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save part data: %v", err), 500)
+			return
+		}
+
+		// For v3, update metadata when part size is pinned (part 1 arrives)
+		// This needs to happen atomically with the part save for consistency
+		if P == 0 && partNumber == 1 {
+			// Part 1 pins the uniform part size P
+			if err := h.updateMetadataPartSize(ctx, manager, uploadID, plaintextSize, partNumber, state.NonUniformParts); err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to update metadata: %v", err), 500)
+				return
+			}
+		}
+	} else {
+		// V2 format: update the shared state object (legacy)
+		state.PartHMACs[int(partNumber)] = backend.EncodeHMACToBase64(blockHMACs)
+		state.PartSizes[int(partNumber)] = plaintextSize
+		if state.PartPlaintextSHAs == nil {
+			state.PartPlaintextSHAs = make(map[int]string)
+		}
+		state.PartPlaintextSHAs[int(partNumber)] = partSHAHex
+
+		if err := manager.SaveState(ctx, state); err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to update multipart state: %v", err), 500)
+			return
+		}
 	}
 
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
+}
+
+// updateMetadataPartSize updates the v3 metadata when part 1 pins the uniform part size.
+func (h *Handlers) updateMetadataPartSize(ctx context.Context, manager *backend.MultipartStateManager, uploadID string, partSize int64, partNumber int64, nonUniformParts bool) error {
+	// Reload metadata to get latest state (in case of concurrent updates)
+	latest, err := manager.LoadMetadataV3(ctx, uploadID)
+	if err != nil {
+		return fmt.Errorf("failed to reload metadata: %w", err)
+	}
+
+	// Update part size if not already set
+	if latest.PartSize == 0 {
+		latest.PartSize = partSize
+		latest.NonUniformParts = nonUniformParts
+		if err := manager.SaveMetadataV3(ctx, latest); err != nil {
+			return fmt.Errorf("failed to save updated metadata: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // multipartRetryMessage is the user-facing instruction appended to every
@@ -2996,10 +3379,22 @@ const multipartMinPartSize = int64(5 * 1024 * 1024)
 // and persists that state so the failure survives to CompleteMultipartUpload.
 // A best-effort save: if it fails we still return the 400 to the client, and
 // the contradiction is re-caught at Complete by the uniformity validation.
-func (h *Handlers) poisonUpload(ctx context.Context, manager *backend.MultipartStateManager, state *backend.MultipartState, reason string) {
+func (h *Handlers) poisonUpload(ctx context.Context, manager *backend.MultipartStateManager, state *backend.MultipartState, reason string, formatVersion int) {
 	state.Poisoned = true
 	state.PoisonReason = reason
-	_ = manager.SaveState(ctx, state)
+
+	if formatVersion == 3 {
+		// V3 format: update metadata instead of state
+		metadata, err := manager.LoadMetadataV3(ctx, state.UploadID)
+		if err == nil {
+			metadata.Poisoned = true
+			metadata.PoisonReason = reason
+			_ = manager.SaveMetadataV3(ctx, metadata)
+		}
+	} else {
+		// V2 format: save state
+		_ = manager.SaveState(ctx, state)
+	}
 }
 
 // CompleteMultipartUpload handles S3 CompleteMultipartUpload.
@@ -3007,12 +3402,50 @@ func (h *Handlers) poisonUpload(ctx context.Context, manager *backend.MultipartS
 func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	ctx := r.Context()
 
-	// Load multipart state
+	// Load multipart state/metadata
+	// Try v3 format first (meta.json), fall back to v2 format (.state file)
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
-	state, err := manager.LoadState(ctx, uploadID)
-	if err != nil {
-		h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
-		return
+
+	// Try v3 format
+	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)
+	var state *backend.MultipartState
+	formatVersion := 2 // Default to v2
+
+	if errV3 == nil && metadata != nil {
+		// V3 format loaded successfully
+		formatVersion = 3
+		// For v3, we'll load part data on-demand below
+		// Create a minimal state structure for compatibility
+		state = &backend.MultipartState{
+			UploadID:        metadata.UploadID,
+			Bucket:          metadata.Bucket,
+			Key:             metadata.Key,
+			IV:              metadata.IV,
+			WrappedDEK:      metadata.WrappedDEK,
+			MEKFingerprint:  metadata.MEKFingerprint,
+			BlockSize:       metadata.BlockSize,
+			ContentType:     metadata.ContentType,
+			KeyID:           metadata.KeyID,
+			PartSize:        metadata.PartSize,
+			NonUniformParts: metadata.NonUniformParts,
+			Poisoned:        metadata.Poisoned,
+			PoisonReason:    metadata.PoisonReason,
+			FormatVersion:   3,
+			PartSizes:       make(map[int]int64),
+			PartHMACs:       make(map[int]string),
+			PartPlaintextSHAs: make(map[int]string),
+		}
+	} else {
+		// Fall back to v2 format
+		state, err = manager.LoadState(ctx, uploadID)
+		if err != nil {
+			h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+			return
+		}
+		formatVersion = state.FormatVersion
+		if formatVersion == 0 {
+			formatVersion = 2 // Old state files without format version are v2
+		}
 	}
 
 	// Verify bucket and key match
@@ -3028,6 +3461,31 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, r, "InvalidPart",
 			fmt.Sprintf("This multipart upload has been invalidated and cannot be completed: %s. %s", state.PoisonReason, multipartRetryMessage), 400)
 		return
+	}
+
+	// For v3 format, load part data from individual part-<n>.json files
+	// This populates state.PartSizes and state.PartHMACs for the rest of the function
+	if formatVersion == 3 {
+		parts, err := manager.ListPartsV3(ctx, uploadID)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list parts: %v", err), 500)
+			return
+		}
+
+		if len(parts) == 0 {
+			h.writeError(w, r, "InvalidPart", "No parts have been uploaded for this multipart upload", 400)
+			return
+		}
+
+		// Populate state maps from loaded part data
+		for partNum, partData := range parts {
+			state.PartSizes[partNum] = partData.PlaintextLen
+			state.PartHMACs[partNum] = partData.BlockHMACsBase64
+			if state.PartPlaintextSHAs == nil {
+				state.PartPlaintextSHAs = make(map[int]string)
+			}
+			state.PartPlaintextSHAs[partNum] = partData.PlaintextSHAHex
+		}
 	}
 
 	// Parse the CompleteMultipartUpload request XML
@@ -3262,15 +3720,16 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Build ARMOR metadata and update via CopyObject
 	meta := (&backend.ARMORMetadata{
-		Version:       2,
-		BlockSize:     state.BlockSize,
-		PlaintextSize: totalPlaintextSize,
-		ContentType:   state.ContentType,
-		IV:            state.IV,
-		WrappedDEK:    state.WrappedDEK,
-		PlaintextSHA:  plaintextSHAHex,
-		ETag:          etag,
-		KeyID:         state.KeyID,
+		Version:        2,
+		BlockSize:      state.BlockSize,
+		PlaintextSize:  totalPlaintextSize,
+		ContentType:    state.ContentType,
+		IV:             state.IV,
+		WrappedDEK:     state.WrappedDEK,
+		MEKFingerprint: state.MEKFingerprint,
+		PlaintextSHA:   plaintextSHAHex,
+		ETag:           etag,
+		KeyID:          state.KeyID,
 	}).ToMetadata()
 
 	// Add multipart flag to indicate HMAC table is external
@@ -3325,7 +3784,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if h.manifest != nil {
-		h.manifest.RecordPut(bucket, key, totalPlaintextSize, plaintextSHAHex, state.IV, state.WrappedDEK, state.BlockSize, state.ContentType, etag, chainEntry, totalCiphertextSize)
+		h.manifest.RecordPut(bucket, key, totalPlaintextSize, plaintextSHAHex, state.IV, state.WrappedDEK, state.MEKFingerprint, state.BlockSize, state.ContentType, etag, chainEntry, totalCiphertextSize)
 	}
 
 	// Record provenance (fallback when manifest is disabled)
@@ -3393,18 +3852,31 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	ctx := r.Context()
 
-	// Load multipart state to verify it exists
+	// Load multipart state/metadata to verify it exists
+	// Try v3 format first (meta.json), fall back to v2 format (.state file)
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
-	state, err := manager.LoadState(ctx, uploadID)
-	if err != nil {
-		h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
-		return
-	}
 
-	// Verify bucket and key match
-	if state.Bucket != bucket || state.Key != key {
-		h.writeError(w, r, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
-		return
+	// Try v3 format
+	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)
+	if errV3 != nil {
+		// Fall back to v2 format
+		state, err := manager.LoadState(ctx, uploadID)
+		if err != nil {
+			h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+			return
+		}
+
+		// Verify bucket and key match
+		if state.Bucket != bucket || state.Key != key {
+			h.writeError(w, r, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
+			return
+		}
+	} else {
+		// Verify bucket and key match for v3
+		if metadata.Bucket != bucket || metadata.Key != key {
+			h.writeError(w, r, "NoSuchUpload", "Multipart upload does not match bucket/key", 404)
+			return
+		}
 	}
 
 	// Forward abort to B2
@@ -3413,7 +3885,7 @@ func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Clean up multipart state
+	// Clean up multipart state (handles both v2 and v3 formats)
 	manager.DeleteState(ctx, uploadID)
 
 	w.WriteHeader(http.StatusNoContent)
@@ -3424,12 +3896,36 @@ func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, 
 func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	ctx := r.Context()
 
-	// Load multipart state to get plaintext sizes
+	// Load multipart state/metadata to get plaintext sizes
+	// Try v3 format first (meta.json), fall back to v2 format (.state file)
 	manager := backend.NewMultipartStateManager(h.backend, bucket)
-	state, err := manager.LoadState(ctx, uploadID)
-	if err != nil {
-		h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
-		return
+
+	// Try v3 format
+	metadata, errV3 := manager.LoadMetadataV3(ctx, uploadID)
+	var state *backend.MultipartState
+	formatVersion := 2 // Default to v2
+
+	if errV3 == nil && metadata != nil {
+		// V3 format loaded successfully
+		formatVersion = 3
+		// For v3, load part data on-demand below
+		state = &backend.MultipartState{
+			UploadID:  metadata.UploadID,
+			Bucket:    metadata.Bucket,
+			Key:       metadata.Key,
+			PartSizes: make(map[int]int64),
+		}
+	} else {
+		// Fall back to v2 format
+		state, err = manager.LoadState(ctx, uploadID)
+		if err != nil {
+			h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
+			return
+		}
+		formatVersion = state.FormatVersion
+		if formatVersion == 0 {
+			formatVersion = 2 // Old state files without format version are v2
+		}
 	}
 
 	// Verify bucket and key match
@@ -3443,6 +3939,20 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list parts: %v", err), 500)
 		return
+	}
+
+	// For v3, load part data if needed
+	if formatVersion == 3 {
+		parts, err := manager.ListPartsV3(ctx, uploadID)
+		if err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to list parts: %v", err), 500)
+			return
+		}
+
+		// Populate state.PartSizes from loaded part data
+		for partNum, partData := range parts {
+			state.PartSizes[partNum] = partData.PlaintextLen
+		}
 	}
 
 	// Build XML response with plaintext sizes
