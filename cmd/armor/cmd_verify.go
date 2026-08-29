@@ -250,7 +250,7 @@ func loadMEKFromEscrowForVerify(escrowPath string) ([]byte, error) {
 }
 
 // initB2BackendForVerify initializes B2 backend from environment
-func initB2BackendForVerify() (*backend.B2Backend, error) {
+func initB2BackendForVerify() (backend.Backend, error) {
 	region := os.Getenv("ARMOR_B2_REGION")
 	endpoint := os.Getenv("ARMOR_B2_ENDPOINT")
 	accessKey := os.Getenv("ARMOR_B2_ACCESS_KEY_ID")
@@ -319,21 +319,12 @@ func listObjectsFromBucket() ([]string, error) {
 	var keys []string
 
 	// List objects with prefix
-	lister, err := b2.List(ctx, bucketFlag, prefixFlag, "")
+	result, err := b2.List(ctx, bucketFlag, prefixFlag, "", "", 1000)
 	if err != nil {
 		return nil, fmt.Errorf("listing objects: %w", err)
 	}
-	defer lister.Close()
 
-	for {
-		obj, err := lister.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("iterating objects: %w", err)
-		}
-
+	for _, obj := range result.Objects {
 		keys = append(keys, obj.Key)
 	}
 
@@ -382,7 +373,7 @@ type VerificationReport struct {
 }
 
 // runVerification performs concurrent verification of objects
-func runVerification(ctx context.Context, b2 *backend.B2Backend, mek []byte, keys []string, since time.Time) *VerificationReport {
+func runVerification(ctx context.Context, b2 backend.Backend, mek []byte, keys []string, since time.Time) *VerificationReport {
 	startTime := time.Now()
 	report := &VerificationReport{
 		Bucket:     bucketFlag,
@@ -451,7 +442,7 @@ func runVerification(ctx context.Context, b2 *backend.B2Backend, mek []byte, key
 }
 
 // verifyObject performs full HMAC + digest verification of a single object
-func verifyObject(ctx context.Context, b2 *backend.B2Backend, mek []byte, bucket, key string, since time.Time) ObjectVerificationResult {
+func verifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucket, key string, since time.Time) ObjectVerificationResult {
 	startTime := time.Now()
 	result := ObjectVerificationResult{
 		Bucket: bucket,
@@ -496,7 +487,7 @@ func verifyObject(ctx context.Context, b2 *backend.B2Backend, mek []byte, bucket
 }
 
 // quickVerifyObject verifies only envelope and DEK (fast check)
-func quickVerifyObject(ctx context.Context, b2 *backend.B2Backend, mek []byte, bucket, key string, info *backend.ObjectInfo, startTime time.Time) ObjectVerificationResult {
+func quickVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucket, key string, info *backend.ObjectInfo, startTime time.Time) ObjectVerificationResult {
 	result := ObjectVerificationResult{
 		Bucket:    bucket,
 		Key:       key,
@@ -590,7 +581,7 @@ func quickVerifyObject(ctx context.Context, b2 *backend.B2Backend, mek []byte, b
 }
 
 // fullVerifyObject performs complete HMAC + digest verification
-func fullVerifyObject(ctx context.Context, b2 *backend.B2Backend, mek []byte, bucket, key string, info *backend.ObjectInfo, startTime time.Time) ObjectVerificationResult {
+func fullVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucket, key string, info *backend.ObjectInfo, startTime time.Time) ObjectVerificationResult {
 	result := ObjectVerificationResult{
 		Bucket:    bucket,
 		Key:       key,
@@ -627,7 +618,7 @@ func fullVerifyObject(ctx context.Context, b2 *backend.B2Backend, mek []byte, bu
 	defer zeroBytes(dek)
 
 	// Read the entire object for HMAC verification
-	objectReader, err := b2.Get(ctx, bucket, key)
+	objectReader, _, err := b2.Get(ctx, bucket, key)
 	if err != nil {
 		result.Status = "ERROR"
 		result.Error = fmt.Sprintf("Failed to read object: %v", err)
@@ -719,6 +710,7 @@ func writeReport(report *VerificationReport, outputPath string) error {
 		defer closer.Close()
 	} else {
 		output = os.Stdout
+		// No need to close os.Stdout
 	}
 
 	encoder := json.NewEncoder(output)
