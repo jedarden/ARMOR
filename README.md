@@ -148,12 +148,16 @@ Key rotation re-wraps DEKs without re-uploading file data — a metadata-only op
 
 | Threat | Mitigation |
 |--------|-----------|
-| B2 breach | Client-side encryption — B2 only stores opaque blobs |
-| Cloudflare inspection | Client-side encryption — Cloudflare only caches opaque blobs |
-| Man-in-the-middle | TLS everywhere + client-side encryption |
-| Key compromise | Envelope encryption — per-file DEKs limit blast radius; rotation re-wraps without re-uploading |
-| Data corruption | SHA-256 integrity hash + per-block HMACs |
-| Unauthorized access | Private bucket + Cloudflare Worker auth + scoped application keys |
+| B2 data breach | All stored data is AES-256-CTR encrypted with per-file DEKs — useless without MEK |
+| Cloudflare CDN inspection | All cached content is ciphertext — CDN sees only opaque blobs |
+| Man-in-the-middle | TLS on ARMOR listener + client-side encryption — plaintext never leaves ARMOR |
+| ARMOR server compromise | MEK exposed — rotate immediately; per-file DEKs limit blast radius |
+| Network sniffing (client ↔ ARMOR) | TLS on ARMOR listener or localhost-only binding |
+| Public bucket enumeration | Attacker can list/download ciphertext — indistinguishable from random bytes without MEK |
+| Bit-flipping on ciphertext | Per-block HMAC-SHA256 detects any modification |
+| Block reordering/truncation | Block index implicit in offset; HMAC table length validates block count |
+| Unauthorized access | ARMOR-side SigV4 authentication + prefix/verb ACLs (not B2 access control) |
+| V1 keystream reuse | Version 1 envelopes had CTR counter bug (keystream reuse between adjacent blocks) — migration to Version 2 required. See [ADR-005](docs/adr/005-ctr-counter-stride-fix.md) and plan.md Phase 8.1 |
 
 ## Configuration
 
