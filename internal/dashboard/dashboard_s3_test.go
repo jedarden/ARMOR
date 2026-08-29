@@ -4,6 +4,7 @@ package dashboard
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"mime/multipart"
@@ -467,5 +468,140 @@ func TestDeleteHandlerAcceptsPost(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("Expected status 200 for POST request, got %d", rec.Code)
+	}
+}
+
+// TestCredentialActivityHandler tests the per-credential activity endpoint.
+func TestCredentialActivityHandler(t *testing.T) {
+	m := metrics.NewMetrics()
+
+	// Simulate credential activity by incrementing metrics
+	m.IncRequestsByCredential("cred1", "GET", "allow")
+	m.IncRequestsByCredential("cred1", "GET", "allow")
+	m.IncRequestsByCredential("cred1", "PUT", "allow")
+	m.IncRequestsByCredential("cred1", "DELETE", "deny-acl")
+	
+	m.IncRequestsByCredential("cred2", "GET", "allow")
+	m.IncRequestsByCredential("cred2", "PUT", "deny-auth")
+	
+	m.IncRequestsByCredential("unknown", "GET", "deny-auth")
+
+	// Create a mock admin API server that returns credentials
+	adminAPIServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/admin/creds" {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		// Return mock credential list
+		w.Write([]byte(`[{"name":"cred1","acls":[],"source":"env","loaded_at":"2024-01-01T00:00:00Z"},{"name":"cred2","acls":[],"source":"file","loaded_at":"2024-01-01T00:00:00Z"}]`))
+	}))
+	defer adminAPIServer.Close()
+
+	d := &Dashboard{
+		backend: newMockBackend(),
+		bucket:  "test-bucket",
+		metrics: m,
+	}
+
+	adminClient := adminAPIServer.Client()
+
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/credential-activity", nil)
+	rec := httptest.NewRecorder()
+
+	d.credentialActivityHandlerImpl(adminClient, adminAPIServer.URL+"/admin/creds")(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Parse response
+	var activities []struct {
+		Name         string `json:"name"`
+		Source       string `json:"source"`
+		TotalReqs    int64  `json:"total_requests"`
+		AllowCount   int64  `json:"allow_count"`
+		DenyAuth     int64  `json:"deny_auth_count"`
+		DenyACL      int64  `json:"deny_acl_count"`
+	}
+
+	if err := json.NewDecoder(rec.Body).Decode(&activities); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Verify we have 3 credentials (cred1, cred2, and unknown)
+	if len(activities) != 3 {
+		t.Errorf("Expected 3 credentials, got %d", len(activities))
+	}
+
+	// Find cred1 and verify counts
+	var cred1, cred2, unknown *struct {
+		Name         string `json:"name"`
+		Source       string `json:"source"`
+		TotalReqs    int64  `json:"total_requests"`
+		AllowCount   int64  `json:"allow_count"`
+		DenyAuth     int64  `json:"deny_auth_count"`
+		DenyACL      int64  `json:"deny_acl_count"`
+	}
+
+	for i := range activities {
+		if activities[i].Name == "cred1" {
+			cred1 = &activities[i]
+		} else if activities[i].Name == "cred2" {
+			cred2 = &activities[i]
+		} else if activities[i].Name == "unknown" {
+			unknown = &activities[i]
+		}
+	}
+
+	if cred1 == nil {
+		t.Fatal("cred1 not found in response")
+	}
+	if cred2 == nil {
+		t.Fatal("cred2 not found in response")
+	}
+	if unknown == nil {
+		t.Fatal("unknown not found in response")
+	}
+
+	// Verify cred1 counts (3 total: 2 allow GET, 1 allow PUT, 1 deny-acl DELETE)
+	if cred1.TotalReqs != 4 {
+		t.Errorf("cred1: expected total requests 4, got %d", cred1.TotalReqs)
+	}
+	if cred1.AllowCount != 3 {
+		t.Errorf("cred1: expected allow count 3, got %d", cred1.AllowCount)
+	}
+	if cred1.DenyACL != 1 {
+		t.Errorf("cred1: expected deny-acl count 1, got %d", cred1.DenyACL)
+	}
+	if cred1.Source != "env" {
+		t.Errorf("cred1: expected source 'env', got '%s'", cred1.Source)
+	}
+
+	// Verify cred2 counts (2 total: 1 allow GET, 1 deny-auth PUT)
+	if cred2.TotalReqs != 2 {
+		t.Errorf("cred2: expected total requests 2, got %d", cred2.TotalReqs)
+	}
+	if cred2.AllowCount != 1 {
+		t.Errorf("cred2: expected allow count 1, got %d", cred2.AllowCount)
+	}
+	if cred2.DenyAuth != 1 {
+		t.Errorf("cred2: expected deny-auth count 1, got %d", cred2.DenyAuth)
+	}
+	if cred2.Source != "file" {
+		t.Errorf("cred2: expected source 'file', got '%s'", cred2.Source)
+	}
+
+	// Verify unknown counts (1 total: 1 deny-auth GET)
+	if unknown.TotalReqs != 1 {
+		t.Errorf("unknown: expected total requests 1, got %d", unknown.TotalReqs)
+	}
+	if unknown.DenyAuth != 1 {
+		t.Errorf("unknown: expected deny-auth count 1, got %d", unknown.DenyAuth)
+	}
+	if unknown.Source != "auth-failures" {
+		t.Errorf("unknown: expected source 'auth-failures', got '%s'", unknown.Source)
 	}
 }

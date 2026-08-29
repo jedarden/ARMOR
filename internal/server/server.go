@@ -618,6 +618,13 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/encryption-stats", s.dashboard.EncryptionStatsHandlerWithAuth())
 		mux.HandleFunc("/dashboard/api/list", s.dashboard.ListAPIHandlerWithAuth())
 
+			// Credential activity handler (proxies to admin API for credential list)
+			adminCredsClient := &http.Client{
+				Timeout: 10 * time.Second,
+			}
+			adminCredsURL := "http://" + s.config.AdminListen + "/admin/creds"
+			mux.HandleFunc("/dashboard/credential-activity", s.dashboard.CredentialActivityHandlerWithAuth(adminCredsClient, adminCredsURL))
+
 			// Dashboard S3 operations (upload, download, delete)
 			// These use the dashboard credential for S3 signing
 			mux.HandleFunc("/dashboard/upload", s.dashboard.UploadHandlerWithAuth())

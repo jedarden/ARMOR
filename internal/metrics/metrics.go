@@ -1127,6 +1127,11 @@ func (m *Metrics) IncRequestsByCredential(accessKeyID, verb, result string) {
 	m.requestsByCredentialTotal.Add(key, 1)
 }
 
+// RequestsByCredentialTotal returns the labelled counter for requests by credential.
+func (m *Metrics) RequestsByCredentialTotal() *labelledCounter {
+	return m.requestsByCredentialTotal
+}
+
 // RequestTracker tracks in-flight requests using a WaitGroup.
 type RequestTracker struct {
 	wg    sync.WaitGroup
