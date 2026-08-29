@@ -1,5 +1,7 @@
 # ARMOR
 
+[![iad-ci](https://img.shields.io/github/checks-status/jedarden/ARMOR/main?label=iad-ci)](docs/release-process.md)
+
 **Authenticated Range-readable Managed Object Repository**
 
 ARMOR is an S3-compatible proxy server that transparently encrypts data before storing it in [Backblaze B2](https://www.backblaze.com/cloud-storage) and serves downloads through Cloudflare for zero-egress cost. Any S3-compatible client — boto3, AWS CLI, DuckDB, rclone — works without modification.
