@@ -195,6 +195,11 @@ type Metrics struct {
 	// S3 error metrics (ADR-008)
 	ErrorsTotal *labelledCounter // Total S3 errors by error code and operation
 
+	// Requests by credential metrics (Plan §8.9)
+	// Tracks requests by access_key_id, verb, and authorization result (allow, deny-auth, deny-acl)
+	// access_key_id is an identifier (not a secret) - cardinality bounded by configured credentials + "unknown"
+	requestsByCredentialTotal *labelledCounter
+
 	// Internal state
 	startTime time.Time
 }
@@ -312,6 +317,9 @@ func NewMetrics() *Metrics {
 
 	// S3 error metrics
 	m.ErrorsTotal = newLabelledCounter()
+
+	// Requests by credential metrics
+	m.requestsByCredentialTotal = newLabelledCounter()
 
 	return m
 }
@@ -951,6 +959,23 @@ func (m *Metrics) PrometheusFormat() string {
 		}
 	})
 
+	// Requests by credential metrics (Plan §8.9)
+	sb.WriteString("\n# HELP armor_requests_by_credential_total Total number of requests by access key ID, verb, and authorization result\n")
+	sb.WriteString("# TYPE armor_requests_by_credential_total counter\n")
+	m.requestsByCredentialTotal.Do(func(kv expvar.KeyValue) {
+		// Parse the "access_key_id:verb:result" key format
+		parts := strings.SplitN(kv.Key, ":", 3)
+		if len(parts) == 3 {
+			accessKeyID := parts[0]
+			verb := parts[1]
+			result := parts[2]
+			fmt.Fprintf(&sb, "armor_requests_by_credential_total{access_key_id=%q,verb=%q,result=%q} %s\n", accessKeyID, verb, result, kv.Value.String())
+		} else {
+			// Fallback for malformed keys (shouldn't happen)
+			fmt.Fprintf(&sb, "armor_requests_by_credential_total{access_key_id=%q,verb=\"\",result=\"\"} %s\n", kv.Key, kv.Value.String())
+		}
+	})
+
 	sb.WriteString("\n# HELP armor_replication_enqueued_total Total number of items enqueued for replication by operation\n")
 	sb.WriteString("# TYPE armor_replication_enqueued_total counter\n")
 	// Read from atomic counters
@@ -1092,6 +1117,14 @@ func (m *Metrics) IncCompactionErrors() {
 func (m *Metrics) IncErrors(code, operation string) {
 	key := fmt.Sprintf("%s:%s", code, operation)
 	m.ErrorsTotal.Add(key, 1)
+}
+
+// IncRequestsByCredential increments the requests by credential counter.
+// Labels: access_key_id, verb, result (allow, deny-auth, deny-acl)
+// The label key combines all three as "access_key_id:verb:result"
+func (m *Metrics) IncRequestsByCredential(accessKeyID, verb, result string) {
+	key := fmt.Sprintf("%s:%s:%s", accessKeyID, verb, result)
+	m.requestsByCredentialTotal.Add(key, 1)
 }
 
 // RequestTracker tracks in-flight requests using a WaitGroup.

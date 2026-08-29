@@ -1205,10 +1205,12 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 
 		// Verify auth for non-public endpoints
 		if !s.isPublicPath(r.URL.Path) {
+			verb = ActionForRequest(r)
 			cred, err := s.verifyAuthAndGetCredential(r)
 			if err != nil {
 				authzResult = "deny-auth"
 				s.metrics.IncRequestsTotal("auth", 403)
+				s.metrics.IncRequestsByCredential("unknown", verb, "deny-auth")
 				if authErr, ok := err.(*AuthError); ok {
 					s.writeError(w, r, authErr.Code, authErr.Message, 403)
 				} else {
@@ -1239,11 +1241,13 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 				authzResult = "deny-acl"
 				s.writeError(w, r, "AccessDenied", "Access Denied", 403)
 				s.metrics.IncRequestsTotal("acl", 403)
+				s.metrics.IncRequestsByCredential(accessKeyID, verb, "deny-acl")
 				// Log denied request with identity (ADR-012)
 				s.logCompletedRequest(r, start, 403, authzResult, accessKeyID, verb, objectKey, 0)
 				return
 			}
 			authzResult = "allow"
+				s.metrics.IncRequestsByCredential(accessKeyID, verb, "allow")
 		}
 
 		// Decode aws-chunked body when MinIO streaming signature is used.
