@@ -151,7 +151,7 @@ During this period, ARMOR versions 0.1.16 through 0.1.42 contained a critical mu
 
 **✅ Available:**
 - `cmd/armor-decrypt/armor-decrypt` — functional, can decrypt with MEK + B2 credentials
-- `cmd/verify-objects/main.go` — verification tool source (needs compilation, requires credentials)
+- `armor verify` — integrated verification subcommand (HMAC + digest verification, requires credentials)
 - `intermediate/filtered-objects.json` — 2,371 enumerated objects ready for verification
 - `intermediate/deployment-windows.json` — affected version windows
 
@@ -186,7 +186,7 @@ During this period, ARMOR versions 0.1.16 through 0.1.42 contained a critical mu
    - `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`
 
 2. Operator provides credentials via one of:
-   - Escrow file: JSON with MEK + B2 config (loaded by verify-objects)
+   - Escrow file: JSON with MEK + B2 config (loaded by armor verify -escrow)
    - Environment variables: Set for verification process only
    - Time-scoped write token: Agent can fetch directly
 
@@ -201,10 +201,8 @@ During this period, ARMOR versions 0.1.16 through 0.1.42 contained a critical mu
 **Process (once credentials available):**
 ```bash
 # Option A: Using escrow file (recommended)
-./cmd/verify-objects/verify-objects \
-  intermediate/filtered-objects.json \
-  /path/to/escrow.json \
-  docs/notes/verification-results-2026-08.json
+armor verify -bucket iad-ci -keys-file intermediate/filtered-objects.json \
+  -escrow /path/to/escrow.json -output docs/notes/verification-results-2026-08.json
 
 # Option B: Using environment variables
 export ARMOR_MEK="<64-char-hex>"
@@ -212,7 +210,12 @@ export ARMOR_B2_REGION="us-west-002"
 export ARMOR_B2_ENDPOINT="..."
 export ARMOR_B2_ACCESS_KEY_ID="..."
 export ARMOR_B2_SECRET_ACCESS_KEY="..."
-# verify-objects reads from env or can be modified to use env
+armor verify -bucket iad-ci -keys-file intermediate/filtered-objects.json \
+  -output docs/notes/verification-results-2026-08.json
+
+# Option C: Quick mode (envelope + DEK only, faster)
+armor verify -bucket iad-ci -keys-file intermediate/filtered-objects.json \
+  -quick -output docs/notes/verification-results-2026-08.json
 ```
 
 **Expected Outcomes:**
@@ -282,7 +285,7 @@ export ARMOR_B2_SECRET_ACCESS_KEY="..."
 
 - **Enumeration results:** `intermediate/filtered-objects.json` (2,371 objects)
 - **Deployment windows:** `intermediate/deployment-windows.json`
-- **Verification tool:** `cmd/verify-objects/main.go`
+- **Verification tool:** `cmd/armor/cmd_verify.go` — `armor verify` subcommand
 - **Decryption tool:** `cmd/armor-decrypt/armor-decrypt`
 - **Previous inventory:** `docs/bf-1ebnuz-corruption-inventory-four-buckets.md` (2026-08-11)
 - **Memory:** `openbao-no-agent-write-path.md` (agent credential access limitations)

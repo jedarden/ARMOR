@@ -7,6 +7,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/jedarden/armor/internal/version"
 )
 
 // Command represents a subcommand that can be registered and executed.
@@ -25,6 +27,12 @@ func registerCommand(cmd Command) {
 }
 
 func main() {
+	// Check for --version flag before parsing other flags
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		version.Print("armor")
+		os.Exit(0)
+	}
+
 	// Parse flags - we only care about subcommand name
 	flag.Parse()
 
@@ -62,4 +70,15 @@ func listCommands(w *os.File) {
 		cmd := commands[name]
 		fmt.Fprintf(w, "  %-12s %s\n", name, cmd.Description)
 	}
+}
+
+func init() {
+	// Register version command
+	registerCommand(Command{
+		Name:        "version",
+		Description: "Print version information",
+		Func: func() {
+			version.Print("armor")
+		},
+	})
 }

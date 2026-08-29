@@ -19,10 +19,11 @@ COPY . .
 RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short
 
 # Build the main armor binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /armor ./cmd/armor
+ARG VERSION
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/armor/internal/version.Version=${VERSION}" -o /armor ./cmd/armor
 
 # Build the restore-verifier binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /restore-verifier ./cmd/restore-verifier
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/armor/internal/version.Version=${VERSION}" -o /restore-verifier ./cmd/restore-verifier
 
 # Runtime stage for restore-verifier.
 # Built only with an explicit --target restore-verifier-runtime; it must NOT

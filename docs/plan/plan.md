@@ -1119,7 +1119,7 @@ open and beaded: restore-verifier discovery Bug B (paginate
 29,303 bookkeeping objects vs 26,219 real ones); enable the periodic DR drill
 (`VERIFIER_DR_DRILL_INTERVAL`) in every restore-verifier Deployment; run the
 multipart-era corruption audit on the four unaudited buckets with
-`cmd/verify-objects` (or `armor verify`, whichever is on `main` at the time)
+`armor verify` (integrated 2026-08-28; `cmd/verify-objects` folded into `armor verify` subcommand)
 and commit the inventory under `docs/notes/`; and the periodic DR drill is
 verified by the scheduler's log line plus one on-demand
 `POST /trigger?mode=dr-drill`, not by waiting a day. The kalshi-tape
@@ -1151,8 +1151,9 @@ Decisions:
   `armor-decrypt` compatibility symlink and wrapper are dropped in the
   release after the CLI release ships; the deprecated `B2_*` secondary
   names are dropped at the same point. `armor-decrypt`
-  and `verify-objects` become `armor decrypt` / `armor verify`; the image
-  keeps `armor-decrypt` as a symlink for one release, then drops it.
+  and `verify-objects` became `armor decrypt` / `armor verify` (2026-08-28; see
+  `cmd/armor/cmd_verify.go`); the image keeps `armor-decrypt` as a symlink for
+  one release, then drops it.
 - Version: `-X main.version=$(cat VERSION)` in `Dockerfile`, `Dockerfile.test`
   and the CI template; `armor version` / `--version` print it; every HTTP
   response carries `Server: ARMOR/<version>`; `GET /version` (both listeners,

@@ -44,6 +44,7 @@ import (
 	"github.com/jedarden/armor/internal/manifest"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/restoreverifier"
+	"github.com/jedarden/armor/internal/version"
 )
 
 var (
@@ -153,6 +154,13 @@ func normalizePrefix(prefix string) string {
 
 func main() {
 	flag.Usage = usage
+
+	// Check for --version flag before parsing other flags
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		version.Print("restore-verifier")
+		os.Exit(0)
+	}
+
 	flag.Parse()
 
 	// Derive the B2 S3 endpoint from the region when not supplied, mirroring the
