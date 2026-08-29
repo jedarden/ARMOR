@@ -443,3 +443,131 @@ func NewEncryptorWithCounterAndVersion(dek, iv []byte, blockSize int, startBlock
 	// So we just need the encryptor with the correct IV
 	return enc, nil
 }
+
+// EncryptV3 encrypts plaintext data using Version3 semantics and produces a trailer block table.
+// This is the primary method for single-PUT v3 objects.
+//
+// Version3 format: header || blocks || trailer_block_table
+// - Each block is encrypted with v3 counter construction (part=0 for single-PUT)
+// - Trailer block table contains [HMAC (32 bytes), clen (4 bytes)] for each block
+// - The high bit of clen indicates compression (currently always false for single-PUT)
+//
+// Parameters:
+//   - plaintext: Plaintext data to encrypt
+//   - compress: Whether to compress the data (currently unused pending compress-rules bead)
+//
+// Returns:
+//   - encrypted: The encrypted blocks (concatenated)
+//   - blockTable: The trailer block table with HMAC and length for each block
+//   - err: Error if encryption fails
+func (e *Encryptor) EncryptV3(plaintext []byte, compress bool) (encrypted []byte, blockTable *BlockTable, err error) {
+	if e.version != Version3 {
+		return nil, nil, fmt.Errorf("EncryptV3 requires Version3 encryptor, got %d", e.version)
+	}
+
+	blockCount := ComputeBlockCount(int64(len(plaintext)), e.blockSize)
+
+	// Create block table to track blocks
+	blockTable = NewBlockTable(e.blockSize, int(blockCount))
+
+	// Pre-allocate encrypted buffer with exact size (same as plaintext for AES-CTR)
+	encrypted = make([]byte, 0, len(plaintext))
+
+	// For single-PUT v3, part number is 0
+	part := uint16(0)
+
+	// Encrypt each block independently
+	for i := uint32(0); i < blockCount; i++ {
+		start := int(i) * e.blockSize
+		end := start + e.blockSize
+		if end > len(plaintext) {
+			end = len(plaintext)
+		}
+
+		plaintextBlock := plaintext[start:end]
+
+		// Encrypt the block using v3 counter construction
+		encryptedBlock, blockHMAC, err := EncryptBlockV3(e.dek, e.iv, part, i, plaintextBlock, e.blockSize)
+		if err != nil {
+			return nil, nil, fmt.Errorf("block %d encryption failed: %w", i, err)
+		}
+
+		// Create block table entry (compression flag is false for now)
+		var hmacArray [32]byte
+		copy(hmacArray[:], blockHMAC)
+		entry := NewBlockTableEntry(hmacArray, uint32(len(encryptedBlock)), false)
+		if err := blockTable.AddEntry(entry); err != nil {
+			return nil, nil, fmt.Errorf("block %d table entry failed: %w", i, err)
+		}
+
+		// Append encrypted block to output
+		encrypted = append(encrypted, encryptedBlock...)
+	}
+
+	return encrypted, blockTable, nil
+}
+
+// EncryptV3Stream encrypts plaintext from a reader using Version3 semantics and produces a trailer block table.
+// This is the streaming version for large single-PUT v3 objects.
+//
+// Parameters:
+//   - plaintext: Reader for plaintext data
+//   - ciphertext: Writer for encrypted data
+//   - plaintextSize: Total size of plaintext (for block count calculation)
+//   - compress: Whether to compress the data (currently unused pending compress-rules bead)
+//
+// Returns:
+//   - blockTable: The trailer block table with HMAC and length for each block
+//   - err: Error if encryption fails
+func (e *Encryptor) EncryptV3Stream(plaintext io.Reader, ciphertext io.Writer, plaintextSize int64, compress bool) (blockTable *BlockTable, err error) {
+	if e.version != Version3 {
+		return nil, fmt.Errorf("EncryptV3Stream requires Version3 encryptor, got %d", e.version)
+	}
+
+	blockCount := ComputeBlockCount(plaintextSize, e.blockSize)
+
+	// Create block table to track blocks
+	blockTable = NewBlockTable(e.blockSize, int(blockCount))
+
+	// For single-PUT v3, part number is 0
+	part := uint16(0)
+
+	buf := make([]byte, e.blockSize)
+	totalWritten := int64(0)
+
+	for blockIndex := uint32(0); blockIndex < blockCount; blockIndex++ {
+		// Read a block
+		n, err := io.ReadFull(plaintext, buf)
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, fmt.Errorf("read error at block %d: %w", blockIndex, err)
+		}
+		if n == 0 {
+			break
+		}
+
+		plaintextBlock := buf[:n]
+
+		// Encrypt the block using v3 counter construction
+		encryptedBlock, blockHMAC, err := EncryptBlockV3(e.dek, e.iv, part, blockIndex, plaintextBlock, e.blockSize)
+		if err != nil {
+			return nil, fmt.Errorf("block %d encryption failed: %w", blockIndex, err)
+		}
+
+		// Create block table entry (compression flag is false for now)
+		var hmacArray [32]byte
+		copy(hmacArray[:], blockHMAC)
+		entry := NewBlockTableEntry(hmacArray, uint32(len(encryptedBlock)), false)
+		if err := blockTable.AddEntry(entry); err != nil {
+			return nil, fmt.Errorf("block %d table entry failed: %w", blockIndex, err)
+		}
+
+		// Write encrypted block
+		written, err := ciphertext.Write(encryptedBlock)
+		if err != nil {
+			return nil, fmt.Errorf("write error at block %d: %w", blockIndex, err)
+		}
+		totalWritten += int64(written)
+	}
+
+	return blockTable, nil
+}
