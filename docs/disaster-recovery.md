@@ -206,7 +206,7 @@ spec:
     spec:
       containers:
       - name: armor
-        image: ronaldraygun/armor:0.1.43
+        image: ronaldraygun/armor:<version>  # Use tag from VERSION file or Docker Hub
         ports:
         - containerPort: 9000
         env:
@@ -261,7 +261,7 @@ docker run -d \
   -e ARMOR_MEK=$(cat ~/mek-recovered.hex) \
   -e ARMOR_AUTH_ACCESS_KEY=my-access-key \
   -e ARMOR_AUTH_SECRET_KEY=my-secret-key \
-  ronaldraygun/armor:0.1.43
+  ronaldraygun/armor:<version>  # Use tag from VERSION file or Docker Hub
 ```
 
 ### Step 3: Verify MEK Against Canary
