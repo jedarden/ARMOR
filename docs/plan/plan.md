@@ -1421,7 +1421,7 @@ one (or deleted if nothing references them); README's security table
 row "Private bucket + Cloudflare Worker auth" is corrected to the actual
 model (public bucket, ciphertext-only, ARMOR-side SigV4 + ACLs); the DR
 runbook and connection guide drop the `0.1.43` pin for a `<version>`
-placeholder with a pointer to `VERSION`; `PROGRESS.md` (March, superseded by
+placeholder with a pointer to `VERSION`; `docs/archive/PROGRESS.md` (March, superseded by
 this file) is archived; `handlers.go.backup`, `deleteobjects_fix.md` and
 `.claude/error_test_manifest.md` (which describes a package this repo does
 not have) are deleted; example/stub code compiled into non-test packages

@@ -287,7 +287,7 @@ armor verify -bucket iad-ci -keys-file intermediate/filtered-objects.json \
 - **Deployment windows:** `intermediate/deployment-windows.json`
 - **Verification tool:** `cmd/armor/cmd_verify.go` — `armor verify` subcommand
 - **Decryption tool:** `cmd/armor-decrypt/armor-decrypt`
-- **Previous inventory:** `docs/bf-1ebnuz-corruption-inventory-four-buckets.md` (2026-08-11)
+- **Previous inventory:** `docs/archive/bf-1ebnuz-corruption-inventory-four-buckets.md` (2026-08-11)
 - **Memory:** `openbao-no-agent-write-path.md` (agent credential access limitations)
 
 ## Timeline Estimate
