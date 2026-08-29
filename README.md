@@ -148,8 +148,8 @@ ARMOR is configured via environment variables:
 | `ARMOR_PREFIX` | No | — | Key prefix for shared bucket deployments (e.g., `kalshi-tape/`). All keys are stored with this prefix in B2 but are transparent to S3 clients (see ADR-001) |
 | `ARMOR_CF_DOMAIN` | Yes | — | Cloudflare domain CNAME'd to B2 |
 | `ARMOR_MEK` | Yes | — | Master encryption key (hex, 32 bytes) |
-| `ARMOR_AUTH_ACCESS_KEY` | No | (random) | Client access key |
-| `ARMOR_AUTH_SECRET_KEY` | No | (random) | Client secret key |
+| `ARMOR_AUTH_ACCESS_KEY` | Yes* | — | Client access key |
+| `ARMOR_AUTH_SECRET_KEY` | Yes* | — | Client secret key |
 | `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size (bytes) |
 | `ARMOR_COMPRESS` | No | `false` | Enable zstd compression for single-PUT uploads. Multipart uploads are rejected when enabled. Compressed objects do not support byte-range reads. See ADR-007. |
 | `ARMOR_READ_CONCURRENCY` | No | `16` | Maximum concurrent ranged reads |
@@ -193,7 +193,7 @@ ARMOR_AUTH_ACCESS_KEY=my-access-key
 ARMOR_AUTH_SECRET_KEY=my-secret-key
 ```
 
-If unset, ARMOR generates a random pair on startup (check the logs).
+At least one credential must be configured (either `ARMOR_AUTH_ACCESS_KEY`/`ARMOR_AUTH_SECRET_KEY`, named credentials, or `ARMOR_AUTH_FILE`). If no credentials are configured, ARMOR will fail to start with a clear error message.
 
 #### Named Credentials with ACLs
 
