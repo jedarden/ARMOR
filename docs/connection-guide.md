@@ -250,7 +250,7 @@ export ARMOR_BUCKET=my-bucket
 version: '3.8'
 services:
   armor:
-    image: ronaldraygun/armor:0.1.43
+    image: ronaldraygun/armor:<version>  # Use tag from VERSION file or Docker Hub
     ports:
       - "9000:9000"  # S3 API
       - "9001:9001"  # Admin API
