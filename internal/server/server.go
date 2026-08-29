@@ -420,12 +420,13 @@ type manifestRecorder struct {
 	writer *manifest.Writer
 }
 
-func (m *manifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64) {
+func (m *manifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64) {
 	entry := &manifest.Entry{
 		PlaintextSize:   size,
 		PlaintextSHA256: sha256Hex,
 		IV:              iv,
 		WrappedDEK:      wrappedDEK,
+		MEKFingerprint:  mekFingerprint,
 		BlockSize:       blockSize,
 		ContentType:     contentType,
 		ETag:            etag,
@@ -533,6 +534,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/readyz", s.readyz)
 
+	// Version endpoint (public, no auth required)
+	mux.HandleFunc("/version", middleware.VersionHandler(s.config))
+
 	// Share endpoint for pre-signed URLs (public, no auth required)
 	mux.HandleFunc("/share/", s.handleShare)
 
@@ -567,8 +571,8 @@ func (s *Server) Handler() http.Handler {
 	// Bucket operations
 	mux.HandleFunc("/", s.wrapHandler(h.HandleRoot))
 
-	// Apply request ID middleware to all S3 responses
-	return middleware.RequestID(mux)
+	// Apply server header and request ID middleware to all S3 responses
+	return middleware.RequestID(middleware.ServerHeader(mux))
 }
 
 // AdminHandler returns the admin API handler.
@@ -576,6 +580,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", s.healthz)
+	mux.HandleFunc("/version", middleware.VersionHandler(s.config)) // Public, no auth required
 	mux.HandleFunc("/admin/key/verify", s.verifyKey)
 	mux.HandleFunc("/admin/key/rotate", s.rotateKey)
 	mux.HandleFunc("/admin/key/export", s.exportKey)
@@ -610,7 +615,7 @@ func (s *Server) AdminHandler() http.Handler {
 
 	// Gate every non-public admin route behind ARMOR_ADMIN_TOKEN and audit-log
 	// each call. Public probe/scrape/dashboard paths are passed through.
-	return s.adminAuthMiddleware(mux)
+	return middleware.ServerHeader(s.adminAuthMiddleware(mux))
 }
 
 // healthz returns the health status.
@@ -1175,7 +1180,7 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 
 // isPublicPath checks if a path is public (no auth required).
 func (s *Server) isPublicPath(path string) bool {
-	return path == "/healthz" || path == "/readyz"
+	return path == "/healthz" || path == "/readyz" || path == "/version"
 }
 
 // verifyAuthAndGetCredential validates AWS SigV4 authentication and returns the credential.

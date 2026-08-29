@@ -163,3 +163,45 @@ Releases are flagged as correctness-related if the release notes or tag contain 
 - fix, bug, security, correctness, critical, patch, hotfix, urgent, vulnerability, cve, issue, regression
 
 These releases get highest priority in the report and trigger exit code 1 when drift is detected.
+
+## Version Probe
+
+ARMOR exposes its version through two mechanisms for drift detection:
+
+### HTTP Header Probe
+
+Every ARMOR response includes a `Server: ARMOR/<version>` header that can be used as a lightweight drift probe:
+
+```bash
+# Check deployed ARMOR version via Server header
+curl -sI https://armor.example.com/healthz | grep Server:
+# Output: Server: ARMOR/0.1.42
+
+# Works on both S3 API and admin API listeners
+curl -sI https://armor.example.com/healthz | grep Server:
+curl -sI https://armor-admin.example.com/healthz | grep Server:
+```
+
+This is the recommended drift check method:
+- No authentication required (works on public /healthz endpoint)
+- Returns only via HEAD request (minimal bandwidth)
+- Available on all ARMOR responses (no special endpoint needed)
+
+### JSON Version Endpoint
+
+For detailed version information, ARMOR provides a `GET /version` endpoint on both listeners:
+
+```bash
+curl -s https://armor.example.com/version
+# Output: {"version":"0.1.42","format_write_version":2,"go":"1.23.1"}
+
+curl -s https://armor-admin.example.com/version
+# Output: {"version":"0.1.42","format_write_version":2,"go":"1.23.1"}
+```
+
+The endpoint returns:
+- `version`: ARMOR version (set at build time via ldflags)
+- `format_write_version`: ARMOR manifest format version (from ARMOR_FORMAT_VERSION env var)
+- `go`: Go runtime version (with "go" prefix stripped for cleaner JSON)
+
+**Note:** The `/version` endpoint requires no authentication and is safe to call from monitoring systems.
