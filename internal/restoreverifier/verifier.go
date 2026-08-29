@@ -1190,6 +1190,28 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 		// Multipart: full ciphertext is just the encrypted blocks (no header)
 		// HMAC table is in a sidecar file - load it through MultipartStateManager
 		encryptedData = fullCiphertext
+
+		// For v3 multipart, use the v3 sidecar format
+		if armorMeta.Version == 3 {
+			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTableV3(ctx, key)
+			if err != nil {
+				return nil, fmt.Errorf("ARMOR path: failed to load v3 sidecar: %w", err)
+			}
+			// Convert v3 sidecar to block table
+			blockTable := sidecar.ToBlockTable(armorMeta.BlockSize)
+			// Decrypt v3 multipart (part numbers start at 1 for multipart)
+			decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, armorMeta.BlockSize, crypto.Version3)
+			if err != nil {
+				return nil, fmt.Errorf("ARMOR path: failed to create v3 decryptor: %w", err)
+			}
+			plaintext, err := decryptor.DecryptV3(encryptedData, 1, blockTable)
+			if err != nil {
+				return nil, fmt.Errorf("ARMOR path: v3 decryption failed: %w", err)
+			}
+			return plaintext, nil
+		}
+
+		// v1/v2 multipart
 		sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTable(ctx, key)
 		if err != nil {
 			return nil, fmt.Errorf("ARMOR path: failed to load HMAC sidecar: %w", err)
@@ -1201,6 +1223,40 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 		}
 	} else {
 		// Single-PUT: extract ciphertext and HMAC from the full envelope
+		if armorMeta.Version == 3 {
+			// v3 single-PUT: trailer block table format
+			// Layout: [64-byte header][encrypted blocks with varying sizes][block table]
+			blockCount := crypto.ComputeBlockCount(armorMeta.PlaintextSize, armorMeta.BlockSize)
+			blockTableSize := int64(blockCount) * crypto.BlockTableEntrySize
+
+			if int64(len(fullCiphertext)) < crypto.HeaderSize+blockTableSize {
+				return nil, fmt.Errorf("ARMOR path: object too small for v3 block table")
+			}
+
+			// Extract encrypted data (everything after header except block table)
+			encryptedData = fullCiphertext[crypto.HeaderSize : len(fullCiphertext)-int(blockTableSize)]
+
+			// Extract block table from trailer
+			blockTableData := fullCiphertext[len(fullCiphertext)-int(blockTableSize):]
+			blockTable, err := crypto.DecodeBlockTable(blockTableData, armorMeta.BlockSize, blockCount)
+			if err != nil {
+				return nil, fmt.Errorf("ARMOR path: failed to decode v3 block table: %w", err)
+			}
+
+			// Decrypt v3 data (part=0 for single-PUT)
+			decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, armorMeta.BlockSize, crypto.Version3)
+			if err != nil {
+				return nil, fmt.Errorf("ARMOR path: failed to create v3 decryptor: %w", err)
+			}
+
+			plaintext, err := decryptor.DecryptV3(encryptedData, 0, blockTable)
+			if err != nil {
+				return nil, fmt.Errorf("ARMOR path: v3 decryption failed: %w", err)
+			}
+			return plaintext, nil
+		}
+
+		// v1/v2 single-PUT: inline HMAC table
 		// Layout: [64-byte header][plaintextSize ciphertext][HMAC table]
 		encryptedData = fullCiphertext[crypto.HeaderSize : crypto.HeaderSize+armorMeta.PlaintextSize]
 		hmacTable = fullCiphertext[crypto.HeaderSize+armorMeta.PlaintextSize:]
@@ -1268,7 +1324,100 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 		hmacTable     []byte
 		iv            []byte
 		header        *crypto.EnvelopeHeader // single-PUT only; nil for multipart
+		blockTable    *crypto.BlockTable     // v3 only; nil for v1/v2
 	)
+
+	if armorMeta.Version == 3 {
+		// v3 format: use block table for single-PUT or sidecar for multipart
+		if isMultipart {
+			// v3 multipart: load sidecar
+			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTableV3(ctx, key)
+			if err != nil {
+				return nil, fmt.Errorf("direct path: failed to load v3 sidecar: %w", err)
+			}
+			blockTable = sidecar.ToBlockTable(armorMeta.BlockSize)
+			iv = armorMeta.IV
+			encryptedData = make([]byte, armorMeta.PlaintextSize)
+			dataReader, err := v.backend.GetRange(ctx, bucket, key, 0, armorMeta.PlaintextSize)
+			if err != nil {
+				return nil, fmt.Errorf("direct path: failed to read multipart ciphertext: %w", err)
+			}
+			defer dataReader.Close()
+			if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
+				return nil, fmt.Errorf("direct path: failed to read multipart ciphertext bytes: %w", err)
+			}
+		} else {
+			// v3 single-PUT: read envelope header and trailer block table
+			headerReader, err := v.backend.GetRange(ctx, bucket, key, 0, crypto.HeaderSize)
+			if err != nil {
+				return nil, fmt.Errorf("direct path: failed to read envelope header: %w", err)
+			}
+			defer headerReader.Close()
+			headerBuf := make([]byte, crypto.HeaderSize)
+			if _, err := io.ReadFull(headerReader, headerBuf); err != nil {
+				return nil, fmt.Errorf("direct path: failed to read header bytes: %w", err)
+			}
+			header, err = crypto.DecodeHeader(headerBuf)
+			if err != nil {
+				return nil, fmt.Errorf("direct path: failed to decode envelope header: %w", err)
+			}
+
+			// Read full object to extract encrypted data and block table
+			blockCount := crypto.ComputeBlockCount(armorMeta.PlaintextSize, armorMeta.BlockSize)
+			blockTableSize := int64(blockCount) * crypto.BlockTableEntrySize
+			fullSize := crypto.HeaderSize + armorMeta.PlaintextSize + blockTableSize
+
+			fullReader, err := v.backend.GetRange(ctx, bucket, key, 0, fullSize)
+			if err != nil {
+				return nil, fmt.Errorf("direct path: failed to read full object: %w", err)
+			}
+			defer fullReader.Close()
+
+			fullData := make([]byte, fullSize)
+			if _, err := io.ReadFull(fullReader, fullData); err != nil {
+				return nil, fmt.Errorf("direct path: failed to read full object bytes: %w", err)
+			}
+
+			// Extract encrypted data (everything after header except block table)
+			encryptedData = fullData[crypto.HeaderSize : len(fullData)-int(blockTableSize)]
+
+			// Extract block table from trailer
+			blockTableData := fullData[len(fullData)-int(blockTableSize):]
+			blockTable, err = crypto.DecodeBlockTable(blockTableData, armorMeta.BlockSize, blockCount)
+			if err != nil {
+				return nil, fmt.Errorf("direct path: failed to decode v3 block table: %w", err)
+			}
+
+			iv = header.IV[:]
+		}
+
+		// Decrypt v3 data
+		decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, armorMeta.BlockSize, crypto.Version3)
+		if err != nil {
+			return nil, fmt.Errorf("direct path: failed to create v3 decryptor: %w", err)
+		}
+
+		part := uint16(0)
+		if isMultipart {
+			part = 1 // Part numbers start at 1 for multipart
+		}
+
+		plaintext, err := decryptor.DecryptV3(encryptedData, part, blockTable)
+		if err != nil {
+			return nil, fmt.Errorf("direct path: v3 decryption failed: %w (possible data corruption or wrong MEK)", err)
+		}
+
+		// Step 5: verify the plaintext digest
+		if header != nil {
+			if err := header.VerifyPlaintextSHA(plaintext); err != nil {
+				return nil, fmt.Errorf("direct path: plaintext SHA-256 verification failed: %w", err)
+			}
+		}
+
+		return plaintext, nil
+	}
+
+	// v1/v2 format: use inline HMAC table
 	if isMultipart {
 		encryptedData, hmacTable, iv, err = v.readMultipartCiphertext(ctx, bucket, key, armorMeta)
 	} else {

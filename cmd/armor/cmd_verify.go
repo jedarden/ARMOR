@@ -539,7 +539,7 @@ func quickVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, buck
 	}
 
 	// Verify envelope version
-	if envelope.Version != crypto.Version1 && envelope.Version != crypto.Version2 {
+	if envelope.Version != crypto.Version1 && envelope.Version != crypto.Version2 && envelope.Version != crypto.Version3 {
 		result.Status = "CORRUPTED"
 		result.Error = fmt.Sprintf("Invalid envelope version: %d", envelope.Version)
 		result.Duration = time.Since(startTime).Seconds()
@@ -646,13 +646,99 @@ func fullVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucke
 		return result
 	}
 
-	// Verify HMAC using crypto.VerifyDecompression
-	// This performs byte-for-byte verification with HMAC checking
-	err = crypto.VerifyDecompression(dek, objectData[crypto.HeaderSize:], envelope)
-	if err != nil {
+	// Verify HMAC using version-specific decryption
+	var plaintext []byte
+
+	if envelope.Version == crypto.Version3 {
+		// v3 format: use trailer block table
+		// Layout: [header][encrypted blocks with varying sizes][block table]
+		blockCount := crypto.ComputeBlockCount(envelope.PlaintextSize, envelope.BlockSize)
+		blockTableSize := int64(blockCount) * crypto.BlockTableEntrySize
+
+		if int64(len(objectData)) < crypto.HeaderSize+blockTableSize {
+			result.Status = "CORRUPTED"
+			result.Error = fmt.Sprintf("Object too small for v3 block table: got %d bytes, need at least %d",
+				len(objectData), crypto.HeaderSize+blockTableSize)
+			result.Duration = time.Since(startTime).Seconds()
+			return result
+		}
+
+		// Extract encrypted data (everything after header except block table)
+		encryptedData := objectData[crypto.HeaderSize : len(objectData)-int(blockTableSize)]
+
+		// Extract block table from trailer
+		blockTableData := objectData[len(objectData)-int(blockTableSize):]
+		blockTable, err := crypto.DecodeBlockTable(blockTableData, envelope.BlockSize, blockCount)
+		if err != nil {
+			result.Status = "CORRUPTED"
+			result.Error = fmt.Sprintf("Failed to decode v3 block table: %v", err)
+			result.Duration = time.Since(startTime).Seconds()
+			return result
+		}
+
+		// Decrypt v3 data (part=0 for single-PUT)
+		decryptor, err := crypto.NewDecryptorWithVersion(dek, envelope.IV[:], envelope.BlockSize, crypto.Version3)
+		if err != nil {
+			result.Status = "ERROR"
+			result.Error = fmt.Sprintf("Failed to create v3 decryptor: %v", err)
+			result.Duration = time.Since(startTime).Seconds()
+			return result
+		}
+
+		plaintext, err = decryptor.DecryptV3(encryptedData, 0, blockTable)
+		if err != nil {
+			result.Status = "CORRUPTED"
+			result.Error = fmt.Sprintf("v3 decryption failed: %v", err)
+			result.Details = "Object data corruption detected - HMAC mismatch or decompression error"
+			result.Duration = time.Since(startTime).Seconds()
+			return result
+		}
+	} else {
+		// v1/v2 format: inline HMAC table
+		// Verify HMAC using crypto.VerifyDecompression
+		// This performs byte-for-byte verification with HMAC checking
+		err = crypto.VerifyDecompression(dek, objectData[crypto.HeaderSize:], envelope)
+		if err != nil {
+			result.Status = "CORRUPTED"
+			result.Error = fmt.Sprintf("HMAC or decompression verification failed: %v", err)
+			result.Details = "Object data corruption detected - HMAC mismatch or decompression error"
+			result.Duration = time.Since(startTime).Seconds()
+			return result
+		}
+
+		// For v1/v2, we need to decrypt to get plaintext for SHA-256 comparison
+		decryptor, err := crypto.NewDecryptorWithVersion(dek, envelope.IV[:], envelope.BlockSize, envelope.Version)
+		if err != nil {
+			result.Status = "ERROR"
+			result.Error = fmt.Sprintf("Failed to create decryptor: %v", err)
+			result.Duration = time.Since(startTime).Seconds()
+			return result
+		}
+
+		encryptedData := objectData[crypto.HeaderSize:]
+		blockCount := crypto.ComputeBlockCount(envelope.PlaintextSize, envelope.BlockSize)
+		hmacTableSize := int64(blockCount) * crypto.HMACSize
+		hmacTable := encryptedData[len(encryptedData)-int(hmacTableSize):]
+		encryptedData = encryptedData[:len(encryptedData)-int(hmacTableSize)]
+
+		plaintext, err = decryptor.Decrypt(encryptedData, hmacTable)
+		if err != nil {
+			result.Status = "CORRUPTED"
+			result.Error = fmt.Sprintf("Decryption failed: %v", err)
+			result.Duration = time.Since(startTime).Seconds()
+			return result
+		}
+	}
+
+	// Verify plaintext SHA-256
+	plaintextSHA := sha256.Sum256(plaintext)
+	plaintextSHAHex := hex.EncodeToString(plaintextSHA[:])
+
+	expectedSHA := info.Metadata["x-amz-meta-armor-plaintext-sha256"]
+	if expectedSHA != "" && expectedSHA != plaintextSHAHex {
 		result.Status = "CORRUPTED"
-		result.Error = fmt.Sprintf("HMAC or decompression verification failed: %v", err)
-		result.Details = "Object data corruption detected - HMAC mismatch or decompression error"
+		result.Error = fmt.Sprintf("SHA-256 mismatch: expected=%s, got=%s", expectedSHA, plaintextSHAHex)
+		result.Details = "Plaintext checksum verification failed"
 		result.Duration = time.Since(startTime).Seconds()
 		return result
 	}

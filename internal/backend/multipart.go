@@ -41,16 +41,16 @@ func IsPlaceholderPlaintextSHA(s string) bool {
 // This is stored in B2 at .armor/multipart/<upload-id>.state for format version 2,
 // or at .armor/multipart/<upload-id>/meta.json for format version 3.
 type MultipartState struct {
-	UploadID    string    `json:"upload_id"`
-	Bucket      string    `json:"bucket"`
-	Key         string    `json:"key"`
-	IV          []byte    `json:"iv"`
-	WrappedDEK  []byte    `json:"wrapped_dek"`
-	MEKFingerprint string `json:"mek_fingerprint,omitempty"` // 16-char hex fingerprint of MEK used (v2 format)
-	BlockSize   int       `json:"block_size"`
-	Created     time.Time `json:"created"`
-	ContentType string    `json:"content_type"`
-	KeyID       string    `json:"key_id"` // Key identifier for multi-key support
+	UploadID       string    `json:"upload_id"`
+	Bucket         string    `json:"bucket"`
+	Key            string    `json:"key"`
+	IV             []byte    `json:"iv"`
+	WrappedDEK     []byte    `json:"wrapped_dek"`
+	MEKFingerprint string    `json:"mek_fingerprint,omitempty"` // 16-char hex fingerprint of MEK used (v2 format)
+	BlockSize      int       `json:"block_size"`
+	Created        time.Time `json:"created"`
+	ContentType    string    `json:"content_type"`
+	KeyID          string    `json:"key_id"` // Key identifier for multi-key support
 
 	// Per-part HMACs (part number -> HMACs for each block in that part)
 	// Stored as base64-encoded concatenation of all block HMACs
@@ -122,7 +122,7 @@ type MultipartMetadataV3 struct {
 	BlockSize      int       `json:"block_size"`
 	Created        time.Time `json:"created"`
 	ContentType    string    `json:"content_type"`
-	KeyID          string    `json:"key_id"` // Key identifier for multi-key support
+	KeyID          string    `json:"key_id"`         // Key identifier for multi-key support
 	FormatVersion  int       `json:"format_version"` // Always 3 for this structure
 
 	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-005).
@@ -339,6 +339,7 @@ func (m *MultipartStateManager) ListPartsV3(ctx context.Context, uploadID string
 		// Extract part number from key: .armor/multipart/<id>/part-<n>.json
 		// Key format: .armor/multipart/{uploadID}/part-{partNumber}.json
 		partStr := obj.Key[len(prefix):]
+		partStr = strings.TrimPrefix(partStr, "part-")
 		if idx := strings.LastIndex(partStr, ".json"); idx != -1 {
 			partStr = partStr[:idx]
 		}
@@ -363,6 +364,7 @@ func (m *MultipartStateManager) ListPartsV3(ctx context.Context, uploadID string
 		}
 		for _, obj := range listResult.Objects {
 			partStr := obj.Key[len(prefix):]
+			partStr = strings.TrimPrefix(partStr, "part-")
 			if idx := strings.LastIndex(partStr, ".json"); idx != -1 {
 				partStr = partStr[:idx]
 			}
@@ -389,24 +391,68 @@ type HMACTableSidecar struct {
 	Key        string   `json:"key"`         // Object key
 	BlockHMACs [][]byte `json:"block_hmacs"` // HMAC for each block (v1/v2 format)
 	BlockSize  int      `json:"block_size"`
-	Version    int      `json:"version"`     // Envelope version (1 or 2)
+	Version    int      `json:"version"` // Envelope version (1 or 2)
 }
 
 // HMACTableSidecarV3 represents the v3 HMAC table stored as a gzip-compressed JSON sidecar.
 // For v3 multipart uploads, the sidecar contains per-part block information with HMACs and
 // ciphertext lengths, stored at .armor/hmac/<sha256(key)>.
 type HMACTableSidecarV3 struct {
-	Version  int                `json:"version"`             // Always 3 for v3 format
-	BlockSize int               `json:"block_size"`           // Block size in bytes
-	Parts    []HMACPartV3       `json:"parts"`                // Array of part information
+	Version   int          `json:"version"`    // Always 3 for v3 format
+	BlockSize int          `json:"block_size"` // Block size in bytes
+	Parts     []HMACPartV3 `json:"parts"`      // Array of part information
 }
 
 // HMACPartV3 represents a single part's HMAC and length information in the v3 sidecar.
 type HMACPartV3 struct {
-	N               int            `json:"n"`                   // Part number (1-based)
-	PlaintextLen    int64          `json:"plaintext_len"`       // Length of plaintext part
-	CiphertextLen   int64          `json:"ciphertext_len"`      // Length of encrypted part
-	Blocks          [][]string     `json:"blocks"`              // Array of [hmac_base64, clen] for each block
+	N             int        `json:"n"`              // Part number (1-based)
+	PlaintextLen  int64      `json:"plaintext_len"`  // Length of plaintext part
+	CiphertextLen int64      `json:"ciphertext_len"` // Length of encrypted part
+	Blocks        [][]string `json:"blocks"`         // Array of [hmac_base64, clen] for each block
+}
+
+// ToBlockTable converts a v3 sidecar to a crypto.BlockTable for decryption.
+// This method processes all parts in the sidecar and creates a flat block table
+// with entries for all blocks across all parts.
+func (s *HMACTableSidecarV3) ToBlockTable(blockSize int) *crypto.BlockTable {
+	// Count total blocks across all parts
+	totalBlocks := 0
+	for _, part := range s.Parts {
+		totalBlocks += len(part.Blocks)
+	}
+
+	table := crypto.NewBlockTable(blockSize, totalBlocks)
+
+	// Process each part's blocks
+	for _, part := range s.Parts {
+		for _, blockData := range part.Blocks {
+			if len(blockData) != 2 {
+				continue // Skip malformed entries
+			}
+
+			// Decode HMAC from base64
+			hmacBytes, err := base64.StdEncoding.DecodeString(blockData[0])
+			if err != nil {
+				continue // Skip entries with invalid HMAC
+			}
+
+			// Parse ciphertext length (with compression flag)
+			var clen uint32
+			if _, err := fmt.Sscanf(blockData[1], "%d", &clen); err != nil {
+				continue // Skip entries with invalid length
+			}
+
+			// Create block table entry
+			entry := &crypto.BlockTableEntry{}
+			copy(entry.HMAC[:], hmacBytes)
+			entry.CiphertextLength = clen
+
+			// Add to table
+			table.AddEntry(entry)
+		}
+	}
+
+	return table
 }
 
 // SaveHMACTable saves the HMAC table as a sidecar object.
@@ -442,9 +488,9 @@ func (m *MultipartStateManager) SaveHMACTableV3(ctx context.Context, key string,
 	sidecarKey := fmt.Sprintf(".armor/hmac/%x", keyHash)
 
 	sidecar := HMACTableSidecarV3{
-		Version:  3,
+		Version:   3,
 		BlockSize: blockSize,
-		Parts:    parts,
+		Parts:     parts,
 	}
 
 	// Marshal to JSON
