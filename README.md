@@ -173,7 +173,8 @@ ARMOR is configured via environment variables:
 | `ARMOR_AUTH_ACCESS_KEY` | Yes* | — | Client access key |
 | `ARMOR_AUTH_SECRET_KEY` | Yes* | — | Client secret key |
 | `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size (bytes) |
-| `ARMOR_COMPRESS` | No | `false` | Enable zstd compression for single-PUT uploads. Multipart uploads are rejected when enabled. Compressed objects do not support byte-range reads. See ADR-007. |
+| `ARMOR_COMPRESS` | No | `false` | Legacy alias for `ARMOR_COMPRESS_RULES="*=zstd"` (all files compressed). Prefer `ARMOR_COMPRESS_RULES` for fine-grained control. Multipart uploads are rejected when compression is enabled. Compressed objects do not support byte-range reads. See ADR-007. |
+| `ARMOR_COMPRESS_RULES` | No | — | Comma-separated compression rules: `<suffix>|<content-type>=zstd|none`. First match wins. Examples: `.jsonl=zstd,.wal=zstd,application/json=zstd,*=none`. Per-request override via `x-amz-meta-armor-compress: true|false` header. Only applies to v3 single-PUT format. See ADR-007. |
 | `ARMOR_READ_CONCURRENCY` | No | `16` | Maximum concurrent ranged reads |
 | `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID |
 | `ARMOR_READYZ_CACHE_TTL` | No | `30` | Seconds to cache backend connectivity in `/readyz` |
