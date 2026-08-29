@@ -419,14 +419,15 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 
 	// Build metadata
 	meta := (&backend.ARMORMetadata{
-		Version:       1,
-		BlockSize:     m.blockSize,
-		PlaintextSize: int64(len(canaryContent)),
-		ContentType:   "application/octet-stream",
-		IV:            iv,
-		WrappedDEK:    wrappedDEK,
-		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
-		ETag:          etag,
+		Version:        1,
+		BlockSize:      m.blockSize,
+		PlaintextSize:  int64(len(canaryContent)),
+		ContentType:    "application/octet-stream",
+		IV:             iv,
+		WrappedDEK:     wrappedDEK,
+		MEKFingerprint: mekFingerprint,
+		PlaintextSHA:   hex.EncodeToString(plaintextSHA[:]),
+		ETag:           etag,
 	}).ToMetadata()
 
 	// Upload to B2 (direct, not through Cloudflare)
@@ -627,14 +628,15 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 
 	// Build metadata
 	meta := (&backend.ARMORMetadata{
-		Version:       1,
-		BlockSize:     m.blockSize,
-		PlaintextSize: int64(len(canaryContent)),
-		ContentType:   "application/octet-stream",
-		IV:            iv,
-		WrappedDEK:    wrappedDEK,
-		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
-		ETag:          etag,
+		Version:        1,
+		BlockSize:      m.blockSize,
+		PlaintextSize:  int64(len(canaryContent)),
+		ContentType:    "application/octet-stream",
+		IV:             iv,
+		WrappedDEK:     wrappedDEK,
+		MEKFingerprint: mekFingerprint,
+		PlaintextSHA:   hex.EncodeToString(plaintextSHA[:]),
+		ETag:           etag,
 	}).ToMetadata()
 
 	// Upload via multipart API (exercises create/upload/complete path)
@@ -1009,14 +1011,15 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 
 	// Build metadata
 	meta := (&backend.ARMORMetadata{
-		Version:       1,
-		BlockSize:     m.blockSize,
-		PlaintextSize: int64(len(canaryContent)),
-		ContentType:   "application/octet-stream",
-		IV:            iv,
-		WrappedDEK:    wrappedDEK,
-		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
-		ETag:          etag,
+		Version:        1,
+		BlockSize:      m.blockSize,
+		PlaintextSize:  int64(len(canaryContent)),
+		ContentType:    "application/octet-stream",
+		IV:             iv,
+		WrappedDEK:     wrappedDEK,
+		MEKFingerprint: mekFingerprint,
+		PlaintextSHA:   hex.EncodeToString(plaintextSHA[:]),
+		ETag:           etag,
 	}).ToMetadata()
 
 	// Upload to primary backend
