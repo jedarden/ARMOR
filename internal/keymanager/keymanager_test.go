@@ -26,7 +26,7 @@ func TestNew(t *testing.T) {
 		{Prefix: "data/", KeyName: "default"},
 	}
 
-	km, err := New(defaultMEK, namedKeys, routes)
+	km, err := New(defaultMEK, namedKeys, routes, nil)
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestNew_InvalidDefaultMEK(t *testing.T) {
-	_, err := New([]byte{1, 2, 3}, nil, nil)
+	_, err := New([]byte{1, 2, 3}, nil, nil, nil)
 	if err == nil {
 		t.Error("Expected error for invalid MEK length")
 	}
@@ -55,7 +55,7 @@ func TestNew_InvalidNamedMEK(t *testing.T) {
 		"test": []byte{1, 2, 3}, // Invalid length
 	}
 
-	_, err := New(defaultMEK, namedKeys, nil)
+	_, err := New(defaultMEK, namedKeys, nil, nil)
 	if err == nil {
 		t.Error("Expected error for invalid named MEK length")
 	}
@@ -67,7 +67,7 @@ func TestNew_RouteReferencesUnknownKey(t *testing.T) {
 		{Prefix: "data/", KeyName: "nonexistent"},
 	}
 
-	_, err := New(defaultMEK, nil, routes)
+	_, err := New(defaultMEK, nil, routes, nil)
 	if err == nil {
 		t.Error("Expected error for route referencing unknown key")
 	}
@@ -89,7 +89,7 @@ func TestGetKey(t *testing.T) {
 		{Prefix: "data/", KeyName: "default"},
 	}
 
-	km, _ := New(defaultMEK, namedKeys, routes)
+	km, _ := New(defaultMEK, namedKeys, routes, nil)
 
 	tests := []struct {
 		objectKey    string
@@ -131,7 +131,7 @@ func TestGetKey_LongestPrefixMatch(t *testing.T) {
 		{Prefix: "a/", KeyName: "default"},
 	}
 
-	km, _ := New(defaultMEK, namedKeys, routes)
+	km, _ := New(defaultMEK, namedKeys, routes, nil)
 
 	tests := []struct {
 		objectKey    string
@@ -209,7 +209,7 @@ func TestGetMEK(t *testing.T) {
 		{Prefix: "pii/", KeyName: "sensitive"},
 	}
 
-	km, _ := New(defaultMEK, namedKeys, routes)
+	km, _ := New(defaultMEK, namedKeys, routes, nil)
 
 	// Test default key
 	mek, keyName, err := km.GetMEK("public/file.txt")
@@ -497,7 +497,7 @@ func TestListRoutes(t *testing.T) {
 		{Prefix: "b/", KeyName: "default"},
 	}
 
-	km, _ := New(defaultMEK, nil, routes)
+	km, _ := New(defaultMEK, nil, routes, nil)
 
 	listRoutes := km.ListRoutes()
 	if len(listRoutes) != 2 {
@@ -516,4 +516,299 @@ func equalBytes(a, b []byte) bool {
 		}
 	}
 	return true
+}
+
+func TestKeyRingFunctionality(t *testing.T) {
+	// Create test MEKs
+	defaultMEK := make([]byte, 32)
+	for i := range defaultMEK {
+		defaultMEK[i] = byte(i)
+	}
+
+	retired1 := make([]byte, 32)
+	for i := range retired1 {
+		retired1[i] = byte(i + 100)
+	}
+
+	retired2 := make([]byte, 32)
+	for i := range retired2 {
+		retired2[i] = byte(i + 200)
+	}
+
+	// Create ring data (concatenated MEKs)
+	ringData := append([]byte{}, retired1...)
+	ringData = append(ringData, retired2...)
+
+	ringKeys := map[string][]byte{
+		"default": ringData,
+	}
+
+	km, err := New(defaultMEK, nil, nil, ringKeys)
+	if err != nil {
+		t.Fatalf("New() with ring failed: %v", err)
+	}
+
+	// Test Ring() accessor
+	ring := km.Ring("default")
+	if ring == nil {
+		t.Fatal("Ring() returned nil for default key")
+	}
+
+	if len(ring) != 2 {
+		t.Errorf("Ring() returned %d entries, want 2", len(ring))
+	}
+
+	// Verify fingerprints are set
+	for i, entry := range ring {
+		if entry.Fingerprint == "" {
+			t.Errorf("Ring entry %d has empty fingerprint", i)
+		}
+		if len(entry.Fingerprint) != 16 {
+			t.Errorf("Ring entry %d fingerprint length = %d, want 16", i, len(entry.Fingerprint))
+		}
+	}
+
+	// Test Ring() for non-existent key
+	ring = km.Ring("nonexistent")
+	if ring != nil {
+		t.Error("Ring() should return nil for non-existent key")
+	}
+
+	// Test Ring() with empty key name (should use default)
+	ring = km.Ring("")
+	if ring == nil {
+		t.Error("Ring() with empty name should return default ring")
+	}
+
+	if len(ring) != 2 {
+		t.Errorf("Ring() with empty name returned %d entries, want 2", len(ring))
+	}
+}
+
+func TestGetMEKByFingerprint(t *testing.T) {
+	// Create test MEKs
+	defaultMEK, _ := hex.DecodeString("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
+	retired1, _ := hex.DecodeString("1111111111111111111111111111111111111111111111111111111111111111")
+	retired2, _ := hex.DecodeString("2222222222222222222222222222222222222222222222222222222222222222")
+
+	// Create ring data
+	ringData := append([]byte{}, retired1...)
+	ringData = append(ringData, retired2...)
+
+	ringKeys := map[string][]byte{
+		"default": ringData,
+	}
+
+	km, err := New(defaultMEK, nil, nil, ringKeys)
+	if err != nil {
+		t.Fatalf("New() with ring failed: %v", err)
+	}
+
+	// Test getting active key by fingerprint
+	defaultFP := "588161913cc0c9f5" // Known fingerprint for the default MEK
+	mek, found := km.GetMEKByFingerprint("default", defaultFP)
+	if !found {
+		t.Error("GetMEKByFingerprint() should find active key")
+	}
+	if !equalBytes(mek, defaultMEK) {
+		t.Error("GetMEKByFingerprint() returned wrong MEK for active key")
+	}
+
+	// Test getting retired key by fingerprint
+	retired1FP := "f65f837a1b287304" // Known fingerprint for retired1
+	mek, found = km.GetMEKByFingerprint("default", retired1FP)
+	if !found {
+		t.Error("GetMEKByFingerprint() should find retired key")
+	}
+	if !equalBytes(mek, retired1) {
+		t.Error("GetMEKByFingerprint() returned wrong MEK for retired key")
+	}
+
+	// Test non-existent fingerprint
+	mek, found = km.GetMEKByFingerprint("default", "ffffffffffffffff")
+	if found {
+		t.Error("GetMEKByFingerprint() should not find non-existent fingerprint")
+	}
+
+	// Test with empty key name (should use default)
+	mek, found = km.GetMEKByFingerprint("", defaultFP)
+	if !found {
+		t.Error("GetMEKByFingerprint() with empty name should use default key")
+	}
+
+	// Test with named key
+	namedMEK, _ := hex.DecodeString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	namedRetired, _ := hex.DecodeString("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+	namedRingData := append([]byte{}, namedRetired...)
+	namedRingKeys := map[string][]byte{
+		"default": ringData,
+		"test":    namedRingData,
+	}
+
+	namedKeys := map[string][]byte{
+		"test": namedMEK,
+	}
+
+	km2, err := New(defaultMEK, namedKeys, nil, namedRingKeys)
+	if err != nil {
+		t.Fatalf("New() with named ring failed: %v", err)
+	}
+
+	// Test getting named active key
+	namedFP := "76e65f64b00963fb" // Known fingerprint for namedMEK
+	mek, found = km2.GetMEKByFingerprint("test", namedFP)
+	if !found {
+		t.Error("GetMEKByFingerprint() should find named active key")
+	}
+	if !equalBytes(mek, namedMEK) {
+		t.Error("GetMEKByFingerprint() returned wrong MEK for named active key")
+	}
+
+	// Test getting named retired key
+	namedRetiredFP := "e3c08bbc03627091" // Known fingerprint for namedRetired
+	mek, found = km2.GetMEKByFingerprint("test", namedRetiredFP)
+	if !found {
+		t.Error("GetMEKByFingerprint() should find named retired key")
+	}
+	if !equalBytes(mek, namedRetired) {
+		t.Error("GetMEKByFingerprint() returned wrong MEK for named retired key")
+	}
+
+	// Test non-existent key
+	mek, found = km2.GetMEKByFingerprint("nonexistent", defaultFP)
+	if found {
+		t.Error("GetMEKByFingerprint() should not find non-existent key")
+	}
+}
+
+func TestEmptyRing(t *testing.T) {
+	defaultMEK := make([]byte, 32)
+	for i := range defaultMEK {
+		defaultMEK[i] = byte(i)
+	}
+
+	km, err := New(defaultMEK, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	// Ring() should return nil for empty ring
+	ring := km.Ring("default")
+	if ring != nil {
+		t.Error("Ring() should return nil when no ring is configured")
+	}
+
+	// GetMEKByFingerprint should only find active key
+	activeFP := "588161913cc0c9f5"
+	mek, found := km.GetMEKByFingerprint("default", activeFP)
+	if !found {
+		t.Error("GetMEKByFingerprint() should find active key even without ring")
+	}
+	if !equalBytes(mek, defaultMEK) {
+		t.Error("GetMEKByFingerprint() returned wrong MEK")
+	}
+}
+
+func TestRingWithNamedKeys(t *testing.T) {
+	defaultMEK, _ := hex.DecodeString("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
+	namedMEK, _ := hex.DecodeString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	namedRetired, _ := hex.DecodeString("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+	namedKeys := map[string][]byte{
+		"test": namedMEK,
+	}
+
+	namedRingData := append([]byte{}, namedRetired...)
+	ringKeys := map[string][]byte{
+		"test": namedRingData,
+	}
+
+	km, err := New(defaultMEK, namedKeys, nil, ringKeys)
+	if err != nil {
+		t.Fatalf("New() with named ring failed: %v", err)
+	}
+
+	// Verify named key ring
+	ring := km.Ring("test")
+	if ring == nil {
+		t.Fatal("Ring() should find named key ring")
+	}
+
+	if len(ring) != 1 {
+		t.Errorf("Named ring has %d entries, want 1", len(ring))
+	}
+
+	// Verify default key has no ring
+	defaultRing := km.Ring("default")
+	if defaultRing != nil {
+		t.Error("Default ring should be nil when not configured")
+	}
+
+	// Test GetMEKByFingerprint with named key
+	namedFP := "76e65f64b00963fb"
+	mek, found := km.GetMEKByFingerprint("test", namedFP)
+	if !found {
+		t.Error("GetMEKByFingerprint() should find named active key")
+	}
+	if !equalBytes(mek, namedMEK) {
+		t.Error("GetMEKByFingerprint() returned wrong MEK for named active key")
+	}
+
+	// Test finding in named ring
+	namedRetiredFP := "e3c08bbc03627091"
+	mek, found = km.GetMEKByFingerprint("test", namedRetiredFP)
+	if !found {
+		t.Error("GetMEKByFingerprint() should find named retired key")
+	}
+	if !equalBytes(mek, namedRetired) {
+		t.Error("GetMEKByFingerprint() returned wrong MEK for named retired key")
+	}
+}
+
+func TestRingValidationErrors(t *testing.T) {
+	defaultMEK := make([]byte, 32)
+	for i := range defaultMEK {
+		defaultMEK[i] = byte(i)
+	}
+
+	tests := []struct {
+		name      string
+		ringKeys  map[string][]byte
+		expectErr bool
+	}{
+		{
+			name: "invalid ring data - not multiple of 32 bytes",
+			ringKeys: map[string][]byte{
+				"default": []byte{1, 2, 3}, // Only 3 bytes
+			},
+			expectErr: true,
+		},
+		{
+			name: "ring for non-existent key",
+			ringKeys: map[string][]byte{
+				"nonexistent": make([]byte, 32),
+			},
+			expectErr: true,
+		},
+		{
+			name: "valid empty ring",
+			ringKeys: map[string][]byte{
+				"default": []byte{},
+			},
+			expectErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(defaultMEK, nil, nil, tt.ringKeys)
+			if tt.expectErr && err == nil {
+				t.Error("Expected error, got nil")
+			}
+			if !tt.expectErr && err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		})
+	}
 }

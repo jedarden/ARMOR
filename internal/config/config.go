@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jedarden/armor/internal/acl"
+	"github.com/jedarden/armor/internal/crypto"
 )
 
 // KeyRoute represents a prefix-to-key mapping for multi-key support.
@@ -87,14 +88,19 @@ type Config struct {
 	NamedKeys map[string][]byte // Named MEKs (key name -> MEK)
 	KeyRoutes []KeyRoute        // Prefix to key name mappings
 
+	// Retired-but-valid key rings for backward compatibility
+	// ARMOR_MEK_RING contains retired MEKs for the default key
+	// ARMOR_MEK_<NAME>_RING contains retired MEKs for named keys
+	KeyRings map[string][]byte // key name -> comma-separated ring MEKs (hex)
+
 	// Authentication credentials for ARMOR clients
 	AuthAccessKey string
 	AuthSecretKey string
 
 	// Multi-credential support
-	Credentials     map[string]*Credential // Access key -> Credential
-	EnvCredentials  map[string]*Credential // Env-only credentials (for hot-reload re-merge)
-	AuthFilePath    string                  // Path to ARMOR_AUTH_FILE (if configured)
+	Credentials    map[string]*Credential // Access key -> Credential
+	EnvCredentials map[string]*Credential // Env-only credentials (for hot-reload re-merge)
+	AuthFilePath   string                 // Path to ARMOR_AUTH_FILE (if configured)
 
 	// Writer ID for provenance chain
 	WriterID string
@@ -144,8 +150,8 @@ type Config struct {
 
 	// Primary backend configuration
 	// ARMOR_BACKEND selects the primary backend: "b2" (default) or "filesystem"
-	Backend     string // Backend type: "b2" or "filesystem"
-	FSPath      string // Path for filesystem backend (required when Backend=filesystem)
+	Backend string // Backend type: "b2" or "filesystem"
+	FSPath  string // Path for filesystem backend (required when Backend=filesystem)
 
 	// Secondary backend configuration (ADR-006)
 	// When set, enables async replication to a secondary backend
@@ -158,6 +164,10 @@ type Config struct {
 	// This is an escape hatch for the demo subcommand only.
 	// Production deployments should always configure credentials.
 	AllowNoCredentials bool
+
+	// FormatWriteVersion controls which ARMOR manifest format version to write.
+	// Valid values: 2 (default) or 3 (future). Invalid values are rejected at startup.
+	FormatWriteVersion int
 }
 
 // Load reads configuration from environment variables.
@@ -339,6 +349,7 @@ func Load() (*Config, error) {
 
 	// Load named keys (ARMOR_MEK_<NAME>)
 	cfg.NamedKeys = make(map[string][]byte)
+	cfg.KeyRings = make(map[string][]byte)
 	for _, env := range os.Environ() {
 		// Look for ARMOR_MEK_<NAME> pattern
 		if strings.HasPrefix(env, "ARMOR_MEK_") {
@@ -365,6 +376,48 @@ func Load() (*Config, error) {
 				continue
 			}
 			cfg.NamedKeys[name] = mek
+		}
+	}
+
+	// Load retired-but-valid key rings
+	// Parse ARMOR_MEK_RING for the default key
+	if ringStr := os.Getenv("ARMOR_MEK_RING"); ringStr != "" {
+		ringMEKs, ringErrs := parseKeyRing(ringStr, "ARMOR_MEK_RING", cfg.MEK)
+		errs = append(errs, ringErrs...)
+		if len(ringMEKs) > 0 {
+			cfg.KeyRings["default"] = ringMEKs
+		}
+	}
+
+	// Parse ARMOR_MEK_<NAME>_RING for named keys
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "ARMOR_MEK_") && strings.HasSuffix(env, "_RING=") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			envKey := parts[0]
+			ringStr := parts[1]
+
+			// Extract key name: ARMOR_MEK_<NAME>_RING -> <NAME>
+			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(envKey, "_RING"), "ARMOR_MEK_")))
+			if name == "" || name == "default" {
+				errs = append(errs, fmt.Errorf("invalid ring key name %q", envKey))
+				continue
+			}
+
+			// Get the active key for this named key
+			activeMEK, exists := cfg.NamedKeys[name]
+			if !exists {
+				errs = append(errs, fmt.Errorf("ARMOR_MEK_%s_RING specified without ARMOR_MEK_%s", name, name))
+				continue
+			}
+
+			ringMEKs, ringErrs := parseKeyRing(ringStr, envKey, activeMEK)
+			errs = append(errs, ringErrs...)
+			if len(ringMEKs) > 0 {
+				cfg.KeyRings[name] = ringMEKs
+			}
 		}
 	}
 
@@ -406,6 +459,23 @@ func Load() (*Config, error) {
 			if cfg.SecondaryBackendPath == "" {
 				errs = append(errs, fmt.Errorf("ARMOR_SECONDARY_BACKEND_PATH is required when ARMOR_SECONDARY_BACKEND_TYPE=filesystem"))
 			}
+		}
+	}
+
+	// Format version configuration (default: 2)
+	// Valid values: 2 (current) or 3 (future)
+	formatVersionStr := os.Getenv("ARMOR_FORMAT_VERSION")
+	if formatVersionStr == "" {
+		cfg.FormatWriteVersion = 2 // Default
+	} else {
+		// Parse and validate format version
+		v, err := strconv.Atoi(formatVersionStr)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("ARMOR_FORMAT_VERSION must be an integer (2 or 3), got %q", formatVersionStr))
+		} else if v != 2 && v != 3 {
+			errs = append(errs, fmt.Errorf("ARMOR_FORMAT_VERSION must be 2 or 3, got %d", v))
+		} else {
+			cfg.FormatWriteVersion = v
 		}
 	}
 
@@ -711,6 +781,65 @@ func parseActions(verbStr string) (map[string]bool, error) {
 	return actions, nil
 }
 
+// parseKeyRing parses a comma-separated string of hex-encoded MEKs for a key ring.
+// It validates each MEK (must be 32 bytes, hex-encoded) and ensures no ring MEK
+// duplicates the active key. Returns the concatenated ring MEKs and any validation errors.
+func parseKeyRing(ringStr, envKey string, activeMEK []byte) ([]byte, []error) {
+	var errs []error
+	var ringMEKs []byte
+
+	if ringStr == "" {
+		return ringMEKs, errs
+	}
+
+	// Split by comma and process each MEK
+	parts := strings.Split(ringStr, ",")
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			errs = append(errs, fmt.Errorf("%s: empty MEK at position %d", envKey, i))
+			continue
+		}
+
+		// Decode hex MEK
+		mek, err := hex.DecodeString(part)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: invalid hex at position %d: %w", envKey, i, err))
+			continue
+		}
+
+		// Validate length
+		if len(mek) != 32 {
+			errs = append(errs, fmt.Errorf("%s: MEK at position %d must be 32 bytes (64 hex chars), got %d", envKey, i, len(mek)))
+			continue
+		}
+
+		// Check for duplicate of active key
+		if len(activeMEK) == 32 && bytesEqual(mek, activeMEK) {
+			errs = append(errs, fmt.Errorf("%s: MEK at position %d duplicates the active key", envKey, i))
+			continue
+		}
+
+		// Append to ring
+		ringMEKs = append(ringMEKs, mek...)
+	}
+
+	return ringMEKs, errs
+}
+
+// bytesEqual compares two byte slices in constant time.
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // RedactedConfig represents a configuration with all secret values redacted.
 // Secret fields are replaced with "<set>" or "<unset>" indicators.
 type RedactedConfig struct {
@@ -748,6 +877,9 @@ type RedactedConfig struct {
 	NamedKeys map[string]string `json:"named_keys"` // key name -> "<set>" or "<unset>"
 	KeyRoutes []KeyRoute        `json:"key_routes"`
 
+	// Retired-but-valid key rings (fingerprints only)
+	KeyRingFingerprints map[string][]string `json:"key_ring_fingerprints"` // key name -> list of 16-char hex fingerprints
+
 	// Authentication credentials for ARMOR clients
 	AuthAccessKey string `json:"auth_access_key"`
 	AuthSecretKey string `json:"auth_secret_key"` // "<set>" or "<unset>"
@@ -767,7 +899,7 @@ type RedactedConfig struct {
 	ListCacheTTL        int `json:"list_cache_ttl"`
 
 	// Pre-signed URL configuration
-	PresignSecret  string `json:"presign_secret"`  // "<set>" or "<unset>"
+	PresignSecret  string `json:"presign_secret"` // "<set>" or "<unset>"
 	PresignBaseURL string `json:"presign_base_url"`
 
 	// Readiness probe configuration
@@ -796,7 +928,7 @@ type RedactedConfig struct {
 
 	// Secondary backend configuration (ADR-006)
 	SecondaryBackend     string `json:"secondary_backend"`
-	SecondaryBackendType  string `json:"secondary_backend_type"`
+	SecondaryBackendType string `json:"secondary_backend_type"`
 	SecondaryBackendPath string `json:"secondary_backend_path"`
 }
 
@@ -812,37 +944,37 @@ type RedactedCredential struct {
 // sensitive material.
 func (c *Config) Redacted() *RedactedConfig {
 	rc := &RedactedConfig{
-		Listen:       c.Listen,
-		AdminListen:  c.AdminListen,
-		B2Region:     c.B2Region,
-		B2Endpoint:   c.B2Endpoint,
-		B2AccessKeyID: c.B2AccessKeyID,
-		Bucket:       c.Bucket,
-		Prefix:       c.Prefix,
-		CFDomain:     c.CFDomain,
-		CanaryDisabled: c.CanaryDisabled,
-		BlockSize:    c.BlockSize,
-		Compress:     c.Compress,
-		ReadConcurrency: c.ReadConcurrency,
-		AuthAccessKey: c.AuthAccessKey,
-		WriterID:     c.WriterID,
-		CacheMaxEntries: c.CacheMaxEntries,
-		CacheTTL:        c.CacheTTL,
-		ListCacheMaxEntries: c.ListCacheMaxEntries,
-		ListCacheTTL:        c.ListCacheTTL,
-		PresignBaseURL: c.PresignBaseURL,
-		ReadyzCacheTTL: c.ReadyzCacheTTL,
+		Listen:                      c.Listen,
+		AdminListen:                 c.AdminListen,
+		B2Region:                    c.B2Region,
+		B2Endpoint:                  c.B2Endpoint,
+		B2AccessKeyID:               c.B2AccessKeyID,
+		Bucket:                      c.Bucket,
+		Prefix:                      c.Prefix,
+		CFDomain:                    c.CFDomain,
+		CanaryDisabled:              c.CanaryDisabled,
+		BlockSize:                   c.BlockSize,
+		Compress:                    c.Compress,
+		ReadConcurrency:             c.ReadConcurrency,
+		AuthAccessKey:               c.AuthAccessKey,
+		WriterID:                    c.WriterID,
+		CacheMaxEntries:             c.CacheMaxEntries,
+		CacheTTL:                    c.CacheTTL,
+		ListCacheMaxEntries:         c.ListCacheMaxEntries,
+		ListCacheTTL:                c.ListCacheTTL,
+		PresignBaseURL:              c.PresignBaseURL,
+		ReadyzCacheTTL:              c.ReadyzCacheTTL,
 		ManifestEnabled:             c.ManifestEnabled,
 		ManifestPrefix:              c.ManifestPrefix,
 		ManifestCompactionInterval:  c.ManifestCompactionInterval,
 		ManifestCompactionThreshold: c.ManifestCompactionThreshold,
-		DashboardUser:  c.DashboardUser,
-		LogLevel:       c.LogLevel,
-		Backend:        c.Backend,
-		FSPath:         c.FSPath,
-		SecondaryBackend:     c.SecondaryBackend,
-		SecondaryBackendType:  c.SecondaryBackendType,
-		SecondaryBackendPath:  c.SecondaryBackendPath,
+		DashboardUser:               c.DashboardUser,
+		LogLevel:                    c.LogLevel,
+		Backend:                     c.Backend,
+		FSPath:                      c.FSPath,
+		SecondaryBackend:            c.SecondaryBackend,
+		SecondaryBackendType:        c.SecondaryBackendType,
+		SecondaryBackendPath:        c.SecondaryBackendPath,
 	}
 
 	// Redact B2 secret key
@@ -901,6 +1033,18 @@ func (c *Config) Redacted() *RedactedConfig {
 		} else {
 			rc.NamedKeys[name] = "<unset>"
 		}
+	}
+
+	// Generate fingerprints for ring keys
+	rc.KeyRingFingerprints = make(map[string][]string)
+	for keyName, ringMEKs := range c.KeyRings {
+		var fingerprints []string
+		for i := 0; i < len(ringMEKs); i += 32 {
+			mek := ringMEKs[i : i+32]
+			fp := crypto.MEKFingerprint(mek)
+			fingerprints = append(fingerprints, fp)
+		}
+		rc.KeyRingFingerprints[keyName] = fingerprints
 	}
 
 	// Copy key routes (no secrets in routes)

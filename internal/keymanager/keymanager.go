@@ -9,12 +9,20 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/jedarden/armor/internal/crypto"
 )
 
 // Key represents a named master encryption key.
 type Key struct {
 	Name string
 	MEK  []byte
+}
+
+// RingKeyEntry represents a retired-but-valid MEK with its fingerprint.
+type RingKeyEntry struct {
+	MEK         []byte // The retired MEK (32 bytes)
+	Fingerprint string // 16 hex chars (first 8 bytes of SHA-256(MEK))
 }
 
 // Route represents a prefix-to-key mapping.
@@ -26,15 +34,18 @@ type Route struct {
 // KeyManager manages multiple MEKs and routes object keys to the appropriate key.
 type KeyManager struct {
 	mu             sync.RWMutex
-	keys           map[string]*Key // name -> key
-	routes         []Route         // sorted by prefix length (longest first)
+	keys           map[string]*Key           // name -> key
+	rings          map[string][]RingKeyEntry // name -> ordered ring of retired keys
+	routes         []Route                   // sorted by prefix length (longest first)
 	defaultKeyName string
 }
 
-// New creates a new KeyManager with the given keys and routes.
-func New(defaultMEK []byte, namedKeys map[string][]byte, routes []Route) (*KeyManager, error) {
+// New creates a new KeyManager with the given keys, routes, and retired key rings.
+// ringKeys is a map from key name to concatenated ring MEKs (each 32 bytes).
+func New(defaultMEK []byte, namedKeys map[string][]byte, routes []Route, ringKeys map[string][]byte) (*KeyManager, error) {
 	km := &KeyManager{
 		keys:           make(map[string]*Key),
+		rings:          make(map[string][]RingKeyEntry),
 		routes:         append([]Route(nil), routes...),
 		defaultKeyName: "default",
 	}
@@ -58,6 +69,34 @@ func New(defaultMEK []byte, namedKeys map[string][]byte, routes []Route) (*KeyMa
 			return nil, fmt.Errorf("duplicate key name %q", name)
 		}
 		km.keys[name] = &Key{Name: name, MEK: append([]byte(nil), mek...)}
+	}
+
+	// Initialize retired key rings
+	for keyName, ringMEKs := range ringKeys {
+		keyName = normalizeKeyName(keyName)
+		if keyName == "" {
+			return nil, fmt.Errorf("invalid ring key name")
+		}
+
+		// Verify the key exists (either as default or named key)
+		if _, exists := km.keys[keyName]; !exists {
+			return nil, fmt.Errorf("ring specified for unknown key %q", keyName)
+		}
+
+		// Parse ring MEKs (concatenated 32-byte MEKs)
+		var ring []RingKeyEntry
+		for i := 0; i < len(ringMEKs); i += 32 {
+			if i+32 > len(ringMEKs) {
+				return nil, fmt.Errorf("ring data for key %q is not a multiple of 32 bytes", keyName)
+			}
+			mek := ringMEKs[i : i+32]
+			fp := crypto.MEKFingerprint(mek)
+			ring = append(ring, RingKeyEntry{
+				MEK:         append([]byte(nil), mek...),
+				Fingerprint: fp,
+			})
+		}
+		km.rings[keyName] = ring
 	}
 
 	// Validate routes reference existing keys
@@ -208,6 +247,58 @@ func (km *KeyManager) ListRoutes() []Route {
 	routes := make([]Route, len(km.routes))
 	copy(routes, km.routes)
 	return routes
+}
+
+// GetMEKByFingerprint returns the MEK for a given key ID and fingerprint.
+// It searches both the active key and the retired ring keys.
+// Returns the MEK and true if found, nil and false otherwise.
+func (km *KeyManager) GetMEKByFingerprint(keyID, fingerprint string) ([]byte, bool) {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+
+	keyID = normalizeKeyName(keyID)
+	if keyID == "" {
+		keyID = km.defaultKeyName
+	}
+
+	// Check active key first
+	if key, exists := km.keys[keyID]; exists {
+		if crypto.MEKFingerprint(key.MEK) == fingerprint {
+			return key.MEK, true
+		}
+	}
+
+	// Check ring keys
+	if ring, exists := km.rings[keyID]; exists {
+		for _, entry := range ring {
+			if entry.Fingerprint == fingerprint {
+				return entry.MEK, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+// Ring returns the ordered ring of retired-but-valid keys for a given key ID.
+// Returns nil if the key has no ring configured.
+func (km *KeyManager) Ring(keyID string) []RingKeyEntry {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+
+	keyID = normalizeKeyName(keyID)
+	if keyID == "" {
+		keyID = km.defaultKeyName
+	}
+
+	if ring, exists := km.rings[keyID]; exists {
+		// Return a copy to prevent mutation
+		result := make([]RingKeyEntry, len(ring))
+		copy(result, ring)
+		return result
+	}
+
+	return nil
 }
 
 // ParseKeyRoutes parses a key routes string.

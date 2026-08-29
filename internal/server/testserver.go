@@ -33,7 +33,7 @@ func NewWithBackend(cfg *config.Config, be backend.Backend) (*Server, error) {
 	for _, r := range cfg.KeyRoutes {
 		routes = append(routes, keymanager.Route{Prefix: r.Prefix, KeyName: r.KeyName})
 	}
-	km, err := keymanager.New(cfg.MEK, cfg.NamedKeys, routes)
+	km, err := keymanager.New(cfg.MEK, cfg.NamedKeys, routes, cfg.KeyRings)
 	if err != nil {
 		return nil, fmt.Errorf("test server: create key manager: %w", err)
 	}
