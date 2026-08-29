@@ -632,6 +632,319 @@ func createValidCanary(t *testing.T, mek []byte) ([]byte, []byte) {
 	return envelope, wrappedDEK
 }
 
+// Test runFingerprintProbe
+func TestRunFingerprintProbe(t *testing.T) {
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+	mekFP := crypto.MEKFingerprint(mek)
+
+	// Create a retired MEK with a different fingerprint
+	retiredMEK := make([]byte, 32)
+	for i := range retiredMEK {
+		retiredMEK[i] = byte(255 - i)
+	}
+	retiredFP := crypto.MEKFingerprint(retiredMEK)
+
+	tests := []struct {
+		name                string
+		backend             *mockBackend
+		cfg                 *config.Config
+		expectedStatus      string
+		shouldContainFingerprints bool
+		shouldContainMissing     bool
+	}{
+		{
+			name:    "no objects - warning",
+			backend: newMockBackend(),
+			cfg: &config.Config{
+				Bucket:    "test-bucket",
+				Prefix:    "",
+				MEK:       mek,
+				KeyRings:  make(map[string][]byte),
+				NamedKeys: make(map[string][]byte),
+			},
+			expectedStatus: "WARN",
+		},
+		{
+			name: "all fingerprints available - pass",
+			backend: func() *mockBackend {
+				m := newMockBackend()
+				// Create an object with active key fingerprint
+				canaryData, wrappedDEK := createValidCanary(t, mek)
+				wrappedWithFP, err := crypto.WrapDEKWithFingerprint(mek, createTestDEK(t))
+				if err != nil {
+					t.Fatalf("failed to wrap with fingerprint: %v", err)
+				}
+				metadata := map[string]string{
+					"x-amz-meta-armor-wrapped-dek": wrappedWithFP,
+				}
+				m.objects[".armor/data/obj1"] = &mockObject{
+					data:         canaryData,
+					metadata:     metadata,
+					isArmor:      true,
+					lastModified: time.Now(),
+				}
+				return m
+			}(),
+			cfg: &config.Config{
+				Bucket:    "test-bucket",
+				Prefix:    "",
+				MEK:       mek,
+				KeyRings:  make(map[string][]byte),
+				NamedKeys: make(map[string][]byte),
+			},
+			expectedStatus:      "PASS",
+			shouldContainFingerprints: true,
+		},
+		{
+			name: "fingerprint in ring - pass",
+			backend: func() *mockBackend {
+				m := newMockBackend()
+				// Create an object with retired key fingerprint
+				wrappedWithFP, err := crypto.WrapDEKWithFingerprint(retiredMEK, createTestDEK(t))
+				if err != nil {
+					t.Fatalf("failed to wrap with fingerprint: %v", err)
+				}
+				canaryData, _ := createValidCanary(t, mek)
+				metadata := map[string]string{
+					"x-amz-meta-armor-wrapped-dek": wrappedWithFP,
+				}
+				m.objects[".armor/data/obj1"] = &mockObject{
+					data:         canaryData,
+					metadata:     metadata,
+					isArmor:      true,
+					lastModified: time.Now(),
+				}
+				return m
+			}(),
+			cfg: &config.Config{
+				Bucket:   "test-bucket",
+				Prefix:   "",
+				MEK:      mek,
+				KeyRings: map[string][]byte{"default": retiredMEK},
+				NamedKeys: make(map[string][]byte),
+			},
+			expectedStatus:      "PASS",
+			shouldContainFingerprints: true,
+		},
+		{
+			name: "fingerprint missing from ring - fail",
+			backend: func() *mockBackend {
+				m := newMockBackend()
+				// Create an object with retired key fingerprint NOT in ring
+				wrappedWithFP, err := crypto.WrapDEKWithFingerprint(retiredMEK, createTestDEK(t))
+				if err != nil {
+					t.Fatalf("failed to wrap with fingerprint: %v", err)
+				}
+				canaryData, _ := createValidCanary(t, mek)
+				metadata := map[string]string{
+					"x-amz-meta-armor-wrapped-dek": wrappedWithFP,
+				}
+				m.objects[".armor/data/obj1"] = &mockObject{
+					data:         canaryData,
+					metadata:     metadata,
+					isArmor:      true,
+					lastModified: time.Now(),
+				}
+				return m
+			}(),
+			cfg: &config.Config{
+				Bucket:    "test-bucket",
+				Prefix:    "",
+				MEK:       mek,
+				KeyRings:  make(map[string][]byte), // Empty ring - retired key missing
+				NamedKeys: make(map[string][]byte),
+			},
+			expectedStatus:      "FAIL",
+			shouldContainMissing:     true,
+		},
+		{
+			name: "legacy format objects - pass",
+			backend: func() *mockBackend {
+				m := newMockBackend()
+				// Create an object with legacy format (no fingerprint)
+				canaryData, wrappedDEK := createValidCanary(t, mek)
+				metadata := map[string]string{
+					"x-amz-meta-armor-wrapped-dek": base64.StdEncoding.EncodeToString(wrappedDEK),
+				}
+				m.objects[".armor/data/obj1"] = &mockObject{
+					data:         canaryData,
+					metadata:     metadata,
+					isArmor:      true,
+					lastModified: time.Now(),
+				}
+				return m
+			}(),
+			cfg: &config.Config{
+				Bucket:    "test-bucket",
+				Prefix:    "",
+				MEK:       mek,
+				KeyRings:  make(map[string][]byte),
+				NamedKeys: make(map[string][]byte),
+			},
+			expectedStatus:      "PASS",
+			shouldContainFingerprints: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			results := runFingerprintProbe(ctx, tt.backend, tt.cfg)
+			if len(results) != 1 {
+				t.Fatalf("runFingerprintProbe() returned %d results, expected 1", len(results))
+			}
+			if results[0].Status != tt.expectedStatus {
+				t.Errorf("runFingerprintProbe() status = %s, expected %s", results[0].Status, tt.expectedStatus)
+			}
+			if tt.shouldContainFingerprints && !strings.Contains(results[0].Message, mekFP) {
+				t.Errorf("runFingerprintProbe() message should contain active fingerprint %s, got: %s", mekFP, results[0].Message)
+			}
+			if tt.shouldContainMissing && !strings.Contains(results[0].Message, "MISSING FINGERPRINTS") {
+				t.Errorf("runFingerprintProbe() message should contain 'MISSING FINGERPRINTS', got: %s", results[0].Message)
+			}
+		})
+	}
+}
+
+// Test collectAvailableFingerprints
+func TestCollectAvailableFingerprints(t *testing.T) {
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+	mekFP := crypto.MEKFingerprint(mek)
+
+	retiredMEK := make([]byte, 32)
+	for i := range retiredMEK {
+		retiredMEK[i] = byte(255 - i)
+	}
+	retiredFP := crypto.MEKFingerprint(retiredMEK)
+
+	tests := []struct {
+		name           string
+		cfg            *config.Config
+		expectedCount  int
+		shouldContain  []string
+	}{
+		{
+			name: "active key only",
+			cfg: &config.Config{
+				MEK:       mek,
+				KeyRings:  make(map[string][]byte),
+				NamedKeys: make(map[string][]byte),
+			},
+			expectedCount: 1,
+			shouldContain: []string{mekFP},
+		},
+		{
+			name: "active key with ring",
+			cfg: &config.Config{
+				MEK:      mek,
+				KeyRings: map[string][]byte{"default": retiredMEK},
+				NamedKeys: make(map[string][]byte),
+			},
+			expectedCount: 2,
+			shouldContain: []string{mekFP, retiredFP},
+		},
+		{
+			name: "named keys",
+			cfg: func() *config.Config {
+				namedMEK1 := make([]byte, 32)
+				for i := range namedMEK1 {
+					namedMEK1[i] = byte(i + 1)
+				}
+				namedMEK2 := make([]byte, 32)
+				for i := range namedMEK2 {
+					namedMEK2[i] = byte(i + 2)
+				}
+				return &config.Config{
+					MEK: mek,
+					KeyRings: make(map[string][]byte),
+					NamedKeys: map[string][]byte{
+						"key1": namedMEK1,
+						"key2": namedMEK2,
+					},
+				}
+			}(),
+			expectedCount: 3, // default + 2 named keys
+			shouldContain: []string{mekFP},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			available := collectAvailableFingerprints(tt.cfg)
+			if len(available) != tt.expectedCount {
+				t.Errorf("collectAvailableFingerprints() returned %d fingerprints, expected %d", len(available), tt.expectedCount)
+			}
+			for _, fp := range tt.shouldContain {
+				if !available[fp] {
+					t.Errorf("collectAvailableFingerprints() should contain fingerprint %s", fp)
+				}
+			}
+		})
+	}
+}
+
+// Test extractFingerprintFromMetadata
+func TestExtractFingerprintFromMetadata(t *testing.T) {
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+	mekFP := crypto.MEKFingerprint(mek)
+
+	tests := []struct {
+		name     string
+		metadata map[string]string
+		expected string
+	}{
+		{
+			name:     "no wrapped DEK",
+			metadata: map[string]string{},
+			expected: "",
+		},
+		{
+			name:     "legacy format",
+			metadata: map[string]string{"x-amz-meta-armor-wrapped-dek": "base64string"},
+			expected: "",
+		},
+		{
+			name: "v2 format with fingerprint",
+			metadata: func() map[string]string {
+				wrapped, err := crypto.WrapDEKWithFingerprint(mek, createTestDEK(t))
+				if err != nil {
+					t.Fatalf("failed to wrap with fingerprint: %v", err)
+				}
+				return map[string]string{"x-amz-meta-armor-wrapped-dek": wrapped}
+			}(),
+			expected: mekFP,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractFingerprintFromMetadata(tt.metadata)
+			if result != tt.expected {
+				t.Errorf("extractFingerprintFromMetadata() = %s, expected %s", result, tt.expected)
+			}
+		})
+	}
+}
+
+// createTestDEK creates a test DEK for testing
+func createTestDEK(t *testing.T) []byte {
+	t.Helper()
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		t.Fatalf("failed to generate DEK: %v", err)
+	}
+	return dek
+}
+
 // Test exit codes via integration test
 func TestCheckExitCodes(t *testing.T) {
 	// Create temporary directory for filesystem backend
