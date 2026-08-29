@@ -38,8 +38,9 @@ def run_armor_decrypt(bucket: str, key: str, output_path: str, timeout_sec: int 
         signal.alarm(timeout_sec)
 
         # Run armor-decrypt command
+        armor_decrypt = os.environ.get('ARMOR_DECRYPT_PATH', 'armor-decrypt')
         cmd = [
-            '/home/coding/ARMOR/armor-decrypt',
+            armor_decrypt,
             '-bucket', bucket,
             '-key', key,
             '-output', output_path

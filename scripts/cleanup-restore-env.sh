@@ -1,7 +1,13 @@
 #!/bin/bash
 # cleanup-restore-env.sh - Clean restore environment while preserving logs
 
-RESTORE_ENV="/home/coding/ARMOR/scratch/litestream-restore"
+RESTORE_ENV="${1:-/home/coding/ARMOR/scratch/litestream-restore}"
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $0 [restore_env_path]"
+    echo "  restore_env_path: Path to litestream restore environment (default: /home/coding/ARMOR/scratch/litestream-restore)"
+    exit 0
+fi
 
 echo "=== Litestream Restore Environment Cleanup ==="
 echo "Started at: $(date)"
