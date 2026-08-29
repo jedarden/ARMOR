@@ -31,10 +31,6 @@ import (
 // - Run in short mode (no testing.Short() skip)
 // - Test through real S3 HTTP handlers
 func TestConcurrentMultipartRoundtrip(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
 	armorEndpoint := getEnvOr("ARMOR_ENDPOINT", "http://localhost:9000")
 	client := createS3Client(t, armorEndpoint)
 	ctx := context.Background()
