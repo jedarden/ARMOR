@@ -1115,3 +1115,567 @@ func TestMultipartFixtureMetadataMatchesServer(t *testing.T) {
 		t.Errorf("IV did not round-trip: got %d bytes", len(parsed.IV))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// V3 Format Tests (Single-PUT and Multipart with Per-Block Compression)
+// ---------------------------------------------------------------------------
+
+// TestDecryptV3SinglePUT verifies v3 single-PUT envelope decryption with block
+// table trailer. Uses the real test vectors from internal/crypto/testdata/v3/
+func TestDecryptV3SinglePUT(t *testing.T) {
+	mek := makeMEK(t)
+
+	testVectors := []string{
+		"1-block-single-put",   // Minimal single-PUT object (1 block, uncompressed)
+		"3-block-compressed",   // Single-PUT object (3 blocks, middle block compressible)
+	}
+
+	for _, vecName := range testVectors {
+		t.Run(vecName, func(t *testing.T) {
+			// Load the test vector
+			vec := loadV3TestVector(t, vecName)
+
+			// Decode test vector components
+			dek, err := base64.StdEncoding.DecodeString(vec.DEK)
+			if err != nil {
+				t.Fatalf("decode DEK: %v", err)
+			}
+			iv, err := base64.StdEncoding.DecodeString(vec.IV)
+			if err != nil {
+				t.Fatalf("decode IV: %v", err)
+			}
+			plaintext, err := base64.StdEncoding.DecodeString(vec.Plaintext)
+			if err != nil {
+				t.Fatalf("decode plaintext: %v", err)
+			}
+			header, err := base64.StdEncoding.DecodeString(vec.Header)
+			if err != nil {
+				t.Fatalf("decode header: %v", err)
+			}
+			ciphertext, err := base64.StdEncoding.DecodeString(vec.Ciphertext)
+			if err != nil {
+				t.Fatalf("decode ciphertext: %v", err)
+			}
+
+			// Assemble v3 envelope: header + encrypted data + block table trailer
+			blockTable := buildV3BlockTableFromVector(vec.Blocks, vec.BlockSize)
+			trailer, err := crypto.EncodeBlockTable(blockTable)
+			if err != nil {
+				t.Fatalf("encode block table: %v", err)
+			}
+
+			var envelope bytes.Buffer
+			envelope.Write(header)
+			envelope.Write(ciphertext)
+			envelope.Write(trailer)
+
+			// Wrap DEK with MEK
+			wrappedDEK, err := crypto.WrapDEK(mek, dek)
+			if err != nil {
+				t.Fatalf("wrap DEK: %v", err)
+			}
+
+			// Create encrypted file
+			tmpDir := t.TempDir()
+			encryptedFile := filepath.Join(tmpDir, "v3-encrypted.bin")
+			if err := os.WriteFile(encryptedFile, envelope.Bytes(), 0644); err != nil {
+				t.Fatalf("write encrypted file: %v", err)
+			}
+
+			// Decrypt via decryptLocal (v3 envelope path)
+			sidecarFlag = ""
+			defer func() { sidecarFlag = "" }()
+
+			src := &inputSource{
+				Type:       "local",
+				Path:       encryptedFile,
+				WrappedDEK: wrappedDEK,
+			}
+
+			ctx := context.Background()
+			decrypted, err := decryptLocal(ctx, src, mek)
+			if err != nil {
+				t.Fatalf("decryptLocal v3: %v", err)
+			}
+
+			// Verify plaintext matches
+			if !bytes.Equal(decrypted, plaintext) {
+				t.Errorf("v3 plaintext mismatch: got %d bytes, want %d", len(decrypted), len(plaintext))
+			}
+		})
+	}
+}
+
+// TestDecryptV3MultipartWithGzipSidecar verifies v3 multipart decryption with
+// gzip-compressed JSON sidecar. Uses the real 2-part-multipart test vector.
+func TestDecryptV3MultipartWithGzipSidecar(t *testing.T) {
+	mek := makeMEK(t)
+
+	// Load the 2-part-multipart test vector
+	vec := loadV3TestVector(t, "2-part-multipart")
+
+	// Decode components
+	dek, err := base64.StdEncoding.DecodeString(vec.DEK)
+	if err != nil {
+		t.Fatalf("decode DEK: %v", err)
+	}
+	iv, err := base64.StdEncoding.DecodeString(vec.IV)
+	if err != nil {
+		t.Fatalf("decode IV: %v", err)
+	}
+	plaintext, err := base64.StdEncoding.DecodeString(vec.Plaintext)
+	if err != nil {
+		t.Fatalf("decode plaintext: %v", err)
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(vec.Ciphertext)
+	if err != nil {
+		t.Fatalf("decode ciphertext: %v", err)
+	}
+
+	// Wrap DEK
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("wrap DEK: %v", err)
+	}
+
+	// Build v3 sidecar
+	sidecarV3 := &backend.HMACTableSidecarV3{
+		Version:   3,
+		BlockSize: vec.BlockSize,
+		Parts:     buildV3SidecarParts(vec),
+	}
+
+	// Compress sidecar with gzip
+	var sidecarBuf bytes.Buffer
+	gz := gzip.NewWriter(&sidecarBuf)
+	sidecarJSON, err := json.Marshal(sidecarV3)
+	if err != nil {
+		t.Fatalf("marshal sidecar: %v", err)
+	}
+	if _, err := gz.Write(sidecarJSON); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+
+	// Write files
+	tmpDir := t.TempDir()
+	ctFile := filepath.Join(tmpDir, "multipart.bin")
+	sidecarFile := filepath.Join(tmpDir, "multipart.hmac.json.gz")
+
+	if err := os.WriteFile(ctFile, ciphertext, 0644); err != nil {
+		t.Fatalf("write ciphertext: %v", err)
+	}
+	if err := os.WriteFile(sidecarFile, sidecarBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	// Decrypt via decryptLocal (multipart path with v3 gzip sidecar)
+	sidecarFlag = sidecarFile
+	ivFlag = hex.EncodeToString(iv)
+	defer func() { sidecarFlag = ""; ivFlag = "" }()
+
+	src := &inputSource{
+		Type:       "local",
+		Path:       ctFile,
+		WrappedDEK: wrappedDEK,
+	}
+
+	ctx := context.Background()
+	decrypted, err := decryptLocal(ctx, src, mek)
+	if err != nil {
+		t.Fatalf("decryptLocal v3 multipart: %v", err)
+	}
+
+	// Verify plaintext matches
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Errorf("v3 multipart plaintext mismatch: got %d bytes, want %d", len(decrypted), len(plaintext))
+	}
+}
+
+// TestDecryptV3B2SinglePUT verifies v3 single-PUT decryption via B2 backend path.
+func TestDecryptV3B2SinglePUT(t *testing.T) {
+	mek := makeMEK(t)
+
+	// Load the 1-block test vector
+	vec := loadV3TestVector(t, "1-block-single-put")
+
+	// Decode components
+	dek, err := base64.StdEncoding.DecodeString(vec.DEK)
+	if err != nil {
+		t.Fatalf("decode DEK: %v", err)
+	}
+	iv, err := base64.StdEncoding.DecodeString(vec.IV)
+	if err != nil {
+		t.Fatalf("decode IV: %v", err)
+	}
+	plaintext, err := base64.StdEncoding.DecodeString(vec.Plaintext)
+	if err != nil {
+		t.Fatalf("decode plaintext: %v", err)
+	}
+	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
+	header, err := base64.StdEncoding.DecodeString(vec.Header)
+	if err != nil {
+		t.Fatalf("decode header: %v", err)
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(vec.Ciphertext)
+	if err != nil {
+		t.Fatalf("decode ciphertext: %v", err)
+	}
+
+	// Build block table trailer
+	blockTable := buildV3BlockTableFromVector(vec.Blocks, vec.BlockSize)
+	trailer, err := crypto.EncodeBlockTable(blockTable)
+	if err != nil {
+		t.Fatalf("encode block table: %v", err)
+	}
+
+	// Assemble v3 envelope
+	var envelope bytes.Buffer
+	envelope.Write(header)
+	envelope.Write(ciphertext)
+	envelope.Write(trailer)
+
+	// Wrap DEK
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("wrap DEK: %v", err)
+	}
+
+	// Create B2 object with v3 metadata
+	const key = "test/v3-single.bin"
+	meta := (&backend.ARMORMetadata{
+		Version:       3,
+		BlockSize:     vec.BlockSize,
+		PlaintextSize: int64(len(plaintext)),
+		IV:            iv,
+		WrappedDEK:    wrappedDEK,
+		PlaintextSHA:  hex.EncodeToString(plaintextSHA[:]),
+	}).ToMetadata()
+
+	objects := map[string]*fakeB2Object{
+		key: {body: envelope.Bytes(), metadata: meta},
+	}
+
+	src := &inputSource{Type: "b2", Bucket: "bucket", Path: key}
+
+	var decrypted []byte
+	withFakeBackend(t, objects, func() {
+		var err error
+		decrypted, err = decryptB2(context.Background(), src, mek, "")
+		if err != nil {
+			t.Fatalf("decryptB2 v3 single-PUT: %v", err)
+		}
+	})
+
+	// Verify plaintext matches
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Errorf("B2 v3 single-PUT plaintext mismatch: got %d bytes, want %d", len(decrypted), len(plaintext))
+	}
+}
+
+// TestDecryptV3B2Multipart verifies v3 multipart decryption via B2 backend path.
+func TestDecryptV3B2Multipart(t *testing.T) {
+	mek := makeMEK(t)
+
+	// Load the 2-part-multipart test vector
+	vec := loadV3TestVector(t, "2-part-multipart")
+
+	// Decode components
+	dek, err := base64.StdEncoding.DecodeString(vec.DEK)
+	if err != nil {
+		t.Fatalf("decode DEK: %v", err)
+	}
+	iv, err := base64.StdEncoding.DecodeString(vec.IV)
+	if err != nil {
+		t.Fatalf("decode IV: %v", err)
+	}
+	plaintext, err := base64.StdEncoding.DecodeString(vec.Plaintext)
+	if err != nil {
+		t.Fatalf("decode plaintext: %v", err)
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(vec.Ciphertext)
+	if err != nil {
+		t.Fatalf("decode ciphertext: %v", err)
+	}
+
+	// Wrap DEK
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("wrap DEK: %v", err)
+	}
+
+	// Build v3 sidecar
+	sidecarV3 := &backend.HMACTableSidecarV3{
+		Version:   3,
+		BlockSize: vec.BlockSize,
+		Parts:     buildV3SidecarParts(vec),
+	}
+
+	// Compress sidecar with gzip (as stored in B2)
+	var sidecarBuf bytes.Buffer
+	gz := gzip.NewWriter(&sidecarBuf)
+	sidecarJSON, err := json.Marshal(sidecarV3)
+	if err != nil {
+		t.Fatalf("marshal sidecar: %v", err)
+	}
+	if _, err := gz.Write(sidecarJSON); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+
+	const key = "test/v3-multipart.bin"
+
+	// Create B2 objects
+	meta := (&backend.ARMORMetadata{
+		Version:       3,
+		BlockSize:     vec.BlockSize,
+		PlaintextSize: int64(len(plaintext)),
+		IV:            iv,
+		WrappedDEK:    wrappedDEK,
+		PlaintextSHA:  emptyStringSHA256Hex, // multipart placeholder
+	}).ToMetadata()
+	meta["x-amz-meta-armor-multipart"] = "true"
+
+	objects := map[string]*fakeB2Object{
+		key:               {body: ciphertext, metadata: meta},
+		sidecarKeyFor(key): {body: sidecarBuf.Bytes()},
+	}
+
+	src := &inputSource{Type: "b2", Bucket: "bucket", Path: key}
+
+	var decrypted []byte
+	withFakeBackend(t, objects, func() {
+		var err error
+		decrypted, err = decryptB2(context.Background(), src, mek, "")
+		if err != nil {
+			t.Fatalf("decryptB2 v3 multipart: %v", err)
+		}
+	})
+
+	// Verify plaintext matches
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Errorf("B2 v3 multipart plaintext mismatch: got %d bytes, want %d", len(decrypted), len(plaintext))
+	}
+}
+
+// TestDecryptV3PerBlockDecompression verifies that per-block decompression works
+// correctly for compressed blocks while leaving uncompressed blocks alone.
+func TestDecryptV3PerBlockDecompression(t *testing.T) {
+	mek := makeMEK(t)
+
+	// Load the 3-block-compressed test vector (middle block is compressed)
+	vec := loadV3TestVector(t, "3-block-compressed")
+
+	// Decode components
+	dek, err := base64.StdEncoding.DecodeString(vec.DEK)
+	if err != nil {
+		t.Fatalf("decode DEK: %v", err)
+	}
+	iv, err := base64.StdEncoding.DecodeString(vec.IV)
+	if err != nil {
+		t.Fatalf("decode IV: %v", err)
+	}
+	plaintext, err := base64.StdEncoding.DecodeString(vec.Plaintext)
+	if err != nil {
+		t.Fatalf("decode plaintext: %v", err)
+	}
+	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
+	header, err := base64.StdEncoding.DecodeString(vec.Header)
+	if err != nil {
+		t.Fatalf("decode header: %v", err)
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(vec.Ciphertext)
+	if err != nil {
+		t.Fatalf("decode ciphertext: %v", err)
+	}
+
+	// Verify we have compressed blocks (high bit set in clen)
+	hasCompressed := false
+	for _, block := range vec.Blocks {
+		if block.CLen&0x80000000 != 0 {
+			hasCompressed = true
+			break
+		}
+	}
+	if !hasCompressed {
+		t.Fatal("test vector should have compressed blocks")
+	}
+
+	// Assemble v3 envelope
+	blockTable := buildV3BlockTableFromVector(vec.Blocks, vec.BlockSize)
+	trailer, err := crypto.EncodeBlockTable(blockTable)
+	if err != nil {
+		t.Fatalf("encode block table: %v", err)
+	}
+
+	var envelope bytes.Buffer
+	envelope.Write(header)
+	envelope.Write(ciphertext)
+	envelope.Write(trailer)
+
+	// Wrap DEK
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("wrap DEK: %v", err)
+	}
+
+	// Write file
+	tmpDir := t.TempDir()
+	encryptedFile := filepath.Join(tmpDir, "v3-compressed.bin")
+	if err := os.WriteFile(encryptedFile, envelope.Bytes(), 0644); err != nil {
+		t.Fatalf("write encrypted file: %v", err)
+	}
+
+	// Decrypt
+	sidecarFlag = ""
+	defer func() { sidecarFlag = "" }()
+
+	src := &inputSource{
+		Type:       "local",
+		Path:       encryptedFile,
+		WrappedDEK: wrappedDEK,
+	}
+
+	ctx := context.Background()
+	decrypted, err := decryptLocal(ctx, src, mek)
+	if err != nil {
+		t.Fatalf("decryptLocal v3 compressed: %v", err)
+	}
+
+	// Verify plaintext matches exactly
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Errorf("v3 compressed plaintext mismatch: got %d bytes, want %d", len(decrypted), len(plaintext))
+
+		// Show where they differ
+		minLen := len(decrypted)
+		if len(plaintext) < minLen {
+			minLen = len(plaintext)
+		}
+		for i := 0; i < minLen; i++ {
+			if decrypted[i] != plaintext[i] {
+				t.Errorf("First mismatch at byte %d: got 0x%02x, want 0x%02x", i, decrypted[i], plaintext[i])
+				break
+			}
+		}
+	}
+
+	// Verify SHA-256 matches
+	decryptedSHA := crypto.ComputePlaintextSHA256(decrypted)
+	if !bytes.Equal(decryptedSHA[:], plaintextSHA[:]) {
+		t.Errorf("v3 compressed SHA-256 mismatch")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// V3 Test Vector Helpers
+// ---------------------------------------------------------------------------
+
+// V3TestVector represents the v3 test vector JSON format.
+type V3TestVector struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	DEK         string         `json:"dek"`
+	IV          string         `json:"iv"`
+	Part        uint16         `json:"part"`
+	BlockSize   int            `json:"block_size"`
+	Plaintext   string         `json:"plaintext"`
+	Header      string         `json:"header"`
+	Ciphertext  string         `json:"ciphertext"`
+	HMAC        string         `json:"hmac"`
+	Blocks      []V3BlockEntry `json:"blocks"`
+	Sidecar     *V3Sidecar     `json:"sidecar,omitempty"`
+}
+
+// V3BlockEntry represents a single block's entry in the test vector.
+type V3BlockEntry struct {
+	HMAC string `json:"hmac"`
+	CLen uint32 `json:"clen"`
+}
+
+// V3Sidecar represents the v3 sidecar format in test vectors.
+type V3Sidecar struct {
+	Version   int            `json:"version"`
+	BlockSize int            `json:"block_size"`
+	Parts     []V3PartEntry  `json:"parts"`
+}
+
+// V3PartEntry represents a part in the sidecar.
+type V3PartEntry struct {
+	N             uint16         `json:"n"`
+	PlaintextLen  int64          `json:"plaintext_len"`
+	CiphertextLen int64          `json:"ciphertext_len"`
+	Blocks        []V3BlockEntry `json:"blocks"`
+}
+
+// loadV3TestVector loads a v3 test vector from internal/crypto/testdata/v3/
+func loadV3TestVector(t *testing.T, name string) *V3TestVector {
+	t.Helper()
+
+	vectorPath := filepath.Join("../../internal/crypto/testdata/v3", name+".json")
+	data, err := os.ReadFile(vectorPath)
+	if err != nil {
+		t.Fatalf("read v3 test vector %s: %v (run 'go test ./internal/crypto -run TestGenerateV3Vectors -update' to generate)", name, err)
+	}
+
+	var vec V3TestVector
+	if err := json.Unmarshal(data, &vec); err != nil {
+		t.Fatalf("parse v3 test vector %s: %v", name, err)
+	}
+
+	return &vec
+}
+
+// buildV3BlockTableFromVector constructs a BlockTable from v3 test vector blocks.
+func buildV3BlockTableFromVector(blocks []V3BlockEntry, blockSize int) *crypto.BlockTable {
+	blockTable := crypto.NewBlockTable(blockSize, len(blocks))
+
+	for i, block := range blocks {
+		hmacBytes, err := base64.StdEncoding.DecodeString(block.HMAC)
+		if err != nil {
+			// This is for test code only
+			panic(fmt.Sprintf("decode block HMAC: %v", err))
+		}
+
+		var hmacArray [32]byte
+		copy(hmacArray[:], hmacBytes)
+
+		entry := &crypto.BlockTableEntry{
+			HMAC:             hmacArray,
+			CiphertextLength: block.CLen,
+		}
+
+		if err := blockTable.AddEntry(entry); err != nil {
+			panic(fmt.Sprintf("add block %d: %v", i, err))
+		}
+	}
+
+	return blockTable
+}
+
+// buildV3SidecarParts constructs v3 sidecar parts from a test vector.
+func buildV3SidecarParts(vec *V3TestVector) []backend.HMACPartV3 {
+	if vec.Sidecar == nil {
+		return nil
+	}
+
+	var parts []backend.HMACPartV3
+	for _, p := range vec.Sidecar.Parts {
+		var blocks [][]string
+		for _, b := range p.Blocks {
+			blocks = append(blocks, []string{b.HMAC, fmt.Sprint(b.CLen)})
+		}
+
+		parts = append(parts, backend.HMACPartV3{
+			N:             int(p.N),
+			PlaintextLen:  p.PlaintextLen,
+			CiphertextLen: p.CiphertextLen,
+			Blocks:        blocks,
+		})
+	}
+
+	return parts
+}
