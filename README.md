@@ -33,7 +33,29 @@ docker run -d \
 
 ### Client Configuration
 
-Point any S3-compatible tool at ARMOR's listen address:
+ARMOR provides a `client-config` command that generates known-good, copy-pasteable configuration snippets for common S3-compatible tools:
+
+```bash
+armor client-config --for aws-cli --endpoint http://localhost:9000 --bucket my-bucket
+armor client-config --for rclone --endpoint http://localhost:9000
+armor client-config --for boto3 --endpoint http://localhost:9000 --credential backup-writer
+armor client-config --for duckdb --endpoint http://localhost:9000
+armor client-config --for litestream --endpoint http://localhost:9000
+armor client-config --for barman --endpoint http://localhost:9000
+```
+
+Supported tools: `aws-cli`, `rclone`, `boto3`, `or `barman`. The command includes:
+
+- Endpoint URL configuration
+- Path-style addressing (required for B2/ARMOR)
+- Region placeholder (required by clients but unused by ARMOR)
+- Credential environment variable names (never values)
+- **Format version 2:** Multipart upload constraints (block-aligned chunk sizes, minimum part sizes)
+- **Format version 3:** No multipart constraints (any part size, any order, any concurrency)
+
+See the section on [Multipart Upload Constraints](#multipart-upload-constraints) for details on format version differences.
+
+#### Quick Examples
 
 ```bash
 # AWS CLI
@@ -351,6 +373,52 @@ The `.armor/` prefix is reserved for ARMOR internal use. Client operations targe
 - `.armor/canary/*` — Health check canary objects
 
 Internal ARMOR components (provenance recorder, manifest persistence, canary, key rotation, multipart state manager) access these keys directly through the backend layer, bypassing the S3 handler guard.
+
+## Multipart Upload Constraints
+
+ARMOR's encryption scheme requires part sizes to be block-aligned for correct counter offset calculation. The constraints depend on the configured write format version:
+
+### Format Version 2 (Default)
+
+**Constraint:** Uniform part sizes that are multiples of the ARMOR block size (64 KiB)
+
+- **Minimum part size:** 5 MiB (S3 requirement, except final part)
+- **Part size must be:** A multiple of 64 KiB (67108864 bytes = 64 MiB recommended)
+- **Part 1** pins the uniform part size for the entire upload
+- **Parts arriving before part 1** receive HTTP 503 SlowDown (retryable)
+- **Block alignment** is required for all parts except the final short part and part 1 itself
+
+**Impact:** Clients must use block-aligned chunk sizes. Tools that emit non-uniform part sizes (e.g., Barman's `chunk_size + 512` pattern) fail with `InvalidPartSize` when backups exceed the single-part threshold.
+
+**Workarounds for format version 2:**
+- AWS CLI: Set `multipart_chunksize` to 67108864 (64 MiB)
+- rclone: Use `--s3-chunk-size 67108864` (64 MiB)
+- boto3: Configure `TransferConfig(multipart_chunksize=64*1024*1024)`
+- Barman: Use `--chunk-size=1024` (1 GiB) to stay in single-part mode for most backups
+- Litestream: Set snapshot size to 64 MiB minimum
+
+### Format Version 3 (Future)
+
+**No constraints:** Any part size ≥ 5 MiB, any order, any concurrency
+
+- Part sizes can vary (non-uniform multipart uploads supported)
+- No block alignment requirement
+- Out-of-order and concurrent part uploads fully supported
+- Per-part cumulative offset tracking
+
+**Migration:** Format version 3 is not yet released. When available, existing format version 2 objects can be optionally migrated via `armor migrate` (see [Format Migration](#format-migration)).
+
+### Checking Your Format Version
+
+```bash
+# Check which format version your ARMOR instance writes
+armor version
+# Output includes: format_write_version: 2 or 3
+
+# Generate tool-specific config with appropriate constraints
+armor client-config --for aws-cli --endpoint http://localhost:9000
+# Output includes multipart settings only when format_write_version=2
+```
 
 ## Web Dashboard
 

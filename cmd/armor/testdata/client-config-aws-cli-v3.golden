@@ -1,0 +1,17 @@
+# AWS CLI configuration for ARMOR
+# Run: aws configure --profile armor
+# Then paste the appropriate values below
+
+[profile armor]
+endpoint_url = http://localhost:9000
+s3 =
+    addressing_style = path
+
+region = us-east-1
+
+# Credentials (set these via 'aws configure set ...' or environment variables)
+# ARMOR_AUTH_ACCESS_KEY_ID
+# ARMOR_AUTH_SECRET_KEY
+
+# Test the configuration:
+# aws --profile armor s3 ls s3://my-bucket

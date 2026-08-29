@@ -1,0 +1,44 @@
+# Boto3 configuration for ARMOR
+# Python code example
+
+import boto3
+import os
+
+# ARMOR endpoint configuration
+endpoint_url = "http://localhost:9000"
+
+# Credentials (set these environment variables)
+# Using named credential: backup-writer
+# Get these from your ARMOR deployment:
+access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+
+# Create S3 client with path-style addressing
+s3 = boto3.client('s3',
+    endpoint_url=endpoint_url,
+    aws_access_key_id=access_key,
+    aws_secret_access_key=secret_key,
+    region_name='us-east-1',  # Required but unused by ARMOR
+    config=boto3.session.Config(s3={'addressing_style': 'path'})
+)
+
+# Example usage
+# bucket = "my-bucket"
+# response = s3.list_objects_v2(Bucket=bucket)
+# for obj in response.get('Contents', []):
+#     print(obj['Key'])
+
+# ARMOR format version 2: multipart upload constraints
+# Configure multipart upload with block-aligned part sizes
+from boto3.s3.transfer import TransferConfig
+
+# TransferConfig for block-aligned multipart uploads
+transfer_config = TransferConfig(
+    multipart_threshold=64 * 1024 * 1024,  # 64 MB (block-aligned)
+    multipart_chunksize=64 * 1024 * 1024,  # 64 MB (block-aligned)
+    max_concurrency=10,
+    use_threads=True
+)
+
+# Use with upload_file:
+# s3.upload_file('local_file', bucket, 'key', Config=transfer_config)
