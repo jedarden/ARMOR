@@ -3889,10 +3889,73 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	// placeholder HMACs for partial blocks, so we don't need to backfill them.
 	// The decryption code handles non-uniform parts by using offset-aware decryption.
 
-	// Store HMAC table as sidecar with version (all new multipart uploads use Version 2)
-	if err := manager.SaveHMACTable(ctx, key, allBlockHMACs, state.BlockSize, 2); err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save HMAC table: %v", err), 500)
-		return
+	// Store HMAC table as sidecar with version
+	// For v3 format, build the per-part sidecar structure from the loaded part data
+	if formatVersion == 3 {
+		// Build v3 sidecar parts from the loaded part data
+		v3Parts := make([]backend.HMACPartV3, 0, len(completeReq.Parts))
+
+		for _, p := range completeReq.Parts {
+			partSize, exists := state.PartSizes[p.PartNumber]
+			if !exists {
+				continue
+			}
+
+			// Get HMACs for this part
+			hmacsBase64, ok := state.PartHMACs[p.PartNumber]
+			if !ok {
+				continue
+			}
+
+			hmacs, err := backend.DecodeHMACFromBase64(hmacsBase64)
+			if err != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to decode HMACs for part %d: %v", p.PartNumber, err), 500)
+				return
+			}
+
+			// Build blocks array: [hmac_b64, clen] for each block
+			blocks := make([][]string, len(hmacs))
+			for i, hmac := range hmacs {
+				// Calculate ciphertext length for this block
+				// For multipart uploads, each block's ciphertext length equals plaintext length
+				// except possibly the last block of the part
+				blockIndex := i
+				var blockCiphertextLen int
+
+				// Calculate block plaintext size
+				blockStart := int64(blockIndex) * int64(state.BlockSize)
+				blockEnd := blockStart + int64(state.BlockSize)
+				if blockEnd > partSize {
+					blockEnd = partSize
+				}
+				blockPlaintextLen := blockEnd - blockStart
+				blockCiphertextLen = int(blockPlaintextLen)
+
+				blocks[i] = []string{
+					base64.StdEncoding.EncodeToString(hmac),
+					strconv.Itoa(blockCiphertextLen),
+				}
+			}
+
+			v3Parts = append(v3Parts, backend.HMACPartV3{
+				N:             p.PartNumber,
+				PlaintextLen:  partSize,
+				CiphertextLen: partSize, // For multipart without compression, ciphertext equals plaintext
+				Blocks:        blocks,
+			})
+		}
+
+		// Save v3 sidecar with gzip compression
+		if err := manager.SaveHMACTableV3(ctx, key, state.BlockSize, v3Parts); err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save v3 HMAC table: %v", err), 500)
+			return
+		}
+	} else {
+		// v2 format: save as binary sidecar
+		if err := manager.SaveHMACTable(ctx, key, allBlockHMACs, state.BlockSize, 2); err != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to save HMAC table: %v", err), 500)
+			return
+		}
 	}
 
 	// Compute the real whole-object plaintext SHA-256 by combining the per-part
@@ -3914,8 +3977,13 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Build ARMOR metadata and update via CopyObject
+	// Use version 3 for v3 format, version 2 for v2 format
+	armorVersion := 2
+	if formatVersion == 3 {
+		armorVersion = 3
+	}
 	meta := (&backend.ARMORMetadata{
-		Version:        2,
+		Version:        armorVersion,
 		BlockSize:      state.BlockSize,
 		PlaintextSize:  totalPlaintextSize,
 		ContentType:    state.ContentType,
