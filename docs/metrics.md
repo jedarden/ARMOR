@@ -216,6 +216,43 @@ sum(rate(armor_request_duration_ms_count[5m])) by (operation)
 **Description:** Total plaintext bytes downloaded by clients  
 **Labels:** None
 
+## Error Metrics
+
+### `armor_errors_total`
+
+**Type:** Counter  
+**Description:** Total number of S3 errors by error code and operation  
+**Labels:**
+- `code` — S3 error code (e.g., "InvalidPartSize", "AccessDenied", "NoSuchBucket")
+- `operation` — S3 operation that triggered the error (e.g., "PutObject", "GetObject", "CompleteMultipartUpload")
+
+**Example Output:**
+```
+# HELP armor_errors_total Total number of S3 errors by error code and operation
+# TYPE armor_errors_total counter
+armor_errors_total{code="InvalidPartSize",operation="CompleteMultipartUpload"} 12
+armor_errors_total{code="AccessDenied",operation="PutObject"} 5
+armor_errors_total{code="NoSuchBucket",operation="GetObject"} 3
+```
+
+**Example Usage (Go):**
+```go
+// Incremented automatically from s3_error hook
+// No manual calls needed - all writeError() calls are tracked
+```
+
+**Alerting Example (Prometheus):**
+```yaml
+- alert: S3ErrorSpike
+  expr: rate(armor_errors_total[5m]) > 10
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "S3 error rate spike detected"
+    description: "{{ $value }} errors/sec over last 5m for {{ $labels.code }} in {{ $labels.operation }}"
+```
+
 ## Cache Metrics
 
 ### `armor_metadata_cache_hits_total`
