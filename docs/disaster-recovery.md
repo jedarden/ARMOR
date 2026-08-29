@@ -341,9 +341,6 @@ parquet-tools schema /tmp/test-recovery.parquet
 For a more thorough validation, use the offline decrypt CLI to verify a few objects directly from B2:
 
 ```bash
-# Build the decrypt tool (if not already built)
-go build -o armor-decrypt ./cmd/armor-decrypt
-
 # Decrypt a specific object from B2
 # B2 reads REQUIRE these four (AWS_* names are ignored) — see
 # "Offline Decryption Without ARMOR" for the full, verified procedure.
@@ -352,7 +349,7 @@ export ARMOR_B2_SECRET_ACCESS_KEY=<b2 application key>
 export ARMOR_B2_REGION=us-west-002
 export ARMOR_B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
 
-armor-decrypt \
+armor decrypt \
   -mek $(cat ~/mek-recovered.hex) \
   -input b2://your-bucket/data/sensor-readings.parquet \
   -output /tmp/verify-decrypt.parquet
@@ -360,6 +357,8 @@ armor-decrypt \
 # Verify checksum matches
 sha256sum /tmp/verify-decrypt.parquet
 ```
+
+**Note:** The decrypt command is available as `armor decrypt`. For backward compatibility, the standalone `armor-decrypt` binary remains available for one release cycle and delegates to `armor decrypt`.
 
 ### Step 6: Verify Metadata Cache and Manifest (if enabled)
 
@@ -388,22 +387,22 @@ go test -v -tags=integration ./...
 
 ## Offline Decryption Without ARMOR (verified 2026-08-08)
 
-The fastest recovery path does **not** involve redeploying ARMOR. `armor-decrypt`
+The fastest recovery path does **not** involve redeploying ARMOR. `armor decrypt`
 reads objects straight from B2 and decrypts them locally, needing only the MEK,
 B2 credentials, and the binary. Use this when you need data back now, or when
 ARMOR itself is what is broken.
 
-> The `armor-decrypt` examples elsewhere in this runbook show only `-mek` and
+> The `armor decrypt` examples elsewhere in this runbook show only `-mek` and
 > `-input`. **That is not sufficient** — the tool also requires four B2
 > environment variables, and it ignores the standard `AWS_*` names. Following
 > those examples literally fails with
 > `B2 credentials not set: set ARMOR_B2_REGION, ARMOR_B2_ENDPOINT, ARMOR_B2_ACCESS_KEY_ID, ARMOR_B2_SECRET_ACCESS_KEY`.
 
+**Note:** For backward compatibility during the transition period, the standalone `armor-decrypt` binary remains available. It delegates to `armor decrypt` internally. New usage should prefer `armor decrypt` directly.
+
 ### Procedure (executed end to end, not theoretical)
 
 ```bash
-go build -o armor-decrypt ./cmd/armor-decrypt
-
 # MEK — take it from escrow, NOT from the cluster you are recovering.
 export ARMOR_MEK=$(vault kv get -field=MASTER_ENCRYPTION_KEY \
                      secret/rs-manager/<cluster>/armor)
@@ -416,10 +415,10 @@ export ARMOR_B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
 
 # Optional: route ciphertext reads through the B2 download URL proxied by
 # Cloudflare (free Bandwidth Alliance egress). Keep the S3 endpoint above:
-# armor-decrypt still uses it for authenticated metadata requests.
+# armor decrypt still uses it for authenticated metadata requests.
 export ARMOR_CF_DOMAIN=b2-us-west-002.ardenone.com
 
-./armor-decrypt -v \
+armor decrypt -v \
   -input  b2://<bucket>/<key> \
   -output /tmp/recovered.bin
 ```
