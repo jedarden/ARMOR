@@ -906,6 +906,7 @@ func TestRedacted(t *testing.T) {
 	setEnv(t, append(minimalEnv(),
 		"ARMOR_B2_SECRET_ACCESS_KEY", testB2Secret,
 		"ARMOR_MEK", testMEK,
+		"ARMOR_AUTH_ACCESS_KEY", "defaultkey",
 		"ARMOR_AUTH_SECRET_KEY", testAuthSecret,
 		"ARMOR_PRESIGN_SECRET", testPresignSecret,
 		"ARMOR_DASHBOARD_PASS", testDashboardPass,
