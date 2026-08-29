@@ -295,7 +295,43 @@ To update a deployment, edit the `armor-deployment.yml` file and push to `declar
 
 ### Quick Health Check
 
-Run this on each deployment after a fix rollout:
+The fastest way to verify ARMOR deployment health is using the built-in `armor check` command:
+
+```bash
+#!/bin/bash
+CLUSTER=$1
+NAMESPACE=$2
+
+echo "Checking ARMOR health in ${CLUSTER}/${NAMESPACE}..."
+
+# Run comprehensive check
+kubectl --server=http://traefik-${CLUSTER}:8001 exec -n ${NAMESPACE} deployment/armor -- armor check
+```
+
+The `armor check` command verifies:
+- **Config**: All required environment variables and credentials are set
+- **Backend**: Bucket connectivity (HeadBucket)
+- **Cloudflare**: Ranged GET through Cloudflare path (if `ARMOR_CF_DOMAIN` is set)
+- **MEK**: Master encryption key verification via canary decryption
+
+Exit codes:
+- `0`: All checks passed
+- `1`: Configuration error
+- `2`: Connectivity or MEK verification failure
+
+Example output:
+```
+[PASS] config: 2 credentials configured
+[PASS] backend: bucket kalshi-tape accessible
+[PASS] cloudflare: ranged GET OK (1024 bytes, CF-Cache-Status: HIT, 45ms)
+[PASS] mek: MEK successfully decrypted wrapped DEK
+
+Check PASSED: all probes OK
+```
+
+#### Manual Verification (Legacy)
+
+For more granular inspection, you can manually check individual components:
 
 ```bash
 #!/bin/bash
