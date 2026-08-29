@@ -92,17 +92,41 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create logger early for use in backend initialization
 	logger := logging.New("armor")
 
-	// Create B2 backend
-	b2Backend, err := backend.NewB2Backend(context.Background(), backend.B2Config{
-		Region:          cfg.B2Region,
-		Endpoint:        cfg.B2Endpoint,
-		AccessKeyID:     cfg.B2AccessKeyID,
-		SecretKey:       cfg.B2SecretAccessKey,
-		CFDomain:        cfg.CFDomain,
-		ReadConcurrency: cfg.ReadConcurrency,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create B2 backend: %w", err)
+	// Create primary backend based on ARMOR_BACKEND setting
+	var primaryBackend backend.Backend
+	switch cfg.Backend {
+	case "filesystem":
+		// Filesystem backend as primary
+		primaryBackend, err = backend.NewFSBackend(backend.FSConfig{
+			BasePath: cfg.FSPath,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create filesystem backend: %w", err)
+		}
+		logger.WithFields(map[string]interface{}{
+			"type": "filesystem",
+			"path": cfg.FSPath,
+		}).Info("primary backend initialized (filesystem)")
+	case "b2":
+		// B2 backend as primary (default)
+		primaryBackend, err = backend.NewB2Backend(context.Background(), backend.B2Config{
+			Region:          cfg.B2Region,
+			Endpoint:        cfg.B2Endpoint,
+			AccessKeyID:     cfg.B2AccessKeyID,
+			SecretKey:       cfg.B2SecretAccessKey,
+			CFDomain:        cfg.CFDomain,
+			ReadConcurrency: cfg.ReadConcurrency,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create B2 backend: %w", err)
+		}
+		logger.WithFields(map[string]interface{}{
+			"type":   "b2",
+			"region": cfg.B2Region,
+			"bucket": cfg.Bucket,
+		}).Info("primary backend initialized (b2)")
+	default:
+		return nil, fmt.Errorf("unsupported backend type: %s", cfg.Backend)
 	}
 
 	// Create secondary backend if configured (ADR-006)
@@ -169,7 +193,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create provenance manager
-	provenanceMgr := provenance.NewManager(b2Backend, cfg.Bucket, cfg.WriterID)
+	provenanceMgr := provenance.NewManager(primaryBackend, cfg.Bucket, cfg.WriterID)
 
 	// Create presign signer
 	presigner := presign.NewSigner(cfg.PresignSecret, cfg.PresignBaseURL)
@@ -199,7 +223,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create dashboard with optional authentication
-	dash := dashboard.NewWithAuth(b2Backend, cfg.Bucket, metrics.DefaultMetrics,
+	dash := dashboard.NewWithAuth(primaryBackend, cfg.Bucket, metrics.DefaultMetrics,
 		cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardToken)
 
 	// Load manifest index from B2 (startup load).
@@ -210,7 +234,7 @@ func New(cfg *config.Config) (*Server, error) {
 		manifestIdx = manifest.New()
 		// ListRaw bypasses the .armor/ filter so manifest keys are discoverable.
 		lister := func(ctx context.Context, prefix, token string) ([]string, string, error) {
-			result, lerr := b2Backend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
+			result, lerr := primaryBackend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
 			if lerr != nil {
 				return nil, "", lerr
 			}
@@ -226,9 +250,9 @@ func New(cfg *config.Config) (*Server, error) {
 			var body io.ReadCloser
 			var ferr error
 			if cfg.CFDomain != "" {
-				body, _, ferr = b2Backend.Get(ctx, cfg.Bucket, key)
+				body, _, ferr = primaryBackend.Get(ctx, cfg.Bucket, key)
 			} else {
-				body, _, ferr = b2Backend.GetDirect(ctx, cfg.Bucket, key)
+				body, _, ferr = primaryBackend.GetDirect(ctx, cfg.Bucket, key)
 			}
 			if ferr != nil {
 				return nil, ferr
@@ -257,17 +281,17 @@ func New(cfg *config.Config) (*Server, error) {
 	var manifestCompactor *manifest.Compactor
 	if manifestIdx != nil {
 		uploader := func(ctx context.Context, key string, data []byte) error {
-			return b2Backend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
+			return primaryBackend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
 		}
 		// Chain-head writer uploads .armor/chain-head/<writer> after each batch
 		chainHeadWriter := func(ctx context.Context, key string, data []byte) error {
-			return b2Backend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
+			return primaryBackend.Put(ctx, cfg.Bucket, key, bytes.NewReader(data), int64(len(data)), nil)
 		}
 		manifestWriter = manifest.NewWriterWithChain(manifestIdx, cfg.ManifestPrefix, cfg.WriterID, uploader, chainHeadWriter, 0)
 
 		// Create compactor that lists and batch-deletes via the B2 backend.
 		listerForCompactor := func(ctx context.Context, prefix, token string) ([]string, string, error) {
-			result, lerr := b2Backend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
+			result, lerr := primaryBackend.ListRaw(ctx, cfg.Bucket, prefix, "", token, 1000)
 			if lerr != nil {
 				return nil, "", lerr
 			}
@@ -278,7 +302,7 @@ func New(cfg *config.Config) (*Server, error) {
 			return keys, result.NextToken, nil
 		}
 		deleter := func(ctx context.Context, keys []string) error {
-			return b2Backend.DeleteObjects(ctx, cfg.Bucket, keys)
+			return primaryBackend.DeleteObjects(ctx, cfg.Bucket, keys)
 		}
 		compactionInterval := time.Duration(cfg.ManifestCompactionInterval) * time.Second
 
@@ -317,7 +341,7 @@ func New(cfg *config.Config) (*Server, error) {
 		replicationLogger := log.New(replicationLoggerWriter, "[replication] ", log.LstdFlags|log.Lmsgprefix)
 		replicationQueue = replication.NewReplicationQueue(
 			replicationMetrics,
-			b2Backend,
+			primaryBackend,
 			secondaryBackend,
 			0, // Use default buffer size
 			replicationLogger,
@@ -327,7 +351,7 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// Create canary monitor (after replicationQueue is available)
 	canaryMonitor := canary.NewMonitor(canary.Config{
-		Backend:           b2Backend,
+		Backend:           primaryBackend,
 		SecondaryBackend:  secondaryBackend,
 		ReplicationQueue:  replicationQueue,
 		Bucket:            cfg.Bucket,
@@ -345,7 +369,7 @@ func New(cfg *config.Config) (*Server, error) {
 
 	return &Server{
 		config:            cfg,
-		backend:           b2Backend,
+		backend:           primaryBackend,
 		secondaryBackend:  secondaryBackend,
 		cache:             cache,
 		footerCache:       footerCache,

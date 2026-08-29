@@ -127,6 +127,11 @@ type Config struct {
 	// When set to "debug", HTTP request/response headers and bodies are logged.
 	LogLevel string
 
+	// Primary backend configuration
+	// ARMOR_BACKEND selects the primary backend: "b2" (default) or "filesystem"
+	Backend     string // Backend type: "b2" or "filesystem"
+	FSPath      string // Path for filesystem backend (required when Backend=filesystem)
+
 	// Secondary backend configuration (ADR-006)
 	// When set, enables async replication to a secondary backend
 	SecondaryBackend     string // Backend identifier (e.g., "filesystem", "s3", "wasabi")
@@ -143,34 +148,53 @@ func Load() (*Config, error) {
 
 	var errs []error
 
-	// Required B2 configuration
-	cfg.B2Region = os.Getenv("ARMOR_B2_REGION")
-	if cfg.B2Region == "" {
-		errs = append(errs, fmt.Errorf("ARMOR_B2_REGION is required"))
+	// Backend selection (default: b2)
+	cfg.Backend = getEnv("ARMOR_BACKEND", "b2")
+	if cfg.Backend != "b2" && cfg.Backend != "filesystem" {
+		errs = append(errs, fmt.Errorf("ARMOR_BACKEND must be 'b2' or 'filesystem', got '%s'", cfg.Backend))
 	}
 
-	cfg.B2Endpoint = os.Getenv("ARMOR_B2_ENDPOINT")
-	if cfg.B2Endpoint == "" {
-		cfg.B2Endpoint = fmt.Sprintf("https://s3.%s.backblazeb2.com", cfg.B2Region)
+	// Filesystem backend configuration
+	if cfg.Backend == "filesystem" {
+		cfg.FSPath = os.Getenv("ARMOR_FS_PATH")
+		if cfg.FSPath == "" {
+			errs = append(errs, fmt.Errorf("ARMOR_FS_PATH is required when ARMOR_BACKEND=filesystem"))
+		}
 	}
 
-	cfg.B2AccessKeyID = os.Getenv("ARMOR_B2_ACCESS_KEY_ID")
-	if cfg.B2AccessKeyID == "" {
-		errs = append(errs, fmt.Errorf("ARMOR_B2_ACCESS_KEY_ID is required"))
+	// B2 backend configuration (required only when Backend=b2)
+	if cfg.Backend == "b2" {
+		cfg.B2Region = os.Getenv("ARMOR_B2_REGION")
+		if cfg.B2Region == "" {
+			errs = append(errs, fmt.Errorf("ARMOR_B2_REGION is required when ARMOR_BACKEND=b2"))
+		}
+
+		cfg.B2Endpoint = os.Getenv("ARMOR_B2_ENDPOINT")
+		if cfg.B2Endpoint == "" && cfg.B2Region != "" {
+			cfg.B2Endpoint = fmt.Sprintf("https://s3.%s.backblazeb2.com", cfg.B2Region)
+		}
+
+		cfg.B2AccessKeyID = os.Getenv("ARMOR_B2_ACCESS_KEY_ID")
+		if cfg.B2AccessKeyID == "" {
+			errs = append(errs, fmt.Errorf("ARMOR_B2_ACCESS_KEY_ID is required when ARMOR_BACKEND=b2"))
+		}
+
+		cfg.B2SecretAccessKey = os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY")
+		if cfg.B2SecretAccessKey == "" {
+			errs = append(errs, fmt.Errorf("ARMOR_B2_SECRET_ACCESS_KEY is required when ARMOR_BACKEND=b2"))
+		}
 	}
 
-	cfg.B2SecretAccessKey = os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY")
-	if cfg.B2SecretAccessKey == "" {
-		errs = append(errs, fmt.Errorf("ARMOR_B2_SECRET_ACCESS_KEY is required"))
-	}
-
+	// Bucket is required for both backends
 	cfg.Bucket = os.Getenv("ARMOR_BUCKET")
 	if cfg.Bucket == "" {
 		errs = append(errs, fmt.Errorf("ARMOR_BUCKET is required"))
 	}
 
-	// Cloudflare domain (optional — empty string enables direct S3 fallback for downloads)
-	cfg.CFDomain = os.Getenv("ARMOR_CF_DOMAIN")
+	// Cloudflare domain (optional for b2, ignored for filesystem)
+	if cfg.Backend == "b2" {
+		cfg.CFDomain = os.Getenv("ARMOR_CF_DOMAIN")
+	}
 
 	// Prefix for shared bucket support (ADR-001)
 	// Normalize to exactly one trailing slash, no leading slash
