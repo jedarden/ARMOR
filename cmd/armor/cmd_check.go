@@ -137,6 +137,9 @@ func runAllProbes(cfg *config.Config) []CheckResult {
 	// Run MEK verification probe
 	results = append(results, runMEKProbe(ctx, b2, cfg)...)
 
+	// Run fingerprint retire gate probe
+	results = append(results, runFingerprintProbe(ctx, b2, cfg)...)
+
 	return results
 }
 
@@ -437,6 +440,174 @@ func findNewestCanary(ctx context.Context, b2 backend.Backend, bucket, prefix st
 	}
 
 	return newestKey, nil
+}
+
+// runFingerprintProbe runs the fingerprint retire gate probe.
+// It collects active and ring fingerprints, scans objects to build a histogram,
+// and fails if any object's fingerprint is missing from available keys.
+func runFingerprintProbe(ctx context.Context, b2 backend.Backend, cfg *config.Config) []CheckResult {
+	// Collect all available fingerprints
+	availableFingerprints := collectAvailableFingerprints(cfg)
+
+	// Print active and ring fingerprints per key-id
+	var fingerprintMessages []string
+	fingerprintMessages = append(fingerprintMessages, fmt.Sprintf("default key: active fingerprint=%s", crypto.MEKFingerprint(cfg.MEK)))
+
+	// Add ring fingerprints for default key
+	if ringMEKs, ok := cfg.KeyRings["default"]; ok {
+		var ringFPs []string
+		for i := 0; i < len(ringMEKs); i += 32 {
+			mek := ringMEKs[i : i+32]
+			fp := crypto.MEKFingerprint(mek)
+			ringFPs = append(ringFPs, fp)
+		}
+		if len(ringFPs) > 0 {
+			fingerprintMessages = append(fingerprintMessages, fmt.Sprintf("default key: ring fingerprints=[%s]", strings.Join(ringFPs, ", ")))
+		}
+	}
+
+	// Add named key fingerprints
+	for name, mek := range cfg.NamedKeys {
+		fp := crypto.MEKFingerprint(mek)
+		fingerprintMessages = append(fingerprintMessages, fmt.Sprintf("key %s: active fingerprint=%s", name, fp))
+		if ringMEKs, ok := cfg.KeyRings[name]; ok {
+			var ringFPs []string
+			for i := 0; i < len(ringMEKs); i += 32 {
+				mek := ringMEKs[i : i+32]
+				fp := crypto.MEKFingerprint(mek)
+				ringFPs = append(ringFPs, fp)
+			}
+			if len(ringFPs) > 0 {
+				fingerprintMessages = append(fingerprintMessages, fmt.Sprintf("key %s: ring fingerprints=[%s]", name, strings.Join(ringFPs, ", ")))
+			}
+		}
+	}
+
+	// Scan objects to build histogram
+	histogram, missingFingerprints, err := scanObjectFingerprints(ctx, b2, cfg.Bucket, cfg.Prefix, availableFingerprints)
+	if err != nil {
+		// Can't scan objects - warn but don't fail
+		msg := fmt.Sprintf("%s (object scan unavailable)", strings.Join(fingerprintMessages, "; "))
+		return []CheckResult{{
+			Name:    "fingerprint",
+			Status:  "WARN",
+			Message: msg,
+		}}
+	}
+
+	// Check for missing fingerprints
+	if len(missingFingerprints) > 0 {
+		msg := fmt.Sprintf("%s; MISSING FINGERPRINTS: [%s] - these objects use keys not in ARMOR_MEK_RING and would become unreadable",
+			strings.Join(fingerprintMessages, "; "),
+			strings.Join(missingFingerprints, ", "))
+		return []CheckResult{{
+			Name:    "fingerprint",
+			Status:  "FAIL",
+			Message: msg,
+		}}
+	}
+
+	// Build histogram message
+	var histogramParts []string
+	for fp, count := range histogram {
+		if fp == "" {
+			histogramParts = append(histogramParts, fmt.Sprintf("legacy=%d", count))
+		} else {
+			histogramParts = append(histogramParts, fmt.Sprintf("%s=%d", fp, count))
+		}
+	}
+
+	msg := fmt.Sprintf("%s; objects by fingerprint: {%s}", strings.Join(fingerprintMessages, "; "), strings.Join(histogramParts, ", "))
+	return []CheckResult{{
+		Name:    "fingerprint",
+		Status:  "PASS",
+		Message: msg,
+	}}
+}
+
+// collectAvailableFingerprints collects all available fingerprints from active and ring keys.
+func collectAvailableFingerprints(cfg *config.Config) map[string]bool {
+	available := make(map[string]bool)
+
+	// Add active key fingerprint
+	available[crypto.MEKFingerprint(cfg.MEK)] = true
+
+	// Add ring key fingerprints for default key
+	if ringMEKs, ok := cfg.KeyRings["default"]; ok {
+		for i := 0; i < len(ringMEKs); i += 32 {
+			mek := ringMEKs[i : i+32]
+			fp := crypto.MEKFingerprint(mek)
+			available[fp] = true
+		}
+	}
+
+	// Add named keys and their rings
+	for name, mek := range cfg.NamedKeys {
+		fp := crypto.MEKFingerprint(mek)
+		available[fp] = true
+		if ringMEKs, ok := cfg.KeyRings[name]; ok {
+			for i := 0; i < len(ringMEKs); i += 32 {
+				mek := ringMEKs[i : i+32]
+				fp := crypto.MEKFingerprint(mek)
+				available[fp] = true
+			}
+		}
+	}
+
+	return available
+}
+
+// scanObjectFingerprints scans ARMOR objects and returns a histogram of objects by fingerprint,
+// plus a list of fingerprints that are not available in the active/ring keys.
+func scanObjectFingerprints(ctx context.Context, b2 backend.Backend, bucket, prefix string, available map[string]bool) (map[string]int, []string, error) {
+	histogram := make(map[string]int)
+	var missingFingerprints []string
+
+	// List all objects with .armor prefix (excluding canary)
+	armorPrefix := prefix + ".armor/"
+
+	result, err := b2.List(ctx, bucket, armorPrefix, "", "", 1000)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list failed: %w", err)
+	}
+
+	for _, obj := range result.Objects {
+		// Skip canary objects
+		if strings.Contains(obj.Key, "/canary/") {
+			continue
+		}
+
+		// Extract fingerprint from wrapped DEK metadata
+		fp := extractFingerprintFromMetadata(obj.Metadata)
+		histogram[fp]++
+
+		// Track missing fingerprints
+		if fp != "" && !available[fp] {
+			missingFingerprints = append(missingFingerprints, fp)
+		}
+	}
+
+	return histogram, missingFingerprints, nil
+}
+
+// extractFingerprintFromMetadata extracts the fingerprint from wrapped DEK metadata.
+// Returns empty string for legacy format (no fingerprint).
+func extractFingerprintFromMetadata(metadata map[string]string) string {
+	wrappedDEK := metadata["x-amz-meta-armor-wrapped-dek"]
+	if wrappedDEK == "" {
+		return ""
+	}
+
+	// Check for v2:<fp16>:<base64> format
+	if len(wrappedDEK) > 4 && wrappedDEK[:3] == "v2:" {
+		parts := strings.SplitN(wrappedDEK, ":", 3)
+		if len(parts) == 3 && parts[0] == "v2" {
+			return parts[1] // fingerprint
+		}
+	}
+
+	// Legacy format - no fingerprint
+	return ""
 }
 
 // initBackendForCheck initializes the backend for checking
