@@ -85,7 +85,7 @@ func TestVersion3EncryptionPutObject(t *testing.T) {
 
 	// Verify trailer block table is present at the end
 	trailerOffset := 64 + int64(len(plaintext))
-	if int64(len(data)) < trailerOffset + crypto.BlockTableEntrySize {
+	if int64(len(data)) < trailerOffset+crypto.BlockTableEntrySize {
 		t.Errorf("cannot read trailer block table: data too short")
 	}
 }
@@ -332,12 +332,12 @@ type testManifestRecorder struct {
 }
 
 type testManifestEntry struct {
-	Bucket          string
-	Key             string
-	PlaintextSize   int64
-	CiphertextSize  int64
-	ContentType     string
-	ETag            string
+	Bucket         string
+	Key            string
+	PlaintextSize  int64
+	CiphertextSize int64
+	ContentType    string
+	ETag           string
 }
 
 func (m *testManifestRecorder) RecordPut(bucket, key string, size int64, sha256Hex string, iv, wrappedDEK []byte, mekFingerprint string, blockSize int, contentType, etag string, chainEntry *manifest.ChainEntry, ciphertextSize int64) {
@@ -375,4 +375,214 @@ func (m *testManifestRecorder) Lookup(bucket, key string) (*handlers.ManifestEnt
 		ContentType:    entry.ContentType,
 		ETag:           entry.ETag,
 	}, true
+}
+
+// TestV3GetObjectFull verifies full object GET works for v3 objects.
+func TestV3GetObjectFull(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+
+	// Set FormatWriteVersion to 3
+	cfg.FormatWriteVersion = 3
+
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	// Create plaintext content larger than one block
+	plaintext := make([]byte, 128*1024) // 128KB (2 blocks)
+	if _, err := rand.Read(plaintext); err != nil {
+		t.Fatalf("failed to generate random plaintext: %v", err)
+	}
+
+	// Create PUT request
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/v3-full-test", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: got status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// Now GET the object
+	getReq := httptest.NewRequest(http.MethodGet, "/test-bucket/v3-full-test", nil)
+	getW := httptest.NewRecorder()
+
+	h.HandleRoot(getW, getReq)
+
+	if getW.Code != http.StatusOK {
+		t.Fatalf("GET failed: got status %d, body: %s", getW.Code, getW.Body.String())
+	}
+
+	// Verify the content matches
+	retrieved := getW.Body.Bytes()
+	if !bytes.Equal(plaintext, retrieved) {
+		t.Errorf("Retrieved content does not match original: got %d bytes, want %d bytes", len(retrieved), len(plaintext))
+		if len(retrieved) > 0 && len(plaintext) > 0 {
+			// Show first differing byte
+			for i := 0; i < len(plaintext) && i < len(retrieved); i++ {
+				if plaintext[i] != retrieved[i] {
+					t.Logf("First difference at byte %d: original=0x%02x, retrieved=0x%02x", i, plaintext[i], retrieved[i])
+					break
+				}
+			}
+		}
+	}
+
+	// Verify response headers
+	contentType := getW.Header().Get("Content-Type")
+	if contentType != "application/octet-stream" {
+		t.Errorf("Content-Type mismatch: got %s, want application/octet-stream", contentType)
+	}
+}
+
+// TestV3GetObjectRangeStraddlingBlocks verifies range requests that straddle block boundaries work for v3 objects.
+func TestV3GetObjectRangeStraddlingBlocks(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+
+	// Set FormatWriteVersion to 3
+	cfg.FormatWriteVersion = 3
+
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	// Create plaintext content exactly 2 blocks
+	plaintext := make([]byte, 128*1024) // 128KB (2 blocks of 64KB)
+	if _, err := rand.Read(plaintext); err != nil {
+		t.Fatalf("failed to generate random plaintext: %v", err)
+	}
+
+	// Create PUT request
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/v3-range-test", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: got status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// Test range that straddles the block boundary (from 32KB to 96KB)
+	getReq := httptest.NewRequest(http.MethodGet, "/test-bucket/v3-range-test", nil)
+	getReq.Header.Set("Range", "bytes=32768-98303") // From middle of block 0 to middle of block 1
+	getW := httptest.NewRecorder()
+
+	h.HandleRoot(getW, getW)
+
+	if getW.Code != http.StatusPartialContent {
+		t.Fatalf("GET range failed: got status %d, body: %s", getW.Code, getW.Body.String())
+	}
+
+	// Verify we got the correct range
+	expectedContent := plaintext[32768:98304]
+	retrieved := getW.Body.Bytes()
+
+	if !bytes.Equal(expectedContent, retrieved) {
+		t.Errorf("Retrieved range content does not match: got %d bytes, want %d bytes", len(retrieved), len(expectedContent))
+	}
+
+	// Verify Content-Range header
+	contentRange := getW.Header().Get("Content-Range")
+	expectedRange := "bytes 32768-98303/131072"
+	if contentRange != expectedRange {
+		t.Errorf("Content-Range mismatch: got %s, want %s", contentRange, expectedRange)
+	}
+}
+
+// TestV3GetObjectRangeLastShortBlock verifies range requests to the last short block work for v3 objects.
+func TestV3GetObjectRangeLastShortBlock(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+
+	// Set FormatWriteVersion to 3
+	cfg.FormatWriteVersion = 3
+
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	// Create plaintext content that doesn't align to block size
+	plaintext := make([]byte, 100*1024) // 100KB (not a multiple of 64KB)
+	if _, err := rand.Read(plaintext); err != nil {
+		t.Fatalf("failed to generate random plaintext: %v", err)
+	}
+
+	// Create PUT request
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/v3-short-block-test", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: got status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// Test range that includes the last short block (from 70KB to end)
+	getReq := httptest.NewRequest(http.MethodGet, "/test-bucket/v3-short-block-test", nil)
+	getReq.Header.Set("Range", "bytes=71680-") // From 70KB to end
+	getW := httptest.NewRecorder()
+
+	h.HandleRoot(getW, getW)
+
+	if getW.Code != http.StatusPartialContent {
+		t.Fatalf("GET range failed: got status %d, body: %s", getW.Code, getW.Body.String())
+	}
+
+	// Verify we got the correct range (from 70KB to end)
+	expectedContent := plaintext[71680:]
+	retrieved := getW.Body.Bytes()
+
+	if !bytes.Equal(expectedContent, retrieved) {
+		t.Errorf("Retrieved range content does not match: got %d bytes, want %d bytes", len(retrieved), len(expectedContent))
+	}
+
+	// Verify Content-Range header
+	contentRange := getW.Header().Get("Content-Range")
+	// Should be "bytes 71680-102399/102400"
+	if !strings.HasPrefix(contentRange, "bytes 71680-") {
+		t.Errorf("Content-Range mismatch: got %s, should start with 'bytes 71680-'", contentRange)
+	}
+}
+
+// TestV3GetObjectRangeSingleBlock verifies range requests within a single block work for v3 objects.
+func TestV3GetObjectRangeSingleBlock(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+
+	// Set FormatWriteVersion to 3
+	cfg.FormatWriteVersion = 3
+
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+
+	// Create plaintext content
+	plaintext := make([]byte, 64*1024) // 64KB (1 block)
+	if _, err := rand.Read(plaintext); err != nil {
+		t.Fatalf("failed to generate random plaintext: %v", err)
+	}
+
+	// Create PUT request
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/v3-single-block-test", bytes.NewReader(plaintext))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+
+	h.HandleRoot(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT failed: got status %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// Test range within the single block (from 10KB to 20KB)
+	getReq := httptest.NewRequest(http.MethodGet, "/test-bucket/v3-single-block-test", nil)
+	getReq.Header.Set("Range", "bytes=10240-20479")
+	getW := httptest.NewRecorder()
+
+	h.HandleRoot(getW, getW)
+
+	if getW.Code != http.StatusPartialContent {
+		t.Fatalf("GET range failed: got status %d, body: %s", getW.Code, getW.Body.String())
+	}
+
+	// Verify we got the correct range
+	expectedContent := plaintext[10240:20480]
+	retrieved := getW.Body.Bytes()
+
+	if !bytes.Equal(expectedContent, retrieved) {
+		t.Errorf("Retrieved range content does not match: got %d bytes, want %d bytes", len(retrieved), len(expectedContent))
+	}
 }
