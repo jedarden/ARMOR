@@ -4011,6 +4011,11 @@ func (h *Handlers) logS3Error(r *http.Request, code, message string, statusCode 
 		// Unexpected: non-error status codes should not use error logging path
 		h.logger.WithFields(fields).Info("S3 operation error logged with non-error status")
 	}
+
+	// Increment error counter (ADR-008)
+	if h.metrics != nil {
+		h.metrics.IncErrors(code, operation)
+	}
 }
 
 // extractBucketAndKey extracts bucket and key from the request URL.

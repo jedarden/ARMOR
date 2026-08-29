@@ -192,6 +192,9 @@ type Metrics struct {
 	// Manifest compaction metrics
 	CompactionErrorsTotal *expvar.Int // Total number of manifest compaction errors
 
+	// S3 error metrics (ADR-008)
+	ErrorsTotal *labelledCounter // Total S3 errors by error code and operation
+
 	// Internal state
 	startTime time.Time
 }
@@ -306,6 +309,9 @@ func NewMetrics() *Metrics {
 
 	// Manifest compaction metrics
 	m.CompactionErrorsTotal = new(expvar.Int)
+
+	// S3 error metrics
+	m.ErrorsTotal = newLabelledCounter()
 
 	return m
 }
@@ -929,6 +935,22 @@ func (m *Metrics) PrometheusFormat() string {
 	// Manifest compaction metrics
 	writeMetric("manifest_compaction_errors_total", "Total number of manifest compaction errors", "counter", m.CompactionErrorsTotal)
 
+	// S3 error metrics (ADR-008)
+	sb.WriteString("\n# HELP armor_errors_total Total number of S3 errors by error code and operation\n")
+	sb.WriteString("# TYPE armor_errors_total counter\n")
+	m.ErrorsTotal.Do(func(kv expvar.KeyValue) {
+		// Parse the "code:operation" key format
+		parts := strings.SplitN(kv.Key, ":", 2)
+		if len(parts) == 2 {
+			code := parts[0]
+			operation := parts[1]
+			fmt.Fprintf(&sb, "armor_errors_total{code=%q,operation=%q} %s\n", code, operation, kv.Value.String())
+		} else {
+			// Fallback for malformed keys (shouldn't happen)
+			fmt.Fprintf(&sb, "armor_errors_total{code=%q,operation=\"\"} %s\n", kv.Key, kv.Value.String())
+		}
+	})
+
 	sb.WriteString("\n# HELP armor_replication_enqueued_total Total number of items enqueued for replication by operation\n")
 	sb.WriteString("# TYPE armor_replication_enqueued_total counter\n")
 	// Read from atomic counters
@@ -1063,6 +1085,13 @@ func (m *Metrics) IncReplicationRetries() {
 // IncCompactionErrors increments the manifest compaction error counter.
 func (m *Metrics) IncCompactionErrors() {
 	m.CompactionErrorsTotal.Add(1)
+}
+
+// IncErrors increments the S3 error counter for a given error code and operation.
+// The label key combines error code and operation as "code:operation".
+func (m *Metrics) IncErrors(code, operation string) {
+	key := fmt.Sprintf("%s:%s", code, operation)
+	m.ErrorsTotal.Add(key, 1)
 }
 
 // RequestTracker tracks in-flight requests using a WaitGroup.
