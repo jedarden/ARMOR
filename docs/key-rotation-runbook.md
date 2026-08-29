@@ -174,6 +174,54 @@ curl -s -X GET "http://localhost:9001/admin/format/migrate" \
   -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" | jq .
 ```
 
+### Using the `armor migrate` CLI
+
+The `armor migrate` command provides a convenient CLI wrapper around the admin API:
+
+```bash
+# Dry run (counts objects without re-encrypting)
+ARMOR_ADMIN_TOKEN=<token> armor migrate \
+  --admin-url http://127.0.0.1:9001 \
+  --dry-run \
+  --include v1 \
+  --concurrency 4
+
+# Actual migration with progress watching
+ARMOR_ADMIN_TOKEN=<token> armor migrate \
+  --admin-url http://127.0.0.1:9001 \
+  --include v1,v2 \
+  --concurrency 8 \
+  --watch
+
+# Migrate from a pod
+kubectl exec deploy/armor -n <namespace> -- armor migrate \
+  --admin-url http://localhost:9001 \
+  --include v1 \
+  --watch
+```
+
+**CLI flags:**
+- `--admin-url`: Admin API endpoint (required). Example: `http://127.0.0.1:9001`
+- `--dry-run`: Verify objects can be migrated without making changes (default: false)
+- `--include`: Comma-separated source versions to migrate (default: `v1`). Examples: `v1`, `v1,v2`
+- `--concurrency`: Number of concurrent workers (default: server-side default of 4)
+- `--watch`: Poll progress until completion and print progress lines (default: false)
+
+**Authentication:**
+The admin token must be provided via the `ARMOR_ADMIN_TOKEN` environment variable. The token is **never accepted as a flag** to prevent accidental exposure in shell history or process listings.
+
+**Watch mode:**
+With `--watch`, the command polls the migration progress endpoint every 2 seconds and prints:
+```
+Progress: 10/1000 processed (in_progress)
+Progress: 20/1000 processed, 5 skipped (in_progress)
+Progress: 30/1000 processed, 5 skipped, 1 failed (in_progress)
+Migration completed successfully.
+Total: 1000, Processed: 994, Skipped: 5, Failed: 1
+```
+
+The command exits with code 1 if any objects failed migration, 0 on success.
+
 ### Query parameters
 
 - `dry_run`: `true` (count only) or `false` (actual migration). Default: `false`
