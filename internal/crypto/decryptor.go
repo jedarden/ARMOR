@@ -331,7 +331,7 @@ func (d *Decryptor) DecryptWithBlockDecompression(encrypted []byte, blockTable *
 		encryptedBlock := encrypted[encryptedOffset : encryptedOffset+int(blockLength)]
 
 		// Verify HMAC first
-		if err := d.verifyBlockHMAC(encryptedBlock, uint32(i), entry.HMAC); err != nil {
+		if err := d.verifyBlockHMAC(encryptedBlock, uint32(i), entry.HMAC[:]); err != nil {
 			return nil, fmt.Errorf("block %d HMAC verification failed: %w", i, err)
 		}
 
@@ -720,4 +720,9 @@ func max(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// DEK returns the data encryption key.
+func (d *Decryptor) DEK() []byte {
+	return d.dek
 }
