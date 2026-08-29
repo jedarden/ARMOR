@@ -4,6 +4,7 @@ import (
 	"github.com/jedarden/armor/internal/acl"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -630,6 +631,79 @@ func TestArmorPrefix(t *testing.T) {
 				t.Errorf("Prefix = %q, want %q", cfg.Prefix, tt.expected)
 			}
 		})
+	}
+}
+
+func TestLoadReportsMultipleErrors(t *testing.T) {
+	// Unset all required env vars
+	for _, k := range []string{
+		"ARMOR_B2_REGION",
+		"ARMOR_B2_ACCESS_KEY_ID",
+		"ARMOR_B2_SECRET_ACCESS_KEY",
+		"ARMOR_BUCKET",
+		"ARMOR_MEK",
+	} {
+		os.Unsetenv(k)
+	}
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should return error when required vars are missing")
+	}
+
+	// Verify all missing variables are reported in the error message
+	errMsg := err.Error()
+	for _, k := range []string{
+		"ARMOR_B2_REGION",
+		"ARMOR_B2_ACCESS_KEY_ID",
+		"ARMOR_B2_SECRET_ACCESS_KEY",
+		"ARMOR_BUCKET",
+		"ARMOR_MEK",
+	} {
+		if !strings.Contains(errMsg, k+" is required") && !strings.Contains(errMsg, k) {
+			t.Errorf("Error message should mention missing %s, got: %v", k, errMsg)
+		}
+	}
+}
+
+func TestLoadWithThreeMissingRequiredVars(t *testing.T) {
+	// Set only B2_REGION and SECRET_KEY, missing ACCESS_KEY_ID, BUCKET, and MEK
+	os.Unsetenv("ARMOR_B2_REGION")
+	os.Unsetenv("ARMOR_B2_ACCESS_KEY_ID")
+	os.Unsetenv("ARMOR_B2_SECRET_ACCESS_KEY")
+	os.Unsetenv("ARMOR_BUCKET")
+	os.Unsetenv("ARMOR_MEK")
+
+	os.Setenv("ARMOR_B2_REGION", "us-west-001")
+	os.Setenv("ARMOR_B2_SECRET_ACCESS_KEY", "testsecret")
+	defer func() {
+		os.Unsetenv("ARMOR_B2_REGION")
+		os.Unsetenv("ARMOR_B2_SECRET_ACCESS_KEY")
+	}()
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should return error when required vars are missing")
+	}
+
+	// Verify all three missing variables are reported in the error
+	errMsg := err.Error()
+	for _, k := range []string{
+		"ARMOR_B2_ACCESS_KEY_ID",
+		"ARMOR_BUCKET",
+		"ARMOR_MEK",
+	} {
+		if !strings.Contains(errMsg, k) {
+			t.Errorf("Error message should mention missing %s, got: %v", k, errMsg)
+		}
+	}
+
+	// Verify the ones that ARE set are NOT in the error
+	if strings.Contains(errMsg, "ARMOR_B2_REGION is required") {
+		t.Error("ARMOR_B2_REGION should not be reported as missing (it was set)")
+	}
+	if strings.Contains(errMsg, "ARMOR_B2_SECRET_ACCESS_KEY is required") {
+		t.Error("ARMOR_B2_SECRET_ACCESS_KEY should not be reported as missing (it was set)")
 	}
 }
 

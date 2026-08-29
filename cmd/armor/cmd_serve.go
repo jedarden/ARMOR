@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,7 +28,27 @@ func serve() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		logging.Fatalf("failed to load configuration: %v", err)
+		// Print each error on a separate line for better operator experience
+		var allErrors []error
+
+		// Try to extract multiple errors from errors.Join()
+		switch jointErr := err.(type) {
+		case interface{ Unwrap() []error }:
+			// errors.Join returns an error with Unwrap() []error
+			allErrors = jointErr.Unwrap()
+		default:
+			// Single error or different error type
+			allErrors = []error{err}
+		}
+
+		var errMsg string
+		for i, e := range allErrors {
+			if i > 0 {
+				errMsg += "\n"
+			}
+			errMsg += fmt.Sprintf("  %s", e.Error())
+		}
+		logging.Fatalf("failed to load configuration:\n%s", errMsg)
 	}
 
 	// Create logger with configuration

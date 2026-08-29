@@ -4,6 +4,7 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -140,10 +141,12 @@ func Load() (*Config, error) {
 		AdminListen: getEnv("ARMOR_ADMIN_LISTEN", "127.0.0.1:9001"),
 	}
 
+	var errs []error
+
 	// Required B2 configuration
 	cfg.B2Region = os.Getenv("ARMOR_B2_REGION")
 	if cfg.B2Region == "" {
-		return nil, fmt.Errorf("ARMOR_B2_REGION is required")
+		errs = append(errs, fmt.Errorf("ARMOR_B2_REGION is required"))
 	}
 
 	cfg.B2Endpoint = os.Getenv("ARMOR_B2_ENDPOINT")
@@ -153,17 +156,17 @@ func Load() (*Config, error) {
 
 	cfg.B2AccessKeyID = os.Getenv("ARMOR_B2_ACCESS_KEY_ID")
 	if cfg.B2AccessKeyID == "" {
-		return nil, fmt.Errorf("ARMOR_B2_ACCESS_KEY_ID is required")
+		errs = append(errs, fmt.Errorf("ARMOR_B2_ACCESS_KEY_ID is required"))
 	}
 
 	cfg.B2SecretAccessKey = os.Getenv("ARMOR_B2_SECRET_ACCESS_KEY")
 	if cfg.B2SecretAccessKey == "" {
-		return nil, fmt.Errorf("ARMOR_B2_SECRET_ACCESS_KEY is required")
+		errs = append(errs, fmt.Errorf("ARMOR_B2_SECRET_ACCESS_KEY is required"))
 	}
 
 	cfg.Bucket = os.Getenv("ARMOR_BUCKET")
 	if cfg.Bucket == "" {
-		return nil, fmt.Errorf("ARMOR_BUCKET is required")
+		errs = append(errs, fmt.Errorf("ARMOR_BUCKET is required"))
 	}
 
 	// Cloudflare domain (optional — empty string enables direct S3 fallback for downloads)
@@ -179,21 +182,21 @@ func Load() (*Config, error) {
 	// Master encryption key (required)
 	mekHex := os.Getenv("ARMOR_MEK")
 	if mekHex == "" {
-		return nil, fmt.Errorf("ARMOR_MEK is required")
-	}
-	var err error
-	cfg.MEK, err = hex.DecodeString(mekHex)
-	if err != nil {
-		return nil, fmt.Errorf("ARMOR_MEK must be hex-encoded: %w", err)
-	}
-	if len(cfg.MEK) != 32 {
-		return nil, fmt.Errorf("ARMOR_MEK must be 32 bytes (64 hex chars), got %d bytes", len(cfg.MEK))
+		errs = append(errs, fmt.Errorf("ARMOR_MEK is required"))
+	} else {
+		var err error
+		cfg.MEK, err = hex.DecodeString(mekHex)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("ARMOR_MEK must be hex-encoded: %w", err))
+		} else if len(cfg.MEK) != 32 {
+			errs = append(errs, fmt.Errorf("ARMOR_MEK must be 32 bytes (64 hex chars), got %d bytes", len(cfg.MEK)))
+		}
 	}
 
 	// Block size (default 64KB)
 	cfg.BlockSize = getEnvInt("ARMOR_BLOCK_SIZE", 65536)
 	if cfg.BlockSize < 4096 || (cfg.BlockSize&(cfg.BlockSize-1)) != 0 {
-		return nil, fmt.Errorf("ARMOR_BLOCK_SIZE must be a power of 2 >= 4096")
+		errs = append(errs, fmt.Errorf("ARMOR_BLOCK_SIZE must be a power of 2 >= 4096"))
 	}
 
 	// Compression (default disabled per ADR-007)
@@ -202,7 +205,7 @@ func Load() (*Config, error) {
 	// Number of ranged reads allowed in flight for a backend read.
 	cfg.ReadConcurrency = getEnvInt("ARMOR_READ_CONCURRENCY", 16)
 	if cfg.ReadConcurrency < 1 {
-		return nil, fmt.Errorf("ARMOR_READ_CONCURRENCY must be at least 1")
+		errs = append(errs, fmt.Errorf("ARMOR_READ_CONCURRENCY must be at least 1"))
 	}
 
 	// Auth credentials (generate random if not provided)
@@ -258,12 +261,12 @@ func Load() (*Config, error) {
 	// Pre-signed URL configuration
 	presignSecretHex := os.Getenv("ARMOR_PRESIGN_SECRET")
 	if presignSecretHex != "" {
+		var err error
 		cfg.PresignSecret, err = hex.DecodeString(presignSecretHex)
 		if err != nil {
-			return nil, fmt.Errorf("ARMOR_PRESIGN_SECRET must be hex-encoded: %w", err)
-		}
-		if len(cfg.PresignSecret) < 32 {
-			return nil, fmt.Errorf("ARMOR_PRESIGN_SECRET must be at least 32 bytes (64 hex chars)")
+			errs = append(errs, fmt.Errorf("ARMOR_PRESIGN_SECRET must be hex-encoded: %w", err))
+		} else if len(cfg.PresignSecret) < 32 {
+			errs = append(errs, fmt.Errorf("ARMOR_PRESIGN_SECRET must be at least 32 bytes (64 hex chars)"))
 		}
 	} else {
 		// Use the auth secret key as the presign secret if not specified
@@ -289,15 +292,18 @@ func Load() (*Config, error) {
 				continue
 			}
 			if name == "default" {
-				return nil, fmt.Errorf("ARMOR_MEK_DEFAULT is reserved; use ARMOR_MEK for the default key")
+				errs = append(errs, fmt.Errorf("ARMOR_MEK_DEFAULT is reserved; use ARMOR_MEK for the default key"))
+				continue
 			}
 			// Decode hex MEK
 			mek, err := hex.DecodeString(parts[1])
 			if err != nil {
-				return nil, fmt.Errorf("ARMOR_MEK_%s must be hex-encoded: %w", name, err)
+				errs = append(errs, fmt.Errorf("ARMOR_MEK_%s must be hex-encoded: %w", name, err))
+				continue
 			}
 			if len(mek) != 32 {
-				return nil, fmt.Errorf("ARMOR_MEK_%s must be 32 bytes (64 hex chars), got %d bytes", name, len(mek))
+				errs = append(errs, fmt.Errorf("ARMOR_MEK_%s must be 32 bytes (64 hex chars), got %d bytes", name, len(mek)))
+				continue
 			}
 			cfg.NamedKeys[name] = mek
 		}
@@ -307,9 +313,10 @@ func Load() (*Config, error) {
 	if routesStr := os.Getenv("ARMOR_KEY_ROUTES"); routesStr != "" {
 		routes, err := parseKeyRoutes(routesStr)
 		if err != nil {
-			return nil, fmt.Errorf("ARMOR_KEY_ROUTES: %w", err)
+			errs = append(errs, fmt.Errorf("ARMOR_KEY_ROUTES: %w", err))
+		} else {
+			cfg.KeyRoutes = routes
 		}
-		cfg.KeyRoutes = routes
 	}
 
 	// Dashboard authentication configuration
@@ -333,14 +340,19 @@ func Load() (*Config, error) {
 	if cfg.SecondaryBackendType != "" {
 		// Validate backend type
 		if cfg.SecondaryBackendType != "filesystem" {
-			return nil, fmt.Errorf("ARMOR_SECONDARY_BACKEND_TYPE must be 'filesystem', got '%s'", cfg.SecondaryBackendType)
+			errs = append(errs, fmt.Errorf("ARMOR_SECONDARY_BACKEND_TYPE must be 'filesystem', got '%s'", cfg.SecondaryBackendType))
+		} else {
+			// For filesystem backend, path is required
+			cfg.SecondaryBackendPath = os.Getenv("ARMOR_SECONDARY_BACKEND_PATH")
+			if cfg.SecondaryBackendPath == "" {
+				errs = append(errs, fmt.Errorf("ARMOR_SECONDARY_BACKEND_PATH is required when ARMOR_SECONDARY_BACKEND_TYPE=filesystem"))
+			}
 		}
+	}
 
-		// For filesystem backend, path is required
-		cfg.SecondaryBackendPath = os.Getenv("ARMOR_SECONDARY_BACKEND_PATH")
-		if cfg.SecondaryBackendPath == "" {
-			return nil, fmt.Errorf("ARMOR_SECONDARY_BACKEND_PATH is required when ARMOR_SECONDARY_BACKEND_TYPE=filesystem")
-		}
+	// Return all errors collected during validation
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	return cfg, nil
