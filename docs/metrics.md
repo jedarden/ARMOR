@@ -226,6 +226,140 @@ sum(rate(armor_request_duration_ms_count[5m])) by (operation)
 - `code` — S3 error code (e.g., "InvalidPartSize", "AccessDenied", "NoSuchBucket")
 - `operation` — S3 operation that triggered the error (e.g., "PutObject", "GetObject", "CompleteMultipartUpload")
 
+## Authorization Metrics
+
+### `armor_requests_by_credential_total`
+
+**Type:** Counter  
+**Description:** Total number of requests by access key ID, verb, and authorization result  
+**Labels:**
+- `access_key_id` — The access key identifier (not a secret). Uses "unknown" for authentication failures where the key cannot be extracted. Cardinality is bounded by the number of configured credentials plus one "unknown" entry.
+- `verb` — The S3 operation being performed (e.g., "GetObject", "PutObject", "DeleteObject")
+- `result` — Authorization outcome: "allow", "deny-auth", or "deny-acl"
+
+**Label Values:**
+
+**access_key_id:**
+- Configured credential access keys (e.g., "AKIAIOSFODNN7EXAMPLE")
+- "unknown" — Used when authentication fails and the access key cannot be extracted from the request
+
+**result:**
+- "allow" — Request authenticated and authorized successfully
+- "deny-auth" — Authentication failed (missing credentials, invalid signature, expired request)
+- "deny-acl" — Authentication succeeded but authorization check failed (access control list denied access)
+
+**Example Output:**
+```
+# HELP armor_requests_by_credential_total Total number of requests by access key ID, verb, and authorization result
+# TYPE armor_requests_by_credential_total counter
+armor_requests_by_credential_total{access_key_id="AKIAIOSFODNN7EXAMPLE",verb="GetObject",result="allow"} 1234
+armor_requests_by_credential_total{access_key_id="AKIAIOSFODNN7EXAMPLE",verb="PutObject",result="allow"} 567
+armor_requests_by_credential_total{access_key_id="AKIAIOSFODNN7EXAMPLE",verb="DeleteObject",result="deny-acl"} 12
+armor_requests_by_credential_total{access_key_id="AKIAI44QH8DHBEXAMPLE",verb="GetObject",result="allow"} 890
+armor_requests_by_credential_total{access_key_id="unknown",verb="PutObject",result="deny-auth"} 45
+armor_requests_by_credential_total{access_key_id="unknown",verb="GetObject",result="deny-auth"} 23
+```
+
+**Example Usage (Go):**
+```go
+// Recorded automatically in server.go during request processing:
+// - deny-auth: When credential verification fails (line ~1213)
+// - deny-acl: When ACL check fails (line ~1244)
+// - allow: When both auth and ACL succeed (line ~1250)
+//
+// Manual invocation (if needed):
+metrics.IncRequestsByCredential("AKIAIOSFODNN7EXAMPLE", "GetObject", "allow")
+```
+
+**Alerting Example (Prometheus):**
+```yaml
+# Alert on high authentication failure rate
+- alert: HighAuthenticationFailureRate
+  expr: |
+    sum by (access_key_id) (
+      rate(armor_requests_by_credential_total{result="deny-auth"}[5m])
+    ) > 0.1
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "High authentication failure rate detected"
+    description: "Access key {{ $labels.access_key_id }} has {{ $value | humanize }} auth failures/sec over last 5m"
+
+# Alert on authorization denial rate
+- alert: HighAuthorizationDenialRate
+  expr: |
+    sum by (access_key_id) (
+      rate(armor_requests_by_credential_total{result="deny-acl"}[5m])
+    ) > 0.05
+  for: 10m
+  labels:
+    severity: info
+  annotations:
+    summary: "High authorization denial rate for {{ $labels.access_key_id }}"
+    description: "{{ $value | humanize }} requests/sec denied by ACL over last 10m"
+
+# Track successful request rate per credential
+- record: credential_request_rate
+  expr: |
+    sum by (access_key_id) (
+      rate(armor_requests_by_credential_total{result="allow"}[5m])
+    )
+```
+
+**Grafana Dashboard Queries:**
+```promql
+# Requests per second by credential and result
+sum by (access_key_id, result) (
+  rate(armor_requests_by_credential_total[5m])
+)
+
+# Authentication failure rate over time
+sum by (access_key_id) (
+  rate(armor_requests_by_credential_total{result="deny-auth"}[5m])
+)
+
+# Authorization denial breakdown by operation
+sum by (verb, access_key_id) (
+  rate(armor_requests_by_credential_total{result="deny-acl"}[5m])
+)
+
+# Top 10 credentials by request volume
+topk(10, sum by (access_key_id) (
+  rate(armor_requests_by_credential_total[5m])
+))
+```
+
+**Cardinality Considerations:**
+This metric has bounded cardinality:
+- `access_key_id`: Number of configured credentials + 1 (for "unknown")
+- `verb`: Number of distinct S3 operations (~20-30)
+- `result`: Always 3 values ("allow", "deny-auth", "deny-acl")
+
+For a deployment with 10 credentials, worst-case cardinality is approximately:
+10 + 1 (unknown) × 30 (verbs) × 3 (results) = ~1,000 series
+
+This is within acceptable Prometheus cardinality limits.
+
+**Testing:**
+```bash
+# Query the metric after some S3 operations
+curl -s http://localhost:9001/metrics | grep requests_by_credential_total
+
+# Check specific credential activity
+curl -s http://localhost:9001/metrics | grep 'access_key_id="AKIAIOSFODNN7EXAMPLE"'
+
+# Verify all three result types are present
+curl -s http://localhost:9001/metrics | grep -E 'result="(allow|deny-auth|deny-acl)"'
+
+# Count unique access_key_ids (should be configured credentials + "unknown")
+curl -s http://localhost:9001/metrics | \
+  grep 'armor_requests_by_credential_total{' | \
+  grep -oP 'access_key_id="\K[^"]+' | \
+  sort -u | \
+  wc -l
+```
+
 **Example Output:**
 ```
 # HELP armor_errors_total Total number of S3 errors by error code and operation

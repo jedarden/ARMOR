@@ -933,3 +933,186 @@ func TestRequestDurationHistogramMultipleOperations(t *testing.T) {
 		}
 	}
 }
+
+// TestRequestsByCredentialTotal verifies the requests by credential metric
+func TestRequestsByCredentialTotal(t *testing.T) {
+	m := NewMetrics()
+
+	// Record some requests with different credentials and results
+	m.IncRequestsByCredential("AKIAIOSFODNN7EXAMPLE", "GetObject", "allow")
+	m.IncRequestsByCredential("AKIAIOSFODNN7EXAMPLE", "PutObject", "allow")
+	m.IncRequestsByCredential("AKIAIOSFODNN7EXAMPLE", "DeleteObject", "deny-acl")
+	m.IncRequestsByCredential("AKIAI44QH8DHBEXAMPLE", "GetObject", "allow")
+	m.IncRequestsByCredential("unknown", "PutObject", "deny-auth")
+
+	// Verify in Prometheus output
+	output := m.PrometheusFormat()
+
+	// Check for expected metric lines
+	expectedMetrics := []string{
+		`# HELP armor_requests_by_credential_total Total number of requests by access key ID, verb, and authorization result`,
+		`# TYPE armor_requests_by_credential_total counter`,
+		`armor_requests_by_credential_total{access_key_id="AKIAIOSFODNN7EXAMPLE",verb="GetObject",result="allow"} 1`,
+		`armor_requests_by_credential_total{access_key_id="AKIAIOSFODNN7EXAMPLE",verb="PutObject",result="allow"} 1`,
+		`armor_requests_by_credential_total{access_key_id="AKIAIOSFODNN7EXAMPLE",verb="DeleteObject",result="deny-acl"} 1`,
+		`armor_requests_by_credential_total{access_key_id="AKIAI44QH8DHBEXAMPLE",verb="GetObject",result="allow"} 1`,
+		`armor_requests_by_credential_total{access_key_id="unknown",verb="PutObject",result="deny-auth"} 1`,
+	}
+
+	for _, expected := range expectedMetrics {
+		if !strings.Contains(output, expected) {
+			t.Errorf("expected metric %q in Prometheus output", expected)
+		}
+	}
+}
+
+// TestRequestsByCredentialAccumulation verifies that the metric accumulates
+// properly instead of being stuck at 1
+func TestRequestsByCredentialAccumulation(t *testing.T) {
+	m := NewMetrics()
+
+	// Increment the same metric 5 times
+	for i := 0; i < 5; i++ {
+		m.IncRequestsByCredential("AKIAIOSFODNN7EXAMPLE", "GetObject", "allow")
+	}
+
+	// Increment a different metric 3 times
+	for i := 0; i < 3; i++ {
+		m.IncRequestsByCredential("AKIAIOSFODNN7EXAMPLE", "PutObject", "allow")
+	}
+
+	// Verify in Prometheus output
+	output := m.PrometheusFormat()
+
+	// Should have value 5, not 1
+	if !strings.Contains(output, `armor_requests_by_credential_total{access_key_id="AKIAIOSFODNN7EXAMPLE",verb="GetObject",result="allow"} 5`) {
+		t.Errorf("expected GetObject allow counter to be 5, got stuck at 1")
+	}
+
+	// Should have value 3, not 1
+	if !strings.Contains(output, `armor_requests_by_credential_total{access_key_id="AKIAIOSFODNN7EXAMPLE",verb="PutObject",result="allow"} 3`) {
+		t.Errorf("expected PutObject allow counter to be 3, got stuck at 1")
+	}
+}
+
+// TestRequestsByCredentialUnknownLabel verifies that "unknown" is used for
+// deny-auth cases when the access key ID cannot be extracted
+func TestRequestsByCredentialUnknownLabel(t *testing.T) {
+	m := NewMetrics()
+
+	// Record authentication failures - should use "unknown" for access_key_id
+	m.IncRequestsByCredential("unknown", "GetObject", "deny-auth")
+	m.IncRequestsByCredential("unknown", "PutObject", "deny-auth")
+	m.IncRequestsByCredential("unknown", "ListObjectsV2", "deny-auth")
+
+	// Verify in Prometheus output
+	output := m.PrometheusFormat()
+
+	// All three should have access_key_id="unknown"
+	expectedMetrics := []string{
+		`armor_requests_by_credential_total{access_key_id="unknown",verb="GetObject",result="deny-auth"} 1`,
+		`armor_requests_by_credential_total{access_key_id="unknown",verb="PutObject",result="deny-auth"} 1`,
+		`armor_requests_by_credential_total{access_key_id="unknown",verb="ListObjectsV2",result="deny-auth"} 1`,
+	}
+
+	for _, expected := range expectedMetrics {
+		if !strings.Contains(output, expected) {
+			t.Errorf("expected metric %q in Prometheus output", expected)
+		}
+	}
+}
+
+// TestRequestsByCredentialResultLabels verifies that all three result labels
+// (allow, deny-auth, deny-acl) are properly tracked
+func TestRequestsByCredentialResultLabels(t *testing.T) {
+	m := NewMetrics()
+
+	// Record all three result types
+	m.IncRequestsByCredential("CRED1", "GetObject", "allow")
+	m.IncRequestsByCredential("CRED2", "PutObject", "deny-auth")
+	m.IncRequestsByCredential("CRED3", "DeleteObject", "deny-acl")
+
+	// Verify in Prometheus output
+	output := m.PrometheusFormat()
+
+	// Check that all three result labels appear
+	resultLabels := []string{"allow", "deny-auth", "deny-acl"}
+	for _, result := range resultLabels {
+		pattern := fmt.Sprintf(`result=%q`, result)
+		if !strings.Contains(output, pattern) {
+			t.Errorf("expected result label %q in Prometheus output", result)
+		}
+	}
+}
+
+// TestRequestsByCredentialCardinality verifies that cardinality is bounded
+// by the number of configured credentials plus one "unknown" entry
+func TestRequestsByCredentialCardinality(t *testing.T) {
+	m := NewMetrics()
+
+	// Simulate 3 configured credentials
+	credentials := []string{"CRED1", "CRED2", "CRED3"}
+
+	// Each credential makes 5 requests with different verbs and results
+	verbs := []string{"GetObject", "PutObject", "DeleteObject", "ListObjectsV2", "HeadObject"}
+	results := []string{"allow", "deny-acl"}
+
+	for _, cred := range credentials {
+		for _, verb := range verbs {
+			for _, result := range results {
+				m.IncRequestsByCredential(cred, verb, result)
+			}
+		}
+	}
+
+	// Add some "unknown" entries for deny-auth
+	for _, verb := range verbs {
+		m.IncRequestsByCredential("unknown", verb, "deny-auth")
+	}
+
+	// Verify in Prometheus output
+	output := m.PrometheusFormat()
+
+	// Count unique access_key_id values
+	accessKeyIDs := make(map[string]bool)
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "armor_requests_by_credential_total{") {
+			// Extract access_key_id value
+			parts := strings.Split(line, `access_key_id="`)
+			if len(parts) == 2 {
+				credPart := strings.Split(parts[1], `"`)
+				if len(credPart) >= 1 {
+					accessKeyIDs[credPart[0]] = true
+				}
+			}
+		}
+	}
+
+	// Should have exactly 4 unique access_key_ids: 3 configured + 1 unknown
+	if len(accessKeyIDs) != 4 {
+		t.Errorf("expected 4 unique access_key_ids (3 configured + 1 unknown), got %d: %v",
+			len(accessKeyIDs), accessKeyIDs)
+	}
+
+	// Verify the specific keys we expect
+	expectedKeys := map[string]bool{
+		"CRED1":   false,
+		"CRED2":   false,
+		"CRED3":   false,
+		"unknown": false,
+	}
+
+	for key := range accessKeyIDs {
+		if _, exists := expectedKeys[key]; !exists {
+			t.Errorf("found unexpected access_key_id %q", key)
+		}
+		expectedKeys[key] = true
+	}
+
+	for key, found := range expectedKeys {
+		if !found {
+			t.Errorf("expected access_key_id %q not found in metrics", key)
+		}
+	}
+}
