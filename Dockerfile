@@ -25,6 +25,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/arm
 # Build the restore-verifier binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/armor/internal/version.Version=${VERSION}" -o /restore-verifier ./cmd/restore-verifier
 
+# Build the armor-fleet binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/armor/internal/version.Version=${VERSION}" -o /armor-fleet ./cmd/armor-fleet
+
 # Runtime stage for restore-verifier.
 # Built only with an explicit --target restore-verifier-runtime; it must NOT
 # be the last stage — an untargeted build produces the final stage, and the
@@ -46,6 +49,22 @@ EXPOSE 9002
 
 # Set entrypoint
 ENTRYPOINT ["/restore-verifier"]
+
+# Runtime stage for armor-fleet
+FROM scratch AS armor-fleet-runtime
+
+# Copy CA certificates and timezone data
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
+# Copy the binary
+COPY --from=builder /armor-fleet /armor-fleet
+
+# Expose ports
+EXPOSE 8080
+
+# Set entrypoint
+ENTRYPOINT ["/armor-fleet"]
 
 # Runtime stage for armor — final stage = default build target
 FROM scratch AS armor-runtime
