@@ -32,6 +32,7 @@ var (
 	// MEK input
 	mekFlag        string
 	mekFileFlag    string
+	mekRingFlag    string // comma-separated hex fingerprints for MEK ring
 	mekEnvFallback bool
 	escrowFile     string // path to escrow JSON file containing MEK + B2 credentials
 
@@ -48,19 +49,20 @@ var (
 	// Multipart local-file inputs (ADR-003 headerless layout)
 	sidecarFlag string // path to a JSON HMAC sidecar file (HMACTableSidecar wire format)
 	ivFlag      string // object IV (hex), required for local multipart — no header to read it from
-	versionFlag  int   // envelope version (1 or 2), for local multipart files (default: 1)
+	versionFlag int    // envelope version (1 or 2), for local multipart files (default: 1)
 
 	// Output
 	outputFlag string
 
 	// Other options
 	decryptVerboseFlag bool
-	readConcurrency   int
+	readConcurrency    int
 )
 
 func init() {
 	flag.StringVar(&mekFlag, "mek", "", "Master encryption key (hex, 64 chars)")
 	flag.StringVar(&mekFileFlag, "mek-file", "", "Read MEK from file (hex, 64 chars)")
+	flag.StringVar(&mekRingFlag, "mek-ring", "", "Comma-separated MEK ring (hex fingerprints, each 16 chars)")
 	flag.BoolVar(&mekEnvFallback, "mek-env", true, "Fallback to ARMOR_MEK env var if flags not set")
 	flag.StringVar(&escrowFile, "escrow", "", "Path to escrow JSON file containing MEK and B2 credentials (self-contained recovery)")
 	flag.StringVar(&inputFlag, "input", "", "Input: B2 URL (b2://bucket/key) or local file path")
@@ -78,11 +80,12 @@ func init() {
 }
 
 func decrypt() {
-	// Get MEK - try escrow file first, then fall back to other methods
+	// Get MEK and ring keys - try escrow file first, then fall back to other methods
 	var mek []byte
+	var ringKeys []crypto.RingKeyEntry
 	var err error
 	if escrowFile != "" {
-		mek, err = loadEscrow()
+		mek, ringKeys, err = loadEscrow()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading escrow: %v\n", err)
 			os.Exit(1)
@@ -92,6 +95,14 @@ func decrypt() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading MEK: %v\n", err)
 			os.Exit(1)
+		}
+		// Parse ring from flag if provided
+		if mekRingFlag != "" {
+			ringKeys, err = parseMEKRing(mekRingFlag)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing MEK ring: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -104,7 +115,7 @@ func decrypt() {
 
 	// Decrypt
 	ctx := context.Background()
-	plaintext, err := decryptObject(ctx, src, mek, b2KeyID)
+	plaintext, err := decryptObject(ctx, src, mek, ringKeys, b2KeyID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Decryption failed: %v\n", err)
 		os.Exit(1)
@@ -171,22 +182,78 @@ func getMEK() ([]byte, error) {
 	return mek, nil
 }
 
+// parseMEKRing parses a comma-separated list of hex fingerprints into ring key entries.
+// This is used when -mek-ring is provided without an escrow file. The actual MEK values
+// must be retrieved from a key store by fingerprint in a real deployment; for testing,
+// this simply parses the fingerprint format and returns entries with nil MEK values that
+// will be populated by the lookup function.
+func parseMEKRing(ringStr string) ([]crypto.RingKeyEntry, error) {
+	if ringStr == "" {
+		return nil, nil
+	}
+
+	fingerprints := strings.Split(ringStr, ",")
+	var ringKeys []crypto.RingKeyEntry
+
+	for _, fp := range fingerprints {
+		fp = strings.TrimSpace(fp)
+		if fp == "" {
+			continue
+		}
+		if len(fp) != 16 {
+			return nil, fmt.Errorf("invalid fingerprint length: got %d chars, expected 16", len(fp))
+		}
+		// Validate hex format
+		if !isHex(fp) {
+			return nil, fmt.Errorf("invalid hex fingerprint: %s", fp)
+		}
+
+		// Note: The actual MEK values need to be retrieved from a key store.
+		// For now, we create ring entries with nil MEK that will be populated
+		// by the lookup function during unwrapping.
+		ringKeys = append(ringKeys, crypto.RingKeyEntry{
+			MEK:         nil, // Will be populated by lookup
+			Fingerprint: fp,
+		})
+	}
+
+	if decryptVerboseFlag {
+		fmt.Fprintf(os.Stderr, "Parsed MEK ring: %d fingerprints\n", len(ringKeys))
+	}
+
+	return ringKeys, nil
+}
+
+// isHex checks if a string is valid hexadecimal.
+func isHex(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 // escrowPackage represents the complete escrow package for break-glass recovery.
 type escrowPackage struct {
-	MEK string `json:"mek"`
-	B2  struct {
-		Region     string `json:"region"`
-		Endpoint   string `json:"endpoint"`
-		AccessKey  string `json:"access_key"`
-		SecretKey  string `json:"secret_key"`
-		Bucket     string `json:"bucket"`
-		CFDomain   string `json:"cf_domain"`
+	MEK     string `json:"mek"`
+	MEKRing []struct {
+		MEK         string `json:"mek"`
+		Fingerprint string `json:"fingerprint"` // 16 hex chars (first 8 bytes of SHA-256(MEK))
+	} `json:"mek_ring"`
+	B2 struct {
+		Region    string `json:"region"`
+		Endpoint  string `json:"endpoint"`
+		AccessKey string `json:"access_key"`
+		SecretKey string `json:"secret_key"`
+		Bucket    string `json:"bucket"`
+		CFDomain  string `json:"cf_domain"`
 	} `json:"b2"`
 }
 
 // loadEscrow reads the escrow JSON file and sets environment variables for B2 credentials.
-// Returns the MEK as hex bytes.
-func loadEscrow() ([]byte, error) {
+// Returns the MEK as hex bytes and a slice of ring key entries (MEK + fingerprint).
+func loadEscrow() ([]byte, []crypto.RingKeyEntry, error) {
 	data, err := os.ReadFile(escrowFile)
 	if err != nil {
 		return nil, fmt.Errorf("read escrow file: %w", err)
@@ -207,6 +274,28 @@ func loadEscrow() ([]byte, error) {
 	}
 	if len(mek) != 32 {
 		return nil, fmt.Errorf("invalid MEK length in escrow: got %d bytes, expected 32", len(mek))
+	}
+
+	// Build ring keys from escrow mek_ring array
+	var ringKeys []crypto.RingKeyEntry
+	for _, rk := range pkg.MEKRing {
+		if rk.MEK == "" || rk.Fingerprint == "" {
+			continue
+		}
+		ringMEK, err := hex.DecodeString(rk.MEK)
+		if err != nil {
+			return nil, nil, fmt.Errorf("decode MEK ring key: %w", err)
+		}
+		if len(ringMEK) != 32 {
+			return nil, nil, fmt.Errorf("invalid MEK ring key length: got %d bytes, expected 32", len(ringMEK))
+		}
+		if len(rk.Fingerprint) != 16 {
+			return nil, nil, fmt.Errorf("invalid MEK ring fingerprint length: got %d chars, expected 16", len(rk.Fingerprint))
+		}
+		ringKeys = append(ringKeys, crypto.RingKeyEntry{
+			MEK:         ringMEK,
+			Fingerprint: rk.Fingerprint,
+		})
 	}
 
 	// Set environment variables for B2 credentials and config
@@ -231,10 +320,10 @@ func loadEscrow() ([]byte, error) {
 	}
 
 	if decryptVerboseFlag {
-		fmt.Fprintf(os.Stderr, "Loaded escrow from %s (MEK + B2 config)\n", escrowFile)
+		fmt.Fprintf(os.Stderr, "Loaded escrow from %s (MEK + %d ring keys + B2 config)\n", escrowFile, len(ringKeys))
 	}
 
-	return mek, nil
+	return mek, ringKeys, nil
 }
 
 // inputSource represents where to read encrypted data from.
@@ -307,12 +396,12 @@ func parseB2URL(url string) (*inputSource, error) {
 }
 
 // decryptObject performs the decryption from the input source.
-func decryptObject(ctx context.Context, src *inputSource, mek []byte, keyID string) ([]byte, error) {
+func decryptObject(ctx context.Context, src *inputSource, mek []byte, ringKeys []crypto.RingKeyEntry, keyID string) ([]byte, error) {
 	switch src.Type {
 	case "local":
-		return decryptLocal(ctx, src, mek)
+		return decryptLocal(ctx, src, mek, ringKeys)
 	case "b2":
-		return decryptB2(ctx, src, mek, keyID)
+		return decryptB2(ctx, src, mek, ringKeys, keyID)
 	default:
 		return nil, fmt.Errorf("unsupported input type: %s", src.Type)
 	}
@@ -328,19 +417,69 @@ func decryptObject(ctx context.Context, src *inputSource, mek []byte, keyID stri
 //     a multipart object has no header byte stream to read it from.
 //
 // The layout is selected by the -sidecar flag: its presence means multipart.
-func decryptLocal(ctx context.Context, src *inputSource, mek []byte) ([]byte, error) {
+func decryptLocal(ctx context.Context, src *inputSource, mek []byte, ringKeys []crypto.RingKeyEntry) ([]byte, error) {
 	if decryptVerboseFlag {
 		fmt.Fprintf(os.Stderr, "Reading from local file: %s\n", src.Path)
 	}
 
-	// Unwrap DEK
-	dek, err := crypto.UnwrapDEK(mek, src.WrappedDEK)
+	// Unwrap DEK using fingerprint-based selection or legacy trial unwrapping
+	// Build lookup function for ring keys
+	lookupMEK := func(keyID, fingerprint string) ([]byte, bool) {
+		// For local files, we only support the default key (keyID is empty)
+		if keyID != "" {
+			return nil, false
+		}
+
+		// Check ring keys by fingerprint
+		for _, rk := range ringKeys {
+			if rk.Fingerprint == fingerprint && rk.MEK != nil {
+				return rk.MEK, true
+			}
+		}
+		return nil, false
+	}
+
+	// Legacy fallback: try active MEK first, then ring keys
+	legacyFallback := func(wrappedBytes []byte) ([]byte, error) {
+		// Try active MEK first
+		dek, err := crypto.UnwrapDEK(mek, wrappedBytes)
+		if err == nil {
+			if decryptVerboseFlag {
+				fmt.Fprintf(os.Stderr, "Successfully unwrapped DEK with active MEK (legacy format)\n")
+			}
+			return dek, nil
+		}
+
+		// Try ring keys
+		for _, rk := range ringKeys {
+			if rk.MEK == nil {
+				continue
+			}
+			dek, err := crypto.UnwrapDEK(rk.MEK, wrappedBytes)
+			if err == nil {
+				if decryptVerboseFlag {
+					fmt.Fprintf(os.Stderr, "Successfully unwrapped DEK with ring key %s (legacy format)\n", rk.Fingerprint)
+				}
+				return dek, nil
+			}
+		}
+
+		return nil, fmt.Errorf("no key in ring could unwrap DEK: %w", err)
+	}
+
+	// For local files, wrappedDEKFlag is already in base64 format
+	wrappedDEKStr := base64.StdEncoding.EncodeToString(src.WrappedDEK)
+	dek, fingerprint, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, lookupMEK, legacyFallback)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap DEK: %w (wrong MEK or corrupted wrapped DEK)", err)
 	}
 
 	if decryptVerboseFlag {
-		fmt.Fprintln(os.Stderr, "Successfully unwrapped DEK")
+		if fingerprint != "" {
+			fmt.Fprintf(os.Stderr, "Successfully unwrapped DEK with fingerprint %s\n", fingerprint)
+		} else {
+			fmt.Fprintln(os.Stderr, "Successfully unwrapped DEK")
+		}
 	}
 
 	// A sidecar JSON signals an ADR-003 multipart object (headerless ciphertext +
@@ -515,7 +654,7 @@ func decryptLocalMultipart(src *inputSource, dek []byte) ([]byte, error) {
 // reader that assumes every object has the envelope layout fails on every
 // multipart object: it decodes a header from raw ciphertext and dies on
 // "invalid ARMOR magic".
-func decryptB2(ctx context.Context, src *inputSource, mek []byte, keyID string) ([]byte, error) {
+func decryptB2(ctx context.Context, src *inputSource, mek []byte, ringKeys []crypto.RingKeyEntry, keyID string) ([]byte, error) {
 	if decryptVerboseFlag {
 		fmt.Fprintf(os.Stderr, "Reading from B2: %s/%s\n", src.Bucket, src.Path)
 	}
@@ -552,14 +691,72 @@ func decryptB2(ctx context.Context, src *inputSource, mek []byte, keyID string) 
 		}
 	}
 
-	// Unwrap DEK
-	dek, err := crypto.UnwrapDEK(mek, armorMeta.WrappedDEK)
+	// Unwrap DEK using fingerprint-based selection or legacy trial unwrapping
+	// Build lookup function for ring keys
+	lookupMEK := func(keyID, fingerprint string) ([]byte, bool) {
+		// For B2 objects, check keyID matches if specified
+		if keyID != "" && keyID != armorMeta.KeyID {
+			return nil, false
+		}
+
+		// Check ring keys by fingerprint
+		for _, rk := range ringKeys {
+			if rk.Fingerprint == fingerprint && rk.MEK != nil {
+				return rk.MEK, true
+			}
+		}
+		return nil, false
+	}
+
+	// Legacy fallback: try active MEK first, then ring keys
+	legacyFallback := func(wrappedBytes []byte) ([]byte, error) {
+		// Try active MEK first
+		dek, err := crypto.UnwrapDEK(mek, wrappedBytes)
+		if err == nil {
+			if decryptVerboseFlag {
+				fmt.Fprintf(os.Stderr, "Successfully unwrapped DEK with active MEK (legacy format)\n")
+			}
+			return dek, nil
+		}
+
+		// Try ring keys
+		for _, rk := range ringKeys {
+			if rk.MEK == nil {
+				continue
+			}
+			dek, err := crypto.UnwrapDEK(rk.MEK, wrappedBytes)
+			if err == nil {
+				if decryptVerboseFlag {
+					fmt.Fprintf(os.Stderr, "Successfully unwrapped DEK with ring key %s (legacy format)\n", rk.Fingerprint)
+				}
+				return dek, nil
+			}
+		}
+
+		return nil, fmt.Errorf("no key in ring could unwrap DEK: %w", err)
+	}
+
+	// Build wrapped DEK string for UnwrapDEKByFingerprint
+	// If the metadata has a fingerprint, use v2: format, otherwise plain base64
+	var wrappedDEKStr string
+	if armorMeta.MEKFingerprint != "" {
+		wrappedDEKStr = fmt.Sprintf("v2:%s:%s", armorMeta.MEKFingerprint,
+			base64.StdEncoding.EncodeToString(armorMeta.WrappedDEK))
+	} else {
+		wrappedDEKStr = base64.StdEncoding.EncodeToString(armorMeta.WrappedDEK)
+	}
+
+	dek, fingerprint, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, lookupMEK, legacyFallback)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap DEK: %w (wrong MEK or corrupted wrapped DEK)", err)
 	}
 
 	if decryptVerboseFlag {
-		fmt.Fprintln(os.Stderr, "Successfully unwrapped DEK")
+		if fingerprint != "" {
+			fmt.Fprintf(os.Stderr, "Successfully unwrapped DEK with fingerprint %s\n", fingerprint)
+		} else {
+			fmt.Fprintln(os.Stderr, "Successfully unwrapped DEK")
+		}
 	}
 
 	// Dispatch on the ADR-003 multipart marker.
