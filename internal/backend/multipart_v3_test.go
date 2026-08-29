@@ -437,6 +437,10 @@ func (m *MockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 	return result, nil
 }
 
+func (m *MockBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error) {
+	return m.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
 // Required unimplemented methods for MockBackend
 func (m *MockBackend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
 	return nil, fmt.Errorf("object not found")
