@@ -57,6 +57,41 @@ const (
 	testPresignSecret = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
+// isCompatEndpointMode returns true if ARMOR_COMPAT_ENDPOINT is set,
+// indicating tests should target an external server instead of the in-process mock.
+func isCompatEndpointMode() bool {
+	return os.Getenv("ARMOR_COMPAT_ENDPOINT") != ""
+}
+
+// compatEndpointConfig returns the endpoint, access key, and secret key from
+// environment variables when running in compat endpoint mode.
+func compatEndpointConfig() (endpoint, accessKey, secretKey string) {
+	endpoint = os.Getenv("ARMOR_COMPAT_ENDPOINT")
+	accessKey = os.Getenv("ARMOR_COMPAT_ACCESS_KEY")
+	secretKey = os.Getenv("ARMOR_COMPAT_SECRET_KEY")
+	return
+}
+
+// compatBucket returns the bucket name to use. When ARMOR_COMPAT_ENDPOINT
+// is set, reads from ARMOR_BUCKET; otherwise uses the test constant.
+func compatBucket(t *testing.T) string {
+	t.Helper()
+	if isCompatEndpointMode() {
+		bucket := os.Getenv("ARMOR_BUCKET")
+		if bucket == "" {
+			t.Fatalf("ARMOR_COMPAT_ENDPOINT requires ARMOR_BUCKET to be set")
+		}
+		return bucket
+	}
+	return testBucket
+}
+
+// bucketPtr returns a pointer to the bucket name string (for SDK calls that
+// require *string parameters).
+func bucketPtr(bucket string) *string {
+	return &bucket
+}
+
 // testBucket is a variable so tests can take its address for SDK calls.
 var testBucket = "compat-bucket"
 
@@ -468,9 +503,15 @@ func testMEK() []byte {
 
 // startArmorServer brings up an in-process ARMOR HTTP server backed by the mock
 // backend and returns its base URL. The server is torn down automatically when
-// the test ends.
+// the test ends. When ARMOR_COMPAT_ENDPOINT is set, returns that endpoint
+// instead (for testing against a running server).
 func startArmorServer(t *testing.T) string {
 	t.Helper()
+	if isCompatEndpointMode() {
+		endpoint, _, _ := compatEndpointConfig()
+		t.Logf("Using external ARMOR endpoint: %s", endpoint)
+		return endpoint
+	}
 	cfg := &config.Config{
 		B2Region:        testRegion,
 		MEK:             testMEK(),
@@ -501,8 +542,15 @@ func startArmorServer(t *testing.T) string {
 
 // startArmorServerWithPresigner brings up an in-process ARMOR server and returns
 // both the base URL and the presigner for generating share tokens in tests.
+// When ARMOR_COMPAT_ENDPOINT is set, returns that endpoint and nil presigner
+// (share token tests require the in-process server).
 func startArmorServerWithPresigner(t *testing.T) (string, *presign.Signer) {
 	t.Helper()
+	if isCompatEndpointMode() {
+		endpoint, _, _ := compatEndpointConfig()
+		t.Logf("Using external ARMOR endpoint: %s (share token tests will be skipped)", endpoint)
+		return endpoint, nil
+	}
 	cfg := &config.Config{
 		B2Region:        testRegion,
 		MEK:             testMEK(),
@@ -611,25 +659,36 @@ func startRealArmorServer(t *testing.T) string {
 
 // requireAWSCLI skips the test unless the `aws` binary is available (and not
 // running under -short). The message explains how to install it so the suite
-// actually runs.
+// actually runs. When ARMOR_COMPAT_ENDPOINT is set, missing aws is a fatal
+// error rather than a skip.
 func requireAWSCLI(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping AWS CLI compatibility test in -short mode")
 	}
 	if _, err := exec.LookPath("aws"); err != nil {
+		if isCompatEndpointMode() {
+			t.Fatalf("aws CLI not installed on PATH but required in ARMOR_COMPAT_ENDPOINT mode " +
+				"(install with e.g. `pip install awscli` or the official AWS CLI v2 bundle)")
+		}
 		t.Skip("aws CLI not installed on PATH — skipping AWS CLI compatibility test " +
 			"(install with e.g. `pip install awscli` or the official AWS CLI v2 bundle)")
 	}
 }
 
 // requireRclone skips unless the `rclone` binary is available (and not -short).
+// When ARMOR_COMPAT_ENDPOINT is set, missing rclone is a fatal error rather
+// than a skip.
 func requireRclone(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping rclone compatibility test in -short mode")
 	}
 	if _, err := exec.LookPath("rclone"); err != nil {
+		if isCompatEndpointMode() {
+			t.Fatalf("rclone not installed on PATH but required in ARMOR_COMPAT_ENDPOINT mode " +
+				"(install from https://rclone.org/install/)")
+		}
 		t.Skip("rclone not installed on PATH — skipping rclone compatibility test " +
 			"(install from https://rclone.org/install/)")
 	}
@@ -638,7 +697,8 @@ func requireRclone(t *testing.T) {
 // awsEnv builds the environment for an `aws` invocation: credentials and region
 // via env vars (which override any user config), path-style addressing and an
 // optional low multipart threshold via a throwaway AWS config file. region from
-// the env.
+// the env. When ARMOR_COMPAT_ENDPOINT is set, uses credentials from the
+// environment instead of the test constants.
 func awsEnv(t *testing.T, endpoint string, multipart bool) []string {
 	t.Helper()
 	dir := t.TempDir()
@@ -658,9 +718,21 @@ func awsEnv(t *testing.T, endpoint string, multipart bool) []string {
 		t.Fatalf("write aws config: %v", err)
 	}
 
+	// Use credentials from environment when in endpoint mode
+	accessKey := testAccessKey
+	secretKey := testSecretKey
+	if isCompatEndpointMode() {
+		_, ak, sk := compatEndpointConfig()
+		if ak == "" || sk == "" {
+			t.Fatalf("ARMOR_COMPAT_ENDPOINT requires ARMOR_COMPAT_ACCESS_KEY and ARMOR_COMPAT_SECRET_KEY")
+		}
+		accessKey = ak
+		secretKey = sk
+	}
+
 	env := mergeEnv(os.Environ(), map[string]string{
-		"AWS_ACCESS_KEY_ID":         testAccessKey,
-		"AWS_SECRET_ACCESS_KEY":     testSecretKey,
+		"AWS_ACCESS_KEY_ID":         accessKey,
+		"AWS_SECRET_ACCESS_KEY":     secretKey,
 		"AWS_DEFAULT_REGION":        testRegion,
 		"AWS_CONFIG_FILE":           cfgPath,
 		"AWS_EC2_METADATA_DISABLED": "true",
@@ -670,15 +742,30 @@ func awsEnv(t *testing.T, endpoint string, multipart bool) []string {
 }
 
 // rcloneConf writes an rclone.conf with an S3 remote named "armor" pointing at
-// the in-process server and returns (configPath, remoteName).
+// the in-process server and returns (configPath, remoteName). When
+// ARMOR_COMPAT_ENDPOINT is set, uses credentials from the environment instead
+// of the test constants.
 func rcloneConf(t *testing.T, endpoint string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	confPath := filepath.Join(dir, "rclone.conf")
+
+	// Use credentials from environment when in endpoint mode
+	accessKey := testAccessKey
+	secretKey := testSecretKey
+	if isCompatEndpointMode() {
+		_, ak, sk := compatEndpointConfig()
+		if ak == "" || sk == "" {
+			t.Fatalf("ARMOR_COMPAT_ENDPOINT requires ARMOR_COMPAT_ACCESS_KEY and ARMOR_COMPAT_SECRET_KEY")
+		}
+		accessKey = ak
+		secretKey = sk
+	}
+
 	body := fmt.Sprintf("[armor]\ntype = s3\nprovider = Other\nendpoint = %s\n"+
 		"access_key_id = %s\nsecret_access_key = %s\nregion = %s\n"+
 		"force_path_style = true\nno_check_bucket = true\n",
-		endpoint, testAccessKey, testSecretKey, testRegion)
+		endpoint, accessKey, secretKey, testRegion)
 	if err := os.WriteFile(confPath, []byte(body), 0o600); err != nil {
 		t.Fatalf("write rclone config: %v", err)
 	}
@@ -1039,7 +1126,7 @@ func TestHarness_GET_BasicUncompressedObject(t *testing.T) {
 
 	// First, PUT the object using SDK
 	putIn := &s3.PutObjectInput{
-		Bucket: &testBucket,
+		Bucket: bucketPtr(compatBucket(t)),
 		Key:    &key,
 		Body:   bytes.NewReader(testData),
 	}
@@ -1052,7 +1139,7 @@ func TestHarness_GET_BasicUncompressedObject(t *testing.T) {
 
 	// Now perform GET operation using SDK
 	getIn := &s3.GetObjectInput{
-		Bucket: &testBucket,
+		Bucket: bucketPtr(compatBucket(t)),
 		Key:    &key,
 	}
 
@@ -1114,7 +1201,7 @@ func TestHarness_GET_MultipleUncompressedObjects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// PUT the object using SDK
 			putIn := &s3.PutObjectInput{
-				Bucket: &testBucket,
+				Bucket: bucketPtr(compatBucket(t)),
 				Key:    &tc.key,
 				Body:   bytes.NewReader(tc.data),
 			}
@@ -1125,7 +1212,7 @@ func TestHarness_GET_MultipleUncompressedObjects(t *testing.T) {
 
 			// GET the object using SDK
 			getIn := &s3.GetObjectInput{
-				Bucket: &testBucket,
+				Bucket: bucketPtr(compatBucket(t)),
 				Key:    &tc.key,
 			}
 
@@ -1162,7 +1249,7 @@ func TestHarness_GET_NonexistentObject(t *testing.T) {
 
 	// Try to GET a non-existent object using SDK
 	getIn := &s3.GetObjectInput{
-		Bucket: &testBucket,
+		Bucket: bucketPtr(compatBucket(t)),
 		Key:    &key,
 	}
 
@@ -1200,13 +1287,13 @@ func TestMockBackend_GET_UncompressedObject(t *testing.T) {
 	}
 
 	// PUT the object
-	err := backend.Put(ctx, testBucket, key, bytes.NewReader(testData), int64(len(testData)), meta)
+	err := backend.Put(ctx, compatBucket(t), key, bytes.NewReader(testData), int64(len(testData)), meta)
 	if err != nil {
 		t.Fatalf("PUT failed: %v", err)
 	}
 
 	// GET the object
-	body, info, err := backend.Get(ctx, testBucket, key)
+	body, info, err := backend.Get(ctx, compatBucket(t), key)
 	if err != nil {
 		t.Fatalf("GET failed: %v", err)
 	}
@@ -1289,13 +1376,13 @@ func TestMockBackend_GET_MultipleUncompressedObjects(t *testing.T) {
 			meta := map[string]string{"Content-Type": tc.contentType}
 
 			// PUT the object
-			err := backend.Put(ctx, testBucket, tc.key, bytes.NewReader(tc.data), int64(len(tc.data)), meta)
+			err := backend.Put(ctx, compatBucket(t), tc.key, bytes.NewReader(tc.data), int64(len(tc.data)), meta)
 			if err != nil {
 				t.Fatalf("PUT failed: %v", err)
 			}
 
 			// GET the object
-			body, info, err := backend.Get(ctx, testBucket, tc.key)
+			body, info, err := backend.Get(ctx, compatBucket(t), tc.key)
 			if err != nil {
 				t.Fatalf("GET failed: %v", err)
 			}
@@ -1337,7 +1424,7 @@ func TestMockBackend_GET_NonexistentObject(t *testing.T) {
 	key := "does-not-exist.txt"
 
 	// Try to GET a non-existent object
-	body, info, err := backend.Get(ctx, testBucket, key)
+	body, info, err := backend.Get(ctx, compatBucket(t), key)
 
 	if err == nil {
 		defer body.Close()
@@ -1366,7 +1453,7 @@ func TestMockBackend_GET_ConcurrentOperations(t *testing.T) {
 		data := []byte(fmt.Sprintf("Object %d data", i))
 		meta := map[string]string{"Content-Type": "text/plain"}
 
-		err := backend.Put(ctx, testBucket, key, bytes.NewReader(data), int64(len(data)), meta)
+		err := backend.Put(ctx, compatBucket(t), key, bytes.NewReader(data), int64(len(data)), meta)
 		if err != nil {
 			t.Fatalf("PUT failed for %s: %v", key, err)
 		}
@@ -1381,7 +1468,7 @@ func TestMockBackend_GET_ConcurrentOperations(t *testing.T) {
 		wg.Add(1)
 		go func(k string) {
 			defer wg.Done()
-			body, info, err := backend.Get(ctx, testBucket, k)
+			body, info, err := backend.Get(ctx, compatBucket(t), k)
 			if err != nil {
 				errors <- fmt.Errorf("GET failed for %s: %v", k, err)
 				return
@@ -1467,13 +1554,13 @@ func TestMockBackend_GET_CompressedObject(t *testing.T) {
 		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
 	}
 
-	err = backend.Put(ctx, testBucket, key, bytes.NewReader(compressedData), int64(len(compressedData)), meta)
+	err = backend.Put(ctx, compatBucket(t), key, bytes.NewReader(compressedData), int64(len(compressedData)), meta)
 	if err != nil {
 		t.Fatalf("PUT failed: %v", err)
 	}
 
 	// GET the compressed object
-	body, info, err := backend.Get(ctx, testBucket, key)
+	body, info, err := backend.Get(ctx, compatBucket(t), key)
 	if err != nil {
 		t.Fatalf("GET failed: %v", err)
 	}
@@ -1526,7 +1613,7 @@ func TestMockBackend_GET_CompressedAndUncompressed(t *testing.T) {
 		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
 	}
 
-	err = backend.Put(ctx, testBucket, compressedKey, bytes.NewReader(compressedData), int64(len(compressedData)), compressedMeta)
+	err = backend.Put(ctx, compatBucket(t), compressedKey, bytes.NewReader(compressedData), int64(len(compressedData)), compressedMeta)
 	if err != nil {
 		t.Fatalf("PUT compressed failed: %v", err)
 	}
@@ -1539,13 +1626,13 @@ func TestMockBackend_GET_CompressedAndUncompressed(t *testing.T) {
 		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
 	}
 
-	err = backend.Put(ctx, testBucket, uncompressedKey, bytes.NewReader(originalData), int64(len(originalData)), uncompressedMeta)
+	err = backend.Put(ctx, compatBucket(t), uncompressedKey, bytes.NewReader(originalData), int64(len(originalData)), uncompressedMeta)
 	if err != nil {
 		t.Fatalf("PUT uncompressed failed: %v", err)
 	}
 
 	// GET compressed object and verify
-	body1, info1, err := backend.Get(ctx, testBucket, compressedKey)
+	body1, info1, err := backend.Get(ctx, compatBucket(t), compressedKey)
 	if err != nil {
 		t.Fatalf("GET compressed failed: %v", err)
 	}
@@ -1563,7 +1650,7 @@ func TestMockBackend_GET_CompressedAndUncompressed(t *testing.T) {
 	}
 
 	// GET uncompressed object and verify
-	body2, info2, err := backend.Get(ctx, testBucket, uncompressedKey)
+	body2, info2, err := backend.Get(ctx, compatBucket(t), uncompressedKey)
 	if err != nil {
 		t.Fatalf("GET uncompressed failed: %v", err)
 	}
@@ -1631,7 +1718,7 @@ func TestHarness_GET_CompressedObjectViaHTTP(t *testing.T) {
 
 	// PUT the compressed object via SDK
 	putIn := &s3.PutObjectInput{
-		Bucket:   &testBucket,
+		Bucket:   bucketPtr(compatBucket(t)),
 		Key:      &key,
 		Body:     bytes.NewReader(compressedData),
 		Metadata: armorMeta,
@@ -1645,7 +1732,7 @@ func TestHarness_GET_CompressedObjectViaHTTP(t *testing.T) {
 
 	// GET the compressed object via SDK
 	getIn := &s3.GetObjectInput{
-		Bucket: &testBucket,
+		Bucket: bucketPtr(compatBucket(t)),
 		Key:    &key,
 	}
 

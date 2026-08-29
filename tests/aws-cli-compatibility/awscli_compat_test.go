@@ -221,12 +221,17 @@ func TestRclone_CopyRoundTrip(t *testing.T) {
 
 // TestShareGET_BasicRoundTrip verifies the share endpoint GET operation
 // performs a basic round-trip: upload object, generate presigned token,
-// retrieve via /share/<token>, verify content matches.
+// retrieve via /share/<token>, verify content matches. In
+// ARMOR_COMPAT_ENDPOINT mode, the test is skipped because the external
+// server's presigner secret is not available to the test harness.
 func TestShareGET_BasicRoundTrip(t *testing.T) {
 	endpoint, signer := startArmorServerWithPresigner(t)
+	if signer == nil {
+		t.Skip("share endpoint tests require in-process server (not available in ARMOR_COMPAT_ENDPOINT mode)")
+	}
 	client := newSDKClient(t, endpoint)
 	ctx := context.Background()
-	bucket := testBucket
+	bucket := compatBucket(t)
 	key := "share/basic-roundtrip.txt"
 
 	// Original test data
