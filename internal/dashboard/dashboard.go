@@ -177,19 +177,20 @@ func (d *Dashboard) handlerImpl() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Get prefix from query
 		prefix := r.URL.Query().Get("prefix")
+		continuationToken := r.URL.Query().Get("continuation_token")
 
 		// List objects
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 
-		result, err := d.backend.List(ctx, d.bucket, prefix, "/", "", 1000)
+		result, err := d.backend.List(ctx, d.bucket, prefix, "/", continuationToken, 1000)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to list objects: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		// Build page data
-		data := d.buildPageData(result, prefix)
+		data := d.buildPageData(result, prefix, continuationToken)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := d.template.Execute(w, data); err != nil {
@@ -243,6 +244,10 @@ type PageData struct {
 	RequestsInFlight   string
 	ReplicationQueue   string
 	ReplicationDropped string
+	// Pagination fields
+	NextToken          string
+	ContinuationToken  string
+	IsTruncated        bool
 }
 
 // Breadcrumb represents a navigation breadcrumb.
@@ -251,7 +256,7 @@ type Breadcrumb struct {
 	Path string
 }
 
-func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) PageData {
+func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string, continuationToken string) PageData {
 	objects := make([]ObjectInfo, 0, len(result.CommonPrefixes)+len(result.Objects))
 	var encCount, plainCount, folderCount int
 	keyIDSet := make(map[string]struct{})
@@ -376,6 +381,10 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string) Pag
 		RequestsInFlight:   d.metrics.RequestsInFlight.String(),
 		ReplicationQueue:   d.metrics.ReplicationQueueDepth.String(),
 		ReplicationDropped: d.metrics.ReplicationDroppedTotal.String(),
+		// Pagination fields
+		NextToken:         result.NextToken,
+		ContinuationToken: continuationToken,
+		IsTruncated:       result.IsTruncated,
 	}
 }
 
@@ -657,9 +666,12 @@ type ListObject struct {
 
 // ListAPIResponse holds the JSON response for the list endpoint.
 type ListAPIResponse struct {
-	Prefix         string       `json:"prefix"`
-	Objects        []ListObject `json:"objects"`
-	CommonPrefixes []string     `json:"common_prefixes"`
+	Prefix             string       `json:"prefix"`
+	Objects            []ListObject `json:"objects"`
+	CommonPrefixes     []string     `json:"common_prefixes"`
+	NextToken          string       `json:"next_token,omitempty"`
+	ContinuationToken  string       `json:"continuation_token,omitempty"`
+	IsTruncated        bool         `json:"is_truncated"`
 }
 
 // ListAPIHandler returns the JSON list handler.
@@ -681,20 +693,24 @@ func (d *Dashboard) listAPIHandlerImpl() http.HandlerFunc {
 		}
 
 		prefix := r.URL.Query().Get("prefix")
+		continuationToken := r.URL.Query().Get("continuation_token")
 
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 
-		result, err := d.backend.List(ctx, d.bucket, prefix, "/", "", 1000)
+		result, err := d.backend.List(ctx, d.bucket, prefix, "/", continuationToken, 1000)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to list objects: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		response := ListAPIResponse{
-			Prefix:         prefix,
-			Objects:        make([]ListObject, 0, len(result.Objects)),
-			CommonPrefixes: result.CommonPrefixes,
+			Prefix:            prefix,
+			Objects:           make([]ListObject, 0, len(result.Objects)),
+			CommonPrefixes:    result.CommonPrefixes,
+			NextToken:         result.NextToken,
+			ContinuationToken: continuationToken,
+			IsTruncated:       result.IsTruncated,
 		}
 
 		for _, obj := range result.Objects {
@@ -919,6 +935,34 @@ const dashboardHTML = `<!DOCTYPE html>
         .folder-icon { margin-right: 5px; }
         .size-cell { font-family: monospace; color: #666; }
         .date-cell { color: #666; font-size: 13px; }
+        .pagination {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 0 0 8px 8px;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .pagination-info { color: #64748b; font-size: 13px; }
+        .pagination-controls { display: flex; gap: 8px; }
+        .pagination-btn {
+            background: #f8fafc;
+            color: #3b82f6;
+            border: 1px solid #e2e8f0;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .pagination-btn:hover:not(:disabled) { background: #e2e8f0; }
+        .pagination-btn:disabled {
+            color: #9ca3af;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
         footer {
             text-align: center;
             padding: 20px;
@@ -1168,7 +1212,7 @@ const dashboardHTML = `<!DOCTYPE html>
             </div>
             <div class="browser-summary" aria-live="polite">
                 <strong>{{.TotalObjectCount}}</strong> objects · <strong>{{.FolderCount}}</strong> folders
-                <a class="refresh-link" href="?prefix={{.Prefix}}" aria-label="Refresh current prefix">Refresh</a>
+                <a class="refresh-link" href="?prefix={{.Prefix}}{{if .ContinuationToken}}&continuation_token={{.ContinuationToken}}{{end}}" aria-label="Refresh current prefix">Refresh</a>
             </div>
         </div>
         <div class="objects-table">
@@ -1221,6 +1265,15 @@ const dashboardHTML = `<!DOCTYPE html>
                 </tbody>
             </table>
         </div>
+        <div class="pagination">
+            <div class="pagination-info">
+                Showing up to 1000 objects {{if .ContinuationToken}}(continuing from previous page){{end}}{{if .IsTruncated}} — more objects available{{end}}
+            </div>
+            <div class="pagination-controls">
+                <button class="pagination-btn" onclick="navigatePrev()" {{if not .ContinuationToken}}disabled{{end}}>← Previous</button>
+                <button class="pagination-btn" onclick="navigateNext()" {{if not .IsTruncated}}disabled{{end}}>Next →</button>
+            </div>
+        </div>
         </section>
 
         <footer>
@@ -1257,6 +1310,23 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
 
     <script>
+    // Pagination state
+    const currentPrefix = {{if .Prefix}}'{{.Prefix}}'{{else}}''{{end}};
+    const currentContinuationToken = {{if .ContinuationToken}}'{{.ContinuationToken}}'{{else}}null{{end}};
+    const nextToken = {{if .NextToken}}'{{.NextToken}}'{{else}}null{{end}};
+
+    function navigatePrev() {
+        if (!currentContinuationToken) return;
+        // To go back, we reload without a continuation token
+        // This is a limitation of the forward-only token model
+        window.location.href = '?prefix=' + encodeURIComponent(currentPrefix);
+    }
+
+    function navigateNext() {
+        if (!nextToken) return;
+        window.location.href = '?prefix=' + encodeURIComponent(currentPrefix) + '&continuation_token=' + encodeURIComponent(nextToken);
+    }
+
     function row(label, value) {
         return '<div><strong style="color:#555;display:inline-block;width:160px">' + label + '</strong>' + escHtml(String(value)) + '</div>';
     }

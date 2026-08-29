@@ -97,9 +97,24 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 		}
 	}
 
+	// Simple pagination: if we have more than maxKeys, truncate and set NextToken
+	if len(objects) > maxKeys {
+		truncatedObjects := objects[:maxKeys]
+		// Use the last key as the continuation token
+		nextToken := truncatedObjects[len(truncatedObjects)-1].Key
+		return &backend.ListResult{
+			Objects:        truncatedObjects,
+			CommonPrefixes: filteredPrefixes,
+			IsTruncated:    true,
+			NextToken:      nextToken,
+		}, nil
+	}
+
 	return &backend.ListResult{
 		Objects:        objects,
 		CommonPrefixes: filteredPrefixes,
+		IsTruncated:    false,
+		NextToken:      "",
 	}, nil
 }
 
@@ -2237,3 +2252,192 @@ func TestKeyRotateHandlerDefaultURL(t *testing.T) {
 		t.Errorf("Expected status 502 (connection refused), got %d", rec.Code)
 	}
 }
+
+// TestPaginationContinuationToken verifies pagination works with continuation tokens.
+func TestPaginationContinuationToken(t *testing.T) {
+	mb := newMockBackend()
+
+	// Add 2500 objects to test pagination (should span 3 pages with maxKeys=1000)
+	for i := 1; i <= 2500; i++ {
+		key := fmt.Sprintf("object-%04d.txt", i)
+		mb.objects[key] = &backend.ObjectInfo{
+			Key:              key,
+			Size:             int64(i * 100),
+			ContentType:      "text/plain",
+			ETag:             fmt.Sprintf("etag%d", i),
+			LastModified:     time.Now(),
+			IsARMOREncrypted: false,
+		}
+	}
+
+	m := metrics.NewMetrics()
+	d := New(mb, "test-bucket", m)
+
+	// Page 1: First request without continuation token
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	rec := httptest.NewRecorder()
+	d.Handler()(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Page 1: Expected status 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// Verify pagination elements are present
+	if !strings.Contains(body, "pagination") {
+		t.Error("Page 1: Expected pagination section in response")
+	}
+	if !strings.Contains(body, "Next →") {
+		t.Error("Page 1: Expected Next button in response")
+	}
+	if !strings.Contains(body, "← Previous") {
+		t.Error("Page 1: Expected Previous button (disabled) in response")
+	}
+
+	// Extract next token from the page (via JavaScript variable)
+	if !strings.Contains(body, "const nextToken =") {
+		t.Error("Page 1: Expected nextToken variable in JavaScript")
+	}
+	if !strings.Contains(body, "const currentContinuationToken = null") {
+		t.Error("Page 1: Expected currentContinuationToken to be null on first page")
+	}
+
+	// Page 2: Request with continuation token (we need to extract it from page 1)
+	// For this test, we'll make a direct API call to get the next token
+	ctx := context.Background()
+	result, err := mb.List(ctx, "test-bucket", "", "/", "", 1000)
+	if err != nil {
+		t.Fatalf("Failed to get first page: %v", err)
+	}
+
+	if !result.IsTruncated {
+		t.Error("Expected first page to be truncated")
+	}
+	if result.NextToken == "" {
+		t.Error("Expected NextToken to be set on first page")
+	}
+
+	// Make second page request using the continuation token
+	req2 := httptest.NewRequest(http.MethodGet, "/dashboard?continuation_token="+result.NextToken, nil)
+	rec2 := httptest.NewRecorder()
+	d.Handler()(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Errorf("Page 2: Expected status 200, got %d", rec2.Code)
+	}
+
+	body2 := rec2.Body.String()
+
+	// Verify second page has pagination controls
+	if !strings.Contains(body2, "pagination") {
+		t.Error("Page 2: Expected pagination section in response")
+	}
+	if !strings.Contains(body2, "Next →") {
+		t.Error("Page 2: Expected Next button in response")
+	}
+	if !strings.Contains(body2, "← Previous") {
+		t.Error("Page 2: Expected Previous button (enabled) in response")
+	}
+
+	// Verify continuation token is set in JavaScript
+	if !strings.Contains(body2, "const currentContinuationToken = '"+result.NextToken+"'") &&
+	   !strings.Contains(body2, `const currentContinuationToken = "`+result.NextToken+`"`) {
+		t.Errorf("Page 2: Expected currentContinuationToken to be set to %s", result.NextToken)
+	}
+
+	// Page 3: Third page should be the last (not truncated)
+	result2, err := mb.List(ctx, "test-bucket", "", "/", result.NextToken, 1000)
+	if err != nil {
+		t.Fatalf("Failed to get second page: %v", err)
+	}
+
+	if !result2.IsTruncated {
+		t.Error("Expected second page to still be truncated")
+	}
+
+	// Make third page request
+	req3 := httptest.NewRequest(http.MethodGet, "/dashboard?continuation_token="+result2.NextToken, nil)
+	rec3 := httptest.NewRecorder()
+	d.Handler()(rec3, req3)
+
+	if rec3.Code != http.StatusOK {
+		t.Errorf("Page 3: Expected status 200, got %d", rec3.Code)
+	}
+
+	body3 := rec3.Body.String()
+
+	// On the last page, Next button should be disabled
+	if !strings.Contains(body3, "pagination") {
+		t.Error("Page 3: Expected pagination section in response")
+	}
+
+	// The Next button should be disabled (or not present as "next" link) when not truncated
+	// Check if the JavaScript shows nextToken as null
+	if !strings.Contains(body3, "const nextToken = null") {
+		t.Error("Page 3: Expected nextToken to be null on last page")
+	}
+
+	// Also test the JSON API endpoint
+	apiReq1 := httptest.NewRequest(http.MethodGet, "/dashboard/api/list", nil)
+	apiRec1 := httptest.NewRecorder()
+	d.ListAPIHandler()(apiRec1, apiReq1)
+
+	if apiRec1.Code != http.StatusOK {
+		t.Errorf("API Page 1: Expected status 200, got %d", apiRec1.Code)
+	}
+
+	var apiResp1 ListAPIResponse
+	if err := json.Unmarshal(apiRec1.Body.Bytes(), &apiResp1); err != nil {
+		t.Fatalf("API Page 1: Failed to parse JSON: %v", err)
+	}
+
+	if !apiResp1.IsTruncated {
+		t.Error("API Page 1: Expected IsTruncated to be true")
+	}
+	if apiResp1.NextToken == "" {
+		t.Error("API Page 1: Expected NextToken to be set")
+	}
+	if apiResp1.ContinuationToken != "" {
+		t.Error("API Page 1: Expected ContinuationToken to be empty on first page")
+	}
+
+	// API Page 2
+	apiReq2 := httptest.NewRequest(http.MethodGet, "/dashboard/api/list?continuation_token="+apiResp1.NextToken, nil)
+	apiRec2 := httptest.NewRecorder()
+	d.ListAPIHandler()(apiRec2, apiReq2)
+
+	if apiRec2.Code != http.StatusOK {
+		t.Errorf("API Page 2: Expected status 200, got %d", apiRec2.Code)
+	}
+
+	var apiResp2 ListAPIResponse
+	if err := json.Unmarshal(apiRec2.Body.Bytes(), &apiResp2); err != nil {
+		t.Fatalf("API Page 2: Failed to parse JSON: %v", err)
+	}
+
+	if apiResp2.ContinuationToken != apiResp1.NextToken {
+		t.Errorf("API Page 2: Expected ContinuationToken to match previous NextToken")
+	}
+
+	// Verify we're getting different objects on each page
+	if len(apiResp1.Objects) != 1000 {
+		t.Errorf("API Page 1: Expected 1000 objects, got %d", len(apiResp1.Objects))
+	}
+	if len(apiResp2.Objects) != 1000 {
+		t.Errorf("API Page 2: Expected 1000 objects, got %d", len(apiResp2.Objects))
+	}
+
+	// Verify no duplicate keys between pages
+	keys1 := make(map[string]bool)
+	for _, obj := range apiResp1.Objects {
+		keys1[obj.Key] = true
+	}
+
+	for _, obj := range apiResp2.Objects {
+		if keys1[obj.Key] {
+			t.Errorf("API Page 2: Found duplicate key %s from page 1", obj.Key)
+		}
+	}
+}
+
