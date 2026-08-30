@@ -426,7 +426,7 @@ func TestVerifyObject_DualPathDetectsCorruption(t *testing.T) {
 				},
 			}
 
-			v := New(fb, mek, blockSize, nil, Config{})
+			v := New(fb, mek, nil, blockSize, nil, Config{})
 
 			result := v.verifyObject(context.Background(), ObjectSample{
 				Key:          tc.fixture,
@@ -543,7 +543,7 @@ func TestVerifyObject_DRDrill_DirectOnlyExcludesARMORReadPath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fb, obj := tc.setup(t)
-			v := New(fb, mek, blockSize, nil, Config{})
+			v := New(fb, mek, nil, blockSize, nil, Config{})
 
 			result := v.verifyObject(context.Background(), obj, ModeDRDrill)
 
@@ -596,7 +596,7 @@ func TestVerifyObject_DRDrill_ChecksumMismatch(t *testing.T) {
 		ciphertext: ct, plaintext: plaintext,
 		info: &backend.ObjectInfo{Key: key, Size: int64(len(plaintext)), Metadata: meta},
 	}
-	v := New(fb, mek, blockSize, nil, Config{})
+	v := New(fb, mek, nil, blockSize, nil, Config{})
 
 	result := v.verifyObject(context.Background(), ObjectSample{
 		Key: key, Bucket: "b", ArtifactType: ArtifactSQLite, Metadata: objMeta,
@@ -655,7 +655,7 @@ func TestVerifyObject_DRDrill_MultipartDigestEnforced(t *testing.T) {
 
 	t.Run("correct_combined_digest_passes", func(t *testing.T) {
 		fb := newBackend()
-		v := New(fb, mek, blockSize, nil, Config{})
+		v := New(fb, mek, nil, blockSize, nil, Config{})
 		result := v.verifyObject(context.Background(), ObjectSample{
 			Key: key, Bucket: "b", ArtifactType: ArtifactSQLite, Metadata: meta,
 		}, ModeDRDrill)
@@ -676,7 +676,7 @@ func TestVerifyObject_DRDrill_MultipartDigestEnforced(t *testing.T) {
 		}
 		objMeta["x-amz-meta-armor-plaintext-sha256"] = strings.Repeat("a", 64)
 		fb := newBackend()
-		v := New(fb, mek, blockSize, nil, Config{})
+		v := New(fb, mek, nil, blockSize, nil, Config{})
 		result := v.verifyObject(context.Background(), ObjectSample{
 			Key: key, Bucket: "b", ArtifactType: ArtifactSQLite, Metadata: objMeta,
 		}, ModeDRDrill)
@@ -695,7 +695,7 @@ func TestVerifyObject_DRDrill_MultipartDigestEnforced(t *testing.T) {
 		}
 		objMeta["x-amz-meta-armor-plaintext-sha256"] = plainDigest
 		fb := newBackend()
-		v := New(fb, mek, blockSize, nil, Config{})
+		v := New(fb, mek, nil, blockSize, nil, Config{})
 		result := v.verifyObject(context.Background(), ObjectSample{
 			Key: key, Bucket: "b", ArtifactType: ArtifactSQLite, Metadata: objMeta,
 		}, ModeDRDrill)
@@ -774,7 +774,7 @@ func TestVerifyObject_DualPathAgreeOnKnownGoodData(t *testing.T) {
 				sidecars:   sidecars,
 			}
 
-			v := New(fb, mek, blockSize, nil, Config{})
+			v := New(fb, mek, nil, blockSize, nil, Config{})
 
 			result := v.verifyObject(context.Background(), ObjectSample{
 				Key:          key,
@@ -892,7 +892,7 @@ func TestGetHistoricalSample_RandomAcrossFullBucket(t *testing.T) {
 		objects[i] = backend.ObjectInfo{Key: fmt.Sprintf("backup-%06d.db", i)}
 	}
 	mb := &paginatingBackend{objects: objects, pageSize: pageSize}
-	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), nil, 4096, nil, Config{})
 
 	// (1) Full pagination: a 2500-object bucket at 100/page must take exactly
 	// ceil(n/pageSize) List calls, proving the sample is drawn from the whole
@@ -990,7 +990,7 @@ func TestGetHistoricalSample_SmallBucketReturnsAll(t *testing.T) {
 		objects = append(objects, backend.ObjectInfo{Key: fmt.Sprintf("backup-%d.db", i)})
 	}
 	mb := &paginatingBackend{objects: objects, pageSize: 100}
-	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), nil, 4096, nil, Config{})
 
 	s, err := v.getHistoricalSample(context.Background(), "bucket", 20)
 	if err != nil {
@@ -1013,7 +1013,7 @@ func TestGetHistoricalSample_SmallBucketReturnsAll(t *testing.T) {
 // a no-op that issues no List calls, guarding the early return.
 func TestGetHistoricalSample_ZeroSampleSize(t *testing.T) {
 	mb := &paginatingBackend{objects: []backend.ObjectInfo{{Key: "a"}}, pageSize: 100}
-	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), nil, 4096, nil, Config{})
 
 	s, err := v.getHistoricalSample(context.Background(), "bucket", 0)
 	if err != nil {
@@ -1074,7 +1074,7 @@ func TestGetLatestObject_PaginatesPastArmorObjects(t *testing.T) {
 	})
 
 	mb := &paginatingBackend{objects: objects, pageSize: pageSize}
-	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), nil, 4096, nil, Config{})
 
 	callsBefore := mb.listCalls
 	latest, err := v.getLatestObject(context.Background(), "test-bucket")
@@ -1154,7 +1154,7 @@ func TestGetLatestObject_FindsLatestAcrossMultiplePages(t *testing.T) {
 	}
 
 	mb := &paginatingBackend{objects: objects, pageSize: pageSize}
-	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), 4096, nil, Config{})
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), nil, 4096, nil, Config{})
 
 	latest, err := v.getLatestObject(context.Background(), "test-bucket")
 	if err != nil {

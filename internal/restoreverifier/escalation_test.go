@@ -445,7 +445,7 @@ func TestBeadPayload_StalenessTitleAndBody(t *testing.T) {
 // a later regression files fresh.
 func TestVerifier_EscalateResultWiring(t *testing.T) {
 	f := &recordingFiler{}
-	v := New(nil, nil, 0, nil, Config{
+	v := New(nil, nil, nil, 0, nil, Config{
 		Escalator: NewEscalator(EscalatorConfig{Filer: f, Deployment: "d"}),
 	})
 	ctx := context.Background()
