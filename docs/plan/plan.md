@@ -346,29 +346,20 @@ These operations don't touch file data and pass through with minimal modificatio
 
 ### Multipart Upload Operations (Transforming)
 
-Large files require multipart upload. ARMOR encrypts each part with a continuous CTR counter:
+Large files require multipart upload. ARMOR encrypts each part independently (v3 format, the default):
 
 | Operation | Behavior |
 |-----------|----------|
-| **CreateMultipartUpload** | Generate DEK + IV; persist encrypted state to B2 at `.armor/multipart/<upload-id>.state`; forward to B2 |
-| **UploadPart** | Encrypt part with CTR counter offset based on cumulative bytes; forward to B2 |
-| **CompleteMultipartUpload** | Forward completion to B2; then upload HMAC table as sidecar object at `.armor/hmac/<key-sha256>`; write `x-amz-meta-armor-*` metadata via CopyObject with REPLACE |
-| **AbortMultipartUpload** | Delete `.armor/multipart/<upload-id>.state` from B2; forward to B2 |
+| **CreateMultipartUpload** | Generate DEK + IV; persist encrypted state to B2 at `.armor/multipart/<upload-id>.state-v3`; forward to B2 |
+| **UploadPart** | Encrypt each part independently using (part number, block number) counter; forward to B2 |
+| **CompleteMultipartUpload** | Forward completion to B2; assemble HMAC sidecar from part data |
+| **AbortMultipartUpload** | Delete `.armor/multipart/<upload-id>.state-v3` from B2; forward to B2 |
 | **ListParts** | Forward to B2; adjust part sizes to plaintext sizes |
 | **ListMultipartUploads** | Forward to B2 directly |
 
-Multipart state (DEK, IV, counter offset, per-part HMACs) is persisted to B2 as an encrypted state object at `.armor/multipart/<upload-id>.state` on each operation. Any ARMOR instance can resume an interrupted multipart upload by reading this state object.
+**Format version 3 (default):** No multipart constraints — any part size ≥ 5 MiB, any order, any concurrency. Parts are encrypted independently with their own (part number, block number) counter, eliminating the uniform-part-size contract, part-1 pinning, SlowDown deferrals, and block alignment requirements. This works with all standard S3 clients without configuration.
 
-B2's multipart assembly concatenates parts byte-for-byte — there is no opportunity to prepend an envelope header or append trailing data. Therefore multipart-completed objects use a **different on-B2 layout than single-PUT objects** (see [ADR-003](../adr/003-multipart-object-layout-and-read-path.md)):
-
-- The stored object is raw concatenated part ciphertext — **no 64-byte envelope header, no embedded HMAC table**.
-- The HMAC table lives in a **sidecar object** at `.armor/hmac/<sha256-of-key>` (JSON, per-block HMACs).
-- The marker `x-amz-meta-armor-multipart: true` is set in object metadata at CompleteMultipartUpload. **The read path dispatches on this metadata marker** — not on an envelope flag — for both full GETs and range reads. (An earlier revision of this plan described a reserved-byte envelope flag; that was never what shipped, and the assumption that multipart objects have an embedded header caused every multipart GET to 500 until fixed in July 2026 — bf-24sxh7.)
-- **Out-of-order and concurrent part uploads are supported via a uniform-part-size contract** (see [ADR-015](../adr/015-out-of-order-multipart-uniform-part-size.md), incl. its 2026-07-19 amendment): part size `P` is pinned **from part number 1** (never the short final part — the amendment's fix after live testing showed the smallest part reliably *completes* first under default client concurrency); parts arriving before part 1 has pinned `P` get a retryable `503 SlowDown` (standard clients retry transparently, no server-side buffering). Part `N`'s CTR start block is `(N−1) × P / blockSize` — a function of the part *number*, not arrival order — and the final part is the only one allowed to be smaller than `P` (uniformity validated at CompleteMultipartUpload; violations hard-fail, never store). Retried parts are idempotent. This is what lets unmodified concurrent clients (aws cli defaults, SDK uploaders, litestream) work. *Implementation status: shipped on main 2026-07-19 — core uniform-part-size contract (bf-5tol4d) plus part-1 pinning + `503 SlowDown` deferral of earlier arrivals (bf-4oi87m); shuffled/concurrent and sequential orders both round-trip byte-identically, and the multipart canary uploads its parts concurrently to continuously exercise this path (bf-7k79m7). The deployed fleet still needs a version bump to pick this up.*
-- **Alignment is required only of parts that another part is placed after** (see [ADR-011](../adr/011-barman-stays-on-armor-non-uniform-multipart.md)). Part 1 always starts at block 0, so `(1-1)×P/BlockSize` is 0 at any size; a part smaller than an already-pinned `P` is presumed final and nothing follows it. Both are exempt, which makes **single-part uploads of arbitrary size work** — previously every such upload failed with `InvalidPartSize`, which is what barman-cloud-backup of a small Postgres produces. Shipped `fc6c1a86`.
-- **Non-uniform parts are not yet supported.** Barman emits parts of `chunk_size + N×512`, so part 2 contradicts the uniform `P` pinned by part 1. Until per-part cumulative offsets land (ADR-011), barman through ARMOR has a **silent size ceiling**: it works while a backup fits in one part and reverts to `InvalidPartSize` once it does not.
-- Part patterns ARMOR cannot encrypt correctly are **rejected with a hard failure** rather than stored corrupted: intermediate parts whose size is not a multiple of the block size get `InvalidPartSize` (400), invalid part references get `InvalidPart`/`InvalidPartOrder`. Clients must use block-aligned part sizes (e.g. 16 MiB). Verified 2026-07-18: a sequential 50 MB multipart round-trip through HEAD is byte-identical; objects written by the deployed pre-fix fleet (0.1.42) with concurrent parts are corrupt at rest and unrecoverable by any read path.
-- **Planned: server-side observability for part-size rejections** (see [ADR-008](../adr/008-multipart-part-size-error-clarity.md)). The `InvalidPartSize` message itself is already specific and actionable (names received size, required block size, and ADR-005 by name — shipped 2026-07-19). The gap ADR-008 closes is different: ARMOR emits **no log line and no error-`Code`-labeled metric** for any of these rejections today — `internal/server/handlers/handlers.go` has zero logging calls, and the per-request "request completed" log in `internal/server/server.go` records only the HTTP status, never the S3 error `Code`. Found via live investigation of a real incident: `queue-db` (CNPG/barman-cloud backups on `iad-ci`) failed 609 consecutive times since 2026-05-26 on exactly this rejection (`Part size 4228497 is not a multiple of the block size (65536 bytes)`), and barman-cloud's own logs showed only `exit status 1` — an ARMOR operator working from ARMOR's own logs/metrics had no way to see which S3 error code was firing or how often, independent of whether the client surfaces the message. Not yet implemented; tracked as a bead for the implementation fleet.
+**Format version 2 (legacy):** Required uniform part sizes (multiples of 64 KiB), part-1 pinning with SlowDown deferral for earlier arrivals, and block alignment. This format is no longer written by default but objects written in v2 remain readable.
 
 ### Operations Not Implemented
 
