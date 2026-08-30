@@ -932,12 +932,9 @@ func (s *Server) keyRing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := make(map[string]KeyRingInfo)
-	manifestDisabled := false
 
 	// Check if manifest is available
-	if s.manifest == nil {
-		manifestDisabled = true
-	}
+	manifestDisabled := s.manifest == nil
 
 	// For each key, get its active fingerprint, ring, and object histogram
 	for _, keyID := range keyIDs {

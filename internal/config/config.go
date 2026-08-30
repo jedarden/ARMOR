@@ -2,7 +2,6 @@
 package config
 
 import (
-	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -581,14 +580,6 @@ func normalizePrefix(prefix string) string {
 	return prefix
 }
 
-func generateRandomKey(length int) string {
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("failed to generate random key: %v", err))
-	}
-	return hex.EncodeToString(b)
-}
-
 // parseKeyRoutes parses a key routes string.
 // Format: "prefix1=key1,prefix2=key2,*=default"
 // The * prefix is a catch-all that maps to the default key.
@@ -926,7 +917,7 @@ type RedactedConfig struct {
 	// Authentication credentials for ARMOR clients
 	AuthAccessKey string `json:"auth_access_key"`
 	AuthSecretKey string `json:"auth_secret_key"` // "<set>" or "<unset>"
-	AuthFilePath  string `json:"auth_file_path"`   // Path to ARMOR_AUTH_FILE, if configured -- not sensitive, unlike its contents
+	AuthFilePath  string `json:"auth_file_path"`  // Path to ARMOR_AUTH_FILE, if configured -- not sensitive, unlike its contents
 
 	// Multi-credential support
 	Credentials map[string]RedactedCredential `json:"credentials"`

@@ -23,10 +23,10 @@ func init() {
 // Migration flags
 var (
 	adminURLFlag    string
-	dryRunFlag     bool
-	includeFlag    string
+	dryRunFlag      bool
+	includeFlag     string
 	concurrencyFlag int
-	watchFlag      bool
+	watchFlag       bool
 )
 
 func init() {
@@ -44,20 +44,20 @@ func init() {
 
 // MigrationState represents the state of a format migration operation
 type MigrationState struct {
-	ID                 string   `json:"id"`
-	StartTime          string   `json:"start_time"`
-	LastUpdated        string   `json:"last_updated"`
-	Status             string   `json:"status"`
-	TotalObjects       int      `json:"total_objects"`
-	ProcessedObjects   int      `json:"processed_objects"`
-	SkippedObjects     int      `json:"skipped_objects"`
-	FailedObjects      int      `json:"failed_objects"`
-	LastKey            string   `json:"last_key"`
-	IncludeVersions    []string `json:"include_versions"`
-	CurrentWriteVersion uint8   `json:"current_write_version"`
-	DryRun             bool     `json:"dry_run"`
-	Concurrency        int      `json:"concurrency"`
-	Failures           []struct {
+	ID                  string   `json:"id"`
+	StartTime           string   `json:"start_time"`
+	LastUpdated         string   `json:"last_updated"`
+	Status              string   `json:"status"`
+	TotalObjects        int      `json:"total_objects"`
+	ProcessedObjects    int      `json:"processed_objects"`
+	SkippedObjects      int      `json:"skipped_objects"`
+	FailedObjects       int      `json:"failed_objects"`
+	LastKey             string   `json:"last_key"`
+	IncludeVersions     []string `json:"include_versions"`
+	CurrentWriteVersion uint8    `json:"current_write_version"`
+	DryRun              bool     `json:"dry_run"`
+	Concurrency         int      `json:"concurrency"`
+	Failures            []struct {
 		Key    string `json:"key"`
 		Reason string `json:"reason"`
 		Time   string `json:"time"`
@@ -172,77 +172,78 @@ func watchMigration(client *http.Client, migrateURL, adminToken string) error {
 	lastProcessed := -1
 	lastFailed := -1
 
-	for {
-		select {
-		case <-ticker.C:
-			resp, err := doRequest(client, "GET", migrateURL, adminToken, nil)
+	for range ticker.C {
+		resp, err := doRequest(client, "GET", migrateURL, adminToken, nil)
+		if err != nil {
+			return fmt.Errorf("failed to get migration status: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return fmt.Errorf("failed to read response: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("status request failed with status %d: %s", resp.StatusCode, string(body))
+		}
+
+		// Parse response
+		var result interface{}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return fmt.Errorf("failed to parse status response: %w", err)
+		}
+
+		// Check if it's a "no migration" response
+		if m, ok := result.(map[string]interface{}); ok {
+			if status, ok := m["status"].(string); ok && status == "no_migration" {
+				fmt.Fprintf(os.Stderr, "No migration in progress.\n")
+				return nil
+			}
+
+			// Parse the migration state
+			state, err := parseMigrationState(m)
 			if err != nil {
-				return fmt.Errorf("failed to get migration status: %w", err)
+				return fmt.Errorf("failed to parse migration state: %w", err)
 			}
 
-			body, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if err != nil {
-				return fmt.Errorf("failed to read response: %w", err)
+			// Print progress line only if something changed
+			if state.ProcessedObjects != lastProcessed || state.FailedObjects != lastFailed {
+				fmt.Printf("Progress: %d/%d processed", state.ProcessedObjects, state.TotalObjects)
+				if state.SkippedObjects > 0 {
+					fmt.Printf(", %d skipped", state.SkippedObjects)
+				}
+				if state.FailedObjects > 0 {
+					fmt.Printf(", %d failed", state.FailedObjects)
+				}
+				fmt.Printf(" (%s)\n", state.Status)
+				lastProcessed = state.ProcessedObjects
+				lastFailed = state.FailedObjects
 			}
 
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("status request failed with status %d: %s", resp.StatusCode, string(body))
+			// Check if migration is complete
+			if state.Status == "completed" {
+				fmt.Fprintf(os.Stderr, "Migration completed successfully.\n")
+				fmt.Fprintf(os.Stderr, "Total: %d, Processed: %d, Skipped: %d, Failed: %d\n",
+					state.TotalObjects, state.ProcessedObjects, state.SkippedObjects, state.FailedObjects)
+
+				// Exit non-zero if there were failures
+				if state.FailedObjects > 0 {
+					fmt.Fprintf(os.Stderr, "Migration had %d failures.\n", state.FailedObjects)
+					exit(1)
+				}
+				return nil
 			}
 
-			// Parse response
-			var result interface{}
-			if err := json.Unmarshal(body, &result); err != nil {
-				return fmt.Errorf("failed to parse status response: %w", err)
-			}
-
-			// Check if it's a "no migration" response
-			if m, ok := result.(map[string]interface{}); ok {
-				if status, ok := m["status"].(string); ok && status == "no_migration" {
-					fmt.Fprintf(os.Stderr, "No migration in progress.\n")
-					return nil
-				}
-
-				// Parse the migration state
-				state, err := parseMigrationState(m)
-				if err != nil {
-					return fmt.Errorf("failed to parse migration state: %w", err)
-				}
-
-				// Print progress line only if something changed
-				if state.ProcessedObjects != lastProcessed || state.FailedObjects != lastFailed {
-					fmt.Printf("Progress: %d/%d processed", state.ProcessedObjects, state.TotalObjects)
-					if state.SkippedObjects > 0 {
-						fmt.Printf(", %d skipped", state.SkippedObjects)
-					}
-					if state.FailedObjects > 0 {
-						fmt.Printf(", %d failed", state.FailedObjects)
-					}
-					fmt.Printf(" (%s)\n", state.Status)
-					lastProcessed = state.ProcessedObjects
-					lastFailed = state.FailedObjects
-				}
-
-				// Check if migration is complete
-				if state.Status == "completed" {
-					fmt.Fprintf(os.Stderr, "Migration completed successfully.\n")
-					fmt.Fprintf(os.Stderr, "Total: %d, Processed: %d, Skipped: %d, Failed: %d\n",
-						state.TotalObjects, state.ProcessedObjects, state.SkippedObjects, state.FailedObjects)
-
-					// Exit non-zero if there were failures
-					if state.FailedObjects > 0 {
-						fmt.Fprintf(os.Stderr, "Migration had %d failures.\n", state.FailedObjects)
-						exit(1)
-					}
-					return nil
-				}
-
-				if state.Status == "failed" || state.Status == "interrupted" {
-					return fmt.Errorf("migration %s: %s", state.Status, state.ErrorMessage)
-				}
+			if state.Status == "failed" || state.Status == "interrupted" {
+				return fmt.Errorf("migration %s: %s", state.Status, state.ErrorMessage)
 			}
 		}
 	}
+
+	// Unreachable: ticker.C is never closed, so the loop above only exits via
+	// an explicit return. Present for the compiler's control-flow analysis.
+	return nil
 }
 
 // parseMigrationState parses a map into a MigrationState

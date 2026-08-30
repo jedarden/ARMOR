@@ -5,30 +5,31 @@
 // specification defined in the following documentation:
 //
 // 1. docs/error-format.md
-//    - Core error message format with required fields (offset, expected, actual)
-//    - Optional context fields for detailed diagnostics
-//    - JSON serialization structure
+//   - Core error message format with required fields (offset, expected, actual)
+//   - Optional context fields for detailed diagnostics
+//   - JSON serialization structure
 //
 // 2. docs/archive/verification-error-to-message-mapping.md
-//    - Field-by-field mapping from VerificationError struct to message format
-//    - Transformation logic (byte arrays → hex strings or descriptions)
-//    - Special offset value semantics (-1, -2, < -2)
-//    - Integration with VerifyResult wrapper type
+//   - Field-by-field mapping from VerificationError struct to message format
+//   - Transformation logic (byte arrays → hex strings or descriptions)
+//   - Special offset value semantics (-1, -2, < -2)
+//   - Integration with VerifyResult wrapper type
 //
 // 3. docs/verification-error-message-examples.md
-//    - Concrete error message examples for common failure scenarios
-//    - Human-readable format vs. JSON format
-//    - Go code to generate each error type
+//   - Concrete error message examples for common failure scenarios
+//   - Human-readable format vs. JSON format
+//   - Go code to generate each error type
 //
 // **Mapping Summary:**
 // VerificationError fields → Error message format → Human-readable output
-//   Offset               → "offset" field           → "byte mismatch at offset X"
-//   Expected[]           → "expected" field        → "expected 0x03" or "expected N-byte context"
-//   Actual[]             → "actual" field          → "got 0x00" or "got N-byte context"
-//   ContextBytes         → Optional context        → "[C bytes context: B before, A after]"
-//   ContextBefore/After  → Optional context        → Included in context description
-//   ExpectedLength       → Optional context        → "(got X bytes, expected Y bytes)"
-//   ActualLength         → Optional context        → "(got X bytes, expected Y bytes)"
+//
+//	Offset               → "offset" field           → "byte mismatch at offset X"
+//	Expected[]           → "expected" field        → "expected 0x03" or "expected N-byte context"
+//	Actual[]             → "actual" field          → "got 0x00" or "got N-byte context"
+//	ContextBytes         → Optional context        → "[C bytes context: B before, A after]"
+//	ContextBefore/After  → Optional context        → Included in context description
+//	ExpectedLength       → Optional context        → "(got X bytes, expected Y bytes)"
+//	ActualLength         → Optional context        → "(got X bytes, expected Y bytes)"
 //
 // **Key Implementation Points:**
 // - Error() method: Implements human-readable message construction
@@ -182,30 +183,30 @@ type VerifyResult struct {
 //
 // Example error cases:
 //
-//	1. Length mismatch (decompressed too short):
-//	   expected: 1024 bytes
-//	   got:      997 bytes
-//	   offset:   -1 (special sentinel for length error)
+//  1. Length mismatch (decompressed too short):
+//     expected: 1024 bytes
+//     got:      997 bytes
+//     offset:   -1 (special sentinel for length error)
 //
-//	2. Single byte corruption:
-//	   offset:   512
-//	   expected: 0xDE (at byte 512)
-//	   actual:   0x00 (null byte overwrite)
+//  2. Single byte corruption:
+//     offset:   512
+//     expected: 0xDE (at byte 512)
+//     actual:   0x00 (null byte overwrite)
 //
-//	3. Bit-flip corruption:
-//	   offset:   1024
-//	   expected: 0x55 (01010101 binary)
-//	   actual:   0x54 (01010100 binary - single bit flip)
+//  3. Bit-flip corruption:
+//     offset:   1024
+//     expected: 0x55 (01010101 binary)
+//     actual:   0x54 (01010100 binary - single bit flip)
 //
-//	4. Burst corruption (sequential bytes corrupted):
-//	   offset:   2048
-//	   expected: 0x41 0x42 0x43 ("ABC")
-//	   actual:   0xFF 0xFF 0xFF (burst overwrite)
+//  4. Burst corruption (sequential bytes corrupted):
+//     offset:   2048
+//     expected: 0x41 0x42 0x43 ("ABC")
+//     actual:   0xFF 0xFF 0xFF (burst overwrite)
 //
-//	5. Offset out of range:
-//	   offset:   5000
-//	   expected: <nil> (offset exceeds expected data length)
-//	   actual:   <nil> (offset exceeds decompressed data length)
+//  5. Offset out of range:
+//     offset:   5000
+//     expected: <nil> (offset exceeds expected data length)
+//     actual:   <nil> (offset exceeds decompressed data length)
 type VerificationError struct {
 	// Offset is the byte position where the first difference occurs.
 	//
@@ -655,12 +656,14 @@ type VerificationError struct {
 //
 // 1. nil error → "verification failed: nil error"
 // 2. Offset == -2 → "verification failed: length mismatch (got X bytes, expected Y bytes)"
-//    - Maps from: ActualLength, ExpectedLength fields
+//   - Maps from: ActualLength, ExpectedLength fields
+//
 // 3. Offset < -2 → "verification failed: invalid offset X"
-//    - Reserved for future error types
+//   - Reserved for future error types
+//
 // 4. Offset >= 0 → "verification failed: byte mismatch at offset X (expected Y, got Z)"
-//    - Maps from: Offset, Expected[0], Actual[0] (or full context arrays)
-//    - Appends context information if ContextBytes > 0
+//   - Maps from: Offset, Expected[0], Actual[0] (or full context arrays)
+//   - Appends context information if ContextBytes > 0
 //
 // **Transformations Applied:**
 // - Single-byte arrays → hex format: "0x03"
@@ -833,9 +836,9 @@ type BytesMismatch struct {
 //     after decrypting ciphertext). This is the data under test.
 //   - expected: The original plaintext data that was compressed before encryption. This is the
 //     reference data for comparison. Can be sourced from:
-//     * Original unencrypted backup (golden copy)
-//     * Previous verification run output
-//     * Known-good test fixtures
+//   - Original unencrypted backup (golden copy)
+//   - Previous verification run output
+//   - Known-good test fixtures
 //
 // **Return Type:**
 //   - *VerifyResult: Contains pass/fail status, diagnostic message, and error details.
@@ -857,9 +860,9 @@ type BytesMismatch struct {
 //   - Never panics, even with nil or malformed input
 //   - Returns VerifyResult with Pass=false and appropriate VerificationError
 //   - VerificationError.Offset indicates failure type:
-//     - -1: Verification passed (no error)
-//     - -2: Length mismatch
-//     - >= 0: Byte offset of first difference
+//   - -1: Verification passed (no error)
+//   - -2: Length mismatch
+//   - >= 0: Byte offset of first difference
 //
 // **Usage Example:**
 //
@@ -1034,9 +1037,9 @@ func createMismatchResult(decompressed, expected []byte, offset int, contextByte
 //
 // **Return Type:**
 //   - *VerificationResult: Contains pass/fail status, diagnostic message, and error details
-//     - ByteOffset is relative to the full object (absolute), not the range
-//     - Diagnostic messages include both absolute and relative offset information
-//     - Example error: "range byte mismatch at absolute offset 1536 (relative offset 512 within range 1024-2047)"
+//   - ByteOffset is relative to the full object (absolute), not the range
+//   - Diagnostic messages include both absolute and relative offset information
+//   - Example error: "range byte mismatch at absolute offset 1536 (relative offset 512 within range 1024-2047)"
 //
 // **Constraints:**
 //   - rangeStart must be >= 0 (negative offsets are invalid)
@@ -1054,9 +1057,9 @@ func createMismatchResult(decompressed, expected []byte, offset int, contextByte
 //   - Never panics, even with nil or malformed input
 //   - Returns VerificationResult with Passed=false and appropriate diagnostic message
 //   - ByteOffset field indicates absolute position in the full object:
-//     - rangeStart + relative_offset: Where the mismatch occurs in the full object
-//     - -2: Length mismatch between decompressed range and expected range
-//     - -1: Verification passed
+//   - rangeStart + relative_offset: Where the mismatch occurs in the full object
+//   - -2: Length mismatch between decompressed range and expected range
+//   - -1: Verification passed
 //
 // **Usage Example:**
 //
@@ -1149,7 +1152,7 @@ func VerifyRangeDecompression(decompressed, expected []byte, rangeStart int64) *
 	// Perform byte-for-byte comparison
 	if bytes.Equal(decompressed, expected) {
 		return &VerifyResult{
-			Pass:       true,
+			Pass: true,
 			Diagnostic: fmt.Sprintf("range verified: %d bytes match exactly (range starts at offset %d)",
 				len(decompressed), rangeStart),
 		}
@@ -1196,15 +1199,15 @@ func VerifyRangeDecompression(decompressed, expected []byte, rangeStart int64) *
 //   - decompressed: The output from the decompression pipeline
 //   - expected: The original plaintext data
 //   - context: Human-readable context string for logging/debugging. Recommended formats:
-//     * "object=bucket/key, version=X"
-//     * "tenant=acme, object=backup.db, attempt=3/5"
-//     * "path=armor, checksum=expected_vs_actual"
-//     * "dr-drill=true, mode=direct-only"
+//   - "object=bucket/key, version=X"
+//   - "tenant=acme, object=backup.db, attempt=3/5"
+//   - "path=armor, checksum=expected_vs_actual"
+//   - "dr-drill=true, mode=direct-only"
 //
 // **Return Type:**
 //   - *VerificationResult: Same as VerifyDecompression, but with Message prefixed by context
-//     - Example success: "[object=my-bucket/key, version=123] verified: 1048576 bytes match exactly"
-//     - Example failure: "[object=my-bucket/key, version=123] byte mismatch at offset 512..."
+//   - Example success: "[object=my-bucket/key, version=123] verified: 1048576 bytes match exactly"
+//   - Example failure: "[object=my-bucket/key, version=123] byte mismatch at offset 512..."
 //
 // **Constraints:**
 //   - Inherits all constraints from VerifyDecompression
@@ -1354,64 +1357,11 @@ func createMismatchDetail(decompressed, expected []byte, offset int, contextSize
 	}
 }
 
-// formatMismatchMessage creates a detailed error message for mismatches.
-func formatMismatchMessage(mismatch *BytesMismatch, decompLen, expLen int) string {
-	if mismatch == nil {
-		return "verification failed: unable to determine mismatch details"
-	}
-
-	msg := fmt.Sprintf("byte mismatch at offset %d: expected 0x%s (%d), got 0x%s (%d)",
-		mismatch.Offset,
-		mismatch.ExpectedHex, mismatch.ExpectedByte,
-		mismatch.ActualHex, mismatch.ActualByte)
-
-	// Add context if available
-	if mismatch.ContextBefore > 0 || mismatch.ContextAfter > 0 {
-		msg += fmt.Sprintf("\n  expected context: %s", mismatch.ExpectedCtx)
-		msg += fmt.Sprintf("\n  actual context:   %s", mismatch.ActualCtx)
-
-		// Show position marker
-		marker := bytes.Repeat([]byte("  "), mismatch.ContextBefore)
-		marker = append(marker, []byte("^^")...)
-		msg += fmt.Sprintf("\n                    %s", string(marker))
-	}
-
-	return msg
-}
-
-// formatRangeMismatchMessage creates a detailed error message for range mismatches.
-func formatRangeMismatchMessage(mismatch *BytesMismatch, rangeStart int64, rangeLen int) string {
-	if mismatch == nil {
-		return fmt.Sprintf("range verification failed (range: %d-%d, length: %d)",
-			rangeStart, rangeStart+int64(rangeLen)-1, rangeLen)
-	}
-
-	absoluteOffset := rangeStart + mismatch.Offset
-	msg := fmt.Sprintf("range byte mismatch at absolute offset %d (relative offset %d within range %d-%d): expected 0x%s (%d), got 0x%s (%d)",
-		absoluteOffset, mismatch.Offset,
-		rangeStart, rangeStart+int64(rangeLen)-1,
-		mismatch.ExpectedHex, mismatch.ExpectedByte,
-		mismatch.ActualHex, mismatch.ActualByte)
-
-	// Add context if available
-	if mismatch.ContextBefore > 0 || mismatch.ContextAfter > 0 {
-		msg += fmt.Sprintf("\n  expected context: %s", mismatch.ExpectedCtx)
-		msg += fmt.Sprintf("\n  actual context:   %s", mismatch.ActualCtx)
-
-		// Show position marker
-		marker := bytes.Repeat([]byte("  "), mismatch.ContextBefore)
-		marker = append(marker, []byte("^^")...)
-		msg += fmt.Sprintf("\n                    %s", string(marker))
-	}
-
-	return msg
-}
-
 // ByteStats provides statistics about byte differences.
 type ByteStats struct {
-	TotalBytes      int      // total bytes compared
-	MismatchCount   int      // number of mismatching bytes
-	MismatchOffsets []int64  // offsets of all mismatches
+	TotalBytes      int          // total bytes compared
+	MismatchCount   int          // number of mismatching bytes
+	MismatchOffsets []int64      // offsets of all mismatches
 	MismatchMap     map[byte]int // frequency distribution of mismatching byte values
 }
 
@@ -1448,10 +1398,10 @@ type ByteStats struct {
 //
 // **Return Type:**
 //   - *ByteStats: Contains statistics about byte differences:
-//     - TotalBytes: Total bytes in expected data
-//     - MismatchCount: Number of mismatching bytes
-//     - MismatchOffsets: Offsets of all mismatches (for pattern analysis)
-//     - MismatchMap: Frequency distribution of mismatching byte values
+//   - TotalBytes: Total bytes in expected data
+//   - MismatchCount: Number of mismatching bytes
+//   - MismatchOffsets: Offsets of all mismatches (for pattern analysis)
+//   - MismatchMap: Frequency distribution of mismatching byte values
 //
 // **Constraints:**
 //   - Both parameters must be non-nil byte slices
@@ -1541,8 +1491,8 @@ type ByteStats struct {
 //   - DR drill vs. normal path comparison anomaly detection
 func AnalyzeByteDifferences(decompressed, expected []byte) *ByteStats {
 	stats := &ByteStats{
-		TotalBytes:    len(expected),
-		MismatchMap:   make(map[byte]int),
+		TotalBytes:      len(expected),
+		MismatchMap:     make(map[byte]int),
 		MismatchOffsets: make([]int64, 0),
 	}
 
@@ -1659,8 +1609,8 @@ func (bs *ByteStats) TopMismatches(n int) []struct {
 //
 // **Return Type:**
 //   - *VerifyResult: Contains pass/fail status, diagnostic message, and error details
-//     - Byte offsets in errors are RELATIVE to the range start (not absolute object position)
-//     - Example error: "range mismatch at relative offset 512 (range: 1024-2047, absolute offset 1536)"
+//   - Byte offsets in errors are RELATIVE to the range start (not absolute object position)
+//   - Example error: "range mismatch at relative offset 512 (range: 1024-2047, absolute offset 1536)"
 //
 // **Constraints:**
 //   - rangeOffset must be >= 0 (negative offsets are invalid)
@@ -1679,9 +1629,9 @@ func (bs *ByteStats) TopMismatches(n int) []struct {
 //   - Returns VerifyResult with Pass=false and appropriate VerificationError
 //   - Byte offset in VerificationError is RELATIVE to range start (0 = first byte of range)
 //   - Special offset values:
-//     - -3: Range out of bounds (rangeOffset + rangeLength exceeds original length)
-//     - -2: Length mismatch (decompressed length != rangeLength)
-//     - >= 0: Relative offset within range where first difference occurs
+//   - -3: Range out of bounds (rangeOffset + rangeLength exceeds original length)
+//   - -2: Length mismatch (decompressed length != rangeLength)
+//   - >= 0: Relative offset within range where first difference occurs
 //   - Never panics, even with nil or malformed input
 //
 // **Usage Example:**
@@ -1723,10 +1673,11 @@ func (bs *ByteStats) TopMismatches(n int) []struct {
 //   - Short-circuits on first mismatch for fast failure detection
 //
 // **Integration with Existing Range Helpers:**
-//   This function works seamlessly with data from existing range helpers:
-//   - crypto.RangeTranslation: Provides range metadata
-//   - backend.GetRange(): Retrieves encrypted range data
-//   - The range bounds validation ensures the requested range is valid
+//
+//	This function works seamlessly with data from existing range helpers:
+//	- crypto.RangeTranslation: Provides range metadata
+//	- backend.GetRange(): Retrieves encrypted range data
+//	- The range bounds validation ensures the requested range is valid
 //
 // **Example: Integration with RangeTranslation:**
 //
@@ -1755,13 +1706,13 @@ func VerifyRangeDecompressionWithBounds(original, decompressed []byte, rangeOffs
 	// Validate input parameters
 	if rangeOffset < 0 {
 		return &VerifyResult{
-			Pass: false,
+			Pass:       false,
 			Diagnostic: fmt.Sprintf("invalid range offset %d: offset cannot be negative", rangeOffset),
 			Error: &VerificationError{
-				Offset:        -3, // Special code for invalid range
-				ContextBytes:  0,
-				ContextBefore: 0,
-				ContextAfter:  0,
+				Offset:         -3, // Special code for invalid range
+				ContextBytes:   0,
+				ContextBefore:  0,
+				ContextAfter:   0,
 				ExpectedLength: int(rangeLength),
 				ActualLength:   len(decompressed),
 			},
@@ -1770,13 +1721,13 @@ func VerifyRangeDecompressionWithBounds(original, decompressed []byte, rangeOffs
 
 	if rangeLength < 0 {
 		return &VerifyResult{
-			Pass: false,
+			Pass:       false,
 			Diagnostic: fmt.Sprintf("invalid range length %d: length cannot be negative", rangeLength),
 			Error: &VerificationError{
-				Offset:        -3,
-				ContextBytes:  0,
-				ContextBefore: 0,
-				ContextAfter:  0,
+				Offset:         -3,
+				ContextBytes:   0,
+				ContextBefore:  0,
+				ContextAfter:   0,
 				ExpectedLength: int(rangeLength),
 				ActualLength:   len(decompressed),
 			},
@@ -1787,13 +1738,13 @@ func VerifyRangeDecompressionWithBounds(original, decompressed []byte, rangeOffs
 	originalLen := int64(len(original))
 	if rangeOffset > originalLen {
 		return &VerifyResult{
-			Pass: false,
+			Pass:       false,
 			Diagnostic: fmt.Sprintf("range offset %d exceeds original object length %d", rangeOffset, originalLen),
 			Error: &VerificationError{
-				Offset:        -3, // Special code for out-of-bounds range
-				ContextBytes:  0,
-				ContextBefore: 0,
-				ContextAfter:  0,
+				Offset:         -3, // Special code for out-of-bounds range
+				ContextBytes:   0,
+				ContextBefore:  0,
+				ContextAfter:   0,
 				ExpectedLength: int(rangeLength),
 				ActualLength:   len(decompressed),
 			},
@@ -1807,10 +1758,10 @@ func VerifyRangeDecompressionWithBounds(original, decompressed []byte, rangeOffs
 			Diagnostic: fmt.Sprintf("range out of bounds: range %d-%d (length %d) exceeds original object length %d",
 				rangeOffset, rangeEnd-1, rangeLength, originalLen),
 			Error: &VerificationError{
-				Offset:        -3,
-				ContextBytes:  0,
-				ContextBefore: 0,
-				ContextAfter:  0,
+				Offset:         -3,
+				ContextBytes:   0,
+				ContextBefore:  0,
+				ContextAfter:   0,
 				ExpectedLength: int(rangeLength),
 				ActualLength:   len(decompressed),
 			},
@@ -1833,7 +1784,7 @@ func VerifyRangeDecompressionWithBounds(original, decompressed []byte, rangeOffs
 				Offset:         -2,
 				ContextBytes:   0,
 				ContextBefore:  0,
-				ContextAfter:  0,
+				ContextAfter:   0,
 				ExpectedLength: 0,
 				ActualLength:   len(decompressed),
 			},
@@ -1850,7 +1801,7 @@ func VerifyRangeDecompressionWithBounds(original, decompressed []byte, rangeOffs
 				Offset:         -2,
 				ContextBytes:   0,
 				ContextBefore:  0,
-				ContextAfter:  0,
+				ContextAfter:   0,
 				ExpectedLength: int(rangeLength),
 				ActualLength:   len(decompressed),
 			},
@@ -1865,7 +1816,7 @@ func VerifyRangeDecompressionWithBounds(original, decompressed []byte, rangeOffs
 	// Perform byte-for-byte comparison
 	if bytes.Equal(decompressed, expectedRange) {
 		return &VerifyResult{
-			Pass:       true,
+			Pass: true,
 			Diagnostic: fmt.Sprintf("range verified: %d bytes match exactly (range offset %d, length %d)",
 				rangeLength, rangeOffset, rangeLength),
 		}

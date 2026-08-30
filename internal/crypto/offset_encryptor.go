@@ -82,7 +82,6 @@ func (e *OffsetEncryptor) EncryptFromOffset(plaintext []byte, byteOffset int64) 
 
 	plaintextIdx := 0
 	hmacIdx := 0
-	blockIdx := startBlock
 
 	// Handle partial first block if offset is not block-aligned
 	if offsetInBlock > 0 {
@@ -102,7 +101,6 @@ func (e *OffsetEncryptor) EncryptFromOffset(plaintext []byte, byteOffset int64) 
 
 		plaintextIdx = int(firstBlockEnd)
 		startBlock++
-		blockIdx++
 		// Skip HMAC slot for the boundary block (leave as zeros)
 		hmacIdx++
 	}
@@ -119,8 +117,6 @@ func (e *OffsetEncryptor) EncryptFromOffset(plaintext []byte, byteOffset int64) 
 			stream := cipher.NewCTR(e.block, ctr)
 			stream.XORKeyStream(encrypted[plaintextIdx:blockEnd], blockData)
 			// Leave HMAC slot as zeros for this boundary block
-			plaintextIdx = blockEnd
-			hmacIdx++
 			break
 		}
 		blockData = plaintext[plaintextIdx:blockEnd]

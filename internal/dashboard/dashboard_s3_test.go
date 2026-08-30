@@ -50,10 +50,10 @@ func (m *mockBackendWithACL) Delete(ctx context.Context, bucket, key string) err
 // TestUploadHandlerWithGetListOnlyCredential tests upload is denied with get+list-only credential.
 func TestUploadHandlerWithGetListOnlyCredential(t *testing.T) {
 	mb := &mockBackendWithACL{
-		mockBackend:  newMockBackend(),
-		allowPut:     false, // get+list-only = no put
-		allowGet:     true,
-		allowDelete:  false,
+		mockBackend: newMockBackend(),
+		allowPut:    false, // get+list-only = no put
+		allowGet:    true,
+		allowDelete: false,
 	}
 	m := metrics.NewMetrics()
 
@@ -100,10 +100,10 @@ func TestUploadHandlerWithGetListOnlyCredential(t *testing.T) {
 // TestUploadHandlerWithFullCredential tests upload succeeds with full credential.
 func TestUploadHandlerWithFullCredential(t *testing.T) {
 	mb := &mockBackendWithACL{
-		mockBackend:  newMockBackend(),
-		allowPut:     true, // full access
-		allowGet:     true,
-		allowDelete:  true,
+		mockBackend: newMockBackend(),
+		allowPut:    true, // full access
+		allowGet:    true,
+		allowDelete: true,
 	}
 	m := metrics.NewMetrics()
 
@@ -150,10 +150,10 @@ func TestUploadHandlerWithFullCredential(t *testing.T) {
 // TestDownloadHandlerWithGetListOnlyCredential tests download succeeds (get is allowed).
 func TestDownloadHandlerWithGetListOnlyCredential(t *testing.T) {
 	mb := &mockBackendWithACL{
-		mockBackend:  newMockBackend(),
-		allowPut:     false,
-		allowGet:     true, // get+list-only allows get
-		allowDelete:  false,
+		mockBackend: newMockBackend(),
+		allowPut:    false,
+		allowGet:    true, // get+list-only allows get
+		allowDelete: false,
 	}
 	mb.objects["existing-file.txt"] = &backend.ObjectInfo{
 		Key:          "existing-file.txt",
@@ -200,10 +200,10 @@ func TestDownloadHandlerWithGetListOnlyCredential(t *testing.T) {
 // TestDownloadHandlerNotFound tests download of non-existent object.
 func TestDownloadHandlerNotFound(t *testing.T) {
 	mb := &mockBackendWithACL{
-		mockBackend:  newMockBackend(),
-		allowPut:     true,
-		allowGet:     true,
-		allowDelete:  true,
+		mockBackend: newMockBackend(),
+		allowPut:    true,
+		allowGet:    true,
+		allowDelete: true,
 	}
 	m := metrics.NewMetrics()
 
@@ -234,10 +234,10 @@ func TestDownloadHandlerNotFound(t *testing.T) {
 // TestDeleteHandlerWithGetListOnlyCredential tests delete is denied with get+list-only credential.
 func TestDeleteHandlerWithGetListOnlyCredential(t *testing.T) {
 	mb := &mockBackendWithACL{
-		mockBackend:  newMockBackend(),
-		allowPut:     false,
-		allowGet:     true,
-		allowDelete:  false, // get+list-only = no delete
+		mockBackend: newMockBackend(),
+		allowPut:    false,
+		allowGet:    true,
+		allowDelete: false, // get+list-only = no delete
 	}
 	mb.objects["to-delete.txt"] = &backend.ObjectInfo{
 		Key:          "to-delete.txt",
@@ -282,10 +282,10 @@ func TestDeleteHandlerWithGetListOnlyCredential(t *testing.T) {
 // TestDeleteHandlerWithFullCredential tests delete succeeds with full credential.
 func TestDeleteHandlerWithFullCredential(t *testing.T) {
 	mb := &mockBackendWithACL{
-		mockBackend:  newMockBackend(),
-		allowPut:     true,
-		allowGet:     true,
-		allowDelete:  true, // full access allows delete
+		mockBackend: newMockBackend(),
+		allowPut:    true,
+		allowGet:    true,
+		allowDelete: true, // full access allows delete
 	}
 	mb.objects["delete-me.txt"] = &backend.ObjectInfo{
 		Key:          "delete-me.txt",
@@ -480,10 +480,10 @@ func TestCredentialActivityHandler(t *testing.T) {
 	m.IncRequestsByCredential("cred1", "GET", "allow")
 	m.IncRequestsByCredential("cred1", "PUT", "allow")
 	m.IncRequestsByCredential("cred1", "DELETE", "deny-acl")
-	
+
 	m.IncRequestsByCredential("cred2", "GET", "allow")
 	m.IncRequestsByCredential("cred2", "PUT", "deny-auth")
-	
+
 	m.IncRequestsByCredential("unknown", "GET", "deny-auth")
 
 	// Create a mock admin API server that returns credentials
@@ -519,12 +519,12 @@ func TestCredentialActivityHandler(t *testing.T) {
 
 	// Parse response
 	var activities []struct {
-		Name         string `json:"name"`
-		Source       string `json:"source"`
-		TotalReqs    int64  `json:"total_requests"`
-		AllowCount   int64  `json:"allow_count"`
-		DenyAuth     int64  `json:"deny_auth_count"`
-		DenyACL      int64  `json:"deny_acl_count"`
+		Name       string `json:"name"`
+		Source     string `json:"source"`
+		TotalReqs  int64  `json:"total_requests"`
+		AllowCount int64  `json:"allow_count"`
+		DenyAuth   int64  `json:"deny_auth_count"`
+		DenyACL    int64  `json:"deny_acl_count"`
 	}
 
 	if err := json.NewDecoder(rec.Body).Decode(&activities); err != nil {
@@ -538,20 +538,21 @@ func TestCredentialActivityHandler(t *testing.T) {
 
 	// Find cred1 and verify counts
 	var cred1, cred2, unknown *struct {
-		Name         string `json:"name"`
-		Source       string `json:"source"`
-		TotalReqs    int64  `json:"total_requests"`
-		AllowCount   int64  `json:"allow_count"`
-		DenyAuth     int64  `json:"deny_auth_count"`
-		DenyACL      int64  `json:"deny_acl_count"`
+		Name       string `json:"name"`
+		Source     string `json:"source"`
+		TotalReqs  int64  `json:"total_requests"`
+		AllowCount int64  `json:"allow_count"`
+		DenyAuth   int64  `json:"deny_auth_count"`
+		DenyACL    int64  `json:"deny_acl_count"`
 	}
 
 	for i := range activities {
-		if activities[i].Name == "cred1" {
+		switch activities[i].Name {
+		case "cred1":
 			cred1 = &activities[i]
-		} else if activities[i].Name == "cred2" {
+		case "cred2":
 			cred2 = &activities[i]
-		} else if activities[i].Name == "unknown" {
+		case "unknown":
 			unknown = &activities[i]
 		}
 	}

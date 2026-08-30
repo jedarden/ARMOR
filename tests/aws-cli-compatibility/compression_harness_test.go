@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,13 +18,6 @@ import (
 	"github.com/jedarden/armor/internal/presign"
 	"github.com/jedarden/armor/internal/server"
 )
-
-// S3Error represents an S3 XML error response
-type S3Error struct {
-	XMLName xml.Name `xml:"Error"`
-	Code    string   `xml:"Code"`
-	Message string   `xml:"Message"`
-}
 
 const compressionHarnessBucket = "compression-harness-bucket"
 
@@ -235,15 +227,6 @@ func verifyByteIdenticalRange(t *testing.T, original, actual []byte, offset, len
 	}
 }
 
-// parseS3Error parses an S3 XML error response from an HTTP response body
-func parseS3Error(body []byte) (*S3Error, error) {
-	var errResp S3Error
-	if err := xml.Unmarshal(body, &errResp); err != nil {
-		return nil, fmt.Errorf("failed to parse S3 error XML: %w", err)
-	}
-	return &errResp, nil
-}
-
 // assertRangeRequestRejected verifies that a range request on a compressed object
 // is rejected. Compressed objects reject all range requests with either:
 // - 416 (RequestedRangeNotSatisfiable) for valid ranges that are rejected due to compression
@@ -383,11 +366,11 @@ func TestCompressionRangeRequestFailClosed(t *testing.T) {
 
 	// Test various range request patterns against compressed objects
 	rangePatterns := []string{
-		"bytes=0-0",           // First byte
-		"bytes=0-1023",        // First kilobyte
-		"bytes=512-1535",      // Middle range
-		"bytes=-512",          // Last 512 bytes
-		"bytes=1024-",         // From offset to end
+		"bytes=0-0",      // First byte
+		"bytes=0-1023",   // First kilobyte
+		"bytes=512-1535", // Middle range
+		"bytes=-512",     // Last 512 bytes
+		"bytes=1024-",    // From offset to end
 	}
 
 	for _, pattern := range rangePatterns {

@@ -63,12 +63,12 @@ func (m *MockB2Backend) Head(ctx context.Context, bucket, key string) (*backend.
 	}
 
 	return &backend.ObjectInfo{
-		Key:             key,
-		Size:            int64(len(obj.data)),
-		LastModified:    obj.lastModified,
+		Key:              key,
+		Size:             int64(len(obj.data)),
+		LastModified:     obj.lastModified,
 		IsARMOREncrypted: obj.isArmor,
-		Metadata:        obj.metadata,
-		ETag:            hex.EncodeToString(SHA256Hash(obj.data)),
+		Metadata:         obj.metadata,
+		ETag:             hex.EncodeToString(SHA256Hash(obj.data)),
 	}, nil
 }
 
@@ -78,12 +78,12 @@ func (m *MockB2Backend) Get(ctx context.Context, bucket, key string) (io.ReadClo
 		return nil, nil, os.ErrNotExist
 	}
 	info := &backend.ObjectInfo{
-		Key:             key,
-		Size:            int64(len(obj.data)),
-		LastModified:    obj.lastModified,
+		Key:              key,
+		Size:             int64(len(obj.data)),
+		LastModified:     obj.lastModified,
 		IsARMOREncrypted: obj.isArmor,
-		Metadata:        obj.metadata,
-		ETag:            hex.EncodeToString(SHA256Hash(obj.data)),
+		Metadata:         obj.metadata,
+		ETag:             hex.EncodeToString(SHA256Hash(obj.data)),
 	}
 	return io.NopCloser(bytes.NewReader(obj.data)), info, nil
 }
@@ -518,10 +518,6 @@ func createValidARMORObject(t *testing.T, mek []byte, key string, plaintext []by
 	}
 }
 
-func base64Encode(data []byte) string {
-	return strings.TrimRight(base64.StdEncoding.EncodeToString(data), "=")
-}
-
 // SHA256Hash computes SHA-256 hash of data
 func SHA256Hash(data []byte) []byte {
 	h := sha256.Sum256(data)
@@ -631,7 +627,7 @@ func TestVerifyV3CompressedBlock(t *testing.T) {
 	mock := NewMockB2Backend()
 
 	// Create a v3 object with compressed blocks
-	validData := createValidV3CompressedObject(t, mek, "v3-compressed", []byte("data that compresses well" + strings.Repeat("repeat", 1000)))
+	validData := createValidV3CompressedObject(t, mek, "v3-compressed", []byte("data that compresses well"+strings.Repeat("repeat", 1000)))
 	mock.PutTestObject(ctx, "test-bucket", "v3-compressed", validData.data, validData.metadata, true, time.Now())
 
 	// Verify the object
@@ -735,7 +731,7 @@ func createValidV3SinglePUTObject(t *testing.T, mek []byte, key string, plaintex
 
 	// Create metadata
 	metadata := map[string]string{
-		"x-amz-meta-armor-wrapped-dek":       base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-wrapped-dek":      base64.StdEncoding.EncodeToString(wrappedDEK),
 		"x-amz-meta-armor-version":          "3",
 		"x-amz-meta-armor-block-size":       fmt.Sprintf("%d", blockSize),
 		"x-amz-meta-armor-iv":               base64.StdEncoding.EncodeToString(iv),

@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"expvar"
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/metrics"
-	"expvar"
 )
 
 // AuthMiddleware handles authentication for dashboard routes.
@@ -92,14 +92,14 @@ func (a *AuthMiddleware) Wrap(h http.HandlerFunc) http.HandlerFunc {
 
 // Dashboard provides the web dashboard handlers.
 type Dashboard struct {
-	backend         backend.Backend
-	bucket          string
-	metrics         *metrics.Metrics
-	template        *template.Template
-	auth            *AuthMiddleware
-	dashboardCred   *DashboardCredential // Named credential for S3 operations
-	serverBaseURL   string                // Base URL for S3 endpoint proxying
-	presignEnabled  bool                  // Whether presign feature is enabled
+	backend        backend.Backend
+	bucket         string
+	metrics        *metrics.Metrics
+	template       *template.Template
+	auth           *AuthMiddleware
+	dashboardCred  *DashboardCredential // Named credential for S3 operations
+	serverBaseURL  string               // Base URL for S3 endpoint proxying
+	presignEnabled bool                 // Whether presign feature is enabled
 }
 
 // DashboardCredential holds credential info for S3 operations
@@ -260,9 +260,9 @@ type PageData struct {
 	ReplicationQueue   string
 	ReplicationDropped string
 	// Pagination fields
-	NextToken          string
-	ContinuationToken  string
-	IsTruncated        bool
+	NextToken         string
+	ContinuationToken string
+	IsTruncated       bool
 	// Dashboard credential for S3 operations
 	DashboardCredential string
 	// Presign feature flag
@@ -404,12 +404,12 @@ func (d *Dashboard) buildPageData(result *backend.ListResult, prefix string, con
 		NextToken:         result.NextToken,
 		ContinuationToken: continuationToken,
 		IsTruncated:       result.IsTruncated,
-			DashboardCredential: func() string {
-				if d.dashboardCred != nil {
-					return d.dashboardCred.Name
-				}
-				return ""
-			}(),
+		DashboardCredential: func() string {
+			if d.dashboardCred != nil {
+				return d.dashboardCred.Name
+			}
+			return ""
+		}(),
 		PresignEnabled: d.presignEnabled,
 	}
 }
@@ -549,8 +549,8 @@ func (d *Dashboard) credentialActivityHandlerImpl(adminClient *http.Client, admi
 		}
 
 		var creds []struct {
-			Name     string `json:"name"`
-			ACLs     []struct {
+			Name string `json:"name"`
+			ACLs []struct {
 				Prefix   string `json:"prefix"`
 				ReadOnly bool   `json:"read_only"`
 			} `json:"acls"`
@@ -565,12 +565,12 @@ func (d *Dashboard) credentialActivityHandlerImpl(adminClient *http.Client, admi
 
 		// Build credential activity data
 		type CredentialActivity struct {
-			Name        string `json:"name"`
-			Source      string `json:"source"`
-			TotalReqs   int64   `json:"total_requests"`
-			AllowCount  int64   `json:"allow_count"`
-			DenyAuth    int64   `json:"deny_auth_count"`
-			DenyACL     int64   `json:"deny_acl_count"`
+			Name       string `json:"name"`
+			Source     string `json:"source"`
+			TotalReqs  int64  `json:"total_requests"`
+			AllowCount int64  `json:"allow_count"`
+			DenyAuth   int64  `json:"deny_auth_count"`
+			DenyACL    int64  `json:"deny_acl_count"`
 		}
 
 		activities := make([]CredentialActivity, 0, len(creds))
@@ -837,12 +837,12 @@ type ListObject struct {
 
 // ListAPIResponse holds the JSON response for the list endpoint.
 type ListAPIResponse struct {
-	Prefix             string       `json:"prefix"`
-	Objects            []ListObject `json:"objects"`
-	CommonPrefixes     []string     `json:"common_prefixes"`
-	NextToken          string       `json:"next_token,omitempty"`
-	ContinuationToken  string       `json:"continuation_token,omitempty"`
-	IsTruncated        bool         `json:"is_truncated"`
+	Prefix            string       `json:"prefix"`
+	Objects           []ListObject `json:"objects"`
+	CommonPrefixes    []string     `json:"common_prefixes"`
+	NextToken         string       `json:"next_token,omitempty"`
+	ContinuationToken string       `json:"continuation_token,omitempty"`
+	IsTruncated       bool         `json:"is_truncated"`
 }
 
 // ListAPIHandler returns the JSON list handler.
@@ -907,212 +907,214 @@ func (d *Dashboard) listAPIHandlerImpl() http.HandlerFunc {
 	}
 }
 
-	// UploadHandler handles file uploads through the dashboard using the dashboard credential.
-	func (d *Dashboard) UploadHandler() http.HandlerFunc {
-		return d.uploadHandlerImpl()
-	}
+// UploadHandler handles file uploads through the dashboard using the dashboard credential.
+func (d *Dashboard) UploadHandler() http.HandlerFunc {
+	return d.uploadHandlerImpl()
+}
 
-	// UploadHandlerWithAuth returns the upload handler with dashboard authentication.
-	func (d *Dashboard) UploadHandlerWithAuth() http.HandlerFunc {
-		return d.auth.Wrap(d.uploadHandlerImpl())
-	}
+// UploadHandlerWithAuth returns the upload handler with dashboard authentication.
+func (d *Dashboard) UploadHandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(d.uploadHandlerImpl())
+}
 
-	// uploadHandlerImpl is the actual implementation of the upload handler.
-	func (d *Dashboard) uploadHandlerImpl() http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
+// uploadHandlerImpl is the actual implementation of the upload handler.
+func (d *Dashboard) uploadHandlerImpl() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 
-			// Check if dashboard credential is configured
-			if d.dashboardCred == nil {
-				http.Error(w, "Dashboard credential not configured - upload disabled", http.StatusForbidden)
-				return
-			}
+		// Check if dashboard credential is configured
+		if d.dashboardCred == nil {
+			http.Error(w, "Dashboard credential not configured - upload disabled", http.StatusForbidden)
+			return
+		}
 
-			// Parse multipart form (max 100MB)
-			if err := r.ParseMultipartForm(100 << 20); err != nil {
-				http.Error(w, fmt.Sprintf("Failed to parse form: %v", err), http.StatusBadRequest)
-				return
-			}
+		// Parse multipart form (max 100MB)
+		if err := r.ParseMultipartForm(100 << 20); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse form: %v", err), http.StatusBadRequest)
+			return
+		}
 
-			// Get file from form
-			file, header, err := r.FormFile("file")
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Failed to get file from form: %v", err), http.StatusBadRequest)
-				return
-			}
-			defer file.Close()
+		// Get file from form
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get file from form: %v", err), http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
 
-			// Get key from form (use filename if not provided)
-			key := r.FormValue("key")
-			if key == "" {
-				key = header.Filename
-			}
+		// Get key from form (use filename if not provided)
+		key := r.FormValue("key")
+		if key == "" {
+			key = header.Filename
+		}
 
-			// Get content type from form (use header if not provided)
-			contentType := r.FormValue("content_type")
-			if contentType == "" {
-				contentType = header.Header.Get("Content-Type")
-			}
+		// Get content type from form (use header if not provided)
+		contentType := r.FormValue("content_type")
+		if contentType == "" {
+			contentType = header.Header.Get("Content-Type")
+		}
 
-			// We need to use the backend's Put method directly
-			// This bypasses HTTP signing but uses the same backend logic
-			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-			defer cancel()
+		// We need to use the backend's Put method directly
+		// This bypasses HTTP signing but uses the same backend logic
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
 
-			// Read file content
-			fileData, err := io.ReadAll(file)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Failed to read file: %v", err), http.StatusInternalServerError)
-				return
-			}
+		// Read file content
+		fileData, err := io.ReadAll(file)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to read file: %v", err), http.StatusInternalServerError)
+			return
+		}
 
-			// Build metadata map from form values
-			metadata := make(map[string]string)
-			for k, v := range r.Form {
-				if strings.HasPrefix(k, "x-amz-meta-") {
-					if len(v) > 0 {
-						metadata[k] = v[0]
-					}
+		// Build metadata map from form values
+		metadata := make(map[string]string)
+		for k, v := range r.Form {
+			if strings.HasPrefix(k, "x-amz-meta-") {
+				if len(v) > 0 {
+					metadata[k] = v[0]
 				}
 			}
+		}
+		metadata["Content-Type"] = contentType
 
-			// Use backend.Put to upload
-			err = d.backend.Put(ctx, d.bucket, key, bytes.NewReader(fileData), int64(len(fileData)), metadata)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Upload failed: %v", err), http.StatusInternalServerError)
-				return
-			}
+		// Use backend.Put to upload
+		err = d.backend.Put(ctx, d.bucket, key, bytes.NewReader(fileData), int64(len(fileData)), metadata)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Upload failed: %v", err), http.StatusInternalServerError)
+			return
+		}
 
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"status":  "success",
-				"key":     key,
-				"size":    len(fileData),
-				"message": "File uploaded successfully",
-			})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "success",
+			"key":     key,
+			"size":    len(fileData),
+			"message": "File uploaded successfully",
+		})
+	}
+}
+
+// DownloadHandler handles file downloads through the dashboard using the dashboard credential.
+func (d *Dashboard) DownloadHandler() http.HandlerFunc {
+	return d.downloadHandlerImpl()
+}
+
+// DownloadHandlerWithAuth returns the download handler with dashboard authentication.
+func (d *Dashboard) DownloadHandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(d.downloadHandlerImpl())
+}
+
+// downloadHandlerImpl is the actual implementation of the download handler.
+func (d *Dashboard) downloadHandlerImpl() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Check if dashboard credential is configured
+		if d.dashboardCred == nil {
+			http.Error(w, "Dashboard credential not configured - download disabled", http.StatusForbidden)
+			return
+		}
+
+		// Get key from query
+		key := r.URL.Query().Get("key")
+		if key == "" {
+			http.Error(w, "key parameter required", http.StatusBadRequest)
+			return
+		}
+
+		// Create S3 GET request signed with dashboard credential
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		// Use backend.Get to download
+		reader, info, err := d.backend.Get(ctx, d.bucket, key)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusNotFound)
+			return
+		}
+		defer reader.Close()
+
+		// Set headers for download
+		if info.ContentType != "" {
+			w.Header().Set("Content-Type", info.ContentType)
+		} else {
+			w.Header().Set("Content-Type", "application/octet-stream")
+		}
+		w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", key))
+
+		// Copy file to response
+		_, err = io.Copy(w, reader)
+		if err != nil {
+			// Too late to send error code, headers already sent
+			return
 		}
 	}
+}
 
-	// DownloadHandler handles file downloads through the dashboard using the dashboard credential.
-	func (d *Dashboard) DownloadHandler() http.HandlerFunc {
-		return d.downloadHandlerImpl()
-	}
+// DeleteHandler handles file deletion through the dashboard using the dashboard credential.
+func (d *Dashboard) DeleteHandler() http.HandlerFunc {
+	return d.deleteHandlerImpl()
+}
 
-	// DownloadHandlerWithAuth returns the download handler with dashboard authentication.
-	func (d *Dashboard) DownloadHandlerWithAuth() http.HandlerFunc {
-		return d.auth.Wrap(d.downloadHandlerImpl())
-	}
+// DeleteHandlerWithAuth returns the delete handler with dashboard authentication.
+func (d *Dashboard) DeleteHandlerWithAuth() http.HandlerFunc {
+	return d.auth.Wrap(d.deleteHandlerImpl())
+}
 
-	// downloadHandlerImpl is the actual implementation of the download handler.
-	func (d *Dashboard) downloadHandlerImpl() http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-
-			// Check if dashboard credential is configured
-			if d.dashboardCred == nil {
-				http.Error(w, "Dashboard credential not configured - download disabled", http.StatusForbidden)
-				return
-			}
-
-			// Get key from query
-			key := r.URL.Query().Get("key")
-			if key == "" {
-				http.Error(w, "key parameter required", http.StatusBadRequest)
-				return
-			}
-
-			// Create S3 GET request signed with dashboard credential
-			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-			defer cancel()
-
-			// Use backend.Get to download
-			reader, info, err := d.backend.Get(ctx, d.bucket, key)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusNotFound)
-				return
-			}
-			defer reader.Close()
-
-			// Set headers for download
-			if info.ContentType != "" {
-				w.Header().Set("Content-Type", info.ContentType)
-			} else {
-				w.Header().Set("Content-Type", "application/octet-stream")
-			}
-			w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
-			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", key))
-
-			// Copy file to response
-			_, err = io.Copy(w, reader)
-			if err != nil {
-				// Too late to send error code, headers already sent
-				return
-			}
+// deleteHandlerImpl is the actual implementation of the delete handler.
+func (d *Dashboard) deleteHandlerImpl() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
-	}
 
-	// DeleteHandler handles file deletion through the dashboard using the dashboard credential.
-	func (d *Dashboard) DeleteHandler() http.HandlerFunc {
-		return d.deleteHandlerImpl()
-	}
-
-	// DeleteHandlerWithAuth returns the delete handler with dashboard authentication.
-	func (d *Dashboard) DeleteHandlerWithAuth() http.HandlerFunc {
-		return d.auth.Wrap(d.deleteHandlerImpl())
-	}
-
-	// deleteHandlerImpl is the actual implementation of the delete handler.
-	func (d *Dashboard) deleteHandlerImpl() http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodDelete && r.Method != http.MethodPost {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-
-			// Check if dashboard credential is configured
-			if d.dashboardCred == nil {
-				http.Error(w, "Dashboard credential not configured - delete disabled", http.StatusForbidden)
-				return
-			}
-
-			// Get key from query (for DELETE) or form (for POST)
-			var key string
-			if r.Method == http.MethodDelete {
-				key = r.URL.Query().Get("key")
-			} else {
-				key = r.FormValue("key")
-			}
-
-			if key == "" {
-				http.Error(w, "key parameter required", http.StatusBadRequest)
-				return
-			}
-
-			// Create S3 DELETE request signed with dashboard credential
-			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-			defer cancel()
-
-			// Use backend.Delete to delete
-			err := d.backend.Delete(ctx, d.bucket, key)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Delete failed: %v", err), http.StatusInternalServerError)
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"status":  "success",
-				"key":     key,
-				"message": "File deleted successfully",
-			})
+		// Check if dashboard credential is configured
+		if d.dashboardCred == nil {
+			http.Error(w, "Dashboard credential not configured - delete disabled", http.StatusForbidden)
+			return
 		}
+
+		// Get key from query (for DELETE) or form (for POST)
+		var key string
+		if r.Method == http.MethodDelete {
+			key = r.URL.Query().Get("key")
+		} else {
+			key = r.FormValue("key")
+		}
+
+		if key == "" {
+			http.Error(w, "key parameter required", http.StatusBadRequest)
+			return
+		}
+
+		// Create S3 DELETE request signed with dashboard credential
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		// Use backend.Delete to delete
+		err := d.backend.Delete(ctx, d.bucket, key)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Delete failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "success",
+			"key":     key,
+			"message": "File deleted successfully",
+		})
 	}
+}
+
 // PresignHandler handles presign requests through the dashboard.
 // It forwards the request to the admin presign endpoint using dashboard authentication.
 func (d *Dashboard) PresignHandler(adminClient *http.Client, adminURL string) http.HandlerFunc {
@@ -1212,6 +1214,7 @@ func (d *Dashboard) presignHandlerImpl(adminClient *http.Client, adminURL string
 		io.Copy(w, resp.Body)
 	}
 }
+
 // Helper functions
 
 func parseExpvarInt(s string) int64 {

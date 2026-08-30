@@ -126,11 +126,6 @@ func TestMigrateServerInteraction(t *testing.T) {
 					t.Errorf("expected token test-admin-token, got %s", auth)
 				}
 
-				// Check query parameters
-				if r.URL.Query().Get("dry_run") != "" {
-					// dry-run was set
-				}
-
 				// Return success response
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
@@ -234,7 +229,6 @@ func TestMigrateServerInteraction(t *testing.T) {
 			for i, f := range tt.flags {
 				if f == "-admin-url" && i+1 < len(tt.flags) && tt.flags[i+1] == "" {
 					flags = append(flags, "-admin-url", server.URL)
-					i++ // skip next element
 				} else if i > 0 && tt.flags[i-1] == "-admin-url" && tt.flags[i-1] != "" {
 					flags = append(flags, server.URL)
 				} else {
@@ -272,9 +266,7 @@ func TestMigrateServerInteraction(t *testing.T) {
 			os.Args = append([]string{"armor", "migrate"}, flags...)
 			func() {
 				defer func() {
-					if r := recover(); r != nil {
-						// Expected exit via panic
-					}
+					recover() // Expected exit via panic
 				}()
 				migrate()
 			}()
@@ -438,9 +430,7 @@ func TestMigrateWatchMode(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				// Expected exit via panic
-			}
+			recover() // Expected exit via panic
 			close(done)
 		}()
 		migrate()
@@ -567,8 +557,7 @@ func TestMigrateWatchModeNoFailures(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-			}
+			recover()
 			close(done)
 		}()
 		migrate()

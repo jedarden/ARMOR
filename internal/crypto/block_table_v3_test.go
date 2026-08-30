@@ -202,9 +202,9 @@ func TestBlockTable_CompressedAndMixedEntries(t *testing.T) {
 	hmac2[0] = 2
 	hmac3[0] = 3
 
-	table.AddEntry(NewBlockTableEntry(hmac1, 65536, false))    // Raw, full block
-	table.AddEntry(NewBlockTableEntry(hmac2, 32768, true))     // Compressed
-	table.AddEntry(NewBlockTableEntry(hmac3, 16384, false))    // Raw, partial block
+	table.AddEntry(NewBlockTableEntry(hmac1, 65536, false)) // Raw, full block
+	table.AddEntry(NewBlockTableEntry(hmac2, 32768, true))  // Compressed
+	table.AddEntry(NewBlockTableEntry(hmac3, 16384, false)) // Raw, partial block
 
 	encoded, err := table.Encode()
 	if err != nil {
@@ -337,7 +337,7 @@ func TestBlockTable_PrefixSums(t *testing.T) {
 	}
 
 	// Test BlockRange
-	for i, _ := range lengths {
+	for i := range lengths {
 		var wantOffset uint32
 		for j := 0; j < i; j++ {
 			wantOffset += lengths[j]
@@ -412,7 +412,7 @@ func TestBlockTableEntry_RandomRoundTrip(t *testing.T) {
 		}
 
 		// Random length between 1 and 65536
-		length := uint32(1 + (i*65535/99))
+		length := uint32(1 + (i * 65535 / 99))
 		compressed := (i % 2) == 0
 
 		entry := NewBlockTableEntry(hmac, length, compressed)
@@ -459,7 +459,7 @@ func TestBlockTable_RoundTripWithTable(t *testing.T) {
 		}
 
 		length := uint32(4096 * (i + 1)) // Varying sizes
-		compressed := (i % 3) == 0      // Every third entry compressed
+		compressed := (i % 3) == 0       // Every third entry compressed
 
 		entry := NewBlockTableEntry(hmac, length, compressed)
 		if err := originalTable.AddEntry(entry); err != nil {

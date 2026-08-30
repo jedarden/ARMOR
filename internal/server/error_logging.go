@@ -31,14 +31,14 @@ func logS3Error(logger *logging.Logger, r *http.Request, code, message string, s
 
 	// Build log fields
 	fields := map[string]interface{}{
-		"event":       "s3_error",
-		"error_code":  code,
-		"operation":   operation,
-		"bucket":      bucket,
-		"key":         key,
-		"request_id":  requestID,
-		"status":      statusCode,
-		"message":     message,
+		"event":      "s3_error",
+		"error_code": code,
+		"operation":  operation,
+		"bucket":     bucket,
+		"key":        key,
+		"request_id": requestID,
+		"status":     statusCode,
+		"message":    message,
 	}
 
 	// Add access_key_id only when present (no empty fields)
@@ -114,7 +114,7 @@ func index(s, sep string, start int) int {
 // FormatS3ErrorLogLine formats an S3 error log line for testing.
 // This returns the expected log message format for assertions.
 func FormatS3ErrorLogLine(event, errorCode, operation, bucket, key, accessKeyID, requestID string, status int, message string) string {
-	baseMsg := fmt.Sprintf("S3 operation failed")
+	baseMsg := "S3 operation failed"
 
 	// Build expected field representation
 	fields := fmt.Sprintf("event=%s error_code=%s operation=%s bucket=%s key=%s request_id=%s status=%d message=%s",

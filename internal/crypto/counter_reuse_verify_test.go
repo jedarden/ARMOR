@@ -27,7 +27,7 @@ func TestProveCounterReuseDirectly(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		blockSize := DefaultBlockSize // 65536 bytes
+		blockSize := DefaultBlockSize            // 65536 bytes
 		aesBlocksPerArmorBlock := blockSize / 16 // 4096 AES blocks
 
 		// Create AES cipher
@@ -101,7 +101,7 @@ func TestProveCounterReuseDirectly(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		blockSize := DefaultBlockSize // 65536 bytes
+		blockSize := DefaultBlockSize            // 65536 bytes
 		aesBlocksPerArmorBlock := blockSize / 16 // 4096 AES blocks
 
 		// Create AES cipher
@@ -206,12 +206,5 @@ func incrementCounter(counter []byte) {
 			break // No carry, done
 		}
 		// Carry to next byte
-	}
-}
-
-// incrementCounterN increments a counter n times.
-func incrementCounterN(counter []byte, n int) {
-	for i := 0; i < n; i++ {
-		incrementCounter(counter)
 	}
 }
