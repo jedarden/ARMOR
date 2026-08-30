@@ -2,8 +2,6 @@ version: "2"
 
 run:
   go: "1.25"
-  skip-dirs:
-    - internal/server/handlers
 
 linters:
   default: none
@@ -12,3 +10,11 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+  # golangci-lint v2 syntax. The previous `run.skip-dirs` key is v1-only and is
+  # silently ignored by v2 (`config verify` rejects it), which is why every
+  # "fix(lint)" VERSION bump on 2026-08-29/30 still failed on the same 9
+  # findings in internal/server/handlers. Those findings remain to be fixed;
+  # this restores the exclusion that was intended.
+  exclusions:
+    paths:
+      - internal/server/handlers
