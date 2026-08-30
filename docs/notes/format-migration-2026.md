@@ -143,6 +143,122 @@ This is expected: secret creation requires operator-level credentials beyond aut
 
 **Not started** - awaiting iad-ci completion and blocker resolution
 
+## ord-devimprint Bucket Migration Status
+
+**Status:** BLOCKED - Admin token not provisioned (2026-08-30)
+
+### Investigation Summary (2026-08-30)
+
+Assessment performed for bead armor-3c278621:
+
+**BLOCKER: Admin Token Not Provisioned - ACTIVE**
+- ❌ OpenBao path `secret/rs-manager/ord-devimprint/armor/admin`: **Returns 403 permission denied** (path does not exist or no read access)
+- ❌ No admin token available to authenticate to `/admin/format/migrate` endpoint
+- ✅ ExternalSecret configured to sync `admin-token` from OpenBao path (`rs-manager/ord-devimprint/armor/admin`, property `admin_token`)
+- ✅ ARMOR deployment configured to read `ARMOR_ADMIN_TOKEN` from `armor-credentials` Secret field `admin-token` (optional: true)
+
+**Migrate Endpoint Status - VERIFIED**
+- ✅ **Deployed image:** `ronaldraygun/armor:0.1.1913` (confirmed via kubectl)
+- ✅ **Migrate endpoint exists:** Returns "Unauthorized" when accessed without token (proves endpoint is functional)
+- ✅ **Image version includes migrate capability:** 0.1.1913 proven to have `/admin/format/migrate` endpoint from iad-ci investigation
+
+**Kubernetes Access - VERIFIED**
+- ✅ **Credential-free proxy:** `http://traefik-ord-devimprint:8001` working
+- ✅ **Kubeconfig:** `/home/coding/.kube/ord-devimprint.kubeconfig` valid
+- ✅ **Cluster access:** Can query deployments, pods, and ExternalSecrets
+- ✅ **Running pod:** armor-6fd8544656-bxlbh (healthy, 0.1.1913)
+
+### Why Agent Cannot Proceed
+
+1. **Admin token not provisioned in OpenBao** - Cannot authenticate to `/admin/format/migrate` endpoint
+2. **Read-only RBAC blocks secret verification** - Cannot directly verify if `admin-token` field exists in Kubernetes `armor-credentials` Secret
+3. **OpenBao read permission denied** - Agent's token cannot read from `secret/rs-manager/ord-devimprint/armor/admin` path (403 error)
+
+### Required Operator Actions
+
+1. **Provision admin token in OpenBao** at `secret/rs-manager/ord-devimprint/armor/admin`:
+
+   ```bash
+   # Generate a secure random token
+   export BAO_ADDR=http://traefik-rs-manager:8200
+   # Authenticate with rs-manager operator credentials
+   bao kv put secret/rs-manager/ord-devimprint/armor/admin admin_token="$(openssl rand -hex 32)"
+   ```
+
+2. **Verify token creation**:
+
+   ```bash
+   bao kv get -field=admin_token secret/rs-manager/ord-devimprint/armor/admin
+   # Should return the generated token value
+   ```
+
+3. **Verify ExternalSecret sync** (should auto-sync within 1h refresh interval):
+
+   ```bash
+   kubectl --server=http://traefik-ord-devimprint:8001 \
+     get externalsecret -n devimprint armor-credentials
+   # STATUS should show "SecretSynced"
+   ```
+
+4. **Trigger immediate sync** (optional, if auto-sync hasn't occurred):
+
+   ```bash
+   kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig \
+     annotate externalsecret armor-credentials -n devimprint \
+     force-sync=$(date +%s) --overwrite
+   ```
+
+5. **Restart ARMOR deployment** to pick up new environment variable:
+
+   ```bash
+   kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig \
+     rollout restart deployment armor -n devimprint
+   ```
+
+### Migration Steps (Once Token is Provisioned)
+
+1. **Start kubectl proxy**:
+
+   ```bash
+   kubectl --kubeconfig=/home/coding/.kube/ord-devimprint.kubeconfig proxy --port=8001 &
+   export ARMOR_ADMIN_TOKEN=$(bao kv get -field=admin_token secret/rs-manager/ord-devimprint/armor/admin)
+   ```
+
+2. **Dry-run migration** (record counts):
+
+   ```bash
+   curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     "http://127.0.0.1:8001/api/v1/namespaces/devimprint/services/armor:9001/proxy/admin/format/migrate?dry_run=true" | jq .
+   ```
+
+3. **Execute migration**:
+
+   ```bash
+   curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     "http://127.0.0.1:8001/api/v1/namespaces/devimprint/services/armor:9001/proxy/admin/format/migrate?include=v1" | jq .
+   ```
+
+4. **Monitor progress**:
+
+   ```bash
+   watch -n 5 'curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     "http://127.0.0.1:8001/api/v1/namespaces/devimprint/services/armor:9001/proxy/admin/format/migrate" | jq .'
+   ```
+
+5. **Verify completion**:
+   - `done == candidates`
+   - `failed` is empty or documented with follow-up beads
+   - Final dry-run returns `candidates: 0`
+   - Spot-check 3 objects for `x-amz-meta-armor-version: 2` (via B2 API with bucket credentials)
+
+### Expected Results (To be Recorded)
+
+- **Candidates:** Number of v1 objects requiring migration
+- **Migrated:** Number of successfully migrated objects
+- **Failed:** List of any objects that failed migration (with follow-up beads created)
+- **Timestamps:** Start and end times
+- **Version verification:** B2 HeadObject showing `x-amz-meta-armor-version: 2` on 3 sampled objects
+
 ## iad-kalshi Bucket Migration Status
 
 **Status:** BLOCKED - Two critical blockers remain (2026-08-30 15:05 UTC)
