@@ -2,25 +2,41 @@
 
 ## iad-ci Bucket Migration Status
 
-**Status:** BLOCKED - Requires operator action to provision admin token in OpenBao
+**Status:** BLOCKED - Two separate blockers: (1) No migrate-capable image deployed, (2) Admin token not provisioned
 
-### Investigation Summary (2026-08-29)
+### Investigation Summary (2026-08-30)
 
-Agent attempted to authenticate to OpenBao and provision the required admin token:
+Assessment performed on 2026-08-30 for bead armor-16071d6e:
+
+**BLOCKER #1: No migrate-capable image deployed**
+- ❌ Running pod: `ronaldraygun/armor:0.1.1913` (does NOT have `/admin/format/migrate` endpoint)
+- ❌ Attempted rollout: `ronaldraygun/armor:0.1.1934` - ImagePullBackOff (image does not exist)
+- ✅ Migrate endpoint introduced in v0.1.1916/1917 (git history confirms)
+- ❌ No ARMOR build workflows in argo-workflows namespace
+- ✅ Current VERSION in repo: 0.1.1937 (includes migrate endpoint in code)
+- ✅ **Blocking bead created:** armor-0084e553 "Build and deploy migrate-capable ARMOR image (0.1.1937+) to iad-ci"
+
+**BLOCKER #2: Admin token not provisioned**
 - ✅ Successfully authenticated to OpenBao via AppRole (`~/.config/openbao/rs-manager/role_id` + `secret_id`)
 - ✅ Received valid token with policies `["default", "ex44"]`
 - ❌ Token lacks write permission to `secret/rs-manager/iad-ci/armor/admin` (403 permission denied)
 - ❌ Policy read also returns 403 (cannot inspect ex44 policy scope)
 - ❌ Admin token does not exist in OpenBao or Kubernetes armor-secrets Secret
 
-**Conclusion:** Creating the admin token requires operator-level OpenBao permissions beyond the agent's ex44 policy scope.
+**Conclusion:** Two blockers must be resolved:
+1. Build and deploy migrate-capable ARMOR image (bead armor-0084e553)
+2. Provision admin token via operator action (requires OpenBao write permissions)
 
-### Current State
-- ARMOR deployment version: `ronaldraygun/armor:0.1.1933` (includes `/admin/format/migrate` endpoint)
-- Admin API endpoint: Deployed and accessible (requires ARMOR_ADMIN_TOKEN environment variable)
+### Current State (2026-08-30)
+- ARMOR deployment version: `ronaldraygun/armor:0.1.1913` (❌ does NOT include `/admin/format/migrate` endpoint)
+- Attempted rollout: `ronaldraygun/armor:0.1.1934` (❌ ImagePullBackOff - image does not exist)
+- Required minimum version: `ronaldraygun/armor:0.1.1916` (first version with migrate endpoint)
+- Current VERSION in repo: 0.1.1937 (✅ includes migrate endpoint in code)
 - ExternalSecret configuration: Already set up to sync `admin-token` from OpenBao
 - Admin token in OpenBao: **Does NOT exist** (confirmed via authenticated API check)
 - Admin token in Kubernetes: **Does NOT exist** (confirmed via kubectl)
+- Blocking bead: armor-0084e553 (assigned to coned agent)
+- Migration bead: armor-16071d6e (Open, blocked by armor-0084e553)
 
 ### Blocker Details
 
