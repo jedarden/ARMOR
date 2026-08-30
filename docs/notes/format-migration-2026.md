@@ -4,7 +4,7 @@
 
 **Status:** BLOCKED - Two separate blockers: (1) No migrate-capable image deployed, (2) Admin token not provisioned
 
-### Investigation Summary (2026-08-30)
+### Investigation Summary (2026-08-30, Updated 15:35 UTC)
 
 Assessment performed on 2026-08-30 for bead armor-16071d6e:
 
@@ -23,9 +23,9 @@ Assessment performed on 2026-08-30 for bead armor-16071d6e:
 - ❌ Policy read also returns 403 (cannot inspect ex44 policy scope)
 - ❌ Admin token does not exist in OpenBao or Kubernetes armor-secrets Secret
 
-**Conclusion:** Two blockers must be resolved:
-1. Build and deploy migrate-capable ARMOR image (bead armor-0084e553)
-2. Provision admin token via operator action (requires OpenBao write permissions)
+**Conclusion (Updated 15:35 UTC):** Two blockers must be resolved:
+1. Build and deploy migrate-capable ARMOR image - blocking bead armor-0084e553 was marked closed but CI builds are still failing (OOMKilled during tests). Currently deployed image 0.1.1913 lacks the migrate endpoint.
+2. Provision admin token via operator action - requires OpenBao write permissions to create `secret/rs-manager/iad-ci/armor/admin` with the generated token value.
 
 ### Current State (2026-08-30)
 - ARMOR deployment version: `ronaldraygun/armor:0.1.1913` (❌ does NOT include `/admin/format/migrate` endpoint)
