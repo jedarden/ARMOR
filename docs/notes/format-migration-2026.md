@@ -145,40 +145,92 @@ This is expected: secret creation requires operator-level credentials beyond aut
 
 ## iad-kalshi Bucket Migration Status
 
-**Status:** BLOCKED - Cluster access unavailable
+**Status:** BLOCKED - Two critical blockers remain (2026-08-30 15:05 UTC)
 
 ### Investigation Summary (2026-08-30)
 
 Assessment performed for bead armor-5b2b7eb3:
 
 **BLOCKER #1: Cluster Access - ACTIVE**
-- ❌ Credential-free proxy (`http://traefik-iad-kalshi:8001`): Connection refused
-- ❌ Kubeconfig access: Both iad-kalshi.kubeconfig and iad-kalshi-admin.kubeconfig expired (credentials required)
-- ❌ Cannot verify deployed ARMOR version or pod status
+- ❌ Credential-free proxy (`http://traefik-iad-kalshi:8001`): Connection refused (confirmed 2026-08-30 15:03 UTC)
+- ❌ Kubeconfig access: Both `iad-kalshi.kubeconfig` and `iad-kalshi-admin.kubeconfig` return "credentials required" (expired)
+- ❌ Cannot verify deployed ARMOR version, pod status, or running state
 
-**BLOCKER #2: Admin Token Status - UNKNOWN**
-- ❓ OpenBao path `secret/rs-manager/iad-kalshi/armor/admin`: Returns 403 (path may not exist or permission denied)
-- ❓ Cannot verify if admin token has been provisioned
-- ✅ ExternalSecret configured to sync `admin-token` from OpenBao path
+**BLOCKER #2: Admin Token Not Provisioned - ACTIVE**
+- ❌ OpenBao path `secret/rs-manager/iad-kalshi/armor/admin`: **Path does not exist** (confirmed via `bao-as rs-manager` query 2026-08-30 15:03 UTC)
+- ❌ No admin token available to authenticate to `/admin/format/migrate` endpoint
+- ✅ ExternalSecret configured to sync `admin-token` from OpenBao path (`rs-manager/iad-kalshi/armor/admin`, property `admin_token`)
 
 **Configured Version:** `ronaldraygun/armor:0.1.1913` (from declarative-config)
-- According to iad-ci investigation, 0.1.1913 DOES include `/admin/format/migrate` endpoint
-- If deployed version matches config, migrate endpoint should be available
+- ✅ According to iad-ci investigation, 0.1.1913 **DOES include** `/admin/format/migrate` endpoint
+- ❓ Cannot verify if deployed version matches config (no cluster access)
 
 ### Why Agent Cannot Proceed
-1. No working kubectl access to iad-kalshi cluster
-2. Cannot retrieve admin token from OpenBao (403 on read - likely path doesn't exist)
-3. Cannot verify current deployment state
+1. **No working kubectl access** to iad-kalshi cluster (both proxy and kubeconfig failed)
+2. **Admin token not provisioned** in OpenBao (path confirmed non-existent)
+3. **Cannot verify deployment state** or attempt migration without cluster access and authentication
 
 ### Required Operator Actions
-1. **Refresh iad-kalshi kubeconfig credentials**
-2. **Verify admin token provisioned** at `secret/rs-manager/iad-kalshi/armor/admin`
-3. **Restart ARMOR deployment** if token was recently added
 
-### Migration Steps (Once Access Restored)
-Same as iad-ci:
-1. Dry-run: `POST /admin/format/migrate?dry_run=true`
-2. Execute: `POST /admin/format/migrate?include=v1`
-3. Monitor: `GET /admin/format/migrate` until `done == candidates`
-4. Verify: Final dry-run returns `candidates: 0`, spot-check `x-amz-meta-armor-version: 2` on 3 objects
+1. **Refresh iad-kalshi kubeconfig credentials**
+   ```bash
+   # Requires operator access to refresh the kubeconfig files
+   # Target: /home/coding/.kube/iad-kalshi.kubeconfig and iad-kalshi-admin.kubeconfig
+   ```
+
+2. **Provision admin token in OpenBao** at `secret/rs-manager/iad-kalshi/armor/admin`:
+   ```bash
+   bao-as rs-manager bao kv put secret/rs-manager/iad-kalshi/armor/admin admin_token="<generated-token>"
+   ```
+
+3. **Verify ExternalSecret sync** after token provisioned:
+   ```bash
+   kubectl --kubeconfig=<fresh-kubeconfig> get secret -n armor armor-secrets \
+     -o jsonpath='{.data.admin-token}' | wc -l
+   # Should return 1 (field exists)
+   ```
+
+4. **Restart ARMOR deployment** to pick up new environment variable:
+   ```bash
+   kubectl --kubeconfig=<fresh-kubeconfig> rollout restart deployment armor -n armor
+   ```
+
+### Migration Steps (Once Access Restored and Token Provisioned)
+
+1. **Start kubectl proxy**:
+   ```bash
+   kubectl --kubeconfig=<fresh-kubeconfig> proxy --port=8001 &
+   ```
+
+2. **Dry-run migration** (record counts):
+   ```bash
+   curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     "http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/format/migrate?dry_run=true" | jq .
+   ```
+
+3. **Execute migration**:
+   ```bash
+   curl -s -X POST -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     "http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/format/migrate?include=v1" | jq .
+   ```
+
+4. **Monitor progress**:
+   ```bash
+   watch -n 5 'curl -s -H "Authorization: Bearer $ARMOR_ADMIN_TOKEN" \
+     "http://127.0.0.1:8001/api/v1/namespaces/armor/services/armor:9001/proxy/admin/format/migrate" | jq .'
+   ```
+
+5. **Verify completion**:
+   - `done == candidates`
+   - `failed` is empty or documented with follow-up beads
+   - Final dry-run returns `candidates: 0`
+   - Spot-check 3 objects for `x-amz-meta-armor-version: 2` (via B2 API with bucket credentials)
+
+### Expected Results (To be Recorded)
+
+- **Candidates:** Number of v1 objects requiring migration
+- **Migrated:** Number of successfully migrated objects
+- **Failed:** List of any objects that failed migration (with follow-up beads created)
+- **Timestamps:** Start and end times
+- **Version verification:** B2 HeadObject showing `x-amz-meta-armor-version: 2` on 3 sampled objects
 
