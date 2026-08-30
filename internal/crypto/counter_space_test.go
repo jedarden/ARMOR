@@ -10,8 +10,9 @@ import (
 //
 // Version 2 stores blockIndex * (blockSize / 16) in a uint32.
 // At 64 KiB blocks (blockSize/16 = 4096), this wraps at:
-//   2^32 / 4096 = 2^20 blocks = 1,048,576 blocks
-//   1,048,576 * 65536 bytes = 68,719,476,736 bytes = 64 GiB
+//
+//	2^32 / 4096 = 2^20 blocks = 1,048,576 blocks
+//	1,048,576 * 65536 bytes = 68,719,476,736 bytes = 64 GiB
 func TestCounterSpaceValidation(t *testing.T) {
 	dek, err := GenerateDEK()
 	if err != nil {
@@ -31,12 +32,18 @@ func TestCounterSpaceValidation(t *testing.T) {
 	// So: blockCount < 2^32 / aesBlocksPerArmorBlock
 	maxBlockCount := (1 << 32) / aesBlocksPerArmorBlock // 2^20 = 1,048,576
 
+	// These subtests exercise the same finalCounterValue math as
+	// materializing (maxBlockCount-1)/maxBlockCount full blocks (up to 64
+	// GiB) would, but via EncryptWithStartingCounter's startBlockIndex
+	// parameter and a single-block plaintext: checkCounterSpaceWithStart
+	// computes finalCounterValue = (startBlockIndex+blockCount)*aesBlocksPerArmorBlock
+	// purely from the block count/index, before any encryption happens, so
+	// a 1-block plaintext at startBlockIndex=N-1 reaches the identical
+	// finalCounterValue as N full blocks starting from 0.
 	t.Run("encryption at boundary should succeed", func(t *testing.T) {
-		// Test with blockCount = maxBlockCount - 1 (should succeed)
-		// This gives us counter = (maxBlockCount - 1) * aesBlocksPerArmorBlock
-		// which is just under 2^32
-		plaintextSize := int64(maxBlockCount-1) * int64(blockSize)
-		plaintext := make([]byte, plaintextSize)
+		// startBlockIndex+1 = maxBlockCount-1, so finalCounterValue is the
+		// same as (maxBlockCount-1)*aesBlocksPerArmorBlock -- just under 2^32
+		plaintext := make([]byte, blockSize)
 		rand.Read(plaintext)
 
 		encryptor, err := NewEncryptorWithVersion(dek, iv, blockSize, Version2)
@@ -45,18 +52,16 @@ func TestCounterSpaceValidation(t *testing.T) {
 		}
 
 		// This should succeed (counter space not exceeded)
-		_, _, err = encryptor.Encrypt(plaintext)
+		_, _, err = encryptor.EncryptWithStartingCounter(plaintext, uint32(maxBlockCount-2))
 		if err != nil {
 			t.Errorf("Encrypt with blockCount=%d should succeed but got error: %v", maxBlockCount-1, err)
 		}
 	})
 
 	t.Run("encryption at overflow boundary should fail", func(t *testing.T) {
-		// Test with blockCount = maxBlockCount (should fail)
-		// This gives us counter = maxBlockCount * aesBlocksPerArmorBlock
-		// which equals 2^32 and would wrap
-		plaintextSize := int64(maxBlockCount) * int64(blockSize)
-		plaintext := make([]byte, plaintextSize)
+		// startBlockIndex+1 = maxBlockCount, so finalCounterValue equals
+		// 2^32 exactly and would wrap
+		plaintext := make([]byte, blockSize)
 		rand.Read(plaintext)
 
 		encryptor, err := NewEncryptorWithVersion(dek, iv, blockSize, Version2)
@@ -65,7 +70,7 @@ func TestCounterSpaceValidation(t *testing.T) {
 		}
 
 		// This should fail (counter space exceeded)
-		_, _, err = encryptor.Encrypt(plaintext)
+		_, _, err = encryptor.EncryptWithStartingCounter(plaintext, uint32(maxBlockCount-1))
 		if err == nil {
 			t.Errorf("Encrypt with blockCount=%d should fail but succeeded", maxBlockCount)
 		}
@@ -95,8 +100,7 @@ func TestCounterSpaceValidation(t *testing.T) {
 	t.Run("Version1 should not have counter space limit", func(t *testing.T) {
 		// Version1 doesn't use the same counter derivation, so it shouldn't
 		// trigger this validation (even though it's insecure and shouldn't be used)
-		plaintextSize := int64(maxBlockCount) * int64(blockSize)
-		plaintext := make([]byte, plaintextSize)
+		plaintext := make([]byte, blockSize)
 		rand.Read(plaintext)
 
 		encryptor, err := NewEncryptorWithVersion(dek, iv, blockSize, Version1)
@@ -106,7 +110,7 @@ func TestCounterSpaceValidation(t *testing.T) {
 
 		// Version1 should not trigger the counter space check
 		// (though it's insecure for other reasons)
-		_, _, err = encryptor.Encrypt(plaintext)
+		_, _, err = encryptor.EncryptWithStartingCounter(plaintext, uint32(maxBlockCount-1))
 		// We don't assert success here because Version1 has other issues,
 		// but it should NOT fail with the counter space error
 		if err != nil && err.Error() == "object exceeds the Version 2 counter space; envelope v3 removes this limit" {
@@ -184,9 +188,9 @@ func TestCounterSpaceValidationDifferentBlockSizes(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name          string
-		blockSize     int
-		maxBlocks     int
+		name      string
+		blockSize int
+		maxBlocks int
 	}{
 		{
 			name:      "4 KiB blocks",
@@ -207,25 +211,19 @@ func TestCounterSpaceValidationDifferentBlockSizes(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Test at the boundary (should fail)
-			plaintextSize := int64(tc.maxBlocks) * int64(tc.blockSize)
-			plaintext := make([]byte, plaintextSize)
-
-			// For large sizes, just test the first and last bytes to avoid
-			// excessive memory allocation in tests
-			if len(plaintext) > 10*1024*1024 {
-				rand.Read(plaintext[:1024])
-				rand.Read(plaintext[len(plaintext)-1024:])
-			} else {
-				rand.Read(plaintext)
-			}
+			// Test at the boundary (should fail). startBlockIndex = maxBlocks-1
+			// with a single-block plaintext reaches the same finalCounterValue
+			// as tc.maxBlocks full blocks starting from 0, without allocating
+			// up to 64 GiB (see TestCounterSpaceValidation for the full math).
+			plaintext := make([]byte, tc.blockSize)
+			rand.Read(plaintext)
 
 			encryptor, err := NewEncryptorWithVersion(dek, iv, tc.blockSize, Version2)
 			if err != nil {
 				t.Fatalf("Failed to create encryptor: %v", err)
 			}
 
-			_, _, err = encryptor.Encrypt(plaintext)
+			_, _, err = encryptor.EncryptWithStartingCounter(plaintext, uint32(tc.maxBlocks-1))
 			if err == nil {
 				t.Errorf("Encrypt with %s at boundary should fail but succeeded", tc.name)
 			}
@@ -256,9 +254,10 @@ func TestCounterSpaceBoundaryValue(t *testing.T) {
 	maxBlockIndex := (1<<32 - 1) / aesBlocksPerArmorBlock
 
 	t.Run("exact boundary should succeed", func(t *testing.T) {
-		// blockIndex = maxBlockIndex gives counter = 2^32 - 1 (just under overflow)
-		plaintextSize := int64(maxBlockIndex) * int64(blockSize)
-		plaintext := make([]byte, plaintextSize)
+		// startBlockIndex = maxBlockIndex-1 with a single-block plaintext
+		// gives the same finalCounterValue as maxBlockIndex full blocks
+		// starting from 0: counter = 2^32 - 1 (just under overflow)
+		plaintext := make([]byte, blockSize)
 		rand.Read(plaintext)
 
 		encryptor, err := NewEncryptorWithVersion(dek, iv, blockSize, Version2)
@@ -266,16 +265,16 @@ func TestCounterSpaceBoundaryValue(t *testing.T) {
 			t.Fatalf("Failed to create encryptor: %v", err)
 		}
 
-		_, _, err = encryptor.Encrypt(plaintext)
+		_, _, err = encryptor.EncryptWithStartingCounter(plaintext, uint32(maxBlockIndex-1))
 		if err != nil {
 			t.Errorf("Encrypt at exact boundary (counter=2^32-1) should succeed but got error: %v", err)
 		}
 	})
 
 	t.Run("one block over boundary should fail", func(t *testing.T) {
-		// blockIndex = maxBlockIndex + 1 would give counter >= 2^32 (overflow)
-		plaintextSize := int64(maxBlockIndex+1) * int64(blockSize)
-		plaintext := make([]byte, plaintextSize)
+		// startBlockIndex = maxBlockIndex with a single-block plaintext
+		// reaches finalCounterValue >= 2^32 (overflow)
+		plaintext := make([]byte, blockSize)
 		rand.Read(plaintext)
 
 		encryptor, err := NewEncryptorWithVersion(dek, iv, blockSize, Version2)
@@ -283,7 +282,7 @@ func TestCounterSpaceBoundaryValue(t *testing.T) {
 			t.Fatalf("Failed to create encryptor: %v", err)
 		}
 
-		_, _, err = encryptor.Encrypt(plaintext)
+		_, _, err = encryptor.EncryptWithStartingCounter(plaintext, uint32(maxBlockIndex))
 		if err == nil {
 			t.Errorf("Encrypt one block over boundary should fail but succeeded")
 		}
