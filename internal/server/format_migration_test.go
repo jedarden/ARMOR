@@ -430,7 +430,7 @@ func TestFormatMigrationResumable(t *testing.T) {
 	if result.Status != "completed" {
 		t.Errorf("Expected completed status, got: %s", result.Status)
 	}
-
+	}
 
 // TestFormatMigrationEndpoint tests the HTTP endpoint for format migration.
 func TestFormatMigrationEndpoint(t *testing.T) {
