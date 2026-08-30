@@ -18,13 +18,3 @@ secret_access_key = YOUR_SECRET_ACCESS_KEY
 # Test the configuration:
 # rclone lsd my-bucket-armor:
 # rclone ls my-bucket-armor:my-bucket
-
-# ARMOR format version 2: multipart upload constraints
-# Rclone uses a fixed 5 MB chunk size by default which is not block-aligned
-# Override with a block-aligned chunk size (multiple of 64 KB):
-# --s3-upload-concurrency 4 \
-# --s3-chunk-size 67108864 \  # 64 MB, block-aligned
-# --s3-disable-checksum \    # ARMOR computes its own HMAC
-#
-# Example rclone command with these settings:
-# rclone copy /local/path my-bucket-armor:my-bucket --s3-chunk-size 67108864

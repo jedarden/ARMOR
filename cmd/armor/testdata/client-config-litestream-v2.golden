@@ -20,18 +20,3 @@ dbs:
         region: us-east-1
         access-key-id: YOUR_ACCESS_KEY_ID
         secret-access-key: YOUR_SECRET_ACCESS_KEY
-
-# ARMOR format version 2: multipart upload constraints
-# Litestream uploads WAL files as multipart uploads
-# Default snapshot size is 4 MB which is below the 5 MB minimum
-# Increase snapshot size to a block-aligned value:
-#
-# litestream.yml:
-# dbs:
-#   - path: /path/to/db.sqlite
-#     snapshots:
-#       - snapshot-interval: 1h
-#         snapshot-size-mb: 64  # Block-aligned: 64 MB (multiple of 64 KB)
-#
-# Or via environment variable:
-# export LITESTREAM_SNAPSHOT_SIZE_MB=64

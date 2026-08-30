@@ -27,18 +27,3 @@ s3 = boto3.client('s3',
 # response = s3.list_objects_v2(Bucket=bucket)
 # for obj in response.get('Contents', []):
 #     print(obj['Key'])
-
-# ARMOR format version 2: multipart upload constraints
-# Configure multipart upload with block-aligned part sizes
-from boto3.s3.transfer import TransferConfig
-
-# TransferConfig for block-aligned multipart uploads
-transfer_config = TransferConfig(
-    multipart_threshold=64 * 1024 * 1024,  # 64 MB (block-aligned)
-    multipart_chunksize=64 * 1024 * 1024,  # 64 MB (block-aligned)
-    max_concurrency=10,
-    use_threads=True
-)
-
-# Use with upload_file:
-# s3.upload_file('local_file', bucket, 'key', Config=transfer_config)
