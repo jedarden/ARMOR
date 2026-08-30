@@ -150,7 +150,7 @@ During this period, ARMOR versions 0.1.16 through 0.1.42 contained a critical mu
 ### Tools Available
 
 **✅ Available:**
-- `cmd/armor-decrypt/armor-decrypt` — functional, can decrypt with MEK + B2 credentials
+- `armor decrypt` — functional, can decrypt with MEK + B2 credentials
 - `armor verify` — integrated verification subcommand (HMAC + digest verification, requires credentials)
 - `intermediate/filtered-objects.json` — 2,371 enumerated objects ready for verification
 - `intermediate/deployment-windows.json` — affected version windows

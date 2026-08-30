@@ -7,7 +7,7 @@
 
 This inventory documents **2,371 potentially corrupted objects** (47.34 GB) across two ARMOR-managed buckets, identified during enumeration of objects uploaded during the multipart bug window (2026-03-24 to 2026-07-16).
 
-**Critical Finding:** Verification with armor-decrypt was **blocked by credential access requirements** (bf-3z191d - verification infrastructure complete, execution blocked). This inventory treats all enumerated objects as potentially corrupted. Actual corruption rate requires operator-provisioned credentials to determine.
+**Critical Finding:** Verification with armor decrypt was **blocked by credential access requirements** (bf-3z191d - verification infrastructure complete, execution blocked). This inventory treats all enumerated objects as potentially corrupted. Actual corruption rate requires operator-provisioned credentials to determine.
 
 ### Statistics by Bucket
 
@@ -165,7 +165,7 @@ During this period, ARMOR versions 0.1.16 through 0.1.42 contained a critical mu
 1. **Forgejo Backups (Immediate)**
    - Trigger on-demand CNPG backups from live cluster
    - Upload new backups via patched ARMOR (0.1.43+)
-   - Verify integrity with armor-decrypt
+   - Verify integrity with armor decrypt
    - Delete old corrupted backups after confirmation
 
 2. **Build Artifacts (Next CI runs)**
@@ -231,7 +231,7 @@ During this period, ARMOR versions 0.1.16 through 0.1.42 contained a critical mu
 
 **Problem:** Agents have read-only OpenBao access; cannot retrieve ARMOR encryption keys or B2 credentials required for verification.
 
-**Impact:** Cannot complete armor-decrypt verification; actual corruption rate unknown.
+**Impact:** Cannot complete armor decrypt verification; actual corruption rate unknown.
 
 **Resolution Required:**
 - Operator must retrieve credentials from OpenBao

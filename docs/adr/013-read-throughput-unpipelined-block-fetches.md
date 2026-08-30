@@ -82,7 +82,7 @@ at production object sizes, and would not have surfaced this.
    but changes the stored format and cannot apply to existing objects.
    Pipelining is strictly better value at no compatibility cost.
 
-4. **Accept that `armor-decrypt` uses the billed direct-S3 endpoint** for now,
+4. **Accept that `armor decrypt` uses the billed direct-S3 endpoint** for now,
    and document it rather than silently spending egress. Closing that gap is
    tracked separately; it is not a correctness issue, and in a genuine disaster
    the faster path is arguably the right one anyway.
@@ -94,7 +94,7 @@ at production object sizes, and would not have surfaced this.
 a full restore through the service from ~1.6 hours to ~18 minutes.
 
 **What this does not change:** disaster recovery does not depend on the service
-read path at all. `armor-decrypt` reads raw ciphertext and decrypts locally, and
+read path at all. `armor decrypt` reads raw ciphertext and decrypts locally, and
 was verified end to end on 2026-08-08 — a 12 MB object decrypted in 3 s with its
 plaintext SHA-256 verified, producing a git repository whose HEAD matched
 production exactly. The RTO figure that matters is unaffected by this ADR.

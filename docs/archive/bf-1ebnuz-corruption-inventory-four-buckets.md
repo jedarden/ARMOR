@@ -15,7 +15,7 @@ This inventory documents the multipart-era corruption audit across **four ARMOR 
 
 **Blocker:** This task is **CREDENTIAL-GATED**. Enumeration of rs-manager/armor-apexalgo and verification of ALL objects requires operator-supplied credentials that agents cannot access:
 - Master B2 key (for direct bucket enumeration)
-- ARMOR MEK from OpenBao (for armor-decrypt verification)
+- ARMOR MEK from OpenBao (for armor decrypt verification)
 - ARMOR B2 credentials (cluster-specific)
 
 ### Statistics by Bucket
@@ -219,7 +219,7 @@ During this period, ARMOR versions 0.1.16 through 0.1.42 contained a critical mu
 1. **Forgejo Backups (Immediate)**
    - Trigger on-demand CNPG backups from live cluster
    - Upload new backups via patched ARMOR (0.1.43+)
-   - Verify integrity with armor-decrypt
+   - Verify integrity with armor decrypt
    - Delete old corrupted backups after confirmation
 
 2. **Build Artifacts (Next CI runs)**
@@ -308,9 +308,9 @@ During this period, ARMOR versions 0.1.16 through 0.1.42 contained a critical mu
 
 ### Issue 2: Verification Credential Access
 
-**Problem:** Agents have read-only OpenBao access; cannot retrieve ARMOR encryption keys or B2 credentials required for armor-decrypt verification.
+**Problem:** Agents have read-only OpenBao access; cannot retrieve ARMOR encryption keys or B2 credentials required for armor decrypt verification.
 
-**Impact:** Cannot complete armor-decrypt verification; actual corruption rate unknown for ALL buckets.
+**Impact:** Cannot complete armor decrypt verification; actual corruption rate unknown for ALL buckets.
 
 **Resolution Required:**
 - Operator must retrieve credentials from OpenBao

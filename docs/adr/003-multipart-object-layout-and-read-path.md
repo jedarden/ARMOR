@@ -26,7 +26,7 @@ Multipart-completed objects use a distinct on-B2 layout, and the read path dispa
 
 ## Consequences
 
-- Any reader of ARMOR data — the server, `armor-decrypt`, the restore-verifier — **must** check the multipart marker before assuming envelope layout. A reader that ignores it fails on every multipart object (this is exactly what bf-24sxh7 was).
+- Any reader of ARMOR data — the server, `armor decrypt`, the restore-verifier — **must** check the multipart marker before assuming envelope layout. A reader that ignores it fails on every multipart object (this is exactly what bf-24sxh7 was).
 - Reading a multipart object costs one extra sidecar GET (cacheable at the Cloudflare edge like any other object).
 - Deleting or copying a multipart object must account for the sidecar (`.armor/hmac/<sha256(key)>`) or it leaks/breaks; CopyObject of multipart objects inherits this constraint.
 - Clients with non-block-aligned part sizes get hard 400s instead of silent corruption; the error message documents the fix (choose an aligned part size).

@@ -980,9 +980,6 @@ kubectl exec deploy/armor -n <namespace> -- \
 ### Offline Decrypt (Single MEK)
 
 ```bash
-# Build decrypt tool
-go build -o armor-decrypt ./cmd/armor-decrypt
-
 # Decrypt from B2
 # B2 reads REQUIRE these four; the tool ignores AWS_* names entirely.
 export ARMOR_B2_ACCESS_KEY_ID=<b2 key id>
@@ -990,7 +987,7 @@ export ARMOR_B2_SECRET_ACCESS_KEY=<b2 application key>
 export ARMOR_B2_REGION=us-west-002
 export ARMOR_B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
 
-armor-decrypt \
+armor decrypt \
   -mek $(cat mek-backup.hex) \
   -input b2://bucket/object-key \
   -output recovered-file.bin
