@@ -1141,12 +1141,11 @@ Decisions:
   `client-config`, `decrypt`, `verify`, `migrate`, `demo`. Registration is a
   map populated by **per-file `init()`** (`cmd/armor/cmd_<name>.go`), so
   each subcommand bead adds one file and never edits a shared switch. The
-  `armor-decrypt` compatibility symlink and wrapper are dropped in the
-  release after the CLI release ships; the deprecated `B2_*` secondary
-  names are dropped at the same point. `armor-decrypt`
+  `armor-decrypt` compatibility symlink and wrapper were dropped after the
+  CLI release shipped; the deprecated `B2_*` secondary
+  names were dropped at the same point. `armor-decrypt`
   and `verify-objects` became `armor decrypt` / `armor verify` (2026-08-28; see
-  `cmd/armor/cmd_verify.go`); the image keeps `armor-decrypt` as a symlink for
-  one release, then drops it.
+  `cmd/armor/cmd_verify.go`).
 - Version: `-X main.version=$(cat VERSION)` in `Dockerfile`, `Dockerfile.test`
   and the CI template; `armor version` / `--version` print it; every HTTP
   response carries `Server: ARMOR/<version>`; `GET /version` (both listeners,

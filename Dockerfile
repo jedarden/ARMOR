@@ -28,9 +28,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/arm
 # Build the armor-fleet binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/armor/internal/version.Version=${VERSION}" -o /armor-fleet ./cmd/armor-fleet
 
-# Build the armor-decrypt binary (thin wrapper for compatibility)
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X github.com/jedarden/armor/internal/version.Version=${VERSION}" -o /armor-decrypt ./cmd/armor-decrypt
-
 # Runtime stage for restore-verifier.
 # Built only with an explicit --target restore-verifier-runtime; it must NOT
 # be the last stage — an untargeted build produces the final stage, and the
@@ -76,12 +73,8 @@ FROM scratch AS armor-runtime
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
-# Copy the binaries
+# Copy the binary
 COPY --from=builder /armor /armor
-COPY --from=builder /armor-decrypt /armor-decrypt
-
-# Create symlink for backward compatibility
-RUN ln -s /armor /usr/local/bin/armor-decrypt
 
 # Expose ports
 EXPOSE 9000 9001

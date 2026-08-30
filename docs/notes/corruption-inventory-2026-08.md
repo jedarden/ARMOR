@@ -286,7 +286,7 @@ armor verify -bucket iad-ci -keys-file intermediate/filtered-objects.json \
 - **Enumeration results:** `intermediate/filtered-objects.json` (2,371 objects)
 - **Deployment windows:** `intermediate/deployment-windows.json`
 - **Verification tool:** `cmd/armor/cmd_verify.go` — `armor verify` subcommand
-- **Decryption tool:** `cmd/armor-decrypt/armor-decrypt`
+- **Decryption tool:** `armor decrypt` (formerly armor-decrypt)
 - **Previous inventory:** `docs/archive/bf-1ebnuz-corruption-inventory-four-buckets.md` (2026-08-11)
 - **Memory:** `openbao-no-agent-write-path.md` (agent credential access limitations)
 
