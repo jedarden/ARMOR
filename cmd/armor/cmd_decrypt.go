@@ -3,10 +3,10 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -258,24 +258,24 @@ type escrowPackage struct {
 func loadEscrow() ([]byte, []crypto.RingKeyEntry, error) {
 	data, err := os.ReadFile(escrowFile)
 	if err != nil {
-		return nil, fmt.Errorf("read escrow file: %w", err)
+		return nil, nil, fmt.Errorf("read escrow file: %w", err)
 	}
 
 	var pkg escrowPackage
 	if err := json.Unmarshal(data, &pkg); err != nil {
-		return nil, fmt.Errorf("parse escrow JSON: %w", err)
+		return nil, nil, fmt.Errorf("parse escrow JSON: %w", err)
 	}
 
 	// Validate MEK
 	if pkg.MEK == "" {
-		return nil, errors.New("escrow missing 'mek' field")
+		return nil, nil, errors.New("escrow missing 'mek' field")
 	}
 	mek, err := hex.DecodeString(pkg.MEK)
 	if err != nil {
-		return nil, fmt.Errorf("decode MEK from escrow: %w", err)
+		return nil, nil, fmt.Errorf("decode MEK from escrow: %w", err)
 	}
 	if len(mek) != 32 {
-		return nil, fmt.Errorf("invalid MEK length in escrow: got %d bytes, expected 32", len(mek))
+		return nil, nil, fmt.Errorf("invalid MEK length in escrow: got %d bytes, expected 32", len(mek))
 	}
 
 	// Build ring keys from escrow mek_ring array

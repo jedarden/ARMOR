@@ -3,7 +3,7 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -31,34 +31,40 @@ func init() {
 	})
 }
 
-// Verification flags
+// Verification-specific flags. bucket, mek, mek-file, escrow, output, and -v
+// are already registered elsewhere (cmd_client_config.go / cmd_decrypt.go)
+// on the shared global flag.CommandLine (see main.go's single flag.Parse()
+// dispatch) -- reusing those existing vars (bucketFlag, mekFlag, mekFileFlag,
+// escrowFile, outputFlag, decryptVerboseFlag) instead of re-registering the
+// same flag name, which panics at process startup ("flag redefined"), or
+// re-declaring the same package-level var name, which doesn't compile.
+// concurrency is also shared with cmd_migrate.go, but that flag's default
+// (0, meaning "server-side default") isn't valid for verify's own semaphore
+// sizing -- see verifyConcurrency() below.
 var (
-	bucketFlag        string
-	prefixFlag        string
-	keysFileFlag      string
-	sinceFlag         string
-	concurrencyFlag   int
-	outputFlag        string
-	mekFlag           string
-	mekFileFlag       string
-	escrowFileFlag    string
-	verboseFlag       bool
-	quickModeFlag     bool
+	prefixFlag    string
+	keysFileFlag  string
+	sinceFlag     string
+	quickModeFlag bool
 )
 
 func init() {
 	// Verification-specific flags
-	flag.StringVar(&bucketFlag, "bucket", "", "Bucket to verify (required)")
 	flag.StringVar(&prefixFlag, "prefix", "", "Key prefix to filter objects (optional)")
 	flag.StringVar(&keysFileFlag, "keys-file", "", "Path to JSON file listing object keys to verify (one per line or JSON array)")
 	flag.StringVar(&sinceFlag, "since", "", "Only verify objects modified after this timestamp (RFC3339 or YYYY-MM-DD)")
-	flag.IntVar(&concurrencyFlag, "concurrency", 10, "Number of concurrent verifications")
-	flag.StringVar(&outputFlag, "output", "", "Output JSON report path (default: stdout)")
-	flag.StringVar(&mekFlag, "mek", "", "Master encryption key (hex, 64 chars)")
-	flag.StringVar(&mekFileFlag, "mek-file", "", "Read MEK from file (hex, 64 chars)")
-	flag.StringVar(&escrowFileFlag, "escrow", "", "Path to escrow JSON file containing MEK and B2 credentials")
-	flag.BoolVar(&verboseFlag, "v", false, "Verbose output")
 	flag.BoolVar(&quickModeFlag, "quick", false, "Quick mode: verify envelope and DEK only, skip HMAC verification")
+}
+
+// verifyConcurrency returns the shared -concurrency flag's value, defaulting
+// to 10 for verify's own use when unset (its shared default of 0 comes from
+// cmd_migrate.go, where 0 means "server-side default" -- here it would size
+// a zero-buffered channel and deadlock every verification goroutine).
+func verifyConcurrency() int {
+	if concurrencyFlag <= 0 {
+		return 10
+	}
+	return concurrencyFlag
 }
 
 func verify() {
@@ -153,8 +159,8 @@ func getMEKForVerify() ([]byte, error) {
 	var err error
 
 	// Try escrow file first
-	if escrowFileFlag != "" {
-		mek, err = loadMEKFromEscrowForVerify(escrowFileFlag)
+	if escrowFile != "" {
+		mek, err = loadMEKFromEscrowForVerify(escrowFile)
 		if err != nil {
 			return nil, fmt.Errorf("loading escrow: %w", err)
 		}
@@ -267,7 +273,7 @@ func initB2BackendForVerify() (backend.Backend, error) {
 		AccessKeyID:     accessKey,
 		SecretKey:       secretKey,
 		CFDomain:        cfDomain,
-		ReadConcurrency: concurrencyFlag,
+		ReadConcurrency: verifyConcurrency(),
 	})
 }
 
@@ -385,7 +391,7 @@ func runVerification(ctx context.Context, b2 backend.Backend, mek []byte, keys [
 	}
 
 	// Create semaphore for concurrency
-	sem := make(chan struct{}, concurrencyFlag)
+	sem := make(chan struct{}, verifyConcurrency())
 	var wg sync.WaitGroup
 	var okCount, corruptedCount, errorCount atomic.Int32
 
@@ -417,7 +423,7 @@ func runVerification(ctx context.Context, b2 backend.Backend, mek []byte, keys [
 			}
 
 			// Print progress
-			if verboseFlag || result.Status != "OK" {
+			if decryptVerboseFlag || result.Status != "OK" {
 				fmt.Fprintf(os.Stderr, "[%s] %s: %s\n", result.Status, key, result.Details)
 			} else if okCount.Load()%100 == 0 {
 				fmt.Fprintf(os.Stderr, "Progress: %d verified...\n", okCount.Load())
@@ -652,7 +658,7 @@ func fullVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucke
 	if envelope.Version == crypto.Version3 {
 		// v3 format: use trailer block table
 		// Layout: [header][encrypted blocks with varying sizes][block table]
-		blockCount := crypto.ComputeBlockCount(envelope.PlaintextSize, envelope.BlockSize)
+		blockCount := crypto.ComputeBlockCount(int64(envelope.PlaintextSize), envelope.BlockSize())
 		blockTableSize := int64(blockCount) * crypto.BlockTableEntrySize
 
 		if int64(len(objectData)) < crypto.HeaderSize+blockTableSize {
@@ -668,7 +674,7 @@ func fullVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucke
 
 		// Extract block table from trailer
 		blockTableData := objectData[len(objectData)-int(blockTableSize):]
-		blockTable, err := crypto.DecodeBlockTable(blockTableData, envelope.BlockSize, blockCount)
+		blockTable, err := crypto.DecodeBlockTable(blockTableData, envelope.BlockSize(), blockCount)
 		if err != nil {
 			result.Status = "CORRUPTED"
 			result.Error = fmt.Sprintf("Failed to decode v3 block table: %v", err)
@@ -677,7 +683,7 @@ func fullVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucke
 		}
 
 		// Decrypt v3 data (part=0 for single-PUT)
-		decryptor, err := crypto.NewDecryptorWithVersion(dek, envelope.IV[:], envelope.BlockSize, crypto.Version3)
+		decryptor, err := crypto.NewDecryptorWithVersion(dek, envelope.IV[:], envelope.BlockSize(), crypto.Version3)
 		if err != nil {
 			result.Status = "ERROR"
 			result.Error = fmt.Sprintf("Failed to create v3 decryptor: %v", err)
@@ -694,20 +700,12 @@ func fullVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucke
 			return result
 		}
 	} else {
-		// v1/v2 format: inline HMAC table
-		// Verify HMAC using crypto.VerifyDecompression
-		// This performs byte-for-byte verification with HMAC checking
-		err = crypto.VerifyDecompression(dek, objectData[crypto.HeaderSize:], envelope)
-		if err != nil {
-			result.Status = "CORRUPTED"
-			result.Error = fmt.Sprintf("HMAC or decompression verification failed: %v", err)
-			result.Details = "Object data corruption detected - HMAC mismatch or decompression error"
-			result.Duration = time.Since(startTime).Seconds()
-			return result
-		}
-
-		// For v1/v2, we need to decrypt to get plaintext for SHA-256 comparison
-		decryptor, err := crypto.NewDecryptorWithVersion(dek, envelope.IV[:], envelope.BlockSize, envelope.Version)
+		// v1/v2 format: inline HMAC table. HMAC verification happens inside
+		// decryptor.Decrypt (it returns an error on any block's HMAC
+		// mismatch, same as v3's DecryptV3 above) -- crypto.VerifyDecompression
+		// is a standalone decompressed-bytes comparator now, not a ciphertext
+		// HMAC checker, so there's no separate pre-decrypt verification step.
+		decryptor, err := crypto.NewDecryptorWithVersion(dek, envelope.IV[:], envelope.BlockSize(), envelope.Version)
 		if err != nil {
 			result.Status = "ERROR"
 			result.Error = fmt.Sprintf("Failed to create decryptor: %v", err)
@@ -716,7 +714,7 @@ func fullVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucke
 		}
 
 		encryptedData := objectData[crypto.HeaderSize:]
-		blockCount := crypto.ComputeBlockCount(envelope.PlaintextSize, envelope.BlockSize)
+		blockCount := crypto.ComputeBlockCount(int64(envelope.PlaintextSize), envelope.BlockSize())
 		hmacTableSize := int64(blockCount) * crypto.HMACSize
 		hmacTable := encryptedData[len(encryptedData)-int(hmacTableSize):]
 		encryptedData = encryptedData[:len(encryptedData)-int(hmacTableSize)]
@@ -725,6 +723,7 @@ func fullVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucke
 		if err != nil {
 			result.Status = "CORRUPTED"
 			result.Error = fmt.Sprintf("Decryption failed: %v", err)
+			result.Details = "Object data corruption detected - HMAC mismatch"
 			result.Duration = time.Since(startTime).Seconds()
 			return result
 		}
@@ -749,22 +748,8 @@ func fullVerifyObject(ctx context.Context, b2 backend.Backend, mek []byte, bucke
 	return result
 }
 
-// decodeBase64ToBytes decodes a base64 string (with URL-safe handling) to bytes
-func decodeBase64ToBytes(s string) ([]byte, error) {
-	// Handle URL-safe base64
-	s = strings.ReplaceAll(s, "-", "+")
-	s = strings.ReplaceAll(s, "_", "/")
-
-	// Add padding if needed
-	switch len(s) % 4 {
-	case 2:
-		s += "=="
-	case 3:
-		s += "="
-	}
-
-	return base64.StdEncoding.DecodeString(s)
-}
+// decodeBase64ToBytes already exists in cmd_check.go (byte-for-byte
+// identical); reused directly instead of a duplicate declaration.
 
 // zeroBytes securely zeros a byte slice
 func zeroBytes(b []byte) {
@@ -776,8 +761,6 @@ func zeroBytes(b []byte) {
 // writeReport writes the verification report to file or stdout
 func writeReport(report *VerificationReport, outputPath string) error {
 	var output io.Writer
-	var closer io.Closer
-	var err error
 
 	if outputPath != "" {
 		// Ensure directory exists
@@ -788,12 +771,16 @@ func writeReport(report *VerificationReport, outputPath string) error {
 			}
 		}
 
-		output, err = os.Create(outputPath)
+		// *os.File satisfies both io.Writer and io.Closer -- kept as its
+		// concrete type here so both assignments below typecheck; assigning
+		// through the io.Writer-typed `output` var to an io.Closer var
+		// doesn't (io.Writer's method set doesn't include Close()).
+		f, err := os.Create(outputPath)
 		if err != nil {
 			return fmt.Errorf("creating output file: %w", err)
 		}
-		closer = output
-		defer closer.Close()
+		defer f.Close()
+		output = f
 	} else {
 		output = os.Stdout
 		// No need to close os.Stdout
