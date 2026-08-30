@@ -516,13 +516,14 @@ func startArmorServer(t *testing.T) string {
 		return endpoint
 	}
 	cfg := &config.Config{
-		B2Region:        testRegion,
-		MEK:             testMEK(),
-		BlockSize:       65536,
-		CacheMaxEntries: 1000,
-		CacheTTL:        300,
-		AuthAccessKey:   testAccessKey,
-		AuthSecretKey:   testSecretKey,
+		B2Region:         testRegion,
+		MEK:              testMEK(),
+		BlockSize:        65536,
+		CacheMaxEntries:  1000,
+		CacheTTL:         300,
+		AuthAccessKey:    testAccessKey,
+		AuthSecretKey:    testSecretKey,
+		FormatWriteVersion: 2, // Explicitly use v2 format - mock backend doesn't support v3 multipart storage
 		Credentials: map[string]*config.Credential{
 			testAccessKey: {
 				AccessKey: testAccessKey,
@@ -555,13 +556,14 @@ func startArmorServerWithPresigner(t *testing.T) (string, *presign.Signer) {
 		return endpoint, nil
 	}
 	cfg := &config.Config{
-		B2Region:        testRegion,
-		MEK:             testMEK(),
-		BlockSize:       65536,
-		CacheMaxEntries: 1000,
-		CacheTTL:        300,
-		AuthAccessKey:   testAccessKey,
-		AuthSecretKey:   testSecretKey,
+		B2Region:         testRegion,
+		MEK:              testMEK(),
+		BlockSize:        65536,
+		CacheMaxEntries:  1000,
+		CacheTTL:         300,
+		AuthAccessKey:    testAccessKey,
+		AuthSecretKey:    testSecretKey,
+		FormatWriteVersion: 2, // Explicitly use v2 format - mock backend doesn't support v3 multipart storage
 		Credentials: map[string]*config.Credential{
 			testAccessKey: {
 				AccessKey: testAccessKey,
