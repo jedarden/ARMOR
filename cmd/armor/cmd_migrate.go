@@ -38,6 +38,10 @@ func init() {
 	flag.BoolVar(&watchFlag, "watch", false, "Watch mode: poll progress until completion")
 }
 
+// exit is declared once, in cmd_client_config.go (same package); reused
+// here rather than redeclared, since a second package-level var of the same
+// name doesn't compile.
+
 // MigrationState represents the state of a format migration operation
 type MigrationState struct {
 	ID                 string   `json:"id"`
@@ -79,21 +83,21 @@ func migrate() {
 	if flag.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", flag.Args())
 		fmt.Fprintf(os.Stderr, "Usage: armor migrate [flags]\n")
-		os.Exit(2)
+		exit(2)
 	}
 
 	// Validate required flags
 	if adminURLFlag == "" {
 		fmt.Fprintf(os.Stderr, "Error: -admin-url is required\n")
 		fmt.Fprintf(os.Stderr, "Usage: armor migrate -admin-url <url> [other flags]\n")
-		os.Exit(2)
+		exit(2)
 	}
 
 	// Get admin token from environment
 	adminToken := os.Getenv("ARMOR_ADMIN_TOKEN")
 	if adminToken == "" {
 		fmt.Fprintf(os.Stderr, "Error: ARMOR_ADMIN_TOKEN environment variable is required\n")
-		os.Exit(1)
+		exit(1)
 	}
 
 	// Build query parameters
@@ -124,7 +128,7 @@ func migrate() {
 	resp, err := doRequest(client, "POST", migrateURL, adminToken, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to start migration: %v\n", err)
-		os.Exit(1)
+		exit(1)
 	}
 	defer resp.Body.Close()
 
@@ -132,14 +136,14 @@ func migrate() {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		fmt.Fprintf(os.Stderr, "Error: migration request failed with status %d: %s\n", resp.StatusCode, string(body))
-		os.Exit(1)
+		exit(1)
 	}
 
 	// Parse response to get initial state
 	var initialState map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&initialState); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to parse response: %v\n", err)
-		os.Exit(1)
+		exit(1)
 	}
 
 	// Check if the response contains a status field indicating an async operation
@@ -148,7 +152,7 @@ func migrate() {
 		// Watch mode: poll progress until completion
 		if err := watchMigration(client, adminURLFlag+"/admin/format/migrate", adminToken); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: migration watch failed: %v\n", err)
-			os.Exit(1)
+			exit(1)
 		}
 		return
 	}
@@ -228,7 +232,7 @@ func watchMigration(client *http.Client, migrateURL, adminToken string) error {
 					// Exit non-zero if there were failures
 					if state.FailedObjects > 0 {
 						fmt.Fprintf(os.Stderr, "Migration had %d failures.\n", state.FailedObjects)
-						os.Exit(1)
+						exit(1)
 					}
 					return nil
 				}

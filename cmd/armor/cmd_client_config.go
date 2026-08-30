@@ -26,6 +26,12 @@ var (
 	credentialFlag string
 )
 
+// exit is os.Exit by default; tests override it (to a panic-and-recover
+// stand-in) so a bad-flags path can be asserted without killing the test
+// binary. Shared across the package's subcommands (e.g. cmd_migrate.go),
+// not just client-config's own.
+var exit = os.Exit
+
 func init() {
 	// client-config specific flags
 	flag.StringVar(&forFlag, "for", "", "Tool to generate config for: aws-cli, rclone, boto3, duckdb, litestream, barman (required)")
@@ -42,7 +48,7 @@ func clientConfig() {
 	if flag.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", flag.Args())
 		fmt.Fprintf(os.Stderr, "Usage: armor client-config -for <tool> -endpoint <url> [flags]\n")
-		os.Exit(2)
+		exit(2)
 	}
 
 	// Validate required flags
@@ -50,13 +56,13 @@ func clientConfig() {
 		fmt.Fprintf(os.Stderr, "Error: -for is required\n")
 		fmt.Fprintf(os.Stderr, "Usage: armor client-config -for <tool> -endpoint <url> [flags]\n")
 		fmt.Fprintf(os.Stderr, "Available tools: aws-cli, rclone, boto3, duckdb, litestream, barman\n")
-		os.Exit(2)
+		exit(2)
 	}
 
 	if endpointFlag == "" {
 		fmt.Fprintf(os.Stderr, "Error: -endpoint is required\n")
 		fmt.Fprintf(os.Stderr, "Usage: armor client-config -for <tool> -endpoint <url> [flags]\n")
-		os.Exit(2)
+		exit(2)
 	}
 
 	// Load config to get format write version
@@ -64,9 +70,9 @@ func clientConfig() {
 	if err != nil {
 		// If config fails to load, we can still generate configs but warn about format version
 		fmt.Fprintf(os.Stderr, "Warning: could not load ARMOR config: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Warning: format write version unknown; assuming version 2 constraints\n")
+		fmt.Fprintf(os.Stderr, "Warning: format write version unknown; assuming version 3 constraints\n")
 		cfg = &config.Config{}
-		cfg.FormatWriteVersion = 2 // Default
+		cfg.FormatWriteVersion = 3 // Default
 	}
 
 	// Generate config for the requested tool
@@ -89,7 +95,7 @@ func clientConfig() {
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown tool %q\n", tool)
 		fmt.Fprintf(os.Stderr, "Available tools: aws-cli, rclone, boto3, duckdb, litestream, barman\n")
-		os.Exit(2)
+		exit(2)
 	}
 
 	fmt.Print(output)
@@ -132,20 +138,20 @@ func awsCLIConfig(endpoint, bucket, credential string, formatVersion int) string
 	}
 	sb.WriteString("\n")
 
-	// Format version 2 requires multipart constraints
-	if formatVersion == 2 {
-		sb.WriteString("\n# ARMOR format version 2: multipart upload constraints\n")
-		sb.WriteString("# Minimum part size: 5 MB (S3 requirement)\n")
-		sb.WriteString("# Part size must be a multiple of ARMOR block size (64 KB)\n")
-		sb.WriteString("# Recommended configuration for multipart uploads:\n")
-		sb.WriteString("aws configure set default.s3.max_bandwidth 104857600  # 100 MB/s throttle (optional)\n")
-		sb.WriteString("aws configure set default.s3.multipart_threshold 67108864  # 64 MB (block-aligned: 64 * 1024 * 1024 bytes)\n")
-		sb.WriteString("aws configure set default.s3.multipart_chunksize 67108864  # 64 MB (block-aligned)\n")
-		sb.WriteString("\n")
-		sb.WriteString("# Or via environment variables:\n")
-		sb.WriteString("# export AWS_DEFAULT_S3_MULTIPART_THRESHOLD=67108864\n")
-		sb.WriteString("# export AWS_DEFAULT_S3_MULTIPART_CHUNKSIZE=67108864\n")
-	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 	return sb.String()
 }
@@ -190,18 +196,18 @@ func rcloneConfig(endpoint, bucket, credential string, formatVersion int) string
 	}
 	sb.WriteString("\n")
 
-	// Format version 2 requires multipart constraints
-	if formatVersion == 2 {
-		sb.WriteString("# ARMOR format version 2: multipart upload constraints\n")
-		sb.WriteString("# Rclone uses a fixed 5 MB chunk size by default which is not block-aligned\n")
-		sb.WriteString("# Override with a block-aligned chunk size (multiple of 64 KB):\n")
-		sb.WriteString("# --s3-upload-concurrency 4 \\\n")
-		sb.WriteString("# --s3-chunk-size 67108864 \\\n") // 64 MB, block-aligned
-		sb.WriteString("# --s3-disable-checksum \\\n")   // ARMOR computes its own HMAC
-		sb.WriteString("\n")
-		sb.WriteString("# Example rclone command with these settings:\n")
-		sb.WriteString(fmt.Sprintf("# rclone copy /local/path %s:%s --s3-chunk-size 67108864\n", remoteName, bucketOrPlaceholder(bucket)))
-	}
+
+
+
+
+
+
+
+
+
+
+
+
 
 	return sb.String()
 }
@@ -252,23 +258,23 @@ func boto3Config(endpoint, bucket, credential string, formatVersion int) string 
 	sb.WriteString("#     print(obj['Key'])\n")
 	sb.WriteString("\n")
 
-	// Format version 2 requires multipart constraints
-	if formatVersion == 2 {
-		sb.WriteString("# ARMOR format version 2: multipart upload constraints\n")
-		sb.WriteString("# Configure multipart upload with block-aligned part sizes\n")
-		sb.WriteString("from boto3.s3.transfer import TransferConfig\n\n")
 
-		sb.WriteString("# TransferConfig for block-aligned multipart uploads\n")
-		sb.WriteString("transfer_config = TransferConfig(\n")
-		sb.WriteString("    multipart_threshold=64 * 1024 * 1024,  # 64 MB (block-aligned)\n")
-		sb.WriteString("    multipart_chunksize=64 * 1024 * 1024,  # 64 MB (block-aligned)\n")
-		sb.WriteString("    max_concurrency=10,\n")
-		sb.WriteString("    use_threads=True\n")
-		sb.WriteString(")\n\n")
 
-		sb.WriteString("# Use with upload_file:\n")
-		sb.WriteString("# s3.upload_file('local_file', bucket, 'key', Config=transfer_config)\n")
-	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 	return sb.String()
 }
@@ -314,16 +320,16 @@ func duckDBConfig(endpoint, bucket, credential string, formatVersion int) string
 	// Note: DuckDB doesn't do multipart uploads in the same way
 	// It uses range reads for GET which work fine with ARMOR
 	// For large exports, DuckDB splits into multiple files which are uploaded individually
-	if formatVersion == 2 {
-		sb.WriteString("-- ARMOR format version 2: Large file exports\n")
-		sb.WriteString("-- DuckDB's COPY TO exports large files as single PUTs or multipart uploads\n")
-		sb.WriteString("-- For very large files (>64 MB), DuckDB may use multipart uploads\n")
-		sb.WriteString("-- ARMOR format version 2 requires block-aligned part sizes (multiple of 64 KB)\n")
-		sb.WriteString("-- DuckDB's default part sizes may need adjustment for optimal compatibility\n")
-		sb.WriteString("-- Consider exporting smaller chunks or using format version 3 for large exports\n")
-	}
 
 	return sb.String()
+}
+
+// bucketOrPlaceholder returns the bucket or a placeholder string
+func bucketOrPlaceholder(bucket string) string {
+	if bucket != "" {
+		return bucket
+	}
+	return "your-bucket"
 }
 
 // litestreamConfig generates Litestream configuration
@@ -340,10 +346,8 @@ func litestreamConfig(endpoint, bucket, credential string, formatVersion int) st
 	sb.WriteString("# Credentials\n")
 	if credential != "" {
 		sb.WriteString(fmt.Sprintf("# Using named credential: %s\n", credential))
-		sb.WriteString("# Set these from your ARMOR deployment:\n")
-	} else {
-		sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY\n")
 	}
+	sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY\n")
 	sb.WriteString("LITESTREAM_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID\n")
 	sb.WriteString("LITESTREAM_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY\n\n")
 
@@ -358,28 +362,13 @@ func litestreamConfig(endpoint, bucket, credential string, formatVersion int) st
 	sb.WriteString("        access-key-id: YOUR_ACCESS_KEY_ID\n")
 	sb.WriteString("        secret-access-key: YOUR_SECRET_ACCESS_KEY\n\n")
 
-	// Format version 2 requires multipart constraints
-	if formatVersion == 2 {
-		sb.WriteString("# ARMOR format version 2: multipart upload constraints\n")
-		sb.WriteString("# Litestream uploads WAL files as multipart uploads\n")
-		sb.WriteString("# Default snapshot size is 4 MB which is below the 5 MB minimum\n")
-		sb.WriteString("# Increase snapshot size to a block-aligned value:\n")
-		sb.WriteString("#\n")
-		sb.WriteString("# litestream.yml:\n")
-		sb.WriteString("# dbs:\n")
-		sb.WriteString("#   - path: /path/to/db.sqlite\n")
-		sb.WriteString("#     snapshots:\n")
-		sb.WriteString("#       - snapshot-interval: 1h\n")
-		sb.WriteString("#         snapshot-size-mb: 64  # Block-aligned: 64 MB (multiple of 64 KB)\n")
-		sb.WriteString("#\n")
-		sb.WriteString("# Or via environment variable:\n")
-		sb.WriteString("# export LITESTREAM_SNAPSHOT_SIZE_MB=64\n")
-	}
+	sb.WriteString("# Note: ARMOR format version 3 (default) has no multipart constraints\n")
+	sb.WriteString("# All snapshot sizes work; Litestream defaults are compatible\n")
 
 	return sb.String()
 }
 
-// barmanConfig generates Barman configuration
+// barmanConfig generates Barman Cloud configuration
 func barmanConfig(endpoint, bucket, credential string, formatVersion int) string {
 	var sb strings.Builder
 
@@ -393,10 +382,8 @@ func barmanConfig(endpoint, bucket, credential string, formatVersion int) string
 	sb.WriteString("# Credentials\n")
 	if credential != "" {
 		sb.WriteString(fmt.Sprintf("# Using named credential: %s\n", credential))
-		sb.WriteString("# Set these from your ARMOR deployment:\n")
-	} else {
-		sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY\n")
 	}
+	sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY\n")
 	sb.WriteString("export AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID\n")
 	sb.WriteString("export AWS_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY\n\n")
 
@@ -404,40 +391,10 @@ func barmanConfig(endpoint, bucket, credential string, formatVersion int) string
 	sb.WriteString("# barman-cloud-backup list <server> <bucket>\n")
 	sb.WriteString("# barman-cloud-backup backup <server> <bucket> <postgres_data_dir>\n")
 	sb.WriteString("# barman-cloud-wal-archive --endpoint-url $AWS_ENDPOINT_URL <bucket> <server>\n")
-	sb.WriteString("# barman-cloud-wal-restore --endpoint-url $AWS_ENDPOINT_URL <bucket> <server> <wal_file> <dest_dir>\n")
-	sb.WriteString("\n")
+	sb.WriteString("# barman-cloud-wal-restore --endpoint-url $AWS_ENDPOINT_URL <bucket> <server> <wal_file> <dest_dir>\n\n")
 
-	// Format version 2 has special constraints for Barman
-	if formatVersion == 2 {
-		sb.WriteString("# ARMOR format version 2: Multipart upload constraints for Barman\n")
-		sb.WriteString("#\n")
-		sb.WriteString("# Barman's chunk size + 512-byte metadata pattern breaks uniform-part-size contract\n")
-		sb.WriteString("# This causes InvalidPartSize errors when backups exceed the single-part threshold\n")
-		sb.WriteString("#\n")
-		sb.WriteString("# WORKAROUND (format version 2):\n")
-		sb.WriteString("# 1. Use large chunk size to keep backups in single-part uploads:\n")
-		sb.WriteString("#    barman-cloud-backup-backup ...\n")
-		sb.WriteString(fmt.Sprintf("#      --endpoint-url=%s\n", endpoint))
-		sb.WriteString("#      --chunk-size=1024  # 1024 MB (1 GB), block-aligned (1024 * 1024 * 1024 is multiple of 64 KB)\n")
-		sb.WriteString("#\n")
-		sb.WriteString("# 2. Limit backup size to stay below single-part threshold (~5 GB)\n")
-		sb.WriteString("# 3. Or upgrade to ARMOR format version 3 which supports non-uniform part sizes\n")
-		sb.WriteString("#\n")
-		sb.WriteString("# Minimum chunk size: 5 MB (S3 requirement)\n")
-		sb.WriteString("# Recommended: 1024 MB (1 GB) - block-aligned and keeps most backups in one part\n")
-		sb.WriteString("\n")
-
-		sb.WriteString("# For WAL archive (small files), default settings work fine:\n")
-		sb.WriteString("# barman-cloud-wal-archive ... --jobs 1  # Sequential uploads avoid part-order issues\n")
-	}
+	sb.WriteString("# Note: ARMOR format version 3 (default) has no multipart constraints\n")
+	sb.WriteString("# All chunk sizes work; Barman defaults are compatible\n\n")
 
 	return sb.String()
-}
-
-// bucketOrPlaceholder returns the bucket or a placeholder string
-func bucketOrPlaceholder(bucket string) string {
-	if bucket != "" {
-		return bucket
-	}
-	return "your-bucket"
 }

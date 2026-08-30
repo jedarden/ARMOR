@@ -427,7 +427,7 @@ func TestReadyzHandler(t *testing.T) {
 
 			// Create test backend
 			tmpDir := t.TempDir()
-			fsBackend, err := backend.NewFilesystemBackend(tmpDir)
+			fsBackend, err := backend.NewFSBackend(backend.FSConfig{BasePath: tmpDir})
 			if err != nil {
 				t.Fatalf("failed to create filesystem backend: %v", err)
 			}

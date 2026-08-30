@@ -90,7 +90,7 @@ func TestParseCompressRules(t *testing.T) {
 				if err == nil {
 					t.Fatalf("ParseCompressRules() expected error, got nil")
 				}
-				if tt.errContains != "" && !containsString(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strContains(err.Error(), tt.errContains) {
 					t.Fatalf("ParseCompressRules() error = %v, expected error containing %q", err, tt.errContains)
 				}
 				return
@@ -347,7 +347,7 @@ func TestParseOverrideHeader(t *testing.T) {
 				if err == nil {
 					t.Fatalf("ParseOverrideHeader() expected error, got nil")
 				}
-				if tt.errContains != "" && !containsString(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strContains(err.Error(), tt.errContains) {
 					t.Fatalf("ParseOverrideHeader() error = %v, expected error containing %q", err, tt.errContains)
 				}
 				return
@@ -428,7 +428,6 @@ func TestEvaluateCompression(t *testing.T) {
 			rulesStr:      ".jsonl=zstd,*=none",
 			overrideValue: "",
 			wantCompress:  false,
-			wantCompress:  false,
 			wantErr:       false,
 		},
 		{
@@ -460,7 +459,7 @@ func TestEvaluateCompression(t *testing.T) {
 				if err == nil {
 					t.Fatalf("EvaluateCompression() expected error, got nil")
 				}
-				if tt.errContains != "" && !containsString(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strContains(err.Error(), tt.errContains) {
 					t.Fatalf("EvaluateCompression() error = %v, expected error containing %q", err, tt.errContains)
 				}
 				return
@@ -534,17 +533,12 @@ func TestCompressRules_String(t *testing.T) {
 	}
 }
 
-// Helper function to check if a string contains a substring
-func containsString(s, substr string) bool {
+// strContains checks if a string contains a substring. Named to avoid
+// colliding with dashboard_integration_test.go's containsString, which
+// checks slice membership ([]string, string), not substrings. contains
+// (the actual substring scan) is declared once, in
+// error_server_enhanced_test.go -- reused here instead of a duplicate.
+func strContains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		(len(s) > 0 && len(substr) > 0 && contains(s, substr)))
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

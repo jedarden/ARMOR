@@ -66,7 +66,7 @@ func TestAuditLogFields(t *testing.T) {
 		logBuf.Reset()
 		start := time.Now()
 
-		s.logCompletedRequest(req, start, 403, "deny-auth", "", "", "")
+		s.logCompletedRequest(req, start, 403, "deny-auth", "", "", "", 0)
 
 		logOutput := logBuf.String()
 
@@ -91,7 +91,7 @@ func TestAuditLogFields(t *testing.T) {
 		logBuf.Reset()
 		start := time.Now()
 
-		s.logCompletedRequest(req, start, 403, "deny-acl", "test-key-id", "get", "restricted/key")
+		s.logCompletedRequest(req, start, 403, "deny-acl", "test-key-id", "get", "restricted/key", 0)
 
 		logOutput := logBuf.String()
 
@@ -121,7 +121,7 @@ func TestAuditLogFields(t *testing.T) {
 		logBuf.Reset()
 		start := time.Now()
 
-		s.logCompletedRequest(reqNoRange, start, 200, "allow", "test-key-id", "put", "testbucket/anotherkey")
+		s.logCompletedRequest(reqNoRange, start, 200, "allow", "test-key-id", "put", "testbucket/anotherkey", 0)
 
 		logOutput := logBuf.String()
 
@@ -160,7 +160,7 @@ func TestAuditLogPublicPaths(t *testing.T) {
 	logBuf.Reset()
 	start := time.Now()
 
-	s.logCompletedRequest(req, start, 200, "", "", "", "")
+	s.logCompletedRequest(req, start, 200, "", "", "", "", 0)
 
 	logOutput := logBuf.String()
 

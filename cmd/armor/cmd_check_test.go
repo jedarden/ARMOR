@@ -4,8 +4,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"os"
-	"path/filepath"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +187,59 @@ func (m *mockBackend) AbortMultipartUpload(ctx context.Context, bucket, key, upl
 
 func (m *mockBackend) ListParts(ctx context.Context, bucket, key, uploadID string) (*backend.ListPartsResult, error) {
 	return &backend.ListPartsResult{}, nil
+}
+
+// The stubs below satisfy backend.Backend for interface conformance --
+// cmd_check's tests don't exercise multipart listing, lifecycle, object
+// lock, retention, legal hold, or versioning, so these return zero values
+// rather than simulating real behavior.
+
+func (m *mockBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*backend.ListMultipartUploadsResult, error) {
+	return &backend.ListMultipartUploadsResult{}, nil
+}
+
+func (m *mockBackend) GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, backend.ErrObjectNotFound
+}
+
+func (m *mockBackend) PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+
+func (m *mockBackend) DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error {
+	return nil
+}
+
+func (m *mockBackend) GetObjectLockConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, backend.ErrObjectNotFound
+}
+
+func (m *mockBackend) PutObjectLockConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+
+func (m *mockBackend) GetObjectRetention(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, backend.ErrObjectNotFound
+}
+
+func (m *mockBackend) PutObjectRetention(ctx context.Context, bucket, key string, retention []byte) error {
+	return nil
+}
+
+func (m *mockBackend) GetObjectLegalHold(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, backend.ErrObjectNotFound
+}
+
+func (m *mockBackend) PutObjectLegalHold(ctx context.Context, bucket, key string, legalHold []byte) error {
+	return nil
+}
+
+func (m *mockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*backend.ListObjectVersionsResult, error) {
+	return &backend.ListObjectVersionsResult{}, nil
+}
+
+func (m *mockBackend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*backend.ObjectInfo, error) {
+	return nil, backend.ErrObjectNotFound
 }
 
 // Test decodeBase64ToBytes
@@ -649,7 +701,7 @@ func TestRunFingerprintProbe(t *testing.T) {
 	for i := range retiredMEK {
 		retiredMEK[i] = byte(255 - i)
 	}
-	retiredFP := crypto.MEKFingerprint(retiredMEK)
+	_ = crypto.MEKFingerprint(retiredMEK) // fingerprint not directly asserted in this test
 
 	tests := []struct {
 		name                string
@@ -676,7 +728,7 @@ func TestRunFingerprintProbe(t *testing.T) {
 			backend: func() *mockBackend {
 				m := newMockBackend()
 				// Create an object with active key fingerprint
-				canaryData, wrappedDEK := createValidCanary(t, mek)
+				canaryData, _ := createValidCanary(t, mek)
 				wrappedWithFP, err := crypto.WrapDEKWithFingerprint(mek, createTestDEK(t))
 				if err != nil {
 					t.Fatalf("failed to wrap with fingerprint: %v", err)

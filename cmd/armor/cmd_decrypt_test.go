@@ -3,8 +3,10 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -109,7 +111,7 @@ func TestDecryptRoundTripSinglePart(t *testing.T) {
 	defer func() { sidecarFlag = "" }()
 
 	ctx := context.Background()
-	decrypted, err := decryptLocal(ctx, src, mek)
+	decrypted, err := decryptLocal(ctx, src, mek, nil)
 	if err != nil {
 		t.Fatalf("decryptLocal: %v", err)
 	}
@@ -205,7 +207,7 @@ func TestDecryptRoundTripLocalMultipart(t *testing.T) {
 		WrappedDEK: wrappedDEK,
 	}
 
-	decrypted, err := decryptLocal(context.Background(), src, mek)
+	decrypted, err := decryptLocal(context.Background(), src, mek, nil)
 	if err != nil {
 		t.Fatalf("decryptLocal multipart: %v", err)
 	}
@@ -250,7 +252,7 @@ func TestDecryptRoundTripLocalMultipartCorrupted(t *testing.T) {
 		WrappedDEK: wrappedDEK,
 	}
 
-	_, err := decryptLocal(context.Background(), src, mek)
+	_, err := decryptLocal(context.Background(), src, mek, nil)
 	if err == nil {
 		t.Fatal("expected HMAC error for corrupted multipart ciphertext, got nil")
 	}
@@ -283,7 +285,7 @@ func TestDecryptLocalMultipartMissingIV(t *testing.T) {
 	defer func() { sidecarFlag = ""; ivFlag = "" }()
 
 	src := &inputSource{Type: "local", Path: ctFile, WrappedDEK: wrappedDEK}
-	_, err := decryptLocal(context.Background(), src, mek)
+	_, err := decryptLocal(context.Background(), src, mek, nil)
 	if err == nil {
 		t.Fatal("expected error for multipart local without -iv, got nil")
 	}
@@ -412,7 +414,7 @@ func TestDecryptB2Multipart(t *testing.T) {
 	var decrypted []byte
 	withFakeBackend(t, objects, func() {
 		var err error
-		decrypted, err = decryptB2(context.Background(), src, mek, "")
+		decrypted, err = decryptB2(context.Background(), src, mek, nil, "")
 		if err != nil {
 			t.Fatalf("decryptB2 multipart: %v", err)
 		}
@@ -444,7 +446,7 @@ func TestDecryptB2MultipartCorrupted(t *testing.T) {
 	src := &inputSource{Type: "b2", Bucket: "bucket", Path: key}
 
 	withFakeBackend(t, objects, func() {
-		_, err := decryptB2(context.Background(), src, mek, "")
+		_, err := decryptB2(context.Background(), src, mek, nil, "")
 		if err == nil {
 			t.Fatal("expected HMAC error for corrupted B2 multipart ciphertext, got nil")
 		}
@@ -515,7 +517,7 @@ func TestDecryptB2SinglePUT(t *testing.T) {
 	var decrypted []byte
 	withFakeBackend(t, objects, func() {
 		var err error
-		decrypted, err = decryptB2(context.Background(), src, mek, "")
+		decrypted, err = decryptB2(context.Background(), src, mek, nil, "")
 		if err != nil {
 			t.Fatalf("decryptB2 single-PUT: %v", err)
 		}
@@ -597,7 +599,7 @@ func TestDecryptWrongMEK(t *testing.T) {
 	defer func() { sidecarFlag = "" }()
 
 	ctx := context.Background()
-	_, err = decryptLocal(ctx, src, wrongMEK)
+	_, err = decryptLocal(ctx, src, wrongMEK, nil)
 	if err == nil {
 		t.Fatal("expected error with wrong MEK, got nil")
 	}
@@ -678,7 +680,7 @@ func TestDecryptCorruptedBlock(t *testing.T) {
 	defer func() { sidecarFlag = "" }()
 
 	ctx := context.Background()
-	_, err = decryptLocal(ctx, src, mek)
+	_, err = decryptLocal(ctx, src, mek, nil)
 	if err == nil {
 		t.Fatal("expected error with corrupted block, got nil")
 	}
@@ -918,7 +920,7 @@ func TestDecryptLoadEscrowWithCFDomain(t *testing.T) {
 
 	// Set the global escrowFile variable to point to our test file
 	escrowFile = testEscrowFile
-	mek, err := loadEscrow()
+	mek, _, err := loadEscrow()
 	if err != nil {
 		t.Fatalf("loadEscrow: %v", err)
 	}
@@ -1001,7 +1003,7 @@ func TestDecryptB2MultipartLayoutMatrix(t *testing.T) {
 			var decrypted []byte
 			withFakeBackend(t, objects, func() {
 				var err error
-				decrypted, err = decryptB2(context.Background(), src, mek, "")
+				decrypted, err = decryptB2(context.Background(), src, mek, nil, "")
 				if err != nil {
 					t.Fatalf("decryptB2 multipart layout %q: %v", tc.name, err)
 				}
@@ -1041,7 +1043,7 @@ func TestDecryptLocalMultipartLayoutMatrix(t *testing.T) {
 
 			src := &inputSource{Type: "local", Path: ctFile, WrappedDEK: wrappedDEK}
 
-			decrypted, err := decryptLocal(context.Background(), src, mek)
+			decrypted, err := decryptLocal(context.Background(), src, mek, nil)
 			if err != nil {
 				t.Fatalf("decryptLocal multipart layout %q: %v", tc.name, err)
 			}
@@ -1079,7 +1081,7 @@ func TestDecryptB2MultipartLayoutMatrixCorrupted(t *testing.T) {
 			src := &inputSource{Type: "b2", Bucket: "bucket", Path: key}
 
 			withFakeBackend(t, objects, func() {
-				_, err := decryptB2(context.Background(), src, mek, "")
+				_, err := decryptB2(context.Background(), src, mek, nil, "")
 				if err == nil {
 					t.Fatalf("%s: expected HMAC error, got nil", tc.name)
 				}
@@ -1140,8 +1142,11 @@ func TestDecryptV3SinglePUT(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode DEK: %v", err)
 			}
-			iv, err := base64.StdEncoding.DecodeString(vec.IV)
-			if err != nil {
+			// vec.IV isn't used directly here -- decryptLocal reads the IV
+			// back out of the envelope header assembled below, not from a
+			// separately-decoded value (unlike the multipart tests, which
+			// have no envelope header and so do need it, via -iv).
+			if _, err := base64.StdEncoding.DecodeString(vec.IV); err != nil {
 				t.Fatalf("decode IV: %v", err)
 			}
 			plaintext, err := base64.StdEncoding.DecodeString(vec.Plaintext)
@@ -1159,7 +1164,7 @@ func TestDecryptV3SinglePUT(t *testing.T) {
 
 			// Assemble v3 envelope: header + encrypted data + block table trailer
 			blockTable := buildV3BlockTableFromVector(vec.Blocks, vec.BlockSize)
-			trailer, err := crypto.EncodeBlockTable(blockTable)
+			trailer, err := blockTable.Encode()
 			if err != nil {
 				t.Fatalf("encode block table: %v", err)
 			}
@@ -1193,7 +1198,7 @@ func TestDecryptV3SinglePUT(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			decrypted, err := decryptLocal(ctx, src, mek)
+			decrypted, err := decryptLocal(ctx, src, mek, nil)
 			if err != nil {
 				t.Fatalf("decryptLocal v3: %v", err)
 			}
@@ -1283,7 +1288,7 @@ func TestDecryptV3MultipartWithGzipSidecar(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	decrypted, err := decryptLocal(ctx, src, mek)
+	decrypted, err := decryptLocal(ctx, src, mek, nil)
 	if err != nil {
 		t.Fatalf("decryptLocal v3 multipart: %v", err)
 	}
@@ -1326,7 +1331,7 @@ func TestDecryptV3B2SinglePUT(t *testing.T) {
 
 	// Build block table trailer
 	blockTable := buildV3BlockTableFromVector(vec.Blocks, vec.BlockSize)
-	trailer, err := crypto.EncodeBlockTable(blockTable)
+	trailer, err := blockTable.Encode()
 	if err != nil {
 		t.Fatalf("encode block table: %v", err)
 	}
@@ -1363,7 +1368,7 @@ func TestDecryptV3B2SinglePUT(t *testing.T) {
 	var decrypted []byte
 	withFakeBackend(t, objects, func() {
 		var err error
-		decrypted, err = decryptB2(context.Background(), src, mek, "")
+		decrypted, err = decryptB2(context.Background(), src, mek, nil, "")
 		if err != nil {
 			t.Fatalf("decryptB2 v3 single-PUT: %v", err)
 		}
@@ -1450,7 +1455,7 @@ func TestDecryptV3B2Multipart(t *testing.T) {
 	var decrypted []byte
 	withFakeBackend(t, objects, func() {
 		var err error
-		decrypted, err = decryptB2(context.Background(), src, mek, "")
+		decrypted, err = decryptB2(context.Background(), src, mek, nil, "")
 		if err != nil {
 			t.Fatalf("decryptB2 v3 multipart: %v", err)
 		}
@@ -1475,8 +1480,7 @@ func TestDecryptV3PerBlockDecompression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode DEK: %v", err)
 	}
-	iv, err := base64.StdEncoding.DecodeString(vec.IV)
-	if err != nil {
+	if _, err := base64.StdEncoding.DecodeString(vec.IV); err != nil {
 		t.Fatalf("decode IV: %v", err)
 	}
 	plaintext, err := base64.StdEncoding.DecodeString(vec.Plaintext)
@@ -1507,7 +1511,7 @@ func TestDecryptV3PerBlockDecompression(t *testing.T) {
 
 	// Assemble v3 envelope
 	blockTable := buildV3BlockTableFromVector(vec.Blocks, vec.BlockSize)
-	trailer, err := crypto.EncodeBlockTable(blockTable)
+	trailer, err := blockTable.Encode()
 	if err != nil {
 		t.Fatalf("encode block table: %v", err)
 	}
@@ -1541,7 +1545,7 @@ func TestDecryptV3PerBlockDecompression(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	decrypted, err := decryptLocal(ctx, src, mek)
+	decrypted, err := decryptLocal(ctx, src, mek, nil)
 	if err != nil {
 		t.Fatalf("decryptLocal v3 compressed: %v", err)
 	}

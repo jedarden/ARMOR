@@ -57,12 +57,13 @@ func (m *MockBackend) Get(ctx context.Context, bucket, key string) (io.ReadClose
 	return io.NopCloser(strings.NewReader(string(obj.Data))), info, nil
 }
 
-func (m *MockBackend) GetDirect(ctx context.Context, bucket, key string) (io.ReadCloser, int64, error) {
+func (m *MockBackend) GetDirect(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
 	obj, ok := m.objects[key]
 	if !ok {
-		return nil, 0, backend.ErrObjectNotFound
+		return nil, nil, backend.ErrObjectNotFound
 	}
-	return io.NopCloser(strings.NewReader(string(obj.Data))), int64(len(obj.Data)), nil
+	info := &backend.ObjectInfo{Key: key, Size: int64(len(obj.Data)), Metadata: obj.Metadata}
+	return io.NopCloser(strings.NewReader(string(obj.Data))), info, nil
 }
 
 func (m *MockBackend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
@@ -155,8 +156,89 @@ func (m *MockBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, ds
 	return nil
 }
 
-func (m *MockBackend) ListBuckets(ctx context.Context) ([]string, error) {
-	return []string{"test-bucket"}, nil
+func (m *MockBackend) ListBuckets(ctx context.Context) ([]backend.BucketInfo, error) {
+	return []backend.BucketInfo{{Name: "test-bucket"}}, nil
+}
+
+func (m *MockBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	return m.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
+func (m *MockBackend) CreateBucket(ctx context.Context, bucket string) error { return nil }
+func (m *MockBackend) DeleteBucket(ctx context.Context, bucket string) error { return nil }
+func (m *MockBackend) HeadBucket(ctx context.Context, bucket string) error   { return nil }
+
+// The stubs below satisfy backend.Backend for interface conformance --
+// format migration tests don't exercise multipart uploads, lifecycle,
+// object lock, retention, legal hold, or versioning, so these return zero
+// values rather than simulating real behavior.
+
+func (m *MockBackend) CreateMultipartUpload(ctx context.Context, bucket, key string, meta map[string]string) (string, error) {
+	return "", nil
+}
+
+func (m *MockBackend) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int32, body io.Reader, size int64) (string, error) {
+	return "", nil
+}
+
+func (m *MockBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []backend.CompletedPart) (string, error) {
+	return "", nil
+}
+
+func (m *MockBackend) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	return nil
+}
+
+func (m *MockBackend) ListParts(ctx context.Context, bucket, key, uploadID string) (*backend.ListPartsResult, error) {
+	return &backend.ListPartsResult{}, nil
+}
+
+func (m *MockBackend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*backend.ListMultipartUploadsResult, error) {
+	return &backend.ListMultipartUploadsResult{}, nil
+}
+
+func (m *MockBackend) GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, backend.ErrObjectNotFound
+}
+
+func (m *MockBackend) PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+
+func (m *MockBackend) DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error {
+	return nil
+}
+
+func (m *MockBackend) GetObjectLockConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, backend.ErrObjectNotFound
+}
+
+func (m *MockBackend) PutObjectLockConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+
+func (m *MockBackend) GetObjectRetention(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, backend.ErrObjectNotFound
+}
+
+func (m *MockBackend) PutObjectRetention(ctx context.Context, bucket, key string, retention []byte) error {
+	return nil
+}
+
+func (m *MockBackend) GetObjectLegalHold(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, backend.ErrObjectNotFound
+}
+
+func (m *MockBackend) PutObjectLegalHold(ctx context.Context, bucket, key string, legalHold []byte) error {
+	return nil
+}
+
+func (m *MockBackend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*backend.ListObjectVersionsResult, error) {
+	return &backend.ListObjectVersionsResult{}, nil
+}
+
+func (m *MockBackend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*backend.ObjectInfo, error) {
+	return nil, backend.ErrObjectNotFound
 }
 
 // TestFormatMigrationDryRun tests that dry run mode counts objects without migrating.
@@ -189,19 +271,22 @@ func TestFormatMigrationDryRun(t *testing.T) {
 	}
 
 	plaintext := []byte("test data for migration")
-	ciphertext, err := encryptor.Encrypt(plaintext)
+	ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
 	if err != nil {
 		t.Fatalf("Failed to encrypt: %v", err)
 	}
 
 	// Build envelope header
-	header := &crypto.EnvelopeHeader{
-		Version:   crypto.Version1,
-		IV:        [16]byte{},
-		BlockSize: blockSize,
+	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, crypto.Version1)
+	if err != nil {
+		t.Fatalf("Failed to build envelope header: %v", err)
 	}
-	headerBuf := make([]byte, crypto.EnvelopeHeaderSize)
-	copy(headerBuf, header.Encode())
+	headerBuf, err := header.Encode()
+	if err != nil {
+		t.Fatalf("Failed to encode envelope header: %v", err)
+	}
+	ciphertext = append(ciphertext, hmacTable...)
 
 	// Store object with V1 metadata
 	metadata := map[string]string{
@@ -283,19 +368,22 @@ func TestFormatMigrationV1ToV2(t *testing.T) {
 	}
 
 	plaintext := []byte("test data for migration to v2")
-	ciphertext, err := encryptor.Encrypt(plaintext)
+	ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
 	if err != nil {
 		t.Fatalf("Failed to encrypt: %v", err)
 	}
 
 	// Build envelope header
-	header := &crypto.EnvelopeHeader{
-		Version:   crypto.Version1,
-		IV:        [16]byte{},
-		BlockSize: blockSize,
+	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, crypto.Version1)
+	if err != nil {
+		t.Fatalf("Failed to build envelope header: %v", err)
 	}
-	headerBuf := make([]byte, crypto.EnvelopeHeaderSize)
-	copy(headerBuf, header.Encode())
+	headerBuf, err := header.Encode()
+	if err != nil {
+		t.Fatalf("Failed to encode envelope header: %v", err)
+	}
+	ciphertext = append(ciphertext, hmacTable...)
 
 	// Store object with V1 metadata
 	metadata := map[string]string{
@@ -468,7 +556,7 @@ func TestFormatMigrationMultipartToSingle(t *testing.T) {
 
 	// Small plaintext that will be migrated to single-PUT (< 5MB threshold)
 	plaintext := []byte("multipart data for migration test")
-	ciphertext, err := encryptor.Encrypt(plaintext)
+	ciphertext, _, err := encryptor.Encrypt(plaintext)
 	if err != nil {
 		t.Fatalf("Failed to encrypt: %v", err)
 	}
@@ -613,14 +701,11 @@ func TestFormatMigrationV2SkippedByDefault(t *testing.T) {
 	}
 }
 
-	// Verify only remaining objects were processed
-	// After resume, only object-3 should be processed (objects 1-2 already done)
-	if result.ProcessedObjects != 1 {
-		t.Errorf("Expected 1 processed object after resume, got %d", result.ProcessedObjects)
-	}
-
-	// Verify total objects counted matches initial state
-	if result.TotalObjects != 3 {
-		t.Errorf("Expected 3 total objects, got %d", result.TotalObjects)
-	}
-}
+// NOTE: a resume-capability test (verifying that re-running Migrate after a
+// partial run only processes previously-unprocessed objects) was truncated
+// here -- its setup/migrator-call was missing, leaving only trailing
+// assertions with no enclosing function (a syntax error blocking every
+// build). Removed rather than reconstructed: the intended setup isn't
+// recoverable from what remained, and guessing at Migrate's resume
+// semantics risks asserting something that was never actually true. Coverage
+// for resume behavior is worth adding back deliberately, not guessed here.

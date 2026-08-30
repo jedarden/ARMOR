@@ -20,6 +20,7 @@ import (
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
+	"github.com/jedarden/armor/internal/keymanager"
 	"github.com/jedarden/armor/internal/manifest"
 )
 
@@ -157,6 +158,14 @@ func (m *mockRotationBackend) DeleteObjects(ctx context.Context, bucket string, 
 		m.Delete(ctx, bucket, key)
 	}
 	return nil
+}
+
+// ListRaw mirrors List -- this mock doesn't distinguish .armor/ internal
+// objects from regular ones, so there's nothing extra for ListRaw to expose.
+// headCountingRotationBackend inherits this via its embedded
+// *mockRotationBackend, same as List.
+func (m *mockRotationBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	return m.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
 }
 
 func (m *mockRotationBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
@@ -451,6 +460,65 @@ func createTestARMORObject(mek []byte, bucket, key string, plaintext []byte) (ma
 	}
 
 	return meta, nil
+}
+
+// putARMORObject creates a v2 (fingerprint-tagged) ARMOR-encrypted object,
+// stores it in mock, and indexes it in idx (mirroring the Put+idx.Put
+// pattern in TestKeyRotationWithManifestIndex above). Unlike
+// createTestARMORObject (plain v1, no fingerprint), fingerprint-rotation
+// tests need the wrapped-DEK to actually carry mek's fingerprint so
+// NewFingerprintRotator can tell active-fingerprint objects from
+// old-fingerprint ones.
+func putARMORObject(t *testing.T, mock *mockRotationBackend, bucket, key string, plaintext, mek []byte, idx *manifest.Index) {
+	t.Helper()
+
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		t.Fatalf("GenerateDEK: %v", err)
+	}
+	iv, err := crypto.GenerateIV()
+	if err != nil {
+		t.Fatalf("GenerateIV: %v", err)
+	}
+	wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(mek, dek)
+	if err != nil {
+		t.Fatalf("WrapDEKWithFingerprint: %v", err)
+	}
+
+	meta := map[string]string{
+		"x-amz-meta-armor-version":          "2",
+		"x-amz-meta-armor-block-size":       "65536",
+		"x-amz-meta-armor-plaintext-size":   fmt.Sprintf("%d", len(plaintext)),
+		"x-amz-meta-armor-content-type":     "application/octet-stream",
+		"x-amz-meta-armor-iv":               base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-wrapped-dek":      wrappedDEKStr,
+		"x-amz-meta-armor-plaintext-sha256": "test-sha256",
+		"x-amz-meta-armor-etag":             "test-etag",
+	}
+
+	var buf bytes.Buffer
+	buf.Write(plaintext)
+	if err := mock.Put(context.Background(), bucket, key, &buf, int64(len(plaintext)), meta); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if idx == nil {
+		return
+	}
+	am, ok := backend.ParseARMORMetadata(meta)
+	if !ok {
+		t.Fatal("failed to parse ARMOR metadata")
+	}
+	idx.Put(bucket, key, &manifest.Entry{
+		PlaintextSize:  am.PlaintextSize,
+		ContentType:    am.ContentType,
+		ETag:           am.ETag,
+		IV:             am.IV,
+		WrappedDEK:     am.WrappedDEK,
+		MEKFingerprint: am.MEKFingerprint,
+		BlockSize:      am.BlockSize,
+		LastModified:   time.Now(),
+	})
 }
 
 // TestKeyRotation tests the basic key rotation functionality.
@@ -1500,21 +1568,8 @@ func TestFingerprintRotationResume(t *testing.T) {
 	// Start rotation but interrupt it after processing 1 object
 	rotator1 := NewFingerprintRotator(mock, bucket, "default", activeMEK, oldRing, idx)
 
-	// Inject a simulated crash after processing one object
-	// We'll do this by manually setting state after processing first object
-	var crashAfter atomic.Int32
-	crashAfter.Store(1) // crash after processing 1 object
-
-	// Modify the rotator to inject a crash
-	originalCountObjects := rotator1.countObjects
-	crashInjected := false
-
-	rotator1.countObjects = func(ctx context.Context) error {
-		// Let countObjects complete normally
-		return originalCountObjects(ctx)
-	}
-
-	// We'll simulate a crash by canceling the context after processing N objects
+	// Simulate a crash by canceling the context once GetState reports the
+	// first object processed.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1531,7 +1586,7 @@ func TestFingerprintRotationResume(t *testing.T) {
 		cancel()
 	}()
 
-	result1, err := rotator1.Rotate(ctx)
+	_, err := rotator1.Rotate(ctx)
 	if err == nil {
 		t.Error("expected interruption error, got nil")
 	}
@@ -1579,11 +1634,6 @@ func TestKeyRingHistogram(t *testing.T) {
 
 	activeFP := crypto.MEKFingerprint(activeMEK)
 	oldFP := crypto.MEKFingerprint(oldMEK)
-
-	// Build ring with old key
-	oldRing := []keymanager.RingKeyEntry{
-		{MEK: oldMEK, Fingerprint: oldFP},
-	}
 
 	// Create manifest index
 	idx := manifest.New()
