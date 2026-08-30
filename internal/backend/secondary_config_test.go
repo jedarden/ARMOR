@@ -95,116 +95,87 @@ func TestParseSecondaryBackendConfigValid(t *testing.T) {
 	}
 }
 
-// TestParseSecondaryBackendConfigDeprecatedNames tests that the old environment
-// variable names still work but trigger deprecation warnings.
-func TestParseSecondaryBackendConfigDeprecatedNames(t *testing.T) {
+// TestParseSecondaryBackendConfigOldNamesFail tests that the deprecated
+// B2_* variable names are no longer supported and return a clear error.
+func TestParseSecondaryBackendConfigOldNamesFail(t *testing.T) {
 	tests := []struct {
 		name         string
-		endpoint     string
-		keyID        string
-		key          string
-		bucket       string
-		wantType     string
-		wantRegion   string
-		wantEndpoint string
-		wantKeyID    string
-		wantBucket   string
+		setEnv       map[string]string
+		wantErrMsg   string
 	}{
 		{
-			name:         "deprecated names - us-east-005",
-			endpoint:     "https://s3.us-east-005.backblazeb2.com",
-			keyID:        "deprecatedKeyId",
-			key:          "deprecatedSecret",
-			bucket:       "deprecated-bucket",
-			wantType:     "b2",
-			wantRegion:   "us-east-005",
-			wantEndpoint: "https://s3.us-east-005.backblazeb2.com",
-			wantKeyID:    "deprecatedKeyId",
-			wantBucket:   "deprecated-bucket",
+			name: "all old names set",
+			setEnv: map[string]string{
+				"B2_ENDPOINT": "https://s3.us-east-005.backblazeb2.com",
+				"B2_KEY_ID":  "oldKeyId",
+				"B2_KEY":     "oldSecret",
+				"B2_BUCKET":  "old-bucket",
+			},
+			wantErrMsg: "ARMOR_SECONDARY_B2_ENDPOINT is required",
+		},
+		{
+			name: "mixed old and new - old endpoint ignored",
+			setEnv: map[string]string{
+				"B2_ENDPOINT":                "https://s3.old-backblazeb2.com",
+				"ARMOR_SECONDARY_B2_KEY_ID": "newKeyId",
+				"ARMOR_SECONDARY_B2_KEY":    "newSecret",
+				"ARMOR_SECONDARY_B2_BUCKET": "new-bucket",
+			},
+			wantErrMsg: "ARMOR_SECONDARY_B2_ENDPOINT is required",
+		},
+		{
+			name: "only old endpoint set",
+			setEnv: map[string]string{
+				"B2_ENDPOINT": "https://s3.us-east-005.backblazeb2.com",
+			},
+			wantErrMsg: "ARMOR_SECONDARY_B2_ENDPOINT is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear any new names that might be set
-			unsetEnv(t, "ARMOR_SECONDARY_B2_ENDPOINT", "ARMOR_SECONDARY_B2_KEY_ID", "ARMOR_SECONDARY_B2_KEY", "ARMOR_SECONDARY_B2_BUCKET")
+			// Clear all secondary B2 variables
+			unsetEnv(t,
+				"ARMOR_SECONDARY_B2_ENDPOINT", "ARMOR_SECONDARY_B2_KEY_ID", "ARMOR_SECONDARY_B2_KEY", "ARMOR_SECONDARY_B2_BUCKET",
+				"B2_ENDPOINT", "B2_KEY_ID", "B2_KEY", "B2_BUCKET",
+			)
 
-			// Set environment variables using old deprecated names
-			setEnv(t, "B2_ENDPOINT", tt.endpoint)
-			setEnv(t, "B2_KEY_ID", tt.keyID)
-			setEnv(t, "B2_KEY", tt.key)
-			setEnv(t, "B2_BUCKET", tt.bucket)
+			// Set the test environment variables
+			for k, v := range tt.setEnv {
+				setEnv(t, k, v)
+			}
 
 			cfg, err := ParseSecondaryBackendConfig()
 
-			if err != nil {
-				t.Fatalf("ParseSecondaryBackendConfig() error: %v", err)
+			// Verify we got an error
+			if err == nil {
+				t.Fatalf("ParseSecondaryBackendConfig() expected error containing %q, got nil (cfg: %+v)", tt.wantErrMsg, cfg)
 			}
 
-			if cfg.Type != tt.wantType {
-				t.Errorf("Type = %q, want %q", cfg.Type, tt.wantType)
-			}
-			if cfg.Region != tt.wantRegion {
-				t.Errorf("Region = %q, want %q", cfg.Region, tt.wantRegion)
-			}
-			if cfg.Endpoint != tt.wantEndpoint {
-				t.Errorf("Endpoint = %q, want %q", cfg.Endpoint, tt.wantEndpoint)
-			}
-			if cfg.AccessKeyID != tt.wantKeyID {
-				t.Errorf("AccessKeyID = %q, want %q", cfg.AccessKeyID, tt.wantKeyID)
-			}
-			if cfg.SecretKey != tt.key {
-				t.Errorf("SecretKey mismatch (value should be %q)", tt.key)
-			}
-			if cfg.Bucket != tt.wantBucket {
-				t.Errorf("Bucket = %q, want %q", cfg.Bucket, tt.wantBucket)
+			// Verify error message mentions the new variable name
+			if !containsSubstring(err.Error(), tt.wantErrMsg) {
+				t.Errorf("Error message should mention new variable name %q, got: %v", tt.wantErrMsg, err)
 			}
 		})
 	}
 }
 
-// TestParseSecondaryBackendConfigNewNamesTakePrecedence tests that new variable
-// names take precedence over old names when both are set.
-func TestParseSecondaryBackendConfigNewNamesTakePrecedence(t *testing.T) {
-	// Set both old and new environment variables with different values
-	setEnv(t, "B2_ENDPOINT", "https://s3.old-backblazeb2.com")
-	setEnv(t, "B2_KEY_ID", "oldKeyId")
-	setEnv(t, "B2_KEY", "oldSecret")
-	setEnv(t, "B2_BUCKET", "old-bucket")
-
-	setEnv(t, "ARMOR_SECONDARY_B2_ENDPOINT", "https://s3.us-east-005.backblazeb2.com")
-	setEnv(t, "ARMOR_SECONDARY_B2_KEY_ID", "newKeyId")
-	setEnv(t, "ARMOR_SECONDARY_B2_KEY", "newSecret")
-	setEnv(t, "ARMOR_SECONDARY_B2_BUCKET", "new-bucket")
-
-	cfg, err := ParseSecondaryBackendConfig()
-
-	if err != nil {
-		t.Fatalf("ParseSecondaryBackendConfig() error: %v", err)
+// containsSubstring checks if substr exists in s.
+func containsSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
 	}
-
-	// Verify that new values were used, not old ones
-	if cfg.Endpoint != "https://s3.us-east-005.backblazeb2.com" {
-		t.Errorf("Endpoint = %q, want new value (https://s3.us-east-005.backblazeb2.com)", cfg.Endpoint)
-	}
-	if cfg.AccessKeyID != "newKeyId" {
-		t.Errorf("AccessKeyID = %q, want new value (newKeyId)", cfg.AccessKeyID)
-	}
-	if cfg.SecretKey != "newSecret" {
-		t.Errorf("SecretKey = %q, want new value (newSecret)", cfg.SecretKey)
-	}
-	if cfg.Bucket != "new-bucket" {
-		t.Errorf("Bucket = %q, want new value (new-bucket)", cfg.Bucket)
-	}
+	return false
 }
 
 // TestParseSecondaryBackendConfigDisabled tests that when all environment
 // variables are unset, a zero BackendConfig is returned (no error).
 func TestParseSecondaryBackendConfigDisabled(t *testing.T) {
-	// Ensure all env vars are unset (both new and old names)
+	// Ensure all env vars are unset
 	unsetEnv(t,
 		"ARMOR_SECONDARY_B2_ENDPOINT", "ARMOR_SECONDARY_B2_KEY_ID", "ARMOR_SECONDARY_B2_KEY", "ARMOR_SECONDARY_B2_BUCKET",
-		"B2_ENDPOINT", "B2_KEY_ID", "B2_KEY", "B2_BUCKET",
 	)
 
 	cfg, err := ParseSecondaryBackendConfig()
