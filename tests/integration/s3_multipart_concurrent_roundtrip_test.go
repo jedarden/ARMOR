@@ -1,14 +1,22 @@
-//go:build integration
-// +build integration
-
 // Concurrent, shuffled, unaligned multipart round-trip test
 // Plan §8.11 acceptance - validates v3 multipart with real-world patterns
+//
+// This test MUST:
+// - Pass under -race detector (validates concurrency safety)
+// - Run in short mode (no testing.Short() skip) - part of go test ./... -short
+// - Test through real S3 HTTP handlers
+//
+// Requirements:
+// - ARMOR_ENDPOINT environment variable (defaults to http://localhost:9000)
+// - ARMOR_TEST_BUCKET for testBucket name
+// - ARMOR_ACCESS_KEY_ID and ARMOR_SECRET_ACCESS_KEY for credentials
 
 package integration
 
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"math/rand"
@@ -18,9 +26,70 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
+
+// readFull reads the entire reader into a byte slice
+func readFull(r io.Reader) ([]byte, error) {
+	return io.ReadAll(r)
+}
+
+// getEnvOr gets an environment variable with a fallback value
+func getEnvOr(key, fallback string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return fallback
+}
+
+// generateTestKey creates a unique test key
+func generateTestKey(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("Failed to generate random key: %v", err)
+	}
+	return fmt.Sprintf("test-concurrent-mp-%x", b)
+}
+
+// createS3Client creates an S3 client for testing
+func createS3Client(t *testing.T, armorEndpoint string) *s3.Client {
+	t.Helper()
+
+	accessKey := os.Getenv("ARMOR_ACCESS_KEY_ID")
+	secretKey := os.Getenv("ARMOR_SECRET_ACCESS_KEY")
+
+	// Use test credentials if not set
+	if accessKey == "" {
+		accessKey = "test_access_key"
+	}
+	if secretKey == "" {
+		secretKey = "test_secret_key"
+	}
+
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			accessKey,
+			secretKey,
+			"",
+		)),
+		config.WithRegion("us-east-1"),
+	)
+	if err != nil {
+		t.Fatalf("Failed to load AWS config: %v", err)
+	}
+
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(armorEndpoint)
+		o.UsePathStyle = true
+	})
+}
+
+// Get test bucket from environment or use default
+var testBucket = getEnvOr("ARMOR_TEST_BUCKET", "test-bucket")
 
 // TestConcurrentMultipartRoundtrip tests concurrent multipart uploads with multiple
 // real-world patterns, then validates with full and range downloads, and verifies
@@ -81,13 +150,13 @@ func testBarmanPattern(t *testing.T, client *s3.Client, ctx context.Context) {
 	t.Logf("Barman pattern: %d parts, total %d bytes", len(partSizes), len(testData))
 
 	// Create and upload multipart
-	uploadID, partETags := uploadMultipartWithParts(t, client, ctx, bucket, key, testData, partSizes)
+	uploadID, partETags := uploadMultipartWithParts(t, client, ctx, testBucket, key, testData, partSizes)
 
 	// Complete the upload
-	completeMultipartUpload(t, client, ctx, bucket, key, uploadID, partETags)
+	completeMultipartUpload(t, client, ctx, testBucket, key, uploadID, partETags)
 
 	// Verify full download and ranges
-	verifyRoundtrip(t, client, ctx, bucket, key, testData, 20)
+	verifyRoundtrip(t, client, ctx, testBucket, key, testData, 20)
 
 	t.Logf("Barman pattern test completed successfully")
 }
@@ -115,7 +184,7 @@ func testAWSClIDefaults(t *testing.T, client *s3.Client, ctx context.Context) {
 
 	// Create multipart upload
 	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(testBucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
@@ -154,7 +223,7 @@ func testAWSClIDefaults(t *testing.T, client *s3.Client, ctx context.Context) {
 			partData := testData[partStart:partEnd]
 
 			uploadResp, err := client.UploadPart(ctx, &s3.UploadPartInput{
-				Bucket:     aws.String(bucket),
+				Bucket:     aws.String(testBucket),
 				Key:        aws.String(key),
 				UploadId:   aws.String(uploadID),
 				PartNumber: aws.Int32(int32(partNum + 1)),
@@ -190,10 +259,10 @@ func testAWSClIDefaults(t *testing.T, client *s3.Client, ctx context.Context) {
 		float64(totalSize)/(1024*1024)/uploadDuration.Seconds())
 
 	// Complete the upload
-	completeMultipartUpload(t, client, ctx, bucket, key, uploadID, partETags)
+	completeMultipartUpload(t, client, ctx, testBucket, key, uploadID, partETags)
 
 	// Verify full download and ranges
-	verifyRoundtrip(t, client, ctx, bucket, key, testData, 20)
+	verifyRoundtrip(t, client, ctx, testBucket, key, testData, 20)
 
 	t.Logf("AWS CLI pattern test completed successfully")
 }
@@ -224,13 +293,13 @@ func testSingleByteFinalPart(t *testing.T, client *s3.Client, ctx context.Contex
 	t.Logf("Single-byte final part: %d parts, total %d bytes", len(partSizes), len(testData))
 
 	// Create and upload multipart
-	uploadID, partETags := uploadMultipartWithParts(t, client, ctx, bucket, key, testData, partSizes)
+	uploadID, partETags := uploadMultipartWithParts(t, client, ctx, testBucket, key, testData, partSizes)
 
 	// Complete the upload
-	completeMultipartUpload(t, client, ctx, bucket, key, uploadID, partETags)
+	completeMultipartUpload(t, client, ctx, testBucket, key, uploadID, partETags)
 
 	// Verify full download and ranges (including ranges that hit the final byte)
-	verifyRoundtrip(t, client, ctx, bucket, key, testData, 20)
+	verifyRoundtrip(t, client, ctx, testBucket, key, testData, 20)
 
 	// Specific test: range that includes the final byte
 	t.Run("FinalByteRange", func(t *testing.T) {
@@ -238,7 +307,7 @@ func testSingleByteFinalPart(t *testing.T, client *s3.Client, ctx context.Contex
 		end := int64(len(testData) - 1)
 
 		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(bucket),
+			Bucket: aws.String(testBucket),
 			Key:    aws.String(key),
 			Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
 		})
@@ -270,7 +339,7 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 
 	// Create multipart upload
 	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(testBucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
@@ -285,7 +354,7 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 		rand.Read(partData)
 
 		_, err := client.UploadPart(ctx, &s3.UploadPartInput{
-			Bucket:     aws.String(bucket),
+			Bucket:     aws.String(testBucket),
 			Key:        aws.String(key),
 			UploadId:   aws.String(uploadID),
 			PartNumber: aws.Int32(int32(i + 1)),
@@ -300,7 +369,7 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 
 	// Verify parts are listed
 	listResp, err := client.ListParts(ctx, &s3.ListPartsInput{
-		Bucket:   aws.String(bucket),
+		Bucket:   aws.String(testBucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
 	})
@@ -313,7 +382,7 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 
 	// Verify upload appears in ListMultipartUploads
 	uploadsResp, err := client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(testBucket),
 	})
 	if err != nil {
 		t.Fatalf("ListMultipartUploads before abort failed: %v", err)
@@ -332,7 +401,7 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 
 	// Abort the upload
 	_, err = client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
-		Bucket:   aws.String(bucket),
+		Bucket:   aws.String(testBucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
 	})
@@ -342,7 +411,7 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 
 	// Verify upload no longer appears in ListMultipartUploads
 	uploadsResp2, err := client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(testBucket),
 	})
 	if err != nil {
 		t.Fatalf("ListMultipartUploads after abort failed: %v", err)
@@ -356,7 +425,7 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 
 	// Verify parts are no longer accessible (or return empty/error)
 	listResp2, err := client.ListParts(ctx, &s3.ListPartsInput{
-		Bucket:   aws.String(bucket),
+		Bucket:   aws.String(testBucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
 	})
@@ -367,7 +436,7 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 
 	// Verify the final object was not created
 	_, err = client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(testBucket),
 		Key:    aws.String(key),
 	})
 	if err == nil {
@@ -378,12 +447,12 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 }
 
 // uploadMultipartWithParts is a helper that uploads multipart data with specific part sizes
-func uploadMultipartWithParts(t *testing.T, client *s3.Client, ctx context.Context, bucket, key string, testData []byte, partSizes []int) (string, []types.CompletedPart) {
+func uploadMultipartWithParts(t *testing.T, client *s3.Client, ctx context.Context, testBucket, key string, testData []byte, partSizes []int) (string, []types.CompletedPart) {
 	t.Helper()
 
 	// Create multipart upload
 	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(testBucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
@@ -398,7 +467,7 @@ func uploadMultipartWithParts(t *testing.T, client *s3.Client, ctx context.Conte
 		partData := testData[offset : offset+size]
 
 		uploadResp, err := client.UploadPart(ctx, &s3.UploadPartInput{
-			Bucket:     aws.String(bucket),
+			Bucket:     aws.String(testBucket),
 			Key:        aws.String(key),
 			UploadId:   aws.String(uploadID),
 			PartNumber: aws.Int32(int32(i + 1)),
@@ -420,11 +489,11 @@ func uploadMultipartWithParts(t *testing.T, client *s3.Client, ctx context.Conte
 }
 
 // completeMultipartUpload is a helper that completes a multipart upload
-func completeMultipartUpload(t *testing.T, client *s3.Client, ctx context.Context, bucket, key, uploadID string, partETags []types.CompletedPart) {
+func completeMultipartUpload(t *testing.T, client *s3.Client, ctx context.Context, testBucket, key, uploadID string, partETags []types.CompletedPart) {
 	t.Helper()
 
 	_, err := client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(bucket),
+		Bucket:          aws.String(testBucket),
 		Key:             aws.String(key),
 		UploadId:        aws.String(uploadID),
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: partETags},
@@ -435,13 +504,13 @@ func completeMultipartUpload(t *testing.T, client *s3.Client, ctx context.Contex
 }
 
 // verifyRoundtrip performs full object download and random range validation
-func verifyRoundtrip(t *testing.T, client *s3.Client, ctx context.Context, bucket, key string, testData []byte, numRanges int) {
+func verifyRoundtrip(t *testing.T, client *s3.Client, ctx context.Context, testBucket, key string, testData []byte, numRanges int) {
 	t.Helper()
 
 	// Test 1: Full object GET
 	t.Run("FullGET", func(t *testing.T) {
 		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(bucket),
+			Bucket: aws.String(testBucket),
 			Key:    aws.String(key),
 		})
 		if err != nil {
@@ -489,7 +558,7 @@ func verifyRoundtrip(t *testing.T, client *s3.Client, ctx context.Context, bucke
 					end = int64(len(testData)) - 1
 
 					getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
-						Bucket: aws.String(bucket),
+						Bucket: aws.String(testBucket),
 						Key:    aws.String(key),
 						Range:  aws.String(fmt.Sprintf("bytes=-%d", suffixLength)),
 					})
@@ -512,7 +581,7 @@ func verifyRoundtrip(t *testing.T, client *s3.Client, ctx context.Context, bucke
 
 				// Normal range
 				getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
-					Bucket: aws.String(bucket),
+					Bucket: aws.String(testBucket),
 					Key:    aws.String(key),
 					Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
 				})
