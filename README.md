@@ -437,16 +437,7 @@ ARMOR_SECONDARY_B2_KEY=your-key-secret
 ARMOR_SECONDARY_B2_BUCKET=your-bucket
 ```
 
-**Deprecated variable names:** The following old variable names are still supported for backward compatibility but will be removed in a future release:
-
-- `B2_ENDPOINT` → Use `ARMOR_SECONDARY_B2_ENDPOINT` instead
-- `B2_KEY_ID` → Use `ARMOR_SECONDARY_B2_KEY_ID` instead
-- `B2_KEY` → Use `ARMOR_SECONDARY_B2_KEY` instead
-- `B2_BUCKET` → Use `ARMOR_SECONDARY_B2_BUCKET` instead
-
-When old variable names are used, ARMOR logs a deprecation warning at startup. New deployments should use the `ARMOR_SECONDARY_B2_*` names.
-
-**Precedence:** If both new and old variable names are set, the new names take precedence. The colon-separated `ARMOR_SECONDARY_BACKEND` format takes precedence over individual variables when both are configured.
+**Precedence:** The colon-separated `ARMOR_SECONDARY_BACKEND` format takes precedence over individual variables when both are configured.
 
 ## S3 API Coverage
 

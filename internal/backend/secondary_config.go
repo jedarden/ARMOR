@@ -11,17 +11,11 @@ import (
 
 // ParseSecondaryBackendConfig parses environment variables to construct a
 // BackendConfig for a secondary B2 backend. It reads the following environment
-// variables (in order of preference):
+// variables:
 //   - ARMOR_SECONDARY_B2_ENDPOINT: B2 S3 API endpoint (e.g., "https://s3.us-east-005.backblazeb2.com")
 //   - ARMOR_SECONDARY_B2_KEY_ID: B2 application key ID
 //   - ARMOR_SECONDARY_B2_KEY: B2 application key secret
 //   - ARMOR_SECONDARY_B2_BUCKET: Target bucket name
-//
-// For backward compatibility, the old variable names are also supported:
-//   - B2_ENDPOINT (deprecated: use ARMOR_SECONDARY_B2_ENDPOINT)
-//   - B2_KEY_ID (deprecated: use ARMOR_SECONDARY_B2_KEY_ID)
-//   - B2_KEY (deprecated: use ARMOR_SECONDARY_B2_KEY)
-//   - B2_BUCKET (deprecated: use ARMOR_SECONDARY_B2_BUCKET)
 //
 // When all environment variables are unset, it returns a zero BackendConfig
 // struct (not an error) — this represents the disabled state.
@@ -34,35 +28,11 @@ func ParseSecondaryBackendConfig() (BackendConfig, error) {
 		Type: "b2",
 	}
 
-	// Read environment variables (prefer new names, fall back to old ones)
+	// Read environment variables
 	endpoint := os.Getenv("ARMOR_SECONDARY_B2_ENDPOINT")
 	keyID := os.Getenv("ARMOR_SECONDARY_B2_KEY_ID")
 	key := os.Getenv("ARMOR_SECONDARY_B2_KEY")
 	bucket := os.Getenv("ARMOR_SECONDARY_B2_BUCKET")
-
-	// Check for deprecated environment variable names
-	oldEndpoint := os.Getenv("B2_ENDPOINT")
-	oldKeyID := os.Getenv("B2_KEY_ID")
-	oldKey := os.Getenv("B2_KEY")
-	oldBucket := os.Getenv("B2_BUCKET")
-
-	// Use new names if set, otherwise fall back to old names
-	if endpoint == "" && oldEndpoint != "" {
-		endpoint = oldEndpoint
-		slog.Warn("Deprecated environment variable B2_ENDPOINT is set; please use ARMOR_SECONDARY_B2_ENDPOINT instead")
-	}
-	if keyID == "" && oldKeyID != "" {
-		keyID = oldKeyID
-		slog.Warn("Deprecated environment variable B2_KEY_ID is set; please use ARMOR_SECONDARY_B2_KEY_ID instead")
-	}
-	if key == "" && oldKey != "" {
-		key = oldKey
-		slog.Warn("Deprecated environment variable B2_KEY is set; please use ARMOR_SECONDARY_B2_KEY instead")
-	}
-	if bucket == "" && oldBucket != "" {
-		bucket = oldBucket
-		slog.Warn("Deprecated environment variable B2_BUCKET is set; please use ARMOR_SECONDARY_B2_BUCKET instead")
-	}
 
 	// If all are unset, return zero config (disabled state)
 	if endpoint == "" && keyID == "" && key == "" && bucket == "" {
