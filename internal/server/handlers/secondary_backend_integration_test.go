@@ -1848,6 +1848,10 @@ func (f *failingBackend) List(ctx context.Context, bucket, prefix, delimiter, co
 	return nil, fmt.Errorf("primary backend is failing")
 }
 
+func (f *failingBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	return f.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
 func (f *failingBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
 	return fmt.Errorf("primary backend is failing")
 }

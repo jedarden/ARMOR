@@ -266,6 +266,12 @@ func (m *MockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 	}, nil
 }
 
+// ListRaw lists objects without filtering .armor/ internal objects.
+// For the mock backend, this is the same as List since we don't do any filtering.
+func (m *MockBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	return m.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
 // ListBuckets lists all buckets.
 func (m *MockBackend) ListBuckets(ctx context.Context) ([]backend.BucketInfo, error) {
 	m.mu.RLock()

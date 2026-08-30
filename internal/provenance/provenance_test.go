@@ -138,6 +138,10 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 	return &backend.ListResult{Objects: objects}, nil
 }
 
+func (m *mockBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	return m.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
 func (m *mockBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
 	src := srcBucket + "/" + srcKey
 	dst := dstBucket + "/" + dstKey
