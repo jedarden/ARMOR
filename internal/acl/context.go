@@ -20,7 +20,7 @@ func WithCredential(ctx context.Context, cred any) context.Context {
 	if cred == nil {
 		return ctx
 	}
-	if v := reflect.ValueOf(cred); v.Kind() == reflect.Ptr && v.IsNil() {
+	if v := reflect.ValueOf(cred); v.Kind() == reflect.Pointer && v.IsNil() {
 		return ctx
 	}
 	return context.WithValue(ctx, credentialKey, cred)
