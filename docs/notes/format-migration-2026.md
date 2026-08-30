@@ -142,3 +142,43 @@ This is expected: secret creation requires operator-level credentials beyond aut
 ## Other Buckets
 
 **Not started** - awaiting iad-ci completion and blocker resolution
+
+## iad-kalshi Bucket Migration Status
+
+**Status:** BLOCKED - Cluster access unavailable
+
+### Investigation Summary (2026-08-30)
+
+Assessment performed for bead armor-5b2b7eb3:
+
+**BLOCKER #1: Cluster Access - ACTIVE**
+- ❌ Credential-free proxy (`http://traefik-iad-kalshi:8001`): Connection refused
+- ❌ Kubeconfig access: Both iad-kalshi.kubeconfig and iad-kalshi-admin.kubeconfig expired (credentials required)
+- ❌ Cannot verify deployed ARMOR version or pod status
+
+**BLOCKER #2: Admin Token Status - UNKNOWN**
+- ❓ OpenBao path `secret/rs-manager/iad-kalshi/armor/admin`: Returns 403 (path may not exist or permission denied)
+- ❓ Cannot verify if admin token has been provisioned
+- ✅ ExternalSecret configured to sync `admin-token` from OpenBao path
+
+**Configured Version:** `ronaldraygun/armor:0.1.1913` (from declarative-config)
+- According to iad-ci investigation, 0.1.1913 DOES include `/admin/format/migrate` endpoint
+- If deployed version matches config, migrate endpoint should be available
+
+### Why Agent Cannot Proceed
+1. No working kubectl access to iad-kalshi cluster
+2. Cannot retrieve admin token from OpenBao (403 on read - likely path doesn't exist)
+3. Cannot verify current deployment state
+
+### Required Operator Actions
+1. **Refresh iad-kalshi kubeconfig credentials**
+2. **Verify admin token provisioned** at `secret/rs-manager/iad-kalshi/armor/admin`
+3. **Restart ARMOR deployment** if token was recently added
+
+### Migration Steps (Once Access Restored)
+Same as iad-ci:
+1. Dry-run: `POST /admin/format/migrate?dry_run=true`
+2. Execute: `POST /admin/format/migrate?include=v1`
+3. Monitor: `GET /admin/format/migrate` until `done == candidates`
+4. Verify: Final dry-run returns `candidates: 0`, spot-check `x-amz-meta-armor-version: 2` on 3 objects
+
