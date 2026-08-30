@@ -110,7 +110,7 @@ func awsCLIConfig(endpoint, bucket, credential string, formatVersion int) string
 	sb.WriteString("# Then paste the appropriate values below\n\n")
 
 	sb.WriteString("[profile armor]\n")
-	sb.WriteString(fmt.Sprintf("endpoint_url = %s\n", endpoint))
+	fmt.Fprintf(&sb, "endpoint_url = %s\n", endpoint)
 
 	// AWS CLI always needs path-style addressing with ARMOR (B2 doesn't support virtual-hosted style)
 	sb.WriteString("s3 =\n")
@@ -121,10 +121,10 @@ func awsCLIConfig(endpoint, bucket, credential string, formatVersion int) string
 
 	sb.WriteString("# Credentials (set these via 'aws configure set ...' or environment variables)\n")
 	if credential != "" {
-		sb.WriteString(fmt.Sprintf("# Using named credential: %s\n", credential))
+		fmt.Fprintf(&sb, "# Using named credential: %s\n", credential)
 		sb.WriteString("# Set these environment variables instead:\n")
-		sb.WriteString(fmt.Sprintf("export AWS_ACCESS_KEY_ID=$(armor get-credential %s key)\n", credential))
-		sb.WriteString(fmt.Sprintf("export AWS_SECRET_ACCESS_KEY=$(armor get-credential %s secret)\n", credential))
+		fmt.Fprintf(&sb, "export AWS_ACCESS_KEY_ID=$(armor get-credential %s key)\n", credential)
+		fmt.Fprintf(&sb, "export AWS_SECRET_ACCESS_KEY=$(armor get-credential %s secret)\n", credential)
 	} else {
 		sb.WriteString("# ARMOR_AUTH_ACCESS_KEY_ID\n")
 		sb.WriteString("# ARMOR_AUTH_SECRET_KEY\n")
@@ -134,7 +134,7 @@ func awsCLIConfig(endpoint, bucket, credential string, formatVersion int) string
 	sb.WriteString("# Test the configuration:\n")
 	sb.WriteString("# aws --profile armor s3 ls")
 	if bucket != "" {
-		sb.WriteString(fmt.Sprintf(" s3://%s", bucket))
+		fmt.Fprintf(&sb, " s3://%s", bucket)
 	}
 	sb.WriteString("\n")
 
@@ -154,9 +154,9 @@ func rcloneConfig(endpoint, bucket, credential string, formatVersion int) string
 		remoteName = fmt.Sprintf("%s-armor", bucket)
 	}
 
-	sb.WriteString(fmt.Sprintf("[%s]\n", remoteName))
+	fmt.Fprintf(&sb, "[%s]\n", remoteName)
 	sb.WriteString("type = s3\n")
-	sb.WriteString(fmt.Sprintf("endpoint = %s\n", endpoint))
+	fmt.Fprintf(&sb, "endpoint = %s\n", endpoint)
 	sb.WriteString("provider = Other\n")
 	sb.WriteString("s3_force_path_style = true\n")
 	sb.WriteString("region = us-east-1\n")
@@ -165,7 +165,7 @@ func rcloneConfig(endpoint, bucket, credential string, formatVersion int) string
 
 	sb.WriteString("# Credentials\n")
 	if credential != "" {
-		sb.WriteString(fmt.Sprintf("# Using named credential: %s\n", credential))
+		fmt.Fprintf(&sb, "# Using named credential: %s\n", credential)
 		sb.WriteString("# Set access_key_id and secret_access_key from the credential:\n")
 		sb.WriteString("# armor get-credential ") // In a real implementation, this would be a subcommand
 	} else {
@@ -175,9 +175,9 @@ func rcloneConfig(endpoint, bucket, credential string, formatVersion int) string
 	sb.WriteString("secret_access_key = YOUR_SECRET_ACCESS_KEY\n\n")
 
 	sb.WriteString("# Test the configuration:\n")
-	sb.WriteString(fmt.Sprintf("# rclone lsd %s:\n", remoteName))
+	fmt.Fprintf(&sb, "# rclone lsd %s:\n", remoteName)
 	if bucket != "" {
-		sb.WriteString(fmt.Sprintf("# rclone ls %s:%s\n", remoteName, bucket))
+		fmt.Fprintf(&sb, "# rclone ls %s:%s\n", remoteName, bucket)
 	}
 	sb.WriteString("\n")
 
@@ -195,12 +195,12 @@ func boto3Config(endpoint, bucket, credential string, formatVersion int) string 
 	sb.WriteString("import os\n\n")
 
 	sb.WriteString("# ARMOR endpoint configuration\n")
-	sb.WriteString(fmt.Sprintf("endpoint_url = %q\n", endpoint))
+	fmt.Fprintf(&sb, "endpoint_url = %q\n", endpoint)
 	sb.WriteString("\n")
 
 	sb.WriteString("# Credentials (set these environment variables)\n")
 	if credential != "" {
-		sb.WriteString(fmt.Sprintf("# Using named credential: %s\n", credential))
+		fmt.Fprintf(&sb, "# Using named credential: %s\n", credential)
 		sb.WriteString("# Get these from your ARMOR deployment:\n")
 	} else {
 		sb.WriteString("# ARMOR_AUTH_ACCESS_KEY_ID\n")
@@ -221,7 +221,7 @@ func boto3Config(endpoint, bucket, credential string, formatVersion int) string 
 
 	sb.WriteString("# Example usage\n")
 	if bucket != "" {
-		sb.WriteString(fmt.Sprintf("# bucket = %q\n", bucket))
+		fmt.Fprintf(&sb, "# bucket = %q\n", bucket)
 	} else {
 		sb.WriteString("# bucket = 'your-bucket'\n")
 	}
@@ -244,12 +244,12 @@ func duckDBConfig(endpoint, bucket, credential string, formatVersion int) string
 	sb.WriteString("LOAD httpfs;\n\n")
 
 	sb.WriteString("# Set S3 endpoint and region\n")
-	sb.WriteString(fmt.Sprintf("SET s3_endpoint = '%s';\n", endpoint))
+	fmt.Fprintf(&sb, "SET s3_endpoint = '%s';\n", endpoint)
 	sb.WriteString("SET region = 'us-east-1';  -- Required but unused by ARMOR\n\n")
 
 	sb.WriteString("# Configure credentials\n")
 	if credential != "" {
-		sb.WriteString(fmt.Sprintf("-- Using named credential: %s\n", credential))
+		fmt.Fprintf(&sb, "-- Using named credential: %s\n", credential)
 		sb.WriteString("-- Set these environment variables instead:\n")
 		sb.WriteString("-- SET s3_access_key_id = $AWS_ACCESS_KEY_ID;\n")
 		sb.WriteString("-- SET s3_secret_access_key = $AWS_SECRET_ACCESS_KEY;\n")
@@ -265,7 +265,7 @@ func duckDBConfig(endpoint, bucket, credential string, formatVersion int) string
 
 	sb.WriteString("-- Example: Read a Parquet file\n")
 	if bucket != "" {
-		sb.WriteString(fmt.Sprintf("-- SELECT * FROM read_parquet('s3://%s/path/to/file.parquet');\n", bucket))
+		fmt.Fprintf(&sb, "-- SELECT * FROM read_parquet('s3://%s/path/to/file.parquet');\n", bucket)
 	} else {
 		sb.WriteString("-- SELECT * FROM read_parquet('s3://bucket/path/to/file.parquet');\n")
 	}
@@ -286,12 +286,12 @@ func litestreamConfig(endpoint, bucket, credential string, formatVersion int) st
 	sb.WriteString("# Add to litestream.yml or use as environment variables\n\n")
 
 	sb.WriteString("# Litestream environment variables\n")
-	sb.WriteString(fmt.Sprintf("LITESTREAM_ENDPOINT=%s\n", endpoint))
+	fmt.Fprintf(&sb, "LITESTREAM_ENDPOINT=%s\n", endpoint)
 	sb.WriteString("LITESTREAM_REGION=us-east-1  # Required but unused by ARMOR\n\n")
 
 	sb.WriteString("# Credentials\n")
 	if credential != "" {
-		sb.WriteString(fmt.Sprintf("# Using named credential: %s\n", credential))
+		fmt.Fprintf(&sb, "# Using named credential: %s\n", credential)
 	}
 	sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY\n")
 	sb.WriteString("LITESTREAM_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID\n")
@@ -302,7 +302,7 @@ func litestreamConfig(endpoint, bucket, credential string, formatVersion int) st
 	sb.WriteString("  - path: /path/to/db.sqlite\n")
 	sb.WriteString("    replicas:\n")
 	sb.WriteString("      - type: s3\n")
-	sb.WriteString(fmt.Sprintf("        endpoint: %s\n", endpoint))
+	fmt.Fprintf(&sb, "        endpoint: %s\n", endpoint)
 	sb.WriteString("        bucket: YOUR_BUCKET\n")
 	sb.WriteString("        region: us-east-1\n")
 	sb.WriteString("        access-key-id: YOUR_ACCESS_KEY_ID\n")
@@ -319,12 +319,12 @@ func barmanConfig(endpoint, bucket, credential string, formatVersion int) string
 	sb.WriteString("# For PostgreSQL backup via barman-cloud-backup / barman-cloud-wal-archive\n\n")
 
 	sb.WriteString("# Environment variables for Barman Cloud\n")
-	sb.WriteString(fmt.Sprintf("export AWS_ENDPOINT_URL=%s\n", endpoint))
+	fmt.Fprintf(&sb, "export AWS_ENDPOINT_URL=%s\n", endpoint)
 	sb.WriteString("export AWS_REGION=us-east-1  # Required but unused by ARMOR\n\n")
 
 	sb.WriteString("# Credentials\n")
 	if credential != "" {
-		sb.WriteString(fmt.Sprintf("# Using named credential: %s\n", credential))
+		fmt.Fprintf(&sb, "# Using named credential: %s\n", credential)
 	}
 	sb.WriteString("# Set these from your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY\n")
 	sb.WriteString("export AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID\n")
