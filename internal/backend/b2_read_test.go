@@ -35,10 +35,11 @@ func TestB2BackendGetRangePipelinesAndReassemblesInOrder(t *testing.T) {
 		// Hold block 1 so block 2 completes first. This also makes the
 		// bounded concurrency observable without making the first request
 		// asynchronous (the first block supplies the response headers).
-		if start == blockSize {
+		switch start {
+		case blockSize:
 			workerStart <- struct{}{}
 			<-release
-		} else if start == 2*blockSize {
+		case 2 * blockSize:
 			workerStart <- struct{}{}
 		}
 

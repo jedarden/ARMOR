@@ -138,21 +138,6 @@ func awsCLIConfig(endpoint, bucket, credential string, formatVersion int) string
 	}
 	sb.WriteString("\n")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 	return sb.String()
 }
 
@@ -195,19 +180,6 @@ func rcloneConfig(endpoint, bucket, credential string, formatVersion int) string
 		sb.WriteString(fmt.Sprintf("# rclone ls %s:%s\n", remoteName, bucket))
 	}
 	sb.WriteString("\n")
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 	return sb.String()
 }
@@ -258,24 +230,6 @@ func boto3Config(endpoint, bucket, credential string, formatVersion int) string 
 	sb.WriteString("#     print(obj['Key'])\n")
 	sb.WriteString("\n")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 	return sb.String()
 }
 
@@ -324,14 +278,6 @@ func duckDBConfig(endpoint, bucket, credential string, formatVersion int) string
 	return sb.String()
 }
 
-// bucketOrPlaceholder returns the bucket or a placeholder string
-func bucketOrPlaceholder(bucket string) string {
-	if bucket != "" {
-		return bucket
-	}
-	return "your-bucket"
-}
-
 // litestreamConfig generates Litestream configuration
 func litestreamConfig(endpoint, bucket, credential string, formatVersion int) string {
 	var sb strings.Builder
@@ -362,9 +308,6 @@ func litestreamConfig(endpoint, bucket, credential string, formatVersion int) st
 	sb.WriteString("        access-key-id: YOUR_ACCESS_KEY_ID\n")
 	sb.WriteString("        secret-access-key: YOUR_SECRET_ACCESS_KEY\n\n")
 
-	sb.WriteString("# Note: ARMOR format version 3 (default) has no multipart constraints\n")
-	sb.WriteString("# All snapshot sizes work; Litestream defaults are compatible\n")
-
 	return sb.String()
 }
 
@@ -392,9 +335,6 @@ func barmanConfig(endpoint, bucket, credential string, formatVersion int) string
 	sb.WriteString("# barman-cloud-backup backup <server> <bucket> <postgres_data_dir>\n")
 	sb.WriteString("# barman-cloud-wal-archive --endpoint-url $AWS_ENDPOINT_URL <bucket> <server>\n")
 	sb.WriteString("# barman-cloud-wal-restore --endpoint-url $AWS_ENDPOINT_URL <bucket> <server> <wal_file> <dest_dir>\n\n")
-
-	sb.WriteString("# Note: ARMOR format version 3 (default) has no multipart constraints\n")
-	sb.WriteString("# All chunk sizes work; Barman defaults are compatible\n\n")
 
 	return sb.String()
 }

@@ -19,7 +19,6 @@ package awsclicompat
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -51,9 +50,9 @@ import (
 // client-claimed region and looks the access key up in cfg.Credentials, so the
 // CLI simply needs to be configured with the same pair.
 const (
-	testAccessKey = "ARMORCOMPAT"
-	testSecretKey = "armorcompatsecretkey0123456789abcdef"
-	testRegion    = "us-east-1"
+	testAccessKey     = "ARMORCOMPAT"
+	testSecretKey     = "armorcompatsecretkey0123456789abcdef"
+	testRegion        = "us-east-1"
 	testPresignSecret = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
@@ -941,182 +940,6 @@ func assertGETSuccess(t *testing.T, resp *http.Response) *GETResponse {
 	return parsed
 }
 
-// assertGET404 verifies that a GET response returned 404 Not Found.
-// Used for post-delete verification.
-func assertGET404(t *testing.T, resp *http.Response) {
-	t.Helper()
-
-	parsed, err := parseGETResponse(resp)
-	if err != nil {
-		t.Fatalf("GET response parsing failed: %v", err)
-	}
-
-	if parsed.StatusCode != http.StatusNotFound {
-		t.Fatalf("GET expected 404 Not Found, got status %d, body: %s", parsed.StatusCode, string(parsed.Body))
-	}
-}
-
-// assertGETContentEqual verifies that a GET response body matches expected
-// data byte-for-byte.
-func assertGETContentEqual(t *testing.T, resp *http.Response, expectedData []byte) {
-	t.Helper()
-
-	parsed := assertGETSuccess(t, resp)
-
-	if !bytes.Equal(parsed.Body, expectedData) {
-		t.Fatalf("GET content mismatch: got %d bytes, want %d bytes", len(parsed.Body), len(expectedData))
-	}
-}
-
-// assertGETMetadata verifies that GET response metadata matches expected values.
-func assertGETMetadata(t *testing.T, resp *http.Response, expectedLength int64, expectedETag, expectedContentType string) {
-	t.Helper()
-
-	parsed := assertGETSuccess(t, resp)
-
-	if parsed.ContentLength != expectedLength {
-		t.Errorf("GET Content-Length mismatch: got %d, want %d", parsed.ContentLength, expectedLength)
-	}
-
-	if expectedETag != "" && parsed.ETag != expectedETag {
-		t.Errorf("GET ETag mismatch: got %s, want %s", parsed.ETag, expectedETag)
-	}
-
-	if expectedContentType != "" && parsed.ContentType != expectedContentType {
-		t.Errorf("GET Content-Type mismatch: got %s, want %s", parsed.ContentType, expectedContentType)
-	}
-}
-
-// testSigner is a simple AWS SigV4 signer for testing ARMOR.
-// It implements AWS Signature Version 4 signing for HTTP requests.
-type testSigner struct {
-	accessKey     string
-	secretKey     string
-	region        string
-	secretKeyHash []byte // Precomputed SHA256("AWS4" + secretKey)
-}
-
-// newTestSigner creates a test signer with the test credentials.
-func newTestSigner(t *testing.T) *testSigner {
-	t.Helper()
-	secretKeyHash := sha256.Sum256([]byte("AWS4" + testSecretKey))
-	return &testSigner{
-		accessKey:     testAccessKey,
-		secretKey:     testSecretKey,
-		region:        testRegion,
-		secretKeyHash: secretKeyHash[:],
-	}
-}
-
-// Sign signs an HTTP request using AWS SigV4.
-func (s *testSigner) Sign(req *http.Request, service, operation, bucket, key string) {
-	now := time.Now().UTC()
-	amzDate := now.Format("20060102T150405Z")
-	dateStamp := now.Format("20060102")
-
-	// Set required headers
-	req.Header.Set("Host", req.URL.Host)
-	req.Header.Set("X-Amz-Date", amzDate)
-	if req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/octet-stream")
-	}
-
-	// Build canonical request
-	canonicalHeaders := s.buildCanonicalHeaders(req)
-	signedHeaders := s.signedHeadersStr(req)
-	canonicalURI := req.URL.Path
-	if canonicalURI == "" {
-		canonicalURI = "/"
-	}
-	canonicalQueryString := req.URL.Query().Encode()
-
-	// For payload hash, we need to use the same value in the header and canonical request
-	var payloadHashStr string
-	if req.Method == http.MethodGet || req.Method == http.MethodDelete {
-		// For GET/DELETE with no body, use hash of empty string
-		payloadHash := sha256.Sum256([]byte{})
-		payloadHashStr = hex.EncodeToString(payloadHash[:])
-		req.Header.Set("X-Amz-Content-Sha256", payloadHashStr)
-	} else if req.Body != nil {
-		// For PUT/POST with body, we'd need to read the body to hash it
-		// For simplicity in tests, we'll use UNSIGNED-PAYLOAD
-		payloadHashStr = "UNSIGNED-PAYLOAD"
-		req.Header.Set("X-Amz-Content-Sha256", payloadHashStr)
-	} else {
-		// No body case (shouldn't happen for PUT/POST, but handle gracefully)
-		payloadHash := sha256.Sum256([]byte{})
-		payloadHashStr = hex.EncodeToString(payloadHash[:])
-		req.Header.Set("X-Amz-Content-Sha256", payloadHashStr)
-	}
-
-	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
-		req.Method,
-		canonicalURI,
-		canonicalQueryString,
-		canonicalHeaders,
-		signedHeaders,
-		payloadHashStr)
-
-	// Create string to sign
-	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", dateStamp, s.region, service)
-	canonicalRequestHash := sha256.Sum256([]byte(canonicalRequest))
-	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s",
-		amzDate, credentialScope, hex.EncodeToString(canonicalRequestHash[:]))
-
-	// Calculate signature
-	signingKey := s.getSigningKey(dateStamp)
-	signature := hmacSHA256(signingKey, stringToSign)
-
-	// Set Authorization header
-	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
-		s.accessKey, credentialScope, signedHeaders, hex.EncodeToString(signature))
-	req.Header.Set("Authorization", authHeader)
-}
-
-// buildCanonicalHeaders builds the canonical headers string for SigV4.
-func (s *testSigner) buildCanonicalHeaders(req *http.Request) string {
-	var headers []string
-	for k, vv := range req.Header {
-		lowerK := strings.ToLower(k)
-		if strings.HasPrefix(lowerK, "x-amz-") || lowerK == "host" || lowerK == "content-type" {
-			for _, v := range vv {
-				headers = append(headers, fmt.Sprintf("%s:%s", lowerK, strings.TrimSpace(v)))
-			}
-		}
-	}
-	sort.Strings(headers)
-	return strings.Join(headers, "\n") + "\n"
-}
-
-// signedHeadersStr returns the signed headers string (lowercase, semicolon-separated).
-func (s *testSigner) signedHeadersStr(req *http.Request) string {
-	var headers []string
-	for k := range req.Header {
-		lowerK := strings.ToLower(k)
-		if strings.HasPrefix(lowerK, "x-amz-") || lowerK == "host" || lowerK == "content-type" {
-			headers = append(headers, lowerK)
-		}
-	}
-	sort.Strings(headers)
-	return strings.Join(headers, ";")
-}
-
-// getSigningKey derives the signing key for the given date stamp.
-func (s *testSigner) getSigningKey(dateStamp string) []byte {
-	kDate := hmacSHA256(s.secretKeyHash, dateStamp)
-	kRegion := hmacSHA256(kDate, s.region)
-	kService := hmacSHA256(kRegion, "s3")
-	kSigning := hmacSHA256(kService, "aws4_request")
-	return kSigning
-}
-
-// hmacSHA256 computes HMAC-SHA256.
-func hmacSHA256(key []byte, data string) []byte {
-	h := hmac.New(sha256.New, key)
-	h.Write([]byte(data))
-	return h.Sum(nil)
-}
-
 // TestHarness_GET_BasicUncompressedObject tests basic GET operation on an uncompressed object.
 // This test verifies that GET can be invoked from the test framework and returns expected results.
 func TestHarness_GET_BasicUncompressedObject(t *testing.T) {
@@ -1338,10 +1161,10 @@ func TestMockBackend_GET_MultipleUncompressedObjects(t *testing.T) {
 	backend := newMockBackend()
 
 	testCases := []struct {
-		name         string
-		key          string
-		data         []byte
-		contentType  string
+		name        string
+		key         string
+		data        []byte
+		contentType string
 	}{
 		{
 			name:        "small-text",
@@ -1552,9 +1375,9 @@ func TestMockBackend_GET_CompressedObject(t *testing.T) {
 
 	// Store the compressed data with ARMOR compression metadata
 	meta := map[string]string{
-		"Content-Type": "text/plain",
-		"x-amz-meta-armor-compressed": "true",
-		"x-amz-meta-armor-version": "1",
+		"Content-Type":                    "text/plain",
+		"x-amz-meta-armor-compressed":     "true",
+		"x-amz-meta-armor-version":        "1",
 		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
 	}
 
@@ -1611,9 +1434,9 @@ func TestMockBackend_GET_CompressedAndUncompressed(t *testing.T) {
 
 	// PUT compressed object
 	compressedMeta := map[string]string{
-		"Content-Type": "application/octet-stream",
-		"x-amz-meta-armor-compressed": "true",
-		"x-amz-meta-armor-version": "1",
+		"Content-Type":                    "application/octet-stream",
+		"x-amz-meta-armor-compressed":     "true",
+		"x-amz-meta-armor-version":        "1",
 		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
 	}
 
@@ -1624,9 +1447,9 @@ func TestMockBackend_GET_CompressedAndUncompressed(t *testing.T) {
 
 	// PUT uncompressed object
 	uncompressedMeta := map[string]string{
-		"Content-Type": "application/octet-stream",
-		"x-amz-meta-armor-compressed": "false",
-		"x-amz-meta-armor-version": "1",
+		"Content-Type":                    "application/octet-stream",
+		"x-amz-meta-armor-compressed":     "false",
+		"x-amz-meta-armor-version":        "1",
 		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
 	}
 
@@ -1709,15 +1532,15 @@ func TestHarness_GET_CompressedObjectViaHTTP(t *testing.T) {
 	// Create ARMOR metadata for compressed object
 	contentType := "text/plain"
 	armorMeta := map[string]string{
-		"x-amz-meta-armor-version":       "1",
-		"x-amz-meta-armor-block-size":   "65536",
-		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(originalData)),
-		"x-amz-meta-armor-content-type":  contentType,
-		"x-amz-meta-armor-iv":            hex.EncodeToString([]byte("0123456789123456")),
-		"x-amz-meta-armor-wrapped-dek":   hex.EncodeToString(bytes.Repeat([]byte("dek"), 32)),
+		"x-amz-meta-armor-version":          "1",
+		"x-amz-meta-armor-block-size":       "65536",
+		"x-amz-meta-armor-plaintext-size":   fmt.Sprintf("%d", len(originalData)),
+		"x-amz-meta-armor-content-type":     contentType,
+		"x-amz-meta-armor-iv":               hex.EncodeToString([]byte("0123456789123456")),
+		"x-amz-meta-armor-wrapped-dek":      hex.EncodeToString(bytes.Repeat([]byte("dek"), 32)),
 		"x-amz-meta-armor-plaintext-sha256": hex.EncodeToString(bytes.Repeat([]byte("sha"), 32)),
-		"x-amz-meta-armor-etag":          "\"test-etag\"",
-		"x-amz-meta-armor-compressed":    "true",
+		"x-amz-meta-armor-etag":             "\"test-etag\"",
+		"x-amz-meta-armor-compressed":       "true",
 	}
 
 	// PUT the compressed object via SDK

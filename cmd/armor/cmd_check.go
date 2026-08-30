@@ -57,9 +57,10 @@ func check() {
 	anyWarn := false
 	for _, result := range results {
 		printCheckResult(result)
-		if result.Status == "FAIL" {
+		switch result.Status {
+		case "FAIL":
 			anyFail = true
-		} else if result.Status == "WARN" {
+		case "WARN":
 			anyWarn = true
 		}
 	}
@@ -85,12 +86,13 @@ func printCheckResult(result CheckResult) {
 // printRedactedConfig prints the redacted configuration
 func printRedactedConfig(rc *config.RedactedConfig) {
 	fmt.Fprintf(os.Stderr, "Backend: %s\n", rc.Backend)
-	if rc.Backend == "b2" {
+	switch rc.Backend {
+	case "b2":
 		fmt.Fprintf(os.Stderr, "  B2 Region: %s\n", rc.B2Region)
 		fmt.Fprintf(os.Stderr, "  B2 Endpoint: %s\n", rc.B2Endpoint)
 		fmt.Fprintf(os.Stderr, "  B2 Access Key: %s\n", rc.B2AccessKeyID)
 		fmt.Fprintf(os.Stderr, "  B2 Secret Key: %s\n", rc.B2SecretAccessKey)
-	} else if rc.Backend == "filesystem" {
+	case "filesystem":
 		fmt.Fprintf(os.Stderr, "  Filesystem Path: %s\n", rc.FSPath)
 	}
 	fmt.Fprintf(os.Stderr, "Bucket: %s\n", rc.Bucket)

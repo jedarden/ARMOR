@@ -625,13 +625,13 @@ func TestGetMEKByFingerprint(t *testing.T) {
 	}
 
 	// Test non-existent fingerprint
-	mek, found = km.GetMEKByFingerprint("default", "ffffffffffffffff")
+	_, found = km.GetMEKByFingerprint("default", "ffffffffffffffff")
 	if found {
 		t.Error("GetMEKByFingerprint() should not find non-existent fingerprint")
 	}
 
 	// Test with empty key name (should use default)
-	mek, found = km.GetMEKByFingerprint("", defaultFP)
+	_, found = km.GetMEKByFingerprint("", defaultFP)
 	if !found {
 		t.Error("GetMEKByFingerprint() with empty name should use default key")
 	}
@@ -676,7 +676,7 @@ func TestGetMEKByFingerprint(t *testing.T) {
 	}
 
 	// Test non-existent key
-	mek, found = km2.GetMEKByFingerprint("nonexistent", defaultFP)
+	_, found = km2.GetMEKByFingerprint("nonexistent", defaultFP)
 	if found {
 		t.Error("GetMEKByFingerprint() should not find non-existent key")
 	}

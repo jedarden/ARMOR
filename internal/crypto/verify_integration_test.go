@@ -3,7 +3,6 @@ package crypto
 import (
 	"bytes"
 	"compress/gzip"
-	"compress/flate"
 	"io"
 	"testing"
 
@@ -25,14 +24,6 @@ func compressVerifyData(data []byte) []byte {
 func compressVerifyDataGzip(data []byte) []byte {
 	var buf bytes.Buffer
 	writer := gzip.NewWriter(&buf)
-	writer.Write(data)
-	writer.Close()
-	return buf.Bytes()
-}
-
-func compressVerifyDataZlib(data []byte) []byte {
-	var buf bytes.Buffer
-	writer, _ := flate.NewWriter(&buf, flate.DefaultCompression)
 	writer.Write(data)
 	writer.Close()
 	return buf.Bytes()
@@ -331,7 +322,7 @@ func TestVerifyIntegration_RangeTranslationIntegration(t *testing.T) {
 	}
 
 	blockSize := 64 * 1024 // 64KB blocks (ARMOR default)
-	headerSize := 1024      // Example header size
+	headerSize := 1024     // Example header size
 
 	t.Run("translate and verify single range", func(t *testing.T) {
 		// Request a plaintext range
@@ -447,9 +438,9 @@ func TestVerifyIntegration_CompressionWithVerification(t *testing.T) {
 	t.Run("compress and verify round-trip", func(t *testing.T) {
 		// Various real-world data patterns
 		testData := []struct {
-			name  string
-			data  []byte
-			desc  string
+			name string
+			data []byte
+			desc string
 		}{
 			{
 				name: "text data",

@@ -901,10 +901,11 @@ func TestVerifyDecompression_CompleteReplacement(t *testing.T) {
 			}
 
 			// Should detect either length mismatch or byte mismatch at offset 0
-			if result.Error.Offset == -2 {
+			switch result.Error.Offset {
+			case -2:
 				// Length mismatch is expected when sizes differ
 				t.Logf("Complete replacement detected via length mismatch: %s", result.Diagnostic)
-			} else if result.Error.Offset == 0 {
+			case 0:
 				// Byte mismatch at first byte when sizes are same
 				t.Logf("Complete replacement detected at offset 0: %s", result.Diagnostic)
 
@@ -914,7 +915,7 @@ func TestVerifyDecompression_CompleteReplacement(t *testing.T) {
 						t.Error("Expected first bytes to differ")
 					}
 				}
-			} else {
+			default:
 				t.Errorf("Expected corruption at offset 0 or length mismatch (-2), got %d", result.Error.Offset)
 			}
 
