@@ -20,16 +20,11 @@ import (
 	"github.com/jedarden/armor/internal/crypto"
 )
 
-// MockB2Backend is a mock backend for testing
+// MockB2Backend is a mock backend for testing. mockObject is declared once,
+// in cmd_check_test.go (identical fields) -- reused here instead of a
+// duplicate declaration in the same package.
 type MockB2Backend struct {
 	objects map[string]*mockObject
-}
-
-type mockObject struct {
-	data           []byte
-	metadata       map[string]string
-	isArmor        bool
-	lastModified   time.Time
 }
 
 func NewMockB2Backend() *MockB2Backend {

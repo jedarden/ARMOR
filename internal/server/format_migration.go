@@ -430,7 +430,7 @@ func (fm *FormatMigrator) decryptMultipartObject(armorMeta *backend.ARMORMetadat
 
 	// Create decryptor with appropriate version
 	// For multipart objects, IV is from metadata (not envelope header)
-	_, err = crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decryptor: %w", err)
 	}
