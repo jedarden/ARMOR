@@ -14,24 +14,92 @@ ARMOR is an S3-compatible proxy server that transparently encrypts data before s
 
 ## Quick Start
 
-### Docker
+### Local demo (Docker only)
+
+The demo uses a temporary filesystem backend and fixed, non-secret credentials. It
+does not need Backblaze B2, Cloudflare, or an AWS account. Replace `<version>`
+with a published tag from the [Docker Hub ARMOR tags](https://hub.docker.com/r/ronaldraygun/armor/tags)
+page (the repository's [`VERSION`](VERSION) file records the current release).
+
+Start ARMOR in the background:
 
 ```bash
-docker run -d \
+docker run -d --name armor-demo \
   -p 9000:9000 \
   -p 9001:9001 \
-  -e ARMOR_B2_REGION=us-east-005 \
-  -e ARMOR_B2_ACCESS_KEY_ID=your-key-id \
-  -e ARMOR_B2_SECRET_ACCESS_KEY=your-key-secret \
-  -e ARMOR_BUCKET=your-bucket \
-  -e ARMOR_CF_DOMAIN=your-cf-domain.example.com \
-  -e ARMOR_MEK=$(openssl rand -hex 32) \
-  -e ARMOR_AUTH_ACCESS_KEY=my-access-key \
-  -e ARMOR_AUTH_SECRET_KEY=my-secret-key \
-  ronaldraygun/armor:0.1.1911
+  ronaldraygun/armor:<version> demo \
+  --listen 0.0.0.0:9000 \
+  --admin-listen 0.0.0.0:9001
 ```
 
-> **Note:** The ARMOR CI pipeline auto-bumps the VERSION file on every build and publishes the container image as `ronaldraygun/armor:<version>` to Docker Hub. Always pin to a specific version tag in production deployments. Use the latest published tag from [Docker Hub](https://hub.docker.com/r/ronaldraygun/armor/tags).
+Run these three client commands from any shell. They use the official AWS CLI
+container, so the only software required on the machine is Docker:
+
+```bash
+# 1. Connectivity check: this succeeds even when the demo bucket is empty.
+docker run --rm --network container:armor-demo \
+  -e AWS_ACCESS_KEY_ID=armor \
+  -e AWS_SECRET_ACCESS_KEY=armor-demo-secret \
+  -e AWS_DEFAULT_REGION=us-east-1 \
+  amazon/aws-cli:2.29.0 \
+  --endpoint-url http://127.0.0.1:9000 s3 ls
+
+# 2. Create the bucket used by the demo.
+docker run --rm --network container:armor-demo \
+  -e AWS_ACCESS_KEY_ID=armor \
+  -e AWS_SECRET_ACCESS_KEY=armor-demo-secret \
+  -e AWS_DEFAULT_REGION=us-east-1 \
+  amazon/aws-cli:2.29.0 \
+  --endpoint-url http://127.0.0.1:9000 s3 mb s3://demo-bucket
+
+# 3. List the demo bucket.
+docker run --rm --network container:armor-demo \
+  -e AWS_ACCESS_KEY_ID=armor \
+  -e AWS_SECRET_ACCESS_KEY=armor-demo-secret \
+  -e AWS_DEFAULT_REGION=us-east-1 \
+  amazon/aws-cli:2.29.0 \
+  --endpoint-url http://127.0.0.1:9000 s3 ls s3://demo-bucket
+```
+
+If the AWS CLI is already installed, the first check is equivalently:
+
+```bash
+AWS_ACCESS_KEY_ID=armor AWS_SECRET_ACCESS_KEY=armor-demo-secret \
+  aws --endpoint-url http://localhost:9000 s3 ls
+```
+
+Stop and remove the demo when finished:
+
+```bash
+docker rm -f armor-demo
+```
+
+### Production Docker deployment
+
+For a B2-backed deployment, replace every placeholder with a value from your
+environment. Keep the same MEK when restarting an instance; losing it makes
+existing objects unreadable. Pin the image to a published version rather than
+using a floating tag.
+
+```bash
+docker run -d --name armor \
+  -p 9000:9000 \
+  -p 127.0.0.1:9001:9001 \
+  -e ARMOR_B2_REGION=us-east-005 \
+  -e ARMOR_B2_ACCESS_KEY_ID=<b2-key-id> \
+  -e ARMOR_B2_SECRET_ACCESS_KEY=<b2-key-secret> \
+  -e ARMOR_BUCKET=<b2-bucket> \
+  -e ARMOR_CF_DOMAIN=<cloudflare-domain> \
+  -e ARMOR_MEK=<64-hex-character-mek> \
+  -e ARMOR_AUTH_ACCESS_KEY=<armor-access-key> \
+  -e ARMOR_AUTH_SECRET_KEY=<armor-secret-key> \
+  -e ARMOR_ADMIN_LISTEN=0.0.0.0:9001 \
+  ronaldraygun/armor:<version>
+```
+
+The ARMOR CI pipeline publishes images as `ronaldraygun/armor:<version>`; see
+[`VERSION`](VERSION) and [Docker Hub](https://hub.docker.com/r/ronaldraygun/armor/tags)
+for the tag to use.
 
 ### Client Configuration
 
