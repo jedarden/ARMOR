@@ -832,7 +832,7 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	var rotator *server.KeyRotator
+	var rotator *KeyRotator
 	var oldMEKHash, newMEKHash, rotationID string
 
 	if len(body) > 0 {
@@ -867,7 +867,7 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		// Get old ring keys for this key ID
 		oldRing := s.keyManager.Ring(keyID)
 
-		rotator = server.NewKeyRotatorForKey(s.backend, s.config.Bucket, keyID, oldMEK, newMEK, oldRing, s.manifest)
+		rotator = NewKeyRotatorForKey(s.backend, s.config.Bucket, keyID, oldMEK, newMEK, oldRing, s.manifest)
 	} else {
 		// NEW MODE: Fingerprint-based rotation (no request body)
 		// Re-wraps objects whose fingerprint ≠ active key's fingerprint
@@ -881,7 +881,7 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 		// Get old ring keys for this key ID (for unwrapping objects encrypted with retired keys)
 		oldRing := s.keyManager.Ring(keyID)
 
-		rotator = server.NewFingerprintRotator(s.backend, s.config.Bucket, keyID, activeMEK, oldRing, s.manifest)
+		rotator = NewFingerprintRotator(s.backend, s.config.Bucket, keyID, activeMEK, oldRing, s.manifest)
 	}
 
 	// Record key rotation start in provenance chain
@@ -961,7 +961,7 @@ func (s *Server) keyRing(w http.ResponseWriter, r *http.Request) {
 			// Walk through all manifest entries and count by fingerprint for this key
 			allEntries := s.manifest.All()
 
-			for manifestKey, entry := range allEntries {
+			for manifestKey := range allEntries {
 				// Parse bucket and key from manifestKey ("bucket/object-key")
 				parts := strings.SplitN(manifestKey, "/", 2)
 				if len(parts) != 2 {
