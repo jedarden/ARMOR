@@ -11,7 +11,7 @@ ARMOR fronts several very different S3 clients, and the 40-day multipart corrupt
 | **L1 unit** (e.g. `aws_chunked_test.go`) | encoding/parsing logic | routing, crypto interplay, B2 semantics |
 | **L2 backend** (`internal/backend/*_test.go`, mock store) | part assembly logic, backend API contract | HTTP routing (where the ADR-002 bug lived), encryption |
 | **L3 HTTP handler** (`internal/server/handlers/*_test.go`, httptest + mock backend) | routing, encryption/decryption round-trip, S3 XML/headers | real B2 behavior, network |
-| **L4 real B2** (canary in prod; `armor-decrypt` offline) | end-to-end truth incl. B2 assembly | only what it's pointed at |
+| **L4 real B2** (canary in prod; `armor decrypt` offline) | end-to-end truth incl. B2 assembly | only what it's pointed at |
 
 **Rule from ADR-002:** every *write* pattern needs coverage at L3 (routing + crypto) **and** L4 (canary or drill); every *read* pattern needs L3 at minimum.
 
@@ -24,7 +24,7 @@ ARMOR fronts several very different S3 clients, and the 40-day multipart corrupt
 | **clone-workers / commitgraph** (parquet corpus — the load-bearing dataset) | **large multipart PUTs** via SDK defaults (5–16MiB parts, possibly parallel) | — |
 | **duckdb / pyiceberg / website-builder** (corpus readers) | — | **parquet access pattern: suffix-range GET (footer), then many small interior range GETs**; HEAD; List |
 | **Canary** (in-cluster, every 5min + hourly) | 1KB single PUT; multipart canary (ADR-002 §1) | GET + byte/HMAC/SHA verify |
-| **armor-decrypt** (offline DR tool) | — | direct-from-B2 read + decrypt, bypassing the proxy |
+| **armor decrypt** (offline DR tool) | — | direct-from-B2 read + decrypt, bypassing the proxy |
 | **Cloudflare zero-egress delivery** | — | GET (+Range) through CF CDN in front of ARMOR |
 
 ## Upload patterns
@@ -56,7 +56,7 @@ ARMOR fronts several very different S3 clients, and the 40-day multipart corrupt
 | R6 | Conditional GET/HEAD (If-Match/None-Match, ±Range) | CDN revalidation | L3 `TestConditionalRequests*`, `TestConditionalRequestsWithRange` | ✅ |
 | R7 | Read-after-complete (immediately GET what multipart just assembled) | litestream restore verification | new U4 full-cycle test (L3, skip-gated on `bf-24sxh7`); hourly multipart canary (L4) | 🔴 **broken** (`bf-24sxh7`) |
 | R8 | GET (+Range) **through the Cloudflare zero-egress path** | all public delivery | none automated — prod-only | ⚠️ ops gap: add a scheduled external probe |
-| R9 | Offline decrypt from raw B2 (`armor-decrypt`) — proxy-bypass truth check | DR drills | manual only | ⚠️ should be part of any pre-cutover drill |
+| R9 | Offline decrypt from raw B2 (`armor decrypt`) — proxy-bypass truth check | DR drills | manual only | ⚠️ should be part of any pre-cutover drill |
 | R10 | List/ListV2/versions/prefix (Hive partition keys) | corpus discovery, pyiceberg | L3 `TestListObjectsV2`, `TestListObjectVersions`, `TestURLDecodeHivePartitionKeys`, cache tests | ✅ |
 
 ## armor-test isolation and RBAC validation (revalidated 2026-08-21)

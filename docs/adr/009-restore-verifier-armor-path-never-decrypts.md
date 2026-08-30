@@ -40,7 +40,7 @@ Regardless of direction, add a regression test shaped like the reproduction in `
 
 ## Evidence
 
-Full method, object-level ground truth table, and byte-for-byte reproduction: `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md`. Summary: all 10 real objects sampled from `armor-apexalgo` (a bucket with no other tracking/monitoring at the time) independently decrypted correctly via a rebuilt `cmd/armor-decrypt` and matched their own upload-time-embedded plaintext SHA-256 — the data was never at risk. The "0/11 verified" reading that triggered this investigation was entirely this bug.
+Full method, object-level ground truth table, and byte-for-byte reproduction: `docs/bf-1ebnuz-corruption-inventory-armor-apexalgo.md`. Summary: all 10 real objects sampled from `armor-apexalgo` (a bucket with no other tracking/monitoring at the time) independently decrypted correctly via `armor decrypt` and matched their own upload-time-embedded plaintext SHA-256 — the data was never at risk. The "0/11 verified" reading that triggered this investigation was entirely this bug.
 
 ## Alternatives Considered
 
@@ -50,7 +50,7 @@ Full method, object-level ground truth table, and byte-for-byte reproduction: `d
 
 ## Consequences
 
-- Any historical `armor_restore_verification_failures_total` increase or near-zero `armor_verified_object_ratio` reading, on any cluster, for any bucket, prior to this fix, should be treated as **uninformative**, not as evidence of an actual restorability problem — it is this bug, not corruption, unless independently corroborated (e.g. by `ModeDRDrill`, or by manual `armor-decrypt` as done for `armor-apexalgo`).
+- Any historical `armor_restore_verification_failures_total` increase or near-zero `armor_verified_object_ratio` reading, on any cluster, for any bucket, prior to this fix, should be treated as **uninformative**, not as evidence of an actual restorability problem — it is this bug, not corruption, unless independently corroborated (e.g. by `ModeDRDrill`, or by manual `armor decrypt` as done for `armor-apexalgo`).
 - No escalation-to-bead behavior should be trusted based on `ModeDual` failures until this is fixed — check whether `VERIFIER_ESCALATION` is enabled on any fleet instance and, if so, whether it has been auto-filing beads against this false-positive signal; those would need to be identified and closed as invalid once the real fix lands.
 - No change to the encryption/HMAC/provenance design, `ModeDRDrill`, `restoreViaDirectDecrypt`, or `B2Backend.Head()`/`Get()`'s existing contract for their other callers — this is entirely a fix to what `restoreViaARMOR` does with the backend it's given.
 - This is independent of and additive to [ADR-007](007-restore-verifier-discovery-reliability.md)'s discovery-layer fixes — a bucket could have both bugs (never discovers anything) or just this one (discovers real objects, then falsely fails all of them, as `armor-apexalgo` did once a working discovery pass — `restore-verifier-acb`'s reservoir sampler — was pointed at it).

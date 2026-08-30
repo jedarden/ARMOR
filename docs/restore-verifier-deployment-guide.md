@@ -2,7 +2,7 @@
 
 ## Overview
 
-The restore-verifier is a standalone service for continuous backup verification that runs dual-path verification (ARMOR read path + armor-decrypt direct) to prove that backups are restorable through both the normal server path and disaster recovery.
+The restore-verifier is a standalone service for continuous backup verification that runs dual-path verification (ARMOR read path + armor decrypt direct) to prove that backups are restorable through both the normal server path and disaster recovery.
 
 ## Deployment Configuration
 
