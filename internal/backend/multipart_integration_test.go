@@ -697,6 +697,10 @@ func (m *mockBackendForMultipart) List(ctx context.Context, bucket, prefix, deli
 	return &ListResult{}, fmt.Errorf("not implemented")
 }
 
+func (m *mockBackendForMultipart) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*ListResult, error) {
+	return m.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
 func (m *mockBackendForMultipart) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
 	return nil, fmt.Errorf("not implemented")
 }
