@@ -2,8 +2,6 @@ version: "2"
 
 run:
   go: "1.25"
-  skip-dirs:
-    - internal/server/handlers
 
 linters:
   default: none
@@ -12,3 +10,13 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+
+issues:
+  exclude-rules:
+    - path: internal/server/handlers/
+      linters:
+        - govet
+        - ineffassign
+        - staticcheck
+        - unused
+      text: ""
