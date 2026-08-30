@@ -492,8 +492,6 @@ ARMOR itself is what is broken.
 > those examples literally fails with
 > `B2 credentials not set: set ARMOR_B2_REGION, ARMOR_B2_ENDPOINT, ARMOR_B2_ACCESS_KEY_ID, ARMOR_B2_SECRET_ACCESS_KEY`.
 
-**Note:** For backward compatibility during the transition period, the standalone `armor-decrypt` binary remains available. It delegates to `armor decrypt` internally. New usage should prefer `armor decrypt` directly.
-
 ### Procedure (executed end to end, not theoretical)
 
 ```bash
@@ -632,7 +630,7 @@ Run on a host outside the protected cluster, with the MEK read from a
 | Cloudflare (`ARMOR_CF_DOMAIN`, e.g. `b2-us-west-002.ardenone.com`) | **~7.9 MB/s** | **free** (Bandwidth Alliance) |
 | Direct B2 S3 (`ARMOR_B2_ENDPOINT`) | **~38 MB/s** | billed |
 
-`armor-decrypt` uses the same B2 range-read path as the ARMOR service. Set
+`armor decrypt` uses the same B2 range-read path as the ARMOR service. Set
 `ARMOR_CF_DOMAIN` to fetch ciphertext through Cloudflare's native B2 download
 URL (`/file/<bucket>/<key>`) at free Bandwidth Alliance egress. Leave it empty
 to use the direct B2 S3 path instead, which is faster but billed. The S3
@@ -651,7 +649,7 @@ Before that fix, the CF read path issued a **ranged GET per 64 KiB block**
 `GetRangeWithHeaders` now pipelines those requests with a bounded worker pool,
 preserves block order, and fails the whole read if any block fails or is
 truncated. `ARMOR_READ_CONCURRENCY` controls the maximum number of ranged GETs
-in flight and defaults to 16. `armor-decrypt` remains faster in a direct-B2
+in flight and defaults to 16. `armor decrypt` remains faster in a direct-B2
 configuration because it bypasses the Cloudflare path, at billed egress.
 
 ## Key Rotation Failure Recovery
