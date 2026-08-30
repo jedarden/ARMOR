@@ -43,7 +43,7 @@ func TestPerKeyRotationLeavesOtherRoutedKeysUntouched(t *testing.T) {
 	defaultBefore := wrappedDEKFromMetadata(t, mock, bucket, "public/report.json")
 	piiBefore := wrappedDEKFromMetadata(t, mock, bucket, "data/pii/customer.json")
 
-	piiRotator := NewKeyRotatorForKey(mock, bucket, "pii", oldPII, newPII, nil)
+	piiRotator := NewKeyRotatorForKey(mock, bucket, "pii", oldPII, newPII, nil, nil)
 	result, err := piiRotator.Rotate(context.Background())
 	if err != nil {
 		t.Fatalf("PII rotation: %v", err)
@@ -67,7 +67,7 @@ func TestPerKeyRotationLeavesOtherRoutedKeysUntouched(t *testing.T) {
 		t.Fatalf("default object no longer unwraps with its original key: %v", err)
 	}
 
-	defaultRotator := NewKeyRotatorForKey(mock, bucket, "default", oldDefault, newDefault, nil)
+	defaultRotator := NewKeyRotatorForKey(mock, bucket, "default", oldDefault, newDefault, nil, nil)
 	result, err = defaultRotator.Rotate(context.Background())
 	if err != nil {
 		t.Fatalf("default rotation: %v", err)

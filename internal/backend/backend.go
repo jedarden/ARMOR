@@ -4,11 +4,19 @@ package backend
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 )
+
+// ErrObjectNotFound is returned by Get/GetRange/Head when the requested key
+// doesn't exist in the bucket.
+var ErrObjectNotFound = errors.New("object not found")
+
+// ErrBucketNotFound is returned when the requested bucket doesn't exist.
+var ErrBucketNotFound = errors.New("bucket not found")
 
 // ObjectInfo contains metadata about an object.
 type ObjectInfo struct {

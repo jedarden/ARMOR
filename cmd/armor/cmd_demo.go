@@ -204,7 +204,7 @@ func printAWSCLIConfig(endpoint, bucket string) {
 	fmt.Println("")
 	fmt.Println("Or use --profile:")
 	fmt.Printf("aws configure set profile.demo.endpoint_url http://%s\n", endpoint)
-	fmt.Printf("aws configure set profile.demo.s3.addressing_style path\n", endpoint)
+	fmt.Println("aws configure set profile.demo.s3.addressing_style path")
 	fmt.Println("")
 	fmt.Println("=============================")
 	fmt.Println("")

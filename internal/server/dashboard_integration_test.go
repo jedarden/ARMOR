@@ -58,7 +58,7 @@ func TestDashboardEndToEndWithARMORServer(t *testing.T) {
 		t.Fatalf("create ARMOR server: %v", err)
 	}
 	armorServer.dashboard = dashboard.NewWithAuth(
-		fsBackend, bucket, armorServer.metrics, user, password, "")
+		fsBackend, bucket, armorServer.metrics, user, password, "", nil, "", false)
 
 	s3Server := httptest.NewServer(armorServer.Handler())
 	adminServer := httptest.NewServer(armorServer.AdminHandler())

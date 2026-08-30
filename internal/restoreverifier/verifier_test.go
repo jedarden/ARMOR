@@ -1273,58 +1273,59 @@ func TestVerifyObject_MEKRing_MultiKeyBucket(t *testing.T) {
 }
 
 // armorEncryptWithMEK encrypts plaintext using a specific MEK, returning
-// ciphertext and ARMOR metadata. Helper for testing multi-key scenarios.
-func armorEncryptWithMEK(t *testing.T, mek []byte, blockSize int, plaintext []byte) ([]byte, map[string]string) {
+// ciphertext and ARMOR metadata in v2 (fingerprint-wrapped-DEK) format.
+// Helper for testing multi-key scenarios. Mirrors armorEncrypt above (same
+// header/encrypt/envelope-assembly and ARMORMetadata.ToMetadata() pattern,
+// which is what actually produces the real metadata key names -- e.g.
+// "x-amz-meta-armor-plaintext-sha256", not "-sha") -- the only difference is
+// MEKFingerprint being set, which makes ToMetadata emit the v2:<fp>:<b64>
+// wrapped-DEK format instead of plain base64.
+func armorEncryptWithMEK(t *testing.T, mek []byte, blockSize int, plaintext []byte) (ciphertext []byte, meta map[string]string) {
 	t.Helper()
-
-	// Generate DEK and wrap with the specified MEK
 	dek, err := crypto.GenerateDEK()
 	if err != nil {
-		t.Fatalf("generate DEK: %v", err)
+		t.Fatalf("GenerateDEK: %v", err)
 	}
-
-	// Wrap DEK with fingerprint (v2 format)
-	wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(mek, dek)
-	if err != nil {
-		t.Fatalf("wrap DEK with fingerprint: %v", err)
-	}
-
-	// Encrypt plaintext
 	iv, err := crypto.GenerateIV()
 	if err != nil {
-		t.Fatalf("generate IV: %v", err)
+		t.Fatalf("GenerateIV: %v", err)
 	}
-
-	ciphertext, err := crypto.EncryptCTR(plaintext, dek, iv, blockSize)
+	wrapped, err := crypto.WrapDEK(mek, dek)
 	if err != nil {
-		t.Fatalf("encrypt: %v", err)
+		t.Fatalf("WrapDEK: %v", err)
 	}
+	sha := crypto.ComputePlaintextSHA256(plaintext)
 
-	// Build metadata
-	plaintextSHA := sha256.Sum256(plaintext)
-	meta := map[string]string{
-		"x-amz-meta-armor-version":        "2",
-		"x-amz-meta-armor-block-size":     strconv.Itoa(blockSize),
-		"x-amz-meta-armor-iv":             hex.EncodeToString(iv),
-		"x-amz-meta-armor-wrapped-dek":    wrappedDEKStr,
-		"x-amz-meta-armor-plaintext-sha":   hex.EncodeToString(plaintextSHA[:]),
-		"x-amz-meta-armor-multipart":      "false",
-		"x-amz-meta-armor-compressed":     "false",
-		"x-amz-meta-armor-mek-fingerprint": crypto.MEKFingerprint(mek),
-	}
-
-	// Prepend envelope header (v2 format: [version:1 byte][plaintext_size:8 bytes][hmac_len:4 bytes])
-	header := crypto.EnvelopeHeader{
-		Version:       2,
-		PlaintextSize: int64(len(plaintext)),
-		HMACLen:       0, // No HMAC in single-PUT v2
-	}
-	headerBytes, err := header.Marshal()
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, sha, crypto.Version2)
 	if err != nil {
-		t.Fatalf("marshal header: %v", err)
+		t.Fatalf("NewEnvelopeHeaderWithVersion: %v", err)
+	}
+	headerBytes, err := header.Encode()
+	if err != nil {
+		t.Fatalf("header encode: %v", err)
+	}
+	enc, err := crypto.NewEncryptor(dek, iv, blockSize)
+	if err != nil {
+		t.Fatalf("NewEncryptor: %v", err)
+	}
+	encrypted, hmacTable, err := enc.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
 	}
 
-	ciphertext = append(headerBytes, ciphertext...)
+	envelope := make([]byte, 0, len(headerBytes)+len(encrypted)+len(hmacTable))
+	envelope = append(envelope, headerBytes...)
+	envelope = append(envelope, encrypted...)
+	envelope = append(envelope, hmacTable...)
 
-	return ciphertext, meta
+	m := (&backend.ARMORMetadata{
+		Version:        2,
+		BlockSize:      blockSize,
+		PlaintextSize:  int64(len(plaintext)),
+		IV:             iv,
+		WrappedDEK:     wrapped,
+		MEKFingerprint: crypto.MEKFingerprint(mek),
+		PlaintextSHA:   hexEncode(sha[:]),
+	}).ToMetadata()
+	return envelope, m
 }

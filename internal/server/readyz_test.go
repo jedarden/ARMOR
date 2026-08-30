@@ -153,6 +153,10 @@ func (b *countingBackend) List(_ context.Context, bucket, prefix, _ string, _ st
 	return &backend.ListResult{Objects: objects}, nil
 }
 
+func (b *countingBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	return b.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
 func (b *countingBackend) Copy(_ context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, _ bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -269,7 +273,7 @@ func TestReadyzManifestWriter(t *testing.T) {
 		writer.EnqueuePut("test-bucket", fmt.Sprintf("test-key-%d", i), &manifest.Entry{
 			PlaintextSize: 100,
 			ContentType:   "application/octet-stream",
-		})
+		}, nil)
 	}
 
 	// Wait for the flush to complete (the writer runs asynchronously)
@@ -329,7 +333,7 @@ func TestReadyzManifestWriterStale(t *testing.T) {
 		writer.EnqueuePut("test-bucket", fmt.Sprintf("test-key-%d", i), &manifest.Entry{
 			PlaintextSize: 100,
 			ContentType:   "application/octet-stream",
-		})
+		}, nil)
 	}
 
 	deadline := time.Now().Add(5 * time.Second)

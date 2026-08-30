@@ -406,33 +406,35 @@ func runMEKProbe(ctx context.Context, b2 backend.Backend, cfg *config.Config) []
 	}}
 }
 
-// findNewestCanary finds the newest .armor/canary object in the bucket
+// findNewestCanary finds the newest .armor/canary object in the bucket.
+// b2.List returns one page per call (Objects/IsTruncated/NextToken), not a
+// streaming iterator, so this pages through the whole prefix rather than
+// just the first 100 objects.
 func findNewestCanary(ctx context.Context, b2 backend.Backend, bucket, prefix string) (string, error) {
 	// List objects with .armor/canary prefix
 	canaryPrefix := prefix + ".armor/canary/"
 
-	lister, err := b2.List(ctx, bucket, canaryPrefix, "", "", 100)
-	if err != nil {
-		return "", fmt.Errorf("list failed: %w", err)
-	}
-	defer lister.Close()
-
 	var newestKey string
 	var newestTime time.Time
+	continuationToken := ""
 
 	for {
-		obj, err := lister.Next()
-		if err == io.EOF {
-			break
-		}
+		result, err := b2.List(ctx, bucket, canaryPrefix, "", continuationToken, 100)
 		if err != nil {
-			return "", fmt.Errorf("iteration failed: %w", err)
+			return "", fmt.Errorf("list failed: %w", err)
 		}
 
-		if obj.LastModified.After(newestTime) {
-			newestTime = obj.LastModified
-			newestKey = obj.Key
+		for _, obj := range result.Objects {
+			if obj.LastModified.After(newestTime) {
+				newestTime = obj.LastModified
+				newestKey = obj.Key
+			}
 		}
+
+		if !result.IsTruncated {
+			break
+		}
+		continuationToken = result.NextToken
 	}
 
 	if newestKey == "" {
@@ -623,7 +625,7 @@ func initBackendForCheck(cfg *config.Config) (backend.Backend, error) {
 			ReadConcurrency: cfg.ReadConcurrency,
 		})
 	case "filesystem":
-		return backend.NewFilesystemBackend(cfg.FSPath)
+		return backend.NewFSBackend(backend.FSConfig{BasePath: cfg.FSPath})
 	default:
 		return nil, fmt.Errorf("unknown backend type: %s", cfg.Backend)
 	}

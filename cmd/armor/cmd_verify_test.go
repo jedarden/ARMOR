@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,13 +32,28 @@ func NewMockB2Backend() *MockB2Backend {
 	}
 }
 
-func (m *MockB2Backend) Put(ctx context.Context, bucket, key string, data []byte, metadata map[string]string, isArmor bool, lastModified time.Time) {
+// PutTestObject is the test-friendly object setter (fixed-size []byte, an
+// explicit isArmor flag, and a caller-supplied lastModified) -- Put itself
+// has to match backend.Backend's real signature (io.Reader body, no isArmor
+// flag) so MockB2Backend satisfies the interface, so this stays under its
+// own name rather than overloading Put.
+func (m *MockB2Backend) PutTestObject(ctx context.Context, bucket, key string, data []byte, metadata map[string]string, isArmor bool, lastModified time.Time) {
 	m.objects[key] = &mockObject{
 		data:         data,
 		metadata:     metadata,
 		isArmor:      isArmor,
 		lastModified: lastModified,
 	}
+}
+
+func (m *MockB2Backend) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	_, isArmor := backend.ParseARMORMetadata(meta)
+	m.PutTestObject(ctx, bucket, key, data, meta, isArmor, time.Now())
+	return nil
 }
 
 func (m *MockB2Backend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {
@@ -58,12 +72,20 @@ func (m *MockB2Backend) Head(ctx context.Context, bucket, key string) (*backend.
 	}, nil
 }
 
-func (m *MockB2Backend) Get(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+func (m *MockB2Backend) Get(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
 	obj, exists := m.objects[key]
 	if !exists {
-		return nil, os.ErrNotExist
+		return nil, nil, os.ErrNotExist
 	}
-	return io.NopCloser(bytes.NewReader(obj.data)), nil
+	info := &backend.ObjectInfo{
+		Key:             key,
+		Size:            int64(len(obj.data)),
+		LastModified:    obj.lastModified,
+		IsARMOREncrypted: obj.isArmor,
+		Metadata:        obj.metadata,
+		ETag:            hex.EncodeToString(SHA256Hash(obj.data)),
+	}
+	return io.NopCloser(bytes.NewReader(obj.data)), info, nil
 }
 
 func (m *MockB2Backend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
@@ -98,6 +120,108 @@ func (m *MockB2Backend) List(ctx context.Context, bucket, prefix, delimiter, con
 	}, nil
 }
 
+func (m *MockB2Backend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	return m.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
+func (m *MockB2Backend) GetRangeWithHeaders(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, map[string]string, error) {
+	rc, err := m.GetRange(ctx, bucket, key, offset, length)
+	return rc, map[string]string{}, err
+}
+
+func (m *MockB2Backend) Delete(ctx context.Context, bucket, key string) error {
+	delete(m.objects, key)
+	return nil
+}
+
+func (m *MockB2Backend) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
+	for _, key := range keys {
+		delete(m.objects, key)
+	}
+	return nil
+}
+
+func (m *MockB2Backend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
+	obj, exists := m.objects[srcKey]
+	if !exists {
+		return os.ErrNotExist
+	}
+	newMeta := obj.metadata
+	if replaceMetadata {
+		newMeta = meta
+	}
+	m.objects[dstKey] = &mockObject{data: obj.data, metadata: newMeta, isArmor: obj.isArmor, lastModified: obj.lastModified}
+	return nil
+}
+
+func (m *MockB2Backend) ListBuckets(ctx context.Context) ([]backend.BucketInfo, error) {
+	return nil, nil
+}
+func (m *MockB2Backend) CreateBucket(ctx context.Context, bucket string) error { return nil }
+func (m *MockB2Backend) DeleteBucket(ctx context.Context, bucket string) error { return nil }
+func (m *MockB2Backend) HeadBucket(ctx context.Context, bucket string) error   { return nil }
+
+func (m *MockB2Backend) GetDirect(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
+	return m.Get(ctx, bucket, key)
+}
+
+// The stubs below satisfy backend.Backend for interface conformance --
+// verify's tests don't exercise multipart uploads, lifecycle, object lock,
+// retention, legal hold, or versioning, so these return zero values rather
+// than simulating real behavior.
+
+func (m *MockB2Backend) CreateMultipartUpload(ctx context.Context, bucket, key string, meta map[string]string) (string, error) {
+	return "", nil
+}
+func (m *MockB2Backend) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int32, body io.Reader, size int64) (string, error) {
+	return "", nil
+}
+func (m *MockB2Backend) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []backend.CompletedPart) (string, error) {
+	return "", nil
+}
+func (m *MockB2Backend) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	return nil
+}
+func (m *MockB2Backend) ListParts(ctx context.Context, bucket, key, uploadID string) (*backend.ListPartsResult, error) {
+	return &backend.ListPartsResult{}, nil
+}
+func (m *MockB2Backend) ListMultipartUploads(ctx context.Context, bucket, prefix string) (*backend.ListMultipartUploadsResult, error) {
+	return &backend.ListMultipartUploadsResult{}, nil
+}
+func (m *MockB2Backend) GetBucketLifecycleConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, os.ErrNotExist
+}
+func (m *MockB2Backend) PutBucketLifecycleConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+func (m *MockB2Backend) DeleteBucketLifecycleConfiguration(ctx context.Context, bucket string) error {
+	return nil
+}
+func (m *MockB2Backend) GetObjectLockConfiguration(ctx context.Context, bucket string) ([]byte, error) {
+	return nil, os.ErrNotExist
+}
+func (m *MockB2Backend) PutObjectLockConfiguration(ctx context.Context, bucket string, config []byte) error {
+	return nil
+}
+func (m *MockB2Backend) GetObjectRetention(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, os.ErrNotExist
+}
+func (m *MockB2Backend) PutObjectRetention(ctx context.Context, bucket, key string, retention []byte) error {
+	return nil
+}
+func (m *MockB2Backend) GetObjectLegalHold(ctx context.Context, bucket, key string) ([]byte, error) {
+	return nil, os.ErrNotExist
+}
+func (m *MockB2Backend) PutObjectLegalHold(ctx context.Context, bucket, key string, legalHold []byte) error {
+	return nil
+}
+func (m *MockB2Backend) ListObjectVersions(ctx context.Context, bucket, prefix, delimiter, keyMarker, versionIDMarker string, maxKeys int) (*backend.ListObjectVersionsResult, error) {
+	return &backend.ListObjectVersionsResult{}, nil
+}
+func (m *MockB2Backend) HeadVersion(ctx context.Context, bucket, key, versionID string) (*backend.ObjectInfo, error) {
+	return nil, os.ErrNotExist
+}
+
 // TestVerifyValidObject tests verification of a valid ARMOR object
 func TestVerifyValidObject(t *testing.T) {
 	ctx := context.Background()
@@ -106,7 +230,7 @@ func TestVerifyValidObject(t *testing.T) {
 
 	// Create a valid ARMOR object
 	validData := createValidARMORObject(t, mek, "test-object", []byte("plaintext data"))
-	mock.Put(ctx, "test-bucket", "test-object", validData.data, validData.metadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "test-object", validData.data, validData.metadata, true, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "test-object", time.Time{})
@@ -131,7 +255,7 @@ func TestVerifyCorruptedHMAC(t *testing.T) {
 	// Flip a bit in the encrypted data section (after header)
 	corruptedData[crypto.HeaderSize+100] ^= 0xFF
 
-	mock.Put(ctx, "test-bucket", "corrupted-object", corruptedData, validData.metadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "corrupted-object", corruptedData, validData.metadata, true, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "corrupted-object", time.Time{})
@@ -159,7 +283,7 @@ func TestVerifyCorruptedEnvelope(t *testing.T) {
 	// Corrupt the magic bytes
 	corruptedData[0] ^= 0xFF
 
-	mock.Put(ctx, "test-bucket", "corrupted-envelope", corruptedData, validData.metadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "corrupted-envelope", corruptedData, validData.metadata, true, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "corrupted-envelope", time.Time{})
@@ -189,7 +313,7 @@ func TestVerifyCorruptedDEK(t *testing.T) {
 		corruptedMetadata["x-amz-meta-armor-wrapped-dek"] = wrappedDEK[:len(wrappedDEK)-10] + "CORRUPTED"
 	}
 
-	mock.Put(ctx, "test-bucket", "corrupted-dek", validData.data, corruptedMetadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "corrupted-dek", validData.data, corruptedMetadata, true, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "corrupted-dek", time.Time{})
@@ -207,7 +331,7 @@ func TestVerifyNonArmorObject(t *testing.T) {
 
 	// Create a non-ARMOR object
 	plainData := []byte("not an ARMOR object")
-	mock.Put(ctx, "test-bucket", "plain-object", plainData, map[string]string{}, false, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "plain-object", plainData, map[string]string{}, false, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "plain-object", time.Time{})
@@ -245,10 +369,10 @@ func TestVerifySinceFilter(t *testing.T) {
 	recentTime := time.Now().Add(-1 * time.Hour)
 
 	oldData := createValidARMORObject(t, mek, "old-object", []byte("old data"))
-	mock.Put(ctx, "test-bucket", "old-object", oldData.data, oldData.metadata, true, oldTime)
+	mock.PutTestObject(ctx, "test-bucket", "old-object", oldData.data, oldData.metadata, true, oldTime)
 
 	recentData := createValidARMORObject(t, mek, "recent-object", []byte("recent data"))
-	mock.Put(ctx, "test-bucket", "recent-object", recentData.data, recentData.metadata, true, recentTime)
+	mock.PutTestObject(ctx, "test-bucket", "recent-object", recentData.data, recentData.metadata, true, recentTime)
 
 	// Verify with since=24h ago
 	since := time.Now().Add(-24 * time.Hour)
@@ -349,37 +473,47 @@ func createValidARMORObject(t *testing.T, mek []byte, key string, plaintext []by
 		t.Fatalf("Failed to wrap DEK: %v", err)
 	}
 
-	// Create envelope header
-	envelope := &crypto.Envelope{
-		Magic:        [4]byte{'A', 'R', 'M', 'R'},
-		Version:      crypto.Version2,
-		IV:           make([]byte, 12),
-		BlockSize:    65536,
-		OriginalSize: uint64(len(plaintext)),
+	iv := make([]byte, 16)
+	for i := range iv {
+		iv[i] = byte(i)
 	}
-	copy(envelope.IV, []byte("test-iv-12345"))
 
-	// Encode header
-	header, err := crypto.EncodeHeader(envelope)
+	blockSize := 65536
+	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, crypto.Version2)
+	if err != nil {
+		t.Fatalf("Failed to create envelope header: %v", err)
+	}
+	headerBytes, err := header.Encode()
 	if err != nil {
 		t.Fatalf("Failed to encode header: %v", err)
 	}
 
-	// Encrypt and HMAC the plaintext (simplified - just create valid structure)
-	// In real testing, you'd use the full encryption pipeline
-	encryptedData := make([]byte, crypto.HeaderSize+len(plaintext)*2) // oversized for safety
-	copy(encryptedData, header)
+	enc, err := crypto.NewEncryptor(dek, iv, blockSize)
+	if err != nil {
+		t.Fatalf("Failed to create encryptor: %v", err)
+	}
+	encrypted, hmacTable, err := enc.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("Failed to encrypt: %v", err)
+	}
 
-	// Create HMAC sidecar metadata
+	data := make([]byte, 0, len(headerBytes)+len(encrypted)+len(hmacTable))
+	data = append(data, headerBytes...)
+	data = append(data, encrypted...)
+	data = append(data, hmacTable...)
+
 	metadata := map[string]string{
-		"x-amz-meta-armor-wrapped-dek":     base64Encode(wrappedDEK),
-		"x-amz-meta-armor-envelope-version": "2",
-		"x-amz-meta-armor-block-size":      "65536",
-		"x-amz-meta-armor-original-size":  fmt.Sprintf("%d", len(plaintext)),
+		"x-amz-meta-armor-version":          "2",
+		"x-amz-meta-armor-block-size":       fmt.Sprintf("%d", blockSize),
+		"x-amz-meta-armor-plaintext-size":   fmt.Sprintf("%d", len(plaintext)),
+		"x-amz-meta-armor-iv":               base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-wrapped-dek":      base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-plaintext-sha256": hex.EncodeToString(plaintextSHA[:]),
 	}
 
 	return armoringResult{
-		data:     encryptedData,
+		data:     data,
 		metadata: metadata,
 	}
 }
@@ -404,7 +538,7 @@ func TestVerifyV3ValidSinglePUT(t *testing.T) {
 
 	// Create a valid v3 single-PUT ARMOR object
 	validData := createValidV3SinglePUTObject(t, mek, "v3-test-object", []byte("plaintext data for v3"))
-	mock.Put(ctx, "test-bucket", "v3-single-put", validData.data, validData.metadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "v3-single-put", validData.data, validData.metadata, true, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-single-put", time.Time{})
@@ -422,7 +556,7 @@ func TestVerifyV3ValidMultipart(t *testing.T) {
 
 	// Create a valid v3 multipart ARMOR object
 	validData := createValidV3MultipartObject(t, mek, "v3-multipart-object", []byte("multipart data for v3"))
-	mock.Put(ctx, "test-bucket", "v3-multipart", validData.data, validData.metadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "v3-multipart", validData.data, validData.metadata, true, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-multipart", time.Time{})
@@ -447,7 +581,7 @@ func TestVerifyV3CorruptedBlock(t *testing.T) {
 	// Find the start of encrypted blocks (after header) and corrupt a block
 	corruptedData[crypto.HeaderSize+64] ^= 0xFF
 
-	mock.Put(ctx, "test-bucket", "v3-corrupted-block", corruptedData, validData.metadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "v3-corrupted-block", corruptedData, validData.metadata, true, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-corrupted-block", time.Time{})
@@ -478,7 +612,7 @@ func TestVerifyV3CorruptedSidecar(t *testing.T) {
 	sidecarKey := ".armor/hmac/" + hex.EncodeToString(SHA256Hash([]byte("v3-multipart"))) + ".json"
 	corruptedMetadata["x-amz-meta-armor-hmac-sidecar"] = sidecarKey + "-corrupted"
 
-	mock.Put(ctx, "test-bucket", "v3-corrupted-sidecar", validData.data, corruptedMetadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "v3-corrupted-sidecar", validData.data, corruptedMetadata, true, time.Now())
 
 	// Note: This test would require sidecar mock implementation
 	// For now, we test that the verification attempts to load the sidecar
@@ -498,7 +632,7 @@ func TestVerifyV3CompressedBlock(t *testing.T) {
 
 	// Create a v3 object with compressed blocks
 	validData := createValidV3CompressedObject(t, mek, "v3-compressed", []byte("data that compresses well" + strings.Repeat("repeat", 1000)))
-	mock.Put(ctx, "test-bucket", "v3-compressed", validData.data, validData.metadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "v3-compressed", validData.data, validData.metadata, true, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-compressed", time.Time{})
@@ -524,7 +658,7 @@ func TestVerifyV3CorruptedBlockTable(t *testing.T) {
 	corruptedData[len(corruptedData)-1] ^= 0xFF
 	corruptedData[len(corruptedData)-2] ^= 0xFF
 
-	mock.Put(ctx, "test-bucket", "v3-corrupted-table", corruptedData, validData.metadata, true, time.Now())
+	mock.PutTestObject(ctx, "test-bucket", "v3-corrupted-table", corruptedData, validData.metadata, true, time.Now())
 
 	// Verify the object
 	result := verifyObject(ctx, mock, mek, "test-bucket", "v3-corrupted-table", time.Time{})
@@ -551,36 +685,35 @@ func createValidV3SinglePUTObject(t *testing.T, mek []byte, key string, plaintex
 		t.Fatalf("Failed to wrap DEK: %v", err)
 	}
 
-	// Create v3 envelope header
-	envelope := &crypto.EnvelopeHeader{
-		Magic:          [4]byte{'A', 'R', 'M', 'R'},
-		Version:        crypto.Version3,
-		IV:             make([]byte, 16),
-		BlockSizeLog2:  16, // 65536
-		PlaintextSize:  uint64(len(plaintext)),
-	}
-	copy(envelope.IV, []byte("test-v3-iv-12345"))
-
 	// Generate IV
 	iv := make([]byte, 16)
 	for i := range iv {
 		iv[i] = byte(i * 3)
 	}
 
+	blockSize := 65536
+	plaintextSHABytes := crypto.ComputePlaintextSHA256(plaintext)
+
+	// Create v3 envelope header
+	envelope, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHABytes, crypto.Version3)
+	if err != nil {
+		t.Fatalf("Failed to create envelope header: %v", err)
+	}
+
 	// Create encryptor
-	encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, 65536, crypto.Version3)
+	encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, blockSize, crypto.Version3)
 	if err != nil {
 		t.Fatalf("Failed to create encryptor: %v", err)
 	}
 
 	// Encrypt the plaintext
-	encrypted, blockTable, err := encryptor.EncryptV3(plaintext)
+	encrypted, blockTable, err := encryptor.EncryptV3(plaintext, false)
 	if err != nil {
 		t.Fatalf("Failed to encrypt v3: %v", err)
 	}
 
 	// Encode header
-	header, err := crypto.EncodeHeader(envelope)
+	header, err := envelope.Encode()
 	if err != nil {
 		t.Fatalf("Failed to encode header: %v", err)
 	}
@@ -598,13 +731,14 @@ func createValidV3SinglePUTObject(t *testing.T, mek []byte, key string, plaintex
 	fullObject = append(fullObject, tableData...)
 
 	// Create plaintext SHA256
-	plaintextSHA := hex.EncodeToString(SHA256Hash(plaintext))
+	plaintextSHA := hex.EncodeToString(plaintextSHABytes[:])
 
 	// Create metadata
 	metadata := map[string]string{
-		"x-amz-meta-armor-wrapped-dek":       base64Encode(wrappedDEK),
+		"x-amz-meta-armor-wrapped-dek":       base64.StdEncoding.EncodeToString(wrappedDEK),
 		"x-amz-meta-armor-version":          "3",
-		"x-amz-meta-armor-block-size":       "65536",
+		"x-amz-meta-armor-block-size":       fmt.Sprintf("%d", blockSize),
+		"x-amz-meta-armor-iv":               base64.StdEncoding.EncodeToString(iv),
 		"x-amz-meta-armor-plaintext-size":   fmt.Sprintf("%d", len(plaintext)),
 		"x-amz-meta-armor-plaintext-sha256": plaintextSHA,
 	}

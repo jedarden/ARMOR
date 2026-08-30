@@ -99,7 +99,7 @@ func TestHandleListCreds_NoSecretLeak(t *testing.T) {
 	}
 
 	// Critical assertion: NO secret key material should be in the response body
-	responseBody := rec.Body.String()
+	// (checked below via rec.Body.Bytes() directly)
 
 	// Check for each specific secret value
 	secretValues := []string{

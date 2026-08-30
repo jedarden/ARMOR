@@ -1,9 +1,11 @@
+//go:build integration
 // +build integration
 
 package integration
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -22,8 +24,9 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	setup(t)
-	defer teardown(t)
+	armorEndpoint := getEnvOr("ARMOR_ENDPOINT", "http://localhost:9000")
+	client := createS3Client(t, armorEndpoint)
+	ctx := context.Background()
 
 	// Create test data that will be split across multiple parts
 	// Each part should be at least 5 MiB (B2 minimum) except the last
@@ -39,8 +42,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 	expectedETag := hex.EncodeToString(expectedMD5[:]) + "-3" // 3 parts
 
 	// Create multipart upload
-	createResp, err := s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(testBucket),
+	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket),
 		Key:    aws.String("v3-multipart-roundtrip-test"),
 	})
 	if err != nil {
@@ -59,8 +62,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 
 		partData := testData[partStart:partEnd]
 
-		uploadResp, err := s3Client.UploadPart(ctx, &s3.UploadPartInput{
-			Bucket:     aws.String(testBucket),
+		uploadResp, err := client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:     aws.String(bucket),
 			Key:        aws.String("v3-multipart-roundtrip-test"),
 			UploadId:   aws.String(uploadID),
 			PartNumber: aws.Int32(int32(i + 1)),
@@ -77,8 +80,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 	}
 
 	// Complete multipart upload
-	completeResp, err := s3Client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(testBucket),
+	completeResp, err := client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(bucket),
 		Key:             aws.String("v3-multipart-roundtrip-test"),
 		UploadId:        aws.String(uploadID),
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: partETags},
@@ -94,8 +97,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 
 	// Test 1: Full object GET should return byte-identical data
 	t.Run("FullGET", func(t *testing.T) {
-		getResp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
 			Key:    aws.String("v3-multipart-roundtrip-test"),
 		})
 		if err != nil {
@@ -131,8 +134,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 		start := int64(partSize + 100)
 		end := int64(partSize + 200)
 
-		getResp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
 			Key:    aws.String("v3-multipart-roundtrip-test"),
 			Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
 		})
@@ -168,8 +171,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 		start := int64(partSize - 100)
 		end := int64(partSize + 100)
 
-		getResp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
 			Key:    aws.String("v3-multipart-roundtrip-test"),
 			Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
 		})
@@ -205,8 +208,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 		start := int64(partSize*2 - 50)
 		end := int64(len(testData) - 1)
 
-		getResp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
 			Key:    aws.String("v3-multipart-roundtrip-test"),
 			Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
 		})
@@ -246,8 +249,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 		newETag := hex.EncodeToString(newMD5[:])
 
 		// Simple PUT (not multipart) to overwrite
-		_, err = s3Client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(testBucket),
+		_, err = client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucket),
 			Key:    aws.String("v3-multipart-roundtrip-test"),
 			Body:   bytes.NewReader(newTestData),
 		})
@@ -256,8 +259,8 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 		}
 
 		// Verify we get the new data
-		getResp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
 			Key:    aws.String("v3-multipart-roundtrip-test"),
 		})
 		if err != nil {
@@ -288,8 +291,9 @@ func TestV3MultipartUnalignedParts(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	setup(t)
-	defer teardown(t)
+	armorEndpoint := getEnvOr("ARMOR_ENDPOINT", "http://localhost:9000")
+	client := createS3Client(t, armorEndpoint)
+	ctx := context.Background()
 
 	// Create parts with random sizes (all ≥ 5 MiB except last)
 	partSizes := []int{
@@ -308,8 +312,8 @@ func TestV3MultipartUnalignedParts(t *testing.T) {
 	}
 
 	// Create multipart upload
-	createResp, err := s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(testBucket),
+	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket),
 		Key:    aws.String("v3-multipart-unaligned-test"),
 	})
 	if err != nil {
@@ -323,8 +327,8 @@ func TestV3MultipartUnalignedParts(t *testing.T) {
 	for i, size := range partSizes {
 		partData := testData[offset : offset+size]
 
-		uploadResp, err := s3Client.UploadPart(ctx, &s3.UploadPartInput{
-			Bucket:     aws.String(testBucket),
+		uploadResp, err := client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:     aws.String(bucket),
 			Key:        aws.String("v3-multipart-unaligned-test"),
 			UploadId:   aws.String(uploadID),
 			PartNumber: aws.Int32(int32(i + 1)),
@@ -343,8 +347,8 @@ func TestV3MultipartUnalignedParts(t *testing.T) {
 	}
 
 	// Complete multipart upload
-	_, err = s3Client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(testBucket),
+	_, err = client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(bucket),
 		Key:             aws.String("v3-multipart-unaligned-test"),
 		UploadId:        aws.String(uploadID),
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: partETags},
@@ -355,8 +359,8 @@ func TestV3MultipartUnalignedParts(t *testing.T) {
 
 	// Verify full object GET
 	t.Run("FullGET_Unaligned", func(t *testing.T) {
-		getResp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
 			Key:    aws.String("v3-multipart-unaligned-test"),
 		})
 		if err != nil {
@@ -383,8 +387,8 @@ func TestV3MultipartUnalignedParts(t *testing.T) {
 		start := boundaryOffset - 1000
 		end := boundaryOffset + 1000
 
-		getResp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
 			Key:    aws.String("v3-multipart-unaligned-test"),
 			Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
 		})
@@ -411,8 +415,9 @@ func TestV3MultipartSmallRanges(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	setup(t)
-	defer teardown(t)
+	armorEndpoint := getEnvOr("ARMOR_ENDPOINT", "http://localhost:9000")
+	client := createS3Client(t, armorEndpoint)
+	ctx := context.Background()
 
 	// Create a simple multipart object
 	partSize := 5 * 1024 * 1024
@@ -420,8 +425,8 @@ func TestV3MultipartSmallRanges(t *testing.T) {
 	rand.Read(testData)
 
 	// Upload as multipart
-	createResp, err := s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(testBucket),
+	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket),
 		Key:    aws.String("v3-small-ranges-test"),
 	})
 	if err != nil {
@@ -434,8 +439,8 @@ func TestV3MultipartSmallRanges(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		partData := testData[i*partSize : (i+1)*partSize]
 
-		uploadResp, err := s3Client.UploadPart(ctx, &s3.UploadPartInput{
-			Bucket:     aws.String(testBucket),
+		uploadResp, err := client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:     aws.String(bucket),
 			Key:        aws.String("v3-small-ranges-test"),
 			UploadId:   aws.String(uploadID),
 			PartNumber: aws.Int32(int32(i + 1)),
@@ -452,8 +457,8 @@ func TestV3MultipartSmallRanges(t *testing.T) {
 	}
 
 	// Complete
-	_, err = s3Client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(testBucket),
+	_, err = client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(bucket),
 		Key:             aws.String("v3-small-ranges-test"),
 		UploadId:        aws.String(uploadID),
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: partETags},
@@ -468,16 +473,16 @@ func TestV3MultipartSmallRanges(t *testing.T) {
 	}{
 		{0, 0},           // First byte
 		{100, 100},       // Arbitrary byte
-		{partSize - 1, partSize - 1}, // Last byte of first part
-		{partSize, partSize},         // First byte of second part
-		{partSize + 1000, partSize + 1000}, // Middle of second part
+		{int64(partSize) - 1, int64(partSize) - 1}, // Last byte of first part
+		{int64(partSize), int64(partSize)},         // First byte of second part
+		{int64(partSize) + 1000, int64(partSize) + 1000}, // Middle of second part
 		{int64(len(testData) - 1), int64(len(testData) - 1)}, // Last byte
 	}
 
 	for _, r := range testRanges {
 		t.Run(fmt.Sprintf("Range_%d_%d", r.start, r.end), func(t *testing.T) {
-			getResp, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(testBucket),
+			getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(bucket),
 				Key:    aws.String("v3-small-ranges-test"),
 				Range:  aws.String(fmt.Sprintf("bytes=%d-%d", r.start, r.end)),
 			})

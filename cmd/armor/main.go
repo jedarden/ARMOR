@@ -4,9 +4,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/jedarden/armor/internal/version"
 )
@@ -58,7 +58,7 @@ func main() {
 }
 
 // listCommands prints all registered commands to the given writer.
-func listCommands(w *os.File) {
+func listCommands(w io.Writer) {
 	// Sort commands by name for consistent output
 	names := make([]string, 0, len(commands))
 	for name := range commands {

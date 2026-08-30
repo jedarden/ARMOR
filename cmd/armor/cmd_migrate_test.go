@@ -6,7 +6,9 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -67,6 +69,7 @@ func TestMigrateInvalidFlags(t *testing.T) {
 			exit = func(code int) {
 				exitCode = code
 				fmt.Fprintf(&exitMsg, "exited with code %d", code)
+				panic("exit")
 			}
 
 			// Run migrate with flags
@@ -223,7 +226,7 @@ func TestMigrateServerInteraction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create test server
-			server := httptest.NewServer(tt.handler)
+			server := httptest.NewServer(http.HandlerFunc(tt.handler))
 			defer server.Close()
 
 			// Update admin-url flag with server URL
@@ -251,6 +254,7 @@ func TestMigrateServerInteraction(t *testing.T) {
 			var exitCode int
 			exit = func(code int) {
 				exitCode = code
+				panic("exit")
 			}
 
 			// Defer cleanup
@@ -400,7 +404,7 @@ func TestMigrateWatchMode(t *testing.T) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 
-	server := httptest.NewServer(handler)
+	server := httptest.NewServer(http.HandlerFunc(handler))
 	defer server.Close()
 
 	// Set up for output capture
@@ -414,6 +418,7 @@ func TestMigrateWatchMode(t *testing.T) {
 	var exitCode int
 	exit = func(code int) {
 		exitCode = code
+		panic("exit")
 	}
 
 	// Defer cleanup
@@ -534,7 +539,7 @@ func TestMigrateWatchModeNoFailures(t *testing.T) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 
-	server := httptest.NewServer(handler)
+	server := httptest.NewServer(http.HandlerFunc(handler))
 	defer server.Close()
 
 	// Set up for output capture
@@ -547,6 +552,7 @@ func TestMigrateWatchModeNoFailures(t *testing.T) {
 	var exitCode int
 	exit = func(code int) {
 		exitCode = code
+		panic("exit")
 	}
 
 	defer func() {

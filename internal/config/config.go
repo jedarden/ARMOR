@@ -497,11 +497,11 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Format version configuration (default: 2)
-	// Valid values: 2 (current) or 3 (future)
+	// Format version configuration (default: 3)
+	// Valid values: 2 (legacy) or 3 (current)
 	formatVersionStr := os.Getenv("ARMOR_FORMAT_VERSION")
 	if formatVersionStr == "" {
-		cfg.FormatWriteVersion = 2 // Default
+		cfg.FormatWriteVersion = 3 // Default
 	} else {
 		// Parse and validate format version
 		v, err := strconv.Atoi(formatVersionStr)
@@ -926,6 +926,7 @@ type RedactedConfig struct {
 	// Authentication credentials for ARMOR clients
 	AuthAccessKey string `json:"auth_access_key"`
 	AuthSecretKey string `json:"auth_secret_key"` // "<set>" or "<unset>"
+	AuthFilePath  string `json:"auth_file_path"`   // Path to ARMOR_AUTH_FILE, if configured -- not sensitive, unlike its contents
 
 	// Multi-credential support
 	Credentials map[string]RedactedCredential `json:"credentials"`
@@ -1002,6 +1003,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		CompressRules:               c.CompressRules.String(),
 		ReadConcurrency:             c.ReadConcurrency,
 		AuthAccessKey:               c.AuthAccessKey,
+		AuthFilePath:                c.AuthFilePath,
 		WriterID:                    c.WriterID,
 		CacheMaxEntries:             c.CacheMaxEntries,
 		CacheTTL:                    c.CacheTTL,

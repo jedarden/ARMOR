@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"os"
@@ -58,7 +59,7 @@ func TestClientConfigInvalidFlags(t *testing.T) {
 				endpointFlag = oldEndpointFlag
 				bucketFlag = oldBucketFlag
 				credentialFlag = oldCredentialFlag
-				flag.CommandLine = flag.NewFlagSet("test", flag.ContinueError)
+				flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
 			}()
 
 			// Reset flags to defaults
@@ -67,12 +68,16 @@ func TestClientConfigInvalidFlags(t *testing.T) {
 			bucketFlag = ""
 			credentialFlag = ""
 
-			// Capture exit
+			// Capture exit. clientConfig doesn't return after a bad-flags
+			// exit(2) the way it would after a real os.Exit, so this panics
+			// (matching the recover() below) to unwind immediately -- os.Exit
+			// itself can't be called here, it would kill the whole test binary.
 			var exitCode int
 			var exitMsg strings.Builder
 			exit = func(code int) {
 				exitCode = code
 				fmt.Fprintf(&exitMsg, "exited with code %d", code)
+				panic("exit")
 			}
 
 			// Run client-config with flags
@@ -210,7 +215,7 @@ func TestClientConfigGoldenFiles(t *testing.T) {
 			credentialFlag = tt.credential
 
 			// Capture output
-			var output strings.Builder
+			var output bytes.Buffer
 			oldStdout := os.Stdout
 			r, w, _ := os.Pipe()
 			os.Stdout = w
@@ -280,7 +285,7 @@ func TestClientConfigToolAliases(t *testing.T) {
 			forFlag = tt.tool
 			endpointFlag = "http://localhost:9000"
 
-			var output strings.Builder
+			var output bytes.Buffer
 			oldStdout := os.Stdout
 			r, w, _ := os.Pipe()
 			os.Stdout = w
