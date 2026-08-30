@@ -6,11 +6,9 @@ import (
 	"context"
 	cryptoRand "crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -281,7 +279,7 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	}
 
 	// Get the object content
-	reader, info, err := fm.backend.Get(ctx, fm.bucket, obj.Key)
+	reader, _, err := fm.backend.Get(ctx, fm.bucket, obj.Key)
 	if err != nil {
 		return fmt.Errorf("failed to get object: %w", err)
 	}
@@ -396,7 +394,7 @@ func (fm *FormatMigrator) decryptSingleObject(armorMeta *backend.ARMORMetadata, 
 	}
 
 	// Create decryptor with appropriate version
-	decryptor, err := crypto.NewDecryptorWithVersion(dek, header.IV[:], header.BlockSize(), header.Version)
+	_, err = crypto.NewDecryptorWithVersion(dek, header.IV[:], header.BlockSize(), header.Version)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decryptor: %w", err)
 	}
@@ -432,7 +430,7 @@ func (fm *FormatMigrator) decryptMultipartObject(armorMeta *backend.ARMORMetadat
 
 	// Create decryptor with appropriate version
 	// For multipart objects, IV is from metadata (not envelope header)
-	decryptor, err := crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
+	_, err = crypto.NewDecryptorWithVersion(dek, armorMeta.IV, armorMeta.BlockSize, uint8(armorMeta.Version))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create decryptor: %w", err)
 	}
@@ -484,7 +482,7 @@ func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wra
 	}
 
 	// Wrap DEK with MEK and fingerprint
-	mekFingerprint := crypto.MEKFingerprint(fm.mek)
+	mekFingerprint = crypto.MEKFingerprint(fm.mek)
 	wrappedDEK, err = crypto.WrapDEK(fm.mek, dek)
 	if err != nil {
 		return nil, nil, nil, 0, "", fmt.Errorf("failed to wrap DEK: %w", err)
@@ -503,7 +501,7 @@ func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wra
 	}
 
 	// Encrypt
-	ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
+	ciphertext, _, err = encryptor.Encrypt(plaintext)
 	if err != nil {
 		return nil, nil, nil, 0, "", fmt.Errorf("failed to encrypt: %w", err)
 	}
@@ -583,7 +581,7 @@ func (fm *FormatMigrator) uploadAsMultipart(ctx context.Context, key string, pla
 		partPlaintext := plaintext[start:]
 
 		// Encrypt this part
-		partCiphertext, err := encryptor.Encrypt(partPlaintext)
+		partCiphertext, _, err := encryptor.Encrypt(partPlaintext)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt final part: %w", err)
 		}
@@ -823,7 +821,7 @@ func (fm *FormatMigrator) countObjects(ctx context.Context) error {
 			}
 
 			// Check if version is in include list
-			if fm.shouldMigrateVersion(armorMeta.Version) {
+			if fm.shouldMigrateVersion(uint8(armorMeta.Version)) {
 				count++
 			}
 		}
