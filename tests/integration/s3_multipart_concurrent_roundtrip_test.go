@@ -16,7 +16,7 @@ package integration
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
+	crand "crypto/rand"
 	"fmt"
 	"io"
 	"math/rand"
@@ -49,7 +49,7 @@ func getEnvOr(key, fallback string) string {
 func generateTestKey(t *testing.T) string {
 	t.Helper()
 	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := crand.Read(b); err != nil {
 		t.Fatalf("Failed to generate random key: %v", err)
 	}
 	return fmt.Sprintf("test-concurrent-mp-%x", b)
@@ -143,7 +143,7 @@ func testBarmanPattern(t *testing.T, client *s3.Client, ctx context.Context) {
 	var testData []byte
 	for _, size := range partSizes {
 		partData := make([]byte, size)
-		rand.Read(partData)
+		crand.Read(partData)
 		testData = append(testData, partData...)
 	}
 
@@ -177,7 +177,7 @@ func testAWSClIDefaults(t *testing.T, client *s3.Client, ctx context.Context) {
 
 	totalSize := partSize * numParts
 	testData := make([]byte, totalSize)
-	rand.Read(testData)
+	crand.Read(testData)
 
 	t.Logf("AWS CLI pattern: %d parts of %d bytes, concurrency %d, total %d bytes",
 		numParts, partSize, concurrency, totalSize)
@@ -286,7 +286,7 @@ func testSingleByteFinalPart(t *testing.T, client *s3.Client, ctx context.Contex
 	var testData []byte
 	for _, size := range partSizes {
 		partData := make([]byte, size)
-		rand.Read(partData)
+		crand.Read(partData)
 		testData = append(testData, partData...)
 	}
 
@@ -351,7 +351,7 @@ func testAbortRemovesState(t *testing.T, client *s3.Client, ctx context.Context)
 	partSizes := []int{5 * 1024 * 1024, 6 * 1024 * 1024, 5 * 1024 * 1024}
 	for i, size := range partSizes {
 		partData := make([]byte, size)
-		rand.Read(partData)
+		crand.Read(partData)
 
 		_, err := client.UploadPart(ctx, &s3.UploadPartInput{
 			Bucket:     aws.String(testBucket),
