@@ -3,7 +3,6 @@ package backend
 
 import (
 	"fmt"
-	"log/slog"
 	"net/url"
 	"os"
 	"strings"
