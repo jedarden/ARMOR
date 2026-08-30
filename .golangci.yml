@@ -2,8 +2,6 @@ version: "2"
 
 run:
   go: "1.25"
-  skip-dirs:
-    - internal/server/handlers
 
 linters:
   default: none
