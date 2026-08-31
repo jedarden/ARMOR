@@ -224,7 +224,7 @@ func TestFSBackend_MultipartUpload(t *testing.T) {
 
 	ctx := context.Background()
 	bucket := "test-bucket"
-	key := "multipart-test.bin"
+	key := "nested/multipart-test.bin"
 
 	if err := fs.CreateBucket(ctx, bucket); err != nil {
 		t.Fatalf("Failed to create bucket: %v", err)
