@@ -42,7 +42,9 @@ scratch/
 # Deployment manifests / scripts / samples / drift config — runtime needs none.
 k8s/
 deploy/
-scripts/
+# Keep the shared Docker/CI release gate while excluding every other helper.
+scripts/*
+!scripts/release-gate.sh
 samples/
 config/
 armor_deployments.json
