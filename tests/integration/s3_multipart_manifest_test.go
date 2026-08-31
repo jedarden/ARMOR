@@ -11,7 +11,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -64,9 +64,9 @@ func TestMultipartManifestCreation(t *testing.T) {
 
 	// Complete the multipart upload
 	completeResp, err := client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(bucket),
-		Key:             aws.String(key),
-		UploadId:        uploadID,
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: uploadID,
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: []types.CompletedPart{
 				{
@@ -126,12 +126,12 @@ func TestMultipartManifestCreation(t *testing.T) {
 
 	var manifestBody struct {
 		CiphertextObject string            `json:"ciphertext_object"`
-		UploadID        string            `json:"upload_id"`
-		CompletedAt     string            `json:"completed_at"`
-		Metadata        map[string]string `json:"metadata"`
+		UploadID         string            `json:"upload_id"`
+		CompletedAt      string            `json:"completed_at"`
+		Metadata         map[string]string `json:"metadata"`
 	}
 
-	manifestBytes, err := readAllBytes(getManifestResp.Body)
+	manifestBytes, err := io.ReadAll(getManifestResp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read manifest body: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestMultipartManifestReadPath(t *testing.T) {
 	t.Logf("Object size: %d, Content-Type: %s", getResp.ContentLength, *getResp.ContentType)
 
 	// Verify we got the decrypted plaintext
-	downloadedData, err := readAllBytes(getResp.Body)
+	downloadedData, err := io.ReadAll(getResp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read downloaded data: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestMultipartManifestLargeObject(t *testing.T) {
 		t.Fatalf("Manifest object not found: %v", err)
 	}
 
-	t.Logf("Manifest exists for %d-byte object", *headManifestResp.Metadata["Armor-Plaintext-Size"])
+	t.Logf("Manifest exists for %s-byte object", headManifestResp.Metadata["Armor-Plaintext-Size"])
 
 	// Verify the object can be read back
 	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
@@ -355,7 +355,7 @@ func TestMultipartManifestLargeObject(t *testing.T) {
 	}
 	defer getResp.Body.Close()
 
-	downloadedData, err := readAllBytes(getResp.Body)
+	downloadedData, err := io.ReadAll(getResp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read downloaded data: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestMultipartManifestStaleDetection(t *testing.T) {
 	}
 	defer getResp.Body.Close()
 
-	downloadedData, err := readAllBytes(getResp.Body)
+	downloadedData, err := io.ReadAll(getResp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read downloaded data: %v", err)
 	}
@@ -581,7 +581,7 @@ func TestMultipartManifestIdempotentCompletion(t *testing.T) {
 	}
 	defer getResp.Body.Close()
 
-	downloadedData, err := readAllBytes(getResp.Body)
+	downloadedData, err := io.ReadAll(getResp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read downloaded data: %v", err)
 	}

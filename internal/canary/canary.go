@@ -102,25 +102,25 @@ type Result struct {
 
 // Monitor manages the canary integrity checks.
 type Monitor struct {
-	backend          backend.Backend
-	secondaryBackend backend.Backend // Secondary backend for replication check (ADR-006)
-	replicationQueue interface{}      // Replication queue for lag metrics (interface{} to avoid import cycle)
-	bucket           string
-	mek              []byte
-	blockSize        int
-	instanceID       string
-	formatWriteVersion int            // Format version to write (2 or 3)
+	backend            backend.Backend
+	secondaryBackend   backend.Backend // Secondary backend for replication check (ADR-006)
+	replicationQueue   interface{}     // Replication queue for lag metrics (interface{} to avoid import cycle)
+	bucket             string
+	mek                []byte
+	blockSize          int
+	instanceID         string
+	formatWriteVersion int // Format version to write (2 or 3)
 
 	state CanaryState
 
 	// Configuration
-	interval           time.Duration
-	canarySize         int
-	maxRetries         int
-	retryDelay         time.Duration
-	multipartInterval  time.Duration
-	multipartSize      int
-	secondaryInterval  time.Duration
+	interval          time.Duration
+	canarySize        int
+	maxRetries        int
+	retryDelay        time.Duration
+	multipartInterval time.Duration
+	multipartSize     int
+	secondaryInterval time.Duration
 
 	// Control
 	stopCh chan struct{}
@@ -136,7 +136,7 @@ type Config struct {
 	MEK                []byte
 	BlockSize          int
 	InstanceID         string
-	FormatWriteVersion int            // Format version to write (2 or 3)
+	FormatWriteVersion int           // Format version to write (2 or 3)
 	Interval           time.Duration // Check interval (default 5 minutes)
 	CanarySize         int           // Size of canary content (default 1024 bytes)
 	MaxRetries         int           // Max retries on failure (default 3)
@@ -188,23 +188,23 @@ func NewMonitor(cfg Config) *Monitor {
 	}
 
 	return &Monitor{
-		backend:             cfg.Backend,
-		secondaryBackend:    cfg.SecondaryBackend,
-		replicationQueue:    cfg.ReplicationQueue,
-		bucket:              cfg.Bucket,
-		mek:                 cfg.MEK,
-		blockSize:           cfg.BlockSize,
-		instanceID:          instanceID,
-		formatWriteVersion:  cfg.FormatWriteVersion,
-		interval:            cfg.Interval,
-		canarySize:          cfg.CanarySize,
-		maxRetries:          cfg.MaxRetries,
-		retryDelay:          cfg.RetryDelay,
-		multipartInterval:   cfg.MultipartInterval,
-		multipartSize:       cfg.MultipartSize,
-		secondaryInterval:   cfg.SecondaryInterval,
-		stopCh:              make(chan struct{}),
-		doneCh:              make(chan struct{}),
+		backend:            cfg.Backend,
+		secondaryBackend:   cfg.SecondaryBackend,
+		replicationQueue:   cfg.ReplicationQueue,
+		bucket:             cfg.Bucket,
+		mek:                cfg.MEK,
+		blockSize:          cfg.BlockSize,
+		instanceID:         instanceID,
+		formatWriteVersion: cfg.FormatWriteVersion,
+		interval:           cfg.Interval,
+		canarySize:         cfg.CanarySize,
+		maxRetries:         cfg.MaxRetries,
+		retryDelay:         cfg.RetryDelay,
+		multipartInterval:  cfg.MultipartInterval,
+		multipartSize:      cfg.MultipartSize,
+		secondaryInterval:  cfg.SecondaryInterval,
+		stopCh:             make(chan struct{}),
+		doneCh:             make(chan struct{}),
 		state: CanaryState{
 			Status:           StatusUnknown,
 			MultipartHealthy: StatusUnknown,
@@ -554,8 +554,11 @@ func generateV3PartSizes(totalSize int) []int {
 
 	// Generate random size for part 1 (between b2MinPartSize and roughly 1/3 of total)
 	maxPart1Size := totalSize/3 + b2MinPartSize/2
-	if maxPart1Size < b2MinPartSize {
-		maxPart1Size = b2MinPartSize
+	// Leave enough room for a minimum-sized second part and at least one
+	// byte in the final part.  The previous upper bound could consume too
+	// much of a 12-15 MiB canary and make the part-2 Intn range negative.
+	if limit := totalSize - b2MinPartSize - 1; maxPart1Size > limit {
+		maxPart1Size = limit
 	}
 	part1Size := b2MinPartSize + mathRand.Intn(maxPart1Size-b2MinPartSize+1)
 
@@ -567,8 +570,11 @@ func generateV3PartSizes(totalSize int) []int {
 	if maxPart2Size < b2MinPartSize {
 		maxPart2Size = b2MinPartSize
 	}
-	if maxPart2Size > remaining-b2MinPartSize {
-		maxPart2Size = remaining - b2MinPartSize
+	// Only non-final parts have B2's 5 MiB minimum.  Reserve one byte for
+	// part 3, then clamp the random range so its upper bound cannot fall
+	// below b2MinPartSize.
+	if maxPart2Size > remaining-1 {
+		maxPart2Size = remaining - 1
 	}
 	part2Size := b2MinPartSize + mathRand.Intn(maxPart2Size-b2MinPartSize+1)
 
