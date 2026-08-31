@@ -308,8 +308,8 @@ The shared upload metadata:
    - Read all per-part JSON objects
    - Construct sidecar (see below)
    - Write sidecar to `.armor/hmac/<sha256-of-key>`
-   - B2 Complete → concatenate parts
-   - `CopyObject` with `REPLACE` to set final metadata (version, wrapped DEK, etc.)
+	   - B2 Complete → concatenate parts into ciphertext object (NO metadata)
+	   - **Write manifest object** to `<key>.armor-manifest` with all ARMOR metadata (version, wrapped DEK, etc.)
    - Delete all `.armor/multipart/<upload-id>/part-*.json` and `meta.json`
 
 ### Multipart Read Workflow
