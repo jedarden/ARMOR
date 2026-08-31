@@ -67,6 +67,7 @@ func (m *mockBackend) Get(ctx context.Context, bucket, key string) (io.ReadClose
 	info := &backend.ObjectInfo{
 		Key:              key,
 		Size:             int64(len(data)),
+		StoredSize:       int64(len(data)),
 		Metadata:         meta,
 		IsARMOREncrypted: meta["x-amz-meta-armor-version"] != "",
 	}
@@ -119,6 +120,7 @@ func (m *mockBackend) Head(ctx context.Context, bucket, key string) (*backend.Ob
 	info := &backend.ObjectInfo{
 		Key:              key,
 		Size:             int64(len(data)),
+		StoredSize:       int64(len(data)),
 		Metadata:         meta,
 		IsARMOREncrypted: meta["x-amz-meta-armor-version"] != "",
 		LastModified:     time.Now(),
@@ -189,9 +191,10 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 
 		meta := m.meta[k]
 		info := backend.ObjectInfo{
-			Key:      key,
-			Size:     int64(len(data)),
-			Metadata: meta,
+			Key:        key,
+			Size:       int64(len(data)),
+			StoredSize: int64(len(data)),
+			Metadata:   meta,
 		}
 		if am, ok := backend.ParseARMORMetadata(meta); ok {
 			info.Size = am.PlaintextSize

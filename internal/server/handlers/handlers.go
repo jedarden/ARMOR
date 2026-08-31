@@ -986,6 +986,7 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		info = &backend.ObjectInfo{
 			Key:              manifestBody.CiphertextObject,
 			Size:             armorMeta.PlaintextSize,
+			StoredSize:       ciphertextInfo.StoredSize,
 			ContentType:      armorMeta.ContentType,
 			ETag:             armorMeta.ETag,
 			LastModified:     ciphertextInfo.LastModified,
@@ -1140,7 +1141,11 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 		// For v3 single-PUT objects, we need the ciphertext size to locate the trailer block table
 		// Store it in a local variable for use in the streaming path
 		if header.Version == crypto.Version3 {
-			armorMeta.CiphertextSize = info.Size
+			armorMeta.CiphertextSize = info.StoredSize
+			if armorMeta.CiphertextSize == 0 {
+				h.writeError(w, r, "InternalError", "v3 object missing stored ciphertext size", 500)
+				return
+			}
 		}
 	}
 
@@ -3408,9 +3413,9 @@ func (h *Handlers) writeManifest(ctx context.Context, bucket, key string, meta m
 	// Build manifest body (optional, for debugging)
 	manifestBody := &backend.ManifestBody{
 		CiphertextObject: ciphertextRef,
-		UploadID:        uploadID,
-		CompletedAt:     time.Now().UTC().Format(time.RFC3339),
-		Metadata:        meta,
+		UploadID:         uploadID,
+		CompletedAt:      time.Now().UTC().Format(time.RFC3339),
+		Metadata:         meta,
 	}
 
 	manifestJSON, err := json.Marshal(manifestBody)
@@ -3470,7 +3475,7 @@ func (h *Handlers) readManifest(ctx context.Context, bucket, key string) (*backe
 		// Create a minimal manifest body
 		manifestBody = backend.ManifestBody{
 			CiphertextObject: info.Metadata["x-amz-meta-armor-ciphertext-ref"],
-			Metadata:        info.Metadata,
+			Metadata:         info.Metadata,
 		}
 	}
 

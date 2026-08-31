@@ -22,6 +22,7 @@ var ErrBucketNotFound = errors.New("bucket not found")
 type ObjectInfo struct {
 	Key              string
 	Size             int64 // Plaintext size
+	StoredSize       int64 // Physical bytes stored in the backend
 	ContentType      string
 	ETag             string
 	LastModified     time.Time
@@ -251,9 +252,9 @@ type ARMORMetadata struct {
 // The manifest stores ARMOR metadata separately from the ciphertext object.
 type ManifestBody struct {
 	CiphertextObject string            `json:"ciphertext_object"`
-	UploadID        string            `json:"upload_id"`
-	CompletedAt     string            `json:"completed_at"`
-	Metadata        map[string]string `json:"metadata"`
+	UploadID         string            `json:"upload_id"`
+	CompletedAt      string            `json:"completed_at"`
+	Metadata         map[string]string `json:"metadata"`
 }
 
 // ParseARMORMetadata extracts ARMOR metadata from S3 headers.

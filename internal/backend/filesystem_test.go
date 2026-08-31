@@ -94,6 +94,63 @@ func TestFSBackend_PutGet(t *testing.T) {
 	}
 }
 
+// TestMultipartV3FilesystemStateDiscovery verifies that multipart state is
+// discovered through the backend's raw listing. Public List intentionally
+// hides .armor/ objects, so using it here makes CompleteMultipartUpload report
+// that no parts were uploaded even though every UploadPart succeeded.
+func TestMultipartV3FilesystemStateDiscovery(t *testing.T) {
+	ctx := context.Background()
+	fs, err := NewFSBackend(FSConfig{BasePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewFSBackend: %v", err)
+	}
+
+	const (
+		bucket   = "test-bucket"
+		uploadID = "test-upload-v3-filesystem"
+	)
+	if err := fs.CreateBucket(ctx, bucket); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	manager := NewMultipartStateManager(fs, bucket)
+	for partNumber := 1; partNumber <= 2; partNumber++ {
+		part := &PartDataV3{
+			PartNumber:       partNumber,
+			PlaintextLen:     int64(partNumber * 1024),
+			CiphertextLen:    int64(partNumber * 1024),
+			BlockHMACsBase64: "dGVzdA==",
+			PlaintextSHAHex:  fmt.Sprintf("sha-%d", partNumber),
+		}
+		if err := manager.SavePartV3(ctx, uploadID, part); err != nil {
+			t.Fatalf("SavePartV3(%d): %v", partNumber, err)
+		}
+	}
+
+	public, err := fs.List(ctx, bucket, ".armor/multipart/", "", "", 1000)
+	if err != nil {
+		t.Fatalf("public List: %v", err)
+	}
+	if len(public.Objects) != 0 {
+		t.Fatalf("public List exposed %d internal objects", len(public.Objects))
+	}
+
+	parts, err := manager.ListPartsV3(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("ListPartsV3: %v", err)
+	}
+	if len(parts) != 2 || parts[1] == nil || parts[2] == nil {
+		t.Fatalf("ListPartsV3 returned %#v, want parts 1 and 2", parts)
+	}
+
+	if err := manager.DeleteState(ctx, uploadID); err != nil {
+		t.Fatalf("DeleteState: %v", err)
+	}
+	if _, err := fs.Head(ctx, bucket, ".armor/multipart/"+uploadID+"/part-1.json"); err == nil {
+		t.Fatal("DeleteState left v3 part state behind")
+	}
+}
+
 // TestFSBackend_List tests List operations with prefix and delimiter.
 func TestFSBackend_List(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "armor-fs-test-*")

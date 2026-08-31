@@ -255,6 +255,7 @@ func (fs *FSBackend) Head(ctx context.Context, bucket, key string) (*ObjectInfo,
 	info := &ObjectInfo{
 		Key:          meta.Key,
 		Size:         meta.Size,
+		StoredSize:   meta.Size,
 		ContentType:  meta.ContentType,
 		ETag:         meta.ETag,
 		LastModified: meta.LastModified,
@@ -388,6 +389,7 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 			objInfo := ObjectInfo{
 				Key:          key,
 				Size:         info.Size(),
+				StoredSize:   info.Size(),
 				LastModified: info.ModTime(),
 			}
 			objects = append(objects, objInfo)
@@ -397,6 +399,7 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 		objInfo := ObjectInfo{
 			Key:          meta.Key,
 			Size:         meta.Size,
+			StoredSize:   meta.Size,
 			ContentType:  meta.ContentType,
 			ETag:         meta.ETag,
 			LastModified: meta.LastModified,
