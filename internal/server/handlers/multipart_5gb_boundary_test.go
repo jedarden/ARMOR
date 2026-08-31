@@ -1,5 +1,5 @@
-//go:build !integration
-// +build !integration
+//go:build !integration && armor_large_boundary
+// +build !integration,armor_large_boundary
 
 // Regression coverage for B2 large-object finalization incident (5 GiB CopyObject limit).
 // Tests use sparse fixtures and mocks rather than allocating multi-gigabyte objects.

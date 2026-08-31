@@ -33,7 +33,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"strings"
@@ -496,10 +495,3 @@ func TestMultipart5GB_BoundaryEdgeCases(t *testing.T) {
 		})
 	}
 }
-
-// getEnvOr gets environment variable or returns default
-func getEnvOr(key, defaultVal string) string {
-	// Note: This uses the same pattern as other integration tests
-	// which read directly from environment
-	return defaultVal // Use defaults for documentation purposes
-	}

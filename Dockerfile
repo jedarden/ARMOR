@@ -13,10 +13,10 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Test gate: run go vet and unit tests before building
-# Integration tests (tests/integration/) require build tags and credentials,
-# and are automatically skipped by this gate.
-RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... -short
+# Test gate shared with CI. It covers the v3 cryptographic primitives,
+# multipart state, canary, concurrent HTTP round trips, and integration-suite
+# compilation without requiring live B2 credentials.
+RUN CGO_ENABLED=0 ./scripts/release-gate.sh
 
 # Build the main armor binary
 ARG VERSION
