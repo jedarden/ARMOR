@@ -624,6 +624,13 @@ func (fs *FSBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, u
 	uploadDir := fs.multipartUploadsDir(bucket, key, uploadID)
 	objPath := fs.objectPath(bucket, key)
 
+	// Multipart keys commonly contain directory components. Unlike Put, this
+	// path previously tried to create the final temporary file before ensuring
+	// its parent existed, so completion failed after every part had uploaded.
+	if err := os.MkdirAll(filepath.Dir(objPath), 0755); err != nil {
+		return "", fmt.Errorf("failed to create object directory: %w", err)
+	}
+
 	// Create final file by concatenating parts
 	finalPath := objPath + ".tmp"
 	outFile, err := os.Create(finalPath)

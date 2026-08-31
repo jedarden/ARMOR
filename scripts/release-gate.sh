@@ -17,7 +17,7 @@ go test ${race_flag} -count=1 ./internal/crypto \
 	-run '^(TestV3Counter|TestV3BlockHMACKeys|TestV3MaxBlockSizeConstraint|TestV3HMACInputFormat)$'
 
 go test ${race_flag} -count=1 ./internal/backend \
-	-run '^TestMultipartV3|^TestMultipartV2Format$'
+	-run '^TestMultipartV3|^TestMultipartV2Format$|^TestFSBackend_MultipartUpload$'
 
 go test ${race_flag} -count=1 ./internal/canary
 
