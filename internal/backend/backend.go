@@ -243,6 +243,17 @@ type ARMORMetadata struct {
 	Compressed      bool            // Object payload is compressed (e.g., zstd, gzip, zlib)
 	CompressionType CompressionType // Type of compression (zstd, gzip, zlib)
 	CiphertextSize  int64           // Raw stored size, populated from ObjectInfo by readers
+	CiphertextRef   string          // Reference to ciphertext object (for manifest pattern)
+	CompletedAt     string          // ISO 8601 timestamp when manifest was written (for manifest pattern)
+}
+
+// ManifestBody represents the JSON body of a manifest object (for debugging).
+// The manifest stores ARMOR metadata separately from the ciphertext object.
+type ManifestBody struct {
+	CiphertextObject string            `json:"ciphertext_object"`
+	UploadID        string            `json:"upload_id"`
+	CompletedAt     string            `json:"completed_at"`
+	Metadata        map[string]string `json:"metadata"`
 }
 
 // ParseARMORMetadata extracts ARMOR metadata from S3 headers.
@@ -329,6 +340,12 @@ func ParseARMORMetadata(meta map[string]string) (*ARMORMetadata, bool) {
 		am.CompressionType = CompressionType(compressionType)
 	}
 
+	// Parse ciphertext reference (for manifest pattern)
+	am.CiphertextRef = meta["x-amz-meta-armor-ciphertext-ref"]
+
+	// Parse completion timestamp (for manifest pattern)
+	am.CompletedAt = meta["x-amz-meta-armor-completed-at"]
+
 	// An object is only ARMOR-encrypted if it has a wrapped DEK.
 	// Without a wrapped DEK, there is no encryption key material, so the object
 	// is not ARMOR-encrypted (even if it happens to have other x-amz-meta-armor-* headers).
@@ -367,6 +384,14 @@ func (am *ARMORMetadata) ToMetadata() map[string]string {
 	// Include compression type if compressed
 	if am.Compressed && am.CompressionType != "" {
 		meta["x-amz-meta-armor-compression-type"] = string(am.CompressionType)
+	}
+	// Include ciphertext reference for manifest pattern
+	if am.CiphertextRef != "" {
+		meta["x-amz-meta-armor-ciphertext-ref"] = am.CiphertextRef
+	}
+	// Include completion timestamp for manifest pattern
+	if am.CompletedAt != "" {
+		meta["x-amz-meta-armor-completed-at"] = am.CompletedAt
 	}
 	return meta
 }

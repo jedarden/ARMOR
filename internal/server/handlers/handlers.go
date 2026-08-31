@@ -955,9 +955,52 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Apply prefix for backend operations
 	prefixedKey := h.applyPrefix(key)
 
-	// Get metadata first
-	info, err := h.backend.Head(ctx, bucket, prefixedKey)
-	if err != nil {
+	// ADR-016: Try manifest first for multipart objects
+	var info *backend.ObjectInfo
+	manifestBody, manifestMeta, err := h.readManifest(ctx, bucket, key)
+	if err == nil && manifestBody != nil {
+		// Manifest exists - use it as the source of truth for metadata
+		// Verify ciphertext freshness if we have a completion timestamp
+		if completedAt := manifestMeta["x-amz-meta-armor-completed-at"]; completedAt != "" {
+			if verifyErr := h.verifyCiphertextFreshness(ctx, bucket, manifestBody.CiphertextObject, completedAt); verifyErr != nil {
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Stale manifest: %v", verifyErr), 500)
+				return
+			}
+		}
+
+		// Parse ARMOR metadata from manifest
+		armorMeta, ok := backend.ParseARMORMetadata(manifestMeta)
+		if !ok {
+			h.writeError(w, r, "InternalError", "Failed to parse ARMOR metadata from manifest", 500)
+			return
+		}
+
+		// Get ciphertext object info for size check
+		ciphertextInfo, ciphertextErr := h.backend.Head(ctx, bucket, manifestBody.CiphertextObject)
+		if ciphertextErr != nil {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to head ciphertext object: %v", ciphertextErr), 500)
+			return
+		}
+
+		// Set info from manifest metadata
+		info = &backend.ObjectInfo{
+			Key:              manifestBody.CiphertextObject,
+			Size:             armorMeta.PlaintextSize,
+			ContentType:      armorMeta.ContentType,
+			ETag:             armorMeta.ETag,
+			LastModified:     ciphertextInfo.LastModified,
+			Metadata:         manifestMeta,
+			IsARMOREncrypted: true,
+		}
+
+		// Override prefixedKey to point to ciphertext object
+		prefixedKey = manifestBody.CiphertextObject
+	} else {
+		// Legacy path: no manifest, get metadata from object itself
+		info, err = h.backend.Head(ctx, bucket, prefixedKey)
+	}
+
+	if err != nil && info == nil {
 		h.writeError(w, r, "NoSuchKey", fmt.Sprintf("Object not found: %v", err), 404)
 		return
 	}
@@ -3355,6 +3398,113 @@ func (h *Handlers) poisonUpload(ctx context.Context, manager *backend.MultipartS
 	}
 }
 
+// writeManifest writes the manifest object for a completed multipart upload.
+// The manifest contains all ARMOR metadata and references the ciphertext object.
+// This is used instead of CopyObject to avoid the 5GB limit and race conditions.
+func (h *Handlers) writeManifest(ctx context.Context, bucket, key string, meta map[string]string, uploadID, etag string, ciphertextRef string) error {
+	// Build manifest key: <prefixed-key>.armor-manifest
+	manifestKey := h.applyPrefix(key) + ".armor-manifest"
+
+	// Build manifest body (optional, for debugging)
+	manifestBody := &backend.ManifestBody{
+		CiphertextObject: ciphertextRef,
+		UploadID:        uploadID,
+		CompletedAt:     time.Now().UTC().Format(time.RFC3339),
+		Metadata:        meta,
+	}
+
+	manifestJSON, err := json.Marshal(manifestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal manifest body: %w", err)
+	}
+
+	// Add ciphertext reference to metadata if not already present
+	if meta["x-amz-meta-armor-ciphertext-ref"] == "" {
+		meta["x-amz-meta-armor-ciphertext-ref"] = ciphertextRef
+	}
+
+	// Add completion timestamp to metadata
+	if meta["x-amz-meta-armor-completed-at"] == "" {
+		meta["x-amz-meta-armor-completed-at"] = manifestBody.CompletedAt
+	}
+
+	// Write manifest object with metadata
+	manifestMeta := map[string]string{
+		"Content-Type": "application/x-armor-manifest+json",
+	}
+	for k, v := range meta {
+		manifestMeta[k] = v
+	}
+
+	err = h.backend.Put(ctx, bucket, manifestKey, bytes.NewReader(manifestJSON), int64(len(manifestJSON)), manifestMeta)
+	if err != nil {
+		return fmt.Errorf("manifest write failed: %w", err)
+	}
+
+	return nil
+}
+
+// readManifest reads the manifest object for a key.
+// Returns (manifestBody, metadata, error).
+func (h *Handlers) readManifest(ctx context.Context, bucket, key string) (*backend.ManifestBody, map[string]string, error) {
+	// Try to read manifest: <prefixed-key>.armor-manifest
+	manifestKey := h.applyPrefix(key) + ".armor-manifest"
+
+	body, info, err := h.backend.Get(ctx, bucket, manifestKey)
+	if err != nil {
+		// Manifest not found is not an error - caller will fall back to legacy
+		return nil, nil, err
+	}
+	defer body.Close()
+
+	// Read manifest body
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read manifest body: %w", err)
+	}
+
+	// Parse manifest JSON
+	var manifestBody backend.ManifestBody
+	if err := json.Unmarshal(bodyBytes, &manifestBody); err != nil {
+		// If JSON parsing fails, we still have metadata from headers
+		// Create a minimal manifest body
+		manifestBody = backend.ManifestBody{
+			CiphertextObject: info.Metadata["x-amz-meta-armor-ciphertext-ref"],
+			Metadata:        info.Metadata,
+		}
+	}
+
+	return &manifestBody, info.Metadata, nil
+}
+
+// verifyCiphertextFreshness checks if the ciphertext object referenced by the manifest
+// is still fresh (hasn't been overwritten by a newer upload).
+func (h *Handlers) verifyCiphertextFreshness(ctx context.Context, bucket, ciphertextRef string, completedAt string) error {
+	// Parse completion timestamp
+	createdAt, err := time.Parse(time.RFC3339, completedAt)
+	if err != nil {
+		// If we can't parse the timestamp, skip verification
+		return nil
+	}
+
+	// Get ciphertext object info
+	info, err := h.backend.Head(ctx, bucket, ciphertextRef)
+	if err != nil {
+		return fmt.Errorf("failed to head ciphertext object: %w", err)
+	}
+
+	// Check if ciphertext was created after the manifest completion
+	// Truncate to seconds since B2 timestamps have second precision
+	ciphertextTime := info.LastModified.UTC().Truncate(time.Second)
+	manifestTime := createdAt.Truncate(time.Second)
+
+	if ciphertextTime.Before(manifestTime) {
+		return fmt.Errorf("ciphertext object is stale (created %v, manifest completed %v)", ciphertextTime, manifestTime)
+	}
+
+	return nil
+}
+
 // CompleteMultipartUpload handles S3 CompleteMultipartUpload.
 // It assembles the parts in B2 and stores the HMAC table as a sidecar.
 func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
@@ -3720,11 +3870,12 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Add multipart flag to indicate HMAC table is external
 	meta["x-amz-meta-armor-multipart"] = "true"
-	// Update metadata via CopyObject. Both source and destination are the
-	// prefixed storage key — copying raw->raw here would silently resurrect the
-	// unprefixed object this fix exists to eliminate.
-	if err := h.backend.Copy(ctx, bucket, h.applyPrefix(key), bucket, h.applyPrefix(key), meta, true); err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to update metadata: %v", err), 500)
+
+	// ADR-016: Write manifest object instead of using CopyObject
+	// This avoids the 5GB limit and race condition window of CopyObject
+	ciphertextRef := h.applyPrefix(key)
+	if err := h.writeManifest(ctx, bucket, key, meta, uploadID, etag, ciphertextRef); err != nil {
+		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to write manifest after completion: %v", err), 500)
 		return
 	}
 
