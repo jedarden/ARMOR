@@ -3849,7 +3849,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Build ARMOR metadata and update via CopyObject
+	// Build ARMOR metadata for manifest object (ADR-016)
 	// Use version 3 for v3 format, version 2 for v2 format
 	armorVersion := 2
 	if formatVersion == 3 {
