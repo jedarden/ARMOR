@@ -155,7 +155,11 @@ func (b *B2Backend) Get(ctx context.Context, bucket, key string) (io.ReadCloser,
 	}
 
 	// Fetch body via Cloudflare for free egress
-	body, err := b.GetRange(ctx, bucket, key, 0, info.Size)
+	readSize := info.StoredSize
+	if readSize == 0 {
+		readSize = info.Size
+	}
+	body, err := b.GetRange(ctx, bucket, key, 0, readSize)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -457,6 +461,7 @@ func (b *B2Backend) Head(ctx context.Context, bucket, key string) (*ObjectInfo, 
 	info := &ObjectInfo{
 		Key:          key,
 		Size:         aws.ToInt64(resp.ContentLength),
+		StoredSize:   aws.ToInt64(resp.ContentLength),
 		ContentType:  aws.ToString(resp.ContentType),
 		ETag:         aws.ToString(resp.ETag),
 		LastModified: aws.ToTime(resp.LastModified),
@@ -467,7 +472,7 @@ func (b *B2Backend) Head(ctx context.Context, bucket, key string) (*ObjectInfo, 
 	if _, ok := ParseARMORMetadata(info.Metadata); ok {
 		info.IsARMOREncrypted = true
 		// Use plaintext size from metadata
-		if am, _ := ParseARMORMetadata(info.Metadata); am != nil && am.PlaintextSize > 0 {
+		if am, _ := ParseARMORMetadata(info.Metadata); am != nil {
 			info.Size = am.PlaintextSize
 		}
 	}
@@ -490,6 +495,7 @@ func (b *B2Backend) HeadVersion(ctx context.Context, bucket, key, versionID stri
 	info := &ObjectInfo{
 		Key:          key,
 		Size:         aws.ToInt64(resp.ContentLength),
+		StoredSize:   aws.ToInt64(resp.ContentLength),
 		ContentType:  aws.ToString(resp.ContentType),
 		ETag:         aws.ToString(resp.ETag),
 		LastModified: aws.ToTime(resp.LastModified),
@@ -500,7 +506,7 @@ func (b *B2Backend) HeadVersion(ctx context.Context, bucket, key, versionID stri
 	if _, ok := ParseARMORMetadata(info.Metadata); ok {
 		info.IsARMOREncrypted = true
 		// Use plaintext size from metadata
-		if am, _ := ParseARMORMetadata(info.Metadata); am != nil && am.PlaintextSize > 0 {
+		if am, _ := ParseARMORMetadata(info.Metadata); am != nil {
 			info.Size = am.PlaintextSize
 		}
 	}
@@ -628,6 +634,7 @@ func (b *B2Backend) GetDirect(ctx context.Context, bucket, key string) (io.ReadC
 	info := &ObjectInfo{
 		Key:          key,
 		Size:         aws.ToInt64(resp.ContentLength),
+		StoredSize:   aws.ToInt64(resp.ContentLength),
 		ContentType:  aws.ToString(resp.ContentType),
 		ETag:         aws.ToString(resp.ETag),
 		LastModified: aws.ToTime(resp.LastModified),

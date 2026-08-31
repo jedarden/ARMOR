@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
 	"github.com/jedarden/armor/internal/manifest"
 	"github.com/jedarden/armor/internal/server/handlers"
@@ -428,6 +429,58 @@ func TestV3GetObjectFull(t *testing.T) {
 	contentType := getW.Header().Get("Content-Type")
 	if contentType != "application/octet-stream" {
 		t.Errorf("Content-Type mismatch: got %s, want application/octet-stream", contentType)
+	}
+}
+
+// TestV3FilesystemPutGetRoundTrip exercises the production Head contract:
+// Size is plaintext bytes while StoredSize is the physical envelope length.
+// A mock that reports only the envelope length for Size masks trailer-offset
+// bugs in v3 single-PUT reads.
+func TestV3FilesystemPutGetRoundTrip(t *testing.T) {
+	cfg, _, cache, footerCache, km := testSetup(t)
+	cfg.FormatWriteVersion = 3
+
+	fs, err := backend.NewFSBackend(backend.FSConfig{BasePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewFSBackend: %v", err)
+	}
+	if err := fs.CreateBucket(t.Context(), "test-bucket"); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	h := handlers.New(cfg, fs, cache, footerCache, km, nil)
+	plaintext := make([]byte, 128*1024+123)
+	if _, err := rand.Read(plaintext); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/test-bucket/v3-filesystem", bytes.NewReader(plaintext))
+	putReq.Header.Set("Content-Type", "application/octet-stream")
+	putResp := httptest.NewRecorder()
+	h.HandleRoot(putResp, putReq)
+	if putResp.Code != http.StatusOK {
+		t.Fatalf("PUT: status %d: %s", putResp.Code, putResp.Body.String())
+	}
+
+	info, err := fs.Head(t.Context(), "test-bucket", "v3-filesystem")
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	if info.Size != int64(len(plaintext)) {
+		t.Fatalf("Head Size = %d, want plaintext size %d", info.Size, len(plaintext))
+	}
+	if info.StoredSize <= info.Size {
+		t.Fatalf("Head StoredSize = %d, want envelope larger than plaintext %d", info.StoredSize, info.Size)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/test-bucket/v3-filesystem", nil)
+	getResp := httptest.NewRecorder()
+	h.HandleRoot(getResp, getReq)
+	if getResp.Code != http.StatusOK {
+		t.Fatalf("GET: status %d: %s", getResp.Code, getResp.Body.String())
+	}
+	if !bytes.Equal(getResp.Body.Bytes(), plaintext) {
+		t.Fatalf("GET returned %d bytes, want %d matching bytes", getResp.Body.Len(), len(plaintext))
 	}
 }
 

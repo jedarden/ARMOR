@@ -212,7 +212,7 @@ func (m *MultipartStateManager) LoadState(ctx context.Context, uploadID string) 
 func (m *MultipartStateManager) DeleteState(ctx context.Context, uploadID string) error {
 	// Try v3 format first (directory)
 	prefix := fmt.Sprintf(".armor/multipart/%s/", uploadID)
-	listResult, err := m.backend.List(ctx, m.bucket, prefix, "", "", 1000)
+	listResult, err := m.backend.ListRaw(ctx, m.bucket, prefix, "", "", 1000)
 	if err == nil && len(listResult.Objects) > 0 {
 		// V3 format: delete all objects in the directory
 		var keys []string
@@ -221,7 +221,7 @@ func (m *MultipartStateManager) DeleteState(ctx context.Context, uploadID string
 		}
 		// Also check if there are more objects
 		for listResult.IsTruncated {
-			listResult, err = m.backend.List(ctx, m.bucket, prefix, "", listResult.NextToken, 1000)
+			listResult, err = m.backend.ListRaw(ctx, m.bucket, prefix, "", listResult.NextToken, 1000)
 			if err != nil {
 				break
 			}
@@ -329,7 +329,7 @@ func (m *MultipartStateManager) LoadPartV3(ctx context.Context, uploadID string,
 func (m *MultipartStateManager) ListPartsV3(ctx context.Context, uploadID string) (map[int]*PartDataV3, error) {
 	prefix := fmt.Sprintf(".armor/multipart/%s/part-", uploadID)
 
-	listResult, err := m.backend.List(ctx, m.bucket, prefix, "", "", 1000)
+	listResult, err := m.backend.ListRaw(ctx, m.bucket, prefix, "", "", 1000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list parts: %w", err)
 	}
@@ -360,7 +360,7 @@ func (m *MultipartStateManager) ListPartsV3(ctx context.Context, uploadID string
 
 	// Also check if there are more objects
 	for listResult.IsTruncated {
-		listResult, err = m.backend.List(ctx, m.bucket, prefix, "", listResult.NextToken, 1000)
+		listResult, err = m.backend.ListRaw(ctx, m.bucket, prefix, "", listResult.NextToken, 1000)
 		if err != nil {
 			break
 		}

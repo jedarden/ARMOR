@@ -22,7 +22,7 @@ go test ${race_flag} -count=1 ./internal/backend \
 go test ${race_flag} -count=1 ./internal/canary
 
 go test ${race_flag} -count=1 ./internal/server/handlers \
-	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3'
+	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3|^TestV3GetObject|^TestV3FilesystemPutGetRoundTrip$'
 
 # Compile the credentialed B2 integration suite without contacting a backend.
 go test -count=1 -tags=integration ./tests/integration/... -run '^$'
