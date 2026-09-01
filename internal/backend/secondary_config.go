@@ -33,6 +33,15 @@ func ParseSecondaryBackendConfig() (BackendConfig, error) {
 	key := os.Getenv("ARMOR_SECONDARY_B2_KEY")
 	bucket := os.Getenv("ARMOR_SECONDARY_B2_BUCKET")
 
+	// Check for deprecated old variable names and reject them explicitly
+	oldEndpoint := os.Getenv("B2_ENDPOINT")
+	oldKeyID := os.Getenv("B2_KEY_ID")
+	oldKey := os.Getenv("B2_KEY")
+	oldBucket := os.Getenv("B2_BUCKET")
+	if oldEndpoint != "" || oldKeyID != "" || oldKey != "" || oldBucket != "" {
+		return BackendConfig{}, fmt.Errorf("ARMOR_SECONDARY_B2_ENDPOINT is required (deprecated B2_* environment variables are no longer supported; use ARMOR_SECONDARY_B2_* instead)")
+	}
+
 	// If all are unset, return zero config (disabled state)
 	if endpoint == "" && keyID == "" && key == "" && bucket == "" {
 		return BackendConfig{}, nil
