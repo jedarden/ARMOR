@@ -565,9 +565,7 @@ func TestFormatMigrationMultipartToSingle(t *testing.T) {
 		t.Fatalf("Failed to encrypt: %v", err)
 	}
 
-	// Append HMAC table to ciphertext (V1 format)
-	ciphertext = append(ciphertext, hmacTable...)
-
+	// For V1 multipart objects, HMAC table is in sidecar only, not appended to ciphertext
 	// Store as multipart object (simulate assembled multipart)
 	metadata := map[string]string{
 		"x-amz-meta-armor-version":        "1",
