@@ -444,7 +444,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	dataToEncrypt := plaintext
 
 	// Evaluate compression decision (rules + override)
-	shouldCompress, err := config.EvaluateCompression(key, contentType, h.config.CompressRules, compressOverride)
+	shouldCompress, err := config.EvaluateCompression(key, contentType, h.config.CompressRules, compressOverride, h.config.Compress)
 	if err != nil {
 		h.writeError(w, r, "InvalidArgument", fmt.Sprintf("Invalid compression override: %v", err), 400)
 		return

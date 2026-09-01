@@ -193,11 +193,13 @@ func ParseOverrideHeader(headerValue string) (bool, bool, error) {
 //   - contentType: content-type header value
 //   - rules: compression rules (may be empty)
 //   - overrideHeader: x-amz-meta-armor-compress header value (may be empty)
+//   - compress: global Compress boolean flag (fallback when no rules match)
 //
 // Returns (shouldCompress, error).
 // Override header takes precedence over rules.
-// If no override and no rules, returns false (no compression).
-func EvaluateCompression(key, contentType string, rules *CompressRules, overrideHeader string) (bool, error) {
+// Rules take precedence over global compress flag.
+// If no override and no rules match, uses the global compress flag.
+func EvaluateCompression(key, contentType string, rules *CompressRules, overrideHeader string, compress bool) (bool, error) {
 	// Check override header first (highest priority)
 	shouldCompress, hasOverride, err := ParseOverrideHeader(overrideHeader)
 	if err != nil {
@@ -215,8 +217,8 @@ func EvaluateCompression(key, contentType string, rules *CompressRules, override
 		}
 	}
 
-	// Default: no compression
-	return false, nil
+	// Default: use global compress flag
+	return compress, nil
 }
 
 // ExtractContentType extracts the content-type from a full content-type string
