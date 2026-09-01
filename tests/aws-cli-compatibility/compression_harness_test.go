@@ -134,6 +134,7 @@ func newCompressionRoundTripHarness(t *testing.T) *compressionRoundTripHarness {
 		CacheTTL:        300,
 		AuthAccessKey:   testAccessKey,
 		AuthSecretKey:   testSecretKey,
+		PresignEnabled:   true, // Enable /share/ endpoint for presigned URL tests
 		Credentials: map[string]*config.Credential{
 			testAccessKey: {
 				AccessKey: testAccessKey,
