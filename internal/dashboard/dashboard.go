@@ -917,6 +917,14 @@ func (d *Dashboard) UploadHandlerWithAuth() http.HandlerFunc {
 	return d.auth.Wrap(d.uploadHandlerImpl())
 }
 
+// isAccessDenied returns true if the error indicates an ACL access denial.
+func isAccessDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "access denied")
+}
+
 // uploadHandlerImpl is the actual implementation of the upload handler.
 func (d *Dashboard) uploadHandlerImpl() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -983,7 +991,11 @@ func (d *Dashboard) uploadHandlerImpl() http.HandlerFunc {
 		// Use backend.Put to upload
 		err = d.backend.Put(ctx, d.bucket, key, bytes.NewReader(fileData), int64(len(fileData)), metadata)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Upload failed: %v", err), http.StatusInternalServerError)
+			if isAccessDenied(err) {
+				http.Error(w, fmt.Sprintf("Upload failed: %v", err), http.StatusForbidden)
+			} else {
+				http.Error(w, fmt.Sprintf("Upload failed: %v", err), http.StatusInternalServerError)
+			}
 			return
 		}
 
@@ -1035,7 +1047,11 @@ func (d *Dashboard) downloadHandlerImpl() http.HandlerFunc {
 		// Use backend.Get to download
 		reader, info, err := d.backend.Get(ctx, d.bucket, key)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusNotFound)
+			if isAccessDenied(err) {
+				http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusForbidden)
+			} else {
+				http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusNotFound)
+			}
 			return
 		}
 		defer reader.Close()
@@ -1102,7 +1118,11 @@ func (d *Dashboard) deleteHandlerImpl() http.HandlerFunc {
 		// Use backend.Delete to delete
 		err := d.backend.Delete(ctx, d.bucket, key)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Delete failed: %v", err), http.StatusInternalServerError)
+			if isAccessDenied(err) {
+				http.Error(w, fmt.Sprintf("Delete failed: %v", err), http.StatusForbidden)
+			} else {
+				http.Error(w, fmt.Sprintf("Delete failed: %v", err), http.StatusInternalServerError)
+			}
 			return
 		}
 

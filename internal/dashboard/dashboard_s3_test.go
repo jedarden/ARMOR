@@ -90,10 +90,8 @@ func TestUploadHandlerWithGetListOnlyCredential(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for upload with get+list-only credential, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "Dashboard credential not configured") {
-		// This test would pass because the mock doesn't actually enforce ACL
-		// In real scenario, the S3 handler would deny based on ACL
-		t.Logf("Note: This test passes because backend.Put is called directly")
+	if !strings.Contains(rec.Body.String(), "access denied") {
+		t.Errorf("Expected 'access denied' error message, got: %s", rec.Body.String())
 	}
 }
 
@@ -266,11 +264,11 @@ func TestDeleteHandlerWithGetListOnlyCredential(t *testing.T) {
 
 	d.deleteHandlerImpl()(rec, req)
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status 500 for delete with get+list-only credential, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403 for delete with get+list-only credential, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Delete failed") {
-		t.Errorf("Expected error message about delete failure, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "access denied") {
+		t.Errorf("Expected 'access denied' error message, got: %s", rec.Body.String())
 	}
 
 	// Verify object still exists
