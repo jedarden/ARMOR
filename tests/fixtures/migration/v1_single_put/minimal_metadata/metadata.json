@@ -1,0 +1,12 @@
+{
+  "plaintext_sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c",
+  "plaintext_length": 94,
+  "source_version": "v1",
+  "source_layout": "single",
+  "v3_expected": {
+    "is_multipart": false,
+    "compression_used": false
+  },
+  "description": "V1 single-PUT with minimal metadata (only required fields)",
+  "expected_migration_outcome": "success"
+}
