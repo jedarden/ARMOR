@@ -524,6 +524,7 @@ func startArmorServer(t *testing.T) string {
 		AuthAccessKey:    testAccessKey,
 		AuthSecretKey:    testSecretKey,
 		FormatWriteVersion: 2, // Explicitly use v2 format - mock backend doesn't support v3 multipart storage
+		PresignEnabled:   true, // Enable /share/ endpoint for presigned URL tests
 		Credentials: map[string]*config.Credential{
 			testAccessKey: {
 				AccessKey: testAccessKey,
@@ -564,6 +565,7 @@ func startArmorServerWithPresigner(t *testing.T) (string, *presign.Signer) {
 		AuthAccessKey:    testAccessKey,
 		AuthSecretKey:    testSecretKey,
 		FormatWriteVersion: 2, // Explicitly use v2 format - mock backend doesn't support v3 multipart storage
+		PresignEnabled:   true, // Enable /share/ endpoint for presigned URL tests
 		Credentials: map[string]*config.Credential{
 			testAccessKey: {
 				AccessKey: testAccessKey,
