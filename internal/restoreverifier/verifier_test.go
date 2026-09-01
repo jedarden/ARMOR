@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -265,12 +266,13 @@ func armorEncrypt(t *testing.T, mek []byte, blockSize int, plaintext []byte) (ci
 	envelope = append(envelope, hmacTable...)
 
 	m := (&backend.ARMORMetadata{
-		Version:       1,
-		BlockSize:     blockSize,
-		PlaintextSize: int64(len(plaintext)),
-		IV:            iv,
-		WrappedDEK:    wrapped,
-		PlaintextSHA:  hexEncode(sha[:]),
+		Version:        2,
+		BlockSize:      blockSize,
+		PlaintextSize:  int64(len(plaintext)),
+		IV:             iv,
+		WrappedDEK:     wrapped,
+		MEKFingerprint: crypto.MEKFingerprint(mek),
+		PlaintextSHA:   hexEncode(sha[:]),
 	}).ToMetadata()
 	return envelope, m
 }
@@ -302,6 +304,7 @@ func armorEncryptMultipart(t *testing.T, mek []byte, blockSize int, key string, 
 	if err != nil {
 		t.Fatalf("WrapDEK: %v", err)
 	}
+	fingerprint := crypto.MEKFingerprint(mek)
 	enc, err := crypto.NewEncryptor(dek, iv, blockSize)
 	if err != nil {
 		t.Fatalf("NewEncryptor: %v", err)
@@ -353,11 +356,12 @@ func armorEncryptMultipart(t *testing.T, mek []byte, blockSize int, key string, 
 	}
 
 	m := (&backend.ARMORMetadata{
-		Version:       1,
-		BlockSize:     blockSize,
-		PlaintextSize: int64(len(plaintext)),
-		IV:            iv,
-		WrappedDEK:    wrapped,
+		Version:        2,
+		BlockSize:      blockSize,
+		PlaintextSize:  int64(len(plaintext)),
+		IV:             iv,
+		WrappedDEK:     wrapped,
+		MEKFingerprint: fingerprint,
 		// Real combined per-part digest (bf-1v2ehf); the verifier recomputes it
 		// via ComputeMultipartDigest and the two must agree.
 		PlaintextSHA: combinedSHA,
@@ -1290,9 +1294,20 @@ func armorEncryptWithMEK(t *testing.T, mek []byte, blockSize int, plaintext []by
 	if err != nil {
 		t.Fatalf("GenerateIV: %v", err)
 	}
-	wrapped, err := crypto.WrapDEK(mek, dek)
+	wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(mek, dek)
 	if err != nil {
-		t.Fatalf("WrapDEK: %v", err)
+		t.Fatalf("WrapDEKWithFingerprint: %v", err)
+	}
+	// Parse the v2:<fp>:<b64> format to extract fingerprint for metadata
+	parts := strings.SplitN(wrappedDEKStr, ":", 3)
+	if len(parts) != 3 || parts[0] != "v2" {
+		t.Fatalf("WrapDEKWithFingerprint returned invalid format: %s", wrappedDEKStr)
+	}
+	fingerprint := parts[1]
+	base64Wrapped := parts[2]
+	wrapped, err := base64.StdEncoding.DecodeString(base64Wrapped)
+	if err != nil {
+		t.Fatalf("base64 decode of wrapped DEK failed: %v", err)
 	}
 	sha := crypto.ComputePlaintextSHA256(plaintext)
 
@@ -1324,7 +1339,7 @@ func armorEncryptWithMEK(t *testing.T, mek []byte, blockSize int, plaintext []by
 		PlaintextSize:  int64(len(plaintext)),
 		IV:             iv,
 		WrappedDEK:     wrapped,
-		MEKFingerprint: crypto.MEKFingerprint(mek),
+		MEKFingerprint: fingerprint,
 		PlaintextSHA:   hexEncode(sha[:]),
 	}).ToMetadata()
 	return envelope, m
