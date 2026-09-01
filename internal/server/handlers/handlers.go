@@ -4830,6 +4830,14 @@ func (h *Handlers) stripPrefixFromCommonPrefix(commonPrefix string) string {
 // The request ID is extracted from the request context and included in the XML body.
 // The resource is the request path. This function also logs a structured s3_error event.
 func (h *Handlers) writeError(w http.ResponseWriter, r *http.Request, code, message string, statusCode int) {
+	// Extract operation (verb) from request for metrics
+	operation := acl.ActionForRequest(r)
+
+	// Increment error counter (ADR-008) - always increment, even without logger
+	if h.metrics != nil {
+		h.metrics.IncErrors(code, operation)
+	}
+
 	// Log structured S3 error event before writing response
 	if h.logger != nil {
 		h.logS3Error(r, code, message, statusCode)
@@ -4903,11 +4911,6 @@ func (h *Handlers) logS3Error(r *http.Request, code, message string, statusCode 
 	} else {
 		// Unexpected: non-error status codes should not use error logging path
 		h.logger.WithFields(fields).Info("S3 operation error logged with non-error status")
-	}
-
-	// Increment error counter (ADR-008)
-	if h.metrics != nil {
-		h.metrics.IncErrors(code, operation)
 	}
 }
 

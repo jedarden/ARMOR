@@ -205,6 +205,8 @@ func TestAuditLogMultipartFields(t *testing.T) {
 
 	// Simulate a failed UploadPart with error code in context
 	ctx := middleware.SetErrorCode(req.Context(), "InvalidPart")
+	// Set request ID in context (normally done by middleware)
+	ctx = middleware.WithRequestID(ctx, "test-request-id-123")
 	*req = *req.WithContext(ctx)
 
 	s.logCompletedRequest(req, start, 400, "allow", "test-key-id", "put", "test-bucket/test-key", 9)
@@ -216,7 +218,7 @@ func TestAuditLogMultipartFields(t *testing.T) {
 		`"upload_id":"test-upload-id"`,
 		`"part_number":"3"`,
 		`"error_code":"InvalidPart"`,
-		`"request_id":"`,
+		`"request_id":"test-request-id-123"`,
 		`"bytes_in":9`,
 		`"bytes_out":9`,
 		`"user_agent":"aws-sdk-rust/1.0"`,
