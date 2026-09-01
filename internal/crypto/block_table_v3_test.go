@@ -3,6 +3,7 @@ package crypto
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"testing"
 )
 
@@ -94,7 +95,7 @@ func TestBlockTableEntry_ValidateRawBlock(t *testing.T) {
 	entry3 := NewBlockTableEntry(hmac, uint32(blockSize+1), false)
 	if err := entry3.Validate(blockSize); err == nil {
 		t.Error("Validate should reject raw block exceeding block size")
-	} else if err != ErrCiphertextTooLarge {
+	} else if !errors.Is(err, ErrCiphertextTooLarge) {
 		t.Errorf("Validate should return ErrCiphertextTooLarge, got: %v", err)
 	}
 }
@@ -136,7 +137,7 @@ func TestBlockTableEntry_InvalidDecode(t *testing.T) {
 	shortData := []byte{1, 2, 3}
 	if _, err := DecodeBlockTableEntry(shortData); err == nil {
 		t.Error("Decode should reject too-short input")
-	} else if err != ErrInvalidBlockTableEntry {
+	} else if !errors.Is(err, ErrInvalidBlockTableEntry) {
 		t.Errorf("Decode should return ErrInvalidBlockTableEntry, got: %v", err)
 	}
 
@@ -249,7 +250,7 @@ func TestBlockTable_InvalidSize(t *testing.T) {
 
 	if _, err := DecodeBlockTable(wrongCountData, blockSize, 3); err == nil {
 		t.Error("Decode should reject mismatched entry count")
-	} else if err != ErrInvalidTableSize {
+	} else if !errors.Is(err, ErrInvalidTableSize) {
 		t.Errorf("Decode should return ErrInvalidTableSize, got: %v", err)
 	}
 

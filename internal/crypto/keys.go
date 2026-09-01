@@ -283,8 +283,8 @@ func UnwrapDEKByFingerprint(wrappedDEKStr string, lookupMEK func(keyID, fingerpr
 		// Look up MEK by fingerprint (keyID is empty for default key)
 		mek, found := lookupMEK("", fingerprint)
 		if !found {
-			// Check if fingerprint exists in any ring for better error message
-			return nil, "", ErrFingerprintNotFound
+			// Return error that includes the specific fingerprint
+			return nil, "", fmt.Errorf("MEK fingerprint %s not found in active or ring keys: %w", fingerprint, ErrFingerprintNotFound)
 		}
 
 		// Unwrap with the found MEK

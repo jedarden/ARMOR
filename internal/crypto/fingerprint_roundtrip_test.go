@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -231,7 +232,7 @@ func TestWrapUnwrapV2FingerprintNotInRing(t *testing.T) {
 		t.Fatal("Expected error when fingerprint not in any ring")
 	}
 
-	if err != ErrFingerprintNotFound {
+	if !errors.Is(err, ErrFingerprintNotFound) {
 		t.Errorf("Expected ErrFingerprintNotFound, got: %v", err)
 	}
 
