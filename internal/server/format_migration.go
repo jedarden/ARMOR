@@ -233,8 +233,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				}
 			}
 
-			// Check if object version is in the include list
-			// Do this BEFORE attempting to migrate objects with invalid metadata
+			// Check if this object should be skipped:
+			// Version not in include list (not a source version we want to migrate from)
+			// Note: shouldMigrateVersion() already excludes target version if it's not in the include list
 			if !fm.shouldMigrateVersion(uint8(version)) {
 				result.SkippedObjects++
 				fm.advanceCursor(obj.Key)
