@@ -841,6 +841,8 @@ func loadTestConfig(t *testing.T, tmpDir string) *config.Config {
 	os.Setenv("ARMOR_PRESIGN_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
 	os.Setenv("ARMOR_SECONDARY_BACKEND_TYPE", "filesystem")
 	os.Setenv("ARMOR_SECONDARY_BACKEND_PATH", tmpDir)
+	os.Setenv("ARMOR_AUTH_ACCESS_KEY", "test-auth-key")
+	os.Setenv("ARMOR_AUTH_SECRET_KEY", "test-auth-secret-key-12345678901234567890")
 
 	t.Cleanup(func() {
 		// Unset environment variables
@@ -853,6 +855,8 @@ func loadTestConfig(t *testing.T, tmpDir string) *config.Config {
 		os.Unsetenv("ARMOR_PRESIGN_SECRET")
 		os.Unsetenv("ARMOR_SECONDARY_BACKEND_TYPE")
 		os.Unsetenv("ARMOR_SECONDARY_BACKEND_PATH")
+		os.Unsetenv("ARMOR_AUTH_ACCESS_KEY")
+		os.Unsetenv("ARMOR_AUTH_SECRET_KEY")
 	})
 
 	cfg, err := config.Load()

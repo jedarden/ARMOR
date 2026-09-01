@@ -28,8 +28,20 @@ func TestHandleListCreds_NoSecretLeak(t *testing.T) {
 	// Set up environment variable credential
 	os.Setenv("ARMOR_AUTH_ACCESS_KEY", "env-test-key")
 	os.Setenv("ARMOR_AUTH_SECRET_KEY", envSecret)
+	os.Setenv("ARMOR_B2_REGION", "us-east-005")
+	os.Setenv("ARMOR_B2_ENDPOINT", "https://s3.us-east-005.backblazeb2.com")
+	os.Setenv("ARMOR_B2_ACCESS_KEY_ID", "testkey")
+	os.Setenv("ARMOR_B2_SECRET_ACCESS_KEY", "testsecret")
+	os.Setenv("ARMOR_BUCKET", "testbucket")
+	os.Setenv("ARMOR_MEK", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
 	defer os.Unsetenv("ARMOR_AUTH_ACCESS_KEY")
 	defer os.Unsetenv("ARMOR_AUTH_SECRET_KEY")
+	defer os.Unsetenv("ARMOR_B2_REGION")
+	defer os.Unsetenv("ARMOR_B2_ENDPOINT")
+	defer os.Unsetenv("ARMOR_B2_ACCESS_KEY_ID")
+	defer os.Unsetenv("ARMOR_B2_SECRET_ACCESS_KEY")
+	defer os.Unsetenv("ARMOR_BUCKET")
+	defer os.Unsetenv("ARMOR_MEK")
 
 	// Create a temporary YAML credential file
 	yamlContent := `credentials:
