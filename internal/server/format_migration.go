@@ -867,6 +867,10 @@ func (fm *FormatMigrator) saveState(ctx context.Context) error {
 }
 
 // countObjects counts the total number of objects to migrate.
+// This counts objects that will be processed (i.e., objects with ARMOR metadata
+// where the version is in the include list). Objects that will be skipped
+// (non-ARMOR objects, or ARMOR objects with a version not in the include list)
+// are not counted, to match the behavior of Migrate().
 func (fm *FormatMigrator) countObjects(ctx context.Context) error {
 	var count int
 	var continuationToken string
@@ -881,20 +885,43 @@ func (fm *FormatMigrator) countObjects(ctx context.Context) error {
 			// Note: .armor/ objects are already filtered by the backend's List method
 			// (for MockBackend in tests, this is done in the List implementation)
 
+			// Skip internal ARMOR objects - these are not counted in TotalObjects
+			// and are also not counted as SkippedObjects (they never enter the pipeline)
+			if len(obj.Key) >= 7 && obj.Key[:7] == ".armor/" {
+				continue
+			}
+
 			// Check if object has ARMOR metadata
 			rawMeta, err := fm.objectMetadata(ctx, obj)
 			if err != nil {
+				// Object will be skipped as FailedObjects in Migrate() - don't count here
 				continue
 			}
 
 			armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
 			if !ok {
-				continue
-			}
-
-			// Check if version is in include list
-			if fm.shouldMigrateVersion(uint8(armorMeta.Version)) {
-				count++
+				// ParseARMORMetadata failed - check if this is an ARMOR object at all
+				armorVersion := rawMeta[armorMetaVersion]
+				if armorVersion == "" {
+					// Not an ARMOR-encrypted object - will be skipped in Migrate()
+					continue
+				}
+				// Has ARMOR version but invalid metadata - parse version directly
+				var version int
+				if _, err := fmt.Sscanf(armorVersion, "%d", &version); err != nil {
+					// Invalid version string - will be skipped in Migrate()
+					continue
+				}
+				// Version parsed successfully - check if it's in the include list
+				if fm.shouldMigrateVersion(uint8(version)) {
+					count++
+				}
+				// If not in include list, it will be skipped in Migrate() - don't count
+			} else {
+				// Parsed successfully - check if version is in include list
+				if fm.shouldMigrateVersion(uint8(armorMeta.Version)) {
+					count++
+				}
 			}
 		}
 
