@@ -27,6 +27,12 @@ go test ${race_flag} -count=1 ./internal/canary
 go test -count=1 ./internal/config \
   -run '^TestLoadWith(KeyRing|EmptyKeyRing|NamedKeyRing|RingValidationErrors)$'
 
+# The S3 API streams multi-gigabyte operations. A server-wide WriteTimeout
+# terminates CompleteMultipartUpload while the backing store is still
+# composing the object, so keep the timeout policy in the release gate.
+go test -count=1 ./cmd/armor \
+	-run '^TestNewS3HTTPServerAllowsLongRunningResponses$'
+
 go test ${race_flag} -count=1 ./internal/server/handlers \
 	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3|^TestV3GetObject|^TestV3FilesystemPutGetRoundTrip$'
 

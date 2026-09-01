@@ -23,6 +23,29 @@ func init() {
 	})
 }
 
+const (
+	s3ReadTimeout       = 30 * time.Minute
+	s3ReadHeaderTimeout = 30 * time.Second
+	s3IdleTimeout       = 2 * time.Minute
+)
+
+// newS3HTTPServer builds the public S3 API server. WriteTimeout must remain
+// disabled: multipart completion and streamed downloads can legitimately take
+// longer than 30 minutes for multi-gigabyte objects. A non-zero server-wide
+// WriteTimeout closes the client connection while CompleteMultipartUpload is
+// still composing the object in the backing store. Header and idle timeouts
+// retain protection for connections that are not actively transferring data.
+func newS3HTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadTimeout:       s3ReadTimeout,
+		ReadHeaderTimeout: s3ReadHeaderTimeout,
+		WriteTimeout:      0,
+		IdleTimeout:       s3IdleTimeout,
+	}
+}
+
 func serve() {
 	// Load configuration
 	cfg, err := config.Load()
@@ -64,12 +87,7 @@ func serve() {
 	}
 
 	// Create HTTP server
-	httpServer := &http.Server{
-		Addr:         cfg.Listen,
-		Handler:      srv.Handler(),
-		ReadTimeout:  30 * time.Minute, // Long timeout for large uploads
-		WriteTimeout: 30 * time.Minute, // Long timeout for large downloads
-	}
+	httpServer := newS3HTTPServer(cfg.Listen, srv.Handler())
 
 	// Create admin HTTP server
 	adminServer := &http.Server{
