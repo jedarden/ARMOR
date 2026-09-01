@@ -18,11 +18,12 @@ func MEKFingerprint(mek []byte) string {
 }
 
 // TestVectorFingerprint is a known test vector for MEKFingerprint.
-// For a 32-byte key of all 0x01 bytes, the SHA-256 hash begins with
-// the bytes shown here, resulting in this 16-hex-char fingerprint.
+// For a 32-byte key of all 0x01 bytes, the SHA-256 hash is:
+// 72cd6e8422c407fb6d098690f1130b7ded7ec2f7f5e1d30bd9d521f015363793
+// The first 8 bytes (72cd6e8422c407fb) encode to this 16-hex-char fingerprint.
 // This test vector ensures the fingerprint function remains stable across
 // implementations and changes.
-const TestVectorFingerprint = "588161913cc0c9f5"
+const TestVectorFingerprint = "72cd6e8422c407fb"
 
 // TestVectorMEK is the 32-byte key that produces TestVectorFingerprint.
 // MEK: 0x01 repeated 32 times.
