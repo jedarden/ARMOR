@@ -13,9 +13,111 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jedarden/armor/internal/server/handlers"
 )
+
+// blockingV3Backend holds each backend UploadPart call until the test releases
+// it. If the HTTP handler serializes distinct v3 parts, only one call can enter
+// and the regression test times out before release.
+type blockingV3Backend struct {
+	*recordingBackend
+	entered chan int32
+	release chan struct{}
+}
+
+func (b *blockingV3Backend) UploadPart(
+	ctx context.Context, bucket, key, uploadID string, partNumber int32,
+	body io.Reader, size int64,
+) (string, error) {
+	select {
+	case b.entered <- partNumber:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	return b.recordingBackend.UploadPart(ctx, bucket, key, uploadID, partNumber, body, size)
+}
+
+// TestMultipartV3DistinctPartsReachBackendConcurrently is the regression test
+// for production uploads whose later request bodies sat unread behind the
+// per-upload mutex while B2 took more than a minute to store an earlier part.
+func TestMultipartV3DistinctPartsReachBackendConcurrently(t *testing.T) {
+	cfg, _, cache, footerCache, km := testSetup(t)
+	cfg.FormatWriteVersion = 3
+	be := &blockingV3Backend{
+		recordingBackend: newRecordingBackend(),
+		entered:          make(chan int32, 2),
+		release:          make(chan struct{}),
+	}
+	h := handlers.New(cfg, be, cache, footerCache, km, nil)
+
+	ctx := context.Background()
+	const bucket, key = "test-bucket", "concurrent-v3"
+	createResp := httptest.NewRecorder()
+	h.CreateMultipartUpload(
+		createResp, createUploadRequest(ctx, bucket, key, "application/octet-stream"),
+		bucket, key,
+	)
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("CreateMultipartUpload failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var created struct {
+		UploadID string `xml:"UploadId"`
+	}
+	if err := xml.Unmarshal(createResp.Body.Bytes(), &created); err != nil {
+		t.Fatalf("parse upload ID: %v", err)
+	}
+
+	type result struct {
+		part int
+		code int
+	}
+	results := make(chan result, 2)
+	var wg sync.WaitGroup
+	for _, partNumber := range []int{1, 2} {
+		wg.Add(1)
+		go func(part int) {
+			defer wg.Done()
+			request := createUploadPartRequest(
+				ctx, bucket, key, created.UploadID, part,
+				"application/octet-stream", bytes.Repeat([]byte{byte(part)}, 64*1024),
+			)
+			response := httptest.NewRecorder()
+			h.UploadPart(response, request, bucket, key, created.UploadID)
+			results <- result{part: part, code: response.Code}
+		}(partNumber)
+	}
+
+	seen := make(map[int32]bool, 2)
+	timer := time.NewTimer(2 * time.Second)
+	for len(seen) < 2 {
+		select {
+		case part := <-be.entered:
+			seen[part] = true
+		case <-timer.C:
+			close(be.release)
+			wg.Wait()
+			t.Fatalf("distinct v3 parts were serialized before the backend: entered=%v", seen)
+		}
+	}
+	if !timer.Stop() {
+		<-timer.C
+	}
+	close(be.release)
+	wg.Wait()
+	close(results)
+	for got := range results {
+		if got.code != http.StatusOK {
+			t.Errorf("UploadPart %d status=%d want=%d", got.part, got.code, http.StatusOK)
+		}
+	}
+}
 
 // TestMultipartV3ConcurrentOutOfOrder uploads parts 3,1,2 of different unaligned sizes
 // concurrently and verifies each part encrypts independently with deterministic ciphertext.
