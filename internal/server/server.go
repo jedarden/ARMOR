@@ -1034,14 +1034,45 @@ func (s *Server) migrateFormat(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
 	dryRun := r.URL.Query().Get("dry_run") == "true"
 	includeStr := r.URL.Query().Get("include")
+	targetStr := r.URL.Query().Get("target")
 	concurrencyStr := r.URL.Query().Get("concurrency")
 
-	// Default to migrating V1 objects only
-	includeVersions := []string{"1"}
+	// Validate target version if provided (must match configured write version)
+	currentWriteVersion := uint8(s.config.FormatWriteVersion)
+	if targetStr != "" {
+		var targetVersion int
+		if _, err := fmt.Sscanf(targetStr, "%d", &targetVersion); err != nil {
+			http.Error(w, "Invalid target version format", http.StatusBadRequest)
+			return
+		}
+		if uint8(targetVersion) != currentWriteVersion {
+			http.Error(w, fmt.Sprintf("Target version %s does not match configured write version %d", targetStr, currentWriteVersion), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Normalize and validate include versions (default to v2)
+	includeVersions := []string{"2"}
 	if includeStr != "" {
 		includeVersions = strings.Split(includeStr, ",")
 		for i, v := range includeVersions {
-			includeVersions[i] = strings.TrimSpace(v)
+			v = strings.TrimSpace(v)
+			// Normalize version numbers (e.g., "v1" -> "1")
+			if strings.HasPrefix(v, "v") {
+				v = v[1:]
+			}
+			// Validate version is numeric
+			var version int
+			if _, err := fmt.Sscanf(v, "%d", &version); err != nil {
+				http.Error(w, fmt.Sprintf("Invalid include version: %s", v), http.StatusBadRequest)
+				return
+			}
+			// Reject v3 in source set (already current format)
+			if version == 3 {
+				http.Error(w, "Version 3 cannot be in the source include set (already current format)", http.StatusBadRequest)
+				return
+			}
+			includeVersions[i] = v
 		}
 	}
 
@@ -1066,7 +1097,7 @@ func (s *Server) migrateFormat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get current write version from config
-	currentWriteVersion := uint8(2) // TODO: Get from server config
+	currentWriteVersion = uint8(s.config.FormatWriteVersion)
 	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, currentWriteVersion, includeVersions, s.manifest)
 
 	// Perform migration
@@ -1096,8 +1127,8 @@ func (s *Server) handleMigrationProgress(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Get current write version from config
-	currentWriteVersion := uint8(2) // TODO: Get from server config
-	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, currentWriteVersion, []string{"1"}, s.manifest)
+	currentWriteVersion := uint8(s.config.FormatWriteVersion)
+	migrator := NewFormatMigrator(s.backend, s.config.Bucket, key.MEK, key.Name, currentWriteVersion, []string{"2"}, s.manifest)
 
 	// Try to load existing state from backend
 	state, err := migrator.loadState(r.Context())
