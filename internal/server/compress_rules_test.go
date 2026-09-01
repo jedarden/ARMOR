@@ -219,13 +219,9 @@ func TestCompressRules_ShouldCompress(t *testing.T) {
 				t.Fatalf("ParseCompressRules() failed: %v", err)
 			}
 
-			// For content-type with charset, we need to extract the mime type first
-			contentType := tt.contentType
-			if contentType != "" {
-				contentType = ExtractContentType(contentType)
-			}
-
-			gotCompress, gotMatched := rules.ShouldCompress(tt.key, contentType)
+			// ShouldCompress expects the full content-type string (with charset if present)
+			// EvaluateCompression passes it directly without extraction.
+			gotCompress, gotMatched := rules.ShouldCompress(tt.key, tt.contentType)
 			if gotCompress != tt.wantCompress {
 				t.Errorf("ShouldCompress() compress = %v, want %v", gotCompress, tt.wantCompress)
 			}
