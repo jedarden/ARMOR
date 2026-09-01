@@ -33,7 +33,7 @@ func init() {
 	// Migration-specific flags
 	flag.StringVar(&adminURLFlag, "admin-url", "", "Admin API endpoint (required, e.g., http://127.0.0.1:9001)")
 	flag.BoolVar(&dryRunFlag, "dry-run", false, "Dry run: verify objects can be migrated without making changes")
-	flag.StringVar(&includeFlag, "include", "", "Comma-separated source versions to migrate (default: v1)")
+	flag.StringVar(&includeFlag, "include", "", "Comma-separated source versions to migrate (default: v2)")
 	flag.IntVar(&concurrencyFlag, "concurrency", 0, "Number of concurrent workers (default: server-side default)")
 	flag.BoolVar(&watchFlag, "watch", false, "Watch mode: poll progress until completion")
 }
