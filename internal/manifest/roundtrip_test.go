@@ -324,7 +324,7 @@ func TestBackwardCompatibilityMissingCiphertextSize(t *testing.T) {
 	)
 
 	// Create a delta JSON entry without CiphertextSize (old format)
-	oldFormatDelta := `{"op":"put","key":"bucket/old-file.parquet","entry":{"plaintext_size":5000,"plaintext_sha256":"abc123","iv":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"wrapped_dek":[20,21,22,23],"block_size":65536,"content_type":"application/octet-stream","etag":"old-etag","last_modified":"` + bcTimestamp + `"},"ts":"` + bcTimestamp + `Z"}
+	oldFormatDelta := `{"op":"put","key":"bucket/old-file.parquet","entry":{"plaintext_size":5000,"plaintext_sha256":"abc123","iv":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"wrapped_dek":[20,21,22,23],"block_size":65536,"content_type":"application/octet-stream","etag":"old-etag","last_modified":"` + bcTimestamp + `"},"ts":"` + bcTimestamp + `"}
 `
 
 	store := newMockStore()
