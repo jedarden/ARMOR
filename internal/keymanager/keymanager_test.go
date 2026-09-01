@@ -605,7 +605,7 @@ func TestGetMEKByFingerprint(t *testing.T) {
 	}
 
 	// Test getting active key by fingerprint
-	defaultFP := "588161913cc0c9f5" // Known fingerprint for the default MEK
+	defaultFP := "ae216c2ef5247a37" // Known fingerprint for the default MEK
 	mek, found := km.GetMEKByFingerprint("default", defaultFP)
 	if !found {
 		t.Error("GetMEKByFingerprint() should find active key")
@@ -615,7 +615,7 @@ func TestGetMEKByFingerprint(t *testing.T) {
 	}
 
 	// Test getting retired key by fingerprint
-	retired1FP := "f65f837a1b287304" // Known fingerprint for retired1
+	retired1FP := "02d449a31fbb267c" // Known fingerprint for retired1
 	mek, found = km.GetMEKByFingerprint("default", retired1FP)
 	if !found {
 		t.Error("GetMEKByFingerprint() should find retired key")
@@ -656,7 +656,7 @@ func TestGetMEKByFingerprint(t *testing.T) {
 	}
 
 	// Test getting named active key
-	namedFP := "76e65f64b00963fb" // Known fingerprint for namedMEK
+	namedFP := "e0e77a507412b120" // Known fingerprint for namedMEK
 	mek, found = km2.GetMEKByFingerprint("test", namedFP)
 	if !found {
 		t.Error("GetMEKByFingerprint() should find named active key")
@@ -666,7 +666,7 @@ func TestGetMEKByFingerprint(t *testing.T) {
 	}
 
 	// Test getting named retired key
-	namedRetiredFP := "e3c08bbc03627091" // Known fingerprint for namedRetired
+	namedRetiredFP := "4ca14526b2751b64" // Known fingerprint for namedRetired
 	mek, found = km2.GetMEKByFingerprint("test", namedRetiredFP)
 	if !found {
 		t.Error("GetMEKByFingerprint() should find named retired key")
@@ -700,7 +700,8 @@ func TestEmptyRing(t *testing.T) {
 	}
 
 	// GetMEKByFingerprint should only find active key
-	activeFP := "588161913cc0c9f5"
+	// This key is bytes 0..31, which has fingerprint: 630dcd2966c43366
+	activeFP := "630dcd2966c43366"
 	mek, found := km.GetMEKByFingerprint("default", activeFP)
 	if !found {
 		t.Error("GetMEKByFingerprint() should find active key even without ring")
@@ -746,7 +747,7 @@ func TestRingWithNamedKeys(t *testing.T) {
 	}
 
 	// Test GetMEKByFingerprint with named key
-	namedFP := "76e65f64b00963fb"
+	namedFP := "e0e77a507412b120"
 	mek, found := km.GetMEKByFingerprint("test", namedFP)
 	if !found {
 		t.Error("GetMEKByFingerprint() should find named active key")
@@ -756,7 +757,7 @@ func TestRingWithNamedKeys(t *testing.T) {
 	}
 
 	// Test finding in named ring
-	namedRetiredFP := "e3c08bbc03627091"
+	namedRetiredFP := "4ca14526b2751b64"
 	mek, found = km.GetMEKByFingerprint("test", namedRetiredFP)
 	if !found {
 		t.Error("GetMEKByFingerprint() should find named retired key")
