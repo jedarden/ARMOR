@@ -147,6 +147,18 @@ func (d *Decryptor) DecryptRange(encrypted []byte, hmacTable []byte, plaintextSt
 		}
 		expectedHMAC := hmacTable[hmacOffset : hmacOffset+HMACSize]
 
+		// ADR-011: non-uniform multipart parts leave a placeholder (all-zero)
+		// HMAC on a boundary block that isn't a full ARMOR block — a part's
+		// trailing partial block, or a part starting mid-block — because no
+		// single UploadPart call ever saw the whole block's ciphertext to hash.
+		// Skip verification for those; decryption is still correct because
+		// every byte was encrypted with the proper CTR counter regardless of
+		// which part it arrived in (see handleFullObjectStream's identical
+		// skip for the full-object read path).
+		if isPlaceholderHMAC(expectedHMAC) {
+			continue
+		}
+
 		if err := d.verifyBlockHMAC(encryptedBlock, uint32(absBlockIdx), expectedHMAC); err != nil {
 			return nil, fmt.Errorf("block %d: %w", absBlockIdx, err)
 		}
@@ -305,6 +317,22 @@ func (d *Decryptor) verifyBlockHMAC(encryptedBlock []byte, blockIndex uint32, ex
 	}
 
 	return nil
+}
+
+// isPlaceholderHMAC reports whether an HMAC slot is the all-zero placeholder
+// ADR-011 non-uniform multipart parts leave on a boundary block (a part's
+// trailing partial block, or a part starting mid-block) that no single
+// UploadPart call ever saw the whole ciphertext of to hash for real.
+func isPlaceholderHMAC(hmac []byte) bool {
+	if len(hmac) == 0 {
+		return false
+	}
+	for _, b := range hmac {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // BlockSize returns the block size.
