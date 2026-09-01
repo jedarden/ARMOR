@@ -24,6 +24,7 @@ type FleetMonitor struct {
 	mu           sync.RWMutex
 	status       map[string]*TargetStatus
 	client       *http.Client
+	baseURL      string // Base URL template for SEAM proxy, configurable for testing
 }
 
 // TargetStatus represents the status of a single ARMOR instance.
@@ -65,6 +66,7 @@ func NewFleetMonitor(targets []Target, seamToken string, pollInterval int) *Flee
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		baseURL: "https://seam-rs-manager.tail1b1987.ts.net/k8s/%s/api/v1/namespaces/%s/services/%s:%d/proxy",
 	}
 }
 
@@ -130,7 +132,7 @@ func (fm *FleetMonitor) pollTarget(ctx context.Context, target Target) *TargetSt
 	}
 
 	// Build SEAM proxy base URL
-	baseURL := fmt.Sprintf("https://seam-rs-manager.tail1b1987.ts.net/k8s/%s/api/v1/namespaces/%s/services/%s:%d/proxy",
+	baseURL := fmt.Sprintf(fm.baseURL,
 		target.Cluster, target.Namespace, target.Service, target.AdminPort)
 
 	// Poll /version
@@ -296,9 +298,9 @@ func parseMetricValue(line string) float64 {
 
 // parseGaugeMetric extracts the gauge name and value from a restore-verifier metric.
 func parseGaugeMetric(line string) (name, value string) {
-	// Format: armor_restore_verifier_{name}{labels} gauge value
+	// Format: armor_restore_verifier_{name}{labels} value
 	parts := strings.Fields(line)
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return "", ""
 	}
 

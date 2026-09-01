@@ -29,6 +29,11 @@ func LoadTargets(path string) ([]Target, error) {
 		return nil, fmt.Errorf("parse YAML: %w", err)
 	}
 
+	// Check if we got any targets
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("no targets found")
+	}
+
 	// Validate targets
 	for i, t := range targets {
 		if t.Name == "" {
