@@ -71,13 +71,46 @@ type MigrationState struct {
 	Failures []MigrationFailure `json:"failures,omitempty"`
 	// ErrorMessage contains any error that occurred
 	ErrorMessage string `json:"error_message,omitempty"`
+	// Detailed classification counts
+	Classification ObjectClassification `json:"classification,omitempty"`
 }
 
 // MigrationFailure records a failed migration attempt.
 type MigrationFailure struct {
-	Key    string `json:"key"`
-	Reason string `json:"reason"`
-	Time   time.Time `json:"time"`
+	Key     string `json:"key"`
+	Reason  string `json:"reason"`
+	Time    time.Time `json:"time"`
+	Details string `json:"details,omitempty"`
+}
+
+// ObjectClassification provides detailed counts by source format, layout, and outcome.
+type ObjectClassification struct {
+	// By source version
+	V1SinglePut   int `json:"v1_single_put"`
+	V1Multipart   int `json:"v1_multipart"`
+	V2SinglePut   int `json:"v2_single_put"`
+	V2Multipart   int `json:"v2_multipart"`
+	V3            int `json:"v3"` // Objects already at target version
+	NonARMOR      int `json:"non_armor"`
+	Malformed     int `json:"malformed"`
+	Contradictory int `json:"contradictory"`
+
+	// By size class (bytes)
+	SizeLessThan1MB    int `json:"size_lt_1mb"`
+	Size1MBTo10MB      int `json:"size_1mb_to_10mb"`
+	Size10MBTo100MB    int `json:"size_10mb_to_100mb"`
+	Size100MBTo1GB     int `json:"size_100mb_to_1gb"`
+	Size1GBTo10GB      int `json:"size_1gb_to_10gb"`
+	SizeGreater10GB    int `json:"size_gt_10gb"`
+
+	// By MEK fingerprint (for rotation visibility)
+	ByKeyFingerprint map[string]int `json:"by_key_fingerprint,omitempty"`
+
+	// By outcome
+	OutcomeProcessed  int `json:"outcome_processed"`
+	OutcomeSkipped    int `json:"outcome_skipped"`
+	OutcomeFailed     int `json:"outcome_failed"`
+	OutcomeIntegrityFailed int `json:"outcome_integrity_failed"`
 }
 
 // MigrationResult contains the result of a format migration operation.
@@ -237,9 +270,18 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			}
 
 			// Check if this object should be skipped:
-			// Version not in include list (not a source version we want to migrate from)
-			// Note: shouldMigrateVersion() already excludes target version if it's not in the include list
+			// 1. Version not in include list (not a source version we want to migrate from)
+			// 2. Already at target version (only checked for versions that ARE in the include list)
 			if !fm.shouldMigrateVersion(uint8(version)) {
+				// Version is not in the include list - skip it
+				result.SkippedObjects++
+				fm.advanceCursor(obj.Key)
+				continue
+			}
+			// Only check "already at target version" for versions in the include list
+			// This prevents double-counting skips for versions that are both "at target" AND "not in include"
+			if uint8(version) == fm.currentWriteVersion {
+				// Object is already at the target version - skip it
 				result.SkippedObjects++
 				fm.advanceCursor(obj.Key)
 				continue
@@ -925,7 +967,13 @@ func (fm *FormatMigrator) countObjects(ctx context.Context) error {
 				}
 				// If not in include list, it will be skipped in Migrate() - don't count
 			} else {
-				// Parsed successfully - check if version is in include list
+				// Parsed successfully - check if version should be counted
+				// Skip objects already at target version
+				if uint8(armorMeta.Version) == fm.currentWriteVersion {
+					// Already at target version - don't count as migration candidate
+					continue
+				}
+				// Check if version is in include list
 				if fm.shouldMigrateVersion(uint8(armorMeta.Version)) {
 					count++
 				}
@@ -964,4 +1012,158 @@ func (fm *FormatMigrator) multipartThreshold() int {
 // Helper function to create a reader from bytes
 func bytesReader(b []byte) io.Reader {
 	return bytes.NewReader(b)
+}
+
+// classifyObject determines the classification category for an object.
+// Returns the category name and whether the object should be migrated.
+func (fm *FormatMigrator) classifyObject(rawMeta map[string]string, objSize int64) (category string, shouldMigrate bool) {
+	// Check if object has ARMOR metadata
+	armorVersion := rawMeta[armorMetaVersion]
+	if armorVersion == "" {
+		return "non_armor", false
+	}
+
+	// Parse version
+	var version int
+	if _, err := fmt.Sscanf(armorVersion, "%d", &version); err != nil {
+		// Has ARMOR metadata header but invalid version - malformed
+		return "malformed", false
+	}
+
+	// Check if this is a V3 object (already at target)
+	if version == 3 {
+		return "v3", false
+	}
+
+	// Check if version is in the include list
+	if !fm.shouldMigrateVersion(uint8(version)) {
+		// Version not in include list - will be skipped
+		return fmt.Sprintf("v%d", version), false
+	}
+
+	// Check for multipart flag
+	isMultipart := rawMeta[armorMetaMultipart] == "true"
+
+	// Classify by version and layout
+	switch version {
+	case 1:
+		if isMultipart {
+			return "v1_multipart", true
+		}
+		return "v1_single_put", true
+	case 2:
+		if isMultipart {
+			return "v2_multipart", true
+		}
+		return "v2_single_put", true
+	default:
+		// Unknown version - malformed
+		return "malformed", false
+	}
+}
+
+// classifyBySize returns the size classification for an object.
+func classifyBySize(size int64) string {
+	switch {
+	case size < 1*1024*1024:
+		return "size_lt_1mb"
+	case size < 10*1024*1024:
+		return "size_1mb_to_10mb"
+	case size < 100*1024*1024:
+		return "size_10mb_to_100mb"
+	case size < 1*1024*1024*1024:
+		return "size_100mb_to_1gb"
+	case size < 10*1024*1024*1024:
+		return "size_1gb_to_10gb"
+	default:
+		return "size_gt_10gb"
+	}
+}
+
+// getMEKFingerprint extracts the MEK fingerprint from wrapped DEK metadata.
+// Returns the fingerprint or "unknown" if not found.
+func getMEKFingerprint(rawMeta map[string]string) string {
+	wrappedDEK := rawMeta[armorMetaWrappedDEK]
+	if wrappedDEK == "" {
+		return "unknown"
+	}
+
+	// Check for v2 format: "v2:<fingerprint>:<base64>"
+	if strings.HasPrefix(wrappedDEK, "v2:") {
+		parts := strings.SplitN(wrappedDEK, ":", 3)
+		if len(parts) >= 2 {
+			return parts[1] // Fingerprint is the second part
+		}
+	}
+
+	// Legacy format - no fingerprint
+	return "legacy"
+}
+
+// updateClassification updates the classification counts based on object metadata.
+func (fm *FormatMigrator) updateClassification(rawMeta map[string]string, objSize int64, outcome string) {
+	fm.stateMu.Lock()
+	defer fm.stateMu.Unlock()
+
+	if fm.state.Classification.ByKeyFingerprint == nil {
+		fm.state.Classification.ByKeyFingerprint = make(map[string]int)
+	}
+
+	// Get category and determine if migration was attempted
+	category, shouldMigrate := fm.classifyObject(rawMeta, objSize)
+
+	// Update category counts
+	switch category {
+	case "v1_single_put":
+		fm.state.Classification.V1SinglePut++
+	case "v1_multipart":
+		fm.state.Classification.V1Multipart++
+	case "v2_single_put":
+		fm.state.Classification.V2SinglePut++
+	case "v2_multipart":
+		fm.state.Classification.V2Multipart++
+	case "v3":
+		fm.state.Classification.V3++
+	case "non_armor":
+		fm.state.Classification.NonARMOR++
+	case "malformed":
+		fm.state.Classification.Malformed++
+	case "contradictory":
+		fm.state.Classification.Contradictory++
+	}
+
+	// Update size classification
+	sizeClass := classifyBySize(objSize)
+	switch sizeClass {
+	case "size_lt_1mb":
+		fm.state.Classification.SizeLessThan1MB++
+	case "size_1mb_to_10mb":
+		fm.state.Classification.Size1MBTo10MB++
+	case "size_10mb_to_100mb":
+		fm.state.Classification.Size10MBTo100MB++
+	case "size_100mb_to_1gb":
+		fm.state.Classification.Size100MBTo1GB++
+	case "size_1gb_to_10gb":
+		fm.state.Classification.Size1GBTo10GB++
+	case "size_gt_10gb":
+		fm.state.Classification.SizeGreater10GB++
+	}
+
+	// Update MEK fingerprint count
+	fingerprint := getMEKFingerprint(rawMeta)
+	if shouldMigrate {
+		fm.state.Classification.ByKeyFingerprint[fingerprint]++
+	}
+
+	// Update outcome counts
+	switch outcome {
+	case "processed":
+		fm.state.Classification.OutcomeProcessed++
+	case "skipped":
+		fm.state.Classification.OutcomeSkipped++
+	case "failed":
+		fm.state.Classification.OutcomeFailed++
+	case "integrity_failed":
+		fm.state.Classification.OutcomeIntegrityFailed++
+	}
 }
