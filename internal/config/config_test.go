@@ -408,6 +408,8 @@ func minimalEnv() []string {
 		"ARMOR_BUCKET", "testbucket",
 		"ARMOR_CF_DOMAIN", "test.example.com",
 		"ARMOR_MEK", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+		"ARMOR_AUTH_ACCESS_KEY", "test-access-key",
+		"ARMOR_AUTH_SECRET_KEY", "test-secret-key",
 	}
 }
 
@@ -1016,9 +1018,9 @@ func TestKeyRingParsing(t *testing.T) {
 			expectCount: 0,
 		},
 		{
-			name:    "single retired key",
-			ringStr: "1111111111111111111111111111111111111111111111111111111111111111",
-			activeMEK: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			name:        "single retired key",
+			ringStr:     "1111111111111111111111111111111111111111111111111111111111111111",
+			activeMEK:   "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
 			expectCount: 1,
 		},
 		{
@@ -1047,9 +1049,9 @@ func TestKeyRingParsing(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:    "empty entry in ring",
-			ringStr: "1111111111111111111111111111111111111111111111111111111111111111,,",
-			activeMEK: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+			name:        "empty entry in ring",
+			ringStr:     "1111111111111111111111111111111111111111111111111111111111111111,,",
+			activeMEK:   "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
 			expectError: true,
 		},
 		{
@@ -1113,6 +1115,23 @@ func TestLoadWithKeyRing(t *testing.T) {
 	// Should have 2 retired keys (64 bytes total)
 	if len(ringMEKs) != 64 {
 		t.Errorf("Ring MEKs length = %d, want 64", len(ringMEKs))
+	}
+}
+
+func TestLoadWithEmptyKeyRing(t *testing.T) {
+	env := append(minimalEnv(), "ARMOR_MEK_RING", "")
+	setEnv(t, env...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if len(cfg.NamedKeys) != 0 {
+		t.Fatalf("NamedKeys count = %d, want 0", len(cfg.NamedKeys))
+	}
+	if len(cfg.KeyRings) != 0 {
+		t.Fatalf("KeyRings count = %d, want 0", len(cfg.KeyRings))
 	}
 }
 
