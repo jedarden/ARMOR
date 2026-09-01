@@ -210,18 +210,42 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			}
 
 			armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
-			if !ok {
-				// Not an ARMOR-encrypted object
+
+			// First, extract and check the version to determine if we should even attempt migration
+			// Use the version from metadata (if parsing failed, try to parse version directly)
+			var version int
+			if armorMeta != nil {
+				version = armorMeta.Version
+			} else {
+				// Try to parse version directly from metadata
+				armorVersion := rawMeta[armorMetaVersion]
+				if armorVersion == "" {
+					// Not an ARMOR-encrypted object
+					result.SkippedObjects++
+					fm.advanceCursor(obj.Key)
+					continue
+				}
+				if _, err := fmt.Sscanf(armorVersion, "%d", &version); err != nil {
+					log.Printf("Warning: object %s has invalid version '%s', skipping", obj.Key, armorVersion)
+					result.SkippedObjects++
+					fm.advanceCursor(obj.Key)
+					continue
+				}
+			}
+
+			// Check if object version is in the include list
+			// Do this BEFORE attempting to migrate objects with invalid metadata
+			if !fm.shouldMigrateVersion(uint8(version)) {
 				result.SkippedObjects++
 				fm.advanceCursor(obj.Key)
 				continue
 			}
 
-			// Check if object version is in the include list
-			if !fm.shouldMigrateVersion(uint8(armorMeta.Version)) {
-				result.SkippedObjects++
-				fm.advanceCursor(obj.Key)
-				continue
+			// If we get here, the object is a migration candidate
+			// If metadata parsing failed but version is in include list, attempt migration (will fail and be recorded)
+			if !ok {
+				// Has ARMOR version but invalid metadata - attempt migration, which will fail
+				log.Printf("Warning: object %s has ARMOR version but invalid metadata, attempting migration (will fail)", obj.Key)
 			}
 
 			// Migrate the object
@@ -407,11 +431,41 @@ func (fm *FormatMigrator) decryptSingleObject(armorMeta *backend.ARMORMetadata, 
 		return nil, fmt.Errorf("failed to read ciphertext: %w", err)
 	}
 
-	// For single-PUT objects, we need to handle HMAC tables differently
-	// Since this is migration code and single-PUT objects have embedded HMACs,
-	// we'll skip the full decrypt for now and just return the ciphertext for verification
-	// TODO: Implement proper single-PUT decryption with embedded HMAC extraction
-	return ciphertext, nil
+	// For single-PUT objects, the HMAC table is embedded at the end of the ciphertext
+	// Split the ciphertext into data and HMAC table
+	// V1 format: [encrypted blocks] + [HMAC table (SHA256 * num_blocks)]
+	// V2 format: [encrypted blocks] + [HMAC table (SHA256 * num_blocks)]
+	blockSize := header.BlockSize()
+	if blockSize <= 0 {
+		return nil, fmt.Errorf("invalid block size: %d", blockSize)
+	}
+
+	// Calculate number of blocks based on actual plaintext size from header
+	plaintextSize := header.PlaintextSize
+	numBlocks := (int(plaintextSize) + blockSize - 1) / blockSize
+	hmacTableSize := numBlocks * 32 // SHA256 = 32 bytes per block
+
+	if len(ciphertext) < hmacTableSize {
+		return nil, fmt.Errorf("ciphertext too short to contain HMAC table: got %d, need %d", len(ciphertext), hmacTableSize)
+	}
+
+	// Split ciphertext and HMAC table
+	dataSize := len(ciphertext) - hmacTableSize
+	encryptedData := ciphertext[:dataSize]
+	hmacTable := ciphertext[dataSize:]
+
+	// Decrypt with HMAC verification
+	decryptor, err := crypto.NewDecryptorWithVersion(dek, header.IV[:], blockSize, header.Version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create decryptor: %w", err)
+	}
+
+	plaintext, err := decryptor.Decrypt(encryptedData, hmacTable)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt: %w", err)
+	}
+
+	return plaintext, nil
 }
 
 // decryptMultipartObject decrypts a multipart object.
@@ -503,12 +557,30 @@ func (fm *FormatMigrator) encryptAsSingle(plaintext []byte) (ciphertext, iv, wra
 	}
 
 	// Encrypt
-	ciphertext, _, err = encryptor.Encrypt(plaintext)
+	ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
 	if err != nil {
 		return nil, nil, nil, 0, "", fmt.Errorf("failed to encrypt: %w", err)
 	}
 
-	return ciphertext, iv, wrappedDEK, blockSize, mekFingerprint, nil
+	// Append HMAC table to ciphertext (as single-PUT format requires)
+	ciphertext = append(ciphertext, hmacTable...)
+
+	// Create envelope header and prepend to ciphertext
+	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, fm.currentWriteVersion)
+	if err != nil {
+		return nil, nil, nil, 0, "", fmt.Errorf("failed to create envelope header: %w", err)
+	}
+
+	headerBuf, err := header.Encode()
+	if err != nil {
+		return nil, nil, nil, 0, "", fmt.Errorf("failed to encode envelope header: %w", err)
+	}
+
+	// Prepend header to ciphertext for storage format
+	fullData := append(headerBuf, ciphertext...)
+
+	return fullData, iv, wrappedDEK, blockSize, mekFingerprint, nil
 }
 
 // uploadAsMultipart uploads the plaintext as a multipart object with encryption.
@@ -806,10 +878,8 @@ func (fm *FormatMigrator) countObjects(ctx context.Context) error {
 		}
 
 		for _, obj := range listResult.Objects {
-			// Skip internal ARMOR objects
-			if len(obj.Key) >= 7 && obj.Key[:7] == ".armor/" {
-				continue
-			}
+			// Note: .armor/ objects are already filtered by the backend's List method
+			// (for MockBackend in tests, this is done in the List implementation)
 
 			// Check if object has ARMOR metadata
 			rawMeta, err := fm.objectMetadata(ctx, obj)
