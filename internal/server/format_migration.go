@@ -269,23 +269,16 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				}
 			}
 
-			// Check if this object should be skipped:
-			// 1. Version not in include list (not a source version we want to migrate from)
-			// 2. Already at target version (only checked for versions that ARE in the include list)
-			if !fm.shouldMigrateVersion(uint8(version)) {
-				// Version is not in the include list - skip it
-				result.SkippedObjects++
-				fm.advanceCursor(obj.Key)
-				continue
-			}
-			// Only check "already at target version" for versions in the include list
-			// This prevents double-counting skips for versions that are both "at target" AND "not in include"
-			if uint8(version) == fm.currentWriteVersion {
-				// Object is already at the target version - skip it
-				result.SkippedObjects++
-				fm.advanceCursor(obj.Key)
-				continue
-			}
+		// Check if this object should be skipped:
+		// Skip if version is already at target (regardless of include list)
+		// OR if version is not in the include list (not a source version we want to migrate from)
+		// These are mutually exclusive conditions - an object is skipped once for one reason
+		if uint8(version) == fm.currentWriteVersion || !fm.shouldMigrateVersion(uint8(version)) {
+			// Object is already at target version, or version is not in the include list - skip it
+			result.SkippedObjects++
+			fm.advanceCursor(obj.Key)
+			continue
+		}
 
 			// If we get here, the object is a migration candidate
 			// If metadata parsing failed but version is in include list, attempt migration (will fail and be recorded)
@@ -968,15 +961,18 @@ func (fm *FormatMigrator) countObjects(ctx context.Context) error {
 				// If not in include list, it will be skipped in Migrate() - don't count
 			} else {
 				// Parsed successfully - check if version should be counted
-				// Skip objects already at target version
+				// Check if version is in include list (matching Migrate's order)
+				if !fm.shouldMigrateVersion(uint8(armorMeta.Version)) {
+					// Version not in include list - don't count
+					continue
+				}
+				// Skip objects already at target version (only checked for versions in include list)
 				if uint8(armorMeta.Version) == fm.currentWriteVersion {
 					// Already at target version - don't count as migration candidate
 					continue
 				}
-				// Check if version is in include list
-				if fm.shouldMigrateVersion(uint8(armorMeta.Version)) {
-					count++
-				}
+				// Version is in include list and not at target version - count it
+				count++
 			}
 		}
 
