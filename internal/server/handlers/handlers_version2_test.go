@@ -141,7 +141,9 @@ func TestVersion2EncryptionMultipartUpload(t *testing.T) {
 	uploadID = createResult.UploadID
 
 	// Step 2: Upload part 1
-	part1Data := make([]byte, 64*1024) // 64KB (1 block)
+	// ADR-005 requires a multi-part upload's uniform part size to meet B2's
+	// 5 MiB minimum, so part 1 (which pins P) must be at least that size.
+	part1Data := make([]byte, 5*1024*1024) // 5MiB (meets ADR-005 minimum)
 	if _, err := rand.Read(part1Data); err != nil {
 		t.Fatalf("failed to generate part 1 data: %v", err)
 	}
@@ -156,7 +158,8 @@ func TestVersion2EncryptionMultipartUpload(t *testing.T) {
 	}
 
 	// Step 3: Upload part 2
-	part2Data := make([]byte, 64*1024) // 64KB (1 block)
+	// Equal to part 1's size (P) — a regular, non-final part under ADR-005.
+	part2Data := make([]byte, 5*1024*1024) // 5MiB
 	if _, err := rand.Read(part2Data); err != nil {
 		t.Fatalf("failed to generate part 2 data: %v", err)
 	}
@@ -171,7 +174,7 @@ func TestVersion2EncryptionMultipartUpload(t *testing.T) {
 	}
 
 	// Step 4: Complete multipart upload
-	completeReqBody := fmt.Sprintf(`<CompleteMultipartUploadRequest xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+	completeReqBody := fmt.Sprintf(`<CompleteMultipartUpload xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
 		<Part>
 			<PartNumber>1</PartNumber>
 			<ETag>%s</ETag>
@@ -180,7 +183,7 @@ func TestVersion2EncryptionMultipartUpload(t *testing.T) {
 			<PartNumber>2</PartNumber>
 			<ETag>%s</ETag>
 		</Part>
-	</CompleteMultipartUploadRequest>`, part1W.Header().Get("ETag"), part2W.Header().Get("ETag"))
+	</CompleteMultipartUpload>`, part1W.Header().Get("ETag"), part2W.Header().Get("ETag"))
 
 	completeReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/%s/%s?uploadId=%s", bucket, key, uploadID), strings.NewReader(completeReqBody))
 	completeW := httptest.NewRecorder()
@@ -191,13 +194,15 @@ func TestVersion2EncryptionMultipartUpload(t *testing.T) {
 		t.Fatalf("CompleteMultipartUpload failed: status %d, body %s", completeW.Code, completeW.Body.String())
 	}
 
-	// Step 5: Verify the stored metadata has Version 2
+	// Step 5: Verify the stored metadata has Version 2.
+	// ADR-016: metadata lives on the <key>.armor-manifest object, not the
+	// ciphertext object itself.
 	mb.mu.Lock()
-	meta, ok := mb.meta[bucket+"/"+key]
+	meta, ok := mb.meta[bucket+"/"+key+".armor-manifest"]
 	mb.mu.Unlock()
 
 	if !ok {
-		t.Fatal("object metadata not found after CompleteMultipartUpload")
+		t.Fatal("manifest metadata not found after CompleteMultipartUpload")
 	}
 
 	version := meta["x-amz-meta-armor-version"]
