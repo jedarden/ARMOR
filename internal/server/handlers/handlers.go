@@ -100,22 +100,20 @@ type Handlers struct {
 	replicationQueue replication.Enqueuer
 	logger           *logging.Logger // Structured logger for S3 error events
 
-	// multipartLocks serializes per-upload state updates. ADR-005 removes the
-	// sequential-only rejection, so parts of one upload may now arrive
-	// concurrently. The multipart state object (.armor/multipart/<id>.state)
-	// is updated by a read-modify-write in every UploadPart/Complete; without
-	// per-upload serialization a later writer would drop earlier parts'
-	// HMAC/size entries. Cross-upload parallelism is unaffected — one mutex
-	// per uploadID. The zero value is a usable sync.Map.
-	multipartLocks sync.Map // uploadID -> *sync.Mutex
+	// multipartLocks protects multipart state updates. Legacy v2 parts share one
+	// read-modify-write state object and therefore lock by upload ID. V3 stores
+	// each part in an independent part-<n>.json object, so it locks only duplicate
+	// requests for the same part number; distinct v3 parts remain concurrent.
+	// The zero value is a usable sync.Map.
+	multipartLocks sync.Map // lock key -> *sync.Mutex
 
 	// multipartSidecarCache caches v3 multipart sidecar data
 	multipartSidecarCache *backend.MultipartSidecarCache
 }
 
-// multipartLock returns the mutex serializing state updates for one upload id.
-func (h *Handlers) multipartLock(uploadID string) *sync.Mutex {
-	v, _ := h.multipartLocks.LoadOrStore(uploadID, &sync.Mutex{})
+// multipartLock returns the mutex serializing state updates for one lock key.
+func (h *Handlers) multipartLock(lockKey string) *sync.Mutex {
+	v, _ := h.multipartLocks.LoadOrStore(lockKey, &sync.Mutex{})
 	return v.(*sync.Mutex)
 }
 
@@ -3163,18 +3161,15 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 // both the original sequential-only layout (ADR-003) and the ADR-011
 // cumulative-offset layout.
 //
-// Per-upload state updates are serialized by multipartLock: the state object is
-// read-modify-written here, so without per-upload serialization a concurrent
-// writer would drop an earlier part's HMAC/size entry. The lock is held across
-// the backend upload too — this keeps state updates atomic. It serializes the
-// parts of ONE upload (different uploads still proceed in parallel).
+// Legacy v2 per-upload state updates are serialized by multipartLock: the state
+// object is read-modify-written here, so without per-upload serialization a
+// concurrent writer would drop an earlier part's HMAC/size entry. V3 uses an
+// independent part-<n>.json object per part, so distinct part numbers must not
+// share this lock. Serializing them leaves concurrent clients' request bodies
+// unread while a slow B2 UploadPart runs, eventually resetting those idle
+// connections. Duplicate requests for the same v3 part remain serialized.
 func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	ctx := r.Context()
-
-	// Serialize state updates for this one upload id.
-	mu := h.multipartLock(uploadID)
-	mu.Lock()
-	defer mu.Unlock()
 
 	// Parse part number
 	partNumberStr := r.URL.Query().Get("partNumber")
@@ -3200,6 +3195,11 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 	if errV3 == nil && metadata != nil {
 		// V3 format loaded successfully
 		formatVersion = 3
+		// V3 part metadata is independent, so only serialize an idempotent retry
+		// racing the same part number. Different parts must reach B2 concurrently.
+		mu := h.multipartLock(fmt.Sprintf("%s/part/%d", uploadID, partNumber))
+		mu.Lock()
+		defer mu.Unlock()
 		// Convert v3 metadata to a minimal state structure for the existing logic
 		// The state is used read-only for most of the function
 		state = &backend.MultipartState{
@@ -3223,6 +3223,11 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		}
 	} else {
 		// Fall back to v2 format
+		// V2 has one shared read-modify-write state object, so the lock must cover
+		// the state load, backend upload, and state save.
+		mu := h.multipartLock(uploadID)
+		mu.Lock()
+		defer mu.Unlock()
 		state, err = manager.LoadState(ctx, uploadID)
 		if err != nil {
 			h.writeError(w, r, "NoSuchUpload", fmt.Sprintf("Multipart upload not found: %v", err), 404)
