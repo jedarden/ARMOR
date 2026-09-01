@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 )
@@ -45,9 +46,9 @@ func TestLoadAuthFile_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("LoadAuthFile() with non-existent file should return error")
 	}
-	// Error should mention the path
-	if msg := err.Error(); filepath.Base(msg) != "credentials.yaml" {
-		t.Errorf("Error should mention the filename, got: %v", err)
+	// Error should mention the filename
+	if msg := err.Error(); !strings.Contains(msg, "credentials.yaml") {
+		t.Errorf("Error should mention the filename 'credentials.yaml', got: %v", err)
 	}
 }
 

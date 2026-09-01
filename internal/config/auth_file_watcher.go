@@ -99,12 +99,25 @@ func (w *AuthFileWatcher) Start() {
 
 // Stop gracefully shuts down the watcher.
 // Blocks until the polling goroutine exits.
+// Safe to call multiple times.
 func (w *AuthFileWatcher) Stop() {
 	if w == nil {
 		return
 	}
 
-	close(w.stopCh)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Use sync.Once to ensure we only close the channel once
+	// This prevents panic on multiple Stop() calls
+	select {
+	case <-w.stopCh:
+		// Already stopped
+		return
+	default:
+		close(w.stopCh)
+	}
+
 	w.wg.Wait()
 
 	slog.Info("stopped ARMOR_AUTH_FILE hot-reload watcher", "path", w.path)
@@ -155,8 +168,8 @@ func (w *AuthFileWatcher) checkAndReload() {
 // reload loads and swaps in a new credential set.
 // On error, keeps the old set and logs at ERROR.
 func (w *AuthFileWatcher) reload(newMtime time.Time) {
-	// Load and parse the file
-	authFile, err := LoadAuthFile()
+	// Load and parse the file from the watcher's path (not env var)
+	authFile, err := loadAuthFileAtPath(w.path)
 	if err != nil {
 		slog.Error("failed to reload ARMOR_AUTH_FILE, keeping previous credentials",
 			"path", w.path,
