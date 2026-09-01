@@ -33,10 +33,15 @@ func LoadAuthFile() (*AuthFile, error) {
 	if path == "" {
 		return nil, nil
 	}
+	return loadAuthFileAtPath(path)
+}
 
+// loadAuthFileAtPath reads and parses the YAML credential file at the given path.
+// Validation errors name the entry index and field, never the values.
+func loadAuthFileAtPath(path string) (*AuthFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read ARMOR_AUTH_FILE %q: %w", path, err)
+		return nil, fmt.Errorf("failed to read ARMOR_AUTH_FILE: %s: %w", path, err)
 	}
 
 	var authFile AuthFile
