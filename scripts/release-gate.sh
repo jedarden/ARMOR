@@ -21,6 +21,12 @@ go test ${race_flag} -count=1 ./internal/backend \
 
 go test ${race_flag} -count=1 ./internal/canary
 
+# Key-ring variables share the ARMOR_MEK_ prefix with named keys. Keep their
+# parsing in the release gate so a deployable image accepts both empty and
+# populated default/named rings.
+go test -count=1 ./internal/config \
+  -run '^TestLoadWith(KeyRing|EmptyKeyRing|NamedKeyRing|RingValidationErrors)$'
+
 go test ${race_flag} -count=1 ./internal/server/handlers \
 	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3|^TestV3GetObject|^TestV3FilesystemPutGetRoundTrip$'
 
