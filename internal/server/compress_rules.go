@@ -21,6 +21,6 @@ var NormalizeKey = config.NormalizeKey
 
 // EvaluateCompression keeps the server-level API while allowing Config to own
 // the rule data without importing server (which would create an import cycle).
-func EvaluateCompression(key, contentType string, rules *CompressRules, overrideHeader string) (bool, error) {
-	return config.EvaluateCompression(key, contentType, rules, overrideHeader)
+func EvaluateCompression(key, contentType string, rules *CompressRules, overrideHeader string, compress bool) (bool, error) {
+	return config.EvaluateCompression(key, contentType, rules, overrideHeader, compress)
 }

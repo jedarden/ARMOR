@@ -368,34 +368,48 @@ func TestEvaluateCompression(t *testing.T) {
 		contentType   string
 		rulesStr      string
 		overrideValue string
+		compress      bool
 		wantCompress  bool
 		wantErr       bool
 		errContains   string
 	}{
 		{
-			name:          "no rules, no override",
+			name:          "no rules, no override, compress=false",
 			key:           "test.jsonl",
 			contentType:   "",
 			rulesStr:      "",
 			overrideValue: "",
+			compress:      false,
 			wantCompress:  false,
 			wantErr:       false,
 		},
 		{
-			name:          "override true ignores rules",
-			key:           "test.log",
+			name:          "no rules, no override, compress=true",
+			key:           "test.jsonl",
 			contentType:   "",
-			rulesStr:      "*.log=none",
-			overrideValue: "true",
+			rulesStr:      "",
+			overrideValue: "",
+			compress:      true,
 			wantCompress:  true,
 			wantErr:       false,
 		},
 		{
-			name:          "override false ignores rules",
+			name:          "override true ignores rules and compress flag",
+			key:           "test.log",
+			contentType:   "",
+			rulesStr:      "*.log=none",
+			overrideValue: "true",
+			compress:      false,
+			wantCompress:  true,
+			wantErr:       false,
+		},
+		{
+			name:          "override false ignores rules and compress flag",
 			key:           "test.jsonl",
 			contentType:   "",
 			rulesStr:      ".jsonl=zstd",
 			overrideValue: "false",
+			compress:      true,
 			wantCompress:  false,
 			wantErr:       false,
 		},
@@ -405,6 +419,7 @@ func TestEvaluateCompression(t *testing.T) {
 			contentType:   "",
 			rulesStr:      ".jsonl=zstd",
 			overrideValue: "",
+			compress:      false,
 			wantCompress:  true,
 			wantErr:       false,
 		},
@@ -414,6 +429,7 @@ func TestEvaluateCompression(t *testing.T) {
 			contentType:   "application/json",
 			rulesStr:      "application/json=zstd",
 			overrideValue: "",
+			compress:      false,
 			wantCompress:  true,
 			wantErr:       false,
 		},
@@ -423,6 +439,7 @@ func TestEvaluateCompression(t *testing.T) {
 			contentType:   "",
 			rulesStr:      ".jsonl=zstd,*=none",
 			overrideValue: "",
+			compress:      false,
 			wantCompress:  false,
 			wantErr:       false,
 		},
@@ -432,6 +449,7 @@ func TestEvaluateCompression(t *testing.T) {
 			contentType:   "",
 			rulesStr:      "",
 			overrideValue: "invalid",
+			compress:      false,
 			wantCompress:  false,
 			wantErr:       true,
 			errContains:   "invalid x-amz-meta-armor-compress",
@@ -450,7 +468,7 @@ func TestEvaluateCompression(t *testing.T) {
 				}
 			}
 
-			gotCompress, err := EvaluateCompression(tt.key, tt.contentType, rules, tt.overrideValue)
+			gotCompress, err := EvaluateCompression(tt.key, tt.contentType, rules, tt.overrideValue, tt.compress)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("EvaluateCompression() expected error, got nil")
