@@ -285,6 +285,13 @@ func (m *failingListBackend) List(ctx context.Context, bucket, prefix, delimiter
 	return m.mockBackend.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
 }
 
+func (m *failingListBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	if prefix == m.failPrefix {
+		return nil, fmt.Errorf("injected listing failure for %q", prefix)
+	}
+	return m.mockBackend.ListRaw(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
 type omittingEntryListBackend struct {
 	*mockBackend
 }
