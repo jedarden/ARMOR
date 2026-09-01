@@ -31,7 +31,7 @@ go test -count=1 ./internal/config \
 # terminates CompleteMultipartUpload while the backing store is still
 # composing the object, so keep the timeout policy in the release gate.
 go test -count=1 ./cmd/armor \
-	-run '^TestNewS3HTTPServerAllowsLongRunningResponses$'
+	-run '^TestNewS3HTTPServerAllowsLongRunningRequestsAndResponses$'
 
 go test ${race_flag} -count=1 ./internal/server/handlers \
 	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3|^TestV3GetObject|^TestV3FilesystemPutGetRoundTrip$'
