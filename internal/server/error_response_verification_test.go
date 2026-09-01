@@ -38,6 +38,7 @@ func TestComprehensiveErrorVerification(t *testing.T) {
 	}
 
 	cfg := &config.Config{
+		Backend:     "filesystem",
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -259,6 +260,7 @@ func TestErrorResponseFormatDocumentation(t *testing.T) {
 	}
 
 	cfg := &config.Config{
+		Backend:     "filesystem",
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,

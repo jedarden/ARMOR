@@ -53,6 +53,7 @@ func SetupTestServer(t *testing.T) *TestServer {
 
 	// Create test configuration
 	cfg := &config.Config{
+		Backend:     "filesystem",
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: testCredentials,

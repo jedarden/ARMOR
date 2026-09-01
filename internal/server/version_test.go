@@ -17,6 +17,7 @@ import (
 // TestVersionEndpoint tests that GET /version returns the expected JSON response.
 func TestVersionEndpoint(t *testing.T) {
 	cfg := &config.Config{
+		Backend:            "filesystem",
 		FormatWriteVersion: 2,
 	}
 
@@ -71,6 +72,7 @@ func TestVersionEndpoint(t *testing.T) {
 // TestVersionEndpointOnAdminListener tests that GET /version works on the admin listener.
 func TestVersionEndpointOnAdminListener(t *testing.T) {
 	cfg := &config.Config{
+		Backend:            "filesystem",
 		FormatWriteVersion: 2,
 	}
 
@@ -114,6 +116,7 @@ func TestVersionEndpointOnAdminListener(t *testing.T) {
 // TestVersionEndpointOnlyAcceptsGet tests that /version rejects non-GET requests.
 func TestVersionEndpointOnlyAcceptsGet(t *testing.T) {
 	cfg := &config.Config{
+		Backend:            "filesystem",
 		FormatWriteVersion: 2,
 	}
 
@@ -137,6 +140,7 @@ func TestVersionEndpointOnlyAcceptsGet(t *testing.T) {
 // TestServerHeaderOnS3Listener tests that all S3 API responses include Server: ARMOR/<version>.
 func TestServerHeaderOnS3Listener(t *testing.T) {
 	cfg := &config.Config{
+		Backend:            "filesystem",
 		FormatWriteVersion: 2,
 	}
 
@@ -203,6 +207,7 @@ func TestServerHeaderOnS3Listener(t *testing.T) {
 // TestServerHeaderOnAdminListener tests that all admin API responses include Server: ARMOR/<version>.
 func TestServerHeaderOnAdminListener(t *testing.T) {
 	cfg := &config.Config{
+		Backend:            "filesystem",
 		FormatWriteVersion: 2,
 	}
 

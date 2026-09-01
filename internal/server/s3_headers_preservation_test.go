@@ -33,6 +33,7 @@ func TestS3HeadersPreservation(t *testing.T) {
 	}
 
 	cfg := &config.Config{
+		Backend:     "filesystem",
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -356,6 +357,7 @@ func TestS3HeadersPreservationWithAuthorization(t *testing.T) {
 	}
 
 	cfg := &config.Config{
+		Backend:     "filesystem",
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
@@ -537,6 +539,7 @@ func TestS3HeadersEdgeCases(t *testing.T) {
 	}
 
 	cfg := &config.Config{
+		Backend:     "filesystem",
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
