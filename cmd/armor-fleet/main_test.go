@@ -217,8 +217,9 @@ armor_restore_verifier_successes_total 42
 	// Create monitor with short poll interval for testing
 	monitor := NewFleetMonitor([]Target{target}, "test-token", 1)
 
-	// Override the client to use the mock server
+	// Override the client and baseURL to use the mock server
 	monitor.client = seamServer.Client()
+	monitor.baseURL = seamServer.URL + "/k8s/%s/api/v1/namespaces/%s/services/%s:%d/proxy"
 
 	// Manually trigger a poll to avoid waiting for the ticker
 	ctx := context.Background()
