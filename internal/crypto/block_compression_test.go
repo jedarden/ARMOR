@@ -532,11 +532,7 @@ func generateRandomBytes(n int) []byte {
 
 // generateCompressedData generates high-entropy data (simulating already-compressed content).
 func generateCompressedData(n int) []byte {
-	data := make([]byte, n)
-	for i := range data {
-		data[i] = byte(i % 256)
-	}
-	return data
+	return generateRandomBytes(n)
 }
 
 // generateHighEntropyData generates data with maximum entropy.

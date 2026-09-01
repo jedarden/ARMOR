@@ -11,9 +11,9 @@ var (
 	// ErrInvalidBlockTableEntry is returned when a block table entry is malformed.
 	ErrInvalidBlockTableEntry = errors.New("invalid block table entry")
 	// ErrCiphertextTooLarge is returned when ciphertext length exceeds blockSize (raw blocks).
-	ErrCiphertextTooLarge = errors.New("ciphertext length exceeds block size for raw block")
+	ErrCiphertextTooLarge = errors.New("ciphertext too large")
 	// ErrInvalidTableSize is returned when the block table size doesn't match expected block count.
-	ErrInvalidTableSize = errors.New("block table size does not match expected block count")
+	ErrInvalidTableSize = errors.New("invalid table size")
 )
 
 const (
@@ -60,7 +60,7 @@ func (e *BlockTableEntry) Encode() ([]byte, error) {
 // DecodeBlockTableEntry parses a 36-byte buffer into a BlockTableEntry.
 func DecodeBlockTableEntry(data []byte) (*BlockTableEntry, error) {
 	if len(data) < BlockTableEntrySize {
-		return nil, fmt.Errorf("%w: expected %d bytes, got %d", ErrInvalidBlockTableEntry, BlockTableEntrySize, len(data))
+		return nil, fmt.Errorf("expected %d bytes, got %d: %w", BlockTableEntrySize, len(data), ErrInvalidBlockTableEntry)
 	}
 
 	e := &BlockTableEntry{}
@@ -83,18 +83,18 @@ func (e *BlockTableEntry) Validate(blockSize int) error {
 
 	// Non-compressed blocks cannot exceed blockSize
 	if !e.IsCompressed() && int(rawLen) > blockSize {
-		return fmt.Errorf("%w: ciphertext length %d exceeds block size %d", ErrCiphertextTooLarge, rawLen, blockSize)
+		return fmt.Errorf("ciphertext length %d exceeds block size %d: %w", rawLen, blockSize, ErrCiphertextTooLarge)
 	}
 
 	// Compressed blocks should also be reasonable (compressed data can be larger than input for incompressible data)
 	// We allow up to blockSize + overhead for compressed blocks
 	if e.IsCompressed() && int(rawLen) > blockSize+1024 {
-		return fmt.Errorf("%w: compressed ciphertext length %d exceeds reasonable limit", ErrInvalidBlockTableEntry, rawLen)
+		return fmt.Errorf("compressed ciphertext length %d exceeds reasonable limit: %w", rawLen, ErrInvalidBlockTableEntry)
 	}
 
 	// Ciphertext length must be non-zero
 	if rawLen == 0 {
-		return fmt.Errorf("%w: ciphertext length cannot be zero", ErrInvalidBlockTableEntry)
+		return fmt.Errorf("ciphertext length cannot be zero: %w", ErrInvalidBlockTableEntry)
 	}
 
 	return nil
@@ -133,7 +133,7 @@ func NewBlockTable(blockSize int, expectedEntries int) *BlockTable {
 // AddEntry appends a new entry to the block table.
 func (t *BlockTable) AddEntry(entry *BlockTableEntry) error {
 	if err := entry.Validate(t.BlockSize); err != nil {
-		return fmt.Errorf("invalid block entry: %w", err)
+		return err
 	}
 
 	t.Entries = append(t.Entries, entry)
@@ -144,7 +144,7 @@ func (t *BlockTable) AddEntry(entry *BlockTableEntry) error {
 // Encode serializes the entire block table to bytes.
 func (t *BlockTable) Encode() ([]byte, error) {
 	if len(t.Entries) == 0 {
-		return nil, fmt.Errorf("%w: cannot encode empty block table", ErrInvalidBlockTableEntry)
+		return nil, fmt.Errorf("cannot encode empty block table: %w", ErrInvalidBlockTableEntry)
 	}
 
 	buf := make([]byte, len(t.Entries)*BlockTableEntrySize)
@@ -163,19 +163,19 @@ func (t *BlockTable) Encode() ([]byte, error) {
 // It validates that the number of entries matches expectedBlockCount.
 func DecodeBlockTable(data []byte, blockSize int, expectedBlockCount uint32) (*BlockTable, error) {
 	if len(data) == 0 {
-		return nil, fmt.Errorf("%w: empty block table data", ErrInvalidBlockTableEntry)
+		return nil, fmt.Errorf("empty block table data: %w", ErrInvalidBlockTableEntry)
 	}
 
 	// Verify table size matches expected block count
 	entryCount := len(data) / BlockTableEntrySize
 	if entryCount != int(expectedBlockCount) {
-		return nil, fmt.Errorf("%w: expected %d entries (%d bytes), got %d entries (%d bytes)",
-			ErrInvalidTableSize, expectedBlockCount, expectedBlockCount*BlockTableEntrySize, entryCount, len(data))
+		return nil, fmt.Errorf("expected %d entries (%d bytes), got %d entries (%d bytes): %w",
+			expectedBlockCount, expectedBlockCount*BlockTableEntrySize, entryCount, len(data), ErrInvalidTableSize)
 	}
 
 	if len(data)%BlockTableEntrySize != 0 {
-		return nil, fmt.Errorf("%w: table size %d is not a multiple of entry size %d",
-			ErrInvalidBlockTableEntry, len(data), BlockTableEntrySize)
+		return nil, fmt.Errorf("table size %d is not a multiple of entry size %d: %w",
+			len(data), BlockTableEntrySize, ErrInvalidBlockTableEntry)
 	}
 
 	table := NewBlockTable(blockSize, entryCount)

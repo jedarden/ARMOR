@@ -14,7 +14,7 @@ func TestEnvelopeHeader(t *testing.T) {
 	plaintext := []byte("Hello, ARMOR!")
 	plaintextSHA := ComputePlaintextSHA256(plaintext)
 
-	header, err := NewEnvelopeHeader(iv, int64(len(plaintext)), 65536, plaintextSHA)
+	header, err := NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), 65536, plaintextSHA, Version1)
 	if err != nil {
 		t.Fatalf("Failed to create header: %v", err)
 	}
