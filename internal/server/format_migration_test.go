@@ -114,6 +114,10 @@ func (m *MockBackend) DeleteObjects(ctx context.Context, bucket string, keys []s
 func (m *MockBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
 	var keys []string
 	for key := range m.objects {
+		// Skip internal ARMOR objects (.armor/ directory)
+		if len(key) >= 7 && key[:7] == ".armor/" {
+			continue
+		}
 		if prefix == "" || strings.HasPrefix(key, prefix) {
 			keys = append(keys, key)
 		}
@@ -556,7 +560,7 @@ func TestFormatMigrationMultipartToSingle(t *testing.T) {
 
 	// Small plaintext that will be migrated to single-PUT (< 5MB threshold)
 	plaintext := []byte("multipart data for migration test")
-	ciphertext, _, err := encryptor.Encrypt(plaintext)
+	ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
 	if err != nil {
 		t.Fatalf("Failed to encrypt: %v", err)
 	}
@@ -577,11 +581,11 @@ func TestFormatMigrationMultipartToSingle(t *testing.T) {
 		Metadata: metadata,
 	}
 
-	// Create HMAC sidecar
+	// Create HMAC sidecar with actual HMAC table from encryption
 	keySHA := sha256.Sum256([]byte("multipart-test.dat"))
 	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
 	mockBackend.objects[sidecarPath] = &MockObject{
-		Data: []byte("mock-hmac-data"),
+		Data: hmacTable,
 	}
 
 	// Create migrator
