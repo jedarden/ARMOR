@@ -96,7 +96,7 @@ func (d *OffsetDecryptor) DecryptFromOffset(encrypted []byte, byteOffset int64) 
 		stream := cipher.NewCTR(d.block, ctr)
 		stream.XORKeyStream(plaintext[plaintextIdx:blockEnd], encryptedBlock)
 
-		plaintextIdx = blockEnd - encryptedIdx
+		plaintextIdx += blockEnd - encryptedIdx
 		encryptedIdx = blockEnd
 		startBlock++
 	}
