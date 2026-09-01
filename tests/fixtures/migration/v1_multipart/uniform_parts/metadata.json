@@ -1,0 +1,19 @@
+{
+  "plaintext_sha256": "5f496adeac6ba5b21a781fe82ecff7548255bcec7abd11705187a2c0f058827c",
+  "plaintext_length": 15728640,
+  "source_version": "v1",
+  "source_layout": "multipart-uniform",
+  "v3_expected": {
+    "is_multipart": true,
+    "part_count": 3,
+    "blocks_per_part": [
+      80,
+      80,
+      80
+    ],
+    "compression_used": false,
+    "sidecar_path": ".armor/hmac/3c94d277a57c4078ce27e75ee1e8f605c2b382dc3108996af09e6c175cd38c9d"
+  },
+  "description": "V1 multipart object with HMAC sidecar",
+  "expected_migration_outcome": "success"
+}

@@ -1249,6 +1249,12 @@ func main() {
 		mediumPlaintext[i] = byte(i % 256)
 	}
 
+	// Large plaintext for proper multipart fixtures (15 MB - large enough to span multiple parts)
+	multipartPlaintext := make([]byte, 15*1024*1024) // 15 MB
+	for i := range multipartPlaintext {
+		multipartPlaintext[i] = byte(i % 256)
+	}
+
 	// Generate V1 single-PUT fixtures
 	fmt.Println("Generating V1 single-PUT fixtures...")
 
@@ -1302,7 +1308,7 @@ func main() {
 	// Generate V1 multipart fixtures
 	fmt.Println("Generating V1 multipart fixtures...")
 
-	v1MultipartUniform, err := gen.GenerateV1Multipart(mediumPlaintext, 5*1024*1024)
+	v1MultipartUniform, err := gen.GenerateV1Multipart(multipartPlaintext, 5*1024*1024)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate V1 multipart uniform: %v\n", err)
 		os.Exit(1)
@@ -1313,7 +1319,7 @@ func main() {
 	}
 	fmt.Println("  ✓ v1_multipart/uniform_parts")
 
-	v1VariableFinal, err := gen.GenerateV1MultipartVariableFinal(mediumPlaintext, 3*1024*1024, 2*1024*1024)
+	v1VariableFinal, err := gen.GenerateV1MultipartVariableFinal(multipartPlaintext, 3*1024*1024, 2*1024*1024)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate V1 variable final: %v\n", err)
 		os.Exit(1)
@@ -1324,7 +1330,7 @@ func main() {
 	}
 	fmt.Println("  ✓ v1_multipart/variable_final_part")
 
-	v1NonUniform, err := gen.GenerateV1MultipartNonUniform(mediumPlaintext, []int{1024*1024, 2*1024*1024, 3*1024*1024})
+	v1NonUniform, err := gen.GenerateV1MultipartNonUniform(multipartPlaintext, []int{1024*1024, 2*1024*1024, 3*1024*1024})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate V1 non-uniform: %v\n", err)
 		os.Exit(1)
@@ -1338,7 +1344,7 @@ func main() {
 	// Generate V2 multipart fixtures
 	fmt.Println("Generating V2 multipart fixtures...")
 
-	v2MultipartUniform, err := gen.GenerateV2Multipart(mediumPlaintext, 5*1024*1024)
+	v2MultipartUniform, err := gen.GenerateV2Multipart(multipartPlaintext, 5*1024*1024)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate V2 multipart uniform: %v\n", err)
 		os.Exit(1)
@@ -1349,7 +1355,7 @@ func main() {
 	}
 	fmt.Println("  ✓ v2_multipart/uniform_parts")
 
-	v2VariableFinal, err := gen.GenerateV2MultipartVariableFinal(mediumPlaintext, 3*1024*1024, 2*1024*1024)
+	v2VariableFinal, err := gen.GenerateV2MultipartVariableFinal(multipartPlaintext, 3*1024*1024, 2*1024*1024)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate V2 variable final: %v\n", err)
 		os.Exit(1)
@@ -1360,7 +1366,7 @@ func main() {
 	}
 	fmt.Println("  ✓ v2_multipart/variable_final_part")
 
-	v2NonUniform, err := gen.GenerateV2MultipartNonUniform(mediumPlaintext, []int{1024*1024, 2*1024*1024, 3*1024*1024})
+	v2NonUniform, err := gen.GenerateV2MultipartNonUniform(multipartPlaintext, []int{1024*1024, 2*1024*1024, 3*1024*1024})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate V2 non-uniform: %v\n", err)
 		os.Exit(1)

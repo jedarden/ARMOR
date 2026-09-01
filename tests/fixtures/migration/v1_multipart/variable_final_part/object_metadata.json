@@ -1,0 +1,10 @@
+{
+  "x-amz-meta-armor-block-size": "65536",
+  "x-amz-meta-armor-iv": "AwQFBgcICQoLDA0ODxAREg==",
+  "x-amz-meta-armor-multipart": "true",
+  "x-amz-meta-armor-part-size": "3145728",
+  "x-amz-meta-armor-plaintext-size": "15728640",
+  "x-amz-meta-armor-sha256": "5f496adeac6ba5b21a781fe82ecff7548255bcec7abd11705187a2c0f058827c",
+  "x-amz-meta-armor-version": "1",
+  "x-amz-meta-armor-wrapped-dek": "Yp6Ydgble++gFNTvGo1FuUkL5BcgXFvN5DUPdhg3+05OZVx6sBvjdk2xxn5tyj+AGgVAfmi2aJpbuyUs"
+}
