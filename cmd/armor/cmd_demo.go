@@ -129,12 +129,7 @@ func demo() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	// Create HTTP servers
-	httpServer := &http.Server{
-		Addr:         cfg.Listen,
-		Handler:      srv.Handler(),
-		ReadTimeout:  30 * time.Minute,
-		WriteTimeout: 30 * time.Minute,
-	}
+	httpServer := newS3HTTPServer(cfg.Listen, srv.Handler())
 
 	adminServer := &http.Server{
 		Addr:         cfg.AdminListen,
