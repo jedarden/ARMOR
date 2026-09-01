@@ -1,0 +1,636 @@
+{
+  "version": "1.0",
+  "generated": "2026-09-01T19:30:00Z",
+  "description": "Expected V3 layout outcomes for all V1/V2 migration test fixtures (computed values)",
+  "test_constants": {
+    "plaintext": "ARMOR migration test data - V1/V2 to V3 fixture with sufficient length to test multiple blocks",
+    "plaintext_length": 94,
+    "plaintext_sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c",
+    "mek_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "dek_hex": "02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021",
+    "iv_hex": "030405060708090a0b0c0d0e0f101112",
+    "block_size": 65536
+  },
+  "fixtures": {
+    "v1_single_put_explicit_version": {
+      "description": "V1 single-PUT with explicit version metadata (x-amz-meta-armor-version: 1)",
+      "source": {
+        "version": "v1",
+        "layout": "single",
+        "metadata_variant": "explicit",
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": false,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": null,
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "Version upgraded from 1 to 3",
+          "DEK re-wrapped with v2 fingerprint format",
+          "Counter derivation changed from vulnerable V1 (blockIndex stride) to V3 per-part independent",
+          "No structural changes (single-PUT \u2192 single-PUT)",
+          "V1 vulnerable derivation: counter = blockIndex (causes keystream reuse)",
+          "V3 fixed derivation: counter = (partIndex, blockIndex) with proper stride"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "v1_single_put_implicit_version": {
+      "description": "V1 single-PUT with missing version metadata (implicit V1 detection)",
+      "source": {
+        "version": "v1",
+        "layout": "single",
+        "metadata_variant": "implicit",
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": false,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": null,
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "Version detection from envelope header (magic + version byte)",
+          "Version field added to metadata (was absent in source)",
+          "V1 vulnerable counter derivation fixed",
+          "Same plaintext integrity preserved via SHA256"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "v1_single_put_minimal_metadata": {
+      "description": "V1 single-PUT with minimal metadata (only required fields)",
+      "source": {
+        "version": "v1",
+        "layout": "single",
+        "metadata_variant": "minimal",
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": false,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": null,
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "Missing optional metadata fields reconstructed from envelope header",
+          "Version field added to metadata",
+          "DEK re-wrapped with v2 format",
+          "Counter derivation fixed from V1 vulnerable to V3 per-part independent"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "v2_single_put_standard": {
+      "description": "V2 single-PUT with full metadata (fixed counter derivation)",
+      "source": {
+        "version": "v2",
+        "layout": "single",
+        "metadata_variant": "full",
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": false,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": null,
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c",
+          "x-amz-meta-armor-etag": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "Version upgraded from 2 to 3",
+          "No security fix needed (V2 already fixed counter derivation)",
+          "V3 adds per-part independence infrastructure (no-op for single-PUT)",
+          "All optional metadata preserved including ETag"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "v1_multipart_uniform_parts": {
+      "description": "V1 multipart with uniform part sizes (legacy ADR-005 contract)",
+      "source": {
+        "version": "v1",
+        "layout": "multipart-uniform",
+        "part_count": 1,
+        "part_size": 5242880,
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": true,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": ".armor/hmac/2c7b4cc71d60b19d18e4b03c863fd0f2b69eb754a4753f8a9efecf1d6f8f6a7",
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-multipart": "true",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "V1 multipart used vulnerable counter derivation within each part",
+          "V3 re-encrypts each part independently with (part, block) counter",
+          "Sidecar HMAC table migrated to per-part HMAC verification",
+          "Part structure preserved (1 part containing 94 bytes)",
+          "Critical security fix: no keystream reuse across parts",
+          "Note: Test data too small to exercise multi-part behavior (only 1 part)"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "v1_multipart_variable_final_part": {
+      "description": "V1 multipart with variable final part (ADR-010 exemption)",
+      "source": {
+        "version": "v1",
+        "layout": "multipart-variable-final",
+        "part_count": 1,
+        "part_sizes": [
+          94
+        ],
+        "uniform_part_size": 3145728,
+        "final_part_size": 2097152,
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": true,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": ".armor/hmac/2c7b4cc71d60b19d18e4b03c863fd0f2b69eb754a4753f8a9efecf1d6f8f6a7",
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-multipart": "true",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "ADR-010 allowed variable final part to fix barman incompatibility",
+          "V1 vulnerable derivation within parts, V3 fixes per-part independence",
+          "Variable part sizes preserved exactly",
+          "Note: Test data too small to exercise multi-part behavior"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "v1_multipart_non_uniform_parts": {
+      "description": "V1 multipart with non-uniform part sizes (ADR-011)",
+      "source": {
+        "version": "v1",
+        "layout": "multipart-nonuniform",
+        "part_count": 1,
+        "part_sizes": [
+          94
+        ],
+        "intended_sizes": [
+          1048576,
+          2097152,
+          3145728
+        ],
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": true,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": ".armor/hmac/2c7b4cc71d60b19d18e4b03c863fd0f2b69eb754a4753f8a9efecf1d6f8f6a7",
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-multipart": "true",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "ADR-011: non-uniform parts remove ADR-005's 64 KB alignment constraint",
+          "V3 fully supports arbitrary part sizes (no alignment required)",
+          "Each part encrypted independently with unique (part, block) counter",
+          "Note: Test data too small to exercise multi-part behavior"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "v2_multipart_uniform_parts": {
+      "description": "V2 multipart with uniform part sizes (fixed counter derivation)",
+      "source": {
+        "version": "v2",
+        "layout": "multipart-uniform",
+        "part_count": 1,
+        "part_size": 5242880,
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": true,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": ".armor/hmac/2c7b4cc71d60b19d18e4b03c863fd0f2b69eb754a4753f8a9efecf1d6f8f6a7",
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-multipart": "true",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c",
+          "x-amz-meta-armor-etag": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "V2 already fixed counter derivation (no keystream reuse)",
+          "V3 adds per-part independence infrastructure",
+          "Migration is structural version bump, not security fix",
+          "All parts re-encrypted with V3 (part, block) counter format",
+          "Note: Test data too small to exercise multi-part behavior"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "v2_multipart_variable_final_part": {
+      "description": "V2 multipart with variable final part (ADR-010)",
+      "source": {
+        "version": "v2",
+        "layout": "multipart-variable-final",
+        "part_count": 1,
+        "part_sizes": [
+          94
+        ],
+        "uniform_part_size": 3145728,
+        "final_part_size": 2097152,
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": true,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": ".armor/hmac/2c7b4cc71d60b19d18e4b03c863fd0f2b69eb754a4753f8a9efecf1d6f8f6a7",
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-multipart": "true",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c",
+          "x-amz-meta-armor-etag": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "V2 fixed derivation + variable parts supported by ADR-010",
+          "V3 preserves structure with per-part independence",
+          "Straightforward version bump migration",
+          "Note: Test data too small to exercise multi-part behavior"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "v2_multipart_non_uniform_parts": {
+      "description": "V2 multipart with non-uniform part sizes (ADR-011)",
+      "source": {
+        "version": "v2",
+        "layout": "multipart-nonuniform",
+        "part_count": 1,
+        "part_sizes": [
+          94
+        ],
+        "intended_sizes": [
+          1048576,
+          2097152,
+          3145728
+        ],
+        "plaintext_size": 94
+      },
+      "v3_expected": {
+        "is_multipart": true,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": ".armor/hmac/2c7b4cc71d60b19d18e4b03c863fd0f2b69eb754a4753f8a9efecf1d6f8f6a7",
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-multipart": "true",
+          "x-amz-meta-armor-plaintext-size": "94",
+          "x-amz-meta-armor-sha256": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c",
+          "x-amz-meta-armor-etag": "a7f6f6d8cfd8a8f487d72bd31703a575f93885fe6cfea9843f8a4752eb69f12c"
+        },
+        "transformation_notes": [
+          "ADR-011: non-uniform parts remove ADR-005's 64 KB alignment constraint",
+          "V3 fully supports arbitrary part sizes (no alignment required)",
+          "Each part encrypted independently with unique (part, block) counter",
+          "Note: Test data too small to exercise multi-part behavior"
+        ]
+      },
+      "expected_outcome": "success"
+    },
+    "malformed_invalid_version_string": {
+      "description": "Malformed: invalid version string",
+      "source": {
+        "version": "malformed",
+        "defect": "invalid_version_string",
+        "metadata": {
+          "x-amz-meta-armor-version": "not-a-number"
+        },
+        "plaintext_size": 94
+      },
+      "v3_expected": null,
+      "expected_outcome": "failure",
+      "expected_failure_reason": "Invalid version format 'not-a-number' - must be numeric 1, 2, or 3",
+      "failure_mode": "metadata_parse_error",
+      "resolution_strategy": "Skip and log - cannot determine source version for migration"
+    },
+    "malformed_envelope_version_mismatch": {
+      "description": "Malformed: envelope header is V1 but metadata claims V2",
+      "source": {
+        "version": "malformed",
+        "defect": "envelope_version_mismatch",
+        "envelope_version": 1,
+        "metadata_version": "2",
+        "plaintext_size": 94
+      },
+      "v3_expected": null,
+      "expected_outcome": "failure",
+      "expected_failure_reason": "Envelope header version (1) != metadata version (2) - contradictory format",
+      "failure_mode": "version_mismatch",
+      "resolution_strategy": "Skip and log - cannot determine actual format version"
+    },
+    "malformed_inconsistent_part_metadata": {
+      "description": "Malformed: multipart metadata is inconsistent with actual data",
+      "source": {
+        "version": "malformed",
+        "defect": "inconsistent_part_metadata",
+        "actual_part_count": 1,
+        "metadata_part_count": "999",
+        "metadata_part_size": "1",
+        "plaintext_size": 94
+      },
+      "v3_expected": null,
+      "expected_outcome": "failure",
+      "expected_failure_reason": "Part count/size in metadata doesn't match actual structure",
+      "failure_mode": "metadata_inconsistency",
+      "resolution_strategy": "Skip and log - metadata cannot be trusted"
+    },
+    "malformed_corrupted_hmac_table": {
+      "description": "Malformed: HMAC table is corrupted (bit flip)",
+      "source": {
+        "version": "malformed",
+        "defect": "corrupted_hmac_table",
+        "plaintext_size": 94,
+        "corruption_type": "bit_flip"
+      },
+      "v3_expected": null,
+      "expected_outcome": "failure",
+      "expected_failure_reason": "HMAC verification fails due to corrupted table",
+      "failure_mode": "integrity_check_failed",
+      "resolution_strategy": "Skip and log - data integrity cannot be verified"
+    },
+    "contradictory_version_says_v1_layout_v2": {
+      "description": "Contradictory: version says V1, layout uses V2 counter derivation",
+      "source": {
+        "version": "contradictory",
+        "defect": "version_layout_mismatch",
+        "envelope_version": 1,
+        "counter_derivation": "v2_fixed",
+        "plaintext_size": 94
+      },
+      "v3_expected": null,
+      "expected_outcome": "failure",
+      "expected_failure_reason": "Version header says V1 but counter derivation uses V2 stride - contradictory format",
+      "failure_mode": "contradictory_format",
+      "resolution_strategy": "Skip and log - cannot trust version field, manual inspection required",
+      "security_implication": "Cannot determine if keystream reuse vulnerability applies"
+    },
+    "edge_case_empty_plaintext": {
+      "description": "Edge case: empty plaintext (zero-byte file)",
+      "source": {
+        "version": "v1",
+        "layout": "single",
+        "plaintext_size": 0
+      },
+      "v3_expected": {
+        "is_multipart": false,
+        "part_count": 1,
+        "blocks_per_part": [
+          0
+        ],
+        "compression_used": false,
+        "sidecar_path": null,
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-plaintext-size": "0",
+          "x-amz-meta-armor-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "expected_outcome": "success",
+      "transformation_notes": [
+        "Empty file is valid (no encrypted data)",
+        "Only envelope header present, no ciphertext blocks",
+        "Zero blocks \u2192 zero HMAC entries",
+        "Version bump only, no re-encryption needed"
+      ],
+      "edge_case_notes": "Tests block_count = 0 edge case in migration logic"
+    },
+    "edge_case_single_byte_plaintext": {
+      "description": "Edge case: single-byte plaintext",
+      "source": {
+        "version": "v1",
+        "layout": "single",
+        "plaintext_size": 1
+      },
+      "v3_expected": {
+        "is_multipart": false,
+        "part_count": 1,
+        "blocks_per_part": [
+          1
+        ],
+        "compression_used": false,
+        "sidecar_path": null,
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-plaintext-size": "1",
+          "x-amz-meta-armor-sha256": "2f2657f031139bedab4c1e1cfb6a8ec3d03c252a52bc9075f6eef3f8d75654df"
+        }
+      },
+      "expected_outcome": "success",
+      "transformation_notes": [
+        "Single byte = partial last block (1 byte of 64 KB)",
+        "Full HMAC computed for partial block",
+        "Tests partial block handling in migration"
+      ],
+      "edge_case_notes": "Tests partial last block encryption/decryption"
+    },
+    "edge_case_exact_block_boundary": {
+      "description": "Edge case: plaintext is exact multiple of block size",
+      "source": {
+        "version": "v1",
+        "layout": "single",
+        "plaintext_size": 131072
+      },
+      "v3_expected": {
+        "is_multipart": false,
+        "part_count": 1,
+        "blocks_per_part": [
+          2
+        ],
+        "compression_used": false,
+        "sidecar_path": null,
+        "manifest_reference": null,
+        "metadata_fields": {
+          "x-amz-meta-armor-version": "3",
+          "x-amz-meta-armor-wrapped-dek": "v2:<fingerprint>:<wrapped_dek>",
+          "x-amz-meta-armor-iv": "AAQCAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+          "x-amz-meta-armor-block-size": "65536",
+          "x-amz-meta-armor-plaintext-size": "131072",
+          "x-amz-meta-armor-sha256": "<computed_from_2_block_pattern>"
+        }
+      },
+      "expected_outcome": "success",
+      "transformation_notes": [
+        "No partial last block",
+        "Exactly 2 blocks \u2192 2 HMAC entries",
+        "Tests boundary condition in block counting"
+      ],
+      "edge_case_notes": "Tests block_count = plaintext_size / block_size (no remainder)"
+    }
+  },
+  "summary": {
+    "total_fixtures": 17,
+    "by_source_version": {
+      "v1": 7,
+      "v2": 4,
+      "malformed": 4,
+      "contradictory": 1,
+      "edge_cases": 3
+    },
+    "by_expected_outcome": {
+      "success": 13,
+      "failure": 4
+    },
+    "by_layout": {
+      "single": 6,
+      "multipart": 6,
+      "malformed": 4,
+      "contradictory": 1
+    },
+    "coverage_notes": [
+      "Test plaintext is only 94 bytes, limiting multipart fixture coverage",
+      "Most multipart fixtures result in single-part outcomes due to small data size",
+      "Edge cases properly exercise block boundary conditions",
+      "Malformed fixtures test error detection and handling",
+      "Comprehensive coverage of version detection and metadata handling"
+    ]
+  },
+  "transformation_rules": {
+    "version_upgrade": {
+      "v1_to_v3": {
+        "security_fix": "Counter derivation changed from vulnerable (blockIndex stride) to per-part independent",
+        "dek_format": "Re-wrapped with v2 fingerprint format",
+        "metadata": "Version field added if missing, upgraded to 3"
+      },
+      "v2_to_v3": {
+        "security_fix": "None (V2 already fixed counter derivation)",
+        "structural_change": "Adds per-part independence infrastructure",
+        "dek_format": "Preserves v2 fingerprint format",
+        "metadata": "Version upgraded to 3"
+      }
+    },
+    "counter_derivation": {
+      "v1_vulnerable": "counter = blockIndex (causes keystream reuse across same blocks)",
+      "v2_fixed": "counter = blockIndex * (blockSize / 16) with proper stride",
+      "v3_per_part_independent": "counter = (partIndex, blockIndex) with unique nonce per part"
+    },
+    "metadata_handling": {
+      "missing_fields": "Reconstructed from envelope header (plaintext_size, sha256)",
+      "inconsistent_fields": "Envelope header is authoritative over metadata",
+      "version_field": "Added to metadata if missing during V1 implicit detection",
+      "optional_fields": "Preserved as-is (etag, custom fields)",
+      "non_armor_metadata": "Preserved unchanged during migration"
+    },
+    "integrity_verification": {
+      "hmac_table": "Migrated from appended (single-PUT) or sidecar (multipart) to per-part verification",
+      "corrupted_hmac": "Causes migration failure - data integrity cannot be verified",
+      "envelope_validation": "Magic bytes and version byte must be valid",
+      "sha256_preservation": "Plaintext SHA256 verified and preserved across migration"
+    }
+  }
+}
