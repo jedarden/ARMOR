@@ -334,6 +334,7 @@ func TestCredentialEdgeCases(t *testing.T) {
 		emptyCredentials := map[string]*config.Credential{}
 
 		cfg := &config.Config{
+			Backend:     "filesystem",
 			Bucket:      "test-bucket",
 			B2Region:    "us-east-005",
 			Credentials: emptyCredentials,
@@ -571,6 +572,7 @@ func SetupTestServerWithCredentials(t *testing.T, credentials map[string]*config
 
 	// Create test configuration
 	cfg := &config.Config{
+		Backend:     "filesystem",
 		Bucket:      "test-bucket",
 		B2Region:    "us-east-005",
 		Credentials: credentials,
