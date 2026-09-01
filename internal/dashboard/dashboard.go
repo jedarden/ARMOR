@@ -1855,7 +1855,7 @@ const dashboardHTML = `<!DOCTYPE html>
                                 <span class="plain-badge" aria-label="Unencrypted object">plain</span>
                             {{end}}
                         </td>
-                        {{if .DashboardCredential}}
+                        {{if $.DashboardCredential}}
                         <td>
                             {{if not .IsFolder}}
                             <button class="btn btn-primary" onclick="downloadObject({{.Key}})" style="padding:4px 8px;font-size:12px;margin-right:4px">Download</button>
