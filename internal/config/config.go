@@ -382,13 +382,16 @@ func Load() (*Config, error) {
 	cfg.NamedKeys = make(map[string][]byte)
 	cfg.KeyRings = make(map[string][]byte)
 	for _, env := range os.Environ() {
-		// Look for ARMOR_MEK_<NAME> pattern
-		if strings.HasPrefix(env, "ARMOR_MEK_") {
-			parts := strings.SplitN(env, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(parts[0], "ARMOR_MEK_")))
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		envKey := parts[0]
+		// Look for ARMOR_MEK_<NAME>, but leave the default and named ring
+		// variables to the dedicated ring parser below.
+		if strings.HasPrefix(envKey, "ARMOR_MEK_") &&
+			envKey != "ARMOR_MEK_RING" && !strings.HasSuffix(envKey, "_RING") {
+			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(envKey, "ARMOR_MEK_")))
 			if name == "" {
 				continue
 			}
@@ -422,16 +425,18 @@ func Load() (*Config, error) {
 
 	// Parse ARMOR_MEK_<NAME>_RING for named keys
 	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, "ARMOR_MEK_") && strings.HasSuffix(env, "_RING=") {
-			parts := strings.SplitN(env, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			envKey := parts[0]
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		envKey := parts[0]
+		if strings.HasPrefix(envKey, "ARMOR_MEK_") &&
+			envKey != "ARMOR_MEK_RING" && strings.HasSuffix(envKey, "_RING") {
 			ringStr := parts[1]
 
 			// Extract key name: ARMOR_MEK_<NAME>_RING -> <NAME>
-			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(envKey, "_RING"), "ARMOR_MEK_")))
+			displayName := strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(envKey, "_RING"), "ARMOR_MEK_"))
+			name := strings.ToLower(displayName)
 			if name == "" || name == "default" {
 				errs = append(errs, fmt.Errorf("invalid ring key name %q", envKey))
 				continue
@@ -440,7 +445,7 @@ func Load() (*Config, error) {
 			// Get the active key for this named key
 			activeMEK, exists := cfg.NamedKeys[name]
 			if !exists {
-				errs = append(errs, fmt.Errorf("ARMOR_MEK_%s_RING specified without ARMOR_MEK_%s", name, name))
+				errs = append(errs, fmt.Errorf("ARMOR_MEK_%s_RING specified without ARMOR_MEK_%s", displayName, displayName))
 				continue
 			}
 
