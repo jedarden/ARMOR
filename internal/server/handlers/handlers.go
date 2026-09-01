@@ -1393,7 +1393,13 @@ func (h *Handlers) handleFullObjectStream(w http.ResponseWriter, r *http.Request
 	// it incrementally with MultipartDigestAccumulator. Legacy multipart objects
 	// (no P) carry the empty-string placeholder, which is not a real digest and
 	// is skipped below rather than enforced.
-	useCombinedDigest := isMultipart && multipartPartSize > 0 && multipartPartSize%int64(blockSize) == 0
+	//
+	// A non-uniform (ADR-011) object's real upload-part boundaries don't line
+	// up with P — MultipartDigestAccumulator's fixed-P chunking would combine
+	// the wrong byte ranges — so it's excluded here; decryptNonUniformParts
+	// reproduces the combined digest itself, from the real part boundaries it
+	// already iterates, straight into wholeHash.
+	useCombinedDigest := isMultipart && !isNonUniform && multipartPartSize > 0 && multipartPartSize%int64(blockSize) == 0
 	var accumulator *backend.MultipartDigestAccumulator
 	if useCombinedDigest {
 		accumulator = backend.NewMultipartDigestAccumulator(multipartPartSize, blockSize)
@@ -1748,17 +1754,18 @@ func (h *Handlers) decryptNonUniformParts(dataBody io.ReadCloser, pw *io.PipeWri
 			return fmt.Errorf("decrypt error for part %d at offset %d: %w", partNumber, partOffset, err)
 		}
 
-		// Update digest
-		if accumulator != nil {
-			isLastPart := partNumber == partNumbers[len(partNumbers)-1]
-			// Write the decrypted part as if it were blocks
-			// The accumulator expects block-aligned writes, so we need to handle this
-			// For non-uniform parts, we just write directly to wholeHash instead
-			wholeHash.Write(decryptedPart)
-			_ = isLastPart // Used in non-accumulator path
-		} else {
-			wholeHash.Write(decryptedPart)
-		}
+		// Update digest. CompleteMultipartUpload stores the combined per-part
+		// digest (backend.CombinePartPlaintextSHAs): each upload part's plaintext
+		// SHA-256, fed as raw digest bytes into one SHA-256 in ascending part
+		// order. MultipartDigestAccumulator reproduces that only for the ADR-005
+		// uniform case (chunking at fixed P boundaries); a genuinely non-uniform
+		// object's real part boundaries don't line up with P, so reproduce the
+		// combined digest directly from the actual parts this loop already
+		// iterates in order: hash each decrypted part and feed that digest into
+		// wholeHash, which callers.go then reads via wholeHash.Sum(nil) for
+		// non-uniform objects instead of the accumulator.
+		partDigest := sha256.Sum256(decryptedPart)
+		wholeHash.Write(partDigest[:])
 
 		// Write decrypted plaintext to pipe
 		if _, err := pw.Write(decryptedPart); err != nil {
