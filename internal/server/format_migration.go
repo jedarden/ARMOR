@@ -185,9 +185,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 		}
 
 		for _, obj := range listResult.Objects {
-			// Skip internal ARMOR objects
+			// Skip internal ARMOR objects (these are also excluded from TotalObjects count)
 			if len(obj.Key) >= 7 && obj.Key[:7] == ".armor/" {
-				result.SkippedObjects++
+				// Don't increment SkippedObjects - these were never counted in TotalObjects
 				continue
 			}
 
@@ -204,7 +204,7 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			if err != nil {
 				log.Printf("Warning: failed to get metadata for %s: %v", obj.Key, err)
 				result.FailedObjects++
-				fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err))
+				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
 				fm.advanceCursor(obj.Key)
 				continue
 			}
@@ -228,7 +228,7 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			if err := fm.migrateObject(ctx, obj, rawMeta, dryRun); err != nil {
 				log.Printf("Warning: failed to migrate %s: %v", obj.Key, err)
 				result.FailedObjects++
-				fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err))
+				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
 				// Continue with other objects - migration is best-effort
 			} else {
 				result.ProcessedObjects++
@@ -256,6 +256,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 	fm.state.Status = "completed"
 	fm.state.LastUpdated = time.Now()
 	fm.state.Failures = result.Failures
+	fm.state.ProcessedObjects = result.ProcessedObjects
+	fm.state.SkippedObjects = result.SkippedObjects
+	fm.state.FailedObjects = result.FailedObjects
 	fm.stateMu.Unlock()
 
 	if err := fm.saveState(ctx); err != nil {
@@ -265,7 +268,6 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 	result.TotalObjects = fm.state.TotalObjects
 	result.Duration = time.Since(startTime)
 	result.Status = "completed"
-	result.Failures = fm.state.Failures
 
 	return result, nil
 }
@@ -700,8 +702,8 @@ func (fm *FormatMigrator) advanceCursor(key string) {
 	fm.state.LastUpdated = time.Now()
 }
 
-// recordFailure records a failed migration.
-func (fm *FormatMigrator) recordFailure(key, reason string) {
+// recordFailure records a failed migration and returns the failure record.
+func (fm *FormatMigrator) recordFailure(key, reason string) MigrationFailure {
 	fm.stateMu.Lock()
 	defer fm.stateMu.Unlock()
 	failure := MigrationFailure{
@@ -710,7 +712,7 @@ func (fm *FormatMigrator) recordFailure(key, reason string) {
 		Time:   time.Now(),
 	}
 	fm.state.Failures = append(fm.state.Failures, failure)
-	fm.state.FailedObjects++
+	return failure
 }
 
 // initOrLoadState initializes a new migration state or loads an existing one.
