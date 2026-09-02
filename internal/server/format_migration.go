@@ -238,9 +238,10 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				log.Printf("Warning: failed to get metadata for %s: %v", obj.Key, err)
 				result.FailedObjects++
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
-			fm.stateMu.Lock()
-			fm.state.FailedObjects++
-			fm.stateMu.Unlock()
+				fm.stateMu.Lock()
+				fm.state.FailedObjects++
+				fm.state.Failures = append(fm.state.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
+				fm.stateMu.Unlock()
 				fm.advanceCursor(obj.Key)
 				continue
 			}
@@ -301,6 +302,7 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
 				fm.stateMu.Lock()
 				fm.state.FailedObjects++
+				fm.state.Failures = append(fm.state.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
 				fm.stateMu.Unlock()
 				// Continue with other objects - migration is best-effort
 			} else {
@@ -834,7 +836,8 @@ func (fm *FormatMigrator) advanceCursor(key string) {
 
 // recordFailure creates a failure record for a failed migration.
 // The returned record is appended to result.Failures by the caller,
-// and later merged into fm.state.Failures at migration completion.
+// and also immediately appended to fm.state.Failures to ensure persistence
+// even if the migration is interrupted before completion.
 func (fm *FormatMigrator) recordFailure(key, reason string) MigrationFailure {
 	return MigrationFailure{
 		Key:    key,
