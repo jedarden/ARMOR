@@ -238,6 +238,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				log.Printf("Warning: failed to get metadata for %s: %v", obj.Key, err)
 				result.FailedObjects++
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
+			fm.stateMu.Lock()
+			fm.state.FailedObjects++
+			fm.stateMu.Unlock()
 				fm.advanceCursor(obj.Key)
 				continue
 			}
