@@ -248,6 +248,7 @@ func (m *MockBackend) HeadVersion(ctx context.Context, bucket, key, versionID st
 // TestFormatMigrationDryRun tests that dry run mode counts objects without migrating.
 func TestFormatMigrationDryRun(t *testing.T) {
 	ctx := context.Background()
+	// Create fresh mock backend for this test to avoid state pollution
 	mockBackend := NewMockBackend()
 
 	// Create a test V1 object
