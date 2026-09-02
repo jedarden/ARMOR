@@ -236,8 +236,16 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			rawMeta, err := fm.objectMetadata(ctx, obj)
 			if err != nil {
 				log.Printf("Warning: failed to get metadata for %s: %v", obj.Key, err)
+				failure := fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err))
 				result.FailedObjects++
-				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
+				result.Failures = append(result.Failures, failure)
+				// Record in state immediately so periodic saves, GetState()
+				// and progress polling reflect the failure even if this run
+				// is interrupted before completion.
+				fm.stateMu.Lock()
+				fm.state.FailedObjects++
+				fm.state.Failures = append(fm.state.Failures, failure)
+				fm.stateMu.Unlock()
 				fm.advanceCursor(obj.Key)
 				continue
 			}
@@ -294,8 +302,16 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			// Migrate the object
 			if err := fm.migrateObject(ctx, obj, rawMeta, dryRun); err != nil {
 				log.Printf("Warning: failed to migrate %s: %v", obj.Key, err)
+				failure := fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err))
 				result.FailedObjects++
-				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
+				result.Failures = append(result.Failures, failure)
+				// Record in state immediately so periodic saves, GetState()
+				// and progress polling reflect the failure even if this run
+				// is interrupted before completion.
+				fm.stateMu.Lock()
+				fm.state.FailedObjects++
+				fm.state.Failures = append(fm.state.Failures, failure)
+				fm.stateMu.Unlock()
 				// Continue with other objects - migration is best-effort
 			}
 
@@ -323,13 +339,14 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 	fm.stateMu.Lock()
 	fm.state.Status = "completed"
 	fm.state.LastUpdated = time.Now()
-	// Preserve cumulative counts from previous runs
-	// result.* contains only current run increments, state.* contains cumulative totals
+	// Preserve cumulative counts from previous runs.
+	// ProcessedObjects and SkippedObjects are run-scoped (accumulated on
+	// result only), so they are merged into the cumulative state here.
 	fm.state.ProcessedObjects += result.ProcessedObjects
 	fm.state.SkippedObjects += result.SkippedObjects
-	fm.state.FailedObjects += result.FailedObjects
-	// Merge failures (append current run failures to existing list)
-	fm.state.Failures = append(fm.state.Failures, result.Failures...)
+	// FailedObjects and Failures are NOT merged again: each failure is
+	// applied to state immediately when it occurs, so re-merging result
+	// here would double-count this run's failures.
 	fm.stateMu.Unlock()
 
 	if err := fm.saveState(ctx); err != nil {
@@ -854,9 +871,11 @@ func (fm *FormatMigrator) advanceCursor(key string) {
 }
 
 // recordFailure creates a failure record for a failed migration.
-// The returned record is appended to result.Failures by the caller,
-// and also immediately appended to fm.state.Failures to ensure persistence
-// even if the migration is interrupted before completion.
+// The returned record is appended to result.Failures by the caller; the
+// completion merge in Migrate is the single writer of state.Failures, so
+// a failure only reaches persisted state at the next saveState (periodic,
+// or at completion). Failures and cursor advances are persisted on the
+// same cadence, so an interrupted run replays both consistently.
 func (fm *FormatMigrator) recordFailure(key, reason string) MigrationFailure {
 	return MigrationFailure{
 		Key:    key,
