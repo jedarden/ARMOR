@@ -296,10 +296,11 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			// Migrate the object
 			if err := fm.migrateObject(ctx, obj, rawMeta, dryRun); err != nil {
 				log.Printf("Warning: failed to migrate %s: %v", obj.Key, err)
-				log.Printf("[FAILURE PATH] About to call recordFailure for key=%s, reason=migration failed", obj.Key)
 				result.FailedObjects++
-				log.Printf("[FAILURE PATH] After increment: result.FailedObjects=%d", result.FailedObjects)
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
+				fm.stateMu.Lock()
+				fm.state.FailedObjects++
+				fm.stateMu.Unlock()
 				// Continue with other objects - migration is best-effort
 			} else {
 				// Migration succeeded (including dry-run mode) - increment counter
@@ -341,6 +342,10 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 	}
 
 	result.TotalObjects = fm.state.TotalObjects
+	result.ProcessedObjects = fm.state.ProcessedObjects
+	result.SkippedObjects = fm.state.SkippedObjects
+	result.FailedObjects = fm.state.FailedObjects
+	result.Failures = fm.state.Failures
 	result.Duration = time.Since(startTime)
 	result.Status = "completed"
 
