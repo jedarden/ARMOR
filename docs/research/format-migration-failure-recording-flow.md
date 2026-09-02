@@ -167,6 +167,13 @@ All these errors propagate up to the error handling at line 299 in `Migrate()`.
 
 ## State Persistence Pattern
 
+> **Note (2026-09-02):** everything in this section and the three code-flow
+> traces above describes source at `82b0135c`. The dual-append pattern below
+> is what caused the double-counting in "Potential Issues"; the fix removes
+> the immediate state appends and keeps the completion merge as the single
+> state writer. Line numbers for the corrected flow are in "Where the
+> recording path stands after both fixes".
+
 The failure recording uses a **dual-append pattern**:
 
 ```
@@ -188,7 +195,7 @@ Completion: merge result into state again (cumulative)
 
 ## Potential Issues
 
-### 1. Duplicate Failure Recording
+### 1. Duplicate Failure Recording (real, empirically confirmed)
 
 **Issue**: At line 340, failures are appended twice:
 - Once immediately during error handling (lines 243, 305)
@@ -196,30 +203,127 @@ Completion: merge result into state again (cumulative)
 
 **Impact**: MigrationState will contain duplicate entries for each failure.
 
-### 2. State Counter Increment
+### 2. State Counter Increment (double-counted — the earlier analysis here was wrong)
 
-**Current behavior**:
-- `state.FailedObjects` is incremented immediately (lines 242, 304)
-- `state.FailedObjects` is also incremented at completion (line 338)
+An earlier version of this document concluded that the immediate
+`state.FailedObjects++` (lines 242, 304) plus the completion merge
+`state.FailedObjects += result.FailedObjects` (line 338) were "correct because
+they happen on different data". **That conclusion is incorrect.** The two
+increments both count the *same* failure event of the *same* run:
 
-**Impact**: The counter would be double-counted if the immediate increments weren't already cumulative. However, examining the code shows that the immediate increments ARE cumulative (they add to the running state total), so line 338 would create an incorrect cumulative total if it weren't for the fact that `result.FailedObjects` tracks ONLY the current run's failures.
+- Line 242/304: the failure event increments `state.FailedObjects` (cumulative) immediately
+- Line 338: the same failure event is inside `result.FailedObjects` (current run), which is added to the cumulative total again
 
-**Actually, looking closer**:
-- `result.FailedObjects` = failures in THIS run (resets to 0 at line 182)
-- `state.FailedObjects` = cumulative failures across ALL runs
-- Line 242/304: `state.FailedObjects++` increments cumulative total
-- Line 338: `state.FailedObjects += result.FailedObjects` adds current run to cumulative
+Because `result.FailedObjects` is then **overwritten** with
+`fm.state.FailedObjects` at the end of `Migrate()` (line 346, cumulative
+reporting), the caller sees every failure from this run twice.
 
-This is CORRECT because the immediate increments and the completion increment happen on different data:
-- Immediate: increment state counter directly
-- Completion: add result counter to state counter
+**Empirical proof** (2026-09-02, source at `82b0135c`):
+
+```
+$ go test ./internal/server/ -run 'TestFormatMigrationFailureRecording'
+    format_migration_test.go:652: Expected 1 failed object, got 2
+    format_migration_test.go:656: Expected 1 failure record, got 2
+```
+
+The duplicate failure-list entries (issue 1) and the doubled counter (issue 2)
+are the same defect: the dual-append pattern plus the completion merge counts
+each failure event twice, in both the counter and the list.
+
+**Fix direction**: record failures to `result` only at the failure sites;
+let the completion merge (lines 336-340) be the single writer of state.
+This is what the working tree does as of 2026-09-02 and
+`TestFormatMigrationFailureRecording` passes with it. The trade-off is that
+state no longer contains failures recorded after the last periodic save if the
+run is interrupted — see "Residual gaps" below.
+
+## Root Cause History: why TestFormatMigrationFailureRecording failed
+
+The test (introduced in `9406b173`) creates one corrupted object:
+`x-amz-meta-armor-version: 1`, `x-amz-meta-armor-wrapped-dek: "invalid-dek"`,
+`x-amz-meta-armor-iv: "invalid-iv"`, and expects exactly 1 failure record. It
+has failed two different ways, for two different reasons.
+
+### Symptom 1 (original): "Expected 1 failed object, got 0"
+
+The corrupted object never reached `migrateObject`, so the failure-recording
+machinery — which was already correctly implemented — never executed. The
+breakdown point was one stage earlier, in the classification gate:
+
+```go
+armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
+if !ok {
+    // Not an ARMOR-encrypted object
+    result.SkippedObjects++
+    fm.advanceCursor(obj.Key)
+    continue                       // ← corrupted object exits here, never migrated
+}
+```
+
+`ParseARMORMetadata` (`internal/backend/backend.go:261`) silently swallows
+base64 decode errors:
+
+- `backend.go:325-327` — legacy DEK: `if decoded, err := base64.StdEncoding.DecodeString(dek); err == nil { am.WrappedDEK = decoded }`. On error the field is simply left `nil`; nothing surfaces.
+- `backend.go:353-354` — `if am.WrappedDEK == nil { return nil, false }`
+
+The function therefore conflates two very different conditions — "not
+ARMOR-encrypted at all" and "ARMOR-encrypted but with corrupt key material" —
+into a single `ok == false`, and the Migrate loop treated both as a skip. The
+object incremented `SkippedObjects`, `migrateObject` was never called, and no
+failure was recorded.
+
+**Bug location**: neither the state counter, the failure list, nor error
+propagation — it was upstream *classification*. **Fixed by** `8c0f3be0`, which
+extracts the version from the raw `x-amz-meta-armor-version` header even when
+metadata parsing fails (current `format_migration.go:247-274`) and lets
+ARMOR-versioned objects with unparseable metadata proceed to migration
+(`format_migration.go:288-292`, "attempting migration (will fail)"), and by
+`61cbf4ad`, which added explicit base64 validation at the top of
+`migrateObject` (`format_migration.go:357-378`) so the recorded reason is
+precise ("invalid base64 in wrapped DEK") rather than a confusing downstream
+decryption error.
+
+### Symptom 2 (at `82b0135c`): "Expected 1 failed object, got 2"
+
+After the classification fix, the object reaches `migrateObject`, which fails
+on the explicit base64 validation (`format_migration.go:369`), and the error
+propagates correctly to the recording block. The failure is then recorded
+**twice** — see "Potential Issues → 2" above: once by the immediate
+`fm.state.FailedObjects++` / `fm.state.Failures` append (lines 242-243 /
+304-305) and once by the completion merge (lines 338, 340), with the doubled
+total reported back at line 346.
+
+### Where the recording path stands after both fixes
+
+- `format_migration.go:236-241` (metadata fetch failure) and `:294-299`
+  (migration failure): record to `result` only.
+- `format_migration.go:330, 332` (completion merge): the single writer of
+  `state.FailedObjects` / `state.Failures`.
+- `format_migration.go:337-346`: `result` fields are overwritten with
+  cumulative state totals before return, so a resumed run with zero new
+  failures still reports the earlier run's failures. Intended for the
+  cumulative API; worth remembering when writing assertions.
+
+### Residual gaps (not regressions, but open)
+
+1. **Stale comment**: `recordFailure` (`format_migration.go:856-859`) still
+   claims the record is "also immediately appended to fm.state.Failures to
+   ensure persistence even if the migration is interrupted before completion".
+   That is no longer true — persistence now happens only at the completion
+   merge.
+2. **Interruption loses failures**: the `ctx.Done()` path (~lines 188-201)
+   returns without merging `result.Failures` (or `result.FailedObjects`) into
+   `fm.state`, and `saveState` persists only `fm.state` — so failures recorded
+   since the last periodic save are absent from `.armor/migration-state.json`
+   if the run is interrupted.
 
 ## Summary
 
 The format migration failure recording mechanism:
 
-1. ✅ **Records failures immediately** in both result and state
+1. ✅ **Records failures** in `result` at the failure site; state written once at completion
 2. ✅ **Persisted to disk** via `.armor/migration-state.json`
 3. ✅ **Thread-safe** using mutex locking
-4. ⚠️ **Duplicate entries**: Failures are appended to state twice (immediate + at completion)
-5. ✅ **Cumulative counts**: State tracks failures across runs, result tracks current run only
+4. ✅ **Corrupted metadata objects are migration failures, not skips** (since `8c0f3be0` + `61cbf4ad`)
+5. ⚠️ **Failures since the last periodic save are lost on interruption** (see Residual gaps)
+6. ⚠️ **`recordFailure` doc comment is stale** (see Residual gaps)
