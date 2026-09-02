@@ -34,3 +34,6 @@ __pycache__/
 # Working directories (local only)
 scratch/
 intermediate/
+
+# NEEDLE execution traces are local diagnostics.
+**/.beads/traces/
