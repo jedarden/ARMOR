@@ -5,8 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"testing"
 
@@ -50,8 +53,8 @@ func (m *MockBackend) Get(ctx context.Context, bucket, key string) (io.ReadClose
 		return nil, nil, backend.ErrObjectNotFound
 	}
 	info := &backend.ObjectInfo{
-		Key:     key,
-		Size:    int64(len(obj.Data)),
+		Key:      key,
+		Size:     int64(len(obj.Data)),
 		Metadata: obj.Metadata,
 	}
 	return io.NopCloser(strings.NewReader(string(obj.Data))), info, nil
@@ -122,22 +125,26 @@ func (m *MockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 			keys = append(keys, key)
 		}
 	}
+	// Real backends (S3, B2) list keys in lexicographic order, and the
+	// migration cursor assumes it (`key <= LastKey` skip check). Return
+	// sorted keys so resumption semantics match production.
+	sort.Strings(keys)
 
 	objects := make([]backend.ObjectInfo, 0, len(keys))
 	for _, key := range keys {
 		obj := m.objects[key]
 		armorMeta, ok := backend.ParseARMORMetadata(obj.Metadata)
 		objects = append(objects, backend.ObjectInfo{
-			Key:             key,
-			Size:            int64(len(obj.Data)),
+			Key:              key,
+			Size:             int64(len(obj.Data)),
 			IsARMOREncrypted: ok,
-			Metadata:        obj.Metadata,
+			Metadata:         obj.Metadata,
 		})
 		_ = armorMeta // Use to avoid unused variable
 	}
 
 	return &backend.ListResult{
-		Objects:    objects,
+		Objects:     objects,
 		IsTruncated: false,
 	}, nil
 }
@@ -269,7 +276,7 @@ func TestFormatMigrationDryRun(t *testing.T) {
 
 	// Create V1 encryptor
 	iv := make([]byte, 16)
- blockSize := 4096
+	blockSize := 4096
 	encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, blockSize, crypto.Version1)
 	if err != nil {
 		t.Fatalf("Failed to create encryptor: %v", err)
@@ -296,11 +303,11 @@ func TestFormatMigrationDryRun(t *testing.T) {
 	// Store object with V1 metadata
 	metadata := map[string]string{
 		"x-amz-meta-armor-version":        "1",
-		"x-amz-meta-armor-wrapped-dek":     base64.StdEncoding.EncodeToString(wrappedDEK),
-		"x-amz-meta-armor-iv":              base64.StdEncoding.EncodeToString(iv),
-		"x-amz-meta-armor-block-size":      "4096",
+		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-block-size":     "4096",
 		"x-amz-meta-armor-plaintext-size": "25",
-		"x-amz-meta-armor-sha256":          "test-sha256",
+		"x-amz-meta-armor-sha256":         "test-sha256",
 	}
 
 	// Combine header and ciphertext
@@ -366,7 +373,7 @@ func TestFormatMigrationV1ToV2(t *testing.T) {
 
 	// Create V1 encryptor
 	iv := make([]byte, 16)
- blockSize := 4096
+	blockSize := 4096
 	encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, blockSize, crypto.Version1)
 	if err != nil {
 		t.Fatalf("Failed to create encryptor: %v", err)
@@ -393,11 +400,11 @@ func TestFormatMigrationV1ToV2(t *testing.T) {
 	// Store object with V1 metadata
 	metadata := map[string]string{
 		"x-amz-meta-armor-version":        "1",
-		"x-amz-meta-armor-wrapped-dek":     base64.StdEncoding.EncodeToString(wrappedDEK),
-		"x-amz-meta-armor-iv":              base64.StdEncoding.EncodeToString(iv),
-		"x-amz-meta-armor-block-size":      "4096",
-		"x-amz-meta-armor-plaintext-size":  "30",
-		"x-amz-meta-armor-sha256":          "test-sha256",
+		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-block-size":     "4096",
+		"x-amz-meta-armor-plaintext-size": "30",
+		"x-amz-meta-armor-sha256":         "test-sha256",
 	}
 
 	// Combine header and ciphertext
@@ -449,9 +456,9 @@ func TestFormatMigrationV2Skipped(t *testing.T) {
 
 	// Store object with V2 metadata
 	metadata := map[string]string{
-		"x-amz-meta-armor-version": "2",
+		"x-amz-meta-armor-version":     "2",
 		"x-amz-meta-armor-wrapped-dek": "test-dek",
-		"x-amz-meta-armor-iv":      "test-iv",
+		"x-amz-meta-armor-iv":          "test-iv",
 	}
 
 	mockBackend.objects["test-object-v2.txt"] = &MockObject{
@@ -491,9 +498,9 @@ func TestFormatMigrationResumable(t *testing.T) {
 	// Create multiple test objects
 	for i := 1; i <= 3; i++ {
 		metadata := map[string]string{
-			"x-amz-meta-armor-version":      "1",
-			"x-amz-meta-armor-wrapped-dek":  "test-dek",
-			"x-amz-meta-armor-iv":           "test-iv",
+			"x-amz-meta-armor-version":     "1",
+			"x-amz-meta-armor-wrapped-dek": "test-dek",
+			"x-amz-meta-armor-iv":          "test-iv",
 		}
 		mockBackend.objects[fmt.Sprintf("test-object-%d.txt", i)] = &MockObject{
 			Data:     []byte(fmt.Sprintf("test data %d", i)),
@@ -506,10 +513,10 @@ func TestFormatMigrationResumable(t *testing.T) {
 
 	// Simulate an interrupted migration by setting state
 	migrator.state = &MigrationState{
-		ID:            "test-migration",
-		Status:        "in_progress",
-		LastKey:       "test-object-2.txt",
-		TotalObjects:  3,
+		ID:               "test-migration",
+		Status:           "in_progress",
+		LastKey:          "test-object-2.txt",
+		TotalObjects:     3,
 		ProcessedObjects: 2,
 	}
 
@@ -523,7 +530,7 @@ func TestFormatMigrationResumable(t *testing.T) {
 	if result.Status != "completed" {
 		t.Errorf("Expected completed status, got: %s", result.Status)
 	}
-	}
+}
 
 // TestFormatMigrationEndpoint tests the HTTP endpoint for format migration.
 func TestFormatMigrationEndpoint(t *testing.T) {
@@ -531,6 +538,7 @@ func TestFormatMigrationEndpoint(t *testing.T) {
 	// For now, we'll test the handler logic in isolation
 	t.Skip("HTTP endpoint test requires full server setup")
 }
+
 // TestFormatMigrationMultipartToSingle tests migrating a V1 multipart object to V2 single-PUT.
 func TestFormatMigrationMultipartToSingle(t *testing.T) {
 	ctx := context.Background()
@@ -570,12 +578,12 @@ func TestFormatMigrationMultipartToSingle(t *testing.T) {
 	// Store as multipart object (simulate assembled multipart)
 	metadata := map[string]string{
 		"x-amz-meta-armor-version":        "1",
-		"x-amz-meta-armor-wrapped-dek":     base64.StdEncoding.EncodeToString(wrappedDEK),
-		"x-amz-meta-armor-iv":              base64.StdEncoding.EncodeToString(iv),
-		"x-amz-meta-armor-block-size":      "4096",
-		"x-amz-meta-armor-plaintext-size":  "29",
-		"x-amz-meta-armor-sha256":          "test-sha256",
-		"x-amz-meta-armor-multipart":       "true",
+		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-block-size":     "4096",
+		"x-amz-meta-armor-plaintext-size": "29",
+		"x-amz-meta-armor-sha256":         "test-sha256",
+		"x-amz-meta-armor-multipart":      "true",
 	}
 
 	mockBackend.objects["multipart-test.dat"] = &MockObject{
@@ -627,9 +635,9 @@ func TestFormatMigrationFailureRecording(t *testing.T) {
 
 	// Create a corrupted object that will fail migration
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":    "1",
+		"x-amz-meta-armor-version":     "1",
 		"x-amz-meta-armor-wrapped-dek": "invalid-dek",
-		"x-amz-meta-armor-iv":         "invalid-iv",
+		"x-amz-meta-armor-iv":          "invalid-iv",
 	}
 
 	mockBackend.objects["corrupted.dat"] = &MockObject{
@@ -678,9 +686,9 @@ func TestFormatMigrationV2SkippedByDefault(t *testing.T) {
 	// Create V2 objects
 	for i := 1; i <= 3; i++ {
 		metadata := map[string]string{
-			"x-amz-meta-armor-version":    "2",
+			"x-amz-meta-armor-version":     "2",
 			"x-amz-meta-armor-wrapped-dek": "test-dek",
-			"x-amz-meta-armor-iv":         "test-iv",
+			"x-amz-meta-armor-iv":          "test-iv",
 		}
 		mockBackend.objects[fmt.Sprintf("v2-object-%d.txt", i)] = &MockObject{
 			Data:     []byte(fmt.Sprintf("v2 data %d", i)),
@@ -715,3 +723,444 @@ func TestFormatMigrationV2SkippedByDefault(t *testing.T) {
 // recoverable from what remained, and guessing at Migrate's resume
 // semantics risks asserting something that was never actually true. Coverage
 // for resume behavior is worth adding back deliberately, not guessed here.
+
+// TestFormatMigrationFailure_InvalidBase64DEK tests that invalid base64 in wrapped-dek field is detected and recorded.
+func TestFormatMigrationFailure_InvalidBase64DEK(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	// Create an object with invalid base64 in wrapped-dek field
+	metadata := map[string]string{
+		"x-amz-meta-armor-version":     "1",
+		"x-amz-meta-armor-wrapped-dek": "invalid-base64!!!",
+		"x-amz-meta-armor-iv":          base64.StdEncoding.EncodeToString(make([]byte, 16)),
+		"x-amz-meta-armor-block-size":  "4096",
+	}
+
+	mockBackend.objects["invalid-dek.dat"] = &MockObject{
+		Data:     []byte("test data"),
+		Metadata: metadata,
+	}
+
+	// Create migrator
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	// Run migration - should record failure and continue
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Logf("Migration completed with errors (expected): %v", err)
+	}
+
+	// Verify failure was recorded
+	if result.FailedObjects != 1 {
+		t.Errorf("Expected 1 failed object, got %d", result.FailedObjects)
+	}
+
+	if len(result.Failures) != 1 {
+		t.Errorf("Expected 1 failure record, got %d", len(result.Failures))
+	}
+
+	if result.Failures[0].Key != "invalid-dek.dat" {
+		t.Errorf("Expected failure for 'invalid-dek.dat', got: %s", result.Failures[0].Key)
+	}
+
+	// Verify the reason mentions invalid base64
+	if result.Failures[0].Reason == "" {
+		t.Error("Expected failure reason to be recorded")
+	}
+
+	if !strings.Contains(result.Failures[0].Reason, "invalid base64") &&
+		!strings.Contains(result.Failures[0].Reason, "illegal base64") {
+		t.Errorf("Expected reason to mention invalid base64, got: %s", result.Failures[0].Reason)
+	}
+
+	// Verify processed counter was incremented despite failure
+	if result.ProcessedObjects != 1 {
+		t.Errorf("Expected 1 processed object, got %d", result.ProcessedObjects)
+	}
+}
+
+// TestFormatMigrationFailure_InvalidBase64IV tests that invalid base64 in iv field is detected and recorded.
+func TestFormatMigrationFailure_InvalidBase64IV(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	// Create an object with invalid base64 in iv field
+	metadata := map[string]string{
+		"x-amz-meta-armor-version":     "1",
+		"x-amz-meta-armor-wrapped-dek": base64.StdEncoding.EncodeToString(make([]byte, 64)),
+		"x-amz-meta-armor-iv":          "invalid-base64@@@",
+		"x-amz-meta-armor-block-size":  "4096",
+	}
+
+	mockBackend.objects["invalid-iv.dat"] = &MockObject{
+		Data:     []byte("test data"),
+		Metadata: metadata,
+	}
+
+	// Create migrator
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	// Run migration - should record failure and continue
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Logf("Migration completed with errors (expected): %v", err)
+	}
+
+	// Verify failure was recorded
+	if result.FailedObjects != 1 {
+		t.Errorf("Expected 1 failed object, got %d", result.FailedObjects)
+	}
+
+	if len(result.Failures) != 1 {
+		t.Errorf("Expected 1 failure record, got %d", len(result.Failures))
+	}
+
+	if result.Failures[0].Key != "invalid-iv.dat" {
+		t.Errorf("Expected failure for 'invalid-iv.dat', got: %s", result.Failures[0].Key)
+	}
+
+	// Verify the reason mentions invalid base64 in IV
+	if !strings.Contains(result.Failures[0].Reason, "invalid base64") &&
+		!strings.Contains(result.Failures[0].Reason, "illegal base64") &&
+		!strings.Contains(result.Failures[0].Reason, "IV") {
+		t.Errorf("Expected reason to mention invalid base64 or IV, got: %s", result.Failures[0].Reason)
+	}
+}
+
+// TestFormatMigrationFailure_CorruptedCiphertext tests that corrupted ciphertext fails during decrypt and is recorded.
+func TestFormatMigrationFailure_CorruptedCiphertext(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(i + 1)
+	}
+
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("Failed to wrap DEK: %v", err)
+	}
+
+	iv := make([]byte, 16)
+	blockSize := 4096
+
+	// Create a valid V1 envelope header first
+	plaintextSHA := sha256.Sum256([]byte("test data"))
+	plaintextSHAArray := plaintextSHA
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len("test data")), blockSize, plaintextSHAArray, crypto.Version1)
+	if err != nil {
+		t.Fatalf("Failed to create header: %v", err)
+	}
+	headerBuf, err := header.Encode()
+	if err != nil {
+		t.Fatalf("Failed to encode header: %v", err)
+	}
+
+	// Create corrupted ciphertext - just random bytes that won't decrypt
+	corruptedCiphertext := make([]byte, 100)
+	for i := range corruptedCiphertext {
+		corruptedCiphertext[i] = byte(i + 99)
+	}
+
+	metadata := map[string]string{
+		"x-amz-meta-armor-version":        "1",
+		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-block-size":     "4096",
+		"x-amz-meta-armor-plaintext-size": "9",
+		"x-amz-meta-armor-sha256":         hex.EncodeToString(plaintextSHA[:]),
+	}
+
+	// Combine header and corrupted ciphertext
+	fullData := append(headerBuf, corruptedCiphertext...)
+	mockBackend.objects["corrupted-cipher.dat"] = &MockObject{
+		Data:     fullData,
+		Metadata: metadata,
+	}
+
+	// Create migrator
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	// Run migration - should record failure and continue
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Logf("Migration completed with errors (expected): %v", err)
+	}
+
+	// Verify failure was recorded
+	if result.FailedObjects != 1 {
+		t.Errorf("Expected 1 failed object, got %d", result.FailedObjects)
+	}
+
+	if len(result.Failures) != 1 {
+		t.Errorf("Expected 1 failure record, got %d", len(result.Failures))
+	}
+
+	if result.Failures[0].Key != "corrupted-cipher.dat" {
+		t.Errorf("Expected failure for 'corrupted-cipher.dat', got: %s", result.Failures[0].Key)
+	}
+
+	// Verify the reason mentions the decrypt failure
+	if !strings.Contains(result.Failures[0].Reason, "decrypt") &&
+		!strings.Contains(result.Failures[0].Reason, "HMAC") &&
+		!strings.Contains(result.Failures[0].Reason, "ciphertext") {
+		t.Errorf("Expected reason to mention decrypt/HMAC/ciphertext failure, got: %s", result.Failures[0].Reason)
+	}
+}
+
+// TestFormatMigrationFailure_MissingMetadata tests that missing required metadata fields are detected and recorded.
+func TestFormatMigrationFailure_MissingMetadata(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	// Create an object with missing wrapped-dek field (required metadata)
+	metadata := map[string]string{
+		"x-amz-meta-armor-version": "1",
+		// Missing wrapped-dek
+		"x-amz-meta-armor-iv": base64.StdEncoding.EncodeToString(make([]byte, 16)),
+	}
+
+	mockBackend.objects["missing-meta.dat"] = &MockObject{
+		Data:     []byte("test data"),
+		Metadata: metadata,
+	}
+
+	// Create migrator
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	// Run migration - should record failure and continue
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Logf("Migration completed with errors (expected): %v", err)
+	}
+
+	// Verify failure was recorded
+	if result.FailedObjects != 1 {
+		t.Errorf("Expected 1 failed object, got %d", result.FailedObjects)
+	}
+
+	if len(result.Failures) != 1 {
+		t.Errorf("Expected 1 failure record, got %d", len(result.Failures))
+	}
+
+	if result.Failures[0].Key != "missing-meta.dat" {
+		t.Errorf("Expected failure for 'missing-meta.dat', got: %s", result.Failures[0].Key)
+	}
+
+	// Verify the reason mentions missing or invalid metadata
+	if result.Failures[0].Reason == "" {
+		t.Error("Expected failure reason to be recorded")
+	}
+}
+
+// TestFormatMigrationFailedObjectsNotRetried tests that failed objects are skipped on subsequent migration runs.
+func TestFormatMigrationFailedObjectsNotRetried(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	// buildValidV1Object stores a fully valid, migratable V1 single-PUT object.
+	buildValidV1Object := func(key, plaintext string) {
+		dek := make([]byte, 32)
+		for i := range dek {
+			dek[i] = byte(i + 1)
+		}
+
+		wrappedDEK, err := crypto.WrapDEK(mek, dek)
+		if err != nil {
+			t.Fatalf("Failed to wrap DEK: %v", err)
+		}
+
+		iv := make([]byte, 16)
+		blockSize := 4096
+		encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, blockSize, crypto.Version1)
+		if err != nil {
+			t.Fatalf("Failed to create encryptor: %v", err)
+		}
+
+		pt := []byte(plaintext)
+		ciphertext, hmacTable, err := encryptor.Encrypt(pt)
+		if err != nil {
+			t.Fatalf("Failed to encrypt: %v", err)
+		}
+
+		plaintextSHA := crypto.ComputePlaintextSHA256(pt)
+		header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(pt)), blockSize, plaintextSHA, crypto.Version1)
+		if err != nil {
+			t.Fatalf("Failed to build envelope header: %v", err)
+		}
+		headerBuf, err := header.Encode()
+		if err != nil {
+			t.Fatalf("Failed to encode envelope header: %v", err)
+		}
+		ciphertext = append(ciphertext, hmacTable...)
+
+		metadata := map[string]string{
+			"x-amz-meta-armor-version":        "1",
+			"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
+			"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(iv),
+			"x-amz-meta-armor-block-size":     "4096",
+			"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(pt)),
+			"x-amz-meta-armor-sha256":         hex.EncodeToString(plaintextSHA[:]),
+		}
+
+		fullData := append(headerBuf, ciphertext...)
+		mockBackend.objects[key] = &MockObject{
+			Data:     fullData,
+			Metadata: metadata,
+		}
+	}
+
+	// Object 1: Valid V1 object (migrates successfully)
+	buildValidV1Object("a-valid-1.txt", "valid data 1")
+
+	// Object 2: Invalid base64 in wrapped-dek (will fail)
+	invalidMetadata := map[string]string{
+		"x-amz-meta-armor-version":     "1",
+		"x-amz-meta-armor-wrapped-dek": "invalid-base64!!!",
+		"x-amz-meta-armor-iv":          base64.StdEncoding.EncodeToString(make([]byte, 16)),
+		"x-amz-meta-armor-block-size":  "4096",
+	}
+	mockBackend.objects["b-invalid.txt"] = &MockObject{
+		Data:     []byte("invalid data"),
+		Metadata: invalidMetadata,
+	}
+
+	// Object 3: Valid V1 object (migrates successfully)
+	buildValidV1Object("c-valid-2.txt", "valid data 2")
+
+	// Create migrator for first run
+	migrator1 := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	// First migration run - should process all 3, fail on 1
+	result1, err := migrator1.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Logf("First migration completed with errors (expected): %v", err)
+	}
+
+	// Verify first run results
+	if result1.ProcessedObjects != 3 {
+		t.Errorf("Expected 3 processed objects in first run, got %d", result1.ProcessedObjects)
+	}
+
+	if result1.FailedObjects != 1 {
+		t.Errorf("Expected 1 failed object in first run, got %d", result1.FailedObjects)
+	}
+
+	if len(result1.Failures) != 1 {
+		t.Fatalf("Expected 1 failure record in first run, got %d", len(result1.Failures))
+	}
+
+	if result1.Failures[0].Key != "b-invalid.txt" {
+		t.Errorf("Expected failure for 'b-invalid.txt', got: %s", result1.Failures[0].Key)
+	}
+
+	// Verify the two valid objects were migrated to V2
+	if v := mockBackend.objects["a-valid-1.txt"].Metadata["x-amz-meta-armor-version"]; v != "2" {
+		t.Errorf("Expected a-valid-1.txt migrated to version 2, got %s", v)
+	}
+	if v := mockBackend.objects["c-valid-2.txt"].Metadata["x-amz-meta-armor-version"]; v != "2" {
+		t.Errorf("Expected c-valid-2.txt migrated to version 2, got %s", v)
+	}
+
+	// Capture state from run 1. Simulate an interrupted migration by marking
+	// the persisted state in_progress, exactly as a crashed run would leave
+	// it, so run 2 exercises the real resume path in initOrLoadState.
+	state := migrator1.GetState()
+	if state == nil {
+		t.Fatal("Expected migration state to exist")
+	}
+
+	// The failed object must sit at or before the cursor: it was visited, its
+	// failure recorded, and the cursor advanced past it.
+	if state.LastKey == "" {
+		t.Fatal("Expected LastKey cursor to be set after run 1")
+	}
+	if state.LastKey < "b-invalid.txt" {
+		t.Errorf("Expected cursor to have advanced past the failed object, got: %s", state.LastKey)
+	}
+
+	state.Status = "in_progress"
+	stateData, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal state: %v", err)
+	}
+	mockBackend.objects[".armor/migration-state.json"] = &MockObject{Data: stateData}
+
+	// Second migration run with a fresh migrator instance. It loads the
+	// persisted state, resumes from LastKey, and must skip every already
+	// visited key -- including the failed one.
+	migrator2 := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	result2, err := migrator2.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Fatalf("Second migration failed: %v", err)
+	}
+
+	// The result of run 2 reports cumulative state (run counters are merged
+	// into state on completion), so compare against run 1's cumulative
+	// values: nothing new processed, nothing new failed.
+	if result2.ProcessedObjects != result1.ProcessedObjects {
+		t.Errorf("Expected cumulative processed objects to remain %d (failed object must not be retried), got %d",
+			result1.ProcessedObjects, result2.ProcessedObjects)
+	}
+
+	if result2.FailedObjects != 1 {
+		t.Errorf("Expected cumulative failed objects to remain 1, got %d", result2.FailedObjects)
+	}
+
+	if len(result2.Failures) != 1 {
+		t.Errorf("Expected cumulative failure records to remain 1, got %d", len(result2.Failures))
+	}
+
+	if len(result2.Failures) == 1 && result2.Failures[0].Key != "b-invalid.txt" {
+		t.Errorf("Expected the only failure to still be 'b-invalid.txt', got: %s", result2.Failures[0].Key)
+	}
+
+	// The invalid object must remain untouched at V1 -- proving it was skipped
+	// rather than retried or migrated.
+	if v := mockBackend.objects["b-invalid.txt"].Metadata["x-amz-meta-armor-version"]; v != "1" {
+		t.Errorf("Expected failed object to remain at version 1 (not retried), got %s", v)
+	}
+
+	// The failed object remains a migration candidate (still V1), but nothing
+	// touched it: the cursor alone is why it was skipped.
+	finalState := migrator2.GetState()
+	if finalState == nil {
+		t.Fatal("Expected migration state to exist after run 2")
+	}
+
+	if finalState.FailedObjects != 1 {
+		t.Errorf("Expected final cumulative failed objects to remain 1, got %d", finalState.FailedObjects)
+	}
+
+	if len(finalState.Failures) != 1 {
+		t.Errorf("Expected final cumulative failure records to remain 1, got %d", len(finalState.Failures))
+	}
+}
