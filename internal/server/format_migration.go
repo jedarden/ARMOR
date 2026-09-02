@@ -238,6 +238,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				log.Printf("Warning: failed to get metadata for %s: %v", obj.Key, err)
 				result.FailedObjects++
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
+				fm.stateMu.Lock()
+				fm.state.FailedObjects++
+				fm.stateMu.Unlock()
 				fm.advanceCursor(obj.Key)
 				continue
 			}
@@ -263,15 +266,19 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 					result.SkippedObjects++
 					fm.advanceCursor(obj.Key)
 					continue
-				}
-			}
-
 		// Check if this object should be skipped:
-		// Skip if version is already at target (regardless of include list)
-		// OR if version is not in the include list (not a source version we want to migrate from)
-		// These are mutually exclusive conditions - an object is skipped once for one reason
-		if uint8(version) == fm.currentWriteVersion || !fm.shouldMigrateVersion(uint8(version)) {
-			// Object is already at target version, or version is not in the include list - skip it
+		// First check if version is in the include list (not a source version we want to migrate from)
+		// Then check if version is already at target version (for versions in the include list)
+		// This order ensures each skipped object is counted exactly once with a clear reason
+		if !fm.shouldMigrateVersion(uint8(version)) {
+			// Version is not in the include list - skip it
+			result.SkippedObjects++
+			fm.advanceCursor(obj.Key)
+			continue
+		}
+		// Version is in the include list - now check if already at target version
+		if uint8(version) == fm.currentWriteVersion {
+			// Object is already at target version - skip it
 			result.SkippedObjects++
 			fm.advanceCursor(obj.Key)
 			continue
