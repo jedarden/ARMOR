@@ -238,9 +238,6 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				log.Printf("Warning: failed to get metadata for %s: %v", obj.Key, err)
 				result.FailedObjects++
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
-				fm.stateMu.Lock()
-				fm.state.FailedObjects++
-				fm.stateMu.Unlock()
 				fm.advanceCursor(obj.Key)
 				continue
 			}
@@ -292,11 +289,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				log.Printf("Warning: failed to migrate %s: %v", obj.Key, err)
 				result.FailedObjects++
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
-				fm.stateMu.Lock()
-				fm.state.FailedObjects++
-				fm.stateMu.Unlock()
 				// Continue with other objects - migration is best-effort
 			} else {
+				// Migration succeeded (including dry-run mode) - increment counter
 				result.ProcessedObjects++
 			}
 
@@ -321,10 +316,13 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 	fm.stateMu.Lock()
 	fm.state.Status = "completed"
 	fm.state.LastUpdated = time.Now()
-	fm.state.Failures = result.Failures
-	fm.state.ProcessedObjects = result.ProcessedObjects
-	fm.state.SkippedObjects = result.SkippedObjects
-	fm.state.FailedObjects = result.FailedObjects
+	// Preserve cumulative counts from previous runs
+	// result.* contains only current run increments, state.* contains cumulative totals
+	fm.state.ProcessedObjects += result.ProcessedObjects
+	fm.state.SkippedObjects += result.SkippedObjects
+	fm.state.FailedObjects += result.FailedObjects
+	// Merge failures (append current run failures to existing list)
+	fm.state.Failures = append(fm.state.Failures, result.Failures...)
 	fm.stateMu.Unlock()
 
 	if err := fm.saveState(ctx); err != nil {
@@ -760,9 +758,9 @@ func (fm *FormatMigrator) buildNewMetadata(oldMeta map[string]string, iv, wrappe
 	newMeta[armorMetaPlaintextSHA] = hex.EncodeToString(plaintextSHA)
 
 	// Copy other ARMOR metadata that should be preserved
-	if v, ok := oldMeta[armorMetaMultipart]; ok {
-		newMeta[armorMetaMultipart] = v
-	}
+	// Note: armorMetaMultipart is NOT copied - the migration output format
+	// (single-PUT vs multipart) is determined by the encrypt path chosen
+	// based on plaintext size, not the input object's layout.
 	if v, ok := oldMeta[armorMetaPartSize]; ok {
 		newMeta[armorMetaPartSize] = v
 	}
@@ -816,17 +814,15 @@ func (fm *FormatMigrator) advanceCursor(key string) {
 	fm.state.LastUpdated = time.Now()
 }
 
-// recordFailure records a failed migration and returns the failure record.
+// recordFailure creates a failure record for a failed migration.
+// The returned record is appended to result.Failures by the caller,
+// and later merged into fm.state.Failures at migration completion.
 func (fm *FormatMigrator) recordFailure(key, reason string) MigrationFailure {
-	fm.stateMu.Lock()
-	defer fm.stateMu.Unlock()
-	failure := MigrationFailure{
+	return MigrationFailure{
 		Key:    key,
 		Reason: reason,
 		Time:   time.Now(),
 	}
-	fm.state.Failures = append(fm.state.Failures, failure)
-	return failure
 }
 
 // initOrLoadState initializes a new migration state or loads an existing one.
