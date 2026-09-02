@@ -236,7 +236,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			rawMeta, err := fm.objectMetadata(ctx, obj)
 			if err != nil {
 				log.Printf("Warning: failed to get metadata for %s: %v", obj.Key, err)
+				log.Printf("[FAILURE PATH] About to call recordFailure for key=%s, reason=metadata fetch failed", obj.Key)
 				result.FailedObjects++
+				log.Printf("[FAILURE PATH] After increment: result.FailedObjects=%d", result.FailedObjects)
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
 				fm.stateMu.Lock()
 				fm.state.FailedObjects++
@@ -294,7 +296,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			// Migrate the object
 			if err := fm.migrateObject(ctx, obj, rawMeta, dryRun); err != nil {
 				log.Printf("Warning: failed to migrate %s: %v", obj.Key, err)
+				log.Printf("[FAILURE PATH] About to call recordFailure for key=%s, reason=migration failed", obj.Key)
 				result.FailedObjects++
+				log.Printf("[FAILURE PATH] After increment: result.FailedObjects=%d", result.FailedObjects)
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
 				// Continue with other objects - migration is best-effort
 			} else {
@@ -340,6 +344,9 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 	result.Duration = time.Since(startTime)
 	result.Status = "completed"
 
+	log.Printf("[FAILURE PATH] Migration complete: result.FailedObjects=%d, len(result.Failures)=%d, fm.state.FailedObjects=%d, len(fm.state.Failures)=%d",
+		result.FailedObjects, len(result.Failures), fm.state.FailedObjects, len(fm.state.Failures))
+
 	return result, nil
 }
 
@@ -348,12 +355,14 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	// Parse ARMOR metadata
 	armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
 	if !ok {
+		log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: not ARMOR-encrypted", obj.Key)
 		return fmt.Errorf("object %s is not ARMOR-encrypted", obj.Key)
 	}
 
 	// Get the object content
 	reader, _, err := fm.backend.Get(ctx, fm.bucket, obj.Key)
 	if err != nil {
+		log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: failed to get object: %v", obj.Key, err)
 		return fmt.Errorf("failed to get object: %w", err)
 	}
 	defer reader.Close()
@@ -369,6 +378,7 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 		plaintext, err = fm.decryptSingleObject(armorMeta, reader)
 	}
 	if err != nil {
+		log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: failed to decrypt object: %v", obj.Key, err)
 		return fmt.Errorf("failed to decrypt object: %w", err)
 	}
 
@@ -386,12 +396,14 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 		// Use multipart upload for large objects
 		err = fm.uploadAsMultipart(ctx, obj.Key, plaintext, plaintextSHA[:], rawMeta)
 		if err != nil {
+			log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: failed to upload as multipart: %v", obj.Key, err)
 			return fmt.Errorf("failed to upload as multipart: %w", err)
 		}
 	} else {
 		// Re-encrypt as single-PUT with current write format
 		ciphertext, newIV, newWrappedDEK, blockSize, mekFingerprint, err := fm.encryptAsSingle(plaintext)
 		if err != nil {
+			log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: failed to encrypt as single: %v", obj.Key, err)
 			return fmt.Errorf("failed to encrypt as single: %w", err)
 		}
 
@@ -401,6 +413,7 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 		// Put the re-encrypted object back
 		size := int64(len(ciphertext))
 		if err := fm.backend.Put(ctx, fm.bucket, obj.Key, bytesReader(ciphertext), size, newMeta); err != nil {
+			log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: failed to put migrated object: %v", obj.Key, err)
 			return fmt.Errorf("failed to put migrated object: %w", err)
 		}
 	}
@@ -408,6 +421,7 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	// Read back and verify
 	verifyReader, verifyInfo, err := fm.backend.Get(ctx, fm.bucket, obj.Key)
 	if err != nil {
+		log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: failed to read back migrated object: %v", obj.Key, err)
 		return fmt.Errorf("failed to read back migrated object: %w", err)
 	}
 	defer verifyReader.Close()
@@ -415,17 +429,20 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	// Get migrated object metadata
 	verifyMeta, err := fm.objectMetadata(ctx, *verifyInfo)
 	if err != nil {
+		log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: failed to get migrated object metadata: %v", obj.Key, err)
 		return fmt.Errorf("failed to get migrated object metadata: %w", err)
 	}
 
 	// Parse migrated metadata
 	verifyArmorMeta, ok := backend.ParseARMORMetadata(verifyMeta)
 	if !ok {
+		log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: migrated object metadata is invalid", obj.Key)
 		return fmt.Errorf("migrated object metadata is invalid")
 	}
 
 	// Verify the version was updated
 	if uint8(verifyArmorMeta.Version) != fm.currentWriteVersion {
+		log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: version not updated (expected %d, got %d)", obj.Key, fm.currentWriteVersion, verifyArmorMeta.Version)
 		return fmt.Errorf("version not updated: expected %d, got %d",
 			fm.currentWriteVersion, verifyArmorMeta.Version)
 	}
@@ -433,6 +450,7 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	// Verify SHA-256 by decrypting the migrated object
 	_, err = fm.decryptSingleObject(verifyArmorMeta, verifyReader)
 	if err != nil {
+		log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: failed to decrypt migrated object for verification: %v", obj.Key, err)
 		return fmt.Errorf("failed to decrypt migrated object for verification: %w", err)
 	}
 
@@ -440,6 +458,7 @@ func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectI
 	verifyPlaintextSHA := verifyMeta[armorMetaPlaintextSHA]
 	expectedSHA := hex.EncodeToString(plaintextSHA[:])
 	if verifyPlaintextSHA != expectedSHA {
+		log.Printf("[FAILURE PATH] migrateObject returning error for key=%s: SHA-256 mismatch after migration (expected %s, got %s)", obj.Key, expectedSHA, verifyPlaintextSHA)
 		return fmt.Errorf("SHA-256 mismatch after migration: expected %s, got %s",
 			expectedSHA, verifyPlaintextSHA)
 	}
@@ -825,6 +844,7 @@ func (fm *FormatMigrator) advanceCursor(key string) {
 // The returned record is appended to result.Failures by the caller,
 // and later merged into fm.state.Failures at migration completion.
 func (fm *FormatMigrator) recordFailure(key, reason string) MigrationFailure {
+	log.Printf("[FAILURE PATH] recordFailure called: key=%s, reason=%s", key, reason)
 	return MigrationFailure{
 		Key:    key,
 		Reason: reason,
