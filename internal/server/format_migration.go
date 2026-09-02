@@ -240,9 +240,6 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				result.FailedObjects++
 				log.Printf("[FAILURE PATH] After increment: result.FailedObjects=%d", result.FailedObjects)
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
-				fm.stateMu.Lock()
-				fm.state.FailedObjects++
-				fm.stateMu.Unlock()
 				fm.advanceCursor(obj.Key)
 				continue
 			}
