@@ -268,11 +268,14 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 					result.SkippedObjects++
 					fm.advanceCursor(obj.Key)
 					continue
-		// Check if this object should be skipped:
-		// First check if version is in the include list (not a source version we want to migrate from)
-		// Then check if version is already at target version (for versions in the include list)
-		// This order ensures each skipped object is counted exactly once with a clear reason
-		if !fm.shouldMigrateVersion(uint8(version)) {
+				}
+			}
+
+			// Check if this object should be skipped:
+			// First check if version is in the include list (not a source version we want to migrate from)
+			// Then check if version is already at target version (for versions in the include list)
+			// This order ensures each skipped object is counted exactly once with a clear reason
+			if !fm.shouldMigrateVersion(uint8(version)) {
 			// Version is not in the include list - skip it
 			result.SkippedObjects++
 			fm.advanceCursor(obj.Key)
