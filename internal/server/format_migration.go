@@ -305,10 +305,10 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				fm.state.Failures = append(fm.state.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
 				fm.stateMu.Unlock()
 				// Continue with other objects - migration is best-effort
-			} else {
-				// Migration succeeded (including dry-run mode) - increment counter
-				result.ProcessedObjects++
 			}
+
+			// Increment processed counter regardless of success/failure
+			result.ProcessedObjects++
 
 			// Update cursor
 			fm.advanceCursor(obj.Key)
