@@ -30,7 +30,7 @@ const (
 	armorMetaBlockSize     = "x-amz-meta-armor-block-size"
 	armorMetaMultipart     = "x-amz-meta-armor-multipart"
 	armorMetaPartSize      = "x-amz-meta-armor-part-size"
-	armorMetaPlaintextSize  = "x-amz-meta-armor-plaintext-size"
+	armorMetaPlaintextSize = "x-amz-meta-armor-plaintext-size"
 	armorMetaPlaintextSHA  = "x-amz-meta-armor-sha256"
 	armorMetaContentType   = "x-amz-meta-armor-content-type"
 	armorMetaETag          = "x-amz-meta-armor-etag"
@@ -77,10 +77,10 @@ type MigrationState struct {
 
 // MigrationFailure records a failed migration attempt.
 type MigrationFailure struct {
-	Key     string `json:"key"`
-	Reason  string `json:"reason"`
+	Key     string    `json:"key"`
+	Reason  string    `json:"reason"`
 	Time    time.Time `json:"time"`
-	Details string `json:"details,omitempty"`
+	Details string    `json:"details,omitempty"`
 }
 
 // ObjectClassification provides detailed counts by source format, layout, and outcome.
@@ -96,29 +96,29 @@ type ObjectClassification struct {
 	Contradictory int `json:"contradictory"`
 
 	// By size class (bytes)
-	SizeLessThan1MB    int `json:"size_lt_1mb"`
-	Size1MBTo10MB      int `json:"size_1mb_to_10mb"`
-	Size10MBTo100MB    int `json:"size_10mb_to_100mb"`
-	Size100MBTo1GB     int `json:"size_100mb_to_1gb"`
-	Size1GBTo10GB      int `json:"size_1gb_to_10gb"`
-	SizeGreater10GB    int `json:"size_gt_10gb"`
+	SizeLessThan1MB int `json:"size_lt_1mb"`
+	Size1MBTo10MB   int `json:"size_1mb_to_10mb"`
+	Size10MBTo100MB int `json:"size_10mb_to_100mb"`
+	Size100MBTo1GB  int `json:"size_100mb_to_1gb"`
+	Size1GBTo10GB   int `json:"size_1gb_to_10gb"`
+	SizeGreater10GB int `json:"size_gt_10gb"`
 
 	// By MEK fingerprint (for rotation visibility)
 	ByKeyFingerprint map[string]int `json:"by_key_fingerprint,omitempty"`
 
 	// By outcome
-	OutcomeProcessed  int `json:"outcome_processed"`
-	OutcomeSkipped    int `json:"outcome_skipped"`
-	OutcomeFailed     int `json:"outcome_failed"`
+	OutcomeProcessed       int `json:"outcome_processed"`
+	OutcomeSkipped         int `json:"outcome_skipped"`
+	OutcomeFailed          int `json:"outcome_failed"`
 	OutcomeIntegrityFailed int `json:"outcome_integrity_failed"`
 }
 
 // MigrationResult contains the result of a format migration operation.
 type MigrationResult struct {
-	TotalObjects     int `json:"total_objects"`
-	ProcessedObjects int `json:"processed_objects"`
-	SkippedObjects   int `json:"skipped_objects"`
-	FailedObjects    int `json:"failed_objects"`
+	TotalObjects     int                `json:"total_objects"`
+	ProcessedObjects int                `json:"processed_objects"`
+	SkippedObjects   int                `json:"skipped_objects"`
+	FailedObjects    int                `json:"failed_objects"`
 	Failures         []MigrationFailure `json:"failures,omitempty"`
 	Duration         time.Duration      `json:"duration"`
 	Status           string             `json:"status"`
@@ -128,10 +128,10 @@ type MigrationResult struct {
 
 // FormatMigrator handles format migration operations.
 type FormatMigrator struct {
-	backend  backend.Backend
-	bucket   string
-	mek      []byte // Master encryption key
-	keyID    string
+	backend backend.Backend
+	bucket  string
+	mek     []byte // Master encryption key
+	keyID   string
 	// currentWriteVersion is the target version for migration
 	currentWriteVersion uint8
 	// includeVersions are the source versions to migrate
@@ -238,10 +238,6 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				log.Printf("Warning: failed to get metadata for %s: %v", obj.Key, err)
 				result.FailedObjects++
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
-				fm.stateMu.Lock()
-				fm.state.FailedObjects++
-				fm.state.Failures = append(fm.state.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("failed to get metadata: %v", err)))
-				fm.stateMu.Unlock()
 				fm.advanceCursor(obj.Key)
 				continue
 			}
@@ -275,18 +271,18 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 			// Then check if version is already at target version (for versions in the include list)
 			// This order ensures each skipped object is counted exactly once with a clear reason
 			if !fm.shouldMigrateVersion(uint8(version)) {
-			// Version is not in the include list - skip it
-			result.SkippedObjects++
-			fm.advanceCursor(obj.Key)
-			continue
-		}
-		// Version is in the include list - now check if already at target version
-		if uint8(version) == fm.currentWriteVersion {
-			// Object is already at target version - skip it
-			result.SkippedObjects++
-			fm.advanceCursor(obj.Key)
-			continue
-		}
+				// Version is not in the include list - skip it
+				result.SkippedObjects++
+				fm.advanceCursor(obj.Key)
+				continue
+			}
+			// Version is in the include list - now check if already at target version
+			if uint8(version) == fm.currentWriteVersion {
+				// Object is already at target version - skip it
+				result.SkippedObjects++
+				fm.advanceCursor(obj.Key)
+				continue
+			}
 
 			// If we get here, the object is a migration candidate
 			// If metadata parsing failed but version is in include list, attempt migration (will fail and be recorded)
@@ -300,10 +296,6 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 				log.Printf("Warning: failed to migrate %s: %v", obj.Key, err)
 				result.FailedObjects++
 				result.Failures = append(result.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
-				fm.stateMu.Lock()
-				fm.state.FailedObjects++
-				fm.state.Failures = append(fm.state.Failures, fm.recordFailure(obj.Key, fmt.Sprintf("migration failed: %v", err)))
-				fm.stateMu.Unlock()
 				// Continue with other objects - migration is best-effort
 			}
 
@@ -345,13 +337,14 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 	}
 
 	result.TotalObjects = fm.state.TotalObjects
+	// Report cumulative totals: the run counters above were merged into
+	// state, so the caller sees totals across all runs, not just this one.
 	result.ProcessedObjects = fm.state.ProcessedObjects
 	result.SkippedObjects = fm.state.SkippedObjects
 	result.FailedObjects = fm.state.FailedObjects
 	result.Failures = fm.state.Failures
 	result.Duration = time.Since(startTime)
 	result.Status = "completed"
-
 
 	return result, nil
 }
@@ -735,7 +728,7 @@ func (fm *FormatMigrator) uploadAsMultipart(ctx context.Context, key string, pla
 	}
 
 	// Handle remaining data if any
-	if totalSize % partSize != 0 {
+	if totalSize%partSize != 0 {
 		partNumber := totalSize/partSize + 1
 		start := (totalSize / partSize) * partSize
 		partPlaintext := plaintext[start:]
@@ -878,14 +871,14 @@ func (fm *FormatMigrator) initOrLoadState(ctx context.Context, dryRun bool, conc
 	migrationID := fmt.Sprintf("format-migration-%d", time.Now().Unix())
 
 	fm.state = &MigrationState{
-		ID:                 migrationID,
-		StartTime:          time.Now(),
-		LastUpdated:        time.Now(),
-		Status:             "initialized",
-		IncludeVersions:    fm.includeVersions,
+		ID:                  migrationID,
+		StartTime:           time.Now(),
+		LastUpdated:         time.Now(),
+		Status:              "initialized",
+		IncludeVersions:     fm.includeVersions,
 		CurrentWriteVersion: fm.currentWriteVersion,
-		DryRun:             dryRun,
-		Concurrency:        concurrency,
+		DryRun:              dryRun,
+		Concurrency:         concurrency,
 	}
 
 	// Try to load existing state
