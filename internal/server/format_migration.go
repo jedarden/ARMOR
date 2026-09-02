@@ -358,6 +358,32 @@ func (fm *FormatMigrator) Migrate(ctx context.Context, dryRun bool, concurrency 
 
 // migrateObject migrates a single object to the current write format.
 func (fm *FormatMigrator) migrateObject(ctx context.Context, obj backend.ObjectInfo, rawMeta map[string]string, dryRun bool) error {
+	// Validate base64 fields before attempting to parse
+	// This ensures that corrupted metadata produces clear error messages
+	if wrappedDEK := rawMeta[armorMetaWrappedDEK]; wrappedDEK != "" {
+		// Check if it's v2 format or legacy base64
+		var base64DEK string
+		if len(wrappedDEK) > 4 && wrappedDEK[:3] == "v2:" {
+			parts := strings.SplitN(wrappedDEK, ":", 3)
+			if len(parts) == 3 && parts[0] == "v2" {
+				base64DEK = parts[2]
+			} else {
+				return fmt.Errorf("object %s has invalid v2 wrapped DEK format: %s", obj.Key, wrappedDEK)
+			}
+		} else {
+			base64DEK = wrappedDEK
+		}
+		if _, err := base64.StdEncoding.DecodeString(base64DEK); err != nil {
+			return fmt.Errorf("object %s has invalid base64 in wrapped DEK: %w", obj.Key, err)
+		}
+	}
+
+	if iv := rawMeta[armorMetaIV]; iv != "" {
+		if _, err := base64.StdEncoding.DecodeString(iv); err != nil {
+			return fmt.Errorf("object %s has invalid base64 in IV: %w", obj.Key, err)
+		}
+	}
+
 	// Parse ARMOR metadata
 	armorMeta, ok := backend.ParseARMORMetadata(rawMeta)
 	if !ok {
