@@ -2,6 +2,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -483,6 +484,123 @@ func TestFormatMigrationV2Skipped(t *testing.T) {
 
 	if result.SkippedObjects != 1 {
 		t.Errorf("Expected 1 skipped object, got %d", result.SkippedObjects)
+	}
+}
+
+// TestFormatMigrationV2AlreadyAtTargetSkipped tests that a V2 object is
+// skipped when the target write version is also V2 (include=["2"],
+// currentWriteVersion=2). This exercises the already-at-target skip site in
+// Migrate -- version in the include list but equal to the target -- distinct
+// from TestFormatMigrationV2Skipped, which exercises the not-in-include-list
+// skip site.
+func TestFormatMigrationV2AlreadyAtTargetSkipped(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	// Create a properly-encrypted V2 single-PUT object so that, if the skip
+	// path were broken, the migration would actually succeed (making
+	// ProcessedObjects != 0 an unambiguous signal) rather than failing on
+	// fake metadata.
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(i + 1)
+	}
+
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("Failed to wrap DEK: %v", err)
+	}
+
+	// Create V2 encryptor
+	iv := make([]byte, 16)
+	blockSize := 4096
+	encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, blockSize, crypto.Version2)
+	if err != nil {
+		t.Fatalf("Failed to create encryptor: %v", err)
+	}
+
+	plaintext := []byte("test data already at v2")
+	ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("Failed to encrypt: %v", err)
+	}
+
+	// Build envelope header
+	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, crypto.Version2)
+	if err != nil {
+		t.Fatalf("Failed to build envelope header: %v", err)
+	}
+	headerBuf, err := header.Encode()
+	if err != nil {
+		t.Fatalf("Failed to encode envelope header: %v", err)
+	}
+	ciphertext = append(ciphertext, hmacTable...)
+
+	// Store object with V2 metadata
+	metadata := map[string]string{
+		"x-amz-meta-armor-version":        "2",
+		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-block-size":     "4096",
+		"x-amz-meta-armor-plaintext-size": fmt.Sprintf("%d", len(plaintext)),
+		"x-amz-meta-armor-sha256":         hex.EncodeToString(plaintextSHA[:]),
+	}
+
+	// Combine header and ciphertext
+	fullData := append(headerBuf, ciphertext...)
+	originalData := append([]byte(nil), fullData...)
+	mockBackend.objects["test-object-v2-at-target.txt"] = &MockObject{
+		Data:     fullData,
+		Metadata: metadata,
+	}
+
+	// Create migrator whose target version is V2 -- the object's version is
+	// in the include list but already equals the current write version.
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"2"}, nil)
+
+	// Run migration
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Fatalf("Migration failed: %v", err)
+	}
+
+	// Verify the object was skipped, not processed
+	if result.ProcessedObjects != 0 {
+		t.Errorf("Expected 0 processed objects, got %d", result.ProcessedObjects)
+	}
+
+	if result.SkippedObjects != 1 {
+		t.Errorf("Expected 1 skipped object, got %d", result.SkippedObjects)
+	}
+
+	if result.FailedObjects != 0 {
+		t.Errorf("Expected 0 failed objects, got %d", result.FailedObjects)
+	}
+
+	// Already-at-target objects are not counted as migration candidates
+	// (see countObjects).
+	if result.TotalObjects != 0 {
+		t.Errorf("Expected 0 total objects, got %d", result.TotalObjects)
+	}
+
+	// Verify the object was left untouched
+	obj, ok := mockBackend.objects["test-object-v2-at-target.txt"]
+	if !ok {
+		t.Fatal("Object was deleted during migration")
+	}
+
+	if !bytes.Equal(obj.Data, originalData) {
+		t.Error("Object data was modified during migration")
+	}
+
+	if obj.Metadata["x-amz-meta-armor-version"] != "2" {
+		t.Errorf("Object version was changed during migration, got: %s", obj.Metadata["x-amz-meta-armor-version"])
 	}
 }
 
