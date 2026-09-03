@@ -640,6 +640,17 @@ that HEAD (`go test ./internal/server/ -run
 2026-09-03). The Summary's bare `:1229` pointer is updated to `:1471`
 accordingly. No verdict change: still no failure-recording gap.
 
+**Re-checked at HEAD `328488c77` (armor-b0234516 re-dispatch, 2026-09-03).**
+`git diff --name-only 9b6d55cd8..328488c77` lists only `.beads/checkpoint/*`
+and this doc — the source is still byte-identical, so every citation holds
+verbatim at this HEAD too (spot re-checked: :239/:245-250, :305/:311-314/
+:322, :339-350, :356-362, :873-879, interruption save :203, resume gate
+:912-915). All three regression tests pass again (`go test ./internal/server/
+-run 'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+2026-09-03; run on a working tree whose `format_migration.go`/`_test.go` are
+identical to HEAD). Verdict unchanged, for the third consecutive HEAD: no
+failure-recording gap exists, and failed objects are never retried by design.
+
 ## Summary
 
 The format migration failure recording mechanism:
