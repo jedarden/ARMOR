@@ -166,8 +166,10 @@ if err := fm.saveState(ctx); err != nil {              // Line 352
 **Completion merge sequence:**
 1. Lines 345-346: merge **only** the run-scoped counters (`Processed`,
    `Skipped`) into the cumulative state totals
-2. Lines 347-349: failure data is deliberately **not** merged — it is
-   already in state from the failure sites
+2. Lines 347-349: failure data is deliberately **not** merged. State
+   already holds every failure this run produced — each was written at
+   its failure site — so re-merging the run's `FailedObjects`/`Failures`
+   here would double-count each one
 3. Line 352: save final state to `.armor/migration-state.json`
 
 **State update pattern**: ✅ the merge is the single writer of the
@@ -220,14 +222,35 @@ result = state (assignment, not addition)                      (356-362)
 
 The invariant that makes this single-count:
 
-1. **Failure data has exactly one state writer** — the failure site. The
-   completion merge adds nothing for `FailedObjects`/`Failures` (347-349).
+1. **Failure data has exactly one writer per run** — the failure site,
+   under `stateMu`. Each failure is written to `fm.state` exactly once,
+   before completion is ever reached; the merge adds nothing for
+   `FailedObjects`/`Failures` (347-349).
 2. **The two levels own disjoint counters.** `result` accumulates the
    run-scoped `Processed`/`Skipped`, which are merged exactly once, at
    completion (345-346). `state` owns failure data and the cumulative
    totals. No counter is both merged and immediately-written.
 3. **Finalization copies, never sums** (356-362), so the caller observes
    the state totals — one increment per failure event.
+
+**Regression guard.** `TestFormatMigrationFailureRecording`
+(`format_migration_test.go:627`) exists to catch both ways this
+invariant can break. It migrates a single corrupted object, which must
+produce exactly one failure, and asserts that count on both levels:
+1 on the returned result (`format_migration_test.go:659-664`) and 1 on
+the persisted state (`format_migration_test.go:681-686`). Each
+assertion fails in a different direction when the invariant is broken —
+0 if a failure site forgets its state write, 2 if the completion merge
+re-adds this run's failure data. The test's own comment spells out both
+directions (`format_migration_test.go:675-679`), and both have happened
+historically (Symptoms 1 and 2 below). Which writer is the single one
+has legitimately differed across the tree's fix lineages — merge-only
+accumulation at `d16fc12d`, failure-site writes in the current tree —
+and both forms pass the test, because the invariant the test guards is
+*exactly one writer*, not which site it is. The current tree is the
+failure-site form; do not rework it into merge-only accumulation (see
+Root Cause History). Citations in this section were grep-verified
+against the working tree on 2026-09-03.
 
 ## State Persistence Pattern
 
