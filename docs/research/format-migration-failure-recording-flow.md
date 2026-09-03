@@ -796,6 +796,35 @@ failure-recording gap exists, and failed objects are never retried by
 designed best-effort semantics. No residual gap found; nothing new to file,
 nothing to link to armor-d3162d1a.
 
+**Re-checked at HEAD `8f6c7e5e4` (armor-b0234516 re-dispatch, 2026-09-03).**
+`git diff --name-only 48b36b2b7..8f6c7e5e4` touches only this document — the
+source is still byte-identical across the consecutive pair, and the working
+tree is clean for both cited files, so every citation holds verbatim at this
+HEAD too. Independently re-checked against the HEAD tree: `recordFailure`
+:879 (corrected comment :873-878) with exactly two callers :239 and :305;
+stateMu failure writes :245-248 and :311-314; `advanceCursor` :866-871 with
+failure-site calls :249 (with the :250 `continue`) and :322; completion merge
+:339-350 with the :347-349 no-re-merge exclusion; result copy from state
+:356-362; interruption save :203; periodic save :324-329; completion save
+:352; resume gate :911-915 (dry runs never resume in either direction).
+Exhaustive grep re-run at this HEAD: `state.FailedObjects`/`state.Failures`
+are mutated only at :246-247 and :312-313 — one writer of failure data per
+run; every other repo-wide hit is `internal/restoreverifier`'s own unrelated
+state struct or the `cmd/armor/cmd_migrate.go` readers (:211-232 display,
+:275/:318 deserializers). All three regression tests pass fresh
+(`go test ./internal/server/ -count=1 -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+go1.25.0, 2026-09-03; pins :988 / :1061 / :1471 —
+`TestFormatMigrationFailureRecording` lives in `./internal/server`, not
+`./internal/server/handlers`). Verdict unchanged, for the tenth consecutive
+HEAD: no failure-recording gap exists, and the advanceCursor at both failure
+sites (:249, :322) — so a failed object is never retried in-run or on a
+resumed run — remains designed best-effort semantics, pinned by
+`TestFormatMigrationFailedObjectsNotRetried`. No residual gap found; nothing
+new to file, nothing to link to armor-d3162d1a. Parent `armor-f6c662e0`
+re-read directly: the GAP ANSWER verdict and the `doc/failure-recording-verdict`
+ref are both in place in its notes — no parent update needed.
+
 ## Summary
 
 The format migration failure recording mechanism:
