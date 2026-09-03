@@ -103,9 +103,12 @@ func (r *recordingBackend) CompleteMultipartUpload(ctx context.Context, bucket, 
 	r.rmu.Unlock()
 
 	// Store assembled object exactly as B2 would, preserving no metadata —
-	// the handler applies ARMOR metadata afterwards via Copy.
+	// the handler applies ARMOR metadata afterwards via Copy. LastModified is
+	// stamped at completion time (before the manifest write that follows), so
+	// the ADR-016 ciphertext freshness gate sees the normal ordering.
 	r.mu.Lock()
 	r.objects[bucket+"/"+key] = assembled
+	r.modified[bucket+"/"+key] = time.Now()
 	if _, ok := r.meta[bucket+"/"+key]; !ok {
 		r.meta[bucket+"/"+key] = map[string]string{}
 	}

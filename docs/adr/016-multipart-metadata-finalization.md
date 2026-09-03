@@ -278,8 +278,20 @@ The manifest includes the ciphertext object reference, creating an explicit depe
 3. Manifest A still references ciphertext A (now gone)
 
 **Solution**: The manifest includes `x-amz-meta-armor-completed-at` timestamp. On read, verify:
-- Ciphertext object's `LastModified` >= manifest's `completed-at`
-- If not, the ciphertext has been overwritten - return error or retry
+- Ciphertext object's `LastModified` <= manifest's `completed-at`
+- If not (ciphertext NEWER than the manifest), the ciphertext has been overwritten since this manifest was finalized - return error or re-read the latest manifest
+
+> **Correction (2026-09-03):** This section originally specified
+> `LastModified >= completed-at`. That direction is backwards for the flow as
+> implemented: `CompleteMultipartUpload` assembles the ciphertext object first
+> (B2 multipart complete) and writes the manifest afterwards, so a ciphertext
+> *older* than `completed-at` is the normal, healthy ordering. Applying the
+> original comparison rejected every multipart object whose completion outlived
+> its assembly second — seen in production on ord-devimprint (2026-08-31), where
+> a 60s assembly gap permanently 500ed GetObject for a litestream segment. The
+> implemented check (`handlers.verifyCiphertextFreshness`) rejects only a
+> ciphertext strictly newer than the manifest, which is the ADR's stated intent:
+> detecting an overwrite that landed between the two manifest writes.
 
 ### Concurrent Writers
 
