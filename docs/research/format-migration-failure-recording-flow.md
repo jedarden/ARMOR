@@ -887,6 +887,81 @@ All three regression tests pass fresh (`go test ./internal/server/
 for the eleventh consecutive HEAD: no failure-recording gap exists, and
 failed objects are never retried by designed best-effort semantics.
 
+## Conclusion (armor-91366ca3, 2026-09-03)
+
+Closing section of the chain: it answers the three acceptance bullets
+parent bead `armor-f6c662e0` was written under by consolidating what the
+verification children established — the flow traces above, the
+"No-Retry Semantics" section, the **Verdict** section (armor-43b2030a,
+carried to the parent's notes by the delivery child `armor-319ea357`), and
+the addendum/stamp trail beneath it. It adds no new claims; where a detail
+lives elsewhere in this document it is referenced, not repeated. All
+citations were re-verified against HEAD `e55faafab` (2026-09-03), where
+both cited files are byte-identical to every tree since `8f6c7e5e4` (the
+commits between touch only `.beads/checkpoint/*` and this document).
+
+**1. The documented error-handling flow.** `Migrate()` has exactly two
+failure sites, of identical four-step shape — `recordFailure` creates one
+record, the run-scoped `result` write, the cumulative `fm.state` write
+under `stateMu`, then `advanceCursor`:
+
+- **Metadata-fetch failure** (`format_migration.go:236-251`):
+  `recordFailure` :239 → `result.FailedObjects++`/append :240-241 →
+  `stateMu.Lock`/`state.FailedObjects++`/append/`Unlock` :245-248 →
+  `advanceCursor` :249 → `continue` :250.
+- **Migration failure** (`format_migration.go:303-316`): `recordFailure`
+  :305 → result :306-307 → `stateMu` span :311-314; no `continue`, so
+  control falls through to the shared tail whose `advanceCursor` :322
+  serves success and failure alike.
+
+Neither site retries: the cursor advanced at :249 and :322 is
+`fm.state.LastKey` (`advanceCursor`, :866-871, write at :869), and the
+skip gate :227-233 (condition :229) drops any key `<=` the cursor before
+`objectMetadata` even runs. Because the cursor persists in
+`.armor/migration-state.json` (`statePath`, :145/:158) at start, every
+100 objects (:324-329), on interruption (:203), and at completion (:352),
+the skip sticks across a restart — a failed key is never revisited by a
+resumed run, while the failure itself stays on `state.Failures` with its
+reason for operator inspection. That is designed best-effort semantics;
+see "No-Retry Semantics" above.
+
+**2. The gap the parent asked for does not exist — the premise was a
+stale citation.** The parent's line citations ("Migrate() lines 256-266",
+with the failure increments at :258-:259 and the state update at
+:260-:262) are **stale as of `ec58ea96`**: those lines moved, and at the
+current HEAD :255-275 hold the version-parsing/skip logic instead (the
+non-ARMOR skip is :263-268, the invalid-version skip :269-274) — nothing
+in that span records a failure, and nothing there fails to record one.
+The failure-handling path actually lives at :236-251 and :303-316
+(bullet 1), and at this tree every failure is recorded exactly once at
+its site, reaches the persisted state at the moment it occurs, and cannot
+be double-counted by the final result. The full evidence is the
+**Verdict** section above (with its addendum and stamp trail); the reason
+the numbers moved is the **Stale-citation note (2026-09-03)** at the top
+of this document.
+
+**3. `recordFailure` exists and works.** It is
+`format_migration.go:879` (comment :873-878, in its corrected committed
+wording since `ca061558f`), with exactly two production callers — :239
+and :305, the two sites of bullet 1. It builds and returns a single
+`MigrationFailure{Key, Reason, Time}`, which each caller appends to both
+`result.Failures` and `fm.state.Failures`, so the two lists carry exactly
+one entry per failure event. That it works is evidenced by the three
+regression guards, all passing fresh at this HEAD (`go test
+./internal/server/ -count=1 -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+go1.25.0, 2026-09-03): `TestFormatMigrationFailureRecording`
+(`format_migration_test.go:988`) asserts exactly 1 failure on both the
+result (:1020) and the persisted state (:1042) — 0 would catch a site
+that stopped writing, 2 a re-merge;
+`TestFormatMigrationFailurePersistenceRoundTrip` (:1061) proves the
+record survives a save/reload; `TestFormatMigrationFailedObjectsNotRetried`
+(:1471) pins the no-retry semantics of bullet 1.
+
+Chain outcome: no residual gap exists, nothing was filed against
+`armor-d3162d1a`, and no code was changed anywhere in this chain — this
+section, like the rest of the chain's output, is documentation only.
+
 ## Summary
 
 The format migration failure recording mechanism:
