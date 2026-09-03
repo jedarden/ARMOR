@@ -713,6 +713,29 @@ HEAD. Verdict unchanged, for the sixth consecutive HEAD: no
 failure-recording gap exists, and failed objects are never retried by
 designed best-effort semantics.
 
+**Re-checked at HEAD `fc599218a` (armor-b0234516 re-dispatch, 2026-09-03).**
+`git diff --name-only 9b6d55cd8..fc599218a` on both
+`internal/server/format_migration.go` and `format_migration_test.go` is
+empty — the source is still byte-identical (the only commits between the
+previous stamp and this HEAD are `.beads/checkpoint/*` publishes), so every
+citation holds verbatim at this HEAD too. Independently re-checked against
+the HEAD working tree: recordFailure callers :239 and :305 with stateMu
+writes :245-248 / :311-314, advanceCursor :249 and :322, completion merge
+:339-350 with the :347-349 exclusion comment, result copy from state
+:356-362, :866-872 `advanceCursor`, :873-879 `recordFailure`, interruption
+save :203, resume gate :912-915. All three regression tests pass fresh
+(`go test ./internal/server/ -count=1 -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+2026-09-03; test pins still :988 / :1061 / :1471, and the Summary's
+`:1471` pointer from the `84cd0a8ad` stamp is still in place). The parent
+bead's delivered verdict was re-confirmed this round by reading its notes
+directly — it is worded "GAP ANSWER: NO failure-recording gap exists"
+(armor-f6c662e0, delivered by armor-319ea357), which is why an exact-phrase
+grep for the doc's heading misses it. Verdict unchanged, for the seventh
+consecutive HEAD: no failure-recording gap exists, and failed objects are
+never retried by designed best-effort semantics. No residual gap found;
+nothing new to file, nothing to link to armor-d3162d1a.
+
 ## Summary
 
 The format migration failure recording mechanism:
