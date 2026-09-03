@@ -761,6 +761,41 @@ unchanged, for the eighth consecutive HEAD: no failure-recording gap exists,
 and failed objects are never retried by designed best-effort semantics. No
 residual gap found; nothing new to file, nothing to link to armor-d3162d1a.
 
+**Re-checked at HEAD `48b36b2b7` (armor-b0234516 re-dispatch, 2026-09-03).**
+`git diff --name-only 8618b3194..48b36b2b7` touches only this document — the
+source is still byte-identical across the consecutive pair, so every
+citation holds verbatim at this HEAD too. Independently re-checked against
+the HEAD working tree (clean for both cited files): recordFailure callers
+:239 and :305 with stateMu writes :245-248 / :311-314, advanceCursor :249
+(with the :250 `continue`) and :322, completion merge :339-350 with the
+:347-349 exclusion comment, result copy from state :356-362, :866-871
+`advanceCursor`, :873-879 `recordFailure`, interruption save :203, resume
+gate :912-915, skip gate :227-233 (condition :229), `statePath` :145/:158.
+
+This round additionally reconciles the **cumulative** pin→HEAD drift, which
+the consecutive-pair stamps above never had to state: `git diff
+ec19626b5..48b36b2b7` on `format_migration.go` is *not* empty (+12/−7), but
+its entire content is the single commit `31993779f` (never resume migration
+state across the dry-run/live-run boundary), which contributes only the
+dry-run resume-gate tightening (:906-915) and the matching `recordFailure`
+comment rewrite (:873-878) — it adds no caller, removes no caller, and
+leaves both recording sites and the completion merge untouched, so the
+verdict's pinned-commit citations map 1:1 onto current HEAD. (The +242
+test-file lines since the pin are what moved the test pins from the
+verdict's :746/:819/:1229 to today's :988/:1061/:1471.) Exhaustive grep
+re-run at this HEAD: `state.FailedObjects`/`state.Failures` are mutated only
+at :246-247 and :312-313 — one writer of failure data per run; every other
+repo-wide hit is a struct field, a comment, the run-scoped `result.*`
+increments (:240-241, :306-307), the state→result copy (:361-362), or the
+`cmd/armor/cmd_migrate.go` display deserializers (:275/:318 — readers), and
+no test mutates `fm.state` failure data directly. All three regression tests
+pass fresh (`go test ./internal/server/ -count=1 -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+go1.25.0, 2026-09-03). Verdict unchanged, for the ninth consecutive HEAD: no
+failure-recording gap exists, and failed objects are never retried by
+designed best-effort semantics. No residual gap found; nothing new to file,
+nothing to link to armor-d3162d1a.
+
 ## Summary
 
 The format migration failure recording mechanism:
