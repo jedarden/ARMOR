@@ -293,6 +293,60 @@ result ← state (cumulative reporting)
 3. **Persistence**: state is saved at start (line 178), every 100 objects
    (lines 324-329), on interruption (line 203), and at completion (line 352)
 
+## No-Retry Semantics (designed best-effort)
+
+Recording a failure also retires the object: **a failed object is never
+retried — not later in the same run, and not on a resumed run.** This is
+designed best-effort semantics, pinned by
+`TestFormatMigrationFailedObjectsNotRetried` (`format_migration_test.go:1229`)
+— not an oversight to be fixed. It follows directly from the flow traced
+above: **both failure sites advance the cursor as part of failing.**
+
+- **Metadata-fetch failure path**: the error branch ends with
+  `fm.advanceCursor(obj.Key)` (`format_migration.go:249`) followed by
+  `continue` (:250), moving the run straight on to the next object.
+- **Migration-failure path**: the error branch has no `continue`; control
+  falls through to the common tail, whose
+  `fm.advanceCursor(obj.Key)` (`format_migration.go:322`) runs for failed
+  and successful candidates alike.
+
+`advanceCursor` (`format_migration.go:865-871`) sets `fm.state.LastKey =
+key` (line 869) under `stateMu`, and `LastKey` is exactly what the skip gate
+tests: any object whose key is `<=` the cursor is skipped before
+`objectMetadata` is even called (`format_migration.go:227-233`, condition at
+line 229 — the gate's own comment reads "already processed in a previous
+run"). Because the cursor is persisted in `.armor/migration-state.json`
+(`statePath`, `format_migration.go:145` and `:158`) at completion (line
+352), periodically every 100 objects (lines 324-329), and on interruption
+(line 203), **a failed key is not revisited after a restart either** — it is
+the persisted cursor, not the failure itself, that makes the skip stick.
+
+- **No in-run retry**: the enumeration loop visits each key once, and both
+  failure branches leave the object behind them; there is no retry queue
+  and no second pass.
+- **No resume retry**: the failed key sits at or before the persisted
+  cursor, so a resumed run skips it even though the object still *is* a
+  migration candidate (still at its source version).
+
+"No-retry" does not mean the failure is hidden: the object remains on
+`state.Failures` with its reason (traces 1 and 2 above) for operator
+inspection — only the re-attempt is forgone.
+
+**Regression guard.** `TestFormatMigrationFailedObjectsNotRetried`
+(`format_migration_test.go:1229`) pins exactly this. Run 1 migrates two
+valid V1 objects and fails one (`b-invalid.txt`), then asserts the cursor
+advanced past the failed key (:1355-1356). The test then persists the state
+exactly as a crashed run would leave it (`Status: "in_progress"` at :1359,
+written to `.armor/migration-state.json` at :1364) and runs a fresh
+migrator over the same backend: the second run must report nothing newly
+processed (:1379-1381) or failed, and `b-invalid.txt` must still be at V1
+(:1398-1399) — skipped by the cursor alone, as the test's own comment puts
+it (:1403).
+
+Citations in this section were verified against HEAD `f8d5ad55` on
+2026-09-03 (both cited files are byte-identical between `7405c0c5` and
+`f8d5ad55`).
+
 ## Root Cause History: why TestFormatMigrationFailureRecording failed
 
 The test (introduced in `9406b173`) creates one corrupted object:
@@ -477,3 +531,10 @@ The format migration failure recording mechanism:
 7. ✅ **Both empirical failures are fixed and covered by passing tests**
    ("got 0" → `8c0f3be0`/`61cbf4ad`; "got 2" → `d16fc12d`, then re-shaped
    into the shipped single-writer split by `c5b9f8b1`)
+8. ✅ **Failed objects are never retried** — by design, not omission: both
+   failure sites advance the cursor (lines 249, 322), so a failed key is
+   skipped in-run and on any resumed run, since the cursor persists in
+   `.armor/migration-state.json` and a failed key is not revisited after
+   restart (see "No-Retry Semantics" above; pinned by
+   `TestFormatMigrationFailedObjectsNotRetried`,
+   `format_migration_test.go:1229`)
