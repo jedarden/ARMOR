@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
@@ -670,6 +671,137 @@ func TestFormatMigrationFailureRecording(t *testing.T) {
 
 	if result.Failures[0].Reason == "" {
 		t.Error("Expected failure reason to be recorded")
+	}
+
+	// The failure must also reach the persistent state atomically with the
+	// counter increment, not be deferred to a completion merge. If the state
+	// write is dropped from the failure path this reads 0; if the completion
+	// merge re-adds this run's failures it reads 2 (each regression happened
+	// historically - see docs/research/format-migration-failure-recording-flow.md).
+	state := migrator.GetState()
+	if state.FailedObjects != 1 {
+		t.Errorf("Expected state.FailedObjects to be 1, got %d", state.FailedObjects)
+	}
+
+	if len(state.Failures) != 1 {
+		t.Errorf("Expected 1 state failure record, got %d", len(state.Failures))
+	}
+
+	if len(state.Failures) == 1 && state.Failures[0].Key != "corrupted.dat" {
+		t.Errorf("Expected state failure for 'corrupted.dat', got: %s", state.Failures[0].Key)
+	}
+}
+
+// TestFormatMigrationFailurePersistenceRoundTrip verifies that a failure
+// recorded during a run survives the saveState -> loadState JSON round trip
+// against the backend. The in-memory assertions in
+// TestFormatMigrationFailureRecording only cover the live state; this covers
+// what a resumed run or operator actually reads back from
+// .armor/migration-state.json after the process is gone.
+func TestFormatMigrationFailurePersistenceRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	// A V1 object whose wrapped DEK cannot be unwrapped: migration fails and
+	// a failure record is written at the failure site.
+	metadata := map[string]string{
+		"x-amz-meta-armor-version":     "1",
+		"x-amz-meta-armor-wrapped-dek": "invalid-dek",
+		"x-amz-meta-armor-iv":          "invalid-iv",
+	}
+	mockBackend.objects["corrupted-persist.dat"] = &MockObject{
+		Data:     []byte("corrupted data"),
+		Metadata: metadata,
+	}
+
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+
+	startedAt := time.Now()
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		// Migration completes even with failures
+		t.Logf("Migration completed with errors (expected): %v", err)
+	}
+	if result.FailedObjects != 1 {
+		t.Fatalf("Expected 1 failed object in run result, got %d", result.FailedObjects)
+	}
+
+	// Capture the live record so the reload can be checked for fidelity
+	// (every field identical), not just presence.
+	before := migrator.GetState()
+	if len(before.Failures) != 1 {
+		t.Fatalf("Expected 1 failure record in live state, got %d", len(before.Failures))
+	}
+
+	// The completion saveState must have left the state object on the backend.
+	rawState, _, err := mockBackend.GetDirect(ctx, "test-bucket", ".armor/migration-state.json")
+	if err != nil {
+		t.Fatalf("Migration state was not persisted to the backend: %v", err)
+	}
+	rawData, err := io.ReadAll(rawState)
+	rawState.Close()
+	if err != nil {
+		t.Fatalf("Failed to read persisted state: %v", err)
+	}
+
+	// Reload through the production loader (the path a resumed run takes).
+	reloaded, err := migrator.loadState(ctx)
+	if err != nil {
+		t.Fatalf("Failed to load persisted migration state: %v", err)
+	}
+
+	if reloaded.FailedObjects != 1 {
+		t.Errorf("Expected reloaded FailedObjects to be 1, got %d", reloaded.FailedObjects)
+	}
+
+	if len(reloaded.Failures) != 1 {
+		t.Fatalf("Expected 1 failure record in reloaded state, got %d", len(reloaded.Failures))
+	}
+
+	f := reloaded.Failures[0]
+	if f.Key != "corrupted-persist.dat" {
+		t.Errorf("Expected persisted failure key 'corrupted-persist.dat', got: %s", f.Key)
+	}
+	if f.Reason == "" {
+		t.Error("Expected persisted failure reason to be non-empty")
+	}
+
+	// Fidelity, not just presence: the reloaded record must equal the live
+	// one field for field. time.Time needs Equal rather than == because the
+	// monotonic clock reading is stripped by the JSON encoding (the wall
+	// instant it represents is preserved exactly by RFC 3339 nano).
+	live := before.Failures[0]
+	if f.Key != live.Key || f.Reason != live.Reason || f.Details != live.Details || !f.Time.Equal(live.Time) {
+		t.Errorf("Reloaded failure record differs from the live record:\n  live:     %+v\n  reloaded: %+v", live, f)
+	}
+
+	// A time.Time survives a JSON round trip either as a valid non-zero time
+	// or not at all (unmarshal fails), so a zero value here means the field
+	// was dropped or corrupted in persisting.
+	if f.Time.IsZero() {
+		t.Error("Expected persisted failure Time to be a non-zero timestamp")
+	} else {
+		if f.Time.Before(startedAt) {
+			t.Errorf("Persisted failure Time %v predates migration start %v", f.Time, startedAt)
+		}
+		if f.Time.After(time.Now().Add(time.Minute)) {
+			t.Errorf("Persisted failure Time %v is implausibly far in the future", f.Time)
+		}
+	}
+
+	// Decode the raw backend object directly, so a loss here is attributed to
+	// the persisted JSON rather than to the loader.
+	var fromBackend MigrationState
+	if err := json.Unmarshal(rawData, &fromBackend); err != nil {
+		t.Fatalf("Persisted state JSON does not parse: %v", err)
+	}
+	if len(fromBackend.Failures) != 1 || fromBackend.Failures[0].Key != "corrupted-persist.dat" {
+		t.Errorf("Raw persisted state lost the failure record: %s", string(rawData))
 	}
 }
 
