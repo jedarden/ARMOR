@@ -871,11 +871,11 @@ func (fm *FormatMigrator) advanceCursor(key string) {
 }
 
 // recordFailure creates a failure record for a failed migration.
-// The returned record is appended to result.Failures by the caller; the
-// completion merge in Migrate is the single writer of state.Failures, so
-// a failure only reaches persisted state at the next saveState (periodic,
-// or at completion). Failures and cursor advances are persisted on the
-// same cadence, so an interrupted run replays both consistently.
+// The caller appends the returned record to result.Failures (current run)
+// and, under stateMu together with the state.FailedObjects increment, to
+// fm.state.Failures (cumulative). Recording at the failure site means the
+// periodic saves and an interrupted final saveState persist the failure,
+// which is why the completion merge must not add this run's failures again.
 func (fm *FormatMigrator) recordFailure(key, reason string) MigrationFailure {
 	return MigrationFailure{
 		Key:    key,
@@ -903,8 +903,13 @@ func (fm *FormatMigrator) initOrLoadState(ctx context.Context, dryRun bool, conc
 	// Try to load existing state
 	existingState, err := fm.loadState(ctx)
 	if err == nil && existingState != nil {
-		// Check if this is a continuation of the same migration
-		if existingState.Status == "in_progress" {
+		// Resume an in-progress migration only between two live runs. A dry
+		// run never resumes, in either direction: resuming a dry run's state
+		// would leak its counters into the live run and skip every object the
+		// dry run's cursor advanced past (leaving them un-migrated), and a dry
+		// run that resumed any state would report counts for objects it never
+		// scanned. Dry runs always scan the bucket from the beginning.
+		if !dryRun && existingState.Status == "in_progress" && !existingState.DryRun {
 			fm.state = existingState
 			log.Printf("Resuming migration from key: %s", existingState.LastKey)
 		}

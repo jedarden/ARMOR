@@ -352,6 +352,248 @@ func TestFormatMigrationDryRun(t *testing.T) {
 	}
 }
 
+// TestFormatMigrationDryRunDoesNotPolluteLiveRun verifies that the state a
+// dry run persists (counters and resume cursor) never leaks into a subsequent
+// live run. A dry run that dies mid-run leaves its in-progress state behind;
+// the next live run must start with clean counters and must still migrate
+// objects the dry run only counted.
+func TestFormatMigrationDryRunDoesNotPolluteLiveRun(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	// Create a test V1 object (same construction as TestFormatMigrationDryRun)
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(i + 1)
+	}
+
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("Failed to wrap DEK: %v", err)
+	}
+
+	iv := make([]byte, 16)
+	blockSize := 4096
+	encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, blockSize, crypto.Version1)
+	if err != nil {
+		t.Fatalf("Failed to create encryptor: %v", err)
+	}
+
+	plaintext := []byte("test data for migration")
+	ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("Failed to encrypt: %v", err)
+	}
+
+	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, crypto.Version1)
+	if err != nil {
+		t.Fatalf("Failed to build envelope header: %v", err)
+	}
+	headerBuf, err := header.Encode()
+	if err != nil {
+		t.Fatalf("Failed to encode envelope header: %v", err)
+	}
+	ciphertext = append(ciphertext, hmacTable...)
+
+	metadata := map[string]string{
+		"x-amz-meta-armor-version":        "1",
+		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-block-size":     "4096",
+		"x-amz-meta-armor-plaintext-size": "25",
+		"x-amz-meta-armor-sha256":         "test-sha256",
+	}
+
+	fullData := append(headerBuf, ciphertext...)
+	mockBackend.objects["test-object-v1.txt"] = &MockObject{
+		Data:     fullData,
+		Metadata: metadata,
+	}
+
+	// Seed the state a dry run leaves behind when it dies mid-run: in
+	// progress, counters already merged from the dry run, cursor advanced
+	// past the object.
+	polluted := MigrationState{
+		ID:                  "format-migration-dry-run-crashed",
+		StartTime:           time.Now(),
+		LastUpdated:         time.Now(),
+		Status:              "in_progress",
+		TotalObjects:        1,
+		ProcessedObjects:    7,
+		SkippedObjects:      5,
+		FailedObjects:       3,
+		LastKey:             "test-object-v1.txt",
+		IncludeVersions:     []string{"1"},
+		CurrentWriteVersion: crypto.Version2,
+		DryRun:              true,
+		Concurrency:         1,
+	}
+	stateData, err := json.MarshalIndent(polluted, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal polluted state: %v", err)
+	}
+	mockBackend.objects[".armor/migration-state.json"] = &MockObject{
+		Data:     stateData,
+		Metadata: map[string]string{"Content-Type": "application/json"},
+	}
+
+	// Run a live migration against the polluted state
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+	result, err := migrator.Migrate(ctx, false, 1)
+	if err != nil {
+		t.Fatalf("Live migration failed: %v", err)
+	}
+
+	// Live-run counters reflect only this run, not the dry run's
+	if result.ProcessedObjects != 1 {
+		t.Errorf("Expected 1 processed object, got %d (dry-run counters leaked into live run)", result.ProcessedObjects)
+	}
+
+	if result.SkippedObjects != 0 {
+		t.Errorf("Expected 0 skipped objects, got %d (dry-run counters leaked into live run)", result.SkippedObjects)
+	}
+
+	if result.FailedObjects != 0 {
+		t.Errorf("Expected 0 failed objects, got %d (dry-run counters leaked into live run)", result.FailedObjects)
+	}
+
+	// The dry run's resume cursor must not cause the live run to skip the
+	// object - it has to actually be migrated
+	obj, ok := mockBackend.objects["test-object-v1.txt"]
+	if !ok {
+		t.Fatal("Object was deleted during live run")
+	}
+
+	if obj.Metadata["x-amz-meta-armor-version"] != "2" {
+		t.Errorf("Object version was not migrated to V2, got: %s (dry-run cursor leaked into live run)", obj.Metadata["x-amz-meta-armor-version"])
+	}
+}
+
+// TestFormatMigrationDryRunDoesNotResumeLiveState verifies the reverse
+// direction: a dry run never resumes persisted state, so its counters always
+// describe a complete scan of the bucket rather than a previous live run's
+// progress.
+func TestFormatMigrationDryRunDoesNotResumeLiveState(t *testing.T) {
+	ctx := context.Background()
+	mockBackend := NewMockBackend()
+
+	// Create a test V1 object (same construction as TestFormatMigrationDryRun)
+	mek := make([]byte, 32)
+	for i := range mek {
+		mek[i] = byte(i)
+	}
+
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(i + 1)
+	}
+
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("Failed to wrap DEK: %v", err)
+	}
+
+	iv := make([]byte, 16)
+	blockSize := 4096
+	encryptor, err := crypto.NewEncryptorWithVersion(dek, iv, blockSize, crypto.Version1)
+	if err != nil {
+		t.Fatalf("Failed to create encryptor: %v", err)
+	}
+
+	plaintext := []byte("test data for migration")
+	ciphertext, hmacTable, err := encryptor.Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("Failed to encrypt: %v", err)
+	}
+
+	plaintextSHA := crypto.ComputePlaintextSHA256(plaintext)
+	header, err := crypto.NewEnvelopeHeaderWithVersion(iv, int64(len(plaintext)), blockSize, plaintextSHA, crypto.Version1)
+	if err != nil {
+		t.Fatalf("Failed to build envelope header: %v", err)
+	}
+	headerBuf, err := header.Encode()
+	if err != nil {
+		t.Fatalf("Failed to encode envelope header: %v", err)
+	}
+	ciphertext = append(ciphertext, hmacTable...)
+
+	metadata := map[string]string{
+		"x-amz-meta-armor-version":        "1",
+		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
+		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-block-size":     "4096",
+		"x-amz-meta-armor-plaintext-size": "25",
+		"x-amz-meta-armor-sha256":         "test-sha256",
+	}
+
+	fullData := append(headerBuf, ciphertext...)
+	mockBackend.objects["test-object-v1.txt"] = &MockObject{
+		Data:     fullData,
+		Metadata: metadata,
+	}
+
+	// Seed the state a live run leaves behind when it dies mid-run
+	polluted := MigrationState{
+		ID:                  "format-migration-live-run-crashed",
+		StartTime:           time.Now(),
+		LastUpdated:         time.Now(),
+		Status:              "in_progress",
+		TotalObjects:        1,
+		ProcessedObjects:    9,
+		SkippedObjects:      4,
+		FailedObjects:       2,
+		LastKey:             "test-object-v1.txt",
+		IncludeVersions:     []string{"1"},
+		CurrentWriteVersion: crypto.Version2,
+		DryRun:              false,
+		Concurrency:         1,
+	}
+	stateData, err := json.MarshalIndent(polluted, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal polluted state: %v", err)
+	}
+	mockBackend.objects[".armor/migration-state.json"] = &MockObject{
+		Data:     stateData,
+		Metadata: map[string]string{"Content-Type": "application/json"},
+	}
+
+	// Run a dry-run migration against the polluted state
+	migrator := NewFormatMigrator(mockBackend, "test-bucket", mek, "default", crypto.Version2, []string{"1"}, nil)
+	result, err := migrator.Migrate(ctx, true, 1)
+	if err != nil {
+		t.Fatalf("Dry run migration failed: %v", err)
+	}
+
+	// Dry-run counters describe this scan only, not the interrupted live run
+	if result.ProcessedObjects != 1 {
+		t.Errorf("Expected 1 processed object, got %d (live-run counters leaked into dry run)", result.ProcessedObjects)
+	}
+
+	if result.SkippedObjects != 0 {
+		t.Errorf("Expected 0 skipped objects, got %d (live-run counters leaked into dry run)", result.SkippedObjects)
+	}
+
+	if result.FailedObjects != 0 {
+		t.Errorf("Expected 0 failed objects, got %d (live-run counters leaked into dry run)", result.FailedObjects)
+	}
+
+	// A dry run must not migrate the object
+	obj, ok := mockBackend.objects["test-object-v1.txt"]
+	if !ok {
+		t.Fatal("Object was deleted during dry run")
+	}
+
+	if obj.Metadata["x-amz-meta-armor-version"] != "1" {
+		t.Error("Object version was changed during dry run")
+	}
+}
+
 // TestFormatMigrationV1ToV2 tests migrating V1 objects to V2.
 func TestFormatMigrationV1ToV2(t *testing.T) {
 	ctx := context.Background()
