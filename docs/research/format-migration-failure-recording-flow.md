@@ -651,6 +651,22 @@ verbatim at this HEAD too (spot re-checked: :239/:245-250, :305/:311-314/
 identical to HEAD). Verdict unchanged, for the third consecutive HEAD: no
 failure-recording gap exists, and failed objects are never retried by design.
 
+**Re-checked at HEAD `8bd995b04` (armor-b0234516 re-dispatch, 2026-09-03).**
+`git diff --name-only 9b6d55cd8..8bd995b04` lists only `.beads/checkpoint/*`
+and this doc — the source is still byte-identical, so every citation holds
+verbatim at this HEAD too (independently re-checked: :239/:245-250,
+:305/:311-314/:322, :339-350 with the :347-349 exclusion comment, :356-362,
+:866-872 `advanceCursor`, :873-879 `recordFailure`, interruption save :203,
+resume gate :912-915; `recordFailure` still has exactly two production
+callers, and the only other `state.FailedObjects` touch in the tree is
+`cmd/armor/cmd_migrate.go:275`, which deserializes the persisted state file
+into the CLI's local display struct — a reader, not a writer). All three
+regression tests pass fresh (`go test ./internal/server/ -count=1 -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+2026-09-03; test pins still :988 / :1061 / :1471). Verdict unchanged, for
+the fourth consecutive HEAD: no failure-recording gap exists, and failed
+objects are never retried by designed best-effort semantics.
+
 ## Summary
 
 The format migration failure recording mechanism:
