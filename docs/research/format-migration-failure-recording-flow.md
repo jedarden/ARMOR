@@ -513,6 +513,99 @@ by the shipped pattern:
    matters, because there is nothing failure-related left on `result` to
    merge.
 
+## Verdict: no failure-recording gap exists (armor-43b2030a, 2026-09-03)
+
+Third child of the `armor-b0234516` split. This section answers, for a
+recorded commit, the question parent bead `armor-f6c662e0` was originally
+written against.
+
+**Verdict: NO.** At HEAD `ec19626b5de55fe18500ce9127b33aa9203dfca3`
+(2026-09-03) there is no failure-recording gap: every failure event is
+recorded exactly once, reaches the persisted cumulative state at the moment
+it occurs, and cannot be double-counted by the final result. The premise
+`armor-f6c662e0` was written under — "failures not recorded", cited as
+"Migrate() lines 256-266" — is stale as of `ec58ea96`; see the
+**Stale-citation note (2026-09-03)** blockquote at the top of this
+document, which covers why those line numbers must not be resolved against
+current source. It is not repeated here.
+
+**Evidence** — all citations are `internal/server/format_migration.go` at
+the pinned commit, each cited line content-checked against it:
+
+1. **One record per failure event.** `recordFailure` (:879) has exactly two
+   callers: the metadata-fetch site (:239) and the migration-failure site
+   (:305). No other call site exists in the tree.
+2. **One state write per event, at the site.** Each caller writes that one
+   record into `fm.state` under `stateMu` in the same iteration: :245-248
+   (`Lock` 245, `state.FailedObjects++` 246, append 247, `Unlock` 248) and
+   :311-314 (`Lock` 311, increment 312, append 313, `Unlock` 314).
+3. **No third writer exists.** An exhaustive grep of the pinned tree for
+   every mutation of `state.FailedObjects`/`state.Failures` matches only
+   :246-247 and :312-313. The `result` writes (:240-241, :306-307) are
+   run-scoped and paired 1:1 with those; finalization (:356-362) only
+   copies state outward (:361-362 are assignments, not additions); the
+   completion merge (:339-350) merges only `Processed`/`Skipped`
+   (:345-346) and deliberately excludes failure data (:347-349) — the
+   reason the returned result cannot double-count (see "Why the final
+   result cannot double-count"). Nothing in `internal/server/handlers`
+   touches failure data at all, and `cmd/armor/cmd_migrate.go` only reads
+   `state.FailedObjects` for progress display.
+4. **Persistence covers every exit path.** `fm.state` is saved at start,
+   every 100 objects (:324-329), on interruption (:203 — the interrupted
+   path :195-206 needs no failure merge precisely because the failures are
+   already in state), and at completion (:352). A restart resumes the same
+   state (`initOrLoadState` :888; resume gate :907-910). A *fresh*
+   migration after a completed one builds new state (:892-901) — that is a
+   new migration, not a lost record.
+5. **The regression guards hold.** At the pinned commit,
+   `TestFormatMigrationFailureRecording` (`format_migration_test.go:746`)
+   asserts exactly 1 failure on the result (:778-783) and exactly 1 on the
+   persisted state (:800-805) — 0 catches a dropped site write, 2 catches
+   a re-merge (:794-798 is the test's own statement of both directions).
+   `TestFormatMigrationFailurePersistenceRoundTrip`
+   (`format_migration_test.go:819`) adds the persistence half: the
+   recorded failure must survive a save and reload (:855-856 live state,
+   :880-881 reloaded state). `TestFormatMigrationFailedObjectsNotRetried`
+   (:1229) pins the no-retry companion (see "No-Retry Semantics"). All
+   three pass (`go test ./internal/server/ -run
+   'TestFormatMigrationFailure|TestFormatMigrationFailedObjectsNotRetried'`,
+   run 2026-09-03; the `Migrate()` recording path :195-364 is
+   byte-identical between the pinned commit and the tree the suite ran
+   on).
+6. **"Never retried" is not "unrecorded".** Both failure sites advance the
+   cursor (:249 with `continue` at :250; :322 in the shared tail), so a
+   failed object is never re-attempted — but the failure itself stays on
+   `state.Failures` with its reason for operator inspection. That is
+   designed best-effort semantics (see "No-Retry Semantics" above), so it
+   is not a gap.
+
+The two historical gaps listed under "Residual gaps" above stay closed in
+behavior; nothing new surfaced during this verification.
+
+**Exceptions recorded (documentation-only; none is a recording gap):**
+
+- At the pinned commit the `recordFailure` comment (:873-878) still carries
+  the pre-correction wording ("the completion merge in Migrate is the
+  single writer of state.Failures"), which contradicts the shipped code.
+  The correcting comment exists only as an uncommitted working-tree change,
+  so "Residual gaps" item 1 above describes the working tree, not this
+  commit. A comment cannot change recording behavior, so the verdict is
+  unaffected; whether landing that comment fix deserves its own bead is the
+  delivery child's (`armor-319ea357`) call. (Lineage note for that child:
+  the landed-history counterpart of the `c5b9f8b1` cited elsewhere in this
+  document is `cdf96ee37` — same shape, a message speaking the merge-form
+  while the diff moves recording back to the failure sites — and the
+  pre-rewrite shas `ec58ea96`/`c5b9f8b1` do not resolve in current
+  history.)
+- Test-file citations drift as tests are added above the functions they
+  name: the "Regression guard" subsection's `627` for
+  `TestFormatMigrationFailureRecording` was correct at `7ca5e41f8` (the
+  re-verification child's commit) and reads `746` at the pinned commit,
+  moved by `bd8ba07c2` (+1) and `7405c0c5e` (+118) — test additions from
+  the unrelated `armor-be0357e8` chain that did not touch this code. The
+  numbers in this verdict are pinned to the recorded commit and supersede
+  that subsection's for cross-checking purposes.
+
 ## Summary
 
 The format migration failure recording mechanism:
