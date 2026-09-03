@@ -853,6 +853,40 @@ confirmed near the top. All three regression tests pass fresh
 'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
 go1.25.0, 2026-09-03). Verdict unchanged.
 
+**Re-checked at HEAD `1077df360` (armor-54de605c, 2026-09-03).**
+`git diff --name-only 8f6c7e5e4..1077df360` touches only
+`.beads/checkpoint/*` and this document — the committed source is still
+byte-identical across the consecutive pair, so every citation holds
+verbatim at this HEAD too. Both cited files
+(`internal/server/format_migration.go`, `format_migration_test.go`) are
+clean in the working tree (empty `git diff HEAD`), so the pins re-checked
+below apply to HEAD, not merely to the tree. This round the pre-existing
+dirty tree has grown into packages the test binary *does* compile, which
+the sixth stamp's "packages these tests do not compile" framing no longer
+covers, so it is stated precisely: `internal/server/server.go` and
+`internal/server/handlers/handlers.go` carry uncommitted HTTP-layer edits
+(smart-default include-version validation in `migrateFormat` /
+`handleMigrationProgress`), and an untracked
+`format_migration_validation_test.go` (plus a non-compiling `.bak`) sits in
+this package. None of it is in the recording path: all three regression
+tests construct their own `NewFormatMigrator` over a `MockBackend` and call
+`Migrate()` directly, never entering the dirty handler code; the untracked
+test file contributes only its own validation helpers and was not selected
+by the run filter; and the production code under test is byte-identical to
+HEAD. The run below therefore remains valid evidence about HEAD.
+Exhaustive grep re-run at this HEAD, now including the new untracked test
+file: `state.FailedObjects`/`state.Failures` are mutated only at
+`format_migration.go` :247 and :313 (inside the :245-248 / :311-314
+`stateMu` spans) — one writer of failure data per run; every other
+repo-wide hit is the state→result copy (:361-362), test assertions, or the
+`cmd/armor/cmd_migrate.go` display deserializers (:275/:318 — readers).
+All three regression tests pass fresh (`go test ./internal/server/
+-count=1 -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'
+-v`, go1.25.0, 2026-09-03; pins :988 / :1061 / :1471). Verdict unchanged,
+for the eleventh consecutive HEAD: no failure-recording gap exists, and
+failed objects are never retried by designed best-effort semantics.
+
 ## Summary
 
 The format migration failure recording mechanism:
