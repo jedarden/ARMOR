@@ -2,8 +2,13 @@
 package handlers
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
 )
 
@@ -368,6 +373,100 @@ func TestPrefixMethodsEdgeCases(t *testing.T) {
 			stripResult := h.stripPrefix(applyResult)
 			if stripResult != tt.stripExpected {
 				t.Errorf("stripPrefix(%q) = %q, want %q", applyResult, stripResult, tt.stripExpected)
+			}
+		})
+	}
+}
+
+// freshnessHeadBackend serves Head results with a fixed LastModified so tests
+// can pin the ciphertext timestamp independently of the manifest's completedAt.
+// All other backend operations come from the embedded NilBackend.
+type freshnessHeadBackend struct {
+	*backend.NilBackend
+	lastModified time.Time
+	headErr      error
+}
+
+func (b *freshnessHeadBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {
+	if b.headErr != nil {
+		return nil, b.headErr
+	}
+	return &backend.ObjectInfo{Key: key, LastModified: b.lastModified}, nil
+}
+
+// TestVerifyCiphertextFreshness covers both timestamp orderings of the
+// ciphertext freshness gate on the manifest read path.
+//
+// CompleteMultipartUpload assembles the ciphertext first and writes the
+// manifest afterwards, so "ciphertext predates manifest completion" is the
+// normal ordering and must verify cleanly (regression: this used to be
+// rejected, permanently 500ing GetObject on every multipart object whose
+// completion outlived its assembly second). Only a ciphertext NEWER than the
+// manifest — an overwrite by a later same-key upload landing between the two
+// manifest writes — is stale.
+func TestVerifyCiphertextFreshness(t *testing.T) {
+	manifestCompleted := time.Date(2026, 8, 31, 22, 48, 24, 0, time.UTC)
+
+	tests := []struct {
+		name          string
+		ciphertext    time.Time
+		completedAt   string
+		headErr       error
+		wantErr       bool
+		wantErrSubstr string
+	}{
+		{
+			name:        "ciphertext predates manifest completion is served (normal multipart ordering)",
+			ciphertext:  manifestCompleted.Add(-time.Minute), // production incident shape: 60s assembly gap
+			completedAt: manifestCompleted.Format(time.RFC3339),
+		},
+		{
+			name:        "ciphertext in the same second as manifest completion is served",
+			ciphertext:  manifestCompleted,
+			completedAt: manifestCompleted.Add(999 * time.Millisecond).Format(time.RFC3339),
+		},
+		{
+			name:          "ciphertext newer than manifest completion is stale (overwritten)",
+			ciphertext:    manifestCompleted.Add(time.Minute),
+			completedAt:   manifestCompleted.Format(time.RFC3339),
+			wantErr:       true,
+			wantErrSubstr: "overwritten after manifest completion",
+		},
+		{
+			name:        "unparseable completedAt skips verification",
+			ciphertext:  manifestCompleted.Add(time.Hour),
+			completedAt: "not-a-timestamp",
+		},
+		{
+			name:          "ciphertext head failure propagates",
+			ciphertext:    manifestCompleted.Add(-time.Minute),
+			completedAt:   manifestCompleted.Format(time.RFC3339),
+			headErr:       errors.New("backend unavailable"),
+			wantErr:       true,
+			wantErrSubstr: "failed to head ciphertext object",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &Handlers{
+				config:  &config.Config{BlockSize: 65536},
+				backend: &freshnessHeadBackend{lastModified: tt.ciphertext, headErr: tt.headErr},
+			}
+
+			err := h.verifyCiphertextFreshness(context.Background(), "bucket", "bucket/key", tt.completedAt)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("verifyCiphertextFreshness() = nil, want error containing %q", tt.wantErrSubstr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErrSubstr) {
+					t.Errorf("verifyCiphertextFreshness() error = %v, want it to contain %q", err, tt.wantErrSubstr)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("verifyCiphertextFreshness() = %v, want nil", err)
 			}
 		})
 	}

@@ -3669,8 +3669,19 @@ func (h *Handlers) readManifest(ctx context.Context, bucket, key string) (*backe
 	return &manifestBody, info.Metadata, nil
 }
 
-// verifyCiphertextFreshness checks if the ciphertext object referenced by the manifest
-// is still fresh (hasn't been overwritten by a newer upload).
+// verifyCiphertextFreshness checks that the ciphertext object referenced by the
+// manifest is still the one the manifest was written for (not overwritten by a
+// newer same-key upload).
+//
+// CompleteMultipartUpload assembles the ciphertext object first and writes the
+// manifest afterwards, so a ciphertext LastModified BEFORE the manifest's
+// completedAt is the normal ordering and must be served. A ciphertext
+// LastModified AFTER completedAt means the ciphertext object was replaced after
+// this manifest was finalized, leaving the manifest pointing at ciphertext it
+// cannot describe — that manifest is stale and the read must be rejected.
+// (This assumes ARMOR and the backend clock stay roughly aligned; the ADR-016
+// overwrite window is seconds wide, so sub-second skew does not flip the
+// comparison.)
 func (h *Handlers) verifyCiphertextFreshness(ctx context.Context, bucket, ciphertextRef string, completedAt string) error {
 	// Parse completion timestamp
 	createdAt, err := time.Parse(time.RFC3339, completedAt)
@@ -3685,13 +3696,12 @@ func (h *Handlers) verifyCiphertextFreshness(ctx context.Context, bucket, cipher
 		return fmt.Errorf("failed to head ciphertext object: %w", err)
 	}
 
-	// Check if ciphertext was created after the manifest completion
 	// Truncate to seconds since B2 timestamps have second precision
 	ciphertextTime := info.LastModified.UTC().Truncate(time.Second)
 	manifestTime := createdAt.Truncate(time.Second)
 
-	if ciphertextTime.Before(manifestTime) {
-		return fmt.Errorf("ciphertext object is stale (created %v, manifest completed %v)", ciphertextTime, manifestTime)
+	if ciphertextTime.After(manifestTime) {
+		return fmt.Errorf("ciphertext object was overwritten after manifest completion (ciphertext %v, manifest completed %v)", ciphertextTime, manifestTime)
 	}
 
 	return nil

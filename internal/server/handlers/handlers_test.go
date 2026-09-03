@@ -30,13 +30,15 @@ type mockBackend struct {
 	mu                                 sync.Mutex
 	objects                            map[string][]byte
 	meta                               map[string]map[string]string
-	capturedListMultipartUploadsPrefix string // Captured prefix argument for testing
+	modified                           map[string]time.Time // LastModified stamped at write time, as a real object store would
+	capturedListMultipartUploadsPrefix string               // Captured prefix argument for testing
 }
 
 func newMockBackend() *mockBackend {
 	return &mockBackend{
-		objects: make(map[string][]byte),
-		meta:    make(map[string]map[string]string),
+		objects:  make(map[string][]byte),
+		meta:     make(map[string]map[string]string),
+		modified: make(map[string]time.Time),
 	}
 }
 
@@ -50,6 +52,7 @@ func (m *mockBackend) Put(ctx context.Context, bucket, key string, body io.Reade
 	}
 	m.objects[bucket+"/"+key] = data
 	m.meta[bucket+"/"+key] = meta
+	m.modified[bucket+"/"+key] = time.Now()
 	return nil
 }
 
@@ -123,7 +126,7 @@ func (m *mockBackend) Head(ctx context.Context, bucket, key string) (*backend.Ob
 		StoredSize:       int64(len(data)),
 		Metadata:         meta,
 		IsARMOREncrypted: meta["x-amz-meta-armor-version"] != "",
-		LastModified:     time.Now(),
+		LastModified:     m.modified[k],
 	}
 
 	if am, ok := backend.ParseARMORMetadata(meta); ok {
@@ -142,6 +145,7 @@ func (m *mockBackend) Delete(ctx context.Context, bucket, key string) error {
 	k := bucket + "/" + key
 	delete(m.objects, k)
 	delete(m.meta, k)
+	delete(m.modified, k)
 	return nil
 }
 
@@ -223,6 +227,7 @@ func (m *mockBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, ds
 	}
 
 	m.objects[dst] = data
+	m.modified[dst] = time.Now()
 	if replaceMetadata {
 		m.meta[dst] = meta
 	} else {
