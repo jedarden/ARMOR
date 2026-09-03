@@ -630,6 +630,16 @@ edits the pin predates. Consequences for the above:
   were :746 / :819 / :1229 at the pin). This drift is why the section pins
   numbers to a recorded sha rather than to "current".
 
+**Re-verified at HEAD `84cd0a8ad` (armor-b0234516, 2026-09-03).** Source
+`internal/server/format_migration.go` is byte-identical from `9b6d55cd8`
+through `84cd0a8ad`, so every citation above still holds verbatim (spot
+re-checked: :239/:245-250, :305/:311-314/:322, :339-350, :356-362,
+:873-879, interruption save :203), and all three regression tests pass at
+that HEAD (`go test ./internal/server/ -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+2026-09-03). The Summary's bare `:1229` pointer is updated to `:1471`
+accordingly. No verdict change: still no failure-recording gap.
+
 ## Summary
 
 The format migration failure recording mechanism:
@@ -654,4 +664,4 @@ The format migration failure recording mechanism:
    `.armor/migration-state.json` and a failed key is not revisited after
    restart (see "No-Retry Semantics" above; pinned by
    `TestFormatMigrationFailedObjectsNotRetried`,
-   `format_migration_test.go:1229`)
+   `format_migration_test.go:1471`)
