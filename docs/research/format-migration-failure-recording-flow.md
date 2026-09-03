@@ -688,6 +688,31 @@ each HEAD they actually verified. All three regression tests pass fresh
 the fifth consecutive HEAD: no failure-recording gap exists, and failed
 objects are never retried by designed best-effort semantics.
 
+**Re-checked at HEAD `e0f452687` (armor-b0234516 re-dispatch, 2026-09-03).**
+`git diff --name-only 9b6d55cd8..e0f452687` lists only `.beads/checkpoint/*`
+and this doc — both `internal/server/format_migration.go` and
+`format_migration_test.go` are byte-identical (empty diff), so every
+citation holds verbatim at this HEAD too. Independently re-checked against
+the HEAD working tree: recordFailure callers :239 and :305 with stateMu
+writes :245-248 / :311-314, advanceCursor :249 and :322, completion merge
+:339-350 with the :347-349 exclusion, result copy from state :356-362,
+:866-872 `advanceCursor`, :873-879 `recordFailure`, interruption save :203,
+resume gate :912-915. Exhaustive grep re-run: `recordFailure` still has
+exactly two production callers; the only other `state.FailedObjects`/
+`state.Failures` touches outside `format_migration.go` are the
+`internal/restoreverifier` package's own unrelated state struct and
+`cmd/armor/cmd_migrate.go:275`/`:318` (persisted-state deserializers into
+the CLI's display struct — readers, not writers). All three regression
+tests pass fresh (`go test ./internal/server/ -count=1 -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+2026-09-03; test pins still :988 / :1061 / :1471). The pre-existing dirty
+working tree (other lineages' in-flight edits, incl. a help-text-only change
+in `cmd/armor/cmd_migrate.go`) sits outside the recording path and in
+packages these tests do not compile, so the run remains valid evidence about
+HEAD. Verdict unchanged, for the sixth consecutive HEAD: no
+failure-recording gap exists, and failed objects are never retried by
+designed best-effort semantics.
+
 ## Summary
 
 The format migration failure recording mechanism:
