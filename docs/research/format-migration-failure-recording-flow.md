@@ -663,7 +663,7 @@ failure-recording gap exists, and failed objects are never retried by design.
 and this doc — the source is still byte-identical, so every citation holds
 verbatim at this HEAD too (independently re-checked: :239/:245-250,
 :305/:311-314/:322, :339-350 with the :347-349 exclusion comment, :356-362,
-:866-872 `advanceCursor`, :873-879 `recordFailure`, interruption save :203,
+:866-871 `advanceCursor`, :873-879 `recordFailure`, interruption save :203,
 resume gate :912-915; `recordFailure` still has exactly two production
 callers, and the only other `state.FailedObjects` touch in the tree is
 `cmd/armor/cmd_migrate.go:275`, which deserializes the persisted state file
@@ -679,7 +679,7 @@ objects are never retried by designed best-effort semantics.
 and this doc — the source is still byte-identical, so every citation holds
 verbatim at this HEAD too (independently re-checked: :239/:245-250,
 :305/:311-314/:322, :339-350 with the :347-349 exclusion comment, :356-362,
-:866-872 `advanceCursor`, :873-879 `recordFailure`, interruption save :203,
+:866-871 `advanceCursor`, :873-879 `recordFailure`, interruption save :203,
 resume gate :912-915). This round also closed a small citation hole in the
 previous stamp: the exhaustive `state.FailedObjects`/`state.Failures` grep
 now explicitly covers `cmd/armor/cmd_migrate.go:318` (the failures *array*
@@ -703,7 +703,7 @@ citation holds verbatim at this HEAD too. Independently re-checked against
 the HEAD working tree: recordFailure callers :239 and :305 with stateMu
 writes :245-248 / :311-314, advanceCursor :249 and :322, completion merge
 :339-350 with the :347-349 exclusion, result copy from state :356-362,
-:866-872 `advanceCursor`, :873-879 `recordFailure`, interruption save :203,
+:866-871 `advanceCursor`, :873-879 `recordFailure`, interruption save :203,
 resume gate :912-915. Exhaustive grep re-run: `recordFailure` still has
 exactly two production callers; the only other `state.FailedObjects`/
 `state.Failures` touches outside `format_migration.go` are the
@@ -729,7 +729,7 @@ citation holds verbatim at this HEAD too. Independently re-checked against
 the HEAD working tree: recordFailure callers :239 and :305 with stateMu
 writes :245-248 / :311-314, advanceCursor :249 and :322, completion merge
 :339-350 with the :347-349 exclusion comment, result copy from state
-:356-362, :866-872 `advanceCursor`, :873-879 `recordFailure`, interruption
+:356-362, :866-871 `advanceCursor`, :873-879 `recordFailure`, interruption
 save :203, resume gate :912-915. All three regression tests pass fresh
 (`go test ./internal/server/ -count=1 -run
 'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
@@ -751,7 +751,7 @@ so every citation holds verbatim at this HEAD too. Independently re-checked
 against the HEAD working tree (clean for both files): recordFailure callers
 :239 and :305 with stateMu writes :245-248 / :311-314, advanceCursor :249
 (with the :250 `continue`) and :322, completion merge :339-350 with the
-:347-349 exclusion comment, result copy from state :356-362, :866-872
+:347-349 exclusion comment, result copy from state :356-362, :866-871
 `advanceCursor`, :873-879 `recordFailure` with the corrected :873-878
 comment, interruption save :203, resume gate :912-915. Exhaustive grep
 re-run at this HEAD: `state.FailedObjects`/`state.Failures` are mutated only
@@ -831,6 +831,27 @@ resumed run — remains designed best-effort semantics, pinned by
 new to file, nothing to link to armor-d3162d1a. Parent `armor-f6c662e0`
 re-read directly: the GAP ANSWER verdict and the `doc/failure-recording-verdict`
 ref are both in place in its notes — no parent update needed.
+
+**Final whole-doc citation audit (armor-58d534b2, 2026-09-03).** A mechanical
+sweep of this entire document extracted every line-number citation (359
+instances, 125 distinct ranges) and content-checked each against its target:
+working-tree citations against the current tree (byte-identical to HEAD for
+both cited files), the Verdict section's pins against `ec19626b5`, the
+No-Retry section's pins against `f8d5ad55`, and the addendum's against
+`ca061558f` (both cited files byte-identical to HEAD there too). One
+imprecision found and corrected: five re-check stamps above cited
+`advanceCursor` as `:866-872`, sweeping in the blank line after the
+function — its actual span is `:866-871` (comment `:865`), as the two most
+recent stamps already had it. Everything else is exact at its target: both
+failure sites (:236-251, :303-316) with the recordFailure → result →
+state-under-`stateMu` sequence, the single-writer invariant (state failure
+data mutated only at :246-247 and :312-313; `recordFailure` has exactly two
+production callers), the completion merge's :347-349 exclusion, and the
+stale-citation note ("Migrate() lines 256-266", stale as of `ec58ea96`)
+confirmed near the top. All three regression tests pass fresh
+(`go test ./internal/server/ -count=1 -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+go1.25.0, 2026-09-03). Verdict unchanged.
 
 ## Summary
 
