@@ -607,7 +607,12 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/admin/key/ring", s.keyRing)
 	mux.HandleFunc("/admin/key/export", s.exportKey)
 	mux.HandleFunc("/admin/format/migrate", s.migrateFormat) // POST=start migration, GET=progress
-	mux.HandleFunc("/admin/creds", s.handleListCreds)        // GET=list credentials
+	// Manifest repair/quarantine (ADR-016 stale-manifest remediation)
+	mux.HandleFunc("/admin/manifest", s.handleManifestInspect)               // GET=state
+	mux.HandleFunc("/admin/manifest/repair", s.handleManifestRepair)         // POST=re-stamp completedAt
+	mux.HandleFunc("/admin/manifest/quarantine", s.handleManifestQuarantine) // POST=mark quarantined
+	mux.HandleFunc("/admin/manifest/release", s.handleManifestRelease)       // POST=lift quarantine
+	mux.HandleFunc("/admin/creds", s.handleListCreds)                        // GET=list credentials
 	mux.HandleFunc("/admin/provenance/compact", s.handleProvenanceCompact)
 	mux.HandleFunc("/armor/canary", s.canaryHandler)
 	mux.HandleFunc("/armor/audit", s.audit)
