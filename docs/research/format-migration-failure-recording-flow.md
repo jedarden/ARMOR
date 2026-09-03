@@ -8,6 +8,16 @@ This document traces how format migration records failures through the code path
 > working tree), where all `FormatMigration` tests pass. Every line number
 > cited matches that source exactly.
 
+> **Stale-citation note (2026-09-03):** the historical citation
+> "Migrate() lines 256-266" that parent bead `armor-f6c662e0` was written
+> against is **stale as of commit `ec58ea96`** — at that tree those lines
+> hold the version-parsing/skip logic, not the failure-handling path, so
+> that bead's line numbers must not be resolved against the current
+> source. Every other line citation in this document is anchored to the
+> working tree **as of the commit that lands this note** and was
+> mechanically re-verified line-by-line against it on 2026-09-03
+> (every cited line content-checked; zero mismatches).
+
 ## Overview
 
 The format migration failure recording mechanism operates at two levels:
