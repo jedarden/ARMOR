@@ -24,6 +24,7 @@ func init() {
 var (
 	adminURLFlag    string
 	dryRunFlag      bool
+	targetFlag      string
 	includeFlag     string
 	concurrencyFlag int
 	watchFlag       bool
@@ -33,7 +34,8 @@ func init() {
 	// Migration-specific flags
 	flag.StringVar(&adminURLFlag, "admin-url", "", "Admin API endpoint (required, e.g., http://127.0.0.1:9001)")
 	flag.BoolVar(&dryRunFlag, "dry-run", false, "Dry run: verify objects can be migrated without making changes")
-	flag.StringVar(&includeFlag, "include", "", "Comma-separated source versions to migrate (default: v2)")
+	flag.StringVar(&targetFlag, "target", "", "Target format version to migrate to (e.g., v3 or 3); must match the server's configured format write version")
+	flag.StringVar(&includeFlag, "include", "", "Comma-separated source versions to migrate (e.g., v1,v2; defaults to v2 for V3 target, v1 for V2 target)")
 	flag.IntVar(&concurrencyFlag, "concurrency", 0, "Number of concurrent workers (default: server-side default)")
 	flag.BoolVar(&watchFlag, "watch", false, "Watch mode: poll progress until completion")
 }
@@ -104,6 +106,9 @@ func migrate() {
 	values := url.Values{}
 	if dryRunFlag {
 		values.Add("dry_run", "true")
+	}
+	if targetFlag != "" {
+		values.Add("target", targetFlag)
 	}
 	if includeFlag != "" {
 		values.Add("include", includeFlag)

@@ -181,6 +181,27 @@ func TestMigrateServerInteraction(t *testing.T) {
 			wantExit:       0,
 		},
 		{
+			name:  "migration with explicit target",
+			flags: []string{"-admin-url", "", "-target", "v3", "-include", "v1,v2"},
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				target := r.URL.Query().Get("target")
+				if target != "v3" {
+					t.Errorf("expected target=v3, got %s", target)
+				}
+				include := r.URL.Query().Get("include")
+				if include != "v1,v2" {
+					t.Errorf("expected include=v1,v2, got %s", include)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": "in_progress",
+				})
+			},
+			wantStatusCode: http.StatusOK,
+			wantExit:       0,
+		},
+		{
 			name:  "migration with concurrency",
 			flags: []string{"-admin-url", "", "-concurrency", "8"},
 			handler: func(w http.ResponseWriter, r *http.Request) {
