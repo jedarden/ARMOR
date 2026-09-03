@@ -499,7 +499,7 @@ These fixtures validate the migration path covers:
 
 ## Related Documentation
 
-- **V1 Multipart Fixtures:** See `v1-multipart-fixtures.md` (TODO)
+- **V1 Multipart Fixtures:** See `v1-multipart-fixtures.md`
 - **V2 Fixtures:** See `v2-fixtures.md` (TODO)
 - **Migration Implementation:** See `cmd/armor/cmd_migrate.go`
 - **Golden Outcomes:** See `tests/fixtures/migration/v3-golden-outcomes.json`
