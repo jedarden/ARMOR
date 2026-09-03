@@ -356,7 +356,7 @@ the failure sites).
 The `migrateObject()` function (`format_migration.go:370-497`) returns
 errors in these scenarios:
 
-1. **Base64 validation errors** (lines 371-395, added by `61cbf4ad`):
+1. **Base64 validation errors** (lines 371-395, added by `89951e3d`):
    - Invalid v2 wrapped DEK format (line 381)
    - Invalid base64 in wrapped DEK (lines 386-388)
    - Invalid base64 in IV (lines 391-394)
@@ -385,7 +385,27 @@ errors in these scenarios:
    - Migrated object metadata is invalid (line 473)
    - Version not updated (lines 477-480)
    - Failed to decrypt migrated object for verification (line 485)
-   - SHA-256 mismatch after migration (lines 491-493)
+   - SHA-256 mismatch after migration (lines 491-494)
+
+**Coverage accounting** — grep-verified against the working tree
+(2026-09-02): `migrateObject` contains exactly 15 `return fmt.Errorf`
+sites, and every one is accounted for above — three in class 1, one
+each in classes 2 through 7, and six in class 8. Its remaining exits
+are not error paths:
+
+- the dry-run early return (lines 427-430) returns `nil` — and also
+  makes classes 5-8 unreachable for dry runs, since it returns before
+  anything is written or verified
+- the success return (line 496)
+- deferred `reader.Close()` (line 408) and `verifyReader.Close()`
+  (line 462) discard their errors
+
+Two of the wraps named above aggregate errors raised inside helpers,
+whose internal error sites sit outside `migrateObject` and are out of
+scope for this enumeration: class 4's wrap (line 421) covers the
+`decryptMultipartObject` (line 415) and `decryptSingleObject`
+(line 418) calls, and class 8's verification-decrypt wrap (line 485)
+covers the `decryptSingleObject` call at line 483.
 
 All these errors propagate up to the error handling at line 303 in
 `Migrate()`.
