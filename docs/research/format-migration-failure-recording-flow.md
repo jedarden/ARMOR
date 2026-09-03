@@ -606,6 +606,30 @@ behavior; nothing new surfaced during this verification.
   numbers in this verdict are pinned to the recorded commit and supersede
   that subsection's for cross-checking purposes.
 
+**Addendum (2026-09-03, immediately before this section landed).** Between
+the pinned commit and this section's own commit, `31993779f` (bead
+`armor-6e0c5257`, not authored by this chain) landed the two working-tree
+edits the pin predates. Consequences for the above:
+
+- **First exception is resolved.** The corrected `recordFailure` comment is
+  now committed — it reads at `ca061558f` exactly as "Residual gaps" item 1
+  describes (:873-878, function definition still :879). Nothing is left to
+  file a bead for; the delivery child (`armor-319ea357`) can drop that
+  exception when carrying the verdict.
+- **The verdict itself is unchanged.** Every failure-recording line this
+  section cites was re-verified at `ca061558f`: :239, :240-241, :245-248,
+  :305, :306-307, :311-314, :339-350, :356-362, :879, :888 — all hold, as
+  does the exhaustive-writer result (state failure data is mutated only at
+  :246-247 and :312-313).
+- **Positions that did move.** The resume gate is now :912-915 (was
+  :907-910 at the pin) and, as new behavior from `armor-6e0c5257` outside
+  this pin, never resumes across the dry-run/live boundary
+  (`!dryRun && ... && !existingState.DryRun`, :912) — a tightening of
+  resume semantics, not a change to failure recording. The three regression
+  tests now sit at `format_migration_test.go` :988 / :1061 / :1471 (they
+  were :746 / :819 / :1229 at the pin). This drift is why the section pins
+  numbers to a recorded sha rather than to "current".
+
 ## Summary
 
 The format migration failure recording mechanism:
