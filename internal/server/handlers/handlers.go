@@ -958,10 +958,28 @@ func (h *Handlers) GetObject(w http.ResponseWriter, r *http.Request, bucket, key
 	manifestBody, manifestMeta, err := h.readManifest(ctx, bucket, key)
 	if err == nil && manifestBody != nil {
 		// Manifest exists - use it as the source of truth for metadata
+
+		// Operator quarantine gate (see manifest_repair.go). A quarantined
+		// manifest is a definitive verdict on this object, so the read fails
+		// with a non-retryable 403 instead of the retryable 500 a stale
+		// manifest produces — clients that retry 5xx forever (litestream
+		// compaction, restore verification) would otherwise hammer a dead
+		// object indefinitely. Checked before the freshness gate so a
+		// quarantined-and-stale manifest still gets the definitive verdict.
+		if reason, quarantined := manifestQuarantineState(manifestMeta); quarantined {
+			h.writeError(w, r, "AccessDenied", fmt.Sprintf("Object is quarantined by the operator and cannot be read: %s (release with POST /admin/manifest/release)", reason), http.StatusForbidden)
+			return
+		}
+
 		// Verify ciphertext freshness if we have a completion timestamp
-		if completedAt := manifestMeta["x-amz-meta-armor-completed-at"]; completedAt != "" {
+		if completedAt := manifestMeta[metaCompletedAt]; completedAt != "" {
 			if verifyErr := h.verifyCiphertextFreshness(ctx, bucket, manifestBody.CiphertextObject, completedAt); verifyErr != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Stale manifest: %v", verifyErr), 500)
+				// Retryable by design: an in-progress ADR-016 overwrite
+				// resolves itself once the new manifest lands. When it never
+				// resolves, the operator repairs or quarantines via the admin
+				// endpoints named in the message — the ones operators grep
+				// for during exactly this outage.
+				h.writeError(w, r, "InternalError", fmt.Sprintf("Stale manifest: %v (repair with POST /admin/manifest/repair or quarantine with POST /admin/manifest/quarantine)", verifyErr), 500)
 				return
 			}
 		}
@@ -3595,7 +3613,7 @@ func (h *Handlers) poisonUpload(ctx context.Context, manager *backend.MultipartS
 // This is used instead of CopyObject to avoid the 5GB limit and race conditions.
 func (h *Handlers) writeManifest(ctx context.Context, bucket, key string, meta map[string]string, uploadID, etag string, ciphertextRef string) error {
 	// Build manifest key: <prefixed-key>.armor-manifest
-	manifestKey := h.applyPrefix(key) + ".armor-manifest"
+	manifestKey := h.manifestKeyFor(key)
 
 	// Build manifest body (optional, for debugging)
 	manifestBody := &backend.ManifestBody{
@@ -3611,18 +3629,18 @@ func (h *Handlers) writeManifest(ctx context.Context, bucket, key string, meta m
 	}
 
 	// Add ciphertext reference to metadata if not already present
-	if meta["x-amz-meta-armor-ciphertext-ref"] == "" {
-		meta["x-amz-meta-armor-ciphertext-ref"] = ciphertextRef
+	if meta[metaCiphertextRef] == "" {
+		meta[metaCiphertextRef] = ciphertextRef
 	}
 
 	// Add completion timestamp to metadata
-	if meta["x-amz-meta-armor-completed-at"] == "" {
-		meta["x-amz-meta-armor-completed-at"] = manifestBody.CompletedAt
+	if meta[metaCompletedAt] == "" {
+		meta[metaCompletedAt] = manifestBody.CompletedAt
 	}
 
 	// Write manifest object with metadata
 	manifestMeta := map[string]string{
-		"Content-Type": "application/x-armor-manifest+json",
+		"Content-Type": manifestContentType,
 	}
 	for k, v := range meta {
 		manifestMeta[k] = v
@@ -3640,7 +3658,7 @@ func (h *Handlers) writeManifest(ctx context.Context, bucket, key string, meta m
 // Returns (manifestBody, metadata, error).
 func (h *Handlers) readManifest(ctx context.Context, bucket, key string) (*backend.ManifestBody, map[string]string, error) {
 	// Try to read manifest: <prefixed-key>.armor-manifest
-	manifestKey := h.applyPrefix(key) + ".armor-manifest"
+	manifestKey := h.manifestKeyFor(key)
 
 	body, info, err := h.backend.Get(ctx, bucket, manifestKey)
 	if err != nil {
