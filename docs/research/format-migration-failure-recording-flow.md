@@ -244,23 +244,30 @@ The invariant that makes this single-count:
    the state totals — one increment per failure event.
 
 **Regression guard.** `TestFormatMigrationFailureRecording`
-(`format_migration_test.go:627`) exists to catch both ways this
+(`format_migration_test.go:988`) exists to catch both ways this
 invariant can break. It migrates a single corrupted object, which must
 produce exactly one failure, and asserts that count on both levels:
-1 on the returned result (`format_migration_test.go:659-664`) and 1 on
-the persisted state (`format_migration_test.go:681-686`). Each
+1 on the returned result (`format_migration_test.go:1020-1026`) and 1
+on the persisted state (`format_migration_test.go:1042-1048`). Each
 assertion fails in a different direction when the invariant is broken —
 0 if a failure site forgets its state write, 2 if the completion merge
 re-adds this run's failure data. The test's own comment spells out both
-directions (`format_migration_test.go:675-679`), and both have happened
+directions (`format_migration_test.go:1036-1040`), and both have happened
 historically (Symptoms 1 and 2 below). Which writer is the single one
 has legitimately differed across the tree's fix lineages — merge-only
 accumulation at `d16fc12d`, failure-site writes in the current tree —
 and both forms pass the test, because the invariant the test guards is
 *exactly one writer*, not which site it is. The current tree is the
 failure-site form; do not rework it into merge-only accumulation (see
-Root Cause History). Citations in this section were grep-verified
-against the working tree on 2026-09-03.
+Root Cause History). Citations in this section were re-verified
+line-by-line against the working tree at HEAD `6c0daa3d4` on 2026-09-03
+(final whole-doc audit) and repointed to it from their earlier
+`7ca5e41f8`-era numbering. Correction: the former state-assert and
+both-directions citations (`681-686` / `675-679`) were stale at every
+anchor — at `7ca5e41f8` itself those lines fall inside
+`TestFormatMigrationV2SkippedByDefault`, which occupied them before the
+test gained its persisted-state assertion and its both-directions
+comment; the numbers above are the positions in the current tree.
 
 ## State Persistence Pattern
 
