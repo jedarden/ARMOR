@@ -736,6 +736,31 @@ consecutive HEAD: no failure-recording gap exists, and failed objects are
 never retried by designed best-effort semantics. No residual gap found;
 nothing new to file, nothing to link to armor-d3162d1a.
 
+**Re-checked at HEAD `8618b3194` (armor-b0234516 re-dispatch, 2026-09-03).**
+`git diff fc599218a..8618b3194` on both `internal/server/format_migration.go`
+and `format_migration_test.go` is empty — the source is still byte-identical
+(`8618b3194` is this doc's previous stamp commit and touches only this file),
+so every citation holds verbatim at this HEAD too. Independently re-checked
+against the HEAD working tree (clean for both files): recordFailure callers
+:239 and :305 with stateMu writes :245-248 / :311-314, advanceCursor :249
+(with the :250 `continue`) and :322, completion merge :339-350 with the
+:347-349 exclusion comment, result copy from state :356-362, :866-872
+`advanceCursor`, :873-879 `recordFailure` with the corrected :873-878
+comment, interruption save :203, resume gate :912-915. Exhaustive grep
+re-run at this HEAD: `state.FailedObjects`/`state.Failures` are mutated only
+at :246-247 and :312-313 — one writer of failure data per run; every other
+repo-wide hit is a struct field, a comment, the run-scoped `result.*`
+increments (:240-241, :306-307), the state→result copy (:361-362), the
+`internal/restoreverifier` package's own unrelated state struct, or the
+`cmd/armor/cmd_migrate.go` display deserializers (:275/:318 — readers), and
+no handler-package code touches either field. All three regression tests
+pass fresh (`go test ./internal/server/ -count=1 -run
+'TestFormatMigrationFailureRecording|TestFormatMigrationFailurePersistenceRoundTrip|TestFormatMigrationFailedObjectsNotRetried'`,
+go1.25.0, 2026-09-03; test pins still :988 / :1061 / :1471). Verdict
+unchanged, for the eighth consecutive HEAD: no failure-recording gap exists,
+and failed objects are never retried by designed best-effort semantics. No
+residual gap found; nothing new to file, nothing to link to armor-d3162d1a.
+
 ## Summary
 
 The format migration failure recording mechanism:
