@@ -28,6 +28,30 @@ const (
 	s3IdleTimeout       = 2 * time.Minute
 )
 
+// Admin listener timeout overrides. Both accept a Go duration string ("30s",
+// "5m"); "0" disables the deadline. Unset or empty also means disabled, which
+// is the default.
+const (
+	EnvAdminReadTimeout  = "ARMOR_ADMIN_READ_TIMEOUT"
+	EnvAdminWriteTimeout = "ARMOR_ADMIN_WRITE_TIMEOUT"
+)
+
+const (
+	// adminReadHeaderTimeout bounds how long the admin listener waits for a
+	// client to finish sending request headers. It is the guardrail that
+	// remains once ReadTimeout defaults to disabled, and it is deliberately
+	// not configurable: the pre-header path is the only part of the admin
+	// surface an unauthenticated caller can reach, so slowloris protection
+	// there is not something an operator should be able to tune away.
+	adminReadHeaderTimeout = 30 * time.Second
+
+	// adminIdleTimeout reaps admin connections sitting between requests. It is
+	// set explicitly because the defaults below disable ReadTimeout, and
+	// http.Server falls back to ReadTimeout for an unset IdleTimeout -- which
+	// would leave stale admin connections open forever.
+	adminIdleTimeout = 2 * time.Minute
+)
+
 // newS3HTTPServer builds the public S3 API server. ReadTimeout and WriteTimeout
 // must remain disabled: multipart uploads, completion, and streamed downloads
 // can legitimately take longer than 30 minutes for multi-gigabyte objects. A
@@ -44,6 +68,68 @@ func newS3HTTPServer(addr string, handler http.Handler) *http.Server {
 		WriteTimeout:      0,
 		IdleTimeout:       s3IdleTimeout,
 	}
+}
+
+// newAdminHTTPServer builds the admin API server.
+//
+// ReadTimeout and WriteTimeout default to disabled. The previous hard-coded 30s
+// on both made every long-running admin call impossible: net/http arms the
+// write deadline as soon as the request has been read, *before* the handler
+// runs, so a handler that needs minutes was guaranteed to fail on write no
+// matter how fast the client was. POST /admin/key/rotate and
+// GET /admin/key/ring both walk the whole bucket and take minutes on a real
+// backend, so they were killed mid-walk with an empty body
+// (docs/notes/mek-rotation-2026.md, "Blocker" item 1). They now match the S3
+// listener, and adminReadHeaderTimeout keeps the pre-handler read path bounded.
+//
+// Set ARMOR_ADMIN_READ_TIMEOUT / ARMOR_ADMIN_WRITE_TIMEOUT to restore an
+// explicit guardrail on a deployment that wants one. They take Go duration
+// strings, and "0" is equivalent to leaving them unset.
+func newAdminHTTPServer(addr string, handler http.Handler, getenv func(string) string) (*http.Server, error) {
+	read, write, err := adminTimeouts(getenv)
+	if err != nil {
+		return nil, err
+	}
+
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadTimeout:       read,
+		ReadHeaderTimeout: adminReadHeaderTimeout,
+		WriteTimeout:      write,
+		IdleTimeout:       adminIdleTimeout,
+	}, nil
+}
+
+// adminTimeouts resolves the admin listener's read and write deadlines from the
+// environment. Both default to 0 (disabled).
+func adminTimeouts(getenv func(string) string) (read, write time.Duration, err error) {
+	if read, err = adminTimeoutFromEnv(getenv, EnvAdminReadTimeout); err != nil {
+		return 0, 0, err
+	}
+	if write, err = adminTimeoutFromEnv(getenv, EnvAdminWriteTimeout); err != nil {
+		return 0, 0, err
+	}
+	return read, write, nil
+}
+
+// adminTimeoutFromEnv reads one duration-valued override. An unset or empty
+// variable yields 0, meaning "no deadline"; anything else must parse as a
+// non-negative Go duration.
+func adminTimeoutFromEnv(getenv func(string) string, key string) (time.Duration, error) {
+	raw := getenv(key)
+	if raw == "" {
+		return 0, nil
+	}
+
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid duration %q (want Go duration syntax, e.g. 30s or 5m, or 0 to disable)", key, raw)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s: must be zero or positive, got %s", key, d)
+	}
+	return d, nil
 }
 
 func serve() {
@@ -90,11 +176,9 @@ func serve() {
 	httpServer := newS3HTTPServer(cfg.Listen, srv.Handler())
 
 	// Create admin HTTP server
-	adminServer := &http.Server{
-		Addr:         cfg.AdminListen,
-		Handler:      srv.AdminHandler(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+	adminServer, err := newAdminHTTPServer(cfg.AdminListen, srv.AdminHandler(), os.Getenv)
+	if err != nil {
+		logger.Fatalf("failed to configure admin server: %v", err)
 	}
 
 	// Start canary monitor
