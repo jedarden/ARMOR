@@ -968,9 +968,13 @@ func TestFormatMigrationMultipartToSingle(t *testing.T) {
 		t.Fatalf("Migration failed: %v", err)
 	}
 
-	// Verify migration completed
+	// Verify migration completed: the converted object is counted as
+	// processed, not skipped (it went through the migration path).
 	if result.ProcessedObjects != 1 {
 		t.Errorf("Expected 1 processed object, got %d", result.ProcessedObjects)
+	}
+	if result.SkippedObjects != 0 {
+		t.Errorf("Expected 0 skipped objects, got %d", result.SkippedObjects)
 	}
 
 	// Verify object was migrated
@@ -981,6 +985,13 @@ func TestFormatMigrationMultipartToSingle(t *testing.T) {
 
 	if obj.Metadata["x-amz-meta-armor-version"] != "2" {
 		t.Errorf("Object version was not migrated to V2, got: %s", obj.Metadata["x-amz-meta-armor-version"])
+	}
+
+	// Verify the object flipped from multipart to single-PUT: the multipart
+	// flag must not survive into the new metadata, since the output layout is
+	// chosen by plaintext size and this object is below the threshold.
+	if obj.Metadata["x-amz-meta-armor-multipart"] != "" {
+		t.Errorf("Multipart flag survived migration to single-PUT: %q", obj.Metadata["x-amz-meta-armor-multipart"])
 	}
 }
 
