@@ -312,6 +312,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		errs = append(errs, err)
 	} else if authFile != nil {
+		// Record the path on the config: the server gates the hot-reload
+		// watcher on AuthFilePath, so leaving it unset would silently disable
+		// reload of a file that demonstrably loaded.
+		cfg.AuthFilePath = os.Getenv("ARMOR_AUTH_FILE")
 		if err := MergeFileCredentials(cfg, authFile); err != nil {
 			errs = append(errs, err)
 		}

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
 )
 
 // TestLoadAuthFile_Unset tests that LoadAuthFile returns nil when ARMOR_AUTH_FILE is unset.
@@ -556,5 +555,49 @@ func TestIntegration_LoadAndMerge(t *testing.T) {
 		if cfg.Credentials[key] == nil {
 			t.Errorf("Missing credential for key %s", key)
 		}
+	}
+}
+
+// TestLoadRecordsAuthFilePath verifies that a successfully loaded
+// ARMOR_AUTH_FILE is recorded on the config. The server starts the
+// hot-reload watcher only when Config.AuthFilePath is set, so a load that
+// leaves the field empty silently disables reload of a file that
+// demonstrably loaded.
+func TestLoadRecordsAuthFilePath(t *testing.T) {
+	yamlContent := `credentials:
+  - name: TEST_READER
+    access_key: test-reader-key
+    secret_key: test-reader-secret
+    acl: "mybucket:readonly/*:get+list"
+`
+	tmpFile := filepath.Join(t.TempDir(), "credentials.yaml")
+	if err := os.WriteFile(tmpFile, []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	setEnv(t, minimalEnv()...)
+	setEnv(t, "ARMOR_AUTH_FILE", tmpFile)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.AuthFilePath != tmpFile {
+		t.Errorf("AuthFilePath = %q, want %q", cfg.AuthFilePath, tmpFile)
+	}
+}
+
+// TestLoadLeavesAuthFilePathEmptyWithoutAuthFile is the mirror case: no
+// ARMOR_AUTH_FILE means no path on the config and therefore no watcher.
+func TestLoadLeavesAuthFilePathEmptyWithoutAuthFile(t *testing.T) {
+	setEnv(t, minimalEnv()...)
+	setEnv(t, "ARMOR_AUTH_FILE", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.AuthFilePath != "" {
+		t.Errorf("AuthFilePath = %q, want empty", cfg.AuthFilePath)
 	}
 }
