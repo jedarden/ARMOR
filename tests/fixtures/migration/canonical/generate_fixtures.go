@@ -1,5 +1,9 @@
-// Package migration provides canonical V1/V2 to V3 migration fixtures.
-// These fixtures are generated independently of the migration code under test.
+// Package canonical holds the legacy crypto-backed V1/V2 fixture generator.
+// It calls internal/crypto instead of reimplementing the envelope format, so
+// unlike ../standalone_generator.go it is not an independent oracle. It lives
+// in its own directory because Go allows one package per directory and both
+// programs declare the same symbols; keeping them together broke the package
+// for every ./... build and lint run.
 package main
 
 import (
