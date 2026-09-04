@@ -2,7 +2,8 @@
 task_types:
 - other
 labels: []
-success_count: 0
+success_count: 1
+last_used: 2026-09-04
 source_beads:
 - session-0989caa8-ede8-47eb-92dc-8443862a6b86
 ---
