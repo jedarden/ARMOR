@@ -2,7 +2,8 @@
 task_types:
 - other
 labels: []
-success_count: 0
+success_count: 1
+last_used: 2026-09-04
 source_beads:
 - bf-520v
 ---
