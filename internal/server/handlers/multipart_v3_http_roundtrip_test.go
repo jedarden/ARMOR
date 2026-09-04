@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -229,4 +230,78 @@ func uploadV3PartsConcurrently(t *testing.T, h *handlers.Handlers, bucket, key, 
 		etags[result.part-1] = result.etag
 	}
 	return etags
+}
+
+// v3SidecarKey reproduces the sidecar naming rule shared by the writer and both
+// v3 read paths: .armor/hmac/<sha256(object key)>, relative to the bucket.
+func v3SidecarKey(bucket, key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return bucket + "/.armor/hmac/" + fmt.Sprintf("%x", sum)
+}
+
+// TestMultipartV3SidecarUsesClientKeyUnderPrefix is the v3 sibling of
+// TestMultipartAppliesArmorPrefix. CompleteMultipartUpload saves the v3 HMAC
+// sidecar under sha256 of the CLIENT key, while the assembled ciphertext is
+// stored under the PREFIXED key. Both v3 read paths hashed the prefixed key
+// instead, so on any deployment with ARMOR_PREFIX set every v3 multipart GET
+// failed with "failed to load v3 HMAC table: 404 NoSuchKey" — the sidecar was
+// in the bucket all along, under the name the writer chose. No data was lost.
+//
+// Invisible wherever ARMOR_PREFIX was empty, because the two keys coincide.
+// Found live on ord-devimprint (ARMOR_PREFIX="commitgraph/"): 554 GetObject 500s
+// across the 55 minutes after rollout, blocking litestream L2 compaction.
+func TestMultipartV3SidecarUsesClientKeyUnderPrefix(t *testing.T) {
+	const mib = 1024 * 1024
+	const prefix = "tenant-a/"
+	cfg, rb, h := recordingTestSetupWithPrefix(t, prefix)
+	cfg.FormatWriteVersion = 3
+
+	bucket, key := "test-bucket", "backups/base/data.tar"
+
+	// 5 MiB+512 keeps the non-final part above multipartMinPartSize; the 1-byte
+	// final part is the smallest non-uniform ending and pins the part splice.
+	parts, plaintext := v3MultipartFixture([]int{5*mib + 512, 1})
+
+	uploadID := initiateMultipart(t, h, bucket, key)
+	etags := uploadV3PartsConcurrently(t, h, bucket, key, uploadID, parts, 4)
+	completeMultipart(t, h, bucket, key, uploadID, etags)
+
+	// The sidecar must exist under sha256 of the CLIENT key — the name the
+	// writer chose — and must NOT exist under sha256 of the prefixed storage
+	// key, which is what the broken readers asked for.
+	rb.mu.Lock()
+	_, sidecarAtClientKey := rb.objects[v3SidecarKey(bucket, key)]
+	_, sidecarAtPrefixedKey := rb.objects[v3SidecarKey(bucket, prefix+key)]
+	rb.mu.Unlock()
+	if !sidecarAtClientKey {
+		t.Fatalf("v3 sidecar missing at .armor/hmac/<sha256(%q)>", key)
+	}
+	if sidecarAtPrefixedKey {
+		t.Errorf("v3 sidecar was written under the PREFIXED key %q; readers and writers disagree", prefix+key)
+	}
+
+	// Full GET: the object must read back byte-for-byte through the handler.
+	fullGet := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/%s/%s", bucket, key), nil)
+	fullResponse := httptest.NewRecorder()
+	h.HandleRoot(fullResponse, fullGet)
+	if fullResponse.Code != http.StatusOK {
+		t.Fatalf("full GET failed: status %d: %s", fullResponse.Code, fullResponse.Body.String())
+	}
+	if !bytes.Equal(fullResponse.Body.Bytes(), plaintext) {
+		t.Fatalf("full GET mismatch: got %d bytes, want %d; first divergence at %d",
+			fullResponse.Body.Len(), len(plaintext), firstDivergence(fullResponse.Body.Bytes(), plaintext))
+	}
+
+	// Range GET covers the second v3 read path, which shares the sidecar loader.
+	rangeRequest := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/%s/%s", bucket, key), nil)
+	rangeRequest.Header.Set("Range", "bytes=0-65535")
+	rangeResponse := httptest.NewRecorder()
+	h.HandleRoot(rangeResponse, rangeRequest)
+	if rangeResponse.Code != http.StatusPartialContent {
+		t.Fatalf("range GET failed: status %d: %s", rangeResponse.Code, rangeResponse.Body.String())
+	}
+	if !bytes.Equal(rangeResponse.Body.Bytes(), plaintext[:65536]) {
+		t.Fatalf("range GET mismatch; first divergence at %d",
+			firstDivergence(rangeResponse.Body.Bytes(), plaintext[:65536]))
+	}
 }
