@@ -590,24 +590,6 @@ func (fg *FixtureGenerator) GenerateV2SingleStandard(plaintext []byte) (*Fixture
 	return bundle, nil
 }
 
-// splitIntoUniformParts splits plaintext into uniform-sized parts.
-func (fg *FixtureGenerator) splitIntoUniformParts(plaintext []byte, partSize int) [][]byte {
-	if partSize <= 0 {
-		partSize = 5 * 1024 * 1024 // Default 5MB
-	}
-
-	var parts [][]byte
-	for i := 0; i < len(plaintext); i += partSize {
-		end := i + partSize
-		if end > len(plaintext) {
-			end = len(plaintext)
-		}
-		parts = append(parts, plaintext[i:end])
-	}
-
-	return parts
-}
-
 // splitIntoVariableFinalParts splits plaintext into uniform parts with a smaller final part (ADR-010).
 func (fg *FixtureGenerator) splitIntoVariableFinalParts(plaintext []byte, uniformPartSize int, finalPartSize int) [][]byte {
 	if uniformPartSize <= 0 {
