@@ -27,6 +27,10 @@ The standalone generator (`standalone_generator.go`) implements all crypto primi
 
 This ensures adversarial validation: if the migration code has a bug, this generator will catch it.
 
+The legacy generator in `canonical/` does **not** have this property — it calls
+`internal/crypto` directly, so it can only reproduce what ARMOR already does.
+Treat `standalone_generator.go` as the sole fixture oracle.
+
 ## Usage
 
 ### Using the standalone generator:
@@ -58,7 +62,11 @@ Each fixture directory contains:
 tests/fixtures/migration/
 ├── standalone_generator.go       # Main generator (fully standalone)
 ├── generate_fixtures.sh          # Convenience script
-├── generate_fixtures.go          # Legacy generator (uses ARMOR crypto)
+├── canonical/
+│   └── generate_fixtures.go      # Legacy generator (uses ARMOR crypto); kept
+│                                 #   in its own directory because both programs
+│                                 #   are `package main` declaring the same
+│                                 #   symbols, which broke every ./... build
 ├── README.md                     # This file
 ├── v1_single_put/
 │   ├── explicit_version/
