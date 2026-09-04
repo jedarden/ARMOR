@@ -1142,12 +1142,149 @@ func TestKeyRotationPassthroughUnchanged(t *testing.T) {
 // SIGKILL mid-rotation. It is recovered by the test harness.
 var errSimulatedCrash = errors.New("simulated crash mid-rotation")
 
+// cancelOnListBackend wraps mockRotationBackend and cancels the rotation
+// context during the cancelOn-th List call, returning the context error. The
+// first List is the count pass, so cancelOn=2 puts the cancellation inside the
+// walk's own listing — where a real request-context expiry surfaces.
+type cancelOnListBackend struct {
+	*mockRotationBackend
+	cancelOn int64
+	cancel   context.CancelFunc
+	lists    atomic.Int64
+}
+
+func (c *cancelOnListBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	if n := c.lists.Add(1); n == c.cancelOn && c.cancel != nil {
+		c.cancel()
+		return nil, ctx.Err()
+	}
+	return c.mockRotationBackend.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
+// TestKeyRotationCancelDuringListStaysResumable proves a cancellation surfacing
+// through List is recorded as "interrupted" and not "failed". Only the first is
+// resumable, so mislabelling it would make the next invocation restart the walk
+// from the beginning even though a checkpoint exists.
+func TestKeyRotationCancelDuringListStaysResumable(t *testing.T) {
+	oldMEK := make([]byte, 32)
+	rand.Read(oldMEK)
+	newMEK := make([]byte, 32)
+	rand.Read(newMEK)
+
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	const total = 2
+	keys := []string{"data/list-cancel-a.bin", "data/list-cancel-b.bin"}
+	for _, k := range keys {
+		pt := []byte("payload for " + k)
+		meta, err := createTestARMORObject(oldMEK, bucket, k, pt)
+		if err != nil {
+			t.Fatalf("create %s: %v", k, err)
+		}
+		var buf bytes.Buffer
+		buf.Write(pt)
+		if err := mock.Put(context.Background(), bucket, k, &buf, int64(len(pt)), meta); err != nil {
+			t.Fatalf("put %s: %v", k, err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b := &cancelOnListBackend{mockRotationBackend: mock, cancelOn: 2, cancel: cancel}
+	rotator := NewKeyRotator(b, bucket, oldMEK, newMEK, nil)
+
+	result, err := rotator.Rotate(ctx)
+	if err == nil {
+		t.Fatal("expected the cancelled rotation to return an error, got nil")
+	}
+	if result.Status != "interrupted" {
+		t.Errorf("status = %q, want interrupted (a cancellation is not a listing failure)", result.Status)
+	}
+	if state := loadPersistedRotationState(t, mock, bucket); state.Status != "interrupted" {
+		t.Errorf("persisted status = %q, want \"interrupted\" (\"failed\" would not be resumed)", state.Status)
+	}
+
+	// The state is still adoptable, so the retry finishes the bucket.
+	resumed, err := NewKeyRotator(b, bucket, oldMEK, newMEK, nil).Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("resume rotate: %v", err)
+	}
+	if resumed.Status != "completed" {
+		t.Errorf("resume status = %q, want completed", resumed.Status)
+	}
+	if resumed.ProcessedObjects != total {
+		t.Errorf("resume processed = %d, want %d", resumed.ProcessedObjects, total)
+	}
+}
+
+// TestKeyRotationCheckpointsPerObject proves the rotation state is persisted
+// after EVERY object rather than every 100: a kill between the first and second
+// re-wrap still leaves a checkpoint naming the first object, so an interrupted
+// rotation loses at most the one object that was in flight. Under the old
+// every-100-objects cadence no checkpoint would exist here at all, and up to 99
+// completed re-wraps would be thrown away.
+func TestKeyRotationCheckpointsPerObject(t *testing.T) {
+	oldMEK := make([]byte, 32)
+	rand.Read(oldMEK)
+	newMEK := make([]byte, 32)
+	rand.Read(newMEK)
+
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	const total = 3
+	keys := make([]string, total)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("data/ckpt-%02d.bin", i)
+		pt := []byte(fmt.Sprintf("payload-%02d", i))
+		meta, err := createTestARMORObject(oldMEK, bucket, keys[i], pt)
+		if err != nil {
+			t.Fatalf("create %s: %v", keys[i], err)
+		}
+		var buf bytes.Buffer
+		buf.Write(pt)
+		if err := mock.Put(context.Background(), bucket, keys[i], &buf, int64(len(pt)), meta); err != nil {
+			t.Fatalf("put %s: %v", keys[i], err)
+		}
+	}
+
+	// Die on the second Copy: the first object has been re-wrapped and
+	// checkpointed, the second has not.
+	cb := &crashBackend{mockRotationBackend: mock, crashAfter: 2}
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected simulated crash on the second copy, but rotation completed")
+			}
+		}()
+		rotator := NewKeyRotator(cb, bucket, oldMEK, newMEK, nil)
+		_, _ = rotator.Rotate(context.Background())
+	}()
+
+	state := loadPersistedRotationState(t, mock, bucket)
+	if state.LastKey != keys[0] {
+		t.Errorf("checkpoint LastKey = %q, want %q (state must be persisted per object)", state.LastKey, keys[0])
+	}
+	if state.ProcessedObjects != 1 {
+		t.Errorf("checkpoint processed = %d, want 1", state.ProcessedObjects)
+	}
+	if !dekUnwrapsWith(t, mock, bucket, keys[0], newMEK) {
+		t.Errorf("%s was re-wrapped but not checkpointed", keys[0])
+	}
+	for _, k := range keys[1:] {
+		if dekUnwrapsWith(t, mock, bucket, k, newMEK) {
+			t.Errorf("%s unexpectedly re-wrapped", k)
+		}
+	}
+}
+
 // crashBackend wraps mockRotationBackend and panics exactly once, on the
 // crashAfter-th Copy call, BEFORE delegating to the underlying Copy. This
 // faithfully models a pod being killed mid-rotation: the rotator goroutine dies
 // without running any graceful cancel/fail state-save, so the on-disk rotation
-// state is whatever the periodic save (every 100 objects) last wrote — status
-// "in_progress", the only status initOrLoadState will resume from.
+// state is whatever the last per-object checkpoint wrote — status "in_progress",
+// one of the statuses initOrLoadState resumes from.
 type crashBackend struct {
 	*mockRotationBackend
 	copyCount  atomic.Int64
@@ -1190,8 +1327,8 @@ func TestKeyRotationInterruptedResume(t *testing.T) {
 		}
 	}
 
-	// Crash on the 101st Copy — immediately after the periodic save at the
-	// 100th object wrote an in_progress state with LastKey = keys[99].
+	// Crash on the 101st Copy — immediately after the per-object checkpoint for
+	// the 100th object wrote an in_progress state with LastKey = keys[99].
 	cb := &crashBackend{mockRotationBackend: mock, crashAfter: 101}
 
 	// First run: dies mid-rotation.
@@ -1205,7 +1342,8 @@ func TestKeyRotationInterruptedResume(t *testing.T) {
 		_, _ = rotator.Rotate(context.Background())
 	}()
 
-	// Persisted state is the periodic save: in_progress, LastKey = keys[99].
+	// Persisted state is the last per-object checkpoint: in_progress, LastKey =
+	// keys[99].
 	reader, _, err := mock.GetDirect(context.Background(), bucket, ".armor/rotation-state.json")
 	if err != nil {
 		t.Fatalf("no rotation state found after crash: %v", err)
@@ -1442,12 +1580,14 @@ func TestFingerprintRotation(t *testing.T) {
 	}
 
 	// The object with active fingerprint should be skipped (not processed)
-	// The object with old fingerprint should be rotated
+	// The object with old fingerprint should be rotated. The rotation state
+	// file (.armor/rotation-state.json) is also counted as skipped — see
+	// TestKeyRotationSkipsNonARMORObjects for that convention.
 	if result.ProcessedObjects != 1 {
 		t.Errorf("processed = %d, want 1 (only old-fingerprint object)", result.ProcessedObjects)
 	}
-	if result.SkippedObjects != 1 {
-		t.Errorf("skipped = %d, want 1 (active-fingerprint object)", result.SkippedObjects)
+	if result.SkippedObjects != 2 {
+		t.Errorf("skipped = %d, want 2 (active-fingerprint object + rotation state file)", result.SkippedObjects)
 	}
 
 	// Verify objects after rotation
@@ -1507,8 +1647,9 @@ func TestFingerprintRotationIdempotence(t *testing.T) {
 	if result1.ProcessedObjects != 1 {
 		t.Errorf("first rotation processed = %d, want 1", result1.ProcessedObjects)
 	}
-	if result1.SkippedObjects != 0 {
-		t.Errorf("first rotation skipped = %d, want 0", result1.SkippedObjects)
+	// The rotation state file is the one skip.
+	if result1.SkippedObjects != 1 {
+		t.Errorf("first rotation skipped = %d, want 1 (rotation state file)", result1.SkippedObjects)
 	}
 
 	// Second rotation (should be idempotent - all objects now use active fingerprint)
@@ -1521,8 +1662,9 @@ func TestFingerprintRotationIdempotence(t *testing.T) {
 	if result2.ProcessedObjects != 0 {
 		t.Errorf("second rotation processed = %d, want 0 (idempotent)", result2.ProcessedObjects)
 	}
-	if result2.SkippedObjects != 1 {
-		t.Errorf("second rotation skipped = %d, want 1", result2.SkippedObjects)
+	// The already-active object plus the rotation state file.
+	if result2.SkippedObjects != 2 {
+		t.Errorf("second rotation skipped = %d, want 2 (active-fingerprint object + rotation state file)", result2.SkippedObjects)
 	}
 
 	// Verify object still uses active MEK
@@ -1531,13 +1673,61 @@ func TestFingerprintRotationIdempotence(t *testing.T) {
 	}
 }
 
-// TestFingerprintRotationResume tests that rotation resumes correctly after
-// an injected crash (state checkpointing).
-func TestFingerprintRotationResume(t *testing.T) {
+// loadPersistedRotationState reads .armor/rotation-state.json from the mock
+// backend, standing in for what the next rotation invocation would load.
+func loadPersistedRotationState(t *testing.T, b *mockRotationBackend, bucket string) *RotationState {
+	t.Helper()
+	reader, _, err := b.GetDirect(context.Background(), bucket, ".armor/rotation-state.json")
+	if err != nil {
+		t.Fatalf("no rotation state found in backend: %v", err)
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read rotation state: %v", err)
+	}
+	var state RotationState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("parse rotation state: %v", err)
+	}
+	return &state
+}
+
+// cancelAfterCopiesBackend wraps mockRotationBackend and cancels the rotation
+// context during the cancelAfter-th Copy call, returning the context error
+// without performing the copy. This models a rotation outliving its request
+// budget: the admin handler runs Rotate on r.Context(), so a walk that takes
+// longer than the request dies exactly here — mid-object, with that object NOT
+// re-wrapped.
+type cancelAfterCopiesBackend struct {
+	*mockRotationBackend
+	cancelAfter int64
+	cancel      context.CancelFunc
+	copies      atomic.Int64
+}
+
+func (c *cancelAfterCopiesBackend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
+	if n := c.copies.Add(1); n == c.cancelAfter && c.cancel != nil {
+		c.cancel()
+		return fmt.Errorf("copy %s: %w", srcKey, ctx.Err())
+	}
+	return c.mockRotationBackend.Copy(ctx, srcBucket, srcKey, dstBucket, dstKey, meta, replaceMetadata)
+}
+
+// TestFingerprintRotationResumeAdoptsInterruptedState proves an interrupted
+// rotation is RESUMED rather than restarted. Run one is cancelled by its
+// request context mid-object; run two must adopt the persisted "interrupted"
+// state, skip the object already re-wrapped (proven by the Copy call count),
+// and finish the rest — including the object that was in flight when the
+// context died, which must not have been checkpointed as done.
+//
+// This is the failure the rotation state used to have: initOrLoadState only
+// adopted "in_progress" state, so a cancelled rotation was re-walked from the
+// first key on every retry and a long bucket never finished.
+func TestFingerprintRotationResumeAdoptsInterruptedState(t *testing.T) {
 	mock := newMockRotationBackend()
 	bucket := "test-bucket"
 
-	// Create two MEKs
 	activeMEK := make([]byte, 32)
 	oldMEK := make([]byte, 32)
 	rand.Read(activeMEK)
@@ -1545,78 +1735,150 @@ func TestFingerprintRotationResume(t *testing.T) {
 
 	activeFP := crypto.MEKFingerprint(activeMEK)
 	oldFP := crypto.MEKFingerprint(oldMEK)
-
 	if activeFP == oldFP {
 		t.Fatal("fingerprints collide, need different MEKs")
 	}
 
-	// Build ring with old key
 	oldRing := []keymanager.RingKeyEntry{
 		{MEK: oldMEK, Fingerprint: oldFP},
 	}
-
-	// Create manifest index
 	idx := manifest.New()
 
-	// Put three objects with old fingerprint
-	keys := []string{"a.txt", "b.txt", "c.txt"}
-	for _, key := range keys {
-		data := []byte("data for " + key)
-		putARMORObject(t, mock, bucket, key, data, oldMEK, idx)
+	const total = 5
+	keys := make([]string, total)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("data/obj-%d.bin", i)
+		putARMORObject(t, mock, bucket, keys[i], []byte("payload"), oldMEK, idx)
 	}
 
-	// Start rotation but interrupt it after processing 1 object
-	rotator1 := NewFingerprintRotator(mock, bucket, "default", activeMEK, oldRing, idx)
-
-	// Simulate a crash by canceling the context once GetState reports the
-	// first object processed.
+	// Run one: the request budget runs out during the SECOND object's re-wrap.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	run1 := &cancelAfterCopiesBackend{mockRotationBackend: mock, cancelAfter: 2, cancel: cancel}
+	rotator1 := NewFingerprintRotator(run1, bucket, "default", activeMEK, oldRing, idx)
 
-	go func() {
-		// Wait for rotation to start
-		time.Sleep(100 * time.Millisecond)
-		// Check state
-		state := rotator1.GetState()
-		for state == nil || state.ProcessedObjects < 1 {
-			time.Sleep(10 * time.Millisecond)
-			state = rotator1.GetState()
-		}
-		// Cancel context to simulate crash
-		cancel()
-	}()
-
-	_, err := rotator1.Rotate(ctx)
+	result1, err := rotator1.Rotate(ctx)
 	if err == nil {
-		t.Error("expected interruption error, got nil")
+		t.Fatal("expected the cancelled rotation to return an error, got nil")
+	}
+	if result1.Status != "interrupted" {
+		t.Errorf("run one status = %q, want interrupted", result1.Status)
 	}
 
-	// Verify state was saved (rotation should be in "in_progress" or "interrupted" status)
-	state1 := rotator1.GetState()
-	if state1 == nil {
-		t.Fatal("no state saved after crash")
+	// The persisted state says "interrupted" — the status initOrLoadState must
+	// adopt — with a LastKey at the last object that ACTUALLY completed. The
+	// object whose copy was cancelled must not be recorded as done, or the
+	// resume would skip it while it is still old-wrapped.
+	state := loadPersistedRotationState(t, mock, bucket)
+	if state.Status != "interrupted" {
+		t.Errorf("persisted status = %q, want \"interrupted\"", state.Status)
 	}
-	if state1.Status != "interrupted" && state1.Status != "in_progress" {
-		t.Errorf("state status = %s, want interrupted or in_progress", state1.Status)
+	if state.LastKey != keys[0] {
+		t.Errorf("persisted LastKey = %q, want %q (the cancelled object must not be checkpointed)", state.LastKey, keys[0])
+	}
+	if state.ProcessedObjects != 1 {
+		t.Errorf("persisted processed = %d, want 1", state.ProcessedObjects)
 	}
 
-	// Resume rotation
-	rotator2 := NewFingerprintRotator(mock, bucket, "default", activeMEK, oldRing, idx)
+	// Exactly one object was re-wrapped before the context died.
+	if !dekUnwrapsWith(t, mock, bucket, keys[0], activeMEK) {
+		t.Errorf("pre-resume: %s not re-wrapped", keys[0])
+	}
+	for _, k := range keys[1:] {
+		if dekUnwrapsWith(t, mock, bucket, k, activeMEK) {
+			t.Errorf("pre-resume: %s was re-wrapped but never checkpointed", k)
+		}
+	}
 
+	// Run two: no cancellation this time. It must ADOPT the interrupted state.
+	run2 := &cancelAfterCopiesBackend{mockRotationBackend: mock}
+	rotator2 := NewFingerprintRotator(run2, bucket, "default", activeMEK, oldRing, idx)
 	result2, err := rotator2.Rotate(context.Background())
 	if err != nil {
 		t.Fatalf("resume rotate: %v", err)
 	}
-
-	// Total processed should be 3 (all objects)
-	if result2.ProcessedObjects != 3 {
-		t.Errorf("resume rotation processed = %d, want 3", result2.ProcessedObjects)
+	if result2.Status != "completed" {
+		t.Errorf("resume status = %q, want completed", result2.Status)
 	}
 
-	// Verify all objects now use active MEK
-	for _, key := range keys {
-		if !dekUnwrapsWith(t, mock, bucket, key, activeMEK) {
-			t.Errorf("object %s not rotated to active MEK after resume", key)
+	// The resume re-wrapped only the objects run one had not reached — not the
+	// whole bucket again. This is the assertion that distinguishes resuming
+	// from restarting: a restart would re-copy all five.
+	if n := run2.copies.Load(); n != int64(total-1) {
+		t.Errorf("resume made %d Copy calls, want %d (already-re-wrapped objects must be skipped)", n, total-1)
+	}
+	if result2.ProcessedObjects != total {
+		t.Errorf("resume processed = %d, want %d (cumulative across both runs)", result2.ProcessedObjects, total)
+	}
+	if final := rotator2.GetState(); final == nil || final.Status != "completed" || final.ProcessedObjects != total {
+		t.Errorf("final state = %+v, want completed with %d processed", final, total)
+	}
+	for _, k := range keys {
+		if !dekUnwrapsWith(t, mock, bucket, k, activeMEK) {
+			t.Errorf("post-resume: %s not re-wrapped to the active MEK", k)
+		}
+	}
+}
+
+// TestFingerprintRotationResumeLegacyPath covers the legacy (old MEK -> new MEK)
+// rotator adopting interrupted state too: the resume must not re-walk the keys
+// the cancelled run already checkpointed.
+func TestFingerprintRotationResumeLegacyPath(t *testing.T) {
+	oldMEK := make([]byte, 32)
+	newMEK := make([]byte, 32)
+	rand.Read(oldMEK)
+	rand.Read(newMEK)
+
+	mock := newMockRotationBackend()
+	bucket := "test-bucket"
+
+	const total = 4
+	keys := make([]string, total)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("data/legacy-%d.bin", i)
+		pt := []byte(fmt.Sprintf("payload-%d", i))
+		meta, err := createTestARMORObject(oldMEK, bucket, keys[i], pt)
+		if err != nil {
+			t.Fatalf("create %s: %v", keys[i], err)
+		}
+		var buf bytes.Buffer
+		buf.Write(pt)
+		if err := mock.Put(context.Background(), bucket, keys[i], &buf, int64(len(pt)), meta); err != nil {
+			t.Fatalf("put %s: %v", keys[i], err)
+		}
+	}
+
+	// Cancel during the third object's re-wrap: two objects checkpointed.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	run1 := &cancelAfterCopiesBackend{mockRotationBackend: mock, cancelAfter: 3, cancel: cancel}
+	rotator1 := NewKeyRotator(run1, bucket, oldMEK, newMEK, nil)
+	if _, err := rotator1.Rotate(ctx); err == nil {
+		t.Fatal("expected the cancelled rotation to return an error, got nil")
+	}
+
+	if state := loadPersistedRotationState(t, mock, bucket); state.Status != "interrupted" || state.LastKey != keys[1] {
+		t.Fatalf("persisted state = %+v, want interrupted with LastKey %q", state, keys[1])
+	}
+
+	run2 := &cancelAfterCopiesBackend{mockRotationBackend: mock}
+	result, err := NewKeyRotator(run2, bucket, oldMEK, newMEK, nil).Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("resume rotate: %v", err)
+	}
+	// Two objects were already done, so the resume copies the remaining two.
+	if n := run2.copies.Load(); n != 2 {
+		t.Errorf("resume made %d Copy calls, want 2", n)
+	}
+	if result.ProcessedObjects != total {
+		t.Errorf("resume processed = %d, want %d (cumulative)", result.ProcessedObjects, total)
+	}
+	for _, k := range keys {
+		if !dekUnwrapsWith(t, mock, bucket, k, newMEK) {
+			t.Errorf("post-resume: %s not re-wrapped to the new MEK", k)
+		}
+		if dekUnwrapsWith(t, mock, bucket, k, oldMEK) {
+			t.Errorf("post-resume: %s still unwraps with the old MEK", k)
 		}
 	}
 }
@@ -1680,4 +1942,3 @@ func TestKeyRingHistogram(t *testing.T) {
 		t.Errorf("old fingerprint count = %d, want 3", objectsByFP[oldFP])
 	}
 }
-
