@@ -1990,3 +1990,6 @@
 {"bead":"armor-e1736d2b","duration_ms":162868,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-04T03:22:22.106185043+00:00","worker":"glm-coned"}
 {"bead":"armor-e1736d2b","event":"claim","strand":"explore","ts":"2026-09-04T03:22:32.595581507+00:00","worker":"glm-coned"}
 {"adapter":"claude-code-glm-5.3-flash","bead":"armor-e1736d2b","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-04T03:22:32.933991797+00:00","worker":"glm-coned"}
+{"bead":"armor-e1736d2b","duration_ms":865799,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-04T03:36:58.832376361+00:00","worker":"glm-coned"}
+{"bead":"armor-e1736d2b","event":"claim","strand":"explore","ts":"2026-09-04T03:41:05.350834467+00:00","worker":"glm-adc"}
+{"adapter":"claude-code-glm-5.3-flash","bead":"armor-e1736d2b","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-04T03:41:05.660233659+00:00","worker":"glm-adc"}
