@@ -20,7 +20,7 @@ func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, 
 	ctx := r.Context()
 
 	// Load the v3 sidecar (with caching)
-	sidecar, err := h.loadV3MultipartSidecar(ctx, bucket, prefixedKey, armorMeta.ETag)
+	sidecar, err := h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, armorMeta.ETag)
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load v3 sidecar: %v", err), 500)
 		return
@@ -58,7 +58,12 @@ func (h *Handlers) handleV3MultipartGet(w http.ResponseWriter, r *http.Request, 
 }
 
 // loadV3MultipartSidecar loads the v3 multipart sidecar with caching.
-func (h *Handlers) loadV3MultipartSidecar(ctx context.Context, bucket, prefixedKey, etag string) (*backend.MultipartSidecarEntry, error) {
+//
+// The sidecar is named sha256 of the CLIENT key, because CompleteMultipartUpload
+// calls SaveHMACTableV3 with the client key while the assembled ciphertext is
+// stored under the prefixed key. Both forms are therefore required: key names
+// the sidecar, prefixedKey addresses the ciphertext and keys the cache.
+func (h *Handlers) loadV3MultipartSidecar(ctx context.Context, bucket, key, prefixedKey, etag string) (*backend.MultipartSidecarEntry, error) {
 	// Check cache first
 	if cached := h.multipartSidecarCache.Get(bucket, prefixedKey, etag); cached != nil {
 		return cached, nil
@@ -67,7 +72,7 @@ func (h *Handlers) loadV3MultipartSidecar(ctx context.Context, bucket, prefixedK
 	// LoadHMACTableV3 derives the sidecar key from the object key itself.
 	// Passing an already-derived sidecar key would hash it a second time.
 	manager := h.getMultipartManager(bucket)
-	sidecar, err := manager.LoadHMACTableV3(ctx, prefixedKey)
+	sidecar, err := manager.LoadHMACTableV3(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load v3 sidecar from B2: %w", err)
 	}

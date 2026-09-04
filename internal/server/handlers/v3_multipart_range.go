@@ -20,7 +20,7 @@ func (h *Handlers) handleV3MultipartRangeRequest(w http.ResponseWriter, r *http.
 	blockSize := armorMeta.BlockSize
 
 	// Load the v3 sidecar (with caching)
-	sidecar, err := h.loadV3MultipartSidecar(ctx, bucket, prefixedKey, armorMeta.ETag)
+	sidecar, err := h.loadV3MultipartSidecar(ctx, bucket, key, prefixedKey, armorMeta.ETag)
 	if err != nil {
 		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to load v3 sidecar: %v", err), 500)
 		return
