@@ -57,7 +57,9 @@ type RotationState struct {
 	StartTime time.Time `json:"start_time"`
 	// LastUpdated is when the state was last updated
 	LastUpdated time.Time `json:"last_updated"`
-	// Status is the current status: "in_progress", "completed", "failed"
+	// Status is the current status: "in_progress", "completed", "failed", or
+	// "interrupted" (the walk stopped on a cancelled context). The first two of
+	// those are resumable — see isResumableRotationStatus.
 	Status string `json:"status"`
 	// TotalObjects is the total number of objects to rotate
 	TotalObjects int `json:"total_objects"`
@@ -173,10 +175,13 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 		return nil, fmt.Errorf("failed to initialize rotation state: %w", err)
 	}
 
+	// Resume past the run boundary: StartTime belongs to the rotation, not to
+	// this particular invocation, so it is left exactly as initOrLoadState set
+	// it (fresh for a new rotation, original for a resumed one).
 	kr.stateMu.Lock()
 	kr.state.Status = "in_progress"
-	kr.state.StartTime = startTime
 	kr.state.LastUpdated = startTime
+	processedSoFar := kr.state.ProcessedObjects
 	kr.stateMu.Unlock()
 
 	// Save initial state
@@ -186,6 +191,9 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 
 	result := &RotationResult{
 		Status: "in_progress",
+		// Cumulative across runs: a resumed rotation reports every object
+		// re-wrapped so far, matching RotationState.ProcessedObjects.
+		ProcessedObjects: processedSoFar,
 	}
 
 	// Count total objects first
@@ -198,19 +206,19 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 	for {
 		select {
 		case <-ctx.Done():
-			result.Status = "interrupted"
-			result.ErrorMessage = ctx.Err().Error()
-			kr.stateMu.Lock()
-			kr.state.Status = "interrupted"
-			kr.state.ErrorMessage = ctx.Err().Error()
-			kr.stateMu.Unlock()
-			kr.saveState(context.Background()) // Best effort save
-			return result, ctx.Err()
+			return kr.abortInterrupted(result, ctx.Err(), startTime)
 		default:
 		}
 
 		listResult, err := kr.backend.List(ctx, kr.bucket, "", "", continuationToken, 1000)
 		if err != nil {
+			// A cancellation surfacing through List is an interruption, not a
+			// listing failure: recording it as "failed" would leave a state the
+			// next invocation refuses to resume from, which is the exact
+			// restart-from-scratch this file exists to avoid.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return kr.abortInterrupted(result, ctxErr, startTime)
+			}
 			result.Status = "failed"
 			result.ErrorMessage = err.Error()
 			kr.stateMu.Lock()
@@ -270,12 +278,11 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 			// Re-wrap the DEK for this object
 			if err := kr.rotateObjectWithMetadata(ctx, obj, rawMeta); err != nil {
 				if errors.Is(err, ErrAlreadyUsingActiveKey) {
-					// Object is already using the active key fingerprint
+					// Object is already using the active key fingerprint.
+					// Nothing to re-wrap, but LastKey still advances past it so
+					// a resumed rotation does not re-inspect it.
 					result.SkippedObjects++
-					kr.stateMu.Lock()
-					kr.state.LastKey = obj.Key
-					kr.state.LastUpdated = time.Now()
-					kr.stateMu.Unlock()
+					kr.checkpointState(obj.Key, false)
 					continue
 				}
 				if errors.Is(err, ErrCopyObjectTooLarge) {
@@ -285,11 +292,15 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 					result.Exceptions++
 					result.ExceptionKeys = append(result.ExceptionKeys, obj.Key)
 					log.Printf("rotation exception: %s cannot be re-wrapped via CopyObject: %v", obj.Key, err)
-					kr.stateMu.Lock()
-					kr.state.LastKey = obj.Key
-					kr.state.LastUpdated = time.Now()
-					kr.stateMu.Unlock()
+					kr.checkpointState(obj.Key, false)
 					continue
+				}
+				// A cancelled or expired context is not an object-level
+				// failure: the re-wrap did not happen, so LastKey must not
+				// advance past it or a resumed rotation would skip an object
+				// that is still old-wrapped. Stop here as interrupted.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return kr.abortInterrupted(result, ctxErr, startTime)
 				}
 				log.Printf("Warning: failed to rotate key for %s: %v", obj.Key, err)
 				// Continue with other objects - rotation is best-effort
@@ -297,19 +308,9 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 
 			result.ProcessedObjects++
 
-			// Update state
-			kr.stateMu.Lock()
-			kr.state.ProcessedObjects++
-			kr.state.LastKey = obj.Key
-			kr.state.LastUpdated = time.Now()
-			kr.stateMu.Unlock()
-
-			// Save state periodically (every 100 objects)
-			if result.ProcessedObjects%100 == 0 {
-				if err := kr.saveState(ctx); err != nil {
-					log.Printf("Warning: failed to save rotation state: %v", err)
-				}
-			}
+			// Checkpoint after every object: a rotation killed mid-walk loses
+			// at most the object that was in flight.
+			kr.checkpointState(obj.Key, true)
 		}
 
 		if !listResult.IsTruncated {
@@ -504,6 +505,64 @@ func (kr *KeyRotator) wrappedDEKFromManifest(key string) []byte {
 	return nil
 }
 
+// checkpointState advances LastKey to key and persists the rotation state.
+//
+// It runs after every object the walk has moved past — a completed re-wrap, an
+// already-active-fingerprint skip, or an oversized exception — so the persisted
+// LastKey is always a true resume point. Persisting per object replaces the old
+// every-100-objects cadence, which threw away up to 99 completed re-wraps on a
+// kill. The cost is one small state Put per object, negligible next to the
+// CopyObject each re-wrap already performs and to the re-listing a lost
+// checkpoint forces on the next attempt.
+func (kr *KeyRotator) checkpointState(key string, processed bool) {
+	kr.stateMu.Lock()
+	kr.state.LastKey = key
+	kr.state.LastUpdated = time.Now()
+	if processed {
+		kr.state.ProcessedObjects++
+	}
+	kr.stateMu.Unlock()
+
+	// Deliberately not the caller's context: the checkpoint exists to survive
+	// that context being cancelled, so it must not die with it.
+	if err := kr.saveState(context.Background()); err != nil {
+		log.Printf("Warning: failed to save rotation state: %v", err)
+	}
+}
+
+// abortInterrupted records that the walk stopped on a cancelled context — the
+// rotation outlived its request budget — and persists the state so the next
+// invocation resumes from the last checkpoint instead of restarting the bucket
+// walk from the beginning.
+func (kr *KeyRotator) abortInterrupted(result *RotationResult, cause error, startTime time.Time) (*RotationResult, error) {
+	result.Status = "interrupted"
+	result.ErrorMessage = cause.Error()
+	result.Duration = time.Since(startTime)
+
+	kr.stateMu.Lock()
+	kr.state.Status = "interrupted"
+	kr.state.ErrorMessage = cause.Error()
+	result.TotalObjects = kr.state.TotalObjects
+	kr.stateMu.Unlock()
+
+	// The caller's context is already done, so this save uses a background one:
+	// losing the checkpoint here is exactly what forced a from-scratch restart.
+	kr.saveState(context.Background()) // Best effort save
+
+	return result, cause
+}
+
+// isResumableRotationStatus reports whether a persisted rotation state may be
+// adopted by a later invocation. "in_progress" means the process died before it
+// could record an outcome; "interrupted" means the walk stopped on a cancelled
+// context. Both leave a LastKey that is a valid resume point. "completed" and
+// "failed" are deliberately not resumable: the first is finished, and the second
+// is an operator-visible terminal condition rather than one to silently resume
+// past.
+func isResumableRotationStatus(status string) bool {
+	return status == "in_progress" || status == "interrupted"
+}
+
 // initOrLoadState initializes a new rotation state or loads an existing one.
 func (kr *KeyRotator) initOrLoadState(ctx context.Context) error {
 	// Compute rotation ID
@@ -534,13 +593,17 @@ func (kr *KeyRotator) initOrLoadState(ctx context.Context) error {
 	// Try to load existing state
 	existingState, err := kr.loadState(ctx)
 	if err == nil && existingState != nil {
-		// Check if this is a continuation of the same rotation
+		// Check if this is a continuation of the same rotation. "interrupted"
+		// is adopted exactly like "in_progress": the cancel path persists its
+		// LastKey, and refusing to adopt it would restart the walk from the
+		// beginning of the bucket on every retry — a rotation that outlives its
+		// request budget could then never reach the end of a real bucket.
 		if existingState.OldMEKHash == kr.state.OldMEKHash &&
 			existingState.NewMEKHash == kr.state.NewMEKHash &&
 			existingState.TargetKeyID == kr.state.TargetKeyID &&
-			existingState.Status == "in_progress" {
+			isResumableRotationStatus(existingState.Status) {
 			kr.state = existingState
-			log.Printf("Resuming rotation from key: %s", existingState.LastKey)
+			log.Printf("Resuming %s rotation from key: %s", existingState.Status, existingState.LastKey)
 		}
 	}
 
