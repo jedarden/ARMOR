@@ -158,6 +158,16 @@ exported or rotated. Never rotate over an unauthenticated admin surface.
 pre-ring failure mode where a mismatch between the request-body MEK and the
 OpenBao MEK made every rotated object unreadable.
 
+**Timeouts:** the admin listener imposes no read or write deadline by default
+(`ARMOR_ADMIN_READ_TIMEOUT` / `ARMOR_ADMIN_WRITE_TIMEOUT`, both default to
+disabled). Do not set them for a large deployment: the deadline is armed before
+the handler runs, so any non-zero `ARMOR_ADMIN_WRITE_TIMEOUT` caps the total
+runtime of the rotation rather than the time spent waiting on the client, and
+`POST /admin/key/rotate` plus `GET /admin/key/ring` walk every object in the
+bucket. On iad-ci a read-only listing alone ran past 5 minutes, and a rotation
+under a 30 s cap was killed mid-walk with an empty body. Request *headers*
+remain bounded at 30 s regardless, so slowloris protection is unaffected.
+
 **Rotation is idempotent and resumable.** If interrupted, re-POST to the same
 endpoint resumes from `.armor/rotation-state.json`. Already-processed objects
 are skipped.

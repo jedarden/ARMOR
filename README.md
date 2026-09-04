@@ -237,6 +237,8 @@ ARMOR is configured via environment variables:
 |----------|----------|---------|-------------|
 | `ARMOR_LISTEN` | No | `0.0.0.0:9000` | S3 API listen address |
 | `ARMOR_ADMIN_LISTEN` | No | `127.0.0.1:9001` | Admin API (key rotation, canary, audit) |
+| `ARMOR_ADMIN_READ_TIMEOUT` | No | disabled | Max time the admin listener spends reading a request. Go duration (`30s`, `5m`), or `0`/unset for no deadline. |
+| `ARMOR_ADMIN_WRITE_TIMEOUT` | No | disabled | Max time the admin listener spends writing a response. Go duration, or `0`/unset for no deadline. Leave unset for `POST /admin/key/rotate` and `GET /admin/key/ring`, which walk the whole bucket and can take minutes. |
 | `ARMOR_B2_REGION` | Yes | — | B2 region (e.g., `us-east-005`) |
 | `ARMOR_B2_ACCESS_KEY_ID` | Yes | — | B2 application key ID |
 | `ARMOR_B2_SECRET_ACCESS_KEY` | Yes | — | B2 application key |

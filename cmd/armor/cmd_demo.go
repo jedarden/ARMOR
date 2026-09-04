@@ -131,11 +131,9 @@ func demo() {
 	// Create HTTP servers
 	httpServer := newS3HTTPServer(cfg.Listen, srv.Handler())
 
-	adminServer := &http.Server{
-		Addr:         cfg.AdminListen,
-		Handler:      srv.AdminHandler(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+	adminServer, err := newAdminHTTPServer(cfg.AdminListen, srv.AdminHandler(), os.Getenv)
+	if err != nil {
+		logger.Fatalf("failed to configure admin server: %v", err)
 	}
 
 	// Start servers in goroutines
