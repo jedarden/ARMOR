@@ -2522,7 +2522,9 @@ func TestPresignHandlerSuccess(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
-	d.PresignHandler(http.DefaultClient, adminServer.URL)(rec, req)
+	// The handler takes the full presign endpoint URL and posts to it verbatim;
+	// it does not append /admin/presign to a base URL.
+	d.PresignHandler(http.DefaultClient, adminServer.URL+"/admin/presign")(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", rec.Code)
