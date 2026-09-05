@@ -153,12 +153,14 @@ func TestDownloadHandlerWithGetListOnlyCredential(t *testing.T) {
 		allowGet:    true, // get+list-only allows get
 		allowDelete: false,
 	}
+	content := "hello from the mock backend"
 	mb.objects["existing-file.txt"] = &backend.ObjectInfo{
 		Key:          "existing-file.txt",
-		Size:         100,
+		Size:         int64(len(content)),
 		ContentType:  "text/plain",
 		LastModified: time.Now(),
 	}
+	mb.bodies["existing-file.txt"] = content
 	m := metrics.NewMetrics()
 
 	cred := &DashboardCredential{
@@ -192,6 +194,10 @@ func TestDownloadHandlerWithGetListOnlyCredential(t *testing.T) {
 	contentDisp := rec.Header().Get("Content-Disposition")
 	if !strings.Contains(contentDisp, "existing-file.txt") {
 		t.Errorf("Expected Content-Disposition to contain filename, got %s", contentDisp)
+	}
+
+	if got := rec.Body.String(); got != content {
+		t.Errorf("Expected body %q, got %q", content, got)
 	}
 }
 
