@@ -8,6 +8,9 @@ rotation — retiring it is an operator step, never an agent step.
   0.1.1960 (deployed on iad-ci ~18:00Z); the object re-wrap is walking the
   bucket under a detached resume client
   (see [the re-run](#re-run-on-011960-2026-09-04)); verification pending.
+  The pending ARMOR_ADMIN_TOKEN rotation (bead armor-c1f4560a) is **gated on
+  this walk** — see [the handoff](#handoff-armor_admin_token-rotation-is-gated-on-this-walk-bead-armor-c1f4560a)
+  for why, and for the runbook.
 - [rs-manager ARMOR Instance](#rs-manager-armor-instance) — procedure
   documented, awaiting operator execution.
 
@@ -327,6 +330,68 @@ Procedural note for repeating this check: the S3 port speaks SigV4, so
 argv by building a mode-600 curl config file with a redirect-only
 pipeline and passing `-K <file>`, then shred it. The ACL-scoped
 `FORGEJO_BACKUP` credential covers `declarative-config-backups/`.
+
+### Handoff: ARMOR_ADMIN_TOKEN rotation is gated on this walk (bead armor-c1f4560a)
+
+Dispatched 2026-09-05 with the precondition "after the MEK rotation walk
+completes". The walk was still running at dispatch time, so the rotation did
+not execute — that ordering is load-bearing, not bureaucratic:
+
+1. **A rotation rolls the pod.** Reloader (`reloader.stakater.com/auto: "true"`
+   on `armor-deployment.yaml`) restarts the Deployment the moment the
+   `armor-secrets` Secret changes, and `AdminToken` is read once at startup
+   from env (`internal/config/config.go:490`, no hot reload). A mid-walk roll
+   interrupts the walk and breaks the port-forward.
+2. **The driver authenticates with the old token.** `/tmp/.armor-adm-hdr`
+   (mode 600) holds the current token; after a rotation every driver
+   reconnect — the re-POST after a `--max-time` disconnect, or a ring-GET
+   retry — 401s, killing both the automated completion path and the
+   verification GET.
+3. **Auth is checked at request time only** (`adminAuthMiddleware`,
+   `internal/server/admin_auth.go`), so an already-in-flight POST/ring GET
+   survives a roll, but any *retry* after it does not. Verification must be
+   finished before the token changes.
+
+**State at handoff (2026-09-05 ~04:56Z).** Walk at 21,622 / ~38,697 objects
+(~56/min), `status=in_progress`, driver2 (pid 214960, 24 h budget from
+01:21Z) + watcher both alive, single attached client. Walk ETA ~10:00Z;
+ring GET adds ~4.3 h, so `/tmp/ring-final.json` lands ~14:30Z.
+
+**Already verified, do not re-derive.** Token flow: OpenBao
+`secret/rs-manager/iad-ci/armor/admin` field `admin_token` (at **v1**, sole
+field at that path, so a versioned write clobbers nothing) → ExternalSecret
+`armor-secrets` (ESO `Ready=True`, `refreshInterval: 1h`, `force-sync`
+annotation forces an immediate refresh) → Secret `armor-secrets` key
+`admin-token` → pod env. Consumers of the token: the armor pod itself, the
+`armor migrate` CLI, and the driver header file — restore-verifier and
+armor-test use their own credentials. Write identity `bao-as
+rs-manager-provision` exists and can create/update on this prefix.
+
+**Runbook for whoever picks this up (after `ring-final.json` is valid):**
+
+```bash
+# 0. Gate: histogram reconciles — old fp 0, legacy 0 (or explained
+#    exceptions), total ~38,697 modulo transient-HEAD undercounts.
+jq . /tmp/ring-final.json
+
+# 1. Write the new token — generated in place, never argv, never a literal.
+V=$(bao-as rs-manager-provision bao kv metadata get -format=json \
+      secret/rs-manager/iad-ci/armor/admin | jq .data.current_version)
+openssl rand -hex 32 | bao-as rs-manager-provision bao kv put \
+  -cas=$V secret/rs-manager/iad-ci/armor/admin admin_token=-
+
+# 2. Force the ESO refresh: bump the force-sync annotation on
+#    declarative-config k8s/iad-ci/armor/armor-externalsecret.yaml,
+#    commit, push, let ArgoCD sync (or wait out refreshInterval).
+# 3. Reloader rolls the pod. Verify by property, never by value:
+#    with a header file built from the NEW token,
+#    GET /admin/no-such-route -> 404 (accepted; bad token -> 401 —
+#    adminAuthMiddleware runs before routing), and with the OLD token
+#    -> 401. Then /armor/canary healthy and
+#    /dashboard/admin/key/status still reporting the completed rotation.
+# 4. Rebuild /tmp/.armor-adm-hdr from the new token (mode 600) if the
+#    driver/watcher machinery is still needed.
+```
 
 ---
 
