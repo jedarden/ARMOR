@@ -236,6 +236,26 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 				continue
 			}
 
+			// Check if we should skip this object (already processed in a previous
+			// run) BEFORE any per-object inspection. A prior run already decided
+			// the outcome for everything at or below LastKey — re-wrapped,
+			// already-active skip, or oversized exception — and advanced LastKey
+			// past it, so there is nothing left to learn about it. The ordering
+			// matters because the key-ID branch below costs a backend Head per
+			// listed object whenever List omits metadata (always on B2): placed
+			// after that branch, every resume re-inspected the entire processed
+			// prefix, and since skipped objects never reach checkpointState,
+			// processed_objects/last_updated froze for the whole replay. Resume
+			// only ever adopts state whose TargetKeyID matches (see
+			// initOrLoadState), so the key-ID verdicts below LastKey do belong
+			// to this rotation.
+			kr.stateMu.Lock()
+			if kr.state.LastKey != "" && obj.Key <= kr.state.LastKey {
+				kr.stateMu.Unlock()
+				continue
+			}
+			kr.stateMu.Unlock()
+
 			var rawMeta map[string]string
 			if kr.targetKeyID != "" {
 				// ListObjectsV2 does not include user metadata on B2, so inspect
@@ -266,14 +286,6 @@ func (kr *KeyRotator) Rotate(ctx context.Context) (*RotationResult, error) {
 				result.SkippedObjects++
 				continue
 			}
-
-			// Check if we should skip this object (already processed in a previous run)
-			kr.stateMu.Lock()
-			if kr.state.LastKey != "" && obj.Key <= kr.state.LastKey {
-				kr.stateMu.Unlock()
-				continue
-			}
-			kr.stateMu.Unlock()
 
 			// Re-wrap the DEK for this object
 			if err := kr.rotateObjectWithMetadata(ctx, obj, rawMeta); err != nil {
