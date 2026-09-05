@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -20,14 +21,17 @@ import (
 // mockBackend implements backend.Backend for testing
 type mockBackend struct {
 	objects        map[string]*backend.ObjectInfo
+	bodies         map[string]string
 	commonPrefixes []string
 	listErr        error
 	headErr        error
+	getErr         error
 }
 
 func newMockBackend() *mockBackend {
 	return &mockBackend{
 		objects: make(map[string]*backend.ObjectInfo),
+		bodies:  make(map[string]string),
 	}
 }
 
@@ -39,12 +43,19 @@ func (m *mockBackend) Put(ctx context.Context, bucket, key string, body io.Reade
 		Metadata:     meta,
 		LastModified: time.Now(),
 	}
-	_ = data
+	m.bodies[key] = string(data)
 	return nil
 }
 
 func (m *mockBackend) Get(ctx context.Context, bucket, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
-	return nil, nil, nil
+	if m.getErr != nil {
+		return nil, nil, m.getErr
+	}
+	obj, ok := m.objects[key]
+	if !ok {
+		return nil, nil, errors.New("object not found")
+	}
+	return io.NopCloser(strings.NewReader(m.bodies[key])), obj, nil
 }
 
 func (m *mockBackend) GetRange(ctx context.Context, bucket, key string, offset, length int64) (io.ReadCloser, error) {
@@ -67,10 +78,16 @@ func (m *mockBackend) Head(ctx context.Context, bucket, key string) (*backend.Ob
 }
 
 func (m *mockBackend) Delete(ctx context.Context, bucket, key string) error {
+	delete(m.objects, key)
+	delete(m.bodies, key)
 	return nil
 }
 
 func (m *mockBackend) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
+	for _, key := range keys {
+		delete(m.objects, key)
+		delete(m.bodies, key)
+	}
 	return nil
 }
 
@@ -79,11 +96,31 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 		return nil, m.listErr
 	}
 
-	var objects []backend.ObjectInfo
-	for _, obj := range m.objects {
-		if prefix == "" || strings.HasPrefix(obj.Key, prefix) {
-			objects = append(objects, *obj)
+	// Real backends list keys in lexicographic order, and the continuation
+	// token is the last key of the previous page. Sort and resume strictly
+	// after it so pages partition the key space instead of overlapping.
+	var keys []string
+	for key := range m.objects {
+		if prefix == "" || strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
 		}
+	}
+	sort.Strings(keys)
+
+	start := 0
+	if continuationToken != "" {
+		for start < len(keys) && keys[start] <= continuationToken {
+			start++
+		}
+	}
+	end := len(keys)
+	if maxKeys > 0 && end-start > maxKeys {
+		end = start + maxKeys
+	}
+
+	objects := make([]backend.ObjectInfo, 0, end-start)
+	for _, key := range keys[start:end] {
+		objects = append(objects, *m.objects[key])
 	}
 
 	// Filter common prefixes by prefix as well
@@ -97,24 +134,16 @@ func (m *mockBackend) List(ctx context.Context, bucket, prefix, delimiter, conti
 		}
 	}
 
-	// Simple pagination: if we have more than maxKeys, truncate and set NextToken
-	if len(objects) > maxKeys {
-		truncatedObjects := objects[:maxKeys]
-		// Use the last key as the continuation token
-		nextToken := truncatedObjects[len(truncatedObjects)-1].Key
-		return &backend.ListResult{
-			Objects:        truncatedObjects,
-			CommonPrefixes: filteredPrefixes,
-			IsTruncated:    true,
-			NextToken:      nextToken,
-		}, nil
+	nextToken := ""
+	if end < len(keys) {
+		nextToken = objects[len(objects)-1].Key
 	}
 
 	return &backend.ListResult{
 		Objects:        objects,
 		CommonPrefixes: filteredPrefixes,
-		IsTruncated:    false,
-		NextToken:      "",
+		IsTruncated:    end < len(keys),
+		NextToken:      nextToken,
 	}, nil
 }
 
@@ -1123,6 +1152,7 @@ func TestEncryptionCoveragePanelInDashboard(t *testing.T) {
 			"x-amz-meta-armor-block-size":     "65536",
 			"x-amz-meta-armor-plaintext-size": "500",
 			"x-amz-meta-armor-key-id":         "mykey",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
 		},
 	}
 	mb.objects["plain.txt"] = &backend.ObjectInfo{
@@ -1864,6 +1894,7 @@ func TestListAPIHandlerEncryptedVsPlain(t *testing.T) {
 			"x-amz-meta-armor-block-size":     "65536",
 			"x-amz-meta-armor-plaintext-size": "500",
 			"x-amz-meta-armor-key-id":         "sensitive",
+			"x-amz-meta-armor-wrapped-dek":    "d3JhcHBlZGRlaw==",
 		},
 	}
 	mb.objects["plain.txt"] = &backend.ObjectInfo{
