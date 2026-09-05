@@ -643,15 +643,18 @@ func (s *Server) AdminHandler() http.Handler {
 		mux.HandleFunc("/dashboard/download", s.dashboard.DownloadHandlerWithAuth())
 		mux.HandleFunc("/dashboard/delete", s.dashboard.DeleteHandlerWithAuth())
 
-		// Key rotation proxy handler (authenticated).
-		// The dashboard proxies rotation to the admin API over loopback; it must
+		// Dashboard proxies to the admin API over loopback; rotation must
 		// present the admin token now that /admin/key/rotate is token-gated.
+		// Both handlers take the full admin URL and never append a path of
+		// their own, so each route needs its own endpoint string — sharing one
+		// here pointed /dashboard/presign at /admin/key/rotate.
 		adminClient := &http.Client{
 			Timeout: 30 * time.Minute, // Key rotation can take a long time
 		}
-		adminURL := "http://" + s.config.AdminListen + "/admin/key/rotate"
-		mux.HandleFunc("/dashboard/presign", s.dashboard.PresignHandlerWithAuth(adminClient, adminURL))
-		mux.HandleFunc("/dashboard/admin/key/rotate", s.dashboard.KeyRotateHandlerWithAuth(adminClient, adminURL, s.config.AdminToken))
+		presignURL := "http://" + s.config.AdminListen + "/admin/presign"
+		mux.HandleFunc("/dashboard/presign", s.dashboard.PresignHandlerWithAuth(adminClient, presignURL))
+		rotateURL := "http://" + s.config.AdminListen + "/admin/key/rotate"
+		mux.HandleFunc("/dashboard/admin/key/rotate", s.dashboard.KeyRotateHandlerWithAuth(adminClient, rotateURL, s.config.AdminToken))
 		mux.HandleFunc("/dashboard/admin/key/status", s.dashboard.KeyRotateStatusHandlerWithAuth())
 	}
 
