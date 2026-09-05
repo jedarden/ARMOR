@@ -291,6 +291,43 @@ and fixed 2026-09-05 ~01:55Z: the watcher now restarts v2, and v2 is what
 the watcher holds for the rest of the run. Any future re-run should delete
 v1 rather than leave it reachable.
 
+### Mid-walk proof the re-wrap itself is correct (2026-09-05)
+
+The read-through verified above now predates the re-wrap: at 06:55Z the
+object still carried the old fingerprint, so it exercised the **ring**
+path (old key unwraps the DEK), not the **re-wrap** path. The re-wrap is
+where a defect would actually destroy readability — unwrap the DEK with a
+ring key, re-wrap it with the active key, `CopyObject` the result — and
+the canary does not cover it, because the canary only ever writes and
+reads with the active key.
+
+While the walk was at ~15.3k / 38.7k objects, the same bundle was fetched
+again through the S3 endpoint:
+
+| | pre-rotation (06:55Z) | after re-wrap (2026-09-05 ~03:05Z) |
+|---|---|---|
+| HTTP | 200 | 200 |
+| bytes | 7,024,767 | 7,024,767 |
+| `git bundle verify` | is okay, 2 refs | is okay, 2 refs, complete history |
+
+Byte-for-byte identical size and a valid bundle after the re-wrap: the
+DEK survived the unwrap/re-wrap round trip and the copy is faithful.
+
+The object was in fact **rewritten by the rotator**, not skipped —
+`GET /dashboard/api/list?prefix=declarative-config-backups/` reports
+`last_modified 2026-09-04T18:31:48Z`, i.e. 38 s after the walk started
+(18:31:10Z), which is the `CopyObject`. (That same listing reports
+`encrypted: false`; that is a B2 listing artifact, not evidence about the
+object — `ListObjectsV2` on B2 carries no user metadata, which is also why
+the rotation state's `total_objects` stays at 0. Only a `Head`/`Get`
+returns the ARMOR metadata.)
+
+Procedural note for repeating this check: the S3 port speaks SigV4, so
+`curl --aws-sigv4 "aws:amz:<region>:s3"` works — keep the pair out of
+argv by building a mode-600 curl config file with a redirect-only
+pipeline and passing `-K <file>`, then shred it. The ACL-scoped
+`FORGEJO_BACKUP` credential covers `declarative-config-backups/`.
+
 ---
 
 ## rs-manager ARMOR Instance
