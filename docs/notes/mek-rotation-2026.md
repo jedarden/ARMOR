@@ -20,7 +20,7 @@ rotation — retiring it is an operator step, never an agent step.
 **Secret and configuration layer COMPLETE and verified. Object re-wrapping
 was BLOCKED** by two ARMOR defects (admin 30 s hard write timeout; rotations
 not resuming) — **both fixed and shipped in 0.1.1960**, deployed on iad-ci
-2026-09-04 ~18:00Z. The re-wrapping re-run is [in progress](#re-run-on-011960-2026-09-04).
+2026-09-04 ~18:00Z. The re-wrapping re-run **completed** -- outcome recorded [below](#outcome-iad-ci-mek-re-wrap-completed).
 No key material appears in this document, only fingerprints.
 
 ### Identifiers
@@ -680,3 +680,34 @@ kubectl -n armor rollout restart deployment/armor
 ## Exceptions
 
 If any objects cannot be rotated (e.g., >5GiB CopyObject exception), they will remain encrypted with their current key and appear in the `objects_by_fp` histogram under the old fingerprint. These should be tracked and addressed separately.
+
+### Outcome: iad-ci MEK re-wrap completed
+
+Recorded 2026-09-05T14:35:42Z by the detached closer `/tmp/armor-41e1a74e-closer.sh`
+(bead armor-41e1a74e); the walk and the histogram GET were performed by the
+detached driver `/tmp/armor-rotate-driver2.sh` under its watcher, and the
+independent evidence file is `/tmp/armor-41e1a74e-final-verification.txt`
+(finalizer verdict: SELF).
+
+| | |
+|---|---|
+| Walk started / histogram landed | 2026-09-04 18:31Z / 2026-09-05T14:33:16Z |
+| Rotation result | status=completed, processed=37319, skipped=162, exceptions=0 |
+| Histogram total | 38526 (baseline 38697, shortfall 171) |
+| objects at new fp `3d3e10bb0ba11bcb` | 38524 |
+| objects at old fp `f68571480246d3d5` | 0 |
+| objects under `legacy` (empty fp metadata) | 2 |
+
+Verification at close, by property:
+
+- Canary: `healthy true true true` (status, decrypt, hmac, multipart).
+- Pre-rotation read-through: `READTHROUGH: PASS` -- the
+  2026-08-08 bundle, re-wrapped mid-walk and re-verified byte-for-byte at
+  ~03:05Z, still decrypts to a valid git bundle after the walk completed.
+- Escrow `secret/rs-manager/escrow/iad-ci-armor`: v3 (bumped to v3
+  when the ring was created; the re-wrap changes no key material, so no
+  further bump was expected).
+- Walk status at close: completed.
+
+`f68571480246d3d5` STAYS in the ring -- retiring it is an operator step. The
+ARMOR_ADMIN_TOKEN rotation gated on this walk is bead armor-c1f4560a.
