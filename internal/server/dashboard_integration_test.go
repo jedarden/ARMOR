@@ -172,6 +172,142 @@ func TestDashboardEndToEndWithARMORServer(t *testing.T) {
 	}
 }
 
+// TestDashboardFailClosedWhenUnconfigured drives the production Server mux with
+// none of ARMOR_DASHBOARD_USER/PASS/TOKEN set — the posture the iad-ci
+// deployment was found in (bead armor-cfd49e41). The dashboard is exempt from
+// the admin bearer-token gate only while it authenticates requests itself, so
+// an unconfigured mount must not answer: every dashboard route returns 401
+// anonymous, 403 when no admin token is configured either, and never 200.
+func TestDashboardFailClosedWhenUnconfigured(t *testing.T) {
+	const (
+		bucket = "dashboard-unconfigured"
+		access = "unconfigured-access"
+		secret = "unconfigured-secret"
+	)
+
+	newServer := func(t *testing.T, adminToken string) *httptest.Server {
+		t.Helper()
+		basePath := t.TempDir()
+		fsBackend, err := backend.NewFSBackend(backend.FSConfig{BasePath: basePath})
+		if err != nil {
+			t.Fatalf("create filesystem backend: %v", err)
+		}
+		if err := fsBackend.CreateBucket(context.Background(), bucket); err != nil {
+			t.Fatalf("create test bucket: %v", err)
+		}
+		cfg := &config.Config{
+			Bucket:     bucket,
+			B2Region:   "us-east-005",
+			BlockSize:  65536,
+			MEK:        bytes.Repeat([]byte{0x11}, 32),
+			AdminToken: adminToken,
+			Credentials: map[string]*config.Credential{
+				access: {AccessKey: access, SecretKey: secret},
+			},
+			// DashboardUser, DashboardPass and DashboardToken deliberately unset.
+		}
+		armorServer, err := NewWithBackend(cfg, fsBackend)
+		if err != nil {
+			t.Fatalf("create ARMOR server: %v", err)
+		}
+		// NewWithBackend omits the dashboard, so wire it the way New() does when
+		// ARMOR_DASHBOARD_USER/PASS/TOKEN are all unset — which is the exact
+		// posture under test.
+		armorServer.dashboard = dashboard.NewWithAuth(
+			fsBackend, bucket, armorServer.metrics, "", "", "", nil, "", false)
+
+		ts := httptest.NewServer(armorServer.AdminHandler())
+		t.Cleanup(ts.Close)
+		return ts
+	}
+
+	// Every route the dashboard serves, including the ones that proxy or
+	// trigger privileged admin operations.
+	routes := []string{
+		"/dashboard",
+		"/dashboard/",
+		"/dashboard?prefix=archive/",
+		"/dashboard/object?key=a.txt",
+		"/dashboard/metrics",
+		"/dashboard/encryption-stats",
+		"/dashboard/api/list",
+		"/dashboard/credential-activity",
+		"/dashboard/upload",
+		"/dashboard/download",
+		"/dashboard/delete",
+		"/dashboard/presign",
+		"/dashboard/admin/key/status",
+		"/dashboard/admin/key/rotate",
+	}
+
+	t.Run("no dashboard auth and no admin token", func(t *testing.T) {
+		ts := newServer(t, "")
+		client := ts.Client()
+		for _, route := range routes {
+			resp, err := client.Get(ts.URL + route)
+			if err != nil {
+				t.Fatalf("GET %s: %v", route, err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("GET %s anonymous = %d, want 403 (fail closed)", route, resp.StatusCode)
+			}
+		}
+	})
+
+	t.Run("no dashboard auth with an admin token", func(t *testing.T) {
+		const adminToken = "test-admin-token"
+		ts := newServer(t, adminToken)
+		client := ts.Client()
+
+		for _, route := range routes {
+			// Anonymous is rejected.
+			resp, err := client.Get(ts.URL + route)
+			if err != nil {
+				t.Fatalf("GET %s: %v", route, err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("GET %s anonymous = %d, want 401", route, resp.StatusCode)
+			}
+
+			// A wrong token is rejected too.
+			req, err := http.NewRequest(http.MethodGet, ts.URL+route, nil)
+			if err != nil {
+				t.Fatalf("build GET %s: %v", route, err)
+			}
+			req.Header.Set("Authorization", "Bearer not-the-token")
+			resp, err = client.Do(req)
+			if err != nil {
+				t.Fatalf("GET %s with wrong token: %v", route, err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("GET %s with wrong token = %d, want 401", route, resp.StatusCode)
+			}
+
+			// The admin bearer token passes the gate — the fallback that keeps
+			// the mount operable for an administrator. Only the gate's verdict
+			// is asserted: a 403 past this point is the handler's own decision
+			// (download without ARMOR_DASHBOARD_CREDENTIAL, method not
+			// allowed, …), not the gate refusing.
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			resp, err = client.Do(req)
+			if err != nil {
+				t.Fatalf("GET %s with admin token: %v", route, err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusUnauthorized {
+				t.Errorf("GET %s with admin bearer = 401, want the gate to admit a valid administrator", route)
+			}
+		}
+	})
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
