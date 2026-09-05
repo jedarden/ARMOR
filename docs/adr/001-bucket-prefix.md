@@ -24,7 +24,7 @@ Add an optional `ARMOR_PREFIX` environment variable. When set, ARMOR prepends th
 ## Consequences
 
 **Positive:**
-- All ARMOR deployments can share a single public bucket (`armor-charbroil-prowling-snagged`) with one B2 application key
+- All ARMOR deployments can share a single public bucket with one B2 application key
 - Cloudflare CDN caches reads — egress is free regardless of query frequency
 - Prefix enforcement is at the proxy layer — consumers do not need to coordinate naming conventions
 - One B2 key rotation covers all workloads
@@ -41,3 +41,26 @@ Add an optional `ARMOR_PREFIX` environment variable. When set, ARMOR prepends th
 **One bucket per deployment (current state)** — keep dedicated buckets, accept egress costs. Rejected: egress cost scales with query frequency; queryable analytics workloads (DuckDB over Parquet) would be expensive.
 
 **Per-workload Cloudflare Workers** — add a Worker per bucket that enforces namespace. Rejected: operational complexity, cost, and latency overhead for what is fundamentally a proxy-layer concern.
+
+## Addendum: Bucket Naming Policy (2026-09-05)
+
+This ADR named the first shared bucket in a public repository, which is how the
+first bucket's name became public on the day it was created. A replacement
+bucket was created on 2026-09-03 with a random name that is deliberately kept
+out of git, and all consolidation lands in that one. The naming rule is now
+part of this ADR rather than an operator habit:
+
+- The unified bucket's name is **not written to git** — not to `docs/`, `tests/`,
+  source comments, commit messages, or beads (`.beads/checkpoint/` is
+  git-tracked, so a name in a bead note is a name in git).
+- Documentation, including this ADR, refers to **"the unified bucket."**
+- The name is stored in OpenBao only: once at the canonical record, and once in
+  each tenant's path. `docs/runbooks/unified-bucket-tenant-onboarding.md` is the
+  authoritative layout.
+- Kubernetes Secrets and pod environment are acceptable carriers — they are
+  cluster state, not the repository — but pod logs are not, so the startup log
+  records a fingerprint of the bucket name rather than the name itself.
+
+Onboarding a tenant onto the unified bucket, and moving an existing tenant's
+objects into it, follow the runbook rather than this document.
+
