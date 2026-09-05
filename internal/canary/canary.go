@@ -106,6 +106,7 @@ type Monitor struct {
 	secondaryBackend   backend.Backend // Secondary backend for replication check (ADR-006)
 	replicationQueue   interface{}     // Replication queue for lag metrics (interface{} to avoid import cycle)
 	bucket             string
+	prefix             string
 	mek                []byte
 	blockSize          int
 	instanceID         string
@@ -133,6 +134,7 @@ type Config struct {
 	SecondaryBackend   backend.Backend // Secondary backend for replication health check (ADR-006)
 	ReplicationQueue   interface{}     // Replication queue for lag metrics (interface{} to avoid import cycle)
 	Bucket             string
+	Prefix             string // ADR-001 shared-bucket prefix, prepended to every canary key
 	MEK                []byte
 	BlockSize          int
 	InstanceID         string
@@ -192,6 +194,7 @@ func NewMonitor(cfg Config) *Monitor {
 		secondaryBackend:   cfg.SecondaryBackend,
 		replicationQueue:   cfg.ReplicationQueue,
 		bucket:             cfg.Bucket,
+		prefix:             cfg.Prefix,
 		mek:                cfg.MEK,
 		blockSize:          cfg.BlockSize,
 		instanceID:         instanceID,
@@ -267,6 +270,19 @@ func (m *Monitor) Start(ctx context.Context) {
 func (m *Monitor) Stop() {
 	close(m.stopCh)
 	<-m.doneCh
+}
+
+// applyPrefix returns the backend key for an internal canary path, applying the
+// configured ADR-001 shared-bucket prefix exactly as the handler layer does for
+// data keys. Canary objects written without it land at the bucket root, which a
+// name-prefix-scoped B2 application key is not allowed to touch — so the canary
+// fails forever and /readyz never turns Ready — and every tenant of a shared
+// bucket would otherwise interleave into one root .armor/canary/ tree.
+func (m *Monitor) applyPrefix(key string) string {
+	if m.prefix == "" {
+		return key
+	}
+	return m.prefix + key
 }
 
 // runCheck performs a single canary check with retries.
@@ -370,7 +386,7 @@ func (m *Monitor) check(ctx context.Context) (*Result, error) {
 	binary.LittleEndian.PutUint64(canaryContent[:8], uint64(timestamp))
 
 	// Generate unique key for this canary
-	key := fmt.Sprintf(".armor/canary/%s/%d", m.instanceID, timestamp)
+	key := m.applyPrefix(fmt.Sprintf(".armor/canary/%s/%d", m.instanceID, timestamp))
 
 	// Generate DEK and IV
 	dek, err := crypto.GenerateDEK()
@@ -632,9 +648,9 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 	// Generate unique key for this canary
 	var key string
 	if m.formatWriteVersion == 3 {
-		key = fmt.Sprintf(".armor/canary-multipart-v3/%s/%d", m.instanceID, timestamp)
+		key = m.applyPrefix(fmt.Sprintf(".armor/canary-multipart-v3/%s/%d", m.instanceID, timestamp))
 	} else {
-		key = fmt.Sprintf(".armor/canary-multipart/%s/%d", m.instanceID, timestamp)
+		key = m.applyPrefix(fmt.Sprintf(".armor/canary-multipart/%s/%d", m.instanceID, timestamp))
 	}
 
 	// Generate DEK and IV
@@ -1103,7 +1119,7 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 	binary.LittleEndian.PutUint64(canaryContent[:8], uint64(timestamp))
 
 	// Generate unique key for this canary
-	key := fmt.Sprintf(".armor/canary-secondary/%s/%d", m.instanceID, timestamp)
+	key := m.applyPrefix(fmt.Sprintf(".armor/canary-secondary/%s/%d", m.instanceID, timestamp))
 
 	// Generate DEK and IV
 	dek, err := crypto.GenerateDEK()
