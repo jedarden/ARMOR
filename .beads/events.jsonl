@@ -2226,3 +2226,15 @@
 {"bead":"armor-74f6e5a3","duration_ms":2035116,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-05T06:53:30.101191155+00:00","worker":"glm-armor"}
 {"bead":"armor-4e837db4","event":"claim","strand":"pluck","ts":"2026-09-05T06:53:35.011163001+00:00","worker":"glm-armor"}
 {"adapter":"claude-code-glm-5.3-flash","bead":"armor-4e837db4","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-05T06:53:35.287435511+00:00","worker":"glm-armor"}
+{"bead":"armor-4e837db4","duration_ms":1806298,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-05T07:23:41.683622075+00:00","worker":"glm-armor"}
+{"bead":"armor-41e1a74e","event":"claim","strand":"pluck","ts":"2026-09-05T07:23:46.689959+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","bead":"armor-41e1a74e","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-05T07:23:47.006440155+00:00","worker":"glm-armor"}
+{"bead":"armor-41e1a74e","duration_ms":1158018,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-05T07:43:05.173218877+00:00","worker":"glm-armor"}
+{"bead":"armor-41e1a74e","event":"claim","strand":"pluck","ts":"2026-09-05T07:43:10.071700583+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","bead":"armor-41e1a74e","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-05T07:43:10.357527793+00:00","worker":"glm-armor"}
+{"bead":"armor-41e1a74e","duration_ms":443659,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-05T07:50:34.126271509+00:00","worker":"glm-armor"}
+{"bead":"armor-41e1a74e","event":"claim","strand":"pluck","ts":"2026-09-05T07:50:38.997470830+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","bead":"armor-41e1a74e","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-05T07:50:39.356625373+00:00","worker":"glm-armor"}
+{"bead":"armor-41e1a74e","duration_ms":3342467,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-05T08:46:21.915257333+00:00","worker":"glm-armor"}
+{"bead":"armor-41e1a74e","event":"claim","strand":"pluck","ts":"2026-09-05T08:46:26.874962453+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","bead":"armor-41e1a74e","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-05T08:46:27.374619466+00:00","worker":"glm-armor"}
