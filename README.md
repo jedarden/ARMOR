@@ -256,6 +256,7 @@ ARMOR is configured via environment variables:
 | `ARMOR_DASHBOARD_USER` | No | — | Dashboard HTTP Basic Auth username |
 | `ARMOR_DASHBOARD_PASS` | No | — | Dashboard HTTP Basic Auth password |
 | `ARMOR_DASHBOARD_TOKEN` | No | — | Dashboard Bearer token |
+| *(none of the three above)* | — | — | Dashboard routes are then not anonymous: they require the `ARMOR_ADMIN_TOKEN` bearer token, and fail closed with 403 when that is unset too |
 | `ARMOR_PRESIGN_ENABLED` | No | `false` | Enable pre-signed URL feature (required for `/admin/presign` and `/share/` routes) |
 | `ARMOR_PRESIGN_SECRET` | Yes\* | — | Secret key for signing pre-signed URLs (hex, 32+ bytes, required when `ARMOR_PRESIGN_ENABLED=true`) |
 | `ARMOR_PRESIGN_BASE_URL` | Yes\* | — | Base URL for pre-signed URLs (must be absolute URL starting with `http://` or `https://`, required when `ARMOR_PRESIGN_ENABLED=true`) |
