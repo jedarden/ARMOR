@@ -27,6 +27,11 @@ type mockBackend struct {
 	objects       map[string][]byte
 	meta          map[string]map[string]string
 	multipartData map[string]map[int32][]byte // uploadID -> part number -> data
+	// putKeys records every key addressed by Put, CreateMultipartUpload and
+	// UploadPart, in order. The canary's cleanup delete is best-effort and runs
+	// in a goroutine, so the objects map can be empty again before a test looks
+	// at it; the record survives that race.
+	putKeys []string
 }
 
 func newMockBackend() *mockBackend {
@@ -47,6 +52,7 @@ func (m *mockBackend) Put(ctx context.Context, bucket, key string, body io.Reade
 	}
 	m.objects[bucket+"/"+key] = data
 	m.meta[bucket+"/"+key] = meta
+	m.putKeys = append(m.putKeys, key)
 	return nil
 }
 
@@ -245,6 +251,7 @@ func (m *mockBackend) CreateMultipartUpload(ctx context.Context, bucket, key str
 	m.multipartData[uploadID] = make(map[int32][]byte)
 	// Store metadata for later use when completing
 	m.meta[bucket+"/"+key+"__pending__"+uploadID] = meta
+	m.putKeys = append(m.putKeys, key)
 	return uploadID, nil
 }
 
@@ -1271,4 +1278,169 @@ func TestMonitorMultipartCheckV2(t *testing.T) {
 	if !result.HMACVerified {
 		t.Error("expected HMAC to be verified")
 	}
+}
+
+// TestApplyPrefix tests the internal-path-to-backend-key mapping. An empty
+// prefix must leave the key alone; a configured one is prepended verbatim,
+// which config.Load already normalized to carry exactly one trailing slash.
+func TestApplyPrefix(t *testing.T) {
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	base := ".armor/canary/test-instance/12345"
+
+	// No prefix configured: keys land at the bucket root as before.
+	m := NewMonitor(Config{Prefix: ""})
+	if got := m.applyPrefix(base); got != base {
+		t.Errorf("applyPrefix with empty prefix = %q, want %q", got, base)
+	}
+
+	// ADR-001 prefix: the canary namespace sits below it, as the handler layer
+	// puts data keys there.
+	m = NewMonitor(Config{Prefix: "tenants/acme/"})
+	want := "tenants/acme/" + base
+	if got := m.applyPrefix(base); got != want {
+		t.Errorf("applyPrefix with prefix = %q, want %q", got, want)
+	}
+}
+
+// assertAllPrefixed fails if the mock recorded no keys, or if any recorded key
+// escapes the expected prefixed canary namespace. Checking the negative case
+// matters as much as the positive one: a canary written to the bucket root is
+// exactly what a prefix-scoped B2 application key is not allowed to touch.
+func assertAllPrefixed(t *testing.T, mb *mockBackend, wantNamespace string) {
+	t.Helper()
+
+	mb.mu.Lock()
+	keys := append([]string(nil), mb.putKeys...)
+	mb.mu.Unlock()
+
+	if len(keys) == 0 {
+		t.Fatal("no keys were written to the backend")
+	}
+	for _, key := range keys {
+		if !strings.HasPrefix(key, wantNamespace) {
+			t.Errorf("key %q written outside %q", key, wantNamespace)
+		}
+	}
+}
+
+// TestMonitorCheckAppliesPrefix tests that the single-part canary is written
+// below the configured ADR-001 prefix rather than at the bucket root.
+func TestMonitorCheckAppliesPrefix(t *testing.T) {
+	mb := newMockBackend()
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	m := NewMonitor(Config{
+		Backend:    mb,
+		Bucket:     "test-bucket",
+		Prefix:     "tenants/acme/",
+		MEK:        mek,
+		BlockSize:  65536,
+		InstanceID: "test-instance",
+		CanarySize: 100,
+	})
+
+	if _, err := m.check(context.Background()); err != nil {
+		t.Fatalf("canary check failed: %v", err)
+	}
+
+	assertAllPrefixed(t, mb, "tenants/acme/.armor/canary/test-instance/")
+}
+
+// TestMonitorMultipartCheckAppliesPrefix tests that the multipart canary is
+// written below the configured prefix, for both the v2 and v3 key namespaces.
+func TestMonitorMultipartCheckAppliesPrefix(t *testing.T) {
+	// Per TestMonitorMultipartCheck (v2) and TestMonitorMultipartCheckV3: the v2
+	// path accepts a tiny object, while v3 sizes its parts against a minimum
+	// envelope and panics on one smaller than a part. v1 and v2 share the
+	// unversioned .armor/canary-multipart/ namespace; only v3 gets -v3.
+	cases := []struct {
+		version       int
+		multipartSize int
+		namespace     string
+	}{
+		{version: 2, multipartSize: 100, namespace: "canary-multipart"},
+		{version: 3, multipartSize: 15 * 1024 * 1024, namespace: "canary-multipart-v3"},
+	}
+
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("v%d", tc.version), func(t *testing.T) {
+			mb := newMockBackend()
+			mek := make([]byte, 32)
+			rand.Read(mek)
+
+			m := NewMonitor(Config{
+				Backend:            mb,
+				Bucket:             "test-bucket",
+				Prefix:             "tenants/acme/",
+				MEK:                mek,
+				BlockSize:          65536,
+				InstanceID:         "test-instance",
+				MultipartSize:      tc.multipartSize,
+				FormatWriteVersion: tc.version,
+			})
+
+			if _, err := m.checkMultipart(context.Background()); err != nil {
+				t.Fatalf("multipart canary check failed: %v", err)
+			}
+
+			wantNamespace := fmt.Sprintf("tenants/acme/.armor/%s/test-instance/", tc.namespace)
+			assertAllPrefixed(t, mb, wantNamespace)
+		})
+	}
+}
+
+// TestMonitorSecondaryCheckAppliesPrefix tests that the secondary-backend
+// canary addresses the same prefixed key on both the primary and the
+// secondary, so replication of the namespace stays inside the prefix a
+// prefix-scoped credential can reach.
+func TestMonitorSecondaryCheckAppliesPrefix(t *testing.T) {
+	primary := newMockBackend()
+	secondary := newMockBackend()
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	m := NewMonitor(Config{
+		Backend:          primary,
+		SecondaryBackend: secondary,
+		Bucket:           "test-bucket",
+		Prefix:           "tenants/acme/",
+		MEK:              mek,
+		BlockSize:        65536,
+		InstanceID:       "test-instance",
+		CanarySize:       100,
+	})
+
+	if _, err := m.checkSecondaryBackend(context.Background()); err != nil {
+		t.Fatalf("secondary canary check failed: %v", err)
+	}
+
+	assertAllPrefixed(t, primary, "tenants/acme/.armor/canary-secondary/test-instance/")
+	assertAllPrefixed(t, secondary, "tenants/acme/.armor/canary-secondary/test-instance/")
+}
+
+// TestMonitorCheckUnprefixedStillRooted guards the no-prefix deployment: with
+// no prefix configured the canary must keep landing at .armor/canary/ under the
+// bucket root, not somewhere else.
+func TestMonitorCheckUnprefixedStillRooted(t *testing.T) {
+	mb := newMockBackend()
+	mek := make([]byte, 32)
+	rand.Read(mek)
+
+	m := NewMonitor(Config{
+		Backend:    mb,
+		Bucket:     "test-bucket",
+		MEK:        mek,
+		BlockSize:  65536,
+		InstanceID: "test-instance",
+		CanarySize: 100,
+	})
+
+	if _, err := m.check(context.Background()); err != nil {
+		t.Fatalf("canary check failed: %v", err)
+	}
+
+	assertAllPrefixed(t, mb, ".armor/canary/test-instance/")
 }

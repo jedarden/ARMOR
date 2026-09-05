@@ -373,6 +373,7 @@ func New(cfg *config.Config) (*Server, error) {
 		SecondaryBackend:  secondaryBackend,
 		ReplicationQueue:  replicationQueue,
 		Bucket:            cfg.Bucket,
+		Prefix:            cfg.Prefix,
 		MEK:               cfg.MEK,
 		BlockSize:         cfg.BlockSize,
 		InstanceID:        cfg.WriterID,
