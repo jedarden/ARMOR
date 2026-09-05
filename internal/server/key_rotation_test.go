@@ -338,11 +338,72 @@ func (m *mockRotationBackend) HeadVersion(ctx context.Context, bucket, key, vers
 type headCountingRotationBackend struct {
 	*mockRotationBackend
 	headCalls atomic.Int64
+
+	// headLog records the keys passed to Head, in call order. headCalls alone
+	// cannot tell a Head on the already-processed prefix from a Head on new
+	// work, which is exactly the distinction the resume-cost test makes.
+	mu      sync.Mutex
+	headLog []string
 }
 
 func (h *headCountingRotationBackend) Head(ctx context.Context, bucket, key string) (*backend.ObjectInfo, error) {
+	h.mu.Lock()
+	h.headLog = append(h.headLog, key)
+	h.mu.Unlock()
 	h.headCalls.Add(1)
 	return h.mockRotationBackend.Head(ctx, bucket, key)
+}
+
+// headedKeys returns the keys passed to Head so far, in call order.
+func (h *headCountingRotationBackend) headedKeys() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.headLog...)
+}
+
+// b2ListBackend models B2's ListObjectsV2 on top of a head-counting backend:
+// the listing carries no custom metadata, so every object the walk inspects
+// costs a HeadObject — the shape of a real bucket walk that the in-memory mock
+// (whose List returns full metadata) never exercises.
+type b2ListBackend struct {
+	*headCountingRotationBackend
+}
+
+func (b *b2ListBackend) List(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	res, err := b.headCountingRotationBackend.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+	if err != nil {
+		return nil, err
+	}
+	for i := range res.Objects {
+		res.Objects[i].Metadata = nil
+	}
+	return res, nil
+}
+
+// ListRaw mirrors List — both omit metadata here, same as the mock it wraps.
+func (b *b2ListBackend) ListRaw(ctx context.Context, bucket, prefix, delimiter, continuationToken string, maxKeys int) (*backend.ListResult, error) {
+	return b.List(ctx, bucket, prefix, delimiter, continuationToken, maxKeys)
+}
+
+// cancelAfterCopiesB2Backend adds the interrupt machinery to b2ListBackend: it
+// counts Copy calls and cancels the rotation context during the cancelAfter-th
+// one, so the walk dies mid-object with that object not re-wrapped. This
+// mirrors cancelAfterCopiesBackend, which cannot be reused here — that type
+// embeds *mockRotationBackend directly and would inherit a metadata-bearing
+// List, defeating the B2 shape.
+type cancelAfterCopiesB2Backend struct {
+	*b2ListBackend
+	cancelAfter int64
+	cancel      context.CancelFunc
+	copies      atomic.Int64
+}
+
+func (c *cancelAfterCopiesB2Backend) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string, meta map[string]string, replaceMetadata bool) error {
+	if n := c.copies.Add(1); n == c.cancelAfter && c.cancel != nil {
+		c.cancel()
+		return fmt.Errorf("copy %s: %w", srcKey, ctx.Err())
+	}
+	return c.b2ListBackend.Copy(ctx, srcBucket, srcKey, dstBucket, dstKey, meta, replaceMetadata)
 }
 
 // TestKeyRotationWithManifestIndex verifies that key rotation uses the in-memory
@@ -519,6 +580,44 @@ func putARMORObject(t *testing.T, mock *mockRotationBackend, bucket, key string,
 		BlockSize:      am.BlockSize,
 		LastModified:   time.Now(),
 	})
+}
+
+// putRoutedARMORObject is putARMORObject for an object written under a routed
+// (non-default) key: the metadata names keyID, so a key-ID-filtered rotation
+// walk must leave it untouched.
+func putRoutedARMORObject(t *testing.T, mock *mockRotationBackend, bucket, keyID, key string, plaintext, mek []byte) {
+	t.Helper()
+
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		t.Fatalf("GenerateDEK: %v", err)
+	}
+	iv, err := crypto.GenerateIV()
+	if err != nil {
+		t.Fatalf("GenerateIV: %v", err)
+	}
+	wrappedDEKStr, err := crypto.WrapDEKWithFingerprint(mek, dek)
+	if err != nil {
+		t.Fatalf("WrapDEKWithFingerprint: %v", err)
+	}
+
+	meta := map[string]string{
+		"x-amz-meta-armor-version":          "2",
+		"x-amz-meta-armor-block-size":       "65536",
+		"x-amz-meta-armor-plaintext-size":   fmt.Sprintf("%d", len(plaintext)),
+		"x-amz-meta-armor-content-type":     "application/octet-stream",
+		"x-amz-meta-armor-iv":               base64.StdEncoding.EncodeToString(iv),
+		"x-amz-meta-armor-wrapped-dek":      wrappedDEKStr,
+		"x-amz-meta-armor-plaintext-sha256": "test-sha256",
+		"x-amz-meta-armor-etag":             "test-etag",
+		"x-amz-meta-armor-key-id":           keyID,
+	}
+
+	var buf bytes.Buffer
+	buf.Write(plaintext)
+	if err := mock.Put(context.Background(), bucket, key, &buf, int64(len(plaintext)), meta); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
 }
 
 // TestKeyRotation tests the basic key rotation functionality.
@@ -1816,6 +1915,156 @@ func TestFingerprintRotationResumeAdoptsInterruptedState(t *testing.T) {
 	for _, k := range keys {
 		if !dekUnwrapsWith(t, mock, bucket, k, activeMEK) {
 			t.Errorf("post-resume: %s not re-wrapped to the active MEK", k)
+		}
+	}
+}
+
+// TestFingerprintRotationResumeSkipsInspectionBelowLastKey pins the resume
+// cost of a fingerprint rotation against a B2-shaped backend. B2's
+// ListObjectsV2 returns no custom metadata, so the walk HeadObjects every
+// listed object to read its key ID — including objects a previous run already
+// moved past. The LastKey resume check therefore has to run BEFORE that
+// inspection: placed after it, every resume re-inspected the whole processed
+// prefix, and since skipped objects never reach checkpointState,
+// processed_objects and last_updated froze for the entire replay — which reads
+// exactly like a wedged walk (and was read as one during the 2026-09-05 MEK
+// rotation, where late resumes spent more time replaying than walking).
+//
+// The routed-key object below the resume point also pins the accounting side
+// effect: a resume decides it from the checkpoint instead of inspecting it, so
+// it is no longer re-counted in SkippedObjects.
+func TestFingerprintRotationResumeSkipsInspectionBelowLastKey(t *testing.T) {
+	base := newMockRotationBackend()
+	mock := &b2ListBackend{headCountingRotationBackend: &headCountingRotationBackend{mockRotationBackend: base}}
+	bucket := "test-bucket"
+
+	activeMEK := make([]byte, 32)
+	oldMEK := make([]byte, 32)
+	rand.Read(activeMEK)
+	rand.Read(oldMEK)
+
+	activeFP := crypto.MEKFingerprint(activeMEK)
+	oldFP := crypto.MEKFingerprint(oldMEK)
+	if activeFP == oldFP {
+		t.Fatal("fingerprints collide, need different MEKs")
+	}
+
+	oldRing := []keymanager.RingKeyEntry{
+		{MEK: oldMEK, Fingerprint: oldFP},
+	}
+
+	const total = 5
+	keys := make([]string, total)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("data/obj-%d.bin", i)
+		// Objects start wrapped with the RETIRED key — that is what gives the
+		// walk something to re-wrap. (Creating them with the active MEK would
+		// make every object an already-active skip and the walk would finish
+		// without a single Copy.)
+		if i == 1 {
+			// obj-1 is routed to another key: a "default" rotation must leave
+			// it alone. The walk skips it on key-ID inspection WITHOUT
+			// advancing LastKey, so the resume point only lands past it once a
+			// later object has been checkpointed.
+			putRoutedARMORObject(t, base, bucket, "pii", keys[i], []byte("payload"), oldMEK)
+			continue
+		}
+		putARMORObject(t, base, bucket, keys[i], []byte("payload"), oldMEK, nil)
+	}
+
+	// Run one: the request budget runs out during the THIRD re-wrap. obj-0 and
+	// obj-2 complete (obj-1 was skipped as another key's object, which does not
+	// advance LastKey), so the resume point is obj-2 and obj-3 is the object in
+	// flight when the context died.
+	ctx, cancel := context.WithCancel(context.Background())
+	run1 := &cancelAfterCopiesB2Backend{b2ListBackend: mock, cancelAfter: 3, cancel: cancel}
+	rotator1 := NewFingerprintRotator(run1, bucket, "default", activeMEK, oldRing, nil)
+
+	result1, err := rotator1.Rotate(ctx)
+	cancel()
+	if err == nil {
+		t.Fatal("expected the cancelled rotation to return an error, got nil")
+	}
+	if result1.Status != "interrupted" {
+		t.Errorf("run one status = %q, want interrupted", result1.Status)
+	}
+
+	state := loadPersistedRotationState(t, base, bucket)
+	if state.LastKey != keys[2] {
+		t.Fatalf("persisted LastKey = %q, want %q", state.LastKey, keys[2])
+	}
+	// wrappedDEKMetadata reads the stored x-amz-meta-armor-wrapped-dek verbatim.
+	// wrappedDEKFromMetadata cannot be used here: it plain-base64-decodes the
+	// value, which only works for v1 objects, and everything in this test is v2
+	// ("v2:<fingerprint>:<base64>").
+	wrappedDEKMetadata := func(key string) string {
+		t.Helper()
+		info, err := base.Head(context.Background(), bucket, key)
+		if err != nil {
+			t.Fatalf("head %s: %v", key, err)
+		}
+		return info.Metadata["x-amz-meta-armor-wrapped-dek"]
+	}
+	piiBefore := wrappedDEKMetadata(keys[1])
+
+	// Everything from here on is the resume. It must decide about obj-0 through
+	// obj-2 from the checkpoint alone.
+	run2 := &cancelAfterCopiesB2Backend{b2ListBackend: mock}
+	headsAfterRun1 := len(mock.headedKeys())
+
+	rotator2 := NewFingerprintRotator(run2, bucket, "default", activeMEK, oldRing, nil)
+	result2, err := rotator2.Rotate(context.Background())
+	if err != nil {
+		t.Fatalf("resume rotate: %v", err)
+	}
+	if result2.Status != "completed" {
+		t.Errorf("resume status = %q, want completed", result2.Status)
+	}
+
+	// No Head below the resume point. This is the assertion the ordering
+	// fix exists for: with the inspection running first, the resume Headed
+	// every object in the bucket before it reached new work.
+	resumeHeads := mock.headedKeys()[headsAfterRun1:]
+	for _, key := range resumeHeads {
+		if key <= state.LastKey {
+			t.Errorf("resume Headed %q, at or below the persisted LastKey %q — the processed prefix was re-inspected", key, state.LastKey)
+		}
+	}
+	if n := int64(len(resumeHeads)); n != int64(total)-3 {
+		t.Errorf("resume made %d Head calls, want %d (only the objects past the resume point)", n, total-3)
+	}
+	if len(resumeHeads) > 0 && resumeHeads[0] != keys[3] {
+		t.Errorf("resume's first inspection was %q, want %q (new work, not replay)", resumeHeads[0], keys[3])
+	}
+
+	// obj-1 belongs to another key and sits below the resume point, so the
+	// resume must no longer inspect (and re-count) it. The one legitimate skip
+	// left is .armor/rotation-state.json, which the internal-object guard
+	// counts before the resume check runs.
+	if n := result2.SkippedObjects; n != 1 {
+		t.Errorf("resume skipped %d objects, want 1 (only the internal state object) — the routed-key object below LastKey must be decided by the checkpoint, not re-inspected and re-counted", n)
+	}
+	if n := run2.copies.Load(); n != int64(total)-3 {
+		t.Errorf("resume made %d Copy calls, want %d", n, total-3)
+	}
+	if n := result2.ProcessedObjects; n != 2+(total-3) {
+		t.Errorf("resume processed = %d, want %d (cumulative across both runs)", n, 2+(total-3))
+	}
+
+	// The skipped routed-key object was never touched by either run: still on
+	// the retired key, and its wrapped DEK is byte-identical.
+	if dekUnwrapsWith(t, base, bucket, keys[1], activeMEK) {
+		t.Errorf("%s was re-wrapped by a rotation for another key", keys[1])
+	}
+	if !dekUnwrapsWith(t, base, bucket, keys[1], oldMEK) {
+		t.Errorf("%s no longer unwraps with its own key", keys[1])
+	}
+	if piiAfter := wrappedDEKMetadata(keys[1]); piiBefore != piiAfter {
+		t.Errorf("%s was re-wrapped by a rotation for another key", keys[1])
+	}
+	for _, i := range []int{0, 2, 3, 4} {
+		if !dekUnwrapsWith(t, base, bucket, keys[i], activeMEK) {
+			t.Errorf("post-resume: %s not re-wrapped to the active MEK", keys[i])
 		}
 	}
 }
