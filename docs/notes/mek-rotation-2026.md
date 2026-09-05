@@ -398,6 +398,25 @@ openssl rand -hex 32 | bao-as rs-manager-provision bao kv put \
 #    driver/watcher machinery is still needed.
 ```
 
+**Progress re-check (2026-09-05 ~06:25Z lineage, bead armor-c1f4560a).**
+Walk at 24,0xx / ~38,697 and advancing again at ~60/min. The 05:21Z reconnect
+paid a ~32 min silent re-scan (frozen `last_updated`, no log lines, walk
+merely `in_progress`), and the same tax recurs at every reconnect — the next
+is due ~09:21Z when driver2's per-attempt cap fires again. Cause: with
+`target_key_id` set, the walk HEADs each listed object before it reaches the
+`LastKey` skip (`internal/server/key_rotation.go:244` vs `:272`; B2 listings
+carry no user metadata), so a resume replays the whole processed prefix at
+~700 obj/min and checkpoints nothing until it reaches new work — measured
+~20 min for an 11.5k prefix, ~32 min for a 23k one. Filed as
+**armor-4e837db4**; until it lands, a frozen `last_updated` for ~30-50 min
+after a reconnect is EXPECTED — do not restart the pod over it. Projection:
+walk ~11:15-11:30Z, ring GET ~15:45Z, `ROTATION_OK` ~16:45-17:45Z.
+`/tmp/armor-c1f4560a-monitor.sh` is **not** running — its background task
+died with the session that launched it, and a detached process cannot notify
+a dead session anyway. Nothing needs it; the rotate script, driver2 and the
+watcher are self-sufficient, so a future lineage's whole job is to read
+`/tmp/armor-c1f4560a-rotate.log` and close the bead.
+
 **Progress re-check (2026-09-05 ~05:15Z lineage, bead armor-c1f4560a).**
 `GET /dashboard/admin/key/status` at 05:01:43Z reported `in_progress` at
 21,949 / ~38,697 (~57%). The last five watcher samples give 291 objects /
