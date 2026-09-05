@@ -183,25 +183,20 @@ func (h *Handlers) WithLogger(logger *logging.Logger) {
 
 // HandleRoot routes S3 operations based on the request.
 func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-
-	// Parse bucket and key from path
-	// Path format: /bucket/key or /bucket
-	path = strings.TrimPrefix(path, "/")
-	parts := strings.SplitN(path, "/", 2)
-
-	bucket := ""
-	key := ""
-	if len(parts) > 0 && parts[0] != "" {
-		bucket = parts[0]
-	}
-	if len(parts) > 1 {
-		key = parts[1]
-		// URL decode the key (DuckDB httpfs encodes special chars like = as %3D)
-		if decoded, err := url.PathUnescape(key); err == nil {
-			key = decoded
-		}
-	}
+	// Parse bucket and key from the URL path. Routing below keys off the name
+	// the client actually sent (an empty one means a root ListBuckets), while
+	// the handlers receive the bucket ARMOR serves the request from so that a
+	// legacy name in the URL reaches the objects that now live under
+	// config.Bucket. See config.ResolveBucket.
+	//
+	// The two must not be conflated: ResolveBucket maps an empty name onto
+	// config.Bucket, so a root ListBuckets would otherwise look like a
+	// bucket-level request for the configured bucket and list its objects
+	// instead of the bucket list.
+	parsed := config.ParseBucketKey(r.URL.Path)
+	named := parsed.Bucket
+	key := parsed.Key
+	bucket := h.config.ResolveBucket(named)
 
 	// Protect the .armor/ reserved namespace
 	// Client operations targeting keys with this prefix return 403 AccessDenied
@@ -214,22 +209,22 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		// Handle ListMultipartUploads (GET ?uploads on bucket, no key)
-		if r.URL.Query().Has("uploads") && key == "" && bucket != "" {
+		if r.URL.Query().Has("uploads") && key == "" && named != "" {
 			h.ListMultipartUploads(w, r, bucket)
 			return
 		}
 		// Handle ListObjectVersions (GET ?versions on bucket)
-		if r.URL.Query().Has("versions") && key == "" && bucket != "" {
+		if r.URL.Query().Has("versions") && key == "" && named != "" {
 			h.ListObjectVersions(w, r, bucket)
 			return
 		}
 		// Handle GetBucketLifecycleConfiguration (GET ?lifecycle on bucket)
-		if r.URL.Query().Has("lifecycle") && key == "" && bucket != "" {
+		if r.URL.Query().Has("lifecycle") && key == "" && named != "" {
 			h.GetBucketLifecycleConfiguration(w, r, bucket)
 			return
 		}
 		// Handle GetObjectLockConfiguration (GET ?object-lock on bucket)
-		if r.URL.Query().Has("object-lock") && key == "" && bucket != "" {
+		if r.URL.Query().Has("object-lock") && key == "" && named != "" {
 			h.GetObjectLockConfiguration(w, r, bucket)
 			return
 		}
@@ -251,7 +246,7 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		// Regular Get operations
 		if key != "" {
 			h.GetObject(w, r, bucket, key)
-		} else if bucket != "" {
+		} else if named != "" {
 			q := r.URL.Query()
 			switch {
 			case q.Has("location"):
@@ -268,12 +263,12 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 	case http.MethodPut:
 		// Handle PutBucketLifecycleConfiguration (PUT ?lifecycle on bucket)
-		if r.URL.Query().Has("lifecycle") && key == "" && bucket != "" {
+		if r.URL.Query().Has("lifecycle") && key == "" && named != "" {
 			h.PutBucketLifecycleConfiguration(w, r, bucket)
 			return
 		}
 		// Handle PutObjectLockConfiguration (PUT ?object-lock on bucket)
-		if r.URL.Query().Has("object-lock") && key == "" && bucket != "" {
+		if r.URL.Query().Has("object-lock") && key == "" && named != "" {
 			h.PutObjectLockConfiguration(w, r, bucket)
 			return
 		}
@@ -302,18 +297,18 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 			} else {
 				h.PutObject(w, r, bucket, key)
 			}
-		} else if bucket != "" {
+		} else if named != "" {
 			h.CreateBucket(w, r, bucket)
 		}
 	case http.MethodHead:
 		if key != "" {
 			h.HeadObject(w, r, bucket, key)
-		} else if bucket != "" {
+		} else if named != "" {
 			h.HeadBucket(w, r, bucket)
 		}
 	case http.MethodDelete:
 		// Handle DeleteBucketLifecycleConfiguration (DELETE ?lifecycle on bucket)
-		if r.URL.Query().Has("lifecycle") && key == "" && bucket != "" {
+		if r.URL.Query().Has("lifecycle") && key == "" && named != "" {
 			h.DeleteBucketLifecycleConfiguration(w, r, bucket)
 			return
 		}
@@ -324,7 +319,7 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 		if key != "" {
 			h.DeleteObject(w, r, bucket, key)
-		} else if bucket != "" {
+		} else if named != "" {
 			h.DeleteBucket(w, r, bucket)
 		}
 	case http.MethodPost:
@@ -2324,6 +2319,12 @@ func (h *Handlers) CopyObject(w http.ResponseWriter, r *http.Request, dstBucket,
 		return
 	}
 
+	// A legacy bucket name in the copy source names the same objects as
+	// config.Bucket once the tenant has been consolidated into it, so it
+	// resolves the same way the URL bucket does. Without this the copy fails
+	// with NoSuchKey against a bucket that no longer holds anything.
+	srcBucket = h.config.ResolveBucket(srcBucket)
+
 	// Apply prefix for backend operations
 	srcPrefixedKey := h.applyPrefix(srcKey)
 	dstPrefixedKey := h.applyPrefix(dstKey)
@@ -2658,7 +2659,7 @@ func (h *Handlers) ListObjectsV2(w http.ResponseWriter, r *http.Request, bucket 
 
 	resp := ListBucketResult{
 		Xmlns:                 "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:                  bucket,
+		Name:                  h.namedBucket(r),
 		Prefix:                prefix,
 		Delimiter:             delimiter,
 		MaxKeys:               maxKeys,
@@ -3149,7 +3150,7 @@ func (h *Handlers) CreateMultipartUpload(w http.ResponseWriter, r *http.Request,
 
 	result := InitiateMultipartUploadResult{
 		Xmlns:    "http://s3.amazonaws.com/doc/2006-03-01/",
-		Bucket:   bucket,
+		Bucket:   h.namedBucket(r),
 		Key:      key,
 		UploadID: uploadID,
 	}
@@ -4217,10 +4218,11 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		ETag     string   `xml:"ETag"`
 	}
 
+	named := h.namedBucket(r)
 	result := CompleteMultipartUploadResult{
 		Xmlns:    "http://s3.amazonaws.com/doc/2006-03-01/",
-		Location: fmt.Sprintf("/%s/%s", bucket, key),
-		Bucket:   bucket,
+		Location: fmt.Sprintf("/%s/%s", named, key),
+		Bucket:   named,
 		Key:      key,
 		ETag:     etag,
 	}
@@ -4395,7 +4397,7 @@ func (h *Handlers) ListParts(w http.ResponseWriter, r *http.Request, bucket, key
 
 	resp := ListPartsResult{
 		Xmlns:                "http://s3.amazonaws.com/doc/2006-03-01/",
-		Bucket:               bucket,
+		Bucket:               h.namedBucket(r),
 		Key:                  key,
 		UploadID:             uploadID,
 		StorageClass:         "STANDARD",
@@ -4483,7 +4485,7 @@ func (h *Handlers) ListMultipartUploads(w http.ResponseWriter, r *http.Request, 
 
 	resp := ListMultipartUploadsResult{
 		Xmlns:              "http://s3.amazonaws.com/doc/2006-03-01/",
-		Bucket:             bucket,
+		Bucket:             h.namedBucket(r),
 		KeyMarker:          r.URL.Query().Get("key-marker"),
 		UploadIDMarker:     r.URL.Query().Get("upload-id-marker"),
 		NextKeyMarker:      h.stripPrefix(result.NextKeyMarker),
@@ -4584,7 +4586,7 @@ func (h *Handlers) ListObjectVersions(w http.ResponseWriter, r *http.Request, bu
 
 	resp := ListVersionsResult{
 		Xmlns:               "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:                bucket,
+		Name:                h.namedBucket(r),
 		Prefix:              prefix,
 		Delimiter:           delimiter,
 		MaxKeys:             maxKeys,
@@ -4945,6 +4947,22 @@ func (h *Handlers) logS3Error(r *http.Request, code, message string, statusCode 
 		// Unexpected: non-error status codes should not use error logging path
 		h.logger.WithFields(fields).Info("S3 operation error logged with non-error status")
 	}
+}
+
+// namedBucket returns the bucket exactly as the client named it, before alias
+// resolution. Response bodies echo this value: S3 clients compare the bucket in
+// a response against the one they addressed, so replying with config.Bucket to
+// a request sent to a legacy alias makes the client discard a response that was
+// in fact correct. Handlers keep using the resolved name for backend calls.
+func (h *Handlers) namedBucket(r *http.Request) string {
+	named := config.ParseBucketKey(r.URL.Path).Bucket
+	if named == "" {
+		// A request that named no bucket is served from the configured bucket.
+		// None of the handlers echoing a bucket name are reachable that way, but
+		// ResolveBucket keeps the fallback consistent if one ever is.
+		return h.config.ResolveBucket(named)
+	}
+	return named
 }
 
 // extractBucketAndKey extracts bucket and key from the request URL.

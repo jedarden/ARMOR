@@ -64,3 +64,70 @@ part of this ADR rather than an operator habit:
 Onboarding a tenant onto the unified bucket, and moving an existing tenant's
 objects into it, follow the runbook rather than this document.
 
+## Addendum: Bucket Alias (2026-09-05)
+
+`ARMOR_PREFIX` makes the move itself transparent to a client — the key a client
+names is unchanged, only where ARMOR stores it — but it does nothing for the
+bucket name in the URL. A tenant that served from its own bucket has every
+consumer addressing `<old-bucket>/...`, and after consolidation those objects
+live in the unified bucket, so the old name reads as a bucket that no longer
+holds anything. Without a bridge, consolidation is coupled to a simultaneous
+edit of every consumer: manifests, CI templates, public download routes.
+
+`ARMOR_BUCKET_ALIASES` is that bridge: a comma-separated list of legacy bucket
+names that resolve to `ARMOR_BUCKET`. Parsing is deliberately boring — entries
+are trimmed of surrounding whitespace, and empty entries, duplicates, and the
+configured bucket's own name are dropped, since recording it as an alias of
+itself would claim a consolidation that did not happen.
+
+**One seam.** `config.ResolveBucket` is the only place the mapping lives, and
+every consumer of a request's bucket name goes through it — `Server
+.extractBucketAndKey`, which the authorization middleware calls, and
+`Handlers.HandleRoot`, which routes and dispatches. Both resolve before any
+other use, so a backend call always names the bucket that holds the objects and
+the ACL check always tests the bucket the request is actually served from. A
+name matching no configured bucket is returned unchanged, so an unknown bucket
+fails in the backend exactly as it did before aliases existed: a typo cannot be
+silently remapped into another tenant's namespace.
+
+**Authorization sees the resolved name, which is both the feature and the
+guard.** Existing ACL strings are written against the configured bucket, so
+resolving first is what lets a pre-consolidation credential keep working for a
+client still sending the legacy name. The same rewrite is what keeps aliasing
+from being a grant: a credential scoped to the legacy name grants nothing,
+because no alias maps onto the bucket it names. Adding an alias therefore
+narrows what a legacy-name credential can reach, and never widens anything.
+
+**Response bodies echo the name the client sent.** S3 clients compare the
+bucket in a response against the one they addressed and discard a mismatch, so
+`ListObjectsV2`'s `Name`, the multipart results, and `ListObjectVersions` all
+report the alias while the work happens against the configured bucket.
+`CopyObject`'s source arrives in the `x-amz-copy-source` header rather than the
+URL, so it is parsed and resolved independently. `ListBuckets` reports only the
+configured bucket — an alias is a name for an existing bucket, not a bucket,
+and listing it would claim a consolidation that makes the alias unnecessary.
+
+**Virtual-hosted style is still not recognised, deliberately.** A request whose
+bucket is in the `Host` header arrives as `GET /key` with no bucket in the path
+at all, so its first path segment is read as a bucket name — and that name is
+not the alias, it is the first component of the key. Such a request therefore
+keeps failing exactly as it did before aliases existed, which is the safe
+outcome: an alias in a `Host` header cannot reach the objects, and neither can
+it widen access. ARMOR does not inspect the host to fix this, because a
+virtual-hosted host cannot be distinguished from an ordinary hostname that
+merely begins with a bucket name, and guessing wrong turns a path-style request
+into a read of a different object. The alias list changes which names work, not
+which addressing styles.
+
+**Cutover ordering.** Arm the alias in the same rollout that completes the
+move, and before any consumer is touched. Arming it while the source bucket
+still holds the only copy sends old-name requests to a bucket that does not
+have their objects yet, and completing the move without the alias leaves a
+window where old-name writes land in the source and the two copies diverge —
+the alias and the data move are one step, not two. Consumers are then repointed
+at their own pace, each independently, and the alias is dropped once no client
+sends the legacy name. Keep the source bucket and its B2 key alive for as long
+as the alias is set: an un-migrated client's read resolves through it, so
+removing either early breaks exactly the client the alias exists to carry. The
+operational steps are the runbook's, not this document's.
+

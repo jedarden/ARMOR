@@ -16,7 +16,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -1480,31 +1479,23 @@ func (s *Server) verifyAuthAndGetCredential(r *http.Request) (*config.Credential
 }
 
 // extractBucketAndKey extracts bucket and key from the request URL.
+//
+// The returned bucket is the one ARMOR serves the request from: a name that is
+// a configured alias of config.Bucket resolves to config.Bucket itself, so the
+// ACL check against this value treats a client still using a legacy bucket name
+// exactly like one using the configured name, and the backend is called with
+// the bucket that actually holds the objects. Unknown names pass through and
+// fail in the backend as they always did.
+//
+// Only path-style addressing is recognised. The Host header is deliberately
+// ignored — including the case where it happens to begin with an alias or the
+// configured bucket name — because a virtual-hosted-style host cannot be told
+// apart from an ordinary hostname with that prefix, and guessing wrong would
+// silently turn a path-style request into a read of a different object. See the
+// ADR-001 bucket-alias addendum.
 func (s *Server) extractBucketAndKey(r *http.Request) (bucket, key string) {
-	path := r.URL.Path
-	// Remove leading slash
-	path = strings.TrimPrefix(path, "/")
-
-	// Check for virtual-hosted-style (bucket in host)
-	// For path-style: /bucket/key
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) >= 1 {
-		bucket = parts[0]
-	}
-	if len(parts) >= 2 {
-		key = parts[1]
-		// URL decode the key (DuckDB httpfs encodes special chars like = as %3D)
-		if decoded, err := url.PathUnescape(key); err == nil {
-			key = decoded
-		}
-	}
-
-	// Use configured bucket if empty
-	if bucket == "" {
-		bucket = s.config.Bucket
-	}
-
-	return bucket, key
+	parsed := config.ParseBucketKey(r.URL.Path)
+	return s.config.ResolveBucket(parsed.Bucket), parsed.Key
 }
 
 // logCompletedRequest logs a completed request with identity audit fields (ADR-012).
@@ -1685,11 +1676,12 @@ func (s *Server) handlePresign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use configured bucket if not specified
-	bucket := req.Bucket
-	if bucket == "" {
-		bucket = s.config.Bucket
-	}
+	// Serve the bucket the client named from the bucket ARMOR actually holds,
+	// exactly as the S3 path does: a legacy name in the request body names the
+	// same objects as config.Bucket once the tenant is consolidated into it.
+	// ResolveBucket("") is config.Bucket, so the "not specified" fallback is
+	// the same call.
+	bucket := s.config.ResolveBucket(req.Bucket)
 
 	// Validate required fields
 	if req.Key == "" {
