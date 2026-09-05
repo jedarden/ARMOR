@@ -57,11 +57,23 @@ lands in shell history, in `ps`, and in the transcript — the same failure the
 secrets-by-reference rule exists for, applied to a name that is only slightly
 less sensitive than a key.
 
+**Variables used below**, all read from OpenBao rather than typed:
+
+```bash
+BUCKET_NAME="$(bao-as rs-manager bao kv get -field=bucket \
+  secret/rs-manager/rs-manager/armor/unified-bucket)"
+BUCKET_ID="$(bao-as rs-manager bao kv get -field=bucket_id \
+  secret/rs-manager/rs-manager/armor/unified-bucket)"
+TENANT_PATH=rs-manager/rs-manager/armor/unified-bucket/<tenant>
+# SRC_REMOTE / SRC_BUCKET / DST_REMOTE / DST_BUCKET: §7's source and target.
+# The target is the unified bucket; both remotes are the same B2 account.
+```
+
 ---
 
 ## 1. Prerequisites
 
-A tenant is prefix-scoped: its B2 application key can touch `<T>/` and nothing
+A tenant is prefix-scoped: its B2 application key can touch `<tenant>/` and nothing
 else. Every ARMOR subsystem that writes must therefore compose its key with
 `ARMOR_PREFIX`, or that subsystem silently 403s forever. Check all four on the
 deployment you are onboarding onto **before** creating the key — three of them
@@ -69,8 +81,8 @@ were bucket-root writers and had to be fixed:
 
 | # | Requirement | If missing | How to check |
 |---|---|---|---|
-| 1 | **Manifest prefix is composed with `ARMOR_PREFIX`** | the manifest write is denied by the tenant's key, and with a bucket-root path every tenant indexes every other tenant's deltas | confirm `manifest_prefix` in `GET /admin/config`-equivalent output sits under `<T>/`; a tenant that must ship today can set `ARMOR_MANIFEST_ENABLED=false`, but that also disables the manifest read path and the `readyz` manifest fallback |
-| 2 | **Canary honours `ARMOR_PREFIX`** | the canary write is denied, so `/readyz` never reports Ready — the instance looks permanently unhealthy | roll with `ARMOR_PREFIX=<T>/` and confirm the canary `last_error` metric stays empty |
+| 1 | **Manifest prefix is composed with `ARMOR_PREFIX`** | the manifest write is denied by the tenant's key, and with a bucket-root path every tenant indexes every other tenant's deltas | confirm `manifest_prefix` in `GET /admin/config`-equivalent output sits under `<tenant>/`; a tenant that must ship today can set `ARMOR_MANIFEST_ENABLED=false`, but that also disables the manifest read path and the `readyz` manifest fallback |
+| 2 | **Canary honours `ARMOR_PREFIX`** | the canary write is denied, so `/readyz` never reports Ready — the instance looks permanently unhealthy | roll with `ARMOR_PREFIX=<tenant>/` and confirm the canary `last_error` metric stays empty |
 | 3 | **Startup log redacts the bucket name** | the name lands in pod logs and every log pipeline on every roll (§9) | `kubectl logs` a freshly rolled pod and confirm `primary backend initialized (b2)` carries a fingerprint, not the name |
 | 4 | **Bucket alias** (`ARMOR_BUCKET_ALIASES`) — optional | only needed if a client's URL hardcodes the old bucket name and cannot be updated | set the old name as an alias and issue one request against it |
 
@@ -118,7 +130,7 @@ the second is the owning cluster.
 | Property | Notes |
 |---|---|
 | `bucket` | copy of the canonical name, so a tenant's credentials and its bucket travel together |
-| `prefix` | `<T>/` |
+| `prefix` | `<tenant>/` |
 | `b2-region` | |
 | `b2-access-key-id`, `b2-secret-access-key` | the tenant's prefix-scoped B2 application key (§3) |
 | `master-encryption-key` | the tenant's MEK (§4) |
@@ -132,8 +144,9 @@ never put a value in `argv` — pipe it or use `@file`. Get the current version
 first, because the mount is `cas_required`:
 
 ```bash
-PATH=rs-manager/rs-manager/armor/unified-bucket/<tenant>
-V=$(bao-as rs-manager-provision bao kv metadata get -format=json "secret/$PATH" \
+# Do not name this variable PATH — that shadows the shell's own $PATH.
+TENANT_PATH=rs-manager/rs-manager/armor/unified-bucket/<tenant>
+V=$(bao-as rs-manager-provision bao kv metadata get -format=json "secret/$TENANT_PATH" \
       | jq .data.current_version)
 # 0 means the path does not exist yet
 ```
@@ -143,7 +156,7 @@ Generate key material into the record without it ever crossing a terminal:
 ```bash
 B2_KEY=$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-40)
 printf 'b2-secret-access-key: %s\n' "$B2_KEY" \
-  | bao-as rs-manager-provision bao kv put -cas=$V "secret/$PATH" -
+  | bao-as rs-manager-provision bao kv put -cas=$V "secret/$TENANT_PATH" -
 ```
 
 **Reading:** the read identity, and never to stdout — materialise into the
@@ -152,7 +165,7 @@ consuming file or a variable.
 **Verifying:** by property, not by reading back.
 
 ```bash
-bao-as rs-manager-provision bao kv metadata get -format=json "secret/$PATH" \
+bao-as rs-manager-provision bao kv metadata get -format=json "secret/$TENANT_PATH" \
   | jq '.data.current_version, .data.created_time'
 ```
 
@@ -239,7 +252,7 @@ un-escrowed key.
 
 ```bash
 openssl rand -hex 32 | bao-as rs-manager-provision \
-  bao kv put -cas=$V "secret/$PATH" master-encryption-key=-
+  bao kv put -cas=$V "secret/$TENANT_PATH" master-encryption-key=-
 ```
 
 Escrow it before making it active, per
@@ -274,8 +287,10 @@ multiple entries; an omitted third segment means all verbs.
 <bucket>:<tenant>/:get+put+delete+list
 ```
 
-Use `<bucket>` here, not a placeholder for it — this string lands in OpenBao and
-in pod env, both of which are acceptable carriers.
+Unlike everything else in this runbook, the ACL string **does** contain the
+bucket name — `<bucket>` above is the real name at provisioning time. That is
+fine: the string lands in OpenBao and in pod env, both of which are acceptable
+carriers. It does not land in git.
 
 Defaults for a new tenant:
 
@@ -292,7 +307,7 @@ linked at the top.
 
 Note what the ACL does **not** cover: it constrains what a client may do
 through ARMOR. It does not widen the B2 key, and it does not give a client
-access to `<T>/.armor/` — internal state is ARMOR's, not the client's.
+access to `<tenant>/.armor/` — internal state is ARMOR's, not the client's.
 
 ---
 
@@ -302,22 +317,23 @@ Three environment values, one decision each:
 
 ```bash
 ARMOR_PREFIX=<tenant>/            # required
-ARMOR_MANIFEST_PREFIX=            # leave unset
+# ARMOR_MANIFEST_PREFIX: leave unset. An empty value is treated the same
+# as unset, so either way the default applies.
 # canary follows ARMOR_PREFIX     # nothing to set
 ```
 
-- **`ARMOR_PREFIX=<T>/`** — one trailing slash, no leading slash. `T`, `T/`, and
+- **`ARMOR_PREFIX=<tenant>/`** — one trailing slash, no leading slash. `T`, `T/`, and
   `/T/` all normalise to `T/`, but write it in the normal form anyway.
 - **`ARMOR_MANIFEST_PREFIX`** — **relative to `ARMOR_PREFIX`**, default
   `.armor/manifest`. Leave it unset: the default already composes to
-  `<T>/.armor/manifest/`, which is what a tenant wants. Setting it relocates
+  `<tenant>/.armor/manifest/`, which is what a tenant wants. Setting it relocates
   manifests *within the tenant's namespace*; it can never escape the prefix. A
   bucket-root value is the bug the relative rule exists to prevent.
-- **Canary** — no configuration. It composes `<T>/.armor/canary/` from the
-  prefix, given prerequisite 1.
+- **Canary** — no configuration. It composes `<tenant>/.armor/canary/` from the
+  prefix, given prerequisite 2.
 - **Provenance** — leave off (§1).
 
-`<T>/.armor/` is inside the tenant's B2 key scope, which is the point: the
+`<tenant>/.armor/` is inside the tenant's B2 key scope, which is the point: the
 tenant's key can write its own internal state and nobody else's.
 
 ---
@@ -342,8 +358,8 @@ restore-verifier, not by re-reading a sample by hand.
 
 ```
 1. Bulk copy            rclone copy --metadata --server-side-across-configs \
-                          "$SRC_REMOTE:$SRC_BUCKET/<T>/" \
-                          "$DST_REMOTE:$DST_BUCKET/<T>/"
+                          "$SRC_REMOTE:$SRC_BUCKET/<tenant>/" \
+                          "$DST_REMOTE:$DST_BUCKET/<tenant>/"
                         (safe to run with writers live; re-runnable; idempotent)
                         --metadata preserves the stored file-info headers ARMOR
                         reads envelope and HMAC state from
