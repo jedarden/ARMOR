@@ -58,6 +58,17 @@ type Config struct {
 	B2SecretAccessKey string
 	Bucket            string
 
+	// Legacy bucket names that ResolveBucket maps onto Bucket. Set
+	// ARMOR_BUCKET_ALIASES to a comma-separated list so a tenant moved into the
+	// ADR-001 shared bucket keeps working under its old bucket name. See
+	// bucket_alias.go.
+	//
+	// These are bucket names too, so they are unpublished like Bucket and are
+	// deliberately absent from Redacted: a startup log that fingerprinted the
+	// unified bucket but printed the aliases in the clear would hand out the
+	// names the alias table still resolves.
+	BucketAliases []string
+
 	// Prefix for all keys (shared bucket support via ADR-001)
 	// When set, all S3 keys are prefixed with this value before B2 operations
 	// Normalized to exactly one trailing slash, no leading slash (e.g., "kalshi-tape/")
@@ -230,6 +241,10 @@ func Load() (*Config, error) {
 	if cfg.Bucket == "" {
 		errs = append(errs, fmt.Errorf("ARMOR_BUCKET is required"))
 	}
+
+	// Legacy bucket names served from ARMOR_BUCKET (ADR-001 bucket-alias
+	// addendum). Optional; empty means no aliasing is in effect.
+	cfg.BucketAliases = ParseBucketAliases(os.Getenv("ARMOR_BUCKET_ALIASES"), cfg.Bucket)
 
 	// Cloudflare domain (optional for b2, ignored for filesystem)
 	if cfg.Backend == "b2" {

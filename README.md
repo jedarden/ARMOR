@@ -243,6 +243,7 @@ ARMOR is configured via environment variables:
 | `ARMOR_B2_ACCESS_KEY_ID` | Yes | — | B2 application key ID |
 | `ARMOR_B2_SECRET_ACCESS_KEY` | Yes | — | B2 application key |
 | `ARMOR_BUCKET` | Yes | — | B2 bucket name |
+| `ARMOR_BUCKET_ALIASES` | No | — | Comma-separated legacy bucket names served from `ARMOR_BUCKET` (see [Bucket Aliases](#bucket-aliases) and ADR-001) |
 | `ARMOR_PREFIX` | No | — | Key prefix for shared bucket deployments (e.g., `kalshi-tape/`). All keys are stored with this prefix in B2 but are transparent to S3 clients (see ADR-001) |
 | `ARMOR_CF_DOMAIN` | Yes | — | Cloudflare domain CNAME'd to B2 |
 | `ARMOR_MEK` | Yes | — | Master encryption key (hex, 32 bytes) |
@@ -260,6 +261,37 @@ ARMOR is configured via environment variables:
 | `ARMOR_PRESIGN_ENABLED` | No | `false` | Enable pre-signed URL feature (required for `/admin/presign` and `/share/` routes) |
 | `ARMOR_PRESIGN_SECRET` | Yes\* | — | Secret key for signing pre-signed URLs (hex, 32+ bytes, required when `ARMOR_PRESIGN_ENABLED=true`) |
 | `ARMOR_PRESIGN_BASE_URL` | Yes\* | — | Base URL for pre-signed URLs (must be absolute URL starting with `http://` or `https://`, required when `ARMOR_PRESIGN_ENABLED=true`) |
+
+### Bucket Aliases
+
+`ARMOR_BUCKET_ALIASES` accepts a comma-separated list of legacy bucket names
+that are served from `ARMOR_BUCKET`:
+
+```bash
+-e ARMOR_BUCKET=unified-bucket \
+-e ARMOR_BUCKET_ALIASES=old-name,older-name \
+```
+
+A request whose bucket is an alias is served exactly as if it named
+`ARMOR_BUCKET` — backend calls go to the configured bucket, and ACL entries
+written against the configured bucket keep matching. The name the client sent
+is what comes back wherever S3 semantics require the server to echo it
+(`ListObjectsV2` / `ListObjectVersions` `Name`, and `CopyObject` sources are
+resolved through the same table). `ListBuckets` still reports only the
+configured bucket: an alias is not a bucket. A bucket name that is neither the
+configured bucket nor an alias behaves as before and fails in the backend.
+
+Aliases exist so a tenant can be consolidated into the shared ADR-001 bucket
+without every consumer changing its bucket name on cutover night. Set the old
+name as an alias **before** the move, and drop it once every client has been
+repointed — see the cutover runbook,
+`docs/runbooks/unified-bucket-tenant-onboarding.md`, and the ADR-001 alias
+addendum.
+
+Aliasing never widens access. The alias is resolved to the configured bucket
+before the ACL check, so a credential scoped to a bucket no alias names gains
+nothing, and a credential's prefix scoping is enforced on the resolved path
+exactly as it is today.
 
 ### Multi-Key Routing
 
