@@ -393,6 +393,60 @@ openssl rand -hex 32 | bao-as rs-manager-provision bao kv put \
 #    driver/watcher machinery is still needed.
 ```
 
+**Progress re-check (2026-09-05 ~05:15Z lineage, bead armor-c1f4560a).**
+`GET /dashboard/admin/key/status` at 05:01:43Z reported `in_progress` at
+21,949 / ~38,697 (~57%). The last five watcher samples give 291 objects /
+5 min = **58/min**, so the walk finishes ~**09:52Z** and the ring GET lands
+~**14:10Z**. driver2 (pid 214960), the watcher (pid 331612) and the
+port-forward (pid 3689471) were all alive with exactly one attached POST
+client.
+
+**The rotation is ARMED, not waiting for a human.** A parallel lineage
+started `/tmp/armor-c1f4560a-rotate.sh` (pid 858152, log
+`/tmp/armor-c1f4560a-rotate.log`, lock `/tmp/.armor-c1f4560a.lock`) at
+05:02:09Z. It polls every 2 min and fires the runbook above on its own once
+`/tmp/ring-final.json` is valid **and** the histogram reconciles (old fp
+`f68571480246d3d5` = 0, `legacy` = 0, total ≥ 38,597) **and** the walk state
+is `completed`; then it stops driver2 + the watcher, writes OpenBao under
+`-cas`, waits ≤2 h for the ESO→Reloader roll, and verifies new=200 / old=401
+on `/admin/creds` before logging `ROTATION_OK`. Do **not** run the runbook by
+hand while it is armed — a second writer to `secret/rs-manager/iad-ci/armor/admin`
+would race it and make its verification meaningless. Expected `ROTATION_OK`
+~**14:15–16:15Z**; read the log first, and treat `GATE FAILED` /
+`ROLL_TIMEOUT` / `VERIFY_FAILED` as the triage paths. Two things that gate
+will flag for a human even though the walk itself is fine: it never rejects a
+*third* stale fingerprint (only the old fp and `legacy` are checked), and
+`legacy == 0` assumes no `.armor/` system object lands in the ring histogram
+without a metadata fingerprint.
+
+Two things the next lineage should expect, so neither reads as a failure:
+
+- **At ~05:21Z the in-flight POST hits driver2's per-attempt cap**
+  (`--max-time 14400`, started 01:21:17Z). curl exits 28, driver2 logs a
+  non-200, sleeps 20 s and re-POSTs; the walk resumes from the persisted
+  `LastKey`. A sample taken in that window reads `interrupted` — that is the
+  designed pause/resume cycle, not a regression. The same blip recurs every
+  ~4 h if the walk is still going.
+- **The watcher log shows a repeating stderr line**
+  `/tmp/armor-rotate-watch.sh: line 54: /tmp/ring-final.json: No such file or
+  directory`. Benign: bash reports the failed `< "$RING"` redirection before
+  the `2>/dev/null || echo 0` fallback can swallow it, so `ring_bytes=0` is
+  still printed correctly. It stops once the ring JSON exists.
+
+**Dashboard exposure, calibrated and split out (armor-cfd49e41).** The
+no-credential `/dashboard` access noted above was re-confirmed live at
+05:11Z and is broader than just `key/status` — `/dashboard` itself and
+`/dashboard/api/list` also return 200 — but narrower in reach than it sounds:
+`/dashboard/credential-activity` still returns 502 with the upstream admin
+API's 401 (the admin API is not reachable through the dashboard), and admin
+port 9001 is a ClusterIP Service with no Ingress, so the exposure is
+cluster-internal rather than internet-facing. Root cause is the conjunction
+of `dashboard.go:47` ("no auth configured - allow all") with
+`admin_auth.go:22` bypassing the admin token gate for the whole
+`/dashboard` prefix. Details and fix directions are on armor-cfd49e41.
+Note that its deploy-side fix rolls the pod, so it inherits this same
+walk-completion gate.
+
 ---
 
 ## rs-manager ARMOR Instance
