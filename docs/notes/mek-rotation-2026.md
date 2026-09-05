@@ -250,10 +250,15 @@ curl -sS --header @"$H" http://127.0.0.1:19001/admin/key/ring
 
 `GET /dashboard/admin/key/status` is a cheap alternative to
 `/admin/key/ring` for rotation progress: it reads
-`.armor/rotation-state.json` (one GET) instead of HEADing every object. On
-iad-ci it is reachable without credentials — the dashboard auth env
-(`ARMOR_DASHBOARD_*`) is unset, so `auth.Wrap` is a no-op there. Worth
-tightening separately.
+`.armor/rotation-state.json` (one GET) instead of HEADing every object.
+
+It needed no credentials on iad-ci — `ARMOR_DASHBOARD_*` is unset there, so
+`auth.Wrap` is a no-op, and the admin gate waived the whole `/dashboard`
+prefix. Fixed on main 2026-09-05 (ab187d6ba; beads armor-d7010d2d,
+armor-cfd49e41): the mount now falls back to the admin bearer-token gate and
+fails closed when no token is configured. Until the pod rolls to an image
+with that fix the endpoint still answers anonymous; after the roll, send the
+same mode-600 header file as the `/admin/key/ring` call above.
 
 ### Reading `/admin/key/ring` (response shape and two counting traps)
 

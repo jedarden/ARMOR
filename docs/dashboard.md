@@ -104,7 +104,8 @@ curl -H "Authorization: Bearer your-secure-token-here" http://localhost:9001/das
 
 ### Security Notes
 
-- If neither authentication method is configured, the dashboard is open to anyone with network access to the admin port
+- If neither authentication method is configured, the dashboard is not anonymous: its routes fall back to the admin bearer-token gate, so every request needs `Authorization: Bearer $ARMOR_ADMIN_TOKEN`. When `ARMOR_ADMIN_TOKEN` is unset too, the mount fails closed with `403 admin API disabled`. (Previously the mount answered with no credentials at all — including `/dashboard/admin/key/status` and `/dashboard/admin/key/rotate`.)
+- That bearer fallback is awkward for interactive use, since a browser cannot attach the header. Set `ARMOR_DASHBOARD_USER`/`ARMOR_DASHBOARD_PASS` (or `ARMOR_DASHBOARD_TOKEN`) wherever a person is meant to open the dashboard.
 - Health check endpoints (`/healthz`, `/readyz`) remain unauthenticated for Kubernetes probes
 - For production deployments, always enable authentication or use network policies to restrict access
 - Consider using a strong random password or token generated with `openssl rand -hex 32`
@@ -273,7 +274,7 @@ curl http://localhost:9001/dashboard/api/list?prefix=data/
 
 - **Listing performance**: The dashboard fetches up to 1000 objects per request. For buckets with many objects, use prefix navigation to narrow the scope.
 - **Cache warm-up**: After ARMOR restarts, the cache hit rate will be low until metadata is loaded. The manifest index (if enabled) will warm the cache on startup.
-- **No auth required**: The dashboard is currently accessible to anyone with network access to the admin port. Secure it appropriately in production.
+- **Auth fallback**: with no dashboard credential configured, dashboard routes require the `ARMOR_ADMIN_TOKEN` bearer token and fail closed with 403 when that is unset too. See Security Notes above.
 
 ## Troubleshooting
 
