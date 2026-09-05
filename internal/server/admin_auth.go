@@ -18,7 +18,9 @@ var adminPublicExact = map[string]bool{
 
 // adminPublicPrefixes are admin-mux path prefixes that stay token-free because
 // they carry their own authentication. /dashboard enforces HTTP Basic or its
-// own DashboardToken via HandlerWithAuth, so it must not be double-gated here.
+// own DashboardToken via HandlerWithAuth, so it must not be double-gated here —
+// but only while a dashboard credential is actually configured. See
+// dashboardAuthConfigured.
 var adminPublicPrefixes = []string{"/dashboard"}
 
 // dashboardAuthConfigured reports whether the dashboard refuses anonymous
@@ -97,7 +99,9 @@ func adminTokenValid(r *http.Request, expected string) bool {
 // the token value are never logged.
 func (s *Server) adminAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Public paths (probes, metrics, dashboard) bypass the token gate.
+		// Public paths (probes, metrics, and the dashboard while it carries its
+		// own credentials) bypass the token gate. An unconfigured dashboard does
+		// not: it falls through and is gated like any other privileged route.
 		if s.isAdminPathPublic(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
