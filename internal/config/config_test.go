@@ -2,12 +2,15 @@ package config
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"github.com/jedarden/armor/internal/acl"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/jedarden/armor/internal/acl"
+	"github.com/jedarden/armor/internal/crypto"
 )
 
 func TestParseACL(t *testing.T) {
@@ -996,10 +999,147 @@ func TestRedacted(t *testing.T) {
 		if redactedCred.SecretKey != "<set>" {
 			t.Errorf("Credentials[%s].SecretKey = %q, want <set>", accessKey, redactedCred.SecretKey)
 		}
-		// Verify ACLs are preserved (not redacted)
-		if accessKey == "appkey" && len(redactedCred.ACLs) == 0 {
+		// Verify ACL prefixes and verbs are preserved (only the bucket name is
+		// fingerprinted)
+		if redactedCred.AccessKey == crypto.IdentifierFingerprint("appkey") && len(redactedCred.ACLs) == 0 {
 			t.Error("Credentials[appkey].ACLs should be preserved")
 		}
+	}
+
+	// Bucket and access-key IDs are deliberately unpublished, so they must not
+	// appear in the redacted output either -- only their fingerprints. This
+	// covers the startup log path ("ARMOR starting" logs the whole Redacted()
+	// struct) landing in pod logs and log pipelines.
+	identifiers := []string{
+		"testbucket", // ARMOR_BUCKET
+		"testkey",    // ARMOR_B2_ACCESS_KEY_ID
+		"defaultkey", // ARMOR_AUTH_ACCESS_KEY
+		"appkey",     // ARMOR_AUTH_APP_ACCESS_KEY
+	}
+	for _, id := range identifiers {
+		if strings.Contains(output, id) {
+			t.Errorf("Deliberately unpublished identifier appears in redacted output: %s", id)
+		}
+	}
+	for _, id := range identifiers {
+		if !strings.Contains(output, crypto.IdentifierFingerprint(id)) {
+			t.Errorf("Fingerprint of %s not found in redacted output", id)
+		}
+	}
+}
+
+// TestRedactedUnpublishedIdentifiersAreFingerprinted pins the field-level
+// contract: bucket names and access-key IDs never survive Redacted() in clear,
+// and each logged value is the fingerprint of the original so a log can still
+// be matched against an expected configuration.
+func TestRedactedUnpublishedIdentifiersAreFingerprinted(t *testing.T) {
+	setEnv(t, append(minimalEnv(),
+		"ARMOR_MEK", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+		"ARMOR_AUTH_APP_ACCESS_KEY", "appkey",
+		"ARMOR_AUTH_APP_SECRET_KEY", "credentialsecret1234567890abcdefghijklmn",
+		"ARMOR_AUTH_APP_ACL", "app-bucket:app-prefix/",
+	)...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	rc := cfg.Redacted()
+
+	if rc.Bucket != crypto.IdentifierFingerprint("testbucket") {
+		t.Errorf("Bucket = %q, want fingerprint of testbucket", rc.Bucket)
+	}
+	if rc.B2AccessKeyID != crypto.IdentifierFingerprint("testkey") {
+		t.Errorf("B2AccessKeyID = %q, want fingerprint of testkey", rc.B2AccessKeyID)
+	}
+	if rc.AuthAccessKey != crypto.IdentifierFingerprint("test-access-key") {
+		t.Errorf("AuthAccessKey = %q, want fingerprint of test-access-key", rc.AuthAccessKey)
+	}
+
+	// Credentials are keyed by fingerprint, and the entry repeats it.
+	fp := crypto.IdentifierFingerprint("appkey")
+	cred, exists := rc.Credentials[fp]
+	if !exists {
+		t.Fatalf("Credentials not keyed by access-key fingerprint %s (have %v)", fp, rc.Credentials)
+	}
+	if cred.AccessKey != fp {
+		t.Errorf("Credentials[%s].AccessKey = %q, want the same fingerprint", fp, cred.AccessKey)
+	}
+
+	// The ACL's bucket name is fingerprinted; its prefix survives untouched.
+	if len(cred.ACLs) != 1 {
+		t.Fatalf("ACL count = %d, want 1", len(cred.ACLs))
+	}
+	if got := cred.ACLs[0].Bucket; got != crypto.IdentifierFingerprint("app-bucket") {
+		t.Errorf("ACLs[0].Bucket = %q, want fingerprint of app-bucket", got)
+	}
+	if cred.ACLs[0].Prefix != "app-prefix/" {
+		t.Errorf("ACLs[0].Prefix = %q, want app-prefix/ (prefixes are not sensitive)", cred.ACLs[0].Prefix)
+	}
+}
+
+// TestRedactedJSONSurfaceHasNoUnpublishedIdentifiers checks the form the startup
+// log actually emits. "ARMOR starting" does logger.WithField("config",
+// cfg.Redacted()), so what reaches pod logs and the log pipeline is the
+// JSON-serialized struct, not the struct in memory -- a struct field can hold a
+// fingerprint while a stale or missing json tag still exposes the value under a
+// differently named key. Asserting on the marshaled bytes closes that gap.
+func TestRedactedJSONSurfaceHasNoUnpublishedIdentifiers(t *testing.T) {
+	setEnv(t, append(minimalEnv(),
+		"ARMOR_MEK", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+		"ARMOR_AUTH_APP_ACCESS_KEY", "appkey",
+		"ARMOR_AUTH_APP_SECRET_KEY", "credentialsecret1234567890abcdefghijklmn",
+		"ARMOR_AUTH_APP_ACL", "app-bucket:app-prefix/",
+	)...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	blob, err := json.Marshal(cfg.Redacted())
+	if err != nil {
+		t.Fatalf("json.Marshal(Redacted()) error: %v", err)
+	}
+	output := string(blob)
+
+	// Bucket and access-key IDs, including the ACL's own bucket, must not
+	// appear under any JSON key or value.
+	for _, id := range []string{"testbucket", "testkey", "test-access-key", "appkey", "app-bucket"} {
+		if strings.Contains(output, id) {
+			t.Errorf("Deliberately unpublished identifier %q survives into the marshaled redacted config", id)
+		}
+		if !strings.Contains(output, crypto.IdentifierFingerprint(id)) {
+			t.Errorf("Fingerprint of %q missing from the marshaled redacted config", id)
+		}
+	}
+}
+
+// TestRedactedACLWildcardBucketNotFingerprinted pins the "*" passthrough: it is
+// a sentinel meaning all buckets, not a bucket name, so hashing it would only
+// make a self-describing rule opaque.
+func TestRedactedACLWildcardBucketNotFingerprinted(t *testing.T) {
+	setEnv(t, append(minimalEnv(),
+		"ARMOR_MEK", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+		"ARMOR_AUTH_APP_ACCESS_KEY", "appkey",
+		"ARMOR_AUTH_APP_SECRET_KEY", "credentialsecret1234567890abcdefghijklmn",
+		"ARMOR_AUTH_APP_ACL", "*:app-prefix/",
+	)...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	rc := cfg.Redacted()
+
+	cred, exists := rc.Credentials[crypto.IdentifierFingerprint("appkey")]
+	if !exists {
+		t.Fatal("APP credential not found by access-key fingerprint")
+	}
+	if len(cred.ACLs) != 1 {
+		t.Fatalf("ACL count = %d, want 1", len(cred.ACLs))
+	}
+	if cred.ACLs[0].Bucket != "*" {
+		t.Errorf("ACLs[0].Bucket = %q, want \"*\" (wildcard must pass through unfingerprinted)", cred.ACLs[0].Bucket)
 	}
 }
 

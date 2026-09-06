@@ -898,18 +898,28 @@ func bytesEqual(a, b []byte) bool {
 }
 
 // RedactedConfig represents a configuration with all secret values redacted.
-// Secret fields are replaced with "<set>" or "<unset>" indicators.
+// Secret fields are replaced with "<set>" or "<unset>" indicators; fields that
+// are not secrets but are deliberately unpublished (bucket names, access-key
+// IDs) are replaced with a crypto.IdentifierFingerprint fingerprint, marked as
+// such on each field.
 type RedactedConfig struct {
 	// Server configuration
 	Listen      string `json:"listen"`
 	AdminListen string `json:"admin_listen"`
 
 	// B2 backend configuration
+	//
+	// B2AccessKeyID and Bucket hold fingerprints, not the values themselves.
+	// The bucket name is deliberately unpublished: it appearing in a pod log
+	// is enough for an unauthenticated caller to target it. The access-key ID
+	// is the non-secret half of a SigV4 credential, but it is the lookup key
+	// an attacker needs, so it is fingerprinted too. Compare against
+	// crypto.IdentifierFingerprint of the expected value.
 	B2Region          string `json:"b2_region"`
 	B2Endpoint        string `json:"b2_endpoint"`
-	B2AccessKeyID     string `json:"b2_access_key_id"`
-	B2SecretAccessKey string `json:"b2_secret_access_key"`
-	Bucket            string `json:"bucket"`
+	B2AccessKeyID     string `json:"b2_access_key_id"`     // fingerprint
+	B2SecretAccessKey string `json:"b2_secret_access_key"` // "<set>" or "<unset>"
+	Bucket            string `json:"bucket"`               // fingerprint
 
 	// Prefix for all keys (shared bucket support via ADR-001)
 	Prefix string `json:"prefix"`
@@ -939,11 +949,14 @@ type RedactedConfig struct {
 	KeyRingFingerprints map[string][]string `json:"key_ring_fingerprints"` // key name -> list of 16-char hex fingerprints
 
 	// Authentication credentials for ARMOR clients
-	AuthAccessKey string `json:"auth_access_key"`
+	AuthAccessKey string `json:"auth_access_key"` // fingerprint
 	AuthSecretKey string `json:"auth_secret_key"` // "<set>" or "<unset>"
 	AuthFilePath  string `json:"auth_file_path"`  // Path to ARMOR_AUTH_FILE, if configured -- not sensitive, unlike its contents
 
 	// Multi-credential support
+	//
+	// Keyed by crypto.IdentifierFingerprint of the access-key ID, not the
+	// access-key ID itself.
 	Credentials map[string]RedactedCredential `json:"credentials"`
 
 	// Writer ID for provenance chain
@@ -993,23 +1006,46 @@ type RedactedConfig struct {
 }
 
 // RedactedCredential represents a credential with secret key redacted.
+//
+// AccessKey holds a fingerprint rather than the access-key ID itself: the ID
+// is the non-secret half of a SigV4 credential, but it is the lookup key an
+// attacker needs, so a startup log carries only its fingerprint. The map key
+// in RedactedConfig.Credentials is the same fingerprint.
 type RedactedCredential struct {
-	AccessKey string         `json:"access_key"`
-	SecretKey string         `json:"secret_key"` // "<set>" or "<unset>"
-	ACLs      []acl.ACLEntry `json:"acls"`
+	AccessKey string             `json:"access_key"` // fingerprint
+	SecretKey string             `json:"secret_key"` // "<set>" or "<unset>"
+	ACLs      []RedactedACLEntry `json:"acls"`
+}
+
+// RedactedACLEntry mirrors acl.ACLEntry with the bucket name replaced by its
+// fingerprint. The key prefix and the action verbs are retained deliberately:
+// neither is sensitive, and they are what make an ACL legible in a startup
+// log -- a fingerprint alone would not tell an operator which paths a
+// credential can reach.
+type RedactedACLEntry struct {
+	Bucket  string          `json:"bucket"` // fingerprint of the bucket name
+	Prefix  string          `json:"prefix"` // key prefix, "*" or "" for any prefix
+	Actions map[string]bool `json:"actions,omitempty"`
 }
 
 // Redacted returns a configuration with all secret values replaced with
 // "<set>" or "<unset>" indicators. This is safe to log without exposing
 // sensitive material.
+//
+// Values that are not secrets but are deliberately unpublished -- the bucket
+// name and every access-key ID -- are replaced by a
+// crypto.IdentifierFingerprint fingerprint rather than passed through, so a
+// startup log cannot be used to discover which bucket or which credentials
+// ARMOR is configured with. Use that function to compare a logged fingerprint
+// against an expected value.
 func (c *Config) Redacted() *RedactedConfig {
 	rc := &RedactedConfig{
 		Listen:                      c.Listen,
 		AdminListen:                 c.AdminListen,
 		B2Region:                    c.B2Region,
 		B2Endpoint:                  c.B2Endpoint,
-		B2AccessKeyID:               c.B2AccessKeyID,
-		Bucket:                      c.Bucket,
+		B2AccessKeyID:               crypto.IdentifierFingerprint(c.B2AccessKeyID),
+		Bucket:                      crypto.IdentifierFingerprint(c.Bucket),
 		Prefix:                      c.Prefix,
 		CFDomain:                    c.CFDomain,
 		CanaryDisabled:              c.CanaryDisabled,
@@ -1017,7 +1053,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		Compress:                    c.Compress,
 		CompressRules:               c.CompressRules.String(),
 		ReadConcurrency:             c.ReadConcurrency,
-		AuthAccessKey:               c.AuthAccessKey,
+		AuthAccessKey:               crypto.IdentifierFingerprint(c.AuthAccessKey),
 		AuthFilePath:                c.AuthFilePath,
 		WriterID:                    c.WriterID,
 		CacheMaxEntries:             c.CacheMaxEntries,
@@ -1114,17 +1150,46 @@ func (c *Config) Redacted() *RedactedConfig {
 	rc.KeyRoutes = make([]KeyRoute, len(c.KeyRoutes))
 	copy(rc.KeyRoutes, c.KeyRoutes)
 
-	// Redact credentials
+	// Redact credentials: the access-key ID becomes a fingerprint, both as the
+	// map key and in the entry, and each ACL's bucket name becomes a
+	// fingerprint. The prefix and verbs survive untouched -- they are not
+	// sensitive and they are what make the ACL legible.
 	rc.Credentials = make(map[string]RedactedCredential)
 	for accessKey, cred := range c.Credentials {
-		rc.Credentials[accessKey] = RedactedCredential{
-			AccessKey: cred.AccessKey,
+		fp := crypto.IdentifierFingerprint(accessKey)
+		rc.Credentials[fp] = RedactedCredential{
+			AccessKey: fp,
 			SecretKey: boolToSetUnset(cred.SecretKey != ""),
-			ACLs:      cred.ACLs,
+			ACLs:      redactACLs(cred.ACLs),
 		}
 	}
 
 	return rc
+}
+
+// redactACLs converts enforcement ACL entries into their log-safe form,
+// replacing each bucket name with its fingerprint.
+//
+// The "*" wildcard is passed through untouched: it is a sentinel meaning all
+// buckets, not a bucket name, so it names nothing to protect -- and hashing it
+// would turn a self-describing rule into an opaque value.
+func redactACLs(entries []acl.ACLEntry) []RedactedACLEntry {
+	if entries == nil {
+		return nil
+	}
+	out := make([]RedactedACLEntry, len(entries))
+	for i, e := range entries {
+		bucket := e.Bucket
+		if bucket != "*" {
+			bucket = crypto.IdentifierFingerprint(bucket)
+		}
+		out[i] = RedactedACLEntry{
+			Bucket:  bucket,
+			Prefix:  e.Prefix,
+			Actions: e.Actions,
+		}
+	}
+	return out
 }
 
 // boolToSetUnset converts a boolean to "<set>" or "<unset>".

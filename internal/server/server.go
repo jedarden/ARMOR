@@ -126,7 +126,9 @@ func New(cfg *config.Config) (*Server, error) {
 		logger.WithFields(map[string]interface{}{
 			"type":   "b2",
 			"region": cfg.B2Region,
-			"bucket": cfg.Bucket,
+			// Fingerprint only: the bucket name is deliberately unpublished,
+			// and this line lands in pod logs and any log pipeline.
+			"bucket": crypto.IdentifierFingerprint(cfg.Bucket),
 		}).Info("primary backend initialized (b2)")
 	default:
 		return nil, fmt.Errorf("unsupported backend type: %s", cfg.Backend)
@@ -161,8 +163,11 @@ func New(cfg *config.Config) (*Server, error) {
 				return nil, fmt.Errorf("failed to initialize B2 secondary backend: %w", err)
 			}
 			logger.WithFields(map[string]interface{}{
-				"type":   secondaryCfg.Type,
-				"bucket": secondaryCfg.Bucket,
+				"type": secondaryCfg.Type,
+				// Fingerprint only, as for the primary backend: a replication
+				// target is at least as sensitive as the source bucket, and
+				// this line lands in pod logs and any log pipeline.
+				"bucket": crypto.IdentifierFingerprint(secondaryCfg.Bucket),
 			}).Info("secondary backend initialized")
 		default:
 			return nil, fmt.Errorf("unsupported secondary backend type: %s", secondaryCfg.Type)
