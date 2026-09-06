@@ -11,6 +11,14 @@ rotation — retiring it is an operator step, never an agent step.
   The pending ARMOR_ADMIN_TOKEN rotation (bead armor-c1f4560a) is **gated on
   this walk** — see [the handoff](#handoff-armor_admin_token-rotation-is-gated-on-this-walk-bead-armor-c1f4560a)
   for why, and for the runbook.
+- [iad-kalshi ARMOR Instance](#iad-kalshi-armor-instance) — **secret layer
+  complete; the rotation has not run** (recorded 2026-09-06T16:13Z). The new
+  active MEK and the ring entry are in OpenBao and the escrow already
+  mirrors them, but `deploy/armor` is still on 0.1.1957 with no ring plumbed,
+  so the running pod still wraps new writes under the old fingerprint.
+  Manifest wiring (armor-a1718cfc) and the walk (armor-1996e666) are both
+  still open; the verification child (armor-44e2ad86) was closed without
+  performing verification.
 - [rs-manager ARMOR Instance](#rs-manager-armor-instance) — procedure
   documented, awaiting operator execution.
 
@@ -470,6 +478,140 @@ of `dashboard.go:47` ("no auth configured - allow all") with
 `/dashboard` prefix. Details and fix directions are on armor-cfd49e41.
 Note that its deploy-side fix rolls the pod, so it inherits this same
 walk-completion gate.
+
+---
+
+## iad-kalshi ARMOR Instance
+
+### Status
+**Secret layer COMPLETE and verified live. The rotation itself has NOT run.**
+OpenBao already holds the new active MEK and the old key is already in the
+ring, but `deploy/armor` is still on `0.1.1957` with no ring plumbed, so
+nothing in the cluster is using the new key yet. The manifest/roll child
+(armor-a1718cfc) and the rotation-walk child (armor-1996e666) were both
+**open and unclaimed** when this section was written
+(2026-09-06T16:13:24Z); the end-to-end verification child (armor-44e2ad86)
+was closed at 2026-09-06T15:37:54Z with "verification is the gate's job
+(Phase 19.4)" — i.e. **with no verification performed and before its own
+blocker ran** — so this instance has no verification record yet. Everything
+below was re-derived live at document time by the pipe-only method
+(fingerprints out, key values never printed); no number is copied from a
+bead body.
+
+### Identifiers
+
+| | |
+|---|---|
+| Cluster / namespace | `iad-kalshi` / `armor` |
+| Image live at document time | `ronaldraygun/armor:0.1.1957@sha256:231faa9c…` — pod up since 2026-09-04T13:12:12Z |
+| Image required for the walk | `ronaldraygun/armor:0.1.1960@sha256:6be87aaa…` (admin 30 s cap fix `fb16d0fbe` + resume fix `c51695130`) |
+| OpenBao path (keys) | `secret/rs-manager/iad-kalshi/armor/kalshi-tape` (v6) |
+| OpenBao path (admin token) | `secret/rs-manager/iad-kalshi/armor/admin` (v2) |
+| Escrow path | `secret/rs-manager/escrow/iad-kalshi-armor` (v1) |
+| Bucket | `kalshi-tape` (B2 `us-west-002`, `b2-us-west-002.ardenone.com`) |
+| Env vars wired today | `ARMOR_MEK`, `ARMOR_ADMIN_TOKEN`, `ARMOR_AUTH_FILE` (inert on 0.1.1957 — see Exceptions) |
+| Env vars still missing | `ARMOR_MEK_RING` (deployment), `VERIFIER_MEK_RING` (restore-verifier) — child armor-a1718cfc |
+
+### Fingerprints (never keys)
+
+| Role | Fingerprint | Where it lives |
+|---|---|---|
+| **New active MEK** (not yet used by any pod) | `c2d3b3f6dd36f716` | keys path v6, `MASTER_ENCRYPTION_KEY` |
+| **Old MEK** — what the running pod still wraps writes with | `d8a7f8e55e33e399` | keys path v4; now the sole `MEK_RING` entry |
+
+Same formula as iad-ci: `hex(sha256(mek_bytes)[:8])` via
+`crypto.MEKFingerprint` (`internal/crypto/fingerprint.go:12`) — 16 hex
+characters, publishable.
+
+### Timeline (UTC)
+
+| Time | Event |
+|---|---|
+| 2026-06-11 19:17:47 | keys path v4 — the key active from here until the rotation (fp `d8a7f8e55e33e399`) |
+| 2026-09-04 13:08:36 | declarative-config `38220ecc` moves named credentials to `ARMOR_AUTH_FILE` (armor-82f8eb1d) |
+| 2026-09-04 13:12:12 | ArgoCD rolls the pod onto the new spec; it has not restarted since |
+| 2026-09-04 13:46:24 | admin token path written to v2 (current) |
+| 2026-09-05 18:36:00 | keys path **v5** — `MEK_RING` created holding the then-active key; `MASTER_ENCRYPTION_KEY` unchanged (still the old key) |
+| 2026-09-05 18:39:56 | keys path **v6** — new MEK generated into `MASTER_ENCRYPTION_KEY` (fp `c2d3b3f6dd36f716`); 64 hex chars, no trailing newline |
+| 2026-09-05 18:44:48 | escrow written at **v1**, mirroring the keys path exactly |
+| 2026-09-06 15:26 | umbrella armor-e7efb55a split into 4 sequential children |
+| 2026-09-06 15:37:54 | verification child closed without performing verification (see Exceptions) |
+| 2026-09-06 16:13:24 | this section written; every number above re-derived live |
+
+### Ring state (live, pre-walk)
+
+```
+OpenBao (v6):   active = c2d3b3f6dd36f716   ring = [d8a7f8e55e33e399]
+running pod:    active = d8a7f8e55e33e399   ring = []   (key_ring_fingerprints:{} in the 0.1.1957 startup dump)
+```
+
+The two lines disagree because MEK is read once at startup (no hot reload)
+and the pod predates the key write. Consequences until the roll lands:
+
+- **Every new write is still wrapped under the old fingerprint**
+  `d8a7f8e55e33e399`, so the walk has more to re-wrap the longer this sits.
+  Not a correctness problem — the old key is in the ring in OpenBao — but
+  any object count measured now is a floor, not the walk's input.
+- Nothing is at risk yet. Risk appears only if the old key were retired
+  before the walk completes: **retirement stays an operator step, gated on
+  the walk**, exactly as on iad-ci.
+
+### What was verified (2026-09-06, live, by property)
+
+1. **The ring entry is the previous active key.** Keys path v4 (2026-06-11)
+   and the sole `MEK_RING` entry both fingerprint to `d8a7f8e55e33e399` —
+   the ring holds exactly the key that was active before the rotation, and
+   nothing else.
+2. **The new key is clean.** v6's `MASTER_ENCRYPTION_KEY` is 64 hex chars
+   with no trailing newline (length + hex-parse check). The iad-ci
+   trailing-newline crash-loop did **not** recur here — and v5 was not a
+   malformed write either, it was the ring-creation step (same old key,
+   clean shape).
+3. **Escrow mirrors the keys path** — see [Escrow](#escrow-1).
+4. **ESO is healthy**: `armor-secrets` and `armor-credentials` both
+   `SecretSynced` (refreshInterval 1h) at check time.
+5. **The deployment is behind the secret layer**: live image
+   `0.1.1957@231faa9c…`, no `ARMOR_MEK_RING` in the pod template, and
+   `key_ring_fingerprints:{}` in the startup dump — the running process has
+   no ring at all.
+
+**Not verified, and why:** canary, pre-rotation read-through and object
+counts all need either the admin API or the S3 endpoint. The admin route
+needs `kubectl port-forward` (the kubectl-proxy route consumes the
+`Authorization` header — see
+[Reaching the admin API](#reaching-the-admin-api-correction-to-plan-86)),
+and `~/.kube/iad-kalshi.kubeconfig` is **expired** — the API server returns
+401 for it (file last modified 2026-09-02), so no port-forward is currently
+possible. The credential-free per-cluster kubectl endpoint cannot
+port-forward. These checks belong to the verification child, which closed
+without running them.
+
+### Escrow
+
+`secret/rs-manager/escrow/iad-kalshi-armor` is at **v1**
+(2026-09-05T18:44:48Z). The stored shape is a top-level `data` object
+holding `mek` and `mek_ring` — the same shape iad-ci's escrow kept. Verified
+by fingerprint only, never by printing a value:
+
+- `data.mek` → `c2d3b3f6dd36f716` (32 bytes) ✓ matches keys path v6
+- `data.mek_ring` → `d8a7f8e55e33e399` (32 bytes) ✓ matches `MEK_RING`
+
+Escrow already reflects the intended post-rotation key state, so **no write
+was needed and none was made**. It stays correct through the walk — the walk
+changes no key material — exactly as on iad-ci.
+
+### Exceptions / follow-ups
+
+| Item | State at document time |
+|---|---|
+| **armor-a1718cfc** — `mek-ring` ExternalSecret mapping + `ARMOR_MEK_RING` + `VERIFIER_MEK_RING` + image roll 0.1.1957 → 0.1.1960 | **open, unclaimed**. Gate for everything below. |
+| **armor-1996e666** — rotation walk to completion under a detached driver | **open, unclaimed**. Must run under `systemd-run --user`, never `setsid`/`nohup` — a needle-worker teardown sweeps `setsid` children out of its own cgroup. |
+| **armor-44e2ad86** — end-to-end verification (ring, canary, read-through, escrow) | **closed without verification** (2026-09-06T15:37:54Z, "verification is the gate's job"). Its five checks are still outstanding; whoever closes the umbrella should run them or re-file them. |
+| **ErrCopyObjectTooLarge / copy-failure exceptions** | **none recorded** — none can exist yet, since the walk has never run. File beads only if and when the walk reports them. |
+| **Bucket scale** | Not measured at document time (needs the admin or S3 endpoint; see the expired kubeconfig below). Prior record: `vps-backups/` alone is 978 objects / 1.49 GB, frozen since the VPS was decommissioned 2026-07-22. The walk's own count is authoritative. |
+| **`~/.kube/iad-kalshi.kubeconfig` expired** | API server returns 401 (file last modified 2026-09-02). Refresh before any port-forward work — both the rotation and the verification routes depend on it. |
+| **`ARMOR_AUTH_FILE` inert on this image** | The env var is present in the live pod template (rolled in with `38220ecc`), but 0.1.1957 never assigns `cfg.AuthFilePath`, so the startup dump's `auth_file_path:""` is the known image-version trap, **not** a load failure. Resolves with the 0.1.1960 roll. |
+| **Two concurrent walks** | `/admin/key/rotate` has no server-side guard against two attached clients (see the iad-ci note). Exactly one driver, ever. |
 
 ---
 
