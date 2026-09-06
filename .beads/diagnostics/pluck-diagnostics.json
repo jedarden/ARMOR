@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-06T11:46:47.01838707Z",
+  "timestamp": "2026-09-06T12:34:57.142370391Z",
   "total_open_beads": 83,
   "exclusion_criteria": {
     "has_assignee": 0,
@@ -247,7 +247,7 @@
       "assignee": null,
       "manual_blocked": false,
       "has_blockers": true,
-      "blocker_count": 8,
+      "blocker_count": 9,
       "has_resource_conflicts": false,
       "conflict_count": 0
     },
