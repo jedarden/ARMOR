@@ -90,19 +90,21 @@ func printRedactedConfig(rc *config.RedactedConfig) {
 	case "b2":
 		fmt.Fprintf(os.Stderr, "  B2 Region: %s\n", rc.B2Region)
 		fmt.Fprintf(os.Stderr, "  B2 Endpoint: %s\n", rc.B2Endpoint)
-		fmt.Fprintf(os.Stderr, "  B2 Access Key: %s\n", rc.B2AccessKeyID)
+		fmt.Fprintf(os.Stderr, "  B2 Access Key (fingerprint): %s\n", rc.B2AccessKeyID)
 		fmt.Fprintf(os.Stderr, "  B2 Secret Key: %s\n", rc.B2SecretAccessKey)
 	case "filesystem":
 		fmt.Fprintf(os.Stderr, "  Filesystem Path: %s\n", rc.FSPath)
 	}
-	fmt.Fprintf(os.Stderr, "Bucket: %s\n", rc.Bucket)
+	// Bucket and access-key IDs render as fingerprints: they are deliberately
+	// unpublished, and this output goes to stderr where it can be captured.
+	fmt.Fprintf(os.Stderr, "Bucket (fingerprint): %s\n", rc.Bucket)
 	fmt.Fprintf(os.Stderr, "Prefix: %s\n", rc.Prefix)
 	fmt.Fprintf(os.Stderr, "Cloudflare Domain: %s\n", rc.CFDomain)
 	fmt.Fprintf(os.Stderr, "MEK: %s\n", rc.MEK)
 	fmt.Fprintf(os.Stderr, "Block Size: %d\n", rc.BlockSize)
 	fmt.Fprintf(os.Stderr, "Compress: %v\n", rc.Compress)
 	fmt.Fprintf(os.Stderr, "Read Concurrency: %d\n", rc.ReadConcurrency)
-	fmt.Fprintf(os.Stderr, "Credentials: %d configured\n", len(rc.Credentials))
+	fmt.Fprintf(os.Stderr, "Credentials: %d configured (identified by access-key fingerprint)\n", len(rc.Credentials))
 	fmt.Fprintf(os.Stderr, "Auth File Path: %s\n", rc.AuthFilePath)
 }
 
