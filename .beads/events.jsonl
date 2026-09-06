@@ -2425,3 +2425,16 @@
 {"adapter":"claude-code-glm-5.3-flash","bead":"armor-7de43702","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-06T12:16:09.796383728+00:00","worker":"glm-roam-17"}
 {"bead":"armor-8b79bac5","event":"claim","strand":"explore","ts":"2026-09-06T12:33:57.015272765+00:00","worker":"glm-vista"}
 {"adapter":"claude-code-glm-5.3-flash","bead":"armor-8b79bac5","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-06T12:33:57.306366462+00:00","worker":"glm-vista"}
+{"bead":"armor-7de43702","duration_ms":6557940,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-06T12:37:26.531141847+00:00","worker":"glm-roam-18"}
+{"bead":"armor-8b79bac5","event":"claim","strand":"explore","ts":"2026-09-06T12:39:52.614177576+00:00","worker":"glm-face"}
+{"adapter":"claude-code-glm-5.3-flash","bead":"armor-8b79bac5","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-06T12:39:52.922761576+00:00","worker":"glm-face"}
+{"bead":"armor-7de43702","duration_ms":5089485,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-06T12:43:03.569493467+00:00","worker":"glm-trail"}
+{"bead":"armor-8b79bac5","duration_ms":874936,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-06T12:48:32.358342264+00:00","worker":"glm-vista"}
+{"bead":"armor-8b79bac5","event":"claim","strand":"explore","ts":"2026-09-06T12:50:55.527956793+00:00","worker":"glm-roam-19"}
+{"adapter":"claude-code-glm-5.3-flash","bead":"armor-8b79bac5","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-06T12:50:55.853939727+00:00","worker":"glm-roam-19"}
+{"bead":"armor-8b79bac5","duration_ms":776826,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-06T12:52:49.926099016+00:00","worker":"glm-face"}
+{"bead":"armor-8b79bac5","event":"claim","strand":"explore","ts":"2026-09-06T12:53:00.263625424+00:00","worker":"glm-face"}
+{"adapter":"claude-code-glm-5.3-flash","bead":"armor-8b79bac5","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-06T12:53:00.593165676+00:00","worker":"glm-face"}
+{"bead":"armor-8b79bac5","duration_ms":3483426,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-06T13:00:08.146899693+00:00","worker":"glm-armor"}
+{"bead":"armor-8b79bac5","event":"claim","strand":"pluck","ts":"2026-09-06T13:00:13.289749097+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","bead":"armor-8b79bac5","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-06T13:00:13.582401748+00:00","worker":"glm-armor"}
