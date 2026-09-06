@@ -40,6 +40,41 @@ Add an optional `ARMOR_PREFIX` environment variable. When set, ARMOR prepends th
 
 **One bucket per deployment (current state)** — keep dedicated buckets, accept egress costs. Rejected: egress cost scales with query frequency; queryable analytics workloads (DuckDB over Parquet) would be expensive.
 
+## Addendum: Internal Namespaces (2026-09-05)
+
+"Prepends this prefix to every S3 key" applies to ARMOR's own bookkeeping as
+much as to client data, and for the same reasons. ARMOR's reserved `.armor/`
+namespace therefore sits at `<ARMOR_PREFIX>.armor/` when a prefix is in force,
+and at `.armor/` when it is not; every writer of internal state resolves its
+path through that same composition.
+
+Listing filters honour **both** locations while a prefix is set. A bucket that
+acquired its prefix after ARMOR had already been writing to it keeps its
+pre-prefix internal objects at the root, and those must stay hidden exactly as
+they were — so `.armor/` at the root is not dead code once a prefix exists.
+
+**Manifest.** Manifest snapshots and deltas live at
+`<ARMOR_PREFIX>.armor/manifest/<writer-id>/`. `ARMOR_MANIFEST_PREFIX` is
+**relative to `ARMOR_PREFIX`**, so setting it relocates a tenant's manifests
+within that tenant's namespace but never escapes it. Taken as a bucket-root
+path instead, every instance sharing the bucket loaded every other tenant's
+deltas into its index — keys are client-visible, so a cross-tenant collision
+resolved to the wrong ciphertext ref — and a B2 key scoped to
+`namePrefix <tenant>/` was denied the manifest write outright. The first shared
+bucket tenant ran with `ARMOR_MANIFEST_ENABLED=false` as a workaround, which
+also disabled the manifest read path and the `readyz` manifest fallback.
+
+**Provenance chain — a known exception.** The provenance chain records
+(`.armor/chain/`, `.armor/chain-head/`, `.armor/chain-segments/`) still live at
+the bucket root, per `provenance.NewAuditorWithPrefix`. A B2 key scoped to
+`namePrefix <tenant>/` therefore cannot write them, and tenants in a shared
+bucket share one chain tree. This is a separate decision to reverse, not a
+side effect of the manifest fix: the manifest is per-tenant state keyed by
+client-visible keys, while the chain is an audit trail. Until it is revisited,
+tenants restricted to their own prefix should not enable provenance. The
+auditor's manifest delta walk does follow the tenant prefix, so it continues to
+find deltas written under the composed location.
+
 **Per-workload Cloudflare Workers** — add a Worker per bucket that enforces namespace. Rejected: operational complexity, cost, and latency overhead for what is fundamentally a proxy-layer concern.
 
 ## Addendum: Bucket Naming Policy (2026-09-05)

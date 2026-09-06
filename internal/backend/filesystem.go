@@ -18,7 +18,8 @@ import (
 // FSBackend implements the Backend interface using a local filesystem.
 // This is designed as a secondary replication target per ADR-006.
 type FSBackend struct {
-	basePath string
+	basePath  string
+	keyPrefix string
 }
 
 // FSConfig contains configuration for the filesystem backend.
@@ -26,6 +27,12 @@ type FSConfig struct {
 	// BasePath is the root directory for all filesystem-backed buckets.
 	// Each bucket becomes a subdirectory under this path.
 	BasePath string
+
+	// KeyPrefix is the ADR-001 shared-bucket prefix (normalized with a trailing
+	// slash) the server prepends to every object key. Like B2Config.KeyPrefix it
+	// is not applied by the backend; it locates the reserved internal namespace
+	// for listing filters. Empty means no prefix.
+	KeyPrefix string
 }
 
 // NewFSBackend creates a new filesystem backend.
@@ -40,7 +47,8 @@ func NewFSBackend(cfg FSConfig) (*FSBackend, error) {
 	}
 
 	return &FSBackend{
-		basePath: cfg.BasePath,
+		basePath:  cfg.BasePath,
+		keyPrefix: cfg.KeyPrefix,
 	}, nil
 }
 
@@ -337,7 +345,10 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 
 		// Skip directories and metadata files
 		if info.IsDir() {
-			// Skip .armor directory
+			// Skip .armor directory. Matched on the base name rather than a
+			// full path so it also prunes <prefix>.armor — the location the
+			// reserved namespace moves to under ADR-001 — and every internal
+			// subtree below it in one step, without walking them first.
 			if !includeInternal && filepath.Base(path) == ".armor" {
 				return filepath.SkipDir
 			}
@@ -360,8 +371,9 @@ func (fs *FSBackend) list(ctx context.Context, bucket, prefix, delimiter, contin
 			return nil
 		}
 
-		// Skip .armor/ prefixed keys
-		if !includeInternal && strings.HasPrefix(key, ".armor/") {
+		// Skip .armor/ prefixed keys (at the bucket root, or under the ADR-001
+		// prefix when one is configured)
+		if !includeInternal && isInternalKey(fs.keyPrefix, key) {
 			return nil
 		}
 

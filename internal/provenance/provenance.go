@@ -1475,9 +1475,19 @@ func (a *Auditor) walkChainSegments(ctx context.Context, writerID string, fromSe
 
 // walkDeltaEntries walks manifest delta files for a writer and extracts
 // chain entries embedded in "put" operations.
-// Delta files are at .armor/manifest/<writer>/delta-{seq:010d}.jsonl.
+// Delta files are at [<prefix>.].armor/manifest/<writer>/delta-{seq:010d}.jsonl —
+// below the tenant prefix when one is in force, at the bucket root otherwise.
 func (a *Auditor) walkDeltaEntries(ctx context.Context, writerID string, fromDeltaSeq uint64) (map[int64]*ChainEntryData, map[string]bool, error) {
-	const manifestPrefix = ".armor/manifest/"
+	// Unlike the chain records this package owns — which are deliberately
+	// bucket-level, see NewAuditorWithPrefix — manifest deltas are
+	// tenant-scoped internal bookkeeping, so they sit at <prefix>.armor/
+	// manifest/ once an ADR-001 prefix is in force. a.prefix is already
+	// normalized with a trailing slash, and empty when no prefix is set, so
+	// this reproduces the composition internal/config applies to
+	// ARMOR_MANIFEST_PREFIX. The two must agree or the walk finds no deltas at
+	// all; ADR-001 "Internal Namespaces" is the normative statement of the
+	// split between the prefixed manifest tree and the bucket-root chain.
+	manifestPrefix := a.prefix + ".armor/manifest/"
 
 	entries := make(map[int64]*ChainEntryData)
 	trackedObjects := make(map[string]bool)

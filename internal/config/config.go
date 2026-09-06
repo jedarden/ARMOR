@@ -361,6 +361,26 @@ func Load() (*Config, error) {
 	manifestEnabledStr := os.Getenv("ARMOR_MANIFEST_ENABLED")
 	cfg.ManifestEnabled = manifestEnabledStr != "false" && manifestEnabledStr != "0"
 	cfg.ManifestPrefix = getEnv("ARMOR_MANIFEST_PREFIX", ".armor/manifest")
+	// Manifest objects are internal bookkeeping, so they share the ADR-001
+	// tenant namespace rather than sitting at the bucket root: with
+	// ARMOR_PREFIX=p/ the deltas land at p/.armor/manifest/<writer>/. Left
+	// uncomposed, every instance sharing the bucket would load every other
+	// tenant's deltas into its index — keys are client-visible, so a
+	// cross-tenant collision resolves to the wrong ciphertext ref — and a B2
+	// key scoped to namePrefix p/ would be denied the write. It is also the
+	// location the reserved-namespace rule already implies: ARMOR's reserved
+	// `.armor/` sits at the bucket root in an unprefixed deployment and
+	// directly below the tenant prefix otherwise, so a manifest written at the
+	// root would be an internal object no tenant's prefix covers.
+	//
+	// ARMOR_MANIFEST_PREFIX is therefore RELATIVE to ARMOR_PREFIX, matching
+	// normalizePrefix's guarantee of exactly one trailing slash. Set it only to
+	// move a tenant's manifests within that tenant's namespace, never to escape
+	// the namespace. ADR-001 "Internal Namespaces" is the normative statement of
+	// this rule and of the provenance chain's deliberate exception to it.
+	if cfg.Prefix != "" {
+		cfg.ManifestPrefix = cfg.Prefix + cfg.ManifestPrefix
+	}
 	cfg.ManifestCompactionInterval = getEnvInt("ARMOR_MANIFEST_COMPACTION_INTERVAL", 3600)
 	cfg.ManifestCompactionThreshold = getEnvInt("ARMOR_MANIFEST_COMPACTION_THRESHOLD", 1000)
 

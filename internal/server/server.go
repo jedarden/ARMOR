@@ -94,14 +94,22 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create logger early for use in backend initialization
 	logger := logging.New("armor")
 
-	// Create primary backend based on ARMOR_BACKEND setting
+	// Create primary backend based on ARMOR_BACKEND setting.
+	//
+	// Both backends are handed cfg.Prefix as KeyPrefix. That is for their
+	// listing filters alone — ARMOR prepends the prefix to keys itself before
+	// calling Put/Get/GetRange, so the backend must not apply it a second time.
+	// It matters because the reserved .armor/ namespace moves under the prefix
+	// (ADR-001 "Internal Namespaces"): without the field a prefixed bucket's
+	// manifest deltas and chain records would surface in client listings.
 	var primaryBackend backend.Backend
 	var err error
 	switch cfg.Backend {
 	case "filesystem":
 		// Filesystem backend as primary
 		primaryBackend, err = backend.NewFSBackend(backend.FSConfig{
-			BasePath: cfg.FSPath,
+			BasePath:  cfg.FSPath,
+			KeyPrefix: cfg.Prefix,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create filesystem backend: %w", err)
@@ -119,6 +127,7 @@ func New(cfg *config.Config) (*Server, error) {
 			SecretKey:       cfg.B2SecretAccessKey,
 			CFDomain:        cfg.CFDomain,
 			ReadConcurrency: cfg.ReadConcurrency,
+			KeyPrefix:       cfg.Prefix,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create B2 backend: %w", err)
@@ -142,8 +151,9 @@ func New(cfg *config.Config) (*Server, error) {
 	if cfg.SecondaryBackendType != "" {
 		// Build BackendConfig from validated config fields
 		secondaryCfg := backend.BackendConfig{
-			Type: cfg.SecondaryBackendType,
-			Path: cfg.SecondaryBackendPath,
+			Type:      cfg.SecondaryBackendType,
+			Path:      cfg.SecondaryBackendPath,
+			KeyPrefix: cfg.Prefix,
 		}
 
 		// Initialize backend based on type using the proper BackendConfig-based initializers
