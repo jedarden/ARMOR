@@ -43,6 +43,7 @@ type B2Backend struct {
 	httpClient      *http.Client
 	readBlockSize   int64
 	readConcurrency int
+	keyPrefix       string
 }
 
 const (
@@ -58,6 +59,20 @@ type B2Config struct {
 	SecretKey       string
 	CFDomain        string // Cloudflare domain for free egress downloads
 	ReadConcurrency int    // Maximum concurrent ranged reads; zero uses the default
+
+	// KeyPrefix is the ADR-001 shared-bucket prefix (normalized with a trailing
+	// slash) that the server prepends to every object key. The backend does not
+	// apply it — callers pass already-prefixed keys — but needs it to locate the
+	// reserved internal namespace, which sits at <KeyPrefix>.armor/ rather than
+	// .armor/ when a prefix is in force. Empty means no prefix. Callers that
+	// build a backend without access to the server config can leave it unset;
+	// internal objects then only ever resolve at the bucket root.
+	//
+	// Unlike FSBackend there is no directory here to prune, so this field is the
+	// only thing standing between a prefixed bucket's internal objects and a
+	// client listing: leaving it unset while a prefix is in force leaks
+	// <prefix>.armor/* into every List and ListObjectVersions.
+	KeyPrefix string
 }
 
 type rangedBlockJob struct {
@@ -108,6 +123,7 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 		httpClient:      &http.Client{Timeout: 30 * time.Minute},
 		readBlockSize:   defaultReadBlockSize,
 		readConcurrency: readConcurrency,
+		keyPrefix:       cfg.KeyPrefix,
 	}, nil
 }
 
@@ -571,8 +587,9 @@ func (b *B2Backend) List(ctx context.Context, bucket, prefix, delimiter, continu
 
 	// Process objects
 	for _, obj := range resp.Contents {
-		// Filter out .armor/ internal objects
-		if strings.HasPrefix(aws.ToString(obj.Key), ".armor/") {
+		// Filter out .armor/ internal objects (at the bucket root, or under the
+		// ADR-001 prefix when one is configured)
+		if isInternalKey(b.keyPrefix, aws.ToString(obj.Key)) {
 			continue
 		}
 
@@ -1460,8 +1477,8 @@ func (b *B2Backend) ListObjectVersions(ctx context.Context, bucket, prefix, deli
 	// Note: ListObjectVersions API does not return metadata or content-type.
 	// For ARMOR metadata (plaintext size), caller needs to do HeadObject with VersionId.
 	for _, version := range resp.Versions {
-		// Filter out .armor/ internal objects
-		if strings.HasPrefix(aws.ToString(version.Key), ".armor/") {
+		// Filter out .armor/ internal objects (root or ADR-001-prefixed)
+		if isInternalKey(b.keyPrefix, aws.ToString(version.Key)) {
 			continue
 		}
 
@@ -1479,8 +1496,8 @@ func (b *B2Backend) ListObjectVersions(ctx context.Context, bucket, prefix, deli
 
 	// Process delete markers
 	for _, marker := range resp.DeleteMarkers {
-		// Filter out .armor/ internal objects
-		if strings.HasPrefix(aws.ToString(marker.Key), ".armor/") {
+		// Filter out .armor/ internal objects (root or ADR-001-prefixed)
+		if isInternalKey(b.keyPrefix, aws.ToString(marker.Key)) {
 			continue
 		}
 

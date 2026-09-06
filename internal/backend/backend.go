@@ -44,6 +44,37 @@ type BucketInfo struct {
 	CreationDate time.Time
 }
 
+// internalNamespace is the object-key root of ARMOR's reserved internal
+// namespace. Clients are refused access to it (see the handler guard), and
+// backends hide it from listings.
+const internalNamespace = ".armor/"
+
+// isInternalKey reports whether key falls in ARMOR's reserved internal
+// namespace. Without an ADR-001 shared-bucket prefix that namespace sits at the
+// bucket root; with one configured it sits at <prefix>.armor/, because ARMOR
+// prepends the prefix to every key it writes — internal bookkeeping included
+// (see ADR-001, "Internal Namespaces"). prefix must already be normalized
+// (empty, or ending in a slash).
+//
+// Both branches stay live even when a prefix is set: a bucket that gained its
+// prefix after ARMOR had been writing to it still holds pre-prefix internal
+// objects at the root, and those must stay hidden too.
+//
+// key is a STORED key — the form the backend addresses objects by, prefix
+// included. It is not the predicate for a client-supplied key: clients name
+// objects without the prefix (handlers.applyPrefix adds it), so the handler
+// guard tests for the bare ".armor/" and would reject everything if handed a
+// prefixed key instead.
+//
+// Callers that need to see internal keys regardless (manifest persistence,
+// provenance) use ListRaw instead of filtering with this.
+func isInternalKey(prefix, key string) bool {
+	if strings.HasPrefix(key, internalNamespace) {
+		return true
+	}
+	return prefix != "" && strings.HasPrefix(key, prefix+internalNamespace)
+}
+
 // Backend defines the interface for storage backends.
 // Implementations include B2 S3, mock backends for testing, etc.
 type Backend interface {

@@ -43,6 +43,18 @@ type BackendConfig struct {
 	AccessKeyID string
 	// SecretKey is the B2 application key secret.
 	SecretKey string
+
+	// KeyPrefix is the ADR-001 shared-bucket prefix of the namespace being
+	// replicated (normalized with a trailing slash). Replication copies keys
+	// verbatim, so the target holds them under the same prefix and needs it to
+	// keep the reserved internal namespace out of its listings. Empty means no
+	// prefix.
+	//
+	// It must be the primary's prefix, not merely "a" prefix: replication
+	// neither rewrites keys nor validates this against the source, so a
+	// mismatched value silently mis-filters the target — too narrow and
+	// internal objects surface in listings, too wide and nothing does.
+	KeyPrefix string
 }
 
 // InitFilesystemBackend initializes a filesystem backend from a parsed
@@ -85,7 +97,7 @@ func InitFilesystemBackend(cfg BackendConfig) (Backend, error) {
 
 	// Path is validated as an existing directory; NewFSBackend's MkdirAll is a
 	// no-op here but keeps the constructor's invariants intact.
-	return NewFSBackend(FSConfig{BasePath: cfg.Path})
+	return NewFSBackend(FSConfig{BasePath: cfg.Path, KeyPrefix: cfg.KeyPrefix})
 }
 
 // InitB2Backend initializes a B2 backend from a parsed BackendConfig
@@ -155,6 +167,7 @@ func InitB2Backend(ctx context.Context, cfg BackendConfig) (Backend, error) {
 		Endpoint:    cfg.Endpoint,
 		AccessKeyID: cfg.AccessKeyID,
 		SecretKey:   cfg.SecretKey,
+		KeyPrefix:   cfg.KeyPrefix,
 	}
 
 	// NewB2Backend returns *B2Backend, which already satisfies the Backend
