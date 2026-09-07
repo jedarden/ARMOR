@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-09-06T15:27:22.759759408Z",
-  "total_open_beads": 86,
+  "timestamp": "2026-09-07T19:11:06.162300645Z",
+  "total_open_beads": 54,
   "exclusion_criteria": {
     "has_assignee": 0,
-    "manually_blocked": 10,
-    "has_dependencies": 70,
+    "manually_blocked": 7,
+    "has_dependencies": 38,
     "resource_conflicts": 0
   },
-  "final_candidate_count": 19,
+  "final_candidate_count": 9,
   "excluded_beads": [
     {
       "bead_id": "armor-d3162d1a",
@@ -340,17 +340,6 @@
       "conflict_count": 0
     },
     {
-      "bead_id": "armor-e1736d2b",
-      "title": "Fix multipart→single conversion counting",
-      "priority": 1,
-      "assignee": null,
-      "manual_blocked": true,
-      "has_blockers": false,
-      "blocker_count": 0,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
       "bead_id": "armor-36b04ecb",
       "title": "Add regression test for the already-at-target skip path in format migration",
       "priority": 1,
@@ -413,39 +402,6 @@
       "manual_blocked": false,
       "has_blockers": true,
       "blocker_count": 2,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-45551222",
-      "title": "Fix failure recording in format migration",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-489028f6",
-      "title": "Fix processed and skipped object counting",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-6a34464e",
-      "title": "Implement failure recording in migration handler",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
       "has_resource_conflicts": false,
       "conflict_count": 0
     },
@@ -538,206 +494,8 @@
       "conflict_count": 0
     },
     {
-      "bead_id": "armor-80d47abd",
-      "title": "Identify why test migration failures are not recorded",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-93ccbb77",
-      "title": "Fix migration failure recording bug",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-f24913bb",
-      "title": "Fix the stale recordFailure doc comment in format_migration.go",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-8ac7da88",
-      "title": "Persist in-flight failures when format migration is interrupted",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-026faf07",
-      "title": "Add a regression test for interruption-path failure persistence",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-17f53a87",
-      "title": "Diagnose processed-count and version-flip bugs in format migration",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-652438fb",
-      "title": "Diagnose failure-recording loss in format migration",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-5055714c",
-      "title": "Write consolidated format migration counting diagnosis report",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
       "bead_id": "armor-a1be3e50",
       "title": "Remove jobs:1 and --min-chunk-size from the forgejo-postgres CNPG backup config after v3",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": true,
-      "has_blockers": false,
-      "blocker_count": 0,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-ae27d04c",
-      "title": "Investigate and diagnose format migration counting logic bugs",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-c039d19f",
-      "title": "Fix format migration counting and version migration logic",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-f6c662e0",
-      "title": "Analyze migration failure handling in format_migration.go",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-31047889",
-      "title": "Diagnose why corrupted object does not trigger migration failure",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-b68a980b",
-      "title": "Implement proper failure recording in migration error path",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-6ecfb855",
-      "title": "Update format-migration failure-flow doc to match current HEAD line numbers",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-3cdf833b",
-      "title": "Add resume-survival test for failure records across interrupted migrations",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-6365003d",
-      "title": "Add failure-record query output to migration status surface",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-58d534b2",
-      "title": "Run the final whole-doc citation audit of the migration failure-flow doc and confirm the stale-citation note",
-      "priority": 3,
-      "assignee": null,
-      "manual_blocked": true,
-      "has_blockers": false,
-      "blocker_count": 0,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-91366ca3",
-      "title": "Write the failure-handling flow conclusion resolving armor-f6c662e0's stale premise",
       "priority": 3,
       "assignee": null,
       "manual_blocked": true,
