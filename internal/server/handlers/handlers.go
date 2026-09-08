@@ -350,6 +350,11 @@ func (h *Handlers) HandleRoot(w http.ResponseWriter, r *http.Request) {
 // loading the entire file into memory.
 func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	ctx := r.Context()
+	createOnly, validCondition := putObjectCreateOnly(r)
+	if !validCondition {
+		h.writeError(w, r, "InvalidArgument", "PutObject supports only If-None-Match: *", http.StatusBadRequest)
+		return
+	}
 
 	// Check Content-Length header
 	contentLength := r.ContentLength
@@ -361,7 +366,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 	useStreaming := !h.config.Compress && !h.config.CompressRules.HasRules() && (contentLength < 0 || contentLength > streamingThreshold)
 
 	if useStreaming {
-		h.putObjectStreaming(ctx, w, r, bucket, key)
+		h.putObjectStreaming(ctx, w, r, bucket, key, createOnly)
 		return
 	}
 
@@ -566,8 +571,8 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Upload to B2 with prefix applied
 	prefixedKey := h.applyPrefix(key)
-	if err := h.backend.Put(ctx, bucket, prefixedKey, bytes.NewReader(envelope), int64(len(envelope)), meta); err != nil {
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to upload: %v", err), 500)
+	if err := h.storePutObject(ctx, bucket, prefixedKey, bytes.NewReader(envelope), int64(len(envelope)), meta, createOnly); err != nil {
+		h.writePutObjectError(w, r, err)
 		return
 	}
 
@@ -645,7 +650,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 // 2. Create envelope header with the computed SHA-256
 // 3. Stream from temp file through encryption to B2 via io.Pipe
 // 4. Clean up temp file
-func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string) {
+func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket, key string, createOnly bool) {
 	// Phase 1: Stream to temp file and compute SHA-256
 	tmpFile, err := os.CreateTemp("", "armor-upload-*.tmp")
 	if err != nil {
@@ -851,18 +856,17 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 
 	// Upload to B2 with prefix applied using streaming reader
 	prefixedKey := h.applyPrefix(key)
-	if err := h.backend.Put(ctx, bucket, prefixedKey, pr, envelopeSize, meta); err != nil {
+	if err := h.storePutObject(ctx, bucket, prefixedKey, pr, envelopeSize, meta, createOnly); err != nil {
+		_ = pr.CloseWithError(err)
 		tmpFile.Close()
-		// Check if there was an encryption error
-		select {
-		case encErrVal := <-encErr:
-			if encErrVal != nil {
-				h.writeError(w, r, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
-				return
-			}
-		default:
+		// Closing the reader releases the encryption goroutine even when the
+		// backend rejected the request before consuming its body.
+		encErrVal := <-encErr
+		if encErrVal != nil && !putObjectExpectedRejection(err) {
+			h.writeError(w, r, "InternalError", fmt.Sprintf("Encryption error: %v", encErrVal), 500)
+			return
 		}
-		h.writeError(w, r, "InternalError", fmt.Sprintf("Failed to upload: %v", err), 500)
+		h.writePutObjectError(w, r, err)
 		return
 	}
 

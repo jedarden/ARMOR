@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -128,6 +129,15 @@ func (fs *FSBackend) saveMetadata(bucket, key string, meta *fsMetadata) error {
 
 // Put stores an object.
 func (fs *FSBackend) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	return fs.put(ctx, bucket, key, body, size, meta, false)
+}
+
+// PutIfAbsent stores an object only when its key does not already exist.
+func (fs *FSBackend) PutIfAbsent(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	return fs.put(ctx, bucket, key, body, size, meta, true)
+}
+
+func (fs *FSBackend) put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string, createOnly bool) error {
 	objPath := fs.objectPath(bucket, key)
 
 	// Ensure directory exists
@@ -135,12 +145,13 @@ func (fs *FSBackend) Put(ctx context.Context, bucket, key string, body io.Reader
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Create temp file
-	tmpPath := objPath + ".tmp"
-	f, err := os.Create(tmpPath)
+	// Create a unique temp file in the destination directory so the final link
+	// or rename stays on one filesystem.
+	f, err := os.CreateTemp(filepath.Dir(objPath), ".armor-put-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
+	tmpPath := f.Name()
 	defer os.Remove(tmpPath)
 
 	// Copy data and compute MD5
@@ -154,8 +165,17 @@ func (fs *FSBackend) Put(ctx context.Context, bucket, key string, body io.Reader
 
 	etag := hex.EncodeToString(hash.Sum(nil))
 
-	// Rename to final path
-	if err := os.Rename(tmpPath, objPath); err != nil {
+	if createOnly {
+		// link(2) publishes the completed temp file only if objPath is absent.
+		// Unlike an existence check followed by Rename, this is atomic against
+		// concurrent writers.
+		if err := os.Link(tmpPath, objPath); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return ErrPreconditionFailed
+			}
+			return fmt.Errorf("failed to publish file: %w", err)
+		}
+	} else if err := os.Rename(tmpPath, objPath); err != nil {
 		return fmt.Errorf("failed to rename file: %w", err)
 	}
 
