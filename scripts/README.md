@@ -161,6 +161,50 @@ bash scripts/setup-version-drift-schedule.sh
 
 ---
 
+## Starvation Watching
+
+Watches the bead workspace's ready frontier for starvation — open beads
+exist while a ready query returns zero candidates.
+
+**Full documentation:** [docs/notes/starvation-watch.md](../docs/notes/starvation-watch.md)
+
+### starvation-watch.py
+
+**Purpose:** Consumes `.beads/diagnostics/pluck-diagnostics.json` (rewritten
+by bead-rs on every ready query) and files **one plain task bead per
+starvation episode**, only when `total_open_beads > 0 AND
+final_candidate_count == 0` reproduces across two consecutive snapshots.
+Healthy frontiers and drained workspaces write nothing. The alert bead
+embeds both snapshots verbatim plus a per-bead exclusion classification,
+and is deduplicated per episode via `--unique-ref` — one episode can never
+file two beads, even if the watcher's state file is lost.
+
+**Inputs:** `.beads/diagnostics/pluck-diagnostics.json` (read-only)
+
+**Options:**
+- `--workspace DIR` - Bead workspace to watch (default: this repo's root)
+- `--dry-run` - Print the would-be alert bead instead of filing
+- `--self-test` - Run the 21 built-in scenario checks and exit
+- `--max-gap-seconds N` - Max age of the previous snapshot for the pair to
+  count as consecutive (default: 3600)
+- `--diagnostics PATH` / `--state-file PATH` / `--bead-bin BIN` - Overrides
+  for testing
+
+**Scheduling:** `armor-starvation-watch.{service,timer}` — a systemd
+`--user` oneshot every 15 minutes at :07/:22/:37/:52 (worker-machine-side;
+deliberately not a k8s Job and not a NEEDLE worker-loop change — NEEDLE's
+`PluckNoCandidate` telemetry already covers the counter side).
+
+**Examples:**
+```bash
+python3 scripts/starvation-watch.py --self-test        # verify the state machine
+python3 scripts/starvation-watch.py --dry-run          # one live cycle, file nothing
+bash scripts/setup-starvation-watch-schedule.sh        # install the timer
+journalctl --user -u armor-starvation-watch.service -n 20
+```
+
+---
+
 ## Testing & Validation
 
 ### test-armor-endpoints.sh

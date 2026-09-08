@@ -1,0 +1,19 @@
+[Unit]
+Description=ARMOR workspace starvation watcher (one pluck-diagnostics cycle)
+# Files a plain task bead only when total_open_beads > 0 AND
+# final_candidate_count == 0 reproduces across consecutive snapshots of
+# .beads/diagnostics/pluck-diagnostics.json. Healthy or drained runs
+# write nothing but the watcher state file.
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/coding/ARMOR
+# __PYTHON__ and /home/coding/ARMOR are rewritten for this checkout by
+# setup-starvation-watch-schedule.sh (this box has no /usr/bin/python3).
+ExecStart=__PYTHON__ /home/coding/ARMOR/scripts/starvation-watch.py --workspace /home/coding/ARMOR
+Nice=10
+IOSchedulingClass=idle
+SyslogIdentifier=armor-starvation-watch
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

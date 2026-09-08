@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the ARMOR starvation watcher every 15 minutes
+
+[Timer]
+# Off-minute marks (7, 22, 37, 52) to avoid aligning with the other
+# workspace timers that fire on :00/:05/:10...
+OnCalendar=*-*-* *:7/15
+Persistent=true
+RandomizedDelaySec=30
+Unit=armor-starvation-watch.service
+
+[Install]
+WantedBy=timers.target
