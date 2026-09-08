@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-09-08T08:20:43.317376549Z",
-  "total_open_beads": 60,
+  "timestamp": "2026-09-08T13:03:12.085500622Z",
+  "total_open_beads": 51,
   "exclusion_criteria": {
     "has_assignee": 0,
-    "manually_blocked": 7,
-    "has_dependencies": 38,
+    "manually_blocked": 5,
+    "has_dependencies": 32,
     "resource_conflicts": 0
   },
-  "final_candidate_count": 15,
+  "final_candidate_count": 14,
   "excluded_beads": [
     {
       "bead_id": "armor-d3162d1a",
@@ -340,50 +340,6 @@
       "conflict_count": 0
     },
     {
-      "bead_id": "armor-36b04ecb",
-      "title": "Add regression test for the already-at-target skip path in format migration",
-      "priority": 1,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-3e6da43d",
-      "title": "Confirm Forgejo gitea pod replacement activates the gitleaks allowlist fix",
-      "priority": 1,
-      "assignee": null,
-      "manual_blocked": true,
-      "has_blockers": false,
-      "blocker_count": 0,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-f9713a40",
-      "title": "Push the unpushed ARMOR range to origin/main once gitleaks accepts bead checkpoints",
-      "priority": 1,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 2,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-999bd5b4",
-      "title": "Verify origin/main carries the at-target skip-path test after push",
-      "priority": 1,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
       "bead_id": "armor-a041e0f1",
       "title": "Operator: admit stalled ARMOR push backlog via documented offline maintenance path (398 MB new bytes vs 256 MiB scan budget)",
       "priority": 1,
@@ -441,50 +397,6 @@
     {
       "bead_id": "armor-ee6ede36",
       "title": "Run golden validation from clean clone",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-55a1fb4c",
-      "title": "Document V1 multipart fixture V3 conversions",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": true,
-      "has_blockers": false,
-      "blocker_count": 0,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-7accbcc8",
-      "title": "Document V2 multipart fixture V3 conversions",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-edc72676",
-      "title": "Document malformed and edge case fixture V3 handling",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-61906972",
-      "title": "Create comprehensive V3 migration reference document",
       "priority": 2,
       "assignee": null,
       "manual_blocked": false,
