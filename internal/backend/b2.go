@@ -44,6 +44,13 @@ type B2Backend struct {
 	readBlockSize   int64
 	readConcurrency int
 	keyPrefix       string
+	conditionalMu   sync.Mutex
+	conditionalKeys map[string]*conditionalKeyLock
+}
+
+type conditionalKeyLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 const (
@@ -124,22 +131,75 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 		readBlockSize:   defaultReadBlockSize,
 		readConcurrency: readConcurrency,
 		keyPrefix:       cfg.KeyPrefix,
+		conditionalKeys: make(map[string]*conditionalKeyLock),
 	}, nil
 }
 
 // Put stores an object in B2.
 func (b *B2Backend) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
-	return b.put(ctx, bucket, key, body, size, meta, false)
+	return b.put(ctx, bucket, key, body, size, meta)
 }
 
 // PutIfAbsent stores an object only when its key does not already exist.
-// B2 evaluates If-None-Match atomically with the write, avoiding the race in a
-// separate HeadObject/PutObject sequence.
+//
+// B2's S3-compatible API closes PutObject requests carrying If-None-Match, so
+// ARMOR serializes create-only writes for a key and checks existence first.
+// This is atomic within one ARMOR process, which matches the supported
+// single-replica B2 deployment topology. The lock remains held until PutObject
+// completes, so an ambiguous client retry observes the completed object.
 func (b *B2Backend) PutIfAbsent(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
-	return b.put(ctx, bucket, key, body, size, meta, true)
+	unlock := b.lockConditionalKey(bucket + "\x00" + key)
+	defer unlock()
+
+	_, err := b.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err == nil {
+		return ErrPreconditionFailed
+	}
+	if !isS3ObjectNotFound(err) {
+		return fmt.Errorf("conditional HeadObject failed: %w", err)
+	}
+
+	return b.put(ctx, bucket, key, body, size, meta)
 }
 
-func (b *B2Backend) put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string, createOnly bool) error {
+func (b *B2Backend) lockConditionalKey(key string) func() {
+	b.conditionalMu.Lock()
+	if b.conditionalKeys == nil {
+		b.conditionalKeys = make(map[string]*conditionalKeyLock)
+	}
+	entry := b.conditionalKeys[key]
+	if entry == nil {
+		entry = &conditionalKeyLock{}
+		b.conditionalKeys[key] = entry
+	}
+	entry.refs++
+	b.conditionalMu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		b.conditionalMu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(b.conditionalKeys, key)
+		}
+		b.conditionalMu.Unlock()
+	}
+}
+
+func isS3ObjectNotFound(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	code := apiErr.ErrorCode()
+	return code == "NotFound" || code == "NoSuchKey"
+}
+
+func (b *B2Backend) put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
 	// B2 rejects requests without a Content-Length header. With an unseekable
 	// body the Go transport falls back to Transfer-Encoding: chunked and drops
 	// Content-Length (AWS accepts that, B2 does not), so spool to a temp file
@@ -166,15 +226,8 @@ func (b *B2Backend) put(ctx context.Context, bucket, key string, body io.Reader,
 		ContentLength: aws.Int64(size),
 		Metadata:      toS3Metadata(meta),
 	}
-	if createOnly {
-		input.IfNoneMatch = aws.String("*")
-	}
 	_, err := b.s3Client.PutObject(ctx, input)
 	if err != nil {
-		var apiErr smithy.APIError
-		if createOnly && errors.As(err, &apiErr) && apiErr.ErrorCode() == "PreconditionFailed" {
-			return fmt.Errorf("%w: %v", ErrPreconditionFailed, err)
-		}
 		return fmt.Errorf("PutObject failed: %w", err)
 	}
 	return nil
