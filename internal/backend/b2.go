@@ -129,6 +129,17 @@ func NewB2Backend(ctx context.Context, cfg B2Config) (*B2Backend, error) {
 
 // Put stores an object in B2.
 func (b *B2Backend) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	return b.put(ctx, bucket, key, body, size, meta, false)
+}
+
+// PutIfAbsent stores an object only when its key does not already exist.
+// B2 evaluates If-None-Match atomically with the write, avoiding the race in a
+// separate HeadObject/PutObject sequence.
+func (b *B2Backend) PutIfAbsent(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	return b.put(ctx, bucket, key, body, size, meta, true)
+}
+
+func (b *B2Backend) put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string, createOnly bool) error {
 	// B2 rejects requests without a Content-Length header. With an unseekable
 	// body the Go transport falls back to Transfer-Encoding: chunked and drops
 	// Content-Length (AWS accepts that, B2 does not), so spool to a temp file
@@ -148,14 +159,22 @@ func (b *B2Backend) Put(ctx context.Context, bucket, key string, body io.Reader,
 		}
 		body = tmp
 	}
-	_, err := b.s3Client.PutObject(ctx, &s3.PutObjectInput{
+	input := &s3.PutObjectInput{
 		Bucket:        aws.String(bucket),
 		Key:           aws.String(key),
 		Body:          body,
 		ContentLength: aws.Int64(size),
 		Metadata:      toS3Metadata(meta),
-	})
+	}
+	if createOnly {
+		input.IfNoneMatch = aws.String("*")
+	}
+	_, err := b.s3Client.PutObject(ctx, input)
 	if err != nil {
+		var apiErr smithy.APIError
+		if createOnly && errors.As(err, &apiErr) && apiErr.ErrorCode() == "PreconditionFailed" {
+			return fmt.Errorf("%w: %v", ErrPreconditionFailed, err)
+		}
 		return fmt.Errorf("PutObject failed: %w", err)
 	}
 	return nil
