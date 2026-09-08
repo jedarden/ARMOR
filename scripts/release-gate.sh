@@ -17,7 +17,7 @@ go test ${race_flag} -count=1 ./internal/crypto \
 	-run '^(TestV3Counter|TestV3BlockHMACKeys|TestV3MaxBlockSizeConstraint|TestV3HMACInputFormat)$'
 
 go test ${race_flag} -count=1 ./internal/backend \
-	-run '^TestMultipartV3|^TestMultipartV2Format$|^TestFSBackend_MultipartUpload$'
+	-run '^TestMultipartV3|^TestMultipartV2Format$|^TestFSBackend_MultipartUpload$|^TestB2PutIfAbsentForwardsAtomicCondition$|^TestFSBackendPutIfAbsentDoesNotOverwrite$'
 
 go test ${race_flag} -count=1 ./internal/canary
 
@@ -34,7 +34,7 @@ go test -count=1 ./cmd/armor \
 	-run '^TestNewS3HTTPServerAllowsLongRunningRequestsAndResponses$'
 
 go test ${race_flag} -count=1 ./internal/server/handlers \
-	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3|^TestV3GetObject|^TestV3FilesystemPutGetRoundTrip$'
+	-run '^TestMultipartV3HTTPConcurrentShuffledUnalignedRoundTrip$|^TestMultipartV3|^TestV3GetObject|^TestV3FilesystemPutGetRoundTrip$|^TestPutObjectIfNoneMatchCreateOnlySmallAndStreaming$|^TestPutObjectRejectsUnsupportedIfNoneMatchValue$|^TestPutObjectDoesNotEmulateConditionalWrite$'
 
 # Compile the credentialed B2 integration suite without contacting a backend.
 go test -count=1 -tags=integration ./tests/integration/... -run '^$'
