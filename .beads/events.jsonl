@@ -2641,3 +2641,4 @@
 {"adapter":"claude-code-glm-5.3-flash","bead":"armor-6d46f85c","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-08T17:55:30.229813222+00:00","worker":"glm-tgp"}
 {"bead":"armor-6d46f85c","event":"claim","strand":"explore","ts":"2026-09-08T17:55:33.745508033+00:00","worker":"glm-face"}
 {"bead":"armor-f782120e","duration_ms":3601980,"event":"timeout","exit_code":124,"outcome":"timeout","strand":"explore","ts":"2026-09-08T17:59:59.011757639+00:00","worker":"glm-cgraph"}
+{"bead":"armor-6d46f85c","duration_ms":1067631,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-08T18:13:18.061499890+00:00","worker":"glm-tgp"}
