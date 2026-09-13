@@ -1547,6 +1547,17 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			// Check ACL for the request. For list operations the URL path has no
 			// key component, so fall back to the ?prefix query param so that ACL
 			// prefix restrictions are enforced correctly against the listed prefix.
+			//
+			// DeleteObjects (POST ?delete) is the one operation whose keys travel
+			// in the body rather than the URL, so there is no key to check here —
+			// and checking the empty key denies every prefix-scoped credential
+			// before the handler can look at the real ones. queue-api's litestream
+			// replica holds delete on its own prefix yet every retention batch
+			// came back 403 for exactly that reason. Skip the gate for that single
+			// sub-operation: DeleteObjects enforces the same ACLs per key and
+			// reports each denied key as an AccessDenied entry in its response.
+			bulkDelete := r.Method == http.MethodPost && r.URL.Query().Has("delete")
+
 			bucket, key := s.extractBucketAndKey(r)
 			if key == "" {
 				key = r.URL.Query().Get("prefix")
@@ -1554,14 +1565,16 @@ func (s *Server) wrapHandler(h http.HandlerFunc) http.HandlerFunc {
 			objectKey = key
 			verb = ActionForRequest(r)
 
-			if err := acl.CheckACL(cred, bucket, key, verb); err != nil {
-				authzResult = "deny-acl"
-				s.writeError(w, r, "AccessDenied", "Access Denied", 403)
-				s.metrics.IncRequestsTotal("acl", 403)
-				s.metrics.IncRequestsByCredential(accessKeyID, verb, "deny-acl")
-				// Log denied request with identity (ADR-012)
-				s.logCompletedRequest(r, start, 403, authzResult, accessKeyID, verb, objectKey, 0)
-				return
+			if !bulkDelete {
+				if err := acl.CheckACL(cred, bucket, key, verb); err != nil {
+					authzResult = "deny-acl"
+					s.writeError(w, r, "AccessDenied", "Access Denied", 403)
+					s.metrics.IncRequestsTotal("acl", 403)
+					s.metrics.IncRequestsByCredential(accessKeyID, verb, "deny-acl")
+					// Log denied request with identity (ADR-012)
+					s.logCompletedRequest(r, start, 403, authzResult, accessKeyID, verb, objectKey, 0)
+					return
+				}
 			}
 			authzResult = "allow"
 			s.metrics.IncRequestsByCredential(accessKeyID, verb, "allow")

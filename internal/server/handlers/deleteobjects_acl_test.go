@@ -239,6 +239,123 @@ func TestDeleteObjects_PerKeyACLAEnforcement(t *testing.T) {
 	}
 }
 
+// TestDeleteObjects_DeniedKeysNotTombstoned pins the manifest contract of a
+// mixed batch: only the allowed keys may be removed from the manifest index.
+// A denied key still exists in the backend, so dropping its manifest entry
+// (and persisting a "del" delta for it) would hide a live object from
+// manifest lookups even though nothing was deleted.
+func TestDeleteObjects_DeniedKeysNotTombstoned(t *testing.T) {
+	be := &mockDeleteBackend{
+		mockBackend: newMockBackend(),
+		deletedKeys: make(map[string]bool),
+	}
+
+	cfg, _, cache, footerCache, km := testSetup(t)
+	h := handlers.New(cfg, be, cache, footerCache, km, nil)
+
+	rec := newMockManifestRecorder()
+	h.WithManifest(rec)
+
+	cred := &config.Credential{
+		AccessKey: "prefix_key",
+		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		ACLs: []acl.ACLEntry{
+			{
+				Bucket: "test-bucket",
+				Prefix: "allowed/",
+			},
+		},
+	}
+
+	for _, key := range []string{"allowed/in-scope.txt", "denied/out-of-scope.txt"} {
+		rec.seed("test-bucket", key, &handlers.ManifestEntry{PlaintextSize: 10, ETag: "abc"})
+	}
+
+	body := `<Delete>` +
+		`<Object><Key>allowed/in-scope.txt</Key></Object>` +
+		`<Object><Key>denied/out-of-scope.txt</Key></Object>` +
+		`</Delete>`
+
+	req := httptest.NewRequest("POST", "/test-bucket?delete", bytes.NewReader([]byte(body)))
+	req = req.WithContext(acl.WithCredential(req.Context(), cred))
+	w := httptest.NewRecorder()
+	h.DeleteObjects(w, req, "test-bucket")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if _, ok := rec.Lookup("test-bucket", "allowed/in-scope.txt"); ok {
+		t.Errorf("allowed key should have been removed from the manifest")
+	}
+	if _, ok := rec.Lookup("test-bucket", "denied/out-of-scope.txt"); !ok {
+		t.Errorf("denied key was tombstoned in the manifest although the ACL refused to delete it")
+	}
+}
+
+// TestDeleteObjects_QuietModeStillReportsDeniedKeys pins the S3 quiet-mode
+// contract: Quiet omits the successful Deleted entries but per-key errors
+// must still be reported, otherwise a restricted credential's failed batch
+// looks fully successful.
+func TestDeleteObjects_QuietModeStillReportsDeniedKeys(t *testing.T) {
+	be := &mockDeleteBackend{
+		mockBackend: newMockBackend(),
+		deletedKeys: make(map[string]bool),
+	}
+
+	cfg, _, cache, footerCache, km := testSetup(t)
+	h := handlers.New(cfg, be, cache, footerCache, km, nil)
+
+	cred := &config.Credential{
+		AccessKey: "prefix_key",
+		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		ACLs: []acl.ACLEntry{
+			{
+				Bucket: "test-bucket",
+				Prefix: "allowed/",
+			},
+		},
+	}
+
+	body := `<Delete>` +
+		`<Quiet>true</Quiet>` +
+		`<Object><Key>allowed/in-scope.txt</Key></Object>` +
+		`<Object><Key>denied/out-of-scope.txt</Key></Object>` +
+		`</Delete>`
+
+	req := httptest.NewRequest("POST", "/test-bucket?delete", bytes.NewReader([]byte(body)))
+	req = req.WithContext(acl.WithCredential(req.Context(), cred))
+	w := httptest.NewRecorder()
+	h.DeleteObjects(w, req, "test-bucket")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	type DeleteResult struct {
+		XMLName xml.Name `xml:"DeleteResult"`
+		Deleted []struct {
+			Key string `xml:"Key"`
+		} `xml:"Deleted"`
+		Error []struct {
+			Key  string `xml:"Key"`
+			Code string `xml:"Code"`
+		} `xml:"Error"`
+	}
+
+	var result DeleteResult
+	if err := xml.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	if len(result.Deleted) != 0 {
+		t.Errorf("quiet mode must omit successful Deleted entries, got %+v", result.Deleted)
+	}
+	if len(result.Error) != 1 || result.Error[0].Key != "denied/out-of-scope.txt" || result.Error[0].Code != "AccessDenied" {
+		t.Errorf("quiet mode must still report per-key AccessDenied, got %+v", result.Error)
+	}
+}
+
 // mockDeleteBackend embeds the package's full mock backend and records
 // which keys DeleteObjects actually removed, so the test can assert per-key
 // ACL enforcement without re-implementing the whole Backend interface.

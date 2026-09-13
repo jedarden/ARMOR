@@ -2896,18 +2896,10 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 		h.footerCache.Delete(bucket, key)
 	}
 
-	// Remove from manifest using original (unprefixed) keys
-	if h.manifest != nil {
-		for _, key := range originalKeys {
-			h.manifest.RecordDelete(bucket, key)
-		}
-	}
-
-	// Invalidate cache for deleted objects using original (unprefixed) keys
-	for _, key := range originalKeys {
-		h.cache.Delete(bucket, key)
-		h.footerCache.Delete(bucket, key)
-	}
+	// Denied keys must not be tombstoned: RecordDelete drops the manifest
+	// entry and persists a "del" delta, so sweeping originalKeys here would
+	// hide still-existing objects from manifest lookups even though the ACL
+	// refused to delete them. Only allowedKeys were removed, above.
 
 	// Build response XML
 	type DeletedObject struct {
@@ -2929,22 +2921,25 @@ func (h *Handlers) DeleteObjects(w http.ResponseWriter, r *http.Request, bucket 
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 	}
 
-	// If not quiet mode, include successfully deleted keys and access denied errors
+	// Per-key errors are always reported: S3 quiet mode omits only the
+	// successful Deleted entries, so suppressing AccessDenied here would make
+	// a restricted credential's failed batch look fully successful.
+	for _, key := range deniedKeys {
+		result.Error = append(result.Error, struct {
+			Key     string `xml:"Key"`
+			Code    string `xml:"Code"`
+			Message string `xml:"Message"`
+		}{
+			Key:     key,
+			Code:    "AccessDenied",
+			Message: "Access Denied",
+		})
+	}
+
+	// Quiet mode omits the successfully deleted keys.
 	if !deleteReq.Quiet {
 		for _, key := range allowedKeys {
 			result.Deleted = append(result.Deleted, DeletedObject{Key: key})
-		}
-		// Add access denied errors for keys that failed ACL checks
-		for _, key := range deniedKeys {
-			result.Error = append(result.Error, struct {
-				Key     string `xml:"Key"`
-				Code    string `xml:"Code"`
-				Message string `xml:"Message"`
-			}{
-				Key:     key,
-				Code:    "AccessDenied",
-				Message: "Access Denied",
-			})
 		}
 	}
 
