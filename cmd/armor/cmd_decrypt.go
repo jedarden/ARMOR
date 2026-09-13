@@ -47,6 +47,7 @@ var (
 	// B2 backend configuration (for break-glass recovery)
 	b2RegionFlag   string
 	b2EndpointFlag string
+	b2PrefixFlag   string // ADR-001 key prefix the bucket stores objects under
 
 	// Multipart local-file inputs (ADR-003 headerless layout)
 	sidecarFlag string // path to a JSON HMAC sidecar file (HMACTableSidecar wire format)
@@ -71,6 +72,7 @@ func init() {
 	flag.StringVar(&b2BucketFlag, "b2-bucket", "", "B2 bucket (alternative to B2 URL)")
 	flag.StringVar(&b2RegionFlag, "b2-region", "", "B2 region (e.g., us-west-004); overrides ARMOR_B2_REGION env var")
 	flag.StringVar(&b2EndpointFlag, "b2-endpoint", "", "B2 S3 endpoint (e.g., https://s3.us-west-004.backblazeb2.com); overrides ARMOR_B2_ENDPOINT env var")
+	flag.StringVar(&b2PrefixFlag, "b2-prefix", normalizePrefix(os.Getenv("ARMOR_PREFIX")), "ADR-001 key prefix the bucket stores objects under (default: ARMOR_PREFIX). Only affects multipart HMAC sidecar lookup: the sidecar is named by the UNprefixed client key, while the ciphertext is addressed by the prefixed one")
 	flag.StringVar(&b2KeyID, "key-id", "", "Key ID for multi-key MEK (from x-amz-meta-armor-key-id)")
 	flag.StringVar(&wrappedDEKFlag, "wrapped-dek", "", "Wrapped DEK (base64, for local files)")
 	flag.StringVar(&sidecarFlag, "sidecar", "", "Path to a JSON HMAC sidecar file for a local multipart object (ADR-003 headerless layout)")
@@ -1006,8 +1008,15 @@ func decryptB2(ctx context.Context, src *inputSource, mek []byte, ringKeys []cry
 			fmt.Fprintf(os.Stderr, "Decrypting v3 object with block table (%d blocks)\n", blockTable.EntryCount())
 		}
 
-		// For v3 single-PUT, use part 0
+		// v3 part numbering: single-PUT objects encrypt under part 0, while
+		// multipart parts are numbered from 1 (part N starts at block
+		// (N-1)*P/BlockSize), so the single-part multipart objects this command
+		// decrypts whole carry their entire block table under part 1. Same
+		// distinction the restore verifier makes on both of its paths.
 		part := uint16(0)
+		if isMultipart {
+			part = 1
+		}
 		plaintext, err = decryptor.DecryptV3(encryptedData, part, blockTable)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt v3 blocks: %w (possible data corruption)", err)
@@ -1159,7 +1168,7 @@ func readB2V3EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, 
 // readB2MultipartCiphertext reads an ADR-003 multipart-completed object: raw
 // concatenated part ciphertext at offset 0 (no envelope header; plaintext offset
 // N == ciphertext offset N) and the per-block HMAC table loaded from the JSON
-// sidecar at .armor/hmac/<sha256(key)>. The IV is carried by object metadata
+// sidecar at .armor/hmac/<sha256(client key)>. The IV is carried by object metadata
 // (there is no header byte stream to read it from). The sidecar is loaded through
 // the same MultipartStateManager the server uses, so the JSON wire format is
 // shared exactly. For v3 objects, returns the block table instead of flattened HMACs.
@@ -1179,9 +1188,20 @@ func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, s
 		return nil, nil, nil, nil, fmt.Errorf("read multipart ciphertext bytes: %w", err)
 	}
 
+	// The sidecar is named sha256 of the CLIENT key, because the server's
+	// CompleteMultipartUpload saves it with the unprefixed key while the
+	// assembled ciphertext lives under applyPrefix(key). The operator supplies
+	// the stored key — that is the only form that addresses the ciphertext — so
+	// the configured prefix comes back off before hashing. With no prefix set
+	// (or an unprefixed bucket) the two coincide and this is a no-op.
+	clientKey := strings.TrimPrefix(src.Path, b2PrefixFlag)
+	if decryptVerboseFlag && clientKey != src.Path {
+		fmt.Fprintf(os.Stderr, "Multipart sidecar: stored key %q, client key %q (prefix %q)\n", src.Path, clientKey, b2PrefixFlag)
+	}
+
 	// For v3, load the v3 sidecar format
 	if armorMeta.Version == 3 {
-		sidecarV3, err := backend.NewMultipartStateManager(b2Backend, src.Bucket).LoadHMACTableV3(ctx, src.Path)
+		sidecarV3, err := backend.NewMultipartStateManager(b2Backend, src.Bucket).LoadHMACTableV3(ctx, clientKey)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("fetch v3 HMAC sidecar from .armor/hmac/<sha256(key)>: %w", err)
 		}
@@ -1195,7 +1215,7 @@ func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, s
 	}
 
 	// For v1/v2, load the regular sidecar format
-	sidecar, err := backend.NewMultipartStateManager(b2Backend, src.Bucket).LoadHMACTable(ctx, src.Path)
+	sidecar, err := backend.NewMultipartStateManager(b2Backend, src.Bucket).LoadHMACTable(ctx, clientKey)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("fetch multipart HMAC sidecar from .armor/hmac/<sha256(key)>: %w", err)
 	}
@@ -1304,6 +1324,30 @@ func envInt(name string, defaultValue int) int {
 		return defaultValue
 	}
 	return value
+}
+
+// normalizePrefix normalizes an ADR-001 bucket prefix: no leading slashes,
+// exactly one trailing slash, empty stays empty. This mirrors the function in
+// internal/config/config.go (unexported, and the restore-verifier main keeps its
+// own copy for the same reason) so the flag and ARMOR_PREFIX spell the prefix
+// the same way the running server does.
+func normalizePrefix(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+
+	// Remove leading slashes
+	prefix = strings.TrimLeft(prefix, "/")
+
+	// Remove all trailing slashes first
+	prefix = strings.TrimRight(prefix, "/")
+
+	// Add exactly one trailing slash if non-empty
+	if prefix != "" {
+		prefix += "/"
+	}
+
+	return prefix
 }
 
 // writeOutput writes data to file or stdout.

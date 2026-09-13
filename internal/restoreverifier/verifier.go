@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -586,6 +587,21 @@ func (v *Verifier) getBucketPrefix(bucket string) string {
 	return ""
 }
 
+// clientKey maps a backend-STORED object key to the client key the server's
+// handler layer would have seen for it. Every backend call here takes the
+// stored key — List returns stored keys, and Head/GetRange address the object
+// by them — but the multipart HMAC sidecar is named sha256 of the CLIENT key:
+// CompleteMultipartUpload calls SaveHMACTable(V3) with the unprefixed key while
+// the assembled ciphertext is stored under applyPrefix(key). LoadHMACTable and
+// LoadHMACTableV3 must therefore be handed the stripped key, or on any bucket
+// with a prefix configured the two never agree and every multipart verify
+// fails with a sidecar 404 — exactly the objects a DR exercise most needs to
+// see pass. Single-PUT objects carry their HMAC table inline and are unaffected.
+// Same defect the v3 server read paths had (armor-1b272971).
+func (v *Verifier) clientKey(bucket, storedKey string) string {
+	return strings.TrimPrefix(storedKey, v.getBucketPrefix(bucket))
+}
+
 // lookupMEKByFingerprint looks up a MEK by fingerprint in the active key and ring.
 // Returns the MEK and true if found, nil and false otherwise.
 func (v *Verifier) lookupMEKByFingerprint(keyID, fingerprint string) ([]byte, bool) {
@@ -1126,7 +1142,15 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 
 	// Step 2: unwrap the DEK with the escrowed MEK (same crypto operation as direct path)
 	// Use ring-based key selection with fingerprint matching
-	wrappedDEKStr := string(armorMeta.WrappedDEK) // Convert []byte to string for v2 format parsing
+	var wrappedDEKStr string
+	if armorMeta.MEKFingerprint != "" {
+		// v2 format: rebuild from raw wrapped DEK bytes and fingerprint
+		wrappedDEKStr = fmt.Sprintf("v2:%s:%s", armorMeta.MEKFingerprint, base64.StdEncoding.EncodeToString(armorMeta.WrappedDEK))
+	} else {
+		// Legacy format: the wrapped DEK bytes are the original base64-decoded value
+		// We need to re-encode to base64 for UnwrapDEKByFingerprint's legacy path
+		wrappedDEKStr = base64.StdEncoding.EncodeToString(armorMeta.WrappedDEK)
+	}
 	dek, _, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, v.lookupMEKByFingerprint, v.legacyFallback)
 	if err != nil {
 		return nil, fmt.Errorf("ARMOR path: failed to unwrap DEK: %w", err)
@@ -1193,7 +1217,7 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 
 		// For v3 multipart, use the v3 sidecar format
 		if armorMeta.Version == 3 {
-			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTableV3(ctx, key)
+			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTableV3(ctx, v.clientKey(bucket, key))
 			if err != nil {
 				return nil, fmt.Errorf("ARMOR path: failed to load v3 sidecar: %w", err)
 			}
@@ -1212,7 +1236,7 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 		}
 
 		// v1/v2 multipart
-		sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTable(ctx, key)
+		sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTable(ctx, v.clientKey(bucket, key))
 		if err != nil {
 			return nil, fmt.Errorf("ARMOR path: failed to load HMAC sidecar: %w", err)
 		}
@@ -1311,7 +1335,15 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 
 	// Step 2: unwrap the DEK with the escrowed MEK.
 	// Use ring-based key selection with fingerprint matching
-	wrappedDEKStr := string(armorMeta.WrappedDEK) // Convert []byte to string for v2 format parsing
+	var wrappedDEKStr string
+	if armorMeta.MEKFingerprint != "" {
+		// v2 format: rebuild from raw wrapped DEK bytes and fingerprint
+		wrappedDEKStr = fmt.Sprintf("v2:%s:%s", armorMeta.MEKFingerprint, base64.StdEncoding.EncodeToString(armorMeta.WrappedDEK))
+	} else {
+		// Legacy format: the wrapped DEK bytes are the original base64-decoded value
+		// We need to re-encode to base64 for UnwrapDEKByFingerprint's legacy path
+		wrappedDEKStr = base64.StdEncoding.EncodeToString(armorMeta.WrappedDEK)
+	}
 	dek, _, err := crypto.UnwrapDEKByFingerprint(wrappedDEKStr, v.lookupMEKByFingerprint, v.legacyFallback)
 	if err != nil {
 		return nil, fmt.Errorf("direct path: failed to unwrap DEK: %w", err)
@@ -1331,7 +1363,7 @@ func (v *Verifier) restoreViaDirectDecrypt(ctx context.Context, bucket, key stri
 		// v3 format: use block table for single-PUT or sidecar for multipart
 		if isMultipart {
 			// v3 multipart: load sidecar
-			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTableV3(ctx, key)
+			sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTableV3(ctx, v.clientKey(bucket, key))
 			if err != nil {
 				return nil, fmt.Errorf("direct path: failed to load v3 sidecar: %w", err)
 			}
@@ -1505,7 +1537,7 @@ func (v *Verifier) readEnvelopeCiphertext(ctx context.Context, bucket, key strin
 // readMultipartCiphertext reads an ADR-003 multipart-completed object: raw
 // concatenated part ciphertext at offset 0 (no envelope header; plaintext
 // offset N == ciphertext offset N) and the per-block HMAC table loaded from the
-// JSON sidecar at .armor/hmac/<sha256(key)>. The IV is carried by object
+// JSON sidecar at .armor/hmac/<sha256(client key)>. The IV is carried by object
 // metadata (there is no header byte stream to read it from). The sidecar is
 // loaded through the same MultipartStateManager the server uses, so the JSON
 // wire format is shared exactly; its per-block HMACs are flattened into the
@@ -1527,7 +1559,9 @@ func (v *Verifier) readMultipartCiphertext(ctx context.Context, bucket, key stri
 	}
 
 	// HMAC table from the JSON sidecar, flattened to one HMACSize entry per block.
-	sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTable(ctx, key)
+	// Named by the client key, not the stored key this function reads the
+	// ciphertext with — see clientKey.
+	sidecar, err := backend.NewMultipartStateManager(v.backend, bucket).LoadHMACTable(ctx, v.clientKey(bucket, key))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("direct path: failed to load multipart HMAC sidecar: %w", err)
 	}

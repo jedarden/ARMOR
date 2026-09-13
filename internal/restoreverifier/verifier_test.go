@@ -182,11 +182,12 @@ func TestTarGzAssertion(t *testing.T) {
 // that verifyObject never calls.
 type fakeBackend struct {
 	backend.Backend
-	ciphertext []byte
-	plaintext  []byte
-	info       *backend.ObjectInfo
-	sidecars   map[string][]byte // JSON HMAC sidecars keyed by ".armor/hmac/<hex>"; multipart only
-	armorGet   int               // calls to Get (the ARMOR read path); a drill run must leave this 0
+	ciphertext     []byte
+	plaintext      []byte
+	info           *backend.ObjectInfo
+	sidecars       map[string][]byte // JSON HMAC sidecars keyed by ".armor/hmac/<hex>"; multipart only
+	armorGet       int               // calls to Get (the ARMOR read path); a drill run must leave this 0
+	sidecarLookups []string          // sidecar object names passed to GetDirect, in call order
 }
 
 func (f *fakeBackend) Get(_ context.Context, _, _ string) (io.ReadCloser, *backend.ObjectInfo, error) {
@@ -216,6 +217,7 @@ func (f *fakeBackend) GetRange(_ context.Context, _, _ string, offset, length in
 // sidecar object name ".armor/hmac/<hex(sha256(key))>" that the verifier (via
 // MultipartStateManager.LoadHMACTable) fetches without an ARMOR server.
 func (f *fakeBackend) GetDirect(_ context.Context, _, key string) (io.ReadCloser, *backend.ObjectInfo, error) {
+	f.sidecarLookups = append(f.sidecarLookups, key)
 	data, ok := f.sidecars[key]
 	if !ok {
 		return nil, nil, fmt.Errorf("fakeBackend: no sidecar registered for %q", key)
@@ -726,9 +728,9 @@ func TestVerifyObject_DualPathAgreeOnKnownGoodData(t *testing.T) {
 
 	// Test with both single-PUT and multipart layouts to cover both ADR-003 formats
 	testCases := []struct {
-		name    string
-		setup   func(t *testing.T, mek []byte) ([]byte, []byte, *backend.ObjectInfo, map[string]string, map[string][]byte)
-		atype   ArtifactType
+		name     string
+		setup    func(t *testing.T, mek []byte) ([]byte, []byte, *backend.ObjectInfo, map[string]string, map[string][]byte)
+		atype    ArtifactType
 		wantPass bool
 	}{
 		{
@@ -743,7 +745,7 @@ func TestVerifyObject_DualPathAgreeOnKnownGoodData(t *testing.T) {
 				}
 				return plaintext, ciphertext, info, meta, make(map[string][]byte)
 			},
-			atype:   ArtifactSQLite,
+			atype:    ArtifactSQLite,
 			wantPass: true,
 		},
 		{
@@ -760,7 +762,7 @@ func TestVerifyObject_DualPathAgreeOnKnownGoodData(t *testing.T) {
 				sidecars := map[string][]byte{sidecarKeyFor(key): sidecar}
 				return plaintext, ciphertext, info, meta, sidecars
 			},
-			atype:   ArtifactSQLite,
+			atype:    ArtifactSQLite,
 			wantPass: true,
 		},
 	}
@@ -1122,6 +1124,7 @@ func TestGetLatestObject_PaginatesPastArmorObjects(t *testing.T) {
 		t.Fatalf("getLatestObject returned a .armor/* bookkeeping object instead of a real data object")
 	}
 }
+
 // TestGetLatestObject_ContinuesPastBackendFilteredInternalPages is the
 // regression test for armor-8290de05. The pagination fix for ADR-014 Bug B was
 // validated against a mock that returns .armor/* objects IN the page — but the
@@ -1184,7 +1187,6 @@ func TestGetLatestObject_ContinuesPastBackendFilteredInternalPages(t *testing.T)
 		t.Fatalf("got time %v, want %v (timestamp mismatch)", latest.LastModified, dataTime)
 	}
 }
-
 
 // TestGetLatestObject_FindsLatestAcrossMultiplePages confirms that when
 // real data objects span multiple pages, getLatestObject correctly identifies

@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -158,8 +159,14 @@ func buildMultipartFixture(t *testing.T, mek []byte, blockSize int, plaintext []
 	for i := 0; i < len(hmacTable); i += crypto.HMACSize {
 		blockHMACs = append(blockHMACs, append([]byte(nil), hmacTable[i:i+crypto.HMACSize]...))
 	}
+	// Version 2 must match the encryptor above: NewEncryptor defaults to V2's
+	// strided counter derivation, and the server stamps v2 metadata + sidecar
+	// version on every v1/v2 multipart object it completes. A version stamp
+	// below the ciphertext's real derivation decrypts block 0 correctly and
+	// garbles everything after it (counter 0 is 0 under both derivations).
 	sidecarObj := backend.HMACTableSidecar{
 		Key:        "replica/db.snapshot",
+		Version:    2,
 		BlockHMACs: blockHMACs,
 		BlockSize:  blockSize,
 	}
@@ -378,7 +385,7 @@ func withFakeBackend(t *testing.T, objects map[string]*fakeB2Object, fn func()) 
 // fake backend under the keys decryptB2 / LoadHMACTable look them up.
 func storeMultipartObjects(objects map[string]*fakeB2Object, key string, ciphertext, sidecarJSON, wrappedDEK, iv []byte, blockSize int, plaintextSize int64) {
 	meta := (&backend.ARMORMetadata{
-		Version:       1,
+		Version:       2,
 		BlockSize:     blockSize,
 		PlaintextSize: plaintextSize,
 		IV:            iv,
@@ -499,7 +506,7 @@ func TestDecryptB2SinglePUT(t *testing.T) {
 	envelope = append(envelope, hmacTable...)
 
 	meta := (&backend.ARMORMetadata{
-		Version:       1,
+		Version:       2,
 		BlockSize:     blockSize,
 		PlaintextSize: int64(len(plaintext)),
 		IV:            iv,
@@ -1128,8 +1135,8 @@ func TestDecryptV3SinglePUT(t *testing.T) {
 	mek := makeMEK(t)
 
 	testVectors := []string{
-		"1-block-single-put",   // Minimal single-PUT object (1 block, uncompressed)
-		"3-block-compressed",   // Single-PUT object (3 blocks, middle block compressible)
+		"1-block-single-put", // Minimal single-PUT object (1 block, uncompressed)
+		"3-block-compressed", // Single-PUT object (3 blocks, middle block compressible)
 	}
 
 	for _, vecName := range testVectors {
@@ -1446,7 +1453,7 @@ func TestDecryptV3B2Multipart(t *testing.T) {
 	meta["x-amz-meta-armor-multipart"] = "true"
 
 	objects := map[string]*fakeB2Object{
-		key:               {body: ciphertext, metadata: meta},
+		key:                {body: ciphertext, metadata: meta},
 		sidecarKeyFor(key): {body: sidecarBuf.Bytes()},
 	}
 
@@ -1602,9 +1609,9 @@ type V3BlockEntry struct {
 
 // V3Sidecar represents the v3 sidecar format in test vectors.
 type V3Sidecar struct {
-	Version   int            `json:"version"`
-	BlockSize int            `json:"block_size"`
-	Parts     []V3PartEntry  `json:"parts"`
+	Version   int           `json:"version"`
+	BlockSize int           `json:"block_size"`
+	Parts     []V3PartEntry `json:"parts"`
 }
 
 // V3PartEntry represents a part in the sidecar.
@@ -1682,4 +1689,232 @@ func buildV3SidecarParts(vec *V3TestVector) []backend.HMACPartV3 {
 	}
 
 	return parts
+}
+
+// ---------------------------------------------------------------------------
+// Prefixed buckets (ADR-001) and multipart sidecar naming. The sidecar is named
+// sha256 of the CLIENT key — CompleteMultipartUpload saves it with the
+// unprefixed key — while the operator can only address the ciphertext by its
+// PREFIXED stored key. -b2-prefix (default ARMOR_PREFIX) is what bridges the
+// two; these tests pin both sidecar formats.
+// ---------------------------------------------------------------------------
+
+// gzipV3Sidecar compresses a v3 sidecar into the wire form LoadHMACTableV3 reads.
+func gzipV3Sidecar(t *testing.T, sidecarV3 *backend.HMACTableSidecarV3) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	sidecarJSON, err := json.Marshal(sidecarV3)
+	if err != nil {
+		t.Fatalf("marshal v3 sidecar: %v", err)
+	}
+	if _, err := gz.Write(sidecarJSON); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// withB2Prefix sets -b2-prefix for the duration of fn and restores it after.
+func withB2Prefix(t *testing.T, prefix string) {
+	t.Helper()
+	prev := b2PrefixFlag
+	b2PrefixFlag = prefix
+	// t.Cleanup, not defer: a defer here would fire when this helper RETURNS,
+	// restoring the zero value before the caller's callback ever runs and
+	// silently leaving the test exercising the unprefixed path.
+	t.Cleanup(func() { b2PrefixFlag = prev })
+}
+
+// TestDecryptB2MultipartPrefixedBucket is the CLI half of the armor-1b272971
+// defect: with a bucket prefix configured, the stored key addresses the
+// ciphertext but the sidecar is named by the client key, so decrypt must strip
+// the prefix before hashing. The sidecar is registered ONLY under the name the
+// server writes, so a prefixed-key hash misses it and the decrypt fails.
+func TestDecryptB2MultipartPrefixedBucket(t *testing.T) {
+	mek := makeMEK(t)
+	blockSize := 65536
+	plaintext := make([]byte, blockSize*3+1234)
+	for i := range plaintext {
+		plaintext[i] = byte(i)
+	}
+
+	ciphertext, sidecarJSON, wrappedDEK, iv := buildMultipartFixture(t, mek, blockSize, plaintext)
+
+	const (
+		prefix    = "commitgraph/"
+		clientKey = "replica/db.snapshot"
+		storedKey = prefix + clientKey
+	)
+
+	objects := map[string]*fakeB2Object{}
+	storeMultipartObjects(objects, clientKey, ciphertext, sidecarJSON, wrappedDEK, iv, blockSize, int64(len(plaintext)))
+	// Re-key the ciphertext object to its stored (prefixed) name; the sidecar
+	// stays at the client-key name the server wrote it under.
+	objects[storedKey] = objects[clientKey]
+	delete(objects, clientKey)
+
+	src := &inputSource{Type: "b2", Bucket: "bucket", Path: storedKey}
+
+	withB2Prefix(t, prefix)
+	var decrypted []byte
+	withFakeBackend(t, objects, func() {
+		var err error
+		decrypted, err = decryptB2(context.Background(), src, mek, nil, "")
+		if err != nil {
+			t.Fatalf("decryptB2 multipart on a prefixed bucket: %v", err)
+		}
+	})
+
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Fatalf("prefixed-bucket multipart plaintext mismatch: got %d bytes, want %d", len(decrypted), len(plaintext))
+	}
+}
+
+// TestDecryptB2V3MultipartPrefixedBucket covers the v3 sidecar format on a
+// prefixed bucket. The fixture is built inline (single-part multipart object,
+// part N=1) rather than from the generated v3 test vectors, which this tree
+// cannot produce — the vector generator's -update flag is not defined.
+func TestDecryptB2V3MultipartPrefixedBucket(t *testing.T) {
+	mek := makeMEK(t)
+	blockSize := 65536
+	plaintext := make([]byte, blockSize*2+777)
+	for i := range plaintext {
+		plaintext[i] = byte(i)
+	}
+
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		t.Fatalf("GenerateDEK: %v", err)
+	}
+	iv, err := crypto.GenerateIV()
+	if err != nil {
+		t.Fatalf("GenerateIV: %v", err)
+	}
+	wrappedDEK, err := crypto.WrapDEK(mek, dek)
+	if err != nil {
+		t.Fatalf("wrap DEK: %v", err)
+	}
+
+	// Raw concatenated v3 block ciphertext, one part (N=1) covering the whole
+	// object — what a single-part multipart upload produces, and what both the
+	// CLI and the verifier decrypt with part=1.
+	blockCount := crypto.ComputeBlockCount(int64(len(plaintext)), blockSize)
+	var ciphertext []byte
+	blocks := make([][]string, 0, blockCount)
+	for blockIdx := uint32(0); blockIdx < blockCount; blockIdx++ {
+		start := int64(blockIdx) * int64(blockSize)
+		end := start + int64(blockSize)
+		if end > int64(len(plaintext)) {
+			end = int64(len(plaintext))
+		}
+		blockCT, blockHMAC, err := crypto.EncryptBlockV3(dek, iv, 1, blockIdx, plaintext[start:end], blockSize)
+		if err != nil {
+			t.Fatalf("EncryptBlockV3 block %d: %v", blockIdx, err)
+		}
+		ciphertext = append(ciphertext, blockCT...)
+		blocks = append(blocks, []string{
+			base64.StdEncoding.EncodeToString(blockHMAC),
+			strconv.FormatUint(uint64(len(blockCT)), 10),
+		})
+	}
+
+	const (
+		prefix    = "commitgraph/"
+		clientKey = "replica/v3.snapshot"
+		storedKey = prefix + clientKey
+	)
+
+	objects := map[string]*fakeB2Object{}
+	meta := (&backend.ARMORMetadata{
+		Version:       3,
+		BlockSize:     blockSize,
+		PlaintextSize: int64(len(plaintext)),
+		IV:            iv,
+		WrappedDEK:    wrappedDEK,
+		PlaintextSHA:  emptyStringSHA256Hex,
+	}).ToMetadata()
+	meta["x-amz-meta-armor-multipart"] = "true"
+	objects[storedKey] = &fakeB2Object{body: ciphertext, metadata: meta}
+	objects[sidecarKeyFor(clientKey)] = &fakeB2Object{body: gzipV3Sidecar(t, &backend.HMACTableSidecarV3{
+		Version:   3,
+		BlockSize: blockSize,
+		Parts: []backend.HMACPartV3{{
+			N:             1,
+			PlaintextLen:  int64(len(plaintext)),
+			CiphertextLen: int64(len(ciphertext)),
+			Blocks:        blocks,
+		}},
+	})}
+
+	src := &inputSource{Type: "b2", Bucket: "bucket", Path: storedKey}
+
+	withB2Prefix(t, prefix)
+	var decrypted []byte
+	withFakeBackend(t, objects, func() {
+		decrypted, err = decryptB2(context.Background(), src, mek, nil, "")
+		if err != nil {
+			t.Fatalf("decryptB2 v3 multipart on a prefixed bucket: %v", err)
+		}
+	})
+
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Fatalf("prefixed-bucket v3 multipart plaintext mismatch: got %d bytes, want %d", len(decrypted), len(plaintext))
+	}
+}
+
+// TestDecryptB2MultipartPrefixedBucketUnsetPrefix documents the operator-visible
+// failure the flag exists to prevent: without the prefix, the sidecar lookup
+// hashes the stored key and misses. (The object itself is still readable — only
+// the sidecar 404s — which is what made this defect look like data loss.)
+func TestDecryptB2MultipartPrefixedBucketUnsetPrefix(t *testing.T) {
+	mek := makeMEK(t)
+	blockSize := 65536
+	plaintext := make([]byte, blockSize*2+50)
+	for i := range plaintext {
+		plaintext[i] = byte(i)
+	}
+
+	ciphertext, sidecarJSON, wrappedDEK, iv := buildMultipartFixture(t, mek, blockSize, plaintext)
+
+	const (
+		prefix    = "commitgraph/"
+		clientKey = "replica/db.snapshot"
+		storedKey = prefix + clientKey
+	)
+
+	objects := map[string]*fakeB2Object{}
+	storeMultipartObjects(objects, clientKey, ciphertext, sidecarJSON, wrappedDEK, iv, blockSize, int64(len(plaintext)))
+	objects[storedKey] = objects[clientKey]
+	delete(objects, clientKey)
+
+	src := &inputSource{Type: "b2", Bucket: "bucket", Path: storedKey}
+
+	withB2Prefix(t, "")
+	withFakeBackend(t, objects, func() {
+		if _, err := decryptB2(context.Background(), src, mek, nil, ""); err == nil {
+			t.Fatal("expected the sidecar lookup to miss without -b2-prefix, got success")
+		}
+	})
+}
+
+// TestNormalizePrefix pins the ADR-001 normalization shared with
+// internal/config and the restore-verifier, so the flag and ARMOR_PREFIX spell
+// the prefix the running server does.
+func TestNormalizePrefix(t *testing.T) {
+	testCases := []struct{ in, want string }{
+		{"", ""},
+		{"commitgraph", "commitgraph/"},
+		{"commitgraph/", "commitgraph/"},
+		{"/commitgraph", "commitgraph/"},
+		{"/commitgraph/", "commitgraph/"},
+		{"commitgraph//", "commitgraph/"},
+	}
+	for _, tc := range testCases {
+		if got := normalizePrefix(tc.in); got != tc.want {
+			t.Errorf("normalizePrefix(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }
