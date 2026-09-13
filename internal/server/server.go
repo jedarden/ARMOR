@@ -294,9 +294,31 @@ func New(cfg *config.Config) (*Server, error) {
 			return io.ReadAll(body)
 		}
 		loadStart := time.Now()
-		if loadErr := manifest.Load(context.Background(), manifestIdx, cfg.ManifestPrefix, cfg.WriterID, lister, fetcher); loadErr != nil {
+		// Progress marker before the load: until the listener binds, pod logs
+		// are the only window into startup, and a load stuck on slow backend
+		// fetches previously produced silence that was indistinguishable from
+		// a hung process.
+		logger.WithFields(map[string]interface{}{
+			"timeout": time.Duration(cfg.ManifestLoadTimeout) * time.Second,
+		}).Info("manifest startup load starting")
+		// Bound the load so it cannot hold startup hostage: the load runs
+		// before the listener binds, so a slow cold load (B2 client timeout is
+		// 30 minutes per request) can outlast the deployment's startupProbe
+		// budget and crash-loop the pod. The load is a performance
+		// optimisation — timing out lands in the same non-fatal fallback as a
+		// load error below, and the async writer keeps persisting new deltas.
+		var loadCtx context.Context
+		var cancelLoad context.CancelFunc
+		if cfg.ManifestLoadTimeout > 0 {
+			loadCtx, cancelLoad = context.WithTimeout(context.Background(), time.Duration(cfg.ManifestLoadTimeout)*time.Second)
+		} else {
+			loadCtx, cancelLoad = context.WithCancel(context.Background())
+		}
+		defer cancelLoad()
+		if loadErr := manifest.Load(loadCtx, manifestIdx, cfg.ManifestPrefix, cfg.WriterID, lister, fetcher); loadErr != nil {
 			logger.WithFields(map[string]interface{}{
-				"error": loadErr.Error(),
+				"error":    loadErr.Error(),
+				"duration": time.Since(loadStart).String(),
 			}).Warn("manifest startup load failed — continuing with empty manifest index")
 			manifestIdx = manifest.New() // reset to empty on error
 		} else {

@@ -139,6 +139,10 @@ type Config struct {
 	ManifestPrefix              string
 	ManifestCompactionInterval  int // seconds between automatic compactions
 	ManifestCompactionThreshold int // delta entry count triggering early compaction
+	// ManifestLoadTimeout bounds the startup manifest load in seconds; <= 0
+	// means unbounded. Must stay under the deployment's startupProbe budget —
+	// see the Load() comment for ARMOR_MANIFEST_LOAD_TIMEOUT.
+	ManifestLoadTimeout int
 
 	// Dashboard authentication configuration
 	// If DashboardUser and DashboardPass are set, HTTP Basic Auth is required
@@ -383,6 +387,21 @@ func Load() (*Config, error) {
 	}
 	cfg.ManifestCompactionInterval = getEnvInt("ARMOR_MANIFEST_COMPACTION_INTERVAL", 3600)
 	cfg.ManifestCompactionThreshold = getEnvInt("ARMOR_MANIFEST_COMPACTION_THRESHOLD", 1000)
+	// The startup manifest load runs before the listener binds, so the k8s
+	// startupProbe sees nothing but a closed port while it runs. The probe's
+	// failure budget (periodSeconds*failureThreshold — 600s in the shipped
+	// manifests) is therefore a hard ceiling on how long the load may take:
+	// a cold bucket whose first fetches crawl through the Cloudflare edge can
+	// otherwise hold startup past the budget, the probe kills the container,
+	// and the pod crash-loops — each attempt re-paying the full cold-load cost
+	// until one converges by luck (observed: 39 restarts over two days).
+	// The load is a performance optimisation — on timeout the server starts
+	// with an empty index exactly as it already does for a load *error* — so
+	// defaulting the bound under the probe budget trades one slow-start for
+	// guaranteed availability. 480s leaves ~2 min of the 600s budget for
+	// listener bind, probe period alignment, and probe round-trip. Set 0 to
+	// restore the unbounded load.
+	cfg.ManifestLoadTimeout = getEnvInt("ARMOR_MANIFEST_LOAD_TIMEOUT", 480)
 
 	// Pre-signed URL configuration
 	// ARMOR_PRESIGN_ENABLED must be explicitly set to "true" to enable presign functionality
@@ -1000,6 +1019,7 @@ type RedactedConfig struct {
 	ManifestPrefix              string `json:"manifest_prefix"`
 	ManifestCompactionInterval  int    `json:"manifest_compaction_interval"`
 	ManifestCompactionThreshold int    `json:"manifest_compaction_threshold"`
+	ManifestLoadTimeout         int    `json:"manifest_load_timeout"`
 
 	// Dashboard authentication configuration
 	DashboardUser  string `json:"dashboard_user"`
@@ -1086,6 +1106,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		ManifestPrefix:              c.ManifestPrefix,
 		ManifestCompactionInterval:  c.ManifestCompactionInterval,
 		ManifestCompactionThreshold: c.ManifestCompactionThreshold,
+		ManifestLoadTimeout:         c.ManifestLoadTimeout,
 		DashboardUser:               c.DashboardUser,
 		LogLevel:                    c.LogLevel,
 		Backend:                     c.Backend,
