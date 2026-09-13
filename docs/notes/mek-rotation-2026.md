@@ -489,13 +489,17 @@ walk-completion gate.
 ## iad-kalshi ARMOR Instance
 
 ### Status
-**Secret layer COMPLETE and verified live. The rotation itself has NOT run.**
-OpenBao already holds the new active MEK and the old key is already in the
-ring, but `deploy/armor` is still on `0.1.1957` with no ring plumbed, so
-nothing in the cluster is using the new key yet. The manifest/roll child
-(armor-a1718cfc) and the rotation-walk child (armor-1996e666) were both
-**open and unclaimed** when this section was written
-(2026-09-06T16:13:24Z); the end-to-end verification child (armor-44e2ad86)
+**Rotation COMPLETE at the key layer and (per backend evidence) at the
+object layer; a full verification sweep is confirming the last of it — see
+[2026-09-13](#2026-09-13-backend-truth-the-manifest-census-was-blind) below,
+which supersedes the pre-walk snapshot that follows.** OpenBao holds the new
+active MEK (fp `c2d3b3f6dd36f716`), the old key (`d8a7f8e55e33e399`) is the
+sole ring entry, the pod is on `0.1.1965` with the ring loaded, escrow v1
+mirrors both, and pre-rotation objects read through the S3 endpoint. The
+paragraphs below were written 2026-09-06T16:13:24Z when the secret layer was
+done but the walk had not started; they are kept because the identifiers and
+the key history are still accurate. The end-to-end verification child
+(armor-44e2ad86)
 was closed at 2026-09-06T15:37:54Z with "verification is the gate's job
 (Phase 19.4)" — i.e. **with no verification performed and before its own
 blocker ran** — so this instance has no verification record yet. Everything
@@ -617,6 +621,68 @@ changes no key material — exactly as on iad-ci.
 | **`~/.kube/iad-kalshi.kubeconfig` expired** | API server returns 401 (file last modified 2026-09-02). Refresh before any port-forward work — both the rotation and the verification routes depend on it. |
 | **`ARMOR_AUTH_FILE` inert on this image** | The env var is present in the live pod template (rolled in with `38220ecc`), but 0.1.1957 never assigns `cfg.AuthFilePath`, so the startup dump's `auth_file_path:""` is the known image-version trap, **not** a load failure. Resolves with the 0.1.1960 roll. |
 | **Two concurrent walks** | `/admin/key/rotate` has no server-side guard against two attached clients (see the iad-ci note). Exactly one driver, ever. |
+
+---
+
+### 2026-09-13: backend truth — the manifest census was blind
+
+The pre-walk section above says "the rotation itself has NOT run". That was
+true of everything measurable on 2026-09-06, and wrong about the bucket.
+Correction, with evidence:
+
+- **A walk from the 2026-09-06 session DID re-wrap the bucket** —
+  backend-side, invisible to every manifest-derived number. Proven 2026-09-13
+  ~11:10Z by reading B2 file info directly (`b2_get_file_info`, by-pipe
+  credentials) on objects the manifest census still counted as old or legacy:
+  `backfill/2026-05-22/candles.jsonl.gz`, `raw/2026-05-18/11/markets.jsonl.gz`,
+  `vps-backups/2026-06-11/19.tar.gz` (frozen since the VPS decommission) all
+  carry `x-amz-meta-armor-wrapped-dek = v2:c2d3b3f6dd36f716:…` — the ACTIVE
+  key — while `x-amz-meta-armor-version` stays 1 (rotation re-wraps the DEK;
+  it does not format-migrate the object).
+- **Counting trap 3 (new): the key-rotation walk never writes the manifest.**
+  `KeyRotator` uses `idx.Get` read-only; its `CopyObject` goes straight to the
+  backend, so every re-wrapped object keeps its stale manifest fingerprint.
+  The 0.1.1965 default `GET /admin/key/ring` census is manifest-built, so it
+  reported 2589 / 2179 / 35713 (active / old / legacy) for days after the
+  bucket was mostly re-wrapped. On iad-ci this never showed because that
+  final histogram was measured by the old HEAD-per-object census — backend
+  truth. **The authoritative completion measure is `GET
+  /admin/key/ring?census=head` (detached; hours at ~40k objects) or direct
+  B2 metadata sampling — never the default census on a walk-rotated bucket.**
+  Reads are unaffected: the wrapped DEK itself carries the fingerprint, so
+  unwrapping never trusts the manifest hint.
+- **The live rotation state is readable straight from B2**, bypassing the
+  `.armor/` reserved-namespace block ARMOR's S3 surface enforces
+  (verified: `GET /kalshi-tape/.armor/…` → AccessDenied "reserved namespace"):
+  authorize against `api.backblazeb2.com`, then
+  `GET {storageApi.downloadUrl}/file/{bucketName}/.armor/rotation-state.json`
+  with the bucket-scoped key from `rs-manager/iad-kalshi/backblaze/kalshi-tape`.
+  On 2026-09-13 11:16Z it read `in_progress`, `last_key
+  iad-kalshi/parquet/2026-08-12/…`, one checkpoint PUT per second.
+- **Second sweep (verification), started 2026-09-13T10:58:44Z** under a
+  `systemd-run --user` driver (`armor-kalshi-rotate-walk`,
+  `~/.needle/armor-e7efb55a/kalshi-walk-driver.sh`): a single held POST
+  `/admin/key/rotate` (fingerprint mode, no body) through the vpn admin
+  route, re-attaching on disconnect, refusing a failed state. Because the
+  09-06 walk left the state file `completed` (not resumable), this sweep
+  started fresh and is Head-checking every object (~1/s), re-wrapping any
+  straggler it finds; everything sampled so far is already-active.
+- **Acceptance evidence, 2026-09-13 (all by pipe / property, never values):**
+
+  | Check | Result |
+  |---|---|
+  | `active_fp` == fingerprint of current OpenBao `MASTER_ENCRYPTION_KEY` | ✓ recomputed `c2d3b3f6dd36f716` = live `active_fp` (32 bytes, 64 hex, no newline) |
+  | ring contains the old fingerprint | ✓ keys-path `MEK_RING` = [`d8a7f8e55e33e399`] = pod `key_ring_fingerprints` |
+  | pre-rotation read-through via S3 endpoint | ✓ `vps-backups/2026-06-11/19.tar.gz` and `backfill/2026-05-22/candles.jsonl.gz`: HTTP 200, exact plaintext sizes (851610 / 2571053), `gzip -t` clean |
+  | canary | ✓ pod continuously Ready 10:28:14Z→11:23Z (≥11 five-minute canary cycles via the /readyz-as-sole-signal chain), 1 restart (the known manifest-load liveness loss at roll) |
+  | escrow | ✓ `secret/rs-manager/escrow/iad-kalshi-armor` v1: `mek`→`c2d3b3f6dd36f716`, `mek_ring`→[`d8a7f8e55e33e399`], matches keys path; no `deletion_time` stamp |
+  | `objects_by_fp` zero under old fingerprint | ⏳ measured by `census=head` / B2 sampling after the sweep completes (~11 h); backend evidence so far (frozen-prefix objects already at active fp) is consistent with zero |
+
+- Driver ops notes: the systemd user-manager PATH lacks `~/.local/bin`, so
+  `bao-as` (which shells out to bare `bao`) fails inside units unless the
+  script exports `PATH` first — the 10:55Z arm of this driver died on exactly
+  that and was re-armed at 10:58Z. Traefik's vpn entrypoint held both a 15-min
+  silent POST and a 1 s census GET with no timeout override.
 
 ---
 
