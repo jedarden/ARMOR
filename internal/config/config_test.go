@@ -115,6 +115,27 @@ func TestParseACL(t *testing.T) {
 			},
 		},
 		{
+			// abort is its own verb (ADR-012 amendment, 2026-09-13): a
+			// put+list+abort writer can clean up failed uploads without
+			// gaining delete.
+			name:        "three-segment writer profile with abort",
+			aclStr:      "bucket:raw/*:put+list+abort",
+			expectCount: 1,
+			checkFunc: func(acls []acl.ACLEntry) bool {
+				return acls[0].Bucket == "bucket" && acls[0].Prefix == "raw/" &&
+					actionsEqual(acls[0].Actions, "put", "list", "abort")
+			},
+		},
+		{
+			name:        "three-segment all five verbs",
+			aclStr:      "bucket:/:get+put+delete+list+abort",
+			expectCount: 1,
+			checkFunc: func(acls []acl.ACLEntry) bool {
+				return acls[0].Bucket == "bucket" && acls[0].Prefix == "/" &&
+					actionsEqual(acls[0].Actions, "get", "put", "delete", "list", "abort")
+			},
+		},
+		{
 			// A present-but-empty third segment is treated like an absent one:
 			// no verbs specified → all permitted (nil map).
 			name:        "trailing empty segment defaults to all actions",

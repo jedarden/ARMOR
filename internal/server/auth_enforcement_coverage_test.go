@@ -19,7 +19,8 @@ import (
 // Decision 5 requirements:
 // 1. CopyObject checks Get on the x-amz-copy-source SOURCE key, not just Put on destination
 // 2. DeleteObjects batch checks every key in the POST body
-// 3. Multipart lifecycle ops verb-checked (create/upload-part/complete = Put, abort = Delete)
+// 3. Multipart lifecycle ops verb-checked (create/upload-part/complete = Put,
+//    abort = Abort; a delete grant still allows abort for backward compatibility)
 // 4. Scoped credential with no ?prefix on ListObjects stays denied
 //
 // These are authorization-decision tests, not data-integrity tests. Related:
@@ -334,15 +335,18 @@ func TestDeleteObjectsBatchAuthorization(t *testing.T) {
 }
 
 // TestMultipartLifecycleVerbAuthorization verifies that multipart lifecycle
-// operations are correctly verb-mapped according to ADR-012:
+// operations are correctly verb-mapped according to ADR-012 (as amended
+// 2026-09-13):
 // - CreateMultipartUpload → Put
 // - UploadPart → Put
 // - CompleteMultipartUpload → Put
-// - AbortMultipartUpload → Delete
+// - AbortMultipartUpload → Abort (its own verb; a delete grant still allows it)
 //
 // This is ADR-012 decision 5 requirement 3. Correct verb mapping is critical
 // for append-only backup-writer roles (Put+List only) - they should be able
-// to create multipart uploads but not abort them (Delete required).
+// to create multipart uploads but not abort them (Abort required). A writer
+// that needs abort cleanup takes Put+List+Abort; granting abort still grants
+// no delete.
 func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 	// Append-only backup-writer: Put+List, no Delete
 	appendOnlyCred := &config.Credential{
@@ -461,8 +465,9 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 		}
 	})
 
-	t.Run("AbortMultipartUpload maps to Delete verb", func(t *testing.T) {
-		// AbortMultipartUpload is DELETE with uploadId
+	t.Run("AbortMultipartUpload maps to Abort verb", func(t *testing.T) {
+		// AbortMultipartUpload is DELETE with uploadId — its own verb since
+		// the ADR-012 amendment (2026-09-13), no longer bundled with Delete.
 		uploadID := "example-upload-id-1234567890"
 		path := fmt.Sprintf("/test-bucket/uploads/large-file.bin?uploadId=%s", uploadID)
 
@@ -474,19 +479,21 @@ func TestMultipartLifecycleVerbAuthorization(t *testing.T) {
 		}
 
 		verb := ActionForRequest(req)
-		if verb != ActionDelete {
-			t.Errorf("AbortMultipartUpload should map to Delete verb, got: %s", verb)
+		if verb != ActionAbort {
+			t.Errorf("AbortMultipartUpload should map to Abort verb, got: %s", verb)
 		}
 
-		// Append-only credential (Put+List, no Delete) must be denied
+		// Append-only credential (Put+List, no Abort) must be denied
 		aclErr := acl.CheckACL(cred, "test-bucket", "uploads/large-file.bin", verb)
 		if aclErr != acl.ErrAccessDenied {
-			t.Errorf("AbortMultipartUpload should be denied for Put+List credential (no Delete), got: %v", aclErr)
+			t.Errorf("AbortMultipartUpload should be denied for Put+List credential (no Abort), got: %v", aclErr)
 		}
 	})
 
 	t.Run("AbortMultipartUpload allowed for Delete-only credential", func(t *testing.T) {
-		// Delete-only credential CAN abort uploads
+		// Delete-only credential CAN abort uploads: abort was part of delete
+		// before the amendment, so a delete grant continues to grant it
+		// (no deployed credential loses a capability).
 		allowed, err := checkMultipartOpAuth(t, "DELETE", "/test-bucket/uploads/large-file.bin", "uploads/large-file.bin", "example-upload-id-1234567890", "DELETEONLY")
 
 		if !allowed {

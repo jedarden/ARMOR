@@ -16,6 +16,7 @@ var validVerbs = map[string]bool{
 	ActionPut:    true,
 	ActionDelete: true,
 	ActionList:   true,
+	ActionAbort:  true,
 }
 
 // mustReq builds a request for the classifier tests. path may begin with "/".
@@ -71,10 +72,12 @@ var opCases = []struct {
 	{"PutBucketLifecycleConfiguration", http.MethodPut, "/bucket", "lifecycle", "", ActionPut},
 	{"PutObjectLockConfiguration", http.MethodPut, "/bucket", "object-lock", "", ActionPut},
 
-	// --- Delete (deletes) ---
+	// --- Abort (multipart-abort only; ADR-012 amendment 2026-09-13) ---
+	{"AbortMultipartUpload", http.MethodDelete, "/bucket/key", "uploadId=abc", "", ActionAbort},
+
+	// --- Delete (deletes of committed data) ---
 	{"DeleteObject", http.MethodDelete, "/bucket/key", "", "", ActionDelete},
 	{"DeleteObjects", http.MethodPost, "/bucket", "delete", "", ActionDelete},
-	{"AbortMultipartUpload", http.MethodDelete, "/bucket/key", "uploadId=abc", "", ActionDelete},
 	{"DeleteBucket", http.MethodDelete, "/bucket", "", "", ActionDelete},
 	{"DeleteBucketLifecycleConfiguration", http.MethodDelete, "/bucket", "lifecycle", "", ActionDelete},
 
@@ -153,10 +156,11 @@ func TestADR012AnchorMappings(t *testing.T) {
 		"UploadPart":              ActionPut,
 		"CompleteMultipartUpload": ActionPut,
 		"CopyObject":              ActionPut,
-		// Delete ← DeleteObject(s), AbortMultipartUpload
-		"DeleteObject":         ActionDelete,
-		"DeleteObjects":        ActionDelete,
-		"AbortMultipartUpload": ActionDelete,
+		// Delete ← DeleteObject(s)
+		"DeleteObject":  ActionDelete,
+		"DeleteObjects": ActionDelete,
+		// Abort ← AbortMultipartUpload (ADR-012 amendment 2026-09-13; was Delete)
+		"AbortMultipartUpload": ActionAbort,
 		// List ← ListObjectsV2, ListMultipartUploads
 		"ListObjectsV2":        ActionList,
 		"ListMultipartUploads": ActionList,
@@ -174,7 +178,7 @@ func TestADR012AnchorMappings(t *testing.T) {
 // entry.Actions[ActionForRequest(r)] silently always miss. We verify by building
 // real ACL entries and indexing them with the Action* constants.
 func TestActionConstantsMatchConfigVerbs(t *testing.T) {
-	for _, v := range []string{ActionGet, ActionPut, ActionDelete, ActionList} {
+	for _, v := range []string{ActionGet, ActionPut, ActionDelete, ActionList, ActionAbort} {
 		// A credential permitting only verb v: indexing with v must allow, any
 		// other verb must deny (map zero value).
 		cred := &config.Credential{
@@ -188,7 +192,7 @@ func TestActionConstantsMatchConfigVerbs(t *testing.T) {
 		if !cred.ACLs[0].Actions[v] {
 			t.Errorf("Action* constant %q does not index into an Actions set keyed by itself", v)
 		}
-		for _, other := range []string{ActionGet, ActionPut, ActionDelete, ActionList} {
+		for _, other := range []string{ActionGet, ActionPut, ActionDelete, ActionList, ActionAbort} {
 			if other == v {
 				continue
 			}
@@ -201,7 +205,9 @@ func TestActionConstantsMatchConfigVerbs(t *testing.T) {
 
 // TestAppendOnlyBackupRoleAllowedDenied exercises the ADR-012 decision-3
 // "append-only writer" role end-to-end through the classifier + Actions set: a
-// Put+List credential can write and list but cannot get or delete.
+// Put+List credential can write and list but cannot get, delete — or abort
+// (a Put+List writer that never aborts keeps its exact old meaning; abort
+// cleanup wants the Put+List+Abort profile below).
 func TestAppendOnlyBackupRoleAllowedDenied(t *testing.T) {
 	cred := &config.Credential{
 		ACLs: []acl.ACLEntry{{
@@ -222,6 +228,9 @@ func TestAppendOnlyBackupRoleAllowedDenied(t *testing.T) {
 		"GetObject",     // cannot exfiltrate history
 		"DeleteObject",  // cannot destroy history
 		"DeleteObjects", // cannot bulk-destroy
+		// Abort is not in the set: Put+List keeps its pre-amendment meaning
+		// (abort moved off delete, and this credential never had delete).
+		"AbortMultipartUpload",
 	}
 
 	for _, op := range allowed {
@@ -238,6 +247,93 @@ func TestAppendOnlyBackupRoleAllowedDenied(t *testing.T) {
 			t.Errorf("append-only role: %s (verb %q) should be DENIED but Actions grants it", op, verb)
 		}
 	}
+}
+
+// TestAbortVerbWriterRole pins the ADR-012 amendment (2026-09-13) acceptance
+// criteria end-to-end through the classifier + CheckACL:
+//
+//   - `put+list+abort` can create, upload parts to, complete, and abort a
+//     multipart upload, but is refused DeleteObject and DeleteObjects with
+//     the standard acl.ErrAccessDenied — abort never implies delete.
+//   - `delete` retains abort: no deployed credential loses a capability.
+//   - `abort` alone grants nothing else (no delete, no read, no write).
+func TestAbortVerbWriterRole(t *testing.T) {
+	// The writer profile the amendment makes expressible for the first time:
+	// multipart-write and abort cleanup, no destruction of committed data.
+	writerCred := &config.Credential{
+		AccessKey: "RAWWRITER",
+		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		ACLs: []acl.ACLEntry{{
+			Bucket:  "archive",
+			Prefix:  "raw/",
+			Actions: map[string]bool{ActionPut: true, ActionList: true, ActionAbort: true},
+		}},
+	}
+	// A pre-amendment credential: delete continues to grant abort.
+	deleteCred := &config.Credential{
+		AccessKey: "LEGACYDELETE",
+		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		ACLs: []acl.ACLEntry{{
+			Bucket:  "archive",
+			Prefix:  "raw/",
+			Actions: map[string]bool{ActionDelete: true},
+		}},
+	}
+	// Abort and nothing else.
+	abortOnlyCred := &config.Credential{
+		AccessKey: "ABORTONLY",
+		SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+		ACLs: []acl.ACLEntry{{
+			Bucket:  "archive",
+			Prefix:  "raw/",
+			Actions: map[string]bool{ActionAbort: true},
+		}},
+	}
+
+	check := func(t *testing.T, cred *config.Credential, op string) error {
+		t.Helper()
+		c := opCaseByName(op)
+		verb := ActionForRequest(mustReq(c.method, c.path, c.rawQuery, c.copySrc))
+		return acl.CheckACL(cred, "archive", "raw/obj.bin", verb)
+	}
+
+	t.Run("put+list+abort writes the full multipart lifecycle", func(t *testing.T) {
+		for _, op := range []string{"CreateMultipartUpload", "UploadPart", "CompleteMultipartUpload", "AbortMultipartUpload", "ListParts"} {
+			if err := check(t, writerCred, op); err != nil {
+				t.Errorf("writer role: %s should be allowed, got: %v", op, err)
+			}
+		}
+	})
+
+	t.Run("put+list+abort cannot delete committed objects", func(t *testing.T) {
+		for _, op := range []string{"DeleteObject", "DeleteObjects", "DeleteBucket"} {
+			err := check(t, writerCred, op)
+			if err != acl.ErrAccessDenied {
+				t.Errorf("writer role: %s should be denied with acl.ErrAccessDenied, got: %v", op, err)
+			}
+		}
+	})
+
+	t.Run("delete continues to grant abort (no deployed credential regresses)", func(t *testing.T) {
+		if err := check(t, deleteCred, "AbortMultipartUpload"); err != nil {
+			t.Errorf("legacy delete grant should still allow abort, got: %v", err)
+		}
+		if err := check(t, deleteCred, "DeleteObject"); err != nil {
+			t.Errorf("legacy delete grant should still allow DeleteObject, got: %v", err)
+		}
+	})
+
+	t.Run("abort alone grants nothing else", func(t *testing.T) {
+		for _, op := range []string{"DeleteObject", "DeleteObjects", "PutObject", "GetObject", "ListObjectsV2"} {
+			err := check(t, abortOnlyCred, op)
+			if err != acl.ErrAccessDenied {
+				t.Errorf("abort-only role: %s should be denied with acl.ErrAccessDenied, got: %v", op, err)
+			}
+		}
+		if err := check(t, abortOnlyCred, "AbortMultipartUpload"); err != nil {
+			t.Errorf("abort-only role: AbortMultipartUpload should be allowed, got: %v", err)
+		}
+	})
 }
 
 // opCaseByName looks up a representative request shape by operation name.

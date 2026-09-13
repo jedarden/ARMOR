@@ -149,6 +149,25 @@ func TestDocumentationACLs(t *testing.T) {
 			},
 		},
 		{
+			// ADR-012 amendment (2026-09-13): the writer-with-abort profile
+			// from the README verb-table section.
+			name:        "README verb-table section - raw writer with abort",
+			aclString:   "mybucket:raw/*:put+list+abort",
+			description: "Grants PUT, LIST and ABORT on mybucket:raw/ (multipart-write and abort cleanup, no delete)",
+			validator: func(acls []acl.ACLEntry) bool {
+				if len(acls) != 1 {
+					return false
+				}
+				if acls[0].Bucket != "mybucket" || acls[0].Prefix != "raw/" {
+					return false
+				}
+				if len(acls[0].Actions) != 3 {
+					return false
+				}
+				return acls[0].Actions["put"] && acls[0].Actions["list"] && acls[0].Actions["abort"]
+			},
+		},
+		{
 			name:        "connection-guide line 347 - readonly credential",
 			aclString:   "mybucket:readonly/*",
 			description: "Grants all verbs on mybucket:readonly/ prefix (no action segment = all permitted)",

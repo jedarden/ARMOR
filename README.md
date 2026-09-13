@@ -362,8 +362,11 @@ ACLs support fine-grained action verbs per [ADR-012](docs/adr/012-authorization-
 |------|----------------------|
 | `get` | GetObject, HeadObject |
 | `put` | PutObject, CreateMultipartUpload, UploadPart, CompleteMultipartUpload, CopyObject (destination) |
-| `delete` | DeleteObject, DeleteObjects, AbortMultipartUpload |
-| `list` | ListObjectsV2, ListMultipartUploads |
+| `delete` | DeleteObject, DeleteObjects, DeleteBucket, DeleteBucketLifecycleConfiguration |
+| `list` | ListObjectsV2, ListMultipartUploads, ListObjectVersions, ListParts, ListBuckets |
+| `abort` | AbortMultipartUpload |
+
+An entry granting `delete` continues to grant `abort` (abort was part of delete before it became its own verb, so no deployed credential loses a capability); the reverse does not hold — `abort` never grants `delete`.
 
 Specify actions as the optional third segment, separated by `:` and using `+` or spaces to combine verbs:
 
@@ -376,6 +379,10 @@ ARMOR_AUTH_READONLY_ACL="mybucket:readonly/*:get+list"
 
 # Only PUT and LIST on backups/ prefix (append-only backup writer)
 ARMOR_AUTH_BACKUP_ACL="mybucket:backups/*:put+list"
+
+# Multipart-write and abort cleanup without delete (writer that can never
+# erase committed objects)
+ARMOR_AUTH_RAW_ACL="mybucket:raw/*:put+list+abort"
 ```
 
 **Append-Only Backup Writers**

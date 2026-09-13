@@ -21,16 +21,21 @@ const (
 	// destination, CreateBucket, and the bucket/object configuration-write
 	// sub-operations (PutObjectRetention/LegalHold, Put*/Lock/Lifecycle).
 	ActionPut = acl.ActionPut
-	// ActionDelete covers deletes: DeleteObject, DeleteObjects (bulk),
-	// AbortMultipartUpload, DeleteBucket, and DeleteBucketLifecycleConfiguration.
+	// ActionDelete covers deletes of committed data: DeleteObject,
+	// DeleteObjects (bulk), DeleteBucket, and DeleteBucketLifecycleConfiguration.
 	ActionDelete = acl.ActionDelete
+	// ActionAbort covers aborting an incomplete multipart upload
+	// (AbortMultipartUpload) only. An entry granting delete continues to
+	// grant abort at enforcement time (acl.CheckACL); the reverse does not
+	// hold (ADR-012 amendment, 2026-09-13).
+	ActionAbort = acl.ActionAbort
 	// ActionList covers listings: ListObjectsV2, ListMultipartUploads,
 	// ListObjectVersions, ListParts, and ListBuckets.
 	ActionList = acl.ActionList
 )
 
 // ActionForRequest classifies a live HTTP request into exactly one ADR-012
-// action verb (get/put/delete/list), mirroring the routing decisions in
+// action verb (get/put/delete/list/abort), mirroring the routing decisions in
 // handlers.HandleRoot. It inspects only the HTTP method, the path shape
 // (object-level vs. bucket-level vs. root), and the S3 sub-operation query
 // parameters — never the body — so it is safe to call before the request body

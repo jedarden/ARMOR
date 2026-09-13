@@ -847,11 +847,15 @@ func parseACL(aclStr string) ([]acl.ACLEntry, error) {
 // validActions is the closed set of action verbs an ACL entry may grant, per
 // ADR-012. Membership is matched case-sensitively (lowercase canonical forms
 // only); see the ACLEntry.Actions doc for the S3-operation each verb covers.
+// abort is its own verb (ADR-012 amendment, 2026-09-13) — an entry granting
+// delete also grants it at enforcement time (acl.CheckACL), but only the
+// granted verbs appear here.
 var validActions = map[string]bool{
 	"get":    true,
 	"put":    true,
 	"delete": true,
 	"list":   true,
+	"abort":  true,
 }
 
 // parseActions parses the optional third ACL segment ("get+list") into an
@@ -870,7 +874,7 @@ func parseActions(verbStr string) (map[string]bool, error) {
 	actions := make(map[string]bool, len(verbs))
 	for _, v := range verbs {
 		if !validActions[v] {
-			return nil, fmt.Errorf("invalid action verb %q (expected one of get, put, delete, list)", v)
+			return nil, fmt.Errorf("invalid action verb %q (expected one of get, put, delete, list, abort)", v)
 		}
 		actions[v] = true
 	}

@@ -13,10 +13,10 @@ type ACLEntry struct {
 	Prefix string // Key prefix, "*" or "" for any prefix
 
 	// Actions is the set of action verbs this rule permits, drawn from
-	// {get, put, delete, list} per ADR-012 (one verb per S3 operation:
+	// {get, put, delete, list, abort} per ADR-012 (one verb per S3 operation:
 	// GetObject/HeadObject → get; PutObject and multipart create/upload-part/
-	// complete and CopyObject destination → put; DeleteObject(s) and
-	// AbortMultipartUpload → delete; ListObjectsV2/ListMultipartUploads →
+	// complete and CopyObject destination → put; DeleteObject(s) → delete;
+	// AbortMultipartUpload → abort; ListObjectsV2/ListMultipartUploads →
 	// list). Membership is tested with a map lookup, e.g. entry.Actions["get"].
 	//
 	// The zero value is a nil map, which reads as an empty set (it holds no
@@ -46,9 +46,18 @@ const (
 	// destination, CreateBucket, and the bucket/object configuration-write
 	// sub-operations (PutObjectRetention/LegalHold, Put*/Lock/Lifecycle).
 	ActionPut = "put"
-	// ActionDelete covers deletes: DeleteObject, DeleteObjects (bulk),
-	// AbortMultipartUpload, DeleteBucket, and DeleteBucketLifecycleConfiguration.
+	// ActionDelete covers deletes of committed, durable data: DeleteObject,
+	// DeleteObjects (bulk), DeleteBucket, and
+	// DeleteBucketLifecycleConfiguration.
 	ActionDelete = "delete"
+	// ActionAbort covers aborting an incomplete multipart upload
+	// (AbortMultipartUpload) — destroying only an uncommitted upload no
+	// reader can observe. It is its own verb, not part of delete, so a
+	// writer can clean up after a failed upload without gaining the power
+	// to erase committed objects (ADR-012 amendment, 2026-09-13).
+	// Backward compatible: an entry granting delete continues to grant
+	// abort (see CheckACL); the reverse is not true.
+	ActionAbort = "abort"
 	// ActionList covers listings: ListObjectsV2, ListMultipartUploads,
 	// ListObjectVersions, ListParts, and ListBuckets.
 	ActionList = "list"
@@ -63,7 +72,9 @@ const (
 //
 //	Get   ← GetObject, HeadObject
 //	Put   ← PutObject, multipart create/upload-part/complete, CopyObject destination
-//	Delete ← DeleteObject(s), AbortMultipartUpload
+//	Delete ← DeleteObject(s)
+//	Abort ← AbortMultipartUpload (ADR-012 amendment, 2026-09-13: its own verb,
+//	        previously lumped with Delete)
 //	List  ← ListObjectsV2, ListMultipartUploads
 //
 // ARMOR implements additional operations beyond that explicit list (bucket
@@ -100,10 +111,12 @@ var operationAction = map[string]string{
 	"PutBucketLifecycleConfiguration": ActionPut, // ARMOR extension — bucket config write
 	"PutObjectLockConfiguration":      ActionPut, // ARMOR extension — bucket config write
 
-	// --- Delete (deletes) ---
+	// --- Abort (multipart-abort only) ---
+	"AbortMultipartUpload": ActionAbort, // ADR-012 amendment 2026-09-13 (was Delete)
+
+	// --- Delete (deletes of committed data) ---
 	"DeleteObject":                       ActionDelete, // ADR-012
 	"DeleteObjects":                      ActionDelete, // ADR-012 — bulk delete (POST ?delete)
-	"AbortMultipartUpload":               ActionDelete, // ADR-012
 	"DeleteBucket":                       ActionDelete, // ARMOR extension — resource delete
 	"DeleteBucketLifecycleConfiguration": ActionDelete, // ARMOR extension — bucket config delete
 
@@ -134,7 +147,7 @@ func OperationActions() map[string]string {
 // mapping this table defines.
 
 // ActionForRequest classifies a live HTTP request into exactly one ADR-012
-// action verb (get/put/delete/list), mirroring the routing decisions in
+// action verb (get/put/delete/list/abort), mirroring the routing decisions in
 // handlers.HandleRoot. It inspects only the HTTP method, the path shape
 // (object-level vs. bucket-level vs. root), and the S3 sub-operation query
 // parameters — never the body — so it is safe to call before the request body
@@ -148,7 +161,8 @@ func OperationActions() map[string]string {
 //
 // Verb selection by method:
 //
-//	DELETE → delete         (DeleteObject(s), DeleteBucket, AbortMultipartUpload, …)
+//	DELETE → abort when ?uploadId is present (AbortMultipartUpload),
+//	         otherwise delete (DeleteObject(s), DeleteBucket, …)
 //	HEAD   → get            (HeadObject, HeadBucket)
 //	PUT    → put            (PutObject, UploadPart, CopyObject, CreateBucket, …)
 //	POST   → put, except POST ?delete → delete
@@ -174,8 +188,14 @@ func ActionForRequest(r *http.Request) string {
 
 	switch r.Method {
 	case http.MethodDelete:
-		// All DELETE operations are deletes: DeleteObject, DeleteBucket,
-		// AbortMultipartUpload (DELETE ?uploadId), DeleteBucketLifecycleConfiguration.
+		// DELETE ?uploadId on an object is AbortMultipartUpload — the one
+		// DELETE that destroys only an uncommitted upload, granted its own
+		// verb (ADR-012 amendment, 2026-09-13). Every other DELETE destroys
+		// committed data: DeleteObject, DeleteBucket,
+		// DeleteBucketLifecycleConfiguration.
+		if q.Get("uploadId") != "" {
+			return ActionAbort
+		}
 		return ActionDelete
 	case http.MethodHead:
 		// HeadObject and HeadBucket are both reads.
@@ -254,13 +274,18 @@ var ErrAccessDenied = &AuthError{Code: "AccessDenied", Message: "Access Denied"}
 
 // CheckACL verifies that the credential is allowed to perform the given action
 // verb on the bucket and key. The verb is an ADR-012 action verb
-// (get/put/delete/list) — typically derived via ActionForRequest(r). If the
-// credential has no ACLs (nil), it has full access.
+// (get/put/delete/list/abort) — typically derived via ActionForRequest(r). If
+// the credential has no ACLs (nil), it has full access.
 //
 // An entry whose Actions set is nil permits every verb — this keeps existing
 // two-segment "bucket:prefix" ACL strings backward compatible. A non-empty
 // Actions set restricts the entry to the listed verbs, so the verb must be a
 // member for the entry to grant access.
+//
+// One verb has a legacy superstring: abort was part of delete before it
+// became its own verb (ADR-012 amendment, 2026-09-13), so an entry granting
+// delete continues to grant abort. No deployed credential loses a capability;
+// the reverse does not hold — granting abort never grants delete.
 func CheckACL(cred interface{}, bucket, key, verb string) error {
 	// cred is expected to be *config.Credential, but we use interface{} to avoid
 	// import cycle. The actual type will have ACLs []ACLEntry field.
@@ -292,11 +317,28 @@ func CheckACL(cred interface{}, bucket, key, verb string) error {
 
 		// Bucket and prefix matched. Check the action verb: a nil Actions
 		// set means all verbs are permitted (backward compatibility); a
-		// non-empty set requires the verb to be a member.
-		if len(aclEntry.Actions) == 0 || aclEntry.Actions[verb] {
+		// non-empty set requires the verb to be a member (with the
+		// delete-implies-abort legacy rule).
+		if entryGrants(aclEntry, verb) {
 			return nil
 		}
 	}
 
 	return ErrAccessDenied
+}
+
+// entryGrants reports whether a matched entry's Actions set permits the verb.
+// A nil (or empty) set means every verb is permitted. abort is additionally
+// granted by an entry that lists delete — the pre-amendment mapping bundled
+// the two, so stripping abort from existing delete grants would have been a
+// silent capability regression (ADR-012 amendment, 2026-09-13). delete is
+// never granted by abort alone.
+func entryGrants(entry ACLEntry, verb string) bool {
+	if len(entry.Actions) == 0 {
+		return true
+	}
+	if entry.Actions[verb] {
+		return true
+	}
+	return verb == ActionAbort && entry.Actions[ActionDelete]
 }

@@ -381,12 +381,13 @@ func parseActions(verbStr string) (map[string]bool, error) {
 		"put":    true,
 		"delete": true,
 		"list":   true,
+		"abort":  true,
 	}
 
 	actions := make(map[string]bool, len(verbs))
 	for _, v := range verbs {
 		if !validActions[v] {
-			return nil, fmt.Errorf("invalid action verb %q (expected one of get, put, delete, list)", v)
+			return nil, fmt.Errorf("invalid action verb %q (expected one of get, put, delete, list, abort)", v)
 		}
 		actions[v] = true
 	}
@@ -434,6 +435,9 @@ func TestAppendOnlyWriterPattern(t *testing.T) {
 		// Append-only role denies deletes (no destruction)
 		{"DeleteObject denied", "DELETE", "/test-bucket/backups/old.dump", "backups/old.dump", false},
 		{"DeleteObjects denied", "POST", "/test-bucket?delete", "backups/file", false},
+		// Denied too (ADR-012 amendment 2026-09-13): abort is its own verb and
+		// is not in this credential's set. Add it ("put+list+abort") when
+		// failed-upload cleanup is wanted — that grant still carries no delete.
 		{"AbortMultipartUpload denied", "DELETE", "/test-bucket/backups/file.tar?uploadId=123", "backups/file.tar", false},
 
 		// Out-of-scope operations are denied
@@ -562,6 +566,8 @@ func TestDeleteOnlyWriterPattern(t *testing.T) {
 		// Delete-only role permits deletes
 		{"DeleteObject allowed", "DELETE", "/test-bucket/temp/file.txt", "temp/file.txt", true},
 		{"DeleteObjects allowed", "POST", "/test-bucket?delete", "temp/file", true},
+		// Still allowed (ADR-012 amendment 2026-09-13): a delete grant
+		// continues to grant abort so no deployed credential regresses.
 		{"AbortMultipartUpload allowed", "DELETE", "/test-bucket/temp/file.tar?uploadId=123", "temp/file.tar", true},
 
 		// Delete-only role denies reads
