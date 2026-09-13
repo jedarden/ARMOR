@@ -163,9 +163,11 @@ OpenBao MEK made every rotated object unreadable.
 disabled). Do not set them for a large deployment: the deadline is armed before
 the handler runs, so any non-zero `ARMOR_ADMIN_WRITE_TIMEOUT` caps the total
 runtime of the rotation rather than the time spent waiting on the client, and
-`POST /admin/key/rotate` plus `GET /admin/key/ring` walk every object in the
-bucket. On iad-ci a read-only listing alone ran past 5 minutes, and a rotation
-under a 30 s cap was killed mid-walk with an empty body. Request *headers*
+`POST /admin/key/rotate` walks every object in the bucket. On iad-ci a
+read-only listing alone ran past 5 minutes, and a rotation under a 30 s cap
+was killed mid-walk with an empty body. The default `GET /admin/key/ring`
+census is in-memory and fast; only its `?census=head` variant walks the
+bucket, and it sends no bytes until the walk finishes. Request *headers*
 remain bounded at 30 s regardless, so slowloris protection is unaffected.
 
 **Rotation is idempotent and resumable.** If interrupted, re-POST to the same
@@ -179,7 +181,10 @@ or run as a background task.
 ### Step 6 — Verify and Retire the Old Key
 
 Before removing the old key from the ring, verify that no objects still depend
-on it. The admin API provides a histogram of object counts by key fingerprint:
+on it. `GET /admin/key/ring` reports the histogram of object counts by key
+fingerprint. The default census is built in memory from the fingerprint each
+manifest entry records at PUT time — it does not touch the backend and answers
+in well under a second even on a bucket with tens of thousands of objects:
 
 ```bash
 # Via kubectl exec
@@ -195,18 +200,40 @@ curl -s http://127.0.0.1:8001/api/v1/namespaces/<namespace>/services/armor:9001/
 **Response:**
 ```json
 {
-  "active_key_fingerprint": "a1b2c3d4e5f6a7b8",
-  "ring_keys": [
-    {
-      "fingerprint": "f1e2d3c4b5a69788",
-      "object_count": 0
+  "keys": {
+    "default": {
+      "active_fp": "a1b2c3d4e5f6a7b8",
+      "ring_fps": ["f1e2d3c4b5a69788"],
+      "objects_by_fp": {
+        "a1b2c3d4e5f6a7b8": 12345,
+        "f1e2d3c4b5a69788": 0
+      }
     }
-  ],
-  "total_objects": 12345
+  },
+  "census": "manifest",
+  "manifest_objects": 12345
 }
 ```
 
-**Retire the old key only when `object_count` is 0.** To retire:
+Objects with no recorded fingerprint (v1-format) count under `"legacy"`, not
+under the old fingerprint — check that bucket alongside the old fingerprint
+before declaring the re-wrap complete. Fingerprints that match no configured
+key (e.g. retired from every ring after a previous rotation) are reported
+under a top-level `unattributed_objects_by_fp` rather than dropped. Reconcile:
+`objects_by_fp` totals plus `unattributed_objects_by_fp` must equal
+`manifest_objects`; a shortfall means entries are unaccounted for.
+
+For backend-verified counts, `GET /admin/key/ring?census=head` HEADs every
+manifest entry and reads each object's live metadata. **This walk takes hours
+on a large bucket** (on iad-ci, ~38.7k entries took >4 h) and sends no bytes
+until it finishes, so run it detached with a generous client timeout. Its
+response carries `"census": "head"` and a `head_failures` counter — a
+transient backend error still skips that entry, but it is now counted; treat
+a non-zero `head_failures` as a reason to re-run rather than to declare
+success.
+
+**Retire the old key only when `objects_by_fp` shows 0 under the old
+fingerprint** (and `"legacy"` is accounted for). To retire:
 
 ```bash
 # Remove the old key from ARMOR_MEK_RING in OpenBao

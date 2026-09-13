@@ -123,10 +123,15 @@ differs from the active one. It cannot complete on iad-ci:
    `key_rotation.go:200-209` saves `Status: "interrupted"`. Every subsequent
    invocation therefore starts a **fresh walk from `LastKey: ""`** — no
    progress ever accumulates, and no invocation can reach the end.
-4. `GET /admin/key/ring` is unusable as a progress or verification signal for
-   the same reason: it HEADs every manifest entry
+4. ~~`GET /admin/key/ring` is unusable as a progress or verification signal
+   for the same reason: it HEADs every manifest entry
    (`internal/server/server.go:970-1005`) and is killed at 30 s with an empty
-   body.
+   body.~~ **RESOLVED 2026-09-13** (bead armor-5023fc92) — the default census
+   is now in-memory and sub-second; see
+   [the addendum](#ring-get-rebuilt-as-in-memory-census-2026-09-13) at the
+   end of this file. The 30 s kill is long gone (timeouts configurable since
+   0.1.1960), but the deeper problem — an hours-long walk with no bytes sent
+   until it finished — outlived it.
 
 Also checked and rejected: the dashboard rotate proxy
 (`/dashboard/admin/key/rotate`) is **not** a workaround — it generates its own
@@ -853,3 +858,49 @@ Verification at close, by property:
 
 `f68571480246d3d5` STAYS in the ring -- retiring it is an operator step. The
 ARMOR_ADMIN_TOKEN rotation gated on this walk is bead armor-c1f4560a.
+
+## Ring GET rebuilt as in-memory census (2026-09-13)
+
+Bead armor-5023fc92. On iad-kalshi (0.1.1963) an authenticated
+`GET /admin/key/ring` produced no response at all — 0 bytes, no status line —
+at 900 s and at 280 s. The route and auth were live (401 in ~1 s
+unauthenticated); the handler was the problem, and the symptom was exactly
+what its code predicted. `keyRing` HEADed every manifest entry — once per
+configured key — and wrote nothing until the whole census finished, so on any
+real bucket the client stared at a silent, headerless connection for the full
+walk. On iad-ci that walk measured **>4 h**; the 38,526-entry histogram that
+closed the re-wrap above took ~20 h of wall clock from walk start to
+histogram in hand. The 900 s curl gave up long before the first byte was
+ever going to arrive.
+
+The same closure evidence contains the second defect, priced in objects: the
+histogram totaled **38,526 against a 38,697 baseline — 171 objects silently
+missing**, every one a transient Head failure that the handler swallowed with
+`continue` (counting trap 2 below). A histogram that undercounts failures
+is precisely the instrument that can declare a rotation complete while
+old-fingerprint objects remain.
+
+The rebuild (`internal/server/server.go`, `keyRing` and friends):
+
+- **Default `GET /admin/key/ring`** builds the histogram in memory from the
+  MEK fingerprint each manifest entry already records at PUT time — the same
+  value the Head reported, without the Head. Sub-second at 38k entries; zero
+  backend calls (the regression test asserts exactly that, under concurrent
+  manifest writes). Counts are attributed by ring membership: a fingerprint
+  belongs to the key whose active MEK or ring records it; fingerprintless
+  (v1) entries count under `"legacy"` on the default key. Fingerprints no
+  configured key holds — e.g. after post-rotation retirement — land in a
+  top-level `unattributed_objects_by_fp` instead of disappearing, and
+  `manifest_objects` lets the caller reconcile the total.
+- **`GET /admin/key/ring?census=head`** keeps the authoritative walk for
+  operators who need backend-verified counts, now one Head per entry (not
+  one per key) and with a `head_failures` counter where the silence used to
+  be. It still takes hours on a large bucket and still sends nothing until
+  done — run it detached.
+
+Consumers of the old shape keep working: `keys.<id>.{active_fp, ring_fps,
+objects_by_fp}` is unchanged; `census`, `manifest_objects`, `head_failures`
+and `unattributed_objects_by_fp` are additive. The runbook's step 6
+(docs/key-rotation-runbook.md) documents the polling contract. Verified on a
+clean export: the new tests fail against the pre-fix handler (9 Heads on the
+default census, attribution mismatches) and pass against the fix.

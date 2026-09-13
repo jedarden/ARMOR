@@ -936,102 +936,235 @@ func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-// keyRing returns the key ring information with object histogram.
+// keyRingInfo is one key's entry in the /admin/key/ring response.
+type keyRingInfo struct {
+	ActiveFingerprint    string         `json:"active_fp"`
+	RingFingerprints     []string       `json:"ring_fps"`
+	ObjectsByFingerprint map[string]int `json:"objects_by_fp"`
+}
+
+// keyRing returns the key ring information with an object histogram.
 // GET /admin/key/ring returns per key-id {active_fp, ring_fps[], objects_by_fp{fp:count}}.
+//
+// By default the histogram is built in memory from the MEK fingerprint each
+// manifest entry already records at PUT time — the same value a HeadObject of
+// the object reports, without touching the backend. This matters at
+// production scale: the earlier implementation HEADed every manifest entry
+// once per configured key and wrote nothing until the whole walk finished, so
+// a single GET on the iad-ci bucket (~38.7k entries) ran for hours while
+// clients saw a 0-byte response with not even a status line (the symptom
+// behind armor-5023fc92). The in-memory build is sub-second at that scale,
+// and "manifest_objects" at the top level lets the caller reconcile the
+// histogram total against the tracked object count.
+//
+// Counts are attributed per key ID by ring membership: a fingerprint belongs
+// to the key whose active MEK or ring records it. Entries with no recorded
+// fingerprint (v1-format objects) count under "legacy" on the default key,
+// mirroring how the authoritative walk treats a missing key-id header.
+// Fingerprints that match no configured key — e.g. retired from every ring
+// after a rotation completes — are reported under the top-level
+// "unattributed_objects_by_fp" instead of being dropped; silently vanishing
+// objects are exactly what makes a rotation look complete when it is not
+// (docs/notes/mek-rotation-2026.md, counting trap 2).
+//
+// GET /admin/key/ring?census=head keeps the authoritative path for operators
+// who need backend-verified counts. It HEADs every manifest entry exactly
+// once (the earlier implementation re-walked the bucket once per key) and
+// takes hours on a real bucket — run it detached, and reconcile
+// "head_failures" and "unattributed_objects_by_fp" before trusting a zero:
+// a transient backend error still skips that entry rather than failing the
+// response, but it is now counted instead of disappearing.
 func (s *Server) keyRing(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Get all configured keys
+	if r.URL.Query().Get("census") == "head" {
+		s.keyRingHeadCensus(w, r)
+		return
+	}
+	s.keyRingManifestCensus(w)
+}
+
+// keyRingManifestCensus serves the default in-memory census. The histogram is
+// keyed by fingerprint ownership: fpOwner maps each fingerprint any key can
+// decrypt to the first key ID (in ListKeys order) that records it, so a
+// fingerprint shared between two keys' rings is counted once, not twice.
+func (s *Server) keyRingManifestCensus(w http.ResponseWriter) {
 	keyIDs := s.keyManager.ListKeys()
 
-	// Build response with per-key-id information
-	type KeyRingInfo struct {
-		ActiveFingerprint    string         `json:"active_fp"`
-		RingFingerprints     []string       `json:"ring_fps"`
-		ObjectsByFingerprint map[string]int `json:"objects_by_fp"`
+	response := make(map[string]keyRingInfo, len(keyIDs))
+	hist := make(map[string]map[string]int, len(keyIDs))
+	fpOwner := make(map[string]string)
+	legacyOwner := ""
+
+	for _, keyID := range keyIDs {
+		key, err := s.keyManager.GetKeyByID(keyID)
+		if err != nil {
+			continue
+		}
+		if dk := s.keyManager.DefaultKey(); dk != nil {
+			legacyOwner = dk.Name
+		}
+
+		activeFingerprint := crypto.MEKFingerprint(key.MEK)
+
+		var ringFingerprints []string
+		for _, entry := range s.keyManager.Ring(keyID) {
+			ringFingerprints = append(ringFingerprints, entry.Fingerprint)
+			if _, ok := fpOwner[entry.Fingerprint]; !ok {
+				fpOwner[entry.Fingerprint] = keyID
+			}
+		}
+		if _, ok := fpOwner[activeFingerprint]; !ok {
+			fpOwner[activeFingerprint] = keyID
+		}
+
+		hist[keyID] = make(map[string]int)
+		response[keyID] = keyRingInfo{
+			ActiveFingerprint:    activeFingerprint,
+			RingFingerprints:     ringFingerprints,
+			ObjectsByFingerprint: hist[keyID],
+		}
 	}
 
-	response := make(map[string]KeyRingInfo)
+	manifestObjects := 0
+	unattributed := make(map[string]int)
 
-	// Check if manifest is available
-	manifestDisabled := s.manifest == nil
+	if s.manifest != nil {
+		for _, entry := range s.manifest.All() {
+			manifestObjects++
+			fp := entry.MEKFingerprint
+			if fp == "" {
+				fp = "legacy"
+			}
+			owner, ok := fpOwner[fp]
+			if !ok && fp == "legacy" {
+				owner = legacyOwner
+			}
+			if owner == "" || hist[owner] == nil {
+				unattributed[fp]++
+				continue
+			}
+			hist[owner][fp]++
+		}
+	}
 
-	// For each key, get its active fingerprint, ring, and object histogram
+	w.Header().Set("Content-Type", "application/json")
+
+	result := map[string]interface{}{
+		"keys":             response,
+		"census":           "manifest",
+		"manifest_objects": manifestObjects,
+	}
+	if len(unattributed) > 0 {
+		result["unattributed_objects_by_fp"] = unattributed
+	}
+	if s.manifest == nil {
+		result["approximate"] = true
+		result["note"] = "Manifest is disabled. Object counts are not available."
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(result)
+}
+
+// keyRingHeadCensus serves ?census=head: the authoritative histogram built
+// from each object's live backend metadata. It HEADs every manifest entry
+// exactly once — the pre-armor-5023fc92 implementation ran this walk once per
+// configured key — and takes hours on a production bucket, so callers should
+// run it detached and poll nothing: there is no progress endpoint, by design
+// the cheap default above is the progress signal.
+func (s *Server) keyRingHeadCensus(w http.ResponseWriter, r *http.Request) {
+	keyIDs := s.keyManager.ListKeys()
+
+	response := make(map[string]keyRingInfo, len(keyIDs))
+	hist := make(map[string]map[string]int, len(keyIDs))
+	knownKeys := make(map[string]bool, len(keyIDs))
+
 	for _, keyID := range keyIDs {
 		key, err := s.keyManager.GetKeyByID(keyID)
 		if err != nil {
 			continue
 		}
 
-		activeFingerprint := crypto.MEKFingerprint(key.MEK)
-		ringEntries := s.keyManager.Ring(keyID)
-
 		var ringFingerprints []string
-		for _, entry := range ringEntries {
+		for _, entry := range s.keyManager.Ring(keyID) {
 			ringFingerprints = append(ringFingerprints, entry.Fingerprint)
 		}
 
-		objectsByFingerprint := make(map[string]int)
-
-		if !manifestDisabled {
-			// Build histogram from manifest
-			// Walk through all manifest entries and count by fingerprint for this key
-			allEntries := s.manifest.All()
-
-			for manifestKey := range allEntries {
-				// Parse bucket and key from manifestKey ("bucket/object-key")
-				parts := strings.SplitN(manifestKey, "/", 2)
-				if len(parts) != 2 {
-					continue
-				}
-				bucket := parts[0]
-				objectKey := parts[1]
-
-				// Check if this object belongs to the current key
-				// We need to check the object metadata to determine the key ID
-				info, err := s.backend.Head(r.Context(), bucket, objectKey)
-				if err != nil {
-					continue
-				}
-
-				armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
-				if !ok {
-					continue
-				}
-
-				effectiveKeyID := strings.ToLower(strings.TrimSpace(armorMeta.KeyID))
-				if effectiveKeyID == "" {
-					effectiveKeyID = "default"
-				}
-
-				if effectiveKeyID == keyID {
-					fingerprint := armorMeta.MEKFingerprint
-					if fingerprint == "" {
-						fingerprint = "legacy"
-					}
-					objectsByFingerprint[fingerprint]++
-				}
-			}
-		}
-
-		response[keyID] = KeyRingInfo{
-			ActiveFingerprint:    activeFingerprint,
+		hist[keyID] = make(map[string]int)
+		knownKeys[keyID] = true
+		response[keyID] = keyRingInfo{
+			ActiveFingerprint:    crypto.MEKFingerprint(key.MEK),
 			RingFingerprints:     ringFingerprints,
-			ObjectsByFingerprint: objectsByFingerprint,
+			ObjectsByFingerprint: hist[keyID],
 		}
 	}
 
-	// Add metadata about the response
+	manifestObjects := 0
+	headFailures := 0
+	unattributed := make(map[string]int)
+
+	if s.manifest != nil {
+		for manifestKey := range s.manifest.All() {
+			manifestObjects++
+
+			// Parse bucket and key from manifestKey ("bucket/object-key")
+			parts := strings.SplitN(manifestKey, "/", 2)
+			if len(parts) != 2 {
+				unattributed["malformed_manifest_key"]++
+				continue
+			}
+
+			info, err := s.backend.Head(r.Context(), parts[0], parts[1])
+			if err != nil {
+				headFailures++
+				continue
+			}
+
+			armorMeta, ok := backend.ParseARMORMetadata(info.Metadata)
+			if !ok {
+				// The object carries no ARMOR metadata (overwritten out of
+				// band, most likely). Report it rather than dropping it.
+				unattributed["no_armor_metadata"]++
+				continue
+			}
+
+			effectiveKeyID := strings.ToLower(strings.TrimSpace(armorMeta.KeyID))
+			if effectiveKeyID == "" {
+				effectiveKeyID = "default"
+			}
+			if !knownKeys[effectiveKeyID] {
+				fp := armorMeta.MEKFingerprint
+				if fp == "" {
+					fp = "legacy"
+				}
+				unattributed[fp]++
+				continue
+			}
+
+			fingerprint := armorMeta.MEKFingerprint
+			if fingerprint == "" {
+				fingerprint = "legacy"
+			}
+			hist[effectiveKeyID][fingerprint]++
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 
 	result := map[string]interface{}{
-		"keys": response,
+		"keys":             response,
+		"census":           "head",
+		"manifest_objects": manifestObjects,
+		"head_failures":    headFailures,
 	}
-
-	if manifestDisabled {
+	if len(unattributed) > 0 {
+		result["unattributed_objects_by_fp"] = unattributed
+	}
+	if s.manifest == nil {
 		result["approximate"] = true
 		result["note"] = "Manifest is disabled. Object counts are not available."
 	}
