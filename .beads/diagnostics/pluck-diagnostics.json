@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-09-12T15:08:43.879991694Z",
-  "total_open_beads": 51,
+  "timestamp": "2026-09-13T06:06:44.189291913Z",
+  "total_open_beads": 53,
   "exclusion_criteria": {
-    "has_assignee": 0,
+    "has_assignee": 3,
     "manually_blocked": 5,
-    "has_dependencies": 30,
+    "has_dependencies": 34,
     "resource_conflicts": 0
   },
-  "final_candidate_count": 16,
+  "final_candidate_count": 14,
   "excluded_beads": [
     {
       "bead_id": "armor-d3162d1a",
@@ -247,7 +247,7 @@
       "assignee": null,
       "manual_blocked": false,
       "has_blockers": true,
-      "blocker_count": 9,
+      "blocker_count": 8,
       "has_resource_conflicts": false,
       "conflict_count": 0
     },
@@ -347,6 +347,50 @@
       "manual_blocked": true,
       "has_blockers": false,
       "blocker_count": 0,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-7de43702",
+      "title": "ARMOR is ready for ADR-001 consolidation: canary and manifest honour ARMOR_PREFIX, legacy bucket names alias to the unified bucket, startup logs redact bucket names, and the tenant runbook exists",
+      "priority": 1,
+      "assignee": "claude-code-glm-5.3-flash-glm-vista",
+      "manual_blocked": false,
+      "has_blockers": false,
+      "blocker_count": 0,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-07fd66f8",
+      "title": "Test-restore queue-api backup to scratch location and verify",
+      "priority": 2,
+      "assignee": "claude-code-glm-4.7-g47-icg",
+      "manual_blocked": false,
+      "has_blockers": false,
+      "blocker_count": 0,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-5e7c78a2",
+      "title": "Deploy armor-fleet on rs-manager with a Traefik vpn IngressRoute via declarative-config",
+      "priority": 2,
+      "assignee": "claude-code-glm-4.7-glm-armor",
+      "manual_blocked": false,
+      "has_blockers": false,
+      "blocker_count": 0,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-e7efb55a",
+      "title": "Rotate the iad-kalshi ARMOR instance to a new active MEK through the key ring",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 1,
       "has_resource_conflicts": false,
       "conflict_count": 0
     },
