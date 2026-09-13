@@ -19,6 +19,13 @@ go test ${race_flag} -count=1 ./internal/crypto \
 go test ${race_flag} -count=1 ./internal/backend \
 	-run '^TestMultipartV3|^TestMultipartV2Format$|^TestFSBackend_MultipartUpload$|^TestB2PutIfAbsentForwardsAtomicCondition$|^TestFSBackendPutIfAbsentDoesNotOverwrite$'
 
+# Restore discovery (armor-8290de05): getLatestObject must continue past list
+# pages the backend returns EMPTY because every key on them was .armor/*
+# internal bookkeeping — an unprefixed bucket whose lexicographic head is
+# thousands of canary objects otherwise blinds the verifier completely.
+go test ${race_flag} -count=1 ./internal/restoreverifier \
+	-run '^TestGetLatestObject'
+
 go test ${race_flag} -count=1 ./internal/canary
 
 # Key-ring variables share the ARMOR_MEK_ prefix with named keys. Keep their

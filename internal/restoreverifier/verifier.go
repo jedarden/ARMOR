@@ -1559,9 +1559,19 @@ func (v *Verifier) getLatestObject(ctx context.Context, bucket string) (ObjectSa
 			return ObjectSample{}, fmt.Errorf("list failed: %w", err)
 		}
 
-		if len(listResult.Objects) == 0 {
-			break
-		}
+		// No empty-page break here. A backend List filters .armor/* internal
+		// keys BEFORE returning a page (B2Backend.List does, at bucket-root or
+		// under the ADR-001 prefix), so a page can legitimately arrive empty
+		// while IsTruncated is still true — e.g. a bucket whose lexicographic
+		// head is thousands of .armor/canary-multipart/* keys, which is what
+		// iad-kalshi's kalshi-tape looks like since the multipart canary
+		// started accumulating (36k internal objects sort ahead of every data
+		// key). Breaking on len(Objects)==0 ended discovery at the first
+		// all-internal page and reported "no non-internal objects found" for a
+		// bucket holding tens of thousands of restorable backups
+		// (armor-8290de05). Termination is driven solely by IsTruncated and
+		// the NextToken-advance guard below; a genuinely empty bucket exits
+		// through !IsTruncated on page one with the same latest==nil result.
 
 		// Find the most recent non-.armor/ object in this page
 		for i := range listResult.Objects {

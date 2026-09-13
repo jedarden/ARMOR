@@ -838,6 +838,11 @@ type paginatingBackend struct {
 	objects   []backend.ObjectInfo
 	pageSize  int
 	listCalls int
+	// filterInternal models the real B2Backend.List contract: .armor/*
+	// internal keys are removed BEFORE the page is returned, so an
+	// all-internal page arrives as Objects=[] with IsTruncated=true. The
+	// default (false) returns pages unfiltered, matching the older mocks.
+	filterInternal bool
 }
 
 func (m *paginatingBackend) List(_ context.Context, _, _, _, continuationToken string, _ int) (*backend.ListResult, error) {
@@ -860,8 +865,19 @@ func (m *paginatingBackend) List(_ context.Context, _, _, _, continuationToken s
 	if truncated {
 		next = strconv.Itoa(end)
 	}
+	page := m.objects[start:end]
+	if m.filterInternal {
+		filtered := make([]backend.ObjectInfo, 0, len(page))
+		for _, o := range page {
+			if strings.HasPrefix(o.Key, ".armor/") {
+				continue
+			}
+			filtered = append(filtered, o)
+		}
+		page = filtered
+	}
 	return &backend.ListResult{
-		Objects:     m.objects[start:end],
+		Objects:     page,
 		IsTruncated: truncated,
 		NextToken:   next,
 	}, nil
@@ -1106,6 +1122,69 @@ func TestGetLatestObject_PaginatesPastArmorObjects(t *testing.T) {
 		t.Fatalf("getLatestObject returned a .armor/* bookkeeping object instead of a real data object")
 	}
 }
+// TestGetLatestObject_ContinuesPastBackendFilteredInternalPages is the
+// regression test for armor-8290de05. The pagination fix for ADR-014 Bug B was
+// validated against a mock that returns .armor/* objects IN the page — but the
+// real B2Backend.List removes internal keys BEFORE returning, so an
+// all-internal page reaches getLatestObject as Objects=[] with IsTruncated=true.
+// The old loop's `len(Objects)==0 -> break` treated that as end-of-bucket and
+// stopped after page one: on iad-kalshi's kalshi-tape, 36k .armor/canary-
+// multipart/* keys sort ahead of every data key, so page one is always
+// all-internal and every run failed with "no non-internal objects found" in a
+// single request. This test models the backend contract faithfully
+// (filterInternal=true) and requires discovery to continue through the
+// empty-looking pages to the real data on page 3.
+func TestGetLatestObject_ContinuesPastBackendFilteredInternalPages(t *testing.T) {
+	const pageSize = 100
+
+	// Raw object stream as B2 stores it: two full pages of .armor/canary-
+	// multipart/* keys lexicographically ahead of any data key — the shape
+	// kalshi-tape has had since the multipart canary began accumulating.
+	objects := make([]backend.ObjectInfo, 0, 2*pageSize+2)
+	for i := 0; i < 2*pageSize; i++ {
+		objects = append(objects, backend.ObjectInfo{
+			Key:          fmt.Sprintf(".armor/canary-multipart/armor-pod1/%08d", i),
+			LastModified: time.Now().Add(-time.Duration(i) * time.Second),
+		})
+	}
+	dataKey := "raw/2026-09-13/06/ws.jsonl.gz"
+	dataTime := time.Now()
+	objects = append(objects, backend.ObjectInfo{
+		Key:          dataKey,
+		LastModified: dataTime,
+		Size:         8192,
+		Metadata:     map[string]string{"x-amz-meta-armor-plaintext-sha256": "abc123"},
+	})
+	objects = append(objects, backend.ObjectInfo{
+		Key:          "parquet/2026-09-12/old.parquet",
+		LastModified: dataTime.Add(-time.Hour),
+		Size:         8192,
+	})
+
+	// filterInternal=true makes the mock behave like B2Backend.List: pages 1
+	// and 2 arrive completely empty (IsTruncated=true, advancing token).
+	mb := &paginatingBackend{objects: objects, pageSize: pageSize, filterInternal: true}
+	v := New(mb, bytes.Repeat([]byte{0xA5}, 32), nil, 4096, nil, Config{})
+
+	callsBefore := mb.listCalls
+	latest, err := v.getLatestObject(context.Background(), "test-bucket")
+	if err != nil {
+		t.Fatalf("getLatestObject failed: %v (loop must continue past backend-filtered empty pages)", err)
+	}
+
+	pagesUsed := mb.listCalls - callsBefore
+	if pagesUsed != 3 {
+		t.Fatalf("pagination: %d List calls, want 3 (must continue through the two all-internal pages)", pagesUsed)
+	}
+
+	if latest.Key != dataKey {
+		t.Fatalf("got key %q, want %q (found wrong object)", latest.Key, dataKey)
+	}
+	if !latest.LastModified.Equal(dataTime) {
+		t.Fatalf("got time %v, want %v (timestamp mismatch)", latest.LastModified, dataTime)
+	}
+}
+
 
 // TestGetLatestObject_FindsLatestAcrossMultiplePages confirms that when
 // real data objects span multiple pages, getLatestObject correctly identifies
