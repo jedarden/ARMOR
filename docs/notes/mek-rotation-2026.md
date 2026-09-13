@@ -904,3 +904,48 @@ and `unattributed_objects_by_fp` are additive. The runbook's step 6
 (docs/key-rotation-runbook.md) documents the polling contract. Verified on a
 clean export: the new tests fail against the pre-fix handler (9 Heads on the
 default census, attribution mismatches) and pass against the fix.
+
+## ARMOR_ADMIN_TOKEN rotation — COMPLETED 2026-09-13 (armor-c1f4560a)
+
+Rotated 2026-09-13 06:03–06:55Z by a single dispatch lineage (no parallel
+writers; the 09-05 armed pipeline was fully gone — units exited, lockfiles
+cleared, only the port-forward survived).
+
+**Gate resolution.** The armed rotate script's gate (`total >= 38597 AND
+legacy == 0`) had failed safe on 09-05 as unsatisfiable by construction. The
+real bar was `old_fp == 0`: the ring histogram (`/tmp/ring-final.json`,
+total=38526) showed old fp `f68571480246d3d5` at **0**, with `legacy: 2`
+(the documented no-metadata exception) and the 171-object total shortfall
+being deleted objects. Walk verified `completed` (37,319 processed,
+last_updated 2026-09-05T13:41:54Z — `error_message` was the known stale
+"context canceled"). So the rotation proceeded manually per the triage input
+on the bead; the script was never restarted as written.
+
+**Mechanics.** Token minted to a mode-600 temp file (64 hex chars, no
+trailing newline) and written by stdin redirect under CAS to OpenBao
+`secret/rs-manager/iad-ci/armor/admin` `admin_token` (sole field),
+**v1 → v2**, verified by metadata only — the value never passed through any
+context or argv. The ExternalSecret's natural hourly refresh landed at
+06:17:17Z (no `force-sync` annotation bump needed; `syncedResourceVersion`
+changed `5-7c37a0c2…` → `5-fd7d5563…` as the sync proof), Reloader rolled the
+deployment, and the new pod came up with the new token.
+
+**Pre-existing cold-start crash-loop surfaced by the roll (now
+armor-8da7201c).** The new pod crash-looped 3×: startup binds no listener
+until `manifest.Load` returns (server.go:297, `context.Background()`, no
+deadline), and when the B2/CF load is slow the container burns the entire
+10-min startupProbe budget (attempts 1–3 died at exactly 600 s after three
+silent log lines, never reaching "manifest index loaded"). Attempt 4
+converged at ~24 min pod age once the Cloudflare edge cache was warm. The
+previous pod's 39 restarts across 09-08→09-10 show this race is long-standing
+and unrelated to the token.
+
+**Verification (by property; values never opened).** Against the new pod:
+new token `GET /admin/creds` → **200**; old token → **401**; bogus → **401**.
+Old pod `armor-5676574bd7-968mb` terminated after convergence (RollingUpdate
+completed); `armor-67c9b58f7d-c6dl9` serves on 0.1.1964, which also puts the
+dashboard-auth fix (ab187d6ba) live on iad-ci — `/dashboard` now requires the
+admin bearer since no dashboard credential is configured. `/tmp/.armor-adm-hdr`
+swapped to the new token (mode 600). Still owed by an operator: delete the
+`secret/rs-manager/iad-ci/armor/.selftest-c1f4560a` self-test artifact
+(agents cannot delete OpenBao paths).
