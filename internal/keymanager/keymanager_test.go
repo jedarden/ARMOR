@@ -2,7 +2,10 @@ package keymanager
 
 import (
 	"encoding/hex"
+	"errors"
 	"testing"
+
+	"github.com/jedarden/armor/internal/crypto"
 )
 
 func TestNew(t *testing.T) {
@@ -679,6 +682,106 @@ func TestGetMEKByFingerprint(t *testing.T) {
 	_, found = km2.GetMEKByFingerprint("nonexistent", defaultFP)
 	if found {
 		t.Error("GetMEKByFingerprint() should not find non-existent key")
+	}
+}
+
+// TestGetMEKByFingerprintEmptyKeyIDScansNamedKeys is the regression test for
+// the v2 DEK read path: crypto.UnwrapDEKByFingerprint always looks the MEK up
+// with an empty key ID, so a lookup that only consulted the default key group
+// made every object encrypted under a non-default named MEK fail GET with
+// "MEK fingerprint <fp> not found in active or ring keys".
+func TestGetMEKByFingerprintEmptyKeyIDScansNamedKeys(t *testing.T) {
+	defaultMEK, _ := hex.DecodeString("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
+	defaultRetired, _ := hex.DecodeString("1111111111111111111111111111111111111111111111111111111111111111")
+	namedMEK, _ := hex.DecodeString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	namedRetired, _ := hex.DecodeString("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+	namedRing := append([]byte{}, namedRetired...)
+	defaultRing := append([]byte{}, defaultRetired...)
+
+	km, err := New(
+		defaultMEK,
+		map[string][]byte{"caches": namedMEK},
+		nil,
+		map[string][]byte{
+			"default": defaultRing,
+			"caches":  namedRing,
+		},
+	)
+	if err != nil {
+		t.Fatalf("New() with named keys failed: %v", err)
+	}
+
+	// Empty key ID (the v2 read-path shape) must resolve named active keys,
+	// named ring keys, and both default groups alike.
+	cases := []struct {
+		name        string
+		fingerprint string
+		want        []byte
+	}{
+		{"named active key", crypto.MEKFingerprint(namedMEK), namedMEK},
+		{"named ring key", crypto.MEKFingerprint(namedRetired), namedRetired},
+		{"default active key", crypto.MEKFingerprint(defaultMEK), defaultMEK},
+		{"default ring key", crypto.MEKFingerprint(defaultRetired), defaultRetired},
+	}
+	for _, tc := range cases {
+		mek, found := km.GetMEKByFingerprint("", tc.fingerprint)
+		if !found {
+			t.Errorf("GetMEKByFingerprint(\"\", %s) (%s) not found; v2 DEK reads under non-default keys would 500", tc.fingerprint, tc.name)
+			continue
+		}
+		if !equalBytes(mek, tc.want) {
+			t.Errorf("GetMEKByFingerprint(\"\", %s) (%s) returned wrong MEK", tc.fingerprint, tc.name)
+		}
+	}
+
+	// Empty key ID must still miss unknown fingerprints.
+	if _, found := km.GetMEKByFingerprint("", "ffffffffffffffff"); found {
+		t.Error("GetMEKByFingerprint(\"\", ...) should not find an unknown fingerprint")
+	}
+
+	// A non-empty key ID keeps the search scoped to that key group: the
+	// default key's fingerprint must not resolve through the "caches" group.
+	if _, found := km.GetMEKByFingerprint("caches", crypto.MEKFingerprint(defaultMEK)); found {
+		t.Error("GetMEKByFingerprint(\"caches\", ...) should not resolve the default key's fingerprint")
+	}
+}
+
+// TestUnwrapDEKByFingerprintNamedKeyViaKeyManager reproduces the production
+// read wiring end to end: handlers build their lookupMEK by delegating
+// directly to GetMEKByFingerprint, and a v2-format DEK wrapped under a
+// non-default named MEK must unwrap through the real key manager.
+func TestUnwrapDEKByFingerprintNamedKeyViaKeyManager(t *testing.T) {
+	defaultMEK, _ := hex.DecodeString("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
+	namedMEK, _ := hex.DecodeString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+	km, err := New(defaultMEK, map[string][]byte{"caches": namedMEK}, nil, nil)
+	if err != nil {
+		t.Fatalf("New() with named keys failed: %v", err)
+	}
+
+	dek, err := crypto.GenerateDEK()
+	if err != nil {
+		t.Fatalf("GenerateDEK() failed: %v", err)
+	}
+	wrapped, err := crypto.WrapDEKWithFingerprint(namedMEK, dek)
+	if err != nil {
+		t.Fatalf("WrapDEKWithFingerprint() failed: %v", err)
+	}
+
+	legacyFallback := func(wrappedDEK []byte) ([]byte, error) {
+		return nil, errors.New("legacy fallback must not be reached for v2 format")
+	}
+
+	got, usedFP, err := crypto.UnwrapDEKByFingerprint(wrapped, km.GetMEKByFingerprint, legacyFallback)
+	if err != nil {
+		t.Fatalf("UnwrapDEKByFingerprint() through the real key manager failed for a named-key object (the production GET failure): %v", err)
+	}
+	if want := crypto.MEKFingerprint(namedMEK); usedFP != want {
+		t.Errorf("used fingerprint = %s, want %s", usedFP, want)
+	}
+	if !equalBytes(got, dek) {
+		t.Error("UnwrapDEKByFingerprint() returned the wrong DEK")
 	}
 }
 

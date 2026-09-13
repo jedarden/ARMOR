@@ -255,25 +255,50 @@ func (km *KeyManager) ListRoutes() []Route {
 
 // GetMEKByFingerprint returns the MEK for a given key ID and fingerprint.
 // It searches both the active key and the retired ring keys.
+// A non-empty keyID scopes the search to that key group only. An empty keyID —
+// the shape every v2 fingerprint-wrapped DEK read uses, because
+// crypto.UnwrapDEKByFingerprint passes no key ID — scans all active keys and
+// all rings, so objects encrypted under non-default named keys unwrap on read.
 // Returns the MEK and true if found, nil and false otherwise.
 func (km *KeyManager) GetMEKByFingerprint(keyID, fingerprint string) ([]byte, bool) {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
 
 	keyID = normalizeKeyName(keyID)
-	if keyID == "" {
-		keyID = km.defaultKeyName
+
+	// If keyID is specified, search only within that key group
+	if keyID != "" {
+		// Check active key first
+		if key, exists := km.keys[keyID]; exists {
+			if crypto.MEKFingerprint(key.MEK) == fingerprint {
+				return key.MEK, true
+			}
+		}
+
+		// Check ring keys
+		if ring, exists := km.rings[keyID]; exists {
+			for _, entry := range ring {
+				if entry.Fingerprint == fingerprint {
+					return entry.MEK, true
+				}
+			}
+		}
+
+		return nil, false
 	}
 
-	// Check active key first
-	if key, exists := km.keys[keyID]; exists {
+	// If keyID is empty, search ALL keys (default + all named + all ring keys)
+	// This enables the v2 wrapped-DEK format to work without explicit key routing
+
+	// Check all active keys
+	for _, key := range km.keys {
 		if crypto.MEKFingerprint(key.MEK) == fingerprint {
 			return key.MEK, true
 		}
 	}
 
-	// Check ring keys
-	if ring, exists := km.rings[keyID]; exists {
+	// Check all ring keys
+	for _, ring := range km.rings {
 		for _, entry := range ring {
 			if entry.Fingerprint == fingerprint {
 				return entry.MEK, true
