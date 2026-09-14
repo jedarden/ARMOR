@@ -8290,3 +8290,13 @@
 {"bead":"armor-5e7c78a2","duration_ms":359331,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-14T13:36:52.884698179+00:00","worker":"glm-armor"}
 {"bead":"armor-7de43702","duration_ms":1114260,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-14T13:50:04.207464149+00:00","worker":"glm-roam-22"}
 {"bead":"armor-07fd66f8","duration_ms":3601882,"event":"timeout","exit_code":124,"outcome":"timeout","strand":"explore","ts":"2026-09-14T14:33:06.751052145+00:00","worker":"glm-tradegraph"}
+{"bead":"armor-9d9cdda9","event":"claim","strand":"pluck","ts":"2026-09-14T18:46:11.373678763+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a0a13d-b883-7912-8199-2c3634ac944c","bead":"armor-9d9cdda9","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-14T18:46:11.843799390+00:00","worker":"glm-armor"}
+{"bead":"armor-2c7152ae","event":"claim","strand":"explore","ts":"2026-09-14T19:00:48.090874662+00:00","worker":"glm-roam-18"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a0a14b-192f-7aa2-992e-46a180c6edf9","bead":"armor-2c7152ae","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-14T19:00:48.560060191+00:00","worker":"glm-roam-18"}
+{"bead":"armor-9d9cdda9","duration_ms":1205817,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-14T19:06:17.744523624+00:00","worker":"glm-armor"}
+{"bead":"armor-ed675a94","event":"claim","strand":"explore","ts":"2026-09-14T19:09:29.966939896+00:00","worker":"glm-roam-22"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a0a153-0f5d-71e0-b1d8-06de35e2e05c","bead":"armor-ed675a94","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-14T19:09:30.333553939+00:00","worker":"glm-roam-22"}
+{"bead":"armor-b47b5435","event":"claim","strand":"pluck","ts":"2026-09-14T19:10:57.130446845+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a0a154-63d7-77c3-93c5-8fa4804fab16","bead":"armor-b47b5435","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-14T19:10:57.495267246+00:00","worker":"glm-armor"}
+{"bead":"armor-2c7152ae","duration_ms":881028,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-14T19:15:29.694596737+00:00","worker":"glm-roam-18"}
