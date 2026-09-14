@@ -61,6 +61,7 @@ Each fixture directory contains:
 ```
 tests/fixtures/migration/
 ├── standalone_generator.go       # Main generator (fully standalone)
+├── v1v2_fixture_generator.go     # Regeneration-set generator (short plaintexts)
 ├── generate_fixtures.sh          # Convenience script
 ├── canonical/
 │   └── generate_fixtures.go      # Legacy generator (uses ARMOR crypto); kept
@@ -68,6 +69,11 @@ tests/fixtures/migration/
 │                                 #   are `package main` declaring the same
 │                                 #   symbols, which broke every ./... build
 ├── README.md                     # This file
+├── v3-golden-outcomes.json/.yml  # Expected-outcome manifest (all fixtures,
+│                                 #   incl. planning-only entries)
+├── v3-golden-outcomes-computed.json/.yml
+│                                 # Computed outcomes for the canonical set;
+│                                 #   cross-checked by TestGoldenFixturesMigrate
 ├── v1_single_put/
 │   ├── explicit_version/
 │   ├── implicit_version/
@@ -82,11 +88,27 @@ tests/fixtures/migration/
 │   ├── uniform_parts/
 │   ├── variable_final_part/
 │   └── non_uniform_parts/
-├── malformed/
+├── generated_fixtures/           # Regeneration set (short plaintexts)
+│   ├── v1-single-explicit-short/
+│   ├── v1-single-implicit-short/
+│   ├── v2-single-short/
+│   ├── v1-multipart-uniform/
+│   └── v2-multipart-uniform/
+├── malformed/                    # 13 corrupt variants; each documents the
+│   │                             #   specific failure it must produce
 │   ├── invalid_version_string/
+│   ├── invalid_envelope_magic/
+│   ├── invalid_sidecar_format/
 │   ├── envelope_version_mismatch/
 │   ├── corrupted_hmac_table/
-│   └── inconsistent_part_metadata/
+│   ├── corrupted_wrapped_dek_tag/
+│   ├── inconsistent_part_metadata/
+│   ├── truncated_ciphertext/
+│   ├── truncated_sidecar/
+│   ├── multipart_part_size_mismatch/
+│   ├── multipart_contradictory_hashes/
+│   ├── v1_object_v2_metadata/
+│   └── v2_object_v1_metadata/
 ├── contradictory/
 │   └── version_says_v1_layout_v2/
 └── edge_cases/
@@ -95,9 +117,85 @@ tests/fixtures/migration/
     └── exact_block_boundary/
 ```
 
-## Fixture Metadata
+## Fixture Inventory and Expected V3 Outcomes
+
+Every fixture directory below carries a documented expected V3 conversion
+outcome: the target layout for valid fixtures, the specific failure a corrupt
+fixture must produce otherwise. The long-form expectations live in
+`v3-golden-outcomes.json` / `.yml` (this table is the index); the values in
+`v3-golden-outcomes-computed.json` are cross-checked by
+`TestGoldenFixturesMigrate`, and every pass/fail class in the table is pinned
+by `internal/server/format_migration_fixture_matrix_test.go`
+(`goldenFixtureMatrix`), which fails if a fixture dir appears on disk without
+a row, or a row without its fixture.
+
+Enforcement stages for corrupt fixtures, strictest first:
+
+- **decrypt** — the legacy read path itself rejects the bytes, with the error
+  identifying the defect (`expected_error_class` in the manifest).
+- **accounting** — pure byte math catches it before any crypto (sidecar
+  length vs 32-byte HMAC entries; entries vs block count).
+- **classify** — decidable from metadata/structure only; the dry-run migrator
+  must fail the object and process nothing.
+
+### Valid fixtures (success: migrate, then read back the documented plaintext)
+
+| Fixture | Source | Expected V3 layout |
+|---|---|---|
+| `v1_single_put/explicit_version` | V1 single, explicit version meta | single, 1 block; version → 3; DEK re-wrapped to v2 fingerprint format; counter derivation fixed |
+| `v1_single_put/implicit_version` | V1 single, no version meta | single, 1 block; version detected from envelope header, then added to metadata |
+| `v1_single_put/minimal_metadata` | V1 single, minimal meta | single, 1 block; missing metadata reconstructed from envelope header |
+| `v2_single_put/standard` | V2 single, full meta | single, 1 block; version 2 → 3; already stride-safe counters |
+| `v1_multipart/uniform_parts` | V1 multipart-uniform | structure preserved; per-(part, block) independent counters; sidecar table migrated |
+| `v1_multipart/variable_final_part` | V1 multipart, ADR-010 | variable final part preserved; per-part independence |
+| `v1_multipart/non_uniform_parts` | V1 multipart, ADR-011 | arbitrary part sizes preserved (no 64 KB alignment constraint) |
+| `v2_multipart/uniform_parts` | V2 multipart-uniform | structure preserved; per-part independence completes |
+| `v2_multipart/variable_final_part` | V2 multipart, ADR-010 | variable final part preserved; version bump |
+| `v2_multipart/non_uniform_parts` | V2 multipart, ADR-011 | non-uniform parts preserved; version bump |
+| `edge_cases/empty_plaintext` | V1, 0 bytes | valid empty V3 object; version bump only |
+| `edge_cases/single_byte_plaintext` | V1, 1 byte | single, 1 partial block; padding handled by AEAD |
+| `edge_cases/exact_block_boundary` | V1, 131072 bytes (2 × 64 KiB) | blocks exactly fill; no partial last block |
+| `generated_fixtures/v1-single-explicit-short` | V1 single, 47 B | single, 1 block (regeneration set) |
+| `generated_fixtures/v1-single-implicit-short` | V1 single implicit, 47 B | single, 1 block; implicit detection |
+| `generated_fixtures/v2-single-short` | V2 single, 47 B | single, 1 block |
+| `generated_fixtures/v1-multipart-uniform` | V1 multipart, 4 × 64 KiB blocks | 1 S3 part, 4 blocks; sidecar migrated |
+| `generated_fixtures/v2-multipart-uniform` | V2 multipart, 4 × 64 KiB blocks | 1 S3 part, 4 blocks; sidecar migrated |
+
+### Corrupt fixtures (failure: fail closed at the pinned stage)
+
+| Fixture | Defect | Required failure (stage: what must fire) |
+|---|---|---|
+| `malformed/invalid_envelope_magic` | header magic `0xDEADBEEF`, not `ARMR` | decrypt: `invalid ARMOR magic` — header undecodable |
+| `malformed/truncated_ciphertext` | stored bytes < header-declared table + data | decrypt: `ciphertext too short to contain HMAC table` |
+| `malformed/corrupted_hmac_table` | bit flip in HMAC table | decrypt: `HMAC verification failed` |
+| `malformed/corrupted_wrapped_dek_tag` | bit flip in wrapped-DEK auth tag | decrypt: `key unwrap failed` — KWP/auth-tag verification |
+| `malformed/invalid_sidecar_format` | sidecar is neither a sidecar document nor a raw HMAC table | accounting: sidecar size not a multiple of the 32-byte HMAC |
+| `malformed/truncated_sidecar` | final 32-byte HMAC entry missing | accounting: fewer HMAC entries than blocks |
+| `malformed/invalid_version_string` | unparsable version metadata | classify: reader deliberately defaults to V1 (backward compat); dry-run migrator must fail the object |
+| `malformed/inconsistent_part_metadata` | part count/size contradicts actual structure | classify: inventory accounting rejects |
+| `malformed/multipart_part_size_mismatch` | declared part size (307200 B) vs actual (524288 B) | classify: derived part boundaries contradict metadata |
+| `malformed/multipart_contradictory_hashes` | metadata sha256 ≠ envelope-header sha256 | classify: integrity cannot be established against either digest |
+| `malformed/envelope_version_mismatch` | header V1, metadata V2 | classify: header-vs-metadata version compare |
+| `malformed/v1_object_v2_metadata` | genuine V1 object claiming V2 | classify: version compare; V2 derivation cannot decrypt V1 ciphertext |
+| `malformed/v2_object_v1_metadata` | genuine V2 object claiming V1 | classify: version compare; V1 derivation cannot decrypt V2 ciphertext |
+| `contradictory/version_says_v1_layout_v2` | metadata claims V1, layout written with V2 derivation | classify: dry-run must fail the object (vacuous at single-block size — V1/V2 counters coincide on block 0) |
+
+No corrupt fixture may pass through every layer: if the read path and
+accounting both accept it and the dry run processes it, the matrix test fails
+even when individual layers had no opinion.
+
+Entries in the golden manifest without an on-disk directory
+(`v1_multipart_sidecar_missing`, `edge_case_very_large_object`,
+`legacy_wrapped_dek_*`, …) are planning-only variants listed in the
+manifest's `summary`; they arm in the matrix automatically when generated.
+
+
 
 Each fixture includes:
+
+## Fixture Metadata
+
+Each fixture directory contains a `metadata.json` declaring:
 
 - `plaintext_sha256`: SHA-256 hash of the original plaintext
 - `plaintext_length`: Length of the original plaintext
@@ -141,7 +239,15 @@ Fixtures can be validated against the migration code:
 
 ## Integration with Tests
 
-See `internal/server/format_migration_test.go` for examples of how these fixtures are used in migration tests.
+- `internal/server/format_migration_test.go` and
+  `format_migration_golden_test.go` validate whatever fixtures exist at run
+  time; `v3-golden-outcomes-computed.json` is the golden input to
+  `TestGoldenFixturesMigrate`.
+- `internal/server/format_migration_fixture_matrix_test.go` pins each
+  fixture to its documented pass/fail class (the "Enforcement stages" table
+  above) and enforces bidirectional coverage between `goldenFixtureMatrix`
+  and the on-disk fixture tree. A new fixture directory cannot land without
+  declaring its class, and a class whose fixture disappears fails.
 
 ## Maintenance
 
