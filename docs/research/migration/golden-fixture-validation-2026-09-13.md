@@ -126,3 +126,59 @@ at pushed origin/main `0fee67ec0`, per armor-9d9cdda9 (re-scope of armor-ee6ede3
 - No new failures; no new bead filed. Ownership of the four pinned defects is
   unchanged (fixture-side: armor-be6e5146; production-side: multipart
   migration lineage).
+
+## Delta 2026-09-14b (complete fixture set: malformed/ + contradictory/ landed)
+
+Re-run over the **complete 32-directory fixture set**, per armor-45aeb954
+(child of the armor-2c7152ae umbrella). The two earlier sections validated
+the five tracked fixture families; the malformed/ (12), contradictory/ (1),
+edge_cases/ (3) and generated_fixtures/ (5) categories exist only as
+untracked working-tree data (never git-tracked in any commit; the
+fixture-construction lineage's on-disk output, stable since 2026-09-03).
+
+Method: clean HEAD export of `0e4b9556e` via `git checkout-index
+--prefix=<tmp>/ -a` (verified byte-identical to `git archive HEAD`), plus an
+explicit copy of those four untracked fixture categories into the export's
+`tests/fixtures/migration/`. The shared working tree was not used (a parallel
+lineage holds in-flight fixture regeneration and a broken-by-design untracked
+`format_migration_classify.go`). Run:
+`PATH="$HOME/sdk/go/bin:$PATH" go test ./internal/server/ -run 'TestGolden'
+-v -buildvcs=false` (go1.25.0). Exit 1: **205 subtests — 152 PASS, 49 SKIP,
+4 FAIL**; all three `TestGoldenFixtureMatrix*` tests PASS; all four pin
+tests PASS (the pinned defects all still reproduce); the corruption suite
+fails closed on every variant.
+
+Tracked-fixture results are **identical to the baseline table** (v1_single_put
+×3 ok; all six multipart fixtures skip on the wrap defect;
+v2_single_put/standard skips decrypt+migrate on the stale-content pin; dry-run
+stays ok for it). The four failures are all in the two newly-covered
+categories, and all are **explained harness-vs-fixture-tree gaps**, not
+computed-vs-committed golden-outcome deltas — the committed
+`v3-golden-outcomes.json/.yml`, `v3-golden-outcomes-computed.json` and every
+fixture manifest agree with the matrix 32/32 (armor-1b0294b5), so no committed
+golden file changes:
+
+1. `TestGoldenFixturesDecrypt/malformed/invalid_sidecar_format` and
+   `/malformed/truncated_sidecar` — the golden harness's unconditional
+   sidecar-accounting precondition (`format_migration_golden_test.go:399-406`)
+   `t.Fatalf`s on the fixture's *intended* defect before the outcome switch
+   can classify it; it predates corrupt-sidecar fixtures. The matrix handles
+   both correctly as `stageAccounting` and passes, and production dry-run +
+   migrate already record failed-as-expected for both (currently at the known
+   GCM-vs-KWP wrap defect, like every multipart-generation fixture). Harness
+   gap: the precondition needs to be outcome-aware.
+2. `TestGoldenFixturesDryRun` + `TestGoldenFixturesMigrate`
+   `/contradictory/version_says_v1_layout_v2` — the fixture is the known
+   vacuous single-block contradiction (94 B = 1 block; V1 and V2 counter
+   derivation coincide on block 0, `goldenVacuousNote` in the matrix, which
+   skips it there). The golden harness lacks that skip and asserts
+   `FailedObjects=1` while the dry run correctly records 0 — the contradiction
+   is undetectable at this committed size. Harness gap: the golden dry-run /
+   migrate failure branches need the matrix's vacuous pointer-skip, re-arming
+   when armor-be6e5146 regenerates the fixture multi-block.
+
+Zero unexplained deltas. Per the armor-9d9cdda9 protocol (document, file
+exactly one bead, do not fix inside a validation bead), the two harness gaps
+are filed as **armor-abbddad5** (blocks the umbrella armor-2c7152ae, related
+to armor-be6e5146); this validation run changed no harness, fixture or golden
+code.
