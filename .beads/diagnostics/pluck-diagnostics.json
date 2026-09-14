@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-09-13T23:07:56.92061453Z",
-  "total_open_beads": 50,
+  "timestamp": "2026-09-14T00:08:02.622120833Z",
+  "total_open_beads": 59,
   "exclusion_criteria": {
     "has_assignee": 3,
     "manually_blocked": 5,
-    "has_dependencies": 38,
-    "resource_conflicts": 0
+    "has_dependencies": 47,
+    "resource_conflicts": 1
   },
-  "final_candidate_count": 7,
+  "final_candidate_count": 8,
   "excluded_beads": [
     {
       "bead_id": "armor-d3162d1a",
@@ -428,39 +428,6 @@
       "conflict_count": 0
     },
     {
-      "bead_id": "armor-5ba75c10",
-      "title": "Fix armor decrypt multipart sidecar lookups to hash the client key via -b2-prefix",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-8b5a4e5c",
-      "title": "Fix v2 wrapped-DEK unwrapping in both restoreverifier restore paths",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-2eae59f1",
-      "title": "Fix armor decrypt v3 multipart part numbering and V2 fixture stamping",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
       "bead_id": "armor-1a7958bd",
       "title": "Verify the client-key sidecar fix end to end on a prefixed bucket",
       "priority": 2,
@@ -472,6 +439,116 @@
       "conflict_count": 0
     },
     {
+      "bead_id": "armor-95f5cd32",
+      "title": "Optimize v3 encryption and decryption with one CTR stream per ARMOR block",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 1,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-73564f97",
+      "title": "Fetch larger backend ranges with a strictly bounded read-ahead window",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 2,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-5694713b",
+      "title": "Coalesce v3 single-PUT and multipart range reads and precompute offsets",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 2,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-c3199f1c",
+      "title": "Reuse read metadata and cache v3 tables without weakening freshness checks",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 1,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-272299ca",
+      "title": "Stream v3 multipart downloads with bounded block verification and read-ahead",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 2,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-09da6b4b",
+      "title": "Choose large-upload streaming from the object's compression decision",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 1,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-213bd392",
+      "title": "Remove redundant full-object spooling from large single-PUT uploads",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 3,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-cb2b0731",
+      "title": "Bound multipart upload memory and overlap encryption with backend transfer",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 2,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-ebd22a99",
+      "title": "Release and verify ARMOR read/write throughput improvements through GitOps",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 3,
+      "has_resource_conflicts": true,
+      "conflict_count": 1
+    },
+    {
+      "bead_id": "armor-d6de0b60",
+      "title": "Improve ARMOR read and write throughput",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 2,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
       "bead_id": "armor-a1be3e50",
       "title": "Remove jobs:1 and --min-chunk-size from the forgejo-postgres CNPG backup config after v3",
       "priority": 3,
@@ -479,6 +556,17 @@
       "manual_blocked": true,
       "has_blockers": false,
       "blocker_count": 0,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-7ad0d7eb",
+      "title": "Tune and measure reusable HTTP connections for ARMOR reads and writes",
+      "priority": 3,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 1,
       "has_resource_conflicts": false,
       "conflict_count": 0
     }

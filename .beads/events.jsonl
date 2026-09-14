@@ -8245,3 +8245,12 @@
 {"bead":"armor-7edd1237","duration_ms":434452,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-13T22:58:30.770955808+00:00","worker":"glm-armor"}
 {"bead":"armor-6e8c9c3b","event":"claim","strand":"pluck","ts":"2026-09-13T22:58:35.369909235+00:00","worker":"glm-armor"}
 {"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a09cfe-71b6-7422-a54e-0aa3266b14d1","bead":"armor-6e8c9c3b","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-13T22:58:36.086887779+00:00","worker":"glm-armor"}
+{"bead":"armor-6e8c9c3b","duration_ms":708178,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-13T23:10:24.438339538+00:00","worker":"glm-armor"}
+{"bead":"armor-5ba75c10","event":"claim","strand":"pluck","ts":"2026-09-13T23:10:44.105555483+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a09d09-9027-77c1-af83-2dd339afbdaa","bead":"armor-5ba75c10","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-13T23:10:44.775805346+00:00","worker":"glm-armor"}
+{"bead":"armor-5ba75c10","duration_ms":663034,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-13T23:21:48.006606854+00:00","worker":"glm-armor"}
+{"bead":"armor-8b5a4e5c","event":"claim","strand":"pluck","ts":"2026-09-13T23:21:51.755640537+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a09d13-bfb6-7230-b61c-de42118bd48d","bead":"armor-8b5a4e5c","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-13T23:21:52.310749117+00:00","worker":"glm-armor"}
+{"bead":"armor-8b5a4e5c","duration_ms":1003378,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-13T23:38:35.841864228+00:00","worker":"glm-armor"}
+{"bead":"armor-fd19a839","event":"claim","strand":"pluck","ts":"2026-09-13T23:38:39.581979669+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a09d23-20c9-7520-8f71-2b1153250854","bead":"armor-fd19a839","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-13T23:38:40.201921255+00:00","worker":"glm-armor"}
