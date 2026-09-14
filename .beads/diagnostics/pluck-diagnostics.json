@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-09-14T11:39:46.2859458Z",
-  "total_open_beads": 55,
+  "timestamp": "2026-09-14T12:39:09.612182496Z",
+  "total_open_beads": 52,
   "exclusion_criteria": {
     "has_assignee": 3,
     "manually_blocked": 5,
-    "has_dependencies": 46,
+    "has_dependencies": 45,
     "resource_conflicts": 1
   },
-  "final_candidate_count": 4,
+  "final_candidate_count": 2,
   "excluded_beads": [
     {
       "bead_id": "armor-d3162d1a",
@@ -419,17 +419,6 @@
     {
       "bead_id": "armor-7edd1237",
       "title": "Sidecar lookups in restoreverifier and armor decrypt hash the stored key — same prefix bug as armor-1b272971",
-      "priority": 2,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-1a7958bd",
-      "title": "Verify the client-key sidecar fix end to end on a prefixed bucket",
       "priority": 2,
       "assignee": null,
       "manual_blocked": false,
