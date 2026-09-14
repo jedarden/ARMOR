@@ -8271,3 +8271,4 @@
 {"bead":"armor-fd19a839","duration_ms":3602662,"event":"timeout","exit_code":124,"outcome":"timeout","strand":"pluck","ts":"2026-09-14T03:58:47.718791329+00:00","worker":"glm-armor"}
 {"bead":"armor-8317f313","event":"claim","strand":"pluck","ts":"2026-09-14T04:01:37.818604080+00:00","worker":"glm-armor"}
 {"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a09e13-e193-77f3-8b34-b211a28c7043","bead":"armor-8317f313","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-14T04:01:38.195293242+00:00","worker":"glm-armor"}
+{"bead":"armor-8317f313","duration_ms":3602719,"event":"timeout","exit_code":124,"outcome":"timeout","strand":"pluck","ts":"2026-09-14T05:01:40.999184319+00:00","worker":"glm-armor"}
