@@ -8280,3 +8280,11 @@
 {"bead":"armor-2eae59f1","duration_ms":1010086,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-14T12:28:44.266121228+00:00","worker":"glm-armor"}
 {"bead":"armor-1a7958bd","event":"claim","strand":"pluck","ts":"2026-09-14T12:28:48.810146388+00:00","worker":"glm-armor"}
 {"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a09fe4-38ef-79a1-815e-16d22cf005d2","bead":"armor-1a7958bd","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-14T12:28:49.263921699+00:00","worker":"glm-armor"}
+{"bead":"armor-1a7958bd","duration_ms":3602227,"event":"timeout","exit_code":124,"outcome":"timeout","strand":"pluck","ts":"2026-09-14T13:28:51.751397191+00:00","worker":"glm-armor"}
+{"bead":"armor-5e7c78a2","event":"claim","strand":"pluck","ts":"2026-09-14T13:30:52.936697147+00:00","worker":"glm-armor"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a0a01d-0c9e-76a0-8eae-151d6f629f35","bead":"armor-5e7c78a2","event":"dispatch","model":"glm-5.3-flash","strand":"pluck","ts":"2026-09-14T13:30:53.470982961+00:00","worker":"glm-armor"}
+{"bead":"armor-7de43702","event":"claim","strand":"explore","ts":"2026-09-14T13:31:29.298060064+00:00","worker":"glm-roam-22"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a0a01d-9a21-7711-989f-690360126683","bead":"armor-7de43702","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-14T13:31:29.697786655+00:00","worker":"glm-roam-22"}
+{"bead":"armor-07fd66f8","event":"claim","strand":"explore","ts":"2026-09-14T13:33:04.159724604+00:00","worker":"glm-tradegraph"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a0a01f-0ced-71a3-9381-89e52f9c1da4","bead":"armor-07fd66f8","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-14T13:33:04.622034011+00:00","worker":"glm-tradegraph"}
+{"bead":"armor-5e7c78a2","duration_ms":359331,"event":"complete","exit_code":0,"outcome":"success","strand":"pluck","ts":"2026-09-14T13:36:52.884698179+00:00","worker":"glm-armor"}
