@@ -917,6 +917,40 @@ func TestLoadSucceedsWithNamedCredentialsOnly(t *testing.T) {
 	}
 }
 
+// TestAdminTokenIsTrimmed confirms a provisioned ARMOR_ADMIN_TOKEN with
+// surrounding whitespace still loads as the bare token. `openssl rand -base64 32
+// | bao kv put ... token=-` stores the trailing newline openssl prints, and an
+// HTTP header cannot carry a raw \n, so an untrimmed value can never match and
+// every /admin/* request 401s with no hint the stored value is malformed.
+func TestAdminTokenIsTrimmed(t *testing.T) {
+	cases := []struct {
+		name  string
+		env   string
+		stage string
+	}{
+		{"trailing newline (openssl/bao shape)", "sekrit\n", "sekrit"},
+		{"trailing CRLF", "sekrit\r\n", "sekrit"},
+		{"trailing tab", "sekrit\t", "sekrit"},
+		{"leading and trailing spaces", "  sekrit  ", "sekrit"},
+		{"already clean", "sekrit", "sekrit"},
+		{"whitespace-only degrades to unset", "  \n\t ", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setEnv(t, minimalEnv()...)
+			setEnv(t, "ARMOR_ADMIN_TOKEN", c.env)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() failed: %v", err)
+			}
+			if cfg.AdminToken != c.stage {
+				t.Errorf("AdminToken = %q, want %q", cfg.AdminToken, c.stage)
+			}
+		})
+	}
+}
+
 func TestRedacted(t *testing.T) {
 	// Create a config with all secrets set
 	testMEK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"

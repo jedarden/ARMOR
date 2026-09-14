@@ -164,7 +164,11 @@ type Config struct {
 	// disabled (fail-closed) so the MEK cannot be exported or rotated without
 	// an explicitly configured secret. Probes (/healthz, /readyz), /armor/canary,
 	// /metrics, and /dashboard* (which carry their own auth) are unaffected.
-	// See bead bf-5m9nde.
+	//
+	// Load() trims surrounding whitespace (including the trailing \n or \r\n a
+	// `bao kv put ... token=-` provisioning pipeline stores from openssl), so a
+	// value here is always header-safe; a whitespace-only value counts as unset.
+	// See bead bf-5m9nde and armor-dbcf1139.
 	AdminToken string
 
 	// LogLevel controls the verbosity of application logging.
@@ -535,7 +539,13 @@ func Load() (*Config, error) {
 
 	// Admin API bearer token. When set, all /admin/* routes (and /armor/audit)
 	// require it; when unset, gated admin routes are disabled (fail-closed).
-	cfg.AdminToken = os.Getenv("ARMOR_ADMIN_TOKEN")
+	// Trimmed because an HTTP header cannot carry a raw \n or \r: a provisioned
+	// value with one (e.g. `openssl rand -base64 32 | bao kv put ... token=-`
+	// stores the newline openssl prints) could never match, silently 401-ing
+	// every /admin/* request. Trimming here also means a whitespace-only value
+	// degrades to unset, i.e. the fail-closed 403, rather than a 401 that looks
+	// like a wrong token.
+	cfg.AdminToken = strings.TrimSpace(os.Getenv("ARMOR_ADMIN_TOKEN"))
 
 	// Log level configuration (default: info)
 	cfg.LogLevel = getEnv("ARMOR_LOG_LEVEL", "info")
