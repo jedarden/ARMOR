@@ -96,3 +96,33 @@ PATH="$HOME/sdk/go/bin:$PATH" go test ./internal/server/ -run 'TestGolden' -v
 - Multipart migration-path lineage: defects 3+4 are production code fixes
   (`uploadAsMultipart` HMAC sidecar; header plaintext-SHA enforcement in the
   migrator's decrypt/read-back verify).
+
+## Delta 2026-09-14 (re-validation at current main)
+
+Re-run of the same suite from a fresh clean clone (`~/scratch/armor-golden-20260914`)
+at pushed origin/main `0fee67ec0`, per armor-9d9cdda9 (re-scope of armor-ee6ede36):
+
+- `PATH="$HOME/sdk/go/bin:$PATH" go test ./internal/server/ -run 'TestGolden' -v
+  -buildvcs=false` — **exit 0**, `ok github.com/jedarden/armor/internal/server`,
+  0 failures, 20 subtest skips.
+- Harness and fixtures byte-unchanged since the baseline commit `d5c78ffd0`:
+  `git diff --stat d5c78ffd0..HEAD -- internal/server/format_migration_golden_test.go
+  tests/fixtures/` is empty; only production code has moved on main.
+- Per-fixture results: **identical to the baseline table**. v1_single_put ×3
+  decrypt/dry-run/migrate ok → V3 with the same plaintext sha `a7f6f6d8…` (94 B);
+  the six multipart fixtures and v2_single_put/standard SKIP in exactly the
+  baseline slots (all three phases for multiparts; decrypt+migrate for
+  v2_single_put/standard, whose dry-run stays ok); all four pin tests
+  (`TestGoldenFixtureWrapDefect`, `TestGoldenFixtureV2StandardStaleDoc`,
+  `TestGoldenMultipartMigratorDefect`, `TestGoldenMigrationIVIntegrityGap`)
+  still pass, i.e. all four pinned defects still reproduce; the corruption
+  suite still fails closed on every variant with the same recorded reasons
+  (HMAC verify, unwrap AIV, envelope-header EOF, missing sidecar), objects
+  left byte-untouched.
+- Prose correction to the baseline, not a behavior delta: the baseline's
+  corruption-suite row says "11 derived variants", but the harness table
+  statically defines **10** corruption cases (5 single + 5 multipart) and the
+  byte-identical baseline harness executed the same 10.
+- No new failures; no new bead filed. Ownership of the four pinned defects is
+  unchanged (fixture-side: armor-be6e5146; production-side: multipart
+  migration lineage).
