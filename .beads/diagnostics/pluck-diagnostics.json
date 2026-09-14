@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-09-14T03:08:14.996648201Z",
-  "total_open_beads": 56,
+  "timestamp": "2026-09-14T04:08:20.584206431Z",
+  "total_open_beads": 55,
   "exclusion_criteria": {
     "has_assignee": 3,
     "manually_blocked": 5,
     "has_dependencies": 46,
     "resource_conflicts": 1
   },
-  "final_candidate_count": 5,
+  "final_candidate_count": 4,
   "excluded_beads": [
     {
       "bead_id": "armor-d3162d1a",
