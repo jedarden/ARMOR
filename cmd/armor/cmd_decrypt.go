@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -721,28 +722,22 @@ func decryptLocalMultipart(src *inputSource, dek []byte) ([]byte, error) {
 			fmt.Fprintf(os.Stderr, "V3 Sidecar: block_size=%d, %d parts, version=%d\n", sidecarV3.BlockSize, len(sidecarV3.Parts), sidecarV3.Version)
 		}
 
-		// For v3, we need to build the block table from the sidecar
-		// v3 sidecar has per-part block information with HMACs and lengths
-		blockTable, err := buildV3BlockTable(&sidecarV3)
-		if err != nil {
-			return nil, fmt.Errorf("build v3 block table: %w", err)
-		}
-
 		// Create decryptor for v3
 		decryptor, err := crypto.NewDecryptorWithVersion(dek, iv, blockSize, uint8(version))
 		if err != nil {
 			return nil, fmt.Errorf("create v3 decryptor: %w", err)
 		}
 
-		// Decrypt using v3 semantics (part 0 for single-PUT local files)
-		plaintext, err = decryptor.DecryptV3(encryptedData, 0, blockTable)
+		// v3 multipart blocks are keyed per (part, local block index) — decrypt
+		// each sidecar part under its own part number.
+		plaintext, err = decryptV3MultipartPerPart(encryptedData, &sidecarV3, decryptor)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt v3 blocks: %w (possible data corruption)", err)
+			return nil, fmt.Errorf("decrypt v3 multipart: %w", err)
 		}
 
 		if decryptVerboseFlag {
-			fmt.Fprintf(os.Stderr, "Decrypted %d bytes using v3 with block table (%d blocks)\n",
-				len(plaintext), blockTable.EntryCount())
+			fmt.Fprintf(os.Stderr, "Decrypted %d bytes across %d sidecar parts\n",
+				len(plaintext), len(sidecarV3.Parts))
 		}
 
 		return plaintext, nil
@@ -800,60 +795,125 @@ func decryptLocalMultipart(src *inputSource, dek []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// buildV3BlockTable constructs a v3 block table from the v3 sidecar format.
-// The v3 sidecar contains per-part block information with HMACs and ciphertext lengths.
-func buildV3BlockTable(sidecar *backend.HMACTableSidecarV3) (*crypto.BlockTable, error) {
-	// Count total blocks across all parts
-	totalBlocks := 0
-	for _, part := range sidecar.Parts {
-		totalBlocks += len(part.Blocks)
+// decodeV3SidecarClen decodes one sidecar block's ciphertext length. The
+// server writes sidecar blocks as [hmac_b64, b64(4-byte big-endian clen)] with
+// the high bit flagging a compressed block, while the v3 test-vector generator
+// writes a plain decimal string. The wire form is tried first, and the forms
+// cannot collide even though digits are base64 characters: exactly 4 decoded
+// bytes require a 6-char unpadded input, and a pure-digit 6-char string always
+// fails Go's trailing-bits check (digit alphabet values 52-61 never carry the
+// required zero low nibble), while an 8-char input decodes to 6 bytes.
+func decodeV3SidecarClen(encoded string) (uint32, error) {
+	if raw, err := base64.StdEncoding.DecodeString(encoded); err == nil && len(raw) == 4 {
+		return binary.BigEndian.Uint32(raw), nil
 	}
+	clen, err := strconv.ParseUint(encoded, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("block ciphertext length is neither the server wire form (base64 uint32) nor decimal: %q", encoded)
+	}
+	return uint32(clen), nil
+}
 
-	blockTable := crypto.NewBlockTable(sidecar.BlockSize, totalBlocks)
+// blockTableForSidecarPart builds the v3 block table for ONE sidecar part: one
+// entry per block, with the HMAC and ciphertext length in the server's sidecar
+// wire form (see decodeV3SidecarClen). The compression flag bit, when set,
+// rides in CiphertextLength exactly as in an envelope block table.
+func blockTableForSidecarPart(part backend.HMACPartV3, blockSize int) (*crypto.BlockTable, error) {
+	table := crypto.NewBlockTable(blockSize, len(part.Blocks))
+	for _, blockData := range part.Blocks {
+		// blockData is []string{"hmac_base64", "clen"}
+		if len(blockData) != 2 {
+			return nil, fmt.Errorf("invalid block data format: expected [hmac, clen], got %d elements", len(blockData))
+		}
 
-	// Process each part's blocks in order
-	globalBlockIndex := 0
-	for _, part := range sidecar.Parts {
-		for _, blockData := range part.Blocks {
-			// blockData is []string{"hmac_base64", "clen"}
-			if len(blockData) != 2 {
-				return nil, fmt.Errorf("invalid block data format: expected [hmac, clen], got %d elements", len(blockData))
-			}
+		hmacBytes, err := base64.StdEncoding.DecodeString(blockData[0])
+		if err != nil {
+			return nil, fmt.Errorf("decode block HMAC: %w", err)
+		}
+		if len(hmacBytes) != 32 {
+			return nil, fmt.Errorf("invalid HMAC length: got %d bytes, expected 32", len(hmacBytes))
+		}
 
-			// Decode HMAC
-			hmacBytes, err := base64.StdEncoding.DecodeString(blockData[0])
-			if err != nil {
-				return nil, fmt.Errorf("decode block HMAC: %w", err)
-			}
-			if len(hmacBytes) != 32 {
-				return nil, fmt.Errorf("invalid HMAC length: got %d bytes, expected 32", len(hmacBytes))
-			}
+		clen, err := decodeV3SidecarClen(blockData[1])
+		if err != nil {
+			return nil, err
+		}
 
-			// Parse ciphertext length
-			var hmacArray [32]byte
-			copy(hmacArray[:], hmacBytes)
+		var hmacArray [32]byte
+		copy(hmacArray[:], hmacBytes)
 
-			// Parse clen as uint32
-			clen, err := strconv.ParseUint(blockData[1], 10, 32)
-			if err != nil {
-				return nil, fmt.Errorf("parse ciphertext length: %w", err)
-			}
-
-			// Create block table entry
-			entry := &crypto.BlockTableEntry{
-				HMAC:             hmacArray,
-				CiphertextLength: uint32(clen),
-			}
-
-			if err := blockTable.AddEntry(entry); err != nil {
-				return nil, fmt.Errorf("add block %d: %w", globalBlockIndex, err)
-			}
-
-			globalBlockIndex++
+		if err := table.AddEntry(&crypto.BlockTableEntry{HMAC: hmacArray, CiphertextLength: clen}); err != nil {
+			return nil, fmt.Errorf("add block: %w", err)
 		}
 	}
+	return table, nil
+}
 
-	return blockTable, nil
+// totalSidecarCiphertextLength sums the stored ciphertext length across all
+// sidecar parts (raw lengths, compression flag bits masked off). This, not the
+// plaintext-size metadata, is how many ciphertext bytes a multipart object
+// stores: CTR keeps ciphertext == plaintext per block only while blocks are
+// uncompressed.
+func totalSidecarCiphertextLength(sidecar *backend.HMACTableSidecarV3) (int64, error) {
+	var total int64
+	for _, part := range sidecar.Parts {
+		for _, blockData := range part.Blocks {
+			if len(blockData) != 2 {
+				return 0, fmt.Errorf("invalid block data format: expected [hmac, clen], got %d elements", len(blockData))
+			}
+			clen, err := decodeV3SidecarClen(blockData[1])
+			if err != nil {
+				return 0, err
+			}
+			total += int64(clen &^ crypto.CompressionFlagBit)
+		}
+	}
+	return total, nil
+}
+
+// decryptV3MultipartPerPart decrypts a v3 multipart object one sidecar part at
+// a time. v3 keys every block's counter and HMAC by (part, local block index)
+// — EncryptPartV3 numbers parts from 1 and restarts block indices at 0 for
+// each part — so no single DecryptV3 call can cover more than one part of a
+// multi-part object. The flattened decrypt this command used before matched at
+// most part 1 (and passed part 0, which matches no multipart block at all).
+// The sidecar carries each part's block list, so the concatenated ciphertext
+// is sliced on cumulative block lengths and each slice is decrypted under its
+// own part number — the exact inverse of how the parts were written.
+func decryptV3MultipartPerPart(encryptedData []byte, sidecar *backend.HMACTableSidecarV3, decryptor *crypto.Decryptor) ([]byte, error) {
+	if sidecar.BlockSize <= 0 {
+		return nil, errors.New("v3 sidecar missing block_size")
+	}
+	if len(sidecar.Parts) == 0 {
+		return nil, errors.New("v3 sidecar has no parts")
+	}
+
+	var plaintext []byte
+	offset := 0
+	for _, part := range sidecar.Parts {
+		if part.N < 0 || part.N > 65535 {
+			return nil, fmt.Errorf("invalid v3 sidecar part number %d", part.N)
+		}
+
+		table, err := blockTableForSidecarPart(part, sidecar.BlockSize)
+		if err != nil {
+			return nil, fmt.Errorf("part %d: %w", part.N, err)
+		}
+
+		partLen := int(table.TotalCiphertextLength())
+		if offset+partLen > len(encryptedData) {
+			return nil, fmt.Errorf("part %d ciphertext (%d bytes at offset %d) exceeds stored ciphertext of %d bytes",
+				part.N, partLen, offset, len(encryptedData))
+		}
+
+		partPlaintext, err := decryptor.DecryptV3(encryptedData[offset:offset+partLen], uint16(part.N), table)
+		if err != nil {
+			return nil, fmt.Errorf("part %d: %w (possible data corruption)", part.N, err)
+		}
+		plaintext = append(plaintext, partPlaintext...)
+		offset += partLen
+	}
+	return plaintext, nil
 }
 
 // decryptB2 decrypts from a B2 bucket.
@@ -978,16 +1038,17 @@ func decryptB2(ctx context.Context, src *inputSource, mek []byte, ringKeys []cry
 		encryptedData []byte
 		hmacTable     []byte
 		iv            []byte
-		header        *crypto.EnvelopeHeader // single-PUT only; nil for multipart
-		blockTable    *crypto.BlockTable     // v3 only; nil for v1/v2
+		header        *crypto.EnvelopeHeader      // single-PUT only; nil for multipart
+		blockTable    *crypto.BlockTable          // v3 single-PUT only; nil for multipart and v1/v2
+		sidecarV3     *backend.HMACTableSidecarV3 // v3 multipart only; nil otherwise
 	)
 	if isMultipart {
 		if decryptVerboseFlag {
 			fmt.Fprintln(os.Stderr, "Multipart object: headerless ciphertext + JSON HMAC sidecar")
 		}
-		encryptedData, hmacTable, iv, blockTable, err = readB2MultipartCiphertext(ctx, b2Backend, src, armorMeta)
+		encryptedData, hmacTable, iv, sidecarV3, err = readB2MultipartCiphertext(ctx, b2Backend, src, armorMeta)
 	} else {
-		encryptedData, hmacTable, iv, header, blockTable, err = readB2EnvelopeCiphertext(ctx, b2Backend, src, armorMeta)
+		encryptedData, hmacTable, iv, header, blockTable, err = readB2EnvelopeCiphertext(ctx, b2Backend, src, armorMeta, info.Size)
 	}
 	if err != nil {
 		return nil, err
@@ -1002,22 +1063,20 @@ func decryptB2(ctx context.Context, src *inputSource, mek []byte, ringKeys []cry
 	var plaintext []byte
 
 	// Decrypt based on version and format
-	if armorMeta.Version == 3 && blockTable != nil {
-		// v3 with block table
+	if armorMeta.Version == 3 && sidecarV3 != nil {
+		// v3 multipart: blocks are keyed per (part, local block index), so each
+		// sidecar part decrypts under its own part number.
+		plaintext, err = decryptV3MultipartPerPart(encryptedData, sidecarV3, decryptor)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt v3 multipart: %w", err)
+		}
+	} else if armorMeta.Version == 3 && blockTable != nil {
+		// v3 single-PUT: the whole block table was written under part 0.
 		if decryptVerboseFlag {
 			fmt.Fprintf(os.Stderr, "Decrypting v3 object with block table (%d blocks)\n", blockTable.EntryCount())
 		}
 
-		// v3 part numbering: single-PUT objects encrypt under part 0, while
-		// multipart parts are numbered from 1 (part N starts at block
-		// (N-1)*P/BlockSize), so the single-part multipart objects this command
-		// decrypts whole carry their entire block table under part 1. Same
-		// distinction the restore verifier makes on both of its paths.
-		part := uint16(0)
-		if isMultipart {
-			part = 1
-		}
-		plaintext, err = decryptor.DecryptV3(encryptedData, part, blockTable)
+		plaintext, err = decryptor.DecryptV3(encryptedData, 0, blockTable)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt v3 blocks: %w (possible data corruption)", err)
 		}
@@ -1059,7 +1118,7 @@ func decryptB2(ctx context.Context, src *inputSource, mek []byte, ringKeys []cry
 // - v3:   block table trailer at the end (per-block HMACs + compression flags)
 // Returns the decoded header so the caller can run header.VerifyPlaintextSHA
 // on the decrypted plaintext. For v3, also returns the block table.
-func readB2EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, src *inputSource, armorMeta *backend.ARMORMetadata) (encryptedData, hmacTable, iv []byte, header *crypto.EnvelopeHeader, blockTable *crypto.BlockTable, err error) {
+func readB2EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, src *inputSource, armorMeta *backend.ARMORMetadata, objectSize int64) (encryptedData, hmacTable, iv []byte, header *crypto.EnvelopeHeader, blockTable *crypto.BlockTable, err error) {
 	// Envelope header (64 bytes) at offset 0.
 	headerReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, 0, crypto.HeaderSize)
 	if err != nil {
@@ -1077,7 +1136,7 @@ func readB2EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, sr
 
 	// For v3, read block table trailer
 	if header.Version == crypto.Version3 {
-		return readB2V3EnvelopeCiphertext(ctx, b2Backend, src, armorMeta, header)
+		return readB2V3EnvelopeCiphertext(ctx, b2Backend, src, armorMeta, header, objectSize)
 	}
 
 	// v1/v2: Read encrypted data and inline HMAC table
@@ -1110,7 +1169,7 @@ func readB2EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, sr
 
 // readB2V3EnvelopeCiphertext reads a v3 single-PUT object with block table trailer.
 // Returns encrypted data, block table, IV, and header (hmacTable is nil for v3).
-func readB2V3EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, src *inputSource, armorMeta *backend.ARMORMetadata, header *crypto.EnvelopeHeader) (encryptedData, hmacTable, iv []byte, returnedHeader *crypto.EnvelopeHeader, blockTable *crypto.BlockTable, err error) {
+func readB2V3EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, src *inputSource, armorMeta *backend.ARMORMetadata, header *crypto.EnvelopeHeader, objectSize int64) (encryptedData, hmacTable, iv []byte, returnedHeader *crypto.EnvelopeHeader, blockTable *crypto.BlockTable, err error) {
 	if decryptVerboseFlag {
 		fmt.Fprintln(os.Stderr, "Reading v3 envelope with block table trailer from B2")
 	}
@@ -1121,12 +1180,16 @@ func readB2V3EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, 
 	// Calculate block table trailer size and offset
 	trailerSize := int64(blockCount) * crypto.BlockTableEntrySize
 
-	// Get object size to calculate trailer offset
-	// For v3, the object size = header + encrypted data + trailer
-	// We can infer encrypted data size from the block table, so we need to read the trailer first
+	// The trailer sits at the very end of the stored object: the size comes
+	// from the Head decryptB2 already made, and the offset stays non-negative —
+	// the backend rejects negative (from-end) ranges. Same arithmetic as the
+	// server's v3 trailer read.
+	trailerOffset := objectSize - trailerSize
+	if trailerOffset < crypto.HeaderSize {
+		return nil, nil, nil, nil, nil, fmt.Errorf("invalid v3 trailer offset: objectSize %d, trailerSize %d", objectSize, trailerSize)
+	}
 
-	// Read the trailer from the end
-	trailerReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, -trailerSize, trailerSize)
+	trailerReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, trailerOffset, trailerSize)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("read block table trailer from B2: %w", err)
 	}
@@ -1171,21 +1234,11 @@ func readB2V3EnvelopeCiphertext(ctx context.Context, b2Backend backend.Backend, 
 // sidecar at .armor/hmac/<sha256(client key)>. The IV is carried by object metadata
 // (there is no header byte stream to read it from). The sidecar is loaded through
 // the same MultipartStateManager the server uses, so the JSON wire format is
-// shared exactly. For v3 objects, returns the block table instead of flattened HMACs.
-func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, src *inputSource, armorMeta *backend.ARMORMetadata) (encryptedData, hmacTable, iv []byte, blockTable *crypto.BlockTable, err error) {
+// shared exactly. For v3 objects, returns the parsed sidecar so decryption can
+// proceed per part; for v1/v2, the flattened HMAC table.
+func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, src *inputSource, armorMeta *backend.ARMORMetadata) (encryptedData, hmacTable, iv []byte, sidecarV3 *backend.HMACTableSidecarV3, err error) {
 	if len(armorMeta.IV) == 0 {
 		return nil, nil, nil, nil, errors.New("multipart object missing IV metadata (x-amz-meta-armor-iv)")
-	}
-
-	// Raw ciphertext at offset 0; CTR mode keeps ciphertext == plaintext size.
-	encryptedData = make([]byte, armorMeta.PlaintextSize)
-	dataReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, 0, armorMeta.PlaintextSize)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("read multipart ciphertext from B2: %w", err)
-	}
-	defer dataReader.Close()
-	if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("read multipart ciphertext bytes: %w", err)
 	}
 
 	// The sidecar is named sha256 of the CLIENT key, because the server's
@@ -1201,17 +1254,43 @@ func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, s
 
 	// For v3, load the v3 sidecar format
 	if armorMeta.Version == 3 {
-		sidecarV3, err := backend.NewMultipartStateManager(b2Backend, src.Bucket).LoadHMACTableV3(ctx, clientKey)
+		sidecarV3, err = backend.NewMultipartStateManager(b2Backend, src.Bucket).LoadHMACTableV3(ctx, clientKey)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("fetch v3 HMAC sidecar from .armor/hmac/<sha256(key)>: %w", err)
 		}
 
-		blockTable, err = buildV3BlockTableFromSidecar(sidecarV3)
+		// The sidecar also says how many ciphertext bytes to read: per-block
+		// ciphertext lengths sum to exactly the stored body, compressed blocks
+		// included, while the plaintext-size metadata only matches when every
+		// block is uncompressed.
+		totalCiphertext, err := totalSidecarCiphertextLength(sidecarV3)
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("build v3 block table: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("v3 sidecar: %w", err)
 		}
 
-		return encryptedData, nil, armorMeta.IV, blockTable, nil
+		// Raw ciphertext at offset 0; CTR mode keeps ciphertext == plaintext size per block.
+		encryptedData = make([]byte, totalCiphertext)
+		dataReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, 0, totalCiphertext)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("read multipart ciphertext from B2: %w", err)
+		}
+		defer dataReader.Close()
+		if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("read multipart ciphertext bytes: %w", err)
+		}
+
+		return encryptedData, nil, armorMeta.IV, sidecarV3, nil
+	}
+
+	// v1/v2: raw ciphertext at offset 0; CTR mode keeps ciphertext == plaintext size.
+	encryptedData = make([]byte, armorMeta.PlaintextSize)
+	dataReader, err := b2Backend.GetRange(ctx, src.Bucket, src.Path, 0, armorMeta.PlaintextSize)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("read multipart ciphertext from B2: %w", err)
+	}
+	defer dataReader.Close()
+	if _, err := io.ReadFull(dataReader, encryptedData); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("read multipart ciphertext bytes: %w", err)
 	}
 
 	// For v1/v2, load the regular sidecar format
@@ -1225,58 +1304,6 @@ func readB2MultipartCiphertext(ctx context.Context, b2Backend backend.Backend, s
 	}
 
 	return encryptedData, hmacTable, armorMeta.IV, nil, nil
-}
-
-// buildV3BlockTableFromSidecar constructs a v3 block table from the v3 sidecar format.
-func buildV3BlockTableFromSidecar(sidecar *backend.HMACTableSidecarV3) (*crypto.BlockTable, error) {
-	// Count total blocks across all parts
-	totalBlocks := 0
-	for _, part := range sidecar.Parts {
-		totalBlocks += len(part.Blocks)
-	}
-
-	blockTable := crypto.NewBlockTable(sidecar.BlockSize, totalBlocks)
-
-	// Process each part's blocks in order
-	for _, part := range sidecar.Parts {
-		for _, blockData := range part.Blocks {
-			// blockData is []string{"hmac_base64", "clen"}
-			if len(blockData) != 2 {
-				return nil, fmt.Errorf("invalid block data format: expected [hmac, clen], got %d elements", len(blockData))
-			}
-
-			// Decode HMAC
-			hmacBytes, err := base64.StdEncoding.DecodeString(blockData[0])
-			if err != nil {
-				return nil, fmt.Errorf("decode block HMAC: %w", err)
-			}
-			if len(hmacBytes) != 32 {
-				return nil, fmt.Errorf("invalid HMAC length: got %d bytes, expected 32", len(hmacBytes))
-			}
-
-			// Parse ciphertext length
-			var hmacArray [32]byte
-			copy(hmacArray[:], hmacBytes)
-
-			// Parse clen as uint32
-			clen, err := strconv.ParseUint(blockData[1], 10, 32)
-			if err != nil {
-				return nil, fmt.Errorf("parse ciphertext length: %w", err)
-			}
-
-			// Create block table entry
-			entry := &crypto.BlockTableEntry{
-				HMAC:             hmacArray,
-				CiphertextLength: uint32(clen),
-			}
-
-			if err := blockTable.AddEntry(entry); err != nil {
-				return nil, fmt.Errorf("add block: %w", err)
-			}
-		}
-	}
-
-	return blockTable, nil
 }
 
 // b2BackendFactory returns the B2 backend decryptB2 reads through. Production
