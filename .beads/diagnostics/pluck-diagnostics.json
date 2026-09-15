@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-09-15T01:39:47.57320526Z",
-  "total_open_beads": 48,
+  "timestamp": "2026-09-15T04:39:59.480161287Z",
+  "total_open_beads": 60,
   "exclusion_criteria": {
     "has_assignee": 0,
     "manually_blocked": 5,
-    "has_dependencies": 41,
+    "has_dependencies": 44,
     "resource_conflicts": 1
   },
-  "final_candidate_count": 3,
+  "final_candidate_count": 11,
   "excluded_beads": [
     {
       "bead_id": "armor-d3162d1a",
@@ -479,6 +479,50 @@
       "manual_blocked": false,
       "has_blockers": true,
       "blocker_count": 2,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-709ba591",
+      "title": "Add canonical V1/V2 uniform multipart fixtures",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 1,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-a61a4bf3",
+      "title": "Add ADR-010/ADR-011 and invalid migration fixtures",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 1,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-271c0930",
+      "title": "Write V3 golden outcomes and clean-clone validation",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 1,
+      "has_resource_conflicts": false,
+      "conflict_count": 0
+    },
+    {
+      "bead_id": "armor-55bc0d4f",
+      "title": "Test coverage for the ADR-001 internal-namespace addendum: prefixed .armor/ paths, dual-location listing filters, ARMOR_MANIFEST_PREFIX composition",
+      "priority": 2,
+      "assignee": null,
+      "manual_blocked": false,
+      "has_blockers": true,
+      "blocker_count": 3,
       "has_resource_conflicts": false,
       "conflict_count": 0
     },
