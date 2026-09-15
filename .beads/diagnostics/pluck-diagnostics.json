@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-14T23:39:39.995831052Z",
+  "timestamp": "2026-09-15T00:24:04.133917961Z",
   "total_open_beads": 49,
   "exclusion_criteria": {
     "has_assignee": 0,
@@ -7,7 +7,7 @@
     "has_dependencies": 42,
     "resource_conflicts": 1
   },
-  "final_candidate_count": 2,
+  "final_candidate_count": 3,
   "excluded_beads": [
     {
       "bead_id": "armor-d3162d1a",
@@ -320,17 +320,6 @@
     {
       "bead_id": "armor-7b39fc12",
       "title": "Implement dry-run integrity checks and fix state failures",
-      "priority": 1,
-      "assignee": null,
-      "manual_blocked": false,
-      "has_blockers": true,
-      "blocker_count": 1,
-      "has_resource_conflicts": false,
-      "conflict_count": 0
-    },
-    {
-      "bead_id": "armor-2c7152ae",
-      "title": "Generate malformed fixtures and validate complete fixture set",
       "priority": 1,
       "assignee": null,
       "manual_blocked": false,
