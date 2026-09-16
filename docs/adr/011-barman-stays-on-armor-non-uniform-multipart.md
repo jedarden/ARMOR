@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-08-07
 **Supersedes:** [ADR-010](010-barman-multipart-incompatibility.md)
-**Related:** ADR-002, ADR-003, ADR-005, ADR-008
+**Related:** ADR-002, ADR-003, ADR-015, ADR-008
 
 ## Context
 
@@ -64,7 +64,7 @@ this failed only because the server-side exemption did not yet exist.
 
 ## Non-uniform multipart: what it requires
 
-ADR-005 pins one uniform `P` from part 1 and derives every later part's offset
+ADR-015 pins one uniform `P` from part 1 and derives every later part's offset
 as `(N-1) × P`. That is what makes out-of-order arrival safe. Barman's parts
 are both non-aligned *and* non-uniform, so a second part of a different size
 contradicts `P` and is rejected today. Supporting it needs three changes:
@@ -72,7 +72,7 @@ contradicts `P` and is rejected today. Supporting it needs three changes:
 1. **Per-part offsets from cumulative sizes.** A part's offset becomes the sum
    of the sizes of all lower-numbered parts, not `(N-1) × P`. This requires
    every lower part to be known, so a part arriving before its predecessors is
-   deferred with the retryable `503 SlowDown` that ADR-005 already uses for
+   deferred with the retryable `503 SlowDown` that ADR-015 already uses for
    part>1-before-part-1. Uniform-size uploads keep the existing fast path
    unchanged.
 2. **CTR seek to an arbitrary byte offset.** Encryption is currently
@@ -115,7 +115,7 @@ different size, and a completed object verified byte-identical end to end.
 - ADR-010 is superseded. Its barman root-cause analysis remains valid and is
   the reference for *why* configuration cannot fix part alignment; its decision
   and its "no server-side fix short of a risky accommodation" framing are not.
-- ADR-005's uniform-part-size contract remains the fast path and remains
+- ADR-015's uniform-part-size contract remains the fast path and remains
   enforced for parts that something is placed after.
 
 ## Correction to the record

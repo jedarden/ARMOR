@@ -10,7 +10,7 @@
 > after, so part 1 and a short final part never needed it. Correcting that
 > makes single-part uploads of any size work without weakening the contract.
 **Date:** 2026-08-06
-**Related:** ADR-002, ADR-003, ADR-005, ADR-008
+**Related:** ADR-002, ADR-003, ADR-015, ADR-008
 
 ## Context
 
@@ -21,7 +21,7 @@ queue-db:          Part size 11876352 is not a multiple of the block size (65536
 forgejo-postgres:   Part size 4284416 is not a multiple of the block size (65536 bytes)
 ```
 
-These are **correct rejections**. ADR-005 established a uniform-part-size contract requiring every non-final multipart part to be an exact multiple of ARMOR's 64 KiB encryption block size, because part offsets and per-block HMAC indices are derived from block-aligned arithmetic. Accepting a misaligned part would silently produce unreadable or corrupt ciphertext — exactly the class of bug ADR-002/ADR-003/ADR-005 already fought once.
+These are **correct rejections**. ADR-015 established a uniform-part-size contract requiring every non-final multipart part to be an exact multiple of ARMOR's 64 KiB encryption block size, because part offsets and per-block HMAC indices are derived from block-aligned arithmetic. Accepting a misaligned part would silently produce unreadable or corrupt ciphertext — exactly the class of bug ADR-002/ADR-003/ADR-015 already fought once.
 
 A same-day "fix" (declarative-config commit `c8aefe75`, 2026-08-06 08:50 EDT) disabled gzip compression on the theory that barman's tar streamer flushes in exact 65536-byte chunks when uncompressed. **This was incorrect.** Live logs pulled hours after the fix showed both clusters still failing on every attempt. The "verified empirically" claim was based on insufficient testing.
 
@@ -97,12 +97,12 @@ No fixed C can satisfy this for arbitrary N (i.e., arbitrary data sizes). The on
 
 **REVISED 2026-08-07 — superseded below.** The original decision here (routing these two backup targets through Garage instead of ARMOR) was rejected: this backup topology stays on ARMOR/B2. Instead:
 
-**Add an opt-in "variable-part-size" mode to ARMOR** that lets an explicitly-scoped client accommodate non-uniform, non-block-aligned multipart parts — targeting barman's actual behavior directly instead of asking the backup topology or barman itself to change. This mode must not weaken ADR-005's guarantees for any client that doesn't opt in.
+**Add an opt-in "variable-part-size" mode to ARMOR** that lets an explicitly-scoped client accommodate non-uniform, non-block-aligned multipart parts — targeting barman's actual behavior directly instead of asking the backup topology or barman itself to change. This mode must not weaken ADR-015's guarantees for any client that doesn't opt in.
 
 The mechanism, replacing the uniform-part-size assumption for opted-in uploads only:
 
 1. **Explicit, narrow opt-in.** The client signals this mode on `CreateMultipartUpload` (e.g. a request header or query param specific to this mode); it must not be inferable or defaulted, and should be further scoped to the specific credential/bucket-prefix these two backup targets use so no other client can trigger it accidentally.
-2. **Sequential-only delivery is required.** A part arriving out of expected order (`partNumber` ≠ next-expected) is rejected outright — the same poison-detection posture ADR-005 already applies to its own contract, just enforcing order instead of size uniformity. This removes any need to guess at an unseen part's offset.
+2. **Sequential-only delivery is required.** A part arriving out of expected order (`partNumber` ≠ next-expected) is rejected outright — the same poison-detection posture ADR-015 already applies to its own contract, just enforcing order instead of size uniformity. This removes any need to guess at an unseen part's offset.
 3. **True cumulative byte offset, tracked server-side.** ARMOR persists a running offset in the upload's existing state (alongside the ADR-003 per-part HMAC table), computed from each part's *actual* received size — not `(partNumber-1) × partSize`.
 4. **Blocks that straddle a part boundary must be handled explicitly.** Since part sizes are no longer guaranteed multiples of the 64 KiB encryption block, a block can now span the tail of one part and the head of the next — the current code assumes every part starts and ends on a block boundary and does not handle this. The implementation must buffer an incomplete trailing block's plaintext across the `UploadPart` boundary until enough bytes arrive to complete it. This buffered state must either survive a process restart within the upload's lifetime, or the upload must fail loudly on restart — silently dropping buffered bytes would reintroduce exactly the class of silent corruption ADR-002/003/005 already fought.
 
@@ -127,7 +127,7 @@ Rejected: the root cause analysis demonstrates that no configuration value can f
 ### Immediate
 
 - ARMOR needs a new opt-in variable-part-size multipart mode (see Decision) before `queue-db`/`forgejo-postgres` backups can succeed. Until it ships, both remain broken exactly as described in Root Cause — no interim topology change is planned.
-- The uniform-part-size contract (ADR-005) remains fully enforced, unchanged, for every client that doesn't explicitly opt in.
+- The uniform-part-size contract (ADR-015) remains fully enforced, unchanged, for every client that doesn't explicitly opt in.
 
 ### Long-Term
 
@@ -139,7 +139,7 @@ Rejected: the root cause analysis demonstrates that no configuration value can f
 
 - ADR-002: Close detection gaps that let the multipart-upload corruption bug run 40 days undetected
 - ADR-003: Per-part HMAC tables for multipart uploads
-- ADR-005: Out-of-order multipart parts via a uniform-part-size contract
+- ADR-015: Out-of-order multipart parts via a uniform-part-size contract
 - ADR-008: Server-side observability for multipart part-size rejections
 - Root cause analysis: `docs/research/barman_armor_root_cause_analysis.md` (code review, simulation, real-world reconstruction)
 - Simulation script: `docs/research/barman_part_size_simulation.py`

@@ -261,7 +261,7 @@ EOF
 ## Related Documentation
 
 - **ADR-016**: B2-safe multipart metadata finalization protocol
-- **ADR-005**: Out-of-order multipart uploads
+- **ADR-015**: Out-of-order multipart uploads
 - **ADR-003**: Multipart object layout and read path
 - `internal/backend/multipart.go`: Multipart state management
 - `internal/server/handlers/handlers.go`: CompleteMultipartUpload handler

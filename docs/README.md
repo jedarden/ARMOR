@@ -34,12 +34,11 @@ This index organizes all durable documentation by audience. Every file under `do
 |-----|-------|--------|
 | [ADR-001](adr/001-bucket-prefix.md) | Shared Bucket via ARMOR_PREFIX | Accepted |
 | [ADR-002](adr/002-multipart-corruption-detection-gaps.md) | Close multipart corruption detection gaps | Accepted |
-| [ADR-003](adr/003-multipart-object-layout-and-read-path.md) | Multipart object layout and read-path dispatch | Accepted (superseded by ADR-005) |
+| [ADR-003](adr/003-multipart-object-layout-and-read-path.md) | Multipart object layout and read-path dispatch | Accepted (§4 superseded by ADR-015) |
 | [ADR-004](adr/004-continuous-restore-verification.md) | Continuous dual-path restore verification | Accepted |
 | [ADR-005](adr/005-ctr-counter-stride-fix.md) | AES-CTR Counter Stride Fix (Version 2) | Accepted |
 | [ADR-006](adr/006-dual-backend-replication.md) | Dual-backend async replication for provider-outage resilience | Accepted |
 | [ADR-007](adr/007-zstd-compression.md) | zstd Compression for Single-PUT Objects | Accepted |
-| [ADR-007](adr/007-restore-verifier-discovery-reliability.md) | Restore-Verifier Discovery Reliability | Accepted |
 | [ADR-008](adr/008-multipart-part-size-error-clarity.md) | Server-side observability for part-size rejections | Proposed |
 | [ADR-009](adr/009-restore-verifier-armor-path-never-decrypts.md) | restore-verifier's ARMOR path never decrypts | Accepted |
 | [ADR-010](adr/010-barman-multipart-incompatibility.md) | Barman multipart incompatibility | Superseded by ADR-011 |
@@ -48,6 +47,7 @@ This index organizes all durable documentation by audience. Every file under `do
 | [ADR-013](adr/013-read-throughput-unpipelined-block-fetches.md) | Read throughput bounded by unpipelined block fetches | Proposed |
 | [ADR-014](adr/014-restore-verifier-discovery-reliability.md) | Restore-verifier discovery reliability | Accepted |
 | [ADR-015](adr/015-out-of-order-multipart-uniform-part-size.md) | Out-of-order multipart via uniform-part-size contract | Implemented |
+| [ADR-016](adr/016-multipart-metadata-finalization.md) | B2-Safe Multipart Metadata Finalization Protocol | Accepted (2026-08-31) |
 
 ### Format Specifications
 

@@ -449,7 +449,7 @@ hex, part maps and per-part counter tables.
 
 | Fixture | Distinguisher | V3 outcome (miniature / full-scale 15 MiB) |
 |---|---|---|
-| `v1_multipart/uniform_parts` | ADR-005 uniform; `part-size` present | single-PUT / multipart 3 × 5 MiB |
+| `v1_multipart/uniform_parts` | ADR-015 uniform; `part-size` present | single-PUT / multipart 3 × 5 MiB |
 | `v1_multipart/variable_final_part` | ADR-010; `part-size` = nominal 3 MiB | single-PUT (stale part-size carried) / multipart 3 × 5 MiB (5 × 3 MiB in) |
 | `v1_multipart/non_uniform_parts` | ADR-011; **no `part-size`** | single-PUT (no part-size emitted) / multipart 3 × 5 MiB (1/2/12 MiB in) |
 | `generated_fixtures/v1-multipart-uniform` | 256 KiB, standalone-generator crypto | single-PUT, 64 × 4 KiB blocks |
@@ -458,7 +458,7 @@ hex, part maps and per-part counter tables.
 
 | Fixture | Distinguisher | V3 outcome (miniature / full-scale 15 MiB) |
 |---|---|---|
-| `v2_multipart/uniform_parts` | ADR-005 + `etag`; continuous counter stream | single-PUT / multipart 3 × 5 MiB |
+| `v2_multipart/uniform_parts` | ADR-015 + `etag`; continuous counter stream | single-PUT / multipart 3 × 5 MiB |
 | `v2_multipart/variable_final_part` | ADR-010; `part-size` 3145728 | single-PUT (stale part-size carried) / multipart 3 × 5 MiB (5 × 3 MiB in) |
 | `v2_multipart/non_uniform_parts` | ADR-011; no `part-size` | single-PUT / multipart 3 × 5 MiB (1/2/12 MiB in) |
 | `generated_fixtures/v2-multipart-uniform` | 256 KiB on-disk, 8-hex fp AES-GCM DEK | single-PUT, 64 × 4 KiB blocks |

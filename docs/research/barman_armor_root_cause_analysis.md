@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Barman-cloud-backup 3.19.1 (the version confirmed live in iad-ci pods) produces multipart upload parts that are not multiples of ARMOR's 65536-byte encryption block size, violating ARMOR's documented uniform-part-size contract (ADR-005). This is not a configuration issue or a bug in ARMOR — it is a fundamental incompatibility between barman's upload logic and ARMOR's encryption requirements.
+Barman-cloud-backup 3.19.1 (the version confirmed live in iad-ci pods) produces multipart upload parts that are not multiples of ARMOR's 65536-byte encryption block size, violating ARMOR's documented uniform-part-size contract (ADR-015). This is not a configuration issue or a bug in ARMOR — it is a fundamental incompatibility between barman's upload logic and ARMOR's encryption requirements.
 
 **Root Cause:** Barman's `CloudTarUploader.write()` method flushes upload parts when the buffer size exceeds `chunk_size`, not when it equals `chunk_size`. This produces parts of size `chunk_size + N` where N depends on the last write operation. For uncompressed tar streams (the post-"fix" configuration on iad-ci), N is a multiple of 512 bytes (POSIX tar block size). For compressed streams, N is unpredictable. ARMOR requires N to be a multiple of 65536 bytes. 512 ≠ 65536, and no client-side `chunk_size` value can fix this mismatch.
 
@@ -136,7 +136,7 @@ Could add an opt-in mode for clients that cannot guarantee alignment:
 - Would need a different integrity mechanism to avoid reintroducing ADR-002's corruption
 
 Risks:
-- Must ensure the new mechanism does not have the same blind spots as the pre-ADR-005 code
+- Must ensure the new mechanism does not have the same blind spots as the pre-ADR-015 code
 - Would require careful threat modeling and extensive testing
 - Adds complexity to ARMOR's encryption layer
 

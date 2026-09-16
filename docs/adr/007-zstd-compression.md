@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-08-23
-**Related:** ADR-005 (uniform-part-size contract), bead armor-8d387bf4
+**Related:** ADR-015 (uniform-part-size contract), bead armor-8d387bf4
 
 ## Context
 
@@ -86,7 +86,7 @@ When `ARMOR_COMPRESS=true`, `CreateMultipartUpload` MUST return:
 ```
 
 See ADR-007 (multipart-compression) for detailed rationale. Summary:
-- Per-part compression breaks ADR-005's uniform-part-size contract
+- Per-part compression breaks ADR-015's uniform-part-size contract
 - CTR block alignment breaks on variable-length compressed parts
 - Idempotent retries violated (same plaintext → different compressed output)
 
@@ -176,7 +176,7 @@ Compression is not supported for multipart uploads. Use single-PUT uploads for c
 
 **Why multipart parts are never compressed:**
 
-1. **ADR-005 Contract Violation:** Multipart uploads require uniform part sizes for out-of-order upload support. Per-part compression produces variable-sized parts, breaking the uniform-part-size invariant.
+1. **ADR-015 Contract Violation:** Multipart uploads require uniform part sizes for out-of-order upload support. Per-part compression produces variable-sized parts, breaking the uniform-part-size invariant.
 
 2. **CTR Block Alignment:** AES-CTR encryption requires block-aligned ciphertext. Compression changes part sizes, making CTR block offsets unpredictable without cumulative size tracking.
 
@@ -240,7 +240,7 @@ Compression operates on plaintext before encryption, producing a compressed plai
 ### Support compression for multipart uploads
 
 **Rejected** — see ADR-007 (multipart-compression) for full analysis. Summary:
-- Breaks ADR-005's uniform-part-size invariant
+- Breaks ADR-015's uniform-part-size invariant
 - Requires per-part compressed size tracking (breaks out-of-order uploads)
 - No standard compression format supports block-aligned seeking
 - Idempotent retries violated (same input → different compressed output)
@@ -279,7 +279,7 @@ Compression operates on plaintext before encryption, producing a compressed plai
 
 If multipart compression becomes a strong requirement, a future ADR could design:
 - Fixed-size block-aligned compression format (custom or extended zstd)
-- Cumulative offset tracking for part sizes (sacrifices ADR-005's part-number-only advantage)
+- Cumulative offset tracking for part sizes (sacrifices ADR-015's part-number-only advantage)
 - Post-Complete compression and rewrite operation
 - Accept non-idempotent retries (store compressed size per retry)
 
@@ -292,7 +292,7 @@ All require significant design work and should not be undertaken without clear u
 
 ## Related Documentation
 
-- ADR-005: Out-of-order multipart uploads with uniform part sizes
+- ADR-015: Out-of-order multipart uploads with uniform part sizes
 - ADR-006: Dual-backend async replication (opt-in pattern reference)
 - ADR-007 (multipart): Multipart uploads do not support compression
 - ADR-012: Authorization action verbs and consumer separation

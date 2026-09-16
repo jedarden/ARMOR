@@ -45,7 +45,7 @@ How the part number enters `j` on the **write** path (`internal/server/handlers/
 
 | Layout | Production write mechanism | Starting counter |
 |---|---|---|
-| Uniform parts (ADR-005) | `Encryptor.EncryptWithStartingCounter(plaintext, startBlockIndex)` | `startBlockIndex = (partNumber − 1) × P / blockSize` where `P` is the uniform part size |
+| Uniform parts (ADR-015) | `Encryptor.EncryptWithStartingCounter(plaintext, startBlockIndex)` | `startBlockIndex = (partNumber − 1) × P / blockSize` where `P` is the uniform part size |
 | Non-uniform parts (ADR-011) | `OffsetEncryptor.EncryptFromOffset(plaintext, cumulativeOffset)` at `crypto.Version2` | Derived from the part's cumulative **byte** offset in the object |
 
 Both mechanisms produce the same result: **one continuous counter stream across the whole object**. Part `k` block `j` uses the global block index `j + (blocks before part k)`, so there is no cross-part keystream reuse — but parts are *not* independent streams, and correct encryption/decryption depends on cumulative-offset bookkeeping (the reason ADR-010 and ADR-011 exist at all).
@@ -116,7 +116,7 @@ As with V1, what happens next depends only on plaintext size, which is why the c
 ### 1. uniform_parts
 
 **Location:** `tests/fixtures/migration/v2_multipart/uniform_parts/`  
-**Source pattern:** ADR-005 uniform multipart with V2's fixed counter derivation  
+**Source pattern:** ADR-015 uniform multipart with V2's fixed counter derivation  
 **Produces the on-disk miniature:** `generate_fixtures.go` → `GenerateV2MultipartUniform(testPlaintext, 5 MiB)` (`tests/fixtures/migration/generate_fixtures.go:415`)  
 **Produced the committed full-scale variant:** `standalone_generator.go` → `GenerateV2Multipart(multipartPlaintext, 5 MiB)` (`tests/fixtures/migration/standalone_generator.go:485`)
 
@@ -558,7 +558,7 @@ For the migrator the two versions share almost the entire pipeline (same classif
 |---|---|---|
 | Counter block | `IV[0:12] ‖ BE32(blockIndex)` — stride 1 | `IV[0:12] ‖ BE32(blockIndex × blockSize/16)` — stride 4096 at 64 KiB |
 | Cross-part counters | Every part restarts at block index 0 → **part k block j reuses part 0's keystream** (the defect migration remediates) | One continuous stream via cumulative offsets → no reuse, but parts are *interdependent* |
-| Write-path machinery | Per-part independent encryption | `EncryptWithStartingCounter` (uniform, ADR-005) / `OffsetEncryptor` cumulative byte offsets (non-uniform, ADR-011) |
+| Write-path machinery | Per-part independent encryption | `EncryptWithStartingCounter` (uniform, ADR-015) / `OffsetEncryptor` cumulative byte offsets (non-uniform, ADR-011) |
 | Counter-space ceiling | 2^32 blocks (≈256 TiB at 64 KiB) — not binding | 2^32 AES counters ÷ 4096 per block = **64 GiB** — binding, V2-specific |
 | Why ADR-010/ADR-011 exist | Final-part length inference + cumulative pinning | Same (the cumulative stream is what needs the bookkeeping); V3 removes the reason for both |
 | Wrapped DEK metadata | Bare base64 of AES-KWP body | `v2:<fingerprint>:<base64>` (both accepted by the migrator's validator) |
@@ -596,7 +596,7 @@ The V2 multipart fixtures validate that migration covers:
 ✅ V2's 64 GiB counter ceiling removed by the V3 counter layout  
 ✅ Multipart → single-PUT downgrade for objects under the 5 MiB threshold  
 ✅ Multipart → multipart preservation with re-split at 5 MiB for large objects  
-✅ ADR-005/010/011 source variants (uniform, variable-final, non-uniform; `part-size` present or absent)  
+✅ ADR-015/010/011 source variants (uniform, variable-final, non-uniform; `part-size` present or absent)  
 ✅ `v2:` fingerprinted wrapped-DEK parsing (and bare-base64 tolerance)  
 ✅ Metadata re-emission: version 3, fresh DEK/IV, `part-size`/`etag` carry-over rules  
 ✅ Fail-closed on missing/corrupt sidecar before any write

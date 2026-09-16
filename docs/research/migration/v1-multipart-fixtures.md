@@ -144,7 +144,7 @@ What happens next depends on the plaintext size, which is why the catalog below 
 ### 1. uniform_parts
 
 **Location:** `tests/fixtures/migration/v1_multipart/uniform_parts/`  
-**Source pattern:** legacy ADR-005 uniform multipart contract  
+**Source pattern:** legacy ADR-015 uniform multipart contract  
 **Produces the on-disk fixture:** `generate_fixtures.go` → `GenerateV1MultipartUniform(testPlaintext, 5 MiB)`  
 **Full-scale variant:** `standalone_generator.go` → `GenerateV1Multipart(15 MiB, 5 MiB)`
 
@@ -165,7 +165,7 @@ What happens next depends on the plaintext size, which is why the catalog below 
     "compression_used": false,
     "sidecar_path": ".armor/hmac/3c94d277a57c4078ce27e75ee1e8f605c2b382dc3108996af09e6c175cd38c9d"
   },
-  "description": "V1 multipart with uniform part sizes (legacy ADR-005 contract)",
+  "description": "V1 multipart with uniform part sizes (legacy ADR-015 contract)",
   "expected_migration_outcome": "success"
 }
 ```
@@ -572,7 +572,7 @@ Both cases must fail **before** any re-encrypted bytes are written: the multipar
 
 - Counter block `IV[0:12] ‖ BE32(blockIndex)` with per-part restart: keystream reuse both within a part (adjacent blocks) and across parts (identical counters). This is the primary security defect migration remediates.
 - HMAC table in a flat sidecar keyed by global block index; object carries no header, so version/IV/size come exclusively from metadata.
-- Part sizes: uniform (ADR-005), variable-final (ADR-010, `part-size` = nominal uniform size), non-uniform (ADR-011, no `part-size` metadata at all).
+- Part sizes: uniform (ADR-015), variable-final (ADR-010, `part-size` = nominal uniform size), non-uniform (ADR-011, no `part-size` metadata at all).
 
 **V2 multipart (for contrast; see `v2-multipart` fixtures doc)**
 
@@ -611,7 +611,7 @@ The V1 multipart fixtures validate that migration covers:
 ✅ Cross-part keystream-reuse remediation (part-namespaced V3 counters)  
 ✅ Multipart → single-PUT downgrade for objects under the 5 MiB threshold  
 ✅ Multipart → multipart preservation with re-split at 5 MiB for large objects  
-✅ ADR-005/010/011 source variants (uniform, variable-final, non-uniform; `part-size` present or absent)  
+✅ ADR-015/010/011 source variants (uniform, variable-final, non-uniform; `part-size` present or absent)  
 ✅ Negative paths: missing or corrupt sidecar must fail closed before any write  
 ✅ Metadata re-emission: version 3, `v2:` wrapped-DEK format, fresh IV, preserved SHA-256
 
