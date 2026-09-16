@@ -546,6 +546,78 @@ armor_restore_verifier_latency_millis{bucket="armor-apexalgo"} 250
 armor_restore_verifier_latency_millis{bucket="iad-kalshi"} 180
 ```
 
+### Restorability Gauges (alerting signal set)
+
+These per-bucket series are the ones the restore-verifier alert rules consume
+(ADR-004 decision 6). The timestamp gauge advances on every verification
+*attempt* — including failed ones — so a rising restore-age means the verifier
+is not running at all, while the failure counter and ratio carry the verdict
+of the latest sample.
+
+### `armor_last_verified_restore_timestamp`
+
+**Type:** Gauge  
+**Description:** Unix timestamp of the most recent verification attempt per bucket  
+**Labels:** `bucket` — Bucket name
+
+**Example Output:**
+```
+# HELP armor_last_verified_restore_timestamp Unix timestamp of the most recent verification attempt per bucket
+# TYPE armor_last_verified_restore_timestamp gauge
+armor_last_verified_restore_timestamp{bucket="armor-apexalgo"} 1750000000
+```
+
+### `armor_verified_object_ratio`
+
+**Type:** Gauge  
+**Description:** Ratio of verified objects to total objects sampled per bucket (0..1)  
+**Labels:** `bucket` — Bucket name
+
+**Example Output:**
+```
+# HELP armor_verified_object_ratio Ratio of verified objects to total objects sampled per bucket (0..1)
+# TYPE armor_verified_object_ratio gauge
+armor_verified_object_ratio{bucket="armor-apexalgo"} 1
+```
+
+### `armor_restore_verification_failures_total`
+
+**Type:** Counter  
+**Description:** Number of objects that failed verification per bucket  
+**Labels:** `bucket` — Bucket name
+
+**Example Output:**
+```
+# HELP armor_restore_verification_failures_total Number of objects that failed verification per bucket
+# TYPE armor_restore_verification_failures_total counter
+armor_restore_verification_failures_total{bucket="armor-apexalgo"} 3
+```
+
+### Alert Rules
+
+The PrometheusRule manifests implementing the alerts below live in
+`declarative-config`, one per cluster, alongside each restore-verifier
+Deployment (`k8s/<cluster>/.../restore-verifier-monitoring.yaml.disabled` for
+`iad-ci`, `iad-kalshi`, `rs-manager`, and
+`k8s/ord-devimprint/devimprint/...` for ord-devimprint):
+
+| Alert | Expression (per bucket) | Meaning |
+|---|---|---|
+| `ArmorRestoreVerificationStale` | `time() - armor_last_verified_restore_timestamp > 12 * 3600` | No verification attempt registered in 12h (~2× the default 6h `VERIFIER_CHECK_INTERVAL`) — verifier down or unable to reach B2 |
+| `ArmorRestoreVerificationFailures` | `sum by (bucket) (rate(armor_restore_verification_failures_total[1h])) > 0` | New sampled-object failures — backups exist but are not restorable |
+| `ArmorRestoreVerificationLowObjectRatio` | `armor_verified_object_ratio < 0.95` | The latest sample verified under 95% of its objects |
+| `ArmorRestoreVerificationDualPathDivergence` | `sum by (bucket) (increase(armor_restore_verification_failures_total[1h])) > 0` | A periodic ModeDual check failed — includes ARMOR-path vs direct-ciphertext digest divergence (ADR-004 decision 2); confirm via the verifier `/status` both-path digests |
+| `ArmorMultipartCanaryUnhealthy` | `armor_multipart_canary_healthy == 0` | The independent multipart write/read canary is red (ADR-002) |
+
+Escalation follows ADR-004 §5: one bead per distinct active failure, no retry
+loops; alerts carry `severity: critical` plus a `component` label for routing.
+
+These manifests keep a `.disabled` suffix today: the ARMOR clusters run
+VictoriaLogs with no Prometheus Operator CRDs installed, and an unapplicable
+`ServiceMonitor`/`PrometheusRule` would fail ArgoCD sync on every pass and
+block its sibling Deployment. Drop the suffix once a Prometheus actually
+scrapes `/metrics` in the cluster (see the Phase 6 caveat in `docs/plan/plan.md`).
+
 ## Canary Metrics
 
 ### `armor_canary_checks_total`
@@ -564,6 +636,12 @@ armor_restore_verifier_latency_millis{bucket="iad-kalshi"} 180
 
 **Type:** Gauge  
 **Description:** Canary health status (1 = healthy, 0 = unhealthy)  
+**Labels:** None
+
+### `armor_multipart_canary_healthy`
+
+**Type:** Gauge  
+**Description:** Multipart canary health status (1 = healthy, 0 = unhealthy or canary disabled/not running). Independent, longer-interval multipart write/read/verify check — distinct from `armor_canary_healthy` so a small-object-only regression cannot mask a multipart one (ADR-002)  
 **Labels:** None
 
 ## Testing Metrics
