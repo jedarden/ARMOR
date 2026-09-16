@@ -947,12 +947,12 @@ func TestDecryptLoadEscrowWithCFDomain(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Multipart layout-matrix verification (ADR-005 patterns)
+// Multipart layout-matrix verification (ADR-015 patterns)
 // ---------------------------------------------------------------------------
 
 const matrixBlockSize = 65536
 
-// multipartLayoutCases enumerates the stored-object geometries ADR-005's valid
+// multipartLayoutCases enumerates the stored-object geometries ADR-015's valid
 // upload patterns produce. Sizes are scaled down from the ADR's MiB-scale part
 // examples (a stored object has no part boundaries — only total geometry) but
 // preserve each pattern's alignment properties exactly.
@@ -990,7 +990,7 @@ func matrixPlaintext(size int64) []byte {
 	return p
 }
 
-// TestDecryptB2MultipartLayoutMatrix runs every ADR-005 layout through the B2
+// TestDecryptB2MultipartLayoutMatrix runs every ADR-015 layout through the B2
 // path — the actual break-glass DR path, exercising the full decryptB2
 // dispatch: metadata marker, offset-0 ciphertext read, sidecar fetch, absolute
 // block indices.

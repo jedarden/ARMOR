@@ -333,7 +333,7 @@ func armorEncryptMultipart(t *testing.T, mek []byte, blockSize int, key string, 
 		t.Fatalf("marshal sidecar: %v", err)
 	}
 
-	// Uniform part size P (ADR-005), block-aligned. With a 4 KiB block size and
+	// Uniform part size P (ADR-015), block-aligned. With a 4 KiB block size and
 	// the 8 KiB valid.sqlite fixture this yields exactly two parts — a genuine
 	// multipart object whose combined digest differs from the plain SHA-256 of
 	// the whole plaintext (the whole reason bf-1v2ehf matters). Build the

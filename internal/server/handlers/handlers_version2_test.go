@@ -141,9 +141,9 @@ func TestVersion2EncryptionMultipartUpload(t *testing.T) {
 	uploadID = createResult.UploadID
 
 	// Step 2: Upload part 1
-	// ADR-005 requires a multi-part upload's uniform part size to meet B2's
+	// ADR-015 requires a multi-part upload's uniform part size to meet B2's
 	// 5 MiB minimum, so part 1 (which pins P) must be at least that size.
-	part1Data := make([]byte, 5*1024*1024) // 5MiB (meets ADR-005 minimum)
+	part1Data := make([]byte, 5*1024*1024) // 5MiB (meets ADR-015 minimum)
 	if _, err := rand.Read(part1Data); err != nil {
 		t.Fatalf("failed to generate part 1 data: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestVersion2EncryptionMultipartUpload(t *testing.T) {
 	}
 
 	// Step 3: Upload part 2
-	// Equal to part 1's size (P) — a regular, non-final part under ADR-005.
+	// Equal to part 1's size (P) — a regular, non-final part under ADR-015.
 	part2Data := make([]byte, 5*1024*1024) // 5MiB
 	if _, err := rand.Read(part2Data); err != nil {
 		t.Fatalf("failed to generate part 2 data: %v", err)

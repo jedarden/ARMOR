@@ -285,7 +285,7 @@ func uploadPart(t *testing.T, h *handlers.Handlers, bucket, key, uploadID string
 
 // uploadPartResponse issues an UploadPart and returns the raw status code, ETag
 // (if any), and response body — used where the test must assert a non-200 path
-// (e.g. the ADR-005-amendment 503 SlowDown defer) rather than fataling on it.
+// (e.g. the ADR-015-amendment 503 SlowDown defer) rather than fataling on it.
 func uploadPartResponse(t *testing.T, h *handlers.Handlers, bucket, key, uploadID string, partNumber int, body []byte) (int, string, string) {
 	t.Helper()
 	url := fmt.Sprintf("/%s/%s?partNumber=%d&uploadId=%s", bucket, key, partNumber, uploadID)
@@ -348,11 +348,11 @@ func TestMultipartFullCycleByteVerification(t *testing.T) {
 	_, rb, h := recordingTestSetup(t)
 	bucket, key := "test-bucket", "full-cycle.parquet"
 
-	// ADR-005 uniform-part-size contract: the first part pins P and every part
+	// ADR-015 uniform-part-size contract: the first part pins P and every part
 	// except the highest-numbered must equal P exactly. Eight full 5MiB parts
 	// (P) plus a short final part keeps the ~44MB production scale from
 	// bf-1v6skf (production litestream snapshot was 44,908,497 bytes and failed
-	// at block 256) while staying contract-valid. (The pre-ADR-005 version used
+	// at block 256) while staying contract-valid. (The pre-ADR-015 version used
 	// a final part LARGER than P, which now correctly contradicts and poisons.)
 	const block = 65536                // encryption block size
 	partSize := 5 * 1024 * 1024        // 5MiB regular part (S3/B2 minimum, matches production)
@@ -438,7 +438,7 @@ func TestMultipartFullCycleByteVerification(t *testing.T) {
 	_ = rb
 }
 
-// TestMultipartLonePartByteVerification proves the ADR-005 single-part
+// TestMultipartLonePartByteVerification proves the ADR-015 single-part
 // exemption is not just accepted but CORRECT: a multipart upload consisting of
 // one non-block-aligned part must decrypt byte-for-byte, including across
 // ranges and in the partial trailing block.
@@ -574,9 +574,9 @@ func TestMultipartZeroByteFinalPartByteVerification(t *testing.T) {
 	}
 }
 
-// TestMultipartSuspectPatterns documents the ADR-005 behavior for the upload
+// TestMultipartSuspectPatterns documents the ADR-015 behavior for the upload
 // patterns real SDKs use by default (docs/upload-retrieval-test-matrix.md
-// U6/U7/U8). ADR-005 reverses the old ADR-003 §4 interim behavior:
+// U6/U7/U8). ADR-015 reverses the old ADR-003 §4 interim behavior:
 //
 //	U6 out-of-order / parallel part upload  — now SUPPORTED (offset is a
 //	    function of part number alone, not arrival order).
@@ -597,7 +597,7 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 
 		uploadID := initiateMultipart(t, h, bucket, key)
 
-		// Upload parts 1, 3, 2 in that order. ADR-005 derives each part's CTR
+		// Upload parts 1, 3, 2 in that order. ADR-015 derives each part's CTR
 		// offset from its part number, so out-of-order arrival is fine.
 		mk := func(b byte) []byte {
 			p := make([]byte, 5*1024*1024) // 5MiB, block-aligned
@@ -637,7 +637,7 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 		uploadID := initiateMultipart(t, h, bucket, key)
 
 		// Part 2 arrives before part 1 (a concurrent uploader whose part 2
-		// finished first). ADR-005 (amended 2026-07-19): P is pinned ONLY from
+		// finished first). ADR-015 (amended 2026-07-19): P is pinned ONLY from
 		// part 1, so part 2 arriving first cannot have its CTR offset computed
 		// and is deferred with a retryable 503 SlowDown — nothing stored.
 		part2 := make([]byte, 5*1024*1024)
@@ -676,7 +676,7 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 		uploadPart(t, h, bucket, key, uploadID, 1, part1)
 
 		// Re-upload part 1 with the SAME size (retry after a network failure).
-		// ADR-005 rule 5: same N → same offset → byte-identical ciphertext; the
+		// ADR-015 rule 5: same N → same offset → byte-identical ciphertext; the
 		// retry is idempotent and must succeed (200), not 400.
 		part1Retry := make([]byte, 5*1024*1024)
 		for i := range part1Retry {
@@ -731,7 +731,7 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 		})
 
 	t.Run("U8_lone_non_aligned_part_accepted_and_completes", func(t *testing.T) {
-		// ADR-005 exemption (b): part 1 always starts at block 0, so when it is
+		// ADR-015 exemption (b): part 1 always starts at block 0, so when it is
 		// the ONLY part its size is unconstrained. This is the shape
 		// barman-cloud-backup produces for a small Postgres — the entire base
 		// backup fits in one flush — and it used to fail with InvalidPartSize,
@@ -796,7 +796,7 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 		})
 
 	t.Run("U8_short_final_part_may_be_non_aligned", func(t *testing.T) {
-		// ADR-005 exemption (a): nothing is placed after the presumed-final
+		// ADR-015 exemption (a): nothing is placed after the presumed-final
 		// part, so a partial trailing block is ordinary — exactly what every
 		// non-multipart PUT of arbitrary size already produces.
 		_, _, h := recordingTestSetup(t)
@@ -819,7 +819,7 @@ func TestMultipartSuspectPatterns(t *testing.T) {
 	})
 
 	t.Run("U8_zero_byte_first_part_rejected", func(t *testing.T) {
-		// An empty first part cannot pin the uniform part size P (ADR-005 rule 1).
+		// An empty first part cannot pin the uniform part size P (ADR-015 rule 1).
 		_, _, h := recordingTestSetup(t)
 		bucket, key := "test-bucket", "zero-byte.dat"
 
@@ -911,12 +911,12 @@ func TestMultipartPartBoundaryDebug(t *testing.T) {
 	_ = rb
 }
 
-// TestMultipartADR005Acceptance is the acceptance suite for ADR-005 (out-of-order
+// TestMultipartADR015Acceptance is the acceptance suite for ADR-015 (out-of-order
 // multipart via the uniform-part-size contract). Every subtest exercises the
 // real HTTP handler path through internal/crypto — no mock-only coverage (the
 // bf-28rb standard). Each maps to an explicit acceptance criterion in the
 // bf-5tol4d task description.
-func TestMultipartADR005Acceptance(t *testing.T) {
+func TestMultipartADR015Acceptance(t *testing.T) {
 	// mkPart returns a size-byte part whose content is a function of the absolute
 	// byte offset base+offset — so any single-byte CTR/HMAC offset error between
 	// parts diverges immediately on retrieval (a constant fill would not).
@@ -961,7 +961,7 @@ func TestMultipartADR005Acceptance(t *testing.T) {
 
 		// Shuffled arrival order: parts 5,1,7,3,9,2,8,4,6 (the short final, part
 		// 9, lands in the middle of the stream, not last). Part 1 is deliberately
-		// NOT first: under the amended ADR-005 every part arriving before part 1
+		// NOT first: under the amended ADR-015 every part arriving before part 1
 		// pins P is deferred with 503 SlowDown, so the goroutines below must retry
 		// on 503 — exactly what aws cli / SDK transfer managers do at default
 		// concurrency. This reproduces the bf-5tol4d default-concurrency failure
@@ -1033,7 +1033,7 @@ func TestMultipartADR005Acceptance(t *testing.T) {
 
 	// AC: "retried part mid-upload". Parts 1,2,3 are uploaded, then part 2 (a
 	// part that is NOT the only one present) is re-uploaded with the same size.
-	// ADR-005 rule 5: same N -> same offset -> byte-identical ciphertext; the
+	// ADR-015 rule 5: same N -> same offset -> byte-identical ciphertext; the
 	// retry is idempotent (200) and the object round-trips byte-for-byte.
 	t.Run("retried_part_mid_upload", func(t *testing.T) {
 		_, _, h := recordingTestSetup(t)
@@ -1099,7 +1099,7 @@ func TestMultipartADR005Acceptance(t *testing.T) {
 	})
 
 	// AC: "a genuine contract contradiction hard-fails poisoned with no stored
-	// object". ADR-005 rule 4 stays as defense-in-depth after the 2026-07-19
+	// object". ADR-015 rule 4 stays as defense-in-depth after the 2026-07-19
 	// amendment: with P pinned from part 1, the short-final-arrives-first case is
 	// deferred by SlowDown (covered in TestMultipartSuspectPatterns) and never
 	// reaches the poison path. What still poisons is a *genuine* contradiction —

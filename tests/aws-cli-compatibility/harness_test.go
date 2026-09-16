@@ -715,7 +715,7 @@ func awsEnv(t *testing.T, endpoint string, multipart bool) []string {
 	if multipart {
 		// Force multipart for files above 8 MiB, split into 8 MiB parts. A 9 MiB
 		// test file therefore uploads as two parts, exercising ARMOR's
-		// concurrent-part multipart path (ADR-005) at small scale.
+		// concurrent-part multipart path (ADR-015) at small scale.
 		s3Block = "\ts3 =\n\t\taddressing_style = path\n\t\tmultipart_threshold = 8MB\n\t\tmultipart_chunksize = 8MB\n"
 	} else {
 		s3Block = "\ts3 =\n\t\taddressing_style = path\n"

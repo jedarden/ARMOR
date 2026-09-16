@@ -285,7 +285,7 @@ func TestV3MultipartRoundTrip(t *testing.T) {
 
 // TestV3MultipartUnalignedParts tests v3 multipart with random unaligned part sizes.
 // This validates that the part-level offset mapping works correctly without
-// requiring uniform part sizes (v3 doesn't have the ADR-005 constraint).
+// requiring uniform part sizes (v3 doesn't have the ADR-015 constraint).
 func TestV3MultipartUnalignedParts(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")

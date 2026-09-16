@@ -142,7 +142,7 @@ func TestAWSCLI_Sync(t *testing.T) {
 
 // TestAWSCLI_MultipartUpload verifies a multipart upload (default aws-cli
 // concurrency) round-trips byte-identically. This is the small-scale analogue
-// of the ADR-005 acceptance criterion.
+// of the ADR-015 acceptance criterion.
 func TestAWSCLI_MultipartUpload(t *testing.T) {
 	requireAWSCLI(t)
 	endpoint := startArmorServer(t)

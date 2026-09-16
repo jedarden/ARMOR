@@ -27,7 +27,7 @@ import (
 
 const prefixedSidecarTestPrefix = "commitgraph/"
 
-// armorEncryptV3Multipart builds a v3 ADR-005 multipart-completed object the way
+// armorEncryptV3Multipart builds a v3 ADR-015 multipart-completed object the way
 // the server writes it: raw concatenated block ciphertext (no envelope header),
 // a gzip-compressed JSON sidecar carrying [hmac, clen] per block, and metadata
 // carrying the IV, the wrapped DEK and the multipart dispatch marker.

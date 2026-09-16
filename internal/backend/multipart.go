@@ -66,11 +66,11 @@ type MultipartState struct {
 	// CompleteMultipartUpload can assemble a real, reproducible whole-object
 	// plaintext digest (CombinePartPlaintextSHAs) instead of the empty-string
 	// placeholder (bf-1v2ehf / ADR-003 residual gap). Parts arrive out of order
-	// (ADR-005), so the digests must be combined in ascending part-number order
+	// (ADR-015), so the digests must be combined in ascending part-number order
 	// at Complete — hence the interaction with the part-ordering contract.
 	PartPlaintextSHAs map[int]string `json:"part_plaintext_shas"`
 
-	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-005,
+	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-015,
 	// amended 2026-07-19 — originally "first arriving part", which failed under
 	// default aws-cli concurrency where the short final part arrives first). A
 	// part's CTR counter offset is a function of its part number alone: part N
@@ -94,7 +94,7 @@ type MultipartState struct {
 	// CumulativePartSizes rather than (N-1)*PartSize.
 	NonUniformParts bool `json:"non_uniform_parts,omitempty"`
 
-	// Poisoned marks an upload id as permanently failed (ADR-005 rule 4). When
+	// Poisoned marks an upload id as permanently failed (ADR-015 rule 4). When
 	// the optimistic-P contract is contradicted (a part larger than P, two
 	// presumed-final parts, or a same-part retry with a different size), the
 	// offending UploadPart is rejected AND the upload id is poisoned so that
@@ -127,7 +127,7 @@ type MultipartMetadataV3 struct {
 	KeyID          string    `json:"key_id"`         // Key identifier for multi-key support
 	FormatVersion  int       `json:"format_version"` // Always 3 for this structure
 
-	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-005).
+	// PartSize is the uniform part size P pinned from part NUMBER 1 (ADR-015).
 	// This field is set when part 1 arrives and is used to validate subsequent
 	// parts. For v3, this is stored in meta.json so it's available without
 	// reading any part files.
@@ -138,7 +138,7 @@ type MultipartMetadataV3 struct {
 	// cumulative part sizes instead of (N-1)*PartSize.
 	NonUniformParts bool `json:"non_uniform_parts,omitempty"`
 
-	// Poisoned marks an upload id as permanently failed (ADR-005 rule 4).
+	// Poisoned marks an upload id as permanently failed (ADR-015 rule 4).
 	Poisoned     bool   `json:"poisoned"`
 	PoisonReason string `json:"poison_reason,omitempty"`
 }
@@ -642,7 +642,7 @@ func DecodeHMACFromBase64(encoded string) ([][]byte, error) {
 
 // CombinePartPlaintextSHAs assembles the per-part plaintext SHA-256 digests
 // (hex) into a single whole-object digest. Because parts arrive out of order
-// (ADR-005), the per-part digests cannot be streamed into one SHA-256 during
+// (ADR-015), the per-part digests cannot be streamed into one SHA-256 during
 // upload; instead each part's plaintext is hashed at UploadPart time and the
 // digests are combined here, in ascending part-number order, by feeding the
 // raw 32-byte digests through a single SHA-256 hasher. The result is
@@ -674,7 +674,7 @@ func CombinePartPlaintextSHAs(partSHAs map[int]string, partNumbers []int) (strin
 // concatenated per-chunk SHA-256 digests. This mirrors CombinePartPlaintextSHAs
 // and lets a verifier (which only sees the assembled plaintext, not the upload
 // parts) recompute the exact digest CompleteMultipartUpload stored. P must be
-// the same uniform part size the upload pinned (ADR-005); P <= 0 yields the
+// the same uniform part size the upload pinned (ADR-015); P <= 0 yields the
 // plain SHA-256 of the whole plaintext (single-part / unknown-part-size case).
 func ComputeMultipartDigest(plaintext []byte, partSize int64) string {
 	if partSize <= 0 {
@@ -701,7 +701,7 @@ func ComputeMultipartDigest(plaintext []byte, partSize int64) string {
 // the streaming GET path (handleFullObjectStream) can verify multipart objects
 // without buffering their (potentially many-gigabyte) plaintext.
 //
-// The uniform part size P is block-aligned (ADR-005 — non-block-aligned parts
+// The uniform part size P is block-aligned (ADR-015 — non-block-aligned parts
 // are rejected at upload), so each part spans exactly P/blockSize blocks (the
 // final part may be shorter). As each block's plaintext arrives it is folded
 // into the current part's hash; when a part boundary is reached, or the final

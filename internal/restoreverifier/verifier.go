@@ -97,7 +97,7 @@ func isPlaceholderPlaintextSHA(s string) bool {
 // plaintextDigestForMetadata returns the plaintext digest that should be
 // compared against an object's declared x-amz-meta-armor-plaintext-sha256.
 // Single-PUT objects declare the plain SHA-256 of the whole plaintext. Multipart
-// objects (ADR-005) declare the combined per-part digest that
+// objects (ADR-015) declare the combined per-part digest that
 // CompleteMultipartUpload now stores, reproduced here by splitting the restored
 // plaintext at the uniform part-size P boundaries (backend.ComputeMultipartDigest)
 // — the order-sensitive combination that CombinePartPlaintextSHAs performs at

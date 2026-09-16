@@ -90,7 +90,7 @@ func TestVerify_MultipartRoundTrip(t *testing.T) {
 	e2 := up(2, part2)
 
 	// Complete parts in REVERSE order to prove part-number assembly, not
-	// arrival order, drives the result (ADR-005 out-of-order contract).
+	// arrival order, drives the result (ADR-015 out-of-order contract).
 	pn1, pn2 := int32(1), int32(2)
 	_, err = client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket: &bucket, Key: &key, UploadId: uploadID,

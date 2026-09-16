@@ -759,7 +759,7 @@ func (m *Monitor) checkMultipart(ctx context.Context) (*Result, error) {
 		return nil, fmt.Errorf("failed to create multipart upload: %w", err)
 	}
 
-	// Step 2: Upload parts CONCURRENTLY (ADR-005 + its 2026-07-19 amendment make
+	// Step 2: Upload parts CONCURRENTLY (ADR-015 + its 2026-07-19 amendment make
 	// out-of-order / concurrent part uploads a supported, first-class path). The
 	// canary must exercise that path continuously — not only the sequential one —
 	// so a regression that re-introduces ordering assumptions fails the canary

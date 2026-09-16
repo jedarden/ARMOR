@@ -1772,7 +1772,7 @@ func (h *Handlers) decryptNonUniformParts(dataBody io.ReadCloser, pw *io.PipeWri
 		// Update digest. CompleteMultipartUpload stores the combined per-part
 		// digest (backend.CombinePartPlaintextSHAs): each upload part's plaintext
 		// SHA-256, fed as raw digest bytes into one SHA-256 in ascending part
-		// order. MultipartDigestAccumulator reproduces that only for the ADR-005
+		// order. MultipartDigestAccumulator reproduces that only for the ADR-015
 		// uniform case (chunking at fixed P boundaries); a genuinely non-uniform
 		// object's real part boundaries don't line up with P, so reproduce the
 		// combined digest directly from the actual parts this loop already
@@ -3263,7 +3263,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// If a prior contradiction poisoned this upload (ADR-005 rule 4), every
+	// If a prior contradiction poisoned this upload (ADR-015 rule 4), every
 	// further part fails the same way — the client must abort and retry.
 	if state.Poisoned {
 		h.writeError(w, r, "InvalidPart",
@@ -3271,7 +3271,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		return
 	}
 
-	// ADR-005 (amended 2026-07-19): P is pinned ONLY from part number 1, for
+	// ADR-015 (amended 2026-07-19): P is pinned ONLY from part number 1, for
 	// formatVersion != 3 uploads (v3 imposes no ordering/size contract — see the
 	// EncryptPartV3 branch below). A part numbered >1 that arrives before part 1
 	// has pinned P cannot have its CTR offset computed and must not be allowed to
@@ -3333,7 +3333,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			}
 		}
 
-		// ADR-005 rule 1 / U8: block alignment is required only where it does work —
+		// ADR-015 rule 1 / U8: block alignment is required only where it does work —
 		// of a part that another part is placed after. The offset formula
 		// (N-1)*P/BlockSize needs P on a block boundary, and a non-aligned regular
 		// part would misalign every subsequent part's HMAC index.
@@ -3347,12 +3347,12 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		presumedFinal := state.PartSize != 0 && plaintextSize < state.PartSize
 		if plaintextSize > 0 && !pinningP && !presumedFinal && !state.NonUniformParts && plaintextSize%int64(state.BlockSize) != 0 {
 			h.writeError(w, r, "InvalidPartSize",
-				fmt.Sprintf("Part size %d is not a multiple of the block size (%d bytes). ARMOR's uniform-part-size contract (ADR-005) requires block-aligned parts. Use a part size that's a multiple of %d (e.g., 5,242,880 for 5MiB, 16,777,216 for 16MiB).", plaintextSize, state.BlockSize, state.BlockSize), 400)
+				fmt.Sprintf("Part size %d is not a multiple of the block size (%d bytes). ARMOR's uniform-part-size contract (ADR-015) requires block-aligned parts. Use a part size that's a multiple of %d (e.g., 5,242,880 for 5MiB, 16,777,216 for 16MiB).", plaintextSize, state.BlockSize, state.BlockSize), 400)
 			return
 		}
 	}
 
-	// Idempotent retry of an already-uploaded part number (ADR-005 rule 5).
+	// Idempotent retry of an already-uploaded part number (ADR-015 rule 5).
 	if existingSize, exists := state.PartSizes[int(partNumber)]; exists {
 		if existingSize != plaintextSize {
 			// A retry with a different size contradicts the contract — poison.
@@ -3368,7 +3368,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 		// them when first uploaded. Fall through to the shared encrypt/upload path.
 	}
 
-	// P is the pinned uniform part size for formatVersion != 3 uploads. ADR-005
+	// P is the pinned uniform part size for formatVersion != 3 uploads. ADR-015
 	// (amended 2026-07-19): pinned ONLY from part number 1 — the SlowDown guard
 	// above already returned any part >1 that arrived before part 1, so reaching
 	// here with P==0 implies partNumber == 1. Part 1 of a well-formed multipart
@@ -3387,7 +3387,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			state.PartSize = P
 		}
 
-		// Contradiction detection against the pinned P (ADR-005 rule 4, defense-in-
+		// Contradiction detection against the pinned P (ADR-015 rule 4, defense-in-
 		// depth). Skip for same-size retries and for non-uniform uploads.
 		if _, exists := state.PartSizes[int(partNumber)]; !exists && !state.NonUniformParts {
 			switch {
@@ -3497,7 +3497,7 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 			return
 		}
 	} else {
-		// Legacy uniform part size mode (ADR-005): CTR starting block is a
+		// Legacy uniform part size mode (ADR-015): CTR starting block is a
 		// function of part NUMBER and the uniform part size P alone (rule 2):
 		// part N starts at block (N-1)*P/BlockSize. Because P is block-aligned,
 		// this is an exact block boundary regardless of arrival order.
@@ -3577,16 +3577,16 @@ func (h *Handlers) UploadPart(w http.ResponseWriter, r *http.Request, bucket, ke
 }
 
 // multipartRetryMessage is the user-facing instruction appended to every
-// ADR-005 rule-4 contradiction error. It tells the client the upload is dead
+// ADR-015 rule-4 contradiction error. It tells the client the upload is dead
 // and must be retried — the invariant that no corrupt object is ever stored.
 const multipartRetryMessage = "This upload has been invalidated; abort it and retry the multipart upload from the beginning."
 
 // multipartMinPartSize is B2's minimum part size for multi-part objects
-// (ADR-005 rule 1). Enforced at Complete for any upload with more than one
+// (ADR-015 rule 1). Enforced at Complete for any upload with more than one
 // part.
 const multipartMinPartSize = int64(5 * 1024 * 1024)
 
-// poisonUpload marks the multipart state as permanently failed (ADR-005 rule 4)
+// poisonUpload marks the multipart state as permanently failed (ADR-015 rule 4)
 // and persists that state so the failure survives to CompleteMultipartUpload.
 // A best-effort save: if it fails we still return the 400 to the client, and
 // the contradiction is re-caught at Complete by the uniformity validation.
@@ -3783,7 +3783,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// ADR-005 rule 4: if a prior UploadPart contradicted the uniform-part-size
+	// ADR-015 rule 4: if a prior UploadPart contradicted the uniform-part-size
 	// contract, the upload id was poisoned and persisted. Fail clearly here,
 	// before assembling or storing anything — the client must abort and retry.
 	if state.Poisoned {
@@ -3865,9 +3865,9 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 		return completeReq.Parts[i].PartNumber < completeReq.Parts[j].PartNumber
 	})
 
-	// ADR-005 rule 3 (Complete-time contract validation): every part except the
+	// ADR-015 rule 3 (Complete-time contract validation): every part except the
 	// highest-numbered one must have size exactly P, the uniform part size pinned
-	// from part 1 (ADR-005, amended 2026-07-19). The highest-numbered part is
+	// from part 1 (ADR-015, amended 2026-07-19). The highest-numbered part is
 	// allowed to be the short final part (< P). This is the authoritative gate —
 	// UploadPart already rejects contradictions as they arrive (and poisons the
 	// upload), but this backstop catches a violating state that reached Complete
@@ -3894,19 +3894,19 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 			// part must match P exactly.
 			if p.PartNumber != highestPartNumber && size != P {
 				h.writeError(w, r, "InvalidPartSize",
-					fmt.Sprintf("Part %d has size %d but the uniform part size for this upload is %d (only the final part may differ). The uniform-part-size contract (ADR-005) was violated. %s", p.PartNumber, size, P, multipartRetryMessage), 400)
+					fmt.Sprintf("Part %d has size %d but the uniform part size for this upload is %d (only the final part may differ). The uniform-part-size contract (ADR-015) was violated. %s", p.PartNumber, size, P, multipartRetryMessage), 400)
 				return
 			}
 		}
 	}
-	// ADR-005 rule 1: a multi-part object's regular part size P must meet B2's
+	// ADR-015 rule 1: a multi-part object's regular part size P must meet B2's
 	// 5 MiB minimum. (A single-part upload — only the highest part — is the last
 	// part and is exempt, matching B2.) Not enforced at UploadPart pin time so
 	// the short-final-part-arriving-first case can still be detected and poisoned
 	// by rule 4 instead of being rejected outright at the first part.
 	if len(completeReq.Parts) > 1 && P < multipartMinPartSize {
 		h.writeError(w, r, "InvalidPartSize",
-			fmt.Sprintf("Uniform part size %d is smaller than the 5 MiB minimum for a multipart object (ADR-005). Use a part size of at least %d bytes. %s", P, multipartMinPartSize, multipartRetryMessage), 400)
+			fmt.Sprintf("Uniform part size %d is smaller than the 5 MiB minimum for a multipart object (ADR-015). Use a part size of at least %d bytes. %s", P, multipartMinPartSize, multipartRetryMessage), 400)
 		return
 	}
 	// Backstop for the single-part alignment exemption. A non-block-aligned P is
@@ -4111,7 +4111,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 
 	// Compute the real whole-object plaintext SHA-256 by combining the per-part
 	// digests accumulated during UploadPart, in ascending part-number order.
-	// Parts arrive out of order (ADR-005), so the per-part digests cannot be
+	// Parts arrive out of order (ADR-015), so the per-part digests cannot be
 	// streamed into one hash during upload; this combination is the
 	// order-sensitive step and is exactly what a verifier reproduces from the
 	// decrypted plaintext split at the uniform part-size P boundaries
