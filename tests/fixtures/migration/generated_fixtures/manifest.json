@@ -1,0 +1,162 @@
+{
+  "manifest_version": 1,
+  "generator": "tests/fixtures/migration/standalone_generator.go",
+  "deterministic": true,
+  "entries": [
+    {
+      "fixture_id": "v1-multipart-uniform",
+      "format_version": "v1",
+      "plaintext_sha256": "2312394bd99545d9de131c24efb781e765ac1aec243f2ed9347597a793a415e9",
+      "plaintext_length": 262144,
+      "v3_expected": {
+        "is_multipart": true,
+        "part_count": 1,
+        "blocks_per_part": [
+          4
+        ],
+        "compression_used": false,
+        "sidecar_path": ".armor/hmac/3c94d277a57c4078ce27e75ee1e8f605c2b382dc3108996af09e6c175cd38c9d"
+      },
+      "artifacts": [
+        {
+          "name": "metadata.json",
+          "bytes": 571,
+          "sha256": "46a6548a28fae3acd45c4eddd53c93ab264cabc746c4e83598ff28e35213e3f9"
+        },
+        {
+          "name": "object_metadata.json",
+          "bytes": 453,
+          "sha256": "795afe0281497e5937e892637e6dc39c3523b5c79f3265da57eb1dec7977fe7a"
+        },
+        {
+          "name": "sidecar.bin",
+          "bytes": 128,
+          "sha256": "439bb50acdbad8131ed3c636d745e38f9215bfaa16b4fce07adfecc37ce35678"
+        },
+        {
+          "name": "stored_ciphertext.bin",
+          "bytes": 262144,
+          "sha256": "ade7b59d0ab9d7fd0ff438eb8730a25273f21832fec59a3d7db5e4b9abe96c6b"
+        }
+      ]
+    },
+    {
+      "fixture_id": "v1-single-explicit-short",
+      "format_version": "v1",
+      "plaintext_sha256": "f8f8e46b1a93bebb3018ec567ebb6272f70fd1bf3350a698e4e712b0f87379b2",
+      "plaintext_length": 47,
+      "v3_expected": {
+        "is_multipart": false,
+        "compression_used": false
+      },
+      "artifacts": [
+        {
+          "name": "metadata.json",
+          "bytes": 395,
+          "sha256": "85c920e1a9e9aca7506274c046af61a875013c26d168f6e44095aaa9646e0058"
+        },
+        {
+          "name": "object_metadata.json",
+          "bytes": 366,
+          "sha256": "df010109a21a75a9b65aa4f5f26f3779b66dc55bd7f0ba21229bfd6252d5dde4"
+        },
+        {
+          "name": "stored_ciphertext.bin",
+          "bytes": 143,
+          "sha256": "5f2ea5ab008da9f91195e1e25d4e48564189f829503159b3560df359c449bc69"
+        }
+      ]
+    },
+    {
+      "fixture_id": "v1-single-implicit-short",
+      "format_version": "v1",
+      "plaintext_sha256": "f8f8e46b1a93bebb3018ec567ebb6272f70fd1bf3350a698e4e712b0f87379b2",
+      "plaintext_length": 47,
+      "v3_expected": {
+        "is_multipart": false,
+        "compression_used": false
+      },
+      "artifacts": [
+        {
+          "name": "metadata.json",
+          "bytes": 394,
+          "sha256": "161f4429523f4db8b5b8e6194b66fb7acc5c1b8a5b7e115dc6e5770b46182c72"
+        },
+        {
+          "name": "object_metadata.json",
+          "bytes": 331,
+          "sha256": "21fffd6d5606ba120175b5a0a19333d0376e35b6408f456f21d0cd8d384eb743"
+        },
+        {
+          "name": "stored_ciphertext.bin",
+          "bytes": 143,
+          "sha256": "5f2ea5ab008da9f91195e1e25d4e48564189f829503159b3560df359c449bc69"
+        }
+      ]
+    },
+    {
+      "fixture_id": "v2-multipart-uniform",
+      "format_version": "v2",
+      "plaintext_sha256": "2312394bd99545d9de131c24efb781e765ac1aec243f2ed9347597a793a415e9",
+      "plaintext_length": 262144,
+      "v3_expected": {
+        "is_multipart": true,
+        "part_count": 1,
+        "blocks_per_part": [
+          4
+        ],
+        "compression_used": false,
+        "sidecar_path": ".armor/hmac/3c94d277a57c4078ce27e75ee1e8f605c2b382dc3108996af09e6c175cd38c9d"
+      },
+      "artifacts": [
+        {
+          "name": "metadata.json",
+          "bytes": 571,
+          "sha256": "8bb3b66218d1cef910672ca17d69fa043a07e5e92ffc9e4897b960d3cf9af02f"
+        },
+        {
+          "name": "object_metadata.json",
+          "bytes": 465,
+          "sha256": "bce74aa067621b9c799442078ec6428e7cc77ca34f64e90233f0307153101826"
+        },
+        {
+          "name": "sidecar.bin",
+          "bytes": 128,
+          "sha256": "161fde2778a9cb1cda38d8fb5a8939285ca5ca989a655da02a4a1fc61767b663"
+        },
+        {
+          "name": "stored_ciphertext.bin",
+          "bytes": 262144,
+          "sha256": "dc5eda6c9dad452584f2ceba3aa548dccae9c674b3cb16d8d5629e795ac32b37"
+        }
+      ]
+    },
+    {
+      "fixture_id": "v2-single-short",
+      "format_version": "v2",
+      "plaintext_sha256": "f8f8e46b1a93bebb3018ec567ebb6272f70fd1bf3350a698e4e712b0f87379b2",
+      "plaintext_length": 47,
+      "v3_expected": {
+        "is_multipart": false,
+        "compression_used": false
+      },
+      "artifacts": [
+        {
+          "name": "metadata.json",
+          "bytes": 368,
+          "sha256": "a16ff04b5c49795988a4ace34365594c27556282048d654b8fd5d5126d232dfb"
+        },
+        {
+          "name": "object_metadata.json",
+          "bytes": 378,
+          "sha256": "822700a249227017b58c4956a5ba0d2a43747459ad9c93a0eafdbd2046c39251"
+        },
+        {
+          "name": "stored_ciphertext.bin",
+          "bytes": 143,
+          "sha256": "dc315b510630b082878311c04f33ba03bd27e056543fae8f38867b24f5037d30"
+        }
+      ]
+    }
+  ]
+}

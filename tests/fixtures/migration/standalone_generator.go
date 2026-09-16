@@ -16,14 +16,12 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -42,8 +40,8 @@ const (
 type FixtureMetadata struct {
 	PlaintextSHA256          string   `json:"plaintext_sha256"`
 	PlaintextLength          int64    `json:"plaintext_length"`
-	SourceVersion            string   `json:"source_version"`   // "v1", "v2", "malformed"
-	SourceLayout             string   `json:"source_layout"`    // "single", "multipart-uniform", "multipart-nonuniform"
+	SourceVersion            string   `json:"source_version"` // "v1", "v2", "malformed"
+	SourceLayout             string   `json:"source_layout"`  // "single", "multipart-uniform", "multipart-nonuniform"
 	V3Expected               V3Layout `json:"v3_expected"`
 	Description              string   `json:"description"`
 	ExpectedMigrationOutcome string   `json:"expected_migration_outcome"` // "success", "failure", "skip"
@@ -52,20 +50,50 @@ type FixtureMetadata struct {
 
 // V3Layout describes the expected V3 outcome.
 type V3Layout struct {
-	IsMultipart       bool     `json:"is_multipart"`
-	PartCount         int      `json:"part_count,omitempty"`
-	BlocksPerPart     []int    `json:"blocks_per_part,omitempty"`
-	CompressionUsed   bool     `json:"compression_used"`
-	SidecarPath       string   `json:"sidecar_path,omitempty"`
-	ManifestReference string   `json:"manifest_reference,omitempty"`
+	IsMultipart       bool   `json:"is_multipart"`
+	PartCount         int    `json:"part_count,omitempty"`
+	BlocksPerPart     []int  `json:"blocks_per_part,omitempty"`
+	CompressionUsed   bool   `json:"compression_used"`
+	SidecarPath       string `json:"sidecar_path,omitempty"`
+	ManifestReference string `json:"manifest_reference,omitempty"`
+}
+
+// RegenManifestArtifact records one emitted file of a fixture bundle.
+type RegenManifestArtifact struct {
+	Name   string `json:"name"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// RegenManifestEntry is one fixture's row in the generated_fixtures manifest.
+// It duplicates the per-fixture metadata.json fields that migration tests
+// consume, keyed by fixture id, so the whole regeneration set can be checked
+// from a single machine-readable file.
+type RegenManifestEntry struct {
+	FixtureID       string                  `json:"fixture_id"`
+	FormatVersion   string                  `json:"format_version"`
+	PlaintextSHA256 string                  `json:"plaintext_sha256"`
+	PlaintextLength int64                   `json:"plaintext_length"`
+	V3Expected      V3Layout                `json:"v3_expected"`
+	Artifacts       []RegenManifestArtifact `json:"artifacts"`
+}
+
+// RegenManifest is the machine-readable manifest written to
+// generated_fixtures/manifest.json. Everything in it derives from bytes on
+// disk at generation time, so it is itself deterministic.
+type RegenManifest struct {
+	ManifestVersion int                  `json:"manifest_version"`
+	Generator       string               `json:"generator"`
+	Deterministic   bool                 `json:"deterministic"`
+	Entries         []RegenManifestEntry `json:"entries"`
 }
 
 // FixtureBundle contains all fixture data for a single test case.
 type FixtureBundle struct {
-	Metadata       FixtureMetadata   `json:"metadata"`
-	StoredCiphertext []byte          `json:"-"` // Stored in separate file
+	Metadata         FixtureMetadata   `json:"metadata"`
+	StoredCiphertext []byte            `json:"-"` // Stored in separate file
 	ObjectMetadata   map[string]string `json:"object_metadata"`
-	SidecarData      []byte          `json:"-"` // For multipart, stored separately
+	SidecarData      []byte            `json:"-"` // For multipart, stored separately
 }
 
 // FixtureGenerator creates canonical V1/V2 fixtures with independent crypto.
@@ -84,11 +112,11 @@ func NewFixtureGenerator(outputDir string) (*FixtureGenerator, error) {
 	iv := make([]byte, 16)
 
 	for i := range mek {
-		mek[i] = byte(i + 1)     // MEK: 0x01, 0x02, ..., 0x20
-		dek[i] = byte(i + 2)     // DEK: 0x02, 0x03, ..., 0x21
+		mek[i] = byte(i + 1) // MEK: 0x01, 0x02, ..., 0x20
+		dek[i] = byte(i + 2) // DEK: 0x02, 0x03, ..., 0x21
 	}
 	for i := range iv {
-		iv[i] = byte(i + 3)     // IV: 0x03, 0x04, ..., 0x12
+		iv[i] = byte(i + 3) // IV: 0x03, 0x04, ..., 0x12
 	}
 
 	return &FixtureGenerator{
@@ -101,7 +129,8 @@ func NewFixtureGenerator(outputDir string) (*FixtureGenerator, error) {
 
 // encodeEnvelopeHeader creates a standalone envelope header.
 // Header format (64 bytes total):
-//   Magic(4) + Version(1) + BlockSizeLog2(1) + IV(16) + PlaintextSize(8) + PlaintextSHA(32) + Reserved(2)
+//
+//	Magic(4) + Version(1) + BlockSizeLog2(1) + IV(16) + PlaintextSize(8) + PlaintextSHA(32) + Reserved(2)
 func (fg *FixtureGenerator) encodeEnvelopeHeader(version byte, blockSize int, plaintextSize int64, plaintextSHA []byte) ([]byte, error) {
 	if len(plaintextSHA) != 32 {
 		return nil, fmt.Errorf("plaintextSHA must be 32 bytes")
@@ -139,35 +168,52 @@ func (fg *FixtureGenerator) encodeEnvelopeHeader(version byte, blockSize int, pl
 	return header, nil
 }
 
-// wrapDEK implements standalone DEK wrapping using AES-GCM.
-// This matches the ARMOR DEK wrapping format.
+// wrapDEK implements standalone DEK wrapping using AES-KWP (RFC 5649),
+// byte-compatible with the production reader's unwrap path: AIV(8) || DEK
+// wrapped by the RFC 3394 round structure to 40 bytes. Deterministic by
+// construction - KWP has no nonce.
 func (fg *FixtureGenerator) wrapDEK() ([]byte, error) {
-	// Generate random nonce for GCM
-	nonce := make([]byte, 12)
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Create AES-GCM cipher from MEK
 	block, err := aes.NewCipher(fg.mek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
 
-	aesgcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	// AIV (RFC 5649) || MLI in bits, then the DEK
+	plaintext := make([]byte, 8+len(fg.dek))
+	binary.BigEndian.PutUint32(plaintext[0:4], 0xA65959A6)
+	binary.BigEndian.PutUint32(plaintext[4:8], uint32(len(fg.dek)*8))
+	copy(plaintext[8:], fg.dek)
+
+	// AES Key Wrap: 6 rounds over (len-8)/8 semiblocks, output same length
+	n := (len(plaintext) - 8) / 8
+	a := make([]byte, 8)
+	copy(a, plaintext[0:8])
+	r := make([][]byte, n)
+	for i := 0; i < n; i++ {
+		r[i] = make([]byte, 8)
+		copy(r[i], plaintext[8+i*8:8+(i+1)*8])
+	}
+	for j := 0; j < 6; j++ {
+		for i := 0; i < n; i++ {
+			b := make([]byte, 16)
+			copy(b[0:8], a)
+			copy(b[8:16], r[i])
+			block.Encrypt(b, b)
+			copy(a, b[0:8])
+			t := uint64(j*n + i + 1)
+			for k := 0; k < 8; k++ {
+				a[k] ^= byte(t >> (56 - 8*k))
+			}
+			copy(r[i], b[8:16])
+		}
+	}
+	wrapped := make([]byte, 8*(n+1))
+	copy(wrapped[0:8], a)
+	for i := 0; i < n; i++ {
+		copy(wrapped[8+i*8:8+(i+1)*8], r[i])
 	}
 
-	// Wrap DEK with AES-GCM
-	wrapped := aesgcm.Seal(nil, nonce, fg.dek, nil)
-
-	// Format: nonce(12) || ciphertext(40) = 52 bytes total
-	result := make([]byte, 0, 12+len(wrapped))
-	result = append(result, nonce...)
-	result = append(result, wrapped...)
-
-	return result, nil
+	return wrapped, nil
 }
 
 // deriveHMACKey derives HMAC key from DEK using HKDF-SHA256.
@@ -318,7 +364,7 @@ func (fg *FixtureGenerator) GenerateV1SingleExplicit(plaintext []byte) (*Fixture
 	}
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "1",
+		"x-amz-meta-armor-version":        "1",
 		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -388,7 +434,7 @@ func (fg *FixtureGenerator) GenerateV2Single(plaintext []byte) (*FixtureBundle, 
 	wrappedDEKV2 := fmt.Sprintf("v2:%s:%s", mekFingerprint, base64.StdEncoding.EncodeToString(wrappedDEK))
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "2",
+		"x-amz-meta-armor-version":        "2",
 		"x-amz-meta-armor-wrapped-dek":    wrappedDEKV2,
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -446,7 +492,7 @@ func (fg *FixtureGenerator) GenerateV1Multipart(plaintext []byte, partSize int) 
 	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "1",
+		"x-amz-meta-armor-version":        "1",
 		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -458,10 +504,10 @@ func (fg *FixtureGenerator) GenerateV1Multipart(plaintext []byte, partSize int) 
 
 	return &FixtureBundle{
 		Metadata: FixtureMetadata{
-			PlaintextSHA256:          hex.EncodeToString(plaintextSHA[:]),
-			PlaintextLength:          int64(len(plaintext)),
-			SourceVersion:            "v1",
-			SourceLayout:             "multipart-uniform",
+			PlaintextSHA256: hex.EncodeToString(plaintextSHA[:]),
+			PlaintextLength: int64(len(plaintext)),
+			SourceVersion:   "v1",
+			SourceLayout:    "multipart-uniform",
 			V3Expected: V3Layout{
 				IsMultipart:     true,
 				PartCount:       partCount,
@@ -518,7 +564,7 @@ func (fg *FixtureGenerator) GenerateV2Multipart(plaintext []byte, partSize int) 
 	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "2",
+		"x-amz-meta-armor-version":        "2",
 		"x-amz-meta-armor-wrapped-dek":    wrappedDEKV2,
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -530,10 +576,10 @@ func (fg *FixtureGenerator) GenerateV2Multipart(plaintext []byte, partSize int) 
 
 	return &FixtureBundle{
 		Metadata: FixtureMetadata{
-			PlaintextSHA256:          hex.EncodeToString(plaintextSHA[:]),
-			PlaintextLength:          int64(len(plaintext)),
-			SourceVersion:            "v2",
-			SourceLayout:             "multipart-uniform",
+			PlaintextSHA256: hex.EncodeToString(plaintextSHA[:]),
+			PlaintextLength: int64(len(plaintext)),
+			SourceVersion:   "v2",
+			SourceLayout:    "multipart-uniform",
 			V3Expected: V3Layout{
 				IsMultipart:     true,
 				PartCount:       partCount,
@@ -757,7 +803,7 @@ func (fg *FixtureGenerator) GenerateV1MultipartVariableFinal(plaintext []byte, u
 	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "1",
+		"x-amz-meta-armor-version":        "1",
 		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -769,10 +815,10 @@ func (fg *FixtureGenerator) GenerateV1MultipartVariableFinal(plaintext []byte, u
 
 	return &FixtureBundle{
 		Metadata: FixtureMetadata{
-			PlaintextSHA256:          hex.EncodeToString(plaintextSHA[:]),
-			PlaintextLength:          int64(len(plaintext)),
-			SourceVersion:            "v1",
-			SourceLayout:             "multipart-variable-final",
+			PlaintextSHA256: hex.EncodeToString(plaintextSHA[:]),
+			PlaintextLength: int64(len(plaintext)),
+			SourceVersion:   "v1",
+			SourceLayout:    "multipart-variable-final",
 			V3Expected: V3Layout{
 				IsMultipart:     true,
 				PartCount:       len(parts),
@@ -818,7 +864,7 @@ func (fg *FixtureGenerator) GenerateV2MultipartVariableFinal(plaintext []byte, u
 	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "2",
+		"x-amz-meta-armor-version":        "2",
 		"x-amz-meta-armor-wrapped-dek":    wrappedDEKV2,
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -830,10 +876,10 @@ func (fg *FixtureGenerator) GenerateV2MultipartVariableFinal(plaintext []byte, u
 
 	return &FixtureBundle{
 		Metadata: FixtureMetadata{
-			PlaintextSHA256:          hex.EncodeToString(plaintextSHA[:]),
-			PlaintextLength:          int64(len(plaintext)),
-			SourceVersion:            "v2",
-			SourceLayout:             "multipart-variable-final",
+			PlaintextSHA256: hex.EncodeToString(plaintextSHA[:]),
+			PlaintextLength: int64(len(plaintext)),
+			SourceVersion:   "v2",
+			SourceLayout:    "multipart-variable-final",
 			V3Expected: V3Layout{
 				IsMultipart:     true,
 				PartCount:       len(parts),
@@ -875,7 +921,7 @@ func (fg *FixtureGenerator) GenerateV1MultipartNonUniform(plaintext []byte, part
 	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "1",
+		"x-amz-meta-armor-version":        "1",
 		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -886,10 +932,10 @@ func (fg *FixtureGenerator) GenerateV1MultipartNonUniform(plaintext []byte, part
 
 	return &FixtureBundle{
 		Metadata: FixtureMetadata{
-			PlaintextSHA256:          hex.EncodeToString(plaintextSHA[:]),
-			PlaintextLength:          int64(len(plaintext)),
-			SourceVersion:            "v1",
-			SourceLayout:             "multipart-nonuniform",
+			PlaintextSHA256: hex.EncodeToString(plaintextSHA[:]),
+			PlaintextLength: int64(len(plaintext)),
+			SourceVersion:   "v1",
+			SourceLayout:    "multipart-nonuniform",
 			V3Expected: V3Layout{
 				IsMultipart:     true,
 				PartCount:       len(parts),
@@ -935,7 +981,7 @@ func (fg *FixtureGenerator) GenerateV2MultipartNonUniform(plaintext []byte, part
 	sidecarPath := fmt.Sprintf(".armor/hmac/%x", keySHA)
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "2",
+		"x-amz-meta-armor-version":        "2",
 		"x-amz-meta-armor-wrapped-dek":    wrappedDEKV2,
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -946,10 +992,10 @@ func (fg *FixtureGenerator) GenerateV2MultipartNonUniform(plaintext []byte, part
 
 	return &FixtureBundle{
 		Metadata: FixtureMetadata{
-			PlaintextSHA256:          hex.EncodeToString(plaintextSHA[:]),
-			PlaintextLength:          int64(len(plaintext)),
-			SourceVersion:            "v2",
-			SourceLayout:             "multipart-nonuniform",
+			PlaintextSHA256: hex.EncodeToString(plaintextSHA[:]),
+			PlaintextLength: int64(len(plaintext)),
+			SourceVersion:   "v2",
+			SourceLayout:    "multipart-nonuniform",
 			V3Expected: V3Layout{
 				IsMultipart:     true,
 				PartCount:       len(parts),
@@ -1009,7 +1055,7 @@ func (fg *FixtureGenerator) GenerateMalformedEnvelopeVersionMismatch(plaintext [
 	}
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "2", // Metadata says V2
+		"x-amz-meta-armor-version":        "2", // Metadata says V2
 		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -1063,7 +1109,7 @@ func (fg *FixtureGenerator) GenerateMalformedInconsistentPartMetadata(plaintext 
 
 	// Corrupt multipart metadata to be inconsistent
 	bundle.ObjectMetadata["x-amz-meta-armor-part-count"] = "999" // Wrong part count
-	bundle.ObjectMetadata["x-amz-meta-armor-part-size"] = "1"     // Wrong part size
+	bundle.ObjectMetadata["x-amz-meta-armor-part-size"] = "1"    // Wrong part size
 	bundle.Metadata.SourceVersion = "malformed"
 	bundle.Metadata.Description = "Malformed: multipart metadata is inconsistent with actual data"
 	bundle.Metadata.ExpectedMigrationOutcome = "failure"
@@ -1098,7 +1144,7 @@ func (fg *FixtureGenerator) GenerateContradictoryVersionLayout(plaintext []byte)
 	}
 
 	metadata := map[string]string{
-		"x-amz-meta-armor-version":       "1",
+		"x-amz-meta-armor-version":        "1",
 		"x-amz-meta-armor-wrapped-dek":    base64.StdEncoding.EncodeToString(wrappedDEK),
 		"x-amz-meta-armor-iv":             base64.StdEncoding.EncodeToString(fg.iv),
 		"x-amz-meta-armor-block-size":     fmt.Sprintf("%d", blockSize),
@@ -1205,6 +1251,151 @@ func (fg *FixtureGenerator) WriteFixture(name string, bundle *FixtureBundle) err
 	return nil
 }
 
+// hashFile returns the hex SHA-256 of a file's contents.
+func hashFile(path string) (string, int64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", 0, err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), int64(len(data)), nil
+}
+
+// buildRegenManifest derives the generated_fixtures manifest from the bytes
+// just written: every entry and artifact hash is read back from disk, so the
+// manifest provably describes the emitted tree rather than in-memory state.
+func (fg *FixtureGenerator) buildRegenManifest() (*RegenManifest, error) {
+	root := filepath.Join(fg.outputDir, "generated_fixtures")
+	dirEntries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read generated_fixtures: %w", err)
+	}
+
+	manifest := &RegenManifest{
+		ManifestVersion: 1,
+		Generator:       "tests/fixtures/migration/standalone_generator.go",
+		Deterministic:   true,
+		Entries:         []RegenManifestEntry{},
+	}
+	for _, dirEntry := range dirEntries {
+		if !dirEntry.IsDir() {
+			continue
+		}
+		fixtureDir := filepath.Join(root, dirEntry.Name())
+		metaRaw, err := os.ReadFile(filepath.Join(fixtureDir, "metadata.json"))
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s metadata: %w", dirEntry.Name(), err)
+		}
+		var meta FixtureMetadata
+		if err := json.Unmarshal(metaRaw, &meta); err != nil {
+			return nil, fmt.Errorf("failed to parse %s metadata: %w", dirEntry.Name(), err)
+		}
+
+		files, err := os.ReadDir(fixtureDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list %s: %w", dirEntry.Name(), err)
+		}
+		entry := RegenManifestEntry{
+			FixtureID:       dirEntry.Name(),
+			FormatVersion:   meta.SourceVersion,
+			PlaintextSHA256: meta.PlaintextSHA256,
+			PlaintextLength: meta.PlaintextLength,
+			V3Expected:      meta.V3Expected,
+			Artifacts:       []RegenManifestArtifact{},
+		}
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			sum, size, err := hashFile(filepath.Join(fixtureDir, f.Name()))
+			if err != nil {
+				return nil, fmt.Errorf("failed to hash %s/%s: %w", dirEntry.Name(), f.Name(), err)
+			}
+			entry.Artifacts = append(entry.Artifacts, RegenManifestArtifact{
+				Name:   f.Name(),
+				Bytes:  size,
+				SHA256: sum,
+			})
+		}
+		manifest.Entries = append(manifest.Entries, entry)
+	}
+	return manifest, nil
+}
+
+// writeRegenerationSet emits the committed regeneration set under
+// <output-dir>/generated_fixtures/ plus its manifest.json. It is a free
+// function (not a method on the test plaintexts) so the determinism tests can
+// drive the exact same code path as main().
+func writeRegenerationSet(fg *FixtureGenerator) error {
+	regenShort := make([]byte, 47)
+	for i := range regenShort {
+		regenShort[i] = byte('A' + i%26)
+	}
+	mediumPlaintext := make([]byte, 256*1024)
+	for i := range mediumPlaintext {
+		mediumPlaintext[i] = byte(i % 256)
+	}
+	regenPartSize := 5 * 1024 * 1024 // one S3 part; four 64 KiB blocks
+
+	cases := []struct {
+		name string
+		desc string
+		gen  func() (*FixtureBundle, error)
+	}{
+		{
+			name: "generated_fixtures/v1-single-explicit-short",
+			desc: "Regeneration set: V1 single-PUT, 47-byte plaintext, explicit version metadata",
+			gen:  func() (*FixtureBundle, error) { return fg.GenerateV1SingleExplicit(regenShort) },
+		},
+		{
+			name: "generated_fixtures/v1-single-implicit-short",
+			desc: "Regeneration set: V1 single-PUT, 47-byte plaintext, missing version metadata",
+			gen:  func() (*FixtureBundle, error) { return fg.GenerateV1SingleImplicit(regenShort) },
+		},
+		{
+			name: "generated_fixtures/v2-single-short",
+			desc: "Regeneration set: V2 single-PUT, 47-byte plaintext",
+			gen:  func() (*FixtureBundle, error) { return fg.GenerateV2Single(regenShort) },
+		},
+		{
+			name: "generated_fixtures/v1-multipart-uniform",
+			desc: "Regeneration set: V1 multipart-uniform, one 256 KiB part of four 64 KiB blocks",
+			gen:  func() (*FixtureBundle, error) { return fg.GenerateV1Multipart(mediumPlaintext, regenPartSize) },
+		},
+		{
+			name: "generated_fixtures/v2-multipart-uniform",
+			desc: "Regeneration set: V2 multipart-uniform, one 256 KiB part of four 64 KiB blocks",
+			gen:  func() (*FixtureBundle, error) { return fg.GenerateV2Multipart(mediumPlaintext, regenPartSize) },
+		},
+	}
+	for _, c := range cases {
+		bundle, err := c.gen()
+		if err != nil {
+			return fmt.Errorf("failed to generate %s: %w", c.name, err)
+		}
+		bundle.Metadata.Description = c.desc
+		if err := fg.WriteFixture(c.name, bundle); err != nil {
+			return fmt.Errorf("failed to write %s: %w", c.name, err)
+		}
+		fmt.Printf("  ✓ %s\n", c.name)
+	}
+
+	manifest, err := fg.buildRegenManifest()
+	if err != nil {
+		return fmt.Errorf("failed to build manifest: %w", err)
+	}
+	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal manifest: %w", err)
+	}
+	manifestPath := filepath.Join(fg.outputDir, "generated_fixtures", "manifest.json")
+	if err := os.WriteFile(manifestPath, manifestJSON, 0644); err != nil {
+		return fmt.Errorf("failed to write manifest: %w", err)
+	}
+	fmt.Printf("  ✓ generated_fixtures/manifest.json (%d fixtures)\n", len(manifest.Entries))
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: %s <output-dir>\n", os.Args[0])
@@ -1226,15 +1417,20 @@ func main() {
 
 	// Test plaintexts
 	testPlaintext := []byte("ARMOR migration test data - V1/V2 to V3 fixture with sufficient length to test multiple blocks and encryption scenarios")
-	mediumPlaintext := make([]byte, 256*1024) // 256 KB
-	for i := range mediumPlaintext {
-		mediumPlaintext[i] = byte(i % 256)
-	}
 
 	// Large plaintext for proper multipart fixtures (15 MB - large enough to span multiple parts)
 	multipartPlaintext := make([]byte, 15*1024*1024) // 15 MB
 	for i := range multipartPlaintext {
 		multipartPlaintext[i] = byte(i % 256)
+	}
+
+	// --- Regeneration set (generated_fixtures/): short, fully deterministic
+	// fixtures committed as the canonical regeneration set pinned by
+	// goldenFixtureMatrix. KWP-wrapped DEKs, fixed MEK/DEK/IV, no randomness.
+	fmt.Println("Generating regeneration set (generated_fixtures/)...")
+	if err := writeRegenerationSet(gen); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate regeneration set: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Generate V1 single-PUT fixtures
@@ -1312,7 +1508,7 @@ func main() {
 	}
 	fmt.Println("  ✓ v1_multipart/variable_final_part")
 
-	v1NonUniform, err := gen.GenerateV1MultipartNonUniform(multipartPlaintext, []int{1024*1024, 2*1024*1024, 3*1024*1024})
+	v1NonUniform, err := gen.GenerateV1MultipartNonUniform(multipartPlaintext, []int{1024 * 1024, 2 * 1024 * 1024, 3 * 1024 * 1024})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate V1 non-uniform: %v\n", err)
 		os.Exit(1)
@@ -1348,7 +1544,7 @@ func main() {
 	}
 	fmt.Println("  ✓ v2_multipart/variable_final_part")
 
-	v2NonUniform, err := gen.GenerateV2MultipartNonUniform(multipartPlaintext, []int{1024*1024, 2*1024*1024, 3*1024*1024})
+	v2NonUniform, err := gen.GenerateV2MultipartNonUniform(multipartPlaintext, []int{1024 * 1024, 2 * 1024 * 1024, 3 * 1024 * 1024})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate V2 non-uniform: %v\n", err)
 		os.Exit(1)
@@ -1469,7 +1665,7 @@ func main() {
 	fmt.Printf("\nKey independence guarantee:\n")
 	fmt.Printf("  - No imports from ARMOR internal packages\n")
 	fmt.Printf("  - Standalone envelope header encoding\n")
-	fmt.Printf("  - Standalone DEK wrapping (AES-GCM)\n")
+	fmt.Printf("  - Standalone DEK wrapping (AES-KWP, RFC 5649)\n")
 	fmt.Printf("  - Standalone HMAC key derivation\n")
 	fmt.Printf("  - Standalone V1/V2 counter derivation\n")
 	fmt.Printf("  - If migration code has a bug, this generator will catch it\n")

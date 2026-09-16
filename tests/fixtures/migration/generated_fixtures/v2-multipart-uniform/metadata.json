@@ -1,0 +1,17 @@
+{
+  "plaintext_sha256": "2312394bd99545d9de131c24efb781e765ac1aec243f2ed9347597a793a415e9",
+  "plaintext_length": 262144,
+  "source_version": "v2",
+  "source_layout": "multipart-uniform",
+  "v3_expected": {
+    "is_multipart": true,
+    "part_count": 1,
+    "blocks_per_part": [
+      4
+    ],
+    "compression_used": false,
+    "sidecar_path": ".armor/hmac/3c94d277a57c4078ce27e75ee1e8f605c2b382dc3108996af09e6c175cd38c9d"
+  },
+  "description": "Regeneration set: V2 multipart-uniform, one 256 KiB part of four 64 KiB blocks",
+  "expected_migration_outcome": "success"
+}

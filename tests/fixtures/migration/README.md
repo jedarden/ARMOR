@@ -21,7 +21,7 @@ The standalone generator (`standalone_generator.go`) implements all crypto primi
 
 - No imports from ARMOR internal packages
 - Standalone envelope header encoding
-- Standalone DEK wrapping (AES-GCM)
+- Standalone DEK wrapping (AES-KWP, RFC 5649)
 - Standalone HMAC key derivation
 - Standalone V1/V2 counter derivation
 
@@ -44,25 +44,43 @@ Or use the convenience script:
 
 ```bash
 cd tests/fixtures/migration
-./generate_fixtures.sh
+go run standalone_generator.go /tmp/fixture-out
 ```
+
+Regenerate into a scratch directory and copy only the fixture sets you intend
+to replace - a full run rewrites the legacy tree with current (deterministic,
+KWP-wrapped) bytes, which the committed legacy dirs do not carry.
 
 ### Generated fixtures:
 
-Each fixture directory contains:
+The regeneration set emitted under `generated_fixtures/` also gets a
+top-level `manifest.json` (machine-readable, schema below). Each fixture
+directory contains:
 
 - `metadata.json` - Fixture metadata (plaintext SHA256, length, source version/layout, expected V3 outcome)
 - `stored_ciphertext.bin` - The encrypted data as stored
 - `object_metadata.json` - S3 object metadata
 - `sidecar.bin` - HMAC sidecar (for multipart fixtures)
 
+`generated_fixtures/manifest.json` records, per fixture:
+
+- `fixture_id` - directory name, entries sorted and complete
+- `format_version` - `v1` or `v2`
+- `plaintext_sha256`, `plaintext_length` - the plaintext facts
+- `v3_expected` - expected V3 layout (`is_multipart`, `part_count`, `blocks_per_part`, `sidecar_path`, …)
+- `artifacts` - every emitted file with its byte length and SHA-256
+
+Every entry and artifact hash is read back from disk after the write, so the
+manifest provably describes the emitted bytes, and it is itself
+deterministic.
+
 ## Fixture Structure
 
 ```
 tests/fixtures/migration/
 ├── standalone_generator.go       # Main generator (fully standalone)
-├── v1v2_fixture_generator.go     # Regeneration-set generator (short plaintexts)
-├── generate_fixtures.sh          # Convenience script
+├── (the regeneration set generated_fixtures/ is emitted by
+│    standalone_generator.go: short plaintexts, KWP-wrapped DEKs)
 ├── canonical/
 │   └── generate_fixtures.go      # Legacy generator (uses ARMOR crypto); kept
 │                                 #   in its own directory because both programs
@@ -89,6 +107,7 @@ tests/fixtures/migration/
 │   ├── variable_final_part/
 │   └── non_uniform_parts/
 ├── generated_fixtures/           # Regeneration set (short plaintexts)
+│   ├── manifest.json             # Machine-readable manifest (schema above)
 │   ├── v1-single-explicit-short/
 │   ├── v1-single-implicit-short/
 │   ├── v2-single-short/
@@ -224,8 +243,40 @@ The generator accurately replicates the V1 CTR keystream reuse bug:
 - Fixed MEK: 0x01, 0x02, ..., 0x20
 - Fixed DEK: 0x02, 0x03, ..., 0x21
 - Fixed IV: 0x03, 0x04, ..., 0x12
+- DEK wrapping is AES-KWP (RFC 5649), which has no nonce
+- Plaintexts are fixed patterns (`i % 256`, an alphabet cycle, …), never random
+- No clock or unseeded randomness anywhere in the generator; the only imports
+  are the Go standard library
 
 This ensures reproducible fixtures across runs.
+
+## Verifying Determinism
+
+Two consecutive runs must produce byte-identical `generated_fixtures/` trees:
+
+```bash
+go run tests/fixtures/migration/standalone_generator.go /tmp/fixture-run1
+go run tests/fixtures/migration/standalone_generator.go /tmp/fixture-run2
+
+# byte-for-byte comparison of both trees
+diff -r /tmp/fixture-run1/generated_fixtures /tmp/fixture-run2/generated_fixtures
+
+# same comparison as sha256 manifests
+(cd /tmp/fixture-run1 && find generated_fixtures -type f | sort | xargs sha256sum) > /tmp/run1.sums
+(cd /tmp/fixture-run2 && find generated_fixtures -type f | sort | xargs sha256sum) > /tmp/run2.sums
+diff /tmp/run1.sums /tmp/run2.sums   # must be empty
+```
+
+`go test ./tests/fixtures/migration/` enforces this durably:
+`TestRegenerationSetIsDeterministic` runs the generator twice and compares the
+trees, `TestCommittedRegenerationSetMatchesGenerator` fails if the committed
+`generated_fixtures/` ever drifts from what the current generator produces,
+and `TestRegenManifestCoversEveryFixture` pins the manifest schema and
+cross-checks every entry against the fixture bytes on disk.
+
+Last verified 2026-09-16: two consecutive runs produced identical
+`sha256sum` output (18 files) and `diff -r` reported no differences; the
+committed `generated_fixtures/` tree is exactly the run-1 output.
 
 ## Validation
 

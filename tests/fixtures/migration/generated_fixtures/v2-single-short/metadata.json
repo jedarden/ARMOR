@@ -1,0 +1,12 @@
+{
+  "plaintext_sha256": "f8f8e46b1a93bebb3018ec567ebb6272f70fd1bf3350a698e4e712b0f87379b2",
+  "plaintext_length": 47,
+  "source_version": "v2",
+  "source_layout": "single",
+  "v3_expected": {
+    "is_multipart": false,
+    "compression_used": false
+  },
+  "description": "Regeneration set: V2 single-PUT, 47-byte plaintext",
+  "expected_migration_outcome": "success"
+}
