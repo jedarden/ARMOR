@@ -5,7 +5,7 @@ A reproducible test script that validates ARMOR's part-size alignment requiremen
 ## Background
 
 ARMOR uses a block-aligned uniform-part-size contract for parts that have a
-following part. This script verifies the ADR-005 exemptions for a lone part and
+following part. This script verifies the ADR-015 exemptions for a lone part and
 the final part, including exact GET/HEAD readback without zero-padding.
 
 ## Prerequisites
@@ -60,7 +60,7 @@ The script tests the following scenarios:
 
 ## Expected Behavior
 
-Under ADR-005:
+Under ADR-015:
 - A lone part may be any size, including non-aligned.
 - A short final part may be any size, including zero bytes.
 - Regular parts that have a following part must remain uniform and block-aligned.

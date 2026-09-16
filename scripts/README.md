@@ -430,7 +430,7 @@ Complete restore environment reset.
 
 Validates ARMOR's part-size alignment requirements for multipart uploads.
 
-**Purpose:** Reproducible test of ADR-005 exemptions for lone parts and final parts, including exact GET/HEAD readback without zero-padding.
+**Purpose:** Reproducible test of ADR-015 exemptions for lone parts and final parts, including exact GET/HEAD readback without zero-padding.
 
 **Full documentation:** [probe-armor-multipart-alignment.README.md](probe-armor-multipart-alignment.README.md)
 
