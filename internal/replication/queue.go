@@ -267,15 +267,20 @@ func (q *ReplicationQueue) Enqueue(bucket, key string) {
 	// Track the task before publishing it to the channel. Otherwise a very fast
 	// worker can finish the task before the enqueue path records its timestamp.
 	q.updateOldestTaskTimestamp(t.enqueuedAt)
+	// Reserve depth before publishing the task. A worker may receive from the
+	// channel immediately; incrementing only after the send would let it
+	// decrement first and briefly expose a negative queue depth.
+	q.depth.Add(1)
 	select {
 	case q.queueCh <- t:
-		q.depth.Add(1)
 		q.metrics.EnqueuedTotal.Add(1)
 	case <-q.stop:
+		q.depth.Add(-1)
 		q.updateOldestAfterTaskRemoval(t.enqueuedAt)
 		q.metrics.DroppedTotal.Add(1)
 	default:
 		// Queue full — drop and increment metric
+		q.depth.Add(-1)
 		q.updateOldestAfterTaskRemoval(t.enqueuedAt)
 		q.metrics.DroppedTotal.Add(1)
 	}

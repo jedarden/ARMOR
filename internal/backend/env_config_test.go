@@ -3,6 +3,7 @@ package backend
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -208,5 +209,34 @@ func TestParseSecondaryBackendEnv(t *testing.T) {
 				t.Errorf("config validation failed for %v", cfg)
 			}
 		})
+	}
+}
+
+func TestParseSecondaryBackendEnvTypeOnlyWithSeparatePath(t *testing.T) {
+	t.Setenv("ARMOR_SECONDARY_BACKEND", "filesystem")
+	t.Setenv("ARMOR_SECONDARY_BACKEND_PATH", "/backup/armor")
+
+	cfg, err := ParseSecondaryBackendEnv()
+	if err != nil {
+		t.Fatalf("ParseSecondaryBackendEnv() error: %v", err)
+	}
+	if cfg.Type != "filesystem" || cfg.Path != "/backup/armor" {
+		t.Fatalf("config = %+v, want filesystem /backup/armor", cfg)
+	}
+}
+
+func TestParseSecondaryBackendEnvTypeOnlyWithSeparateB2Credentials(t *testing.T) {
+	t.Setenv("ARMOR_SECONDARY_BACKEND", "b2")
+	t.Setenv("ARMOR_SECONDARY_B2_ENDPOINT", "https://s3.us-east-005.backblazeb2.com")
+	t.Setenv("ARMOR_SECONDARY_B2_KEY_ID", "secondary-key-id")
+	t.Setenv("ARMOR_SECONDARY_B2_KEY", strings.Repeat("k", 16))
+	t.Setenv("ARMOR_SECONDARY_B2_BUCKET", "secondary-bucket")
+
+	cfg, err := ParseSecondaryBackendEnv()
+	if err != nil {
+		t.Fatalf("ParseSecondaryBackendEnv() error: %v", err)
+	}
+	if cfg.Type != "b2" || cfg.Region != "us-east-005" || cfg.Bucket != "secondary-bucket" {
+		t.Fatalf("config = %+v, want configured B2 target", cfg)
 	}
 }

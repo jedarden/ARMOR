@@ -27,7 +27,7 @@ import (
 //   - an unsupported backend type is specified
 //   - required fields for the backend type are missing
 func ParseSecondaryBackendEnv() (BackendConfig, error) {
-	configStr := os.Getenv("ARMOR_SECONDARY_BACKEND")
+	configStr := strings.TrimSpace(os.Getenv("ARMOR_SECONDARY_BACKEND"))
 	if configStr == "" {
 		// Unset = disabled state
 		return BackendConfig{}, nil
@@ -36,11 +36,28 @@ func ParseSecondaryBackendEnv() (BackendConfig, error) {
 	// Split into type and params
 	parts := strings.SplitN(configStr, ":", 2)
 	if len(parts) != 2 {
-		return BackendConfig{}, fmt.Errorf("invalid ARMOR_SECONDARY_BACKEND format: expected 'type:params', got %q", configStr)
+		// Permit a type-only selector when its credentials/path are supplied by
+		// dedicated environment variables. The colon form remains the compact
+		// configuration supported for backwards compatibility.
+		backendType := strings.ToLower(strings.TrimSpace(configStr))
+		switch backendType {
+		case "filesystem":
+			if path := os.Getenv("ARMOR_SECONDARY_BACKEND_PATH"); path != "" {
+				return parseFilesystemBackend(path)
+			}
+		case "b2":
+			if os.Getenv("ARMOR_SECONDARY_B2_ENDPOINT") != "" ||
+				os.Getenv("ARMOR_SECONDARY_B2_KEY_ID") != "" ||
+				os.Getenv("ARMOR_SECONDARY_B2_KEY") != "" ||
+				os.Getenv("ARMOR_SECONDARY_B2_BUCKET") != "" {
+				return ParseSecondaryBackendConfig()
+			}
+		}
+		return BackendConfig{}, fmt.Errorf("invalid ARMOR_SECONDARY_BACKEND format: expected 'type:params' or a type-only selector with separate credentials/path")
 	}
 
-	backendType := strings.ToLower(parts[0])
-	params := parts[1]
+	backendType := strings.ToLower(strings.TrimSpace(parts[0]))
+	params := strings.TrimSpace(parts[1])
 
 	if params == "" {
 		return BackendConfig{}, fmt.Errorf("ARMOR_SECONDARY_BACKEND params cannot be empty for type %q", backendType)

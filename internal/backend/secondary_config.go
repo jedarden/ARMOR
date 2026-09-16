@@ -160,7 +160,7 @@ func ParseSecondaryBackendConfigString(configStr string) (BackendConfig, error) 
 	// Split into type and params
 	parts := strings.SplitN(configStr, ":", 2)
 	if len(parts) != 2 {
-		return BackendConfig{}, fmt.Errorf("invalid config format: expected 'type:params', got %q", configStr)
+		return BackendConfig{}, fmt.Errorf("invalid config format: expected 'type:params'")
 	}
 
 	backendType := strings.ToLower(strings.TrimSpace(parts[0]))
@@ -208,7 +208,7 @@ func parseB2ConfigString(params string) (BackendConfig, error) {
 	// Split into exactly 4 parts: bucket:key:id:secret
 	parts := strings.Split(params, ":")
 	if len(parts) != 4 {
-		return BackendConfig{}, fmt.Errorf("invalid B2 format: expected 'bucket:key:id:secret' (4 fields), got %d fields: %q", len(parts), params)
+		return BackendConfig{}, fmt.Errorf("invalid B2 format: expected 'bucket:key:id:secret' (4 fields), got %d fields", len(parts))
 	}
 
 	bucket := strings.TrimSpace(parts[0])

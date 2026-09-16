@@ -80,6 +80,46 @@ func TestCanonicalSecondaryBackendConfig(t *testing.T) {
 	}
 }
 
+// TestCanonicalSecondaryBackendSelectorWithSeparatePath verifies that the
+// selector and filesystem path can be provisioned independently.
+func TestCanonicalSecondaryBackendSelectorWithSeparatePath(t *testing.T) {
+	setEnv(t, append(minimalEnv(),
+		"ARMOR_SECONDARY_BACKEND", "filesystem",
+		"ARMOR_SECONDARY_BACKEND_PATH", "/backup/armor",
+		"ARMOR_SECONDARY_BACKEND_TYPE", "",
+	)...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.SecondaryBackendConfig.Type != "filesystem" || cfg.SecondaryBackendConfig.Path != "/backup/armor" {
+		t.Fatalf("SecondaryBackendConfig = %+v, want filesystem /backup/armor", cfg.SecondaryBackendConfig)
+	}
+}
+
+// TestCanonicalSecondaryB2SelectorWithSeparateCredentials verifies that the
+// B2 selector uses the separately provisioned credential variables.
+func TestCanonicalSecondaryB2SelectorWithSeparateCredentials(t *testing.T) {
+	setEnv(t, append(minimalEnv(),
+		"ARMOR_SECONDARY_BACKEND", "b2",
+		"ARMOR_SECONDARY_BACKEND_TYPE", "",
+		"ARMOR_SECONDARY_BACKEND_PATH", "",
+		"ARMOR_SECONDARY_B2_ENDPOINT", "https://s3.us-east-005.backblazeb2.com",
+		"ARMOR_SECONDARY_B2_KEY_ID", "value",
+		"ARMOR_SECONDARY_B2_KEY", "value",
+		"ARMOR_SECONDARY_B2_BUCKET", "bucket",
+	)...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.SecondaryBackendConfig.Type != "b2" || cfg.SecondaryBackendConfig.Bucket != "bucket" {
+		t.Fatalf("SecondaryBackendConfig = %+v, want configured B2 target", cfg.SecondaryBackendConfig)
+	}
+}
+
 // TestSecondaryB2CredentialConfig verifies credentials kept in separate
 // environment variables are parsed into the typed config and never require
 // the server to overload the legacy filesystem-only fields.
@@ -211,17 +251,17 @@ func TestSecondaryBackendConfigEdgeCases(t *testing.T) {
 			},
 		},
 		{
-			name:        "type set but path unset",
-			typeValue:   "filesystem",
-			pathValue:   "",
-			shouldError: true,
+			name:          "type set but path unset",
+			typeValue:     "filesystem",
+			pathValue:     "",
+			shouldError:   true,
 			errorContains: "ARMOR_SECONDARY_BACKEND_PATH is required",
 		},
 		{
-			name:        "whitespace-only type treated as empty (disabled)",
-			typeValue:   "   ",
-			pathValue:   "/tmp/armor/secondary",
-			shouldError: true,
+			name:          "whitespace-only type treated as empty (disabled)",
+			typeValue:     "   ",
+			pathValue:     "/tmp/armor/secondary",
+			shouldError:   true,
 			errorContains: "must be 'filesystem'",
 		},
 		{
@@ -286,17 +326,17 @@ func TestSecondaryBackendConfigEdgeCases(t *testing.T) {
 			},
 		},
 		{
-			name:        "mixed case filesystem is rejected (case-sensitive)",
-			typeValue:   "FileSystem",
-			pathValue:   "/mnt/backup",
-			shouldError: true,
+			name:          "mixed case filesystem is rejected (case-sensitive)",
+			typeValue:     "FileSystem",
+			pathValue:     "/mnt/backup",
+			shouldError:   true,
 			errorContains: "must be 'filesystem'",
 		},
 		{
-			name:        "uppercase FILESYSTEM is rejected (case-sensitive)",
-			typeValue:   "FILESYSTEM",
-			pathValue:   "/mnt/backup",
-			shouldError: true,
+			name:          "uppercase FILESYSTEM is rejected (case-sensitive)",
+			typeValue:     "FILESYSTEM",
+			pathValue:     "/mnt/backup",
+			shouldError:   true,
 			errorContains: "must be 'filesystem'",
 		},
 		{

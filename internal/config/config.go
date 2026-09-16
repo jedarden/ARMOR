@@ -576,7 +576,27 @@ func Load() (*Config, error) {
 		os.Getenv("ARMOR_SECONDARY_B2_KEY") != "" ||
 		os.Getenv("ARMOR_SECONDARY_B2_BUCKET") != ""
 	if secondaryEnv != "" {
-		parsed, parseErr := backend.ParseSecondaryBackendEnv()
+		var parsed backend.BackendConfig
+		var parseErr error
+		// A type-only selector keeps credentials and paths in independently
+		// provisioned variables. Compact type:path and type:credential forms are
+		// still handled by ParseSecondaryBackendEnv.
+		switch strings.ToLower(strings.TrimSpace(secondaryEnv)) {
+		case "filesystem":
+			if pathValue := os.Getenv("ARMOR_SECONDARY_BACKEND_PATH"); pathValue != "" {
+				parsed = backend.BackendConfig{Type: "filesystem", Path: pathValue}
+			} else {
+				parseErr = fmt.Errorf("ARMOR_SECONDARY_BACKEND_PATH is required when ARMOR_SECONDARY_BACKEND=filesystem")
+			}
+		case "b2":
+			if secondaryB2Configured {
+				parsed, parseErr = backend.ParseSecondaryBackendConfig()
+			} else {
+				parseErr = fmt.Errorf("ARMOR_SECONDARY_B2_* credentials are required when ARMOR_SECONDARY_BACKEND=b2")
+			}
+		default:
+			parsed, parseErr = backend.ParseSecondaryBackendEnv()
+		}
 		if parseErr != nil {
 			errs = append(errs, parseErr)
 		} else {

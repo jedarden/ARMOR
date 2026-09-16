@@ -800,6 +800,20 @@ secondary, for example:
 ARMOR_SECONDARY_BACKEND=filesystem:/offsite/armor
 ```
 
+The selector and path may also be provisioned separately, which is useful when
+the path is mounted or injected independently of the deployment environment:
+
+```bash
+ARMOR_SECONDARY_BACKEND=filesystem
+ARMOR_SECONDARY_BACKEND_PATH=/offsite/armor
+```
+
+For a future B2 secondary, use `ARMOR_SECONDARY_BACKEND=b2` with
+`ARMOR_SECONDARY_B2_ENDPOINT`, `ARMOR_SECONDARY_B2_KEY_ID`,
+`ARMOR_SECONDARY_B2_KEY`, and `ARMOR_SECONDARY_B2_BUCKET`. Those credential
+values must come from the deployment secret store and are never printed in
+redacted configuration.
+
 The secondary is a best-effort, asynchronous mirror. A successful client
 response means only that the primary write succeeded; an object acknowledged
 just before the B2 failure may still be absent from the mirror. The queue is
