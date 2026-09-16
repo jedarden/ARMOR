@@ -12,9 +12,11 @@ import (
 
 // newManifestTenantServer builds a server over the shared store at root with the
 // given ADR-001 tenant prefix, exactly as two tenants in one bucket would be
-// configured. The caller is responsible for flushing via flushTenantManifest
-// before another instance is expected to see what it enqueued.
-func newManifestTenantServer(t *testing.T, root, tenantPrefix, writerID string) *Server {
+// configured. An empty manifestPrefix leaves ARMOR_MANIFEST_PREFIX unset so the
+// default applies. The caller is responsible for flushing via
+// flushTenantManifest before another instance is expected to see what it
+// enqueued.
+func newManifestTenantServer(t *testing.T, root, tenantPrefix, writerID, manifestPrefix string) *Server {
 	t.Helper()
 
 	const mek = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
@@ -39,7 +41,11 @@ func newManifestTenantServer(t *testing.T, root, tenantPrefix, writerID string) 
 	// ARMOR_MANIFEST_PREFIX must not leak in from another test: the default is
 	// what a shared-bucket tenant actually runs with.
 	prevManifestPrefix, hadManifestPrefix := os.LookupEnv("ARMOR_MANIFEST_PREFIX")
-	os.Unsetenv("ARMOR_MANIFEST_PREFIX")
+	if manifestPrefix == "" {
+		os.Unsetenv("ARMOR_MANIFEST_PREFIX")
+	} else if err := os.Setenv("ARMOR_MANIFEST_PREFIX", manifestPrefix); err != nil {
+		t.Fatalf("Setenv(ARMOR_MANIFEST_PREFIX): %v", err)
+	}
 
 	t.Cleanup(func() {
 		for k, v := range originals {
@@ -60,7 +66,11 @@ func newManifestTenantServer(t *testing.T, root, tenantPrefix, writerID string) 
 	if err != nil {
 		t.Fatalf("config.Load() for tenant %q: %v", tenantPrefix, err)
 	}
-	if want := filepath.ToSlash(filepath.Join(tenantPrefix, ".armor/manifest")); cfg.ManifestPrefix != want {
+	wantManifestPrefix := filepath.Join(tenantPrefix, ".armor/manifest")
+	if manifestPrefix != "" {
+		wantManifestPrefix = filepath.Join(tenantPrefix, manifestPrefix)
+	}
+	if want := filepath.ToSlash(wantManifestPrefix); cfg.ManifestPrefix != want {
 		t.Fatalf("tenant %q got ManifestPrefix %q, want %q", tenantPrefix, cfg.ManifestPrefix, want)
 	}
 
@@ -94,7 +104,7 @@ func TestManifestPrefixIsolatesTenantsInOneBucket(t *testing.T) {
 	root := t.TempDir()
 
 	// Tenant p records an upload and flushes it as a delta object.
-	tenantP := newManifestTenantServer(t, root, "p/", "writer-p")
+	tenantP := newManifestTenantServer(t, root, "p/", "writer-p", "")
 	tenantP.manifestWriter.EnqueuePut("shared-bucket", "ledger/row-1", &manifest.Entry{
 		PlaintextSize: 10,
 		BlockSize:     65536,
@@ -102,14 +112,14 @@ func TestManifestPrefixIsolatesTenantsInOneBucket(t *testing.T) {
 	flushTenantManifest(t, tenantP)
 
 	// A second p/ instance must find that delta under p/.armor/manifest/.
-	againP := newManifestTenantServer(t, root, "p/", "writer-p-2")
+	againP := newManifestTenantServer(t, root, "p/", "writer-p-2", "")
 	if got := againP.manifest.Len(); got != 1 {
 		t.Errorf("second p/ instance loaded %d manifest entries, want 1; store holds:%s",
 			got, listStoreKeys(t, root))
 	}
 
 	// A q/ instance in the same bucket must load none of them.
-	tenantQ := newManifestTenantServer(t, root, "q/", "writer-q")
+	tenantQ := newManifestTenantServer(t, root, "q/", "writer-q", "")
 	if got := tenantQ.manifest.Len(); got != 0 {
 		t.Errorf("q/ instance loaded %d manifest entries from p/'s deltas, want 0", got)
 	}
@@ -152,4 +162,84 @@ func listStoreKeys(t *testing.T, root string) string {
 		return "<store is empty>"
 	}
 	return sb.String()
+}
+
+// TestManifestPrefixConfinement is the integration half of the confinement
+// rule: a custom ARMOR_MANIFEST_PREFIX relocates the deltas within the tenant
+// namespace end to end — a second instance of the same tenant loads them from
+// the relocated path — while a "../" traversal or an absolute path is refused
+// at configuration time and leaves the store untouched, so nothing can land
+// outside the namespace on either backend.
+func TestManifestPrefixConfinement(t *testing.T) {
+	root := t.TempDir()
+
+	// Relocation within p/'s namespace: the delta object must sit at
+	// p/deeper/manifest/<writer>/ and be loadable by the next p/ instance
+	// configured identically.
+	tenantP := newManifestTenantServer(t, root, "p/", "writer-p", "deeper/manifest")
+	tenantP.manifestWriter.EnqueuePut("shared-bucket", "ledger/row-1", &manifest.Entry{
+		PlaintextSize: 10,
+		BlockSize:     65536,
+	}, nil)
+	flushTenantManifest(t, tenantP)
+
+	matches, err := filepath.Glob(filepath.Join(root, "shared-bucket", "p", "deeper", "manifest", "*", "*.jsonl"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatalf("no delta object under %s — store holds:%s",
+			filepath.Join(root, "shared-bucket", "p", "deeper", "manifest"), listStoreKeys(t, root))
+	}
+
+	againP := newManifestTenantServer(t, root, "p/", "writer-p-2", "deeper/manifest")
+	if got := againP.manifest.Len(); got != 1 {
+		t.Errorf("relocated p/ instance loaded %d manifest entries, want 1; store holds:%s",
+			got, listStoreKeys(t, root))
+	}
+
+	// A traversal prefix is refused before any writer exists, and the path it
+	// would have resolved to — both the within-bucket escape and, for the
+	// filesystem backend, the one ../ would clean out of the bucket directory
+	// entirely — must not appear on disk.
+	for _, tt := range []struct {
+		name           string
+		manifestPrefix string
+	}{
+		{name: "parent traversal", manifestPrefix: "../escape"},
+		{name: "absolute path", manifestPrefix: "/var/armor/manifest"},
+	} {
+		t.Run("rejects "+tt.name, func(t *testing.T) {
+			// t.Setenv restores every variable on cleanup; the leg builds no
+			// server, so it needs none of the helper's flush bookkeeping.
+			for _, pair := range [][2]string{
+				{"ARMOR_BACKEND", "filesystem"},
+				{"ARMOR_FS_PATH", root},
+				{"ARMOR_BUCKET", "shared-bucket"},
+				{"ARMOR_MEK", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},
+				{"ARMOR_AUTH_ACCESS_KEY", "test-access-key"},
+				{"ARMOR_AUTH_SECRET_KEY", "test-secret-key"},
+				{"ARMOR_WRITER_ID", "writer-escape"},
+				{"ARMOR_PREFIX", "p/"},
+				{"ARMOR_MANIFEST_PREFIX", tt.manifestPrefix},
+			} {
+				t.Setenv(pair[0], pair[1])
+			}
+
+			if _, err := config.Load(); err == nil {
+				t.Fatalf("config.Load() accepted ARMOR_MANIFEST_PREFIX=%q, want rejection", tt.manifestPrefix)
+			} else if !strings.Contains(err.Error(), "ARMOR_MANIFEST_PREFIX") {
+				t.Errorf("Load() error %v does not name ARMOR_MANIFEST_PREFIX", err)
+			}
+
+			for _, escaped := range []string{
+				filepath.Join(root, "shared-bucket", "escape"),
+				filepath.Join(root, "escape"),
+			} {
+				if _, statErr := os.Stat(escaped); !os.IsNotExist(statErr) {
+					t.Errorf("rejected prefix escaped to %s: %v — store holds:%s", escaped, statErr, listStoreKeys(t, root))
+				}
+			}
+		})
+	}
 }

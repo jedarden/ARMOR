@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -392,6 +393,11 @@ func Load() (*Config, error) {
 	// move a tenant's manifests within that tenant's namespace, never to escape
 	// the namespace. ADR-001 "Internal Namespaces" is the normative statement of
 	// this rule and of the provenance chain's deliberate exception to it.
+	// Confinement is enforced here: a value that would climb out with "../"
+	// or escape into an absolute path is refused at load rather than composed.
+	if err := validateManifestPrefix(cfg.ManifestPrefix); err != nil {
+		errs = append(errs, err)
+	}
 	if cfg.Prefix != "" {
 		cfg.ManifestPrefix = cfg.Prefix + cfg.ManifestPrefix
 	}
@@ -694,6 +700,27 @@ func normalizePrefix(prefix string) string {
 	}
 
 	return prefix
+}
+
+// validateManifestPrefix rejects an ARMOR_MANIFEST_PREFIX that could not stay
+// confined once composed. The value is a relative object-key segment (see the
+// composition comment in Load): an absolute path does not compose onto
+// ARMOR_PREFIX at all, and a "../"-leading path climbs out of the tenant
+// namespace — concretely on the filesystem backend, where objectPath joins the
+// key with filepath.Join and its Clean step resolves ".." into a directory
+// outside <FSPath>/<bucket>/<prefix>/. On B2 the composed key would be literal,
+// but it still names a location no tenant prefix covers. The value is refused
+// rather than clamped because the manifest is coordination state: two
+// instances that clamped the same bad input differently would silently stop
+// seeing each other's deltas, which is a worse failure than refusing to start.
+func validateManifestPrefix(manifestPrefix string) error {
+	if path.IsAbs(manifestPrefix) {
+		return fmt.Errorf("ARMOR_MANIFEST_PREFIX must be a relative path (it composes onto ARMOR_PREFIX), got %q", manifestPrefix)
+	}
+	if cleaned := path.Clean(manifestPrefix); cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("ARMOR_MANIFEST_PREFIX must not traverse out of the tenant namespace, got %q", manifestPrefix)
+	}
+	return nil
 }
 
 // parseKeyRoutes parses a key routes string.

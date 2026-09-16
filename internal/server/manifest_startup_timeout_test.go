@@ -18,7 +18,7 @@ func TestManifestStartupLoadUnderTimeoutBound(t *testing.T) {
 	root := t.TempDir()
 
 	// Seed the store with one flushed delta from a default-configured writer.
-	seeder := newManifestTenantServer(t, root, "p/", "writer-p")
+	seeder := newManifestTenantServer(t, root, "p/", "writer-p", "")
 	seeder.manifestWriter.EnqueuePut("shared-bucket", "ledger/row-1", &manifest.Entry{
 		PlaintextSize: 10,
 		BlockSize:     65536,
@@ -37,7 +37,7 @@ func TestManifestStartupLoadUnderTimeoutBound(t *testing.T) {
 		}
 	})
 
-	bounded := newManifestTenantServer(t, root, "p/", "writer-p-2")
+	bounded := newManifestTenantServer(t, root, "p/", "writer-p-2", "")
 	if got := bounded.manifest.Len(); got != 1 {
 		t.Errorf("instance with ARMOR_MANIFEST_LOAD_TIMEOUT=1 loaded %d manifest entries, want 1; store holds:%s",
 			got, listStoreKeys(t, root))

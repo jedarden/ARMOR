@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -98,6 +99,107 @@ func TestManifestPrefixComposedWithTenantPrefix(t *testing.T) {
 			setManifestPrefixEnv(t, tt.armorPrefix, tt.manifestPrefix)
 
 			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			if cfg.ManifestPrefix != tt.want {
+				t.Errorf("ManifestPrefix = %q, want %q", cfg.ManifestPrefix, tt.want)
+			}
+		})
+	}
+}
+
+// TestManifestPrefixConfinedToTenantNamespace verifies the confinement half of
+// the contract: ARMOR_MANIFEST_PREFIX may relocate the manifests anywhere
+// within the tenant namespace, but a value that would climb out with "../" —
+// which the filesystem backend resolves physically out of
+// <FSPath>/<bucket>/<prefix>/ — or escape into an absolute path is rejected at
+// Load rather than composed.
+func TestManifestPrefixConfinedToTenantNamespace(t *testing.T) {
+	tests := []struct {
+		name           string
+		armorPrefix    string
+		manifestPrefix string // "" leaves ARMOR_MANIFEST_PREFIX unset
+		wantErr        bool
+		want           string // asserted when wantErr is false
+	}{
+		{
+			name:           "parent traversal escapes the tenant namespace",
+			armorPrefix:    "needle-ledger/",
+			manifestPrefix: "../escape",
+			wantErr:        true,
+		},
+		{
+			name:           "nested traversal escapes after cleaning",
+			armorPrefix:    "needle-ledger/",
+			manifestPrefix: "sub/../../escape",
+			wantErr:        true,
+		},
+		{
+			name:           "bare dotdot escapes",
+			armorPrefix:    "needle-ledger/",
+			manifestPrefix: "..",
+			wantErr:        true,
+		},
+		{
+			name:           "traversal escapes the bucket root too",
+			armorPrefix:    "",
+			manifestPrefix: "../escape",
+			wantErr:        true,
+		},
+		{
+			name:           "absolute path does not compose onto a tenant prefix",
+			armorPrefix:    "needle-ledger/",
+			manifestPrefix: "/var/armor/manifest",
+			wantErr:        true,
+		},
+		{
+			name:           "absolute path is rejected without a tenant prefix",
+			armorPrefix:    "",
+			manifestPrefix: "/var/armor/manifest",
+			wantErr:        true,
+		},
+		{
+			name:           "relocation within the namespace is allowed",
+			armorPrefix:    "needle-ledger/",
+			manifestPrefix: "deeper/manifest",
+			want:           "needle-ledger/deeper/manifest",
+		},
+		{
+			name:           "in-namespace detour that cleans back is allowed",
+			armorPrefix:    "needle-ledger/",
+			manifestPrefix: "sub/../manifest",
+			want:           "needle-ledger/sub/../manifest",
+		},
+		{
+			name:           "dot-relative form is allowed",
+			armorPrefix:    "needle-ledger/",
+			manifestPrefix: "./manifest",
+			want:           "needle-ledger/./manifest",
+		},
+		{
+			name:           "relocation without a tenant prefix is literal",
+			armorPrefix:    "",
+			manifestPrefix: "deeper/manifest",
+			want:           "deeper/manifest",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setEnv(t, minimalEnv()...)
+			setManifestPrefixEnv(t, tt.armorPrefix, tt.manifestPrefix)
+
+			cfg, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() accepted ManifestPrefix %q, want rejection", tt.manifestPrefix)
+				}
+				if !strings.Contains(err.Error(), "ARMOR_MANIFEST_PREFIX") {
+					t.Errorf("Load() error %v does not name ARMOR_MANIFEST_PREFIX", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("Load() error: %v", err)
 			}
