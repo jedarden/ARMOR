@@ -33,8 +33,10 @@ const DefaultQueueBufferSize = 4096
 // channel is full, items are dropped with a metric increment (replication is a cache
 // — the primary backend remains authoritative).
 //
-// The worker reads from the primary backend and writes to the secondary backend,
-// using backend.Copy() when available (B2-to-B2) or falling back to Get+Put.
+// The worker reads from the primary backend and writes to the secondary backend.
+// It deliberately uses Get+Put rather than Backend.Copy: Copy is an operation
+// within one Backend instance and cannot copy from the primary into a separate
+// secondary implementation.
 type ReplicationQueue struct {
 	// metrics holds the Prometheus metrics for this queue
 	metrics *Metrics
@@ -51,8 +53,22 @@ type ReplicationQueue struct {
 	// once ensures Stop is idempotent
 	once sync.Once
 
+	// enqueueMu closes the small stop/enqueue race without closing queueCh.
+	// Stop waits for an in-progress enqueue before signaling the worker, so a
+	// successfully sent task is always visible to the drain path.
+	enqueueMu sync.Mutex
+
+	// stateMu serializes Start and Stop so Stop-before-Start cannot race into a
+	// worker that was created after the stop decision.
+	stateMu sync.Mutex
+
 	// started indicates whether Start has been called
 	started atomic.Bool
+
+	// stopped prevents handler goroutines that finish during server shutdown
+	// from adding work after the worker has exited. The channel stays open so
+	// Enqueue remains race-safe and never panics.
+	stopped atomic.Bool
 
 	// depth tracks the current queue depth for metrics
 	depth atomic.Int64
@@ -63,12 +79,23 @@ type ReplicationQueue struct {
 	// secondary is the secondary backend (target for replication)
 	secondary backend.Backend
 
+	// targetBucket is the secondary bucket. Filesystem targets are bucket
+	// agnostic and leave this empty, which means the source bucket is reused.
+	targetBucket string
+
+	// keyPrefix identifies the shared-bucket namespace so internal ARMOR state
+	// is never copied if an internal key is accidentally enqueued.
+	keyPrefix string
+
 	// oldestTaskEnqueued tracks when the oldest task in the queue was enqueued
 	// for the replication_lag_seconds metric (Unix nanoseconds)
 	oldestTaskEnqueued atomic.Int64
 
-	// mu protects concurrent updates to oldestTaskEnqueued
-	mu sync.Mutex
+	// pendingMu protects the pending enqueue timestamps. Tasks remain pending
+	// while a worker is processing them, so lag measures work not yet durable
+	// on the secondary rather than only items waiting in the channel.
+	pendingMu sync.Mutex
+	pending   map[int64]int
 
 	// logger is used for replication status logging
 	logger *log.Logger
@@ -129,28 +156,61 @@ func NewMetrics() *Metrics {
 //   - bufSize: Buffer size for the replication queue (0 uses DefaultQueueBufferSize)
 //   - logger: Logger for replication status (nil uses default stdout logger)
 func NewReplicationQueue(metrics *Metrics, primary, secondary backend.Backend, bufSize int, logger *log.Logger) *ReplicationQueue {
+	return NewReplicationQueueWithTargetBucketAndPrefix(metrics, primary, secondary, "", "", bufSize, logger)
+}
+
+// NewReplicationQueueWithTargetBucket creates a queue that writes to
+// targetBucket on the secondary backend. An empty target bucket reuses the
+// source bucket, which is the correct behavior for the filesystem backend.
+func NewReplicationQueueWithTargetBucket(metrics *Metrics, primary, secondary backend.Backend, targetBucket string, bufSize int, logger *log.Logger) *ReplicationQueue {
+	return NewReplicationQueueWithTargetBucketAndPrefix(metrics, primary, secondary, targetBucket, "", bufSize, logger)
+}
+
+// NewReplicationQueueWithTargetBucketAndPrefix is the fully-configured queue
+// constructor used by the server. keyPrefix is the already-normalized
+// ARMOR_PREFIX value.
+func NewReplicationQueueWithTargetBucketAndPrefix(metrics *Metrics, primary, secondary backend.Backend, targetBucket, keyPrefix string, bufSize int, logger *log.Logger) *ReplicationQueue {
 	if bufSize <= 0 {
 		bufSize = DefaultQueueBufferSize
 	}
 	if logger == nil {
 		logger = log.New(log.Writer(), "[replication] ", log.LstdFlags|log.Lmsgprefix)
 	}
-	return &ReplicationQueue{
-		metrics:   metrics,
-		queueCh:   make(chan task, bufSize),
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
-		started:   atomic.Bool{},
-		depth:     atomic.Int64{},
-		primary:   primary,
-		secondary: secondary,
-		logger:    logger,
+	if metrics == nil {
+		metrics = NewMetrics()
 	}
+	q := &ReplicationQueue{
+		metrics:      metrics,
+		queueCh:      make(chan task, bufSize),
+		stop:         make(chan struct{}),
+		done:         make(chan struct{}),
+		started:      atomic.Bool{},
+		stopped:      atomic.Bool{},
+		depth:        atomic.Int64{},
+		primary:      primary,
+		secondary:    secondary,
+		targetBucket: targetBucket,
+		keyPrefix:    keyPrefix,
+		logger:       logger,
+		pending:      make(map[int64]int),
+	}
+	// Expose the queue's authoritative depth counter through the metrics
+	// object as well; callers should not need to wire this relationship by hand.
+	metrics.QueueDepth = &q.depth
+	return q
 }
 
 // Start launches the background worker goroutine. Call it once after NewReplicationQueue.
 // ctx cancellation stops the goroutine (same effect as Stop).
 func (q *ReplicationQueue) Start(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	q.stateMu.Lock()
+	defer q.stateMu.Unlock()
+	if q.stopped.Load() {
+		return
+	}
 	if !q.started.CompareAndSwap(false, true) {
 		// Already started
 		return
@@ -158,13 +218,22 @@ func (q *ReplicationQueue) Start(ctx context.Context) {
 	go q.run(ctx)
 }
 
-// Stop signals the worker goroutine to stop and waits for it to exit.
-// It waits up to shutdownTimeout for the queue to drain before forcing
-// a stop. Safe to call multiple times (idempotent).
+// Stop signals the worker goroutine to stop and waits for it to exit. Pending
+// tasks are drained using the worker context; retry backoff is interrupted by
+// shutdown. Safe to call multiple times (idempotent).
 func (q *ReplicationQueue) Stop() {
+	q.stateMu.Lock()
+	q.stopped.Store(true)
+	started := q.started.Load()
+	q.stateMu.Unlock()
+	if !started {
+		return
+	}
+	q.enqueueMu.Lock()
 	q.once.Do(func() {
 		close(q.stop)
 	})
+	q.enqueueMu.Unlock()
 	<-q.done
 }
 
@@ -172,52 +241,78 @@ func (q *ReplicationQueue) Stop() {
 // Non-blocking: when the channel is full, the item is silently dropped
 // and the dropped metric is incremented.
 func (q *ReplicationQueue) Enqueue(bucket, key string) {
+	q.enqueueMu.Lock()
+	defer q.enqueueMu.Unlock()
+
+	if q.stopped.Load() || q.isInternalKey(key) {
+		if q.stopped.Load() {
+			q.metrics.DroppedTotal.Add(1)
+		}
+		return
+	}
 	t := task{
 		bucket:     bucket,
 		key:        key,
 		enqueuedAt: time.Now().UnixNano(),
 	}
+	// Check stop before the send. The channel is intentionally never closed,
+	// because handler goroutines may still be finishing while the server shuts
+	// down.
+	select {
+	case <-q.stop:
+		q.metrics.DroppedTotal.Add(1)
+		return
+	default:
+	}
+	// Track the task before publishing it to the channel. Otherwise a very fast
+	// worker can finish the task before the enqueue path records its timestamp.
+	q.updateOldestTaskTimestamp(t.enqueuedAt)
 	select {
 	case q.queueCh <- t:
 		q.depth.Add(1)
-		// Update oldest task timestamp if this is now the oldest
-		q.updateOldestTaskTimestamp(t.enqueuedAt)
+		q.metrics.EnqueuedTotal.Add(1)
+	case <-q.stop:
+		q.updateOldestAfterTaskRemoval(t.enqueuedAt)
+		q.metrics.DroppedTotal.Add(1)
 	default:
 		// Queue full — drop and increment metric
+		q.updateOldestAfterTaskRemoval(t.enqueuedAt)
 		q.metrics.DroppedTotal.Add(1)
 	}
 }
 
-// run is the background worker goroutine. It drains replication tasks
-// from the queue and processes them. For now, this is a stub that logs
-// the keys — the actual replication logic will be added later.
+// run is the background worker goroutine. It drains replication tasks from the
+// queue and processes them until Stop or the caller's context is canceled.
 func (q *ReplicationQueue) run(ctx context.Context) {
-	defer close(q.done)
+	defer func() {
+		q.stopped.Store(true)
+		close(q.done)
+	}()
 
 	for {
 		select {
 		case t := <-q.queueCh:
 			q.depth.Add(-1)
-			q.processTask(t)
+			q.processTask(ctx, t)
 		case <-q.stop:
 			// Drain remaining tasks before exit
-			q.drain()
+			q.drain(ctx)
 			return
 		case <-ctx.Done():
 			// Context cancelled — drain and exit
-			q.drain()
+			q.drain(ctx)
 			return
 		}
 	}
 }
 
 // drain processes all remaining tasks in the queue before shutdown.
-func (q *ReplicationQueue) drain() {
+func (q *ReplicationQueue) drain(ctx context.Context) {
 	for {
 		select {
 		case t := <-q.queueCh:
 			q.depth.Add(-1)
-			q.processTask(t)
+			q.processTask(ctx, t)
 		default:
 			// Queue empty
 			return
@@ -295,80 +390,93 @@ func isTransientError(err error) bool {
 
 // processTask performs the actual replication from primary to secondary backend.
 // It handles errors gracefully, implements retry logic with exponential backoff,
-// and updates metrics. The worker never blocks on errors — it logs, increments
-// the error metric, and continues to the next task.
-func (q *ReplicationQueue) processTask(t task) {
-	defer q.updateOldestAfterTaskRemoval()
+// and updates metrics. Transient failures stay with the task until recovery or
+// worker shutdown; permanent failures are recorded and skipped.
+func (q *ReplicationQueue) processTask(ctx context.Context, t task) {
+	defer q.updateOldestAfterTaskRemoval(t.enqueuedAt)
 
 	// Update lag metric before processing
 	q.updateLagMetric()
 
-	// Attempt replication with retries
-	const maxRetries = 3
-	var lastErr error
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			// Check if error is permanent - if so, skip immediately
-			if !isTransientError(lastErr) {
-				q.logger.Printf("replication failed for %s/%s with permanent error (skipping retries): %v", t.bucket, t.key, lastErr)
-				q.metrics.ErrorsTotal.Add(1)
-				return
-			}
-
-			// Exponential backoff: 100ms, 200ms, 400ms
-			backoffMs := int64(100 * (1 << (attempt - 1)))
-			time.Sleep(time.Duration(backoffMs) * time.Millisecond)
-			q.metrics.RetriesTotal.Add(1)
+	// Retry transient secondary failures for the lifetime of the worker. A
+	// provider outage must not turn into permanent data loss merely because it
+	// lasted longer than a small fixed retry budget. Permanent errors are still
+	// dropped immediately, and shutdown/context cancellation stops retries.
+	for attempt := 0; ; attempt++ {
+		if ctx.Err() != nil {
+			return
 		}
 
 		// Time the copy operation for the duration histogram
 		start := time.Now()
 
-		// Try backend.Copy() first (most efficient for B2-to-B2)
-		err := q.secondary.Copy(context.Background(), t.bucket, t.key, t.bucket, t.key, nil, false)
+		err := q.fallbackCopy(ctx, t.bucket, t.key)
 		if err == nil {
-			// Success! Record duration and return
-			duration := time.Since(start).Seconds()
-			q.metrics.CopyDurationSeconds.Observe(duration)
-			q.logger.Printf("replicated %s/%s (attempt %d, %.2fs)", t.bucket, t.key, attempt+1, duration)
-			return
-		}
-
-		// Copy failed, fall back to Get+Put pattern
-		// This handles cases where Copy() is not available or fails
-		lastErr = q.fallbackCopy(t.bucket, t.key)
-		if lastErr == nil {
 			duration := time.Since(start).Seconds()
 			q.metrics.CopyDurationSeconds.Observe(duration)
 			q.logger.Printf("replicated %s/%s via Get+Put (attempt %d, %.2fs)", t.bucket, t.key, attempt+1, duration)
 			return
 		}
 
-		// Log retry attempt
-		if attempt < maxRetries {
-			q.logger.Printf("replication attempt %d failed for %s/%s: %v (will retry)", attempt+1, t.bucket, t.key, lastErr)
+		if !isTransientError(err) {
+			q.logger.Printf("replication failed for %s/%s with permanent error (skipping retries): %v", t.bucket, t.key, err)
+			q.metrics.ErrorsTotal.Add(1)
+			return
+		}
+
+		q.metrics.RetriesTotal.Add(1)
+		q.logger.Printf("replication attempt %d failed for %s/%s: %v (will retry)", attempt+1, t.bucket, t.key, err)
+		backoff := replicationBackoff(attempt)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			stopTimer(timer)
+			return
+		case <-q.stop:
+			stopTimer(timer)
+			return
 		}
 	}
+}
 
-	// All retries exhausted
-	q.metrics.ErrorsTotal.Add(1)
-	q.logger.Printf("replication failed after %d attempts for %s/%s: %v", maxRetries+1, t.bucket, t.key, lastErr)
+func stopTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
 }
 
 // fallbackCopy implements Get+Put pattern for backends that don't support Copy.
-func (q *ReplicationQueue) fallbackCopy(bucket, key string) error {
-	ctx := context.Background()
-
+func (q *ReplicationQueue) fallbackCopy(ctx context.Context, bucket, key string) error {
 	// Get object from primary backend
 	body, info, err := q.primary.Get(ctx, bucket, key)
 	if err != nil {
 		return err
 	}
+	if body == nil || info == nil {
+		if body != nil {
+			body.Close()
+		}
+		return errors.New("primary returned incomplete object")
+	}
 	defer body.Close()
 
-	// Put to secondary backend with same metadata
-	err = q.secondary.Put(ctx, bucket, key, body, info.Size, info.Metadata)
+	targetBucket := q.targetBucket
+	if targetBucket == "" {
+		targetBucket = bucket
+	}
+
+	// Put the physical ciphertext size, not the plaintext size reported by an
+	// ARMOR-aware primary backend. The latter would make B2 reject the upload or
+	// truncate the filesystem copy.
+	storedSize := info.StoredSize
+	if storedSize <= 0 {
+		storedSize = info.Size
+	}
+	err = q.secondary.Put(ctx, targetBucket, key, body, storedSize, cloneMetadata(info.Metadata))
 	if err != nil {
 		return err
 	}
@@ -376,10 +484,44 @@ func (q *ReplicationQueue) fallbackCopy(bucket, key string) error {
 	return nil
 }
 
+func (q *ReplicationQueue) isInternalKey(key string) bool {
+	if strings.HasPrefix(key, ".armor/") {
+		return true
+	}
+	return q.keyPrefix != "" && strings.HasPrefix(key, q.keyPrefix+".armor/")
+}
+
+func replicationBackoff(attempt int) time.Duration {
+	const (
+		initial = 100 * time.Millisecond
+		maximum = 30 * time.Second
+	)
+	if attempt >= 9 {
+		return maximum
+	}
+	delay := initial << attempt
+	if delay > maximum {
+		return maximum
+	}
+	return delay
+}
+
+func cloneMetadata(meta map[string]string) map[string]string {
+	if len(meta) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(meta))
+	for key, value := range meta {
+		clone[key] = value
+	}
+	return clone
+}
+
 // updateOldestTaskTimestamp updates the oldest task enqueue timestamp if the given timestamp is older.
 func (q *ReplicationQueue) updateOldestTaskTimestamp(timestamp int64) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.pendingMu.Lock()
+	defer q.pendingMu.Unlock()
+	q.pending[timestamp]++
 
 	currentOldest := q.oldestTaskEnqueued.Load()
 	if currentOldest == 0 || timestamp < currentOldest {
@@ -403,24 +545,31 @@ func (q *ReplicationQueue) updateLagMetric() {
 	q.metrics.LagSeconds.Store(lagSeconds)
 }
 
-// updateOldestAfterTaskRemoval updates the oldest task timestamp after a task is removed.
-// This is a placeholder for a more sophisticated implementation that would track
-// the second-oldest task. For now, we conservatively set to 0 when we can't determine the actual oldest.
-func (q *ReplicationQueue) updateOldestAfterTaskRemoval() {
-	// In a production implementation, we would maintain a priority queue of enqueue times.
-	// For this implementation, we'll conservatively set to 0 when we can't track accurately.
-	// The lag will spike briefly when processing the oldest task, then settle to the next task's age.
-	q.mu.Lock()
-	defer q.mu.Unlock()
+// updateOldestAfterTaskRemoval updates the oldest task timestamp after a task
+// finishes. A timestamp count handles the unlikely case of two tasks enqueued
+// during the same nanosecond without letting one remove the other.
+func (q *ReplicationQueue) updateOldestAfterTaskRemoval(timestamp int64) {
+	q.pendingMu.Lock()
+	defer q.pendingMu.Unlock()
 
-	// If we processed the oldest task, we need to find the next oldest
-	// This is complex without a priority queue, so we use a heuristic:
-	// If queue depth is 0, reset to 0. Otherwise, we'll update on next enqueue.
-	if q.depth.Load() == 0 {
-		q.oldestTaskEnqueued.Store(0)
+	if count := q.pending[timestamp]; count <= 1 {
+		delete(q.pending, timestamp)
+	} else {
+		q.pending[timestamp] = count - 1
 	}
-	// If queue still has items, the next enqueue will update if it's older,
-	// or we'll continue with a conservative lag estimate.
+
+	oldest := int64(0)
+	for pendingTimestamp := range q.pending {
+		if oldest == 0 || pendingTimestamp < oldest {
+			oldest = pendingTimestamp
+		}
+	}
+	q.oldestTaskEnqueued.Store(oldest)
+	if oldest == 0 {
+		q.metrics.LagSeconds.Store(0)
+	} else {
+		q.updateLagMetric()
+	}
 }
 
 // copyDurationHistogram tracks copy operation durations.

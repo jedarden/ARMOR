@@ -632,7 +632,7 @@ func (h *Handlers) PutObject(w http.ResponseWriter, r *http.Request, bucket, key
 			// Note: Enqueue() is non-blocking and does not return errors
 			// Dropped items are tracked via the replication_dropped_total metric
 			if h.replicationQueue != nil {
-				h.replicationQueue.Enqueue(bucket, key)
+				h.replicationQueue.Enqueue(bucket, prefixedKey)
 				if h.metrics != nil {
 					h.metrics.IncReplicationEnqueued("put")
 				}
@@ -934,7 +934,7 @@ func (h *Handlers) putObjectStreaming(ctx context.Context, w http.ResponseWriter
 			// Note: Enqueue() is non-blocking and does not return errors
 			// Dropped items are tracked via the replication_dropped_total metric
 			if h.replicationQueue != nil {
-				h.replicationQueue.Enqueue(bucket, key)
+				h.replicationQueue.Enqueue(bucket, prefixedKey)
 				if h.metrics != nil {
 					h.metrics.IncReplicationEnqueued("put-streaming")
 				}
@@ -4252,7 +4252,7 @@ func (h *Handlers) CompleteMultipartUpload(w http.ResponseWriter, r *http.Reques
 			// Note: Enqueue() is non-blocking and does not return errors
 			// Dropped items are tracked via the replication_dropped_total metric
 			if h.replicationQueue != nil {
-				h.replicationQueue.Enqueue(bucket, key)
+				h.replicationQueue.Enqueue(bucket, h.applyPrefix(key))
 				if h.metrics != nil {
 					h.metrics.IncReplicationEnqueued("completemultipart")
 				}

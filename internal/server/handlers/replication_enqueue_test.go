@@ -183,6 +183,32 @@ func TestCompleteMultipartUpload_EnqueuesReplication(t *testing.T) {
 	}
 }
 
+// TestPutObjectEnqueuesStoredPrefixedKey verifies the queue receives the key
+// that exists in the primary backend, not the client-visible unprefixed key.
+func TestPutObjectEnqueuesStoredPrefixedKey(t *testing.T) {
+	cfg, mb, cache, footerCache, km := testSetup(t)
+	cfg.Prefix = "tenant/"
+	queue := &mockReplicationQueue{}
+	h := handlers.New(cfg, mb, cache, footerCache, km, nil)
+	h.WithReplicationQueue(queue)
+
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket/test-key", bytes.NewReader([]byte("payload")))
+	resp := httptest.NewRecorder()
+	h.HandleRoot(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("PutObject returned %d: %s", resp.Code, resp.Body.String())
+	}
+
+	deadline := time.After(time.Second)
+	for !queue.wasKeyEnqueued("test-bucket", "tenant/test-key") {
+		select {
+		case <-deadline:
+			t.Fatal("replication queue did not receive the stored prefixed key")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // TestCompleteMultipartUpload_NilReplicationQueue verifies that when replication queue
 // is nil, CompleteMultipartUpload succeeds without attempting to enqueue.
 func TestCompleteMultipartUpload_NilReplicationQueue(t *testing.T) {

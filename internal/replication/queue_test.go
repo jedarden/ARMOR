@@ -5,8 +5,11 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/jedarden/armor/internal/backend"
 )
 
 // helper function to create a test queue with mock backends
@@ -214,6 +217,250 @@ func TestGracefulShutdown(t *testing.T) {
 	// Verify no items were dropped
 	if dropped := metrics.DroppedTotal.Load(); dropped != 0 {
 		t.Errorf("expected 0 dropped items, got %d", dropped)
+	}
+}
+
+// blockingPutBackend makes the secondary write deliberately slow. The queue
+// must let Enqueue return while the worker is blocked in that write.
+type blockingPutBackend struct {
+	*MockBackend
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingPutBackend) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, meta map[string]string) error {
+	b.once.Do(func() { close(b.entered) })
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return b.MockBackend.Put(ctx, bucket, key, body, size, meta)
+}
+
+// TestEnqueueDoesNotWaitForSecondaryWrite verifies the client-facing queue
+// handoff remains fast even while the secondary backend is unavailable/slow.
+func TestEnqueueDoesNotWaitForSecondaryWrite(t *testing.T) {
+	metrics := NewMetrics()
+	primary := NewMockBackend()
+	secondary := &blockingPutBackend{
+		MockBackend: NewMockBackend(),
+		entered:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	q := NewReplicationQueue(metrics, primary, secondary, 10, nil)
+
+	ctx := context.Background()
+	if err := primary.CreateBucket(ctx, "bucket"); err != nil {
+		t.Fatal(err)
+	}
+	if err := primary.Put(ctx, "bucket", "key", strings.NewReader("payload"), 7, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	q.Start(ctx)
+	defer q.Stop()
+	q.Enqueue("bucket", "key")
+
+	select {
+	case <-secondary.entered:
+	case <-time.After(time.Second):
+		t.Fatal("secondary write did not start")
+	}
+
+	start := time.Now()
+	q.Enqueue("bucket", "another-key")
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("Enqueue waited for secondary write: %v", elapsed)
+	}
+
+	close(secondary.release)
+	deadline := time.After(time.Second)
+	for {
+		if _, err := secondary.Head(ctx, "bucket", "key"); err == nil {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("released secondary write did not complete")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestTransientSecondaryOutageEventuallyRecovers verifies that a transient
+// outage longer than the old fixed retry budget does not lose the task.
+func TestTransientSecondaryOutageEventuallyRecovers(t *testing.T) {
+	metrics := NewMetrics()
+	primary := NewMockBackend()
+	attempts := 0
+	secondary := &failingBackend{
+		MockBackend: NewMockBackend(),
+		shouldFail: func() bool {
+			attempts++
+			return attempts <= 4
+		},
+		failErr: errors.New("connection refused"),
+	}
+	q := NewReplicationQueue(metrics, primary, secondary, 10, nil)
+
+	ctx := context.Background()
+	if err := primary.CreateBucket(ctx, "bucket"); err != nil {
+		t.Fatal(err)
+	}
+	if err := primary.Put(ctx, "bucket", "key", strings.NewReader("payload"), 7, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	q.Start(ctx)
+	q.Enqueue("bucket", "key")
+	deadline := time.After(4 * time.Second)
+	for {
+		if _, err := secondary.Head(ctx, "bucket", "key"); err == nil {
+			break
+		}
+		select {
+		case <-deadline:
+			q.Stop()
+			t.Fatalf("replication did not recover after transient outage; attempts=%d", attempts)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	q.Stop()
+
+	if metrics.ErrorsTotal.Load() != 0 {
+		t.Fatalf("transient outage was recorded as permanent error: %d", metrics.ErrorsTotal.Load())
+	}
+	if metrics.RetriesTotal.Load() < 4 {
+		t.Fatalf("expected retries for each failed attempt, got %d", metrics.RetriesTotal.Load())
+	}
+}
+
+// TestReplicationUsesConfiguredTargetBucket verifies a secondary backend with
+// its own bucket receives the object there rather than under the primary name.
+func TestReplicationUsesConfiguredTargetBucket(t *testing.T) {
+	metrics := NewMetrics()
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueueWithTargetBucket(metrics, primary, secondary, "replica-bucket", 10, nil)
+
+	ctx := context.Background()
+	if err := primary.CreateBucket(ctx, "primary-bucket"); err != nil {
+		t.Fatal(err)
+	}
+	if err := primary.Put(ctx, "primary-bucket", "key", strings.NewReader("payload"), 7, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	q.Start(ctx)
+	q.Enqueue("primary-bucket", "key")
+	defer q.Stop()
+
+	deadline := time.After(time.Second)
+	for {
+		if _, err := secondary.Head(ctx, "replica-bucket", "key"); err == nil {
+			if _, err := secondary.Head(ctx, "primary-bucket", "key"); err == nil {
+				t.Fatal("replication unexpectedly wrote to the primary bucket too")
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("replication did not reach configured target bucket")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestFilesystemSecondaryReplication exercises the real secondary backend
+// implementation with the queue, including physical-vs-plaintext metadata.
+func TestFilesystemSecondaryReplication(t *testing.T) {
+	primary, err := backend.NewFSBackend(backend.FSConfig{BasePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("create primary filesystem backend: %v", err)
+	}
+	secondary, err := backend.NewFSBackend(backend.FSConfig{BasePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("create secondary filesystem backend: %v", err)
+	}
+	q := NewReplicationQueue(NewMetrics(), primary, secondary, 10, nil)
+
+	ctx := context.Background()
+	if err := primary.CreateBucket(ctx, "bucket"); err != nil {
+		t.Fatal(err)
+	}
+	physical := strings.Repeat("ciphertext", 3)
+	meta := map[string]string{
+		"Content-Type":                    "application/octet-stream",
+		"x-amz-meta-armor-version":        "3",
+		"x-amz-meta-armor-plaintext-size": "7",
+	}
+	if err := primary.Put(ctx, "bucket", "key", strings.NewReader(physical), int64(len(physical)), meta); err != nil {
+		t.Fatal(err)
+	}
+
+	q.Start(ctx)
+	q.Enqueue("bucket", "key")
+	defer q.Stop()
+	deadline := time.After(time.Second)
+	for {
+		body, info, err := secondary.Get(ctx, "bucket", "key")
+		if err == nil {
+			data, readErr := io.ReadAll(body)
+			body.Close()
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(data) != physical {
+				t.Fatalf("replicated ciphertext changed: got %q", string(data))
+			}
+			if info.Size != 7 || info.StoredSize != int64(len(physical)) {
+				t.Fatalf("replicated sizes = plaintext %d/stored %d, want 7/%d", info.Size, info.StoredSize, len(physical))
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("filesystem secondary did not receive object: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestInternalStateIsNotReplicated verifies that replication is for completed
+// data objects only. Reserved ARMOR bookkeeping remains authoritative on the
+// primary and is never exposed or copied as a client object.
+func TestInternalStateIsNotReplicated(t *testing.T) {
+	metrics := NewMetrics()
+	primary := NewMockBackend()
+	secondary := NewMockBackend()
+	q := NewReplicationQueueWithTargetBucketAndPrefix(metrics, primary, secondary, "", "tenant/", 10, nil)
+
+	ctx := context.Background()
+	if err := primary.CreateBucket(ctx, "bucket"); err != nil {
+		t.Fatal(err)
+	}
+	if err := primary.Put(ctx, "bucket", "tenant/data", strings.NewReader("data"), 4, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := primary.Put(ctx, "bucket", "tenant/.armor/manifest/delta", strings.NewReader("state"), 5, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	q.Start(ctx)
+	q.Enqueue("bucket", "tenant/data")
+	q.Enqueue("bucket", "tenant/.armor/manifest/delta")
+	q.Stop()
+
+	if _, err := secondary.Head(ctx, "bucket", "tenant/data"); err != nil {
+		t.Fatalf("completed object was not replicated: %v", err)
+	}
+	if _, err := secondary.Head(ctx, "bucket", "tenant/.armor/manifest/delta"); err == nil {
+		t.Fatal("internal ARMOR state was replicated")
+	}
+	if got := metrics.EnqueuedTotal.Load(); got != 1 {
+		t.Fatalf("expected one data task enqueued, got %d", got)
 	}
 }
 

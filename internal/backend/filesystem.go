@@ -715,12 +715,13 @@ func (fs *FSBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, u
 	// Save metadata
 	now := time.Now()
 	fsMeta := &fsMetadata{
-		Key:          key,
-		Size:         totalSize,
-		ContentType:  getValueFromMap(metaMap, "Content-Type"),
-		ETag:         etag,
-		LastModified: now,
-		Metadata:     mapToString(metaMap),
+		Key:           key,
+		Size:          totalSize,
+		PlaintextSize: getInt64FromMap(metaMap, "x-amz-meta-armor-plaintext-size"),
+		ContentType:   getValueFromMap(metaMap, "Content-Type"),
+		ETag:          etag,
+		LastModified:  now,
+		Metadata:      mapToString(metaMap),
 	}
 
 	if err := fs.saveMetadata(bucket, key, fsMeta); err != nil {

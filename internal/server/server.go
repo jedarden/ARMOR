@@ -143,18 +143,21 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("unsupported backend type: %s", cfg.Backend)
 	}
 
-	// Create secondary backend if configured (ADR-006)
-	// Config package has already validated ARMOR_SECONDARY_BACKEND_TYPE and
-	// ARMOR_SECONDARY_BACKEND_PATH (when Type=filesystem). When Type is empty,
-	// secondaryBackend remains nil and replication is a complete no-op.
+	// Create secondary backend if configured (ADR-006). When the typed config is
+	// empty, secondaryBackend remains nil and replication is a complete no-op.
 	var secondaryBackend backend.Backend
-	if cfg.SecondaryBackendType != "" {
-		// Build BackendConfig from validated config fields
-		secondaryCfg := backend.BackendConfig{
-			Type:      cfg.SecondaryBackendType,
-			Path:      cfg.SecondaryBackendPath,
-			KeyPrefix: cfg.Prefix,
+	secondaryCfg := cfg.SecondaryBackendConfig
+	// Config values can also be assembled directly by tests or embedders, so
+	// retain a small compatibility fallback for the original filesystem-only
+	// fields.
+	if secondaryCfg.Type == "" && cfg.SecondaryBackendType != "" {
+		secondaryCfg = backend.BackendConfig{
+			Type: cfg.SecondaryBackendType,
+			Path: cfg.SecondaryBackendPath,
 		}
+	}
+	secondaryCfg.KeyPrefix = cfg.Prefix
+	if secondaryCfg.Type != "" {
 
 		// Initialize backend based on type using the proper BackendConfig-based initializers
 		switch secondaryCfg.Type {
@@ -394,10 +397,12 @@ func New(cfg *config.Config) (*Server, error) {
 		// Use the same loggerWriter adapter for the replication queue
 		replicationLoggerWriter := &loggerWriter{logger: logger}
 		replicationLogger := log.New(replicationLoggerWriter, "[replication] ", log.LstdFlags|log.Lmsgprefix)
-		replicationQueue = replication.NewReplicationQueue(
+		replicationQueue = replication.NewReplicationQueueWithTargetBucketAndPrefix(
 			replicationMetrics,
 			primaryBackend,
 			secondaryBackend,
+			secondaryCfg.Bucket,
+			cfg.Prefix,
 			0, // Use default buffer size
 			replicationLogger,
 		)
@@ -408,6 +413,7 @@ func New(cfg *config.Config) (*Server, error) {
 	canaryMonitor := canary.NewMonitor(canary.Config{
 		Backend:           primaryBackend,
 		SecondaryBackend:  secondaryBackend,
+		SecondaryBucket:   secondaryCfg.Bucket,
 		ReplicationQueue:  replicationQueue,
 		Bucket:            cfg.Bucket,
 		Prefix:            cfg.Prefix,

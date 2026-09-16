@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jedarden/armor/internal/acl"
+	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/crypto"
 )
 
@@ -181,11 +182,16 @@ type Config struct {
 	Backend string // Backend type: "b2" or "filesystem"
 	FSPath  string // Path for filesystem backend (required when Backend=filesystem)
 
-	// Secondary backend configuration (ADR-006)
-	// When set, enables async replication to a secondary backend
-	SecondaryBackend     string // Backend identifier (e.g., "filesystem", "s3", "wasabi")
-	SecondaryBackendType string // Type: "filesystem" (future: "s3", "wasabi")
-	SecondaryBackendPath string // Path for filesystem backend (required when Type=filesystem)
+	// Secondary backend configuration (ADR-006). When set, enables async
+	// replication to a secondary backend. SecondaryBackend is a safe display
+	// value containing only the backend kind; credentials live only in the typed
+	// config and are never included in RedactedConfig.
+	SecondaryBackend     string // Backend kind (e.g. "filesystem", "b2")
+	SecondaryBackendType string // Compatibility alias for the backend kind
+	SecondaryBackendPath string // Compatibility path for filesystem backend
+	// SecondaryBackendConfig is the parsed, typed configuration used by the
+	// server. It remains zero-valued when replication is disabled.
+	SecondaryBackendConfig backend.BackendConfig
 
 	// AllowNoCredentials disables the credential requirement check.
 	// When true, the server starts without client credentials.
@@ -553,20 +559,57 @@ func Load() (*Config, error) {
 		cfg.LogLevel = "info"
 	}
 
-	// Secondary backend configuration (ADR-006)
-	// Only enabled if ARMOR_SECONDARY_BACKEND_TYPE is set
-	cfg.SecondaryBackendType = os.Getenv("ARMOR_SECONDARY_BACKEND_TYPE")
-	if cfg.SecondaryBackendType != "" {
-		// Validate backend type
-		if cfg.SecondaryBackendType != "filesystem" {
-			errs = append(errs, fmt.Errorf("ARMOR_SECONDARY_BACKEND_TYPE must be 'filesystem', got '%s'", cfg.SecondaryBackendType))
+	// Secondary backend configuration (ADR-006).
+	// ARMOR_SECONDARY_BACKEND is the canonical opt-in. The individual
+	// ARMOR_SECONDARY_B2_* variables are also supported for deployments that
+	// keep credentials separate from the backend selector. The older
+	// ARMOR_SECONDARY_BACKEND_TYPE/PATH pair remains a compatibility path.
+	secondaryEnv := os.Getenv("ARMOR_SECONDARY_BACKEND")
+	secondaryB2Configured := os.Getenv("ARMOR_SECONDARY_B2_ENDPOINT") != "" ||
+		os.Getenv("ARMOR_SECONDARY_B2_KEY_ID") != "" ||
+		os.Getenv("ARMOR_SECONDARY_B2_KEY") != "" ||
+		os.Getenv("ARMOR_SECONDARY_B2_BUCKET") != ""
+	if secondaryEnv != "" {
+		parsed, parseErr := backend.ParseSecondaryBackendEnv()
+		if parseErr != nil {
+			errs = append(errs, parseErr)
 		} else {
-			// For filesystem backend, path is required
-			cfg.SecondaryBackendPath = os.Getenv("ARMOR_SECONDARY_BACKEND_PATH")
-			if cfg.SecondaryBackendPath == "" {
-				errs = append(errs, fmt.Errorf("ARMOR_SECONDARY_BACKEND_PATH is required when ARMOR_SECONDARY_BACKEND_TYPE=filesystem"))
+			cfg.SecondaryBackendConfig = parsed
+		}
+	} else if secondaryB2Configured {
+		parsed, parseErr := backend.ParseSecondaryBackendConfig()
+		if parseErr != nil {
+			errs = append(errs, parseErr)
+		} else {
+			cfg.SecondaryBackendConfig = parsed
+		}
+	} else {
+		// Compatibility with the original filesystem-only configuration.
+		cfg.SecondaryBackendType = os.Getenv("ARMOR_SECONDARY_BACKEND_TYPE")
+		if cfg.SecondaryBackendType != "" {
+			if cfg.SecondaryBackendType != "filesystem" {
+				errs = append(errs, fmt.Errorf("ARMOR_SECONDARY_BACKEND_TYPE must be 'filesystem', got '%s'", cfg.SecondaryBackendType))
+			} else {
+				cfg.SecondaryBackendPath = os.Getenv("ARMOR_SECONDARY_BACKEND_PATH")
+				if cfg.SecondaryBackendPath == "" {
+					errs = append(errs, fmt.Errorf("ARMOR_SECONDARY_BACKEND_PATH is required when ARMOR_SECONDARY_BACKEND_TYPE=filesystem"))
+				}
 			}
 		}
+		if cfg.SecondaryBackendType != "" {
+			cfg.SecondaryBackendConfig = backend.BackendConfig{
+				Type: cfg.SecondaryBackendType,
+				Path: cfg.SecondaryBackendPath,
+			}
+		}
+	}
+	if cfg.SecondaryBackendConfig.Type != "" {
+		cfg.SecondaryBackendConfig.KeyPrefix = cfg.Prefix
+		cfg.SecondaryBackendType = cfg.SecondaryBackendConfig.Type
+		cfg.SecondaryBackendPath = cfg.SecondaryBackendConfig.Path
+		// Keep only the backend kind in the legacy display field. The canonical
+		// string may contain credentials and must never be logged verbatim.
+		cfg.SecondaryBackend = cfg.SecondaryBackendConfig.Type
 	}
 
 	// Format version configuration (default: 3)
@@ -1093,6 +1136,15 @@ type RedactedACLEntry struct {
 // ARMOR is configured with. Use that function to compare a logged fingerprint
 // against an expected value.
 func (c *Config) Redacted() *RedactedConfig {
+	secondaryBackendName := c.SecondaryBackendType
+	if secondaryBackendName == "" {
+		secondaryBackendName = c.SecondaryBackendConfig.Type
+	}
+	if secondaryBackendName == "" && c.SecondaryBackend != "" {
+		// Config values assembled outside Load may still carry the canonical
+		// selector, which can include credentials. Do not echo it.
+		secondaryBackendName = "<set>"
+	}
 	rc := &RedactedConfig{
 		Listen:                      c.Listen,
 		AdminListen:                 c.AdminListen,
@@ -1125,7 +1177,7 @@ func (c *Config) Redacted() *RedactedConfig {
 		LogLevel:                    c.LogLevel,
 		Backend:                     c.Backend,
 		FSPath:                      c.FSPath,
-		SecondaryBackend:            c.SecondaryBackend,
+		SecondaryBackend:            secondaryBackendName,
 		SecondaryBackendType:        c.SecondaryBackendType,
 		SecondaryBackendPath:        c.SecondaryBackendPath,
 		FormatWriteVersion:          c.FormatWriteVersion,

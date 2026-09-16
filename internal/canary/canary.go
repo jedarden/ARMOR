@@ -104,6 +104,7 @@ type Result struct {
 type Monitor struct {
 	backend            backend.Backend
 	secondaryBackend   backend.Backend // Secondary backend for replication check (ADR-006)
+	secondaryBucket    string          // Optional fixed bucket for the secondary target
 	replicationQueue   interface{}     // Replication queue for lag metrics (interface{} to avoid import cycle)
 	bucket             string
 	prefix             string
@@ -132,6 +133,7 @@ type Monitor struct {
 type Config struct {
 	Backend            backend.Backend
 	SecondaryBackend   backend.Backend // Secondary backend for replication health check (ADR-006)
+	SecondaryBucket    string          // Optional fixed bucket for the secondary target
 	ReplicationQueue   interface{}     // Replication queue for lag metrics (interface{} to avoid import cycle)
 	Bucket             string
 	Prefix             string // ADR-001 shared-bucket prefix, prepended to every canary key
@@ -192,6 +194,7 @@ func NewMonitor(cfg Config) *Monitor {
 	return &Monitor{
 		backend:            cfg.Backend,
 		secondaryBackend:   cfg.SecondaryBackend,
+		secondaryBucket:    cfg.SecondaryBucket,
 		replicationQueue:   cfg.ReplicationQueue,
 		bucket:             cfg.Bucket,
 		prefix:             cfg.Prefix,
@@ -1107,6 +1110,10 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 	if m.secondaryBackend == nil {
 		return nil, fmt.Errorf("secondary backend not configured")
 	}
+	secondaryBucket := m.secondaryBucket
+	if secondaryBucket == "" {
+		secondaryBucket = m.bucket
+	}
 
 	// Generate unique canary content with timestamp
 	timestamp := time.Now().UnixNano()
@@ -1193,7 +1200,7 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 	}
 
 	// Upload to secondary backend
-	if err := m.secondaryBackend.Put(ctx, m.bucket, key, bytes.NewReader(envelope), int64(len(envelope)), meta); err != nil {
+	if err := m.secondaryBackend.Put(ctx, secondaryBucket, key, bytes.NewReader(envelope), int64(len(envelope)), meta); err != nil {
 		return nil, fmt.Errorf("failed to upload secondary canary to secondary backend: %w", err)
 	}
 	result.UploadLatencyMs = time.Since(uploadStart).Milliseconds()
@@ -1212,7 +1219,7 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 	}
 
 	// Download and verify from secondary backend
-	secondaryBody, secondaryInfo, err := m.secondaryBackend.Get(ctx, m.bucket, key)
+	secondaryBody, secondaryInfo, err := m.secondaryBackend.Get(ctx, secondaryBucket, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download secondary canary from secondary backend: %w", err)
 	}
@@ -1303,7 +1310,7 @@ func (m *Monitor) checkSecondaryBackend(ctx context.Context) (*Result, error) {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		m.backend.Delete(cleanupCtx, m.bucket, key)
-		m.secondaryBackend.Delete(cleanupCtx, m.bucket, key)
+		m.secondaryBackend.Delete(cleanupCtx, secondaryBucket, key)
 	}()
 
 	result.Status = StatusHealthy

@@ -69,6 +69,9 @@ func TestFSBackend_PutGet(t *testing.T) {
 	if info.Size != 35 { // Plaintext size
 		t.Errorf("Size mismatch: got %d, want %d", info.Size, 35)
 	}
+	if info.StoredSize != int64(len(content)) {
+		t.Errorf("StoredSize mismatch: got %d, want %d", info.StoredSize, len(content))
+	}
 	if !info.IsARMOREncrypted {
 		t.Error("Expected ARMOR encrypted flag to be true")
 	}

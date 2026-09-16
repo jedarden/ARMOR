@@ -16,8 +16,9 @@ This document covers disaster recovery procedures for ARMOR deployments, includi
 2. [Restore Drill: Recovering from Complete Deployment Loss](#restore-drill-recovering-from-complete-deployment-loss)
 3. [Key Rotation Failure Recovery](#key-rotation-failure-recovery)
 4. [Multipart Upload Recovery](#multipart-upload-recovery)
-5. [What is NOT Recoverable](#what-is-not-recoverable)
-6. [Verification and Testing](#verification-and-testing)
+5. [B2 Account or Bucket Gone: Secondary Filesystem Recovery](#b2-account-or-bucket-gone-secondary-filesystem-recovery)
+6. [What is NOT Recoverable](#what-is-not-recoverable)
+7. [Verification and Testing](#verification-and-testing)
 
 ---
 
@@ -787,6 +788,92 @@ aws s3 rm --endpoint-url http://localhost:9000 s3://your-bucket/.armor/hmac/abc1
 However, direct B2 API calls can bypass ARMOR and delete these objects. **Never use the B2 native API to delete `.armor/` objects.**
 
 ---
+
+## B2 Account or Bucket Gone: Secondary Filesystem Recovery
+
+ADR-006 provides a manual recovery path when the B2 account is suspended,
+unreachable for an extended period, or the primary bucket has been deleted.
+This is available only for deployments that opted in to the filesystem
+secondary, for example:
+
+```bash
+ARMOR_SECONDARY_BACKEND=filesystem:/offsite/armor
+```
+
+The secondary is a best-effort, asynchronous mirror. A successful client
+response means only that the primary write succeeded; an object acknowledged
+just before the B2 failure may still be absent from the mirror. The queue is
+in memory, so restart the ARMOR process only after checking its lag and
+draining/recovering any queued work that is still possible. Replication does
+not change normal reads and does not fail over automatically.
+
+### What the filesystem contains
+
+The filesystem backend stores each replicated object at
+`<root>/<bucket>/<stored-key>` and its metadata at the same path with a
+`.metadata` suffix. `stored-key` includes `ARMOR_PREFIX` when that option is
+enabled. The metadata JSON contains the original ARMOR headers, including the
+wrapped DEK, IV, plaintext size, and multipart marker.
+
+Only completed data-object keys are queued by the S3 handlers. The reserved
+`.armor/` namespace (manifest, provenance, rotation state, multipart upload
+state, and HMAC sidecars) is internal primary-backend state and is not copied
+or exposed through public listings. Consequently, single-PUT envelope files
+can be decrypted from this mirror, but a multipart ciphertext alone is not
+recoverable: multipart decryption also requires its `.armor/hmac/` sidecar.
+Keep a separate backup of ARMOR internal state if multipart recovery from the
+secondary is a requirement.
+
+### Recover a single-PUT object
+
+1. Preserve the secondary volume and mount it read-only if possible. Do not
+   delete or rename the object while investigating it.
+2. Resolve the bucket and stored key. With a prefix, use the prefixed path
+   exactly as it appears below the configured filesystem root:
+
+   ```bash
+   replica_root=/offsite/armor
+   bucket=<primary-bucket>
+   stored_key=<stored-key-including-any-prefix>
+   ciphertext="$replica_root/$bucket/$stored_key"
+   metadata="$ciphertext.metadata"
+   test -f "$ciphertext" && test -f "$metadata"
+   ```
+
+3. Read the wrapped DEK from the metadata sidecar. The value may be a plain
+   base64 string or the newer `v2:<mek-fingerprint>:<base64>` form; pass only
+   the final base64 component to the local decrypt command:
+
+   ```bash
+   wrapped_dek=$(jq -r '.Metadata["x-amz-meta-armor-wrapped-dek"]' "$metadata")
+   case "$wrapped_dek" in
+     v2:*:*) wrapped_dek="${wrapped_dek##*:}" ;;
+   esac
+   ```
+
+4. Use the escrowed MEK, never a value copied from the failed deployment, to
+   decrypt the copied envelope. The envelope carries its own IV and inline
+   HMAC/block table, so no secondary B2 credentials are needed:
+
+   ```bash
+   armor decrypt \
+     -mek-file /secure/escrow/armor-mek.hex \
+     -input "$ciphertext" \
+     -wrapped-dek "$wrapped_dek" \
+     -output /secure/recovered/<object-name>
+   ```
+
+5. Verify the recovered plaintext against the metadata SHA-256 and the
+   application-level checks appropriate to the artifact (for example SQLite,
+   Parquet, or tar/gzip validation). Repeat for each required object. To
+   resume service, provision a replacement primary and upload the recovered
+   plaintext through ARMOR; this creates fresh encrypted objects and does not
+   recreate the lost B2-side manifest/provenance history.
+
+This procedure is intentionally manual: the secondary is insurance against
+provider loss, not an automatic read replica. If the filesystem is also gone,
+or the object was acknowledged during the asynchronous replication window,
+the secondary cannot provide recovery.
 
 ## What is NOT Recoverable
 

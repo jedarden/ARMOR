@@ -46,6 +46,65 @@ func TestSecondaryBackendConfigDisabled(t *testing.T) {
 	if cfg.SecondaryBackendPath != "" {
 		t.Errorf("SecondaryBackendPath = %q, want empty string (disabled)", cfg.SecondaryBackendPath)
 	}
+	if cfg.SecondaryBackendConfig.Type != "" {
+		t.Errorf("SecondaryBackendConfig.Type = %q, want empty string (disabled)", cfg.SecondaryBackendConfig.Type)
+	}
+}
+
+// TestCanonicalSecondaryBackendConfig verifies the ADR-006 selector is wired
+// into the application config, rather than merely being documented/parser-only.
+func TestCanonicalSecondaryBackendConfig(t *testing.T) {
+	setEnv(t, append(minimalEnv(),
+		"ARMOR_SECONDARY_BACKEND", "filesystem:/backup/armor",
+		"ARMOR_SECONDARY_BACKEND_TYPE", "",
+		"ARMOR_SECONDARY_BACKEND_PATH", "",
+		"ARMOR_SECONDARY_B2_ENDPOINT", "",
+		"ARMOR_SECONDARY_B2_KEY_ID", "",
+		"ARMOR_SECONDARY_B2_KEY", "",
+		"ARMOR_SECONDARY_B2_BUCKET", "",
+		"ARMOR_PREFIX", "tenant",
+	)...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.SecondaryBackend != "filesystem" {
+		t.Errorf("SecondaryBackend = %q, want filesystem", cfg.SecondaryBackend)
+	}
+	if cfg.SecondaryBackendConfig.Type != "filesystem" || cfg.SecondaryBackendConfig.Path != "/backup/armor" {
+		t.Fatalf("SecondaryBackendConfig = %+v, want filesystem /backup/armor", cfg.SecondaryBackendConfig)
+	}
+	if cfg.SecondaryBackendConfig.KeyPrefix != "tenant/" {
+		t.Errorf("SecondaryBackendConfig.KeyPrefix = %q, want tenant/", cfg.SecondaryBackendConfig.KeyPrefix)
+	}
+}
+
+// TestSecondaryB2CredentialConfig verifies credentials kept in separate
+// environment variables are parsed into the typed config and never require
+// the server to overload the legacy filesystem-only fields.
+func TestSecondaryB2CredentialConfig(t *testing.T) {
+	setEnv(t, append(minimalEnv(),
+		"ARMOR_SECONDARY_BACKEND", "",
+		"ARMOR_SECONDARY_BACKEND_TYPE", "",
+		"ARMOR_SECONDARY_BACKEND_PATH", "",
+		"ARMOR_SECONDARY_B2_ENDPOINT", "https://s3.us-east-005.backblazeb2.com",
+		"ARMOR_SECONDARY_B2_KEY_ID", "secondary-key-id",
+		"ARMOR_SECONDARY_B2_KEY", "secondary-key-secret",
+		"ARMOR_SECONDARY_B2_BUCKET", "secondary-bucket",
+	)...)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	secondary := cfg.SecondaryBackendConfig
+	if secondary.Type != "b2" || secondary.Region != "us-east-005" || secondary.Bucket != "secondary-bucket" {
+		t.Fatalf("unexpected secondary B2 config: type=%q region=%q bucket=%q", secondary.Type, secondary.Region, secondary.Bucket)
+	}
+	if secondary.AccessKeyID != "secondary-key-id" || secondary.SecretKey != "secondary-key-secret" {
+		t.Fatalf("secondary credential fields were not retained in typed config")
+	}
 }
 
 // TestSecondaryBackendConfigInvalidType tests that non-'filesystem' values for
