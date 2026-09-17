@@ -31,12 +31,12 @@
         {
           "name": "sidecar.bin",
           "bytes": 128,
-          "sha256": "439bb50acdbad8131ed3c636d745e38f9215bfaa16b4fce07adfecc37ce35678"
+          "sha256": "8c67772de12e0d10ea98f98d330f63e1303f6cf192ded2ca65d206dd39ed6fc4"
         },
         {
           "name": "stored_ciphertext.bin",
           "bytes": 262144,
-          "sha256": "ade7b59d0ab9d7fd0ff438eb8730a25273f21832fec59a3d7db5e4b9abe96c6b"
+          "sha256": "75be9d3134ec2ff77953fcb01a62c2937da784f1598293eecdc4c8736d4598a8"
         }
       ]
     },
@@ -63,7 +63,7 @@
         {
           "name": "stored_ciphertext.bin",
           "bytes": 143,
-          "sha256": "5f2ea5ab008da9f91195e1e25d4e48564189f829503159b3560df359c449bc69"
+          "sha256": "736f2e7c47a4b600bb9e05e167d169e9b7e5abedf8f813de4a483136f6af5765"
         }
       ]
     },
@@ -90,7 +90,7 @@
         {
           "name": "stored_ciphertext.bin",
           "bytes": 143,
-          "sha256": "5f2ea5ab008da9f91195e1e25d4e48564189f829503159b3560df359c449bc69"
+          "sha256": "736f2e7c47a4b600bb9e05e167d169e9b7e5abedf8f813de4a483136f6af5765"
         }
       ]
     },
@@ -116,18 +116,18 @@
         },
         {
           "name": "object_metadata.json",
-          "bytes": 465,
-          "sha256": "bce74aa067621b9c799442078ec6428e7cc77ca34f64e90233f0307153101826"
+          "bytes": 473,
+          "sha256": "a55aab5a8996f78239c8dd4870973ef4ecb78aeaef7bd4c74bfd35e12eccff7c"
         },
         {
           "name": "sidecar.bin",
           "bytes": 128,
-          "sha256": "161fde2778a9cb1cda38d8fb5a8939285ca5ca989a655da02a4a1fc61767b663"
+          "sha256": "4fd6894a9b12da630359583f5e95e35d6a036a2ec0d27a0f328ee02e0ca53645"
         },
         {
           "name": "stored_ciphertext.bin",
           "bytes": 262144,
-          "sha256": "dc5eda6c9dad452584f2ceba3aa548dccae9c674b3cb16d8d5629e795ac32b37"
+          "sha256": "746edaf4d5666fbd3f83cab291cef9e1b6321b80b63bd65b601ef9bbe567b4d3"
         }
       ]
     },
@@ -148,13 +148,13 @@
         },
         {
           "name": "object_metadata.json",
-          "bytes": 378,
-          "sha256": "822700a249227017b58c4956a5ba0d2a43747459ad9c93a0eafdbd2046c39251"
+          "bytes": 386,
+          "sha256": "913a9d0914486c627aa2ea95f825758f6ecd2c95321c11498128325f742ea2f5"
         },
         {
           "name": "stored_ciphertext.bin",
           "bytes": 143,
-          "sha256": "dc315b510630b082878311c04f33ba03bd27e056543fae8f38867b24f5037d30"
+          "sha256": "a78f38a7691699f0814ba311a3eec23fd337b3148ebac246c5c282ff2332980b"
         }
       ]
     }

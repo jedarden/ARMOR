@@ -22,8 +22,10 @@ The standalone generator (`standalone_generator.go`) implements all crypto primi
 - No imports from ARMOR internal packages
 - Standalone envelope header encoding
 - Standalone DEK wrapping (AES-KWP, RFC 5649)
-- Standalone HMAC key derivation
-- Standalone V1/V2 counter derivation
+- HKDF-SHA256 HMAC key derivation (`golang.org/x/crypto/hkdf`, info string
+  `armor-hmac-v1` — the same value as the reader's `crypto.HMACKeyInfo`)
+- Standalone V1/V2 counter derivation (counter block `IV[0:12] || BE uint32`,
+  matching the reader's `Decryptor.makeCounter`)
 
 This ensures adversarial validation: if the migration code has a bug, this generator will catch it.
 
@@ -73,6 +75,24 @@ directory contains:
 Every entry and artifact hash is read back from disk after the write, so the
 manifest provably describes the emitted bytes, and it is itself
 deterministic.
+
+### The explicit format-version field
+
+`object_metadata.json` mirrors the object's `x-amz-meta-*` user metadata, and
+the field that explicitly records the source format version is
+**`x-amz-meta-armor-version`** (`"1"` for V1, `"2"` for V2):
+
+- `generated_fixtures/v1-single-explicit-short` carries it, set to `"1"`. What
+  reads it: `backend.ParseARMORMetadata` returns `Version: 1`, which drives
+  migrator classification and multipart reads; single-PUT decryption builds
+  its decryptor from the envelope header's version byte instead. The two
+  agree on this fixture — a header that contradicts the field is the
+  `malformed/v1_object_v2_metadata` class (the header wins at decrypt,
+  inventory must reject).
+- `generated_fixtures/v1-single-implicit-short` deliberately omits it;
+  `ParseARMORMetadata` defaults a missing version to 1 (implicit V1
+  detection) and the envelope header's version byte still says `1`.
+- Every other generated fixture carries it, set to its `format_version`.
 
 ## Fixture Structure
 

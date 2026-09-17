@@ -22,9 +22,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/crypto/hkdf"
 )
 
 const (
@@ -34,6 +37,12 @@ const (
 	// Version constants
 	version1 = 0x01
 	version2 = 0x02
+
+	// hmacKeyInfo is the HKDF info string the production reader uses when
+	// deriving the per-block HMAC key (crypto.HMACKeyInfo in
+	// internal/crypto/hkdf.go). Duplicated here because internal packages
+	// cannot be imported by this standalone generator.
+	hmacKeyInfo = "armor-hmac-v1"
 )
 
 // FixtureMetadata records the plaintext properties and expected V3 layout.
@@ -155,8 +164,11 @@ func (fg *FixtureGenerator) encodeEnvelopeHeader(version byte, blockSize int, pl
 	// IV
 	copy(header[6:22], fg.iv)
 
-	// Plaintext size
-	binary.BigEndian.PutUint64(header[22:30], uint64(plaintextSize))
+	// Plaintext size, little-endian: the production reader decodes
+	// PlaintextSize with binary.LittleEndian.Uint64 (crypto.DecodeHeader).
+	// A big-endian write here parses as plaintextSize<<56 and every
+	// downstream size check explodes.
+	binary.LittleEndian.PutUint64(header[22:30], uint64(plaintextSize))
 
 	// Plaintext SHA256
 	copy(header[30:62], plaintextSHA)
@@ -216,13 +228,30 @@ func (fg *FixtureGenerator) wrapDEK() ([]byte, error) {
 	return wrapped, nil
 }
 
-// deriveHMACKey derives HMAC key from DEK using HKDF-SHA256.
-// This matches the ARMOR HMAC key derivation.
+// deriveHMACKey derives the per-block HMAC key from the DEK exactly as the
+// production reader does (crypto.DeriveHMACKey): HKDF-SHA256 with a zero salt
+// and info "armor-hmac-v1", reading 32 bytes. HKDF comes from
+// golang.org/x/crypto/hkdf — an external, pre-vetted library, not ARMOR code
+// — so the independence guarantee (no ARMOR internal imports) holds while the
+// derived bytes stay identical to the reader's.
 func (fg *FixtureGenerator) deriveHMACKey() ([]byte, error) {
-	// Simple HKDF: HMAC-SHA256(DEK, "armor-hmac") with expansion
-	h := hmac.New(sha256.New, fg.dek)
-	h.Write([]byte("armor-hmac-key"))
-	return h.Sum(nil), nil
+	reader := hkdf.New(sha256.New, fg.dek, nil, []byte(hmacKeyInfo))
+	hmacKey := make([]byte, 32)
+	if _, err := io.ReadFull(reader, hmacKey); err != nil {
+		return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
+	}
+	return hmacKey, nil
+}
+
+// counterBlock builds the 16-byte CTR counter block exactly as the production
+// reader's Decryptor.makeCounter does: IV[0:12] || big-endian uint32 counter
+// value. The caller picks the counter value (V1: blockIndex; V2:
+// blockIndex * blockSize/16).
+func (fg *FixtureGenerator) counterBlock(counter uint32) []byte {
+	block := make([]byte, 16)
+	copy(block[0:12], fg.iv[0:12])
+	binary.BigEndian.PutUint32(block[12:16], counter)
+	return block
 }
 
 // computeBlockHMAC computes HMAC-SHA256 for a single encrypted block.
@@ -267,10 +296,13 @@ func (fg *FixtureGenerator) encryptV1(plaintext []byte, blockSize int) ([]byte, 
 			break
 		}
 
-		// V1 counter derivation (BUGGY - causes keystream reuse)
+		// V1 counter derivation (BUGGY - causes keystream reuse).
+		// The legacy defect is in the counter VALUE (blockIndex, not
+		// blockIndex * blockSize/16); the counter BLOCK itself is
+		// IV[0:12] || big-endian uint32, exactly as the production reader's
+		// Decryptor.makeCounter constructs it.
 		counter := uint32(blockIndex) // BUG: should be blockIndex * (blockSize/16)
-		blockCtr := make([]byte, 16)
-		binary.LittleEndian.PutUint32(blockCtr, counter)
+		blockCtr := fg.counterBlock(counter)
 
 		stream := cipher.NewCTR(block, blockCtr)
 		blockCiphertext := make([]byte, len(blockPlaintext))
@@ -319,8 +351,7 @@ func (fg *FixtureGenerator) encryptV2(plaintext []byte, blockSize int) ([]byte, 
 
 		// V2 counter derivation (FIXED - no keystream reuse)
 		counter := uint32(blockIndex * aesBlocksPerArmorBlock)
-		blockCtr := make([]byte, 16)
-		binary.LittleEndian.PutUint32(blockCtr, counter)
+		blockCtr := fg.counterBlock(counter)
 
 		stream := cipher.NewCTR(block, blockCtr)
 		blockCiphertext := make([]byte, len(blockPlaintext))
@@ -430,7 +461,7 @@ func (fg *FixtureGenerator) GenerateV2Single(plaintext []byte) (*FixtureBundle, 
 
 	// Compute MEK fingerprint for V2 wrapped DEK format
 	mekSHA := sha256.Sum256(fg.mek)
-	mekFingerprint := hex.EncodeToString(mekSHA[:])[:8]
+	mekFingerprint := hex.EncodeToString(mekSHA[:])[:16]
 	wrappedDEKV2 := fmt.Sprintf("v2:%s:%s", mekFingerprint, base64.StdEncoding.EncodeToString(wrappedDEK))
 
 	metadata := map[string]string{
@@ -556,7 +587,7 @@ func (fg *FixtureGenerator) GenerateV2Multipart(plaintext []byte, partSize int) 
 
 	// Compute MEK fingerprint for V2 format
 	mekSHA := sha256.Sum256(fg.mek)
-	mekFingerprint := hex.EncodeToString(mekSHA[:])[:8]
+	mekFingerprint := hex.EncodeToString(mekSHA[:])[:16]
 	wrappedDEKV2 := fmt.Sprintf("v2:%s:%s", mekFingerprint, base64.StdEncoding.EncodeToString(wrappedDEK))
 
 	// Compute sidecar path
@@ -856,7 +887,7 @@ func (fg *FixtureGenerator) GenerateV2MultipartVariableFinal(plaintext []byte, u
 	}
 
 	mekSHA := sha256.Sum256(fg.mek)
-	mekFingerprint := hex.EncodeToString(mekSHA[:])[:8]
+	mekFingerprint := hex.EncodeToString(mekSHA[:])[:16]
 	wrappedDEKV2 := fmt.Sprintf("v2:%s:%s", mekFingerprint, base64.StdEncoding.EncodeToString(wrappedDEK))
 
 	// Compute sidecar path
@@ -973,7 +1004,7 @@ func (fg *FixtureGenerator) GenerateV2MultipartNonUniform(plaintext []byte, part
 	}
 
 	mekSHA := sha256.Sum256(fg.mek)
-	mekFingerprint := hex.EncodeToString(mekSHA[:])[:8]
+	mekFingerprint := hex.EncodeToString(mekSHA[:])[:16]
 	wrappedDEKV2 := fmt.Sprintf("v2:%s:%s", mekFingerprint, base64.StdEncoding.EncodeToString(wrappedDEK))
 
 	// Compute sidecar path

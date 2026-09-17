@@ -4,5 +4,5 @@
   "x-amz-meta-armor-plaintext-size": "47",
   "x-amz-meta-armor-sha256": "f8f8e46b1a93bebb3018ec567ebb6272f70fd1bf3350a698e4e712b0f87379b2",
   "x-amz-meta-armor-version": "2",
-  "x-amz-meta-armor-wrapped-dek": "v2:ae216c2e:yuqSInsrWAcC9/I2eXdQEU5j8GFYSShpTxvCWNRrGpqAtZPdbBePJQ=="
+  "x-amz-meta-armor-wrapped-dek": "v2:ae216c2ef5247a37:yuqSInsrWAcC9/I2eXdQEU5j8GFYSShpTxvCWNRrGpqAtZPdbBePJQ=="
 }
