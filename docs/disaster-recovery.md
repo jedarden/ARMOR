@@ -837,6 +837,21 @@ need them:
   `CompleteMultipartUpload`, but without its `.armor/hmac/` sidecar it cannot
   be decrypted from the mirror. Single-PUT objects carry their HMAC/block
   table inline and decrypt fine.
+- **Deletes and server-side copies do not replicate.** The enqueue sites are
+  exactly the write acknowledgements — `PutObject` (buffered and streaming
+  paths) and `CompleteMultipartUpload`, the list ADR-006 Decision #1 names.
+  A `DeleteObject`/`DeleteObjects`/`DeleteBucket` removes from the primary
+  only, and a `CopyObject` destination never enqueues. Two operator-visible
+  consequences: a key deleted on the primary **reappears after failover**
+  (the mirror retains the last replicated ciphertext — prune the secondary
+  by hand when that resurrection is unacceptable), and an object created by
+  server-side copy has **no mirror copy at all** until a later real write
+  replicates it. An overwrite — a second PUT, or a re-completed multipart
+  upload, of an already-replicated key — does replicate: once the queue
+  drains, the mirror converges on the newest ciphertext. These semantics are
+  pinned by the tests in
+  `internal/server/srvtest/overwrite_delete_semantics_test.go`; runbook
+  follow-ups are tracked on operator-runbook bead armor-b2235418.
 - **Failover is never automatic.** Replication does not change the read path,
   and read traffic does not move on its own. Promotion is the manual procedure
   below.
