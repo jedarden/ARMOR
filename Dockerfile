@@ -13,6 +13,13 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Staging directory copied into the scratch runtime stages as /tmp. The demo
+# subcommand (README "Local demo (Docker only)") builds its temporary
+# filesystem backend under os.TempDir(), so the published image must ship a
+# writable /tmp or the demo container dies at startup with "failed to create
+# temp directory: stat /tmp: no such file or directory".
+RUN mkdir -p /image-tmp && chmod 1777 /image-tmp
+
 # Test gate shared with CI. It covers the v3 cryptographic primitives,
 # multipart state, canary, concurrent HTTP round trips, and integration-suite
 # compilation without requiring live B2 credentials.
@@ -72,6 +79,10 @@ FROM scratch AS armor-runtime
 # Copy CA certificates and timezone data
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
+# /tmp for the demo subcommand's temporary filesystem backend (see the
+# /image-tmp staging note in the builder stage).
+COPY --from=builder /image-tmp /tmp
 
 # Copy the binary
 COPY --from=builder /armor /armor

@@ -25,7 +25,7 @@ BINARIES := armor armor-decrypt armor-fleet restore-verifier verify-objects
 # Docker build arguments
 DOCKER_BUILD := docker build --build-arg VERSION=$(VERSION)
 
-.PHONY: all build test test-integration lint docker compat clean help
+.PHONY: all build test test-integration lint docker compat test-docker-demo clean help
 
 all: build test lint
 
@@ -71,6 +71,11 @@ docker: Dockerfile Dockerfile.test
 compat:
 	@echo "Running AWS CLI / rclone compatibility tests..."
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) test -v $(TESTDIR)/aws-cli-compatibility/...
+
+## test-docker-demo: Run the README Docker demo smoke test (requires Docker)
+test-docker-demo:
+	@echo "Running Docker demo smoke test (requires Docker)..."
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) test -v $(TESTDIR)/docker-demo-smoke/...
 
 ## clean: Remove build artifacts
 clean:

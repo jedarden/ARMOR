@@ -53,6 +53,18 @@ func main() {
 		os.Exit(2)
 	}
 
+	// Consume the subcommand name before dispatch. Subcommands that take
+	// flags (demo, client-config, migrate, verify) re-parse the shared
+	// flag.CommandLine themselves, and flag parsing stops at the first
+	// non-flag argument — leaving the subcommand name in place made every
+	// one of them see itself as an unexpected positional and reject its own
+	// flags (e.g. "armor demo --listen ..." failed with "unexpected
+	// arguments"). Re-slicing os.Args hands each subcommand only its own
+	// flags and positionals.
+	if len(args) > 0 {
+		os.Args = append([]string{os.Args[0]}, args[1:]...)
+	}
+
 	// Execute the command
 	cmd.Func()
 }

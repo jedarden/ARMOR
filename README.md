@@ -74,6 +74,10 @@ Stop and remove the demo when finished:
 docker rm -f armor-demo
 ```
 
+This workflow is guarded by an automated smoke test (`make test-docker-demo`),
+which replays the commands above against the pinned image and fails if they
+stop working.
+
 ### Production Docker deployment
 
 For a B2-backed deployment, replace every placeholder with a value from your
