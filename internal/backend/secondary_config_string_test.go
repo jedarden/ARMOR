@@ -44,7 +44,7 @@ func TestParseSecondaryBackendConfigStringValid(t *testing.T) {
 				Type:        "b2",
 				Bucket:      "mybucket",
 				AccessKeyID: "appKeyId",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey:   "appKey",
 			},
 		},
 		{
@@ -54,7 +54,7 @@ func TestParseSecondaryBackendConfigStringValid(t *testing.T) {
 				Type:        "b2",
 				Bucket:      "my-bucket-123",
 				AccessKeyID: "keyABC",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey:   "secretXYZ",
 			},
 		},
 	}
@@ -228,7 +228,7 @@ func TestParseSecondaryBackendConfigStringWhitespace(t *testing.T) {
 				Type:        "b2",
 				Bucket:      "mybucket",
 				AccessKeyID: "keyId",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey:   "appKey",
 			},
 		},
 	}
@@ -283,6 +283,58 @@ func TestParseSecondaryBackendConfigStringCase(t *testing.T) {
 
 			if got.Type != tt.wantType {
 				t.Errorf("Type = %q, want %q", got.Type, tt.wantType)
+			}
+		})
+	}
+}
+
+// TestParseSecondaryBackendConfigStringErrorHygiene pins the credential
+// handling contract on the error path: a malformed config string can carry a
+// real B2 application key secret, and the parser's error messages must never
+// echo the input params back, or the secret lands in startup failures and
+// logs. Successful parses intentionally retain SecretKey so
+// InitB2BackendFromConfig can authenticate; hygiene is enforced at the
+// display/logging boundary instead (Config.SecondaryBackend carries only the
+// backend type, never the canonical string).
+func TestParseSecondaryBackendConfigStringErrorHygiene(t *testing.T) {
+	tests := []struct {
+		name      string
+		configStr string
+		wantErr   string
+	}{
+		{
+			name:      "missing type separator",
+			configStr: "b2bucket-keyid-accountid-secretvalue",
+			wantErr:   "invalid config format",
+		},
+		{
+			name:      "empty params",
+			configStr: "b2:",
+			wantErr:   "params cannot be empty",
+		},
+		{
+			name:      "b2 wrong field count",
+			configStr: "b2:mybucket:keyid:secretvalue",
+			wantErr:   "invalid B2 format",
+		},
+		{
+			name:      "unsupported type with embedded secret",
+			configStr: "s3:mybucket:keyid:secretvalue",
+			wantErr:   "unsupported backend type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseSecondaryBackendConfigString(tt.configStr)
+			if err == nil {
+				t.Fatalf("ParseSecondaryBackendConfigString(%q) expected error, got nil", tt.configStr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Error should contain %q, got: %v", tt.wantErr, err)
+			}
+			if strings.Contains(err.Error(), "secretvalue") {
+				t.Errorf("Error message must not echo credential material from the input, got: %v", err)
 			}
 		})
 	}

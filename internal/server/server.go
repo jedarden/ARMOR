@@ -561,13 +561,52 @@ func (s *Server) StopCanary() {
 	}
 }
 
+// replicationMetricsSyncInterval is how often the replication queue's
+// authoritative counters are republished into the expvar-backed metrics that
+// /metrics and the dashboard serve.
+const replicationMetricsSyncInterval = 5 * time.Second
+
 // StartReplicationQueue starts the replication queue worker goroutine (ADR-006).
 // It should be called after the server is created if a secondary backend is configured.
 func (s *Server) StartReplicationQueue(ctx context.Context) {
 	if s.replicationQueue != nil {
 		s.replicationQueue.Start(ctx)
+		s.publishReplicationMetrics(ctx)
 		s.logger.Info("Replication queue started")
 	}
+}
+
+// publishReplicationMetrics periodically copies the replication queue's
+// authoritative counters into the expvar-backed metrics behind /metrics and the
+// dashboard. The queue mutates its own internal atomics and nothing else reads
+// them, so a snapshot republish (Set, not increment) is the only way the
+// exported armor_replication_* series stay truthful; without it they would sit
+// at zero while replication runs. The loop lives as long as ctx and is started
+// only when replication is configured, so a disabled deployment correctly
+// reports zero depth and lag.
+func (s *Server) publishReplicationMetrics(ctx context.Context) {
+	qm := s.replicationQueue.GetMetrics()
+	if qm == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(replicationMetricsSyncInterval)
+		defer ticker.Stop()
+		for {
+			s.metrics.SetReplicationStats(
+				qm.QueueDepth.Load(),
+				qm.LagSeconds.Load(),
+				qm.DroppedTotal.Load(),
+				qm.ErrorsTotal.Load(),
+				qm.RetriesTotal.Load(),
+			)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 // StopReplicationQueue stops the replication queue worker goroutine (ADR-006).

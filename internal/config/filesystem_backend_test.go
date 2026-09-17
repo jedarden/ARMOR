@@ -7,13 +7,17 @@ import (
 )
 
 // minimalFilesystemEnv returns the set of required env var pairs needed for Load()
-// to succeed with ARMOR_BACKEND=filesystem.
+// to succeed with ARMOR_BACKEND=filesystem. Load() rejects any deployment with no
+// client credential configured, so the fixture carries the same test triplet used
+// by minimalEnv in config_test.go.
 func minimalFilesystemEnv() []string {
 	return []string{
 		"ARMOR_BACKEND", "filesystem",
 		"ARMOR_FS_PATH", "/tmp/armor",
 		"ARMOR_BUCKET", "testbucket",
 		"ARMOR_MEK", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+		"ARMOR_AUTH_ACCESS_KEY", "test-access-key",
+		"ARMOR_AUTH_SECRET_KEY", "test-secret-key",
 	}
 }
 
@@ -338,10 +342,10 @@ func TestFilesystemBackendConfigEdgeCases(t *testing.T) {
 			},
 		},
 		{
-			name:         "whitespace-only backend rejected",
-			backendValue: "   ",
-			pathValue:    "/tmp/armor",
-			shouldError:  true,
+			name:          "whitespace-only backend rejected",
+			backendValue:  "   ",
+			pathValue:     "/tmp/armor",
+			shouldError:   true,
 			errorContains: "ARMOR_BACKEND must be 'b2' or 'filesystem'",
 		},
 		{
@@ -389,17 +393,17 @@ func TestFilesystemBackendConfigEdgeCases(t *testing.T) {
 			},
 		},
 		{
-			name:         "mixed case FileSystem rejected (case-sensitive)",
-			backendValue: "FileSystem",
-			pathValue:    "/mnt/backup",
-			shouldError:  true,
+			name:          "mixed case FileSystem rejected (case-sensitive)",
+			backendValue:  "FileSystem",
+			pathValue:     "/mnt/backup",
+			shouldError:   true,
 			errorContains: "ARMOR_BACKEND must be 'b2' or 'filesystem'",
 		},
 		{
-			name:         "uppercase FILESYSTEM rejected (case-sensitive)",
-			backendValue: "FILESYSTEM",
-			pathValue:    "/mnt/backup",
-			shouldError:  true,
+			name:          "uppercase FILESYSTEM rejected (case-sensitive)",
+			backendValue:  "FILESYSTEM",
+			pathValue:     "/mnt/backup",
+			shouldError:   true,
 			errorContains: "ARMOR_BACKEND must be 'b2' or 'filesystem'",
 		},
 		{
@@ -416,9 +420,9 @@ func TestFilesystemBackendConfigEdgeCases(t *testing.T) {
 			},
 		},
 		{
-			name:         "uppercase B2 rejected (case-sensitive)",
-			backendValue: "B2",
-			shouldError:  true,
+			name:          "uppercase B2 rejected (case-sensitive)",
+			backendValue:  "B2",
+			shouldError:   true,
 			errorContains: "ARMOR_BACKEND must be 'b2' or 'filesystem'",
 		},
 	}

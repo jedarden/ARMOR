@@ -76,9 +76,9 @@ func (lc *labelledCounter) Do(f func(expvar.KeyValue)) {
 // Metrics holds all ARMOR metrics.
 type Metrics struct {
 	// Request metrics
-	RequestsTotal         *expvar.Int
-	RequestsInFlight      *expvar.Int
-	requestsByLabel       *labelledCounter // per-operation, status-class counters
+	RequestsTotal    *expvar.Int
+	RequestsInFlight *expvar.Int
+	requestsByLabel  *labelledCounter // per-operation, status-class counters
 
 	// Data transfer metrics
 	BytesUploaded        *expvar.Int
@@ -141,9 +141,9 @@ type Metrics struct {
 	BackendRequestDuration *labelledCounter
 
 	// Request duration histogram (fixed buckets)
-	requestDurationBuckets []int64
-	requestDurationSum      *expvar.Map // operation -> sum of durations
-	requestDurationCount   *expvar.Map // operation -> count of observations
+	requestDurationBuckets    []int64
+	requestDurationSum        *expvar.Map // operation -> sum of durations
+	requestDurationCount      *expvar.Map // operation -> count of observations
 	requestDurationBucketsMap *expvar.Map // operation_bucket_le -> cumulative count
 
 	// Restore verifier metrics (Phase 6)
@@ -175,8 +175,12 @@ type Metrics struct {
 	RestoreVerifierDrillObjectRatio    *expvar.Map // bucket -> recovered/total ratio (0..1)
 	RestoreVerifierDrillFailureCount   *expvar.Map // bucket -> cumulative failed direct-only recoveries
 
-	// Replication queue metrics for async secondary backend replication
+	// Replication queue metrics for async secondary backend replication.
+	// The replication queue holds the authoritative atomics (internal/replication
+	// Metrics); the server publishes them here via SetReplicationStats so /metrics
+	// and the dashboard serve live values.
 	ReplicationQueueDepth   *expvar.Int // Current number of items in replication queue
+	ReplicationLagSeconds   *expvar.Int // Age of the oldest unreplicated object in the queue
 	ReplicationDroppedTotal *expvar.Int // Total number of items dropped due to full queue
 	ReplicationErrorsTotal  *expvar.Int // Total number of replication copy failures after all retries
 	ReplicationRetriesTotal *expvar.Int // Total number of replication retry attempts
@@ -186,7 +190,7 @@ type Metrics struct {
 	ReplicationEnqueuedTotal *expvar.Map // Deprecated: kept for Prometheus format compatibility
 	// Atomic counters for thread-safe increments
 	replicationEnqueuedPut               atomic.Int64 // Counter for "put" operations
-	replicationEnqueuedPutStreaming     atomic.Int64 // Counter for "put-streaming" operations
+	replicationEnqueuedPutStreaming      atomic.Int64 // Counter for "put-streaming" operations
 	replicationEnqueuedCompleteMultipart atomic.Int64 // Counter for "completemultipart" operations
 
 	// Manifest compaction metrics
@@ -307,6 +311,7 @@ func NewMetrics() *Metrics {
 
 	// Replication queue metrics
 	m.ReplicationQueueDepth = new(expvar.Int)
+	m.ReplicationLagSeconds = new(expvar.Int)
 	m.ReplicationDroppedTotal = new(expvar.Int)
 	m.ReplicationErrorsTotal = new(expvar.Int)
 	m.ReplicationRetriesTotal = new(expvar.Int)
@@ -931,14 +936,13 @@ func (m *Metrics) PrometheusFormat() string {
 		fmt.Fprintf(&sb, "armor_drill_failures_total{bucket=%q} %s\n", kv.Key, kv.Value.String())
 	})
 
-	// Replication queue metrics
+	// Replication queue metrics — published from the replication queue's
+	// authoritative atomics via SetReplicationStats (see StartReplicationQueue)
 	writeMetric("replication_queue_depth", "Current number of items in the replication queue", "gauge", m.ReplicationQueueDepth)
+	writeMetric("replication_lag_seconds", "Age of the oldest unreplicated object in the replication queue", "gauge", m.ReplicationLagSeconds)
 	writeMetric("replication_dropped_total", "Total number of items dropped due to full replication queue", "counter", m.ReplicationDroppedTotal)
 	writeMetric("replication_errors_total", "Total number of replication copy failures after all retries", "counter", m.ReplicationErrorsTotal)
 	writeMetric("replication_retries_total", "Total number of replication retry attempts", "counter", m.ReplicationRetriesTotal)
-
-	// Replication lag and duration metrics will be exported from the replication package's Metrics struct
-	// These are accessed through the replication queue's metrics instance
 
 	// Manifest compaction metrics
 	writeMetric("manifest_compaction_errors_total", "Total number of manifest compaction errors", "counter", m.CompactionErrorsTotal)
@@ -982,7 +986,6 @@ func (m *Metrics) PrometheusFormat() string {
 	fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %d\n", "put", m.replicationEnqueuedPut.Load())
 	fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %d\n", "put-streaming", m.replicationEnqueuedPutStreaming.Load())
 	fmt.Fprintf(&sb, "armor_replication_enqueued_total{operation=%q} %d\n", "completemultipart", m.replicationEnqueuedCompleteMultipart.Load())
-
 
 	// Uptime
 	uptime := time.Since(m.startTime).Seconds()
@@ -1085,6 +1088,19 @@ func (m *Metrics) RecordDRDrillRun(bucket string, lastVerified, lastSuccess time
 // SetReplicationQueueDepth sets the current replication queue depth.
 func (m *Metrics) SetReplicationQueueDepth(depth int64) {
 	m.ReplicationQueueDepth.Set(depth)
+}
+
+// SetReplicationStats publishes a snapshot of the replication queue's
+// authoritative counters into the expvar-backed gauges/counters that /metrics
+// and the dashboard serve. All values are Set (not incremented): the replication
+// queue owns the cumulative atomics, so re-publishing a counter snapshot must
+// replace the previous value rather than add to it.
+func (m *Metrics) SetReplicationStats(depth, lagSeconds, dropped, errors, retries int64) {
+	m.ReplicationQueueDepth.Set(depth)
+	m.ReplicationLagSeconds.Set(lagSeconds)
+	m.ReplicationDroppedTotal.Set(dropped)
+	m.ReplicationErrorsTotal.Set(errors)
+	m.ReplicationRetriesTotal.Set(retries)
 }
 
 // AddReplicationQueueDepth adds to the replication queue depth (can be negative).
