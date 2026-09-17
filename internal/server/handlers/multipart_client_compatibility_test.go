@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jedarden/armor/internal/backend"
 	"github.com/jedarden/armor/internal/config"
@@ -188,6 +189,14 @@ func TestMultipartClientCompat_SDKTransferManager(t *testing.T) {
 			const workers = 4
 			const fullParts = 7
 			const fullSize = 5 * 1024 * 1024
+			// SDK retry policy for a 503-deferred part: real transfer
+			// managers (boto3 TransferConfig, the Go SDK manager) retry
+			// with backoff, not a tight loop — a deferred part must
+			// outlast part 1's in-flight encryption rather than fail
+			// the transfer after a few immediate attempts under CPU
+			// contention.
+			const deferralRetries = 12
+			const deferralBackoff = 10 * time.Millisecond
 			finalSize := 2*1024*1024 + 8191
 
 			parts := make([][]byte, fullParts+1)
@@ -217,15 +226,17 @@ func TestMultipartClientCompat_SDKTransferManager(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					for p := range jobs {
-						// Standard SDK retry policy: 503 SlowDown is retryable,
-						// anything else fails the transfer.
+						// Standard SDK retry policy: 503 SlowDown is
+						// retryable with backoff, anything else fails
+						// the transfer.
 						for attempt := 0; ; attempt++ {
 							c, etag, body := uploadPartResponse(t, h, bucket, key, uploadID, p, parts[p-1])
 							if c == http.StatusOK {
 								etags[p-1] = etag
 								break
 							}
-							if c == http.StatusServiceUnavailable && attempt < 2 {
+							if c == http.StatusServiceUnavailable && attempt < deferralRetries {
+								time.Sleep(time.Duration(attempt+1) * deferralBackoff)
 								continue
 							}
 							errs <- fmt.Errorf("part %d: status %d after retries: %s", p, c, body)
