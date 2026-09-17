@@ -1,6 +1,6 @@
 # ARMOR Documentation
 
-This index organizes all durable documentation by audience. Every file under `docs/` (excluding `archive/`) is linked exactly once.
+This index organizes all durable documentation by audience. Every file under `docs/` (excluding `archive/`) is linked exactly once. The consistency test in `internal/docsindex` enforces this: it fails when a document is missing from the index, linked more than once, or when a link no longer resolves.
 
 ## Operate
 
@@ -79,17 +79,40 @@ Background research and third-party analysis:
 - **[B2 Pricing and Features](research/b2-pricing-and-features.md)** — Backblaze B2 cost structure and feature comparison
 - **[Bandwidth Alliance](research/bandwidth-alliance.md)** — Cloudflare Bandwidth Alliance research
 - **[Barman ARMOR Root Cause Analysis](research/barman_armor_root_cause_analysis.md)** — Barman multipart failure investigation
+- **[Barman Part Size Simulation](research/barman_part_size_simulation.py)** — Simulation of barman-cloud-backup part-size behavior (why 65536-byte-aligned parts are unreliable)
 - **[Cloudflare Architecture](research/cloudflare-architecture.md)** — Cloudflare CDN and PNI architecture
 - **[DuckDB Encrypted Parquet](research/duckdb-encrypted-parquet.md)** — DuckDB query patterns over encrypted Parquet
+- **[Format Migration Failure Recording Flow](research/format-migration-failure-recording-flow.md)** — Failure-recording flow during the V1/V2 → V3 migration
+- **[Real-World Reconstruction](research/real_world_reconstruction.py)** — Script reconstructing the real-world multipart failure from queue-db and forgejo-postgres
 - **[S3 Operation Surface](research/s3-operation-surface.md)** — S3 API operation inventory
 - **[SDKs and Encryption](research/sdks-and-encryption.md)** — Client-side encryption vs. proxy-side encryption
+
+### Migration Research
+
+V1/V2 → V3 migration fixture catalogs, validation reports, and reference material:
+
+- **[V3 Migration Reference](research/migration/V3_Migration_Reference.md)** — V3 format and migration reference
+- **[Golden Fixture Validation 2026-09-13](research/migration/golden-fixture-validation-2026-09-13.md)** — Validation report over the golden fixture set
+- **[Malformed & Edge-Case Fixtures](research/migration/malformed-edge-case-fixtures.md)** — Expected V3 handling of malformed and edge-case inputs
+- **[Migration Error Handling Flow](research/migration/migration-error-handling-flow.md)** — Error-handling flow in the migration path
+- **[V1 Multipart Fixture Conversions](research/migration/v1-multipart-fixtures.md)** — V1 multipart fixtures and their V3 conversions
+- **[V1 Single-Part Fixture Conversions](research/migration/v1-single-part-fixtures.md)** — V1 single-PUT fixtures and their V3 conversions
+- **[V2 Multipart Fixture Conversions](research/migration/v2-multipart-fixtures.md)** — V2 multipart fixtures and their V3 conversions
+- **[V2 Single-Part Fixture Conversions](research/migration/v2-single-part-fixtures.md)** — V2 single-part fixtures and their V3 conversions
 
 ### Notes
 
 Contextual notes and temporary documentation:
 
 - **[Corruption Inventory 2026-08](notes/corruption-inventory-2026-08.md)** — Multipart-era corruption audit findings
+- **[Format Migration 2026](notes/format-migration-2026.md)** — Format migration plan and progress
+- **[Format Migration Counting Bugs](notes/format-migration-counting-bugs.md)** — Root-cause analysis of the migration failure-recording counting bugs
 - **[Litestream Verified Generation ID](notes/litestream-verified-generation-id.md)** — Litestream restore verification notes
+- **[Manifest Repair Quarantine](notes/manifest-repair-quarantine.md)** — Operator guide to manifest repair and quarantine
+- **[MEK Rotation 2026](notes/mek-rotation-2026.md)** — MEK rotation walkthrough and rotation state
+- **[Migration Error Handling Flow](notes/migration-error-handling-flow.md)** — Migration error handling and failure-recording flow analysis
+- **[Starvation Resolution 2026-08-28](notes/starvation-2026-08-28-resolution.md)** — Ready-frontier starvation alert resolution, verified 2026-09-08
+- **[Starvation Watch](notes/starvation-watch.md)** — Workspace-local starvation watcher for bead frontiers
 
 ## Test
 
@@ -97,6 +120,7 @@ Contextual notes and temporary documentation:
 
 - **[Integration Tests](../tests/integration/README.md)** — Real B2 + Cloudflare integration test suite
 - **[AWS CLI Compatibility Tests](../tests/aws-cli-compatibility/README.md)** — AWS CLI and rclone compatibility verification
+- **[Multipart 5 GiB Boundary Tests](testing/multipart-5gb-boundary-tests.md)** — 5 GiB multipart boundary test coverage
 
 ## Archive
 
