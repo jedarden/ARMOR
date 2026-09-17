@@ -89,9 +89,16 @@ the field that explicitly records the source format version is
   agree on this fixture — a header that contradicts the field is the
   `malformed/v1_object_v2_metadata` class (the header wins at decrypt,
   inventory must reject).
-- `generated_fixtures/v1-single-implicit-short` deliberately omits it;
-  `ParseARMORMetadata` defaults a missing version to 1 (implicit V1
-  detection) and the envelope header's version byte still says `1`.
+- `generated_fixtures/v1-single-implicit-short` deliberately omits it — the
+  omission variant. Expected reader behavior: `ParseARMORMetadata` defaults a
+  missing (or unparsable) version to 1 for backward compatibility, and that
+  default is what classification and multipart reads consult; single-PUT
+  decryption never reads the metadata version at all — it builds its
+  decryptor from the envelope header's version byte (`crypto.DecodeHeader`
+  inside `decryptSingleObject`). This fixture's header byte says `1`,
+  agreeing with the default, so the bytes decrypt identically to its explicit
+  sibling: the omission exercises the metadata default path, not a different
+  decryption.
 - Every other generated fixture carries it, set to its `format_version`.
 
 ## Fixture Structure
@@ -265,8 +272,8 @@ The generator accurately replicates the V1 CTR keystream reuse bug:
 - Fixed IV: 0x03, 0x04, ..., 0x12
 - DEK wrapping is AES-KWP (RFC 5649), which has no nonce
 - Plaintexts are fixed patterns (`i % 256`, an alphabet cycle, …), never random
-- No clock or unseeded randomness anywhere in the generator; the only imports
-  are the Go standard library
+- No clock or unseeded randomness anywhere in the generator; the only
+  non-stdlib import is `golang.org/x/crypto/hkdf` (see Independence Guarantee)
 
 This ensures reproducible fixtures across runs.
 

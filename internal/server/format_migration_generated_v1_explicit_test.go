@@ -11,8 +11,9 @@
 //   - that the production legacy reader decrypts the committed bytes to the
 //     plaintext the regen manifest records — manifest against decrypted
 //     bytes, not manifest against itself
-//   - the implicit sibling's documented fallback: field absent, parser
-//     defaults to V1, bytes still decrypt
+//   - the omission variant (armor-3aac661d): field absent, parser defaults
+//     to V1, the derivation-driving header byte agrees with that default,
+//     bytes still decrypt to the plaintext the regen manifest records
 //
 // Verification only. The fixture bytes themselves are emitted by
 // tests/fixtures/migration/standalone_generator.go, which deliberately links
@@ -139,9 +140,11 @@ func TestGeneratedV1ExplicitFixtureLegacyReader(t *testing.T) {
 	}
 }
 
-// TestGeneratedV1ImplicitFixtureDefaultsToV1 pins the implicit sibling's
-// documented fallback: without the version field the production parser
-// defaults to V1 and the committed bytes still decrypt.
+// TestGeneratedV1ImplicitFixtureDefaultsToV1 pins the omission variant's
+// documented reader behavior (armor-3aac661d): without the version field the
+// production parser defaults to V1, the envelope header byte that actually
+// drives single-PUT decryption agrees with that default, and the committed
+// bytes still decrypt to exactly what the regen manifest records.
 func TestGeneratedV1ImplicitFixtureDefaultsToV1(t *testing.T) {
 	byName, _ := goldenMatrixFixtures(t)
 	f, ok := byName["generated_fixtures/v1-single-implicit-short"]
@@ -149,6 +152,8 @@ func TestGeneratedV1ImplicitFixtureDefaultsToV1(t *testing.T) {
 		t.Fatal("generated_fixtures/v1-single-implicit-short not on disk; run the standalone generator")
 	}
 
+	// The omission: the field is absent from the committed object metadata,
+	// and the production parser's backward-compat default is V1.
 	if _, has := f.ObjectMeta["x-amz-meta-armor-version"]; has {
 		t.Fatal("implicit fixture carries x-amz-meta-armor-version; it must omit it to exercise the fallback")
 	}
@@ -160,9 +165,52 @@ func TestGeneratedV1ImplicitFixtureDefaultsToV1(t *testing.T) {
 		t.Fatalf("ParseARMORMetadata defaulted missing version to %d, want 1", armorMeta.Version)
 	}
 
+	// The derivation path: single-PUT decryption takes its version from the
+	// envelope header's byte, never from the (defaulted) metadata — so the
+	// header must be a genuine V1 header agreeing with the default, or this
+	// would be a contradictory-version fixture instead of an implicit one.
+	if len(f.Data) < crypto.HeaderSize {
+		t.Fatalf("stored_ciphertext.bin is %d bytes, shorter than the %d-byte envelope header", len(f.Data), crypto.HeaderSize)
+	}
+	header, err := crypto.DecodeHeader(f.Data[:crypto.HeaderSize])
+	if err != nil {
+		t.Fatalf("committed bytes do not decode as an envelope header: %v", err)
+	}
+	if header.Version != crypto.Version1 {
+		t.Fatalf("envelope header version = %d, want %d", header.Version, crypto.Version1)
+	}
+	if uint8(armorMeta.Version) != header.Version {
+		t.Fatalf("defaulted metadata version %d disagrees with envelope header version %d", armorMeta.Version, header.Version)
+	}
+	if int(header.PlaintextSize) != f.Meta.PlaintextLength {
+		t.Fatalf("header plaintext size = %d, metadata.json records %d", header.PlaintextSize, f.Meta.PlaintextLength)
+	}
+	if got := hex.EncodeToString(header.PlaintextSHA[:]); got != f.Meta.PlaintextSHA256 {
+		t.Fatalf("header plaintext sha256 = %s, metadata.json records %s", got, f.Meta.PlaintextSHA256)
+	}
+
+	// The production legacy (pre-V3) reader over the committed artifacts.
 	plaintext, err := decryptGoldenFixture(t, f, "generated/v1-single-implicit-short")
 	if err != nil {
 		t.Fatalf("legacy reader failed to decrypt the implicit-V1 fixture: %v", err)
 	}
 	checkGoldenPlaintext(t, f, plaintext)
+
+	// The regen manifest is machine-checkable against the decrypted bytes,
+	// exactly as for the explicit sibling: what the reader got is what the
+	// manifest says to expect.
+	entry := regenManifestEntryFor(t, "v1-single-implicit-short")
+	sum := sha256.Sum256(plaintext)
+	if got := hex.EncodeToString(sum[:]); got != entry.PlaintextSHA256 {
+		t.Fatalf("decrypted plaintext sha256 = %s, manifest records %s", got, entry.PlaintextSHA256)
+	}
+	if int64(len(plaintext)) != entry.PlaintextLength {
+		t.Fatalf("decrypted plaintext length = %d, manifest records %d", len(plaintext), entry.PlaintextLength)
+	}
+	if entry.FormatVersion != "v1" {
+		t.Fatalf("manifest format_version = %q, want \"v1\"", entry.FormatVersion)
+	}
+	if entry.V3Expected.IsMultipart {
+		t.Fatal("manifest v3_expected.is_multipart = true for a single-PUT fixture")
+	}
 }
