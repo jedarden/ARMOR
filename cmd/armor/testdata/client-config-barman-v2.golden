@@ -15,3 +15,10 @@ export AWS_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY
 # barman-cloud-backup backup <server> <bucket> <postgres_data_dir>
 # barman-cloud-wal-archive --endpoint-url $AWS_ENDPOINT_URL <bucket> <server>
 # barman-cloud-wal-restore --endpoint-url $AWS_ENDPOINT_URL <bucket> <server> <wal_file> <dest_dir>
+
+# Multipart (write format v2, legacy; ADR-015): part 1 pins the uniform
+# part size P; non-final parts must be exactly P, the final part any size.
+# A part numbered >1 arriving before part 1 is deferred with retryable
+# 503 SlowDown -- default client retry clears it. No tuning required.
+# barman's tar-aligned parts (chunk_size + N*512) are accepted: ADR-011 non-uniform mode on v2; no contract on v3.
+# Tested compatibility matrix: docs/multipart-client-compatibility.md

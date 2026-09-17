@@ -6,7 +6,6 @@ package main
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -49,17 +48,27 @@ func TestClientConfigInvalidFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original flag state
+			// Save original state — including os.Args, the exit stand-in and
+			// stderr, all of which clientConfig() consumes directly. (An
+			// earlier defer here also replaced flag.CommandLine with a fresh
+			// empty FlagSet; that unregistered -for/-endpoint/... for every
+			// later flag.Parse() in the package, which then failed into the
+			// still-installed exit stand-in and crashed the whole binary.)
 			oldForFlag := forFlag
 			oldEndpointFlag := endpointFlag
 			oldBucketFlag := bucketFlag
 			oldCredentialFlag := credentialFlag
+			oldArgs := os.Args
+			oldExit := exit
+			oldStderr := os.Stderr
 			defer func() {
 				forFlag = oldForFlag
 				endpointFlag = oldEndpointFlag
 				bucketFlag = oldBucketFlag
 				credentialFlag = oldCredentialFlag
-				flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+				os.Args = oldArgs
+				exit = oldExit
+				os.Stderr = oldStderr
 			}()
 
 			// Reset flags to defaults
@@ -80,24 +89,34 @@ func TestClientConfigInvalidFlags(t *testing.T) {
 				panic("exit")
 			}
 
-			// Run client-config with flags
-			os.Args = append([]string{"armor", "client-config"}, tt.flags...)
+			// Capture stderr too: the wantErr assertions match the error text
+			// clientConfig writes there, which the exit stand-in never sees.
+			stderrR, stderrW, _ := os.Pipe()
+			os.Stderr = stderrW
 
-			// This will panic if exit is called, which we expect
+			// Seed argv the way main() hands off to a subcommand: argv[0]
+			// followed by this case's flags — main re-slices os.Args to strip
+			// the subcommand name before dispatch (main.go), so it must not
+			// appear here or flag.Parse sees it as an unexpected positional.
+			os.Args = append([]string{"armor"}, tt.flags...)
+
 			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						if exitCode != tt.wantExit {
-							t.Errorf("unexpected exit code: got %d, want %d", exitCode, tt.wantExit)
-						}
-						msg := exitMsg.String()
-						if !strings.Contains(msg, tt.wantErr) {
-							t.Errorf("error message does not contain expected text: got %q, want to contain %q", msg, tt.wantErr)
-						}
-					}
-				}()
+				defer func() { _ = recover() }() // the expected exit panic
 				clientConfig()
 			}()
+
+			stderrW.Close()
+			os.Stderr = oldStderr
+			var stderrBuf bytes.Buffer
+			stderrBuf.ReadFrom(stderrR)
+
+			if exitCode != tt.wantExit {
+				t.Errorf("unexpected exit code: got %d, want %d", exitCode, tt.wantExit)
+			}
+			msg := stderrBuf.String() + exitMsg.String()
+			if !strings.Contains(msg, tt.wantErr) {
+				t.Errorf("error message does not contain expected text: got %q, want to contain %q", msg, tt.wantErr)
+			}
 		})
 	}
 }
@@ -123,88 +142,90 @@ func TestClientConfigGoldenFiles(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name           string
-		tool           string
-		endpoint       string
-		bucket         string
-		credential     string
-		formatVersion  int
-		goldenFile     string
+		name          string
+		tool          string
+		endpoint      string
+		bucket        string
+		credential    string
+		formatVersion int
+		goldenFile    string
 	}{
 		{
-			name:      "aws-cli",
-			tool:      "aws-cli",
-			endpoint:  "http://localhost:9000",
-			bucket:    "my-bucket",
+			name:          "aws-cli",
+			tool:          "aws-cli",
+			endpoint:      "http://localhost:9000",
+			bucket:        "my-bucket",
 			formatVersion: 2,
-			goldenFile: "testdata/client-config-aws-cli-v2.golden",
+			goldenFile:    "testdata/client-config-aws-cli-v2.golden",
 		},
 		{
-			name:      "aws-cli v3",
-			tool:      "aws-cli",
-			endpoint:  "http://localhost:9000",
-			bucket:    "my-bucket",
+			name:          "aws-cli v3",
+			tool:          "aws-cli",
+			endpoint:      "http://localhost:9000",
+			bucket:        "my-bucket",
 			formatVersion: 3,
-			goldenFile: "testdata/client-config-aws-cli-v3.golden",
+			goldenFile:    "testdata/client-config-aws-cli-v3.golden",
 		},
 		{
-			name:      "rclone",
-			tool:      "rclone",
-			endpoint:  "http://localhost:9000",
-			bucket:    "my-bucket",
+			name:          "rclone",
+			tool:          "rclone",
+			endpoint:      "http://localhost:9000",
+			bucket:        "my-bucket",
 			formatVersion: 2,
-			goldenFile: "testdata/client-config-rclone-v2.golden",
+			goldenFile:    "testdata/client-config-rclone-v2.golden",
 		},
 		{
-			name:      "rclone v3",
-			tool:      "rclone",
-			endpoint:  "http://localhost:9000",
-			bucket:    "my-bucket",
+			name:          "rclone v3",
+			tool:          "rclone",
+			endpoint:      "http://localhost:9000",
+			bucket:        "my-bucket",
 			formatVersion: 3,
-			goldenFile: "testdata/client-config-rclone-v3.golden",
+			goldenFile:    "testdata/client-config-rclone-v3.golden",
 		},
 		{
-			name:      "boto3",
-			tool:      "boto3",
-			endpoint:  "http://localhost:9000",
-			bucket:    "my-bucket",
-			credential: "backup-writer",
+			name:          "boto3",
+			tool:          "boto3",
+			endpoint:      "http://localhost:9000",
+			bucket:        "my-bucket",
+			credential:    "backup-writer",
 			formatVersion: 2,
-			goldenFile: "testdata/client-config-boto3-v2.golden",
+			goldenFile:    "testdata/client-config-boto3-v2.golden",
 		},
 		{
-			name:      "duckdb",
-			tool:      "duckdb",
-			endpoint:  "http://localhost:9000",
-			bucket:    "parquet-bucket",
+			name:          "duckdb",
+			tool:          "duckdb",
+			endpoint:      "http://localhost:9000",
+			bucket:        "parquet-bucket",
 			formatVersion: 2,
-			goldenFile: "testdata/client-config-duckdb-v2.golden",
+			goldenFile:    "testdata/client-config-duckdb-v2.golden",
 		},
 		{
-			name:      "litestream",
-			tool:      "litestream",
-			endpoint:  "http://armor.example.com:9000",
-			bucket:    "sqlite-backups",
+			name:          "litestream",
+			tool:          "litestream",
+			endpoint:      "http://armor.example.com:9000",
+			bucket:        "sqlite-backups",
 			formatVersion: 2,
-			goldenFile: "testdata/client-config-litestream-v2.golden",
+			goldenFile:    "testdata/client-config-litestream-v2.golden",
 		},
 		{
-			name:      "barman",
-			tool:      "barman",
-			endpoint:  "http://localhost:9000",
-			bucket:    "postgres-backups",
+			name:          "barman",
+			tool:          "barman",
+			endpoint:      "http://localhost:9000",
+			bucket:        "postgres-backups",
 			formatVersion: 2,
-			goldenFile: "testdata/client-config-barman-v2.golden",
+			goldenFile:    "testdata/client-config-barman-v2.golden",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set format version
+			// Set format version explicitly. The unset default is v3
+			// (config.Load), so the legacy-contract cases must pin 2 —
+			// unsetting would silently produce v3 output.
 			if tt.formatVersion == 3 {
 				os.Setenv("ARMOR_FORMAT_VERSION", "3")
 			} else {
-				os.Unsetenv("ARMOR_FORMAT_VERSION")
+				os.Setenv("ARMOR_FORMAT_VERSION", "2")
 			}
 			defer os.Unsetenv("ARMOR_FORMAT_VERSION")
 

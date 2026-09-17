@@ -118,14 +118,13 @@ armor client-config --for litestream --endpoint http://localhost:9000
 armor client-config --for barman --endpoint http://localhost:9000
 ```
 
-Supported tools: `aws-cli`, `rclone`, `boto3`, `or `barman`. The command includes:
+Supported tools: `aws-cli`, `rclone`, `boto3`, `duckdb`, `litestream`, `barman`. The command includes:
 
 - Endpoint URL configuration
 - Path-style addressing (required for B2/ARMOR)
 - Region placeholder (required by clients but unused by ARMOR)
 - Credential environment variable names (never values)
-- **Format version 2:** Multipart upload constraints (block-aligned chunk sizes, minimum part sizes)
-- **Format version 3:** No multipart constraints (any part size, any order, any concurrency)
+- The multipart part-order/part-size contract in force for the configured write format, how that tool's default concurrency behaves against it, and a pointer to the tested compatibility matrix: **format version 2** pins a uniform part size from part 1 (an out-of-order part is deferred with retryable 503 SlowDown; non-uniform parts switch to ADR-011 mode), **format version 3** has no contract beyond B2's ≥ 5 MiB non-final-part minimum
 
 See the section on [Multipart Upload Constraints](#multipart-upload-constraints) for details on format version differences.
 
@@ -569,7 +568,10 @@ armor version
 
 # Generate tool-specific config with appropriate constraints
 armor client-config --for aws-cli --endpoint http://localhost:9000
-# Output includes multipart settings only when format_write_version=2
+# Output includes a multipart contract block for the configured write
+# format on both v2 and v3 — the part-order/part-size contract in force,
+# what this tool's default concurrency does against it, and a pointer to
+# the tested compatibility matrix.
 ```
 
 Per-client behavior — AWS CLI (default concurrency and serial), SDK transfer managers, rclone, litestream, barman — on each format is documented, together with the tests that back every row, in the [multipart client-concurrency compatibility matrix](docs/multipart-client-compatibility.md).

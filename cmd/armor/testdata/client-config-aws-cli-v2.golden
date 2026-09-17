@@ -6,7 +6,6 @@
 endpoint_url = http://localhost:9000
 s3 =
     addressing_style = path
-
 region = us-east-1
 
 # Credentials (set these via 'aws configure set ...' or environment variables)
@@ -15,3 +14,10 @@ region = us-east-1
 
 # Test the configuration:
 # aws --profile armor s3 ls s3://my-bucket
+
+# Multipart (write format v2, legacy; ADR-015): part 1 pins the uniform
+# part size P; non-final parts must be exactly P, the final part any size.
+# A part numbered >1 arriving before part 1 is deferred with retryable
+# 503 SlowDown -- default client retry clears it. No tuning required.
+# aws s3 cp default concurrency works unmodified: the short final part usually completes first; on v2 it is deferred with 503 SlowDown and the CLI retries transparently. No multipart_chunksize tuning required.
+# Tested compatibility matrix: docs/multipart-client-compatibility.md

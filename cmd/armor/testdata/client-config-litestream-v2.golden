@@ -20,3 +20,10 @@ dbs:
         region: us-east-1
         access-key-id: YOUR_ACCESS_KEY_ID
         secret-access-key: YOUR_SECRET_ACCESS_KEY
+
+# Multipart (write format v2, legacy; ADR-015): part 1 pins the uniform
+# part size P; non-final parts must be exactly P, the final part any size.
+# A part numbered >1 arriving before part 1 is deferred with retryable
+# 503 SlowDown -- default client retry clears it. No tuning required.
+# litestream's multipart snapshots work unmodified on both formats; no serial knob exists or is needed.
+# Tested compatibility matrix: docs/multipart-client-compatibility.md

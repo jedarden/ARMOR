@@ -9,7 +9,7 @@ SET s3_endpoint = 'http://localhost:9000';
 SET region = 'us-east-1';  -- Required but unused by ARMOR
 
 # Configure credentials
-# Set these to your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY
+-- Set these to your ARMOR_AUTH_ACCESS_KEY_ID and ARMOR_AUTH_SECRET_KEY
 SET s3_access_key_id = 'YOUR_ACCESS_KEY_ID';
 SET s3_secret_access_key = 'YOUR_SECRET_ACCESS_KEY';
 
@@ -19,3 +19,10 @@ SET s3_url_style = 'path';  -- or 'virtual' for path-style
 
 -- Example: Read a Parquet file
 -- SELECT * FROM read_parquet('s3://parquet-bucket/path/to/file.parquet');
+
+-- Multipart (write format v2, legacy; ADR-015): part 1 pins the uniform
+-- part size P; non-final parts must be exactly P, the final part any size.
+-- A part numbered >1 arriving before part 1 is deferred with retryable
+-- 503 SlowDown -- default client retry clears it. No tuning required.
+-- DuckDB/httpfs is a reader (GET / Range / HEAD) and is unaffected by the multipart upload contract on either format.
+-- Tested compatibility matrix: docs/multipart-client-compatibility.md

@@ -229,6 +229,29 @@ SELECT * FROM read_parquet('s3://my-bucket/data.parquet');
 SELECT * FROM glob('s3://my-bucket/*.parquet');
 ```
 
+## Multipart Uploads (Large Files)
+
+Files above a client's multipart threshold are uploaded as multiple parts.
+The constraints ARMOR applies depend on the server's configured write format
+(`ARMOR_FORMAT_VERSION`, default **3**; `armor version` reports it):
+
+- **Format v3 (default)** — no part-order or part-size contract: any part
+  sizes, any order, any concurrency. The only remaining rule is B2's own:
+  non-final parts must be at least 5 MiB.
+- **Format v2 (legacy)** — part 1 pins the uniform part size for the
+  upload; every non-final part must match it exactly (the final part may be
+  any size), and a part numbered > 1 that arrives before part 1 is deferred
+  with a retryable `503 SlowDown`. Standard clients retry that
+  transparently — no configuration needed.
+
+Default client concurrency therefore works unmodified on both formats — AWS
+CLI (`aws s3 cp`), boto3 `TransferConfig`, rclone (default
+`--s3-upload-concurrency 4`), litestream, and barman. Per-client behavior,
+including the tests that back each row, is documented in the
+[multipart client-concurrency compatibility
+matrix](./multipart-client-compatibility.md). `armor client-config --for
+<tool> --endpoint <url>` embeds the same contract in the config it prints.
+
 ## Environment Setup
 
 ### Required Environment Variables
@@ -428,6 +451,7 @@ server {
 ## See Also
 
 - [README.md](../README.md) - ARMOR overview and architecture
+- [Multipart Client-Compatibility Matrix](./multipart-client-compatibility.md) - Per-client concurrency behavior per write format, and the tests behind it
 - [Cloudflare Setup](./cloudflare-setup.md) - Zero-egress download configuration
 - [Disaster Recovery](./disaster-recovery.md) - Backup and restore procedures
 - [Integration Tests](../tests/integration/README.md) - Testing against real B2 + Cloudflare

@@ -7,7 +7,7 @@ endpoint = http://localhost:9000
 provider = Other
 s3_force_path_style = true
 region = us-east-1
-location_constraint =
+location_constraint = 
 acl = private
 
 # Credentials
@@ -18,3 +18,10 @@ secret_access_key = YOUR_SECRET_ACCESS_KEY
 # Test the configuration:
 # rclone lsd my-bucket-armor:
 # rclone ls my-bucket-armor:my-bucket
+
+# Multipart (write format v2, legacy; ADR-015): part 1 pins the uniform
+# part size P; non-final parts must be exactly P, the final part any size.
+# A part numbered >1 arriving before part 1 is deferred with retryable
+# 503 SlowDown -- default client retry clears it. No tuning required.
+# rclone's default --s3-upload-concurrency 4 works unmodified; --s3-chunk-size tuning is optional on v2, not required.
+# Tested compatibility matrix: docs/multipart-client-compatibility.md

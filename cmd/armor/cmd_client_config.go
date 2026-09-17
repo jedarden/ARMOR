@@ -40,6 +40,43 @@ func init() {
 	flag.StringVar(&credentialFlag, "credential", "", "Named credential to reference (optional, for inclusion in config)")
 }
 
+// multipartClientNotes is the per-client behavior line embedded in every
+// client-config output: what the tool's default concurrency does against each
+// write format, so the "clients work without modification" claim is stated
+// (and kept honest) in the config the operator actually pastes.
+var multipartClientNotes = map[string]string{
+	"aws-cli":    "aws s3 cp default concurrency works unmodified: the short final part usually completes first; on v2 it is deferred with 503 SlowDown and the CLI retries transparently. No multipart_chunksize tuning required.",
+	"rclone":     "rclone's default --s3-upload-concurrency 4 works unmodified; --s3-chunk-size tuning is optional on v2, not required.",
+	"boto3":      "boto3's TransferConfig defaults work unmodified: parts upload concurrently out-of-order, and the SDK retries 5xx (which covers v2's SlowDown deferral).",
+	"duckdb":     "DuckDB/httpfs is a reader (GET / Range / HEAD) and is unaffected by the multipart upload contract on either format.",
+	"litestream": "litestream's multipart snapshots work unmodified on both formats; no serial knob exists or is needed.",
+	"barman":     "barman's tar-aligned parts (chunk_size + N*512) are accepted: ADR-011 non-uniform mode on v2; no contract on v3.",
+}
+
+// multipartContractBlock renders the multipart part-size and ordering
+// contract the server's configured write format currently enforces, together
+// with how this client behaves against it — the per-tool twin of
+// docs/multipart-client-compatibility.md. comment is the tool's comment
+// prefix ("#" for ini/env configs, "--" for DuckDB SQL).
+func multipartContractBlock(formatVersion int, tool, comment string) string {
+	var sb strings.Builder
+	if formatVersion == 2 {
+		fmt.Fprintf(&sb, "%s Multipart (write format v2, legacy; ADR-015): part 1 pins the uniform\n", comment)
+		fmt.Fprintf(&sb, "%s part size P; non-final parts must be exactly P, the final part any size.\n", comment)
+		fmt.Fprintf(&sb, "%s A part numbered >1 arriving before part 1 is deferred with retryable\n", comment)
+		fmt.Fprintf(&sb, "%s 503 SlowDown -- default client retry clears it. No tuning required.\n", comment)
+	} else {
+		fmt.Fprintf(&sb, "%s Multipart (write format v3, ARMOR default): no part-order or part-size\n", comment)
+		fmt.Fprintf(&sb, "%s contract -- any part sizes, any order, any concurrency. Only B2's own\n", comment)
+		fmt.Fprintf(&sb, "%s rule applies: non-final parts must be at least 5 MiB.\n", comment)
+	}
+	if note := multipartClientNotes[tool]; note != "" {
+		fmt.Fprintf(&sb, "%s %s\n", comment, note)
+	}
+	fmt.Fprintf(&sb, "%s Tested compatibility matrix: docs/multipart-client-compatibility.md\n", comment)
+	return sb.String()
+}
+
 // clientConfig generates and prints a known-good configuration for the specified tool
 func clientConfig() {
 	// Parse flags
@@ -136,7 +173,9 @@ func awsCLIConfig(endpoint, bucket, credential string, formatVersion int) string
 	if bucket != "" {
 		fmt.Fprintf(&sb, " s3://%s", bucket)
 	}
-	sb.WriteString("\n")
+	sb.WriteString("\n\n")
+
+	sb.WriteString(multipartContractBlock(formatVersion, "aws-cli", "#"))
 
 	return sb.String()
 }
@@ -180,6 +219,8 @@ func rcloneConfig(endpoint, bucket, credential string, formatVersion int) string
 		fmt.Fprintf(&sb, "# rclone ls %s:%s\n", remoteName, bucket)
 	}
 	sb.WriteString("\n")
+
+	sb.WriteString(multipartContractBlock(formatVersion, "rclone", "#"))
 
 	return sb.String()
 }
@@ -230,6 +271,8 @@ func boto3Config(endpoint, bucket, credential string, formatVersion int) string 
 	sb.WriteString("#     print(obj['Key'])\n")
 	sb.WriteString("\n")
 
+	sb.WriteString(multipartContractBlock(formatVersion, "boto3", "#"))
+
 	return sb.String()
 }
 
@@ -271,9 +314,10 @@ func duckDBConfig(endpoint, bucket, credential string, formatVersion int) string
 	}
 	sb.WriteString("\n")
 
-	// Note: DuckDB doesn't do multipart uploads in the same way
-	// It uses range reads for GET which work fine with ARMOR
-	// For large exports, DuckDB splits into multiple files which are uploaded individually
+	// DuckDB accesses objects read-only via range GETs (httpfs), so the
+	// multipart upload contract never applies to it — the emitted block says
+	// so explicitly rather than leaving the operator to infer it.
+	sb.WriteString(multipartContractBlock(formatVersion, "duckdb", "--"))
 
 	return sb.String()
 }
@@ -308,6 +352,8 @@ func litestreamConfig(endpoint, bucket, credential string, formatVersion int) st
 	sb.WriteString("        access-key-id: YOUR_ACCESS_KEY_ID\n")
 	sb.WriteString("        secret-access-key: YOUR_SECRET_ACCESS_KEY\n\n")
 
+	sb.WriteString(multipartContractBlock(formatVersion, "litestream", "#"))
+
 	return sb.String()
 }
 
@@ -335,6 +381,8 @@ func barmanConfig(endpoint, bucket, credential string, formatVersion int) string
 	sb.WriteString("# barman-cloud-backup backup <server> <bucket> <postgres_data_dir>\n")
 	sb.WriteString("# barman-cloud-wal-archive --endpoint-url $AWS_ENDPOINT_URL <bucket> <server>\n")
 	sb.WriteString("# barman-cloud-wal-restore --endpoint-url $AWS_ENDPOINT_URL <bucket> <server> <wal_file> <dest_dir>\n\n")
+
+	sb.WriteString(multipartContractBlock(formatVersion, "barman", "#"))
 
 	return sb.String()
 }

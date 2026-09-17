@@ -6,7 +6,6 @@
 endpoint_url = http://localhost:9000
 s3 =
     addressing_style = path
-
 region = us-east-1
 
 # Credentials (set these via 'aws configure set ...' or environment variables)
@@ -15,3 +14,9 @@ region = us-east-1
 
 # Test the configuration:
 # aws --profile armor s3 ls s3://my-bucket
+
+# Multipart (write format v3, ARMOR default): no part-order or part-size
+# contract -- any part sizes, any order, any concurrency. Only B2's own
+# rule applies: non-final parts must be at least 5 MiB.
+# aws s3 cp default concurrency works unmodified: the short final part usually completes first; on v2 it is deferred with 503 SlowDown and the CLI retries transparently. No multipart_chunksize tuning required.
+# Tested compatibility matrix: docs/multipart-client-compatibility.md
