@@ -8,8 +8,9 @@ The ARMOR Version Drift Check automatically detects when deployed ARMOR versions
 
 ### Scripts
 
+- **`scripts/drift_check.py`** - Fleet drift check: live `/version` probing, four-state classification, deduplicated alert-bead filing via `--unique-ref`
 - **`scripts/version-drift-check.py`** - Unified wrapper that orchestrates the complete drift check pipeline
-- **`scripts/check-armor-version-drift.py`** - Standalone drift check script (legacy)
+- **`scripts/archive/check-armor-version-drift.py`** - Standalone drift check script (legacy, archived)
 - **`scripts/github-release-fetcher.py`** - Fetches ARMOR releases from GitHub API
 - **`scripts/find-armor-deployments.py`** - Scans declarative-config for ARMOR deployments
 - **`scripts/compare-version-drift.py`** - Compares deployments against releases to detect drift
@@ -41,9 +42,53 @@ Deployments are flagged if they meet any of these criteria:
 - **Correctness releases**: Any bug fix or security release was missed
 - **Non-version tags**: Using git SHA instead of version tag
 
+## Deployment States
+
+`scripts/drift_check.py` classifies every deployment into exactly one state:
+
+- **`current`** - deployed tag matches the latest approved release, or is close enough that no threshold above is exceeded (routine version bumps are not drift)
+- **`stale`** - parseable version behind latest beyond a threshold, or missing a correctness-labelled release
+- **`mismatched`** - the deployed image is not the approved release in a way version math cannot express: a non-version tag (git SHA, `latest`), or a live `/version` probe disagreeing with the declared manifest tag
+- **`unavailable`** - the deployment could not be verified at all: the probe failed, no releases were available for comparison, or a configured cluster has no ARMOR manifest in declarative-config
+
+Digest-pinned tags (`0.1.1957@sha256:…`, the manifest convention) are read as
+their version, so pinning is never drift on its own; likewise a `/version`
+probe reporting `0.1.1957` against a `0.1.1957@sha256:…` manifest is the same
+release, not a mismatch. Alert dedup is also version-normalized: a
+digest-only rebuild of the same stale version keeps the fingerprint and does
+not refile.
+
 ## Usage
 
 ### Manual Execution
+
+#### drift_check.py (recommended)
+
+```bash
+# Classify the fleet against the live GitHub release list
+python3 scripts/drift_check.py
+
+# Machine-readable JSON (adds per-deployment state and the drift fingerprint)
+python3 scripts/drift_check.py --json
+
+# Probe running versions live and compare against the declared manifest tag
+python3 scripts/drift_check.py --probe-url iad-kalshi=https://armor-iad-kalshi.example.com/version
+
+# Treat a configured cluster with no ARMOR manifest as unavailable
+python3 scripts/drift_check.py --expected-cluster iad-acb
+
+# File ONE deduplicated alert bead when anything is non-current
+python3 scripts/drift_check.py --emit-bead            # files via `bead create --unique-ref drift-check:<fingerprint>`
+python3 scripts/drift_check.py --emit-bead --dry-run  # print the bead command instead of running it
+```
+
+Alerting deduplicates on a fingerprint: a stable hash of the non-current subset
+(cluster, image type, state, deployed tag, latest tag). An unchanged drift
+picture replays to `EXISTING` on the `--unique-ref` and files nothing; a changed
+fleet picture hashes differently and files fresh. Exit codes: `0` all current,
+`1` drift present, `2` error.
+
+#### version-drift-check.py and older scripts
 
 ```bash
 # Run with default configuration
@@ -67,13 +112,13 @@ python3 scripts/version-drift-check.py --sort-by releases       # Show most rele
 python3 scripts/version-drift-check.py --sort-by days          # Show oldest deployments first
 ```
 
-Or use the legacy script:
+Or use the archived legacy script:
 ```bash
 # Run the check
-./scripts/check-armor-version-drift.py
+python3 scripts/archive/check-armor-version-drift.py
 
 # Get JSON output for integration
-./scripts/check-armor-version-drift.py --json
+python3 scripts/archive/check-armor-version-drift.py --json
 ```
 
 ### Scheduled Execution
@@ -118,7 +163,7 @@ After=network.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/coding/ARMOR
-ExecStart=/home/coding/ARMOR/scripts/check-armor-version-drift.py
+ExecStart=/usr/bin/env python3 /home/coding/ARMOR/scripts/drift_check.py
 StandardOutput=append:/home/coding/ARMOR/logs/version-drift-check.log
 StandardError=append:/home/coding/ARMOR/logs/version-drift-check.log
 ```
@@ -154,7 +199,7 @@ systemctl --user start armor-version-drift-check.timer
 Use the Claude Code /loop skill:
 
 ```
-/loop 1d ./scripts/check-armor-version-drift.py
+/loop 1d python3 scripts/drift_check.py
 ```
 
 This runs the check daily within the Claude Code session.
@@ -176,7 +221,7 @@ Or manually configure the schedule:
 crontab -e
 
 # Add this line (runs daily at 9:17 AM)
-17 9 * * * /home/coding/ARMOR/scripts/check-armor-version-drift.py >> /home/coding/ARMOR/logs/version-drift-check.log 2>&1
+17 9 * * * cd /home/coding/ARMOR && python3 scripts/drift_check.py >> /home/coding/ARMOR/logs/version-drift-check.log 2>&1
 ```
 
 ## Configuration
@@ -309,6 +354,14 @@ Using non-version tags: 0
 
 ## Exit Codes
 
+`scripts/drift_check.py`:
+
+- **0**: every deployment classified `current`
+- **1**: any deployment classified `stale`, `mismatched`, or `unavailable`
+- **2**: script error (bad arguments, missing input, fetcher/enumeration failure)
+
+Older scripts (`version-drift-check.py`, `compare-version-drift.py`, the archived legacy script):
+
 - **0**: No drift or only routine version bumps
 - **1**: Correctness drift detected (missing bug/security fixes)
 - **2**: Script error (failed to run)
@@ -340,7 +393,7 @@ import json
 import subprocess
 
 result = subprocess.run(
-    ["./scripts/check-armor-version-drift.py", "--json"],
+    ["python3", "scripts/drift_check.py", "--json"],
     capture_output=True,
     text=True
 )
@@ -362,7 +415,7 @@ if len(needs_update) > 0:
 import json
 
 result = subprocess.run(
-    ["./scripts/check-armor-version-drift.py", "--json"],
+    ["python3", "scripts/drift_check.py", "--json"],
     capture_output=True,
     text=True
 )
@@ -400,16 +453,15 @@ All methods write logs to: `/home/coding/ARMOR/logs/version-drift-check.log`
 ## Maintenance
 
 To update the list of monitored deployments:
-1. Edit `scripts/check-armor-version-drift.py` or `scripts/version-drift-check.py`
-2. Modify the `DEPLOYMENTS` list with new `(cluster, path)` tuples
-3. Test the changes: `./scripts/check-armor-version-drift.py`
+1. Deployments are discovered automatically by `scripts/find-armor-deployments.py` — add the manifest to `declarative-config`
+2. Add any cluster that must always report (even with no ARMOR manifest) to the `clusters` list in `config/drift-config.json`
+3. Test the changes: `python3 scripts/drift_check.py --json`
 
 ## Testing
 
-Regardless of scheduling method, test the script first:
+Regardless of scheduling method, test first:
 
 ```bash
-./scripts/check-armor-version-drift.py
-# or
-python3 scripts/version-drift-check.py
+python3 -m pytest tests/test_drift_check.py -q   # drift_check.py test suite
+python3 scripts/drift_check.py --json            # live classification pass
 ```

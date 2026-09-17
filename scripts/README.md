@@ -2,11 +2,50 @@
 
 This directory contains operational, testing, and monitoring scripts for ARMOR deployments.
 
+## definition-of-done.sh
+
+Local verification gate. `scripts/definition-of-done.sh --fast` runs `go build ./...`, `go vet ./...`, and the Python scripts test suite; without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails.
+
 ## Version Drift Monitoring
 
 Automated version drift monitoring across ARMOR deployments.
 
 **Full documentation:** [docs/drift-check.md](../docs/drift-check.md)
+
+### drift_check.py
+
+Fleet drift check with live verification and deduplicated alerting.
+
+**Purpose:** Enumerates ARMOR deployments, compares each against the approved latest release, and classifies every deployment as `current`, `stale`, `mismatched`, or `unavailable`. Optionally probes running versions via each cluster's `/version` endpoint (or the `Server: ARMOR/<version>` header) and files ONE deduplicated alert bead (`bead create --unique-ref drift-check:<fingerprint>`) when anything is non-current.
+
+**Inputs:** declarative-config checkout, GitHub releases (or `--releases-file`), optional per-cluster probe URLs
+
+**Options:**
+- `--config FILE` - Configuration file (default: `config/drift-config.json`)
+- `--manifests DIR` - declarative-config checkout (default from config)
+- `--releases-file FILE` - Releases JSON (default: run `github-release-fetcher.py`)
+- `--probe-url CLUSTER=URL` - Live `/version` endpoint for a cluster (repeatable)
+- `--expected-cluster NAME` - Cluster that must have an ARMOR manifest (repeatable)
+- `--releases-threshold N` / `--days-threshold N` - Stale thresholds (default: 50 / 30)
+- `--json` - Machine-readable JSON output
+- `--emit-bead` - File the deduplicated alert bead when anything is non-current
+- `--dry-run` - With `--emit-bead`, print the bead command instead of running it
+
+**Examples:**
+```bash
+# Classify the fleet against the live release list
+python3 scripts/drift_check.py --json
+
+# Probe running versions, then file a deduped alert bead if anything drifted
+python3 scripts/drift_check.py --emit-bead
+
+# Preview the alert without filing
+python3 scripts/drift_check.py --emit-bead --dry-run
+```
+
+**Exit codes:** 0 (all current), 1 (stale/mismatched/unavailable present), 2 (error)
+
+---
 
 ### check-version-drift.sh
 

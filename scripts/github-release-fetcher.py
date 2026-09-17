@@ -122,6 +122,33 @@ def load_cached_releases(ttl_seconds: int = None) -> list[dict] | None:
         return None
 
 
+def read_stale_cache() -> list[dict] | None:
+    """
+    Load cached releases regardless of TTL.
+
+    Fallback for when the GitHub API is unreachable (rate limited, network
+    down): for version-drift purposes a stale release list is better than
+    failing an unattended check outright. Returns None when no usable cache
+    file exists, so first-run failures still exit non-zero.
+    """
+    if not CACHE_FILE.exists():
+        return None
+    try:
+        with open(CACHE_FILE, 'r') as f:
+            cache_data = json.load(f)
+
+        if not isinstance(cache_data, dict) or 'releases' not in cache_data:
+            return None
+
+        cached_at = datetime.fromisoformat(cache_data['cached_at'])
+        print(f"Warning: GitHub API unreachable; using stale cache from "
+              f"{cached_at.strftime('%Y-%m-%d %H:%M:%S')}", file=sys.stderr)
+        return cache_data['releases']
+    except (json.JSONDecodeError, KeyError, ValueError, OSError) as e:
+        print(f"Warning: Invalid cache file: {e}", file=sys.stderr)
+        return None
+
+
 def save_releases_to_cache(releases: list[dict]) -> None:
     """
     Save releases to cache with timestamp.
@@ -233,13 +260,20 @@ def fetch_git_tags(per_page: int = 100, use_cache: bool = True, force_refresh: b
 
         except urllib.error.HTTPError as e:
             if e.code == 403:
-                # Rate limit exceeded
-                print(f"Error: GitHub API rate limit exceeded. "
-                      f"Use --cache to avoid repeated API calls.", file=sys.stderr)
+                # Rate limit exceeded — serve stale cache rather than fail
+                # an unattended drift check
+                stale = read_stale_cache()
+                if stale is not None:
+                    return stale[:limit] if limit is not None else stale
+                print(f"Error: GitHub API rate limit exceeded and no cache "
+                      f"available at {CACHE_FILE}.", file=sys.stderr)
                 sys.exit(1)
             print(f"Error fetching tags: {e}", file=sys.stderr)
             sys.exit(1)
         except urllib.error.URLError as e:
+            stale = read_stale_cache()
+            if stale is not None:
+                return stale[:limit] if limit is not None else stale
             print(f"Error fetching tags: {e}", file=sys.stderr)
             sys.exit(1)
         except json.JSONDecodeError as e:
@@ -318,13 +352,20 @@ def fetch_releases(per_page: int = 100, use_cache: bool = True, force_refresh: b
 
         except urllib.error.HTTPError as e:
             if e.code == 403:
-                # Rate limit exceeded
-                print(f"Error: GitHub API rate limit exceeded. "
-                      f"Use --cache to avoid repeated API calls.", file=sys.stderr)
+                # Rate limit exceeded — serve stale cache rather than fail
+                # an unattended drift check
+                stale = read_stale_cache()
+                if stale is not None:
+                    return stale[:limit] if limit is not None else stale
+                print(f"Error: GitHub API rate limit exceeded and no cache "
+                      f"available at {CACHE_FILE}.", file=sys.stderr)
                 sys.exit(1)
             print(f"Error fetching releases: {e}", file=sys.stderr)
             sys.exit(1)
         except urllib.error.URLError as e:
+            stale = read_stale_cache()
+            if stale is not None:
+                return stale[:limit] if limit is not None else stale
             print(f"Error fetching releases: {e}", file=sys.stderr)
             sys.exit(1)
         except json.JSONDecodeError as e:
@@ -607,8 +648,11 @@ def main():
 
     # Save to cache if we fetched from API and cache is enabled
     if use_cache and not args.no_cache:
-        # Only cache if we actually fetched from API (not from existing cache)
-        if force_refresh or not is_cache_valid(cache_ttl):
+        # Only cache if we actually fetched from API (not from existing cache).
+        # A --limit'ed fetch is a truncated view and must never replace a
+        # full listing in the shared cache — downstream drift counts would
+        # silently understate releases_behind.
+        if args.limit is None and (force_refresh or not is_cache_valid(cache_ttl)):
             save_releases_to_cache(parsed_items)
 
     # Output as JSON
