@@ -9,6 +9,7 @@ This document covers disaster recovery procedures for ARMOR deployments, includi
 3. **The `.armor/` prefix is reserved and must be preserved** — losing sidecar files (`.armor/hmac/*`, `.armor/rotation-state.json`, `.armor/multipart/*.state`) makes corresponding objects unrecoverable.
 4. **Per-file DEKs are wrapped by the MEK** — if you lose the MEK, every object's wrapped DEK becomes useless, even though the ciphertext is intact.
 5. **The MEK key ring (v0.1.1922+) makes rotation safer** — multiple MEKs can coexist, eliminating the strict ordering and byte-identical value requirements of the old rotation procedure.
+6. **The secondary backend ([ADR-006](adr/006-dual-backend-replication.md)) is the only hedge against B2 itself being gone**, and only for deployments that opted in before the loss. Replication is asynchronous and best-effort: a write acknowledged before its secondary copy completes may be absent after failover. See [B2 Account or Bucket Gone: Provider-Outage Recovery](#b2-account-or-bucket-gone-provider-outage-recovery).
 
 ## Table of Contents
 
@@ -16,7 +17,7 @@ This document covers disaster recovery procedures for ARMOR deployments, includi
 2. [Restore Drill: Recovering from Complete Deployment Loss](#restore-drill-recovering-from-complete-deployment-loss)
 3. [Key Rotation Failure Recovery](#key-rotation-failure-recovery)
 4. [Multipart Upload Recovery](#multipart-upload-recovery)
-5. [B2 Account or Bucket Gone: Secondary Filesystem Recovery](#b2-account-or-bucket-gone-secondary-filesystem-recovery)
+5. [B2 Account or Bucket Gone: Provider-Outage Recovery](#b2-account-or-bucket-gone-provider-outage-recovery)
 6. [What is NOT Recoverable](#what-is-not-recoverable)
 7. [Verification and Testing](#verification-and-testing)
 
@@ -789,39 +790,243 @@ However, direct B2 API calls can bypass ARMOR and delete these objects. **Never 
 
 ---
 
-## B2 Account or Bucket Gone: Secondary Filesystem Recovery
+## B2 Account or Bucket Gone: Provider-Outage Recovery
 
-ADR-006 provides a manual recovery path when the B2 account is suspended,
-unreachable for an extended period, or the primary bucket has been deleted.
-This is available only for deployments that opted in to the filesystem
-secondary, for example:
+Every procedure above this one recovers ARMOR **from** B2. This one covers the
+failure where B2 itself is what is lost: the account is suspended (billing or
+ToS action), a regional outage outlasts your tolerance, or the bucket is
+destroyed (accidental deletion, lifecycle-rule misfire). The canary, the
+provenance chain, and restore verification
+([ADR-004](adr/004-continuous-restore-verification.md)) cannot detect or
+survive this class of failure — they all read their known-good answer from the
+same provider that just went away.
+
+[ADR-006](adr/006-dual-backend-replication.md) added an opt-in secondary
+backend as insurance for exactly this scenario, and deliberately deferred the
+failover steps to this section. They apply **only** to deployments that
+configured `ARMOR_SECONDARY_BACKEND` before the loss; for everything else,
+"B2 account or bucket gone" is total loss (see
+[What is NOT Recoverable](#what-is-not-recoverable)).
+
+### The replication model and its data-loss window
+
+The secondary is a **best-effort, non-blocking mirror**; ADR-006 explicitly
+rejected making it transactional. Internalize these properties before you
+need them:
+
+- **A client write is acknowledged when the primary write succeeds.** The copy
+  to the secondary is enqueued and performed in the background.
+  **Any write acknowledged before its secondary copy completed may be absent
+  after failover.** This is the documented consistency tradeoff (ADR-006,
+  Decision #6) — the secondary is not zero-RPO and must not be presented as
+  such.
+- **The queue is in memory** (capacity 4096) and is lost when the ARMOR
+  process stops. Objects still queued at that moment were acknowledged to
+  clients but never copied.
+- **A full queue drops items rather than blocking writes.** Every drop is
+  counted in `armor_replication_dropped_total`; each count is an acknowledged
+  write that never reached the mirror.
+- **Copy failures retry while the worker lives.** Transient errors (timeouts,
+  rate limits, 5xx) retry indefinitely; permanent errors (not found, access
+  denied, authentication failure) are dropped and counted in
+  `armor_replication_errors_total`.
+- **Only completed data objects are mirrored.** The reserved `.armor/`
+  namespace — manifest snapshot, provenance chain, rotation state, multipart
+  upload state, multipart HMAC sidecars — is internal primary state and is
+  never copied. A multipart object's ciphertext is mirrored after
+  `CompleteMultipartUpload`, but without its `.armor/hmac/` sidecar it cannot
+  be decrypted from the mirror. Single-PUT objects carry their HMAC/block
+  table inline and decrypt fine.
+- **Failover is never automatic.** Replication does not change the read path,
+  and read traffic does not move on its own. Promotion is the manual procedure
+  below.
+
+### Prerequisites (arrange these before the outage)
+
+1. **Opt in, and pick an independent failure domain.** The filesystem
+   secondary on a different host/network than any B2-dependent component is
+   the ADR-006-recommended first choice. A B2 secondary is supported but
+   shares fate with its account — point it at a **different account**
+   (ideally a different provider), or it does not survive an account-level
+   suspension:
+
+   ```bash
+   # Filesystem secondary — inline form
+   ARMOR_SECONDARY_BACKEND=filesystem:/offsite/armor
+   # …or the split form, useful when the path is mounted/injected separately
+   ARMOR_SECONDARY_BACKEND=filesystem
+   ARMOR_SECONDARY_BACKEND_PATH=/offsite/armor
+   ```
+
+   For a B2 secondary use `ARMOR_SECONDARY_BACKEND=b2` with
+   `ARMOR_SECONDARY_B2_ENDPOINT`, `ARMOR_SECONDARY_B2_KEY_ID`,
+   `ARMOR_SECONDARY_B2_KEY`, and `ARMOR_SECONDARY_B2_BUCKET`. Those credential
+   values must come from the deployment secret store and are never printed in
+   redacted configuration.
+
+2. **Match the prefix.** Replication copies keys verbatim and filters the
+   target with the primary's `ARMOR_PREFIX`. A mismatched value does not
+   error — it silently mis-filters listings. Configure the secondary's prefix
+   to exactly the primary's.
+
+3. **Make the volume real.** The secondary initializer fails ARMOR startup if
+   the configured path does not exist or is not a directory — a deliberately
+   loud check that the backing volume actually mounted. Do not "fix" that
+   startup failure by pre-creating an empty directory; fix the mount.
+
+4. **Monitor replication health continuously** — see
+   [metrics](metrics.md) and [dashboard](dashboard.md):
+
+   | Signal | Healthy | Investigate/page when |
+   |---|---|---|
+   | `armor_replication_queue_depth` | ~0 | sustained growth (example alert: `> 1000`) |
+   | `armor_replication_lag_seconds` | ~0 | rising — the oldest unreplicated object is aging |
+   | `armor_replication_dropped_total` | flat | **any increase** — acknowledged writes with no mirror copy |
+   | `armor_replication_errors_total` | flat | any increase — copies failing permanently |
+   | `/armor/canary` `secondary_healthy` | `healthy` | repeated `secondary_consecutive_fails` |
+
+   Note: the canary's secondary check re-reads the canary object from the
+   primary to compare envelopes, so when the primary is unreachable
+   `secondary_healthy` fails too — that is expected and does not by itself
+   mean the secondary copy is damaged.
+
+5. **Drill the procedure** (see
+   [Verification and Testing](#verification-and-testing)) so these steps are
+   familiar before they are urgent.
+
+### Route A — Promote the replica and serve reads from it
+
+#### Step 1: Freeze writes and capture the replication state
+
+Stop client writes first: every acknowledged write that has not yet
+replicated widens the loss window. Then record the replication state
+**before restarting anything** — the queue is in memory and a restart
+destroys it.
 
 ```bash
-ARMOR_SECONDARY_BACKEND=filesystem:/offsite/armor
+# Replication state at the moment of failure (capture BEFORE any restart)
+curl -s http://localhost:9001/metrics | grep '^armor_replication'
+curl -s http://localhost:9001/armor/canary | jq '{
+  secondary_healthy,
+  secondary_replication_lag_ms,
+  secondary_queue_depth,
+  secondary_last_error
+}'
 ```
 
-The selector and path may also be provisioned separately, which is useful when
-the path is mounted or injected independently of the deployment environment:
+Reading it:
+
+- last `armor_replication_queue_depth` — objects acknowledged-but-uncopied at
+  that instant; the tightest upper bound on your loss window;
+- `armor_replication_dropped_total` (delta over the deployment's life) —
+  acknowledged writes that were never queued at all;
+- `armor_replication_lag_seconds` — age of the oldest unreplicated object.
+
+If ARMOR must restart during triage, everything still in the queue at that
+moment is gone. Capture the numbers first.
+
+#### Step 2: Verify the secondary copy before trusting it
 
 ```bash
-ARMOR_SECONDARY_BACKEND=filesystem
-ARMOR_SECONDARY_BACKEND_PATH=/offsite/armor
+# Mount the replica volume read-only — it is now the only copy.
+mount -o ro <device> /offsite/armor   # or your volume manager's equivalent
+
+# Layout is <root>/<bucket>/<stored-key> with .metadata sidecars.
+replica_root=/offsite/armor
+find "$replica_root" -name '*.metadata' | wc -l   # ≈ mirrored object count
 ```
 
-For a future B2 secondary, use `ARMOR_SECONDARY_BACKEND=b2` with
-`ARMOR_SECONDARY_B2_ENDPOINT`, `ARMOR_SECONDARY_B2_KEY_ID`,
-`ARMOR_SECONDARY_B2_KEY`, and `ARMOR_SECONDARY_B2_BUCKET`. Those credential
-values must come from the deployment secret store and are never printed in
-redacted configuration.
+Compare the count against the primary's last known object inventory (your
+records, or the manifest snapshot if preserved) to size the gap. If the
+newest mirrored objects predate your last acknowledged writes by more than
+the lag recorded in Step 1, assume everything in between is lost.
 
-The secondary is a best-effort, asynchronous mirror. A successful client
-response means only that the primary write succeeded; an object acknowledged
-just before the B2 failure may still be absent from the mirror. The queue is
-in memory, so restart the ARMOR process only after checking its lag and
-draining/recovering any queued work that is still possible. Replication does
-not change normal reads and does not fail over automatically.
+#### Step 3: Point a fresh ARMOR instance at the replica
 
-### What the filesystem contains
+The filesystem mirror **is** a valid filesystem-primary tree:
+`ARMOR_BACKEND=filesystem` selects the filesystem backend as a supported
+primary, with the B2 credentials and Cloudflare domain optional in that mode
+(plan.md §8.5). Start a fresh instance against it:
+
+```bash
+export ARMOR_BACKEND=filesystem
+export ARMOR_FS_PATH=/offsite/armor   # the replica ROOT; objects live at <path>/<bucket>/<key>
+export ARMOR_PREFIX=<primary's ARMOR_PREFIX>   # must match the mirrored keys
+export ARMOR_MEK=$(cat /secure/escrow/armor-mek.hex)   # from escrow, never the failed deployment
+# plus ARMOR_MEK_RING / ARMOR_AUTH_FILE (or auth env) as in the restore drill above
+```
+
+Validation and caveats for this instance:
+
+- **Watch for the silent empty-directory trap.** Unlike the secondary
+  initializer, a filesystem *primary* creates its base directory on demand.
+  If the volume did not mount, ARMOR starts happily against an empty path and
+  serves zero objects. Confirm the S3 list count matches the `find` inventory
+  from Step 2 before anything else.
+- Multipart objects fail to read — their `.armor/hmac/` sidecars were never
+  mirrored. Single-PUT objects read normally.
+- There is no Cloudflare read path in filesystem mode; reads are served from
+  the mounted volume.
+- `/admin/key/verify` and `/armor/canary` prove the MEK and the
+  encrypt/decrypt pipeline. The canary **self-heals** — it writes a fresh
+  canary object on the promoted instance — so a green canary does **not**
+  prove the mirrored data is readable. That is Step 4's job.
+- Writes on the promoted instance land only on this volume: single-copy
+  durability until Step 5 is done.
+
+#### Step 4: Validate reads (restore validation)
+
+```bash
+export AWS_ACCESS_KEY_ID=<access key>     # from ARMOR_AUTH_FILE / credentials
+export AWS_SECRET_ACCESS_KEY=<secret key>
+export AWS_ENDPOINT_URL=http://localhost:9000
+
+# Count and compare with the Step 2 inventory
+aws s3 ls --endpoint-url $AWS_ENDPOINT_URL s3://<bucket>/ | wc -l
+
+# Spot-read a sample across size and age ranges — GET decrypts transparently
+aws s3 cp --endpoint-url $AWS_ENDPOINT_URL s3://<bucket>/<key> /tmp/verify.bin
+
+# Application-level validity, then checksum
+duckdb -c "SELECT COUNT(*) FROM '/tmp/verify.parquet';"
+sha256sum /tmp/verify.bin
+```
+
+For strong per-object validation, decrypt straight from the replica file
+(Route B below) and compare the tool's `Verified plaintext SHA-256` output
+against `x-amz-meta-armor-plaintext-sha` in the object's `.metadata` sidecar.
+Every object that fails here joins the loss list from Step 1 — validate
+before declaring the failover complete.
+
+#### Step 5: Return to a durable primary
+
+The promoted instance is insurance made permanent — do not leave it that way.
+
+1. Provision the replacement primary (new B2 account/bucket, or another
+   provider) and verify it with the
+   [restore drill](#restore-drill-recovering-from-complete-deployment-loss)
+   and the restore verifier
+   ([ADR-004](adr/004-continuous-restore-verification.md),
+   [deployment guide](restore-verifier-deployment-guide.md)).
+2. Reprotect new writes immediately: configure the replacement as the
+   **secondary** on the promoted instance (`ARMOR_SECONDARY_BACKEND=b2 …`).
+   New writes replicate out as they land. **There is no bulk backfill** —
+   replication is write-time only.
+3. Reprotect pre-outage objects by reading each through the promoted instance
+   and re-uploading it: a fresh PUT creates fresh ciphertext and metadata,
+   which then replicate to the replacement.
+4. When the replacement holds everything and has passed verification, migrate
+   the primary back to it as a new deployment change. The manifest snapshot
+   and the provenance/audit history do not survive the original provider's
+   loss — they restart from the promoted instance's first write.
+
+### Route B — Offline decryption from the replica
+
+When you need specific objects rather than a promoted server, decrypt
+directly from the replica tree. `armor decrypt` reads local files, taking the
+wrapped DEK from the `.metadata` sidecar.
+
+#### What the filesystem contains
 
 The filesystem backend stores each replicated object at
 `<root>/<bucket>/<stored-key>` and its metadata at the same path with a
@@ -838,7 +1043,7 @@ recoverable: multipart decryption also requires its `.armor/hmac/` sidecar.
 Keep a separate backup of ARMOR internal state if multipart recovery from the
 secondary is a requirement.
 
-### Recover a single-PUT object
+#### Recover a single-PUT object
 
 1. Preserve the secondary volume and mount it read-only if possible. Do not
    delete or rename the object while investigating it.
@@ -877,12 +1082,24 @@ secondary is a requirement.
      -output /secure/recovered/<object-name>
    ```
 
-5. Verify the recovered plaintext against the metadata SHA-256 and the
-   application-level checks appropriate to the artifact (for example SQLite,
-   Parquet, or tar/gzip validation). Repeat for each required object. To
-   resume service, provision a replacement primary and upload the recovered
-   plaintext through ARMOR; this creates fresh encrypted objects and does not
-   recreate the lost B2-side manifest/provenance history.
+5. Verify the recovered plaintext against `x-amz-meta-armor-plaintext-sha` in
+   the `.metadata` sidecar and the application-level checks appropriate to
+   the artifact (for example SQLite, Parquet, or tar/gzip validation). Repeat
+   for each required object. To resume service, provision a replacement
+   primary and upload the recovered plaintext through ARMOR; this creates
+   fresh encrypted objects and does not recreate the lost B2-side
+   manifest/provenance history.
+
+### What the replica cannot recover
+
+| Data | Why it is lost |
+|---|---|
+| Writes acknowledged before their secondary copy completed | ADR-006's asynchronous window — the ack reflects the primary only |
+| Objects still queued when the ARMOR process stopped | The queue is in memory and dies with the process |
+| Items dropped on a full queue (`armor_replication_dropped_total`) | Never queued; the primary remained authoritative |
+| Multipart objects | Ciphertext mirrors, `.armor/hmac/` sidecars do not — undecryptable without a separate ARMOR internal-state backup |
+| Manifest snapshot, provenance chain, audit history | The `.armor/` internal namespace is never mirrored |
+| Buckets that never opted in | Replication is opt-in per deployment |
 
 This procedure is intentionally manual: the secondary is insurance against
 provider loss, not an automatic read replica. If the filesystem is also gone,
@@ -945,6 +1162,7 @@ If the B2 bucket itself is deleted, all objects are gone. B2 does not provide un
 - Use B2 lifecycle rules to archive to a separate bucket
 - Cross-region replicate to a separate B2 account
 - Regular backups to cold storage (Glacier, B2 Cold Storage)
+- Configure the ADR-006 secondary backend — see [B2 Account or Bucket Gone: Provider-Outage Recovery](#b2-account-or-bucket-gone-provider-outage-recovery) for the only recovery path that survives losing the provider entirely
 
 ---
 
@@ -1126,3 +1344,7 @@ armor decrypt \
 - [Offline Decrypt CLI](../README.md#disaster-recovery--offline-decryption) — Decrypt tool documentation
 - [Envelope Encryption Format](plan/plan.md#encryption-scheme) — Cryptographic design
 - [Key Rotation Runbook](key-rotation-runbook.md) — Rotation procedure with MEK key ring (v0.1.1922+)
+- [ADR-006: Dual-Backend Async Replication](adr/006-dual-backend-replication.md) — Design and tradeoffs behind the secondary backend and this section's recovery procedure
+- [ADR-004: Continuous Restore Verification](adr/004-continuous-restore-verification.md) — Restore verifier (proves the primary's contents; does not cover provider loss)
+- [Replication Metrics](metrics.md) — `armor_replication_*` queue depth, lag, drop, and error counters
+- [Dashboard](dashboard.md) — Replication queue depth and enqueue panels
