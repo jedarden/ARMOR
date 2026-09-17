@@ -4,7 +4,7 @@
 
 **Authenticated Range-readable Managed Object Repository**
 
-ARMOR is an S3-compatible proxy server that transparently encrypts data before storing it in [Backblaze B2](https://www.backblaze.com/cloud-storage) and serves downloads through Cloudflare for zero-egress cost. Any S3-compatible client — boto3, AWS CLI, DuckDB, rclone — works without modification.
+ARMOR is an S3-compatible proxy server that transparently encrypts data before storing it in [Backblaze B2](https://www.backblaze.com/cloud-storage) and serves downloads through Cloudflare for zero-egress cost. Any S3-compatible client — boto3, AWS CLI, DuckDB, rclone — works without modification. Multipart client-concurrency behavior per write format — including how the ADR-003 §4 sequential-only era was superseded — is documented in the [multipart client-concurrency compatibility matrix](docs/multipart-client-compatibility.md).
 
 - **Zero-knowledge encryption** — data is encrypted before it leaves ARMOR; B2 only ever stores ciphertext
 - **Zero egress fees** — downloads route through Cloudflare via the Bandwidth Alliance
@@ -526,37 +526,35 @@ Internal ARMOR components (provenance recorder, manifest persistence, canary, ke
 
 ## Multipart Upload Constraints
 
-ARMOR's encryption scheme requires part sizes to be block-aligned for correct counter offset calculation. The constraints depend on the configured write format version:
+The constraints depend on the configured write format version (`ARMOR_FORMAT_VERSION`, reported by `armor version`):
 
-### Format Version 2 (Default)
+### Format Version 3 (Default)
 
-**Constraint:** Uniform part sizes that are multiples of the ARMOR block size (64 KiB)
+**No part-order or part-size contract.** Parts are encrypted in independent counter namespaces, so:
 
-- **Minimum part size:** 5 MiB (S3 requirement, except final part)
-- **Part size must be:** A multiple of 64 KiB (67108864 bytes = 64 MiB recommended)
-- **Part 1** pins the uniform part size for the entire upload
-- **Parts arriving before part 1** receive HTTP 503 SlowDown (retryable)
-- **Block alignment** is required for all parts except the final short part and part 1 itself
+- Any part sizes (non-uniform multipart uploads supported) and no block-alignment requirement
+- Out-of-order and concurrent part uploads fully supported — nothing is deferred or rejected for arrival order
+- Part retries are idempotent (same part number, same bytes → same offset)
+- The only remaining part-size rule is B2's own: non-final parts must be ≥ 5 MiB
 
-**Impact:** Clients must use block-aligned chunk sizes. Tools that emit non-uniform part sizes (e.g., Barman's `chunk_size + 512` pattern) fail with `InvalidPartSize` when backups exceed the single-part threshold.
+### Format Version 2 (Legacy)
 
-**Workarounds for format version 2:**
-- AWS CLI: Set `multipart_chunksize` to 67108864 (64 MiB)
-- rclone: Use `--s3-chunk-size 67108864` (64 MiB)
-- boto3: Configure `TransferConfig(multipart_chunksize=64*1024*1024)`
-- Barman: Use `--chunk-size=1024` (1 GiB) to stay in single-part mode for most backups
-- Litestream: Set snapshot size to 64 MiB minimum
+ADR-015's uniform-part-size contract, as amended by ADR-011:
 
-### Format Version 3 (Future)
+- **Part 1** pins the uniform part size `P` for the entire upload; part 1 itself may be any size
+- **Parts arriving before part 1** receive HTTP 503 SlowDown (retryable — standard clients retry it transparently)
+- Every part except the highest-numbered one must be exactly `P`; the final part may be any size
+- **Non-uniform part sizes** (e.g., Barman's `chunk_size + N×512` pattern) switch the upload to ADR-011 non-uniform mode instead of failing
+- Genuine contract contradictions (a part larger than `P`, two short parts, a size-changing retry) poison the upload with a 400 — a loud failure, never silent corruption
 
-**No constraints:** Any part size ≥ 5 MiB, any order, any concurrency
+**Optional tuning for format version 2** (not required — default client behavior already works):
+- AWS CLI: `multipart_chunksize = 67108864` (64 MiB)
+- rclone: `--s3-chunk-size 67108864` (64 MiB)
+- boto3: `TransferConfig(multipart_chunksize=64*1024*1024)`
 
-- Part sizes can vary (non-uniform multipart uploads supported)
-- No block alignment requirement
-- Out-of-order and concurrent part uploads fully supported
-- Per-part cumulative offset tracking
+### Migration (v2 → v3)
 
-**Migration:** Format version 3 is not yet released. When available, existing format version 2 objects can be optionally migrated via `armor migrate` (see [Format Migration](#format-migration)).
+Existing format version 2 objects can be optionally migrated via `armor migrate` (see [Format Migration](#format-migration)).
 
 ### Checking Your Format Version
 
@@ -569,6 +567,8 @@ armor version
 armor client-config --for aws-cli --endpoint http://localhost:9000
 # Output includes multipart settings only when format_write_version=2
 ```
+
+Per-client behavior — AWS CLI (default concurrency and serial), SDK transfer managers, rclone, litestream, barman — on each format is documented, together with the tests that back every row, in the [multipart client-concurrency compatibility matrix](docs/multipart-client-compatibility.md).
 
 ## Web Dashboard
 
