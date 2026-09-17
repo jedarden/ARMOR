@@ -281,8 +281,39 @@ func (h *Harness) WaitUntilReplicated(keys []string, timeout time.Duration) {
 
 // Snapshot enumerates every raw key in the bucket on the given backend and
 // reads each object's bytes.
+// snapshotAttempts bounds how many listings Snapshot will take when a listed
+// key fails to Get. A listing swept while a backend put is mid-flight can
+// observe its staging temp before the rename publishes it — the filesystem
+// backend's .armor-put-*.tmp has no metadata sidecar yet, so Get on it fails
+// and an unlucky convergence poll dies on an unrelated in-flight copy.
+// Re-listing snapshots only stable state; a temp that genuinely leaks is the
+// defect this must still catch, and it stays listed and fails every attempt.
+const snapshotAttempts = 5
+
 func (h *Harness) Snapshot(be backend.Backend) map[string][]byte {
 	h.t.Helper()
+	var (
+		failedKey string
+		failedErr error
+	)
+	for attempt := 1; ; attempt++ {
+		out, key, err := h.listAndReadAll(be)
+		if err == nil {
+			return out
+		}
+		failedKey, failedErr = key, err
+		if attempt == snapshotAttempts {
+			h.t.Fatalf("srvtest: Get %q after listing still fails after %d listings (not a transient in-flight put temp): %v", failedKey, snapshotAttempts, failedErr)
+		}
+		time.Sleep(PollInterval)
+	}
+}
+
+// listAndReadAll takes one listing of every key on be — including internal
+// state, since callers decide what counts — and reads each object whole. On
+// the first Get (or read) failure it returns the partial map, the failing
+// key, and the error so Snapshot can decide whether a re-list heals it.
+func (h *Harness) listAndReadAll(be backend.Backend) (map[string][]byte, string, error) {
 	res, err := be.ListRaw(context.Background(), h.Bucket, "", "", "", 0)
 	if err != nil {
 		h.t.Fatalf("srvtest: ListRaw: %v", err)
@@ -291,16 +322,16 @@ func (h *Harness) Snapshot(be backend.Backend) map[string][]byte {
 	for _, obj := range res.Objects {
 		body, _, err := be.Get(context.Background(), h.Bucket, obj.Key)
 		if err != nil {
-			h.t.Fatalf("srvtest: Get %q after listing: %v", obj.Key, err)
+			return out, obj.Key, err
 		}
 		data, err := io.ReadAll(body)
 		body.Close()
 		if err != nil {
-			h.t.Fatalf("srvtest: read %q: %v", obj.Key, err)
+			return out, obj.Key, err
 		}
 		out[obj.Key] = data
 	}
-	return out
+	return out, "", nil
 }
 
 // IsInternalKey reports whether a backend key is reserved ARMOR state
