@@ -994,7 +994,8 @@ sha256sum /tmp/verify.bin
 
 For strong per-object validation, decrypt straight from the replica file
 (Route B below) and compare the tool's `Verified plaintext SHA-256` output
-against `x-amz-meta-armor-plaintext-sha` in the object's `.metadata` sidecar.
+against `x-amz-meta-armor-plaintext-sha256` in the object's `.metadata`
+sidecar.
 Every object that fails here joins the loss list from Step 1 — validate
 before declaring the failover complete.
 
@@ -1082,8 +1083,8 @@ secondary is a requirement.
      -output /secure/recovered/<object-name>
    ```
 
-5. Verify the recovered plaintext against `x-amz-meta-armor-plaintext-sha` in
-   the `.metadata` sidecar and the application-level checks appropriate to
+5. Verify the recovered plaintext against `x-amz-meta-armor-plaintext-sha256`
+   in the `.metadata` sidecar and the application-level checks appropriate to
    the artifact (for example SQLite, Parquet, or tar/gzip validation). Repeat
    for each required object. To resume service, provision a replacement
    primary and upload the recovered plaintext through ARMOR; this creates
