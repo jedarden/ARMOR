@@ -924,10 +924,11 @@ func (v *Verifier) escalateResult(ctx context.Context, obj ObjectSample, result 
 
 // recordBucketRun publishes the per-bucket restorability gauges after a
 // verification run — including runs that failed before any object could be
-// verified (runVerified == 0), so an unenumerable bucket still advances its
-// restore-age gauge and trips the verification-failure alert instead of
-// silently emitting no series. state.LastVerification must already be set to
-// this attempt's timestamp; state.FailedObjects is forwarded unchanged as the
+// verified (runVerified == 0), so an unenumerable bucket still emits a failure
+// series instead of silently disappearing. The restore-age timestamp is the
+// last successful restore, not the last attempt: a run that fails must not
+// reset the stale-restore clock. state.LastSuccess is zero until a restore has
+// actually passed, and state.FailedObjects is forwarded unchanged as the
 // monotonic counter backing the failure alert.
 func (v *Verifier) recordBucketRun(bucket string, state *BucketState, runVerified int64) {
 	if v.metrics == nil {
@@ -937,7 +938,7 @@ func (v *Verifier) recordBucketRun(bucket string, state *BucketState, runVerifie
 	if state.TotalObjects > 0 {
 		runRatio = float64(runVerified) / float64(state.TotalObjects)
 	}
-	v.metrics.RecordRestoreBucketState(bucket, state.LastVerification, runRatio, state.FailedObjects)
+	v.metrics.RecordRestoreBucketState(bucket, state.LastSuccess, runRatio, state.FailedObjects)
 }
 
 // recordDRDrillRun publishes the per-bucket direct-only DR-drill gauges after a

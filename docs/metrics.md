@@ -549,20 +549,19 @@ armor_restore_verifier_latency_millis{bucket="iad-kalshi"} 180
 ### Restorability Gauges (alerting signal set)
 
 These per-bucket series are the ones the restore-verifier alert rules consume
-(ADR-004 decision 6). The timestamp gauge advances on every verification
-*attempt* — including failed ones — so a rising restore-age means the verifier
-is not running at all, while the failure counter and ratio carry the verdict
-of the latest sample.
+(ADR-004 decision 6). The timestamp gauge records the most recent *successful*
+restore, so a rising restore-age remains visible during repeated verification
+failures. The failure counter and ratio carry the verdict of the latest sample.
 
 ### `armor_last_verified_restore_timestamp`
 
 **Type:** Gauge  
-**Description:** Unix timestamp of the most recent verification attempt per bucket  
+**Description:** Unix timestamp of the most recent successful restore per bucket
 **Labels:** `bucket` — Bucket name
 
 **Example Output:**
 ```
-# HELP armor_last_verified_restore_timestamp Unix timestamp of the most recent verification attempt per bucket
+# HELP armor_last_verified_restore_timestamp Unix timestamp of the most recent successful restore per bucket
 # TYPE armor_last_verified_restore_timestamp gauge
 armor_last_verified_restore_timestamp{bucket="armor-apexalgo"} 1750000000
 ```
@@ -597,17 +596,14 @@ armor_restore_verification_failures_total{bucket="armor-apexalgo"} 3
 
 The PrometheusRule manifests implementing the alerts below live in
 `declarative-config`, one per cluster, alongside each restore-verifier
-Deployment (`k8s/<cluster>/.../restore-verifier-monitoring.yaml.disabled` for
-`iad-ci`, `iad-kalshi`, `rs-manager`, and
-`k8s/ord-devimprint/devimprint/...` for ord-devimprint):
+Deployment (inline in the `restore-verifier.yaml` manifests for `iad-kalshi`
+and `rs-manager`; in `restore-verifier-monitoring.yaml.disabled` for `iad-ci`
+and `ord-devimprint`):
 
 | Alert | Expression (per bucket) | Meaning |
 |---|---|---|
-| `ArmorRestoreVerificationStale` | `time() - armor_last_verified_restore_timestamp > 12 * 3600` | No verification attempt registered in 12h (~2× the default 6h `VERIFIER_CHECK_INTERVAL`) — verifier down or unable to reach B2 |
-| `ArmorRestoreVerificationFailures` | `sum by (bucket) (rate(armor_restore_verification_failures_total[1h])) > 0` | New sampled-object failures — backups exist but are not restorable |
-| `ArmorRestoreVerificationLowObjectRatio` | `armor_verified_object_ratio < 0.95` | The latest sample verified under 95% of its objects |
-| `ArmorRestoreVerificationDualPathDivergence` | `sum by (bucket) (increase(armor_restore_verification_failures_total[1h])) > 0` | A periodic ModeDual check failed — includes ARMOR-path vs direct-ciphertext digest divergence (ADR-004 decision 2); confirm via the verifier `/status` both-path digests |
-| `ArmorMultipartCanaryUnhealthy` | `armor_multipart_canary_healthy == 0` | The independent multipart write/read canary is red (ADR-002) |
+| `ArmorRestoreVerificationStale` | `time() - armor_last_verified_restore_timestamp > 12 * 3600` | No successful restore registered in 12h (~2× the default 6h `VERIFIER_CHECK_INTERVAL`) — verifier down or unable to reach B2, or repeated restores are failing |
+| `ArmorRestoreVerificationFailures` | `increase(armor_restore_verification_failures_total[1h]) > 0` | New sampled-object failures — backups exist but are not restorable |
 
 Escalation follows ADR-004 §5: one bead per distinct active failure, no retry
 loops; alerts carry `severity: critical` plus a `component` label for routing.

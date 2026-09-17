@@ -279,6 +279,20 @@ func TestMetricsRestoreBucketGauges(t *testing.T) {
 	}
 }
 
+func TestMetricsRestoreBucketStatePreservesCounterAndClampsRatio(t *testing.T) {
+	m := NewMetrics()
+	m.RecordRestoreBucketState("bucket", time.Unix(1_750_000_000, 0), 2, 3)
+	m.RecordRestoreBucketState("bucket", time.Unix(1_750_000_001, 0), -1, 1)
+
+	output := m.PrometheusFormat()
+	if !strings.Contains(output, `armor_verified_object_ratio{bucket="bucket"} 0`) {
+		t.Fatalf("ratio was not clamped to [0,1]:\n%s", output)
+	}
+	if !strings.Contains(output, `armor_restore_verification_failures_total{bucket="bucket"} 3`) {
+		t.Fatalf("failure counter regressed after an older snapshot:\n%s", output)
+	}
+}
+
 func TestMetricsHandler(t *testing.T) {
 	m := NewMetrics()
 	m.IncRequestsTotal("GET", 200)

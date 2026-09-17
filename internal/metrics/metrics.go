@@ -4,6 +4,7 @@ package metrics
 import (
 	"expvar"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -160,9 +161,10 @@ type Metrics struct {
 	// series per bucket. These back the restorability PrometheusRule:
 	// armor_last_verified_restore_timestamp, armor_verified_object_ratio, and
 	// armor_restore_verification_failures_total.
-	RestoreVerifierLastVerifiedTs *expvar.Map // bucket -> last verification time (unix seconds)
+	RestoreVerifierLastVerifiedTs *expvar.Map // bucket -> last successful restore (unix seconds)
 	RestoreVerifierObjectRatio    *expvar.Map // bucket -> verified/total ratio (0..1)
-	RestoreVerifierFailureCount   *expvar.Map // bucket -> failed object count
+	RestoreVerifierFailureCount   *expvar.Map // bucket -> cumulative failed object count
+	restoreVerifierStateMu        sync.Mutex  // serializes per-bucket state updates
 
 	// DR-drill (direct-only) per-bucket gauges — the direct-path analogue of the
 	// three above, kept distinct so a drill run never bumps the dual-path
@@ -890,7 +892,7 @@ func (m *Metrics) PrometheusFormat() string {
 	// PrometheusRules. Emitted manually (like the multipart histogram above)
 	// because the writeMetric helper only handles scalar Int/String vars, not the
 	// bucket-labeled maps.
-	sb.WriteString("\n# HELP armor_last_verified_restore_timestamp Unix timestamp of the most recent verification attempt per bucket\n")
+	sb.WriteString("\n# HELP armor_last_verified_restore_timestamp Unix timestamp of the most recent successful restore per bucket\n")
 	sb.WriteString("# TYPE armor_last_verified_restore_timestamp gauge\n")
 	m.RestoreVerifierLastVerifiedTs.Do(func(kv expvar.KeyValue) {
 		fmt.Fprintf(&sb, "armor_last_verified_restore_timestamp{bucket=%q} %s\n", kv.Key, kv.Value.String())
@@ -1030,18 +1032,32 @@ func (m *Metrics) SetRestoreVerifierLastError(err string) {
 }
 
 // RecordRestoreBucketState publishes the per-bucket restorability gauges that
-// back the restore-age and verification-failure PrometheusRules. lastVerified is
-// the time of this verification attempt (success or failure) so the
-// restore-age alert advances on every run; ratio is verified/total in [0,1];
-// failures is the count of objects that failed verification this run (and is
-// exported as a counter so any non-zero value trips the failure alert).
-func (m *Metrics) RecordRestoreBucketState(bucket string, lastVerified time.Time, ratio float64, failures int64) {
+// back the restore-age and verification-failure PrometheusRules. lastSuccess is
+// the time of the most recent successful restore; a zero value is exported as
+// zero so a bucket with no successful restore is immediately eligible for the
+// stale alert. ratio is verified/total in [0,1]. failures is cumulative and is
+// never allowed to decrease, preserving the Prometheus counter contract across
+// overlapping runs or callers that report an older snapshot.
+func (m *Metrics) RecordRestoreBucketState(bucket string, lastSuccess time.Time, ratio float64, failures int64) {
 	if bucket == "" {
 		return
 	}
+	if ratio < 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+		ratio = 0
+	} else if ratio > 1 {
+		ratio = 1
+	}
+
+	lastSuccessUnix := int64(0)
+	if !lastSuccess.IsZero() {
+		lastSuccessUnix = lastSuccess.Unix()
+	}
+
+	m.restoreVerifierStateMu.Lock()
+	defer m.restoreVerifierStateMu.Unlock()
 
 	var ts expvar.Int
-	ts.Set(lastVerified.Unix())
+	ts.Set(lastSuccessUnix)
 	m.RestoreVerifierLastVerifiedTs.Set(bucket, &ts)
 
 	var r expvar.Float
@@ -1049,6 +1065,11 @@ func (m *Metrics) RecordRestoreBucketState(bucket string, lastVerified time.Time
 	m.RestoreVerifierObjectRatio.Set(bucket, &r)
 
 	var fc expvar.Int
+	if existing := m.RestoreVerifierFailureCount.Get(bucket); existing != nil {
+		if current, ok := existing.(*expvar.Int); ok && current.Value() > failures {
+			failures = current.Value()
+		}
+	}
 	fc.Set(failures)
 	m.RestoreVerifierFailureCount.Set(bucket, &fc)
 }
