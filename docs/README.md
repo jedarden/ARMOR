@@ -120,6 +120,7 @@ Contextual notes and temporary documentation:
 
 - **[Integration Tests](../tests/integration/README.md)** — Real B2 + Cloudflare integration test suite
 - **[AWS CLI Compatibility Tests](../tests/aws-cli-compatibility/README.md)** — AWS CLI and rclone compatibility verification
+- **[Multipart Client-Concurrency Compatibility Matrix](multipart-client-compatibility.md)** — What AWS CLI (serial and default concurrency), SDK transfer managers, rclone, litestream, and barman experience per write format; reconciles the unmodified-client claim with ADR-003 §4's superseded sequential-only era
 - **[Multipart 5 GiB Boundary Tests](testing/multipart-5gb-boundary-tests.md)** — 5 GiB multipart boundary test coverage
 
 ## Archive

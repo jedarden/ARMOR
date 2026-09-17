@@ -2,6 +2,8 @@
 
 **Date:** 2026-07-15 · **Companion to:** `adr/002-multipart-corruption-detection-gaps.md`
 
+> **Historical — superseded for U6/U7/U8.** The rows below describing out-of-order parts, part retries, and non-aligned parts as *"rejected with 400"* record the pre-ADR-015 sequential-only behavior, which [ADR-015](../adr/015-out-of-order-multipart-uniform-part-size.md) (uniform-part-size contract, 2026-07-19), [ADR-011](../adr/011-barman-stays-on-armor-non-uniform-multipart.md) (non-uniform parts), and format v3 (the `ARMOR_FORMAT_VERSION` default) have since replaced. The current per-client compatibility contract — and where each pattern is tested today — lives in the [multipart client-concurrency compatibility matrix](../multipart-client-compatibility.md); the U-numbers carry forward there.
+
 ARMOR fronts several very different S3 clients, and the 40-day multipart corruption incident (ADR-002) proved that "the tests pass" means nothing unless the tests exercise **the same code paths real clients hit, at the same layer the bug can live in**. The original bug was in HTTP *routing* — so backend-level tests and the 1KB canary were structurally blind to it. This matrix enumerates every upload/retrieval pattern a real consumer uses, where it is (or isn't) tested, and at which layer.
 
 ## Layers

@@ -588,8 +588,9 @@ func TestMultipartZeroByteFinalPartByteVerification(t *testing.T) {
 //	    positioned after them — see TestMultipartLonePartByteVerification.
 //
 // The contradiction cases (a part larger than P, two short parts, a retry with
-// a different size) poison the upload — those are covered in
-// multipart_out_of_order_test.go.
+// a different size) poison the upload — see
+// TestMultipartADR015Acceptance/second_short_part_poisons_no_object below, and
+// docs/multipart-client-compatibility.md for the client-facing contract.
 func TestMultipartSuspectPatterns(t *testing.T) {
 	t.Run("U6_out_of_order_parts_supported", func(t *testing.T) {
 		_, _, h := recordingTestSetup(t)
