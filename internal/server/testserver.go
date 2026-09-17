@@ -9,6 +9,7 @@ import (
 	"github.com/jedarden/armor/internal/logging"
 	"github.com/jedarden/armor/internal/metrics"
 	"github.com/jedarden/armor/internal/presign"
+	"github.com/jedarden/armor/internal/replication"
 )
 
 // NewWithBackend builds an ARMOR *Server whose full S3 request pipeline
@@ -56,4 +57,23 @@ func NewWithBackend(cfg *config.Config, be backend.Backend) (*Server, error) {
 // the share endpoint round-trip.
 func (s *Server) SetPresigner(presigner *presign.Signer) {
 	s.presigner = presigner
+}
+
+// SetSecondaryBackend wires an ADR-006 secondary backend into the server after
+// construction. Intended for test use only (production configures the
+// secondary through New's SecondaryBackendConfig); it exists so test harnesses
+// can inject a wrapper — e.g. one with fault injection — instead of a
+// concretely typed backend. Must be called before Handler(): Handler wires the
+// field into the S3 handlers it builds.
+func (s *Server) SetSecondaryBackend(be backend.Backend) {
+	s.secondaryBackend = be
+}
+
+// SetReplicationQueue wires an ADR-006 replication queue into the server after
+// construction. Intended for test use only (production builds the queue inside
+// New); it exists so test harnesses can supply a real queue over
+// harness-controlled primary/secondary backends. Must be called before
+// Handler(): Handler wires the queue into the S3 handlers it builds.
+func (s *Server) SetReplicationQueue(q *replication.ReplicationQueue) {
+	s.replicationQueue = q
 }
