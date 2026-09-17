@@ -305,6 +305,55 @@ Last verified 2026-09-16: two consecutive runs produced identical
 `sha256sum` output (18 files) and `diff -r` reported no differences; the
 committed `generated_fixtures/` tree is exactly the run-1 output.
 
+## Validating the Committed Set Against the Manifest
+
+`generated_fixtures_validation_test.go` is the machine-checkable harness over
+the whole committed set, driven entirely by
+`generated_fixtures/manifest.json` as recorded data:
+
+- `TestRegenFixturesMatchManifestAndDecrypt` — for EVERY manifest entry:
+  every artifact still hashes to its recorded size and SHA-256; the
+  per-fixture `metadata.json` agrees with the manifest row; the stored bytes
+  match the V1/V2 layout the recorded `v3_expected` fields describe
+  (single-PUT: 64-byte envelope header + ciphertext + embedded HMAC table
+  sized `ceil(plaintext_length / block_size) × 32`, with the header's version
+  byte, plaintext size and SHA-256 equal to the manifest row; multipart:
+  headerless body plus a `sidecar.bin` of exactly
+  `sum(blocks_per_part) × 32` bytes, `part_count` and `blocks_per_part`
+  derivable from the recorded plaintext/part/block sizes, `sidecar_path` in
+  the `.armor/hmac/<64-hex>` shape); and the legacy reader
+  (`backend.ParseARMORMetadata` + `internal/crypto` `UnwrapDEK` /
+  `DecodeHeader` / `NewDecryptorWithVersion` / `Decrypt` — the same
+  primitives the production V1/V2 read path uses) decrypts every valid
+  fixture to exactly the recorded plaintext SHA-256 and length.
+- `TestRegenFixtureTamperIsDetected` — the loud-failure spot-check: for every
+  fixture, flipping one bit of the ciphertext body must fail the legacy read,
+  and so must flipping one bit of the HMAC table (the embedded table for
+  single-PUT, `sidecar.bin` for multipart).
+
+Expectation discipline: the `v3_expected` fields are consumed as recorded
+data only — compared against facts derived from the artifacts and object
+metadata, never recomputed by the migration implementation. The generator
+itself stays independent of ARMOR packages (see "Independence Guarantee");
+only the validation test imports `internal/`, because its job is to prove the
+committed bytes satisfy the reader.
+
+### Tamper spot-check
+
+Flip one bit anywhere in
+`generated_fixtures/v2-single-short/stored_ciphertext.bin` and run
+`go test ./tests/fixtures/migration/`: both harness tests fail immediately
+with `tampered or regenerated on disk (manifest records ... bytes sha256 ...)`,
+naming the file and both digests. Restore with
+`git checkout -- generated_fixtures/v2-single-short/stored_ciphertext.bin`.
+
+Last verified 2026-09-17: bit flip at offset 70 failed both
+`TestRegenFixturesMatchManifestAndDecrypt/v2-single-short` and
+`TestRegenFixtureTamperIsDetected/v2-single-short`; after restore, the full
+package is green. Editing the manifest to match tampered bytes does not get
+past the harness — the HMAC verification inside the legacy read then fails in
+the same run (`TestRegenFixtureTamperIsDetected` proves that path fires).
+
 ## Validation
 
 Fixtures can be validated against the migration code:
