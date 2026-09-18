@@ -27,7 +27,10 @@ fleet, and how a correctness fix is proven to have reached every deployment.
 
 The version is a counter: the third component only increases and carries no
 SemVer meaning, so every release may contain fixes and features. `CHANGELOG.md`
-says what changed. There is no `:latest` tag anywhere.
+says what changed. Only semver tags are published; there is no floating tag to
+pull — a `latest` tag visible on Docker Hub or GHCR is a stale leftover that
+CI never pushes or updates (removing one needs registry package-delete scope
+and is an operator action).
 
 Two things never happen: CI never bumps `VERSION`, and nobody creates a `v*`
 tag by hand. A hand-made tag desynchronizes the Forgejo and GitHub release

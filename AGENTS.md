@@ -109,7 +109,9 @@ The short form:
 
 Versions are `0.1.<counter>`: the third component only increases and carries
 no SemVer meaning. Never bump `VERSION` without `cut-release.sh`, never create
-a `v*` tag by hand, and never use `:latest`.
+a `v*` tag by hand, and never use `:latest`. Only semver tags are published;
+there is no floating tag to pull — a `latest` visible in a registry is a stale
+leftover, not something CI pushes.
 
 ## Deployments
 
