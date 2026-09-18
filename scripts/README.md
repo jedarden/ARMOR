@@ -4,7 +4,29 @@ This directory contains operational, testing, and monitoring scripts for ARMOR d
 
 ## definition-of-done.sh
 
-Local verification gate. `scripts/definition-of-done.sh --fast` runs `go build ./...`, `go vet ./...`, and the Python scripts test suite; without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails.
+Local verification gate. `scripts/definition-of-done.sh --fast` runs `go build ./...`, `go vet ./...`, and the Python scripts test suite (`tests/test_drift_check.py`); without `--fast` it additionally runs `go test ./... -short`. Exits non-zero if any leg fails.
+
+## release-gate.sh
+
+The test gate CI and the `Dockerfile` run before building an image: crypto, backend, restore-verifier, canary, config, `cmd/armor` and the server handlers, plus an integration-suite compile. `ARMOR_RELEASE_RACE=1` adds `-race` to the packages that support it (CI sets it).
+
+## cut-release.sh
+
+Cuts a release commit. `scripts/cut-release.sh <MAJOR.MINOR.PATCH>` (or `make release V=...`) writes `VERSION`, prepends a `CHANGELOG.md` entry generated from the commit subjects since the previous `v*` tag (bead-checkpoint and release commits excluded), commits `release: armor <version>` with exactly those two files, and pushes to `origin main`. CI does everything after that (images, tag, Forgejo and GitHub releases); see [docs/release-process.md](../docs/release-process.md).
+
+**Options:** `--dry-run` prints the entry and changes nothing; `--no-push` commits without pushing.
+
+**Refuses to run** off `main`, with staged changes in the index, or with a version that is not newer than the current one.
+
+## publish_release.py
+
+The idempotent release publisher the `armor-build` workflow runs after the image-existence gate, also usable by hand for backfills: creates the annotated `v<version>` tag at `--commit` through the Forgejo API (never moves an existing tag; exit 3 on conflict), creates or refreshes the Forgejo release with the image digests, waits for the push mirror to carry the tag to GitHub, then creates or refreshes the GitHub release. Credentials come only from `FORGEJO_TOKEN` and `GITHUB_TOKEN` in the environment; `DOCKER_CONFIG_JSON` optionally points at a Docker config whose Docker Hub auth lets it resolve the private image digests.
+
+```bash
+FORGEJO_TOKEN=... GITHUB_TOKEN=... python3 scripts/publish_release.py --version 0.1.1969 --commit <full sha> --dry-run
+```
+
+**Options:** `--dry-run`, `--tag-only`, `--no-github`, `--workflow NAME` (credited in the body), `--forgejo-api`, `--github-api`, `--github-wait-seconds`. Exit codes: 0 ok, 2 usage, 3 tag conflict, 4 GitHub failure, 5 Forgejo failure. Tests: `python3 -m pytest tests/test_publish_release.py`.
 
 ## Version Drift Monitoring
 
@@ -18,12 +40,13 @@ Fleet drift check with live verification and deduplicated alerting.
 
 **Purpose:** Enumerates ARMOR deployments, compares each against the approved latest release, and classifies every deployment as `current`, `stale`, `mismatched`, or `unavailable`. Optionally probes running versions via each cluster's `/version` endpoint (or the `Server: ARMOR/<version>` header) and files ONE deduplicated alert bead (`bead create --unique-ref drift-check:<fingerprint>`) when anything is non-current.
 
-**Inputs:** declarative-config checkout, GitHub releases (or `--releases-file`), optional per-cluster probe URLs
+**Inputs:** declarative-config checkout, release tags via `github-release-fetcher.py` (or `--releases-file`), optional per-cluster probe URLs
 
 **Options:**
 - `--config FILE` - Configuration file (default: `config/drift-config.json`)
 - `--manifests DIR` - declarative-config checkout (default from config)
 - `--releases-file FILE` - Releases JSON (default: run `github-release-fetcher.py`)
+- `--latest-tag TAG` - Treat `TAG` (e.g. `v0.1.1970`) as the latest release even if the release source does not list it yet
 - `--probe-url CLUSTER=URL` - Live `/version` endpoint for a cluster (repeatable)
 - `--expected-cluster NAME` - Cluster that must have an ARMOR manifest (repeatable)
 - `--releases-threshold N` / `--days-threshold N` - Stale thresholds (default: 50 / 30)
@@ -156,17 +179,19 @@ python3 scripts/compare-version-drift.py \
 
 ### github-release-fetcher.py
 
-Fetches ARMOR releases from GitHub API.
+Lists ARMOR release tags and classifies correctness/security releases.
 
-**Purpose:** Retrieves release history from GitHub and classifies correctness/security releases.
+**Purpose:** Produces the release list `drift_check.py` compares against. CI writes one annotated `v<version>` tag per published release, so the tags are the release record.
 
-**Inputs:** GitHub repository (hardcoded to jedarden/ARMOR)
+**Inputs:** `--source auto` (default) reads the local checkout's `v*` tags when it has any and falls back to the GitHub tags API otherwise; `--source git` and `--source github` force one. Run `git fetch --tags` before relying on the checkout. `--use-releases` reads the GitHub Releases API instead of tags.
 
-**Outputs:** JSON array with release metadata (tag, published_at, is_correctness, url)
+**Outputs:** JSON array with release metadata (tag, published_at, is_correctness, url), newest first
 
 **Examples:**
 ```bash
-python3 scripts/github-release-fetcher.py
+python3 scripts/github-release-fetcher.py                  # local tags, else GitHub
+python3 scripts/github-release-fetcher.py --source github  # always the GitHub API
+python3 scripts/github-release-fetcher.py --limit 10
 ```
 
 **Correctness keywords:** correctness, fix, critical, security, bug, patch, hotfix, urgent, vulnerability, cve, issue, regression
