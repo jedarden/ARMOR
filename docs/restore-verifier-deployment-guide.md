@@ -147,6 +147,21 @@ When rotating MEKs (Plan §8.13):
 
 **Solution**: Verify the retired MEK is included in `VERIFIER_MEK_RING` and the fingerprint matches
 
+## Image
+
+CI publishes the restore-verifier image to two registries on every release:
+
+- `ghcr.io/jedarden/armor-restore-verifier:<version>` — the **public**
+  mirror, anonymously pullable with no Docker Hub credential. Use this name
+  unless your cluster already pulls the private Docker Hub namespace (the
+  fleet does, via its pull-through cache).
+- `ronaldraygun/armor-restore-verifier:<version>` — Docker Hub, **private**
+  (fleet-internal pulls only). An outsider cannot pull this name.
+
+Only released semver tags exist — there is no floating tag. Pin a tag from
+the [GHCR package page](https://github.com/jedarden/armor-restore-verifier/pkgs/container/armor-restore-verifier).
+The `armor-fleet` image is internal and has no public mirror.
+
 ## Deployment Example
 
 ```yaml
@@ -168,7 +183,7 @@ spec:
     spec:
       containers:
       - name: restore-verifier
-        image: ronaldraygun/armor-restore-verifier:0.1.1913
+        image: ghcr.io/jedarden/armor-restore-verifier:<released-version>
         envFrom:
         - configMapRef:
             name: restore-verifier-config

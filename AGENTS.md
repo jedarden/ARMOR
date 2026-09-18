@@ -106,7 +106,8 @@ The short form:
    previous tag, commits `release: armor <version>`, and pushes.
 3. CI does everything else: builds and publishes `ronaldraygun/armor`,
    `ronaldraygun/armor-restore-verifier`, `ronaldraygun/armor-fleet` and the
-   public mirror `ghcr.io/jedarden/armor`, verifies each tag exists in the
+   public mirrors `ghcr.io/jedarden/armor` and
+   `ghcr.io/jedarden/armor-restore-verifier`, verifies each tag exists in the
    registry, runs the compatibility suite, then runs
    `scripts/publish_release.py`, which creates the annotated git tag
    `v<version>`, the Forgejo release and the GitHub release (idempotent; the
