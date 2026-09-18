@@ -4,22 +4,65 @@
 
 **Authenticated Range-readable Managed Object Repository**
 
-ARMOR is an S3-compatible proxy server that transparently encrypts data before storing it in [Backblaze B2](https://www.backblaze.com/cloud-storage) and serves downloads through Cloudflare for zero-egress cost. Any S3-compatible client — boto3, AWS CLI, DuckDB, rclone — works without modification. Multipart client-concurrency behavior per write format — including how the ADR-003 §4 sequential-only era was superseded — is documented in the [multipart client-concurrency compatibility matrix](docs/multipart-client-compatibility.md).
+ARMOR is an S3-compatible proxy server that encrypts data before storing it in
+[Backblaze B2](https://www.backblaze.com/cloud-storage) and serves downloads
+through Cloudflare for zero-egress cost. Any S3-compatible client (boto3, AWS
+CLI, DuckDB, rclone, litestream, barman) works without modification.
 
 - **Zero-knowledge encryption** — data is encrypted before it leaves ARMOR; B2 only ever stores ciphertext
 - **Zero egress fees** — downloads route through Cloudflare via the Bandwidth Alliance
-- **Seekable encryption** — AES-256-CTR with 64KB blocks enables byte-range reads without decrypting the whole file
+- **Seekable encryption** — AES-256-CTR with 64 KB blocks enables byte-range reads without decrypting the whole file
 - **DuckDB-compatible** — query encrypted Parquet files with column pruning and predicate pushdown intact
 - **Multi-key routing** — different master keys for different path prefixes; automatic key selection per object
 
+## Contents
+
+- [Quick Start](#quick-start)
+- [Subcommands](#subcommands)
+- [Production Docker deployment](#production-docker-deployment)
+- [Client configuration](#client-configuration)
+- [Cost model](#cost-model)
+- [Architecture](#architecture)
+- [Encryption design](#encryption-design)
+- [Security model](#security-model)
+- [Configuration reference](#configuration-reference)
+- [Bucket aliases](#bucket-aliases)
+- [Multi-key routing](#multi-key-routing)
+- [Authentication](#authentication)
+- [Secondary backend](#secondary-backend)
+- [S3 API coverage](#s3-api-coverage)
+- [Multipart upload constraints](#multipart-upload-constraints)
+- [HTTP endpoints](#http-endpoints)
+- [Web dashboard](#web-dashboard)
+- [Disaster recovery / offline decryption](#disaster-recovery--offline-decryption)
+- [Releases and versioning](#releases-and-versioning)
+- [Repository structure](#repository-structure)
+- [Documentation](#documentation)
+- [License](#license)
+
 ## Quick Start
+
+### Images
+
+Every release publishes the same server image to two registries:
+
+| Image | Access |
+|---|---|
+| `ghcr.io/jedarden/armor:<version>` | Public. Pulls need no credentials. **Use this one.** |
+| `ronaldraygun/armor:<version>` (Docker Hub) | Private namespace; pulls need a Docker Hub login. Used by the fleet's own deployments. |
+
+Companion images `ronaldraygun/armor-restore-verifier:<version>` and
+`ronaldraygun/armor-fleet:<version>` are published alongside (Docker Hub only).
+
+`<version>` is a release counter such as `0.1.1969`. The current one is in
+[`VERSION`](VERSION); every published version has an entry in
+[`CHANGELOG.md`](CHANGELOG.md) and a release on GitHub. There is no `latest`
+tag; pin a version.
 
 ### Local demo (Docker only)
 
-The demo uses a temporary filesystem backend and fixed, non-secret credentials. It
-does not need Backblaze B2, Cloudflare, or an AWS account. Replace `<version>`
-with a published tag from the [Docker Hub ARMOR tags](https://hub.docker.com/r/ronaldraygun/armor/tags)
-page (the repository's [`VERSION`](VERSION) file records the current release).
+The demo uses a temporary filesystem backend and fixed, non-secret credentials.
+It does not need Backblaze B2, Cloudflare, or an AWS account.
 
 Start ARMOR in the background:
 
@@ -27,7 +70,7 @@ Start ARMOR in the background:
 docker run -d --name armor-demo \
   -p 9000:9000 \
   -p 9001:9001 \
-  ronaldraygun/armor:<version> demo \
+  ghcr.io/jedarden/armor:<version> demo \
   --listen 0.0.0.0:9000 \
   --admin-listen 0.0.0.0:9001
 ```
@@ -78,12 +121,39 @@ This workflow is guarded by an automated smoke test (`make test-docker-demo`),
 which replays the commands above against the pinned image and fails if they
 stop working.
 
-### Production Docker deployment
+### Build from source
+
+```bash
+git clone https://github.com/jedarden/ARMOR.git && cd ARMOR
+make build            # every cmd/ binary into bin/, version injected from VERSION
+bin/armor help
+scripts/definition-of-done.sh --fast   # build + vet + script tests, the local gate
+```
+
+Go 1.25 or newer is required (`go.mod`). Contributors and agents: read
+[AGENTS.md](AGENTS.md).
+
+## Subcommands
+
+`armor help` prints this list; `serve` is the default when no subcommand is given.
+
+| Subcommand | What it does |
+|---|---|
+| `serve` | Start the S3-compatible server (default). Configured entirely by environment variables, see [Configuration reference](#configuration-reference) |
+| `demo` | Start ARMOR with a temporary filesystem backend and fixed credentials (`--listen`, `--admin-listen`, `--dir`) |
+| `check` | Verify a deployment: config, backend connectivity (HeadBucket), the Cloudflare path (ranged GET) and MEK correctness via the canary. Exit 0 ok, 1 config error, 2 connectivity or MEK failure |
+| `client-config` | Print known-good configuration for `aws-cli`, `rclone`, `boto3`, `duckdb`, `litestream` or `barman` (`--for`, `--endpoint`, `--bucket`, `--credential`) |
+| `decrypt` | Decrypt objects offline with only the MEK and B2 access (or a local ciphertext copy); see [Disaster recovery](#disaster-recovery--offline-decryption) |
+| `verify` | Verify encrypted objects for corruption: HMAC and digest checks over a prefix, a keys file, or a time window (`--prefix`, `--keys-file`, `--since`, `--quick`) |
+| `migrate` | Client of `POST /admin/format/migrate`: migrate legacy-format objects to the current envelope format (`--admin-url`, `--target`, `--include`, `--dry-run`, `--watch`) |
+| `version` | Print `armor <version> (<go>, <os>/<arch>)`. The same information is served as JSON at `/version` |
+| `help` | Show the subcommand list |
+
+## Production Docker deployment
 
 For a B2-backed deployment, replace every placeholder with a value from your
 environment. Keep the same MEK when restarting an instance; losing it makes
-existing objects unreadable. Pin the image to a published version rather than
-using a floating tag.
+existing objects unreadable. Pin the image to a published version.
 
 ```bash
 docker run -d --name armor \
@@ -97,17 +167,20 @@ docker run -d --name armor \
   -e ARMOR_MEK=<64-hex-character-mek> \
   -e ARMOR_AUTH_ACCESS_KEY=<armor-access-key> \
   -e ARMOR_AUTH_SECRET_KEY=<armor-secret-key> \
+  -e ARMOR_ADMIN_TOKEN=<admin-bearer-token> \
   -e ARMOR_ADMIN_LISTEN=0.0.0.0:9001 \
-  ronaldraygun/armor:<version>
+  ghcr.io/jedarden/armor:<version>
 ```
 
-The ARMOR CI pipeline publishes images as `ronaldraygun/armor:<version>`; see
-[`VERSION`](VERSION) and [Docker Hub](https://hub.docker.com/r/ronaldraygun/armor/tags)
-for the tag to use.
+Without `ARMOR_ADMIN_TOKEN` the key-management and migration endpoints are
+disabled (fail-closed), which is fine for a plain proxy but leaves no way to
+rotate keys. Verify a running instance with `armor check` (inside the
+container) or `curl http://127.0.0.1:9001/version`.
 
-### Client Configuration
+## Client configuration
 
-ARMOR provides a `client-config` command that generates known-good, copy-pasteable configuration snippets for common S3-compatible tools:
+ARMOR provides a `client-config` command that generates known-good,
+copy-pasteable configuration snippets for common S3-compatible tools:
 
 ```bash
 armor client-config --for aws-cli --endpoint http://localhost:9000 --bucket my-bucket
@@ -118,31 +191,31 @@ armor client-config --for litestream --endpoint http://localhost:9000
 armor client-config --for barman --endpoint http://localhost:9000
 ```
 
-Supported tools: `aws-cli`, `rclone`, `boto3`, `duckdb`, `litestream`, `barman`. The command includes:
+The output includes the endpoint URL, path-style addressing (required), a
+region placeholder (required by clients, unused by ARMOR), the credential
+environment variable names (never values), and the multipart contract in force
+for the configured write format together with a pointer to the tested
+[multipart client-concurrency compatibility matrix](docs/multipart-client-compatibility.md).
 
-- Endpoint URL configuration
-- Path-style addressing (required for B2/ARMOR)
-- Region placeholder (required by clients but unused by ARMOR)
-- Credential environment variable names (never values)
-- The multipart part-order/part-size contract in force for the configured write format, how that tool's default concurrency behaves against it, and a pointer to the tested compatibility matrix: **format version 2** pins a uniform part size from part 1 (an out-of-order part is deferred with retryable 503 SlowDown; non-uniform parts switch to ADR-011 mode), **format version 3** has no contract beyond B2's ≥ 5 MiB non-final-part minimum
-
-See the section on [Multipart Upload Constraints](#multipart-upload-constraints) for details on format version differences.
-
-#### Quick Examples
+### Quick examples
 
 ```bash
 # AWS CLI
 aws --endpoint-url http://localhost:9000 s3 cp file.txt s3://bucket/key
+```
 
-# boto3 (Python)
+```python
+# boto3
 import boto3
 s3 = boto3.client('s3',
     endpoint_url='http://localhost:9000',
     aws_access_key_id='my-access-key',
     aws_secret_access_key='my-secret-key')
 s3.upload_file('local.txt', 'bucket', 'key')
+```
 
-# DuckDB
+```sql
+-- DuckDB
 INSTALL httpfs;
 LOAD httpfs;
 SET s3_endpoint='localhost:9000';
@@ -151,12 +224,12 @@ SET s3_secret_access_key='my-secret-key';
 SELECT * FROM read_parquet('s3://bucket/data.parquet');
 ```
 
-## Cost Model
+## Cost model
 
 | Component | Cost |
 |-----------|------|
 | Storage | ~$6–7/TB/month |
-| Compression savings (optional) | Varies by data type — Optional zstd via `ARMOR_COMPRESS=true` reduces storage for compressible data: manifests (2–5×), WAL (3–5×), JSON logs (2–4×). Parquet/columnar: minimal additional benefit (already compressed internally). See ADR-007. |
+| Compression savings (optional) | Varies by data type. Optional zstd via `ARMOR_COMPRESS_RULES` reduces storage for compressible data: manifests (2–5×), WAL (3–5×), JSON logs (2–4×). Parquet/columnar: minimal additional benefit. See [ADR-007](docs/adr/007-zstd-compression.md) |
 | Egress (via Cloudflare Bandwidth Alliance) | $0 |
 | B2 API calls | $0 |
 | Cloudflare (free plan) | $0 |
@@ -164,7 +237,7 @@ SELECT * FROM read_parquet('s3://bucket/data.parquet');
 
 ## Architecture
 
-### Upload Path (direct to B2 — ingress is free)
+### Upload path (direct to B2; ingress is free)
 
 ```
 ┌──────────┐     ┌──────────────┐     ┌──────────┐
@@ -174,19 +247,21 @@ SELECT * FROM read_parquet('s3://bucket/data.parquet');
 └──────────┘     └──────────────┘     └──────────┘
 ```
 
-### Download Path (through Cloudflare — egress is free)
+### Download path (through Cloudflare; egress is free)
 
 ```
 ┌──────────┐     ┌────────────┐     ┌────────────┐     ┌──────────┐
 │  Client   │◀───│ Cloudflare │◀───│  Cloudflare │◀───│    B2    │
 │  ARMOR    │    │   Edge     │    │  PNI Link   │    │          │
 │  decrypt  │    │  (cache)   │    │  (free)     │    │          │
-└──────────┘     └────────────┘     └────────────┘     └──────────┘
+└──────────┘     └────────────┘    └────────────┘     └──────────┘
 ```
 
-### DuckDB Query Path (seekable decryption)
+### DuckDB query path (seekable decryption)
 
-DuckDB issues byte-range GET requests for specific row groups and columns. ARMOR decrypts only the requested 64KB blocks, so column pruning and predicate pushdown remain effective:
+DuckDB issues byte-range GET requests for specific row groups and columns.
+ARMOR decrypts only the requested 64 KB blocks, so column pruning and predicate
+pushdown remain effective:
 
 ```
 DuckDB                          ARMOR                       Cloudflare → B2
@@ -200,7 +275,12 @@ DuckDB                          ARMOR                       Cloudflare → B2
   └─ result set                    └                              └
 ```
 
-## Encryption Design
+ARMOR is stateless: any instance with the same MEK, B2 credentials and
+Cloudflare domain can serve the same bucket, and all authoritative state
+(envelope metadata, key-rotation progress, provenance chain, manifest index)
+lives in B2 under the reserved `.armor/` prefix.
+
+## Encryption design
 
 ```
 Master Key (MEK)
@@ -215,57 +295,135 @@ Master Key (MEK)
                                    seekable random access
 ```
 
-Key rotation re-wraps DEKs without re-uploading file data — a metadata-only operation.
+Key rotation re-wraps DEKs without re-uploading file data; it is a
+metadata-only operation. The on-disk envelope is
+[format version 3](docs/format/envelope-v3.md) (the default write format);
+version 2 is still readable and can be written with `ARMOR_FORMAT_VERSION=2`.
+Version 1 objects are readable but are migrated to v3 by `armor migrate`
+because of the CTR counter defect described in
+[ADR-005](docs/adr/005-ctr-counter-stride-fix.md).
 
-## Security Model
+## Security model
 
 | Threat | Mitigation |
 |--------|-----------|
-| B2 data breach | All stored data is AES-256-CTR encrypted with per-file DEKs — useless without MEK |
-| Cloudflare CDN inspection | All cached content is ciphertext — CDN sees only opaque blobs |
-| Man-in-the-middle | TLS on ARMOR listener + client-side encryption — plaintext never leaves ARMOR |
-| ARMOR server compromise | MEK exposed — rotate immediately; per-file DEKs limit blast radius |
-| Network sniffing (client ↔ ARMOR) | TLS on ARMOR listener or localhost-only binding |
-| Public bucket enumeration | Attacker can list/download ciphertext — indistinguishable from random bytes without MEK |
+| B2 data breach | All stored data is AES-256-CTR encrypted with per-file DEKs; useless without the MEK |
+| Cloudflare CDN inspection | All cached content is ciphertext; the CDN sees only opaque blobs |
+| Man-in-the-middle | TLS on the ARMOR listener plus server-side encryption; plaintext never leaves ARMOR |
+| ARMOR server compromise | MEK exposed: rotate immediately; per-file DEKs limit blast radius |
+| Network sniffing (client ↔ ARMOR) | TLS on the ARMOR listener or localhost-only binding |
+| Public bucket enumeration | An attacker can list and download ciphertext, indistinguishable from random bytes without the MEK |
 | Bit-flipping on ciphertext | Per-block HMAC-SHA256 detects any modification |
-| Block reordering/truncation | Block index implicit in offset; HMAC table length validates block count |
-| Unauthorized access | ARMOR-side SigV4 authentication + prefix/verb ACLs (not B2 access control) |
-| V1 keystream reuse | Version 1 envelopes had CTR counter bug (keystream reuse between adjacent blocks) — migration to Version 2 required. See [ADR-005](docs/adr/005-ctr-counter-stride-fix.md) and plan.md Phase 8.1 |
+| Block reordering/truncation | Block index is implicit in the offset; the HMAC table length validates the block count |
+| Unauthorized access | ARMOR-side SigV4 authentication plus prefix/verb ACLs (not B2 access control) |
+| V1 keystream reuse | Version 1 envelopes had a CTR counter bug (keystream reuse between adjacent blocks). Migrate with `armor migrate`. See [ADR-005](docs/adr/005-ctr-counter-stride-fix.md) |
 
-## Configuration
+## Configuration reference
 
-ARMOR is configured via environment variables:
+ARMOR is configured entirely by environment variables. Every variable read by
+`internal/config` is listed here; a test (`internal/docsindex`) fails when one
+is missing. Names in `<angle brackets>` are placeholders.
+
+### Listeners and operation
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ARMOR_LISTEN` | No | `0.0.0.0:9000` | S3 API listen address |
-| `ARMOR_ADMIN_LISTEN` | No | `127.0.0.1:9001` | Admin API (key rotation, canary, audit) |
-| `ARMOR_ADMIN_READ_TIMEOUT` | No | disabled | Max time the admin listener spends reading a request. Go duration (`30s`, `5m`), or `0`/unset for no deadline. |
-| `ARMOR_ADMIN_WRITE_TIMEOUT` | No | disabled | Max time the admin listener spends writing a response. Go duration, or `0`/unset for no deadline. Leave unset for `POST /admin/key/rotate` and `GET /admin/key/ring?census=head`, which walk the whole bucket and can take hours. The default `GET /admin/key/ring` census is in-memory and fast. |
-| `ARMOR_B2_REGION` | Yes | — | B2 region (e.g., `us-east-005`) |
-| `ARMOR_B2_ACCESS_KEY_ID` | Yes | — | B2 application key ID |
-| `ARMOR_B2_SECRET_ACCESS_KEY` | Yes | — | B2 application key |
-| `ARMOR_BUCKET` | Yes | — | B2 bucket name |
-| `ARMOR_BUCKET_ALIASES` | No | — | Comma-separated legacy bucket names served from `ARMOR_BUCKET` (see [Bucket Aliases](#bucket-aliases) and ADR-001) |
-| `ARMOR_PREFIX` | No | — | Key prefix for shared bucket deployments (e.g., `kalshi-tape/`). All keys are stored with this prefix in B2 but are transparent to S3 clients (see ADR-001) |
-| `ARMOR_CF_DOMAIN` | Yes | — | Cloudflare domain CNAME'd to B2 |
-| `ARMOR_MEK` | Yes | — | Master encryption key (hex, 32 bytes) |
-| `ARMOR_AUTH_ACCESS_KEY` | Yes* | — | Client access key |
-| `ARMOR_AUTH_SECRET_KEY` | Yes* | — | Client secret key |
-| `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size (bytes) |
-| `ARMOR_COMPRESS` | No | `false` | Legacy alias for `ARMOR_COMPRESS_RULES="*=zstd"` (all files compressed). Prefer `ARMOR_COMPRESS_RULES` for fine-grained control. Multipart uploads are rejected when compression is enabled. Compressed objects do not support byte-range reads. See ADR-007. |
-| `ARMOR_COMPRESS_RULES` | No | — | Comma-separated compression rules: `<suffix>|<content-type>=zstd|none`. First match wins. Examples: `.jsonl=zstd,.wal=zstd,application/json=zstd,*=none`. Per-request override via `x-amz-meta-armor-compress: true|false` header. Only applies to v3 single-PUT format. See ADR-007. |
-| `ARMOR_READ_CONCURRENCY` | No | `16` | Maximum concurrent ranged reads |
-| `ARMOR_WRITER_ID` | No | (hostname) | Provenance chain writer ID |
-| `ARMOR_DASHBOARD_USER` | No | — | Dashboard HTTP Basic Auth username |
-| `ARMOR_DASHBOARD_PASS` | No | — | Dashboard HTTP Basic Auth password |
-| `ARMOR_DASHBOARD_TOKEN` | No | — | Dashboard Bearer token |
-| *(none of the three above)* | — | — | Dashboard routes are then not anonymous: they require the `ARMOR_ADMIN_TOKEN` bearer token, and fail closed with 403 when that is unset too |
-| `ARMOR_PRESIGN_ENABLED` | No | `false` | Enable pre-signed URL feature (required for `/admin/presign` and `/share/` routes) |
-| `ARMOR_PRESIGN_SECRET` | Yes\* | — | Secret key for signing pre-signed URLs (hex, 32+ bytes, required when `ARMOR_PRESIGN_ENABLED=true`) |
-| `ARMOR_PRESIGN_BASE_URL` | Yes\* | — | Base URL for pre-signed URLs (must be absolute URL starting with `http://` or `https://`, required when `ARMOR_PRESIGN_ENABLED=true`) |
+| `ARMOR_ADMIN_LISTEN` | No | `127.0.0.1:9001` | Admin API listen address (key management, migration, metrics, dashboard) |
+| `ARMOR_ADMIN_TOKEN` | No | — | Bearer token that gates every `/admin/*` route and `/armor/audit`. When unset those routes are disabled and return 403 (fail-closed). Surrounding whitespace is trimmed so a provisioned value with a trailing newline still works |
+| `ARMOR_ADMIN_READ_TIMEOUT` | No | disabled | Max time the admin listener spends reading a request. Go duration (`30s`, `5m`), or `0`/unset for no deadline |
+| `ARMOR_ADMIN_WRITE_TIMEOUT` | No | disabled | Max time the admin listener spends writing a response. Leave unset for `POST /admin/key/rotate` and `GET /admin/key/ring?census=head`, which walk the whole bucket and can take hours |
+| `ARMOR_LOG_LEVEL` | No | `info` | `debug`, `info`, `warn` or `error`. `debug` logs request and response headers and bodies |
+| `ARMOR_WRITER_ID` | No | hostname | Provenance chain writer ID |
+| `ARMOR_FORMAT_VERSION` | No | `3` | Envelope format written for new objects: `3` (current) or `2` (legacy). Reported by `armor version` and `/version` as `format_write_version` |
+| `ARMOR_CANARY_DISABLED` | No | `false` | `true` skips the canary check in `/readyz` (readiness then reports 200 without verifying the MEK) |
+| `ARMOR_ALLOW_NO_CREDENTIALS` | No | `false` | Start without any client credential. Set by the `demo` subcommand only; never in production |
 
-### Bucket Aliases
+### Backend
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_BACKEND` | No | `b2` | Primary backend: `b2` or `filesystem` |
+| `ARMOR_FS_PATH` | With `filesystem` | — | Directory for the filesystem backend |
+| `ARMOR_B2_REGION` | With `b2` | — | B2 region (e.g., `us-east-005`) |
+| `ARMOR_B2_ENDPOINT` | No | `https://s3.<region>.backblazeb2.com` | B2 S3 endpoint override |
+| `ARMOR_B2_ACCESS_KEY_ID` | With `b2` | — | B2 application key ID |
+| `ARMOR_B2_SECRET_ACCESS_KEY` | With `b2` | — | B2 application key |
+| `ARMOR_BUCKET` | Yes | — | Bucket name (both backends) |
+| `ARMOR_BUCKET_ALIASES` | No | — | Comma-separated legacy bucket names served from `ARMOR_BUCKET` (see [Bucket aliases](#bucket-aliases)) |
+| `ARMOR_PREFIX` | No | — | Key prefix for shared-bucket deployments (e.g., `kalshi-tape/`). Stored in B2, invisible to S3 clients ([ADR-001](docs/adr/001-bucket-prefix.md)) |
+| `ARMOR_CF_DOMAIN` | No | — | Cloudflare domain CNAMEd to the bucket. When set, reads go through Cloudflare (free egress, edge cache); when unset, reads go to the B2 S3 endpoint directly and B2 egress applies. Ignored for the filesystem backend |
+
+### Encryption and keys
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_MEK` | Yes | — | Master encryption key for the default key (hex, 32 bytes = 64 characters) |
+| `ARMOR_MEK_<NAME>` | No | — | A named master key (same format). `<NAME>` is lower-cased; `DEFAULT` is reserved |
+| `ARMOR_MEK_RING` | No | — | Comma-separated retired MEKs (hex) that remain valid for reading objects wrapped with the default key before a rotation |
+| `ARMOR_MEK_<NAME>_RING` | No | — | The same for a named key; requires `ARMOR_MEK_<NAME>` |
+| `ARMOR_KEY_ROUTES` | No | — | Prefix-to-key routes, e.g. `data/pii/*=sensitive,archive/*=archive,*=default` (see [Multi-key routing](#multi-key-routing)) |
+| `ARMOR_BLOCK_SIZE` | No | `65536` | Encryption block size in bytes; a power of two, at least 4096 |
+| `ARMOR_COMPRESS` | No | `false` | Legacy alias for `ARMOR_COMPRESS_RULES="*=zstd"`. Multipart uploads are rejected and byte-range reads are unsupported for compressed objects ([ADR-007](docs/adr/007-zstd-compression.md)) |
+| `ARMOR_COMPRESS_RULES` | No | — | Comma-separated rules `<suffix>|<content-type>=zstd|none`, first match wins, e.g. `.jsonl=zstd,application/json=zstd,*=none`. Per-request override via `x-amz-meta-armor-compress: true|false`. Single-PUT v3 objects only |
+
+### Client authentication
+
+At least one credential must be configured or the server refuses to start
+(unless `ARMOR_ALLOW_NO_CREDENTIALS=true`). See [Authentication](#authentication)
+for the ACL syntax.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_AUTH_ACCESS_KEY` / `ARMOR_AUTH_SECRET_KEY` | One of these | — | The default (unnamed) credential; full access to `ARMOR_BUCKET` |
+| `ARMOR_AUTH_<NAME>_ACCESS_KEY`, `ARMOR_AUTH_<NAME>_SECRET_KEY`, `ARMOR_AUTH_<NAME>_ACL` | One of these | — | A named credential with an optional ACL (`bucket:prefix[:verbs]`, comma-separated) |
+| `ARMOR_AUTH_FILE` | One of these | — | YAML credentials file with the same schema; merged with environment credentials (environment wins on collision) and hot-reloaded when it changes |
+
+### Read path and caches
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_READ_CONCURRENCY` | No | `16` | Maximum concurrent ranged reads per backend read |
+| `ARMOR_CACHE_MAX_ENTRIES` | No | `10000` | Object metadata cache entries |
+| `ARMOR_CACHE_TTL` | No | `300` | Metadata cache TTL in seconds |
+| `ARMOR_LIST_CACHE_MAX_ENTRIES` | No | `1000` | List-result cache entries |
+| `ARMOR_LIST_CACHE_TTL` | No | `60` | List-result cache TTL in seconds |
+
+### Manifest index
+
+The manifest index caches envelope metadata (IV, wrapped DEK) so reads do not
+need a HEAD per object. It is stored under `.armor/manifest/` in the bucket.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_MANIFEST_ENABLED` | No | `true` | `false` or `0` disables the index |
+| `ARMOR_MANIFEST_PREFIX` | No | `.armor/manifest` | Location of the index, relative to `ARMOR_PREFIX`. Must stay inside the tenant namespace (no absolute paths, no `../`) |
+| `ARMOR_MANIFEST_COMPACTION_INTERVAL` | No | `3600` | Seconds between automatic compactions |
+| `ARMOR_MANIFEST_COMPACTION_THRESHOLD` | No | `1000` | Delta entry count that triggers an early compaction |
+| `ARMOR_MANIFEST_LOAD_TIMEOUT` | No | `480` | Seconds allowed for the startup manifest load; `0` is unbounded. Keep it under the pod's startupProbe budget: on timeout the server starts with an empty index instead of crash-looping |
+
+### Dashboard and pre-signed URLs
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_DASHBOARD_USER` / `ARMOR_DASHBOARD_PASS` | No | — | HTTP Basic Auth for `/dashboard` |
+| `ARMOR_DASHBOARD_TOKEN` | No | — | Bearer token for `/dashboard` |
+| *(none of the three above)* | — | — | The dashboard then requires `ARMOR_ADMIN_TOKEN`, and returns 403 when that is unset too |
+| `ARMOR_DASHBOARD_CREDENTIAL` | No | — | Access key of a configured named credential the dashboard signs uploads, downloads and deletes with. Unset means browse-only |
+| `ARMOR_PRESIGN_ENABLED` | No | `false` | Enable pre-signed share URLs (`POST /admin/presign`, `GET /share/`) |
+| `ARMOR_PRESIGN_SECRET` | With presign | — | Signing key (hex, at least 32 bytes) |
+| `ARMOR_PRESIGN_BASE_URL` | With presign | — | Absolute base URL for generated share links (`http://` or `https://`) |
+
+### Secondary backend (async replication, [ADR-006](docs/adr/006-dual-backend-replication.md))
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARMOR_SECONDARY_BACKEND` | No | — | Enables replication. Either a compact form (`filesystem:/backup/armor` or `b2:<region>:<endpoint>:<keyid>:<secret>:<bucket>`) or a bare kind (`filesystem` or `b2`) combined with the variables below |
+| `ARMOR_SECONDARY_BACKEND_PATH` | With `filesystem` | — | Directory for a filesystem secondary |
+| `ARMOR_SECONDARY_BACKEND_TYPE` | No | — | Legacy selector; only `filesystem` is accepted and it pairs with `ARMOR_SECONDARY_BACKEND_PATH` |
+| `ARMOR_SECONDARY_B2_ENDPOINT`, `ARMOR_SECONDARY_B2_KEY_ID`, `ARMOR_SECONDARY_B2_KEY`, `ARMOR_SECONDARY_B2_BUCKET` | With a B2 secondary | — | B2 secondary credentials kept out of the selector string. `ARMOR_SECONDARY_BACKEND` takes precedence when both forms are set |
+
+## Bucket aliases
 
 `ARMOR_BUCKET_ALIASES` accepts a comma-separated list of legacy bucket names
 that are served from `ARMOR_BUCKET`:
@@ -276,27 +434,25 @@ that are served from `ARMOR_BUCKET`:
 ```
 
 A request whose bucket is an alias is served exactly as if it named
-`ARMOR_BUCKET` — backend calls go to the configured bucket, and ACL entries
+`ARMOR_BUCKET`: backend calls go to the configured bucket, and ACL entries
 written against the configured bucket keep matching. The name the client sent
-is what comes back wherever S3 semantics require the server to echo it
-(`ListObjectsV2` / `ListObjectVersions` `Name`, and `CopyObject` sources are
-resolved through the same table). `ListBuckets` still reports only the
-configured bucket: an alias is not a bucket. A bucket name that is neither the
-configured bucket nor an alias behaves as before and fails in the backend.
+is echoed back wherever S3 semantics require it (`ListObjectsV2` /
+`ListObjectVersions` `Name`; `CopyObject` sources resolve through the same
+table). `ListBuckets` still reports only the configured bucket: an alias is not
+a bucket. A bucket name that is neither the configured bucket nor an alias
+fails in the backend as before.
 
 Aliases exist so a tenant can be consolidated into the shared ADR-001 bucket
 without every consumer changing its bucket name on cutover night. Set the old
 name as an alias **before** the move, and drop it once every client has been
-repointed — see the cutover runbook,
-`docs/runbooks/unified-bucket-tenant-onboarding.md`, and the ADR-001 alias
-addendum.
+repointed; see the
+[unified-bucket tenant onboarding runbook](docs/runbooks/unified-bucket-tenant-onboarding.md).
 
-Aliasing never widens access. The alias is resolved to the configured bucket
-before the ACL check, so a credential scoped to a bucket no alias names gains
-nothing, and a credential's prefix scoping is enforced on the resolved path
-exactly as it is today.
+Aliasing never widens access: the alias is resolved to the configured bucket
+before the ACL check, so a credential's bucket and prefix scoping is enforced
+on the resolved path.
 
-### Multi-Key Routing
+## Multi-key routing
 
 Route different path prefixes to different master keys:
 
@@ -311,17 +467,18 @@ Routes use longest-prefix matching; the trailing `/*` is shorthand for the
 path prefix (`data/pii/` and `archive/` above). Objects without a matching
 route use the default key. Rotate one key at a time with
 `POST /admin/key/rotate?key-id=sensitive`; omitting `key-id` rotates only the
-default key.
+default key. See the [key rotation runbook](docs/key-rotation-runbook.md).
 
-### Authentication
+## Authentication
 
-ARMOR uses its own credential system for client authentication. **These ARMOR credentials are separate from your B2 credentials** — ARMOR validates clients locally, then uses its own B2 credentials to talk to the backend. This means:
+ARMOR uses its own credential system for client authentication. **These ARMOR
+credentials are separate from your B2 credentials**: ARMOR validates clients
+locally, then uses its own B2 credentials to talk to the backend. B2
+credentials never leave the ARMOR server, multiple clients can share one ARMOR
+with different keys and permissions, and access keys can be scoped per bucket
+or per prefix.
 
-- B2 credentials never leave the ARMOR server
-- Multiple clients can share ARMOR with different access keys and permissions
-- Access keys can be scoped per-bucket or per-prefix
-
-#### Default Credential
+### Default credential
 
 The simplest deployment uses a single static key pair:
 
@@ -330,11 +487,10 @@ ARMOR_AUTH_ACCESS_KEY=my-access-key
 ARMOR_AUTH_SECRET_KEY=my-secret-key
 ```
 
-At least one credential must be configured (either `ARMOR_AUTH_ACCESS_KEY`/`ARMOR_AUTH_SECRET_KEY`, named credentials, or `ARMOR_AUTH_FILE`). If no credentials are configured, ARMOR will fail to start with a clear error message.
+### Named credentials with ACLs
 
-#### Named Credentials with ACLs
-
-For multi-user deployments, define any number of named credentials via environment triplets — one `ACCESS_KEY`, one `SECRET_KEY`, and one optional `ACL`:
+For multi-user deployments, define any number of named credentials via
+environment triplets: one `ACCESS_KEY`, one `SECRET_KEY`, and one optional `ACL`:
 
 ```bash
 # Credential named "READONLY" (the name is for your bookkeeping)
@@ -348,20 +504,17 @@ ARMOR_AUTH_WRITER_SECRET_KEY=writer-secret
 ARMOR_AUTH_WRITER_ACL="mybucket:*,otherbucket:uploads/*"
 ```
 
-**ACL Format**
-
-An ACL string grants scoped access to specific bucket and prefix combinations:
+**ACL format**
 
 - **Syntax:** `bucket:prefix[:actions]`
-- **Multiple rules:** Comma-separated (`bucket1:prefix1,bucket2:prefix2`)
-- **Wildcard bucket:** Use `*` to match all buckets
-- **Wildcard prefix:** Use `*` or empty string to match all keys
+- **Multiple rules:** comma-separated (`bucket1:prefix1,bucket2:prefix2`)
+- **Wildcard bucket:** `*` matches all buckets
+- **Wildcard prefix:** `*` or an empty string matches all keys
 
-**Action Verbs**
+**Action verbs** ([ADR-012](docs/adr/012-authorization-action-verbs-and-consumer-separation.md)).
+If no actions are specified, all verbs are permitted.
 
-ACLs support fine-grained action verbs per [ADR-012](docs/adr/012-authorization-action-verbs-and-consumer-separation.md). If no actions are specified, all verbs are permitted (backward compatible).
-
-| Verb | S3 Operations Covered |
+| Verb | S3 operations covered |
 |------|----------------------|
 | `get` | GetObject, HeadObject |
 | `put` | PutObject, CreateMultipartUpload, UploadPart, CompleteMultipartUpload, CopyObject (destination) |
@@ -369,57 +522,40 @@ ACLs support fine-grained action verbs per [ADR-012](docs/adr/012-authorization-
 | `list` | ListObjectsV2, ListMultipartUploads, ListObjectVersions, ListParts, ListBuckets |
 | `abort` | AbortMultipartUpload |
 
-An entry granting `delete` continues to grant `abort` (abort was part of delete before it became its own verb, so no deployed credential loses a capability); the reverse does not hold — `abort` never grants `delete`.
-
-Specify actions as the optional third segment, separated by `:` and using `+` or spaces to combine verbs:
+An entry granting `delete` continues to grant `abort` (abort was part of delete
+before it became its own verb); the reverse does not hold.
 
 ```bash
-# All verbs on logs/ prefix (no action segment = all permitted)
+# All verbs on logs/ (no action segment = all permitted)
 ARMOR_AUTH_LOGS_ACL="mybucket:logs/*"
 
-# Only GET and LIST on readonly/ prefix
+# Only GET and LIST on readonly/
 ARMOR_AUTH_READONLY_ACL="mybucket:readonly/*:get+list"
 
-# Only PUT and LIST on backups/ prefix (append-only backup writer)
+# Append-only backup writer: can write and list, never read, overwrite-protect or delete
 ARMOR_AUTH_BACKUP_ACL="mybucket:backups/*:put+list"
 
-# Multipart-write and abort cleanup without delete (writer that can never
-# erase committed objects)
+# Multipart writer that can clean up its own aborted uploads but never delete objects
 ARMOR_AUTH_RAW_ACL="mybucket:raw/*:put+list+abort"
-```
 
-**Append-Only Backup Writers**
-
-The standard pattern for backup systems is `put+list` — the client can write new backups and list what it wrote, but cannot read, overwrite, or delete existing data:
-
-```bash
-ARMOR_AUTH_BACKUP_WRITER_ACCESS_KEY=backup-writer
-ARMOR_AUTH_BACKUP_WRITER_SECRET_KEY=backup-secret
-ARMOR_AUTH_BACKUP_WRITER_ACL="mybucket:backups/*:put+list"
-```
-
-**Overwrite-as-Destruction Risk:** Without bucket versioning enabled, a compromised `put`-only credential can still overwrite existing objects by re-uploading poisoned data (S3 `PutObject` overwrites by default). Append-only writers mitigate but do not eliminate this risk in v1 — the credential cannot delete, but it can still destroy data by overwriting. This is accepted residual risk; revisit if B2 versioning is enabled.
-
-**Multi-Bucket Example**
-
-```bash
 # Full access to one bucket, read-only to another
 ARMOR_AUTH_CROSSBUCKET_ACL="bucket-primary:*:get+put+delete+list,bucket-audit:logs/*:get+list"
 ```
 
-**Empty ACL**
+**Overwrite-as-destruction risk:** without bucket versioning, a compromised
+`put`-only credential can still overwrite existing objects. Append-only writers
+mitigate but do not eliminate this; it is accepted residual risk.
 
-If a credential has no `ACL` defined, it has full access to the configured `ARMOR_BUCKET`. This is the default for the unnamed `ARMOR_AUTH_*` pair.
+**Empty ACL:** a credential with no `ACL` has full access to `ARMOR_BUCKET`.
 
-#### Credentials from a YAML File
+### Credentials from a YAML file
 
-For deployments managed by Kubernetes or external secret systems, credentials can be loaded from a YAML file:
+For deployments managed by Kubernetes or an external secret system, load
+credentials from a file:
 
 ```bash
 ARMOR_AUTH_FILE=/etc/armor/credentials.yaml
 ```
-
-The YAML file uses the same schema and ACL parser as environment triplets:
 
 ```yaml
 credentials:
@@ -436,335 +572,298 @@ credentials:
   - name: FULL_ACCESS
     access_key: "full-key"
     secret_key: "full-secret"
-    # No ACL means full access to configured bucket
+    # No ACL means full access to the configured bucket
 ```
 
-**File Loading Behavior**
+File credentials are merged with environment credentials; environment wins on
+an access-key collision (logged at WARN); duplicate access keys within the file
+are skipped (first wins); the file is watched and reloaded without a restart;
+validation errors name the entry index and field, never the values.
 
-- File credentials are **merged** with environment-defined credentials
-- **Environment credentials win** on access key collision (logged at WARN)
-- Duplicate access keys within the file are skipped (first wins)
-- File permissions are not checked (Kubernetes mounts manage this)
-- Validation errors name the entry index and field, never the values
+## Secondary backend
 
-**Why Use a File?**
-
-- Kubernetes deployments: mount a single Secret/ConfigMap instead of many env vars
-- External secret systems: sync credentials from a central source
-- Hot reloading: change credentials without pod restart (future feature)
-
-### Secondary Backend
-
-ARMOR supports an optional secondary backend for disaster recovery, backup, or multi-region replication. Secondary backends are configured via environment variables in one of two formats:
-
-#### Colon-Separated Format (ARMOR_SECONDARY_BACKEND)
-
-The secondary backend can be configured via a single colon-separated environment variable:
+ARMOR supports an optional secondary backend for disaster recovery, backup, or
+multi-region replication ([ADR-006](docs/adr/006-dual-backend-replication.md)).
+Writes are replicated asynchronously through a queue; reads always come from
+the primary.
 
 ```bash
 ARMOR_SECONDARY_BACKEND="filesystem:/backup/armor"
 ARMOR_SECONDARY_BACKEND="b2:us-east-005:https://s3.us-east-005.backblazeb2.com:KEYID:SECRET:mybucket"
 ```
 
-- **Filesystem format:** `filesystem:/path` - local filesystem backend at the given path
-- **B2 format:** `b2:region:endpoint:accessKeyId:secretKey:bucket` - B2 S3 backend
-
-When `ARMOR_SECONDARY_BACKEND` is unset or empty, the secondary backend is disabled.
-
-#### Individual Variable Format (ARMOR_SECONDARY_B2_*)
-
-For B2 secondary backends, individual environment variables can be used instead of the colon-separated format:
+To keep credentials out of the selector string, use the individual variables:
 
 ```bash
+ARMOR_SECONDARY_BACKEND=b2
 ARMOR_SECONDARY_B2_ENDPOINT=https://s3.us-east-005.backblazeb2.com
 ARMOR_SECONDARY_B2_KEY_ID=your-key-id
 ARMOR_SECONDARY_B2_KEY=your-key-secret
 ARMOR_SECONDARY_B2_BUCKET=your-bucket
 ```
 
-**Precedence:** The colon-separated `ARMOR_SECONDARY_BACKEND` format takes precedence over individual variables when both are configured.
+The compact `ARMOR_SECONDARY_BACKEND` form takes precedence over the individual
+variables when both are configured. The failover procedure is in
+[Disaster Recovery](docs/disaster-recovery.md).
 
-## S3 API Coverage
+## S3 API coverage
 
-### Transforming Operations (encryption/decryption applied)
+### Transforming operations (encryption/decryption applied)
 
 | Operation | Support |
 |-----------|---------|
-| PutObject | Full (streaming for large files) |
+| PutObject | Full (streaming for large files; `If-None-Match: *` create-only honored) |
 | GetObject | Full (range reads) |
 | HeadObject | Full (plaintext size, conditionals) |
 | CopyObject | Full (DEK re-wrapping, cross-bucket) |
-| CreateMultipartUpload | Full |
-| UploadPart | Full |
-| CompleteMultipartUpload | Full |
-| AbortMultipartUpload | Full |
-| ListParts | Full |
-| ListMultipartUploads | Full |
+| CreateMultipartUpload / UploadPart / CompleteMultipartUpload / AbortMultipartUpload | Full |
+| ListParts / ListMultipartUploads | Full |
 
-### Passthrough Operations
+### Passthrough operations
 
 | Operation | Support |
 |-----------|---------|
 | ListObjectsV2 | Full (size correction, `.armor/` filter) |
-| DeleteObject | Full |
-| DeleteObjects | Full |
+| DeleteObject / DeleteObjects | Full |
 | ListBuckets | Full |
 | CreateBucket / DeleteBucket / HeadBucket | Full |
 | Lifecycle configuration | Full |
 | Object Lock / Retention / Legal Hold | Full |
 
-**Reserved Namespace: `.armor/`**
+A detailed comparison against AWS S3 is in
+[docs/s3-compliance-comparison.md](docs/s3-compliance-comparison.md).
 
-The `.armor/` prefix is reserved for ARMOR internal use. Client operations targeting keys with this prefix return `403 AccessDenied`. This protects:
+**Reserved namespace: `.armor/`.** Client operations targeting keys under this
+prefix return `403 AccessDenied`. It holds the provenance chain
+(`.armor/chain/<writer>/*`, `.armor/chain-head/<writer>`), manifest deltas
+(`.armor/manifest/<writer>/*`), multipart HMAC sidecars (`.armor/hmac/<sha256>`),
+key-rotation state (`.armor/rotation-state.json`), multipart crash-recovery
+state (`.armor/multipart/*.state`) and canary objects (`.armor/canary/*`).
 
-- `.armor/chain/<writer>/*` — Tamper-evident provenance chain entries
-- `.armor/chain-head/<writer>` — Provenance chain head pointers
-- `.armor/manifest/<writer>/*` — Manifest delta files (IV + wrapped DEK entries)
-- `.armor/hmac/<sha256>` — Multipart upload HMAC sidecars
-- `.armor/rotation-state.json` — In-progress key rotation state
-- `.armor/multipart/*.state` — Crash recovery state for multipart uploads
-- `.armor/canary/*` — Health check canary objects
+## Multipart upload constraints
 
-Internal ARMOR components (provenance recorder, manifest persistence, canary, key rotation, multipart state manager) access these keys directly through the backend layer, bypassing the S3 handler guard.
+The constraints depend on the configured write format version
+(`ARMOR_FORMAT_VERSION`, reported by `armor version` and `/version`).
 
-## Multipart Upload Constraints
+### Format version 3 (default)
 
-The constraints depend on the configured write format version (`ARMOR_FORMAT_VERSION`, reported by `armor version`):
+**No part-order or part-size contract.** Parts are encrypted in independent
+counter namespaces, so any part sizes work (no block alignment), out-of-order
+and concurrent part uploads are fully supported, part retries are idempotent,
+and the only remaining rule is B2's own: non-final parts must be at least 5 MiB.
 
-### Format Version 3 (Default)
+### Format version 2 (legacy)
 
-**No part-order or part-size contract.** Parts are encrypted in independent counter namespaces, so:
+[ADR-015](docs/adr/015-out-of-order-multipart-uniform-part-size.md)'s
+uniform-part-size contract, as amended by
+[ADR-011](docs/adr/011-barman-stays-on-armor-non-uniform-multipart.md):
 
-- Any part sizes (non-uniform multipart uploads supported) and no block-alignment requirement
-- Out-of-order and concurrent part uploads fully supported — nothing is deferred or rejected for arrival order
-- Part retries are idempotent (same part number, same bytes → same offset)
-- The only remaining part-size rule is B2's own: non-final parts must be ≥ 5 MiB
-
-### Format Version 2 (Legacy)
-
-ADR-015's uniform-part-size contract, as amended by ADR-011:
-
-- **Part 1** pins the uniform part size `P` for the entire upload; part 1 itself may be any size
-- **Parts arriving before part 1** receive HTTP 503 SlowDown (retryable — standard clients retry it transparently)
+- Part 1 pins the uniform part size `P` for the entire upload; part 1 itself may be any size
+- Parts arriving before part 1 receive HTTP 503 SlowDown (retryable; standard clients retry transparently)
 - Every part except the highest-numbered one must be exactly `P`; the final part may be any size
-- **Non-uniform part sizes** (e.g., Barman's `chunk_size + N×512` pattern) switch the upload to ADR-011 non-uniform mode instead of failing
-- Genuine contract contradictions (a part larger than `P`, two short parts, a size-changing retry) poison the upload with a 400 — a loud failure, never silent corruption
+- Non-uniform part sizes (e.g. barman's `chunk_size + N×512` pattern) switch the upload to ADR-011 non-uniform mode instead of failing
+- Genuine contract contradictions poison the upload with a 400: a loud failure, never silent corruption
 
-**Optional tuning for format version 2** (not required — default client behavior already works):
-- AWS CLI: `multipart_chunksize = 67108864` (64 MiB)
-- rclone: `--s3-chunk-size 67108864` (64 MiB)
-- boto3: `TransferConfig(multipart_chunksize=64*1024*1024)`
+Optional tuning for format version 2 (not required): AWS CLI
+`multipart_chunksize = 67108864`, rclone `--s3-chunk-size 67108864`, boto3
+`TransferConfig(multipart_chunksize=64*1024*1024)`.
 
-### Migration (v2 → v3)
+### Migration (v1/v2 → v3)
 
-Existing format version 2 objects can be optionally migrated via `armor migrate` (see [Format Migration](#format-migration)).
+Existing objects are migrated in place with `armor migrate --admin-url
+http://127.0.0.1:9001 --target v3` (a client of `POST /admin/format/migrate`;
+requires `ARMOR_ADMIN_TOKEN`). Start with `--dry-run`. Per-client behavior on
+each format is documented, with the tests that back every row, in the
+[multipart client-concurrency compatibility matrix](docs/multipart-client-compatibility.md).
 
-### Checking Your Format Version
+## HTTP endpoints
 
-```bash
-# Check which format version your ARMOR instance writes
-armor version
-# Output includes: format_write_version: 2 or 3
+### S3 listener (`ARMOR_LISTEN`, default `:9000`)
 
-# Generate tool-specific config with appropriate constraints
-armor client-config --for aws-cli --endpoint http://localhost:9000
-# Output includes a multipart contract block for the configured write
-# format on both v2 and v3 — the part-order/part-size contract in force,
-# what this tool's default concurrency does against it, and a pointer to
-# the tested compatibility matrix.
-```
+| Path | Auth | Description |
+|---|---|---|
+| `/healthz` | none | Liveness: the process is up |
+| `/readyz` | none | Readiness: canary health (or always 200 when `ARMOR_CANARY_DISABLED=true`) |
+| `/version` | none | `{"version":"0.1.1969","format_write_version":3,"go":"1.25.0"}`. Every response also carries `Server: ARMOR/<version>` |
+| `/share/<token>` | token | Decrypted content for a pre-signed URL (only when `ARMOR_PRESIGN_ENABLED=true`) |
+| everything else | SigV4 | The S3 API |
 
-Per-client behavior — AWS CLI (default concurrency and serial), SDK transfer managers, rclone, litestream, barman — on each format is documented, together with the tests that back every row, in the [multipart client-concurrency compatibility matrix](docs/multipart-client-compatibility.md).
+### Admin listener (`ARMOR_ADMIN_LISTEN`, default `127.0.0.1:9001`)
 
-## Web Dashboard
+Routes marked *token* require `Authorization: Bearer <ARMOR_ADMIN_TOKEN>` and
+return 403 when no token is configured. Every gated call is audit-logged.
 
-A web dashboard for bucket browsing, encryption status, and metrics is available on the admin port (default `127.0.0.1:9001`):
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/healthz` | GET | none | Liveness |
+| `/version` | GET | none | Same JSON as on the S3 listener |
+| `/metrics` | GET | none | Prometheus metrics ([reference](docs/metrics.md)) |
+| `/armor/canary` | GET | none | Canary integrity status (single-PUT and multipart canaries) |
+| `/armor/audit` | GET | token | Walk the provenance chains and verify their integrity ([guide](docs/provenance-audit-walker.md)) |
+| `/admin/key/verify` | GET | token | Verify the MEK can decrypt the canary object |
+| `/admin/key/rotate` | POST | token | Rotate one MEK (`?key-id=<name>`, default key when omitted): re-wraps matching DEKs, no file re-upload; resumable ([runbook](docs/key-rotation-runbook.md)) |
+| `/admin/key/ring` | GET | token | Key-ring census from the manifest; `?census=head` walks the bucket instead |
+| `/admin/key/export` | GET | token | Export the current MEK (`?confirm=yes`) |
+| `/admin/format/migrate` | POST / GET | token | Start (`?dry_run=true`, `?include=v1,v2`, `?target=3`, `?concurrency=N`) or poll an envelope-format migration |
+| `/admin/manifest` | GET | token | Manifest state ([operator guide](docs/notes/manifest-repair-quarantine.md)) |
+| `/admin/manifest/repair` | POST | token | Re-stamp a manifest's completion marker |
+| `/admin/manifest/quarantine` | POST | token | Mark a manifest quarantined so stale entries are not served |
+| `/admin/manifest/release` | POST | token | Lift a quarantine |
+| `/admin/creds` | GET | token | List configured credentials (access keys and ACLs, never secrets) |
+| `/admin/provenance/compact` | POST | token | Compact the provenance chain |
+| `/admin/presign` | POST | token | Generate a pre-signed share URL (`ARMOR_PRESIGN_ENABLED=true`) |
+| `/admin/b2/keys` | GET / POST | token | List or create scoped B2 application keys |
+| `/admin/b2/keys/<id>` | DELETE | token | Delete a B2 application key |
+| `/dashboard`, `/dashboard/...` | GET / POST | dashboard auth | Web dashboard and its JSON API (`/dashboard/api/list`, `/dashboard/metrics`, `/dashboard/encryption-stats`, `/dashboard/credential-activity`, upload/download/delete, presign, key rotation) |
+
+## Web dashboard
+
+A web dashboard for bucket browsing, encryption status, and metrics is
+available on the admin port:
 
 ```bash
 open http://localhost:9001/dashboard
 ```
 
-Features:
-- Bucket browsing with prefix-based navigation
-- Encryption status badges per object (key name, ARMOR vs. unencrypted)
-- Metadata cache hit rates
-- Real-time metrics: requests, bytes transferred, uptime, canary status
+Bucket browsing with prefix navigation, encryption status badges per object
+(key name, ARMOR vs. unencrypted), metadata cache hit rates, and real-time
+metrics (requests, bytes transferred, uptime, canary status). See
+[docs/dashboard.md](docs/dashboard.md).
 
-See [docs/dashboard.md](docs/dashboard.md) for full documentation.
+## Disaster recovery / offline decryption
 
-## Admin API
+The `decrypt` subcommand recovers encrypted objects without a running ARMOR
+server. You need the MEK and either B2 access or a local copy of the
+encrypted object. The full procedures (MEK escrow, restore drills, secondary
+failover) are in [docs/disaster-recovery.md](docs/disaster-recovery.md).
 
-Key management and monitoring endpoints on the admin listener (`127.0.0.1:9001`):
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/healthz` | GET | Liveness check |
-| `/readyz` | GET | Readiness check (verifies B2 connectivity) |
-| `/metrics` | GET | Prometheus metrics |
-| `/admin/key/verify` | GET | Verify MEK can decrypt the canary object |
-| `/admin/key/rotate` | POST | Rotate one MEK (`?key-id=name`; default key when omitted) — re-wraps matching DEKs, no file re-upload |
-| `/admin/key/export` | GET | Export current MEK (`?confirm=yes`) |
-| `/armor/audit` | GET | Walk provenance chains, verify integrity |
-| `/admin/presign` | POST | Generate pre-signed share URL (requires `ARMOR_PRESIGN_ENABLED=true`) |
-| `/armor/canary` | GET | Canary integrity status |
-| `/dashboard` | GET | Web dashboard |
-| `/share/` | GET | Serve decrypted content from pre-signed URL token (requires `ARMOR_PRESIGN_ENABLED=true`) |
-
-## Repository Structure
-
-```
-ARMOR/
-├── cmd/armor/main.go          # Entrypoint
-├── internal/
-│   ├── server/                # S3 API handlers, auth
-│   ├── crypto/                # Encryption, decryption, envelope key management
-│   ├── backend/               # B2 S3 client, Cloudflare download routing
-│   ├── canary/                # Self-healing integrity monitor
-│   ├── config/                # Configuration loading (env vars)
-│   ├── keymanager/            # Multi-key routing
-│   ├── dashboard/             # Web dashboard UI and metrics
-│   ├── presign/               # Pre-signed URL generation
-│   ├── provenance/            # Cryptographic audit chain
-│   ├── logging/               # Structured JSON logging
-│   └── metrics/               # Prometheus metrics
-├── deploy/kubernetes/         # Kubernetes manifests
-├── tests/integration/         # Integration tests (requires real B2 + Cloudflare)
-└── docs/
-    ├── dashboard.md
-    ├── cloudflare-setup.md    # DNS configuration for zero-egress downloads
-    └── research/
-```
-
-## Documentation
-
-- **[Documentation Index](docs/README.md)** — Complete documentation organized by audience (Operate, Design, Test, Archive)
-- [Disaster Recovery](docs/disaster-recovery.md) — MEK backup/escrow, restore drills, rotation failure recovery
-- [Web Dashboard](docs/dashboard.md) — Bucket browsing, encryption status, cache statistics
-- [Cloudflare Setup](docs/cloudflare-setup.md) — DNS configuration for zero-egress B2 downloads
-- [Integration Tests](tests/integration/README.md) — Testing against real B2 + Cloudflare
-
-## Disaster Recovery / Offline Decryption
-
-ARMOR includes a `decrypt` subcommand for recovering encrypted objects without a running ARMOR server. This enables disaster recovery scenarios where you have:
-
-- The Master Encryption Key (MEK)
-- Access to B2 (or a local copy of an encrypted object)
-
-### Usage
-
-#### Decrypt from B2
+### Decrypt from B2
 
 ```bash
-# Decrypt directly from B2 (requires B2 credentials)
+# Decrypt directly from B2 (requires B2 credentials in the environment)
 armor decrypt \
-  -mek 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  -mek <64-hex-character-mek> \
   -input b2://my-bucket/path/to/file.encrypted \
   -output recovered-file.txt
 
-# Using MEK from environment
-export ARMOR_MEK=0123456789abcdef...
+# Using the MEK from the environment
+export ARMOR_MEK=<64-hex-character-mek>
 armor decrypt -input b2://my-bucket/file -output recovered.txt
 
 # With verbose output
-armor decrypt -mek HEX -input b2://bucket/file -v -output recovered.txt
+armor decrypt -mek <hex> -input b2://bucket/file -v -output recovered.txt
 ```
 
-Multipart objects (the usual shape for large backups) need no special flags
-here: the tool detects the `x-amz-meta-armor-multipart` marker in object
-metadata and switches to the headerless layout automatically.
+Multipart objects need no special flags: the tool detects the
+`x-amz-meta-armor-multipart` marker and switches to the headerless layout
+automatically. For an `ARMOR_PREFIX` deployment pass `-b2-prefix` (or set
+`ARMOR_PREFIX`) so the HMAC sidecar is found.
 
-#### Decrypt from Local File
+### Decrypt from a local file
 
-For local files, you need the wrapped DEK (from `x-amz-meta-armor-wrapped-dek` metadata):
+For local files you need the wrapped DEK (from `x-amz-meta-armor-wrapped-dek`):
 
 ```bash
 armor decrypt \
-  -mek 0123456789abcdef... \
+  -mek <hex> \
   -input /path/to/encrypted.bin \
-  -wrapped-dek WWF...base64... \
+  -wrapped-dek <base64-wrapped-dek> \
   -output plaintext.bin
 ```
 
-For a local copy of a **multipart** object (headerless ciphertext — no envelope
-header), two extra inputs are required, since the multipart layout has no
-header to read them from:
+For a local copy of a **multipart** object (headerless ciphertext) two extra
+inputs are required: the object IV (`-iv`, from `x-amz-meta-armor-iv`) and the
+JSON HMAC sidecar (`-sidecar`, stored at `.armor/hmac/<sha256-of-object-key>`;
+download it with any S3 client).
 
-```bash
-armor decrypt \
-  -mek 0123456789abcdef... \
-  -input /path/to/multipart-object.bin \
-  -wrapped-dek WWF...base64... \
-  -iv aabbccdd...00112233 \
-  -sidecar /path/to/object.hmac.json \
-  -output plaintext.bin
-```
+### Key requirements
 
-- `-iv` — the object IV, from the `x-amz-meta-armor-iv` metadata field (hex).
-- `-sidecar` — the JSON HMAC sidecar the server stores alongside every
-  multipart object at `.armor/hmac/<sha256-of-object-key>` (download it with
-  any S3 client; the hex key is `sha256sum` of the object key string).
-
-### Key Requirements
-
-- **MEK (Master Encryption Key)**: 32-byte hex string
-- **For B2**: `ARMOR_B2_REGION`, `ARMOR_B2_ENDPOINT`, `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`
-- **For local files**: Wrapped DEK (base64, from object metadata)
-
-### Multi-Key Support
-
-If your ARMOR deployment uses named keys (via `ARMOR_KEY_ROUTES`), specify the key ID:
-
-```bash
-armor decrypt \
-  -mek <hex-for-specific-key> \
-  -input b2://bucket/file \
-  -key-id sensitive \
-  -output recovered.txt
-```
-
-The key ID comes from the `x-amz-meta-armor-key-id` metadata header.
+- **MEK:** 32-byte hex string, via `-mek`, `-mek-file`, `-escrow <file>` or `ARMOR_MEK`
+- **For B2:** `ARMOR_B2_REGION`, `ARMOR_B2_ENDPOINT`, `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`
+- **Named keys:** pass `-key-id <name>` (from `x-amz-meta-armor-key-id`) with that key's MEK
 
 ### Verification
 
-The decrypt tool automatically:
-
-- Verifies per-block HMAC-SHA256 integrity on every object
-- Validates the plaintext SHA-256 checksum for single-PUT objects
-- Detects corrupted blocks or wrong MEK
+The decrypt tool verifies per-block HMAC-SHA256 on every object, validates the
+plaintext SHA-256 for single-PUT objects, and detects corrupted blocks or a
+wrong MEK. Exit code 0 is success; 1 is a failed decryption (wrong MEK,
+corrupted data, HMAC mismatch).
 
 **Multipart caveat:** multipart objects store a placeholder plaintext SHA-256
-(the digest of the empty string) rather than the true whole-object digest, so
-for those the tool verifies integrity via per-block HMACs only and skips the
-SHA check. Do not compare `sha256sum` of a recovered multipart object against
-`x-amz-meta-armor-plaintext-sha256` — it will not match, by design.
+(the digest of the empty string), so the tool verifies them by per-block HMAC
+only. Do not compare `sha256sum` of a recovered multipart object against
+`x-amz-meta-armor-plaintext-sha256`; it will not match, by design.
 
-Exit codes:
-- `0`: Success
-- `1`: Decryption failed (wrong MEK, corrupted data, HMAC mismatch)
+## Releases and versioning
 
-### Example Workflow
+- Versions are `0.1.<counter>`; the counter only increases and carries no
+  SemVer meaning. What changed is in [`CHANGELOG.md`](CHANGELOG.md).
+- A release is one commit, `release: armor <version>`, produced by
+  `scripts/cut-release.sh`, which bumps `VERSION` and writes the CHANGELOG
+  entry. CI builds and publishes the images, verifies each tag exists in the
+  registry, runs the compatibility suite, then creates the `v<version>` git
+  tag and the Forgejo and GitHub releases. Nothing is tagged by hand.
+- The badge at the top reflects the last release build on `main`.
+- Full procedure, fleet rollout and the correctness-fix propagation checklist:
+  [docs/release-process.md](docs/release-process.md).
 
-```bash
-# 1. List objects to find the target
-aws s3 ls --endpoint-url http://localhost:9000 s3://bucket/
+## Repository structure
 
-# 2. Get metadata to see key requirements
-aws s3api head-object --endpoint-url http://localhost:9000 \
-  --bucket bucket --key file
-
-# 3. Decrypt with the correct MEK
-armor decrypt -mek $ARMOR_MEK -input b2://bucket/file -output recovered
-
-# 4. Verify the recovered file
-#    Single-PUT objects only: should match x-amz-meta-armor-plaintext-sha256.
-#    Multipart objects carry a placeholder SHA there — the decrypt tool's
-#    per-block HMAC verification (a non-zero exit on failure) is the check.
-sha256sum recovered
+```
+ARMOR/
+├── cmd/
+│   ├── armor/                 # The server and its subcommands (serve, demo, check, decrypt, verify, migrate, client-config, version)
+│   ├── restore-verifier/      # Continuous restore verification harness (ADR-004)
+│   ├── armor-fleet/           # Fleet console: version and health across deployments
+│   └── verify-objects/        # Offline object verifier
+├── internal/
+│   ├── server/                # S3 handlers, admin API, auth middleware
+│   ├── crypto/                # Envelope encryption, seekable CTR, HMAC tables
+│   ├── backend/               # B2 S3 client, Cloudflare download routing, filesystem backend
+│   ├── config/                # Environment configuration (see Configuration reference)
+│   ├── acl/                   # Credential ACL evaluation (ADR-012)
+│   ├── keymanager/            # Multi-key routing and key rings
+│   ├── manifest/              # Manifest index (envelope metadata cache)
+│   ├── canary/                # Self-healing integrity monitor
+│   ├── provenance/            # Tamper-evident audit chain
+│   ├── replication/           # Secondary backend queue (ADR-006)
+│   ├── restoreverifier/       # restore-verifier library
+│   ├── dashboard/             # Web dashboard
+│   ├── presign/               # Pre-signed share URLs
+│   ├── b2keys/                # B2 application key management
+│   ├── metrics/, logging/     # Prometheus metrics, structured logging
+│   ├── docsindex/             # Tests that keep docs/README.md and this file in sync with the tree
+│   ├── version/               # Build-time version
+│   └── testutil/
+├── tests/
+│   ├── integration/           # Real B2 + Cloudflare (build tag `integration`)
+│   ├── aws-cli-compatibility/ # AWS CLI and rclone against a live endpoint
+│   ├── docker-demo-smoke/     # The README demo, replayed
+│   ├── fixtures/              # Migration fixtures and golden outcomes
+│   └── test_drift_check.py    # Drift tooling tests (python3 -m pytest)
+├── scripts/                   # definition-of-done.sh, release-gate.sh, cut-release.sh, drift check, ops tooling
+├── docs/                      # ADRs, runbooks, notes, plan (index: docs/README.md)
+├── config/drift-config.json   # Fleet drift-check configuration
+├── Dockerfile                 # Published image (final stage = armor server)
+├── AGENTS.md                  # Guide for contributors and agents
+├── CHANGELOG.md, VERSION      # Release record and counter
+└── Makefile
 ```
 
-### Backward Compatibility
+Deployment manifests live in `jedarden/declarative-config` under
+`k8s/<cluster>/<namespace>/armor-deployment.y*ml`, applied by ArgoCD.
 
-For backward compatibility during the transition period, the standalone `armor-decrypt` binary remains available. It delegates to `armor decrypt` internally and can be used interchangeably. New deployments should prefer `armor decrypt` directly.
+## Documentation
+
+- **[Documentation index](docs/README.md)** — every document, organized by audience (Operate, Design, Test, Archive)
+- [AGENTS.md](AGENTS.md) — how to build, test, track work and release in this repository
+- [Release process](docs/release-process.md) — cutting a release, what CI publishes, fleet rollout, fix propagation
+- [Disaster recovery](docs/disaster-recovery.md) — MEK backup/escrow, restore drills, secondary failover
+- [Key rotation runbook](docs/key-rotation-runbook.md)
+- [Cloudflare setup](docs/cloudflare-setup.md) — DNS configuration for zero-egress downloads
+- [Web dashboard](docs/dashboard.md)
+- [Integration tests](tests/integration/README.md) — testing against real B2 + Cloudflare
+- [Implementation plan](docs/plan/plan.md) — architecture, phases, decisions
 
 ## License
 
