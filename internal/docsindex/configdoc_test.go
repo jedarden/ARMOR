@@ -46,10 +46,11 @@ func TestUndocumentedEnvVars(t *testing.T) {
 	}
 }
 
-// TestReadmeDocumentsEveryConfigVariable is the repository-level guard: every
-// ARMOR_* variable that internal/config reads must appear in README.md, so
-// the configuration reference cannot silently fall behind the code.
-func TestReadmeDocumentsEveryConfigVariable(t *testing.T) {
+// TestConfigReferenceDocumentsEveryVariable is the repository-level guard:
+// every ARMOR_* variable that internal/config reads must appear in
+// docs/configuration.md, so the configuration reference cannot silently fall
+// behind the code. The README keeps only the required-minimum table.
+func TestConfigReferenceDocumentsEveryVariable(t *testing.T) {
 	root := repoRoot(t)
 	vars, err := ConfigEnvVars(filepath.Join(root, "internal", "config"))
 	if err != nil {
@@ -58,11 +59,11 @@ func TestReadmeDocumentsEveryConfigVariable(t *testing.T) {
 	if len(vars) == 0 {
 		t.Fatal("no ARMOR_* variables found under internal/config; the scanner is broken")
 	}
-	readme, err := os.ReadFile(filepath.Join(root, "README.md"))
+	ref, err := os.ReadFile(filepath.Join(root, "docs", "configuration.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missing := UndocumentedEnvVars(vars, readme); len(missing) != 0 {
-		t.Errorf("README.md does not document these variables read by internal/config (add them to the Configuration reference): %q", missing)
+	if missing := UndocumentedEnvVars(vars, ref); len(missing) != 0 {
+		t.Errorf("docs/configuration.md does not document these variables read by internal/config (add them to the Configuration reference): %q", missing)
 	}
 }

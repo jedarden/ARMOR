@@ -272,7 +272,9 @@ export ARMOR_BUCKET=my-bucket
 The following Compose file has two mutually exclusive profiles. The `demo`
 profile uses ARMOR's filesystem-backed demo mode and needs no B2 or Cloudflare
 credentials. The `production` profile passes through the B2 and ARMOR
-credentials from the shell environment. Set `ARMOR_VERSION` to the value in the
+credentials from the shell environment — the required minimum from the
+[Configuration Reference](configuration.md), which documents every variable
+ARMOR reads. Set `ARMOR_VERSION` to the value in the
 repository's [`VERSION`](../VERSION) file or to a published Docker Hub tag
 before starting either profile.
 

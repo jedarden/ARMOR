@@ -17,7 +17,8 @@ var envVarLiteral = regexp.MustCompile(`"(ARMOR_[A-Z0-9_]*)"`)
 
 // ConfigEnvVars returns, sorted and de-duplicated, every ARMOR_* environment
 // variable name that appears as a string literal in the non-test Go sources
-// of configDir. It is the set the README configuration reference must cover.
+// of configDir. It is the set the configuration reference
+// (docs/configuration.md) must cover.
 func ConfigEnvVars(configDir string) ([]string, error) {
 	seen := make(map[string]bool)
 	err := filepath.WalkDir(configDir, func(path string, d fs.DirEntry, err error) error {
@@ -57,13 +58,13 @@ func ConfigEnvVars(configDir string) ([]string, error) {
 	return vars, nil
 }
 
-// UndocumentedEnvVars returns every name in vars that readme does not
+// UndocumentedEnvVars returns every name in vars that doc does not
 // mention, sorted. A plain name counts as documented when it appears anywhere
-// in the README. A family prefix (name ending in "_") counts as documented
-// when the README shows its placeholder form, e.g. "ARMOR_MEK_<NAME>" for
+// in the document. A family prefix (name ending in "_") counts as documented
+// when the document shows its placeholder form, e.g. "ARMOR_MEK_<NAME>" for
 // "ARMOR_MEK_".
-func UndocumentedEnvVars(vars []string, readme []byte) []string {
-	text := string(readme)
+func UndocumentedEnvVars(vars []string, doc []byte) []string {
+	text := string(doc)
 	var missing []string
 	for _, v := range vars {
 		want := v
