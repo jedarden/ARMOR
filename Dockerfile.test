@@ -1,6 +1,8 @@
 # Test deployment image: compile the validated ARMOR server with the
 # repository's release-image test gate.
-FROM golang:1.25-alpine AS builder
+# Builder pin must equal go.mod's `toolchain` directive (single source of the
+# Go version — see the note in Dockerfile).
+FROM golang:1.25.14-alpine AS builder
 
 WORKDIR /build
 

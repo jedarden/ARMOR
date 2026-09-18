@@ -45,6 +45,12 @@ make build                           # every cmd/ binary into bin/ with the vers
 make help                            # the rest of the targets
 ```
 
+- **go.mod is the single source of the Go toolchain version** (its `toolchain`
+  directive). `Dockerfile` and `Dockerfile.test` pin `golang:<that
+  version>-alpine` and must be bumped in the same change; CI builds with
+  `GOTOOLCHAIN=local` on images at least that new. A local `go` newer than the
+  directive is fine — `make build` runs `toolchain-check`, which warns (never
+  fails) on a mismatch.
 - The definition of done for any code change is `scripts/definition-of-done.sh`
   green. CI (`armor-build` in iad-ci) additionally runs golangci-lint, the race
   release gate, an integration-suite compile, the Docker builds, a registry

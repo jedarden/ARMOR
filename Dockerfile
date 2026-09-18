@@ -1,5 +1,9 @@
 # Build stage
-FROM golang:1.25-alpine AS builder
+# Builder pin must equal go.mod's `toolchain` directive — with the pin
+# matching, the image's go is exactly the declared toolchain and nothing is
+# downloaded or substituted at build time. go.mod is the single source of
+# this version.
+FROM golang:1.25.14-alpine AS builder
 
 WORKDIR /build
 
