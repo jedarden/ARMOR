@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ import (
 func TestTextRendering(t *testing.T) {
 	got := Text("armor")
 
-	want := fmt.Sprintf("armor %s (%s, %s/%s)", Version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	want := fmt.Sprintf("armor %s (%s, %s/%s)", Effective(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	if got != want {
 		t.Errorf("Text(\"armor\") = %q, want %q", got, want)
 	}
@@ -44,17 +45,27 @@ func TestTextRenderingHonorsAppNameAndBuildVersion(t *testing.T) {
 
 // TestJSONRendering checks the --json form: a single-line object carrying
 // every field the text form prints (app, version, go, os, arch) plus the
-// envelope format version, in that key order.
+// envelope format version, in that key order. The commit/dirty fields are
+// optional: the test binary carries VCS stamping only when built inside a
+// git checkout, so the assertion requires the fixed prefix and allows any
+// well-formed tail behind it.
 func TestJSONRendering(t *testing.T) {
 	got, err := JSON("armor", DefaultFormatWriteVersion)
 	if err != nil {
 		t.Fatalf("JSON(\"armor\", %d) returned error: %v", DefaultFormatWriteVersion, err)
 	}
 
-	want := fmt.Sprintf(`{"app":"armor","version":%q,"go":%q,"os":%q,"arch":%q,"format_write_version":%d}`,
-		Version, runtime.Version(), runtime.GOOS, runtime.GOARCH, DefaultFormatWriteVersion)
-	if got != want {
-		t.Errorf("JSON(\"armor\", %d) =\n  %s\nwant\n  %s", DefaultFormatWriteVersion, got, want)
+	want := fmt.Sprintf(`{"app":"armor","version":%q,"go":%q,"os":%q,"arch":%q,"format_write_version":%d`,
+		Effective(), runtime.Version(), runtime.GOOS, runtime.GOARCH, DefaultFormatWriteVersion)
+	if !strings.HasPrefix(got, want) {
+		t.Errorf("JSON(\"armor\", %d) =\n  %s\nwant prefix\n  %s", DefaultFormatWriteVersion, got, want)
+	}
+	tail := strings.TrimPrefix(got, want)
+	switch {
+	case tail == "}":
+	case strings.HasPrefix(tail, `,"commit":`), strings.HasPrefix(tail, `,"dirty":`):
+	default:
+		t.Errorf("JSON(\"armor\", %d) = %q has unexpected tail %q after the fixed fields", DefaultFormatWriteVersion, got, tail)
 	}
 	if strings.Contains(got, "\n") {
 		t.Errorf("JSON output spans multiple lines: %q", got)
@@ -68,7 +79,7 @@ func TestJSONRendering(t *testing.T) {
 	if err := json.Unmarshal([]byte(got), &info); err != nil {
 		t.Fatalf("JSON output does not parse: %v", err)
 	}
-	if info.App != "armor" || info.Version != Version || info.OS != runtime.GOOS || info.Arch != runtime.GOARCH {
+	if info.App != "armor" || info.Version != Effective() || info.OS != runtime.GOOS || info.Arch != runtime.GOARCH {
 		t.Errorf("round-trip lost a text-form field: %+v", info)
 	}
 	if !strings.HasPrefix(info.Go, "go") {
@@ -90,4 +101,113 @@ func TestJSONRenderingPassesThroughFormatWriteVersion(t *testing.T) {
 	if !strings.Contains(got, `"format_write_version":2`) {
 		t.Errorf("JSON(\"armor\", 2) = %q, want format_write_version 2", got)
 	}
+}
+
+// withBuildInfo swaps the BuildInfo source for the duration of f so tests can
+// inject the exact BuildInfo a go-install or VCS-stamped build would carry.
+func withBuildInfo(t *testing.T, bi *debug.BuildInfo, ok bool, f func()) {
+	t.Helper()
+	origInfo, origVersion := buildInfo, Version
+	defer func() { buildInfo, Version = origInfo, origVersion }()
+	buildInfo = func() (*debug.BuildInfo, bool) { return bi, ok }
+	Version = "dev"
+	f()
+}
+
+// TestEffectiveFallsBackToBuildInfo covers the motivating case: a binary
+// built by `go install github.com/jedarden/armor/cmd/armor@v0.1.1970` carries
+// no ldflags version, so Effective falls back to the module version the
+// toolchain records, stripped of its "v" to match the VERSION file format.
+func TestEffectiveFallsBackToBuildInfo(t *testing.T) {
+	withBuildInfo(t, &debug.BuildInfo{Main: debug.Module{Version: "v0.1.1970"}}, true, func() {
+		if got := Effective(); got != "0.1.1970" {
+			t.Errorf("Effective() = %q, want %q", got, "0.1.1970")
+		}
+		if got, want := Text("armor"), "armor 0.1.1970 ("; !strings.HasPrefix(got, want) {
+			t.Errorf("Text(\"armor\") = %q, want prefix %q", got, want)
+		}
+		got, err := JSON("armor", DefaultFormatWriteVersion)
+		if err != nil {
+			t.Fatalf("JSON(\"armor\", %d) returned error: %v", DefaultFormatWriteVersion, err)
+		}
+		if !strings.Contains(got, `"version":"0.1.1970"`) {
+			t.Errorf("JSON output = %q, want version 0.1.1970", got)
+		}
+	})
+}
+
+// TestEffectiveIgnoresDevelAndMissingBuildInfo pins the development-build
+// behavior: a plain `go build` in a module directory records "(devel)", some
+// contexts record no version at all, and a binary compiled without build
+// info returns ok=false. None of these may be reported as a version.
+func TestEffectiveIgnoresDevelAndMissingBuildInfo(t *testing.T) {
+	cases := []struct {
+		name string
+		bi   *debug.BuildInfo
+		ok   bool
+	}{
+		{"devel marker", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true},
+		{"empty version", &debug.BuildInfo{Main: debug.Module{Version: ""}}, true},
+		{"no build info", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withBuildInfo(t, tc.bi, tc.ok, func() {
+				if got := Effective(); got != "dev" {
+					t.Errorf("Effective() = %q, want %q", got, "dev")
+				}
+			})
+		})
+	}
+}
+
+// TestEffectiveKeepsLdflagsPrecedence proves an ldflags-injected version
+// wins: `make build` and CI set Version through -X and the fallback must
+// never override it even when build info carries a module version.
+func TestEffectiveKeepsLdflagsPrecedence(t *testing.T) {
+	withBuildInfo(t, &debug.BuildInfo{Main: debug.Module{Version: "v0.1.1970"}}, true, func() {
+		Version = "0.1.1969"
+		if got := Effective(); got != "0.1.1969" {
+			t.Errorf("Effective() = %q, want the ldflags value %q", got, "0.1.1969")
+		}
+	})
+}
+
+// TestJSONSurfacesVCSInfo checks the optional vcs.revision / vcs.modified
+// reporting: present settings reach the JSON object as commit/dirty, and a
+// build without VCS stamping (proxy downloads build from the module zip)
+// omits both keys.
+func TestJSONSurfacesVCSInfo(t *testing.T) {
+	t.Run("stamped", func(t *testing.T) {
+		bi := &debug.BuildInfo{
+			Main: debug.Module{Version: "v0.1.1970"},
+			Settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: "3f39c3f9abc"},
+				{Key: "vcs.modified", Value: "true"},
+			},
+		}
+		withBuildInfo(t, bi, true, func() {
+			got, err := JSON("armor", DefaultFormatWriteVersion)
+			if err != nil {
+				t.Fatalf("JSON(\"armor\", %d) returned error: %v", DefaultFormatWriteVersion, err)
+			}
+			if !strings.Contains(got, `"commit":"3f39c3f9abc"`) {
+				t.Errorf("JSON output = %q, want commit 3f39c3f9abc", got)
+			}
+			if !strings.Contains(got, `"dirty":true`) {
+				t.Errorf("JSON output = %q, want dirty true", got)
+			}
+		})
+	})
+	t.Run("unstamped", func(t *testing.T) {
+		withBuildInfo(t, &debug.BuildInfo{Main: debug.Module{Version: "v0.1.1970"}}, true, func() {
+			got, err := JSON("armor", DefaultFormatWriteVersion)
+			if err != nil {
+				t.Fatalf("JSON(\"armor\", %d) returned error: %v", DefaultFormatWriteVersion, err)
+			}
+			if strings.Contains(got, "commit") || strings.Contains(got, "dirty") {
+				t.Errorf("JSON output = %q, want no commit/dirty keys without VCS stamping", got)
+			}
+		})
+	})
 }

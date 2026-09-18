@@ -53,8 +53,8 @@ func TestVersionEndpoint(t *testing.T) {
 	}
 
 	// Verify version
-	if result.Version != version.Version {
-		t.Errorf("expected version %q, got %q", version.Version, result.Version)
+	if result.Version != version.Effective() {
+		t.Errorf("expected version %q, got %q", version.Effective(), result.Version)
 	}
 
 	// Verify format_write_version
@@ -108,8 +108,8 @@ func TestVersionEndpointOnAdminListener(t *testing.T) {
 	}
 
 	// Verify version
-	if result.Version != version.Version {
-		t.Errorf("expected version %q, got %q", version.Version, result.Version)
+	if result.Version != version.Effective() {
+		t.Errorf("expected version %q, got %q", version.Effective(), result.Version)
 	}
 }
 
@@ -195,7 +195,7 @@ func TestServerHeaderOnS3Listener(t *testing.T) {
 				t.Error("expected Server header to be set, but it was empty")
 			}
 			if tt.expectServer && serverHeader != "" {
-				expectedServer := "ARMOR/" + version.Version
+				expectedServer := "ARMOR/" + version.Effective()
 				if serverHeader != expectedServer {
 					t.Errorf("expected Server header %q, got %q", expectedServer, serverHeader)
 				}
@@ -256,7 +256,7 @@ func TestServerHeaderOnAdminListener(t *testing.T) {
 				t.Error("expected Server header to be set, but it was empty")
 			}
 			if tt.expectServer && serverHeader != "" {
-				expectedServer := "ARMOR/" + version.Version
+				expectedServer := "ARMOR/" + version.Effective()
 				if serverHeader != expectedServer {
 					t.Errorf("expected Server header %q, got %q", expectedServer, serverHeader)
 				}

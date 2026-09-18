@@ -16,7 +16,7 @@ import (
 func ServerHeader(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Add Server header to response
-		w.Header().Set("Server", fmt.Sprintf("ARMOR/%s", version.Version))
+		w.Header().Set("Server", fmt.Sprintf("ARMOR/%s", version.Effective()))
 		next.ServeHTTP(w, r)
 	})
 }
@@ -37,6 +37,6 @@ func VersionHandler(cfg *config.Config) http.HandlerFunc {
 		goVersion := strings.TrimPrefix(runtime.Version(), "go")
 
 		fmt.Fprintf(w, `{"version":"%s","format_write_version":%d,"go":"%s"}`,
-			version.Version, cfg.FormatWriteVersion, goVersion)
+			version.Effective(), cfg.FormatWriteVersion, goVersion)
 	}
 }
