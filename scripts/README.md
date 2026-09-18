@@ -540,7 +540,7 @@ Verification script for multipart-era corruption audit.
 2. output.json - Optional output file for verification results
 
 **Environment variables:**
-- `ARMOR_DECRYPT_PATH` - Path to armor-decrypt binary (default: armor-decrypt from PATH)
+- `ARMOR_DECRYPT_PATH` - Path to the `armor` binary (default: `armor` from PATH); the script runs `armor decrypt`
 
 **Examples:**
 ```bash
@@ -550,8 +550,8 @@ python3 scripts/verify-multipart-integrity.py candidates.json
 # Verify with output file
 python3 scripts/verify-multipart-integrity.py candidates.json results.json
 
-# Use custom decrypt binary
-ARMOR_DECRYPT_PATH=/path/to/armor-decrypt \
+# Use a specific armor binary
+ARMOR_DECRYPT_PATH=/path/to/armor \
 python3 scripts/verify-multipart-integrity.py candidates.json
 ```
 

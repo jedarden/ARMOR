@@ -1,6 +1,6 @@
 # ARMOR Disaster Recovery Runbook
 
-This document covers disaster recovery procedures for ARMOR deployments, including MEK backup/escrow, restore drills, key rotation failure recovery, and data recovery limitations.
+This document covers disaster recovery procedures for ARMOR deployments, including MEK backup/escrow, restore drills, offline decryption with `armor decrypt`, key rotation failure recovery, and data recovery limitations.
 
 ## TL;DR Critical Points
 
@@ -15,11 +15,12 @@ This document covers disaster recovery procedures for ARMOR deployments, includi
 
 1. [MEK Backup and Escrow](#mek-backup-and-escrow)
 2. [Restore Drill: Recovering from Complete Deployment Loss](#restore-drill-recovering-from-complete-deployment-loss)
-3. [Key Rotation Failure Recovery](#key-rotation-failure-recovery)
-4. [Multipart Upload Recovery](#multipart-upload-recovery)
-5. [B2 Account or Bucket Gone: Provider-Outage Recovery](#b2-account-or-bucket-gone-provider-outage-recovery)
-6. [What is NOT Recoverable](#what-is-not-recoverable)
-7. [Verification and Testing](#verification-and-testing)
+3. [Offline Decryption Without ARMOR](#offline-decryption-without-armor-verified-2026-08-08)
+4. [Key Rotation Failure Recovery](#key-rotation-failure-recovery)
+5. [Multipart Upload Recovery](#multipart-upload-recovery)
+6. [B2 Account or Bucket Gone: Provider-Outage Recovery](#b2-account-or-bucket-gone-provider-outage-recovery)
+7. [What is NOT Recoverable](#what-is-not-recoverable)
+8. [Verification and Testing](#verification-and-testing)
 
 ---
 
@@ -653,6 +654,63 @@ preserves block order, and fails the whole read if any block fails or is
 truncated. `ARMOR_READ_CONCURRENCY` controls the maximum number of ranged GETs
 in flight and defaults to 16. `armor decrypt` remains faster in a direct-B2
 configuration because it bypasses the Cloudflare path, at billed egress.
+
+### Decrypt tool reference
+
+`armor decrypt` is the only supported decryption entry point. The commands
+below cover the inputs it accepts beyond the B2 procedure above.
+
+From B2, multipart objects need no special flags: the tool detects the
+`x-amz-meta-armor-multipart` marker and switches to the headerless layout
+automatically. For an `ARMOR_PREFIX` deployment pass `-b2-prefix` (or set
+`ARMOR_PREFIX`) so the HMAC sidecar is found.
+
+```bash
+# Decrypt directly from B2 (requires B2 credentials in the environment)
+armor decrypt \
+  -mek <64-hex-character-mek> \
+  -input b2://my-bucket/path/to/file.encrypted \
+  -output recovered-file.txt
+
+# Using the MEK from the environment
+export ARMOR_MEK=<64-hex-character-mek>
+armor decrypt -input b2://my-bucket/file -output recovered.txt
+
+# With verbose output
+armor decrypt -mek <hex> -input b2://bucket/file -v -output recovered.txt
+```
+
+For local files you need the wrapped DEK (from `x-amz-meta-armor-wrapped-dek`):
+
+```bash
+armor decrypt \
+  -mek <hex> \
+  -input /path/to/encrypted.bin \
+  -wrapped-dek <base64-wrapped-dek> \
+  -output plaintext.bin
+```
+
+For a local copy of a **multipart** object (headerless ciphertext) two extra
+inputs are required: the object IV (`-iv`, from `x-amz-meta-armor-iv`) and the
+JSON HMAC sidecar (`-sidecar`, stored at `.armor/hmac/<sha256-of-object-key>`;
+for v3 it is the gzip-compressed JSON described under
+[V3 Format Support](#v3-format-support); download it with any S3 client).
+
+**Key requirements:**
+
+- **MEK:** 32-byte hex string, via `-mek`, `-mek-file`, `-escrow <file>` or `ARMOR_MEK`
+- **For B2:** `ARMOR_B2_REGION`, `ARMOR_B2_ENDPOINT`, `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`
+- **Named keys:** pass `-key-id <name>` (from `x-amz-meta-armor-key-id`) with that key's MEK
+
+**Verification:** the tool verifies per-block HMAC-SHA256 on every object,
+validates the plaintext SHA-256 for single-PUT objects, and detects corrupted
+blocks or a wrong MEK. Exit code 0 is success; 1 is a failed decryption (wrong
+MEK, corrupted data, HMAC mismatch).
+
+**Multipart caveat:** multipart objects store a placeholder plaintext SHA-256
+(the digest of the empty string), so the tool verifies them by per-block HMAC
+only. Do not compare `sha256sum` of a recovered multipart object against
+`x-amz-meta-armor-plaintext-sha256`; it will not match, by design.
 
 ## Key Rotation Failure Recovery
 
@@ -1357,7 +1415,7 @@ armor decrypt \
 - [ARMOR README](../README.md) — Project overview and quick start
 - [ARMOR Plan](plan/plan.md) — Comprehensive implementation details (see §8.13 for MEK key ring)
 - [Admin API Endpoints](../README.md#admin-api) — Full admin API reference
-- [Offline Decrypt CLI](../README.md#disaster-recovery--offline-decryption) — Decrypt tool documentation
+- [Offline Decrypt CLI](#offline-decryption-without-armor-verified-2026-08-08) — Decrypt tool documentation (in this document)
 - [Envelope Encryption Format](plan/plan.md#encryption-scheme) — Cryptographic design
 - [Key Rotation Runbook](key-rotation-runbook.md) — Rotation procedure with MEK key ring (v0.1.1922+)
 - [ADR-006: Dual-Backend Async Replication](adr/006-dual-backend-replication.md) — Design and tradeoffs behind the secondary backend and this section's recovery procedure

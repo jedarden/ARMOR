@@ -9,7 +9,7 @@ This index organizes all durable documentation by audience. Every file under `do
 - **[Release Process](release-process.md)** — Cutting a release (`scripts/cut-release.sh`: VERSION + CHANGELOG), what CI builds, tags and publishes, fleet rollout through declarative-config, and the correctness-fix propagation checklist
 - **[Key Rotation Runbook](key-rotation-runbook.md)** — Step-by-step MEK rotation procedure with rollback guidance
 - **[Unified Bucket Tenant Onboarding](runbooks/unified-bucket-tenant-onboarding.md)** — Adding a tenant to the shared ADR-001 bucket, prefix-scoped keys, per-tenant MEK, and the data move
-- **[Disaster Recovery](disaster-recovery.md)** — MEK backup/escrow, restore drills, recovery from rotation failures, and the ADR-006 provider-outage (secondary-backend) failover procedure
+- **[Disaster Recovery](disaster-recovery.md)** — MEK backup/escrow, restore drills, offline decryption with the `armor decrypt` CLI, recovery from rotation failures, and the ADR-006 provider-outage (secondary-backend) failover procedure
 - **[Drift Check](drift-check.md)** — Version drift detection between ARMOR instances and rollback coordination
 - **[Connection Guide](connection-guide.md)** — Network topology, Cloudflare PNI setup, and connectivity troubleshooting
 - **[Cloudflare Setup](cloudflare-setup.md)** — DNS and CDN configuration for zero-egress downloads

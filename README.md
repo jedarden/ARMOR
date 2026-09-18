@@ -56,7 +56,7 @@ Silicon, add `--platform linux/amd64` to `docker pull` and `docker run`.
 - [Multipart upload constraints](#multipart-upload-constraints)
 - [HTTP endpoints](#http-endpoints)
 - [Web dashboard](#web-dashboard)
-- [Disaster recovery / offline decryption](#disaster-recovery--offline-decryption)
+- [Disaster recovery](#disaster-recovery)
 - [Releases and versioning](#releases-and-versioning)
 - [Repository structure](#repository-structure)
 - [Documentation](#documentation)
@@ -166,7 +166,7 @@ Go 1.25 or newer is required (`go.mod`). Contributors and agents: read
 | `demo` | Start ARMOR with a temporary filesystem backend and fixed credentials (`--listen`, `--admin-listen`, `--dir`) |
 | `check` | Verify a deployment: config, backend connectivity (HeadBucket), the Cloudflare path (ranged GET) and MEK correctness via the canary. Exit 0 ok, 1 config error, 2 connectivity or MEK failure |
 | `client-config` | Print known-good configuration for `aws-cli`, `rclone`, `boto3`, `duckdb`, `litestream` or `barman` (`--for`, `--endpoint`, `--bucket`, `--credential`) |
-| `decrypt` | Decrypt objects offline with only the MEK and B2 access (or a local ciphertext copy); see [Disaster recovery](#disaster-recovery--offline-decryption) |
+| `decrypt` | Decrypt objects offline with only the MEK and B2 access (or a local ciphertext copy); see [Disaster recovery](#disaster-recovery) |
 | `verify` | Verify encrypted objects for corruption: HMAC and digest checks over a prefix, a keys file, or a time window (`--prefix`, `--keys-file`, `--since`, `--quick`) |
 | `migrate` | Client of `POST /admin/format/migrate`: migrate legacy-format objects to the current envelope format (`--admin-url`, `--target`, `--include`, `--dry-run`, `--watch`) |
 | `version` | Print `armor <version> (<go>, <os>/<arch>)`. The same information is served as JSON at `/version` |
@@ -753,69 +753,15 @@ Bucket browsing with prefix navigation, encryption status badges per object
 metrics (requests, bytes transferred, uptime, canary status). See
 [docs/dashboard.md](docs/dashboard.md).
 
-## Disaster recovery / offline decryption
+## Disaster recovery
 
 The `decrypt` subcommand recovers encrypted objects without a running ARMOR
-server. You need the MEK and either B2 access or a local copy of the
-encrypted object. The full procedures (MEK escrow, restore drills, secondary
-failover) are in [docs/disaster-recovery.md](docs/disaster-recovery.md).
-
-### Decrypt from B2
-
-```bash
-# Decrypt directly from B2 (requires B2 credentials in the environment)
-armor decrypt \
-  -mek <64-hex-character-mek> \
-  -input b2://my-bucket/path/to/file.encrypted \
-  -output recovered-file.txt
-
-# Using the MEK from the environment
-export ARMOR_MEK=<64-hex-character-mek>
-armor decrypt -input b2://my-bucket/file -output recovered.txt
-
-# With verbose output
-armor decrypt -mek <hex> -input b2://bucket/file -v -output recovered.txt
-```
-
-Multipart objects need no special flags: the tool detects the
-`x-amz-meta-armor-multipart` marker and switches to the headerless layout
-automatically. For an `ARMOR_PREFIX` deployment pass `-b2-prefix` (or set
-`ARMOR_PREFIX`) so the HMAC sidecar is found.
-
-### Decrypt from a local file
-
-For local files you need the wrapped DEK (from `x-amz-meta-armor-wrapped-dek`):
-
-```bash
-armor decrypt \
-  -mek <hex> \
-  -input /path/to/encrypted.bin \
-  -wrapped-dek <base64-wrapped-dek> \
-  -output plaintext.bin
-```
-
-For a local copy of a **multipart** object (headerless ciphertext) two extra
-inputs are required: the object IV (`-iv`, from `x-amz-meta-armor-iv`) and the
-JSON HMAC sidecar (`-sidecar`, stored at `.armor/hmac/<sha256-of-object-key>`;
-download it with any S3 client).
-
-### Key requirements
-
-- **MEK:** 32-byte hex string, via `-mek`, `-mek-file`, `-escrow <file>` or `ARMOR_MEK`
-- **For B2:** `ARMOR_B2_REGION`, `ARMOR_B2_ENDPOINT`, `ARMOR_B2_ACCESS_KEY_ID`, `ARMOR_B2_SECRET_ACCESS_KEY`
-- **Named keys:** pass `-key-id <name>` (from `x-amz-meta-armor-key-id`) with that key's MEK
-
-### Verification
-
-The decrypt tool verifies per-block HMAC-SHA256 on every object, validates the
-plaintext SHA-256 for single-PUT objects, and detects corrupted blocks or a
-wrong MEK. Exit code 0 is success; 1 is a failed decryption (wrong MEK,
-corrupted data, HMAC mismatch).
-
-**Multipart caveat:** multipart objects store a placeholder plaintext SHA-256
-(the digest of the empty string), so the tool verifies them by per-block HMAC
-only. Do not compare `sha256sum` of a recovered multipart object against
-`x-amz-meta-armor-plaintext-sha256`; it will not match, by design.
+server — it needs the MEK and either B2 access or a local copy of the object,
+and self-verifies every block it decrypts. Multipart objects store a
+placeholder plaintext SHA-256, so recovered multipart output will not match
+`sha256sum`, by design. The full runbook — decrypt commands, key requirements,
+MEK escrow, restore drills, secondary failover — is in
+[docs/disaster-recovery.md](docs/disaster-recovery.md).
 
 ## Releases and versioning
 
@@ -881,7 +827,7 @@ Deployment manifests live in `jedarden/declarative-config` under
 - **[Documentation index](docs/README.md)** — every document, organized by audience (Operate, Design, Test, Archive)
 - [AGENTS.md](AGENTS.md) — how to build, test, track work and release in this repository
 - [Release process](docs/release-process.md) — cutting a release, what CI publishes, fleet rollout, fix propagation
-- [Disaster recovery](docs/disaster-recovery.md) — MEK backup/escrow, restore drills, secondary failover
+- [Disaster recovery](docs/disaster-recovery.md) — MEK backup/escrow, restore drills, offline decryption, secondary failover
 - [Key rotation runbook](docs/key-rotation-runbook.md)
 - [Cloudflare setup](docs/cloudflare-setup.md) — DNS configuration for zero-egress downloads
 - [Web dashboard](docs/dashboard.md)

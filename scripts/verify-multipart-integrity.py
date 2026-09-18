@@ -37,12 +37,14 @@ def run_armor_decrypt(bucket: str, key: str, output_path: str, timeout_sec: int 
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.alarm(timeout_sec)
 
-        # Run armor-decrypt command
-        armor_decrypt = os.environ.get('ARMOR_DECRYPT_PATH', 'armor-decrypt')
+        # Run the `armor decrypt` subcommand (the standalone armor-decrypt
+        # binary was folded into `armor decrypt`; ARMOR_DECRYPT_PATH now
+        # points at the armor binary itself)
+        armor_bin = os.environ.get('ARMOR_DECRYPT_PATH', 'armor')
         cmd = [
-            armor_decrypt,
-            '-bucket', bucket,
-            '-key', key,
+            armor_bin,
+            'decrypt',
+            '-input', f'b2://{bucket}/{key}',
             '-output', output_path
         ]
 
