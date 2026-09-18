@@ -120,6 +120,7 @@ Contextual notes and temporary documentation:
 
 **For QA engineers validating ARMOR compatibility and correctness.**
 
+- **[Test Suites](../tests/README.md)** — Every suite under `tests/`: what it covers, the command that runs it, prerequisites, and which CI steps run it
 - **[Integration Tests](../tests/integration/README.md)** — Real B2 + Cloudflare integration test suite
 - **[AWS CLI Compatibility Tests](../tests/aws-cli-compatibility/README.md)** — AWS CLI and rclone compatibility verification
 - **[Multipart Client-Concurrency Compatibility Matrix](multipart-client-compatibility.md)** — What AWS CLI (serial and default concurrency), SDK transfer managers, rclone, litestream, and barman experience per write format; reconciles the unmodified-client claim with ADR-003 §4's superseded sequential-only era
