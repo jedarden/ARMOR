@@ -1,0 +1,18 @@
+{
+  "name": "1-block-single-put",
+  "description": "Minimal single-PUT object (1 block, uncompressed)",
+  "dek": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "iv": "CgsMDQ4PEBESExQVFhcYGQ==",
+  "part": 0,
+  "block_size": 65536,
+  "plaintext": "SGVsbG8sIEFSTU9SIHYzISBUaGlzIGlzIGEgdGVzdCBwbGFpbnRleHQgZm9yIHRoZSAxLWJsb2NrIHNpbmdsZS1QVVQgdmVjdG9yLg==",
+  "header": "QVJNUgMQCgsMDQ4PEBESExQVFhcYGUwAAAAAAAAAICgJD6tfsrZkADgZNCCepvJUXTtRD/o9cf5LR6FoayMAAA==",
+  "ciphertext": "Zc73mQJM5dhObhc+lO+SZwaLMPstSVxo4QBVn5nqtHIbKiMbkT0f3Z5BDaIUfrzIEDQhB0tNsaTbw6efPt9GPwX7bf412asYlcSgfQ==",
+  "hmac": "YD/XkNNhESZYdp6zd3gADDhEDQMbXqfuMHd2+AGQgb0=",
+  "blocks": [
+    {
+      "hmac": "YD/XkNNhESZYdp6zd3gADDhEDQMbXqfuMHd2+AGQgb0=",
+      "clen": 76
+    }
+  ]
+}

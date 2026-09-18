@@ -3,6 +3,7 @@ package crypto
 import (
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,16 +50,31 @@ type V3PartEntry struct {
 	Blocks         []V3BlockEntry `json:"blocks"`         // Array of [hmac, clen] pairs
 }
 
+// updateGoldens regenerates the golden vector files in testdata/v3 instead
+// of verifying them. It is registered as a real flag so the documented
+// invocation works as written (the previous os.Args scan never ran: the test
+// binary's own flag parsing rejected the unregistered -update first):
+//
+//	go test ./internal/crypto -run TestGenerateV3Vectors -update
+var updateGoldens = flag.Bool("update", false, "regenerate golden v3 test vector files")
+
+// TestMain exists to parse -update. There may be only one TestMain per test
+// binary; this one covers both test packages in internal/crypto (crypto and
+// crypto_test are linked into a single binary).
+func TestMain(m *testing.M) {
+	flag.Parse()
+	os.Exit(m.Run())
+}
+
 // TestGenerateV3Vectors generates v3 test vectors.
+// This is the authoritative v3 vector generator: it builds vectors with the
+// production crypto functions (EncryptBlockV3, NewEnvelopeHeaderWithVersion,
+// HKDF-derived HMAC keys), so the committed goldens pin real implementation
+// output. cmd/armor decrypts these same files, and docs/format/envelope-v3.md
+// documents them.
 // Run with: go test ./internal/crypto -run TestGenerateV3Vectors -update
 func TestGenerateV3Vectors(t *testing.T) {
-	update := false
-	for _, arg := range os.Args {
-		if arg == "-update" {
-			update = true
-			break
-		}
-	}
+	update := *updateGoldens
 
 	testDir := "testdata/v3"
 	if update {
@@ -447,8 +463,25 @@ func verifyTestVector(t *testing.T, vec *V3TestVector) {
 		decrypted, err := decryptor.DecryptV3(ciphertext, vec.Part, blockTable)
 		require.NoError(t, err, "Failed to decrypt v3 blocks")
 
-		// Verify decryption round-trip
-		assert.Equal(t, plaintext, decrypted, "Decrypted plaintext should match original")
+		// Verify decryption round-trip. A multipart vector records the whole
+		// object's plaintext (cmd/armor's tests compare the fully reassembled
+		// object against it), but Ciphertext/Blocks carry only vec.Part's
+		// blocks — the sidecar holds the rest — so the block-table round-trip
+		// recovers just that part's slice of the plaintext.
+		want := plaintext
+		if vec.Sidecar != nil {
+			partLen := -1
+			for _, p := range vec.Sidecar.Parts {
+				if int(p.N) == int(vec.Part) {
+					partLen = int(p.PlaintextLen)
+					break
+				}
+			}
+			require.GreaterOrEqual(t, partLen, 0, "Sidecar has no entry for part %d", vec.Part)
+			require.LessOrEqual(t, partLen, len(plaintext), "Sidecar part %d length exceeds recorded plaintext", vec.Part)
+			want = plaintext[:partLen]
+		}
+		assert.Equal(t, want, decrypted, "Decrypted plaintext should match original")
 	} else {
 		// Single block verification
 		// Decode expected HMAC
