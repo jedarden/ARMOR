@@ -203,10 +203,12 @@ E       + [1, 2, 0, 4]
 
 ## Related Documentation
 
-- [bf-1wxppv: Pytest Flags Test Results](../notes/bf-1wxppv-pytest-flags-test-results.md)
-- [bf-1rgu22: Pytest Assertion Output Flags Research](../notes/bf-1rgu22.md)
-- [bf-1wim6c: Pytest Assertion Flags Research](../notes/bf-1wim6c.md)
 - [Pytest Official Documentation](https://docs.pytest.org/en/stable/how-to/output.html)
+
+The bf-1wxppv / bf-1rgu22 / bf-1wim6c bead-scratch notes formerly linked here
+lived in the root `notes/` tree, which was removed from the repository on
+2026-09-18 (armor-c70bb108); they are retrievable from git history if ever
+needed.
 
 ## Version Information
 
