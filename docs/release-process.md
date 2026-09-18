@@ -1,583 +1,309 @@
 # ARMOR Release Process
 
-This document covers ARMOR release processes, with special emphasis on **correctness fix propagation** — ensuring that data-integrity and correctness fixes reach every ARMOR deployment.
+How a change in this repository becomes a versioned artifact running on the
+fleet, and how a correctness fix is proven to have reached every deployment.
 
-## Table of Contents
-
-1. [Correctness Fix Propagation Checklist](#correctness-fix-propagation-checklist)
-2. [ARMOR Deployment Inventory](#armor-deployment-inventory)
-3. [Verification Procedures](#verification-procedures)
-4. [Tracking Pending Deployments](#tracking-pending-deployments)
-5. [Release Classification](#release-classification)
+1. [What a release is](#what-a-release-is)
+2. [Cutting a release](#cutting-a-release)
+3. [What CI does](#what-ci-does)
+4. [Verifying a release](#verifying-a-release)
+5. [Rolling the fleet forward](#rolling-the-fleet-forward)
+6. [Correctness-fix propagation](#correctness-fix-propagation)
+7. [Drift monitoring](#drift-monitoring)
+8. [Troubleshooting](#troubleshooting)
+9. [History](#history)
 
 ---
 
-## Correctness Fix Propagation Checklist
+## What a release is
 
-### Definition: Correctness/Data-Integrity Fix
+| Artifact | Where | Made by |
+|---|---|---|
+| `VERSION` (`0.1.<counter>`) and a `CHANGELOG.md` entry | this repo, one commit `release: armor <version>` | `scripts/cut-release.sh` |
+| `ronaldraygun/armor:<version>` (server), `ronaldraygun/armor-restore-verifier:<version>`, `ronaldraygun/armor-fleet:<version>` | Docker Hub (private namespace) | CI |
+| `ghcr.io/jedarden/armor:<version>` (server, public mirror) | GHCR | CI |
+| Annotated git tag `v<version>` at the release commit | Forgejo, mirrored to GitHub | CI |
+| Release `ARMOR v<version>` with the CHANGELOG entry as body | Forgejo and GitHub | CI |
 
-A **correctness fix** is any commit that addresses:
-- **Data corruption bugs** — fixes that prevent or recover from corrupted object data
-- **Encryption/decryption bugs** — fixes to envelope encryption, DEK wrapping, HMAC verification
-- **Metadata handling bugs** — fixes to ARMOR metadata headers (`x-amz-meta-armor-*`)
-- **Multipart upload integrity bugs** — fixes to multipart HMAC tables, state management
-- **Authentication/authorization bugs** — fixes that expose data to unauthorized parties
-- **Race conditions** — fixes that cause data inconsistency under concurrent operations
-- **Critical security vulnerabilities** — CVE-level issues that affect data confidentiality
+The version is a counter: the third component only increases and carries no
+SemVer meaning, so every release may contain fixes and features. `CHANGELOG.md`
+says what changed. There is no `:latest` tag anywhere.
 
-**Non-correctness fixes** (exempt from full propagation):
-- UI/dashboard changes
-- Logging/metrics improvements
-- Performance optimizations that don't affect correctness
-- Documentation updates
-- Test infrastructure changes
+Two things never happen: CI never bumps `VERSION`, and nobody creates a `v*`
+tag by hand. A hand-made tag desynchronizes the Forgejo and GitHub release
+lists and the drift monitor, which is exactly what happened between
+2026-09-01 and 2026-09-17 (twelve versions shipped without a tag or a release,
+and `drift_check.py` could not see any of them).
 
-### The Golden Rule
+## Cutting a release
 
-> **A correctness fix is NOT resolved until every known ARMOR deployment is patched or explicitly tracked as pending.**
->
-> Merging to `main` is necessary but NOT sufficient. The fix must be propagated to all deployments.
->
-> **Before closing any bead that fixes a correctness/data-integrity bug, you MUST:**
-> 1. Enumerate every known ARMOR deployment
-> 2. Confirm each deployment is patched OR explicitly track it as pending with a linked follow-up bead
-> 3. Document the propagation status in the bead closing comment
-
-**Failure to follow this process leaves deployments vulnerable to known bugs.**
-
-### Propagation Checklist (Mandatory Before Closing Correctness Fix Beads)
-
-**⚠️ DO NOT CLOSE a correctness/data-integrity fix bead until this checklist is complete.**
-
-#### Phase 1: Pre-Merge (Before Merging to Main)
-
-- [ ] **1.1 Confirm this is a correctness fix** — Verify the fix addresses data corruption, encryption bugs, race conditions, auth issues, or S3 contract violations (see classification below)
-- [ ] **1.2 Identify scope of impact** — Determine which deployments are affected by the bug (all, or subset?)
-- [ ] **1.3 Check deployment inventory** — Review `~/declarative-config` for all ARMOR deployments
-
-#### Phase 2: Post-Merge (Before Closing Bead)
-
-- [ ] **2.1 Enumerate all deployments** — List every known ARMOR deployment from the inventory below
-- [ ] **2.2 Check each deployment's version** — For each deployment, run `kubectl` to check current ARMOR version
-- [ ] **2.3 Apply fix to each deployment** — Update image tags in `declarative-config` or roll out manually
-- [ ] **2.4 Verify each deployment is patched** — Confirm pods are running the new image
-- [ ] **2.5 Run health checks** — Verify `/armor/canary` returns healthy on each deployment
-- [ ] **2.6 Document propagation status** — Create a propagation table (see Step 5)
-- [ ] **2.7 Create follow-up beads for pending deployments** — If any deployment cannot be patched immediately, create a tracking bead
-
-#### Phase 3: Final Resolution
-
-- [ ] **3.1 Confirm all deployments are either:**
-  - ✅ **Patched and verified**, OR
-  - ⏳ **Explicitly tracked as pending** with a linked follow-up bead
-- [ ] **3.2 Update bead with propagation table** — Add the propagation table to the bead closing comment
-- [ ] **3.3 Close the bead** — Only close after ALL deployments meet Phase 3.1 criteria
-
-#### Step 1: Enumerate All Deployments
-
-List every known ARMOR deployment from the deployment inventory below:
-
-```markdown
-- [ ] iad-ci (CI/CD cluster)
-- [ ] iad-kalshi (Rackspace Spot cluster)
-- [ ] iad-native-ads (Rackspace Spot cluster)
-- [ ] rs-manager (management cluster)
-- [ ] ord-devimprint (DevImprint cluster)
-- [ ] iad-acb (AI Code Battle)
-- [ ] apexalgo-iad (AI Code Battle - legacy)
-- [ ] ardenone-cluster (if applicable)
-- [ ] ardenone-hub (if applicable)
-- [ ] iad-options (if applicable)
-- [ ] Any external deployments (documented separately)
-```
-
-**To refresh this list:**
-```bash
-cd ~/declarative-config
-find . -name "*armor*" -type f | grep -E "(deployment|workflow)" | grep -v "argo-workflows"
-```
-
-#### Step 2: Check Each Deployment's Current Version
-
-For each deployment, verify the running ARMOR version:
+Pre-conditions, on `main` in a checkout whose index is clean:
 
 ```bash
-# Via kubectl (adjust for each cluster's kubeconfig/proxy)
-kubectl --server=http://traefik-<cluster>:8001 get deployment -n <namespace> armor -o jsonpath='{.spec.template.spec.containers[0].image}'
-
-# Example: iad-kalshi
-kubectl --server=http://traefik-iad-kalshi:8001 get deployment -n armor armor -o jsonpath='{.spec.template.spec.containers[0].image}'
+git pull --rebase origin main
+scripts/definition-of-done.sh          # build, vet, script tests, short Go suite: must be green
 ```
 
-**Expected output format:** `ronaldraygun/armor:<version>`
+Cut it:
 
-#### Step 3: Apply Fix to Each Deployment
+```bash
+scripts/cut-release.sh 0.1.1970        # or: make release V=0.1.1970
+```
 
-For each deployment that is NOT running the fixed version:
+The script
 
-**Option A: Via ArgoCD (preferred for GitOps-managed deployments)**
+- refuses a version that is not `MAJOR.MINOR.PATCH` or not newer than `VERSION`,
+- refuses to run off `main` or with anything already staged (the release commit
+  must contain nothing but `VERSION` and `CHANGELOG.md`; other agents' unstaged
+  edits in the shared checkout are left alone),
+- prepends a `## <version> (<date>)` entry to `CHANGELOG.md` listing every
+  non-merge commit subject since the previous `v*` tag, minus bead-checkpoint
+  and release commits (edit the entry afterwards if a subject needs rewording,
+  then amend before pushing, or accept it as is),
+- commits `release: armor <version>` and pushes to `origin main`.
 
-1. Update the image tag in `declarative-config`:
+`--dry-run` prints the entry without touching anything; `--no-push` commits
+but leaves the push to you.
+
+Which commit becomes the release is decided by CI as "the most recent commit
+that changed `VERSION`", so push the release commit on its own or as the last
+commit in a push. Pushing more commits after it before CI has run is
+harmless: the tag still lands on the release commit.
+
+## What CI does
+
+Pushing a commit that changes `VERSION` reaches the `armor-build`
+WorkflowTemplate in iad-ci (declarative-config
+`k8s/iad-ci/argo-workflows/armor-workflowtemplate.yml`, triggered by
+`k8s/iad-ci/argo-events/armor-sensor.yml`, which fires only for pushes whose
+commit list touches `VERSION`). The run posts a `iad-ci/armor-build` commit
+status on GitHub at start and at the end, which is what the README badge shows.
+
+| Step | What it proves |
+|---|---|
+| `resolve-version` | The pushed commit changed `VERSION` and the value is `MAJOR.MINOR.PATCH`. A non-release push fails here by design |
+| `lint` | `golangci-lint` clean |
+| `test` | `scripts/release-gate.sh` with `ARMOR_RELEASE_RACE=1` (crypto, backend, restore-verifier, canary, config, cmd, handlers under `-race`) |
+| `integration-test` | `tests/integration` compiles and runs in short mode |
+| `docker-build`, `docker-build-restore-verifier`, `docker-build-fleet`, `docker-build-ghcr` | The four images are built with kaniko from the pushed tree. They are siblings: the server image is published even if a companion build fails |
+| `verify-*-image` | Each Docker Hub tag is resolvable through the registry API (the ghost-tag guard) |
+| `compat-suite-test` | The freshly pushed server image serves AWS CLI and rclone end to end |
+| `publish-release` | Runs `scripts/publish_release.py` (fetched from the released revision): creates the annotated tag `v<version>` at the pushed revision through the Forgejo API (an existing tag at another commit is a hard error, never moved), creates or refreshes the Forgejo release whose body carries the image digests observed in the registries, waits up to five minutes for the push mirror to carry the tag to GitHub, then creates or refreshes the GitHub release. Every action is idempotent, so a re-run of a partially published version completes it. Sibling of the step below: a release-API failure shows as a red workflow but never blocks the armor-test bump |
+| `update-declarative-config` | Bumps the **armor-test** deployment (`k8s/iad-ci/armor-test/`) to the new version. Production deployments are never touched by CI |
+
+The release body written by CI is the digest table; `CHANGELOG.md` is the
+human-readable record and is linked from the README. Including the CHANGELOG
+entry in the release body is tracked as a follow-up on the release bead.
+
+Watching a run (read-only):
+
+```bash
+kubectl --server=http://traefik-iad-ci:8001 get workflows -n argo-workflows \
+  --sort-by=.metadata.creationTimestamp | grep armor-build | tail -5
+kubectl --server=http://traefik-iad-ci:8001 get workflow <name> -n argo-workflows \
+  -o jsonpath='{.status.phase} - {.status.message}'
+```
+
+Pods are deleted the moment a step finishes (`podGC: OnPodCompletion`);
+completed-step logs are in VictoriaLogs for iad-ci
+(`victorialogs-iad-ci-ts.ardenone.com:8444`) or the Argo UI within the TTL.
+
+Submitting a build by hand (needs the write kubeconfig; the read-only proxy
+cannot create). Pass the **full 40-character SHA** of the release commit as
+`revision`, or the GitHub status posts fail silently:
+
+```bash
+kubectl --kubeconfig=/home/coding/.kube/iad-ci.kubeconfig create -f - <<EOF
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: armor-build-manual-
+  namespace: argo-workflows
+spec:
+  workflowTemplateRef:
+    name: armor-build
+  arguments:
+    parameters:
+      - name: git-repo
+        value: jedarden/ARMOR
+      - name: branch
+        value: main
+      - name: revision
+        value: <full sha of the release commit>
+EOF
+```
+
+## Verifying a release
+
+Run this after the workflow succeeds. Docker Hub is private, so the manifest
+check needs a logged-in Docker client; GHCR is public.
+
+```bash
+V=$(cat VERSION)
+docker manifest inspect ronaldraygun/armor:$V >/dev/null && echo "hub armor ok"
+docker manifest inspect ronaldraygun/armor-restore-verifier:$V >/dev/null && echo "hub restore-verifier ok"
+docker manifest inspect ghcr.io/jedarden/armor:$V >/dev/null && echo "ghcr ok"
+git fetch --tags origin && git tag --list "v$V"                       # tag on Forgejo
+gh release view "v$V" -R jedarden/ARMOR --json isDraft,tagName        # GitHub release, isDraft must be false
+awk "/^## $V /{f=1;next} /^## /{f=0} f" CHANGELOG.md | head           # the notes CI used
+```
+
+`gh release view` also matches drafts, so check `isDraft` rather than mere
+existence.
+
+## Rolling the fleet forward
+
+Desired state lives only in `jedarden/declarative-config`; ArgoCD applies it.
+Enumerate the current deployments from the manifests rather than from any list
+in a document:
+
+```bash
+python3 scripts/find-armor-deployments.py ~/declarative-config
+```
+
+As of 2026-09-18 that is (ArgoCD application `<namespace>-ns-<cluster>`):
+
+| Cluster | Manifests (`declarative-config/k8s/...`) |
+|---|---|
+| iad-ci | `iad-ci/armor/armor-deployment.yaml`, `iad-ci/armor/restore-verifier.yaml`; `iad-ci/armor-test/armor-test-deployment.yml` is bumped by CI |
+| iad-kalshi | `iad-kalshi/armor/armor-deployment.yml`, `iad-kalshi/armor/restore-verifier.yaml` |
+| rs-manager | `rs-manager/armor/armor-deployment.yml`, `rs-manager/armor/restore-verifier.yaml`, `rs-manager/armor/restore-verifier-acb-deployment.yml` |
+| ord-devimprint | `ord-devimprint/devimprint/armor-deployment.yml`, `ord-devimprint/devimprint/restore-verifier.yaml` |
+| ardenone-cluster | `ardenone-cluster/tradegraph-platform/armor/armor-deployment.yaml`; `ardenone-cluster/commitgraph-dashboard/parquet-mirror-deployment.yml` consumes the image |
+| apexalgo-iad | `apexalgo-iad/needle-observability/armor-ledger.yml` |
+
+To roll out:
+
+1. Edit the image tag(s) in the manifest(s): `ronaldraygun/armor:<version>`
+   and, in the same change, `ronaldraygun/armor-restore-verifier:<version>`.
+   Keep the digest pin form used in that file if it has one.
+2. Commit with a message that names the version and the reason, push to
+   declarative-config `origin` (Forgejo). ArgoCD syncs within minutes; a failed
+   sync attempt is not retried for that revision, so check the Application if
+   nothing has landed after ~20 minutes.
+3. Verify each deployment:
+
    ```bash
-   cd ~/declarative-config
-   # Find the deployment file
-   find . -name "*armor-deployment*.yml" -o -name "*armor-deployment*.yaml"
-   
-   # Edit to update image tag
-   # Example: ronaldraygun/armor:0.1.43 → ronaldraygun/armor:0.1.44
+   kubectl --server=http://traefik-<cluster>:8001 get pods -n <namespace> -l app=armor \
+     -o jsonpath='{.items[*].spec.containers[0].image}'
+   kubectl --server=http://traefik-<cluster>:8001 exec -n <namespace> deployment/armor -- armor check
+   kubectl --server=http://traefik-<cluster>:8001 exec -n <namespace> deployment/armor -- \
+     wget -qO- http://127.0.0.1:9001/version
    ```
 
-2. Commit and push to declarative-config:
-   ```bash
-   git add k8s/<cluster>/<namespace>/armor-deployment.yml
-   git commit -m "chore(armor): bump to v0.1.44 for correctness fix"
-   git push
+   `armor check` exits 0 when config, backend, Cloudflare path and MEK all
+   pass; 1 is a configuration error; 2 is connectivity or MEK failure.
+
+Never change a running deployment with `kubectl` (`set image`, `rollout
+restart`, `patch`, `scale`, `delete`): selfHeal reverts it and the change is
+invisible to the next person. The only sanctioned write is the commit.
+
+Record the declarative-config commit SHA, the clusters changed and the
+verification output on the release bead before closing it.
+
+## Correctness-fix propagation
+
+A **correctness fix** addresses data corruption, encryption or decryption,
+`x-amz-meta-armor-*` metadata handling, multipart integrity, authentication or
+authorization, a race that causes inconsistency, or a CVE-level
+confidentiality issue. UI, logging, metrics, performance-only and
+documentation changes are not.
+
+> A correctness fix is not resolved until every known ARMOR deployment is
+> patched or explicitly tracked as pending. Merging to `main` is necessary,
+> not sufficient.
+
+Before closing the bead for a correctness fix:
+
+1. Cut and verify the release (sections above).
+2. Enumerate every deployment with `find-armor-deployments.py`.
+3. Roll each one forward, or file a follow-up bead per deployment that cannot
+   move yet (`bead create --title "Propagate ARMOR <version> to <cluster>" --priority 1 --issue-type task`)
+   and link it with `bead dep`.
+4. Verify each patched deployment (`armor check`, `/version`,
+   `/armor/canary` healthy).
+5. Put a propagation table on the closing bead:
+
+   ```markdown
+   | Cluster | Namespace | Previous | New | Status | Verified at |
+   |---|---|---|---|---|---|
+   | iad-ci | armor | 0.1.1963 | 0.1.1969 | Synced, canary healthy | 2026-09-14T12:30Z |
+   | rs-manager | armor | 0.1.1963 | 0.1.1969 | Pending, bead armor-xxxx | - |
    ```
 
-3. Verify ArgoCD syncs the change:
-   ```bash
-   curl -sk https://argocd-ro-ardenone-manager-ts.ardenone.com:8444/api/v1/applications | \
-     jq -r '.items[] | select(.metadata.name | contains("armor")) | .metadata.name + ": " + .status.syncStatus'
-   ```
+Timelines: critical correctness (corruption, encryption, security) within
+24 h on all deployments; other correctness fixes within one week; everything
+else at the next convenient rollout.
 
-**Option B: Manual rollout (if ArgoCD is not managing the deployment)**
+## Drift monitoring
 
-```bash
-# Via direct kubeconfig (for clusters with write access)
-kubectl --kubeconfig=/home/coding/.kube/<cluster>.kubeconfig \
-  set image deployment/armor armor=ronaldraygun/armor:<new-version> -n <namespace>
-
-# Via kubectl-proxy read-only + separate write kubeconfig
-kubectl --kubeconfig=/home/coding/.kube/<cluster>.kubeconfig \
-  rollout restart deployment/armor -n <namespace>
-```
-
-#### Step 4: Verify the Fix is Live
-
-For each deployment, run health checks to confirm the fix is active:
+`scripts/drift_check.py` classifies every deployment as `current`, `stale`,
+`mismatched` or `unavailable` against the newest release tag and can file one
+deduplicated alert bead. It runs daily in iad-ci
+(`declarative-config/k8s/iad-ci/argo-workflows/armor-drift-check-*.yml`) and
+on demand:
 
 ```bash
-# 1. Check deployment is healthy
-kubectl --server=http://traefik-<cluster>:8001 get deployment -n <namespace> armor
-
-# 2. Check pods are running the new image
-kubectl --server=http://traefik-<cluster>:8001 get pods -n <namespace> -l app=armor -o jsonpath='{.items[*].spec.containers[0].image}'
-
-# 3. Run canary health check
-kubectl --server=http://traefik-<cluster>:8001 exec -n <namespace> deployment/armor -- \
-  curl -s http://localhost:9001/armor/canary | jq .
-
-# 4. Verify MEK is correct
-kubectl --server=http://traefik-<cluster>:8001 exec -n <namespace> deployment/armor -- \
-  curl -s http://localhost:9001/admin/key/verify | jq .
+python3 scripts/drift_check.py                 # human report
+python3 scripts/drift_check.py --json          # machine-readable
+python3 scripts/drift_check.py --latest-tag v0.1.1970   # assert the latest when tags lag
 ```
 
-**Expected outputs:**
-- Deployment: `1/1` replicas ready
-- Canary: `{"status": "healthy"}`
-- MEK verify: `{"status": "verified"}`
-
-#### Step 5: Document Deployment Status
-
-Create a comment in the closing bead/issue with a propagation table:
-
-```markdown
-## Fix Propagation Status
-
-| Cluster | Namespace | Previous Version | New Version | Status | Verified At |
-|---------|-----------|------------------|-------------|--------|-------------|
-| iad-ci | armor | 0.1.43 | 0.1.44 | ✅ Synced | 2026-07-14T14:30:00Z |
-| iad-kalshi | armor | 0.1.43 | 0.1.44 | ✅ Synced | 2026-07-14T14:32:00Z |
-| iad-native-ads | armor | 0.1.42 | 0.1.44 | 🔄 Pending | - |
-| rs-manager | armor | 0.1.43 | 0.1.44 | ⏸️ Blocked (needs approval) | - |
-| ord-devimprint | devimprint | 0.1.43 | 0.1.44 | ✅ Synced | 2026-07-14T14:35:00Z |
-| iad-acb | ai-code-battle | 0.1.43 | 0.1.44 | ⚠️ Manual rollout required | - |
-```
-
-**Status codes:**
-- ✅ Synced: Deployed and verified
-- 🔄 Pending: In progress via ArgoCD
-- ⏸️ Blocked: Requires approval/action
-- ⚠️ Manual: Requires manual intervention
-- ❌ Failed: Rollback required
-
-#### Step 6: Track Pending Deployments
-
-For any deployment that CANNOT be immediately patched:
-
-1. Create a tracking bead or issue:
-   ```bash
-   br create --type bug \
-     --title "Propagate ARMOR v0.1.44 to <cluster>" \
-     --acceptance "Deployment runs ARMOR v0.1.44"
-   ```
-
-2. Link it to the original fix bead as a related issue.
-
-3. Add the pending deployment to the `docs/release-process.md` tracking table (see [Tracking Pending Deployments](#tracking-pending-deployments)).
-
-#### Step 7: Close the Fix Bead
-
-Only close the fix bead when **ALL** deployments meet one of:
-- ✅ Patched and verified
-- 🔄 Explicitly tracked with a linked follow-up bead
-
-**Do NOT close the bead if any deployment is in unknown state.**
-
----
-
-## ARMOR Deployment Inventory
-
-### Known Deployments (as of 2026-07-14)
-
-| Cluster | Namespace | ArgoCD App | Image Source | Access Method | Notes |
-|---------|-----------|------------|---------------|---------------|-------|
-| **iad-ci** | `armor` | `armor-ns-iad-ci` | `ronaldraygun/armor` | Direct kubeconfig | CI/CD cluster, builds armor image |
-| **iad-kalshi** | `armor` | `armor-iad-kalshi` | `ronaldraygun/armor` | kubectl-proxy | Rackspace Spot, hosts kalshi-weather |
-| **iad-native-ads** | `armor` | `armor-iad-native-ads` | `ronaldraygun/armor` | kubectl-proxy | Rackspace Spot, native ads pipeline |
-| **rs-manager** | `armor` | `armor-rs-manager` | `ronaldraygun/armor` | kubectl-proxy | Management cluster |
-| **ord-devimprint** | `devimprint` | N/A (manual) | `ronaldraygun/armor` | kubectl-proxy | DevImprint production |
-| **iad-acb** | `ai-code-battle` | `acb-armor-iad-acb` | `ronaldraygun/armor` | kubectl-proxy | AI Code Battle |
-| **apexalgo-iad** | `ai-code-battle` | N/A (legacy) | `ronaldraygun/armor` | kubectl-proxy | Legacy ACB deployment |
-| **ardenone-cluster** | TBD | TBD | TBD | kubectl-proxy | Check if ARMOR is deployed here |
-| **ardenone-hub** | TBD | TBD | TBD | kubectl-proxy | Check if ARMOR is deployed here |
-| **iad-options** | TBD | TBD | TBD | kubectl-proxy | Check if ARMOR is deployed here |
-
-### Access Patterns
-
-**kubectl-proxy (read-only):**
-```bash
-kubectl --server=http://traefik-<cluster>:8001 get pods -n <namespace>
-```
-
-**Direct kubeconfig (read/write):**
-```bash
-kubectl --kubeconfig=/home/coding/.kube/<cluster>.kubeconfig get pods -n <namespace>
-```
-
-**ArgoCD API (read-only):**
-```bash
-curl -sk https://argocd-ro-ardenone-manager-ts.ardenone.com:8444/api/v1/applications/<app-name>
-```
-
-### Deployment Config Locations
-
-All ARMOR deployment configurations live in `~/declarative-config/k8s/`:
-
-```
-declarative-config/
-├── k8s/
-│   ├── iad-ci/armor/
-│   │   ├── armor-deployment.yaml
-│   │   ├── armor-externalsecret.yaml
-│   │   └── armor-configmap.yaml
-│   ├── iad-kalshi/armor/
-│   │   ├── armor-deployment.yml
-│   │   └── armor-externalsecret.yml
-│   ├── iad-native-ads/armor/
-│   │   ├── armor-deployment.yml
-│   │   └── armor-externalsecret.yml
-│   ├── rs-manager/armor/
-│   │   ├── armor-deployment.yml
-│   │   └── armor-externalsecret.yml
-│   ├── ord-devimprint/devimprint/
-│   │   └── armor-deployment.yml
-│   └── iad-acb/ai-code-battle/
-│       ├── acb-armor-deployment.yml
-│       └── acb-armor-externalsecret.yml
-```
-
-To update a deployment, edit the `armor-deployment.yml` file and push to `declarative-config`. ArgoCD will sync automatically.
-
----
-
-## Verification Procedures
-
-### Quick Health Check
-
-The fastest way to verify ARMOR deployment health is using the built-in `armor check` command:
-
-```bash
-#!/bin/bash
-CLUSTER=$1
-NAMESPACE=$2
-
-echo "Checking ARMOR health in ${CLUSTER}/${NAMESPACE}..."
-
-# Run comprehensive check
-kubectl --server=http://traefik-${CLUSTER}:8001 exec -n ${NAMESPACE} deployment/armor -- armor check
-```
-
-The `armor check` command verifies:
-- **Config**: All required environment variables and credentials are set
-- **Backend**: Bucket connectivity (HeadBucket)
-- **Cloudflare**: Ranged GET through Cloudflare path (if `ARMOR_CF_DOMAIN` is set)
-- **MEK**: Master encryption key verification via canary decryption
-
-Exit codes:
-- `0`: All checks passed
-- `1`: Configuration error
-- `2`: Connectivity or MEK verification failure
-
-Example output:
-```
-[PASS] config: 2 credentials configured
-[PASS] backend: bucket kalshi-tape accessible
-[PASS] cloudflare: ranged GET OK (1024 bytes, CF-Cache-Status: HIT, 45ms)
-[PASS] mek: MEK successfully decrypted wrapped DEK
-
-Check PASSED: all probes OK
-```
-
-#### Manual Verification (Legacy)
-
-For more granular inspection, you can manually check individual components:
-
-```bash
-#!/bin/bash
-CLUSTER=$1
-NAMESPACE=$2
-
-echo "Checking ARMOR health in ${CLUSTER}/${NAMESPACE}..."
-
-# 1. Deployment health
-kubectl --server=http://traefik-${CLUSTER}:8001 get deployment -n ${NAMESPACE} armor -o json | jq -r '
-  "Replicas: " + 
-  (.spec.replicas | tostring) + 
-  ", Ready: " + 
-  (.status.readyReplicas | tostring)
-'
-
-# 2. Pod image versions
-kubectl --server=http://traefik-${CLUSTER}:8001 get pods -n ${NAMESPACE} -l app=armor -o json | jq -r '
-  .items[].spec.containers[].image
-'
-
-# 3. Canary health
-kubectl --server=http://traefik-${CLUSTER}:8001 exec -n ${NAMESPACE} deployment/armor -- \
-  curl -s http://localhost:9001/armor/canary | jq .
-
-# 4. MEK verification
-kubectl --server=http://traefik-${CLUSTER}:8001 exec -n ${NAMESPACE} deployment/armor -- \
-  curl -s http://localhost:9001/admin/key/verify | jq .
-```
-
-Usage:
-```bash
-# Check iad-kalshi
-./scripts/check-armor-health.sh iad-kalshi armor
-
-# Check iad-native-ads
-./scripts/check-armor-health.sh iad-native-ads armor
-```
-
-### Correctness-Specific Verification
-
-For encryption/decryption fixes, verify end-to-end:
-
-```bash
-#!/bin/bash
-CLUSTER=$1
-NAMESPACE=$2
-
-# Port-forward to local
-kubectl --server=http://traefik-${CLUSTER}:8001 port-forward -n ${NAMESPACE} svc/armor 9000:9000 &
-PF_PID=$!
-sleep 2
-
-# Test upload
-echo "test data" | aws s3 cp --endpoint-url http://localhost:9000 - s3://test-bucket/verify-test.txt
-
-# Test download
-DOWNLOADED=$(aws s3 cp --endpoint-url http://localhost:9000 s3://test-bucket/verify-test.txt -)
-
-# Verify
-if [ "$DOWNLOADED" = "test data" ]; then
-  echo "✅ Encryption/decryption verified"
-else
-  echo "❌ Encryption/decryption FAILED"
-fi
-
-# Cleanup
-kill $PF_PID
-```
-
----
-
-## Tracking Pending Deployments
-
-### Pending Deployments Table
-
-Maintain this table in `docs/release-process.md` for outstanding propagations:
-
-| Fix Version | Fix Bead | Deployment | Pending Since | Blocked By | Follow-up Bead |
-|-------------|----------|------------|---------------|------------|----------------|
-| 0.1.44 | bf-xxxx | iad-native-ads | 2026-07-14 | Needs approval | bf-yyyy |
-| 0.1.43 | bf-zzzz | ord-devimprint | 2026-07-10 | Testing | bf-aaaa |
-
-Update this table when:
-1. A correctness fix is merged to main (add row for each unpatched deployment)
-2. A deployment is patched (remove row or mark as ✅)
-3. A follow-up bead is created (link it)
-
-### Audit Procedure
-
-Run this weekly to catch missing propagations:
-
-```bash
-#!/bin/bash
-# Check for version drift across ARMOR deployments
-
-echo "Checking ARMOR version drift..."
-echo ""
-
-# List all deployments and their versions
-for cluster in iad-ci iad-kalshi iad-native-ads rs-manager ord-devimprint; do
-  echo "=== $cluster ==="
-  kubectl --server=http://traefik-${cluster}:8001 get deployment -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}' | grep armor
-  echo ""
-done
-
-# Find latest version from git
-LATEST=$(cd ~/ARMOR && git tag -l "armor-v*" | sort -V | tail -1 | sed 's/armor-v//')
-echo "Latest release: $LATEST"
-```
-
-If any deployment is running a version older than the latest release that contains a correctness fix, create a propagation bead.
-
----
-
-## Release Classification
-
-### Release Categories
-
-| Category | Criteria | Propagation Required? | Timeline |
-|----------|----------|----------------------|----------|
-| **Critical Correctness** | Data corruption, encryption bugs, security vulns | Yes, all deployments immediately | Within 24h |
-| **High Correctness** | Race conditions, metadata bugs, auth issues | Yes, all deployments | Within 1 week |
-| **Medium Correctness** | Edge case bugs, rare data paths | Yes, all deployments | Within 2 weeks |
-| **Non-Correctness** | UI, logging, docs, perf | No, deploy at convenience | Next release cycle |
-
-### Release Template
-
-When releasing a correctness fix, use this template:
-
-```markdown
-## ARMOR Release v<VERSION>
-
-### Release Type
-- [ ] Critical Correctness
-- [ ] High Correctness
-- [ ] Medium Correctness
-- [ ] Non-Correctness
-
-### Fixes Included
-- bead bf-xxxx: Brief description of correctness fix
-- bead bf-yyyy: Brief description of another fix
-
-### Deployments Patched
-- [ ] iad-ci
-- [ ] iad-kalshi
-- [ ] iad-native-ads
-- [ ] rs-manager
-- [ ] ord-devimprint
-- [ ] iad-acb
-- [ ] apexalgo-iad
-
-### Deployments Pending
-- **deployment-name**: Reason for delay, tracked in bf-zzzz
-
-### Verification Steps Performed
-- [ ] Canary health checked on all deployments
-- [ ] MEK verification passed on all deployments
-- [ ] End-to-end encryption/decryption tested on 3+ deployments
-- [ ] Integration tests passed
-
-### Rollback Plan (if needed)
-If this release causes issues, rollback to previous version: <PREV_VERSION>
-
-Rollback command:
-```bash
-kubectl --kubeconfig=/home/coding/.kube/<cluster>.kubeconfig \
-  rollout undo deployment/armor -n <namespace>
-```
-```
-
----
-
-## GitOps Ship Documentation
-
-### GitOps Ship Commit Log
-
-This section records the declarative-config commit SHAs for ARMOR fleet-wide image tag changes.
-
-| Date | ARMOR Image Tag | declarative-config Commit | Files Changed | Clusters | Status |
-|------|----------------|---------------------------|---------------|----------|--------|
-| 2026-08-13 | 0.1.1911 | `fe3e839e` (Forgejo origin/main) | 6 files (iad-ci, iad-kalshi, ord-devimprint, rs-manager deployments + commitgraph) | 4 clusters (iad-ci, iad-kalshi, ord-devimprint, rs-manager) | ✅ Synced and verified |
-| 2026-08-10 | 0.1.1906 | `b5169cce` (Forgejo origin/main) | 5 files (iad-ci, iad-kalshi, ord-devimprint, rs-manager deployments) | 4 clusters (iad-ci, iad-kalshi, ord-devimprint, rs-manager) | ✅ Synced and verified |
-
-**Commit `fe3e839e` details:**
-- Commit: `chore(armor): deploy multipart completion recovery`
-- Changed files:
-  - `k8s/commitgraph-dashboard/parquet-mirror-deployment.yml`
-  - `k8s/iad-ci/armor-test/armor-test-deployment.yml`
-  - `k8s/iad-ci/armor/armor-deployment.yaml`
-  - `k8s/iad-kalshi/armor/armor-deployment.yml`
-  - `k8s/ord-devimprint/devimprint/armor-deployment.yml`
-  - `k8s/rs-manager/armor/armor-deployment.yml`
-- All changed to image: `ronaldraygun/armor:0.1.1911`
-- Repo: `jedarden/declarative-config` (Forgejo: git.ardenone.com)
-- Parent bead: `bf-1oe7yn` (GitOps ship step)
-- Verification bead: `bf-4miwq8` (final verification)
-- Verification completed: 2026-08-13 19:24 UTC
-
-**Commit `b5169cce` details:**
-- Commit: `fix(armor): converge fleet to HEAD image 0.1.1906 (bf-1oe7yn)`
-- Changed files:
-  - `k8s/iad-ci/armor/armor-deployment.yaml`
-  - `k8s/iad-ci/armor-test/armor-test-deployment.yml`
-  - `k8s/iad-kalshi/armor/armor-deployment.yml`
-  - `k8s/ord-devimprint/devimprint/armor-deployment.yml`
-  - `k8s/rs-manager/armor/armor-deployment.yml`
-- All changed to image: `ronaldraygun/armor:0.1.1906`
-- Repo: `jedarden/declarative-config` (Forgejo: git.ardenone.com)
-- Parent bead: `bf-1oe7yn` (GitOps ship step)
-- Verification bead: `bf-4miwq8` (final verification)
-
----
-
-## References
-
-- [Disaster Recovery Runbook](disaster-recovery.md) — MEK escrow, restore drills
-- [Deployment Config](https://github.com/jedarden/declarative-config) — All ARMOR manifests
-- [ArgoCD API](https://argocd-ro-ardenone-manager-ts.ardenone.com:8444) — Application status
-- [ARMOR Build Workflow](https://github.com/jedarden/ARMOR/blob/main/.beads/traces/bf-build/armor-workflowtemplate.yml) — CI/CD pipeline
-
----
-
-## CI/CD Troubleshooting
-
-### armor-build Workflow Failures
-
-**Issue (2026-08-28):** armor-build workflow failed on every run, exiting at the resolve-version step with "VERSION must change in the release commit; CI never auto-bumps or pushes."
-
-**Root Cause:** The `armor-sensor` Argo Events sensor was configured to trigger on **every push to main**, not just VERSION-changing commits. This caused the workflow to run on non-release commits, where the resolve-version guard correctly rejected them (as intended).
-
-**Fix:** Added a CEL expression filter to `armor-sensor` (commit `db840e7` in declarative-config) that checks if `VERSION` appears in any commit's `modified`, `added`, or `removed` file lists:
-
-```yaml
-filters:
-  data:
-    # ... existing filters ...
-  expr:
-    - expr: 'any(commit, "VERSION" in commit.modified || "VERSION" in commit.added || "VERSION" in commit.removed, data.commits)'
-```
-
-**Impact:** The sensor now only triggers armor-build when VERSION actually changes, eliminating unnecessary workflow runs and reducing CI resource consumption.
-
-**Verification:** After ArgoCD syncs the change, subsequent non-VERSION commits to main should not trigger armor-build workflows. The next VERSION-changing commit should successfully pass resolve-version and proceed to build.
-
-**Related Files:**
-- `declarative-config/k8s/iad-ci/argo-events/armor-sensor.yml` — Sensor configuration
-- `declarative-config/k8s/iad-ci/argo-workflows/armor-workflowtemplate.yml` — Workflow template
-- Bead `armor-4d10cd48` — Fix investigation bead
+The release list comes from the local checkout's `v*` tags when it has any
+(`git fetch --tags` first) and from the GitHub tags API otherwise, which is
+why CI must tag every release: an untagged release is invisible to the monitor.
+Details: [drift-check.md](drift-check.md).
+
+## Troubleshooting
+
+- **`resolve-version` failed with "VERSION must change in the release commit".**
+  The build ran for a push that did not change `VERSION`. Before 2026-09-18 the
+  sensor's version filter was written as `filters.expr`, which is not a Sensor
+  field, so every push built and failed here, turning the README badge red for
+  non-release commits. The filter is now a gjson data filter on
+  `body.commits.#(modified.#(=="VERSION")).id`. If it fires wrongly again, check
+  the live Sensor's `spec.dependencies[0].filters` against the manifest.
+- **The GitHub status stays `pending` or never appears.** The status posts wait
+  up to two minutes for the Forgejo→GitHub mirror and need a full-length SHA.
+  A manual submission without `revision` posts against `main`, which GitHub
+  rejects. Re-run with the full SHA.
+- **A version has images but no tag or release.** Re-run the workflow for that
+  release commit (manual submission above), or publish by hand with the same
+  idempotent script CI uses; credentials come from the environment only, never
+  from arguments:
+
+  ```bash
+  FORGEJO_TOKEN="$(git credential fill <<< $'protocol=https\nhost=git.ardenone.com\n' | grep password | cut -d= -f2)" \
+  GITHUB_TOKEN="$(gh auth token)" \
+    python3 scripts/publish_release.py --version 0.1.1969 --commit <full sha of the release commit>
+  ```
+
+  `--dry-run` prints the planned mutations; `--tag-only` and `--no-github`
+  narrow the scope. Exit 3 means the tag already exists at a different commit:
+  stop and look, the script never moves a tag.
+- **A version was cut but the build failed and never published an image.**
+  Cut the next version; note in its CHANGELOG entry that it carries the
+  unpublished one's changes (see 0.1.1969 and 0.1.1960 in `CHANGELOG.md`). Do
+  not tag the unpublished version.
+- **Ghost tag** (`verify-*-image` failed although kaniko exited 0): the
+  registry never received the push. Re-run; if it persists, check the
+  `docker-hub-registry` / `ghcr-jedarden-registry` secrets in iad-ci.
+- **A release must be marked superseded** (a defect found after publishing):
+  do not delete it. Edit the Forgejo and GitHub release to prerelease with a
+  body starting "Superseded by v<next>: <why>", cut the next version, and add
+  the same sentence to the CHANGELOG entry (see 0.1.1953–0.1.1955).
+
+## History
+
+Fleet-wide image tag changes recorded before this document became the
+procedure above:
+
+| Date | Tag | declarative-config commit | Clusters | Status |
+|------|-----|---------------------------|----------|--------|
+| 2026-08-13 | 0.1.1911 | `fe3e839e` | iad-ci, iad-kalshi, ord-devimprint, rs-manager (+ commitgraph consumer) | Synced and verified |
+| 2026-08-10 | 0.1.1906 | `b5169cce` | iad-ci, iad-kalshi, ord-devimprint, rs-manager | Synced and verified |
+
+On 2026-08-28 the sensor was first given a VERSION filter (declarative-config
+`db840e7`) after every push produced a failing build; that filter used a field
+the Sensor CRD does not have, which is why the symptom persisted until
+2026-09-18.

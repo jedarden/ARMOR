@@ -1,6 +1,8 @@
 # ARMOR Implementation Plan
 
-> **Status (updated 2026-08-28): Phases 1–5 complete and deployed (fleet on 0.1.1913); Phase 6 deployed with one discovery bug still open; Phase 7 shipped in code and rolled out to 3 of 4 production instances; Phase 8 (correctness, usability & convenience) opened 2026-08-28 after a full review — it starts with two P0 defects: `main` does not compile (import cycle + sources referenced by HEAD that were never committed) and every production PUT still writes the Version 1 envelope whose CTR derivation reuses keystream between adjacent blocks (ADR-005, reproduced 2026-08-28). See Phase 8 for the decided remediation and the bead graph.**
+> **Status (updated 2026-09-18): `main` builds and releases through CI (fleet on 0.1.1963–0.1.1969, see `CHANGELOG.md`); the default write format is envelope v3 (since 0.1.1943), so §8.0 and the write side of §8.1 are done. The open P0 work is the in-place migration of legacy v1/v2 objects to v3: genesis bead `armor-cb6f29ce` and its blockers (migrate object-count bookkeeping, authoritative target selection, asynchronous and resumable migration). Phase 8 below is the decision record; the 2026-08-28 findings it opens with are historical. Releases are cut with `scripts/cut-release.sh` and CI tags and publishes them (`docs/release-process.md`).**
+>
+> **Status as of 2026-08-28, kept for history: Phases 1–5 complete and deployed (fleet on 0.1.1913); Phase 6 deployed with one discovery bug still open; Phase 7 shipped in code and rolled out to 3 of 4 production instances; Phase 8 (correctness, usability & convenience) opened 2026-08-28 after a full review — it starts with two P0 defects: `main` does not compile (import cycle + sources referenced by HEAD that were never committed) and every production PUT still writes the Version 1 envelope whose CTR derivation reuses keystream between adjacent blocks (ADR-005, reproduced 2026-08-28). See Phase 8 for the decided remediation and the bead graph.**
 >
 > The paragraph below is the 2026-08-06 status, kept for history; where it disagrees with Phase 8, Phase 8 wins.
 >
@@ -915,7 +917,7 @@ For a DuckDB workload issuing 50 range reads against 5 unique files: **50 HeadOb
 
 - [x] Extend `internal/canary` with a second, longer-interval multipart canary check (real `CreateMultipartUpload`/`UploadPart`×N/`CompleteMultipartUpload` above the multipart size threshold), reusing existing HMAC/plaintext-SHA verification; surface a distinct `multipart_healthy` status in `/armor/canary` and Prometheus metrics — **done** (`internal/canary/canary.go`, `multipart_healthy` in status + metrics)
 - [x] Strengthen multipart tests to verify actual downloaded byte content, not just `ContentLength` — **done at the HTTP-handler layer**: `TestMultipartFullCycleByteVerification` + routing tripwire (`TestUploadPartRoutingNeverFallsThroughToPut`) + suspect-pattern cases in `internal/server/handlers/multipart_routing_test.go`, all gating CI. The *integration* test against real B2 (`tests/integration`) still asserts via mock backend only — tracked as bf-28rb.
-- [x] Add a version-drift check across known ARMOR deployments — **code + docs done** (`docs/drift-check.md`, `docs/version-drift-check.md`, `k8s/armor-drift-check-{workflowtemplate,cronworkflow}.yml`, deployment inventory in `armor_deployments.json`); **not yet running anywhere** — the CronWorkflow manifests live only in this repo and have not been added to declarative-config.
+- [x] Add a version-drift check across known ARMOR deployments — **code + docs done** (`docs/drift-check.md`, `docs/version-drift-check.md`, the WorkflowTemplate and CronWorkflow in `declarative-config/k8s/iad-ci/argo-workflows/armor-drift-check-*.yml`); **running daily in iad-ci** since 2026-08-21. The copies that lived under this repository's `k8s/` had diverged from the applied ones and were removed 2026-09-18.
 - [x] Document the fix-propagation checklist — **done** (`docs/release-process.md`)
 - [ ] **Immediate remediation — still outstanding, and broader than originally scoped.** As of the 2026-07-16 inventory, *every* deployment runs a pre-fix image: `iad-kalshi` 0.1.13, `rs-manager` 0.1.13, `iad-ci` 0.1.24, `iad-native-ads` 0.1.42, `ord-devimprint` 0.1.42, `iad-acb` fcbf6d3 — while the multipart read-path fix (bf-24sxh7), out-of-order-part fix (bf-2sq7gf), and hard-fail part validation all landed at ≥0.1.18xx. Per the fix-propagation checklist: bump every deployment via declarative-config, then force a fresh backup baseline on `ord-devimprint` and verify it restores end-to-end (bf-4qq1). (Fleet has since moved past this — 0.1.1901 confirmed live on all four remaining clusters as of 2026-07-22 — but this line is left as-written pending a dedicated plan truth-up pass.)
 - [ ] **Full file lifecycle testing, through the real HTTP API path** (bf-54irmj). The canary (`internal/canary/canary.go`) and integration tests call `internal/backend` directly, bypassing ARMOR's own S3 HTTP handlers entirely — the exact layer bf-24sxh7's bug lived in — so a handler-only regression would not be caught today. Also confirmed missing regardless of layer: DELETE is fire-and-forget with no verification it succeeded or that the key actually 404s afterward; no overwrite-in-place coverage; no LIST coverage (object appears / disappears); multipart Abort is only exercised as an error-path side effect, never asserted to actually remove the incomplete upload on B2 (a real pile of abandoned incomplete uploads was found 2026-07-20). Scope: one continuous real-HTTP, real-B2-backed lifecycle test — PUT (single + multipart) → HEAD → GET (full + boundary-straddling range) → LIST → overwrite → DELETE → verify-gone (GET/HEAD 404, LIST empty) — plus a dedicated Abort-actually-removes-upload case. See bf-54irmj for sharp acceptance criteria (this repo has closed equivalent-looking test beads on insufficient evidence four times — see bf-1v6skf).
@@ -1405,9 +1407,9 @@ Decisions: a `Makefile` (`build`, `test`, `test-integration`, `lint`,
 analysis documents move to `docs/archive/` (list in the bead), the seven
 error-header documents collapse into `docs/error-responses.md`, the three
 version-drift documents into `docs/drift-check.md`, and the five
-error-format/severity documents into `docs/error-format.md`; the duplicate
-`samples/pytest_outputs/` vs `samples/pytest-output/` trees are reduced to
-one (or deleted if nothing references them); README's security table
+error-format/severity documents into `docs/error-format.md`; the
+`samples/pytest_outputs/` tree is deleted (done 2026-09-18; nothing
+referenced it); README's security table
 row "Private bucket + Cloudflare Worker auth" is corrected to the actual
 model (public bucket, ciphertext-only, ARMOR-side SigV4 + ACLs); the DR
 runbook and connection guide drop the `0.1.43` pin for a `<version>`
@@ -1477,6 +1479,50 @@ Decisions:
 - **Ships with the CLI release cut** (defence-in-depth, not the fix for the
   V1 disclosure — the format migration is); per-bucket rotation beads run
   after that bump and after the bucket's migration, in the 8.6 order.
+
+#### 8.14 Onboarding and release hygiene (decided 2026-09-17/18)
+
+Findings (repo review 2026-09-17): `VERSION` had reached 0.1.1969 while the
+last tag was v0.1.1957 and GitHub's Releases page still showed v0.1.0, because
+nothing in CI tagged or published and the Forgejo push mirror copies refs but
+not releases; the drift monitor took "latest" from GitHub tags and was blind
+to twelve releases. The README's pull path was the private Docker Hub
+namespace (anonymous 401) while the public GHCR mirror went unmentioned;
+`make build` was broken; the repo carried a bead-scratch `notes/` tree with
+`kind: Job` manifests, unrelated pytest samples, stale hand manifests and a
+runner-less Python test framework; there was no `AGENTS.md`, no CHANGELOG, and
+the release doc described no release procedure.
+
+Decisions (all shipped, beads armor-43ec803f, armor-143660f6, armor-5e68c2ec,
+armor-db388027, armor-0c37405f, armor-1ed07b10, armor-c70bb108, armor-26be2614,
+armor-4a03c2f6, armor-b00ee40c, armor-c01708aa):
+
+- **Public image first.** `ghcr.io/jedarden/armor:<version>` is the documented
+  pull path; `ronaldraygun/*` stays private to the fleet. No floating tag on
+  either registry, ever.
+- **Version scheme stays `0.1.<counter>`.** The counter only increases and
+  carries no SemVer meaning; `CHANGELOG.md` says what changed. Cutting 1.0.0
+  is a deliberate future decision, not a side effect.
+- **One release commit, written by `scripts/cut-release.sh`** (`VERSION` +
+  `CHANGELOG.md`, message `release: armor <version>`). CI never bumps
+  `VERSION`; nobody creates a `v*` tag by hand.
+- **CI publishes the release** (`publish-release` step running
+  `scripts/publish_release.py`): annotated tag at the released revision via
+  the Forgejo API, Forgejo release with the image digests, GitHub release
+  once the mirror carries the tag. Idempotent by construction so a re-run
+  repairs a partial publish. The CI GitHub credential already had `repo`
+  scope, so no new token was needed (the "GitHub-release fork" is closed).
+- **The sensor fires only for pushes that touch `VERSION`** (gjson data
+  filter; the earlier `filters.expr` was not a Sensor field and never
+  applied), so the README badge reflects release builds only.
+- **Drift monitoring reads tags**, from the local checkout when it has them
+  and from GitHub otherwise, with `--latest-tag` as the operator override;
+  decommissioned clusters are no longer "expected".
+- **`AGENTS.md` is the canonical agent guide** (`CLAUDE.md` imports it);
+  `docs/README.md` and the README configuration table are enforced by tests
+  in `internal/docsindex`.
+- **Clutter is deleted, not archived:** `notes/`, `samples/`, `deploy/`,
+  `k8s/`, and the Python test-table framework under `tests/`.
 
 ---
 

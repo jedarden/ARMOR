@@ -6,7 +6,7 @@ This index organizes all durable documentation by audience. Every file under `do
 
 **For operators running and maintaining ARMOR in production.**
 
-- **[Release Process](release-process.md)** — Version bumping, container publishing, and deployment checklist
+- **[Release Process](release-process.md)** — Cutting a release (`scripts/cut-release.sh`: VERSION + CHANGELOG), what CI builds, tags and publishes, fleet rollout through declarative-config, and the correctness-fix propagation checklist
 - **[Key Rotation Runbook](key-rotation-runbook.md)** — Step-by-step MEK rotation procedure with rollback guidance
 - **[Unified Bucket Tenant Onboarding](runbooks/unified-bucket-tenant-onboarding.md)** — Adding a tenant to the shared ADR-001 bucket, prefix-scoped keys, per-tenant MEK, and the data move
 - **[Disaster Recovery](disaster-recovery.md)** — MEK backup/escrow, restore drills, recovery from rotation failures, and the ADR-006 provider-outage (secondary-backend) failover procedure
@@ -51,7 +51,7 @@ This index organizes all durable documentation by audience. Every file under `do
 
 ### Format Specifications
 
-- **[Envelope V3 Format](format/envelope-v3.md)** — Version 3 envelope specification (future format)
+- **[Envelope V3 Format](format/envelope-v3.md)** — Version 3 envelope specification (the default write format since 0.1.1943; v2 remains readable and selectable with `ARMOR_FORMAT_VERSION=2`)
 - **[Named Credential Provisioning Spec](named-credential-provisioning-spec.md)** — External credential provisioning interface design
 - **[Decompression Verification API Design](decompression-verification-api-design.md)** — Zstd compression verification API
 
@@ -122,6 +122,7 @@ Contextual notes and temporary documentation:
 - **[AWS CLI Compatibility Tests](../tests/aws-cli-compatibility/README.md)** — AWS CLI and rclone compatibility verification
 - **[Multipart Client-Concurrency Compatibility Matrix](multipart-client-compatibility.md)** — What AWS CLI (serial and default concurrency), SDK transfer managers, rclone, litestream, and barman experience per write format; reconciles the unmodified-client claim with ADR-003 §4's superseded sequential-only era
 - **[Multipart 5 GiB Boundary Tests](testing/multipart-5gb-boundary-tests.md)** — 5 GiB multipart boundary test coverage
+- **[Performance Runbook](performance/README.md)** — Reproducible, bounded read/write throughput baselines (`tests/performance`); supersedes the one-off ADR-013 figures
 
 ## Archive
 
