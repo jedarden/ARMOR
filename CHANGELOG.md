@@ -14,6 +14,56 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1970 (2026-09-18)
+
+- fix(restoreverifier): size the v3 single-PUT trailer with BlockTableEntrySize on the ARMOR path (armor-8d4420fc)
+- feat(cmd): add armor version --json with format_write_version (armor-fe7653ef)
+- docs(readme): point quick start at the public GHCR image, add Install section (armor-6900d193)
+- docs: rewrite the release process as a procedure; truth-up the docs index and plan status (armor-1ed07b10, armor-ac7faf72)
+- drift: read release tags from the local checkout first, add --latest-tag, ignore workflow manifests, drop decommissioned clusters (armor-26be2614)
+- docs(readme): GHCR-first quick start, subcommand table, complete configuration and endpoint references, current repo map (armor-0c37405f)
+- docs: add AGENTS.md and a CLAUDE.md that imports it (armor-5e68c2ec)
+- build: repair the Makefile, fix the go-version prefix in 'armor version', ignore local caches (armor-db388027)
+- chore(tests): reduce tests/__init__.py to a package marker after the framework removal (armor-c70bb108)
+- feat(scripts): publish_release.py, idempotent tag + Forgejo/GitHub release publisher (armor-4a03c2f6, armor-b00ee40c)
+- chore: prune misleading clutter that no runner or deployment uses (armor-c70bb108)
+- perf(tests): reproducible bounded throughput benchmark harness + runbook (armor-fd19a839)
+- test(multipart): back off SDK-shape deferral retries like a real transfer manager (armor-13bf495b)
+- feat(scripts): automate fleet version-drift detection with dedup alerts (armor-3d3cfdca)
+- docs(client-config): embed multipart contract in every tool config; repair client-config tests (armor-fdbbd145)
+- fix(srvtest): tolerate in-flight put temps in Snapshot listings (armor-114138b9)
+- feat(metrics): complete restore verification alert signals
+- test(replication): pin overwrite convergence and delete non-propagation for ADR-006 (armor-6a46d263)
+- test(docker-demo): smoke test replaying the README Docker-only demo workflow (armor-8fb3e996)
+- test(srvtest): secondary outage/slow windows never block acks and fully drain with gauge coherence (armor-e32d8c27)
+- docs(multipart): client-concurrency compatibility matrix; reconcile README claim with ADR-003 §4 (armor-13bf495b)
+- feat(tests): server-level dual-backend harness + primary-ack-to-secondary landing e2e (armor-8e26f4ef)
+- feat(adr-006): publish replication queue stats to server metrics + credential-hygiene tests
+- test(manifest): pre-prefix coexistence and prefixed provenance delta-walk coverage (armor-8636e2d5)
+- feat(docs): enforce documentation-index consistency via internal/docsindex
+- docs(dr): correct plaintext SHA metadata header in failover validation steps (armor-cdc2c6a7)
+- test(migration): manifest-driven regeneration-set validation harness (armor-b8aa06b2)
+- test(migration): deepen omission-variant fixture pins (armor-3aac661d)
+- feat(migration): reader-aligned V1 explicit-version fixture (armor-53bcdd78)
+- docs(dr): full ADR-006 provider-outage recovery procedure (armor-cdc2c6a7)
+- docs(scripts): relabel remaining contract-sense ADR-005 citations to ADR-015 (armor-d8e0f80d)
+- test(listing): dual-location internal-namespace filters under ARMOR_PREFIX (armor-0d31cf6e)
+- feat(migration): deterministic standalone fixture generator foundation (armor-19065d7e)
+- fix(multipart): relabel uniform-part-size contract citations ADR-005 -> ADR-015 (armor-d8e0f80d)
+- fix: harden secondary replication configuration and queue
+- test(config): confine ARMOR_MANIFEST_PREFIX to the tenant namespace (armor-d69329fe)
+- docs(adr): repair ADR numbering and cross-references (armor-0d1596e3)
+- feat: implement ADR-006 async secondary replication
+- docs(metrics): document the restorability gauges and the declarative-config alert rules
+- chore: stop tracking local worker runtime
+- fix(beads): rebuild checkpoint from authoritative live store
+- fix(checkpoint): repair JSON truncated by the gitleaks-remediation filter-repo pass
+- test(migration): align golden harness with malformed/contradictory fixtures (armor-abbddad5)
+- docs(migration): record complete-fixture-set golden validation delta (armor-45aeb954)
+- docs(migration): document expected V3 outcome for every fixture dir (armor-1b0294b5)
+- test(migration): pin fixture matrix with per-fixture pass/fail classes (armor-b47b5435)
+- docs(migration): record 2026-09-14 golden fixture validation delta
+
 ## 0.1.1969 (2026-09-14)
 
 - fix(decrypt): decrypt v3 multipart objects per part and pin the `cmd/armor` fixtures to the server wire form (armor-2eae59f1)
