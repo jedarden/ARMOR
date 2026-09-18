@@ -1,0 +1,13 @@
+{
+  "plaintext_sha256": "2312394bd99545d9de131c24efb781e765ac1aec243f2ed9347597a793a415e9",
+  "plaintext_length": 262144,
+  "source_version": "contradictory",
+  "source_layout": "single",
+  "v3_expected": {
+    "is_multipart": false,
+    "compression_used": false
+  },
+  "description": "Contradictory: version says V1, layout uses V2 counter derivation",
+  "expected_migration_outcome": "failure",
+  "expected_failure_reason": "version/header mismatch (V1 header with V2 ciphertext)"
+}

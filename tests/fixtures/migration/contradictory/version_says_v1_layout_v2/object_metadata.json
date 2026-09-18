@@ -1,0 +1,8 @@
+{
+  "x-amz-meta-armor-block-size": "65536",
+  "x-amz-meta-armor-iv": "AwQFBgcICQoLDA0ODxAREg==",
+  "x-amz-meta-armor-plaintext-size": "262144",
+  "x-amz-meta-armor-sha256": "2312394bd99545d9de131c24efb781e765ac1aec243f2ed9347597a793a415e9",
+  "x-amz-meta-armor-version": "1",
+  "x-amz-meta-armor-wrapped-dek": "yuqSInsrWAcC9/I2eXdQEU5j8GFYSShpTxvCWNRrGpqAtZPdbBePJQ=="
+}

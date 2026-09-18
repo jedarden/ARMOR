@@ -224,7 +224,7 @@ Enforcement stages for corrupt fixtures, strictest first:
 | `malformed/envelope_version_mismatch` | header V1, metadata V2 | classify: header-vs-metadata version compare |
 | `malformed/v1_object_v2_metadata` | genuine V1 object claiming V2 | classify: version compare; V2 derivation cannot decrypt V1 ciphertext |
 | `malformed/v2_object_v1_metadata` | genuine V2 object claiming V1 | classify: version compare; V1 derivation cannot decrypt V2 ciphertext |
-| `contradictory/version_says_v1_layout_v2` | metadata claims V1, layout written with V2 derivation | classify: dry-run must fail the object (vacuous at single-block size — V1/V2 counters coincide on block 0) |
+| `contradictory/version_says_v1_layout_v2` | metadata + envelope header claim V1; stored layout is V2 (counter = blockIndex × 4096 AES blocks per 64 KiB block). Multi-block: 262144 B plaintext (4 × 64 KiB, plaintext SHA-256 `2312394b…`), so the contradiction is real — block 0 coincides (both derivations produce counter 0) and block 1 diverges (V1 derives counter 1, reusing bytes [16, 65536) of block 0's keystream; V2 wrote counter 4096) | classify: dry-run must fail the object — V1 derivation decrypts blocks 1–3 to garbage, so the header plaintext SHA-256 cannot match and plaintext-integrity enforcement fails the object closed |
 
 No corrupt fixture may pass through every layer: if the read path and
 accounting both accept it and the dry run processes it, the matrix test fails

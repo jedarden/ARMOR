@@ -1636,7 +1636,17 @@ func main() {
 	// Generate contradictory fixtures
 	fmt.Println("Generating contradictory fixtures...")
 
-	contradictory, err := gen.GenerateContradictoryVersionLayout(testPlaintext)
+	// Multi-block plaintext (deterministic byte(i%256) fill) so the
+	// V1-vs-V2 counter derivation genuinely diverges: both derivations
+	// produce counter 0 for block 0, so a single-block plaintext would make
+	// the version/layout contradiction vacuous. Divergence starts at block
+	// 1, where V1 derives counter 1 and V2 derives counter 4096.
+	contradictoryPlaintext := make([]byte, 4*65536)
+	for i := range contradictoryPlaintext {
+		contradictoryPlaintext[i] = byte(i % 256)
+	}
+
+	contradictory, err := gen.GenerateContradictoryVersionLayout(contradictoryPlaintext)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate contradictory: %v\n", err)
 		os.Exit(1)
