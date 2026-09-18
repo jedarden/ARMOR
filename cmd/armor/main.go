@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 
 	"github.com/jedarden/armor/internal/version"
 )
@@ -84,13 +85,62 @@ func listCommands(w io.Writer) {
 	}
 }
 
+// versionJSONFlag arms `armor version --json`.
+var versionJSONFlag bool
+
 func init() {
+	// version specific flag, on the shared flag.CommandLine like every other
+	// subcommand's flags
+	flag.BoolVar(&versionJSONFlag, "json", false, "Print version information as a single-line JSON object")
+
 	// Register version command
 	registerCommand(Command{
 		Name:        "version",
-		Description: "Print version information",
-		Func: func() {
-			version.Print("armor")
-		},
+		Description: "Print version information (--json for machine-readable output)",
+		Func:        runVersion,
 	})
+}
+
+// runVersion implements the version subcommand: the one-line text form by
+// default, or a JSON object with --json. `armor --version` and `-v` are
+// handled in main and always print the text form.
+func runVersion() {
+	// Parse flags
+	flag.Parse()
+
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", flag.Args())
+		fmt.Fprintf(os.Stderr, "Usage: armor version [--json]\n")
+		exit(2)
+	}
+
+	if !versionJSONFlag {
+		version.Print("armor")
+		return
+	}
+
+	out, err := version.JSON("armor", formatWriteVersion())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: rendering version JSON: %v\n", err)
+		exit(1)
+	}
+	fmt.Println(out)
+}
+
+// formatWriteVersion resolves the envelope format this build writes, from the
+// same ARMOR_FORMAT_VERSION variable internal/config reads (default 3), so
+// `armor version --json` reports the same value the server's /version
+// endpoint would. config.Load cannot be used here: it requires server
+// credentials, so the default-and-validate logic is mirrored instead.
+func formatWriteVersion() int {
+	v := version.DefaultFormatWriteVersion
+	if s := os.Getenv("ARMOR_FORMAT_VERSION"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || (n != 2 && n != 3) {
+			fmt.Fprintf(os.Stderr, "Error: ARMOR_FORMAT_VERSION must be an integer (2 or 3), got %q\n", s)
+			exit(2)
+		}
+		v = n
+	}
+	return v
 }

@@ -358,7 +358,7 @@ is missing. Names in `<angle brackets>` are placeholders.
 | `ARMOR_ADMIN_WRITE_TIMEOUT` | No | disabled | Max time the admin listener spends writing a response. Leave unset for `POST /admin/key/rotate` and `GET /admin/key/ring?census=head`, which walk the whole bucket and can take hours |
 | `ARMOR_LOG_LEVEL` | No | `info` | `debug`, `info`, `warn` or `error`. `debug` logs request and response headers and bodies |
 | `ARMOR_WRITER_ID` | No | hostname | Provenance chain writer ID |
-| `ARMOR_FORMAT_VERSION` | No | `3` | Envelope format written for new objects: `3` (current) or `2` (legacy). Reported by `armor version` and `/version` as `format_write_version` |
+| `ARMOR_FORMAT_VERSION` | No | `3` | Envelope format written for new objects: `3` (current) or `2` (legacy). Reported by `armor version --json` and `/version` as `format_write_version` |
 | `ARMOR_CANARY_DISABLED` | No | `false` | `true` skips the canary check in `/readyz` (readiness then reports 200 without verifying the MEK) |
 | `ARMOR_ALLOW_NO_CREDENTIALS` | No | `false` | Start without any client credential. Set by the `demo` subcommand only; never in production |
 
@@ -666,7 +666,7 @@ state (`.armor/multipart/*.state`) and canary objects (`.armor/canary/*`).
 ## Multipart upload constraints
 
 The constraints depend on the configured write format version
-(`ARMOR_FORMAT_VERSION`, reported by `armor version` and `/version`).
+(`ARMOR_FORMAT_VERSION`, reported by `armor version --json` and `/version`).
 
 ### Format version 3 (default)
 
