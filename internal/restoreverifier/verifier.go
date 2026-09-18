@@ -1187,11 +1187,20 @@ func (v *Verifier) restoreViaARMOR(ctx context.Context, bucket, key string) ([]b
 		}
 
 		iv = header.IV[:]
-		// Raw size = header + ciphertext + HMAC table
-		// Raw size = header + ciphertext + HMAC table
+		// Raw size = header + ciphertext + trailer. The trailer is the per-block
+		// HMAC table for v1/v2 (HMACSize per block) and the block table for v3
+		// (BlockTableEntrySize per block: HMAC + CLen). Sizing a v3 object with
+		// the v2 entry width fetched 4 bytes per block too little, so the
+		// trailer slice taken below started 4*blockCount bytes early and read
+		// HMAC bytes as the CLen field ("failed to decode v3 block table:
+		// ciphertext length N exceeds block size") for every v3 single-PUT
+		// object in the fleet (armor-8d4420fc).
 		blockCount := crypto.ComputeBlockCount(armorMeta.PlaintextSize, armorMeta.BlockSize)
-		hmacTableSize := int64(blockCount) * crypto.HMACSize
-		rawCiphertextSize = crypto.HeaderSize + armorMeta.PlaintextSize + hmacTableSize
+		trailerEntrySize := int64(crypto.HMACSize)
+		if armorMeta.Version == 3 {
+			trailerEntrySize = crypto.BlockTableEntrySize
+		}
+		rawCiphertextSize = crypto.HeaderSize + armorMeta.PlaintextSize + int64(blockCount)*trailerEntrySize
 	}
 
 	// Step 4: read the full raw ciphertext object in one operation
