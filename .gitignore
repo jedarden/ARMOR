@@ -8,6 +8,9 @@
 .pytest_cache/
 .benchmarks/
 
+# Local compose env: copied from .env.example and filled in; never commit it
+/.env
+
 # Test artifacts
 *.test
 *.out

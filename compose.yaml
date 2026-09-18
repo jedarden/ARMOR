@@ -1,0 +1,52 @@
+# ARMOR Docker Compose — demo and production profiles.
+#
+#   docker compose --profile demo up -d         # filesystem-backed demo, no credentials needed
+#   docker compose --profile production up -d   # real backend; copy .env.example to .env first
+#
+# The image tag is pinned through ARMOR_VERSION. The default below is the
+# repository's VERSION-file value at the time this file was last bumped, and
+# it must be bumped in the same change as VERSION (cut-release.sh does not
+# touch this file) — tests/docker-demo-smoke fails the drift otherwise. Set
+# ARMOR_VERSION in the environment (or in .env) to use any other published
+# tag. There is no floating :latest tag to fall back to.
+services:
+  armor-demo:
+    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1970}
+    profiles: [demo]
+    command:
+      - demo
+      - --listen
+      - 0.0.0.0:9000
+      - --admin-listen
+      - 0.0.0.0:9001
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  armor-production:
+    image: ghcr.io/jedarden/armor:${ARMOR_VERSION:-0.1.1970}
+    profiles: [production]
+    # Configuration reaches the container from the shell environment and from
+    # a root .env (compose interpolates the ${...} references below from the
+    # same two places, so the mechanisms agree; the shell wins). Copy
+    # .env.example to .env and fill it in — .env is git-ignored. Every
+    # variable here is passed by reference; no credential value belongs in
+    # this file. The required minimum is documented in docs/configuration.md.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ARMOR_ADMIN_LISTEN: 0.0.0.0:9001
+      ARMOR_B2_REGION: ${ARMOR_B2_REGION:-}
+      ARMOR_B2_ACCESS_KEY_ID: ${ARMOR_B2_ACCESS_KEY_ID:-}
+      ARMOR_B2_SECRET_ACCESS_KEY: ${ARMOR_B2_SECRET_ACCESS_KEY:-}
+      ARMOR_BUCKET: ${ARMOR_BUCKET:-}
+      ARMOR_CF_DOMAIN: ${ARMOR_CF_DOMAIN:-}
+      ARMOR_MEK: ${ARMOR_MEK:-}
+      ARMOR_AUTH_ACCESS_KEY: ${ARMOR_AUTH_ACCESS_KEY:-}
+      ARMOR_AUTH_SECRET_KEY: ${ARMOR_AUTH_SECRET_KEY:-}
+    ports:
+      - "9000:9000"
+      # The admin API (key management, migration, dashboard) stays on
+      # loopback; only the S3 API is published on all interfaces.
+      - "127.0.0.1:9001:9001"

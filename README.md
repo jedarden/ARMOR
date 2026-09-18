@@ -139,7 +139,11 @@ docker rm -f armor-demo
 
 This workflow is guarded by an automated smoke test (`make test-docker-demo`),
 which replays the commands above against the pinned image and fails if they
-stop working.
+stop working. The same suite also renders the tracked
+[`compose.yaml`](compose.yaml) (both profiles, no daemon needed) and, where a
+daemon is available, brings its demo profile up and runs the connectivity
+check through it; it fails when `compose.yaml`'s pinned image drifts from
+[`VERSION`](VERSION).
 
 ### Build from source
 
@@ -567,6 +571,7 @@ ARMOR/
 ├── docs/                      # ADRs, runbooks, notes, plan (index: docs/README.md)
 ├── config/drift-config.json   # Fleet drift-check configuration
 ├── Dockerfile                 # Published image (final stage = armor server)
+├── compose.yaml, .env.example # Docker Compose demo + production profiles (see docs/connection-guide.md)
 ├── AGENTS.md                  # Guide for contributors and agents
 ├── CHANGELOG.md, VERSION      # Release record and counter
 └── Makefile

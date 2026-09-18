@@ -25,6 +25,13 @@
 //     image publishing can lag the VERSION file) or when the published
 //     build regresses.
 //
+// A second test keeps the tracked compose.yaml (repository root, documented
+// in docs/connection-guide.md) working: both profiles must render with
+// `docker compose config` — a client-side check that needs no daemon — the
+// rendered demo image must stay pinned to the repo's VERSION file, and, when
+// a daemon is available, the demo profile must come up and answer the same
+// README connectivity check.
+//
 // Like tests/aws-cli-compatibility, every test skips cleanly — via t.Skip,
 // not failure — when Docker is unavailable or under -short, so plain
 // `go test ./...` and `make test` stay green on machines without a daemon.
@@ -166,6 +173,207 @@ func TestDockerDemoWorkflow(t *testing.T) {
 	if _, err := awsCLI("s3", "ls", "s3://"+readmeDemoBucket); err != nil {
 		t.Fatalf("README list-bucket command failed: %v", err)
 	}
+}
+
+// TestDockerComposeDemoWorkflow keeps the tracked compose.yaml at the
+// repository root working. The parse checks render each profile with
+// `docker compose config`, which is client-side only and needs no daemon:
+// the demo profile must come out with its image pinned to exactly the repo's
+// VERSION-file value (compose.yaml's ARMOR_VERSION default is bumped with
+// VERSION or this test fails the drift), and the production profile must
+// keep the admin port loopback-only with its variables passed by reference.
+// When a daemon is available, the demo profile is then brought up as its own
+// compose project and driven through the same README AWS CLI connectivity
+// check as TestDockerDemoWorkflow.
+func TestDockerComposeDemoWorkflow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("docker compose smoke test needs Docker; skipped in -short mode")
+	}
+	dockerBin, err := exec.LookPath("docker")
+	if err != nil {
+		t.Skip("docker not found in PATH; compose.yaml cannot be exercised here")
+	}
+	if out, err := dockerRun(t, dockerBin, 30*time.Second, "compose", "version"); err != nil {
+		t.Skipf("docker compose plugin unavailable: %v: %s", err, firstLine(out))
+	}
+	root := repoRoot(t)
+	composeFile := filepath.Join(root, "compose.yaml")
+	if _, err := os.Stat(composeFile); err != nil {
+		t.Fatalf("compose.yaml is missing from the repository root: %v", err)
+	}
+
+	project := envDefault("ARMOR_SMOKE_COMPOSE_PROJECT", "armor-compose-smoke")
+	compose := func(args ...string) []string {
+		return append([]string{"compose", "-f", composeFile, "-p", project}, args...)
+	}
+
+	// Parse check, demo profile: must render, pinned to the VERSION file.
+	// (The raw file, deliberately not versionForBuild: ARMOR_SMOKE_VERSION
+	// exists for custom ARMOR_SMOKE_IMAGE builds and must not redefine what
+	// compose.yaml's default is checked against.)
+	raw, err := os.ReadFile(filepath.Join(root, "VERSION"))
+	if err != nil {
+		t.Fatalf("cannot read the repo VERSION file to check compose.yaml's pinned image: %v", err)
+	}
+	version := strings.TrimSpace(string(raw))
+	if version == "" {
+		t.Fatal("repo VERSION file is empty; refusing to reason about compose.yaml's pinned image")
+	}
+	wantImage := "ghcr.io/jedarden/armor:" + version
+	demoOut, err := dockerRun(t, dockerBin, 60*time.Second, compose("--profile", "demo", "config")...)
+	if err != nil {
+		t.Fatalf("docker compose --profile demo config failed; compose.yaml is not a runnable demo compose file: %v\noutput: %s",
+			err, tailLines(demoOut, 30))
+	}
+	if image := renderedImage(t, demoOut); image != wantImage {
+		t.Fatalf("compose.yaml's rendered demo image is %q, not the VERSION-file pin %q; bump the ARMOR_VERSION default in compose.yaml in the same change as VERSION",
+			image, wantImage)
+	}
+
+	// Parse check, production profile: must render even with no .env present
+	// (its env_file entry is optional), must pass the required variables by
+	// reference, and must keep the admin port on loopback only.
+	prodOut, err := dockerRun(t, dockerBin, 60*time.Second, compose("--profile", "production", "config")...)
+	if err != nil {
+		t.Fatalf("docker compose --profile production config failed: %v\noutput: %s", err, tailLines(prodOut, 30))
+	}
+	if !adminPortIsLoopbackOnly(t, prodOut) {
+		t.Fatalf("production profile does not bind the admin port to loopback only; rendered config:\n%s", prodOut)
+	}
+	for _, ref := range []string{
+		"ARMOR_B2_REGION", "ARMOR_B2_ACCESS_KEY_ID", "ARMOR_B2_SECRET_ACCESS_KEY",
+		"ARMOR_BUCKET", "ARMOR_CF_DOMAIN", "ARMOR_MEK",
+		"ARMOR_AUTH_ACCESS_KEY", "ARMOR_AUTH_SECRET_KEY",
+	} {
+		if !strings.Contains(prodOut, ref) {
+			t.Fatalf("production profile does not pass %s through by reference; rendered config:\n%s", ref, prodOut)
+		}
+	}
+
+	// Live check — needs a daemon; skip cleanly (the parse checks above have
+	// already run and passed) when there is none.
+	if out, err := exec.Command(dockerBin, "info").CombinedOutput(); err != nil {
+		t.Skipf("docker daemon unreachable (docker info: %v): %s; the compose parse checks already passed",
+			err, firstLine(string(out)))
+	}
+
+	ensureImage(t, dockerBin, wantImage)
+	ensureAWSCLIImage(t, dockerBin)
+
+	// The compose project's containers never outlive the test, even when a
+	// documented step fails midway.
+	t.Cleanup(func() {
+		_, _ = dockerRun(t, dockerBin, 120*time.Second,
+			compose("--profile", "demo", "down", "--volumes", "--remove-orphans")...)
+	})
+
+	if out, err := dockerRun(t, dockerBin, imagePullWait, compose("--profile", "demo", "up", "-d")...); err != nil {
+		t.Fatalf("docker compose --profile demo up -d failed: %v\noutput: %s", err, tailLines(out, 30))
+	}
+	cidOut, err := dockerRun(t, dockerBin, 30*time.Second, compose("--profile", "demo", "ps", "-q", "armor-demo")...)
+	if err != nil {
+		t.Fatalf("cannot resolve the compose demo container: %v\noutput: %s", err, cidOut)
+	}
+	container := firstLine(cidOut)
+	if container == "" {
+		t.Fatal("compose demo service has no container; up -d reported success but ps -q is empty")
+	}
+
+	// The README connectivity check against the compose-managed demo: the
+	// AWS CLI container joins the demo container's network namespace and
+	// addresses it on 127.0.0.1, so no host port mapping is involved.
+	awsCLI := func(args ...string) (string, error) {
+		awsArgs := []string{
+			"run", "--rm", "--network", "container:" + container,
+			"-e", "AWS_ACCESS_KEY_ID=" + readmeAccessKey,
+			"-e", "AWS_SECRET_ACCESS_KEY=" + readmeSecretKey,
+			"-e", "AWS_DEFAULT_REGION=" + readmeRegion,
+			readmeAWSCLIImage,
+			"--endpoint-url", "http://127.0.0.1:" + readmeS3Port,
+		}
+		awsArgs = append(awsArgs, args...)
+		out, err := dockerRun(t, dockerBin, awsCLICommandWait, awsArgs...)
+		if err != nil {
+			return out, fmt.Errorf("aws %s: %w\noutput: %s", strings.Join(args, " "), err, out)
+		}
+		return out, nil
+	}
+
+	var lastErr error
+	deadline := time.Now().Add(containerStartWait)
+	for {
+		if _, err := awsCLI("s3", "ls"); err == nil {
+			break
+		} else {
+			lastErr = err
+		}
+		if !containerRunning(t, dockerBin, container) {
+			logs, _ := dockerRun(t, dockerBin, 30*time.Second, "logs", container)
+			t.Fatalf("compose demo container exited during startup; the connectivity check never succeeded\nlast error: %v\ndemo logs:\n%s",
+				lastErr, tailLines(logs, 40))
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("compose demo connectivity check (aws s3 ls) did not succeed within %s\nlast error: %v",
+				containerStartWait, lastErr)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	// Bring the project down now; the t.Cleanup above is the safety net for
+	// the failure paths.
+	if out, err := dockerRun(t, dockerBin, 120*time.Second,
+		compose("--profile", "demo", "down", "--volumes", "--remove-orphans")...); err != nil {
+		t.Fatalf("docker compose --profile demo down failed: %v\noutput: %s", err, out)
+	}
+}
+
+// renderedImage extracts the image reference from `docker compose config`
+// output. A single-profile render describes exactly one service, so exactly
+// one image line is expected; anything else is a compose.yaml this test does
+// not understand and must not silently pass on.
+func renderedImage(t *testing.T, configOut string) string {
+	t.Helper()
+	var images []string
+	for _, line := range strings.Split(configOut, "\n") {
+		if field, ok := strings.CutPrefix(strings.TrimSpace(line), "image:"); ok {
+			images = append(images, strings.Trim(strings.TrimSpace(field), `"'`))
+		}
+	}
+	if len(images) != 1 {
+		t.Fatalf("expected exactly one rendered image line in compose config output, got %d: %q", len(images), images)
+	}
+	return images[0]
+}
+
+// adminPortIsLoopbackOnly reports whether the rendered compose config
+// publishes the admin port (9001) on the loopback address only. Depending on
+// the compose CLI version, port mappings render either short-form
+// ("127.0.0.1:9001:9001") or long-form (mode/host_ip/target/published
+// fields); both shapes must pass.
+func adminPortIsLoopbackOnly(t *testing.T, configOut string) bool {
+	t.Helper()
+	lines := strings.Split(configOut, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Short form, quoted or bare.
+		if strings.Contains(trimmed, "127.0.0.1:9001:9001") {
+			return true
+		}
+		// Long form: the admin-port entry carries host_ip 127.0.0.1. The
+		// entry's fields are contiguous lines after its "- mode:" bullet.
+		if trimmed == "target: 9001" {
+			for back := i - 1; back >= 0 && i-back <= 4; back-- {
+				field := strings.TrimSpace(lines[back])
+				if field == "host_ip: 127.0.0.1" {
+					return true
+				}
+				if strings.HasPrefix(field, "- mode:") {
+					break // start of the entry; no host_ip before it
+				}
+			}
+		}
+	}
+	return false
 }
 
 // pinnedImage returns the image reference under test: ARMOR_SMOKE_IMAGE when

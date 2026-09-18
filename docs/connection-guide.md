@@ -269,47 +269,20 @@ export ARMOR_BUCKET=my-bucket
 
 ### Docker Compose Example
 
-The following Compose file has two mutually exclusive profiles. The `demo`
-profile uses ARMOR's filesystem-backed demo mode and needs no B2 or Cloudflare
-credentials. The `production` profile passes through the B2 and ARMOR
-credentials from the shell environment — the required minimum from the
-[Configuration Reference](configuration.md), which documents every variable
-ARMOR reads. Set `ARMOR_VERSION` to the value in the
-repository's [`VERSION`](../VERSION) file or to a published Docker Hub tag
-before starting either profile.
+The repository root carries a tracked [`compose.yaml`](../compose.yaml) with
+two mutually exclusive profiles, exercised by the demo smoke test
+(`make test-docker-demo`), so the file is kept working rather than merely
+illustrative. The `demo` profile uses ARMOR's filesystem-backed demo mode and
+needs no B2 or Cloudflare credentials. The `production` profile passes
+through the B2 and ARMOR credentials from the shell environment or from a
+root `.env` file — copy [`.env.example`](../.env.example), fill it in, and
+never commit the result. The required minimum comes from the [Configuration
+Reference](configuration.md), which documents every variable ARMOR reads.
 
-```yaml
-services:
-  armor-demo:
-    image: ronaldraygun/armor:${ARMOR_VERSION:-0.1.1934}
-    profiles: [demo]
-    command:
-      - demo
-      - --listen
-      - 0.0.0.0:9000
-      - --admin-listen
-      - 0.0.0.0:9001
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-
-  armor-production:
-    image: ronaldraygun/armor:${ARMOR_VERSION:-0.1.1934}
-    profiles: [production]
-    ports:
-      - "9000:9000"
-      - "127.0.0.1:9001:9001"
-    environment:
-      ARMOR_ADMIN_LISTEN: 0.0.0.0:9001
-      ARMOR_B2_REGION: ${ARMOR_B2_REGION:-}
-      ARMOR_B2_ACCESS_KEY_ID: ${ARMOR_B2_ACCESS_KEY_ID:-}
-      ARMOR_B2_SECRET_ACCESS_KEY: ${ARMOR_B2_SECRET_ACCESS_KEY:-}
-      ARMOR_BUCKET: ${ARMOR_BUCKET:-}
-      ARMOR_CF_DOMAIN: ${ARMOR_CF_DOMAIN:-}
-      ARMOR_MEK: ${ARMOR_MEK:-}
-      ARMOR_AUTH_ACCESS_KEY: ${ARMOR_AUTH_ACCESS_KEY:-}
-      ARMOR_AUTH_SECRET_KEY: ${ARMOR_AUTH_SECRET_KEY:-}
-```
+Both profiles pin the image tag through `ARMOR_VERSION`, which defaults to
+the repository [`VERSION`](../VERSION) value at the time `compose.yaml` was
+last bumped; set `ARMOR_VERSION` to that value or to any published tag before
+starting either profile.
 
 Start and stop the demo profile:
 
@@ -320,7 +293,7 @@ docker compose --profile demo down
 ```
 
 Start the production profile after exporting the variables shown in the
-Compose file:
+Compose file or filling in `.env`:
 
 ```bash
 docker compose --profile production up -d armor-production
