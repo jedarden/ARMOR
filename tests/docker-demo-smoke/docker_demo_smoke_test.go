@@ -10,17 +10,17 @@
 // published 0.1.1969 image exited 2 on "docker run ... demo --listen ...").
 //
 // The image under test is pinned, never floating: by default it is
-// ronaldraygun/armor:<contents of the repo's VERSION file>, exactly the tag
-// the README points at. ARMOR_SMOKE_IMAGE overrides the reference wholesale.
+// ghcr.io/jedarden/armor:<contents of the repo's VERSION file>, exactly the
+// tag the README points at. ARMOR_SMOKE_IMAGE overrides the reference wholesale.
 //
 // The image is made available in one of two ways:
 //
 //   - default: used as-is when present locally, otherwise built from the
 //     repo's Dockerfile with `--build-arg VERSION=<VERSION file>` (the same
 //     invocation as `make docker`). This keeps the suite runnable on machines
-//     without Docker Hub credentials for the private ronaldraygun/armor repo.
+//     with no registry access at all.
 //   - ARMOR_SMOKE_PULL=1: `docker pull` the pinned reference instead, which
-//     validates that the tag published to Docker Hub actually serves the
+//     validates that the tag published to GHCR actually serves the
 //     documented workflow. This mode fails when the tag is missing (ARMOR's
 //     image publishing can lag the VERSION file) or when the published
 //     build regresses.
@@ -93,7 +93,7 @@ func TestDockerDemoWorkflow(t *testing.T) {
 	t.Cleanup(func() { removeContainer(t, dockerBin, container) })
 
 	// README: docker run -d --name armor-demo -p 9000:9000 -p 9001:9001
-	//   ronaldraygun/armor:<version> demo --listen 0.0.0.0:9000 --admin-listen 0.0.0.0:9001
+	//   ghcr.io/jedarden/armor:<version> demo --listen 0.0.0.0:9000 --admin-listen 0.0.0.0:9001
 	runArgs := []string{
 		"run", "-d", "--name", container,
 		"-p", hostPort + ":" + readmeS3Port,
@@ -169,8 +169,8 @@ func TestDockerDemoWorkflow(t *testing.T) {
 }
 
 // pinnedImage returns the image reference under test: ARMOR_SMOKE_IMAGE when
-// set, otherwise ronaldraygun/armor tagged with the repo's VERSION file — the
-// pinned tag README.md directs readers to, never a floating reference.
+// set, otherwise ghcr.io/jedarden/armor tagged with the repo's VERSION file —
+// the pinned tag README.md directs readers to, never a floating reference.
 func pinnedImage(t *testing.T) string {
 	t.Helper()
 	if ref := os.Getenv("ARMOR_SMOKE_IMAGE"); ref != "" {
@@ -185,12 +185,12 @@ func pinnedImage(t *testing.T) string {
 	if v == "" {
 		t.Fatal("repo VERSION file is empty; refusing to run the demo workflow against an unpinned image")
 	}
-	return "ronaldraygun/armor:" + v
+	return "ghcr.io/jedarden/armor:" + v
 }
 
 // ensureImage makes the pinned image available locally. With
 // ARMOR_SMOKE_PULL=1 it pulls the published reference (and fails when the
-// tag is not on Docker Hub); otherwise it uses an existing local image or
+// tag is not on GHCR); otherwise it uses an existing local image or
 // builds one from the repo's Dockerfile, mirroring `make docker`.
 func ensureImage(t *testing.T, dockerBin, image string) {
 	t.Helper()

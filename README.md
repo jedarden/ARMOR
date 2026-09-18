@@ -15,8 +15,30 @@ CLI, DuckDB, rclone, litestream, barman) works without modification.
 - **DuckDB-compatible** — query encrypted Parquet files with column pruning and predicate pushdown intact
 - **Multi-key routing** — different master keys for different path prefixes; automatic key selection per object
 
+## Install
+
+**Container image:**
+
+```bash
+docker pull ghcr.io/jedarden/armor:<version>
+```
+
+`<version>` is a release counter such as `0.1.1969`; the current one is in the
+[`VERSION`](VERSION) file. Only pinned version tags are published — there is no
+`latest` or other floating tag.
+
+**Go toolchain** (Go 1.25 or newer):
+
+```bash
+go install github.com/jedarden/armor/cmd/armor@v<version>
+```
+
+**Platform note:** published images are built for linux/amd64 only. On Apple
+Silicon, add `--platform linux/amd64` to `docker pull` and `docker run`.
+
 ## Contents
 
+- [Install](#install)
 - [Quick Start](#quick-start)
 - [Subcommands](#subcommands)
 - [Production Docker deployment](#production-docker-deployment)
@@ -44,15 +66,16 @@ CLI, DuckDB, rclone, litestream, barman) works without modification.
 
 ### Images
 
-Every release publishes the same server image to two registries:
+Every release publishes the server image to the GitHub Container Registry:
 
 | Image | Access |
 |---|---|
 | `ghcr.io/jedarden/armor:<version>` | Public. Pulls need no credentials. **Use this one.** |
-| `ronaldraygun/armor:<version>` (Docker Hub) | Private namespace; pulls need a Docker Hub login. Used by the fleet's own deployments. |
 
-Companion images `ronaldraygun/armor-restore-verifier:<version>` and
-`ronaldraygun/armor-fleet:<version>` are published alongside (Docker Hub only).
+The same tags are also pushed to a private Docker Hub namespace used by the
+fleet's own deployments; anonymous pulls there return 401, so everything in
+this document points at GHCR instead. The companion images (restore verifier,
+fleet console) are published to that internal namespace only.
 
 `<version>` is a release counter such as `0.1.1969`. The current one is in
 [`VERSION`](VERSION); every published version has an entry in
