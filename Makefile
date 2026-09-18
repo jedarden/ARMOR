@@ -1,15 +1,15 @@
 # ARMOR Makefile
-# Targets: build, test, test-integration, lint, docker, compat
+# Targets: build, test, test-integration, lint, docker, compat, test-docker-demo, dod, release, clean, help
 
-VERSION ?=$(shell cat VERSION)
+VERSION ?= $(shell cat VERSION)
 
-# Nix Go installation (NOS/NixOS environment)
-NIX_GO := /nix/store/3yh8g6m3balbhzxsx77jlyyx443bxqii-go-1.26.6/share/go/bin/go
-export PATH := $(dir $(NIX_GO)):$(PATH)
-GO := go
+# Go toolchain: whatever `go` is on PATH. go.mod pins the minimum language
+# version and CI builds with golang:1.25; there are deliberately no
+# machine-specific toolchain paths here.
+GO ?= go
 CGO_ENABLED ?= 0
-GOOS ?= $(shell $(NIX_GO) env GOOS)
-GOARCH ?= $(shell $(NIX_GO) env GOARCH)
+GOOS ?= $(shell $(GO) env GOOS)
+GOARCH ?= $(shell $(GO) env GOARCH)
 
 # LDFLAGS for version injection
 LDFLAGS := -s -w -X github.com/jedarden/armor/internal/version.Version=$(VERSION)
@@ -19,23 +19,25 @@ CMDDIR := ./cmd
 TESTDIR := ./tests
 BUILDDIR := ./bin
 
-# Binaries to build
-BINARIES := armor armor-decrypt armor-fleet restore-verifier verify-objects
+# One binary per cmd/ directory. The list is derived from the tree so it can
+# never name a command that no longer exists (armor-decrypt was folded into
+# `armor decrypt` on 2026-08-30 and the old hard-coded list kept building it).
+BINARIES := $(notdir $(wildcard $(CMDDIR)/*))
 
 # Docker build arguments
 DOCKER_BUILD := docker build --build-arg VERSION=$(VERSION)
 
-.PHONY: all build test test-integration lint docker compat test-docker-demo clean help
+.PHONY: all build test test-integration lint docker compat test-docker-demo dod release clean help
 
 all: build test lint
 
-## build: Build all cmd/ binaries with version injection
+## build: Build every cmd/ binary into bin/ with the version injected
 build:
 	@echo "Building ARMOR binaries (version $(VERSION))..."
 	@mkdir -p $(BUILDDIR)
 	@for bin in $(BINARIES); do \
 		echo "  Building $$bin..."; \
-		CGO_ENABLED=$(CGO_ENABLED) $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILDDIR)/$$bin $(CMDDIR)/$$bin; \
+		CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILDDIR)/$$bin $(CMDDIR)/$$bin || exit 1; \
 	done
 	@echo "Build complete: $(BUILDDIR)/{$(BINARIES)}"
 
@@ -56,15 +58,13 @@ lint:
 	@echo "Running golangci-lint..."
 	golangci-lint run --config .golangci.yml
 
-## docker: Build both Dockerfiles (armor and test images)
+## docker: Build the server and test images, tagged with VERSION only (no floating tags)
 docker: Dockerfile Dockerfile.test
 	@echo "Building Docker images..."
 	@echo "  Building ronaldraygun/armor:$(VERSION)..."
 	$(DOCKER_BUILD) -t ronaldraygun/armor:$(VERSION) -f Dockerfile .
-	$(DOCKER_BUILD) -t ronaldraygun/armor:latest -f Dockerfile .
 	@echo "  Building ronaldraygun/armor-test:$(VERSION)..."
 	$(DOCKER_BUILD) -t ronaldraygun/armor-test:$(VERSION) -f Dockerfile.test .
-	$(DOCKER_BUILD) -t ronaldraygun/armor-test:latest -f Dockerfile.test .
 	@echo "Docker images built successfully"
 
 ## compat: Run AWS CLI / rclone compatibility tests
@@ -76,6 +76,15 @@ compat:
 test-docker-demo:
 	@echo "Running Docker demo smoke test (requires Docker)..."
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) test -v $(TESTDIR)/docker-demo-smoke/...
+
+## dod: Run the repository definition of done (fast lane: build, vet, script tests)
+dod:
+	scripts/definition-of-done.sh --fast
+
+## release: Cut a release commit (VERSION bump + CHANGELOG entry). Usage: make release V=0.1.1970
+release:
+	@test -n "$(V)" || { echo "usage: make release V=<MAJOR.MINOR.PATCH>"; exit 2; }
+	scripts/cut-release.sh $(V)
 
 ## clean: Remove build artifacts
 clean:
@@ -93,6 +102,7 @@ help:
 	done
 	@echo ""
 	@echo "Variables:"
-	@echo "  VERSION    - Version string (default: read from VERSION file)"
+	@echo "  VERSION     - Version string (default: read from VERSION file)"
+	@echo "  GO          - Go binary (default: go from PATH)"
 	@echo "  CGO_ENABLED - CGO mode (default: 0)"
-	@echo "  GOFLAGS    - Additional Go build flags"
+	@echo "  GOFLAGS     - Additional Go build flags"

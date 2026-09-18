@@ -1,7 +1,12 @@
-# Binary (root-level only)
+# Binaries (root-level only) and the `make build` output directory
 /armor
 /armor-decrypt
 /restore-verifier
+/bin/
+
+# Local tool caches
+.pytest_cache/
+.benchmarks/
 
 # Test artifacts
 *.test
