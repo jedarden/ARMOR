@@ -11,14 +11,18 @@ The ARMOR Version Drift Check automatically detects when deployed ARMOR versions
 - **`scripts/drift_check.py`** - Fleet drift check: live `/version` probing, four-state classification, deduplicated alert-bead filing via `--unique-ref`
 - **`scripts/version-drift-check.py`** - Unified wrapper that orchestrates the complete drift check pipeline
 - **`scripts/archive/check-armor-version-drift.py`** - Standalone drift check script (legacy, archived)
-- **`scripts/github-release-fetcher.py`** - Fetches ARMOR releases from GitHub API
+- **`scripts/github-release-fetcher.py`** - Lists release tags: from the local checkout's `v*` tags when it has any (`--source auto`, the default; run `git fetch --tags` first), otherwise from the GitHub tags API (`--source github`)
 - **`scripts/find-armor-deployments.py`** - Scans declarative-config for ARMOR deployments
 - **`scripts/compare-version-drift.py`** - Compares deployments against releases to detect drift
 
 ### Kubernetes Resources
 
-- **`k8s/armor-drift-check-workflowtemplate.yml`** - Argo WorkflowTemplate for running drift checks
-- **`k8s/armor-drift-check-cronworkflow.yml`** - Scheduled workflow (runs daily at 9 AM UTC)
+Both live in declarative-config, where ArgoCD applies them (the copies that
+used to sit under this repository's `k8s/` had diverged and were removed on
+2026-09-18):
+
+- **`declarative-config/k8s/iad-ci/argo-workflows/armor-drift-check-workflowtemplate.yml`** - Argo WorkflowTemplate for running drift checks
+- **`declarative-config/k8s/iad-ci/argo-workflows/armor-drift-check-cronworkflow.yml`** - Scheduled workflow (runs daily at 9 AM UTC)
 
 ### Configuration
 
@@ -26,13 +30,15 @@ The ARMOR Version Drift Check automatically detects when deployed ARMOR versions
 
 ## Deployments Monitored
 
-The following clusters are checked:
-- **iad-ci**: `iad-ci/armor/armor-deployment.yaml`
-- **iad-kalshi**: `iad-kalshi/armor/armor-deployment.yml`
-- **rs-manager**: `rs-manager/armor/armor-deployment.yml`
-- **ord-devimprint**: `ord-devimprint/devimprint/armor-deployment.yml`
-- **iad-native-ads**: `iad-native-ads/armor/armor-deployment.yml`
-- **iad-acb**: `iad-acb/ai-code-battle/acb-armor-deployment.yml`
+Every `ronaldraygun/armor*` image reference under `declarative-config/k8s/`
+is checked (server and restore-verifier images alike); the list is enumerated
+by `scripts/find-armor-deployments.py`, never maintained by hand. The clusters
+in `config/drift-config.json` (`iad-ci`, `iad-kalshi`, `rs-manager`,
+`ord-devimprint`, `apexalgo-iad`, `ardenone-cluster`) are additionally
+*expected* to have at least one deployment, so a cluster whose manifests
+disappear is reported as `unavailable` rather than silently dropping out.
+`iad-native-ads` and `iad-acb` were decommissioned in July 2026 and are no
+longer expected.
 
 ## Warning Thresholds
 
@@ -65,8 +71,11 @@ not refile.
 #### drift_check.py (recommended)
 
 ```bash
-# Classify the fleet against the live GitHub release list
+# Classify the fleet against the release tags (local checkout first, GitHub otherwise)
 python3 scripts/drift_check.py
+
+# Assert the newest release when tags lag VERSION (e.g. CI has not tagged yet)
+python3 scripts/drift_check.py --latest-tag v0.1.1970
 
 # Machine-readable JSON (adds per-deployment state and the drift fingerprint)
 python3 scripts/drift_check.py --json

@@ -535,6 +535,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="declarative-config checkout (default from config, else ~/declarative-config)")
     parser.add_argument("--releases-file", type=Path, default=None,
                         help="releases JSON file (default: run github-release-fetcher.py)")
+    parser.add_argument("--latest-tag", default=None, metavar="TAG",
+                        help="treat TAG (e.g. v0.1.1970) as the latest approved release even if"
+                             " the release source does not list it yet; use when tags lag VERSION")
     parser.add_argument("--probe-url", action="append", default=[], metavar="CLUSTER=URL",
                         help="live /version endpoint for a cluster; running tag is compared"
                              " against the declared manifest tag (repeatable)")
@@ -578,6 +581,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (OSError, json.JSONDecodeError, RuntimeError, subprocess.TimeoutExpired) as exc:
         print(f"Error: cannot load releases: {exc}", file=sys.stderr)
         return 2
+
+    if args.latest_tag:
+        # An operator-asserted latest: appended so latest_release() (highest
+        # version wins) picks it up, without discarding the fetched history
+        # that missed_correctness_releases still needs.
+        if parse_version(args.latest_tag) is None:
+            print(f"Error: --latest-tag expects a version tag like v0.1.1970, got {args.latest_tag!r}",
+                  file=sys.stderr)
+            return 2
+        if not any(r.get("tag") == args.latest_tag for r in releases):
+            releases = list(releases) + [{
+                "tag": args.latest_tag,
+                "published_at": datetime.now(timezone.utc).isoformat(),
+                "is_correctness": False,
+                "url": "",
+            }]
 
     try:
         finder = load_finder_module()

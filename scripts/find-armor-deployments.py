@@ -54,6 +54,11 @@ def find_armor_deployments(declarative_config_path: str) -> list[dict]:
 
     # Walk the k8s directory recursively
     for root, dirs, files in os.walk(k8s_path):
+        # Argo WorkflowTemplates and Sensors reference the image in build and
+        # test steps (e.g. "ronaldraygun/armor:$IMAGE_TAG" in armor-build's
+        # compatibility suite). They are not deployments and their tags are
+        # shell or template expressions, so they must not be classified.
+        dirs[:] = [d for d in dirs if d not in ('argo-workflows', 'argo-events')]
         for filename in files:
             if not filename.endswith('.yml') and not filename.endswith('.yaml'):
                 continue
@@ -68,6 +73,11 @@ def find_armor_deployments(declarative_config_path: str) -> list[dict]:
                     continue
 
                 image_type, image_tag = extract_image_info(content)
+                if image_tag and any(marker in image_tag for marker in ('$', '{{', '}}')):
+                    # An unexpanded variable or template placeholder, not a pin.
+                    print(f"Warning: unexpanded image tag {image_tag!r} in {filepath}, skipping",
+                          file=sys.stderr)
+                    continue
                 if image_type and image_tag:
                     cluster = extract_cluster_from_path(filepath)
                     deployments.append({

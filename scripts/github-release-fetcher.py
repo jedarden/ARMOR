@@ -378,6 +378,42 @@ def fetch_releases(per_page: int = 100, use_cache: bool = True, force_refresh: b
     return releases
 
 
+def fetch_local_git_tags(repo_path: Optional[Path] = None) -> list[dict]:
+    """
+    List release tags (v*) from the local git checkout, in the same parsed
+    shape the GitHub paths produce.
+
+    Tags are the release record ARMOR's CI writes (one annotated v<version>
+    tag per published release), so a checkout that has fetched them is the
+    most direct source and needs no network. A shallow CI clone has none, in
+    which case this returns [] and the caller falls back to GitHub.
+    """
+    if repo_path is None:
+        repo_path = Path.cwd()
+    try:
+        result = subprocess.run(
+            ['git', 'tag', '--list', 'v*'],
+            cwd=repo_path, capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    items = []
+    for tag in result.stdout.split():
+        if parse_version_number(tag) == 0:
+            continue
+        commit_msg = get_commit_message_for_tag(tag, repo_path)
+        items.append({
+            'tag': tag,
+            'published_at': get_tag_commit_date({'name': tag}, repo_path),
+            'is_correctness': is_correctness_release({'tag': tag}, commit_msg),
+            'url': f"{REPO_URL}/releases/tag/{tag}",
+        })
+    items.sort(key=lambda x: parse_version_number(x['tag']), reverse=True)
+    return items
+
+
 def get_commit_message_for_tag(tag_name: str, repo_path: Optional[Path] = None) -> str:
     """
     Get the commit message for a specific tag using local git repository.
@@ -591,8 +627,30 @@ def main():
         action='store_true',
         help='Use GitHub Releases API instead of git tags'
     )
+    parser.add_argument(
+        '--source',
+        choices=['auto', 'git', 'github'],
+        default='auto',
+        help='Where to read tags from: the local checkout (git), the GitHub API (github), '
+             'or the checkout when it has any v* tag and GitHub otherwise (auto, default). '
+             'Run `git fetch --tags` first when relying on the checkout.'
+    )
 
     args = parser.parse_args()
+
+    if not args.use_releases and args.source != 'github':
+        local = fetch_local_git_tags(Path.cwd())
+        if local or args.source == 'git':
+            if not local:
+                print("No v* tags in the local checkout (run `git fetch --tags`)", file=sys.stderr)
+            if args.limit is not None:
+                local = local[:args.limit]
+            print(json.dumps(local, indent=2))
+            correctness_count = sum(1 for r in local if r['is_correctness'])
+            print(f"Fetched {len(local)} tag(s) from the local checkout", file=sys.stderr)
+            print(f"Correctness-labeled: {correctness_count}", file=sys.stderr)
+            return 0
+        print("No local v* tags; falling back to the GitHub API", file=sys.stderr)
 
     # Determine cache TTL
     cache_ttl = args.cache_ttl if args.cache_ttl else CACHE_TTL_SECONDS

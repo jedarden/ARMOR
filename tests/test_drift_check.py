@@ -488,3 +488,32 @@ def test_cli_unavailable_cluster_in_expected_list(dc_and_releases):
     states = {d["cluster"]: d["state"] for d in data["deployments"]}
     assert states["iad-ci"] == drift_check.STATE_CURRENT
     assert states["iad-acb"] == drift_check.STATE_UNAVAILABLE
+
+
+def test_cli_latest_tag_override_makes_lagging_source_visible(dc_and_releases):
+    # The release source stops at v0.1.100 (tags lagged VERSION); the operator
+    # asserts v0.1.200 is the real latest. The deployment at v0.1.100 is then
+    # one approved release behind: current under the default threshold, stale
+    # as soon as the threshold is one release.
+    dc, releases, config = dc_and_releases
+    proc = _run_cli(["--json", "--manifests", str(dc),
+                     "--releases-file", str(releases), "--config", str(config),
+                     "--latest-tag", "v0.1.200"])
+    assert proc.returncode == 0, proc.stderr
+    report = json.loads(proc.stdout)["deployments"][0]
+    assert report["latest_tag"] == "v0.1.200"
+    assert report["releases_behind"] == 1
+    assert report["state"] == drift_check.STATE_CURRENT
+
+    proc = _run_cli(["--json", "--manifests", str(dc),
+                     "--releases-file", str(releases), "--config", str(config),
+                     "--latest-tag", "v0.1.200", "--releases-threshold", "1"])
+    assert proc.returncode == 1, proc.stderr
+    report = json.loads(proc.stdout)["deployments"][0]
+    assert report["state"] == drift_check.STATE_STALE
+
+
+def test_cli_latest_tag_rejects_non_version():
+    proc = _run_cli(["--latest-tag", "latest"])
+    assert proc.returncode == 2
+    assert "--latest-tag" in proc.stderr
