@@ -11,6 +11,7 @@ This index organizes all durable documentation by audience. Every file under `do
 - **[Unified Bucket Tenant Onboarding](runbooks/unified-bucket-tenant-onboarding.md)** — Adding a tenant to the shared ADR-001 bucket, prefix-scoped keys, per-tenant MEK, and the data move
 - **[Disaster Recovery](disaster-recovery.md)** — MEK backup/escrow, restore drills, offline decryption with the `armor decrypt` CLI, recovery from rotation failures, and the ADR-006 provider-outage (secondary-backend) failover procedure
 - **[Drift Check](drift-check.md)** — Version drift detection between ARMOR instances and rollback coordination
+- **[Authentication](authentication.md)** — Client credential model: default and named credentials, the ACL grammar (`bucket:prefix[:actions]`) and action verbs, append-only writers and the overwrite-as-destruction risk, and the YAML credentials file (`ARMOR_AUTH_FILE`) with its merge rules
 - **[Connection Guide](connection-guide.md)** — Network topology, Cloudflare PNI setup, and connectivity troubleshooting
 - **[Cloudflare Setup](cloudflare-setup.md)** — DNS and CDN configuration for zero-egress downloads
 - **[Dashboard](dashboard.md)** — Web UI for bucket browsing, encryption status, and metrics
