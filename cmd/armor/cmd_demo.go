@@ -26,25 +26,24 @@ var (
 )
 
 func init() {
+	// demo-specific flags, on demo's own flag set
+	demoFlags := flag.NewFlagSet("demo", flag.ExitOnError)
+	demoFlags.StringVar(&demoDirFlag, "dir", "", "Directory for filesystem backend (default: temp directory, removed on exit)")
+	demoFlags.StringVar(&demoListenFlag, "listen", "127.0.0.1:9000", "S3 API listen address")
+	demoFlags.StringVar(&demoAdminListenFlag, "admin-listen", "127.0.0.1:9001", "Admin API listen address")
+
 	// Register demo command
 	registerCommand(Command{
 		Name:        "demo",
 		Description: "Start ARMOR in demo mode with filesystem backend and fixed credentials",
+		Flags:       demoFlags,
 		Func:        demo,
 	})
-
-	// demo-specific flags - these are parsed in the demo() function
-	flag.StringVar(&demoDirFlag, "dir", "", "Directory for filesystem backend (default: temp directory, removed on exit)")
-	flag.StringVar(&demoListenFlag, "listen", "127.0.0.1:9000", "S3 API listen address")
-	flag.StringVar(&demoAdminListenFlag, "admin-listen", "127.0.0.1:9001", "Admin API listen address")
 }
 
 // demo implements the demo subcommand.
-func demo() {
-	// Parse flags
-	flag.Parse()
-
-	if flag.NArg() > 0 {
+func demo(fs *flag.FlagSet) {
+	if fs.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", flag.Args())
 		fmt.Fprintf(os.Stderr, "Usage: armor demo [--dir DIR] [--listen ADDR] [--admin-listen ADDR]\n")
 		os.Exit(2)

@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,9 +17,11 @@ import (
 )
 
 func init() {
+	// serve takes no flags: its configuration is entirely environmental
+	// (ARMOR_* variables). registerCommand arms an empty flag set for it.
 	registerCommand(Command{
 		Name:        "serve",
-		Description: "Start the ARMOR S3-compatible server (default)",
+		Description: "Start the ARMOR S3-compatible server (default; configured via ARMOR_* environment variables)",
 		Func:        serve,
 	})
 }
@@ -132,7 +135,15 @@ func adminTimeoutFromEnv(getenv func(string) string, key string) (time.Duration,
 	return d, nil
 }
 
-func serve() {
+func serve(fs *flag.FlagSet) {
+	// No flags and no positional arguments; anything after the subcommand
+	// name was previously swallowed silently by the global parse.
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", fs.Args())
+		fmt.Fprintf(os.Stderr, "Usage: armor serve\n")
+		os.Exit(2)
+	}
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {

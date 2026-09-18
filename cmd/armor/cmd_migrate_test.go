@@ -5,8 +5,8 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,8 +44,11 @@ func TestMigrateInvalidFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original environment
+			// Save original state: environment, exit stand-in, and the flag
+			// storage vars migrate validates.
 			oldEnv := os.Environ()
+			oldExit := exit
+			oldAdminURL := adminURLFlag
 			defer func() {
 				// Restore environment
 				os.Clearenv()
@@ -55,6 +58,8 @@ func TestMigrateInvalidFlags(t *testing.T) {
 						os.Setenv(kv[0], kv[1])
 					}
 				}
+				exit = oldExit
+				adminURLFlag = oldAdminURL
 			}()
 
 			// Set up test environment
@@ -72,23 +77,39 @@ func TestMigrateInvalidFlags(t *testing.T) {
 				panic("exit")
 			}
 
-			// Run migrate with flags
-			os.Args = append([]string{"armor", "migrate"}, tt.flags...)
+			// Capture stderr too: migrate writes its validation errors
+			// there, and the exit stand-in only records the code.
+			oldStderr := os.Stderr
+			stderrR, stderrW, _ := os.Pipe()
+			os.Stderr = stderrW
+			defer func() { os.Stderr = oldStderr }()
+
+			// The missing-admin-url case must see an empty flag, not whatever
+			// an earlier test parsed into the shared storage var.
+			adminURLFlag = ""
+
+			// Dispatch the way main does: parse this case's flags into
+			// migrate's own FlagSet, then run the command.
+			cmd := commands["migrate"]
+			_ = cmd.Flags.Parse(tt.flags)
 
 			// This will panic if exit is called, which we expect
 			defer func() {
 				if r := recover(); r != nil {
+					stderrW.Close()
+					var stderrBuf bytes.Buffer
+					stderrBuf.ReadFrom(stderrR)
 					if exitCode != tt.wantExit {
 						t.Errorf("unexpected exit code: got %d, want %d", exitCode, tt.wantExit)
 					}
-					msg := exitMsg.String()
+					msg := stderrBuf.String() + exitMsg.String()
 					if !strings.Contains(msg, tt.wantErr) {
 						t.Errorf("error message does not contain expected text: got %q, want to contain %q", msg, tt.wantErr)
 					}
 				}
 			}()
 
-			migrate()
+			cmd.Func(cmd.Flags)
 		})
 	}
 }
@@ -245,15 +266,18 @@ func TestMigrateServerInteraction(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(tt.handler))
 			defer server.Close()
 
-			// Update admin-url flag with server URL
+			// Substitute the -admin-url placeholder value with the test
+			// server's URL. (The earlier rewrite loop appended the URL twice
+			// for the ["-admin-url", ""] pattern, leaving a stray positional
+			// argument that migrate rejects with "unexpected arguments"
+			// before ever reaching the server.)
 			flags := make([]string, 0, len(tt.flags))
-			for i, f := range tt.flags {
-				if f == "-admin-url" && i+1 < len(tt.flags) && tt.flags[i+1] == "" {
+			for i := 0; i < len(tt.flags); i++ {
+				if tt.flags[i] == "-admin-url" && i+1 < len(tt.flags) && tt.flags[i+1] == "" {
 					flags = append(flags, "-admin-url", server.URL)
-				} else if i > 0 && tt.flags[i-1] == "-admin-url" && tt.flags[i-1] != "" {
-					flags = append(flags, server.URL)
+					i++ // skip the placeholder value
 				} else {
-					flags = append(flags, f)
+					flags = append(flags, tt.flags[i])
 				}
 			}
 
@@ -267,6 +291,7 @@ func TestMigrateServerInteraction(t *testing.T) {
 
 			// Capture exit
 			var exitCode int
+			oldExit := exit
 			exit = func(code int) {
 				exitCode = code
 				panic("exit")
@@ -274,22 +299,24 @@ func TestMigrateServerInteraction(t *testing.T) {
 
 			// Defer cleanup
 			defer func() {
+				exit = oldExit
 				os.Stderr = oldStderr
 				os.Stdout = oldStdout
 				werr.Close()
 				wout.Close()
 			}()
 
-			// Reset flag parsing for this test
-			flag.CommandLine = flag.NewFlagSet("migrate", flag.ContinueOnError)
-
-			// Run migrate
-			os.Args = append([]string{"armor", "migrate"}, flags...)
+			// Dispatch the way main does: parse this case's flags into
+			// migrate's own FlagSet, then run the command. (An earlier
+			// revision of this test swapped in a fresh empty flag.CommandLine
+			// here, which silently dropped every flag registration.)
+			cmd := commands["migrate"]
+			_ = cmd.Flags.Parse(flags)
 			func() {
 				defer func() {
 					recover() // Expected exit via panic
 				}()
-				migrate()
+				cmd.Func(cmd.Flags)
 			}()
 
 			// Restore output and read captured output
@@ -429,6 +456,7 @@ func TestMigrateWatchMode(t *testing.T) {
 
 	// Capture exit
 	var exitCode int
+	oldExit := exit
 	exit = func(code int) {
 		exitCode = code
 		panic("exit")
@@ -436,16 +464,16 @@ func TestMigrateWatchMode(t *testing.T) {
 
 	// Defer cleanup
 	defer func() {
+		exit = oldExit
 		os.Stderr = oldStderr
 		os.Stdout = oldStdout
 		wout.Close()
 	}()
 
-	// Run migrate with --watch
-	os.Args = []string{"armor", "migrate", "-admin-url", server.URL, "-watch"}
-
-	// Reset flag parsing
-	flag.CommandLine = flag.NewFlagSet("migrate", flag.ContinueOnError)
+	// Dispatch the way main does: parse --watch mode's flags into migrate's
+	// own FlagSet, then run the command.
+	cmd := commands["migrate"]
+	_ = cmd.Flags.Parse([]string{"-admin-url", server.URL, "-watch"})
 
 	// Run migrate in goroutine with timeout
 	done := make(chan struct{})
@@ -454,7 +482,7 @@ func TestMigrateWatchMode(t *testing.T) {
 			recover() // Expected exit via panic
 			close(done)
 		}()
-		migrate()
+		cmd.Func(cmd.Flags)
 	}()
 
 	// Wait for migration to complete or timeout
@@ -561,19 +589,23 @@ func TestMigrateWatchModeNoFailures(t *testing.T) {
 	os.Stdout = wout
 
 	var exitCode int
+	oldExit := exit
 	exit = func(code int) {
 		exitCode = code
 		panic("exit")
 	}
 
 	defer func() {
+		exit = oldExit
 		os.Stderr = oldStderr
 		os.Stdout = oldStdout
 		wout.Close()
 	}()
 
-	os.Args = []string{"armor", "migrate", "-admin-url", server.URL, "-watch"}
-	flag.CommandLine = flag.NewFlagSet("migrate", flag.ContinueOnError)
+	// Dispatch the way main does: parse --watch mode's flags into migrate's
+	// own FlagSet, then run the command.
+	cmd := commands["migrate"]
+	_ = cmd.Flags.Parse([]string{"-admin-url", server.URL, "-watch"})
 
 	done := make(chan struct{})
 	go func() {
@@ -581,7 +613,7 @@ func TestMigrateWatchModeNoFailures(t *testing.T) {
 			recover()
 			close(done)
 		}()
-		migrate()
+		cmd.Func(cmd.Flags)
 	}()
 
 	select {

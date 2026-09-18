@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,8 @@ import (
 )
 
 func init() {
+	// check takes no flags: it verifies the deployment's environmental
+	// configuration as loaded. registerCommand arms an empty flag set.
 	registerCommand(Command{
 		Name:        "check",
 		Description: "Verify ARMOR deployment: config, backend connectivity, Cloudflare path, MEK, and credentials",
@@ -32,7 +35,15 @@ type CheckResult struct {
 }
 
 // check runs deployment verification checks
-func check() {
+func check(fs *flag.FlagSet) {
+	// No flags and no positional arguments; anything after the subcommand
+	// name was previously swallowed silently by the global parse.
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", fs.Args())
+		fmt.Fprintf(os.Stderr, "Usage: armor check\n")
+		os.Exit(2)
+	}
+
 	// Load configuration (collects all errors at once)
 	cfg, err := config.Load()
 	if err != nil {

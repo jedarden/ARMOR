@@ -23,9 +23,31 @@ import (
 )
 
 func init() {
+	// decrypt's flags, on decrypt's own flag set
+	decryptFlags := flag.NewFlagSet("decrypt", flag.ExitOnError)
+	decryptFlags.StringVar(&mekFlag, "mek", "", "Master encryption key (hex, 64 chars)")
+	decryptFlags.StringVar(&mekFileFlag, "mek-file", "", "Read MEK from file (hex, 64 chars)")
+	decryptFlags.StringVar(&mekRingFlag, "mek-ring", "", "Comma-separated MEK ring (hex fingerprints, each 16 chars)")
+	decryptFlags.BoolVar(&mekEnvFallback, "mek-env", true, "Fallback to ARMOR_MEK env var if flags not set")
+	decryptFlags.StringVar(&escrowFile, "escrow", "", "Path to escrow JSON file containing MEK and B2 credentials (self-contained recovery)")
+	decryptFlags.StringVar(&inputFlag, "input", "", "Input: B2 URL (b2://bucket/key) or local file path")
+	decryptFlags.StringVar(&b2BucketFlag, "b2-bucket", "", "B2 bucket (alternative to B2 URL)")
+	decryptFlags.StringVar(&b2RegionFlag, "b2-region", "", "B2 region (e.g., us-west-004); overrides ARMOR_B2_REGION env var")
+	decryptFlags.StringVar(&b2EndpointFlag, "b2-endpoint", "", "B2 S3 endpoint (e.g., https://s3.us-west-004.backblazeb2.com); overrides ARMOR_B2_ENDPOINT env var")
+	decryptFlags.StringVar(&b2PrefixFlag, "b2-prefix", normalizePrefix(os.Getenv("ARMOR_PREFIX")), "ADR-001 key prefix the bucket stores objects under (default: ARMOR_PREFIX). Only affects multipart HMAC sidecar lookup: the sidecar is named by the UNprefixed client key, while the ciphertext is addressed by the prefixed one")
+	decryptFlags.StringVar(&b2KeyID, "key-id", "", "Key ID for multi-key MEK (from x-amz-meta-armor-key-id)")
+	decryptFlags.StringVar(&wrappedDEKFlag, "wrapped-dek", "", "Wrapped DEK (base64, for local files)")
+	decryptFlags.StringVar(&sidecarFlag, "sidecar", "", "Path to a JSON HMAC sidecar file for a local multipart object (ADR-003 headerless layout)")
+	decryptFlags.StringVar(&ivFlag, "iv", "", "Object IV (hex, 16 bytes) for a local multipart object (required with -sidecar)")
+	decryptFlags.IntVar(&versionFlag, "version", 1, "Envelope version (1 or 2), for local multipart files without envelope header (default: 1)")
+	decryptFlags.StringVar(&outputFlag, "output", "", "Output file path (default: stdout)")
+	decryptFlags.BoolVar(&decryptVerboseFlag, "v", false, "Verbose output")
+	decryptFlags.IntVar(&readConcurrency, "read-concurrency", envInt("ARMOR_READ_CONCURRENCY", 16), "Maximum concurrent ranged reads")
+
 	registerCommand(Command{
 		Name:        "decrypt",
 		Description: "Decrypt ARMOR-encrypted objects offline (MEK + B2 or local files)",
+		Flags:       decryptFlags,
 		Func:        decrypt,
 	})
 }
@@ -63,28 +85,15 @@ var (
 	readConcurrency    int
 )
 
-func init() {
-	flag.StringVar(&mekFlag, "mek", "", "Master encryption key (hex, 64 chars)")
-	flag.StringVar(&mekFileFlag, "mek-file", "", "Read MEK from file (hex, 64 chars)")
-	flag.StringVar(&mekRingFlag, "mek-ring", "", "Comma-separated MEK ring (hex fingerprints, each 16 chars)")
-	flag.BoolVar(&mekEnvFallback, "mek-env", true, "Fallback to ARMOR_MEK env var if flags not set")
-	flag.StringVar(&escrowFile, "escrow", "", "Path to escrow JSON file containing MEK and B2 credentials (self-contained recovery)")
-	flag.StringVar(&inputFlag, "input", "", "Input: B2 URL (b2://bucket/key) or local file path")
-	flag.StringVar(&b2BucketFlag, "b2-bucket", "", "B2 bucket (alternative to B2 URL)")
-	flag.StringVar(&b2RegionFlag, "b2-region", "", "B2 region (e.g., us-west-004); overrides ARMOR_B2_REGION env var")
-	flag.StringVar(&b2EndpointFlag, "b2-endpoint", "", "B2 S3 endpoint (e.g., https://s3.us-west-004.backblazeb2.com); overrides ARMOR_B2_ENDPOINT env var")
-	flag.StringVar(&b2PrefixFlag, "b2-prefix", normalizePrefix(os.Getenv("ARMOR_PREFIX")), "ADR-001 key prefix the bucket stores objects under (default: ARMOR_PREFIX). Only affects multipart HMAC sidecar lookup: the sidecar is named by the UNprefixed client key, while the ciphertext is addressed by the prefixed one")
-	flag.StringVar(&b2KeyID, "key-id", "", "Key ID for multi-key MEK (from x-amz-meta-armor-key-id)")
-	flag.StringVar(&wrappedDEKFlag, "wrapped-dek", "", "Wrapped DEK (base64, for local files)")
-	flag.StringVar(&sidecarFlag, "sidecar", "", "Path to a JSON HMAC sidecar file for a local multipart object (ADR-003 headerless layout)")
-	flag.StringVar(&ivFlag, "iv", "", "Object IV (hex, 16 bytes) for a local multipart object (required with -sidecar)")
-	flag.IntVar(&versionFlag, "version", 1, "Envelope version (1 or 2), for local multipart files without envelope header (default: 1)")
-	flag.StringVar(&outputFlag, "output", "", "Output file path (default: stdout)")
-	flag.BoolVar(&decryptVerboseFlag, "v", false, "Verbose output")
-	flag.IntVar(&readConcurrency, "read-concurrency", envInt("ARMOR_READ_CONCURRENCY", 16), "Maximum concurrent ranged reads")
-}
+func decrypt(fs *flag.FlagSet) {
+	// No positional arguments; anything after the flags was previously
+	// swallowed silently (decrypt never re-parsed the global flag set).
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", fs.Args())
+		fmt.Fprintf(os.Stderr, "Usage: armor decrypt [flags] (run \"armor decrypt --help\" for the full flag list)\n")
+		os.Exit(2)
+	}
 
-func decrypt() {
 	// Get MEK and ring keys - try escrow file first, then fall back to other methods
 	var mek []byte
 	var ringKeys []crypto.RingKeyEntry

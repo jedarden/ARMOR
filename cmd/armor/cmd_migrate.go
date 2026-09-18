@@ -13,9 +13,19 @@ import (
 )
 
 func init() {
+	// Migration-specific flags, on migrate's own flag set
+	migrateFlags := flag.NewFlagSet("migrate", flag.ExitOnError)
+	migrateFlags.StringVar(&adminURLFlag, "admin-url", "", "Admin API endpoint (required, e.g., http://127.0.0.1:9001)")
+	migrateFlags.BoolVar(&dryRunFlag, "dry-run", false, "Dry run: verify objects can be migrated without making changes")
+	migrateFlags.StringVar(&targetFlag, "target", "", "Target format version to migrate to (e.g., v3 or 3); must match the server's configured format write version")
+	migrateFlags.StringVar(&includeFlag, "include", "", "Comma-separated source versions to migrate (e.g., v1,v2; defaults to v2 for V3 target, v1 for V2 target)")
+	migrateFlags.IntVar(&concurrencyFlag, "concurrency", 0, "Number of concurrent workers (default: server-side default)")
+	migrateFlags.BoolVar(&watchFlag, "watch", false, "Watch mode: poll progress until completion")
+
 	registerCommand(Command{
 		Name:        "migrate",
 		Description: "Migrate ARMOR objects to the current encryption format (client of /admin/format/migrate)",
+		Flags:       migrateFlags,
 		Func:        migrate,
 	})
 }
@@ -29,16 +39,6 @@ var (
 	concurrencyFlag int
 	watchFlag       bool
 )
-
-func init() {
-	// Migration-specific flags
-	flag.StringVar(&adminURLFlag, "admin-url", "", "Admin API endpoint (required, e.g., http://127.0.0.1:9001)")
-	flag.BoolVar(&dryRunFlag, "dry-run", false, "Dry run: verify objects can be migrated without making changes")
-	flag.StringVar(&targetFlag, "target", "", "Target format version to migrate to (e.g., v3 or 3); must match the server's configured format write version")
-	flag.StringVar(&includeFlag, "include", "", "Comma-separated source versions to migrate (e.g., v1,v2; defaults to v2 for V3 target, v1 for V2 target)")
-	flag.IntVar(&concurrencyFlag, "concurrency", 0, "Number of concurrent workers (default: server-side default)")
-	flag.BoolVar(&watchFlag, "watch", false, "Watch mode: poll progress until completion")
-}
 
 // exit is declared once, in cmd_client_config.go (same package); reused
 // here rather than redeclared, since a second package-level var of the same
@@ -78,11 +78,8 @@ type MigrationResult struct {
 	DryRun           bool   `json:"dry_run"`
 }
 
-func migrate() {
-	// Re-parse flags for the migrate subcommand
-	flag.Parse()
-
-	if flag.NArg() > 0 {
+func migrate(fs *flag.FlagSet) {
+	if fs.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", flag.Args())
 		fmt.Fprintf(os.Stderr, "Usage: armor migrate [flags]\n")
 		exit(2)

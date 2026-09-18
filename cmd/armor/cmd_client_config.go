@@ -11,9 +11,17 @@ import (
 )
 
 func init() {
+	// client-config specific flags, on client-config's own flag set
+	clientConfigFlags := flag.NewFlagSet("client-config", flag.ExitOnError)
+	clientConfigFlags.StringVar(&forFlag, "for", "", "Tool to generate config for: aws-cli, rclone, boto3, duckdb, litestream, barman (required)")
+	clientConfigFlags.StringVar(&endpointFlag, "endpoint", "", "ARMOR endpoint URL (e.g., http://localhost:9000) (required)")
+	clientConfigFlags.StringVar(&bucketFlag, "bucket", "", "Bucket name (optional, for inclusion in config)")
+	clientConfigFlags.StringVar(&credentialFlag, "credential", "", "Named credential to reference (optional, for inclusion in config)")
+
 	registerCommand(Command{
 		Name:        "client-config",
 		Description: "Generate known-good client configuration for S3-compatible tools (aws-cli, rclone, boto3, duckdb, litestream, barman)",
+		Flags:       clientConfigFlags,
 		Func:        clientConfig,
 	})
 }
@@ -31,14 +39,6 @@ var (
 // binary. Shared across the package's subcommands (e.g. cmd_migrate.go),
 // not just client-config's own.
 var exit = os.Exit
-
-func init() {
-	// client-config specific flags
-	flag.StringVar(&forFlag, "for", "", "Tool to generate config for: aws-cli, rclone, boto3, duckdb, litestream, barman (required)")
-	flag.StringVar(&endpointFlag, "endpoint", "", "ARMOR endpoint URL (e.g., http://localhost:9000) (required)")
-	flag.StringVar(&bucketFlag, "bucket", "", "Bucket name (optional, for inclusion in config)")
-	flag.StringVar(&credentialFlag, "credential", "", "Named credential to reference (optional, for inclusion in config)")
-}
 
 // multipartClientNotes is the per-client behavior line embedded in every
 // client-config output: what the tool's default concurrency does against each
@@ -78,11 +78,8 @@ func multipartContractBlock(formatVersion int, tool, comment string) string {
 }
 
 // clientConfig generates and prints a known-good configuration for the specified tool
-func clientConfig() {
-	// Parse flags
-	flag.Parse()
-
-	if flag.NArg() > 0 {
+func clientConfig(fs *flag.FlagSet) {
+	if fs.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", flag.Args())
 		fmt.Fprintf(os.Stderr, "Usage: armor client-config -for <tool> -endpoint <url> [flags]\n")
 		exit(2)

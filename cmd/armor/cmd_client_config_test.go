@@ -48,17 +48,12 @@ func TestClientConfigInvalidFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original state — including os.Args, the exit stand-in and
-			// stderr, all of which clientConfig() consumes directly. (An
-			// earlier defer here also replaced flag.CommandLine with a fresh
-			// empty FlagSet; that unregistered -for/-endpoint/... for every
-			// later flag.Parse() in the package, which then failed into the
-			// still-installed exit stand-in and crashed the whole binary.)
+			// Save original state — the flag storage vars, the exit stand-in
+			// and stderr, all of which clientConfig() consumes directly.
 			oldForFlag := forFlag
 			oldEndpointFlag := endpointFlag
 			oldBucketFlag := bucketFlag
 			oldCredentialFlag := credentialFlag
-			oldArgs := os.Args
 			oldExit := exit
 			oldStderr := os.Stderr
 			defer func() {
@@ -66,7 +61,6 @@ func TestClientConfigInvalidFlags(t *testing.T) {
 				endpointFlag = oldEndpointFlag
 				bucketFlag = oldBucketFlag
 				credentialFlag = oldCredentialFlag
-				os.Args = oldArgs
 				exit = oldExit
 				os.Stderr = oldStderr
 			}()
@@ -94,15 +88,13 @@ func TestClientConfigInvalidFlags(t *testing.T) {
 			stderrR, stderrW, _ := os.Pipe()
 			os.Stderr = stderrW
 
-			// Seed argv the way main() hands off to a subcommand: argv[0]
-			// followed by this case's flags — main re-slices os.Args to strip
-			// the subcommand name before dispatch (main.go), so it must not
-			// appear here or flag.Parse sees it as an unexpected positional.
-			os.Args = append([]string{"armor"}, tt.flags...)
-
+			// Dispatch the way main does: parse this case's flags into
+			// client-config's own FlagSet, then run the command.
+			cmd := commands["client-config"]
+			_ = cmd.Flags.Parse(tt.flags)
 			func() {
 				defer func() { _ = recover() }() // the expected exit panic
-				clientConfig()
+				cmd.Func(cmd.Flags)
 			}()
 
 			stderrW.Close()
@@ -241,7 +233,10 @@ func TestClientConfigGoldenFiles(t *testing.T) {
 			r, w, _ := os.Pipe()
 			os.Stdout = w
 
-			clientConfig()
+			// Dispatch with no command-line flags: the storage vars were set
+			// directly above, and runCommand's Parse(nil) clears any args a
+			// previous test left in the shared FlagSet.
+			runCommand(t, "client-config")
 
 			w.Close()
 			os.Stdout = oldStdout
@@ -311,7 +306,7 @@ func TestClientConfigToolAliases(t *testing.T) {
 			r, w, _ := os.Pipe()
 			os.Stdout = w
 
-			clientConfig()
+			runCommand(t, "client-config")
 
 			w.Close()
 			os.Stdout = oldStdout

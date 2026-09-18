@@ -24,37 +24,46 @@ import (
 )
 
 func init() {
+	// Verification flags, on verify's own flag set. The storage vars for
+	// -bucket/-mek/-mek-file/-escrow/-output/-v/-concurrency are shared with
+	// other subcommands (cmd_client_config.go / cmd_decrypt.go /
+	// cmd_migrate.go): verify reuses the same package-level vars so the
+	// shared helpers (getMEKForVerify, writeReport) keep working, but each
+	// FlagSet registers its own flag definitions — with separate flag sets
+	// the same flag name on two commands no longer panics ("flag
+	// redefined"), it just binds the same storage from each set. Only one
+	// command's set is ever parsed in a real process.
+	//
+	// -concurrency keeps migrate's default of 0, which isn't valid for
+	// verify's own semaphore sizing — see verifyConcurrency() below.
+	verifyFlags := flag.NewFlagSet("verify", flag.ExitOnError)
+	verifyFlags.StringVar(&bucketFlag, "bucket", "", "Bucket name to verify (required)")
+	verifyFlags.StringVar(&mekFlag, "mek", "", "Master encryption key (hex, 64 chars)")
+	verifyFlags.StringVar(&mekFileFlag, "mek-file", "", "Read MEK from file (hex, 64 chars)")
+	verifyFlags.StringVar(&escrowFile, "escrow", "", "Path to escrow JSON file containing MEK and B2 credentials (self-contained recovery)")
+	verifyFlags.StringVar(&outputFlag, "output", "", "Output report file path (default: stdout)")
+	verifyFlags.BoolVar(&decryptVerboseFlag, "v", false, "Verbose output")
+	verifyFlags.StringVar(&prefixFlag, "prefix", "", "Key prefix to filter objects (optional)")
+	verifyFlags.StringVar(&keysFileFlag, "keys-file", "", "Path to JSON file listing object keys to verify (one per line or JSON array)")
+	verifyFlags.StringVar(&sinceFlag, "since", "", "Only verify objects modified after this timestamp (RFC3339 or YYYY-MM-DD)")
+	verifyFlags.BoolVar(&quickModeFlag, "quick", false, "Quick mode: verify envelope and DEK only, skip HMAC verification")
+	verifyFlags.IntVar(&concurrencyFlag, "concurrency", 0, "Number of concurrent workers (default: 10 for verify)")
+
 	registerCommand(Command{
 		Name:        "verify",
 		Description: "Verify ARMOR-encrypted objects for corruption (HMAC + digest verification)",
+		Flags:       verifyFlags,
 		Func:        verify,
 	})
 }
 
-// Verification-specific flags. bucket, mek, mek-file, escrow, output, and -v
-// are already registered elsewhere (cmd_client_config.go / cmd_decrypt.go)
-// on the shared global flag.CommandLine (see main.go's single flag.Parse()
-// dispatch) -- reusing those existing vars (bucketFlag, mekFlag, mekFileFlag,
-// escrowFile, outputFlag, decryptVerboseFlag) instead of re-registering the
-// same flag name, which panics at process startup ("flag redefined"), or
-// re-declaring the same package-level var name, which doesn't compile.
-// concurrency is also shared with cmd_migrate.go, but that flag's default
-// (0, meaning "server-side default") isn't valid for verify's own semaphore
-// sizing -- see verifyConcurrency() below.
+// Verification-specific flags
 var (
 	prefixFlag    string
 	keysFileFlag  string
 	sinceFlag     string
 	quickModeFlag bool
 )
-
-func init() {
-	// Verification-specific flags
-	flag.StringVar(&prefixFlag, "prefix", "", "Key prefix to filter objects (optional)")
-	flag.StringVar(&keysFileFlag, "keys-file", "", "Path to JSON file listing object keys to verify (one per line or JSON array)")
-	flag.StringVar(&sinceFlag, "since", "", "Only verify objects modified after this timestamp (RFC3339 or YYYY-MM-DD)")
-	flag.BoolVar(&quickModeFlag, "quick", false, "Quick mode: verify envelope and DEK only, skip HMAC verification")
-}
 
 // verifyConcurrency returns the shared -concurrency flag's value, defaulting
 // to 10 for verify's own use when unset (its shared default of 0 comes from
@@ -67,11 +76,8 @@ func verifyConcurrency() int {
 	return concurrencyFlag
 }
 
-func verify() {
-	// Re-parse flags for the verify subcommand
-	flag.Parse()
-
-	if flag.NArg() > 0 {
+func verify(fs *flag.FlagSet) {
+	if fs.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after flags: %v\n", flag.Args())
 		fmt.Fprintf(os.Stderr, "Usage: armor verify [flags]\n")
 		os.Exit(2)
