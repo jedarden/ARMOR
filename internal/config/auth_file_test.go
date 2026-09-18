@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+// Fixture secrets. They are identifier-shaped and referenced by name from
+// both the fixture and the assertion that reads it back: the 2026-08
+// gitleaks-remediation pass rewrote every quoted secret_key literal in this
+// file to a sentinel while leaving the assertions alone, which is how six
+// tests went red on main (armor-927879ce). None of these is a credential.
+const (
+	fixtureSecret       = "fixture-secret"
+	fixtureEnvSecret    = "env-secret"
+	fixtureFileSecret   = "file-secret"
+	fixtureFirstSecret  = "first-secret"
+	fixtureSecondSecret = "second-secret"
+)
+
 // TestLoadAuthFile_Unset tests that LoadAuthFile returns nil when ARMOR_AUTH_FILE is unset.
 func TestLoadAuthFile_Unset(t *testing.T) {
 	// Ensure env var is unset
@@ -154,7 +167,7 @@ func TestValidateAuthFile_MissingName(t *testing.T) {
 			{
 				Name:      "",
 				AccessKey: "test-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureSecret,
 			},
 		},
 	}
@@ -177,7 +190,7 @@ func TestValidateAuthFile_MissingAccessKey(t *testing.T) {
 			{
 				Name:      "TEST",
 				AccessKey: "",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureSecret,
 			},
 		},
 	}
@@ -200,7 +213,7 @@ func TestValidateAuthFile_MissingSecretKey(t *testing.T) {
 			{
 				Name:      "TEST",
 				AccessKey: "test-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: "", // missing on purpose
 			},
 		},
 	}
@@ -223,7 +236,7 @@ func TestValidateAuthFile_InvalidACL(t *testing.T) {
 			{
 				Name:      "TEST",
 				AccessKey: "test-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureSecret,
 				ACL:       "invalid acl format",
 			},
 		},
@@ -247,7 +260,7 @@ func TestValidateAuthFile_ValidACL(t *testing.T) {
 			{
 				Name:      "TEST",
 				AccessKey: "test-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureSecret,
 				ACL:       "mybucket:prefix/*:get+put+list",
 			},
 		},
@@ -265,7 +278,7 @@ func TestMergeFileCredentials_BasicMerge(t *testing.T) {
 		Credentials: map[string]*Credential{
 			"env-key": {
 				AccessKey: "env-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureEnvSecret,
 				ACLs:      nil,
 			},
 		},
@@ -276,7 +289,7 @@ func TestMergeFileCredentials_BasicMerge(t *testing.T) {
 			{
 				Name:      "FILE_CRED",
 				AccessKey: "file-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureFileSecret,
 				ACL:       "mybucket:file/*:get",
 			},
 		},
@@ -307,7 +320,7 @@ func TestMergeFileCredentials_BasicMerge(t *testing.T) {
 	if fileCred.AccessKey != "file-key" {
 		t.Errorf("Expected access_key file-key, got %s", fileCred.AccessKey)
 	}
-	if fileCred.SecretKey != "file-secret" {
+	if fileCred.SecretKey != fixtureFileSecret {
 		t.Errorf("Expected secret_key file-secret, got %s", fileCred.SecretKey)
 	}
 	if len(fileCred.ACLs) != 1 {
@@ -330,7 +343,7 @@ func TestMergeFileCredentials_NameCollision(t *testing.T) {
 		Credentials: map[string]*Credential{
 			"shared-key": {
 				AccessKey: "shared-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureEnvSecret,
 				ACLs:      nil,
 			},
 		},
@@ -341,7 +354,7 @@ func TestMergeFileCredentials_NameCollision(t *testing.T) {
 			{
 				Name:      "FILE_CRED",
 				AccessKey: "shared-key", // Same access key as env credential
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureFileSecret,
 				ACL:       "mybucket:file/*:get",
 			},
 		},
@@ -359,7 +372,7 @@ func TestMergeFileCredentials_NameCollision(t *testing.T) {
 
 	// Verify env secret is kept
 	cred := cfg.Credentials["shared-key"]
-	if cred.SecretKey != "env-secret" {
+	if cred.SecretKey != fixtureEnvSecret {
 		t.Errorf("Expected env-secret to be preserved, got %s", cred.SecretKey)
 	}
 }
@@ -375,13 +388,13 @@ func TestMergeFileCredentials_DuplicateInFile(t *testing.T) {
 			{
 				Name:      "FIRST",
 				AccessKey: "dup-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureFirstSecret,
 				ACL:       "bucket1:*",
 			},
 			{
 				Name:      "SECOND",
 				AccessKey: "dup-key", // Duplicate access key
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureSecondSecret,
 				ACL:       "bucket2:*",
 			},
 		},
@@ -399,7 +412,7 @@ func TestMergeFileCredentials_DuplicateInFile(t *testing.T) {
 
 	// Verify first secret is kept
 	cred := cfg.Credentials["dup-key"]
-	if cred.SecretKey != "first-secret" {
+	if cred.SecretKey != fixtureFirstSecret {
 		t.Errorf("Expected first-secret to be preserved, got %s", cred.SecretKey)
 	}
 }
@@ -410,7 +423,7 @@ func TestMergeFileCredentials_NilAuthFile(t *testing.T) {
 		Credentials: map[string]*Credential{
 			"env-key": {
 				AccessKey: "env-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureSecret,
 			},
 		},
 	}
@@ -432,7 +445,7 @@ func TestMergeFileCredentials_EmptyAuthFile(t *testing.T) {
 		Credentials: map[string]*Credential{
 			"env-key": {
 				AccessKey: "env-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureSecret,
 			},
 		},
 	}
@@ -463,7 +476,7 @@ func TestMergeFileCredentials_ACLParsing(t *testing.T) {
 			{
 				Name:      "MULTI_ACL",
 				AccessKey: "multi-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureSecret,
 				ACL:       "bucket1:prefix1/*:get+list,bucket2:prefix2/*:put+delete",
 			},
 		},
@@ -533,7 +546,7 @@ func TestIntegration_LoadAndMerge(t *testing.T) {
 		Credentials: map[string]*Credential{
 			"env-key": {
 				AccessKey: "env-key",
-				SecretKey: "REMOVED-NOT-A-SECRET-VALUE",
+				SecretKey: fixtureSecret,
 				ACLs:      nil,
 			},
 		},

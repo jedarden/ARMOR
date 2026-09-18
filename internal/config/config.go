@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -161,7 +162,7 @@ type Config struct {
 	DashboardCredential string
 
 	// AdminToken gates the admin API (all /admin/* routes and /armor/audit).
-	// When set, every gated request must carry "Authorization: Bearer REMOVED-NOT-A-SECRET-VALUE
+	// When set, every gated request must carry "Authorization: Bearer <token>"
 	// and is compared in constant time. When unset, gated admin routes are
 	// disabled (fail-closed) so the MEK cannot be exported or rotated without
 	// an explicitly configured secret. Probes (/healthz, /readyz), /armor/canary,
@@ -824,8 +825,25 @@ func loadNamedCredentials(cfg *Config) error {
 	var errs []error
 	now := time.Now()
 
-	// Load each credential
+	// Process names in a fixed order so the error list is deterministic: a
+	// map walk reported a different subset of failures on every start (and
+	// made TestLoadWithMultipleCredentialErrors flaky), because which of two
+	// credentials sharing an access key counted as "the duplicate" depended
+	// on iteration order, and a credential rejected for another reason was
+	// never registered, so its twin then loaded silently.
+	names := make([]string, 0, len(credNames))
 	for name := range credNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	// An access key declared by more than one credential is a configuration
+	// error for every declaration after the first, whether or not the first
+	// one ends up loading.
+	declared := make(map[string]string) // access key -> first name declaring it
+
+	// Load each credential
+	for _, name := range names {
 		accessKey := os.Getenv("ARMOR_AUTH_" + name + "_ACCESS_KEY")
 		secretKey := os.Getenv("ARMOR_AUTH_" + name + "_SECRET_KEY")
 		aclStr := os.Getenv("ARMOR_AUTH_" + name + "_ACL")
@@ -835,11 +853,17 @@ func loadNamedCredentials(cfg *Config) error {
 			continue
 		}
 
-		// Check for duplicate access key
+		// Check for duplicate access key: against the default credential and
+		// against every named credential declared before this one.
 		if _, exists := cfg.Credentials[accessKey]; exists {
 			errs = append(errs, fmt.Errorf("duplicate access key in ARMOR_AUTH_%s", name))
 			continue
 		}
+		if first, dup := declared[accessKey]; dup {
+			errs = append(errs, fmt.Errorf("duplicate access key in ARMOR_AUTH_%s (already declared by ARMOR_AUTH_%s)", name, first))
+			continue
+		}
+		declared[accessKey] = name
 
 		cred := &Credential{
 			AccessKey: accessKey,

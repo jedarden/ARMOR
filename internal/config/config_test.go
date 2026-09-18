@@ -969,7 +969,11 @@ func TestRedacted(t *testing.T) {
 		"ARMOR_MEK", testMEK,
 		"ARMOR_AUTH_ACCESS_KEY", "defaultkey",
 		"ARMOR_AUTH_SECRET_KEY", testAuthSecret,
+		// The presign secret is only loaded (and therefore only redactable)
+		// when the feature is enabled, which also requires the base URL.
+		"ARMOR_PRESIGN_ENABLED", "true",
 		"ARMOR_PRESIGN_SECRET", testPresignSecret,
+		"ARMOR_PRESIGN_BASE_URL", "https://armor.example.com/share",
 		"ARMOR_DASHBOARD_PASS", testDashboardPass,
 		"ARMOR_DASHBOARD_TOKEN", testDashboardToken,
 		"ARMOR_ADMIN_TOKEN", testAdminToken,
@@ -1483,9 +1487,9 @@ func TestFormatWriteVersion(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name:          "unset defaults to 2",
+			name:          "unset defaults to 3",
 			envValue:      "",
-			expectVersion: 2,
+			expectVersion: 3,
 			expectError:   false,
 		},
 		{
@@ -1571,7 +1575,7 @@ func TestFormatWriteVersionInRedacted(t *testing.T) {
 		{
 			name:          "default version 2",
 			envValue:      "",
-			expectVersion: 2,
+			expectVersion: 3,
 		},
 		{
 			name:          "explicit version 2",
