@@ -318,7 +318,7 @@ Full runbook: [docs/disaster-recovery.md](docs/disaster-recovery.md).
 
 | Path | What it is |
 |------|------------|
-| `cmd/` | The four binaries: `armor` (the server and its `serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config` subcommands), `restore-verifier`, `armor-fleet`, `verify-objects` |
+| `cmd/` | The four binaries: `armor` (the server and its `serve`, `demo`, `check`, `decrypt`, `verify`, `migrate`, `client-config`, `version`, `help` subcommands), `restore-verifier`, `armor-fleet`, `verify-objects` |
 | `internal/` | All packages: `server` (S3 + admin handlers), `crypto`, `backend`, `config`, `keymanager`, `manifest`, `acl`, `canary`, `dashboard`, `presign`, `provenance`, `replication`, `restoreverifier`, `metrics`, `logging`, `b2keys`, `docsindex`, `version`, `testutil` |
 | `tests/` | Go suites outside the package tree — `integration/` (real B2, build-tagged), `aws-cli-compatibility/`, `docker-demo-smoke/`, `rbac/`, `performance/` — plus the pytest suites (`tests/test_*.py`) and migration `fixtures/` |
 | `scripts/` | Operator tooling: `definition-of-done.sh`, `release-gate.sh`, `cut-release.sh`, drift check, starvation watch ([scripts/README.md](scripts/README.md)) |
