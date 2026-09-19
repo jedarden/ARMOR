@@ -8,7 +8,7 @@ The ARMOR Version Drift Check automatically detects when deployed ARMOR versions
 
 ### Scripts
 
-- **`scripts/drift_check.py`** - Fleet drift check: live `/version` probing, four-state classification, deduplicated alert-bead filing via `--unique-ref`
+- **`scripts/drift_check.py`** - Fleet drift check: live `/version` probing, four-state classification, VERSION floor for the approved latest, deduplicated alert-bead filing via `--unique-ref`
 - **`scripts/version-drift-check.py`** - Unified wrapper that orchestrates the complete drift check pipeline
 - **`scripts/archive/check-armor-version-drift.py`** - Standalone drift check script (legacy, archived)
 - **`scripts/github-release-fetcher.py`** - Lists release tags: from the local checkout's `v*` tags when it has any (`--source auto`, the default; run `git fetch --tags` first), otherwise from the GitHub tags API (`--source github`)
@@ -64,6 +64,24 @@ release, not a mismatch. Alert dedup is also version-normalized: a
 digest-only rebuild of the same stale version keeps the fingerprint and does
 not refile.
 
+### Approved latest: max(newest tag, VERSION)
+
+The approved latest is not just the newest release tag — it is
+`max(newest tag, VERSION)`, where VERSION comes from the ARMOR checkout
+(or an explicit `--version-file` path or URL, such as the raw file on the
+GitHub mirror). This is robust to a CI tagging lapse: on 2026-09-17 tags
+stopped at v0.1.1957 while VERSION and the fleet reached 0.1.1969, so the
+tag-only "latest" was 12 releases behind production and misclassified
+deployments. When VERSION exceeds the newest tag, a distinct
+**`tags_behind_version`** warning is emitted (stderr, the JSON `warnings`
+list, the alert body, and the dedup fingerprint) saying tagging lapsed, a
+deployment newer than every tag but `<= VERSION` classifies `current`, and
+an older deployment is judged against the VERSION-raised latest. A missing,
+unreadable, or malformed VERSION degrades to tag-only behaviour rather than
+failing the run; a completely empty or unparseable tag list stays broken
+(`unavailable`) rather than gaining a floor, because that is a release
+source outage, not a tagging lapse.
+
 ## Usage
 
 ### Manual Execution
@@ -76,6 +94,10 @@ python3 scripts/drift_check.py
 
 # Assert the newest release when tags lag VERSION (e.g. CI has not tagged yet)
 python3 scripts/drift_check.py --latest-tag v0.1.1970
+
+# The checkout's VERSION is applied automatically as the approved-latest floor;
+# point --version-file elsewhere (or at the raw file on the GitHub mirror) to override
+python3 scripts/drift_check.py --version-file https://raw.githubusercontent.com/jedarden/ARMOR/main/VERSION
 
 # Machine-readable JSON (adds per-deployment state and the drift fingerprint)
 python3 scripts/drift_check.py --json
@@ -92,10 +114,13 @@ python3 scripts/drift_check.py --emit-bead --dry-run  # print the bead command i
 ```
 
 Alerting deduplicates on a fingerprint: a stable hash of the non-current subset
-(cluster, image type, state, deployed tag, latest tag). An unchanged drift
+(cluster, image type, state, deployed tag, latest tag) plus any checker
+warnings such as `tags_behind_version`. An unchanged drift
 picture replays to `EXISTING` on the `--unique-ref` and files nothing; a changed
-fleet picture hashes differently and files fresh. Exit codes: `0` all current,
-`1` drift present, `2` error.
+fleet picture hashes differently and files fresh, and a tagging lapse alone
+(all deployments current) files an alert that says "tagging lapsed".
+Exit codes: `0` all current with no warning, `1` drift present or a
+`tags_behind_version` warning fired, `2` error.
 
 #### version-drift-check.py and older scripts
 
@@ -365,8 +390,8 @@ Using non-version tags: 0
 
 `scripts/drift_check.py`:
 
-- **0**: every deployment classified `current`
-- **1**: any deployment classified `stale`, `mismatched`, or `unavailable`
+- **0**: every deployment classified `current` and no `tags_behind_version` warning
+- **1**: any deployment classified `stale`, `mismatched`, or `unavailable`, or a `tags_behind_version` warning fired (a tagging lapse alone — tags behind VERSION with every deployment current — still exits 1 and files an alert)
 - **2**: script error (bad arguments, missing input, fetcher/enumeration failure)
 
 Older scripts (`version-drift-check.py`, `compare-version-drift.py`, the archived legacy script):

@@ -794,6 +794,29 @@ def test_cli_version_floor_mixed_fleet_classifies_both_ways(tmp_path):
     assert data["warnings"]
 
 
+def test_cli_version_floor_acceptance_1957_stale_1963_current(tmp_path):
+    # The parent's acceptance end to end in a single run: tags end at
+    # v0.1.1957 and VERSION is 0.1.1969, so --json reports latest 0.1.1969,
+    # flags tags_behind_version, a 0.1.1957 deployment classifies stale, and
+    # a 0.1.1963 deployment (newer than every tag, <= VERSION) classifies
+    # current — in the same --json output.
+    args = version_floor_cli_env(tmp_path, "0.1.1963")
+    write_dc(tmp_path / "dc", "iad-kalshi", "v0.1.1957")
+    proc = _run_cli(args)
+    assert proc.returncode == 1, proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["warnings"], "tags_behind_version must reach the JSON output"
+    assert "tags_behind_version" in data["warnings"][0]
+    by_cluster = {r["cluster"]: r for r in data["deployments"]}
+    assert by_cluster["iad-ci"]["state"] == drift_check.STATE_CURRENT
+    assert by_cluster["iad-ci"]["latest_tag"] == "0.1.1969"
+    assert by_cluster["iad-kalshi"]["state"] == drift_check.STATE_STALE
+    assert by_cluster["iad-kalshi"]["latest_tag"] == "0.1.1969"
+    assert data["summary"]["current_count"] == 1
+    assert data["summary"]["stale_count"] == 1
+    assert data["fingerprint"]
+
+
 def test_cli_version_matching_newest_tag_stays_quiet(tmp_path):
     # VERSION == newest tag: no floor entry, no warning, exit 0.
     dc = tmp_path / "dc"
