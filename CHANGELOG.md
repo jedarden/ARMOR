@@ -14,6 +14,32 @@ Entries before 0.1.1958 were written by hand on the Forgejo releases and are
 reproduced here; entries from 0.1.1958 on were reconstructed from git history
 on 2026-09-18 (bead armor-43ec803f).
 
+## 0.1.1971 (2026-09-19)
+
+- fix(multipart): batch v3 range block fetches per part; int64 part offsets (armor-817d9d92)
+- test(prefix): pin internal-writer .armor/ placement under ARMOR_PREFIX (armor-5850c682)
+- docs(readme): name all nine armor subcommands in Repository structure (armor-96564423)
+- test(drift-check): parent acceptance CLI fixture + tags_behind_version docs (armor-c843c9e7)
+- test(drift-check): classify_fleet + mixed-fleet CLI coverage for the VERSION floor (armor-f469fe8d)
+- feat(drift-check): VERSION floor for the approved latest (armor-9c1449b0)
+- feat(scripts): list the ghcr.io restore-verifier mirror in the release body (armor-1ea3cb50)
+- test(migration): encode contradiction failure in golden outcomes, disarm vacuous skips (armor-a4c372f7)
+- test(migration): regenerate version_says_v1_layout_v2 as validated multi-block fixture (armor-c7b91d95)
+- fix(crypto): commit v3 golden vectors, one authoritative generator, working -update flag (armor-5303ea09)
+- docs(readme): rewrite Repository Structure, add contributing block and compose demo (armor-b14976f8)
+- docs(release): restore-verifier image is publicly mirrored to GHCR (armor-1ea3cb50)
+- docs(tests): one tests/README.md covering every suite; link it from the docs index (armor-75f52683)
+- docs(archive): annotate pruned notes/ links as removed (armor-12ca1a63)
+- feat(compose): track compose.yaml (demo + production profiles) and exercise it in the demo smoke test (armor-76be93d0)
+- docs(config): move the full environment-variable reference to docs/configuration.md (armor-262777b7)
+- fix(config): make named-credential errors deterministic and repair the scrubbed test fixtures so internal/config is green again (armor-927879ce)
+- build(toolchain): declare go1.25.14 in go.mod, pin Dockerfile builders, add make toolchain-check (armor-2239f5b1)
+- refactor(cmd): per-subcommand flag sets, armor help, subcommand list from --help (armor-da6e4721)
+- feat(version): fall back to debug.ReadBuildInfo for go-install builds (armor-cd8d4712)
+- docs(release): state semver-only image publishing (armor-0d603b24)
+- docs(readme): move Authentication/ACL grammar into docs/authentication.md (armor-08246821)
+- docs(readme): move offline-decrypt runbook into docs/disaster-recovery.md (armor-126ea386)
+
 ## 0.1.1970 (2026-09-18)
 
 - fix(restoreverifier): size the v3 single-PUT trailer with BlockTableEntrySize on the ARMOR path (armor-8d4420fc)
