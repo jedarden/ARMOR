@@ -679,6 +679,41 @@ def test_classify_between_newest_tag_and_version_is_current():
     assert report["is_drift"] is False
 
 
+def test_classify_fleet_at_newest_tag_with_version_floor_is_stale():
+    """Fleet-level acceptance: with the floor applied, a deployment at the
+    newest tag itself (v0.1.1957) goes stale once VERSION (0.1.1969) outruns
+    it — classify_fleet measures against the approved latest, not the tag."""
+    releases = [{"tag": "v0.1.1957", "published_at": "2026-08-01T00:00:00Z",
+                 "is_correctness": False, "url": ""}]
+    merged, warning = drift_check.approved_latest_from_version(releases, 1969, "0.1.1969")
+    assert warning, "the floor must fire for this fleet picture"
+    reports = drift_check.classify_fleet([deployment(tag="0.1.1957")], merged, 50, 30)
+    assert len(reports) == 1
+    report = reports[0]
+    assert report["state"] == drift_check.STATE_STALE
+    assert report["latest_tag"] == "0.1.1969"
+    assert report["is_drift"] is True
+    assert report["needs_update"] is True
+
+
+def test_classify_fleet_between_newest_tag_and_version_is_current():
+    """Fleet-level acceptance: deployments newer than every fetched tag but
+    <= VERSION classify current, never unavailable — the 0.1.1963-0.1.1969
+    fleet the parent observed misclassifying."""
+    releases = [{"tag": "v0.1.1957", "published_at": "2026-08-01T00:00:00Z",
+                 "is_correctness": False, "url": ""}]
+    merged, _ = drift_check.approved_latest_from_version(releases, 1969, "0.1.1969")
+    reports = drift_check.classify_fleet(
+        [deployment(cluster="ardenone-cluster", tag="0.1.1963"),
+         deployment(cluster="iad-kalshi", tag="v0.1.1969")],
+        merged, 50, 30)
+    assert len(reports) == 2
+    assert all(r["state"] == drift_check.STATE_CURRENT for r in reports)
+    assert all(r["latest_tag"] == "0.1.1969" for r in reports)
+    assert all(not r["is_drift"] for r in reports)
+    assert all(not r["needs_update"] for r in reports)
+
+
 def test_fingerprint_non_none_on_warning_alone():
     reports = drift_check.classify_fleet(
         [deployment(tag="v0.1.100")], RELEASES, 50, 30)
@@ -738,6 +773,24 @@ def test_cli_version_floor_deployment_between_tag_and_version_is_current(tmp_pat
     assert report["latest_tag"] == "0.1.1969"
     assert report["state"] == drift_check.STATE_CURRENT
     assert data["summary"]["current_count"] == 1
+    assert data["warnings"]
+
+
+def test_cli_version_floor_mixed_fleet_classifies_both_ways(tmp_path):
+    # The parent's observed fleet in one run: with tags ending at 1957 and
+    # VERSION at 0.1.1969, a 0.1.1957 deployment is stale (twelve releases
+    # behind the approved latest) while a 0.1.1969 deployment stays current.
+    args = version_floor_cli_env(tmp_path, "0.1.1969")
+    write_dc(tmp_path / "dc", "iad-kalshi", "v0.1.1957")
+    proc = _run_cli(args)
+    assert proc.returncode == 1, proc.stderr
+    data = json.loads(proc.stdout)
+    by_cluster = {r["cluster"]: r for r in data["deployments"]}
+    assert by_cluster["iad-ci"]["state"] == drift_check.STATE_CURRENT
+    assert by_cluster["iad-kalshi"]["state"] == drift_check.STATE_STALE
+    assert by_cluster["iad-kalshi"]["latest_tag"] == "0.1.1969"
+    assert data["summary"]["current_count"] == 1
+    assert data["summary"]["stale_count"] == 1
     assert data["warnings"]
 
 
