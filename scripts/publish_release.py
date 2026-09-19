@@ -49,6 +49,14 @@ DEFAULT_REPO = "jedarden/ARMOR"
 DEFAULT_FORGEJO_API = "https://git.ardenone.com/api/v1"
 DEFAULT_GITHUB_API = "https://api.github.com"
 PUBLIC_IMAGE = "ghcr.io/jedarden/armor"
+# Public GHCR mirrors. The digest lookup is deliberately anonymous: a row that
+# reads "digest unavailable" means the package is missing or still private,
+# which is a finding an outside consumer would hit too. armor-fleet has no
+# mirror by design (internal console).
+PUBLIC_IMAGES = (
+    PUBLIC_IMAGE,
+    "ghcr.io/jedarden/armor-restore-verifier",
+)
 PRIVATE_IMAGES = (
     "ronaldraygun/armor",
     "ronaldraygun/armor-restore-verifier",
@@ -183,20 +191,21 @@ def dockerhub_basic_from_config(path: str | None) -> str | None:
 def collect_digests(version: str, docker_config: str | None) -> list[tuple[str, str, str | None]]:
     """[(image_ref, visibility, digest_or_None), ...] for the release body."""
     rows: list[tuple[str, str, str | None]] = []
-    ghcr_repo = PUBLIC_IMAGE.split("/", 1)[1]
-    rows.append(
-        (
-            f"{PUBLIC_IMAGE}:{version}",
-            "public",
-            registry_digest(
-                "ghcr.io",
-                ghcr_repo,
-                version,
-                f"https://ghcr.io/token?scope=repository:{ghcr_repo}:pull",
-                None,
-            ),
+    for image in PUBLIC_IMAGES:
+        ghcr_repo = image.split("/", 1)[1]
+        rows.append(
+            (
+                f"{image}:{version}",
+                "public",
+                registry_digest(
+                    "ghcr.io",
+                    ghcr_repo,
+                    version,
+                    f"https://ghcr.io/token?scope=repository:{ghcr_repo}:pull",
+                    None,
+                ),
+            )
         )
-    )
     basic = dockerhub_basic_from_config(docker_config)
     for repo in PRIVATE_IMAGES:
         digest = None
@@ -246,7 +255,7 @@ def release_body(
         f"go install github.com/jedarden/armor/cmd/armor@v{version}",
         "```",
         "",
-        "The `ronaldraygun/*` images are private to the ardenone fleet; the GHCR image is the public server image.",
+        "The `ghcr.io/jedarden/*` images are the public mirrors (server and restore-verifier; the fleet console has none by design). The `ronaldraygun/*` images are private to the ardenone fleet.",
     ]
     return "\n".join(lines) + "\n"
 
