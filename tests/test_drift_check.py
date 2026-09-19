@@ -4,7 +4,9 @@ Tests for scripts/drift_check.py — the ARMOR fleet version-drift check.
 
 Covers the three documented deployment states (current, stale, unavailable)
 plus mismatched, the deduplicated alert fingerprint/emission, the live
-/version probe, and the CLI exit-code contract from docs/drift-check.md.
+/version probe, the VERSION floor (max(newest tag, VERSION) as the approved
+latest, with the tags_behind_version warning), and the CLI exit-code
+contract from docs/drift-check.md.
 
 Run: python3 -m pytest tests/test_drift_check.py -q
 """
@@ -436,7 +438,12 @@ def dc_and_releases(tmp_path):
     releases.write_text(json.dumps(RELEASES), encoding="utf-8")
     empty_config = tmp_path / "empty-config.json"
     empty_config.write_text("{}", encoding="utf-8")
-    return tmp_path / "dc", releases, empty_config
+    # Same version as the newest fixture tag: no VERSION floor, no
+    # tags_behind_version warning, so these CLI tests stay independent of
+    # the real checkout's VERSION.
+    version_file = tmp_path / "VERSION"
+    version_file.write_text("0.1.100\n", encoding="utf-8")
+    return tmp_path / "dc", releases, empty_config, version_file
 
 
 def _run_cli(args):
@@ -446,9 +453,10 @@ def _run_cli(args):
 
 
 def test_cli_exit_zero_when_all_current(dc_and_releases):
-    dc, releases, config = dc_and_releases
+    dc, releases, config, version_file = dc_and_releases
     proc = _run_cli(["--json", "--manifests", str(dc),
-                     "--releases-file", str(releases), "--config", str(config)])
+                     "--releases-file", str(releases), "--config", str(config),
+                     "--version-file", str(version_file)])
     assert proc.returncode == 0, proc.stderr
     data = json.loads(proc.stdout)
     assert data["summary"]["current_count"] == 1
@@ -458,9 +466,10 @@ def test_cli_exit_zero_when_all_current(dc_and_releases):
 
 def test_cli_exit_one_on_stale_and_dry_run_alert(dc_and_releases, tmp_path):
     write_dc(tmp_path / "dc", "iad-kalshi", "v0.1.10")
-    dc, releases, config = dc_and_releases
+    dc, releases, config, version_file = dc_and_releases
     proc = _run_cli(["--json", "--manifests", str(dc),
                      "--releases-file", str(releases), "--config", str(config),
+                     "--version-file", str(version_file),
                      "--emit-bead", "--dry-run"])
     assert proc.returncode == 1, proc.stderr
     data = json.loads(proc.stdout)
@@ -479,9 +488,10 @@ def test_cli_exit_two_on_missing_manifests_dir(tmp_path):
 
 
 def test_cli_unavailable_cluster_in_expected_list(dc_and_releases):
-    dc, releases, config = dc_and_releases
+    dc, releases, config, version_file = dc_and_releases
     proc = _run_cli(["--json", "--manifests", str(dc),
                      "--releases-file", str(releases), "--config", str(config),
+                     "--version-file", str(version_file),
                      "--expected-cluster", "iad-acb"])
     assert proc.returncode == 1, proc.stderr
     data = json.loads(proc.stdout)
@@ -493,12 +503,16 @@ def test_cli_unavailable_cluster_in_expected_list(dc_and_releases):
 def test_cli_latest_tag_override_makes_lagging_source_visible(dc_and_releases):
     # The release source stops at v0.1.100 (tags lagged VERSION); the operator
     # asserts v0.1.200 is the real latest. The deployment at v0.1.100 is then
-    # one approved release behind: current under the default threshold, stale
-    # as soon as the threshold is one release.
-    dc, releases, config = dc_and_releases
+    # one approved release behind: current under the releases threshold, stale
+    # as soon as that threshold is one release. The days threshold is pinned
+    # high because the --latest-tag entry is stamped "now" while the fixture's
+    # v0.1.100 date is fixed — an unpinned default would trip as the fixture
+    # ages past it (this test failed exactly that way on 2026-09-19).
+    dc, releases, config, version_file = dc_and_releases
     proc = _run_cli(["--json", "--manifests", str(dc),
                      "--releases-file", str(releases), "--config", str(config),
-                     "--latest-tag", "v0.1.200"])
+                     "--version-file", str(version_file),
+                     "--latest-tag", "v0.1.200", "--days-threshold", "3650"])
     assert proc.returncode == 0, proc.stderr
     report = json.loads(proc.stdout)["deployments"][0]
     assert report["latest_tag"] == "v0.1.200"
@@ -507,7 +521,9 @@ def test_cli_latest_tag_override_makes_lagging_source_visible(dc_and_releases):
 
     proc = _run_cli(["--json", "--manifests", str(dc),
                      "--releases-file", str(releases), "--config", str(config),
-                     "--latest-tag", "v0.1.200", "--releases-threshold", "1"])
+                     "--version-file", str(version_file),
+                     "--latest-tag", "v0.1.200", "--releases-threshold", "1",
+                     "--days-threshold", "3650"])
     assert proc.returncode == 1, proc.stderr
     report = json.loads(proc.stdout)["deployments"][0]
     assert report["state"] == drift_check.STATE_STALE
@@ -517,3 +533,228 @@ def test_cli_latest_tag_rejects_non_version():
     proc = _run_cli(["--latest-tag", "latest"])
     assert proc.returncode == 2
     assert "--latest-tag" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# VERSION floor: max(newest tag, VERSION) is the approved latest
+# ---------------------------------------------------------------------------
+
+def write_version_file(tmp_path, text="0.1.1969"):
+    p = tmp_path / "VERSION"
+    p.write_text(text + "\n", encoding="utf-8")
+    return p
+
+
+def version_floor_cli_env(tmp_path, tag):
+    """Manifests + releases ending at v0.1.1957 + a VERSION of 0.1.1969 —
+    the 2026-09-17 incident shape (tags stopped 12 releases behind prod)."""
+    dc = tmp_path / "dc"
+    write_dc(dc, "iad-ci", tag)
+    releases = tmp_path / "releases.json"
+    releases.write_text(json.dumps([
+        {"tag": "v0.1.1957", "published_at": "2026-08-01T00:00:00Z",
+         "is_correctness": False, "url": ""},
+        {"tag": "v0.1.1956", "published_at": "2026-07-25T00:00:00Z",
+         "is_correctness": False, "url": ""},
+    ]), encoding="utf-8")
+    config = tmp_path / "empty-config.json"
+    config.write_text("{}", encoding="utf-8")
+    version_file = write_version_file(tmp_path)
+    return ["--json", "--manifests", str(dc), "--releases-file", str(releases),
+            "--config", str(config), "--version-file", str(version_file)]
+
+
+def test_resolve_version_source_default_is_repo_version(tmp_path):
+    (tmp_path / "VERSION").write_text("0.1.1970\n", encoding="utf-8")
+    assert drift_check.resolve_version_source(None, tmp_path) == (1970, "0.1.1970")
+
+
+def test_resolve_version_source_reads_given_file(tmp_path):
+    assert (drift_check.resolve_version_source(str(write_version_file(tmp_path)), tmp_path)
+            == (1969, "0.1.1969"))
+
+
+def test_resolve_version_source_keeps_v_prefix(tmp_path):
+    assert (drift_check.resolve_version_source(str(write_version_file(tmp_path, "v0.1.1969")), tmp_path)
+            == (1969, "v0.1.1969"))
+
+
+def test_resolve_version_source_missing_is_none(tmp_path):
+    assert drift_check.resolve_version_source(str(tmp_path / "nope"), tmp_path) == (None, "")
+
+
+def test_resolve_version_source_malformed_is_none(tmp_path):
+    assert (drift_check.resolve_version_source(str(write_version_file(tmp_path, "not-a-version")), tmp_path)
+            == (None, ""))
+
+
+def test_resolve_version_source_url():
+    class FakeResp:
+        status = 200
+
+        def read(self, n=-1):
+            return b"0.1.1969\n"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    version = drift_check.resolve_version_source(
+        "https://raw.githubusercontent.com/jedarden/ARMOR/main/VERSION",
+        Path("/unused"), urlopen=lambda url, timeout=None: FakeResp())
+    assert version == (1969, "0.1.1969")
+
+
+def test_resolve_version_source_url_failure_degrades_to_none():
+    import urllib.error
+
+    def boom(url, timeout=None):
+        raise urllib.error.URLError("no network")
+
+    version = drift_check.resolve_version_source(
+        "https://example.invalid/VERSION", Path("/unused"), urlopen=boom)
+    assert version == (None, "")
+
+
+def test_resolve_version_source_url_http_exception_degrades_to_none():
+    # http.client.HTTPException (IncompleteRead, BadStatusLine, …) is not an
+    # OSError; the fetch must degrade to tag-only, not crash the run.
+    import http.client
+
+    def truncated(url, timeout=None):
+        raise http.client.IncompleteRead(b"0.1.19")
+
+    version = drift_check.resolve_version_source(
+        "https://example.invalid/VERSION", Path("/unused"), urlopen=truncated)
+    assert version == (None, "")
+
+
+def test_approved_latest_appends_version_floor():
+    releases = [{"tag": "v0.1.1957", "published_at": "2026-08-01T00:00:00Z",
+                 "is_correctness": False, "url": ""}]
+    merged, warning = drift_check.approved_latest_from_version(releases, 1969, "0.1.1969")
+    assert drift_check.latest_release(merged)["tag"] == "0.1.1969"
+    assert warning is not None and "tags_behind_version" in warning
+    assert "v0.1.1957" in warning
+
+
+def test_approved_latest_noop_when_tags_cover_version():
+    releases = [{"tag": "v0.1.1970", "published_at": "2026-09-01T00:00:00Z",
+                 "is_correctness": False, "url": ""}]
+    merged, warning = drift_check.approved_latest_from_version(releases, 1969, "0.1.1969")
+    assert merged == releases
+    assert warning is None
+
+
+def test_approved_latest_noop_without_parseable_tags():
+    """An empty/broken release source stays broken: no floor, deployments
+    stay unavailable rather than 'current' against zero history."""
+    merged, warning = drift_check.approved_latest_from_version([], 1969, "0.1.1969")
+    assert merged == []
+    assert warning is None
+
+
+def test_classify_at_newest_tag_with_version_floor_is_stale():
+    """The acceptance case: tags end at 1957, VERSION is 1969 — a 0.1.1957
+    deployment is stale against the VERSION-raised latest."""
+    releases = [{"tag": "v0.1.1957", "published_at": "2026-08-01T00:00:00Z",
+                 "is_correctness": False, "url": ""}]
+    merged, _ = drift_check.approved_latest_from_version(releases, 1969, "0.1.1969")
+    report = drift_check.classify(deployment(tag="0.1.1957"), merged, 50, 30)
+    assert report["state"] == drift_check.STATE_STALE
+    assert report["latest_tag"] == "0.1.1969"
+
+
+def test_classify_between_newest_tag_and_version_is_current():
+    """A deployment newer than every tag but <= VERSION is current against
+    the VERSION floor, never 'newer than latest'."""
+    releases = [{"tag": "v0.1.1957", "published_at": "2026-09-01T00:00:00Z",
+                 "is_correctness": False, "url": ""}]
+    merged, _ = drift_check.approved_latest_from_version(releases, 1969, "0.1.1969")
+    report = drift_check.classify(deployment(tag="0.1.1963"), merged, 50, 30)
+    assert report["state"] == drift_check.STATE_CURRENT
+    assert report["latest_tag"] == "0.1.1969"
+    assert report["is_drift"] is False
+
+
+def test_fingerprint_non_none_on_warning_alone():
+    reports = drift_check.classify_fleet(
+        [deployment(tag="v0.1.100")], RELEASES, 50, 30)
+    assert drift_check.drift_fingerprint(reports) is None
+    fp = drift_check.drift_fingerprint(
+        reports, warnings=["tags_behind_version: VERSION 0.1.1969 newer than v0.1.1957"])
+    assert fp is not None
+
+
+def test_fingerprint_changes_when_warning_appears_or_text_changes():
+    reports = drift_check.classify_fleet(
+        [deployment(cluster="iad-kalshi", tag="v0.1.10")], RELEASES, 50, 30)
+    fp_plain = drift_check.drift_fingerprint(reports)
+    warning = "tags_behind_version: VERSION 0.1.1969 newer than v0.1.1957"
+    fp_warned = drift_check.drift_fingerprint(reports, warnings=[warning])
+    assert fp_plain != fp_warned
+    # Same warning twice -> same key (dedup still holds); changed text -> new key.
+    assert (drift_check.drift_fingerprint(reports, warnings=[warning]) == fp_warned)
+    assert (drift_check.drift_fingerprint(reports, warnings=[warning + " (updated)"])
+            != fp_warned)
+
+
+def test_render_alert_body_includes_tags_behind_version():
+    reports = drift_check.classify_fleet(
+        [deployment(tag="v0.1.100")], RELEASES, 50, 30)
+    body = drift_check.render_alert_body(
+        reports, "fp02",
+        warnings=["tags_behind_version: tagging lapsed; using VERSION"])
+    assert "tags_behind_version" in body
+    assert "tagging lapsed" in body
+
+
+def test_cli_version_floor_reports_latest_warning_and_stale(tmp_path):
+    # Acceptance: with tags ending at 1957 and VERSION at 1969, --json
+    # reports latest=0.1.1969, flags tags_behind_version, and classifies a
+    # 0.1.1957 deployment as stale.
+    args = version_floor_cli_env(tmp_path, "0.1.1957")
+    proc = _run_cli(args)
+    assert proc.returncode == 1, proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["warnings"], "tags_behind_version must reach the JSON output"
+    assert "tags_behind_version" in data["warnings"][0]
+    report = data["deployments"][0]
+    assert report["latest_tag"] == "0.1.1969"
+    assert report["state"] == drift_check.STATE_STALE
+    assert data["fingerprint"]
+
+
+def test_cli_version_floor_deployment_between_tag_and_version_is_current(tmp_path):
+    # 0.1.1963 is newer than every tag but <= VERSION: current, not unknown.
+    # Exit is still 1 because the tags_behind_version warning fired.
+    args = version_floor_cli_env(tmp_path, "0.1.1963")
+    proc = _run_cli(args)
+    assert proc.returncode == 1, proc.stderr
+    data = json.loads(proc.stdout)
+    report = data["deployments"][0]
+    assert report["latest_tag"] == "0.1.1969"
+    assert report["state"] == drift_check.STATE_CURRENT
+    assert data["summary"]["current_count"] == 1
+    assert data["warnings"]
+
+
+def test_cli_version_matching_newest_tag_stays_quiet(tmp_path):
+    # VERSION == newest tag: no floor entry, no warning, exit 0.
+    dc = tmp_path / "dc"
+    write_dc(dc, "iad-ci", "v0.1.100")
+    releases = tmp_path / "releases.json"
+    releases.write_text(json.dumps(RELEASES), encoding="utf-8")
+    config = tmp_path / "empty-config.json"
+    config.write_text("{}", encoding="utf-8")
+    version_file = write_version_file(tmp_path, "v0.1.100")
+    proc = _run_cli(["--json", "--manifests", str(dc),
+                     "--releases-file", str(releases), "--config", str(config),
+                     "--version-file", str(version_file)])
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["warnings"] == []
+    assert data["deployments"][0]["latest_tag"] == "v0.1.100"
+    assert data["fingerprint"] is None

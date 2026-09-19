@@ -31,9 +31,19 @@ unchanged drift filed with ``--emit-bead`` returns ``EXISTING`` from the
 bead CLI instead of minting a second alert bead. A changed fleet picture
 hashes differently and files fresh.
 
+The approved latest is ``max(newest release tag, VERSION)``: the checkout's
+VERSION file (or the raw file on the GitHub mirror, via ``--version-file
+https://…``) is the version production was cut from even when CI tagging
+lapsed. When VERSION exceeds the newest tag, it becomes the approved latest
+and a distinct ``tags_behind_version`` warning is emitted (stderr, the JSON
+``warnings`` list, the alert body, and the dedup fingerprint), so an alert
+says "tagging lapsed" instead of misclassifying deployments. A deployment
+newer than every tag but <= VERSION classifies ``current``.
+
 Exit codes (docs/drift-check.md):
-    0  all deployments current
-    1  drift detected (stale / mismatched / unavailable present)
+    0  all deployments current and no tags_behind_version warning
+    1  drift detected (stale / mismatched / unavailable present), or a
+       tags_behind_version warning fired with every deployment current
     2  error (bad arguments, missing input, fetcher failure)
 
 Usage:
@@ -47,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -117,6 +128,82 @@ def latest_release(releases: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if dated:
         return max(dated, key=lambda tr: tr[0])[1]
     return None
+
+
+def resolve_version_source(spec: Optional[str], repo_root: Path,
+                           urlopen=None) -> Tuple[Optional[int], str]:
+    """Resolve the VERSION source to ``(version_number, verbatim_tag)``.
+
+    ``spec`` is a local path or an http(s):// URL (the raw VERSION file on
+    the GitHub mirror); the default is the checkout's own VERSION. VERSION
+    is an advisory floor for the approved latest, so an unreadable, missing
+    or malformed source degrades to ``(None, "")`` — tag-only behaviour —
+    rather than failing an unattended run.
+
+    ``(version, text)`` is returned so callers can keep the file's own tag
+    spelling (``0.1.1969`` or ``v0.1.1969``) for release-list entries.
+    """
+    source = spec if spec is not None else str(repo_root / "VERSION")
+    text = ""
+    if source.startswith(("http://", "https://")):
+        if urlopen is None:
+            urlopen = urllib.request.urlopen
+        try:
+            with urlopen(source, timeout=10) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                if status == 200:
+                    text = resp.read(4096).decode("utf-8", "replace").strip()
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
+            # HTTPException (IncompleteRead, BadStatusLine, …) is not an
+            # OSError; an unattended run must degrade, not crash.
+            text = ""
+    else:
+        try:
+            text = Path(source).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            text = ""
+    version = parse_version(text) if text else None
+    if version is None:
+        return None, ""
+    return version, text
+
+
+def approved_latest_from_version(
+        releases: List[Dict[str, Any]],
+        version: Optional[int],
+        version_tag: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Apply the VERSION floor: ``max(newest tag, VERSION)`` is the approved
+    latest.
+
+    When VERSION parses higher than every fetched tag (CI tagging lapsed —
+    observed 2026-09-17: tags stopped at v0.1.1957 while VERSION and the
+    fleet reached 0.1.1969), a synthetic release entry for VERSION is
+    appended so ``latest_release`` picks it, and the ``tags_behind_version``
+    warning text is returned. With no parseable tags at all the release
+    source is broken rather than merely lagging, so nothing is merged and
+    deployments stay ``unavailable``. Returns ``(releases, None)`` when tags
+    already cover VERSION.
+    """
+    if version is None:
+        return releases, None
+    newest_tag = max(
+        (v for v in (parse_version(r.get("tag", "")) for r in releases)
+         if v is not None),
+        default=None,
+    )
+    if newest_tag is None or version <= newest_tag:
+        return releases, None
+    if not any(parse_version(r.get("tag", "")) == version for r in releases):
+        releases = list(releases) + [{
+            "tag": version_tag,
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "is_correctness": False,
+            "url": "",
+        }]
+    warning = (f"tags_behind_version: VERSION {version_tag} is newer than the newest "
+               f"release tag v0.1.{newest_tag} (tagging lapsed; {version_tag} treated "
+               f"as the approved latest)")
+    return releases, warning
 
 
 def releases_behind(deployed_version: Optional[int],
@@ -290,17 +377,23 @@ def classify_fleet(deployments: List[Dict[str, Any]],
     return reports
 
 
-def drift_fingerprint(reports: List[Dict[str, Any]]) -> Optional[str]:
-    """Stable short hash of the non-current subset; None when all current.
+def drift_fingerprint(reports: List[Dict[str, Any]],
+                      warnings: Optional[List[str]] = None) -> Optional[str]:
+    """Stable short hash of the non-current subset plus checker warnings;
+    None when all current and no warnings.
 
     Dedup identity for alerting: the same drift twice hashes identically so
     `--unique-ref` replays to EXISTING, while any change to the drifting set
     (a deployment fixed, a new stale one, a new release) yields a new key.
     Tags enter the hash version-normalized, so a digest-only rebuild of the
-    same stale version refiles nothing.
+    same stale version refiles nothing. `tags_behind_version` warnings hash
+    in too: a tagging lapse is alert-worthy on its own (the approved latest
+    is misrecorded even with every deployment current), and a lapse starting
+    or ending changes the picture and refiles.
     """
     drifting = [r for r in reports if r["state"] in DRIFT_STATES]
-    if not drifting:
+    warning_lines = sorted(w for w in (warnings or []) if w)
+    if not drifting and not warning_lines:
         return None
 
     def tag_key(tag: Optional[str]) -> str:
@@ -317,12 +410,15 @@ def drift_fingerprint(reports: List[Dict[str, Any]]) -> Optional[str]:
         ])
         for r in drifting
     )
+    lines.extend(warning_lines)
     digest = hashlib.sha256("\n".join(lines).encode()).hexdigest()
     return digest[:16]
 
 
-def render_alert_body(reports: List[Dict[str, Any]], fingerprint: str) -> str:
-    """Human-readable alert bead body for the non-current subset."""
+def render_alert_body(reports: List[Dict[str, Any]], fingerprint: str,
+                      warnings: Optional[List[str]] = None) -> str:
+    """Human-readable alert bead body for the non-current subset and any
+    checker warnings (e.g. tags_behind_version)."""
     counts: Dict[str, int] = {}
     for r in reports:
         if r["state"] in DRIFT_STATES:
@@ -335,6 +431,8 @@ def render_alert_body(reports: List[Dict[str, Any]], fingerprint: str) -> str:
         "States: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())),
         "",
     ]
+    for warning in warnings or []:
+        lines.append(f"Warning: {warning}")
     for r in reports:
         if r["state"] not in DRIFT_STATES:
             continue
@@ -375,7 +473,8 @@ def emit_alert(reports: List[Dict[str, Any]],
                fingerprint: str,
                bead_bin: str = "bead",
                dry_run: bool = False,
-               runner=None) -> Tuple[str, str]:
+               runner=None,
+               warnings: Optional[List[str]] = None) -> Tuple[str, str]:
     """File the deduplicated alert bead. Returns (status, detail).
 
     Status is one of created / existing / existing_closed / dry_run / error,
@@ -384,7 +483,7 @@ def emit_alert(reports: List[Dict[str, Any]],
     if runner is None:
         runner = subprocess.run
     title = f"ARMOR fleet version drift detected ({fingerprint})"
-    body = render_alert_body(reports, fingerprint)
+    body = render_alert_body(reports, fingerprint, warnings=warnings)
     cmd = [
         resolve_bead_bin(bead_bin), "create",
         "--title", title,
@@ -480,7 +579,8 @@ def summarize(reports: List[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
-def format_report(reports: List[Dict[str, Any]], thresholds: Dict[str, int]) -> str:
+def format_report(reports: List[Dict[str, Any]], thresholds: Dict[str, int],
+                  warnings: Optional[List[str]] = None) -> str:
     counts = summarize(reports)
     icon_for = {
         STATE_CURRENT: "✅",
@@ -495,6 +595,10 @@ def format_report(reports: List[Dict[str, Any]], thresholds: Dict[str, int]) -> 
         f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
         f"Thresholds: >= {thresholds['releases']} releases, >= {thresholds['days']} days",
         "",
+    ]
+    for warning in warnings or []:
+        lines.append(f"⚠️  {warning}")
+    lines += [
         f"Total deployments: {len(reports)}",
         f"current: {counts[STATE_CURRENT]}  stale: {counts[STATE_STALE]}"
         f"  mismatched: {counts[STATE_MISMATCHED]}"
@@ -538,6 +642,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--latest-tag", default=None, metavar="TAG",
                         help="treat TAG (e.g. v0.1.1970) as the latest approved release even if"
                              " the release source does not list it yet; use when tags lag VERSION")
+    parser.add_argument("--version-file", default=None, metavar="PATH_OR_URL",
+                        help="VERSION file giving the approved-latest floor (default: the"
+                             " checkout's VERSION; accepts an http(s) URL such as the raw"
+                             " file on the GitHub mirror). When VERSION is newer than the"
+                             " newest release tag it becomes the approved latest and a"
+                             " tags_behind_version warning is emitted")
     parser.add_argument("--probe-url", action="append", default=[], metavar="CLUSTER=URL",
                         help="live /version endpoint for a cluster; running tag is compared"
                              " against the declared manifest tag (repeatable)")
@@ -581,6 +691,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (OSError, json.JSONDecodeError, RuntimeError, subprocess.TimeoutExpired) as exc:
         print(f"Error: cannot load releases: {exc}", file=sys.stderr)
         return 2
+
+    # Approved-latest floor: VERSION is what production was cut from, so
+    # when release tags lag it the tag list alone understates the approved
+    # latest (observed 2026-09-17: tags at v0.1.1957, fleet at 0.1.1969).
+    version_int, version_tag = resolve_version_source(args.version_file, repo_root)
+    releases, version_warning = approved_latest_from_version(
+        releases, version_int, version_tag)
+    warnings: List[str] = [version_warning] if version_warning else []
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
 
     if args.latest_tag:
         # An operator-asserted latest: appended so latest_release() (highest
@@ -631,25 +751,28 @@ def main(argv: Optional[List[str]] = None) -> int:
             **{f"{state}_count": count for state, count in summarize(reports).items()},
             "needs_update": sum(1 for r in reports if r["needs_update"]),
         },
+        "warnings": warnings,
         "deployments": reports,
-        "fingerprint": drift_fingerprint(reports),
+        "fingerprint": drift_fingerprint(reports, warnings=warnings),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
     if args.emit_bead:
         fingerprint = result["fingerprint"]
         if fingerprint is None:
-            print("All deployments current; no alert to file.", file=sys.stderr)
+            print("Nothing to alert on (all deployments current, no warnings).",
+                  file=sys.stderr)
         else:
             status, detail = emit_alert(reports, fingerprint,
-                                        bead_bin=args.bead_bin, dry_run=args.dry_run)
+                                        bead_bin=args.bead_bin, dry_run=args.dry_run,
+                                        warnings=warnings)
             result["alert"] = {"status": status, "detail": detail}
             print(f"alert: {status} {detail}".rstrip(), file=sys.stderr)
 
     if args.json:
         output = json.dumps(result, indent=2)
     else:
-        output = format_report(reports, result["thresholds"])
+        output = format_report(reports, result["thresholds"], warnings=warnings)
     print(output)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
