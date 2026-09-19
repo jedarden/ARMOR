@@ -772,7 +772,10 @@ func (d *Decryptor) DecryptV3(encrypted []byte, part uint16, blockTable *BlockTa
 	}
 
 	blockCount := blockTable.EntryCount()
-	plaintext := make([]byte, 0)
+	// Ciphertext length is the upper bound on plaintext before decompression,
+	// so seed the buffer with it and let append grow past it only for
+	// compressed blocks.
+	plaintext := make([]byte, 0, len(encrypted))
 	encryptedOffset := 0
 
 	for blockIdx := 0; blockIdx < blockCount; blockIdx++ {
@@ -821,15 +824,13 @@ func (d *Decryptor) DecryptV3(encrypted []byte, part uint16, blockTable *BlockTa
 func (d *Decryptor) verifyV3BlockHMAC(encryptedBlock []byte, part uint16, block uint32, expected []byte) error {
 	mac := hmac.New(sha256.New, d.hmacKey)
 
-	// Include part number (big-endian)
-	partBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(partBytes, part)
-	mac.Write(partBytes)
-
-	// Include block index (big-endian)
-	blockBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(blockBytes, block)
-	mac.Write(blockBytes)
+	// Include part number and block index (big-endian) from one stack buffer
+	// to match the allocation-free prefix in ComputeV3BlockHMAC.
+	var prefix [4]byte
+	binary.BigEndian.PutUint16(prefix[0:2], part)
+	mac.Write(prefix[0:2])
+	binary.BigEndian.PutUint32(prefix[0:4], block)
+	mac.Write(prefix[0:4])
 
 	// Include ciphertext
 	mac.Write(encryptedBlock)
@@ -845,30 +846,18 @@ func (d *Decryptor) verifyV3BlockHMAC(encryptedBlock []byte, part uint16, block 
 
 // decryptBlockV3 decrypts a single block using v3 (part, block, aesBlock) counter semantics.
 func (d *Decryptor) decryptBlockV3(encryptedBlock []byte, part uint16, block uint32) ([]byte, error) {
-	decryptedBlock := make([]byte, len(encryptedBlock))
-
-	// Decrypt each 16-byte AES block within the ARMOR block
-	numAESBlocks := (len(encryptedBlock) + 15) / 16
-	for aesBlockIdx := 0; aesBlockIdx < numAESBlocks; aesBlockIdx++ {
-		// Create v3 counter for this AES block
-		counter := make([]byte, 16)
-		copy(counter[0:8], d.iv[0:8])                  // IV[0:8]
-		binary.BigEndian.PutUint16(counter[8:10], part) // uint16(part)
-		binary.BigEndian.PutUint32(counter[10:14], block) // uint32(block)
-		binary.BigEndian.PutUint16(counter[14:16], uint16(aesBlockIdx)) // uint16(aesBlock)
-
-		stream := cipher.NewCTR(d.block, counter)
-
-		// Decrypt this AES block's worth of data
-		start := aesBlockIdx * 16
-		end := start + 16
-		if end > len(encryptedBlock) {
-			end = len(encryptedBlock)
-		}
-		if end > start {
-			stream.XORKeyStream(decryptedBlock[start:end], encryptedBlock[start:end])
-		}
+	// Fail closed before any keystream is generated: a payload past
+	// V3MaxBlockSize would exhaust the u16 aesBlock counter field and reuse
+	// keystream (see validateV3BlockPayload).
+	if err := validateV3BlockPayload(encryptedBlock); err != nil {
+		return nil, err
 	}
+
+	// Decrypt the whole ARMOR block with one CTR stream over the cached AES
+	// cipher (see newV3CTR for the counter construction and why the stream
+	// is byte-identical to the historical per-16-byte loop).
+	decryptedBlock := make([]byte, len(encryptedBlock))
+	newV3CTR(d.block, d.iv, part, block).XORKeyStream(decryptedBlock, encryptedBlock)
 
 	return decryptedBlock, nil
 }

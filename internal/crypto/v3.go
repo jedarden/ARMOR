@@ -107,6 +107,56 @@ func VerifyV3BlockHMAC(hmacKey []byte, part uint16, block uint32, ciphertext []b
 	return nil
 }
 
+// newV3CTR returns a single CTR stream spanning one whole ARMOR block, seeded
+// at aesBlock = 0 for the v3 counter construction
+// IV[0:8] || uint16(part) || uint32(block) || uint16(aesBlock).
+//
+// Go's CTR mode increments the full 16-byte counter big-endian as one value,
+// so successive keystream blocks run the aesBlock field 0, 1, 2, ... exactly
+// as the historical one-cipher.NewCTR-per-16-bytes construction did. The
+// increment cannot carry from the aesBlock field into the block field while a
+// block payload holds at most 65536 AES blocks (V3MaxBlockSize), which
+// validateV3BlockPayload enforces — so one stream per ARMOR block is
+// byte-identical to the historical keystream.
+func newV3CTR(blockCipher cipher.Block, iv []byte, part uint16, block uint32) cipher.Stream {
+	if len(iv) != 16 {
+		panic(fmt.Sprintf("IV must be 16 bytes, got %d", len(iv)))
+	}
+	counter := make([]byte, 16)
+	copy(counter[0:8], iv[0:8])
+	binary.BigEndian.PutUint16(counter[8:10], part)
+	binary.BigEndian.PutUint32(counter[10:14], block)
+	// counter[14:16] stays zero: the stream starts at aesBlock 0.
+	return cipher.NewCTR(blockCipher, counter)
+}
+
+// validateV3BlockParams checks the DEK/IV/blockSize invariants shared by
+// EncryptBlockV3 and DecryptBlockV3.
+func validateV3BlockParams(dek, iv []byte, blockSize int) error {
+	if len(dek) != 32 {
+		return fmt.Errorf("DEK must be 32 bytes")
+	}
+	if len(iv) != 16 {
+		return fmt.Errorf("IV must be 16 bytes")
+	}
+	if blockSize > V3MaxBlockSize {
+		return fmt.Errorf("block size %d exceeds Version3 maximum %d", blockSize, V3MaxBlockSize)
+	}
+	return nil
+}
+
+// validateV3BlockPayload rejects a payload long enough to exhaust the u16
+// aesBlock counter field (65536 AES blocks = V3MaxBlockSize). Beyond that the
+// counter would carry into the part/block namespace; the historical
+// implementation instead wrapped uint16(aesBlockIdx) back to 0 and silently
+// reused keystream.
+func validateV3BlockPayload(payload []byte) error {
+	if len(payload) > V3MaxBlockSize {
+		return fmt.Errorf("block payload %d bytes exceeds Version3 maximum %d", len(payload), V3MaxBlockSize)
+	}
+	return nil
+}
+
 // EncryptBlockV3 encrypts a single ARMOR block with Version3 semantics.
 //
 // Parameters:
@@ -182,19 +232,19 @@ func EncryptBlockV3(dek, iv []byte, part uint16, block uint32, plaintext []byte,
 //
 // Returns:
 //   - plaintext: Decrypted block (same length as ciphertext)
-//   - err: Error if decryption or HMAC verification fails
+//   - err: Error if decryption or HMAC verification fails. A ciphertext
+//     longer than V3MaxBlockSize is rejected before any keystream is
+//     generated: the u16 aesBlock counter field would wrap or carry into
+//     the part/block namespace and decrypt with reused keystream.
 func DecryptBlockV3(dek, iv []byte, part uint16, block uint32, ciphertext []byte, expectedHMAC []byte, blockSize int) (plaintext []byte, err error) {
-	if len(dek) != 32 {
-		return nil, fmt.Errorf("DEK must be 32 bytes")
+	if err := validateV3BlockParams(dek, iv, blockSize); err != nil {
+		return nil, err
 	}
-	if len(iv) != 16 {
-		return nil, fmt.Errorf("IV must be 16 bytes")
-	}
-	if blockSize > V3MaxBlockSize {
-		return nil, fmt.Errorf("block size %d exceeds Version3 maximum %d", blockSize, V3MaxBlockSize)
+	if err := validateV3BlockPayload(ciphertext); err != nil {
+		return nil, err
 	}
 
-	// Verify HMAC first
+	// Verify HMAC first — no plaintext is released before authentication.
 	hmacKey, err := DeriveHMACKey(dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive HMAC key: %w", err)
@@ -204,31 +254,14 @@ func DecryptBlockV3(dek, iv []byte, part uint16, block uint32, ciphertext []byte
 	}
 
 	// Create AES cipher
-	aesBlock, err := aes.NewCipher(dek)
+	blockCipher, err := aes.NewCipher(dek)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
 	}
 
-	// Allocate plaintext buffer
+	// Decrypt the whole ARMOR block with one CTR stream (see newV3CTR).
 	plaintext = make([]byte, len(ciphertext))
-
-	// Decrypt each 16-byte AES block within the ARMOR block
-	numAESBlocks := (len(ciphertext) + 15) / 16
-	for aesBlockIdx := 0; aesBlockIdx < numAESBlocks; aesBlockIdx++ {
-		// Create counter for this AES block
-		counter := MakeV3Counter(iv, part, block, uint16(aesBlockIdx))
-		stream := cipher.NewCTR(aesBlock, counter)
-
-		// Decrypt this AES block's worth of data
-		start := aesBlockIdx * 16
-		end := start + 16
-		if end > len(ciphertext) {
-			end = len(ciphertext)
-		}
-		if end > start {
-			stream.XORKeyStream(plaintext[start:end], ciphertext[start:end])
-		}
-	}
+	newV3CTR(blockCipher, iv, part, block).XORKeyStream(plaintext, ciphertext)
 
 	return plaintext, nil
 }
